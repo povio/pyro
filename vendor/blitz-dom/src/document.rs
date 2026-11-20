@@ -427,6 +427,8 @@ pub struct BaseDocument {
     pub(crate) frame_client: Option<String>,
     /// pyro: `DocumentConfig::frames`: the documents its frame elements show.
     pub(crate) frames: crate::FrameTable,
+    /// pyro: its sheets' `Referrer-Policy`, by sheet object (`net::SheetPolicies`).
+    pub(crate) sheet_policies: crate::net::SheetPolicies,
 
     // Events
     pub(crate) tx: Sender<DocumentEvent>,
@@ -780,6 +782,9 @@ bitflags! {
     }
 }
 
+/// pyro: the attribute the render snapshot writes on a sheet link: its response's `Referrer-Policy`.
+pub const SHEET_POLICY_ATTRIBUTE: &str = "data-pyro-sheet-referrer-policy";
+
 impl BaseDocument {
     /// Create a new (empty) [`BaseDocument`] with the specified configuration
     pub fn new(config: DocumentConfig) -> Self {
@@ -890,6 +895,7 @@ impl BaseDocument {
             subdocument_depth: config.subdocument_depth,
             frame_client: config.frame_client.clone(),
             frames: config.frames.clone(),
+            sheet_policies: Default::default(),
             devtool_settings: DevtoolSettings::default(),
             url: base_url,
             nodes_to_stylesheet: BTreeMap::new(),
@@ -1870,6 +1876,8 @@ impl BaseDocument {
                                     net_provider: self.net_provider.clone(),
                                     abort_signal: self.abort_signal.clone(),
                                     client: self.request_client(),
+                                    policy: element.attr(markup5ever::LocalName::from(SHEET_POLICY_ATTRIBUTE)).map(str::to_owned),
+                                    policies: self.sheet_policies.clone(),
                                 },
                             ),
                         );
@@ -2125,6 +2133,7 @@ impl BaseDocument {
                 import_depth: 0,
                 client: self.request_client(),
                 inline: Some(self.url.inline_url_data().clone()),
+                policies: self.sheet_policies.clone(),
             }),
             None,
             QuirksMode::NoQuirks,

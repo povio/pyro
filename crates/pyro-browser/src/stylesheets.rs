@@ -67,37 +67,8 @@ pub(crate) struct Stylesheets {
     /// `load` / `error` events of `<style>` elements queued and not fired
     /// yet: like the imports, they delay the document's load event.
     style_events: usize,
-    /// pyro: each style sheet response the document applied (a link's, by its node; an import's,
-    /// by its request), with its URL after redirects and the `Referrer-Policy` it was served with:
-    /// the policy of the requests that sheet makes (as Chrome sends them;
-    /// `Browser::sheet_referrer_policy`). A sheet's next response replaces its record.
-    pub(crate) responses: HashMap<SheetResponseId, SheetResponseRecord>,
 }
 
-/// pyro: which sheet a response record is of.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum SheetResponseId {
-    Link(NodeId),
-    Import(String),
-}
-
-/// pyro: one sheet response's URL after redirects and `Referrer-Policy`.
-#[derive(Clone, Debug)]
-pub(crate) struct SheetResponseRecord {
-    pub(crate) url: String,
-    pub(crate) referrer_policy: Option<pyro_net::ReferrerPolicy>,
-}
-
-impl Stylesheets {
-    /// pyro: the policy of the requests the sheet at `url` makes: its response's. The URL only
-    /// finds the record (a request names its sheet by its URL); where responses at one URL say
-    /// different things, none is taken for another: `no-referrer`.
-    pub(crate) fn referrer_policy_of(&self, url: &str) -> Option<pyro_net::ReferrerPolicy> {
-        let mut policies = self.responses.values().filter(|r| r.url == url).map(|r| r.referrer_policy);
-        let first = policies.next()?;
-        if policies.all(|p| p == first) { first } else { Some(pyro_net::ReferrerPolicy::NoReferrer) }
-    }
-}
 impl Stylesheets {
     pub(crate) fn pending(&self) -> usize {
         self.entries.values().filter(|s| s.pending).count()
@@ -115,8 +86,6 @@ impl Stylesheets {
             self.bytes -= sheet.bytes;
             // Dropping the cancellation handle stops the native request.
         }
-        // pyro: its response goes with it (its policy no longer applies to anything).
-        self.responses.remove(&SheetResponseId::Link(node));
     }
 }
 impl Page {
@@ -331,16 +300,9 @@ impl Browser {
         // pyro: a CORS-cross-origin response's sheet is not origin-clean (CSSOM), nor (as
         // Chrome) a network error's, which is no CORS-same-origin response either.
         let opaque = result.as_ref().map_or(true, |r| r.opaque);
-        // pyro: this link's response now, with its policy (replacing its previous response's).
-        match result.as_ref() {
-            Ok(r) => {
-                let record = SheetResponseRecord { url: r.url.clone(), referrer_policy: r.referrer_policy };
-                sheets.responses.insert(SheetResponseId::Link(node), record);
-            }
-            Err(_) => {
-                sheets.responses.remove(&SheetResponseId::Link(node));
-            }
-        }
+        // pyro: its response's `Referrer-Policy`, which the sheet's own requests follow (carried
+        // to its imports and, on the link in the snapshot, to its `url()`s; never by URL).
+        let sheet_policy = result.as_ref().ok().and_then(|r| r.referrer_policy);
         let text = result
             .ok()
             .filter(|r| {
@@ -365,7 +327,7 @@ impl Browser {
             sheets.bytes += text.len();
             bindings.set_sheet_response(node, !opaque);
             // pyro: at its URL after redirects, which its URLs resolve against.
-            bindings.set_stylesheet_response(node, &sheet_url, &text);
+            bindings.set_stylesheet_response(node, &sheet_url, &text, sheet_policy.map(|p| p.as_str()));
         } else {
             bindings.set_sheet_response(node, !opaque);
             remove_sheet(bindings, node);
@@ -396,7 +358,7 @@ impl Browser {
             };
             let environment = document_encoding(bindings).unwrap_or_default();
             for import in imports {
-                self.fetch_style_import(page, loader, node, generation, import, 1, &sheet_url, &environment);
+                self.fetch_style_import(page, loader, node, generation, import, 1, &sheet_url, sheet_policy, &environment);
             }
             self.style_imports_settled(page, loader, node);
             self.stylesheets_changed(page);
@@ -552,7 +514,8 @@ impl Browser {
         let referrer = self.doc(page).map(|p| p.main_frame.url.clone()).unwrap_or_default();
         let environment = document_encoding(&bindings).unwrap_or_default();
         for import in urls {
-            self.fetch_style_import(page, &loader, node, generation, import, 1, &referrer, &environment);
+            // (A `<style>`'s imports: the document's policy.)
+            self.fetch_style_import(page, &loader, node, generation, import, 1, &referrer, None, &environment);
         }
         self.style_imports_settled(page, &loader, node);
         true
@@ -570,6 +533,8 @@ impl Browser {
         import: pyro_dom::cssom::ImportRequest,
         depth: usize,
         referrer: &str,
+        // pyro: the importing sheet's own response policy (from that sheet, never by URL).
+        parent_policy: Option<pyro_net::ReferrerPolicy>,
         environment: &str,
     ) {
         let url = import.url.clone();
@@ -632,7 +597,7 @@ impl Browser {
         // The parent sheet is the import's referrer, whatever its mode (as Blink sends a style
         // sheet's requests).
         let referrer = referrer.to_owned();
-        let sheet_policy = self.sheet_referrer_policy(page, &referrer);
+
         let request = FetchRequest {
             credentials: None,
             post: None,
@@ -645,7 +610,7 @@ impl Browser {
                 .referrer_policy
                 .as_deref()
                 .and_then(pyro_net::ReferrerPolicy::parse)
-                .or(sheet_policy),
+                .or(parent_policy),
             frame_id: Some(frame.id.0.clone()),
             loader_id: Some(frame.loader_id.0.clone()),
             crossorigin: import.cross_origin.clone(),
@@ -708,10 +673,6 @@ impl Browser {
             entry.failed |= if entry.link { !ok || !css } else { (!ok || !css) && depth == 1 };
         }
         if let Some(r) = result.as_ref().ok().filter(|r| ok && r.mime.eq_ignore_ascii_case("text/css")) {
-            if let Some(mut doc) = self.doc_mut(page) {
-                let record = SheetResponseRecord { url: r.url.clone(), referrer_policy: r.referrer_policy };
-                doc.stylesheets.responses.insert(SheetResponseId::Import(request_key.to_owned()), record);
-            }
             let (text, encoding) = pyro_dom::cssom::decode_stylesheet(&r.body, r.charset.as_deref(), &[environment]);
             // CSSOM: `CSSImportRule.styleSheet` lists the imported rules.
             if let Some(bindings) = self.doc(page).and_then(|d| d.main_frame.page_dom.clone()) {
@@ -728,13 +689,14 @@ impl Browser {
                     final_url: r.url.clone(),
                     opaque: r.opaque,
                     status: r.status,
+                    referrer_policy: r.referrer_policy.map(|p| p.as_str().to_owned()),
                 });
             }
             if depth < MAX_IMPORT_DEPTH {
                 let base = url::Url::parse(&r.url).ok();
                 let nested = resolve_imports(pyro_dom::cssom::leading_import_requests(&text), base.as_ref());
                 for nested in nested {
-                    self.fetch_style_import(page, loader, node, generation, nested, depth + 1, &r.url, encoding);
+                    self.fetch_style_import(page, loader, node, generation, nested, depth + 1, &r.url, r.referrer_policy, encoding);
                 }
             }
         }

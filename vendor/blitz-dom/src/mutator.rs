@@ -1871,6 +1871,13 @@ impl<'doc> DocumentMutator<'doc> {
                 net_provider: self.doc.net_provider.clone(),
                 abort_signal: self.doc.abort_signal.clone(),
                 client: self.doc.request_client(),
+                // pyro: the response's policy as the snapshot wrote it on the link (an engine
+                // attribute page content cannot write).
+                policy: node
+                    .element_data()
+                    .and_then(|e| e.attr(markup5ever::LocalName::from(crate::document::SHEET_POLICY_ATTRIBUTE)))
+                    .map(str::to_owned),
+                policies: self.doc.sheet_policies.clone(),
             },
         );
 

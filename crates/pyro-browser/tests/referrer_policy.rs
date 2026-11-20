@@ -290,71 +290,53 @@ fn a_srcdoc_document_inherits_its_containers_policy() {
 }
 
 /// A style sheet's requests are sent under the sheet's own `Referrer-Policy` when it was served
-/// with one (as Chrome sends them): its `@import`s, and the renderer's requests for its `url()`s
-/// (which name the sheet as referrer), carry no referrer from a sheet served with `no-referrer`,
-/// though the document's policy would send one (security review cycle 1, MEDIUM 6).
+/// with one (as Chrome sends them): its `@import`s carry it from the sheet that imports them, and
+/// the renderer gets it for its `url()`s on the sheet's link in the render snapshot (an engine
+/// attribute), never by looking its URL up (security review cycles 1-4, MEDIUM 6 / S1).
 #[test]
 fn a_sheets_requests_follow_its_referrer_policy() {
-    use std::cell::RefCell;
     let (mut thread, page, loader) = setup();
     let sheet = format!("{SAME}/strict.css");
     loader.insert(&sheet, "text/css", &format!("@import \"{SAME}/imported.css\"; p {{ color: red }}"), Duration::ZERO);
     loader.set_referrer_policy(&sheet, "no-referrer");
     loader.insert(&format!("{SAME}/imported.css"), "text/css", "p { margin: 0 }", Duration::ZERO);
-    loader.insert(PAGE, "text/html", &format!("<!doctype html><link rel=stylesheet href=\"{sheet}\">"), Duration::ZERO);
-    loader.set_referrer_policy(PAGE, "unsafe-url");
-    thread.browser.navigate(page, NavigateOpts::address_bar(PAGE)).unwrap();
-    settle(&mut thread);
-    assert_eq!(loader.referer_of(&format!("{SAME}/imported.css")), Some(None), "the import");
-    // The renderer's request for one of the sheet's `url()`s names the sheet as referrer.
-    let done: Rc<RefCell<bool>> = Rc::default();
-    let flag = done.clone();
-    thread.browser.fetch_subresource_options(
-        page,
-        format!("{SAME}/i.png"),
-        pyro_browser::ResourceKind::Image,
-        pyro_browser::SubresourceOptions { referrer: Some(sheet.clone()), ..Default::default() },
-        Box::new(move |_, _| *flag.borrow_mut() = true),
-    );
-    settle(&mut thread);
-    assert!(*done.borrow());
-    assert_eq!(loader.referer_of(&format!("{SAME}/i.png")), Some(None), "a url() of the sheet");
-}
-
-/// A sheet's `Referrer-Policy` is its response's, gone with it: once the link is removed, a
-/// request naming that URL as referrer follows the document's policy. The policy sat in a slot by
-/// URL that outlived every response at that URL (security review cycles 2-3, 2b).
-#[test]
-fn a_sheets_referrer_policy_goes_with_its_response() {
-    use std::cell::RefCell;
-    let (mut thread, page, loader) = setup();
-    let sheet = format!("{SAME}/strict.css");
-    loader.insert(&sheet, "text/css", "p { color: red }", Duration::ZERO);
-    loader.set_referrer_policy(&sheet, "no-referrer");
     loader.insert(PAGE, "text/html", &format!("<!doctype html><link id=l rel=stylesheet href=\"{sheet}\">"), Duration::ZERO);
     loader.set_referrer_policy(PAGE, "unsafe-url");
     thread.browser.navigate(page, NavigateOpts::address_bar(PAGE)).unwrap();
     settle(&mut thread);
-    let request = |thread: &mut BrowserThread, query: &str| {
-        let done: Rc<RefCell<bool>> = Rc::default();
-        let flag = done.clone();
-        thread.browser.fetch_subresource_options(
-            page,
-            format!("{SAME}/i.png?{query}"),
-            pyro_browser::ResourceKind::Image,
-            pyro_browser::SubresourceOptions { referrer: Some(sheet.clone()), ..Default::default() },
-            Box::new(move |_, _| *flag.borrow_mut() = true),
-        );
-        settle(thread);
-        assert!(*done.borrow());
-    };
-    request(&mut thread, "with");
-    assert_eq!(loader.referer_of(&format!("{SAME}/i.png?with")), Some(None), "the sheet's policy");
-    let realm = thread.browser.page(page).unwrap().main_frame.main_realm().unwrap();
-    let scope = realm.scope().unwrap();
-    scope.eval("document.getElementById('l').remove()", None, 1).unwrap();
-    drop(scope);
+    assert_eq!(loader.referer_of(&format!("{SAME}/imported.css")), Some(None), "the import");
+    let page_dom = thread.browser.page(page).unwrap().main_frame.page_dom.clone().unwrap();
+    let html = page_dom.render_snapshot(PAGE, None).html;
+    assert!(html.contains("data-pyro-sheet-referrer-policy=\"no-referrer\""), "{html}");
+}
+
+/// A sheet's `Referrer-Policy` is its current response's: once the link loads a response without
+/// one (or fails), the snapshot gives its sheet none; a page's own attribute of that name is never
+/// written (security review cycles 2-4, 2b / S1).
+#[test]
+fn a_sheets_referrer_policy_goes_with_its_response() {
+    let (mut thread, page, loader) = setup();
+    let sheet = format!("{SAME}/strict.css");
+    loader.insert(&sheet, "text/css", "p { color: red }", Duration::ZERO);
+    loader.set_referrer_policy(&sheet, "no-referrer");
+    loader.insert(&format!("{SAME}/plain.css"), "text/css", "p { color: blue }", Duration::ZERO);
+    loader.insert(
+        PAGE,
+        "text/html",
+        &format!("<!doctype html><link id=l rel=stylesheet href=\"{sheet}\"><link id=f rel=stylesheet href=\"{SAME}/plain.css\" data-pyro-sheet-referrer-policy=unsafe-url>"),
+        Duration::ZERO,
+    );
+    thread.browser.navigate(page, NavigateOpts::address_bar(PAGE)).unwrap();
     settle(&mut thread);
-    request(&mut thread, "without");
-    assert_eq!(loader.referer_of(&format!("{SAME}/i.png?without")), Some(Some(sheet.clone())), "the document's policy");
+    let snapshot = |thread: &BrowserThread| {
+        let page_dom = thread.browser.page(page).unwrap().main_frame.page_dom.clone().unwrap();
+        page_dom.render_snapshot(PAGE, None).html
+    };
+    let html = snapshot(&thread);
+    assert_eq!(html.matches("data-pyro-sheet-referrer-policy").count(), 1, "{html}");
+    assert!(!html.contains("unsafe-url"), "the page's own attribute is not written: {html}");
+    eval(&thread, page, &format!("document.getElementById('l').href = '{SAME}/plain.css'; 1"));
+    settle(&mut thread);
+    let html = snapshot(&thread);
+    assert!(!html.contains("data-pyro-sheet-referrer-policy"), "{html}");
 }

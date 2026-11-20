@@ -66,6 +66,20 @@ pub trait NetHandler: Send + Sync + 'static {
         let _ = opaque;
         self.bytes_at(resolved_url, final_url, bytes)
     }
+
+    /// pyro: [`Self::bytes_from`] with the `Referrer-Policy` the response was served with: a
+    /// style sheet's own requests (its imports, its `url()`s) are sent under it.
+    fn bytes_meta(
+        self: Box<Self>,
+        resolved_url: String,
+        final_url: String,
+        opaque: bool,
+        referrer_policy: Option<String>,
+        bytes: Bytes,
+    ) {
+        let _ = referrer_policy;
+        self.bytes_from(resolved_url, final_url, opaque, bytes)
+    }
 }
 
 /// A callback which gets called every time a network request completes

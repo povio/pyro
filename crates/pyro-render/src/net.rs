@@ -74,7 +74,7 @@ pub trait Fetcher: Send + Sync + 'static {
     ) {
         let asked = url.clone();
         let done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send> =
-            Box::new(move |r| done(r.map(|body| Fetched { body, url: asked, opaque: false })));
+            Box::new(move |r| done(r.map(|body| Fetched { body, url: asked, opaque: false, referrer_policy: None })));
         if options.is_default() {
             self.fetch(url, done);
         } else if is_plain_cors(options) {
@@ -95,6 +95,8 @@ pub struct Fetched {
     /// Its tainting is "opaque" (Fetch): a no-cors request that reached another origin at any
     /// hop, though it ended back at the document's.
     pub opaque: bool,
+    /// pyro: the `Referrer-Policy` it was served with (a style sheet's requests follow it).
+    pub referrer_policy: Option<String>,
 }
 
 /// pyro: whether `options` ask only for a CORS fetch with credentials to the same origin
@@ -130,7 +132,21 @@ impl ResourceCache {
 
 /// A handler, the URL asked for, the response's URL after redirects, whether its tainting is
 /// opaque, the body, and whether the render waits for it (counted in `outstanding`).
-type Delivery = (Box<dyn NetHandler>, String, String, bool, Bytes, bool);
+type Delivery = (Box<dyn NetHandler>, String, Meta, Bytes, bool);
+
+/// pyro: what a response says beyond its body: its URL after redirects, tainting and policy.
+#[derive(Clone, Debug)]
+struct Meta {
+    final_url: String,
+    opaque: bool,
+    referrer_policy: Option<String>,
+}
+
+impl Meta {
+    fn of(url: &str) -> Meta {
+        Meta { final_url: url.to_owned(), opaque: false, referrer_policy: None }
+    }
+}
 
 pub(crate) fn new_cache() -> Cache {
     Cache::default()
@@ -149,7 +165,7 @@ struct Provider {
     cache: Cache,
     /// pyro: the URL after redirects of a cached response that was redirected, or whose tainting
     /// is opaque, by cache key, with that tainting.
-    finals: Arc<Mutex<HashMap<String, (String, bool)>>>,
+    finals: Arc<Mutex<HashMap<String, Meta>>>,
     /// pyro: the client of each frame document's requests, by document id
     /// (`NetProvider::document_client`).
     clients: Mutex<HashMap<usize, String>>,
@@ -176,7 +192,8 @@ impl NetProvider for Provider {
         let admitted = self.fetcher.lock().ok().is_some_and(|f| f.admits(options.client.as_deref()));
         if !admitted {
             self.outstanding.fetch_add(1, Ordering::AcqRel);
-            let _ = self.tx.send((handler, url.clone(), url, false, Bytes::new(), true));
+            let meta = Meta::of(&url);
+            let _ = self.tx.send((handler, url, meta, Bytes::new(), true));
             return;
         }
         // A CORS fetch's body (or one fetched with other options) is cached apart: one fetched
@@ -216,9 +233,8 @@ impl NetProvider for Provider {
         };
         let ready = ready.map(|bytes| if late() { Bytes::new() } else { bytes });
         if let Some(bytes) = ready {
-            let (final_url, opaque) =
-                self.finals.lock().ok().and_then(|f| f.get(&key).cloned()).unwrap_or_else(|| (url.clone(), false));
-            let _ = self.tx.send((handler, url, final_url, opaque, bytes, true));
+            let meta = self.finals.lock().ok().and_then(|f| f.get(&key).cloned()).unwrap_or_else(|| Meta::of(&url));
+            let _ = self.tx.send((handler, url, meta, bytes, true));
             return;
         }
         let tx = self.tx.clone();
@@ -233,25 +249,26 @@ impl NetProvider for Provider {
             self.outstanding.fetch_sub(1, Ordering::AcqRel);
         }
         let done: Box<dyn FnOnce(Result<Fetched, String>) + Send> = Box::new(move |result| {
-            let (bytes, final_url, opaque) = match result {
-                Ok(Fetched { body, url: final_url, opaque }) => {
+            let (bytes, meta) = match result {
+                Ok(Fetched { body, url: final_url, opaque, referrer_policy }) => {
                     let bytes = Bytes::from(body);
+                    let meta = Meta { final_url, opaque, referrer_policy };
                     if !inline {
-                        if final_url != url || opaque {
+                        if meta.final_url != url || meta.opaque || meta.referrer_policy.is_some() {
                             if let Ok(mut f) = finals.lock() {
-                                f.insert(key.clone(), (final_url.clone(), opaque));
+                                f.insert(key.clone(), meta.clone());
                             }
                         }
                         if let Ok(mut c) = cache.lock() {
                             c.insert(key, bytes.clone());
                         }
                     }
-                    if late() { (Bytes::new(), final_url, opaque) } else { (bytes, final_url, opaque) }
+                    if late() { (Bytes::new(), meta) } else { (bytes, meta) }
                 }
                 // Empty bytes: Blitz's handlers treat it as a failed load.
-                Err(_) => (Bytes::new(), url.clone(), false),
+                Err(_) => (Bytes::new(), Meta::of(&url)),
             };
-            let _ = tx.send((handler, url, final_url, opaque, bytes, counted));
+            let _ = tx.send((handler, url, meta, bytes, counted));
         });
         fetcher.fetch_final(request.url.to_string(), &options, done);
     }
@@ -348,8 +365,8 @@ impl Bridge {
         let mut passes = 0;
         let mut first_layout = Some(Instant::now() + first_layout_wait);
         // pyro: what arrived since the last settle, deferred fetches' bytes included.
-        while let Ok((handler, url, final_url, opaque, bytes, counted)) = self.rx.try_recv() {
-            handler.bytes_from(url, final_url, opaque, bytes);
+        while let Ok((handler, url, meta, bytes, counted)) = self.rx.try_recv() {
+            handler.bytes_meta(url, meta.final_url, meta.opaque, meta.referrer_policy, bytes);
             if counted {
                 self.outstanding.fetch_sub(1, Ordering::AcqRel);
             }
@@ -364,8 +381,8 @@ impl Bridge {
                 };
                 waited += t.elapsed();
                 match next {
-                    Ok((handler, url, final_url, opaque, bytes, counted)) => {
-                        handler.bytes_from(url, final_url, opaque, bytes);
+                    Ok((handler, url, meta, bytes, counted)) => {
+                        handler.bytes_meta(url, meta.final_url, meta.opaque, meta.referrer_policy, bytes);
                         if counted {
                             self.outstanding.fetch_sub(1, Ordering::AcqRel);
                         }
@@ -448,8 +465,8 @@ mod cors_tests {
         let mut cors = Request::get(url.parse().unwrap());
         blitz_dom::net::mark_cors(&mut cors);
         provider.fetch(0, cors, Box::new(Sink(got.clone())));
-        while let Ok((handler, url, final_url, opaque, bytes, _)) = bridge.rx.try_recv() {
-            handler.bytes_from(url, final_url, opaque, bytes);
+        while let Ok((handler, url, meta, bytes, _)) = bridge.rx.try_recv() {
+            handler.bytes_meta(url, meta.final_url, meta.opaque, meta.referrer_policy, bytes);
         }
         assert_eq!(*recorder.0.lock().unwrap(), vec![(url.to_string(), false), (url.to_string(), true)]);
         assert_eq!(*got.lock().unwrap(), vec![Bytes::from_static(b"no-cors"), Bytes::new()]);

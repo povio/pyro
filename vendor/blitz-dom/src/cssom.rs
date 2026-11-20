@@ -339,6 +339,7 @@ impl BaseDocument {
             import_depth: 0,
             client: self.request_client(),
             inline: Some(self.url.inline_url_data().clone()),
+            policies: self.sheet_policies.clone(),
         }
     }
 

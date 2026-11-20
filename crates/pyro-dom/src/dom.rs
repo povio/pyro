@@ -247,6 +247,8 @@ pub struct Dom {
     /// The document each iframe shows as the renderer paints it (by slot): its render HTML, URL and
     /// scroll position (`set_frame_documents`, snapshot `srcdoc` + `data-pyro-frame-*`).
     pub(crate) frame_documents: rustc_hash::FxHashMap<u32, FrameDocument>,
+    /// pyro: each sheet link's response `Referrer-Policy` (`Dom::set_sheet_policy`), by its slot.
+    pub(crate) sheet_policies: rustc_hash::FxHashMap<u32, String>,
     /// pyro: each document's snapshot nonce (`Dom::snapshot_nonce`), by its slot.
     snapshot_nonces: std::cell::RefCell<rustc_hash::FxHashMap<u32, String>>,
     /// pyro: each frame document's animations now, by its client (`FrameDocument::client`): the
@@ -346,6 +348,7 @@ impl Dom {
             svg_pans: Default::default(),
             frame_documents: Default::default(),
             snapshot_nonces: Default::default(),
+            sheet_policies: Default::default(),
             frame_animations: Default::default(),
             journal_floor: 0,
             style_snapshots: Default::default(),
@@ -1207,6 +1210,21 @@ impl Dom {
             .map(|(i, d)| (crate::snapshot::render_key(self.id_of(*i)).to_string(), d.clone()))
             .collect();
         FrameTable { nonce, entries }
+    }
+
+    /// pyro: the `Referrer-Policy` of the response a sheet link's sheet is of: the render snapshot
+    /// writes it on the link ([`crate::snapshot::SHEET_POLICY_ATTRIBUTE`]), which is how the
+    /// renderer gets it for the sheet's own requests (by the sheet, never by its URL).
+    pub fn set_sheet_policy(&mut self, link: NodeId, policy: Option<&str>) {
+        let Ok(i) = self.check(link) else { return };
+        let changed = match policy {
+            Some(policy) => self.sheet_policies.insert(i, policy.to_owned()).as_deref() != Some(policy),
+            None => self.sheet_policies.remove(&i).is_some(),
+        };
+        if changed {
+            self.bump();
+            self.note(Change::State(i));
+        }
     }
 
     /// pyro: the nonce the frame markers of document slot `doc`'s render snapshots carry

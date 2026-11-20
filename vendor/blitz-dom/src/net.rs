@@ -56,9 +56,33 @@ pub fn is_cors_request(request: &Request) -> bool {
 /// document's own CSS (its referrer is `inline`, the document's URL data, by identity:
 /// `DocumentUrl::inline_url_data`) leaves it to the document. Never decided by comparing URLs:
 /// an external sheet at the document's URL is an external sheet.
+/// pyro: each parsed style sheet's `Referrer-Policy` (its response's), by the identity of the URL
+/// data it was parsed with (the object, held here, never its URL): a `url()` written in that sheet
+/// names it as its referrer, which finds its policy ([`url_fetch_options`]).
+pub type SheetPolicies = Arc<std::sync::Mutex<std::collections::HashMap<usize, (ServoArc<Url>, String)>>>;
+
+/// pyro: records `policy` as the policy of the sheet parsed with `url_data`.
+pub(crate) fn record_sheet_policy(policies: &SheetPolicies, url_data: &ServoArc<Url>, policy: Option<String>) {
+    let Some(policy) = policy else { return };
+    if let Ok(mut map) = policies.lock() {
+        map.insert((&**url_data as *const Url) as usize, (url_data.clone(), policy));
+    }
+}
+
+/// pyro: the policy of the sheet whose URL data is `url_data` (by identity).
+fn sheet_policy(policies: &SheetPolicies, url_data: &ServoArc<Url>) -> Option<String> {
+    let map = policies.lock().ok()?;
+    map.get(&((&**url_data as *const Url) as usize))
+        .filter(|(held, _)| ServoArc::ptr_eq(held, url_data))
+        .map(|(_, policy)| policy.clone())
+}
+
+/// pyro: `policies`: a `url()` without a `referrer-policy()` of its own is sent under the policy
+/// of the sheet it was written in, found by that sheet object (`SheetPolicies`).
 pub fn url_fetch_options(
     modifiers: Option<&style::url::RequestUrlModifiers>,
     inline: Option<&style::servo_arc::Arc<url::Url>>,
+    policies: Option<&SheetPolicies>,
 ) -> blitz_traits::net::FetchOptions {
     use blitz_traits::net::{CorsCredentials, FetchOptions};
     use style::url::CrossOriginModifier;
@@ -70,7 +94,10 @@ pub fn url_fetch_options(
     FetchOptions {
         cors,
         integrity: modifiers.integrity.clone(),
-        referrer_policy: modifiers.referrer_policy.map(|policy| policy.as_str().to_owned()),
+        referrer_policy: modifiers.referrer_policy.map(|policy| policy.as_str().to_owned()).or_else(|| {
+            let sheet = modifiers.referrer.as_ref()?;
+            sheet_policy(policies?, sheet)
+        }),
         referrer: modifiers
             .referrer
             .as_ref()
@@ -89,9 +116,10 @@ pub fn asks_same_request(
     modifiers: Option<&style::url::RequestUrlModifiers>,
 ) -> bool {
     // (The referrer is the sheet's, which an inline sheet's request leaves to the document.)
-    let wanted = url_fetch_options(modifiers, None);
+    // (A policy the `url()` does not name is its sheet's, which the stored request holds.)
+    let wanted = url_fetch_options(modifiers, None, None);
     stored.integrity == wanted.integrity
-        && stored.referrer_policy == wanted.referrer_policy
+        && (wanted.referrer_policy.is_none() || stored.referrer_policy == wanted.referrer_policy)
         && (wanted.cors.is_none() || stored.cors == wanted.cors)
 }
 
@@ -239,6 +267,11 @@ pub struct StylesheetHandler {
     pub abort_signal: Option<AbortSignal>,
     /// pyro: the client of the sheet's imports (`StylesheetLoader::client`).
     pub client: Option<String>,
+    /// pyro: the sheet's `Referrer-Policy` as the snapshot gave it (its link's
+    /// `data-pyro-sheet-referrer-policy`), else the response's.
+    pub policy: Option<String>,
+    /// pyro: the document's sheet policies, which this sheet's goes into.
+    pub policies: SheetPolicies,
 }
 
 impl NetHandler for ResourceHandler<StylesheetHandler> {
@@ -247,12 +280,25 @@ impl NetHandler for ResourceHandler<StylesheetHandler> {
     }
 
     fn bytes(self: Box<Self>, resolved_url: String, bytes: Bytes) {
+        self.parse_sheet(resolved_url, None, bytes)
+    }
+
+    fn bytes_meta(self: Box<Self>, resolved_url: String, _final_url: String, _opaque: bool, policy: Option<String>, bytes: Bytes) {
+        self.parse_sheet(resolved_url, policy, bytes)
+    }
+}
+
+impl ResourceHandler<StylesheetHandler> {
+    fn parse_sheet(self: Box<Self>, resolved_url: String, policy: Option<String>, bytes: Bytes) {
         // NOTE(Nico): I don't *think* external stylesheets should have HTML entities escaped
         // let escaped_css = html_escape::decode_html_entities(css);
+        // pyro: the sheet's policy, by its URL data object (before parsing: its imports use it).
+        let url_data = ServoArc::new(self.data.source_url.clone());
+        record_sheet_policy(&self.data.policies, &url_data, self.data.policy.clone().or(policy));
 
         let sheet = Stylesheet::from_bytes(
             &bytes,
-            self.data.source_url.clone().into(),
+            UrlExtraData(url_data),
             None,
             None,
             Origin::Author,
@@ -267,6 +313,7 @@ impl NetHandler for ResourceHandler<StylesheetHandler> {
                 import_depth: 0,
                 client: self.data.client.clone(),
                 inline: None,
+                policies: self.data.policies.clone(),
             }),
             None, // error_reporter
             QuirksMode::NoQuirks,
@@ -312,6 +359,8 @@ pub(crate) struct StylesheetLoader {
     /// pyro: the document's own URL data (`DocumentUrl::inline_url_data`) for a loader of the
     /// document's own CSS: an `@import` written there has the document as its referrer.
     pub(crate) inline: Option<style::servo_arc::Arc<url::Url>>,
+    /// pyro: the document's sheet policies (`SheetPolicies`).
+    pub(crate) policies: SheetPolicies,
 }
 impl ServoStylesheetLoader for StylesheetLoader {
     fn request_stylesheet(
@@ -347,7 +396,8 @@ impl ServoStylesheetLoader for StylesheetLoader {
         // pyro: as the page sends it (its parent sheet as referrer, unless the document's own CSS),
         // so it is the same request, with the same key, as the page's own fetch of it.
         let modifiers = import.url.modifiers().map(|m| &**m);
-        request.options = url_fetch_options(modifiers, self.inline.as_ref()).for_destination(blitz_traits::net::Destination::Style);
+        request.options = url_fetch_options(modifiers, self.inline.as_ref(), Some(&self.policies))
+            .for_destination(blitz_traits::net::Destination::Style);
         // pyro: a frame document's import (nested ones too) is its frame's request.
         if !request.options.is_default() {
             request.options.client = self.client.clone();
@@ -398,6 +448,14 @@ impl NetHandler for ResourceHandler<NestedStylesheetHandler> {
     /// sent with) resolve against its URL after redirects, not the URL the `@import` named.
     fn bytes_at(self: Box<Self>, resolved_url: String, final_url: String, bytes: Bytes) {
         let base = Url::parse(&final_url).map(ServoArc::new).unwrap_or_else(|_| self.data.url.clone());
+        self.parse_at(resolved_url, base, bytes)
+    }
+
+    /// pyro: with its response's `Referrer-Policy`, which its own requests follow (by its URL
+    /// data object: `SheetPolicies`).
+    fn bytes_meta(self: Box<Self>, resolved_url: String, final_url: String, _opaque: bool, policy: Option<String>, bytes: Bytes) {
+        let base = Url::parse(&final_url).map(ServoArc::new).unwrap_or_else(|_| ServoArc::new((*self.data.url).clone()));
+        record_sheet_policy(&self.data.loader.policies, &base, policy);
         self.parse_at(resolved_url, base, bytes)
     }
 }

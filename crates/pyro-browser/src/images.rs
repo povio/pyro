@@ -1010,6 +1010,7 @@ impl Browser {
                     final_url: r.url.clone(),
                     opaque: r.opaque,
                     status: r.status,
+                    referrer_policy: r.referrer_policy.map(|p| p.as_str().to_owned()),
                 });
             }
         }

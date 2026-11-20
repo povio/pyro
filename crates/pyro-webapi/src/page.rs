@@ -1823,7 +1823,10 @@ impl PageDom {
     }
     /// pyro: [`Self::set_stylesheet_text`] of the response at `url` (after redirects), which the
     /// sheet's URLs resolve against, in layout and in the renderer.
-    pub fn set_stylesheet_response(&self, link: NodeId, url: &str, text: &str) {
+    /// pyro: `policy`, its `Referrer-Policy`, goes on the link in render snapshots (an engine
+    /// attribute), where the renderer takes it for the sheet's own requests.
+    pub fn set_stylesheet_response(&self, link: NodeId, url: &str, text: &str, policy: Option<&str>) {
+        self.dom.borrow_mut().set_sheet_policy(link, policy);
         let mut layout = self.layout.borrow_mut();
         layout.style_mut().set_sheet_url(link, Some(url));
         layout.style_mut().set_sheet_text(link, text);

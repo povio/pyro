@@ -34,7 +34,11 @@
 /// (`prefix:local`, ASCII case-insensitively, in any namespace) is one of these, or one this
 /// element got from the engine, or starts with the prefix, is not written: page content can
 /// never stand in for an engine attribute, in markup or a keyed tree (security review cycle 3).
-pub const ENGINE_ATTRIBUTES: &[&str] = &["srcdoc", FRAME_ATTRIBUTE];
+pub const ENGINE_ATTRIBUTES: &[&str] = &["srcdoc", FRAME_ATTRIBUTE, SHEET_POLICY_ATTRIBUTE];
+
+/// pyro: the attribute a sheet link carries its response's `Referrer-Policy` in
+/// ([`Dom::set_sheet_policy`]): the renderer records it for that sheet object.
+pub const SHEET_POLICY_ATTRIBUTE: &str = "data-pyro-sheet-referrer-policy";
 
 /// pyro: the prefix of the snapshot's own attribute family (`data-pyro-key`, scroll offsets,
 /// frame URL and content height, the clip mark): page attributes with it are never written.
@@ -606,6 +610,13 @@ impl Dom {
                     let plain = |local: &str| Cow::Owned(QualName::new(None, ns!(), local.into()));
                     if let Some(href) = href {
                         attrs.push(RAttr { name: plain("href"), value: Cow::Owned(href), valueless: false });
+                        if let Some(policy) = self.sheet_policies.get(&n) {
+                            attrs.push(RAttr {
+                                name: plain(SHEET_POLICY_ATTRIBUTE),
+                                value: Cow::Borrowed(policy),
+                                valueless: false,
+                            });
+                        }
                     }
                     if let Some(source) = image_source {
                         attrs.push(RAttr { name: plain("src"), value: Cow::Borrowed(source), valueless: false });

@@ -327,7 +327,12 @@ impl PageFetcher {
             if kind == ResourceKind::Image {
                 if let Some(body) = b.layout_bodies(page).and_then(|bodies| bodies.get(&key)) {
                     let opaque = !cors && body.opaque;
-                    done(Ok(pyro_render::Fetched { body: body.bytes.to_vec(), url: body.final_url.clone(), opaque }));
+                    done(Ok(pyro_render::Fetched {
+                        body: body.bytes.to_vec(),
+                        url: body.final_url.clone(),
+                        opaque,
+                        referrer_policy: body.referrer_policy.clone(),
+                    }));
                     return;
                 }
             }
@@ -342,7 +347,8 @@ impl PageFetcher {
                     done(result.and_then(|r| {
                         if (200..300).contains(&r.status) {
                             let (url, opaque) = (r.url.clone(), r.opaque);
-                            Ok(pyro_render::Fetched { body: r.render_body(environment.as_slice()), url, opaque })
+                            let referrer_policy = r.referrer_policy.map(|p| p.as_str().to_owned());
+                            Ok(pyro_render::Fetched { body: r.render_body(environment.as_slice()), url, opaque, referrer_policy })
                         } else {
                             Err(format!("HTTP {}", r.status))
                         }

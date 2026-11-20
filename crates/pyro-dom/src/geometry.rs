@@ -221,12 +221,14 @@ pub struct LayoutBody {
     /// redirect chain went through one).
     pub opaque: bool,
     pub status: u16,
+    /// pyro: the `Referrer-Policy` it was served with (a style sheet's requests follow it).
+    pub referrer_policy: Option<String>,
 }
 
 impl LayoutBody {
     /// A body of a response that is not the network's (a `data:` URL, a local file) at `url`.
     pub fn local(url: &str, bytes: Vec<u8>) -> Self {
-        LayoutBody { bytes: std::sync::Arc::new(bytes), final_url: url.to_owned(), opaque: false, status: 200 }
+        LayoutBody { bytes: std::sync::Arc::new(bytes), final_url: url.to_owned(), opaque: false, status: 200, referrer_policy: None }
     }
 }
 

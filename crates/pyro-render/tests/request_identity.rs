@@ -333,9 +333,10 @@ impl Fetcher for RedirectingFetcher {
                 body: b"@import \"b.css\";".to_vec(),
                 url: "http://elsewhere.test/dir/a.css".into(),
                 opaque: false,
+                referrer_policy: None,
             }));
         } else {
-            done(Ok(Fetched { body: Vec::new(), url, opaque: false }));
+            done(Ok(Fetched { body: Vec::new(), url, opaque: false, referrer_policy: None }));
         }
     }
 }
@@ -415,4 +416,76 @@ fn each_frame_is_served_its_own_sheets_and_only_admitted_clients() {
     assert_eq!(pixel(&image, 10, 10), [0, 128, 0], "frame A's own sheet");
     assert_eq!(pixel(&image, 10, 30), [0, 0, 255], "frame B's own sheet, at the same URL");
     assert_eq!(pixel(&image, 10, 50), [255, 255, 255], "a client not admitted gets nothing");
+}
+
+/// A `url()`'s request is sent under the policy of the sheet object it was written in: a linked
+/// sheet's from its link (the snapshot's engine attribute), an imported sheet's from its own
+/// response; never by its URL, so the same URL as another document's sheet with another policy
+/// changes nothing (it was selected by URL, `no-referrer` where two responses disagreed:
+/// security review cycle 4, S1).
+#[test]
+fn a_urls_policy_is_its_sheet_objects() {
+    #[derive(Default)]
+    struct Policies(Mutex<Vec<(String, Option<String>)>>);
+    struct Serving(Arc<Policies>);
+    impl Fetcher for Serving {
+        fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+            self.0 .0.lock().unwrap().push((url, None));
+            done(Err("404".into()));
+        }
+        fn fetch_final(&self, url: String, options: &FetchOptions, done: Box<dyn FnOnce(Result<Fetched, String>) + Send>) {
+            self.0 .0.lock().unwrap().push((url.clone(), options.referrer_policy.clone()));
+            if url.ends_with("/imp.css") {
+                done(Ok(Fetched {
+                    body: b"#i { width: 10px; height: 10px; background-image: url(http://test/i.png) }".to_vec(),
+                    url,
+                    opaque: false,
+                    referrer_policy: Some("no-referrer".into()),
+                }));
+            } else {
+                done(Err("404".into()));
+            }
+        }
+    }
+    let mut sheets = std::collections::HashMap::new();
+    sheets.insert(
+        "http://test/s.css".to_owned(),
+        "@import url(http://test/imp.css); #a { width: 10px; height: 10px; background-image: url(http://test/a.png) }".to_owned(),
+    );
+    let mut frame_sheets = std::collections::BTreeMap::new();
+    frame_sheets.insert(
+        "http://test/s.css".to_owned(),
+        "#b { width: 10px; height: 10px; background-image: url(http://test/b.png) }".to_owned(),
+    );
+    let frame = FrameContent {
+        html: "<!doctype html><link rel=stylesheet href='http://test/s.css'><div id=b></div>".into(),
+        url: "http://test/".into(),
+        scroll: (0.0, 0.0),
+        client: "F#L".into(),
+        frames: Default::default(),
+        version: 1,
+        sheets: frame_sheets,
+    };
+    let snapshot = Snapshot {
+        html: "<!doctype html><link rel=stylesheet href='http://test/s.css' data-pyro-sheet-referrer-policy='origin'>\
+               <div id=a></div><div id=i></div>\
+               <iframe data-pyro-frame='N:1:0000000000000001' style='border:0;width:20px;height:20px'></iframe>"
+            .into(),
+        sheets,
+        frames: Arc::new(FrameTableData { nonce: "N".into(), entries: [("1".to_owned(), frame)].into_iter().collect() }),
+        base_url: "http://test/doc.html".into(),
+        width: 100,
+        height: 50,
+        device_scale_factor: 1.0,
+        ..Default::default()
+    };
+    let policies = Arc::new(Policies::default());
+    let fetcher: Arc<dyn Fetcher> = Arc::new(Serving(policies.clone()));
+    Renderer::new().render(&snapshot, Area::Viewport, Backend::Cpu, &fetcher).unwrap();
+    let seen = policies.0.lock().unwrap().clone();
+    let of = |name: &str| seen.iter().find(|(url, _)| url.ends_with(name)).map(|(_, p)| p.clone());
+    assert_eq!(of("/a.png"), Some(Some("origin".to_owned())), "the link's sheet's: {seen:?}");
+    assert_eq!(of("/imp.css"), Some(Some("origin".to_owned())), "its import, sent by it: {seen:?}");
+    assert_eq!(of("/i.png"), Some(Some("no-referrer".to_owned())), "the imported sheet's own: {seen:?}");
+    assert_eq!(of("/b.png"), Some(None), "a frame's sheet at the same URL has its own (none): {seen:?}");
 }
