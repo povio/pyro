@@ -161,6 +161,7 @@ pub fn install_with(fetchers: FetcherFactory) {
             fetcher: RefCell::new(fetchers(None)),
             loader: RefCell::new(None),
             fetchers: fetchers.clone(),
+            referenced_images: Default::default(),
         }) as Rc<dyn GeometrySource>
     })));
 }
@@ -259,6 +260,10 @@ pub struct BlitzGeometry {
     /// scripts reading them in a loop turned into seconds per task. Chromium
     /// keeps them until the next style recalc too.
     undisplayed: RefCell<std::collections::HashMap<u64, style::servo_arc::Arc<style::properties::ComputedValues>>>,
+    /// pyro: the image requests its document referenced at the last sync, by body key (each as
+    /// requested and as stored, `SubresourceBodies::effective_key`): what a later sync no longer
+    /// references is released ([`BlitzGeometry::retain_referenced_images`]).
+    referenced_images: RefCell<std::collections::HashSet<pyro_dom::layout::LayoutBodyKey>>,
 }
 
 impl Drop for BlitzGeometry {
@@ -539,15 +544,29 @@ impl BlitzGeometry {
         });
     }
 
+    /// pyro: releases the image bodies of requests its document referenced at the last sync and no
+    /// longer does (a removed `<img>`, a changed `background-image`). A body it never referenced is
+    /// not this layout's to drop: the screenshot renderer, a frame's image document or the
+    /// browser's own image load may have put it there (they share the store, bounded per document
+    /// and dropped with the document).
     fn retain_referenced_images(&self) {
         let loader = self.loader.borrow();
-        let Some(loader) = loader.as_ref().filter(|loader| loader.bodies().has_images()) else { return };
+        let Some(loader) = loader.as_ref() else { return };
         let Some(images) = RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.referenced_images(self.page)) else { return };
         let document = loader.document();
-        let keys = images.into_iter().map(|(url, options)| loader.bodies().effective_key(pyro_dom::layout::LayoutBodyKey::new(
-            &document, &url, &request_options(&options), pyro_dom::layout::SubresourceKind::Image,
-        ))).collect::<std::collections::HashSet<_>>();
-        loader.bodies().retain_images(&document, |key| keys.contains(key));
+        let bodies = loader.bodies();
+        let mut current = std::collections::HashSet::new();
+        for (url, options) in images {
+            let key = pyro_dom::layout::LayoutBodyKey::new(&document, &url, &request_options(&options), pyro_dom::layout::SubresourceKind::Image);
+            current.insert(bodies.effective_key(key.clone()));
+            current.insert(key);
+        }
+        let previous = std::mem::replace(&mut *self.referenced_images.borrow_mut(), current);
+        let current = self.referenced_images.borrow();
+        let released: std::collections::HashSet<_> = previous.difference(&current).collect();
+        if !released.is_empty() && bodies.has_images() {
+            bodies.retain_images(&document, |key| !released.contains(key));
+        }
     }
 
     fn sync_document(&self, dom: &Dom, style: &StyleEngine, style_only: bool) {
@@ -1298,6 +1317,7 @@ mod tests {
             fetcher: RefCell::new(std::sync::Arc::new(NoFetch)),
             loader: RefCell::new(None),
             fetchers: Rc::new(|_| std::sync::Arc::new(NoFetch)),
+            referenced_images: Default::default(),
         };
         assert_eq!(g.base_url.borrow().text, "about:blank");
         assert_eq!(g.base_url.borrow().parsed.as_ref().map(|u| u.as_str()), Some("about:blank"));
@@ -1431,6 +1451,40 @@ mod tests {
             }
             assert!(layout.synced_geometry_source(&dom.borrow()).is_some());
             assert!(!bodies.has_images(), "removed batch {batch}");
+        }
+    }
+
+    /// A body the layout's document never referenced (here one another renderer of the page, as
+    /// the screenshot's, loaded into the shared store) stays through its syncs: the layout releases
+    /// only what it referenced and no longer does.
+    #[test]
+    fn layout_keeps_image_bodies_it_never_referenced() {
+        use pyro_dom::layout::{LayoutBody, LayoutBodyKey, SubresourceBodies, SubresourceKind, SubresourceLoader, SubresourceOptions};
+        use std::sync::Arc;
+
+        struct Network(Arc<SubresourceBodies>);
+        impl SubresourceLoader for Network {
+            fn load(&self, _: &str, _: String, _: SubresourceKind, _: &SubresourceOptions, _: Box<dyn FnOnce(Result<LayoutBody, String>) + Send>) {}
+            fn bodies(&self) -> &Arc<SubresourceBodies> { &self.0 }
+            fn document(&self) -> String { "doc".into() }
+        }
+        let (dom, doc, mut layout) = page("<!doctype html><body><p>text</p></body>");
+        let body = find(&dom.borrow(), doc, "body");
+        let bodies = Arc::new(SubresourceBodies::default());
+        layout.set_subresource_loader(Arc::new(Network(bodies.clone())));
+        let url = "http://test/embedded.jpg";
+        let key = LayoutBodyKey::new("doc", url, &Default::default(), SubresourceKind::Image);
+        assert!(bodies.start(&key));
+        bodies.finish(key.clone(), LayoutBody::local(url, vec![0; 2048]));
+        for text in ["one", "two", "three"] {
+            let mut d = dom.borrow_mut();
+            let p = d.create_element(doc, "p").unwrap();
+            let t = d.create_text(doc, text).unwrap();
+            d.append_child(p, t).unwrap();
+            d.append_child(body, p).unwrap();
+            drop(d);
+            assert!(layout.synced_geometry_source(&dom.borrow()).is_some());
+            assert!(bodies.get(&key).is_some(), "dropped after the sync adding {text}");
         }
     }
 

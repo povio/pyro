@@ -358,13 +358,22 @@ impl BodySlots {
         self.insert_image(key, ImageSlot { state: slot, dispatched });
     }
 
+    /// Keeps `key`'s image, within its document's share: at most `IMAGE_ENTRIES` images and
+    /// `IMAGE_BYTES` per document, its oldest going first. A store serves every context with the
+    /// same network identity (`Browser::layout_bodies_for`), so a bound over all of them would let
+    /// one document's images evict another's (a page's ready body gone before its screenshot).
     fn insert_image(&mut self, key: LayoutBodyKey, mut slot: ImageSlot) {
         if slot.cost(&key) > Self::IMAGE_BYTES { slot.state = Slot::Failed; }
         let cost = slot.cost(&key);
         if cost > Self::IMAGE_BYTES { return; }
-        while self.images.len() >= Self::IMAGE_ENTRIES || self.bytes > Self::IMAGE_BYTES - cost {
-            let (key, slot) = self.images.shift_remove_index(0).unwrap();
-            self.bytes -= slot.cost(&key);
+        let (mut count, mut bytes) = self.images.iter().filter(|(k, _)| k.document == key.document)
+            .fold((0usize, 0usize), |(count, bytes), (k, slot)| (count + 1, bytes + slot.cost(k)));
+        while count >= Self::IMAGE_ENTRIES || bytes > Self::IMAGE_BYTES - cost {
+            let Some(index) = self.images.iter().position(|(k, _)| k.document == key.document) else { break };
+            let (old, slot) = self.images.shift_remove_index(index).unwrap();
+            let freed = slot.cost(&old);
+            self.bytes -= freed;
+            (count, bytes) = (count - 1, bytes - freed);
         }
         self.images.insert(key, slot);
         self.bytes += cost;
@@ -1149,6 +1158,25 @@ mod font_load_tests {
         assert_eq!(locked(&bodies.slots).bytes, 0);
         assert!(!bodies.has_images());
         assert!(locked(&bodies.came).is_empty() && locked(&bodies.needed).is_empty());
+    }
+
+    #[test]
+    fn one_documents_images_do_not_evict_anothers() {
+        let bodies = SubresourceBodies::default();
+        let kept = LayoutBodyKey::new("page", "https://example.test/kept", &Default::default(), SubresourceKind::Image);
+        assert!(bodies.start(&kept));
+        bodies.finish(kept.clone(), LayoutBody::local("https://example.test/kept", vec![0; 2048]));
+        for index in 0..1_000 {
+            let url = format!("https://example.test/{index}");
+            let key = LayoutBodyKey::new("other", &url, &Default::default(), SubresourceKind::Image);
+            assert!(bodies.start(&key));
+            bodies.finish(key, LayoutBody::local(&url, vec![0; 64 << 10]));
+        }
+        assert!(bodies.get(&kept).is_some(), "another document's images evicted this one's");
+        let slots = locked(&bodies.slots);
+        let other = slots.images.keys().filter(|key| key.document == "other").count();
+        assert!(other <= BodySlots::IMAGE_ENTRIES, "{other}");
+        assert_eq!(slots.bytes, slots.images.iter().map(|(key, slot)| slot.cost(key)).sum::<usize>());
     }
 
     #[test]
