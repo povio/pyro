@@ -996,9 +996,11 @@ fn resolve<'a>(
                 Some(scope) => shared.stylist.lookup_keyframes_scoped(name, scope, node),
                 None => shared.stylist.lookup_keyframes(name, node),
             };
-            let Some(animation) = animation else {
-                return Resolved::default();
-            };
+            if animation.is_none() && let Some(css) = doc.transition_group_from(node.id, name) {
+                let block = keyframe_block(&parse_declarations_at(css, &doc.url.url_extra_data()), &base.base_style);
+                frames.push((0.0, default_easing.clone(), Some(*composite), block));
+                frames.push((1.0, default_easing, Some(*composite), PropertyDeclarationBlock::new()));
+            } else if let Some(animation) = animation {
             let guard = &shared.guards.author;
             for step in &animation.steps {
                 let offset = step.start_offset.percentage.0 as f64;
@@ -1033,6 +1035,7 @@ fn resolve<'a>(
                     )),
                 }
             }
+            } else { return Resolved::default(); }
         }
         Keyframes::Text(text) => {
             implicit_easing = None;

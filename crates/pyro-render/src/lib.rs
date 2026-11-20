@@ -1808,6 +1808,35 @@ impl Renderer {
         self.capture_transition_budgeted(page, root, old, remaining_pixels, &mut (1 << 18), &mut 0)
     }
 
+    pub fn set_transition_boxes(&mut self, page: u64, root: u64, old: &[TransitionBox], new: &[TransitionBox]) -> Option<usize> {
+        use blitz_dom::view_transition::{Geometry, Participant};
+        if old.len() > 256 || new.len() > 256 { return None; }
+        let mirror = self.mirrors.get_mut(&page)?;
+        let origin = mirror.node(root)?;
+        let mut indices = HashMap::new();
+        let mut groups = Vec::<Participant>::new();
+        for (items, before) in [(old,true),(new,false)] {
+            for item in items {
+                if item.name.len() > 1024 { return None; }
+                let auto = item.name == "match-element";
+                let index = *indices.entry((item.name.as_str(), auto.then_some(item.key))).or_insert_with(|| {
+                    let index = groups.len();
+                    groups.push(Participant { name: if auto { format!("-ua-vt-{}",item.key) } else { item.name.clone() }, target: None, old: None, new: None });
+                    index
+                });
+                let group = &mut groups[index];
+                group.target = mirror.node(item.key);
+                let geometry = Some(Geometry { size: item.size, transform: item.transform });
+                if before { group.old = geometry; } else { group.new = geometry; }
+            }
+        }
+        mirror.doc.create_transition_tree(origin, &groups)
+    }
+
+    pub fn clear_transition_boxes(&mut self, page: u64, root: u64) {
+        if let Some(mirror) = self.mirrors.get_mut(&page) { if let Some(origin) = mirror.node(root) { mirror.doc.clear_transition_tree(origin); } }
+    }
+
     pub fn capture_transition_budgeted(&mut self, page: u64, root: u64, old: bool, remaining_pixels: u64, work: &mut u64, recordings: &mut usize) -> Option<Vec<TransitionBox>> {
         fn charge_tree(doc: &blitz_dom::BaseDocument, depth: u64, nodes_left: &mut usize, work: &mut u64, pixels: &mut u64) -> Option<()> {
             if depth > 64 { return None; }
@@ -2193,7 +2222,11 @@ impl Renderer {
         generated_only: bool,
     ) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
         let m = self.mirrors.get(&page)?;
-        m.doc.pseudo_element_style(m.node(key)?, pseudo, generated_only)
+        let origin = m.node(key)?;
+        if pseudo.transition_argument().is_some() || *pseudo == style::selector_parser::PseudoElement::ViewTransition {
+            if let Some(style) = m.doc.transition_box_style(origin, pseudo) { return Some(style); }
+        }
+        m.doc.pseudo_element_style(origin, pseudo, generated_only)
     }
 
     /// `false` while no element of `page`'s persistent document has been

@@ -676,6 +676,7 @@ pub struct BaseDocument {
     pub(crate) scroll_marker_groups: bool,
     /// pyro: the elements with scroll pseudo-element boxes (`ElementData::scroll`).
     pub(crate) scroll_pseudo_owners: std::collections::HashSet<NodeId>,
+    pub(crate) transition_trees: Option<Box<style::FxHashMap<NodeId, crate::view_transition::Tree>>>,
     /// pyro: each element with `scroll-target-group: auto` and the links in its group.
     pub(crate) scroll_target_groups: Vec<(NodeId, Vec<NodeId>)>,
     /// pyro: each scroll container's current scroll target (CSS Overflow 5 § 2.1; the viewport's
@@ -997,6 +998,7 @@ impl BaseDocument {
             anchor_flush_choices: Default::default(),
             scroll_marker_groups: false,
             scroll_pseudo_owners: Default::default(),
+            transition_trees: None,
             scroll_target_groups: Vec::new(),
             scroll_targets: Default::default(),
             first_line_styles: false,
@@ -1441,6 +1443,7 @@ impl BaseDocument {
     /// (hover/active/focus/mousedown/selection/drag/scrollbar) that references
     /// it so that stale NodeIds are never dereferenced after the slot is freed.
     pub(crate) fn remove_node_from_tree(&mut self, node_id: NodeId) -> Option<Node> {
+        if self.transition_trees.is_some() { self.clear_transition_tree(node_id); }
         self.clear_interaction_state_for_removed_node(node_id);
         // pyro: a dropped element leaves the top layer.
         if !self.top_layer.is_empty() {

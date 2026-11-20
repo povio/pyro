@@ -23,10 +23,12 @@ pub(crate) struct Capture {
     work: u64,
     old: Boxes,
     new: Boxes,
+    tree: Option<(std::rc::Weak<dyn pyro_dom::geometry::GeometrySource>, u64)>,
 }
 
 impl Drop for Capture {
     fn drop(&mut self) {
+        if let Some((source, root)) = self.tree.take() { if let Some(source) = source.upgrade() { source.clear_transition_boxes(root); } }
         self.quota.slots.set(self.quota.slots.get() - 1);
         self.quota.pixels.set(self.quota.pixels.get() - self.pixels);
         self.quota.work.set(self.quota.work.get() - self.work);
@@ -46,7 +48,7 @@ fn admit(mut page: Rc<PageDom>) -> Option<Capture> {
         let quota = page.transition_quota.borrow_mut().get_or_insert_with(Default::default).clone();
         if quota.slots.get() >= 16 { return None; }
         quota.slots.set(quota.slots.get() + 1);
-        return Some(Capture { quota, pixels: 0, work: 0, old: Vec::new(), new: Vec::new() });
+        return Some(Capture { quota, pixels: 0, work: 0, old: Vec::new(), new: Vec::new(), tree: None });
     }
     None
 }
@@ -98,7 +100,14 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<pyro_js::Object<'s>> {
             record.pixels = boxes.iter().filter_map(|item| item.rgba.as_ref()).map(|img| img.len() as u64 / 4).sum();
             quota.pixels.set(used_pixels + record.pixels);
             record.old = boxes;
-        } else { record.new = boxes; }
+        } else {
+            let cost = 1 + 4 * (record.old.len() + boxes.len()) as u64;
+            if cost > work || !source.set_transition_boxes(key, &record.old, &boxes) { return Ok(s.boolean(false)); }
+            record.work += cost;
+            quota.work.set(quota.work.get() + cost);
+            record.tree = Some((Rc::downgrade(source), key));
+            record.new = boxes;
+        }
         Ok(s.boolean(true))
     })
 }

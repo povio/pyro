@@ -1085,6 +1085,16 @@ impl GeometrySource for BlitzGeometry {
         RENDERER.with(|renderer| renderer.try_borrow().ok().and_then(|renderer| renderer.as_ref().map(|renderer| renderer.view_transition_names(self.page, root).0)).unwrap_or(false))
     }
 
+    fn set_transition_boxes(&self, root: u64, old: &[pyro_dom::geometry::TransitionBox], new: &[pyro_dom::geometry::TransitionBox]) -> bool {
+        if old.len() > 256 || new.len() > 256 { return false; }
+        let convert = |boxes: &[pyro_dom::geometry::TransitionBox]| boxes.iter().map(|item| pyro_render::TransitionBox { key: item.key, name: item.name.clone(), size: item.size, transform: item.transform, ink: item.ink, image: None }).collect::<Vec<_>>();
+        RENDERER.with(|renderer| renderer.try_borrow_mut().ok()?.as_mut()?.set_transition_boxes(self.page, root, &convert(old), &convert(new))).is_some()
+    }
+
+    fn clear_transition_boxes(&self, root: u64) {
+        RENDERER.with(|renderer| { if let Ok(mut renderer) = renderer.try_borrow_mut() { if let Some(renderer) = renderer.as_mut() { renderer.clear_transition_boxes(self.page, root); } } });
+    }
+
     fn capture_transition(&self, root: u64, old: bool, pixels: u64, work: &mut u64) -> Option<Vec<pyro_dom::geometry::TransitionBox>> {
         RENDERER.with(|renderer| Some(renderer.try_borrow_mut().ok()?.as_mut()?.capture_transition_budgeted(self.page, root, old, pixels, work, &mut 0)?.into_iter().map(|item| pyro_dom::geometry::TransitionBox {
             key: item.key, name: item.name, size: item.size, transform: item.transform, ink: item.ink, rgba: item.image.map(|image| Arc::new(image.data)),

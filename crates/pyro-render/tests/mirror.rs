@@ -101,6 +101,31 @@ fn view_transition_collection_bounds_work_before_visiting_children() {
 }
 
 #[test]
+fn view_transition_boxes_cascade_and_charge_created_nodes() {
+    use style::properties::{LonghandId, PropertyDeclarationId};
+    use style::selector_parser::PseudoElement::*;
+    let page = Page::new("<!doctype html><style>#scope::view-transition-group(target){animation-duration:8s} #scope::view-transition-old(target){animation:none;opacity:.25}</style><div id=scope><div style='view-transition-name:target;width:30px;height:10px'></div></div>");
+    let root = pyro_dom::snapshot::render_key(page.find("#scope"));
+    let mut renderer = Renderer::new();
+    renderer.sync_layout(&page.snapshot(1,page.tree()), &fetcher()).unwrap();
+    let boxes = renderer.capture_transition_boxes(1,root,false,0).unwrap();
+    assert_eq!(boxes.len(),1);
+    assert_eq!(renderer.set_transition_boxes(1,root,&boxes,&boxes),Some(5));
+    let arg = style::selector_parser::PseudoElement::transition_box_argument("target", &[]).unwrap();
+    let value = |pseudo, prop| renderer.element_pseudo_style(1,root,&pseudo,true).unwrap().computed_value_to_string(PropertyDeclarationId::Longhand(prop));
+    assert_eq!(value(ViewTransitionGroup(arg),LonghandId::Width),"30px");
+    assert_eq!(value(ViewTransitionPair(arg),LonghandId::Isolation),"isolate");
+    assert_eq!(value(ViewTransitionNew(arg),LonghandId::AnimationDuration),"8s");
+    assert_eq!(value(ViewTransitionOld(arg),LonghandId::AnimationName),"none");
+    assert_eq!(value(ViewTransitionOld(arg),LonghandId::Opacity),"0.25");
+    renderer.clear_transition_boxes(1,root);
+    assert!(renderer.element_pseudo_style(1,root,&ViewTransitionGroup(arg),true).is_none());
+    assert_eq!(renderer.set_transition_boxes(1,root,&[],&boxes),Some(4));
+    renderer.clear_transition_boxes(1,root);
+    assert_eq!(renderer.set_transition_boxes(1,root,&vec![boxes[0].clone();257],&[]),None);
+}
+
+#[test]
 fn view_transition_capture_charges_frame_tree_before_recording() {
     use blitz_dom::{ns, QualName};
     let page = Page::new("<!doctype html><html style='view-transition-name:root'><iframe style='width:32px;height:32px;border:0'></iframe></html>");

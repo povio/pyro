@@ -312,6 +312,7 @@ impl BaseDocument {
         self.paint_tree_dirty = true;
         // pyro: so are the hit bounds (`ensure_hit_overflow`).
         self.hit_overflow_dirty = true;
+        if self.transition_trees.is_some() { self.refresh_transition_trees(); }
         timer.record_time("paint_tree");
         phase_profile::mark(6, &mut phase_t);
 

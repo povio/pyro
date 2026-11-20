@@ -37,6 +37,7 @@ pub const BULLET_FONT: &[u8] = include_bytes!("../assets/moz-bullet-font.otf");
 mod document;
 /// pyro: animated values the embedder samples into the cascade.
 pub mod animation;
+pub mod view_transition;
 
 /// The nodes themsleves, and their data.
 pub mod node;

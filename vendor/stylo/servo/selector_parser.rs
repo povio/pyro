@@ -309,6 +309,13 @@ impl ::selectors::parser::PseudoElement for PseudoElement {
 pub const EAGER_PSEUDO_COUNT: usize = 8;
 
 impl PseudoElement {
+    /// Interns the identity used when matching a generated view-transition box.
+    pub fn transition_box_argument(name: &str, classes: &[Atom]) -> Option<u16> {
+        if classes.len() > 32 || name.len() + classes.iter().map(|class| class.len()).sum::<usize>() > 1024 { return None; }
+        let mut parts = vec![Atom::from(name)];
+        parts.extend_from_slice(classes);
+        transition_name_id(parts).ok()
+    }
     /// Interned name and classes for a named transition pseudo.
     pub fn transition_argument(&self) -> Option<u16> {
         use PseudoElement::*;
