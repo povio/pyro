@@ -34,6 +34,14 @@ fn projected_overflow_clips_and_bounds_the_visible_horizon() {
 }
 
 #[test]
+fn projected_overflow_maps_corners_with_signed_w() {
+    for (width, perspective, translation, expected) in [(120, "-.01", -240, 600.0), (128, "-.0078125", 240, 368.0)] {
+        let document = doc(&format!("<div id=panel style='overflow:auto;width:50px;height:50px'><div style='width:{width}px;height:40px;transform-origin:0 0;transform:matrix3d(1,0,0,{perspective},0,1,0,0,0,0,1,0,{translation},0,0,1)'></div></div>"), true);
+        assert!((node(&document, "#panel").scrollable_overflow().x1 - expected).abs() < 0.01);
+    }
+}
+
+#[test]
 fn projected_overflow_keeps_finite_scroll_range() {
     let document = doc("<div id=panel style='overflow:auto;width:200px;height:200px'><div style='width:20px;height:160000px;transform-origin:0 0;transform:perspective(200000px) rotateX(45deg)'></div></div>", true);
     assert!((node(&document, "#panel").scrollable_overflow().y1 - 260_496.0).abs() < 1.0);

@@ -13,10 +13,7 @@ pub fn layout_bounds(h: &[f64; 9], rect: Rect) -> Option<Rect> {
     let points = homogeneous_corners(h, rect)?;
     let mut bounds: Option<Rect> = None;
     for [x, y, _, w] in points {
-        if w <= 0.0 {
-            continue;
-        }
-        let point = kurbo::Point::new(x / w, y / w);
+        let point = if w == 0.0 { kurbo::Point::new(x, y) } else { kurbo::Point::new(x / w, y / w) };
         if !point.is_finite() {
             return None;
         }
