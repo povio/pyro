@@ -56,6 +56,8 @@ mod paint_worklet;
 pub mod test_hooks {
     pub use crate::paint_worklet::force_graph_fallback_for_tests;
 }
+#[cfg(feature = "experimental-webnn-cpu")]
+mod webnn_cpu;
 mod secure_context;
 pub mod handlers;
 pub mod headers;
@@ -380,6 +382,10 @@ fn install_page<'s>(scope: &Scope<'s>, page: Rc<PageDom>) -> JsResult<Object<'s>
     fetch::install(scope)?;
     structured_clone::install(scope, &page, helpers.get_atom("structuredClone")?)?;
     secure_context::hide_if_insecure(scope, &page)?;
+    #[cfg(feature = "experimental-webnn-cpu")]
+    if secure_context::secure(scope, &page) {
+        webnn_cpu::install(scope)?;
+    }
     if let Some(define) =
         scope.global().get_atom("Object")?.as_object().map(|o| o.get_atom("defineProperty")).transpose()?
     {

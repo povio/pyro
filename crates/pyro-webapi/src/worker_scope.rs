@@ -1288,6 +1288,10 @@ fn install(s: &Scope<'_>, page: &Rc<PageDom>, global: &str) -> JsResult<()> {
     // HTML "report the error": the global's `error` event fires in the task
     // that threw, its listeners before their microtasks.
     realm.set_exception_reporter(Some(crate::lifecycle::report_exception));
+    #[cfg(feature = "experimental-webnn-cpu")]
+    if s.global_data::<WorkerGlobalScope>().is_some_and(|g| pyro_net::is_potentially_trustworthy_url(&g.url)) {
+        crate::webnn_cpu::install(s)?;
+    }
     let helpers = crate::install_helpers(s)?;
     crate::file::install(s, helpers.get_atom("blobParts")?)?;
     crate::encoding::install(s, helpers.get_atom("encoding")?)?;

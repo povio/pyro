@@ -8,6 +8,8 @@ license.workspace = true
 autotests = false
 
 [features]
+# Private CPU graph experiment; absent from production builds.
+experimental-webnn-cpu = []
 # Hooks only tests use (`test_hooks`): enabled through dev-dependencies (pyro-cdp's), never in a build
 # of the browser (resolver 2 does not unify dev-dependency features into it).
 test-hooks = []
