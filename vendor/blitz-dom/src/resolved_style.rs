@@ -362,7 +362,7 @@ impl BaseDocument {
         if !live.writing_mode.is_horizontal() { return None; }
         let (live, sampled) = (live.get_position(), sampled.get_position());
         let sizes = if width { (&live.width, &sampled.width) } else { (&live.height, &sampled.height) };
-        let calculation = match sizes {
+        let calculation = match (sizes.0.prepared_size(), sizes.1.prepared_size()) {
             (Size::CalcSizeAuto(_), Size::CalcSizeAuto(value)) |
             (Size::CalcSizeStretch(_), Size::CalcSizeStretch(value)) |
             (Size::CalcSizeFitContent(_), Size::CalcSizeFitContent(value)) |

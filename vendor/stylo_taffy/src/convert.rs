@@ -99,6 +99,7 @@ pub fn length_percentage(val: &stylo::LengthPercentage) -> taffy::LengthPercenta
 #[inline]
 pub fn dimension(val: &stylo::Size) -> taffy::Dimension {
     match val {
+        stylo::Size::CalcSizeBasis(_) => dimension(val.prepared_size()),
         stylo::Size::LengthPercentage(val) | stylo::Size::CalcSizeAny(val) => length_percentage(&val.0).into(),
         stylo::Size::Auto => taffy::Dimension::AUTO,
 
@@ -149,7 +150,7 @@ pub fn calc_size_function(val: &stylo::LengthPercentage) -> taffy::CalcSizeFunct
 /// pyro: the calculation of a `calc-size(auto, ...)` value.
 #[inline]
 pub fn calc_size_auto(val: &stylo::Size) -> Option<taffy::CalcSizeFunction> {
-    match val {
+    match val.prepared_size() {
         stylo::Size::CalcSizeAuto(calc) => Some(calc_size_function(&calc.0)),
         _ => None,
     }
@@ -158,6 +159,7 @@ pub fn calc_size_auto(val: &stylo::Size) -> Option<taffy::CalcSizeFunction> {
 #[inline]
 pub fn min_size(val: &stylo::Size) -> taffy::LengthPercentageAuto {
     match val {
+        stylo::Size::CalcSizeBasis(_) => min_size(val.prepared_size()),
         stylo::Size::LengthPercentage(val) | stylo::Size::CalcSizeAny(val) => length_percentage(&val.0).into(),
         stylo::Size::Auto => taffy::LengthPercentageAuto::AUTO,
 
@@ -185,7 +187,7 @@ pub fn min_size(val: &stylo::Size) -> taffy::LengthPercentageAuto {
 /// [`min_size`] drops.
 #[inline]
 pub fn min_size_keyword(val: &stylo::Size) -> taffy::Dimension {
-    match val {
+    match val.prepared_size() {
         stylo::Size::LengthPercentage(_)
         | stylo::Size::CalcSizeAny(_)
         | stylo::Size::Auto

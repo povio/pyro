@@ -159,6 +159,21 @@ impl LengthPercentage {
         }
     }
 
+    pub(crate) fn substitute_size(&self, basis: &Self) -> Self {
+        let mut result = self.to_calc_node();
+        result.visit_depth_first(|node| {
+            if let CalcNode::Leaf(ComputedLeaf::Percentage(factor)) = node {
+                let mut scale = CalcNode::Leaf(ComputedLeaf::Number(factor.get()));
+                let mut replacement = basis.to_calc_node();
+                if !replacement.try_product_in_place(&mut scale) {
+                    replacement = CalcNode::Product(vec![scale, replacement].into());
+                }
+                *node = replacement;
+            }
+        });
+        Self::new_calc(result, AllowedNumericType::All)
+    }
+
     fn map_lengths(&self, mut map_fn: impl FnMut(Length) -> Length) -> Self {
         match self.unpack() {
             Unpacked::Length(l) => Self::new_length(map_fn(l)),

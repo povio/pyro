@@ -1888,7 +1888,7 @@ impl Size {
                                "auto" => Auto);
         parse_fit_content_function!(Size, input, context, allow_quirks);
         // pyro: `calc-size(<intrinsic keyword>, <calculation>)`.
-        if let Ok(size) = input.try_parse(|input| Self::parse_calc_size(context, input)) {
+        if let Ok(size) = input.try_parse(|input| Self::parse_calc_size(context, input, 0, &mut 0)) {
             return Ok(size);
         }
 
@@ -1960,21 +1960,46 @@ impl Size {
         GenericSize::LengthPercentage(NonNegativeLengthPercentage::zero_percent())
     }
     /// pyro: `calc-size(auto | fit-content | min-content | max-content, <calculation>)`.
-    fn parse_calc_size(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
+    fn parse_calc_size(context: &ParserContext, input: &mut Parser, depth: usize, expanded: &mut usize) -> Result<Self, ParseError> {
+        if depth >= 32 { return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError)); }
         input.expect_function_matching("calc-size")?;
         input.parse_nested_block(|input| {
-            let basis = try_match_ident_ignore_ascii_case! { input,
+            let keyword = input.try_parse(|input| Ok::<_, ParseError>(try_match_ident_ignore_ascii_case! { input,
                 "auto" => 0u8,
                 "fit-content" => 1u8,
                 "min-content" => 2u8,
                 "max-content" => 3u8,
                 "stretch" => 4u8,
                 "any" => 5u8,
-            };
+            }));
+            let basis = if keyword.is_err() {
+                Some(input.parse_until_before(cssparser::Delimiter::Comma, |input| {
+                    if let Ok(nested) = input.try_parse(|input| Self::parse_calc_size(context, input, depth + 1, expanded)) { return Ok(nested); }
+                    let mut calc = CalcNode::parse_calc_size_calculation(context, input, AllowedNumericType::All, false)?;
+                    let mut percentage = false;
+                    calc.0.node.visit_depth_first(|node| {
+                        *expanded += 1;
+                        percentage |= matches!(node, CalcNode::Leaf(super::calc::Leaf::Percentage(_)));
+                    });
+                    if percentage { return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError)); }
+                    Ok(Self::LengthPercentage(NonNegative(LengthPercentage::Calc(Box::new(calc)))))
+                })?)
+            } else { None };
             input.expect_comma()?;
-            let calc = CalcNode::parse_calc_size_calculation(context, input, AllowedNumericType::NonNegative, basis != 5)?;
+            let range = if depth == 0 && basis.is_none() { AllowedNumericType::NonNegative } else { AllowedNumericType::All };
+            let mut calc = CalcNode::parse_calc_size_calculation(context, input, range, !matches!(keyword, Ok(5)))?;
+            let inner_cost = *expanded;
+            let mut cost = 0usize;
+            calc.0.node.visit_depth_first(|node| {
+                cost = cost.saturating_add(if matches!(node, CalcNode::Leaf(super::calc::Leaf::Percentage(_))) {
+                    inner_cost.saturating_add(3)
+                } else { 1 });
+            });
+            if cost > 16384 { return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError)); }
+            *expanded = cost;
             let length = NonNegative(LengthPercentage::Calc(Box::new(calc)));
-            Ok(match basis {
+            if let Some(basis) = basis { return Ok(Self::CalcSizeBasis(Box::new(generics::GenericSizeBasis { basis, calculation: length, prepared: None }))); }
+            Ok(match keyword? {
                 0 => GenericSize::CalcSizeAuto(length),
                 1 => GenericSize::CalcSizeFitContent(length),
                 2 => GenericSize::CalcSizeMinContent(length),
@@ -1983,6 +2008,40 @@ impl Size {
                 _ => GenericSize::CalcSizeAny(length),
             })
         })
+    }
+}
+
+macro_rules! convert_size {
+    ($source:expr, $from:ident, $to:ident, $convert:expr, $pair:expr; $($unit:ident),*; $($value:ident),*) => { match $source {
+                $($from::$unit => $to::$unit,)*
+                #[cfg(feature = "gecko")]
+                $from::MozAvailable => $to::MozAvailable,
+                $($from::$value(value) => $to::$value($convert(value)),)*
+                $from::CalcSizeBasis(value) => $pair(&value.basis, &value.calculation),
+            } };
+    ($source:expr, $from:ident, $to:ident, $convert:expr, $pair:expr) => {
+        convert_size!($source, $from, $to, $convert, $pair; Auto, MaxContent, MinContent, FitContent, Stretch, WebkitFillAvailable;
+            LengthPercentage, FitContentFunction, AnchorSizeFunction, AnchorContainingCalcFunction,
+            CalcSizeAuto, CalcSizeStretch, CalcSizeMinContent, CalcSizeMaxContent, CalcSizeFitContent, CalcSizeAny)
+    };
+}
+
+impl ToComputedValue for Size {
+    type ComputedValue = computed::Size;
+    fn to_computed_value(&self, context: &Context) -> computed::Size {
+        use computed::Size as Output;
+        convert_size!(self, Self, Output, |value| ToComputedValue::to_computed_value(value, context), |basis: &Size, calc: &NonNegativeLengthPercentage| {
+            let basis = basis.to_computed_value(context);
+            let calculation = calc.to_computed_value(context);
+            let prepared = Some(basis.prepared_size().compose_size(&calculation));
+            Output::CalcSizeBasis(Box::new(generics::GenericSizeBasis { basis, calculation, prepared }))
+        })
+    }
+    fn from_computed_value(value: &computed::Size) -> Self {
+        use computed::Size as Input;
+        convert_size!(value, Input, Self, ToComputedValue::from_computed_value, |basis, calculation| Self::CalcSizeBasis(Box::new(generics::GenericSizeBasis {
+            basis: Self::from_computed_value(basis), calculation: ToComputedValue::from_computed_value(calculation), prepared: None,
+        })))
     }
 }
 

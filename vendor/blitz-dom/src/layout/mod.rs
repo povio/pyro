@@ -122,7 +122,7 @@ fn has_calc_size(styles: &style::properties::ComputedValues) -> bool {
     use style::values::computed::Size;
     let is_calc_size = |size: &Size| {
         matches!(
-            size,
+            size.prepared_size(),
             Size::CalcSizeAuto(_) | Size::CalcSizeFitContent(_) | Size::CalcSizeMinContent(_) | Size::CalcSizeMaxContent(_)
             | Size::CalcSizeStretch(_)
         )
@@ -433,7 +433,7 @@ impl LayoutPassState<'_> {
             return inputs;
         }
         let calculation = |size: &StyloSize| -> Option<LengthPercentage> {
-            match size {
+            match size.prepared_size() {
                 StyloSize::CalcSizeAuto(lp)
                 | StyloSize::CalcSizeStretch(lp)
                 | StyloSize::CalcSizeFitContent(lp)
@@ -443,7 +443,7 @@ impl LayoutPassState<'_> {
             }
         };
         // An `auto` or `fit-content` basis shrinks to fit when its parent measures it.
-        let shrinks = matches!(styles.get_position().width, StyloSize::CalcSizeAuto(_) | StyloSize::CalcSizeFitContent(_));
+        let shrinks = matches!(styles.get_position().width.prepared_size(), StyloSize::CalcSizeAuto(_) | StyloSize::CalcSizeFitContent(_));
         let position = styles.get_position();
         let mut functions = taffy::Size { width: calculation(&position.width), height: calculation(&position.height) };
         if functions.width.is_none() && functions.height.is_none() {

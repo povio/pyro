@@ -20343,7 +20343,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +    use style::values::computed::Size;
 +    let is_calc_size = |size: &Size| {
 +        matches!(
-+            size,
++            size.prepared_size(),
 +            Size::CalcSizeAuto(_) | Size::CalcSizeFitContent(_) | Size::CalcSizeMinContent(_) | Size::CalcSizeMaxContent(_)
 +            | Size::CalcSizeStretch(_)
 +        )
@@ -20586,7 +20586,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +            return inputs;
 +        }
 +        let calculation = |size: &StyloSize| -> Option<LengthPercentage> {
-+            match size {
++            match size.prepared_size() {
 +                StyloSize::CalcSizeAuto(lp)
 +                | StyloSize::CalcSizeStretch(lp)
 +                | StyloSize::CalcSizeFitContent(lp)
@@ -20596,7 +20596,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +            }
 +        };
 +        // An `auto` or `fit-content` basis shrinks to fit when its parent measures it.
-+        let shrinks = matches!(styles.get_position().width, StyloSize::CalcSizeAuto(_) | StyloSize::CalcSizeFitContent(_));
++        let shrinks = matches!(styles.get_position().width.prepared_size(), StyloSize::CalcSizeAuto(_) | StyloSize::CalcSizeFitContent(_));
 +        let position = styles.get_position();
 +        let mut functions = taffy::Size { width: calculation(&position.width), height: calculation(&position.height) };
 +        if functions.width.is_none() && functions.height.is_none() {
@@ -53080,7 +53080,7 @@ diff --git a/packages/blitz-dom/src/resolved_style.rs b/packages/blitz-dom/src/r
 +        if !live.writing_mode.is_horizontal() { return None; }
 +        let (live, sampled) = (live.get_position(), sampled.get_position());
 +        let sizes = if width { (&live.width, &sampled.width) } else { (&live.height, &sampled.height) };
-+        let calculation = match sizes {
++        let calculation = match (sizes.0.prepared_size(), sizes.1.prepared_size()) {
 +            (Size::CalcSizeAuto(_), Size::CalcSizeAuto(value)) |
 +            (Size::CalcSizeStretch(_), Size::CalcSizeStretch(value)) |
 +            (Size::CalcSizeFitContent(_), Size::CalcSizeFitContent(value)) |
