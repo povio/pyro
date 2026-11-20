@@ -53,6 +53,14 @@ fn assert_near(got: [u8; 3], want: [u8; 3], what: &str) {
 
 const BOX: &str = "position:absolute;left:0;top:0;width:100px;height:100px;box-sizing:border-box;background:green;";
 
+#[test]
+fn rotating_a_solid_circle_preserves_its_coverage() {
+    let circle = |angle| render(&format!("<div style='{BOX}border-radius:50%;transform:rotate({angle}deg)'></div>"), 1.0);
+    let plain = circle(0);
+    assert_eq!(pixel(&plain, 1.0, 50.0, 50.0), GREEN);
+    assert!(circle(45).data == plain.data);
+}
+
 /// A bevelled corner is the straight line between the ends of its radii, and the border's inner
 /// edge is that line moved in by the border width along its normal (WPT `corner-shape-bevel`:
 /// the padding edge meets the top at 27.071px).

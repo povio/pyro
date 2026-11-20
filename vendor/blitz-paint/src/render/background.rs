@@ -328,9 +328,30 @@ impl ElementCx<'_, '_> {
                     &self.frame.padding_box_path(),
                 );
             }
+            let color_transform = if canvas.is_none()
+                && last_clip == StyloBackgroundClip::BorderBox
+                && !local_color
+                && shape_clip.is_none()
+                && shrunk_border_box.get().is_some_and(Option::is_none)
+                && self.frame.border_box.width() == self.frame.border_box.height()
+                && self.frame.is_elliptical_border()
+            {
+                let [xx, yx, xy, yy, ..] = self.transform.as_coeffs();
+                if xx == yy && xy == -yx && yx != 0.0 {
+                    let center = self.frame.border_box.center();
+                    let scale = xx.hypot(yx);
+                    Affine::translate((self.transform * center).to_vec2())
+                        * Affine::scale(scale)
+                        * Affine::translate(-center.to_vec2())
+                } else {
+                    self.transform
+                }
+            } else {
+                self.transform
+            };
             scene.fill(
                 Fill::NonZero,
-                self.transform,
+                color_transform,
                 bg_color,
                 None,
                 &background_clip_path,
