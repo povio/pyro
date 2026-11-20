@@ -120,7 +120,7 @@ pub struct PageDom {
     /// The custom element definitions of this page's realms (`crate::custom`).
     pub(crate) custom_elements: RefCell<crate::custom::Registry>,
     pub(crate) header_helpers: RefCell<FxHashMap<RealmId, Persistent>>,
-    pub(crate) data_view_readers: RefCell<FxHashMap<RealmId, Persistent>>,
+    pub(crate) encoding_helpers: RefCell<FxHashMap<RealmId, Persistent>>,
     /// install.js's `blobParts` conversion, per realm (file.rs).
     pub(crate) blob_parts: RefCell<FxHashMap<RealmId, Persistent>>,
     /// Wrappers kept alive because they hold listeners for a connected
@@ -849,7 +849,7 @@ impl PageDom {
             current_script: Cell::new(None),
             realms: RefCell::new(FxHashMap::default()),
             main_world: RefCell::new(None),
-            data_view_readers: RefCell::new(FxHashMap::default()),
+            encoding_helpers: RefCell::new(FxHashMap::default()),
             blob_parts: RefCell::new(FxHashMap::default()),
             header_helpers: RefCell::new(FxHashMap::default()),
             url_params_helpers: RefCell::new(FxHashMap::default()),
@@ -1185,7 +1185,7 @@ impl PageDom {
         drop(self.event_clock.take());
         self.animation_events.clear();
         drop(self.pending_port_reconcile.take());
-        drop(self.data_view_readers.take());
+        drop(self.encoding_helpers.take());
         drop(self.blob_parts.take());
         drop(self.header_helpers.take());
         drop(self.url_params_helpers.take());
@@ -2132,7 +2132,7 @@ impl PageDom {
         self.header_helpers.borrow_mut().retain(|realm, _| {
             self.realms.borrow().get(realm).and_then(|r| r.upgrade()).is_some_and(|r| !r.is_disposed())
         });
-        self.data_view_readers.borrow_mut().retain(|realm, _| {
+        self.encoding_helpers.borrow_mut().retain(|realm, _| {
             self.realms.borrow().get(realm).and_then(|r| r.upgrade()).is_some_and(|r| !r.is_disposed())
         });
         self.blob_parts.borrow_mut().retain(|realm, _| {
