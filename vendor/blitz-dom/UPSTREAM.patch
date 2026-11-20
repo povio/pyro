@@ -48558,7 +48558,7 @@ diff --git a/packages/blitz-dom/src/projection.rs b/packages/blitz-dom/src/proje
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/projection.rs
-@@ -0,0 +1,64 @@
+@@ -0,0 +1,82 @@
 +use kurbo::Rect;
 +
 +pub const MIN_W: f64 = 1e-6;
@@ -48566,18 +48566,36 @@ new file mode 100644
 +
 +/// The projection of `rect` through the homography `h`, cut at the viewer's plane.
 +pub fn project(h: &[f64; 9], rect: Rect) -> Vec<(f64, f64)> {
++    let Some(points) = homogeneous_corners(h, rect) else { return Vec::new() };
++    clip_w(&points).into_iter().map(|p| (p[0], p[1])).collect()
++}
++
++pub fn layout_bounds(h: &[f64; 9], rect: Rect) -> Option<Rect> {
++    let points = homogeneous_corners(h, rect)?;
++    let mut bounds: Option<Rect> = None;
++    for [x, y, _, w] in points {
++        if w <= 0.0 {
++            continue;
++        }
++        let point = kurbo::Point::new(x / w, y / w);
++        if !point.is_finite() {
++            return None;
++        }
++        bounds = Some(bounds.map_or_else(|| Rect::from_points(point, point), |rect| rect.union_pt(point)));
++    }
++    bounds
++}
++
++fn homogeneous_corners(h: &[f64; 9], rect: Rect) -> Option<[[f64; 4]; 4]> {
 +    if !rect.is_finite() || !h.iter().all(|v| v.is_finite()) {
-+        return Vec::new();
++        return None;
 +    }
 +    let corners = [(rect.x0, rect.y0), (rect.x1, rect.y0), (rect.x1, rect.y1), (rect.x0, rect.y1)];
-+    let homogeneous: Vec<[f64; 4]> = corners
-+        .iter()
-+        .map(|&(x, y)| {
-+            let [a, b, c, d, e, f, g, i, j] = *h;
-+            [a * x + b * y + c, d * x + e * y + f, 0.0, g * x + i * y + j]
-+        })
-+        .collect();
-+    clip_w(&homogeneous).into_iter().map(|p| (p[0], p[1])).collect()
++    let homogeneous = corners.map(|(x, y)| {
++        let [a, b, c, d, e, f, g, i, j] = *h;
++        [a * x + b * y + c, d * x + e * y + f, 0.0, g * x + i * y + j]
++    });
++    homogeneous.iter().flatten().all(|v| v.is_finite()).then_some(homogeneous)
 +}
 +
 +/// A polygon of homogeneous points cut at the viewer's plane (W below [`MIN_W`]) and divided by W.
@@ -50072,7 +50090,9 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +        let width = marker.full_width() as f64 / scale + padding;
 +        (width > 0.0).then(|| (width, marker.height() as f64 / scale))
 +    }
-+
+ 
+-        let full = if let Some(t) = transform {
+-            Affine::translate((scaled_x, scaled_y)) * t
 +    /// pyro: whether `node_id` is a box of combined text in a vertical line, whose text paint
 +    /// compresses into it (blitz-paint's `combined_text_compression`).
 +    fn is_compressed_combined_text(&self, node_id: NodeId) -> bool {
@@ -50086,9 +50106,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +            .and_then(|parent| self.nodes[parent].primary_styles().map(|p| p.writing_mode))
 +            .is_some_and(|wm| wm.is_vertical() && !wm.is_sideways())
 +    }
- 
--        let full = if let Some(t) = transform {
--            Affine::translate((scaled_x, scaled_y)) * t
++
 +    /// pyro: whether `node_id` is `position: fixed`.
 +    fn is_fixed(&self, node_id: NodeId) -> bool {
 +        self.nodes[node_id]
@@ -50497,10 +50515,16 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
  
          fn resolve_layout_children_recursive(doc: &mut BaseDocument, node_id: NodeId) {
              // Anonymous blocks and pseudo-elements can be removed from the slab
-@@ -264,6 +1819,43 @@
-             let mut damage = doc.nodes[node_id].damage().unwrap_or(ALL_DAMAGE);
-             let _flags = doc.nodes[node_id].flags;
+@@ -261,9 +1816,46 @@
+                 return;
+             }
  
+-            let mut damage = doc.nodes[node_id].damage().unwrap_or(ALL_DAMAGE);
+-            let _flags = doc.nodes[node_id].flags;
+-
++            let mut damage = doc.nodes[node_id].damage().unwrap_or(ALL_DAMAGE);
++            let _flags = doc.nodes[node_id].flags;
++
 +            // pyro: a table whose rows or cells changed (their damage reaches it) updates
 +            // the rows that did and keeps its layout children; what it can't update is built again.
 +            let table_changed =
@@ -50796,7 +50820,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
      /// Walk the nodes now that they're properly styled and transfer their styles to the taffy style system
      ///
      /// TODO: update taffy to use an associated type instead of slab key
-@@ -437,32 +2148,1137 @@
+@@ -437,32 +2148,1139 @@
      pub fn resolve_layout(&mut self) {
          let size = self.stylist.device().au_viewport_size();
  
@@ -51481,11 +51505,13 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +    }
 +    let bounds = if let Some(plane) = plane.filter(|plane| plane.places_by_local || plane.crosses_viewer) {
 +        let limit = f64::from(app_units::MAX_AU.to_f32_px());
-+        let mut points = crate::projection::project(&plane.local, rect.scale_from_origin(1.0 / scale)).into_iter().map(|(x, y)| {
-+            kurbo::Point::new(x.clamp(-limit, limit) * scale, y.clamp(-limit, limit) * scale)
-+        });
-+        let Some(first) = points.next() else { return Rect::ZERO };
-+        points.fold(Rect::from_points(first, first), |bounds, point| bounds.union_pt(point)) + offset
++        let Some(bounds) = crate::projection::layout_bounds(&plane.local, rect.scale_from_origin(1.0 / scale)) else {
++            return Rect::ZERO;
++        };
++        Rect::new(
++            bounds.x0.clamp(-limit, limit), bounds.y0.clamp(-limit, limit),
++            bounds.x1.clamp(-limit, limit), bounds.y1.clamp(-limit, limit),
++        ).scale_from_origin(scale) + offset
 +    } else {
 +        match node.transform().as_deref() {
 +            Some(transform) if transform.is_finite() => transform.transform_rect_bbox(rect) + offset,

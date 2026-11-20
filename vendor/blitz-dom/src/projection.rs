@@ -5,18 +5,36 @@ pub const PROJECT_LIMIT: f64 = 1e5;
 
 /// The projection of `rect` through the homography `h`, cut at the viewer's plane.
 pub fn project(h: &[f64; 9], rect: Rect) -> Vec<(f64, f64)> {
+    let Some(points) = homogeneous_corners(h, rect) else { return Vec::new() };
+    clip_w(&points).into_iter().map(|p| (p[0], p[1])).collect()
+}
+
+pub fn layout_bounds(h: &[f64; 9], rect: Rect) -> Option<Rect> {
+    let points = homogeneous_corners(h, rect)?;
+    let mut bounds: Option<Rect> = None;
+    for [x, y, _, w] in points {
+        if w <= 0.0 {
+            continue;
+        }
+        let point = kurbo::Point::new(x / w, y / w);
+        if !point.is_finite() {
+            return None;
+        }
+        bounds = Some(bounds.map_or_else(|| Rect::from_points(point, point), |rect| rect.union_pt(point)));
+    }
+    bounds
+}
+
+fn homogeneous_corners(h: &[f64; 9], rect: Rect) -> Option<[[f64; 4]; 4]> {
     if !rect.is_finite() || !h.iter().all(|v| v.is_finite()) {
-        return Vec::new();
+        return None;
     }
     let corners = [(rect.x0, rect.y0), (rect.x1, rect.y0), (rect.x1, rect.y1), (rect.x0, rect.y1)];
-    let homogeneous: Vec<[f64; 4]> = corners
-        .iter()
-        .map(|&(x, y)| {
-            let [a, b, c, d, e, f, g, i, j] = *h;
-            [a * x + b * y + c, d * x + e * y + f, 0.0, g * x + i * y + j]
-        })
-        .collect();
-    clip_w(&homogeneous).into_iter().map(|p| (p[0], p[1])).collect()
+    let homogeneous = corners.map(|(x, y)| {
+        let [a, b, c, d, e, f, g, i, j] = *h;
+        [a * x + b * y + c, d * x + e * y + f, 0.0, g * x + i * y + j]
+    });
+    homogeneous.iter().flatten().all(|v| v.is_finite()).then_some(homogeneous)
 }
 
 /// A polygon of homogeneous points cut at the viewer's plane (W below [`MIN_W`]) and divided by W.

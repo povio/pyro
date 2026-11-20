@@ -2817,11 +2817,13 @@ fn place_overflow(node: &crate::Node, location: (f64, f64), scale: f64, rect: Re
     }
     let bounds = if let Some(plane) = plane.filter(|plane| plane.places_by_local || plane.crosses_viewer) {
         let limit = f64::from(app_units::MAX_AU.to_f32_px());
-        let mut points = crate::projection::project(&plane.local, rect.scale_from_origin(1.0 / scale)).into_iter().map(|(x, y)| {
-            kurbo::Point::new(x.clamp(-limit, limit) * scale, y.clamp(-limit, limit) * scale)
-        });
-        let Some(first) = points.next() else { return Rect::ZERO };
-        points.fold(Rect::from_points(first, first), |bounds, point| bounds.union_pt(point)) + offset
+        let Some(bounds) = crate::projection::layout_bounds(&plane.local, rect.scale_from_origin(1.0 / scale)) else {
+            return Rect::ZERO;
+        };
+        Rect::new(
+            bounds.x0.clamp(-limit, limit), bounds.y0.clamp(-limit, limit),
+            bounds.x1.clamp(-limit, limit), bounds.y1.clamp(-limit, limit),
+        ).scale_from_origin(scale) + offset
     } else {
         match node.transform().as_deref() {
             Some(transform) if transform.is_finite() => transform.transform_rect_bbox(rect) + offset,
