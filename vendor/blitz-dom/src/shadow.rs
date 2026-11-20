@@ -257,6 +257,31 @@ impl BaseDocument {
         }
     }
 
+    /// pyro: Stylo invalidates a change of an element's attributes for its children (`details >
+    /// p`) by the tree's children: for an element whose children render in slots of its user-agent
+    /// shadow tree (a `<details>`, pyro-dom's render tree), the slots. The slots' children, its own
+    /// children, are restyled with their subtrees (a closed `<details>` opened shows its content,
+    /// and its styles change as a restyle, not as new boxes: transitions start).
+    pub(crate) fn invalidate_slotted_children(&self, node_id: NodeId) {
+        if !self.nodes.has_shadow_hosts {
+            return;
+        }
+        let Some(node) = self.nodes.get(node_id).filter(|node| node.is_element()) else { return };
+        for &slot in &node.children {
+            let Some(slot) = self.nodes.get(slot) else { continue };
+            if !slot.flags.contains(NodeFlags::IS_ASSIGNED_SLOT) {
+                continue;
+            }
+            for &child in &slot.children {
+                let Some(child) = self.nodes.get(child).filter(|child| child.is_element()) else { continue };
+                if let Some(mut data) = style::dom::TElement::mutate_data(&child) {
+                    data.hint.insert(RestyleHint::restyle_subtree());
+                }
+                child.mark_ancestors_dirty();
+            }
+        }
+    }
+
     /// Sets the element's shadow flags from its marker attributes.
     pub(crate) fn sync_shadow_markers(&mut self, node_id: NodeId) {
         let Some(node) = self.nodes.get_mut(node_id) else { return };

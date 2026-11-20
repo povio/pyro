@@ -37086,7 +37086,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  }
                  Ok(())
              }
-@@ -320,12 +344,88 @@
+@@ -320,12 +344,91 @@
          }
      }
  
@@ -37145,6 +37145,9 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
 +        }
 +        // pyro: `:has-slotted(<selector>)` of its slot (`crate::shadow`).
 +        self.doc.invalidate_has_slotted(node_id);
++        // pyro: and the children a `<details>` element renders in its slots (`details:not([open])
++        // > *`).
++        self.doc.invalidate_slotted_children(node_id);
 +    }
 +
 +    fn set_attribute_impl(&mut self, node_id: NodeId, name: QualName, value: &str) {
@@ -37175,7 +37178,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          }
  
          if name.local == local_name!("id") && node_is_in_document {
-@@ -357,6 +457,9 @@
+@@ -357,6 +460,9 @@
          }
  
          element.attrs.set(name.clone(), value);
@@ -37185,7 +37188,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          if node_is_in_document {
              devtools!(
                  self,
-@@ -380,6 +483,9 @@
+@@ -380,6 +486,9 @@
  
          if name.local == local_name!("href") {
              element.flush_link_state();
@@ -37195,7 +37198,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          }
  
          if name.local == local_name!("open") {
-@@ -389,7 +495,9 @@
+@@ -389,7 +498,9 @@
          let tag = &element.name.local;
          let attr = &name.local;
  
@@ -37206,7 +37209,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              element.id = Some(Atom::from(value))
          }
  
-@@ -415,7 +523,8 @@
+@@ -415,7 +526,8 @@
              return;
          }
  
@@ -37216,7 +37219,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              node.disable();
              return;
          }
-@@ -440,7 +549,22 @@
+@@ -440,7 +552,22 @@
  
          if (tag, attr) == tag_and_attr!("input", "checked") {
              set_input_checked_state(element, value.to_string());
@@ -37240,7 +37243,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              self.load_image(node_id);
          } else if (tag, attr) == tag_and_attr!("canvas", "src") {
              self.load_custom_paint_src(node_id);
-@@ -450,17 +574,67 @@
+@@ -450,17 +577,70 @@
              self.load_linked_stylesheet(node_id);
          } else if (tag, attr) == tag_and_attr!("iframe", "src")
              || (tag, attr) == tag_and_attr!("iframe", "srcdoc")
@@ -37278,6 +37281,9 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
 +        }
 +        // pyro: `:has-slotted(<selector>)` of its slot (`crate::shadow`).
 +        self.doc.invalidate_has_slotted(node_id);
++        // pyro: and the children a `<details>` element renders in its slots (`details:not([open])
++        // > *`).
++        self.doc.invalidate_slotted_children(node_id);
 +    }
 +
 +    fn clear_attribute_impl(&mut self, node_id: NodeId, name: QualName) {
@@ -37308,7 +37314,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          }
  
          if name.local == local_name!("id") && node_is_in_document {
-@@ -483,6 +657,9 @@
+@@ -483,6 +663,9 @@
          if !had_attr {
              return;
          }
@@ -37318,7 +37324,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          self.mutations_occurred |= node_is_in_document;
          if node_is_in_document {
              devtools!(
-@@ -503,7 +680,7 @@
+@@ -503,7 +686,7 @@
                  .attribute_changed(&name.local, old_value, None);
          }
  
@@ -37327,7 +37333,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              element.id = None;
          }
  
-@@ -522,6 +699,9 @@
+@@ -522,6 +705,9 @@
  
          if name.local == local_name!("href") {
              element.flush_link_state();
@@ -37337,7 +37343,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          }
  
          if name.local == local_name!("open") {
-@@ -542,7 +722,7 @@
+@@ -542,7 +728,7 @@
          let tag = &element.name.local;
          let attr = &name.local;
  
@@ -37346,7 +37352,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              node.enable();
              return;
          }
-@@ -554,11 +734,26 @@
+@@ -554,11 +740,26 @@
              element.set_checkbox_input_checked(false);
          } else if (tag, attr) == tag_and_attr!("canvas", "src") {
              self.recompute_is_animating = true;
@@ -37375,7 +37381,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          }
      }
  
-@@ -602,11 +797,14 @@
+@@ -602,11 +803,14 @@
  
      /// Remove the node from it's parent but don't drop it
      pub fn remove_node(&mut self, node_id: NodeId) {
@@ -37390,7 +37396,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
  
          let node = &mut self.doc.nodes[node_id];
  
-@@ -614,11 +812,12 @@
+@@ -614,11 +818,12 @@
          if let Some(parent_id) = node.parent.take() {
              self.mutations_occurred |= node_is_in_document;
              let parent = &mut self.doc.nodes[parent_id];
@@ -37405,7 +37411,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  devtools!(
                      self,
                      MutationRecord::NodeRemoved(NodeRemoved { parent_id, node_id })
-@@ -639,8 +838,12 @@
+@@ -639,8 +844,12 @@
          node_id: NodeId,
          on_drop: &mut dyn FnMut(NodeId),
      ) -> Option<Node> {
@@ -37418,7 +37424,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
  
          let node = self.doc.drop_node_ignoring_parent_with(node_id, on_drop);
          self.mutations_occurred |= node_is_in_document;
-@@ -648,13 +851,14 @@
+@@ -648,13 +857,14 @@
          // Update child_idx values
          if let Some(parent_id) = node.as_ref().and_then(|node| node.parent) {
              let parent = &mut self.doc.nodes[parent_id];
@@ -37435,7 +37441,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  devtools!(
                      self,
                      MutationRecord::NodeRemoved(NodeRemoved { parent_id, node_id })
-@@ -668,13 +872,19 @@
+@@ -668,13 +878,19 @@
      }
  
      pub fn remove_and_drop_all_children(&mut self, node_id: NodeId) {
@@ -37456,7 +37462,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          }
  
          for child_id in children {
-@@ -697,6 +907,64 @@
+@@ -697,6 +913,64 @@
      /// is hinted: its snapshot lets Stylo's invalidator find the siblings and descendants
      /// whose selectors depend on the attribute. `style`, `class` and `id` reach layout only
      /// through the computed style (whose diff yields the damage); other attributes may not.
@@ -37521,7 +37527,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
      fn restyle_for_attribute_change(&mut self, node_id: NodeId, attr: &LocalName) {
          let node = &mut self.doc.nodes[node_id];
          let is_style = *attr == local_name!("style");
-@@ -727,6 +995,8 @@
+@@ -727,6 +1001,8 @@
          // A table's `cellpadding` is a presentational hint on its cells, not on the table.
          let restyles_cells = *attr == local_name!("cellpadding")
              && node.data.is_element_with_tag_name(&local_name!("table"));
@@ -37530,7 +37536,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          if let Some(mut data) = node.try_stylo_element_data_mut().and_then(|s| s.get_mut()) {
              data.hint |= if is_style {
                  RestyleHint::RESTYLE_STYLE_ATTRIBUTE
-@@ -748,27 +1018,52 @@
+@@ -748,27 +1024,52 @@
      }
  
      /// Restyle an in-document element whose child list changed, `changed` being the position
@@ -37596,7 +37602,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              || flags.intersects(
                  ElementSelectorFlags::HAS_SLOW_SELECTOR
                      | ElementSelectorFlags::HAS_SLOW_SELECTOR_NTH_OF
-@@ -776,18 +1071,43 @@
+@@ -776,18 +1077,43 @@
              )
          {
              hint |= RestyleHint::RESTYLE_DESCENDANTS;
@@ -37643,7 +37649,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  if !children[..changed.start].iter().any(is_element) {
                      edge[0] = children[changed.end..].iter().copied().find(is_element);
                  }
-@@ -799,10 +1119,30 @@
+@@ -799,10 +1125,30 @@
                          .find(is_element);
                  }
              }
@@ -37675,7 +37681,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          }
  
          let parent = &mut self.doc.nodes[parent_id];
-@@ -878,12 +1218,32 @@
+@@ -878,12 +1224,32 @@
          // would remove both the old and the newly-inserted entries from the
          // parent's child list, and anchor indices would be computed against a
          // child list that still contains the moved nodes.
@@ -37708,7 +37714,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              let child = &mut self.doc.nodes[child_id];
              let child_was_in_doc = child.flags.is_in_document();
              self.mutations_occurred |= child_was_in_doc;
-@@ -892,12 +1252,13 @@
+@@ -892,12 +1258,13 @@
              };
  
              let old_parent = &mut self.doc.nodes[old_parent_id];
@@ -37724,7 +37730,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  devtools!(
                      self,
                      MutationRecord::NodeRemoved(NodeRemoved {
-@@ -911,19 +1272,29 @@
+@@ -911,19 +1278,29 @@
          }
  
          let new_parent = &mut self.doc.nodes[parent_id];
@@ -37757,7 +37763,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  child.set_restyle_hint(RestyleHint::restyle_subtree());
              }
  
-@@ -938,10 +1309,57 @@
+@@ -938,10 +1315,57 @@
                  );
              }
  
@@ -37815,7 +37821,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              }
          }
  
-@@ -975,6 +1393,23 @@
+@@ -975,6 +1399,23 @@
          self.maybe_record_node(parent_id);
      }
  
@@ -37839,7 +37845,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
      /// The nearest preceding sibling of `node_id` in `parent_id`'s children
      /// that devtools show (not a whitespace-only text node or anonymous block)
      #[cfg(feature = "devtools")]
-@@ -1142,6 +1577,9 @@
+@@ -1142,6 +1583,9 @@
          for id in self.style_nodes.drain() {
              self.doc.process_style_element(id);
          }
@@ -37849,7 +37855,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
  
          for id in self.form_nodes.drain() {
              self.doc.reset_form_owner(id);
-@@ -1222,12 +1660,51 @@
+@@ -1222,12 +1666,51 @@
                  }
                  _ if has_custom_widget => {}
                  "link" => self.eager_op_queue.push(SpecialOp::LoadStylesheet(node_id)),
@@ -37902,7 +37908,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                      self.eager_op_queue
                          .push(SpecialOp::ProcessButtonInput(node_id));
                      self.form_nodes.insert(node_id);
-@@ -1359,13 +1836,18 @@
+@@ -1359,13 +1842,18 @@
          let rel_attr = node.attr(local_name!("rel"));
          let href_attr = node.attr(local_name!("href"));
  
@@ -37921,7 +37927,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              return;
          }
  
-@@ -1382,6 +1864,7 @@
+@@ -1382,6 +1870,7 @@
                  guard: self.doc.guard.clone(),
                  net_provider: self.doc.net_provider.clone(),
                  abort_signal: self.doc.abort_signal.clone(),
@@ -37929,7 +37935,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              },
          );
  
-@@ -1391,11 +1874,10 @@
+@@ -1391,11 +1880,10 @@
                  .insert(handler.request_id());
          }
  
@@ -37945,7 +37951,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
      }
  
      fn unload_stylesheet(&mut self, node_id: NodeId) {
-@@ -1413,6 +1895,11 @@
+@@ -1413,6 +1901,11 @@
              }
          };
  
@@ -37957,7 +37963,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          let guard = self.doc.guard.read();
          self.doc.stylist.remove_stylesheet(stylesheet, &guard);
          self.doc
-@@ -1420,21 +1907,113 @@
+@@ -1420,21 +1913,113 @@
              .force_stylesheet_origins_dirty(OriginSet::all());
  
          self.doc.nodes_to_stylesheet.remove(&node_id);
@@ -38076,7 +38082,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                      let node = &mut self.doc.nodes[target_id];
                      node.element_data_mut().unwrap().special_data =
                          SpecialElementData::Image(Box::new(cached_image.clone()));
-@@ -1458,15 +2037,18 @@
+@@ -1458,15 +2043,18 @@
                      .pending_images
                      .insert(src_string.to_string(), vec![(target_id, ImageType::Image)]);
  
@@ -38097,7 +38103,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                      ),
                  );
              }
-@@ -1483,6 +2065,14 @@
+@@ -1483,6 +2071,14 @@
              return;
          }
  
@@ -38112,7 +38118,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          let node = &self.doc.nodes[target_id];
          let Some(element) = node.element_data() else {
              return;
-@@ -1544,12 +2134,27 @@
+@@ -1544,12 +2140,27 @@
              return;
          }
  
@@ -38141,7 +38147,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              let id = self.create_text_node(&value);
              self.append_children(target_id, &[id]);
              return;
-@@ -1579,6 +2184,20 @@
+@@ -1579,6 +2190,20 @@
      }
  }
  
@@ -38162,7 +38168,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
  /// Set 'checked' state on an input based on given attributevalue
  fn set_input_checked_state(element: &mut ElementData, value: String) {
      let Ok(checked) = value.parse() else {
-@@ -2377,6 +2996,50 @@
+@@ -2377,6 +3002,50 @@
          }
      }
  
@@ -38213,7 +38219,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
      fn qual_name(name: &str) -> crate::QualName {
          crate::QualName::new(None, crate::ns!(), crate::LocalName::from(name))
      }
-@@ -3088,3 +3751,254 @@
+@@ -3088,3 +3757,254 @@
          );
      }
  }
@@ -49766,7 +49772,7 @@ diff --git a/packages/blitz-dom/src/shadow.rs b/packages/blitz-dom/src/shadow.rs
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/shadow.rs
-@@ -0,0 +1,357 @@
+@@ -0,0 +1,382 @@
 +//! pyro: shadow trees (CSS Scoping 1) in the flat tree pyro-dom's render tree gives Blitz.
 +//!
 +//! The render tree is the flat tree: a shadow host's children are its shadow tree's nodes (the
@@ -50023,6 +50029,31 @@ new file mode 100644
 +            }
 +            slot.mark_ancestors_dirty();
 +            current = slot;
++        }
++    }
++
++    /// pyro: Stylo invalidates a change of an element's attributes for its children (`details >
++    /// p`) by the tree's children: for an element whose children render in slots of its user-agent
++    /// shadow tree (a `<details>`, pyro-dom's render tree), the slots. The slots' children, its own
++    /// children, are restyled with their subtrees (a closed `<details>` opened shows its content,
++    /// and its styles change as a restyle, not as new boxes: transitions start).
++    pub(crate) fn invalidate_slotted_children(&self, node_id: NodeId) {
++        if !self.nodes.has_shadow_hosts {
++            return;
++        }
++        let Some(node) = self.nodes.get(node_id).filter(|node| node.is_element()) else { return };
++        for &slot in &node.children {
++            let Some(slot) = self.nodes.get(slot) else { continue };
++            if !slot.flags.contains(NodeFlags::IS_ASSIGNED_SLOT) {
++                continue;
++            }
++            for &child in &slot.children {
++                let Some(child) = self.nodes.get(child).filter(|child| child.is_element()) else { continue };
++                if let Some(mut data) = style::dom::TElement::mutate_data(&child) {
++                    data.hint.insert(RestyleHint::restyle_subtree());
++                }
++                child.mark_ancestors_dirty();
++            }
 +        }
 +    }
 +

@@ -845,8 +845,7 @@ impl Dom {
                     if e.is_html() && matches!(local, "script" | "noscript" | "template" | "iframe" | "frame") {
                         return Ok(false);
                     }
-                    // pyro: and a `<details>` element, whose children render in its slots.
-                    if e.is_html() && matches!(local, "style" | "textarea" | "link" | "slot" | "details") {
+                    if e.is_html() && matches!(local, "style" | "textarea" | "link" | "slot") {
                         return Err(());
                     }
                     if e.name.ns == ns!(svg) && local == "script" {
@@ -891,6 +890,13 @@ impl Dom {
         parents.sort_unstable();
         parents.dedup();
         for &p in &parents {
+            // pyro: a `<details>` element whose children came or went renders them in its slots
+            // again (its first `<summary>` may be another one): the whole tree. A change deeper in
+            // it, or of its attributes (`open`), is a change of the nodes alone, which keep their
+            // keys in the slots.
+            if self.renders_details_slots(p) && rendered(p) == Ok(true) {
+                return None;
+            }
             match rendered(p) {
                 Err(()) => {
                     // A child of the `<style>` came or went; deeper in it,

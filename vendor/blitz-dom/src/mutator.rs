@@ -399,6 +399,9 @@ impl DocumentMutator<'_> {
         }
         // pyro: `:has-slotted(<selector>)` of its slot (`crate::shadow`).
         self.doc.invalidate_has_slotted(node_id);
+        // pyro: and the children a `<details>` element renders in its slots (`details:not([open])
+        // > *`).
+        self.doc.invalidate_slotted_children(node_id);
     }
 
     fn set_attribute_impl(&mut self, node_id: NodeId, name: QualName, value: &str) {
@@ -608,6 +611,9 @@ impl DocumentMutator<'_> {
         }
         // pyro: `:has-slotted(<selector>)` of its slot (`crate::shadow`).
         self.doc.invalidate_has_slotted(node_id);
+        // pyro: and the children a `<details>` element renders in its slots (`details:not([open])
+        // > *`).
+        self.doc.invalidate_slotted_children(node_id);
     }
 
     fn clear_attribute_impl(&mut self, node_id: NodeId, name: QualName) {
