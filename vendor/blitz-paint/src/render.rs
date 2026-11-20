@@ -1356,11 +1356,13 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         // scrollbars over its inline content, its classic ones with its box.
         if phase != FlowPhase::All && should_clip && node.scroller_paints_in_ancestor_phases() {
             let clip = cx.overflow_clip_path(&styles);
+            let mut shared_color = None;
             match phase {
                 FlowPhase::Background if !hidden => {
                     cx.draw_outset_box_shadow(scene);
                     if cx.context.backgrounds && self.canvas_background != Some(node_id) {
-                        cx.draw_background(scene);
+                        shared_color = cx.shared_overflow_color(&clip);
+                        if shared_color.is_none() { cx.draw_background(scene); }
                     }
                     cx.draw_inset_box_shadow(scene);
                     cx.draw_border(scene);
@@ -1375,6 +1377,9 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             }
             let unscrolled = cx.transform;
             scene.push_clip_layer(Fill::NonZero, unscrolled, &clip);
+            if let Some(color) = shared_color {
+                scene.fill(Fill::NonZero, unscrolled, color, None, &cx.frame.border_box);
+            }
             cx.transform = self.scrolled_transform(node, unscrolled);
             if phase == FlowPhase::Foreground {
                 cx.draw_marker(scene, content_position);
@@ -1676,6 +1681,8 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         // cuts this element's own box and its content, inside its effect group, except the boxes
         // its owner does not contain.
         let handed = self.handed_clip.borrow_mut().take();
+        let own_clip = if is_text_input { cx.frame.text_input_clip_path() } else { cx.overflow_clip_path(&cx.style) };
+        let mut shared_color = None;
         let outer_escape_owner = self.escape_owner.get();
         if let Some((owner, device_clip)) = &handed {
             self.escape_owner.set(Some((node.id, *owner)));
@@ -1709,7 +1716,10 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                 cx.draw_positioned_table_part_backgrounds(scene);
             }
             if cx.context.backgrounds && !is_root && self.canvas_background != Some(node.id) {
-                cx.draw_background(scene);
+                if should_clip && handed.is_none() && !is_text_input {
+                    shared_color = cx.shared_overflow_color(&own_clip);
+                }
+                if shared_color.is_none() { cx.draw_background(scene); }
             }
             cx.draw_inset_box_shadow(scene);
         }
@@ -1737,7 +1747,6 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             scene.pop_layer();
         }
 
-        let own_clip = if is_text_input { cx.frame.text_input_clip_path() } else { cx.overflow_clip_path(&cx.style) };
         // (A handed clip, in this element's space; the element clips nothing itself then.)
         let handed_local = handed.as_ref().map(|(_, device_clip)| cx.transform.inverse() * device_clip.clone());
         let should_clip = should_clip || handed.is_some();
@@ -1772,6 +1781,9 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         // painted before the clip layer, the positioned level and positive `z-index` after it,
         // each in the clip unless it escapes it.
         let escapes = should_clip && cx.has_clip_escapes();
+        if (!should_clip || escapes) && let Some(color) = shared_color.take() {
+            scene.fill(Fill::NonZero, cx.transform, color, None, &own_clip);
+        }
         let outer_escapes = self.clip_escapes_of.replace(None);
         // pyro: a box with an outline paints it before its positioned descendants (z-index auto
         // or 0, and positive), as Chromium paints a layer's outline before its z-order lists
@@ -1799,7 +1811,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             }
         }
         // Clip layer if box requires clipping. Opacity set to 1.0
-        self.layer_manager.maybe_with_layer(
+        let content_layer = self.layer_manager.maybe_push_layer(
             scene,
             should_clip,
             BlendMode::default(),
@@ -1808,7 +1820,15 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             clip,
             None,
             None,
-            |scene| {
+        );
+        if let Some(color) = shared_color {
+            if content_layer {
+                scene.fill(Fill::NonZero, cx.transform, color, None, &cx.frame.border_box);
+            } else {
+                scene.fill(Fill::NonZero, cx.transform, color, None, &own_clip);
+            }
+        }
+        {
                 // Now that background has been drawn, offset pos and cx in order to draw our contents scrolled
                 let content_position = Point {
                     x: content_position.x - node.scroll_offset().x,
@@ -1898,8 +1918,8 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                         cx.draw_inline_boxes_over_atomics(scene, content_position);
                     }
                 }
-            },
-        );
+        }
+        self.layer_manager.maybe_pop_layer(scene, content_layer);
         self.clip_escapes_of.set(outer_escapes);
         self.positioned_after_outline_of.set(outer_defers);
         self.neg_z_outside_clip_of.set(outer_neg);

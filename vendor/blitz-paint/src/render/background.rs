@@ -161,6 +161,24 @@ impl<'a> ImageLayerStyles<'a> {
 }
 
 impl ElementCx<'_, '_> {
+    pub(super) fn shared_overflow_color(&self, clip: &BezPath) -> Option<Color> {
+        use style::dom::TElement as _;
+        let background = self.style.get_background();
+        if self.frame.corner_curvature.is_none() || self.frame.border_width != kurbo::Insets::ZERO
+            || self.devtools.show_layout || self.node.local_name() == "input"
+            || !matches!(self.style.clone_display().inside(), style::values::specified::box_::DisplayInside::Flow | style::values::specified::box_::DisplayInside::FlowRoot)
+            || self.style.clone_overflow_x() != Overflow::Clip || self.style.clone_overflow_y() != Overflow::Clip
+            || !matches!(self.element.special_data, SpecialElementData::None)
+            || !self.style.get_effects().box_shadow.0.is_empty() || self.border_shape().is_some()
+            || !matches!(self.style.get_border().border_image_source, GenericImage::None)
+            || !matches!(background.background_image.0.as_ref(), [GenericImage::None])
+            || background.background_clip.0.first() != Some(&StyloBackgroundClip::BorderBox)
+            || *clip != self.frame.border_box_path()
+        { return None; }
+        let color = background.background_color.resolve_to_absolute(&self.style.clone_color()).as_srgb_color();
+        (color != Color::TRANSPARENT).then_some(color)
+    }
+
     pub(super) fn draw_background(&self, scene: &mut impl PaintScene) {
         // pyro: a checkbox, radio button or range input in its native appearance paints no author
         // background (Chromium draws the widget alone; `appearance: none` draws the box).
