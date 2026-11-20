@@ -313,7 +313,14 @@ impl ElementCx<'_, '_> {
             .background_color
             .resolve_to_absolute(&current_color)
             .as_srgb_color();
-        if bg_color != Color::TRANSPARENT {
+        let color_with_image = bg_color != Color::TRANSPARENT
+            && canvas.is_none()
+            && !text_run
+            && !blends
+            && self.frame.has_border_radius()
+            && local_cx(last_attachment).is_none()
+            && !layer_paints_nothing(&ImageLayerStyles::from_background(bg_styles, image_data, layer_count - 1));
+        if bg_color != Color::TRANSPARENT && !color_with_image {
             // pyro: the colour's clip only when there is a colour.
             let background_clip_path = clip_path(
                 background_clip,
@@ -412,7 +419,7 @@ impl ElementCx<'_, '_> {
                 && self.frame.corner_curvature.is_none()
                 && !(layer.clip == BoxModelBox::BorderBox && shrunk_border_box.get().is_some_and(Option::is_some))
                 && self.image_tile_within(&layer, area);
-            self.context.layer_manager.maybe_with_layer(
+            let clipped = self.context.layer_manager.maybe_push_layer(
                 scene,
                 !unclipped,
                 crate::blend::convert_blend_mode(blend),
@@ -421,10 +428,17 @@ impl ElementCx<'_, '_> {
                 &background_clip_path,
                 None,
                 None,
-                |scene| {
-                    cx.draw_image_layer_in(scene, &layer, area, &current_color);
-                },
             );
+            if color_with_image && idx == layer_count - 1 {
+                if clipped {
+                    let bounds = self.transform.transform_rect_bbox(background_clip_path.bounding_box()).expand();
+                    scene.fill(Fill::NonZero, Affine::IDENTITY, bg_color, None, &bounds);
+                } else {
+                    scene.fill(Fill::NonZero, self.transform, bg_color, None, &background_clip_path);
+                }
+            }
+            cx.draw_image_layer_in(scene, &layer, area, &current_color);
+            self.context.layer_manager.maybe_pop_layer(scene, clipped);
             if local.is_some() {
                 scene.pop_layer();
             }

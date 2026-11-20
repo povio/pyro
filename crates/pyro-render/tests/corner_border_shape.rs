@@ -61,6 +61,14 @@ fn rotating_a_solid_circle_preserves_its_coverage() {
     assert!(circle(45).data == plain.data);
 }
 
+#[test]
+fn background_color_under_an_opaque_image_does_not_bleed_at_round_corners() {
+    let image = |color| render(&format!("<div style='{BOX}border-radius:24px;background:{color} linear-gradient(green,green)'></div>"), 1.0);
+    let clear = image("transparent");
+    assert_eq!(pixel(&clear, 1.0, 50.0, 50.0), GREEN);
+    assert!(image("red").data == clear.data);
+}
+
 /// A bevelled corner is the straight line between the ends of its radii, and the border's inner
 /// edge is that line moved in by the border width along its normal (WPT `corner-shape-bevel`:
 /// the padding edge meets the top at 27.071px).
