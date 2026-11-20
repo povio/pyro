@@ -1,0 +1,544 @@
+{
+  "loss": {
+    "selected": 159,
+    "counts": {
+      "candidate": {
+        "observed": 159,
+        "fully": 42,
+        "names": 65357,
+        "namedPass": 60261,
+        "page_complete": 156,
+        "page_timeout": 3
+      },
+      "priorAa": {
+        "observed": 159,
+        "fully": 38,
+        "names": 65428,
+        "namedPass": 60289,
+        "page_complete": 156,
+        "page_timeout": 3
+      },
+      "historical35df": {
+        "observed": 159,
+        "fully": 45,
+        "names": 65428,
+        "namedPass": 60310,
+        "page_complete": 156,
+        "page_timeout": 3
+      },
+      "localStable": {
+        "observed": 159,
+        "fully": 78,
+        "names": 65385,
+        "namedPass": 60713,
+        "page_complete": 157,
+        "page_timeout": 1,
+        "page_hang": 1
+      },
+      "publicStable": {
+        "observed": 159,
+        "fully": 80,
+        "names": 65442,
+        "namedPass": 60886,
+        "page_OK": 159
+      },
+      "publicCanary": {
+        "observed": 159,
+        "fully": 83,
+        "names": 65442,
+        "namedPass": 60896,
+        "page_OK": 159
+      }
+    },
+    "paired": {
+      "priorAa": {
+        "paired": 159,
+        "onlyHeadFull": 12,
+        "onlyRefFull": 8,
+        "onlyHead": 81,
+        "onlyRef": 109,
+        "both": 60180,
+        "headMissingName": 83,
+        "referenceMissingName": 12
+      },
+      "historical35df": {
+        "paired": 159,
+        "onlyHeadFull": 8,
+        "onlyRefFull": 11,
+        "onlyHead": 56,
+        "onlyRef": 105,
+        "both": 60205,
+        "headMissingName": 83,
+        "referenceMissingName": 12
+      },
+      "localStable": {
+        "paired": 159,
+        "onlyHeadFull": 1,
+        "onlyRefFull": 37,
+        "onlyHead": 1265,
+        "onlyRef": 1717,
+        "both": 58996,
+        "headMissingName": 85,
+        "referenceMissingName": 57
+      },
+      "publicStable": {
+        "paired": 159,
+        "onlyHeadFull": 1,
+        "onlyRefFull": 39,
+        "onlyHead": 1139,
+        "onlyRef": 1764,
+        "both": 59122,
+        "headMissingName": 97,
+        "referenceMissingName": 12
+      },
+      "publicCanary": {
+        "paired": 159,
+        "onlyHeadFull": 0,
+        "onlyRefFull": 41,
+        "onlyHead": 1138,
+        "onlyRef": 1773,
+        "both": 59123,
+        "headMissingName": 97,
+        "referenceMissingName": 12
+      }
+    }
+  },
+  "main": {
+    "selected": 2407,
+    "counts": {
+      "candidate": {
+        "observed": 2407,
+        "fully": 1067,
+        "names": 197862,
+        "namedPass": 179499,
+        "page_complete": 2288,
+        "page_timeout": 88,
+        "page_error": 31
+      },
+      "priorAa": {
+        "observed": 2407,
+        "fully": 988,
+        "names": 197098,
+        "namedPass": 176978,
+        "page_complete": 2287,
+        "page_timeout": 88,
+        "page_error": 32
+      },
+      "historical35df": {
+        "missing": 2407
+      },
+      "localStable": {
+        "observed": 2407,
+        "fully": 1878,
+        "names": 198139,
+        "namedPass": 188043,
+        "page_complete": 2388,
+        "page_timeout": 13,
+        "page_error": 4,
+        "page_hang": 2
+      },
+      "publicStable": {
+        "observed": 2407,
+        "fully": 1892,
+        "names": 198189,
+        "namedPass": 187967,
+        "page_OK": 2398,
+        "page_ERROR": 4,
+        "page_TIMEOUT": 5
+      },
+      "publicCanary": {
+        "observed": 2407,
+        "fully": 1965,
+        "names": 198876,
+        "namedPass": 189272,
+        "page_OK": 2402,
+        "page_ERROR": 2,
+        "page_TIMEOUT": 3
+      }
+    },
+    "paired": {
+      "priorAa": {
+        "paired": 2407,
+        "onlyHeadFull": 79,
+        "onlyRefFull": 0,
+        "onlyHead": 2524,
+        "onlyRef": 3,
+        "both": 176975,
+        "headMissingName": 17,
+        "referenceMissingName": 781
+      },
+      "historical35df": {
+        "missingReferencePage": 2407
+      },
+      "localStable": {
+        "paired": 2407,
+        "onlyHeadFull": 102,
+        "onlyRefFull": 913,
+        "onlyHead": 3723,
+        "onlyRef": 12267,
+        "both": 175776,
+        "headMissingName": 1382,
+        "referenceMissingName": 1105
+      },
+      "publicStable": {
+        "paired": 2407,
+        "onlyHeadFull": 100,
+        "onlyRefFull": 925,
+        "onlyHead": 3786,
+        "onlyRef": 12254,
+        "both": 175713,
+        "headMissingName": 1424,
+        "referenceMissingName": 1097
+      },
+      "publicCanary": {
+        "paired": 2407,
+        "onlyHeadFull": 87,
+        "onlyRefFull": 985,
+        "onlyHead": 3018,
+        "onlyRef": 12791,
+        "both": 176481,
+        "headMissingName": 1438,
+        "referenceMissingName": 424
+      }
+    }
+  },
+  "ext": {
+    "selected": 38,
+    "counts": {
+      "candidate": {
+        "observed": 38,
+        "fully": 29,
+        "names": 376,
+        "namedPass": 330,
+        "page_complete": 38
+      },
+      "priorAa": {
+        "observed": 38,
+        "fully": 29,
+        "names": 376,
+        "namedPass": 330,
+        "page_complete": 38
+      },
+      "historical35df": {
+        "missing": 38
+      },
+      "localStable": {
+        "observed": 38,
+        "fully": 18,
+        "names": 376,
+        "namedPass": 300,
+        "page_complete": 38
+      },
+      "publicStable": {
+        "observed": 38,
+        "fully": 18,
+        "names": 376,
+        "namedPass": 300,
+        "page_OK": 38
+      },
+      "publicCanary": {
+        "observed": 38,
+        "fully": 18,
+        "names": 376,
+        "namedPass": 300,
+        "page_OK": 38
+      }
+    },
+    "paired": {
+      "priorAa": {
+        "paired": 38,
+        "onlyHeadFull": 0,
+        "onlyRefFull": 0,
+        "onlyHead": 0,
+        "onlyRef": 0,
+        "both": 330,
+        "headMissingName": 0,
+        "referenceMissingName": 0
+      },
+      "historical35df": {
+        "missingReferencePage": 38
+      },
+      "localStable": {
+        "paired": 38,
+        "onlyHeadFull": 12,
+        "onlyRefFull": 1,
+        "onlyHead": 44,
+        "onlyRef": 14,
+        "both": 286,
+        "headMissingName": 0,
+        "referenceMissingName": 0
+      },
+      "publicStable": {
+        "paired": 38,
+        "onlyHeadFull": 12,
+        "onlyRefFull": 1,
+        "onlyHead": 44,
+        "onlyRef": 14,
+        "both": 286,
+        "headMissingName": 0,
+        "referenceMissingName": 0
+      },
+      "publicCanary": {
+        "paired": 38,
+        "onlyHeadFull": 12,
+        "onlyRefFull": 1,
+        "onlyHead": 44,
+        "onlyRef": 14,
+        "both": 286,
+        "headMissingName": 0,
+        "referenceMissingName": 0
+      }
+    }
+  },
+  "extra": {
+    "selected": 414,
+    "counts": {
+      "candidate": {
+        "observed": 414,
+        "fully": 397,
+        "names": 5969,
+        "namedPass": 4693,
+        "page_complete": 413,
+        "page_timeout": 1
+      },
+      "priorAa": {
+        "observed": 414,
+        "fully": 325,
+        "names": 5969,
+        "namedPass": 3075,
+        "page_complete": 413,
+        "page_timeout": 1
+      },
+      "historical35df": {
+        "missing": 414
+      },
+      "localStable": {
+        "observed": 414,
+        "fully": 409,
+        "names": 5969,
+        "namedPass": 3519,
+        "page_complete": 413,
+        "page_timeout": 1
+      },
+      "publicStable": {
+        "observed": 414,
+        "fully": 409,
+        "names": 5969,
+        "namedPass": 3542,
+        "page_OK": 414
+      },
+      "publicCanary": {
+        "observed": 414,
+        "fully": 409,
+        "names": 5969,
+        "namedPass": 3542,
+        "page_OK": 414
+      }
+    },
+    "paired": {
+      "priorAa": {
+        "paired": 414,
+        "onlyHeadFull": 72,
+        "onlyRefFull": 0,
+        "onlyHead": 1618,
+        "onlyRef": 0,
+        "both": 3075,
+        "headMissingName": 0,
+        "referenceMissingName": 0
+      },
+      "historical35df": {
+        "missingReferencePage": 414
+      },
+      "localStable": {
+        "paired": 414,
+        "onlyHeadFull": 0,
+        "onlyRefFull": 12,
+        "onlyHead": 1238,
+        "onlyRef": 64,
+        "both": 3455,
+        "headMissingName": 0,
+        "referenceMissingName": 0
+      },
+      "publicStable": {
+        "paired": 414,
+        "onlyHeadFull": 0,
+        "onlyRefFull": 12,
+        "onlyHead": 1217,
+        "onlyRef": 66,
+        "both": 3476,
+        "headMissingName": 0,
+        "referenceMissingName": 0
+      },
+      "publicCanary": {
+        "paired": 414,
+        "onlyHeadFull": 0,
+        "onlyRefFull": 12,
+        "onlyHead": 1217,
+        "onlyRef": 66,
+        "both": 3476,
+        "headMissingName": 0,
+        "referenceMissingName": 0
+      }
+    }
+  },
+  "css": {
+    "selected": 1050,
+    "counts": {
+      "candidate": {
+        "observed": 1050,
+        "fully": 819,
+        "names": 36077,
+        "namedPass": 33321,
+        "page_complete": 1038,
+        "page_timeout": 8,
+        "page_error": 4
+      },
+      "priorAa": {
+        "observed": 1050,
+        "fully": 819,
+        "names": 36077,
+        "namedPass": 33321,
+        "page_complete": 1038,
+        "page_timeout": 8,
+        "page_error": 4
+      },
+      "historical35df": {
+        "missing": 1050
+      },
+      "localStable": {
+        "missing": 1050
+      },
+      "publicStable": {
+        "observed": 1050,
+        "fully": 933,
+        "names": 36094,
+        "namedPass": 34492,
+        "page_OK": 1049,
+        "page_ERROR": 1
+      },
+      "publicCanary": {
+        "observed": 1050,
+        "fully": 948,
+        "names": 36096,
+        "namedPass": 34759,
+        "page_OK": 1049,
+        "page_ERROR": 1
+      }
+    },
+    "paired": {
+      "priorAa": {
+        "paired": 1050,
+        "onlyHeadFull": 0,
+        "onlyRefFull": 0,
+        "onlyHead": 0,
+        "onlyRef": 0,
+        "both": 33321,
+        "headMissingName": 0,
+        "referenceMissingName": 0
+      },
+      "historical35df": {
+        "missingReferencePage": 1050
+      },
+      "localStable": {
+        "missingReferencePage": 1050
+      },
+      "publicStable": {
+        "paired": 1050,
+        "onlyHeadFull": 46,
+        "onlyRefFull": 160,
+        "onlyHead": 795,
+        "onlyRef": 1966,
+        "both": 32526,
+        "headMissingName": 229,
+        "referenceMissingName": 212
+      },
+      "publicCanary": {
+        "paired": 1050,
+        "onlyHeadFull": 39,
+        "onlyRefFull": 168,
+        "onlyHead": 645,
+        "onlyRef": 2083,
+        "both": 32676,
+        "headMissingName": 225,
+        "referenceMissingName": 206
+      }
+    }
+  },
+  "workers": {
+    "selected": 41,
+    "counts": {
+      "candidate": {
+        "observed": 41,
+        "fully": 27,
+        "names": 874,
+        "namedPass": 577,
+        "page_complete": 41
+      },
+      "priorAa": {
+        "observed": 41,
+        "fully": 27,
+        "names": 874,
+        "namedPass": 577,
+        "page_complete": 41
+      },
+      "historical35df": {
+        "missing": 41
+      },
+      "localStable": {
+        "missing": 41
+      },
+      "publicStable": {
+        "observed": 41,
+        "fully": 35,
+        "names": 874,
+        "namedPass": 619,
+        "page_OK": 41
+      },
+      "publicCanary": {
+        "observed": 41,
+        "fully": 35,
+        "names": 874,
+        "namedPass": 619,
+        "page_OK": 41
+      }
+    },
+    "paired": {
+      "priorAa": {
+        "paired": 41,
+        "onlyHeadFull": 0,
+        "onlyRefFull": 0,
+        "onlyHead": 0,
+        "onlyRef": 0,
+        "both": 577,
+        "headMissingName": 0,
+        "referenceMissingName": 0
+      },
+      "historical35df": {
+        "missingReferencePage": 41
+      },
+      "localStable": {
+        "missingReferencePage": 41
+      },
+      "publicStable": {
+        "paired": 41,
+        "onlyHeadFull": 0,
+        "onlyRefFull": 8,
+        "onlyHead": 0,
+        "onlyRef": 42,
+        "both": 577,
+        "headMissingName": 0,
+        "referenceMissingName": 0
+      },
+      "publicCanary": {
+        "paired": 41,
+        "onlyHeadFull": 0,
+        "onlyRefFull": 8,
+        "onlyHead": 0,
+        "onlyRef": 42,
+        "both": 577,
+        "headMissingName": 0,
+        "referenceMissingName": 0
+      }
+    }
+  }
+}

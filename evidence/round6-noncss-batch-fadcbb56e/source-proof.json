@@ -1,0 +1,31 @@
+{
+  "base": "aa0268b479a6b463da16910b4b743cf38901d962",
+  "head": "fadcbb56ee0afbcbbbed5730c12e24c72480ace6",
+  "tree": "646a7ed874eeb06808cc08e221ed8c69fb59c1b8",
+  "componentPaths": {
+    "b1acacb9cfcfeb97819ee573209309c5489a097f": [
+      "crates/pyro-webapi/src/webaudio.js",
+      "crates/pyro-webapi/src/webaudio.rs"
+    ],
+    "33ea5eaf3e5870addf7f3d6ad3249b1d4d380523": [
+      "crates/pyro-webapi/src/editing/paragraph_join.rs"
+    ],
+    "75dcebe258a873acc7690e370496af6cfda8413f": [
+      "crates/pyro-browser/src/bindings.rs",
+      "crates/pyro-browser/src/frames.rs",
+      "crates/pyro-browser/src/images.rs",
+      "crates/pyro-browser/src/lib.rs",
+      "crates/pyro-browser/src/nav.rs"
+    ],
+    "88de7ac1dbcf6c229331e1b6600a0af5f23ee1b3": [
+      "crates/pyro-webapi/src/fetch.rs",
+      "crates/pyro-webapi/src/headers.rs",
+      "crates/pyro-webapi/src/request.rs",
+      "crates/pyro-webapi/src/response.rs",
+      "crates/pyro-webapi/src/streams.js"
+    ]
+  },
+  "identicalPaths": 13,
+  "overlap": [],
+  "binarySHA256": "6f3a26b8b90304018db97b249a6fec961c880226da79feea89529c1dbfa359f1"
+}

@@ -1,0 +1,292 @@
+{
+  "candidate": "fadcbb56ee0afbcbbbed5730c12e24c72480ace6",
+  "priorAa": "aa0268b479a6b463da16910b4b743cf38901d962",
+  "historical35df": "35dfb7474ab60c46ba537a98060e2789fb2c4662",
+  "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+  "JSC": "0e0dd7038a7a-6f4649e395e0",
+  "columns": [
+    "candidate",
+    "priorAa",
+    "historical35df",
+    "localStable",
+    "publicStable",
+    "publicCanary"
+  ],
+  "receipts": {
+    "merged-aa-loss.json": {
+      "binary": "priorAa",
+      "receiptSHA256": "5432f01206f468eba437e5a2c07c67d6b55908e0919357fb4dce62e373c76b66",
+      "serverLogSHA256": "0c97dda2858c371a7b31d8fe33e3ec7d3c64f8cbf48ac56a61095b931dc162d2",
+      "serverConfigSHA256": "edeedff2036118095e74ce7610f16ecc41283db8a3ce0691c143676c5991a293",
+      "jobs": 4,
+      "urls": 159,
+      "http2": true,
+      "manifestInventory": true,
+      "restarts": 0,
+      "watchdogKills": 0,
+      "statuses": {
+        "complete": 156,
+        "timeout": 3
+      }
+    },
+    "merged-aa-batch-loss.json": {
+      "binary": "candidate",
+      "receiptSHA256": "21feec4a260917f91bf22bbda31ff38dda1ab20adf89fb646f539d5d35a96d52",
+      "serverLogSHA256": "768bd0d468c6ab900a8141f39d307a008b7e9944a12dbd6c5c8539c7e0673386",
+      "serverConfigSHA256": "ce5c0d88b0983978904e5494aa75e61a418202f3a26aaad1b012f285dfcfa36d",
+      "jobs": 4,
+      "urls": 159,
+      "http2": true,
+      "manifestInventory": true,
+      "restarts": 0,
+      "watchdogKills": 0,
+      "statuses": {
+        "complete": 156,
+        "timeout": 3
+      }
+    },
+    "merged-aa-main.json": {
+      "binary": "priorAa",
+      "receiptSHA256": "b11c68b3eb122f947502d941a3d4b1170a8c92674b93b81f2734222dab808e61",
+      "serverLogSHA256": "ff07956a122d6a134518ef70c8f0778e7d73e5a5c6ccd12664b5dc178191c8db",
+      "serverConfigSHA256": "1fb96c8902950e95dbb4c0356628296f7279534a3fbc8e24ff163b12a3a36957",
+      "jobs": 4,
+      "urls": 2407,
+      "http2": true,
+      "manifestInventory": true,
+      "restarts": 0,
+      "watchdogKills": 0,
+      "statuses": {
+        "complete": 2287,
+        "timeout": 88,
+        "error": 32
+      }
+    },
+    "merged-aa-batch-main.json": {
+      "binary": "candidate",
+      "receiptSHA256": "56d3248e5a0e17c7c86e6f8d7331401f0e1148f1564cd21e067c835812e950ed",
+      "serverLogSHA256": "45767c3613e4fadad921840cf986b5febe46de11f7fbcbcf3fe49cf0c939299c",
+      "serverConfigSHA256": "d491a9e67af07df963387cc5db1a6303461a50f9be5d450b298f54aaebf50bad",
+      "jobs": 4,
+      "urls": 2407,
+      "http2": true,
+      "manifestInventory": true,
+      "restarts": 0,
+      "watchdogKills": 0,
+      "statuses": {
+        "complete": 2288,
+        "timeout": 88,
+        "error": 31
+      }
+    },
+    "merged-aa-extra.json": {
+      "binary": "priorAa",
+      "receiptSHA256": "72f4c95fd6b76547f08848fa02f6c196d26f02954b6a13ee2926ac831ab5b3aa",
+      "serverLogSHA256": "4b1b441ab11f553c97543944b83b74a37079ee49b0a091a7f1cc0d11a432c63b",
+      "serverConfigSHA256": "2ce9a399d524e180051c1e023677a8121df1c93951d3930b2a6b398615ea8b50",
+      "jobs": 4,
+      "urls": 38,
+      "http2": true,
+      "manifestInventory": true,
+      "restarts": 0,
+      "watchdogKills": 0,
+      "statuses": {
+        "complete": 38
+      }
+    },
+    "merged-aa-batch-ext.json": {
+      "binary": "candidate",
+      "receiptSHA256": "992610b6e1c4f346ada05414204a266603077a314e3a2512629d114857aef938",
+      "serverLogSHA256": "53e614715dc95d366f2bdc573b4d027c4390911343c8bc264322380c57741437",
+      "serverConfigSHA256": "23e65323c8e4b959859dcf23a9ac61d58497feec22c2af9314c8d80372434af1",
+      "jobs": 4,
+      "urls": 38,
+      "http2": true,
+      "manifestInventory": true,
+      "restarts": 0,
+      "watchdogKills": 0,
+      "statuses": {
+        "complete": 38
+      }
+    },
+    "merged-aa-batch-extra-control.json": {
+      "binary": "priorAa",
+      "receiptSHA256": "d25ba57ac535b1a8aafd58158d9977bd8426f019379ac0cfa7c5c05ad685031c",
+      "serverLogSHA256": "6f0e848aed2ccc7765fec5f52f1dd7f7e0fb9789d37927fdf6ae1668b9b50eae",
+      "serverConfigSHA256": "87d613e8a01fcfca4fb661103ef9829fe5e7e6046b9146047b18f5b36c223683",
+      "jobs": 4,
+      "urls": 414,
+      "http2": true,
+      "manifestInventory": true,
+      "restarts": 0,
+      "watchdogKills": 0,
+      "statuses": {
+        "complete": 413,
+        "timeout": 1
+      }
+    },
+    "merged-aa-batch-extra.json": {
+      "binary": "candidate",
+      "receiptSHA256": "bd17a1fad6fac2c946cd489c30d32fa1c3bc2c4b9d17177ce1881a757e23f707",
+      "serverLogSHA256": "dda707b44349b2e7dc00c7f2f73c10d74959192dc0c08a9aa9150aa0f0b884d5",
+      "serverConfigSHA256": "4eafb8229feecb7dad214a221cd24eba9e0af032c6c8becd43819aed8943f8ca",
+      "jobs": 4,
+      "urls": 414,
+      "http2": true,
+      "manifestInventory": true,
+      "restarts": 0,
+      "watchdogKills": 0,
+      "statuses": {
+        "complete": 413,
+        "timeout": 1
+      }
+    },
+    "merged-aa-css.json": {
+      "binary": "priorAa",
+      "receiptSHA256": "b6fe39f4e522d0d3ae621b62a9863dedd94a1a630d8612992893d2346e926882",
+      "serverLogSHA256": "42f7835755fecc16a31b7fc3eb476b56f00ce35f7ea62737eef4deca1ec04661",
+      "serverConfigSHA256": "33cfc5793870df8be4b553b2d54b44bfa75634346e256eabbd3e5b009f2f554f",
+      "jobs": 2,
+      "urls": 1050,
+      "http2": false,
+      "manifestInventory": false,
+      "restarts": 0,
+      "watchdogKills": 0,
+      "statuses": {
+        "complete": 1038,
+        "timeout": 8,
+        "error": 4
+      }
+    },
+    "merged-aa-batch-css.json": {
+      "binary": "candidate",
+      "receiptSHA256": "66f2dddcfd92f30a619a767e64b55a4d302cefe7430cba6c9f3b128ea3f10d0f",
+      "serverLogSHA256": "467ff70604e1962d3137148933ae6586c3bc58cd904200fc57792d5648f4c4f0",
+      "serverConfigSHA256": "8837257661d96d81c58578ffe17f5f925e638d9960ae9b6863539d8ea30e2463",
+      "jobs": 2,
+      "urls": 1050,
+      "http2": false,
+      "manifestInventory": false,
+      "restarts": 0,
+      "watchdogKills": 0,
+      "statuses": {
+        "complete": 1038,
+        "timeout": 8,
+        "error": 4
+      }
+    },
+    "merged-aa-workers.json": {
+      "binary": "priorAa",
+      "receiptSHA256": "96e55f9a713c784d3c29f659aeac861dd5cdd008f20b8867c7919ed57f2602dd",
+      "serverLogSHA256": "4872579c59460e38ff929759bdefd84baf73de326cb44cb9e98230a126874ecf",
+      "serverConfigSHA256": "2b91f67157f1e7045e2690d41c495ae2bd3e0ce715e2bad9d2cf4768be4655a9",
+      "jobs": 2,
+      "urls": 41,
+      "http2": false,
+      "manifestInventory": true,
+      "restarts": 0,
+      "watchdogKills": 0,
+      "statuses": {
+        "complete": 41
+      }
+    },
+    "merged-aa-batch-workers.json": {
+      "binary": "candidate",
+      "receiptSHA256": "406cde83c34c41a025c4a21bdd33573142dc0b8b1d619f1f0b7e45786873eca7",
+      "serverLogSHA256": "d1582a3d61f523cc398c791589cc84dd73f23b12c553524a3cb8e580ed6e4307",
+      "serverConfigSHA256": "31e1910436b305c5432424daeb2c8ec7cf38b6cf57599f8f71bc27ed016b5c54",
+      "jobs": 2,
+      "urls": 41,
+      "http2": false,
+      "manifestInventory": true,
+      "restarts": 0,
+      "watchdogKills": 0,
+      "statuses": {
+        "complete": 41
+      }
+    },
+    "platform-loss-final.json": {
+      "binary": "historical35df",
+      "receiptSHA256": "06c92f4ca19a736448851305644c2d3deb4e71c6fc4a588298ffd1be89804f27",
+      "serverLogSHA256": "13ad8685ef21bfd03141ea8aa7bf6900455c66f319848421dbb95853d00f3cb5",
+      "serverConfigSHA256": "56a58720da9fe0576663663140c768ecc44d92802aabe083fc6b921ab07e600b",
+      "jobs": 4,
+      "urls": 159,
+      "http2": true,
+      "manifestInventory": true,
+      "restarts": 0,
+      "watchdogKills": 0,
+      "statuses": {
+        "complete": 156,
+        "timeout": 3
+      }
+    }
+  },
+  "binSha256": {
+    "candidate": "6f3a26b8b90304018db97b249a6fec961c880226da79feea89529c1dbfa359f1",
+    "priorAa": "9623217e05de0c6866256ce4f855edabf2ca810eb0d6a3ae51a93fd5ba50f7a8",
+    "historical35df": "e5ddaa6bc18125410917843e328d6680325f99690b202e8e5f573926d876f1a6"
+  },
+  "coverage": {
+    "observed": 2947,
+    "outside this merge guard": 27566,
+    "crash or vulnerability fixture (inventory only)": 43,
+    "unsupported testdriver features: bidi": 209,
+    "previously reviewed outside ordinary execution": 304,
+    "requires manifest proxy auto-configuration": 89,
+    "historical hang": 3,
+    "raw HTTP/1 transport unsupported": 20,
+    "hangs: a custom element the parser reparents into its own shadow or template cycle (lane F3a)": 2,
+    "needs the back/forward cache": 1,
+    "times out in pyro (lane F3b leftover: javascript:/srcdoc/meta refresh/history.go(0), reentrant intercepts, multi-frame traversal, sandboxed back)": 3,
+    "needs CSP connect-src violations (Trusted Types end marker)": 18,
+    "Wasm runtime withheld": 538,
+    "requires JS shell": 78,
+    "requires browser extension harness": 6
+  },
+  "distinctGuardURLs": 4038,
+  "uniquePrimaryNonCSS": 2859,
+  "historicalDisposition": {
+    "Fail": 124,
+    "Pass": 156,
+    "missing-name": 12
+  },
+  "historicalOverlapWithPrimary": 71,
+  "localStable": {
+    "version": "157.0.8103.80",
+    "os": "macOS 27.2.1 arm64",
+    "source": "corrected same-pin Chrome census",
+    "unmeasuredHere": "local stable CSS receipts unavailable"
+  },
+  "publicStable": {
+    "id": 5478394868006912,
+    "version": "157.0.8103.38",
+    "os": "Linux 22.04",
+    "revision": "1eecaa0c300058f0a47472f8a4733552f929cc63",
+    "unchangedSourceCount": 4038
+  },
+  "publicCanary": {
+    "id": 4907012216061952,
+    "version": "159.0.8143.0",
+    "os": "Linux 22.04",
+    "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+  },
+  "jscLibrarySHA256": "3deb71f8e7d14daf174e35340a4ff0c1900b0e9f576503adeb5facbb1201f029",
+  "finishedGuardReceipts": 6,
+  "namedIdentity": "canonical name and one-based occurrence within URL and run",
+  "selectedSourceBlobsChecked": 3223,
+  "referenceReportSHA256": {
+    "stable": "a620da1880353e2d4f8bf8b7aea29458b7517d6e280628a4a91c4efbd95ce36a",
+    "canary": "d86b53353c2b4494dd66bc8928cba7d09b530014ba77f760027e9d2f4f112b38"
+  },
+  "historicalKeysSHA256": "68bdbe91b1eda496adf6e1df9f5b0fde5837a12789b468677e785779a5aaaa01",
+  "baselineCensusCommit": "fdf757052183b8df60dae474f478d20de16aa436",
+  "priorIntegrationEvidenceCommit": "20fec3cd80197c06fa44a7a44a5ef98a707ef183",
+  "currentAcceptanceReference": {
+    "product": "Chrome stable",
+    "version": "158.0.8127.37",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "observedInThisBundle": false,
+    "note": "No matched Chrome 158 receipts were supplied for this readback. The existing named reference columns retain their original 157 stable and 159 canary identities."
+  }
+}
