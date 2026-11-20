@@ -2426,8 +2426,11 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                             // placed again from here (css-contain-3 § 2.1; the queries may change what
                             // fits: WPT container-queries `inline-size-bfc-floats`).
                             if let Some(styled) = cq_width {
-                                let slot_width = slot.border_width;
-                                if styled.is_none_or(|styled| (styled - slot_width).abs() > FIT_TOLERANCE) {
+                                // (the width it gets there: the slot's for an auto width, which stretches to it,
+                                // else its own; a fixed-width container in a wider slot is styled already)
+                                let item_width =
+                                    if plain_auto { slot.border_width } else { width.max(item.padding_border_sum.width) };
+                                if styled.is_none_or(|styled| (styled - item_width).abs() > FIT_TOLERANCE) {
                                     tree.set_block_child_float_floor(item.node_id, slot.y);
                                     break slot;
                                 }

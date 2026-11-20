@@ -211,3 +211,24 @@ fn many_table_rows_in_an_inline_box_build_in_linear_time() {
     assert_eq!(pixel(&img, 10, 10), GREEN);
     assert!(started.elapsed() < std::time::Duration::from_secs(20), "took {:?}", started.elapsed());
 }
+
+/// A fixed-width size container in a wider slot beside floats is kept clear of the floats down its
+/// whole height, as any box: it compared its styled width with the slot's (never equal) and took
+/// the slot at once, over a lower float. Also when no container query reads it (no width recorded).
+/// Review cycle 4, finding 1.
+#[test]
+fn fixed_width_size_container_avoids_lower_floats() {
+    for query in ["", "@container (min-width: 50px) { #c > div { color: red } }"] {
+        let img = render(&format!(
+            "<style>{query}</style><div style='width:300px;display:flow-root'>\
+             <div style='float:right;width:150px;height:20px;background:blue'></div>\
+             <div style='float:left;clear:right;width:250px;height:20px;background:green'></div>\
+             <div id=c style='width:100px;container-type:inline-size;overflow:hidden;background:orange'>\
+             <div style='height:200px'></div></div></div>"
+        ));
+        // Beside the right float there is room, but the box is taller than that slot: it goes below
+        // the left float (y 40), not over it.
+        assert_eq!(pixel(&img, 50, 30), GREEN, "the left float, not the container ({query:?})");
+        assert_eq!(pixel(&img, 50, 50), [255, 165, 0], "the container below the floats ({query:?})");
+    }
+}

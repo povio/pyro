@@ -2724,7 +2724,8 @@ impl taffy::LayoutBlockContainer for LayoutPassState<'_> {
             return None;
         }
         drop(style);
-        let content = self.nodes.container_query_sizes.lock().unwrap().get(&id).and_then(|entry| entry.size.width);
+        // (A container no query reads is placed as any box: it has no size recorded, ever.)
+        let content = self.nodes.container_query_sizes.lock().unwrap().get(&id)?.size.width;
         let Some(content) = content else { return Some(None) };
         use taffy::{CoreStyle as _, ResolveOrZero as _};
         let layout_style = node.layout_style();
