@@ -29,6 +29,93 @@ index facd048..5da0c3a 100644
  
  pub(crate) trait ComposeExt {
      fn compose<S: Simd>(
+diff --git a/src/fine/lowp/image.rs b/src/fine/lowp/image.rs
+index 1116a12..9f86a09 100644
+--- a/src/fine/lowp/image.rs
++++ b/src/fine/lowp/image.rs
+@@ -8,7 +8,7 @@ use vello_common::encode::EncodedImage;
+ use vello_common::fearless_simd::{f32x4, prelude::*, u8x16, u16x16};
+ use vello_common::pixmap::Pixmap;
+ use vello_common::simd::element_wise_splat;
+-use vello_common::util::{Div255Ext, f32_to_u8, narrow, widen};
++use vello_common::util::{f32_to_u8, narrow, widen};
+ 
+ /// A faster bilinear image renderer for the u8 pipeline.
+ #[derive(Debug)]
+@@ -75,17 +75,17 @@ impl<S: Simd> Iterator for BilinearImagePainter<'_, S> {
+ 
+         let fx = f32_to_u8(element_wise_splat(
+             self.simd,
+-            (x_shifted - x_base).mul_add(255.0, 0.5),
++            (x_shifted - x_base) * 256.0,
+         ));
+         let fy = f32_to_u8(element_wise_splat(
+             self.simd,
+-            (y_shifted - y_base).mul_add(255.0, 0.5),
++            (y_shifted - y_base) * 256.0,
+         ));
+ 
+         let fx = widen(fx);
+         let fy = widen(fy);
+-        let fx_inv = u16x16::splat(self.simd, 255) - fx;
+-        let fy_inv = u16x16::splat(self.simd, 255) - fy;
++        let fx_inv = u16x16::splat(self.simd, 256) - fx;
++        let fy_inv = u16x16::splat(self.simd, 256) - fy;
+ 
+         let x_pos1 = extend_x(x_base - 1.0);
+         let x_pos2 = extend_x(x_base);
+@@ -97,9 +97,9 @@ impl<S: Simd> Iterator for BilinearImagePainter<'_, S> {
+         let p01 = widen(sample(self.simd, &self.data, x_pos1, y_pos2));
+         let p11 = widen(sample(self.simd, &self.data, x_pos2, y_pos2));
+ 
+-        let ip1 = (p00 * fx_inv + p10 * fx).div_255();
+-        let ip2 = (p01 * fx_inv + p11 * fx).div_255();
+-        let res = narrow((ip1 * fy_inv + ip2 * fy).div_255());
++        let ip1 = p00 * fx_inv + p10 * fx;
++        let ip2 = p01 * fx_inv + p11 * fx;
++        let res = narrow(narrow((widen(ip1) * widen(fy_inv) + widen(ip2) * widen(fy) + 32768_u32) >> 16_u32));
+ 
+         self.data.cur_pos += self.data.image.x_advance;
+ 
+@@ -168,10 +168,10 @@ impl<'a, S: Simd> PlainBilinearImagePainter<'a, S> {
+                 // Pre-compute y interpolation weights
+                 let fy = f32_to_u8(element_wise_splat(
+                     simd,
+-                    (y_shifted - y_base).mul_add(255.0, 0.5),
++                    (y_shifted - y_base) * 256.0,
+                 ));
+                 let fy = widen(fy);
+-                let fy_inv = u16x16::splat(simd, 255) - fy;
++                let fy_inv = u16x16::splat(simd, 256) - fy;
+ 
+                 let cur_x_pos = f32x4::splat_pos(
+                     simd,
+@@ -220,10 +220,10 @@ impl<S: Simd> Iterator for PlainBilinearImagePainter<'_, S> {
+         // Compute x interpolation weights
+         let fx = f32_to_u8(element_wise_splat(
+             self.simd,
+-            (x_shifted - x_base).mul_add(255.0, 0.5),
++            (x_shifted - x_base) * 256.0,
+         ));
+         let fx = widen(fx);
+-        let fx_inv = u16x16::splat(self.simd, 255) - fx;
++        let fx_inv = u16x16::splat(self.simd, 256) - fx;
+ 
+         // Sample the 4 corners using pre-computed y positions
+         let p00 = widen(sample(self.simd, &self.data, x_pos1, self.y_pos1));
+@@ -232,9 +232,9 @@ impl<S: Simd> Iterator for PlainBilinearImagePainter<'_, S> {
+         let p11 = widen(sample(self.simd, &self.data, x_pos2, self.y_pos2));
+ 
+         // Bilinear interpolation
+-        let ip1 = (p00 * fx_inv + p10 * fx).div_255();
+-        let ip2 = (p01 * fx_inv + p11 * fx).div_255();
+-        let res = narrow((ip1 * self.fy_inv + ip2 * self.fy).div_255());
++        let ip1 = p00 * fx_inv + p10 * fx;
++        let ip2 = p01 * fx_inv + p11 * fx;
++        let res = narrow(narrow((widen(ip1) * widen(self.fy_inv) + widen(ip2) * widen(self.fy) + 32768_u32) >> 16_u32));
+ 
+         self.cur_x_pos += self.advance;
+ 
 diff --git a/src/fine/lowp/mod.rs b/src/fine/lowp/mod.rs
 index 5717e22..cc1bff6 100644
 --- a/src/fine/lowp/mod.rs

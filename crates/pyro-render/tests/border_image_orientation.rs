@@ -7,6 +7,20 @@ use pyro_render::*;
 
 /// Serves `image` at every URL.
 struct Image(Vec<u8>);
+
+#[test]
+fn bilinear_scaling_rounds_only_after_both_axes() {
+    let pixels = [0, 1, 0, 0].map(|level| [level, level, level, 255]).concat();
+    let fetcher: Arc<dyn Fetcher> = Arc::new(Image(encode_png(&RgbaImage { width: 2, height: 2, data: pixels })));
+    let snapshot = Snapshot {
+        html: "<!doctype html><body style='margin:0'><img style='display:block;width:3px;height:3px' src='tile.png'>".into(),
+        width: 100, height: 100, device_scale_factor: 1.0, base_url: "http://test/".into(), ..Default::default()
+    };
+    let img = Renderer::new().render(&snapshot, Area::Viewport, Backend::Cpu, &fetcher).unwrap().0;
+    let center = (img.width as usize + 1) * 4;
+    assert_eq!(&img.data[center..center + 4], &[0, 0, 0, 255]);
+    assert_eq!(&img.data[8..12], &[1, 1, 1, 255]);
+}
 impl Fetcher for Image {
     fn fetch(&self, _: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
         done(Ok(self.0.clone()));
