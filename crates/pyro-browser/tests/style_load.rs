@@ -560,3 +560,37 @@ fn media_lists_and_imports_are_their_sheet_objects() {
     let after = eval(&thread, page, "[document.getElementById('l').media, document.getElementById('l').sheet.media.mediaText].join('|')");
     assert_eq!(after, "screen|screen", "the kept list wrote nowhere");
 }
+
+/// A link repointed from sheet A to sheet B, both importing the same request: B's import is B's
+/// sheet object's alone, so while it fails (or is pending) B's `CSSImportRule.styleSheet` is null,
+/// never A's response and tainting (security review cycle 6, 3).
+#[test]
+fn a_repointed_links_import_is_never_the_previous_sheets() {
+    struct SecondFails(Rc<StaticLoader>, std::cell::Cell<u32>);
+    impl pyro_browser::ResourceLoader for SecondFails {
+        fn fetch(&self, browser: &mut pyro_browser::Browser, mut request: pyro_browser::FetchRequest, done: pyro_browser::FetchDone) {
+            if request.url.ends_with("/x.css") {
+                self.1.set(self.1.get() + 1);
+                if self.1.get() > 1 {
+                    request.url = "http://site.test/gone.css".into();
+                }
+            }
+            self.0.fetch(browser, request, done);
+        }
+    }
+    let (mut thread, page, loader) = setup("<link id=l rel=stylesheet href=a.css>");
+    loader.insert("http://site.test/a.css", "text/css", "@import \"x.css\";", Duration::ZERO);
+    loader.insert("http://site.test/b.css", "text/css", "@import \"x.css\";", Duration::ZERO);
+    loader.insert("http://site.test/x.css", "text/css", "from-a { }", Duration::ZERO);
+    thread.browser.set_loader(Some(Rc::new(SecondFails(loader.clone(), Default::default()))));
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    let read = "String(document.getElementById('l').sheet.cssRules[0].styleSheet?.cssRules[0]?.selectorText)";
+    assert_eq!(eval(&thread, page, read), "from-a");
+    eval(&thread, page, "document.getElementById('l').href = 'b.css'; ''");
+    settle(&mut thread);
+    assert_eq!(
+        eval(&thread, page, "[document.getElementById('l').sheet.href.endsWith('b.css'), String(document.getElementById('l').sheet.cssRules[0].styleSheet)].join('|')"),
+        "true|null"
+    );
+}

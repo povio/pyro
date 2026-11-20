@@ -635,6 +635,10 @@ pub struct SheetModel {
     /// The margin rules of each `@page` rule of the sheet (by its identity),
     /// parsed from its text when that changes, so their objects stay the same.
     margins: RefCell<MarginCache>,
+    /// pyro: the sheet object of its node the rules are of ([`SheetGeneration`]): another one (a
+    /// repointed link's, a replaced `<style>`'s) gets rule objects of its own, even for the same
+    /// text, never the previous object's rules (and their imports).
+    generation: Cell<Option<SheetGeneration>>,
 }
 
 type MarginCache = std::collections::HashMap<(u64, u64), (Vec<String>, Vec<Rc<RuleNode>>)>;
@@ -760,12 +764,15 @@ fn sheet_model(page: &PageDom, owner: NodeId) -> Rc<SheetModel> {
             namespaces: RefCell::default(),
             checked: Cell::new(version),
             margins: RefCell::default(),
+            generation: Cell::new(None),
         });
         page.sheet_models.borrow_mut().insert(owner, model.clone());
         model
     });
     model.checked.set(version);
-    if *model.source.borrow() != source {
+    let generation = SheetGeneration::now(page, owner);
+    let new_object = model.generation.replace(Some(generation)).is_some_and(|g| g != generation);
+    if new_object || *model.source.borrow() != source {
         let mut namespaces = Vec::new();
         model.list.replace(parsed_nodes(&source, &mut namespaces));
         model.margins.borrow_mut().clear();
@@ -963,6 +970,19 @@ impl SheetGeneration {
             response: page.sheet_response(owner).generation,
         }
     }
+}
+
+/// pyro: the parent identity of `owner`'s sheet object of `generation` for the sheets it imports
+/// ([`pyro_dom::cssom::imported_sheet_key`]): a repointed link's (or a changed `<style>`'s) new
+/// sheet object starts with no imports, never the previous one's.
+pub(crate) fn sheet_parent_identity(owner: NodeId, generation: SheetGeneration) -> String {
+    format!("{}#{}:{}", pyro_dom::cssom::sheet_owner_identity(owner), generation.style, generation.response)
+}
+
+/// pyro: [`sheet_parent_identity`] of `owner`'s sheet object now (the browser's, as it starts its
+/// imports).
+pub fn current_sheet_parent_identity(page: &PageDom, owner: NodeId) -> String {
+    sheet_parent_identity(owner, SheetGeneration::now(page, owner))
 }
 
 fn sheet_key(page: &PageDom, owner: NodeId) -> IdentityKey {
@@ -1375,21 +1395,29 @@ rule_class!(CssImportRule, "CSSImportRule", CssRule, |def| {
     });
     // The imported sheet once it loaded (one object per rule and realm).
     def.getter("styleSheet", |s, r| {
-        let key = IdentityKey(r.node()?.identity.0 | (1 << 52), r.node()?.identity.1);
+        // pyro: under the sheet object that imports it (by identity, never the request text alone).
+        let parent = match &r.owner {
+            SheetOwner::Node(h, generation) => sheet_parent_identity(h.id, *generation),
+            SheetOwner::Constructed(c) => match &c.import {
+                Some(i) => i.key.clone(),
+                None => return Ok(s.null()),
+            },
+        };
+        // pyro: one object per rule of that sheet object (a rule of a repointed link's new sheet
+        // may have the old one's rule identity: its import object is never the old one's).
+        let mixed = {
+            use std::hash::{Hash, Hasher};
+            let mut h = rustc_hash::FxHasher::default();
+            parent.hash(&mut h);
+            h.finish()
+        };
+        let key = IdentityKey(r.node()?.identity.0 | (1 << 52), r.node()?.identity.1 ^ mixed);
         if let Some(o) = s.lookup_identity(key) {
             return Ok(o.value());
         }
         let Some((page, url)) = import_url(r) else { return Ok(s.null()) };
         // pyro: the sheet of this rule's request (URL and modifiers), at its URL after redirects.
         let import = pyro_dom::cssom::import_request(&rule_prelude(r)).unwrap_or_default();
-        // pyro: under the sheet object that imports it (by identity, never the request text alone).
-        let parent = match &r.owner {
-            SheetOwner::Node(h, _) => pyro_dom::cssom::sheet_owner_identity(h.id),
-            SheetOwner::Constructed(c) => match &c.import {
-                Some(i) => i.key.clone(),
-                None => return Ok(s.null()),
-            },
-        };
         let request = pyro_dom::cssom::imported_sheet_key(&parent, &pyro_dom::cssom::import_key(&url, &import));
         let Some((final_url, text, opaque)) = page.imported_sheets.borrow().get(&request).cloned() else {
             return Ok(s.null());
@@ -1735,6 +1763,7 @@ impl Constructed {
                 namespaces: RefCell::default(),
                 checked: Cell::new(0),
                 margins: RefCell::default(),
+                generation: Cell::new(None),
             }),
             media: RefCell::new(media_text(&media)),
             disabled: Cell::new(disabled),
@@ -1769,6 +1798,7 @@ impl Constructed {
                 namespaces: RefCell::new(namespaces),
                 checked: Cell::new(0),
                 margins: RefCell::default(),
+                generation: Cell::new(None),
             }),
             media: RefCell::new(media),
             disabled: Cell::new(false),
@@ -1937,6 +1967,7 @@ fn detached_model() -> Rc<SheetModel> {
         namespaces: RefCell::default(),
         checked: Cell::new(0),
         margins: RefCell::default(),
+        generation: Cell::new(None),
     })
 }
 

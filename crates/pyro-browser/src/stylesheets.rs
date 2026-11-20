@@ -358,7 +358,8 @@ impl Browser {
             };
             let environment = document_encoding(bindings).unwrap_or_default();
             for import in imports {
-                let parent = pyro_dom::cssom::sheet_owner_identity(node);
+                // pyro: under this sheet object (its node and generations), not the node alone.
+                let parent = pyro_webapi::css::current_sheet_parent_identity(bindings, node);
                 self.fetch_style_import(page, loader, node, generation, import, 1, &sheet_url, sheet_policy, &parent, &environment);
             }
             self.style_imports_settled(page, loader, node);
@@ -516,7 +517,7 @@ impl Browser {
         let environment = document_encoding(&bindings).unwrap_or_default();
         for import in urls {
             // (A `<style>`'s imports: the document's policy.)
-            let parent = pyro_dom::cssom::sheet_owner_identity(node);
+            let parent = pyro_webapi::css::current_sheet_parent_identity(&bindings, node);
             self.fetch_style_import(page, &loader, node, generation, import, 1, &referrer, None, &parent, &environment);
         }
         self.style_imports_settled(page, &loader, node);
