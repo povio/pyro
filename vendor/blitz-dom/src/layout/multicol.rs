@@ -1814,6 +1814,11 @@ impl LayoutPassState<'_> {
                 fragment.offset.y += shift;
             }
         }
+        if !vertical {
+            for fragment in &mut fragments {
+                fragment.offset.y = snap(fragment.offset.y);
+            }
+        }
         let right = fragments.iter().map(|f| f.x + f.width).fold(width - border.right, f32::max);
         let left = fragments.iter().map(|f| f.x).fold(border.left, f32::min);
         // pyro: and what overflows its spanners below, shown under their rows (their rows paint

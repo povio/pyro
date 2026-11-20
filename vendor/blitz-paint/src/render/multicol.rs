@@ -50,7 +50,7 @@ impl ElementCx<'_, '_> {
             let (start, end) = (fragment.start as f64, fragment.end as f64);
             let (offset, range) = match vertical {
                 None => (
-                    Vec2::new(fragment.offset.x as f64 * scale, f64::from(fragment.offset.y).round() * scale),
+                    Vec2::new(fragment.offset.x as f64 * scale, f64::from(fragment.offset.y) * scale),
                     Rect::new(
                         -UNBOUNDED,
                         (start * scale).max(-UNBOUNDED),

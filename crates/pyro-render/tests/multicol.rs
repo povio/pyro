@@ -40,6 +40,13 @@ const GREEN: [u8; 3] = [0, 128, 0];
 const BLUE: [u8; 3] = [0, 0, 255];
 const BLACK: [u8; 3] = [0, 0, 0];
 
+#[test]
+fn fractional_column_translation_uses_device_pixels() {
+    let image = render(include_str!("fixtures/fractional-column-offset.html"), 3.0);
+    assert_eq!(pixel(&image, 3.0, 30.0, 7.0 / 3.0), GREEN);
+    assert_eq!(pixel(&image, 3.0, 30.0, 8.0 / 3.0), BLUE);
+}
+
 fn check(img: &RgbaImage, scale: f64, points: &[(f64, f64, [u8; 3])], what: &str) {
     let wrong: Vec<String> = points
         .iter()
