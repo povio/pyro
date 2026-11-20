@@ -84,105 +84,162 @@ fn flattened_segments(path: &BezPath, tolerance: f64) -> usize {
     total
 }
 
+/// pyro: a run of a stroked path that `cull_far_segments` keeps: its segments, and how far along
+/// its subpath it starts (where a dash pattern is there).
+struct Run {
+    path: BezPath,
+    start: f64,
+}
+
 /// pyro: `path` (in the space `transform` maps to device px) without its segments that lie wholly
-/// outside `bounds` grown by `reach` (a stroke's half width, joins and caps): a subpath is broken
-/// where they were (no join or cap there can reach into `bounds`), so expanding a stroke costs what
-/// lies near the raster, not the whole of a huge path.
-fn cull_far_segments(path: &BezPath, transform: Affine, bounds: Rect, reach: f64) -> BezPath {
-    use kurbo::PathEl;
+/// outside `bounds` grown by `reach` (a stroke's half width, joins and caps), as runs of the
+/// segments kept: no join or cap where a run ends can reach into `bounds` (its end lies on a far
+/// segment), so expanding a stroke costs what lies near the raster, not the whole of a huge path. A
+/// curve much larger than the raster is cut in halves where it nears it (a far half is left out
+/// before it is cut again; at most `MAX_SPLITS` cuts, each counted as work). A closed subpath kept
+/// whole stays closed; one broken whose closing segment and first segment are both kept is one run
+/// across its start, which keeps the join there. With `dashed`, each run knows how far along its
+/// subpath it starts, so its dashes keep their phase (lengths measured for what is reached only).
+fn cull_far_segments(path: &BezPath, transform: Affine, bounds: Rect, reach: f64, dashed: bool) -> Vec<Run> {
+    use kurbo::{ParamCurve as _, ParamCurveArclen as _, PathEl};
     let near = bounds.inflate(reach + 1.0, reach + 1.0);
-    let mut out = BezPath::new();
-    let (mut last, mut start) = (kurbo::Point::ZERO, kurbo::Point::ZERO);
-    // Whether the last point written is `last` (the pen is there), and whether this subpath lost
-    // a segment (it is then not closed: its closing line would cross the gap).
-    let (mut at_last, mut broken) = (false, false);
-    let mut keep = |out: &mut BezPath, from: kurbo::Point, points: &[kurbo::Point], at_last: &mut bool, el: PathEl| {
-        let bbox = points.iter().fold(Rect::from_points(from, from), |b, &p| b.union_pt(p));
-        if !transform.transform_rect_bbox(bbox).overlaps(near) && !near.contains(transform * from) {
-            *at_last = false;
-            return false;
-        }
-        if !*at_last {
-            out.move_to(from);
-        }
-        out.push(el);
-        *at_last = true;
-        true
-    };
-    // A curve much larger than the raster (an arc of a huge circle in view) is cut in halves until
-    // its pieces lie far outside (left out at once: neither half is cut further) or are no larger
-    // than the raster: what is kept is near. The cuts of one path are at most `MAX_SPLITS` (each
-    // counted as work), past which a piece is kept whole for vello_cpu. Whether all of it was kept.
-    fn split_far(
-        out: &mut BezPath,
-        c: kurbo::CubicBez,
-        far: &dyn Fn(Rect) -> bool,
-        keep: &mut impl FnMut(&mut BezPath, kurbo::Point, &[kurbo::Point], &mut bool, PathEl) -> bool,
-        at_last: &mut bool,
-    ) -> bool {
-        use kurbo::ParamCurve as _;
-        let (splits, size) = SPLIT.with(|s| s.get());
-        let bbox = Rect::from_points(c.p0, c.p0).union_pt(c.p1).union_pt(c.p2).union_pt(c.p3);
-        if far(bbox) {
-            *at_last = false;
-            return false;
-        }
-        let big = bbox.width().max(bbox.height()) > size;
-        if big && splits < MAX_SPLITS {
-            SPLIT.with(|s| s.set((splits + 1, size)));
-            count_segments(1);
-            let (a, b) = c.subdivide();
-            let first = split_far(out, a, far, keep, at_last);
-            let second = split_far(out, b, far, keep, at_last);
-            return first && second;
-        }
-        keep(out, c.p0, &[c.p1, c.p2, c.p3], at_last, PathEl::CurveTo(c.p1, c.p2, c.p3))
-    }
     let far = |bbox: Rect| !transform.transform_rect_bbox(bbox).overlaps(near);
-    // (The largest piece kept whole, in the path's space: the raster's size there.)
-    let inverse_scale = {
+    let size = {
         let [a, b, c, d, _, _] = transform.as_coeffs();
         let scale = (a * a + b * b).sqrt().min((c * c + d * d).sqrt());
-        if scale > 1e-12 { 1.0 / scale } else { f64::INFINITY }
+        near.width().max(near.height()) / scale.max(1e-12)
     };
-    SPLIT.with(|s| s.set((0, near.width().max(near.height()) * inverse_scale)));
+    // The pieces of one segment, in order, each kept or not.
+    fn pieces(c: kurbo::CubicBez, far: &dyn Fn(Rect) -> bool, size: f64, splits: &mut usize, out: &mut Vec<(kurbo::CubicBez, bool)>) {
+        use kurbo::ParamCurve as _;
+        let bbox = Rect::from_points(c.p0, c.p0).union_pt(c.p1).union_pt(c.p2).union_pt(c.p3);
+        if far(bbox) {
+            out.push((c, false));
+            return;
+        }
+        if bbox.width().max(bbox.height()) > size && *splits < MAX_SPLITS {
+            *splits += 1;
+            count_segments(1);
+            let (a, b) = c.subdivide();
+            pieces(a, far, size, splits, out);
+            pieces(b, far, size, splits, out);
+            return;
+        }
+        out.push((c, true));
+    }
+    let length = |el: &PathEl, from: kurbo::Point| -> f64 {
+        if !dashed {
+            return 0.0;
+        }
+        match *el {
+            PathEl::LineTo(p) => (p - from).hypot(),
+            PathEl::QuadTo(a, p) => kurbo::QuadBez::new(from, a, p).arclen(1e-3),
+            PathEl::CurveTo(a, b, p) => {
+                let c = kurbo::CubicBez::new(from, a, b, p);
+                c.arclen((c.p3 - c.p0).hypot().max(1.0) * 1e-7)
+            }
+            _ => 0.0,
+        }
+    };
+    let mut runs: Vec<Run> = Vec::new();
+    let mut splits = 0usize;
+    // The subpath: its start, the runs it has so far (index of the first), the run open, whether
+    // its first segment was kept, and whether it lost a segment.
+    let mut start = kurbo::Point::ZERO;
+    let mut last = kurbo::Point::ZERO;
+    let mut pos = 0.0f64;
+    let mut first_run = 0usize;
+    let mut open: Option<Run> = None;
+    let mut first_kept: Option<bool> = None;
+    let mut broken = false;
+    let mut segment = |el: PathEl, from: kurbo::Point, pos: &mut f64, open: &mut Option<Run>, runs: &mut Vec<Run>, first_kept: &mut Option<bool>, broken: &mut bool, splits: &mut usize| {
+        let mut list = Vec::new();
+        match el {
+            PathEl::LineTo(p) => {
+                let bbox = Rect::from_points(from, p);
+                list.push((el, !far(bbox), length(&el, from), from));
+            }
+            PathEl::QuadTo(a, p) => {
+                let mut ps = Vec::new();
+                pieces(kurbo::QuadBez::new(from, a, p).raise(), &far, size, splits, &mut ps);
+                for (c, kept) in ps {
+                    let el = PathEl::CurveTo(c.p1, c.p2, c.p3);
+                    list.push((el, kept, length(&el, c.p0), c.p0));
+                }
+            }
+            PathEl::CurveTo(a, b, p) => {
+                let mut ps = Vec::new();
+                pieces(kurbo::CubicBez::new(from, a, b, p), &far, size, splits, &mut ps);
+                for (c, kept) in ps {
+                    let el = PathEl::CurveTo(c.p1, c.p2, c.p3);
+                    list.push((el, kept, length(&el, c.p0), c.p0));
+                }
+            }
+            _ => {}
+        }
+        for (el, kept, len, p0) in list {
+            first_kept.get_or_insert(kept);
+            if kept {
+                let run = open.get_or_insert_with(|| {
+                    let mut path = BezPath::new();
+                    path.move_to(p0);
+                    Run { path, start: *pos }
+                });
+                run.path.push(el);
+            } else {
+                *broken = true;
+                if let Some(run) = open.take() {
+                    runs.push(run);
+                }
+            }
+            *pos += len;
+        }
+    };
+    let mut end_subpath = |closed: bool, open: &mut Option<Run>, runs: &mut Vec<Run>, first_run: usize, first_kept: Option<bool>, broken: bool| {
+        if closed && !broken {
+            if let Some(mut run) = open.take() {
+                run.path.close_path();
+                runs.push(run);
+            }
+            return;
+        }
+        let closing = open.take();
+        match closing {
+            // A closed subpath whose closing segment and first segment are kept: one run across
+            // its start (not for dashes, whose phase does not run on across the start).
+            Some(closing) if closed && !dashed && first_kept == Some(true) && runs.len() > first_run => {
+                let first = runs.remove(first_run);
+                let mut path = closing.path;
+                path.extend(first.path.elements().iter().skip(1).copied());
+                runs.insert(first_run, Run { path, start: closing.start });
+            }
+            Some(closing) => runs.push(closing),
+            None => {}
+        }
+    };
     for el in path.elements() {
         match *el {
             PathEl::MoveTo(p) => {
-                out.move_to(p);
-                (last, start, at_last, broken) = (p, p, true, false);
-            }
-            PathEl::LineTo(p) => {
-                broken |= !keep(&mut out, last, &[p], &mut at_last, *el);
-                last = p;
-            }
-            PathEl::QuadTo(a, p) => {
-                let cubic = kurbo::QuadBez::new(last, a, p).raise();
-                broken |= !split_far(&mut out, cubic, &far, &mut keep, &mut at_last);
-                last = p;
-            }
-            PathEl::CurveTo(a, b, p) => {
-                broken |= !split_far(&mut out, kurbo::CubicBez::new(last, a, b, p), &far, &mut keep, &mut at_last);
-                last = p;
+                end_subpath(false, &mut open, &mut runs, first_run, first_kept, broken);
+                (start, last, pos, first_run, first_kept, broken) = (p, p, 0.0, runs.len(), None, false);
             }
             PathEl::ClosePath => {
-                if broken {
-                    // Its closing line, as any segment.
-                    keep(&mut out, last, &[start], &mut at_last, PathEl::LineTo(start));
-                } else {
-                    out.close_path();
-                }
-                last = start;
+                segment(PathEl::LineTo(start), last, &mut pos, &mut open, &mut runs, &mut first_kept, &mut broken, &mut splits);
+                end_subpath(true, &mut open, &mut runs, first_run, first_kept, broken);
+                (last, pos, first_run, first_kept, broken) = (start, 0.0, runs.len(), None, false);
+            }
+            PathEl::LineTo(p) | PathEl::QuadTo(_, p) | PathEl::CurveTo(_, _, p) => {
+                segment(*el, last, &mut pos, &mut open, &mut runs, &mut first_kept, &mut broken, &mut splits);
+                last = p;
             }
         }
     }
-    out
+    end_subpath(false, &mut open, &mut runs, first_run, first_kept, broken);
+    runs
 }
 
 thread_local! {
     static SEGMENTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    /// (`cull_far_segments`: the size of the largest curve piece kept whole.)
-    static SPLIT: std::cell::Cell<(usize, f64)> = const { std::cell::Cell::new((0, f64::INFINITY)) };
 }
 
 fn count_segments(n: usize) {
@@ -417,32 +474,27 @@ impl PaintScene for VelloCpuScenePainter {
         // outside the raster are left out first, whichever way it is expanded.
         let reach = (style.width * scale * style.miter_limit.max(1.0)).max(style.width * scale);
         let path = shape.into_path(DEFAULT_TOLERANCE);
-        let path = if reach.is_finite() { cull_far_segments(&path, transform, self.raster_bounds(), reach) } else { path };
-        let near = near_raster(transform.transform_rect_bbox(curves_bbox(&path)).inflate(reach, reach), self.raster_bounds());
-        // (An outline is about twice the path's lines, and a join or cap for each element: at most
-        // `MAX_FINE_SEGMENTS` in all, as a fill.)
-        let fine = near
-            && scale.is_finite()
-            && scale > 1e-9
-            && flattened_segments(&(transform * path.clone()), FINE)
-                .saturating_mul(2)
-                .saturating_add(path.elements().len().saturating_mul(8))
-                <= MAX_FINE_SEGMENTS;
-        if fine {
-            let outline = kurbo::stroke(path.elements().iter().copied(), style, &kurbo::StrokeOpts::default(), FINE / scale);
-            count_segments(outline.elements().len());
-            self.fill(Fill::NonZero, transform, paint, brush_transform, &outline);
-            return;
+        // (A dashed stroke's runs each start their dashes where its subpath had them there.)
+        let dashed = !style.dash_pattern.is_empty();
+        if reach.is_finite() {
+            let runs = cull_far_segments(&path, transform, self.raster_bounds(), reach, dashed);
+            // (A dashed run starting along its subpath, alone or not, is stroked with its own offset.)
+            if dashed && (runs.len() > 1 || runs.first().is_some_and(|run| run.start > 0.0)) {
+                let paint = paint.into();
+                for run in runs {
+                    let mut style = style.clone();
+                    style.dash_offset += run.start;
+                    self.stroke_kept(&style, transform, paint.clone(), brush_transform, run.path, scale, reach);
+                }
+                return;
+            }
+            let mut kept = BezPath::new();
+            for run in runs {
+                kept.extend(run.path.elements().iter().copied());
+            }
+            return self.stroke_kept(style, transform, paint, brush_transform, kept, scale, reach);
         }
-        self.render_ctx.set_transform(transform);
-        self.render_ctx.set_stroke(style.clone());
-        let paint = self.convert_paint(paint.into());
-        self.render_ctx.set_paint(paint);
-        self.render_ctx
-            .set_paint_transform(brush_transform.unwrap_or(Affine::IDENTITY));
-        // (Counted as what vello_cpu expands: both sides at its quarter-pixel tolerance.)
-        count_segments(flattened_segments(&(transform * path.clone()), 0.25).saturating_mul(2));
-        self.render_ctx.stroke_path(&path);
+        self.stroke_kept(style, transform, paint, brush_transform, path, scale, reach)
     }
 
     fn fill<'a>(
@@ -1370,6 +1422,47 @@ fn units_per_em(font: &FontData) -> Option<u16> {
         .filter(|&upem| upem > 0)
 }
 
+impl VelloCpuScenePainter {
+    /// pyro: `stroke` of the path it keeps (`cull_far_segments`).
+    #[allow(clippy::too_many_arguments)]
+    fn stroke_kept<'a>(
+        &mut self,
+        style: &Stroke,
+        transform: Affine,
+        paint: impl Into<PaintRef<'a>>,
+        brush_transform: Option<Affine>,
+        path: BezPath,
+        scale: f64,
+        reach: f64,
+    ) {
+        let near = near_raster(transform.transform_rect_bbox(curves_bbox(&path)).inflate(reach, reach), self.raster_bounds());
+        // (An outline is about twice the path's lines, and a join or cap for each element: at most
+        // `MAX_FINE_SEGMENTS` in all, as a fill.)
+        let fine = near
+            && scale.is_finite()
+            && scale > 1e-9
+            && flattened_segments(&(transform * path.clone()), FINE)
+                .saturating_mul(2)
+                .saturating_add(path.elements().len().saturating_mul(8))
+                <= MAX_FINE_SEGMENTS;
+        if fine {
+            let outline = kurbo::stroke(path.elements().iter().copied(), style, &kurbo::StrokeOpts::default(), FINE / scale);
+            count_segments(outline.elements().len());
+            self.fill(Fill::NonZero, transform, paint, brush_transform, &outline);
+            return;
+        }
+        self.render_ctx.set_transform(transform);
+        self.render_ctx.set_stroke(style.clone());
+        let paint = self.convert_paint(paint.into());
+        self.render_ctx.set_paint(paint);
+        self.render_ctx
+            .set_paint_transform(brush_transform.unwrap_or(Affine::IDENTITY));
+        // (Counted as what vello_cpu expands: both sides at its quarter-pixel tolerance.)
+        count_segments(flattened_segments(&(transform * path.clone()), 0.25).saturating_mul(2));
+        self.render_ctx.stroke_path(&path);
+    }
+}
+
 #[cfg(test)]
 mod clip_rule_tests {
     use anyrender::{PaintScene, recording::Scene, render_to_buffer};
@@ -1702,5 +1795,56 @@ mod stroke_cull_tests {
         assert!(work < 2_000, "{work} cuts and segments");
         let i = (80 * 160 + 80) * 4;
         assert!(buffer[i + 2] > 200 && buffer[i] < 60, "the stroke in view: {:?}", &buffer[i..i + 4]);
+    }
+
+    fn render(path: &BezPath, stroke: &Stroke) -> Vec<u8> {
+        let mut scene = Scene::new();
+        scene.stroke(stroke, Affine::IDENTITY, Color::from_rgba8(0, 0, 255, 255), None, path);
+        render_to_buffer::<VelloCpuImageRenderer, _>(|painter| painter.append_scene(scene, Affine::IDENTITY), 160, 160)
+    }
+
+    /// pyro: a dashed path whose first segment lies far off screen keeps its dashes' phase where
+    /// it is in view: the run kept starts its dashes as far along the subpath as it is (it restarted
+    /// them where the culled segment ended). Review cycle 5, finding 4.
+    #[test]
+    fn a_dashed_path_with_an_offscreen_prefix_keeps_its_dash_phase() {
+        let stroke = Stroke::new(4.0).with_dashes(0.0, [10.0, 10.0]);
+        let mut culled = BezPath::new();
+        culled.move_to((-1005.0, 80.0));
+        culled.line_to((-500.0, 80.0));
+        culled.line_to((150.0, 80.0));
+        // The same dashes from x -5 (1000, a whole number of periods, before): nothing culled.
+        let mut near = BezPath::new();
+        near.move_to((-5.0, 80.0));
+        near.line_to((150.0, 80.0));
+        let (a, b) = (render(&culled, &stroke), render(&near, &stroke));
+        let row = |buffer: &[u8]| (0..150).map(|x| buffer[(80 * 160 + x) * 4 + 2]).collect::<Vec<_>>();
+        let (ra, rb) = (row(&a), row(&b));
+        assert!(ra.iter().zip(&rb).all(|(x, y)| x.abs_diff(*y) <= 40), "the dashes along the row: {ra:?} against {rb:?}");
+    }
+
+    /// pyro: a closed path whose far segment is left out keeps the join at its start corner, in
+    /// view: the run of its closing segment goes on into its first segment. Review cycle 5,
+    /// finding 4.
+    #[test]
+    fn a_closed_path_with_a_far_segment_keeps_its_start_join() {
+        // (Butt caps and a miter join: only the join fills the corner's outer square.)
+        let stroke = Stroke::new(8.0).with_caps(kurbo::Cap::Butt).with_join(kurbo::Join::Miter);
+        let mut culled = BezPath::new();
+        culled.move_to((20.0, 20.0));
+        culled.line_to((140.0, 20.0));
+        culled.line_to((140.0, 1.0e6));
+        culled.line_to((20.0, 1.0e6));
+        culled.close_path();
+        let mut near = BezPath::new();
+        near.move_to((20.0, 20.0));
+        near.line_to((140.0, 20.0));
+        near.line_to((140.0, 150.0));
+        near.line_to((20.0, 150.0));
+        near.close_path();
+        let (a, b) = (render(&culled, &stroke), render(&near, &stroke));
+        let at = |buffer: &[u8], x: usize, y: usize| buffer[(y * 160 + x) * 4 + 3];
+        assert!(at(&b, 17, 17) > 200, "the reference's corner");
+        assert!(at(&a, 17, 17).abs_diff(at(&b, 17, 17)) <= 40, "the join at the start corner: {} against {}", at(&a, 17, 17), at(&b, 17, 17));
     }
 }
