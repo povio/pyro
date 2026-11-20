@@ -684,3 +684,28 @@ fn disabled_is_one_flag_per_sheet_object_switched_synchronously() {
         "false|false|false|rgb(3, 3, 3)"
     );
 }
+
+/// Disabling each of many sheet objects of one `<style>` keeps bounded bookkeeping: the page holds
+/// the current sheet object's flag only (a detached one's lives in its wrappers), so 10,000
+/// replace-and-disable rounds leave at most one entry, and the semantics hold (security review
+/// cycle 9, 1).
+#[test]
+fn disabling_many_sheet_generations_keeps_bounded_bookkeeping() {
+    let (mut thread, page, _loader) = setup("<style id=s>i { color: rgb(1, 1, 1) }</style><i id=i>i</i>");
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    assert_eq!(
+        eval(
+            &thread,
+            page,
+            "globalThis.kept = s.sheet; kept.disabled = true; \
+             for (let i = 0; i < 10000; i++) { s.textContent = 'i { color: rgb(2, 2, ' + (i % 200) + ') }'; if (i % 2) s.sheet.disabled = true; else s.disabled = true; } \
+             [kept.disabled, s.disabled, s.sheet.disabled].join('|')"
+        ),
+        "true|true|true"
+    );
+    let page_dom = thread.browser.page(page).unwrap().main_frame.page_dom.clone().unwrap();
+    assert!(pyro_webapi::css::sheet_flag_count(&page_dom) <= 1, "{}", pyro_webapi::css::sheet_flag_count(&page_dom));
+    eval(&thread, page, "s.textContent = 'i { color: rgb(3, 3, 3) }'; ''");
+    assert_eq!(eval(&thread, page, "[kept.disabled, s.disabled, getComputedStyle(i).color].join('|')"), "true|false|rgb(3, 3, 3)");
+}

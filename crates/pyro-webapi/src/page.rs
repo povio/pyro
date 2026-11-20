@@ -356,10 +356,10 @@ pub struct PageDom {
     /// over: a later attribute change wins, as it updates the internal slot.
     nonces: RefCell<FxHashMap<NodeId, (Option<String>, String)>>,
     pub(crate) sheet_models: RefCell<FxHashMap<NodeId, Rc<crate::css::SheetModel>>>,
-    /// pyro: THE `disabled` flag of each node's sheet objects, by sheet object (node and
-    /// generation): `sheet.disabled` and `style.disabled` read and write it alike; a new sheet
-    /// object has none (enabled) (`css::set_sheet_object_disabled`).
-    pub(crate) sheet_flags: RefCell<FxHashMap<(NodeId, crate::css::SheetGeneration), bool>>,
+    /// pyro: the `disabled` flag of each node's CURRENT sheet object (its association): one entry
+    /// per node, the cell every wrapper of that sheet object shares (`css::sheet_flag`). A detached
+    /// sheet object's flag lives only in its wrappers and goes with them.
+    pub(crate) sheet_flags: RefCell<FxHashMap<NodeId, (crate::css::SheetGeneration, Rc<Cell<bool>>)>>,
     /// The text of each sheet a `<style>` imported, by its absolute URL (for
     /// `CSSImportRule.styleSheet`); the embedder provides it as it loads.
     /// pyro: by the import's request key (`pyro_dom::cssom::import_key`: its URL and modifiers),
