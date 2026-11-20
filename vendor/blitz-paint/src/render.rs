@@ -514,14 +514,24 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         // resolved (with transforms: css-transforms transform-translate-001, a translated box
         // overflowing the viewport), as the document's scrollWidth/scrollHeight.
         let doc_scale = self.dom.as_ref().viewport().scale_f64();
-        let (doc_width, doc_height) = self.root_element_id.and_then(|id| self.dom.get_node(id)).map_or((0.0, 0.0), |root| {
-            let l = root.final_layout();
-            let overflow = root.scrollable_overflow().scale_from_origin(1.0 / doc_scale);
-            (
-                ((l.location.x + l.size.width + l.margin.right) as f64).max(l.location.x as f64 + overflow.x1),
-                ((l.location.y + l.size.height + l.margin.bottom) as f64).max(l.location.y as f64 + overflow.y1),
-            )
-        });
+        // pyro: and where it starts: a document scrolled from the right
+        // (`viewport_scrolls_leftward`: a vertical-rl or rtl root's, scrolled from x = 0 to
+        // negative offsets) reaches what overflows the viewport's left edge, which is where the
+        // thumb's track starts (Chrome: WPT css-writing-modes `sizing-orthog-htb-in-vrl-001`, the
+        // thumb at the track's right end at first). Overflow above it or, in a document scrolled
+        // from the left, before its left edge is out of reach (WPT css-overflow
+        // `overflow-clip-margin-007`).
+        let leftward = self.dom.as_ref().viewport_scrolls_leftward();
+        let (doc_width, doc_height, doc_left) =
+            self.root_element_id.and_then(|id| self.dom.get_node(id)).map_or((0.0, 0.0, 0.0), |root| {
+                let l = root.final_layout();
+                let overflow = root.scrollable_overflow().scale_from_origin(1.0 / doc_scale);
+                (
+                    ((l.location.x + l.size.width + l.margin.right) as f64).max(l.location.x as f64 + overflow.x1),
+                    ((l.location.y + l.size.height + l.margin.bottom) as f64).max(l.location.y as f64 + overflow.y1),
+                    if leftward { (l.location.x as f64 + overflow.x0).min(0.0) } else { 0.0 },
+                )
+            });
         let origin = Vec2::new(self.initial_x, self.initial_y);
         let (port_w, port_h) = (port.width() / s, port.height() / s);
         let port_origin = ((port.x0 - origin.x) / s, (port.y0 - origin.y) / s);
@@ -532,8 +542,8 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         }
         if bars.shown.x {
             let track = Rect::new(port.x0, port.y1, port.x1, port.y1 + thickness);
-            let content = (doc_width - port_origin.0).max(port_w);
-            paint_classic_scrollbar(scene, colors, Affine::IDENTITY, track, false, port_w, content, scroll.x, s);
+            let content = (doc_width - doc_left - port_origin.0).max(port_w);
+            paint_classic_scrollbar(scene, colors, Affine::IDENTITY, track, false, port_w, content, scroll.x - doc_left, s);
         }
         if bars.shown.x && bars.shown.y {
             let corner = Rect::new(port.x1, port.y1, port.x1 + thickness, port.y1 + thickness);
