@@ -1270,6 +1270,7 @@ fn register(engine: &Engine, service: bool, shared_worker: bool) -> pyro_js::Cla
     if service {
         return engine.register::<ServiceWorkerGlobalScope>();
     }
+    engine.register::<crate::file_reader::FileReaderSync>();
     if shared_worker {
         return engine.register::<SharedWorkerGlobalScope>();
     }
