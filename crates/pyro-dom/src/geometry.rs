@@ -480,10 +480,8 @@ pub trait GeometrySource {
     fn element_quads(&self, _key: u64) -> Option<ExternalQuads> {
         None
     }
-    /// The pieces of one element's border box when the engine splits it into fragments (column
-    /// breaks), each where it is shown (document coordinates, as [`ExternalBox`]'s: x, y, width,
-    /// height), as of the last sync; `None` when it is one piece. Hit testing asks only while
-    /// [`GeometrySource::has_fragmented_boxes`].
+    /// Hit regions (document x, y, width, height) when fragmentation restricts the element's
+    /// bounds. `None` uses the whole box; an empty list admits no hits.
     fn element_fragments(&self, _key: u64) -> Option<Vec<[f64; 4]>> {
         None
     }

@@ -29,6 +29,26 @@ pub(crate) struct Page {
     pub(crate) layout: Layout,
 }
 
+#[test]
+fn hit_each_child_fragment_through_its_spanner_continuation() {
+    for (wrapped, layer, under_overlap) in [(true, "", false), (false, "", true), (true, "position:relative", true)] {
+        let (open, close) = if wrapped { ("<div>", "</div>") } else { ("", "") };
+        let page = page(&format!("<!doctype html><style>body{{margin:0}}section{{width:100px;columns:2;column-gap:0}}header{{height:60px}}aside{{column-span:all;height:40px}}article{{width:120px;height:100px;margin-top:-70px;{layer}}}</style><section>{open}<header id=h></header><aside id=s></aside><article id=a></article>{close}</section>"));
+        for (x, y, target) in [
+            (10., 10., if under_overlap { "a" } else { "h" }),
+            (60., 10., if under_overlap { "a" } else { "h" }),
+            (10., 40., if under_overlap { "a" } else { "s" }),
+            (10., 77., "a"),
+            (155., 77., "a"),
+        ] {
+            let expected = Some(page.id(target));
+            assert_eq!(page.layout.element_from_point(&page.dom, x, y), expected, "wrapped={wrapped} {layer} ({x},{y})");
+            assert_eq!(page.layout.element_from_point_scan(&page.dom, x, y), expected);
+            assert_eq!(page.layout.element_from_point_descent(&page.dom, x, y), expected);
+        }
+    }
+}
+
 /// Fills shadow root `root` with `html` (parsed in a scratch element).
 pub(crate) fn fill_shadow(p: &mut Page, root: NodeId, html: &str) {
     let scratch = p.dom.create_element(p.doc, "div").unwrap();

@@ -362,6 +362,10 @@ impl Geometry {
     /// column (document CSS px; Chromium's fragments, which `getClientRects` lists and hit
     /// testing tests one by one). `None` when no multi-column container shows it.
     pub(crate) fn columns_pieces(&self, doc: &BaseDocument, id: NodeId) -> Option<Vec<Rect>> {
+        self.column_rects(doc, id, false)
+    }
+
+    pub(crate) fn column_rects(&self, doc: &BaseDocument, id: NodeId, for_hit: bool) -> Option<Vec<Rect>> {
         if !doc.has_multicol() {
             return None;
         }
@@ -386,10 +390,18 @@ impl Geometry {
         };
         // A strip rectangle cut at the container's breaks, each piece where its column shows it
         // (the container's coordinates), with its height in the strip.
-        let cut = |columns: &blitz_dom::ColumnFragments, chain: &[&blitz_dom::Node], strip: Rect, out: &mut Vec<(Rect, f64)>| {
+        let mut restricted = false;
+        let mut cut = |columns: &blitz_dom::ColumnFragments, chain: &[&blitz_dom::Node], strip: Rect, out: &mut Vec<(Rect, f64)>| {
             let child = chain.iter().find(|node| columns.first_after_spanner.contains_key(&node.id)).unwrap_or(&chain[0]).id;
+            let through_continuation = for_hit && columns.first_after_spanner.contains_key(&child) && chain.iter()
+                    .find(|node| columns.run_wrappers.contains(&node.id) || box_position(node) != BoxPosition::Static || node.is_stacking_context_root(false))
+                    .is_some_and(|node| columns.run_wrappers.contains(&node.id));
             for f in &columns.fragments {
                 let Some(start) = columns.child_start(child, f.start) else { continue };
+                let start = if through_continuation && start < f.start {
+                    restricted = true;
+                    f.start
+                } else { start };
                 let (y0, y1) = (strip.y0.max(start as f64), strip.y1.min(f.end as f64));
                 let shows =
                     if strip.height() > 0.0 { y1 > y0 } else { strip.y0 >= start as f64 && strip.y0 < f.end as f64 };
@@ -439,7 +451,8 @@ impl Geometry {
         let (t, _) = self.transform(doc, container.id)?;
         let scroll = container.scroll_offset();
         let base = t * Affine::translate((-scroll.x, -scroll.y));
-        (!out.is_empty()).then(|| out.into_iter().map(|(rect, _)| base.transform_rect_bbox(rect)).collect())
+        (restricted || if for_hit { out.len() > 1 } else { !out.is_empty() })
+            .then(|| out.into_iter().map(|(rect, _)| base.transform_rect_bbox(rect)).collect())
     }
 
     /// The box Blitz lays out for `id`, before the adjustments. A node that

@@ -2177,9 +2177,8 @@ impl Renderer {
         self.geometry.get(&page)?.element_quads(&m.doc, m.node(key)?)
     }
 
-    /// pyro: the pieces of the border box of the element keyed `key` in `page`'s persistent
-    /// document when column breaks split it, each where its column shows it (document CSS px:
-    /// x, y, width, height), as of the last [`Renderer::sync_layout`]; `None` when it is whole.
+    /// Hit regions of a fragmented box in document CSS pixels. Unlike CSSOM border rects,
+    /// these only include the part reachable through the owning fragment's hit traversal.
     pub fn element_fragments(&self, page: u64, key: u64) -> Option<Vec<[f64; 4]>> {
         let m = self.mirrors.get(&page)?;
         let (g, id) = (self.geometry.get(&page)?, m.node(key)?);
@@ -2188,8 +2187,8 @@ impl Renderer {
         if !g.in_layout_tree(&m.doc, id) || g.projective(&m.doc, id).is_some() {
             return None;
         }
-        let pieces = g.columns_pieces(&m.doc, id)?;
-        (pieces.len() > 1).then(|| pieces.iter().map(|r| [r.x0, r.y0, r.width(), r.height()]).collect())
+        let pieces = g.column_rects(&m.doc, id, true)?;
+        Some(pieces.into_iter().map(|r| [r.x0, r.y0, r.width(), r.height()]).collect())
     }
 
     /// pyro: whether `page`'s persistent document may have boxes split by column breaks (a
