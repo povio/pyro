@@ -223,6 +223,11 @@ impl Dom {
         self.top_layer.invokers.get(&el).copied()
     }
 
+    pub fn popover_anchor_keys(&self) -> Vec<(u64, u64)> {
+        use crate::snapshot::render_key;
+        self.top_layer.invokers.iter().map(|(&popover, &source)| (render_key(popover), render_key(source))).collect()
+    }
+
     /// Keeps `el` in the top layer when it next stops being modal or showing, until
     /// [`Dom::finish_top_layer_exit`]: an `overlay` transition keeps it rendered there
     /// (css-position-4 §4.1). Its popover stack and invoker go as usual.

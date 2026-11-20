@@ -2,6 +2,26 @@ use pyro_dom::cssom::{ParsedRule, parse_one_rule};
 use pyro_dom::stylo::declarations::DeclarationBlock;
 
 #[test]
+fn popover_sources_use_direct_default_anchor_lookup() {
+    for count in [16, 64] {
+        let html = format!("<!doctype html><style>main{{position:relative}}i,em{{display:block;width:30px;height:10px}}em{{width:70px}}b{{position:absolute;position-anchor:auto;left:anchor(right,7px);width:anchor-size(width,2px);height:5px}}</style><main>{}<i></i><em></em><b></b></main>", "<span></span>".repeat(count));
+        let mut doc = blitz_html::HtmlDocument::from_html(&html, Default::default());
+        doc.viewport_mut().window_size = (400,300);
+        doc.resolve(0.);
+        let target = doc.query_selector("b").unwrap().unwrap();
+        for (selector, width) in [(Some("i"),30.),(Some("em"),70.),(None,2.)] {
+            let source = selector.map(|value| doc.query_selector(value).unwrap().unwrap());
+            doc.set_popover_anchors(source.map(|id| (target,id)).into_iter().collect());
+            let before = doc.anchor_candidate_visits();
+            doc.resolve(0.);
+            let layout = doc.get_node(target).unwrap().final_layout();
+            assert_eq!((layout.location.x,layout.size.width),(if source.is_some(){width}else{7.},width));
+            assert!(doc.anchor_candidate_visits()-before <= 8);
+        }
+    }
+}
+
+#[test]
 fn sticky_anchor_uses_one_raw_sticky_translation() {
     let html = "<!doctype html><style>main{position:relative;width:200px;height:150px}section{height:100px;overflow:auto}i{display:block;position:sticky;top:0;height:20px;anchor-name:--a}section div{height:300px}b{position:absolute;position-anchor:--a;top:anchor(bottom);left:0;width:10px;height:10px}</style><main><section><i></i><div></div></section><b></b></main>";
     let mut doc = blitz_html::HtmlDocument::from_html(html, blitz_dom::DocumentConfig::default());

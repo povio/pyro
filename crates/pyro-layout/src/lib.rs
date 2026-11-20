@@ -494,6 +494,7 @@ impl BlitzGeometry {
             element_scroll: None,
             sticky_offsets: None,
             scroll_targets: None,
+            popover_anchors: dom.popover_anchor_keys(),
             animations: None,
             frame_animations: Vec::new(),
             transition_frames: Vec::new(),
@@ -619,11 +620,12 @@ impl BlitzGeometry {
                         guarded(r, self.page, |r| {
                             // pyro: the frame elements of the delta name entries of this table.
                             r.set_frame_table(self.page, frames.clone());
-                            r.sync_delta(
+                            r.sync_delta_with_anchors(
                                 self.page,
                                 &ops,
                                 (viewport.0, viewport.1, dpr, viewport.3, viewport.4),
                                 style_only,
+                                &dom.popover_anchor_keys(),
                             )
                             .ok()
                         })

@@ -2515,12 +2515,11 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
     }
 
     fn oof_anchor_center(&self, id: NodeId, container: NodeId) -> taffy::Point<Option<f32>> {
-        use style::values::specified::{align::AlignFlags,position::{PositionAnchorKeyword,PositionAreaTrack}};
+        use style::values::specified::{align::AlignFlags,position::PositionAreaTrack};
         let none = taffy::Point { x:None,y:None };
-        if self.named_anchor_nodes.is_empty() { return none; }
+        if !self.has_anchor_sources() { return none; }
         let item = self.get_oof_item_style(id);
         let pos = item.style.get_position();
-        let PositionAnchorKeyword::Ident(name) = &pos.position_anchor.value else { return none };
         let container = self.node_from_id(container);
         let Some(cb) = container.primary_styles() else { return none };
         let area = pos.position_area.to_physical(cb.writing_mode,item.style.writing_mode);
@@ -2530,7 +2529,7 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
         let (x,y)=(center(x,area.first.track()),center(y,area.second.track()));
         if !x && !y {return none;}
         let node = self.node_from_id(id);
-        let Some((anchor,point,extent)) = self.anchor_rect(node,container,name,pos.position_anchor.scope) else {return none};
+        let Some((anchor,point,extent)) = self.default_anchor_rect(node,container,&item.style) else {return none};
         let old = node.anchor_scroll_axes.get();
         node.anchor_scroll_axes.set((if x {Some(anchor)} else {old.0}, if y {Some(anchor)} else {old.1}));
         use stylo_taffy::WritingModeExt;
@@ -2586,7 +2585,6 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
         use style::logical_geometry::{PhysicalSide, WritingMode};
         use style::values::computed::position::Inset;
         use style::values::generics::position::{GenericAnchorSide, AnchorSideKeyword as Side};
-        use style::values::specified::position::PositionAnchorKeyword;
         let node = self.node_from_id(node);
         let container = self.node_from_id(container);
         let item = self.get_oof_item_style(taffy_node_id(node.id));
@@ -2599,18 +2597,16 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
         if wm.swaps_axes() && !wm.is_vertical_lr() { offset.x = self.anchor_physical_size(container).width - offset.x - size.width; }
         let coordinate = |target: &style::values::generics::position::TreeScoped<style::values::DashedIdent>, anchor_side: &style::values::computed::position::AnchorSide, side: PhysicalSide| {
             if !anchor_side.valid_for(side) { return None; }
-            let (name, level) = if target.value.0.is_empty() {
-                let PositionAnchorKeyword::Ident(name) = &pos.position_anchor.value else { return None };
-                (name,pos.position_anchor.scope)
-            } else { (&target.value,target.scope) };
-            let (anchor,point, extent) = self.anchor_rect(node,container,name,level)?;
+            let (anchor,point, extent) = if target.value.0.is_empty() {
+                self.default_anchor_rect(node,container,style)
+            } else { self.anchor_rect(node,container,&target.value,target.scope) }?;
             let horizontal = side.parallel_to(PhysicalSide::Left);
             let adjustment_anchor = if target.value.0.is_empty() {
                 Some(anchor)
-            } else if let PositionAnchorKeyword::Ident(default) = &pos.position_anchor.value {
-                let default = *default_anchor.get_or_init(|| self.anchor_rect(node, container, default, pos.position_anchor.scope).map(|(id, _, _)| id));
+            } else {
+                let default = *default_anchor.get_or_init(|| self.default_anchor_rect(node, container, style).map(|(id, _, _)| id));
                 default.filter(|&id| id == anchor || self.nodes[id].nearest_anchor_scrollport(horizontal) == self.nodes[anchor].nearest_anchor_scrollport(horizontal))
-            } else { None };
+            };
             if let Some(anchor) = adjustment_anchor {
                 let (old_x,old_y) = node.anchor_scroll_axes.get();
                 node.anchor_scroll_axes.set(if horizontal {(Some(anchor),old_y)} else {(old_x,Some(anchor))});
@@ -2660,7 +2656,7 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
     }
 
     fn oof_anchor_area(&self, node: NodeId, container: NodeId, size: taffy::Size<f32>, offset: taffy::Point<f32>, trial: bool) -> Option<(taffy::Size<f32>, taffy::Point<f32>, taffy::Point<taffy::AlignSelf>)> {
-        use style::values::specified::position::{PositionAnchorKeyword, PositionAreaTrack};
+        use style::values::specified::position::PositionAreaTrack;
         let node = self.node_from_id(node);
         if node.anchor_scroll_axes.get() != (None,None) { node.anchor_scroll_axes.set((None,None)); }
         node.anchor_visibility_target.set(None);
@@ -2672,10 +2668,7 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
         let valid = pos.position_visibility.contains(style::values::computed::PositionVisibility::ANCHOR_VALID);
         let visible = pos.position_visibility.contains(style::values::computed::PositionVisibility::ANCHOR_VISIBLE);
         if pos.position_area.is_none() && !valid && !visible {return None;}
-        let default = match &pos.position_anchor.value {
-            PositionAnchorKeyword::Ident(name) => self.anchor_rect(node,container,name,pos.position_anchor.scope),
-            _ => None,
-        };
+        let default = self.default_anchor_rect(node,container,style);
         if visible { node.anchor_visibility_target.set(default.map(|(id,_,_)|id)); }
         if valid && default.is_none() {
             use style::values::computed::{position::Inset,length::{Size,MaxSize,Margin}};

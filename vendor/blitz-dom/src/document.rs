@@ -662,6 +662,7 @@ pub struct BaseDocument {
     /// tree changed since `resolve_scroll_markers` (`layout::scroll_markers`).
     pub(crate) scroll_markers_dirty: bool,
     pub(crate) named_anchor_nodes: HashMap<(Option<NodeId>, style::values::DashedIdent), HashSet<NodeId>>,
+    pub(crate) popover_anchors: HashMap<NodeId, NodeId>,
     anchor_node_names: HashMap<NodeId, (Option<NodeId>, style::values::specified::position::AnchorNameIdent)>,
     anchor_rule_users: HashMap<Atom, HashSet<usize>>,
     anchor_list_users: HashMap<usize, HashSet<NodeId>>,
@@ -999,6 +1000,7 @@ impl BaseDocument {
             marker_items_restyled: Vec::new(),
             scroll_markers_dirty: true,
             named_anchor_nodes: HashMap::new(),
+            popover_anchors: HashMap::new(),
             anchor_node_names: HashMap::new(),
             anchor_rule_users: HashMap::new(),
             anchor_list_users: HashMap::new(),
@@ -1612,7 +1614,20 @@ impl BaseDocument {
     }
     pub fn anchor_index_work(&self) -> u64 { self.anchor_index.borrow().work.get() }
     pub fn anchor_boundary_entries(&self) -> usize { self.anchor_index.borrow().boundary_entries() }
-    pub fn has_named_anchors(&self) -> bool { !self.named_anchor_nodes.is_empty() }
+    pub fn has_anchor_sources(&self) -> bool { !self.named_anchor_nodes.is_empty() || !self.popover_anchors.is_empty() }
+
+    pub fn set_popover_anchors(&mut self, anchors: HashMap<NodeId, NodeId>) {
+        if self.popover_anchors == anchors { return; }
+        let old = std::mem::replace(&mut self.popover_anchors, anchors);
+        for id in old.keys().chain(self.popover_anchors.keys()) {
+            if old.get(id) == self.popover_anchors.get(id) { continue; }
+            if let Some(node) = self.nodes.get_mut(*id) {
+                let block = node.containing_block();
+                node.insert_damage(crate::layout::damage::ONLY_RELAYOUT);
+                if let Some(block) = block.and_then(|id| self.nodes.get_mut(id)) { block.insert_damage(crate::layout::damage::ONLY_RELAYOUT); }
+            }
+        }
+    }
     pub fn anchor_try_visits(&self) -> u64 { self.anchor_try_visits.get() }
     pub fn anchor_list_visits(&self) -> u64 { self.anchor_list_visits.get() }
     pub fn anchor_clip_steps(&self) -> u64 { self.nodes.anchor_clip_steps.load(std::sync::atomic::Ordering::Relaxed) }

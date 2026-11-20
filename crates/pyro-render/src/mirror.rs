@@ -296,6 +296,11 @@ impl Mirror {
 
     /// Gives the document the current scroll targets in `targets` (by key; `u64::MAX`: the
     /// viewport's, which is the root element's), for scroll marker selection.
+    pub(crate) fn set_popover_anchors(&mut self, pairs: &[(u64, u64)]) {
+        let anchors = pairs.iter().filter_map(|&(popover, source)| Some((self.node(popover)?, self.node(source)?))).collect();
+        self.doc.set_popover_anchors(anchors);
+    }
+
     pub(crate) fn set_scroll_targets(&mut self, targets: &[(u64, u64)]) {
         let root = self.doc.try_root_element().map(|root| root.id);
         let targets: Vec<(NodeId, NodeId)> = targets

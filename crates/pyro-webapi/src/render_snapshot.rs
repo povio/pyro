@@ -46,6 +46,7 @@ pub struct RenderSnapshot {
     /// The current scroll targets (CSS Overflow 5 § 2.1) by render key, each scroll container's
     /// (`u64::MAX`: the viewport's) with its target's, in every form.
     pub scroll_targets: Vec<(u64, u64)>,
+    pub popover_anchors: Vec<(u64, u64)>,
     /// Render keys (`pyro_dom::snapshot::render_key`) of the element under the
     /// pointer and the focused element, in every form.
     pub hovered: Option<u64>,
@@ -268,6 +269,7 @@ fn snapshot_of(
             element_scroll: layout.scrolled_elements(),
             sticky_offsets: layout.sticky_offsets(dom),
             scroll_targets: layout.scroll_targets(dom),
+            popover_anchors: dom.popover_anchor_keys(),
             hovered: dom.hovered(document).map(pyro_dom::snapshot::render_key),
             focused: dom.focused(document).ok().flatten().map(pyro_dom::snapshot::render_key),
             canvases: Vec::new(),

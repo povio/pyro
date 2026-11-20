@@ -155,15 +155,11 @@ impl BaseDocument {
         style: &style::properties::ComputedValues,
     ) -> Option<f32> {
         use style::values::generics::length::AnchorSizeKeyword as Axis;
-        use style::values::specified::position::PositionAnchorKeyword;
-        let default = &style.get_position().position_anchor;
-        let (name, level) = if func.target_element.value.0.is_empty() {
-            let PositionAnchorKeyword::Ident(name) = &default.value else { return None };
-            (name, default.scope)
+        let (_, _, extent) = if func.target_element.value.0.is_empty() {
+            self.default_anchor_rect(node, container, style)
         } else {
-            (&func.target_element.value, func.target_element.scope)
-        };
-        let (_, _, extent) = self.anchor_rect(node, container, name, level)?;
+            self.anchor_rect(node, container, &func.target_element.value, func.target_element.scope)
+        }?;
         let width = match func.size {
             Axis::None => horizontal,
             Axis::Width => true,
@@ -175,6 +171,21 @@ impl BaseDocument {
         };
         Some(if width { extent.width } else { extent.height })
     }
+    pub(super) fn default_anchor_rect(&self, node: &Node, container: &Node, style: &style::properties::ComputedValues) -> Option<(crate::NodeId, taffy::Point<f32>, taffy::Size<f32>)> {
+        use style::values::specified::position::PositionAnchorKeyword;
+        let pos = style.get_position();
+        match &pos.position_anchor.value {
+            PositionAnchorKeyword::Ident(name) => self.anchor_rect(node,container,name,pos.position_anchor.scope),
+            PositionAnchorKeyword::Auto | PositionAnchorKeyword::Normal if !pos.position_area.is_none() || matches!(pos.position_anchor.value,PositionAnchorKeyword::Auto) => {
+                let source = *self.popover_anchors.get(&node.id)?;
+                self.nodes.get(source)?;
+                self.anchor_lookup_visits.set(self.anchor_lookup_visits.get().saturating_add(1));
+                self.anchor_geometry(node,container,source,Some(node.id))
+            }
+            _ => None,
+        }
+    }
+
     pub(super) fn anchor_rect(
         &self,
         node: &Node,

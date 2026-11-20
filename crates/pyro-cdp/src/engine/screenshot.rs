@@ -617,6 +617,7 @@ impl EngineHost {
             element_scroll: Some(s.element_scroll),
             sticky_offsets: Some(s.sticky_offsets),
             scroll_targets: Some(s.scroll_targets),
+            popover_anchors: s.popover_anchors,
             // CSS animations, transitions and Web Animations as they are now.
             animations: Some(Arc::new(pyro_layout::animation_frame(&dom.animation_frame()))),
             // pyro: what `content-visibility: auto` skips as the page's layout engine determined it.

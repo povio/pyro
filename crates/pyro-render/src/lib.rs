@@ -230,6 +230,7 @@ pub struct Snapshot {
     /// selection): each scroll container's key (`u64::MAX` for the viewport) and its target's.
     /// `None` leaves the document's.
     pub scroll_targets: Option<Vec<(u64, u64)>>,
+    pub popover_anchors: Vec<(u64, u64)>,
     /// Straight RGBA painted under the document where it has no background
     /// (CDP `Emulation.setDefaultBackgroundColorOverride`); `None`: white.
     pub background: Option<[u8; 4]>,
@@ -1345,6 +1346,7 @@ impl Renderer {
                             m.set_scroll_targets(targets);
                         }
                         m.set_canvases(&snap.canvases);
+                        m.set_popover_anchors(&snap.popover_anchors);
                         // The selection's text nodes, both in the document.
                         let selection_paint = selection;
                         let selection = snap.selection.filter(|_| selection).and_then(|s| {
@@ -1665,6 +1667,17 @@ impl Renderer {
         viewport: (u32, u32, f64, bool, bool),
         style_only: bool,
     ) -> Result<Timings, RenderError> {
+        self.sync_delta_with_anchors(page, ops, viewport, style_only, &[])
+    }
+
+    pub fn sync_delta_with_anchors(
+        &mut self,
+        page: u64,
+        ops: &[DeltaOp],
+        viewport: (u32, u32, f64, bool, bool),
+        style_only: bool,
+        anchors: &[(u64, u64)],
+    ) -> Result<Timings, RenderError> {
         let started = Instant::now();
         let mut timings = Timings::default();
         let m = self.mirrors.get_mut(&page).ok_or(RenderError::NoElement)?;
@@ -1674,6 +1687,7 @@ impl Renderer {
             return Err(RenderError::BadArea("the viewport changed".into()));
         }
         m.apply_delta(ops).map_err(|_| RenderError::BadArea("the delta does not fit the document".into()))?;
+        m.set_popover_anchors(anchors);
         // pyro: a new state of the page determines `content-visibility: auto` relevance anew.
         m.doc.clear_content_visibility_forcing();
         self.apply_animations(page);
@@ -1966,7 +1980,7 @@ impl Renderer {
 
     pub fn anchor_scroll_shift(&self, page: u64, key: u64, scroll: &dyn Fn(Option<u64>) -> (f64, f64), sticky: &dyn Fn(u64) -> (f64, f64)) -> Option<(f64, f64)> {
         let mirror = self.mirrors.get(&page)?;
-        if !mirror.doc.has_named_anchors() { return None; }
+        if !mirror.doc.has_anchor_sources() { return None; }
         let mut node = mirror.doc.get_node(mirror.node(key)?)?;
         let mut shift = (0.0, 0.0);
         for _ in 0..node.tree().len() {
