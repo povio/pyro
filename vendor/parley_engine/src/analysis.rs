@@ -104,6 +104,15 @@ impl Analysis {
         &self.levels
     }
 
+    /// Inherit the embedding direction when shaping an inserted string within a resolved run.
+    pub fn set_run_direction(&mut self, rtl: bool) {
+        self.paragraph_level = BidiLevel::new(u8::from(rtl));
+        self.levels.clear();
+        if rtl {
+            self.levels.resize(self.info.len(), self.paragraph_level);
+        }
+    }
+
     /// The base bidi level of the paragraph of text.
     #[inline(always)]
     pub fn paragraph_level(&self) -> BidiLevel {

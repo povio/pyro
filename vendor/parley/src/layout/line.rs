@@ -72,6 +72,7 @@ impl<'a, B: Brush> Line<'a, B> {
 
         Some(match item.kind {
             LayoutItemKind::TextRun => LineItem::Run(Run {
+                replacement_source: None,
                 layout: self.layout,
                 line_index: self.index,
                 index: original_index as u32,
@@ -194,35 +195,26 @@ impl<'a, B: Brush> Line<'a, B> {
     ) -> impl Iterator<Item = LineItem<'a, B>> + Clone + use<'a, B> {
         let copy = self.clone();
         let line_items = &copy.layout.data.line_items[self.data.item_range.clone()];
-        line_items
-            .iter()
-            .enumerate()
-            .map(move |(item_index, line_data)| match line_data.kind {
-                LayoutItemKind::TextRun => LineItem::Run(Run {
-                    layout: copy.layout,
-                    line_index: copy.index,
-                    index: item_index as u32,
-                    shaped_text_run_index: line_data.index as u32,
-                    shaped: &copy.layout.data.shaped_text.runs()[line_data.index],
-                    data: &copy.layout.data.runs[line_data.index],
-                    line_data: Some(line_data),
-                }),
-                LayoutItemKind::InlineBox => {
-                    LineItem::InlineBox(&copy.layout.data.inline_boxes[line_data.index].inline_box)
-                }
-            })
+        line_items.iter().enumerate().map(move |(item_index, line_data)| match line_data.kind {
+            LayoutItemKind::TextRun => LineItem::Run(Run {
+                replacement_source: None,
+                layout: copy.layout,
+                line_index: copy.index,
+                index: item_index as u32,
+                shaped_text_run_index: line_data.index as u32,
+                shaped: &copy.layout.data.shaped_text.runs()[line_data.index],
+                data: &copy.layout.data.runs[line_data.index],
+                line_data: Some(line_data),
+            }),
+            LayoutItemKind::InlineBox => {
+                LineItem::InlineBox(&copy.layout.data.inline_boxes[line_data.index].inline_box)
+            }
+        })
     }
 
     /// Returns an iterator over the glyph runs for the line.
-    pub fn items(
-        &self,
-    ) -> impl Iterator<Item = PositionedLayoutItem<'a, B>> + 'a + Clone + use<'a, B> {
-        GlyphRunIter {
-            line: self.clone(),
-            item_index: 0,
-            atoms: None,
-            offset: 0.,
-        }
+    pub fn items(&self) -> impl Iterator<Item = PositionedLayoutItem<'a, B>> + 'a + Clone + use<'a, B> {
+        GlyphRunIter { line: self.clone(), item_index: 0, atoms: None, pending: alloc::vec::Vec::new(), offset: 0. }
     }
 }
 
@@ -392,6 +384,8 @@ pub struct PositionedInlineBox {
 #[derive(Clone)]
 pub struct GlyphRun<'a, B: Brush> {
     run: Run<'a, B>,
+    origin: Option<(Run<'a, B>, Range<usize>)>,
+    glyph_slice: (usize, usize),
     style_index: u16,
     /// The glyph run's shaped clusters, indexing into the shaped run this [`Run`] belongs to.
     ///
@@ -419,14 +413,12 @@ impl<'a, B: Brush> GlyphRun<'a, B> {
         } else {
             slice.atoms_start()
         };
+        let origin = self.origin.as_ref().map(|(_, range)| range.clone());
+        let trim = self.glyph_slice.0 + self.glyph_slice.1;
         core::iter::from_fn(move || {
             let atom = if rtl { atoms.prev() } else { atoms.next() }?;
-            let glyphs = atom
-                .shaped_clusters()
-                .iter()
-                .map(|cluster| usize::from(cluster.glyph_len()))
-                .sum();
-            Some((slice.text_byte_range(atom.char_range()), glyphs))
+            let glyphs: usize = atom.shaped_clusters().iter().map(|cluster| usize::from(cluster.glyph_len())).sum();
+            Some((origin.clone().unwrap_or_else(|| slice.text_byte_range(atom.char_range())), glyphs - trim))
         })
     }
 
@@ -434,7 +426,11 @@ impl<'a, B: Brush> GlyphRun<'a, B> {
     ///
     /// See also [`Self::style_index`].
     pub fn style(&self) -> &Style<B> {
-        &self.run.layout.styles()[usize::from(self.style_index)]
+        &self.source_run().layout.styles()[usize::from(self.style_index)]
+    }
+
+    fn source_run(&self) -> Run<'a, B> {
+        self.origin.as_ref().map_or(self.run, |(source, _)| *source)
     }
 
     /// Returns the associated style index.
@@ -455,7 +451,7 @@ impl<'a, B: Brush> GlyphRun<'a, B> {
     /// where a baseline-aligned run moves to the line's central baseline.
     pub fn edge_aligned(&self) -> bool {
         use crate::style::{AlignmentBaseline, BaselineShift};
-        let styles = self.run.layout.styles();
+        let styles = self.source_run().layout.styles();
         let mut index = self.style_index;
         loop {
             let Some(style) = styles.get(usize::from(index)) else {
@@ -481,7 +477,7 @@ impl<'a, B: Brush> GlyphRun<'a, B> {
     /// moving as its parent does.
     pub fn named_aligned(&self) -> bool {
         use crate::style::AlignmentBaseline;
-        let styles = self.run.layout.styles();
+        let styles = self.source_run().layout.styles();
         let mut index = self.style_index;
         loop {
             let Some(style) = styles.get(usize::from(index)) else {
@@ -534,7 +530,9 @@ impl<'a, B: Brush> GlyphRun<'a, B> {
 
     /// Returns an iterator over the glyphs in the run.
     pub fn glyphs(&'a self) -> impl Iterator<Item = Glyph> + 'a + Clone {
-        self.run.glyphs_in(self.shaped_clusters.clone())
+        let glyphs = self.run.glyphs_in(self.shaped_clusters.clone());
+        let count = if self.glyph_slice.1 != 0 { glyphs.clone().count() - self.glyph_slice.1 } else { usize::MAX };
+        glyphs.take(count).skip(self.glyph_slice.0)
     }
 
     /// Returns an iterator over the fully positioned glyphs in the run.
@@ -627,6 +625,7 @@ struct GlyphRunIter<'a, B: Brush> {
     /// Iterator over the visual atoms of the run at `item_index`, positioned at the first atom
     /// not yet yielded as part of a glyph run. `None` before entering a run.
     atoms: Option<AtomIter<'a>>,
+    pending: alloc::vec::Vec<GlyphRun<'a, B>>,
     offset: f32,
 }
 
@@ -634,6 +633,9 @@ impl<'a, B: Brush> Iterator for GlyphRunIter<'a, B> {
     type Item = PositionedLayoutItem<'a, B>;
 
     fn next(&mut self) -> Option<Self::Item> {
+        if let Some(run) = self.pending.pop() {
+            return Some(PositionedLayoutItem::GlyphRun(run));
+        }
         loop {
             let item = self.line.item(self.item_index)?;
             match item {
@@ -687,6 +689,62 @@ impl<'a, B: Brush> Iterator for GlyphRunIter<'a, B> {
                     let mut glyph_run: Option<(u16, Range<u32>)> = None;
                     while let Some(atom) = atoms.peek() {
                         let (atom_glyph_count, atom_advance) = atoms.measure(&atom);
+                        let data = &self.line.layout.data;
+                        if let Some((_, _, Some((index, keep)))) =
+                            data.shown_hyphens.iter().find(|(cluster, _, replacement)| {
+                                replacement.is_some() && atom.shaped_clusters_range().contains(cluster)
+                            })
+                        {
+                            if glyph_run.is_some() {
+                                break;
+                            }
+                            let replacement = &data.replacements[*index].2;
+                            let style_index = atom.characters().last().unwrap().style_index;
+                            let baseline = self.line.style_baseline(style_index);
+                            let range = atom.characters().last().unwrap().text_byte_range();
+                            let offset =
+                                self.offset + self.line.data.metrics.inline_min_coord + self.line.data.metrics.offset;
+                            let scale = run.text_fit_scale();
+                            let replacement_width = replacement.full_width() * scale;
+                            let own_width = atom_advance - replacement_width;
+                            let rtl = run.is_rtl();
+                            let own = (*keep).then(|| GlyphRun {
+                                run,
+                                style_index,
+                                shaped_clusters: atom.shaped_clusters_range(),
+                                origin: None,
+                                glyph_slice: (usize::from(rtl), usize::from(!rtl)),
+                                advance: own_width,
+                                baseline,
+                                offset: offset + if rtl { replacement_width } else { 0.0 },
+                            });
+                            if !rtl {
+                                self.pending.extend(own.clone());
+                            }
+                            if let Some(line) = replacement.get(0) {
+                                for item in line.items() {
+                                    if let PositionedLayoutItem::GlyphRun(mut part) = item {
+                                        part.origin = Some((run, range.clone()));
+                                        part.style_index = style_index;
+                                        part.run.replacement_source = Some((range.start, range.end, scale));
+                                        part.offset = part.offset * scale + offset + if rtl { 0.0 } else { own_width };
+                                        part.advance *= scale;
+                                        part.baseline = baseline;
+                                        self.pending.push(part);
+                                    }
+                                }
+                            }
+                            if rtl {
+                                self.pending.extend(own);
+                            }
+                            self.offset += atom_advance;
+                            atoms.consume();
+                            self.pending.reverse();
+                            if let Some(run) = self.pending.pop() {
+                                return Some(PositionedLayoutItem::GlyphRun(run));
+                            }
+                            continue;
+                        }
                         if atom_glyph_count != 0 {
                             let atom_style_index = atom.characters()[0].style_index;
                             let atom_clusters = atom.shaped_clusters_range();
@@ -720,6 +778,8 @@ impl<'a, B: Brush> Iterator for GlyphRunIter<'a, B> {
                         self.offset += advance;
                         return Some(PositionedLayoutItem::GlyphRun(GlyphRun {
                             run,
+                            origin: None,
+                            glyph_slice: (0, 0),
                             style_index,
                             shaped_clusters,
                             offset: offset

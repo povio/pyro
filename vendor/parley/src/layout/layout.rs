@@ -20,7 +20,7 @@ use core::fmt;
 /// The alternate form (`{:#?}`) formats the full underlying data.
 ///
 /// [`Debug`]: core::fmt::Debug
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct Layout<B: Brush> {
     pub(crate) data: LayoutData<B>,
 }

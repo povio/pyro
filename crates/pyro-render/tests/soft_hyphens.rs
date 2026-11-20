@@ -158,3 +158,24 @@ fn an_unused_soft_hyphen_preserves_cursive_joining() {
     );
     assert_near(widths[0][0], widths[1][0]);
 }
+
+#[test]
+fn discretionary_shaping_preserves_ligatures_and_composes_replacements() {
+    let render = |width: u32, replacement: &str, body: &str| {
+        let snapshot = Snapshot {
+            html: format!(
+                "<!doctype html><style>body{{margin:0}}div{{direction:rtl;margin-left:120px;width:{width}px;font:32px/48px sans-serif;hyphenate-character:'{replacement}'}}</style><div>{body}</div>"
+            ),
+            base_url: "http://test/".into(),
+            width: 450,
+            height: 110,
+            device_scale_factor: 1.,
+            ..Default::default()
+        };
+        let fetcher: Arc<dyn Fetcher> = Arc::new(NoFetch);
+        Renderer::new().render(&snapshot, Area::Viewport, Backend::Cpu, &fetcher).unwrap().0.data
+    };
+    assert!(render(280, "-", "ل&shy;اميميميم") == render(280, "-", "لاميميميم"));
+    assert!(render(56, "-", "ل&shy;اميميميم") == render(56, "-", "ل-<br>اميميميم"));
+    assert!(render(56, "e\u{301}", "قل&shy;ميميميم") == render(56, "é", "قل&shy;ميميميم"));
+}

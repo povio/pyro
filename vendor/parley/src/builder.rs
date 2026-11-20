@@ -570,6 +570,91 @@ fn build_into_layout<B: Brush>(
         &mut layout.data.style_metrics,
     );
 
+    if text.contains('\u{ad}') {
+        let mut forms = alloc::vec::Vec::new();
+        for run in layout.data.shaped_text.runs() {
+            let rtl = run.bidi_level.is_rtl();
+            for cluster in run.shaped_clusters_range.start..run.shaped_clusters_range.end.saturating_sub(1) {
+                let pair = &layout.data.shaped_text.shaped_clusters()[cluster as usize..][..2];
+                let chars = layout.data.shaped_text.characters();
+                let left = pair[0].chars_range();
+                let right = pair[1].chars_range();
+                if pair[1].glyph_len() != 0 || left.len() < 2 || right.is_empty() {
+                    continue;
+                }
+                let last = chars[left.end as usize - 1];
+                if !last.flags.is_soft_hyphen() {
+                    continue;
+                }
+                let ranges = [
+                    chars[left.start as usize].text_byte_start as usize..last.text_byte_start as usize,
+                    chars[right.start as usize].text_byte_start as usize
+                        ..chars[right.end as usize - 1].text_byte_range().end,
+                ];
+                let mut halves = alloc::vec::Vec::new();
+                for (part, range) in pair.iter().zip(ranges) {
+                    let shaped = shape_fragment(lcx, fcx, options, part.style_index, rtl, &text[range]);
+                    let data = &shaped.data.shaped_text;
+                    if data
+                        .runs()
+                        .iter()
+                        .any(|r| data.fonts()[r.font_index] != layout.data.shaped_text.fonts()[run.font_index])
+                    {
+                        break;
+                    }
+                    let glyphs = shaped
+                        .get(0)
+                        .into_iter()
+                        .flat_map(|line| line.items())
+                        .filter_map(|item| match item {
+                            crate::layout::PositionedLayoutItem::GlyphRun(part) => {
+                                Some(part.glyphs().collect::<alloc::vec::Vec<_>>())
+                            }
+                            _ => None,
+                        })
+                        .flatten()
+                        .collect::<alloc::vec::Vec<_>>();
+                    halves.push(glyphs);
+                }
+                if let [left, right] = halves.as_slice() {
+                    forms.push((
+                        cluster,
+                        left.clone(),
+                        right.clone(),
+                        left.iter().map(|glyph| glyph.advance).sum::<f32>() - pair[0].advance,
+                    ));
+                }
+            }
+            for character in &layout.data.shaped_text.characters()
+                [run.characters_range.start as usize..run.characters_range.end as usize]
+            {
+                if !character.flags.is_soft_hyphen() {
+                    continue;
+                }
+                let index = character.style_index;
+                if layout.data.replacements.iter().any(|entry| (entry.0, entry.1) == (index, rtl)) {
+                    continue;
+                }
+                let style = &lcx.style_table[usize::from(index)];
+                let replacement: String = match style.soft_hyphen {
+                    crate::SoftHyphen::Chars(chars, len) => chars[..usize::from(len)].iter().collect(),
+                    crate::SoftHyphen::Char(ch) => String::from(ch),
+                    _ => continue,
+                };
+                let shaped = shape_fragment(lcx, fcx, options, index, rtl, &replacement);
+                layout.data.replacements.push((index, rtl, shaped));
+            }
+        }
+        for (cluster, left, right, delta) in forms {
+            if let (Some(left), Some(right)) = (
+                layout.data.shaped_text.store_cluster_form(cluster, &left),
+                layout.data.shaped_text.store_cluster_form(cluster + 1, &right),
+            ) {
+                layout.data.broken_forms.push((cluster, [left, right], delta));
+            }
+        }
+    }
+
     // Move inline boxes into the layout
     layout.data.inline_boxes.clear();
     core::mem::swap(&mut layout.data.inline_boxes, &mut lcx.inline_boxes);
@@ -577,6 +662,58 @@ fn build_into_layout<B: Brush>(
     if let Some(key) = cache_key {
         lcx.build_cache.insert(key, &layout.data);
     }
+}
+
+fn shape_fragment<B: Brush>(
+    lcx: &mut LayoutContext<B>,
+    fcx: &mut FontContext,
+    options: BuilderOptions<'_>,
+    index: u16,
+    rtl: bool,
+    replacement: &str,
+) -> Layout<B> {
+    let mut style = lcx.style_table[usize::from(index)].clone();
+    style.parent = 0;
+    let mut analysis = parley_engine::Analysis::new();
+    let direction = if rtl { BaseDirection::Rtl } else { BaseDirection::Ltr };
+    lcx.analyzer.analyze(
+        &replacement,
+        &parley_engine::AnalysisOptions { base_direction: direction, ..Default::default() },
+        &mut analysis,
+    );
+    analysis.set_run_direction(rtl);
+    let mut shaped = Layout::default();
+    shaped.data.scale = options.scale;
+    shaped.data.quantize = options.quantize;
+    shaped.data.base_level = analysis.paragraph_level();
+    shaped.data.text_len = replacement.len();
+    shaped.data.styles.push(style.as_layout_style());
+    let styles = core::slice::from_ref(&style);
+    let mut fonts = alloc::vec::Vec::new();
+    super::shape::shape_text(
+        &lcx.rcx,
+        fcx,
+        styles,
+        &[],
+        &analysis,
+        &alloc::vec![0; analysis.char_info().len()],
+        &mut lcx.scx,
+        &replacement,
+        &mut shaped,
+        &lcx.analysis_data_sources,
+        &mut fonts,
+    );
+    crate::layout::style_metrics::resolve_style_metrics(
+        &lcx.rcx,
+        fcx,
+        styles,
+        &shaped.data.shaped_text,
+        &fonts,
+        shaped.data.quantum(),
+        &mut shaped.data.style_metrics,
+    );
+    shaped.break_all_lines(None);
+    shaped
 }
 
 /// pyro: a character of UAX #14 class GL (no-break spaces and hyphen, the combining grapheme

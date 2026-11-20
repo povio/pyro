@@ -65,7 +65,6 @@ use crate::{AlignmentBaseline, BaselineShift, FontContext, FontData, InlineBox, 
 /// extend upwards, `under`/`descent` downwards.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct StyleMetrics {
-    pub(crate) hyphen_space: Option<f32>,
     /// Ascent of the first available font (the top of the content area).
     pub(crate) ascent: f32,
     /// Descent of the first available font (the bottom of the content area).
@@ -177,14 +176,6 @@ pub(crate) fn resolve_style_metrics<B: Brush>(
 
         let mut metrics = StyleMetrics::from_font(&font_metrics, line_height, quantum);
         metrics.font_size = style.font_size;
-        use crate::style::SoftHyphen;
-        if match style.soft_hyphen {
-            SoftHyphen::Char(ch) => matches!(ch, ' ' | '\u{a0}'),
-            SoftHyphen::Chars(chars, len) => chars[..usize::from(len)].iter().any(|ch| matches!(ch, ' ' | '\u{a0}')),
-            _ => false,
-        } {
-            metrics.hyphen_space = font.and_then(|font| font.space_advance(style.font_size, rcx.variations(style.font_variations).unwrap_or(&[])));
-        }
         metrics.font = Some(font_metrics);
         // pyro: the ideographic boxes: the font's `BASE` table, else derived from the em box as
         // Blink derives them (the em box sits on the descent; the face box is 5% of the em in).
@@ -298,7 +289,6 @@ pub(crate) fn scale_style_metrics<B: Brush>(
         let mut metrics = StyleMetrics::from_font(&font, line_height, quantum);
         metrics.font = Some(font);
         metrics.font_size = font_size;
-        metrics.hyphen_space = base.hyphen_space.map(|width| width * scale);
         metrics.ideographic = base.ideographic.map(|value| value * scale);
         metrics.named = base.named.map(|value| value * scale);
         // A side `text-box-trim` trims stays trimmed (to its scaled edge).
@@ -456,7 +446,6 @@ impl StyleMetrics {
         let x_height = font.x_height.unwrap_or(box_metrics.ascent * 0.56);
         Self {
             ascent: box_metrics.ascent,
-            hyphen_space: None,
             descent: box_metrics.descent,
             x_height: if quantize { x_height.round() } else { x_height },
             cap_height: font.cap_height.unwrap_or(box_metrics.ascent),

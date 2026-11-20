@@ -436,10 +436,13 @@
      }
  
      /// Get a [`ShapedSlice`] of the run at `run_index`.
-@@ -218,6 +443,278 @@
+@@ -215,9 +440,303 @@
          }
-     }
- 
+         for shaped_cluster in self.shaped_clusters.iter_mut() {
+             shaped_cluster.style_index = remap[shaped_cluster.style_index as usize];
++        }
++    }
++
 +    /// pyro: sets the advance of the shaped cluster at `index` (a tab, once the line breaker knows
 +    /// the tab stop it reaches). A cluster whose glyphs are stored takes the difference on its
 +    /// last glyph; an inline glyph's advance is its cluster's.
@@ -543,9 +546,9 @@
 +    pub fn set_character_justification(&mut self, index: usize, none: bool, before: bool, after: bool) {
 +        if let Some(character) = self.characters.get_mut(index) {
 +            character.flags = character.flags.with_justification(none, before, after);
-+        }
-+    }
-+
+         }
+     }
+ 
 +    /// pyro: gives the one glyph of the shaped cluster at `index` back the x offset and the
 +    /// cluster back the advance [`Self::shift_cluster`] returned.
 +    pub fn unshift_cluster(&mut self, index: u32, x: f32, advance: f32) {
@@ -692,6 +695,28 @@
 +        }
 +    }
 +
++    /// Store an alternate shaping without changing the active cluster.
++    pub fn store_cluster_form(&mut self, index: u32, glyphs: &[Glyph]) -> Option<ClusterGlyphs> {
++        let cluster = self.shaped_clusters[index as usize];
++        let flags = cluster.flags.with_inline_glyph(false).with_glyph_len(glyphs.len().try_into().ok()?);
++        let form = ClusterGlyphs {
++            glyph_offset: self.glyphs.len() as u32,
++            flags: flags.bits(),
++            advance: glyphs.iter().map(|glyph| glyph.advance).sum(),
++        };
++        self.glyphs.extend_from_slice(glyphs);
++        Some(form)
++    }
++
++    /// Select a previously stored shaping and return the previous one.
++    pub fn swap_cluster_form(&mut self, index: u32, form: ClusterGlyphs) -> ClusterGlyphs {
++        let cluster = self.shaped_clusters[index as usize];
++        let old =
++            ClusterGlyphs { glyph_offset: cluster.glyph_offset, flags: cluster.flags.bits(), advance: cluster.advance };
++        self.restore_cluster(index, form);
++        old
++    }
++
 +    /// pyro: gives the one-glyph shaped cluster at `index` the glyph `id` with `advance`, and
 +    /// returns what it had (a soft hyphen at the end of a line shows a hyphen; one inside a line
 +    /// gets its own glyph back).
@@ -715,7 +740,7 @@
      /// The character data of the text, in logical order.
      ///
      /// [`ShapedRun::characters_range`] indexes into this. The nth [`Character`] corresponds exactly
-@@ -273,7 +770,12 @@
+@@ -273,7 +792,12 @@
          font: &FontInstance,
          glyph_buffer: &harfrust::GlyphBuffer,
          normalized_coords: &[harfrust::NormalizedCoord],
@@ -729,7 +754,7 @@
          debug_assert_eq!(
              range.char_range.len(),
              text[range.byte_range.clone()].chars().count(),
-@@ -302,42 +804,71 @@
+@@ -302,42 +826,71 @@
                  index
              });
  
@@ -819,7 +844,7 @@
                  grapheme_start: info.is_grapheme_start(),
              });
          }
-@@ -395,7 +926,11 @@
+@@ -395,7 +948,11 @@
              bidi_level: segment.bidi_level,
              advance: run_advance,
              font_metrics,
@@ -831,7 +856,7 @@
      }
  }
  
-@@ -423,6 +958,14 @@
+@@ -423,6 +980,14 @@
      pub bidi_level: BidiLevel,
      /// Total advance of the run.
      pub advance: f32,
@@ -846,7 +871,39 @@
      /// The font metrics of this run.
      pub font_metrics: FontMetrics,
  }
-@@ -534,7 +1077,15 @@
+@@ -486,8 +1051,11 @@
+             )
+         };
+ 
++        let split = (cluster.characters_start..char_end.saturating_sub(1))
++            .find(|&index| characters[index].flags.is_soft_hyphen())
++            .map(|index| index + 1);
+         shaped_clusters.push(ShapedCluster {
+-            chars_range: (cluster.characters_start as u32, char_end as u32),
++            chars_range: (cluster.characters_start as u32, split.unwrap_or(char_end) as u32),
+             style_index: first_character.style_index,
+             flags: ShapedClusterFlags::new(glyph_len)
+                 .with_grapheme_start(first_character.grapheme_start)
+@@ -501,6 +1069,18 @@
+             glyph_offset,
+             advance,
+         });
++        if let Some(start) = split {
++            let first = characters[start];
++            shaped_clusters.push(ShapedCluster {
++                chars_range: (start as u32, char_end as u32),
++                style_index: first.style_index,
++                flags: ShapedClusterFlags::new(0)
++                    .with_grapheme_start(true)
++                    .with_first_char(first.flags.is_soft_wrap_opportunity(), first.whitespace),
++                glyph_offset: 0,
++                advance: 0.,
++            });
++        }
+     }
+ 
+     let mut cluster = Cluster {
+@@ -534,7 +1114,15 @@
              y: -(glyph_pos.y_offset as f32) * scale_factor,
              advance: (glyph_pos.x_advance as f32) * scale_factor,
          };
@@ -863,7 +920,7 @@
              // Defer this potential zero-offset, single glyph cluster
              cluster.inline_glyph = Some(glyph);
          } else {
-@@ -647,9 +1198,18 @@
+@@ -647,9 +1235,18 @@
              char_end: text.chars().count().try_into().unwrap(),
              options: ShapeOptions {
                  font_size: 32.0,
@@ -882,7 +939,7 @@
              },
          }];
          shaper.shape_text(
-@@ -765,7 +1325,8 @@
+@@ -765,7 +1362,8 @@
  
      #[test]
      fn newlines_removed() {
@@ -892,7 +949,7 @@
              let shaped = shape_with_font(&alloc::format!("a{newline}b"), ROBOTO);
  
              let index = shaped
-@@ -805,18 +1366,36 @@
+@@ -805,18 +1403,36 @@
                  char_end: 1,
                  options: ShapeOptions {
                      font_size: 32.0,
@@ -1929,7 +1986,23 @@
      /// The per-character info in source order.
      #[inline(always)]
      pub fn char_info(&self) -> &[CharInfo] {
-@@ -126,6 +153,9 @@
+@@ -77,6 +104,15 @@
+         &self.levels
+     }
+ 
++    /// Inherit the embedding direction when shaping an inserted string within a resolved run.
++    pub fn set_run_direction(&mut self, rtl: bool) {
++        self.paragraph_level = BidiLevel::new(u8::from(rtl));
++        self.levels.clear();
++        if rtl {
++            self.levels.resize(self.info.len(), self.paragraph_level);
++        }
++    }
++
+     /// The base bidi level of the paragraph of text.
+     #[inline(always)]
+     pub fn paragraph_level(&self) -> BidiLevel {
+@@ -126,6 +162,9 @@
          opt.word_option = Some(key.word_option);
          opt.strictness = Some(key.strictness);
          opt.content_locale = key.ja_zh.then_some(&JA);
@@ -1939,7 +2012,7 @@
          line_segmenter_impl(opt)
      }
  
-@@ -174,6 +204,8 @@
+@@ -174,6 +213,8 @@
      /// [`LineBreak::Normal`] and [`LineBreak::Loose`], so we only track whether one of them
      /// applies.
      ja_zh: bool,
@@ -1948,7 +2021,7 @@
  }
  
  impl SegmenterKey {
-@@ -181,6 +213,7 @@
+@@ -181,6 +222,7 @@
          word_option: LineBreakWordOption::Normal,
          strictness: LineBreakStrictness::Strict,
          ja_zh: false,
@@ -1956,7 +2029,7 @@
      };
  
      fn new(config: &LineBreakConfig) -> Self {
-@@ -189,7 +222,12 @@
+@@ -189,7 +231,12 @@
              LineBreak::Normal => LineBreakStrictness::Normal,
              LineBreak::Loose => LineBreakStrictness::Loose,
              // We add opportunities per grapheme ourselves.
@@ -1970,7 +2043,7 @@
          };
          let word_option = match config.word_break {
              WordBreak::Normal => LineBreakWordOption::Normal,
-@@ -199,13 +237,22 @@
+@@ -199,13 +246,22 @@
          let ja_zh = match strictness {
              LineBreakStrictness::Normal | LineBreakStrictness::Loose => config
                  .language
@@ -1994,7 +2067,7 @@
          }
      }
  }
-@@ -219,6 +266,23 @@
+@@ -219,6 +275,23 @@
  }
  
  impl CharInfo {
@@ -2018,7 +2091,7 @@
      const VARIATION_SELECTOR_SHIFT: u16 = 0;
      const REGION_INDICATOR_SHIFT: u16 = 1;
      const CONTROL_SHIFT: u16 = 2;
-@@ -232,6 +296,7 @@
+@@ -232,6 +305,7 @@
      const EMOJI_PRESENTATION_SHIFT: u16 = 10;
      const EMOJI_MODIFIER_SHIFT: u16 = 11;
      const EMOJI_MODIFIER_BASE_SHIFT: u16 = 12;
@@ -2026,7 +2099,7 @@
  
      const VARIATION_SELECTOR_MASK: u16 = 1 << Self::VARIATION_SELECTOR_SHIFT;
      const REGION_INDICATOR_MASK: u16 = 1 << Self::REGION_INDICATOR_SHIFT;
-@@ -246,6 +311,7 @@
+@@ -246,6 +320,7 @@
      const EMOJI_PRESENTATION_MASK: u16 = 1 << Self::EMOJI_PRESENTATION_SHIFT;
      const EMOJI_MODIFIER_MASK: u16 = 1 << Self::EMOJI_MODIFIER_SHIFT;
      const EMOJI_MODIFIER_BASE_MASK: u16 = 1 << Self::EMOJI_MODIFIER_BASE_SHIFT;
@@ -2034,7 +2107,7 @@
  
      fn new(
          script: Script,
-@@ -279,8 +345,29 @@
+@@ -279,6 +354,27 @@
                  | (is_emoji_modifier as u16) << Self::EMOJI_MODIFIER_SHIFT
                  | (is_emoji_modifier_base as u16) << Self::EMOJI_MODIFIER_BASE_SHIFT,
          }
@@ -2045,8 +2118,8 @@
 +    fn set_soft_wrap_opportunity(&mut self, value: bool) {
 +        self.flags = self.flags & !Self::SOFT_WRAP_OPPORTUNITY_MASK
 +            | (value as u16) << Self::SOFT_WRAP_OPPORTUNITY_SHIFT;
-     }
- 
++    }
++
 +    /// pyro: sets whether `word-break: normal` would have a soft wrap opportunity before the
 +    /// character where `auto-phrase` has none ([`Self::is_phrase_fallback`]).
 +    #[inline(always)]
@@ -2059,26 +2132,24 @@
 +    #[inline(always)]
 +    pub fn is_phrase_fallback(self) -> bool {
 +        self.flags & Self::PHRASE_FALLBACK_MASK != 0
-+    }
-+
+     }
+ 
      /// Whether this character is a variation selector.
-     #[inline(always)]
-     pub fn is_variation_selector(self) -> bool {
-@@ -634,6 +721,13 @@
-         .line_break
-         .iter()
+@@ -636,6 +732,13 @@
          .filter(|(_, config)| config.line_break == LineBreak::Anywhere)
-+        .map(|(range, _)| range)
-+        .peekable();
+         .map(|(range, _)| range)
+         .peekable();
 +    // pyro: the `word-break: break-all` ranges.
 +    let mut break_all_iter = options
 +        .line_break
 +        .iter()
 +        .filter(|(_, config)| config.word_break == WordBreak::BreakAll && config.line_break != LineBreak::Anywhere)
-         .map(|(range, _)| range)
-         .peekable();
++        .map(|(range, _)| range)
++        .peekable();
      let boundary_iter = text.char_indices().map(|(byte_pos, ch)| {
-@@ -717,6 +811,10 @@
+         // advance any stale word boundary positions
+         while let Some(&w) = wb_iter.peek() {
+@@ -717,6 +820,10 @@
          {
              _ = break_anywhere_iter.next();
          }
@@ -2089,7 +2160,7 @@
          let is_break_anywhere = break_anywhere_iter
              .peek()
              .is_some_and(|range| range.contains(&byte_pos));
-@@ -733,7 +831,30 @@
+@@ -733,7 +840,30 @@
                  // `line-break: anywhere`: an opportunity around every grapheme.
                  prev_char.is_some() && is_grapheme_start
              } else {
@@ -2121,7 +2192,7 @@
              };
              // Consumers can override soft wrap opportunities, except around a mandatory
              // break.
-@@ -808,21 +929,288 @@
+@@ -808,21 +938,288 @@
          ));
      }
  
@@ -2201,16 +2272,16 @@
 +        if analysis.paragraph_levels.iter().all(|&(_, level)| level == first) {
 +            analysis.paragraph_levels.clear();
 +        }
-+    }
-+}
-+
+     }
+ }
+ 
 +/// pyro: `word-break: keep-all` keeps letters together, not what a hyphen-minus separates: the
 +/// line may break after one before a letter, as under `normal` (UAX #14: HY ÷ AL; ICU4X's
 +/// keep-all data drops it; WPT css-text `word-break-keep-all-u002d`).
 +fn keep_all_hyphen_breaks(text: &str, options: &AnalysisOptions<'_>, info: &mut [CharInfo]) {
 +    if !text.contains('-') || !options.line_break.iter().any(|(_, config)| config.word_break == WordBreak::KeepAll) {
 +        return;
-     }
++    }
 +    let config_at = |byte: usize| {
 +        options
 +            .line_break
@@ -2234,8 +2305,8 @@
 +            info[index + 1].set_soft_wrap_opportunity(true);
 +        }
 +    }
- }
- 
++}
++
 +/// pyro: a soft hyphen whose style ends no line there (`hyphens: none`) is no soft wrap
 +/// opportunity, so it does not narrow min-content sizes either; under `word-break: auto-phrase`
 +/// it is a phrase fallback. Runs after [`phrase_breaks`].

@@ -291,7 +291,10 @@ pub(crate) struct LayoutData<B: Brush> {
     pub(crate) central_baseline: bool,
     /// pyro: the soft hyphens that show a hyphen (their lines end at them): each one's shaped
     /// cluster with the glyphs it was shaped with.
-    pub(crate) shown_hyphens: Vec<(u32, parley_engine::ClusterGlyphs)>,
+    pub(crate) shown_hyphens: Vec<(u32, parley_engine::ClusterGlyphs, Option<(usize, bool)>)>,
+    pub(crate) replacements: Vec<(u16, bool, crate::Layout<B>)>,
+    pub(crate) broken_forms: Vec<(u32, [parley_engine::ClusterGlyphs; 2], f32)>,
+    pub(crate) active_forms: Vec<(u32, [parley_engine::ClusterGlyphs; 2])>,
     /// pyro: the shaped clusters a line's edge changed (fullwidth punctuation set half-width at
     /// a line's start or end, `text-spacing-trim`; the space after an ideograph that ends a line,
     /// `text-autospace`): each one with its glyph's x offset and its advance as shaped. Each line
@@ -340,6 +343,9 @@ impl<B: Brush> Default for LayoutData<B> {
             line_height_quirk: false,
             central_baseline: false,
             shown_hyphens: Vec::new(),
+            replacements: Vec::new(),
+            broken_forms: Vec::new(),
+            active_forms: Vec::new(),
             edge_clusters: Vec::new(),
             autospace: Vec::new(),
         }
@@ -412,6 +418,9 @@ impl<B: Brush> LayoutData<B> {
         self.line_height_quirk = false;
         self.central_baseline = false;
         self.shown_hyphens.clear();
+        self.replacements.clear();
+        self.broken_forms.clear();
+        self.active_forms.clear();
         self.edge_clusters.clear();
         self.autospace.clear();
         self.styles.clear();
@@ -578,8 +587,12 @@ impl<B: Brush> LayoutData<B> {
 
     /// Start measurements and new line breaks from the original shaped clusters.
     pub(crate) fn restore_shown_hyphens(&mut self) {
-        for (cluster, saved) in self.shown_hyphens.drain(..) {
+        for (cluster, saved, _) in self.shown_hyphens.drain(..) {
             self.shaped_text.restore_cluster(cluster, saved);
+        }
+        for (cluster, [left, right]) in self.active_forms.drain(..) {
+            self.shaped_text.restore_cluster(cluster, left);
+            self.shaped_text.restore_cluster(cluster + 1, right);
         }
     }
 

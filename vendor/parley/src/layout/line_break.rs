@@ -80,13 +80,13 @@ struct Shy {
     /// The shaped cluster that shows the hyphen.
     cluster: u32,
     /// The hyphen's glyphs and advances, the first `len` of them.
-    glyphs: [(u32, f32); 4],
-    len: u8,
+    glyph: Option<(u32, f32)>,
     /// The hyphen's advance.
     advance: f32,
     /// The cluster keeps its own glyphs (shaping merged the soft hyphen into it).
     keep: bool,
     rtl: bool,
+    replacement: Option<usize>,
 }
 
 #[derive(Clone, Default)]
@@ -830,25 +830,12 @@ impl BreakerState {
             use crate::style::SoftHyphen;
             let run = data.shaped_text.runs().get(self.run_idx);
             let font_hyphen = || run.and_then(|run| run.hyphen);
-            let replacement = |ch| {
-                if matches!(ch, ' ' | '\u{a0}') {
-                    let (glyph, width) = data.shaped_text.glyph_of(self.run_idx, ' ')?;
-                    Some((glyph, run.and_then(|run| run.upright_advance).or(data.style_metrics[usize::from(shy_style)].hyphen_space).unwrap_or(width)))
-                } else {
-                    data.shaped_text.glyph_of(self.run_idx, ch)
-                }
-            };
-            let mut glyphs = [(0, 0.0); 4];
-            let len = match data.styles[shy_style as usize].soft_hyphen {
-                SoftHyphen::Auto => font_hyphen().map(|glyph| { glyphs[0] = glyph; 1 }),
-                SoftHyphen::Char(ch) => replacement(ch)
-                    .or_else(font_hyphen)
-                    .map(|glyph| { glyphs[0] = glyph; 1 }),
-                SoftHyphen::Chars(chars, len) => {
-                    let found = chars[..usize::from(len)].iter().enumerate().all(|(index, &ch)| {
-                        replacement(ch).map(|glyph| glyphs[index] = glyph).is_some()
-                    });
-                    if found { Some(len) } else { font_hyphen().map(|glyph| { glyphs[0] = glyph; 1 }) }
+            let rtl = run.is_some_and(|run| run.bidi_level.is_rtl());
+            let replacement = data.replacements.iter().position(|entry| (entry.0, entry.1) == (shy_style, rtl));
+            let glyph = match data.styles[shy_style as usize].soft_hyphen {
+                SoftHyphen::Auto => font_hyphen(),
+                SoftHyphen::Char(_) | SoftHyphen::Chars(_, _) => {
+                    replacement.map(|index| (0, data.replacements[index].2.full_width()))
                 }
                 SoftHyphen::Hidden => None,
                 SoftHyphen::NoBreak => {
@@ -856,13 +843,14 @@ impl BreakerState {
                     None
                 }
             };
-            self.line.shy = len.map(|len| Shy {
+            let form = data.broken_forms.iter().find(|entry| entry.0 == cluster);
+            self.line.shy = (glyph.is_some() || form.is_some() && !self.line.no_break_after).then(|| Shy {
                 cluster,
-                glyphs,
-                len,
-                advance: glyphs[..usize::from(len)].iter().map(|glyph| glyph.1).sum(),
+                glyph,
+                advance: glyph.map_or(0., |g| g.1) + form.map_or(0., |entry| entry.2),
                 keep,
-                rtl: run.is_some_and(|run| run.bidi_level.is_rtl()),
+                rtl,
+                replacement,
             });
         }
         // pyro: a tab that goes to a tab stop keeps what is before it where it is.
@@ -1498,7 +1486,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
         let clusters = self.state.line.clusters.clone();
         let data = &mut self.layout.data;
         let mut shown = false;
-        data.shown_hyphens.retain(|&(cluster, saved)| {
+        data.shown_hyphens.retain(|&(cluster, saved, _)| {
             if shy.is_some_and(|shy| shy.cluster == cluster) {
                 shown = true;
                 true
@@ -1511,14 +1499,16 @@ impl<'a, B: Brush> BreakLines<'a, B> {
         });
         if let Some(shy) = shy {
             if !shown
-                && let Some(saved) = data.shaped_text.show_hyphen(
-                    shy.cluster,
-                    &shy.glyphs[..usize::from(shy.len)],
-                    shy.keep,
-                    shy.rtl,
-                )
+                && let Some(&(_, [left, right], _)) = data.broken_forms.iter().find(|entry| entry.0 == shy.cluster)
             {
-                data.shown_hyphens.push((shy.cluster, saved));
+                let old_left = data.shaped_text.swap_cluster_form(shy.cluster, left);
+                let old_right = data.shaped_text.swap_cluster_form(shy.cluster + 1, right);
+                data.active_forms.push((shy.cluster, [old_left, old_right]));
+            }
+            if !shown
+                && let Some(saved) = data.shaped_text.show_hyphen(shy.cluster, shy.glyph.as_slice(), shy.keep, shy.rtl)
+            {
+                data.shown_hyphens.push((shy.cluster, saved, shy.replacement.map(|index| (index, shy.keep))));
                 shown = true;
             }
             if shown {
@@ -1679,6 +1669,22 @@ impl<'a, B: Brush> BreakLines<'a, B> {
     pub fn revert_to(&mut self, state: BreakerState) {
         self.resumable = false;
         self.state = state;
+        let data = &mut self.layout.data;
+        data.shown_hyphens.retain(|&(cluster, saved, _)| {
+            if cluster < self.state.cluster_idx {
+                return true;
+            }
+            data.shaped_text.restore_cluster(cluster, saved);
+            false
+        });
+        data.active_forms.retain(|&(cluster, [left, right])| {
+            if cluster < self.state.cluster_idx {
+                return true;
+            }
+            data.shaped_text.restore_cluster(cluster, left);
+            data.shaped_text.restore_cluster(cluster + 1, right);
+            false
+        });
         self.lines.truncate(self.state.lines);
         self.lines.line_items.truncate(self.state.items);
         self.done = false;

@@ -202,7 +202,7 @@ index 0000000..0930692
 +    }
 +}
 diff --git a/src/builder.rs b/src/builder.rs
-index 4d5dcf2..f9c4de4 100644
+index 4d5dcf2..e786d8d 100644
 --- a/src/builder.rs
 +++ b/src/builder.rs
 @@ -35,6 +35,11 @@ impl BuilderOptions<'_> {
@@ -472,7 +472,7 @@ index 4d5dcf2..f9c4de4 100644
          );
      }
  
-@@ -415,13 +565,30 @@ fn build_into_layout<B: Brush>(
+@@ -415,13 +565,167 @@ fn build_into_layout<B: Brush>(
          fcx,
          &lcx.style_table,
          &layout.data.shaped_text,
@@ -482,6 +482,91 @@ index 4d5dcf2..f9c4de4 100644
          &mut layout.data.style_metrics,
      );
  
++    if text.contains('\u{ad}') {
++        let mut forms = alloc::vec::Vec::new();
++        for run in layout.data.shaped_text.runs() {
++            let rtl = run.bidi_level.is_rtl();
++            for cluster in run.shaped_clusters_range.start..run.shaped_clusters_range.end.saturating_sub(1) {
++                let pair = &layout.data.shaped_text.shaped_clusters()[cluster as usize..][..2];
++                let chars = layout.data.shaped_text.characters();
++                let left = pair[0].chars_range();
++                let right = pair[1].chars_range();
++                if pair[1].glyph_len() != 0 || left.len() < 2 || right.is_empty() {
++                    continue;
++                }
++                let last = chars[left.end as usize - 1];
++                if !last.flags.is_soft_hyphen() {
++                    continue;
++                }
++                let ranges = [
++                    chars[left.start as usize].text_byte_start as usize..last.text_byte_start as usize,
++                    chars[right.start as usize].text_byte_start as usize
++                        ..chars[right.end as usize - 1].text_byte_range().end,
++                ];
++                let mut halves = alloc::vec::Vec::new();
++                for (part, range) in pair.iter().zip(ranges) {
++                    let shaped = shape_fragment(lcx, fcx, options, part.style_index, rtl, &text[range]);
++                    let data = &shaped.data.shaped_text;
++                    if data
++                        .runs()
++                        .iter()
++                        .any(|r| data.fonts()[r.font_index] != layout.data.shaped_text.fonts()[run.font_index])
++                    {
++                        break;
++                    }
++                    let glyphs = shaped
++                        .get(0)
++                        .into_iter()
++                        .flat_map(|line| line.items())
++                        .filter_map(|item| match item {
++                            crate::layout::PositionedLayoutItem::GlyphRun(part) => {
++                                Some(part.glyphs().collect::<alloc::vec::Vec<_>>())
++                            }
++                            _ => None,
++                        })
++                        .flatten()
++                        .collect::<alloc::vec::Vec<_>>();
++                    halves.push(glyphs);
++                }
++                if let [left, right] = halves.as_slice() {
++                    forms.push((
++                        cluster,
++                        left.clone(),
++                        right.clone(),
++                        left.iter().map(|glyph| glyph.advance).sum::<f32>() - pair[0].advance,
++                    ));
++                }
++            }
++            for character in &layout.data.shaped_text.characters()
++                [run.characters_range.start as usize..run.characters_range.end as usize]
++            {
++                if !character.flags.is_soft_hyphen() {
++                    continue;
++                }
++                let index = character.style_index;
++                if layout.data.replacements.iter().any(|entry| (entry.0, entry.1) == (index, rtl)) {
++                    continue;
++                }
++                let style = &lcx.style_table[usize::from(index)];
++                let replacement: String = match style.soft_hyphen {
++                    crate::SoftHyphen::Chars(chars, len) => chars[..usize::from(len)].iter().collect(),
++                    crate::SoftHyphen::Char(ch) => String::from(ch),
++                    _ => continue,
++                };
++                let shaped = shape_fragment(lcx, fcx, options, index, rtl, &replacement);
++                layout.data.replacements.push((index, rtl, shaped));
++            }
++        }
++        for (cluster, left, right, delta) in forms {
++            if let (Some(left), Some(right)) = (
++                layout.data.shaped_text.store_cluster_form(cluster, &left),
++                layout.data.shaped_text.store_cluster_form(cluster + 1, &right),
++            ) {
++                layout.data.broken_forms.push((cluster, [left, right], delta));
++            }
++        }
++    }
++
      // Move inline boxes into the layout
      layout.data.inline_boxes.clear();
      core::mem::swap(&mut layout.data.inline_boxes, &mut lcx.inline_boxes);
@@ -489,6 +574,58 @@ index 4d5dcf2..f9c4de4 100644
 +    if let Some(key) = cache_key {
 +        lcx.build_cache.insert(key, &layout.data);
 +    }
++}
++
++fn shape_fragment<B: Brush>(
++    lcx: &mut LayoutContext<B>,
++    fcx: &mut FontContext,
++    options: BuilderOptions<'_>,
++    index: u16,
++    rtl: bool,
++    replacement: &str,
++) -> Layout<B> {
++    let mut style = lcx.style_table[usize::from(index)].clone();
++    style.parent = 0;
++    let mut analysis = parley_engine::Analysis::new();
++    let direction = if rtl { BaseDirection::Rtl } else { BaseDirection::Ltr };
++    lcx.analyzer.analyze(
++        &replacement,
++        &parley_engine::AnalysisOptions { base_direction: direction, ..Default::default() },
++        &mut analysis,
++    );
++    analysis.set_run_direction(rtl);
++    let mut shaped = Layout::default();
++    shaped.data.scale = options.scale;
++    shaped.data.quantize = options.quantize;
++    shaped.data.base_level = analysis.paragraph_level();
++    shaped.data.text_len = replacement.len();
++    shaped.data.styles.push(style.as_layout_style());
++    let styles = core::slice::from_ref(&style);
++    let mut fonts = alloc::vec::Vec::new();
++    super::shape::shape_text(
++        &lcx.rcx,
++        fcx,
++        styles,
++        &[],
++        &analysis,
++        &alloc::vec![0; analysis.char_info().len()],
++        &mut lcx.scx,
++        &replacement,
++        &mut shaped,
++        &lcx.analysis_data_sources,
++        &mut fonts,
++    );
++    crate::layout::style_metrics::resolve_style_metrics(
++        &lcx.rcx,
++        fcx,
++        styles,
++        &shaped.data.shaped_text,
++        &fonts,
++        shaped.data.quantum(),
++        &mut shaped.data.style_metrics,
++    );
++    shaped.break_all_lines(None);
++    shaped
 +}
 +
 +/// pyro: a character of UAX #14 class GL (no-break spaces and hyphen, the combining grapheme
@@ -1290,7 +1427,7 @@ index 25f0b3b..47860c4 100644
      pub fn is_soft_line_break(&self) -> bool {
          self.is_end_of_line()
 diff --git a/src/layout/data.rs b/src/layout/data.rs
-index e6ab383..668e0be 100644
+index e6ab383..97d7512 100644
 --- a/src/layout/data.rs
 +++ b/src/layout/data.rs
 @@ -4,6 +4,7 @@
@@ -1386,7 +1523,7 @@ index e6ab383..668e0be 100644
      /// The width constraint that was used to line break the layout
      pub(crate) layout_max_advance: f32,
      /// The computed width of the layout excluding hanging whitespace
-@@ -234,8 +269,37 @@ pub(crate) struct LayoutData<B: Brush> {
+@@ -234,8 +269,40 @@ pub(crate) struct LayoutData<B: Brush> {
      pub(crate) alignment: Option<super::Alignment>,
      /// The text-indent amount in layout units.
      pub(crate) indent_amount: f32,
@@ -1412,7 +1549,10 @@ index e6ab383..668e0be 100644
 +    pub(crate) central_baseline: bool,
 +    /// pyro: the soft hyphens that show a hyphen (their lines end at them): each one's shaped
 +    /// cluster with the glyphs it was shaped with.
-+    pub(crate) shown_hyphens: Vec<(u32, parley_engine::ClusterGlyphs)>,
++    pub(crate) shown_hyphens: Vec<(u32, parley_engine::ClusterGlyphs, Option<(usize, bool)>)>,
++    pub(crate) replacements: Vec<(u16, bool, crate::Layout<B>)>,
++    pub(crate) broken_forms: Vec<(u32, [parley_engine::ClusterGlyphs; 2], f32)>,
++    pub(crate) active_forms: Vec<(u32, [parley_engine::ClusterGlyphs; 2])>,
 +    /// pyro: the shaped clusters a line's edge changed (fullwidth punctuation set half-width at
 +    /// a line's start or end, `text-spacing-trim`; the space after an ideograph that ends a line,
 +    /// `text-autospace`): each one with its glyph's x offset and its advance as shaped. Each line
@@ -1424,7 +1564,7 @@ index e6ab383..668e0be 100644
  }
  
  impl<B: Brush> Default for LayoutData<B> {
-@@ -244,12 +308,17 @@ impl<B: Brush> Default for LayoutData<B> {
+@@ -244,12 +311,17 @@ impl<B: Brush> Default for LayoutData<B> {
              scale: 1.,
              quantize: true,
              base_level: BidiLevel::new(0),
@@ -1442,7 +1582,7 @@ index e6ab383..668e0be 100644
              inline_boxes: Vec::new(),
              shaped_text: ShapedText::new(),
              runs: Vec::new(),
-@@ -257,19 +326,79 @@ impl<B: Brush> Default for LayoutData<B> {
+@@ -257,19 +329,82 @@ impl<B: Brush> Default for LayoutData<B> {
              lines: Vec::new(),
              line_items: Vec::new(),
              aligned_subtree_offsets: Vec::new(),
@@ -1460,6 +1600,9 @@ index e6ab383..668e0be 100644
 +            line_height_quirk: false,
 +            central_baseline: false,
 +            shown_hyphens: Vec::new(),
++            replacements: Vec::new(),
++            broken_forms: Vec::new(),
++            active_forms: Vec::new(),
 +            edge_clusters: Vec::new(),
 +            autospace: Vec::new(),
          }
@@ -1522,7 +1665,7 @@ index e6ab383..668e0be 100644
          self.text_len = 0;
          self.width = 0.;
          self.full_width = 0.;
-@@ -277,8 +406,19 @@ impl<B: Brush> LayoutData<B> {
+@@ -277,8 +412,22 @@ impl<B: Brush> LayoutData<B> {
          self.layout_max_advance = 0.0;
          self.indent_amount = 0.0;
          self.indent_options = IndentOptions::default();
@@ -1532,6 +1675,9 @@ index e6ab383..668e0be 100644
 +        self.line_height_quirk = false;
 +        self.central_baseline = false;
 +        self.shown_hyphens.clear();
++        self.replacements.clear();
++        self.broken_forms.clear();
++        self.active_forms.clear();
 +        self.edge_clusters.clear();
 +        self.autospace.clear();
          self.styles.clear();
@@ -1542,7 +1688,7 @@ index e6ab383..668e0be 100644
          self.inline_boxes.clear();
          self.shaped_text.clear();
          self.runs.clear();
-@@ -286,9 +426,36 @@ impl<B: Brush> LayoutData<B> {
+@@ -286,9 +435,36 @@ impl<B: Brush> LayoutData<B> {
          self.lines.clear();
          self.line_items.clear();
          self.aligned_subtree_offsets.clear();
@@ -1579,7 +1725,7 @@ index e6ab383..668e0be 100644
      /// Push an inline box to the list of items
      pub(crate) fn push_inline_box(&mut self, index: usize, bidi_level: BidiLevel) {
          self.items.push(LayoutItem {
-@@ -319,7 +486,7 @@ impl<B: Brush> LayoutData<B> {
+@@ -319,7 +495,7 @@ impl<B: Brush> LayoutData<B> {
          let line_height = self.styles[style_index as usize].line_height.resolve(
              shaped_run.font_size,
              &shaped_run.font_metrics,
@@ -1588,7 +1734,7 @@ index e6ab383..668e0be 100644
          );
  
          // The run's box metrics, if it's uniform across all the styles within the run. A run's box
-@@ -337,7 +504,7 @@ impl<B: Brush> LayoutData<B> {
+@@ -337,7 +513,7 @@ impl<B: Brush> LayoutData<B> {
                  run_box_metrics(
                      &self.styles[usize::from(first_style)],
                      shaped_run,
@@ -1597,7 +1743,7 @@ index e6ab383..668e0be 100644
                  )
              } else {
                  None
-@@ -397,7 +564,69 @@ impl<B: Brush> LayoutData<B> {
+@@ -397,7 +573,73 @@ impl<B: Brush> LayoutData<B> {
      /// - min-content width: any conditionally-hanging suffix hangs in full, so all hanging
      ///   whitespace hangs in full.
      pub(crate) fn calculate_content_widths(&self) -> ContentWidths {
@@ -1616,8 +1762,12 @@ index e6ab383..668e0be 100644
 +
 +    /// Start measurements and new line breaks from the original shaped clusters.
 +    pub(crate) fn restore_shown_hyphens(&mut self) {
-+        for (cluster, saved) in self.shown_hyphens.drain(..) {
++        for (cluster, saved, _) in self.shown_hyphens.drain(..) {
 +            self.shaped_text.restore_cluster(cluster, saved);
++        }
++        for (cluster, [left, right]) in self.active_forms.drain(..) {
++            self.shaped_text.restore_cluster(cluster, left);
++            self.shaped_text.restore_cluster(cluster + 1, right);
 +        }
 +    }
 +
@@ -1668,7 +1818,7 @@ index e6ab383..668e0be 100644
      }
  }
  
-@@ -429,6 +658,47 @@ struct ContentWidthsMeasurer {
+@@ -429,6 +671,47 @@ struct ContentWidthsMeasurer {
      /// Indents for lines following a soft/hard wrap.
      soft_indent: f32,
      hard_indent: f32,
@@ -1716,7 +1866,7 @@ index e6ab383..668e0be 100644
  }
  
  impl ContentWidthsMeasurer {
-@@ -445,7 +715,11 @@ impl ContentWidthsMeasurer {
+@@ -445,7 +728,11 @@ impl ContentWidthsMeasurer {
              text_wrap_mode: TextWrapMode::Wrap,
              soft_indent: indent_options.indent_following_soft_wrap_break(indent_amount),
              hard_indent: indent_options.indent_following_forced_line_break(indent_amount),
@@ -1728,7 +1878,7 @@ index e6ab383..668e0be 100644
          }
      }
  
-@@ -457,13 +731,14 @@ impl ContentWidthsMeasurer {
+@@ -457,13 +744,14 @@ impl ContentWidthsMeasurer {
      /// indent is "hanging" (see [`IndentOptions::hanging`]).
      #[inline(always)]
      fn soft_break(&mut self, line_has_content: bool) {
@@ -1744,7 +1894,7 @@ index e6ab383..668e0be 100644
      }
  
      /// Ends the current line at a forced break.
-@@ -485,6 +760,7 @@ impl ContentWidthsMeasurer {
+@@ -485,6 +773,7 @@ impl ContentWidthsMeasurer {
          self.line_has_content = false;
          self.running_min_width = self.hard_indent;
          self.running_max_width = self.hard_indent;
@@ -1752,7 +1902,7 @@ index e6ab383..668e0be 100644
      }
  
      #[inline(always)]
-@@ -499,7 +775,7 @@ impl ContentWidthsMeasurer {
+@@ -499,7 +788,7 @@ impl ContentWidthsMeasurer {
                      // bidi reordering. We don't currently apply UAX #9 L1 (resetting trailing
                      // whitespace to paragraph level), so only logically-last items that match the
                      // paragraph level are guaranteed to be at that edge.
@@ -1761,7 +1911,7 @@ index e6ab383..668e0be 100644
                      let is_rtl = item.bidi_level.is_rtl();
  
                      if run_spacing.is_zero() {
-@@ -522,6 +798,29 @@ impl ContentWidthsMeasurer {
+@@ -522,6 +811,29 @@ impl ContentWidthsMeasurer {
                  }
                  LayoutItemKind::InlineBox => {
                      let inline_box = &layout_data.inline_boxes[item.index].inline_box;
@@ -1791,7 +1941,7 @@ index e6ab383..668e0be 100644
                      if inline_box.kind == InlineBoxKind::InFlow {
                          let next = items.as_slice().iter().find(|next| {
                              next.kind == LayoutItemKind::TextRun
-@@ -596,8 +895,15 @@ impl ContentWidthsMeasurer {
+@@ -596,8 +908,15 @@ impl ContentWidthsMeasurer {
                  skip_atom = false;
                  let prev_text_wrap_mode = self.text_wrap_mode;
                  self.text_wrap_mode = style.text_wrap_mode;
@@ -1807,7 +1957,7 @@ index e6ab383..668e0be 100644
                          || style.overflow_wrap == OverflowWrap::Anywhere)
                  {
                      self.soft_break(i != empty_at);
-@@ -611,7 +917,15 @@ impl ContentWidthsMeasurer {
+@@ -611,7 +930,15 @@ impl ContentWidthsMeasurer {
                      continue;
                  }
                  if SPACED {
@@ -1824,7 +1974,7 @@ index e6ab383..668e0be 100644
                  }
              } else if skip_atom {
                  // The next line starts after the whole newline atom.
-@@ -620,6 +934,15 @@ impl ContentWidthsMeasurer {
+@@ -620,6 +947,15 @@ impl ContentWidthsMeasurer {
              }
  
              let mut advance = cluster.advance;
@@ -1840,7 +1990,7 @@ index e6ab383..668e0be 100644
              if SPACED {
                  let owns_gap = if is_rtl {
                      is_atom_start
-@@ -630,9 +953,10 @@ impl ContentWidthsMeasurer {
+@@ -630,9 +966,10 @@ impl ContentWidthsMeasurer {
                  };
                  if owns_gap {
                      advance += gap;
@@ -1852,7 +2002,7 @@ index e6ab383..668e0be 100644
              self.running_max_width += advance;
  
              // A cluster hangs if all of its characters hang. Its first character is checked via the
-@@ -657,13 +981,19 @@ impl ContentWidthsMeasurer {
+@@ -657,13 +994,19 @@ impl ContentWidthsMeasurer {
                  self.running_hanging_whitespace = 0.0;
              }
          }
@@ -1875,9 +2025,18 @@ index e6ab383..668e0be 100644
          }
          // Inline boxes don't hang.
 diff --git a/src/layout/layout.rs b/src/layout/layout.rs
-index 4b0cf9a..4a6656b 100644
+index 4b0cf9a..4f55921 100644
 --- a/src/layout/layout.rs
 +++ b/src/layout/layout.rs
+@@ -20,7 +20,7 @@ use core::fmt;
+ /// The alternate form (`{:#?}`) formats the full underlying data.
+ ///
+ /// [`Debug`]: core::fmt::Debug
+-#[derive(Clone)]
++#[derive(Clone, PartialEq)]
+ pub struct Layout<B: Brush> {
+     pub(crate) data: LayoutData<B>,
+ }
 @@ -66,6 +66,15 @@ impl<B: Brush> Layout<B> {
          &self.data.styles
      }
@@ -2077,7 +2236,7 @@ index 4b0cf9a..4a6656b 100644
      /// given byte `index` in the source text.
      pub(crate) fn line_for_byte_index(&self, index: usize) -> Option<(usize, Line<'_, B>)> {
 diff --git a/src/layout/line.rs b/src/layout/line.rs
-index 1569071..e4d356f 100644
+index 1569071..8894d8c 100644
 --- a/src/layout/line.rs
 +++ b/src/layout/line.rs
 @@ -22,11 +22,26 @@ pub struct Line<'a, B: Brush> {
@@ -2107,7 +2266,15 @@ index 1569071..e4d356f 100644
      pub fn break_reason(&self) -> BreakReason {
          self.data.break_reason
      }
-@@ -71,10 +86,29 @@ impl<'a, B: Brush> Line<'a, B> {
+@@ -57,6 +72,7 @@ impl<'a, B: Brush> Line<'a, B> {
+ 
+         Some(match item.kind {
+             LayoutItemKind::TextRun => LineItem::Run(Run {
++                replacement_source: None,
+                 layout: self.layout,
+                 line_index: self.index,
+                 index: original_index as u32,
+@@ -71,10 +87,29 @@ impl<'a, B: Brush> Line<'a, B> {
          })
      }
  
@@ -2138,7 +2305,7 @@ index 1569071..e4d356f 100644
              Some(metrics) => self
                  .data
                  .style_baseline(&self.layout.data.aligned_subtree_offsets, metrics),
-@@ -82,21 +116,62 @@ impl<'a, B: Brush> Line<'a, B> {
+@@ -82,21 +117,62 @@ impl<'a, B: Brush> Line<'a, B> {
          }
      }
  
@@ -2206,7 +2373,60 @@ index 1569071..e4d356f 100644
                  self.data.metrics.baseline
                      - self.data.aligned_subtree_offset(
                          &self.layout.data.aligned_subtree_offsets,
-@@ -188,6 +263,12 @@ pub struct LineMetrics {
+@@ -119,35 +195,26 @@ impl<'a, B: Brush> Line<'a, B> {
+     ) -> impl Iterator<Item = LineItem<'a, B>> + Clone + use<'a, B> {
+         let copy = self.clone();
+         let line_items = &copy.layout.data.line_items[self.data.item_range.clone()];
+-        line_items
+-            .iter()
+-            .enumerate()
+-            .map(move |(item_index, line_data)| match line_data.kind {
+-                LayoutItemKind::TextRun => LineItem::Run(Run {
+-                    layout: copy.layout,
+-                    line_index: copy.index,
+-                    index: item_index as u32,
+-                    shaped_text_run_index: line_data.index as u32,
+-                    shaped: &copy.layout.data.shaped_text.runs()[line_data.index],
+-                    data: &copy.layout.data.runs[line_data.index],
+-                    line_data: Some(line_data),
+-                }),
+-                LayoutItemKind::InlineBox => {
+-                    LineItem::InlineBox(&copy.layout.data.inline_boxes[line_data.index].inline_box)
+-                }
+-            })
++        line_items.iter().enumerate().map(move |(item_index, line_data)| match line_data.kind {
++            LayoutItemKind::TextRun => LineItem::Run(Run {
++                replacement_source: None,
++                layout: copy.layout,
++                line_index: copy.index,
++                index: item_index as u32,
++                shaped_text_run_index: line_data.index as u32,
++                shaped: &copy.layout.data.shaped_text.runs()[line_data.index],
++                data: &copy.layout.data.runs[line_data.index],
++                line_data: Some(line_data),
++            }),
++            LayoutItemKind::InlineBox => {
++                LineItem::InlineBox(&copy.layout.data.inline_boxes[line_data.index].inline_box)
++            }
++        })
+     }
+ 
+     /// Returns an iterator over the glyph runs for the line.
+-    pub fn items(
+-        &self,
+-    ) -> impl Iterator<Item = PositionedLayoutItem<'a, B>> + 'a + Clone + use<'a, B> {
+-        GlyphRunIter {
+-            line: self.clone(),
+-            item_index: 0,
+-            atoms: None,
+-            offset: 0.,
+-        }
++    pub fn items(&self) -> impl Iterator<Item = PositionedLayoutItem<'a, B>> + 'a + Clone + use<'a, B> {
++        GlyphRunIter { line: self.clone(), item_index: 0, atoms: None, pending: alloc::vec::Vec::new(), offset: 0. }
+     }
+ }
+ 
+@@ -188,6 +255,12 @@ pub struct LineMetrics {
      // into two fields.
      pub hanging_advance: f32,
  
@@ -2219,7 +2439,7 @@ index 1569071..e4d356f 100644
      /// The minimum inline-axis coordinate of the line.
      ///
      /// For horizontal text, this would be the left of the line.
-@@ -213,6 +294,12 @@ pub struct LineMetrics {
+@@ -213,6 +286,12 @@ pub struct LineMetrics {
      /// For horizontal text, this is the bottom of the line box.
      pub block_max_coord: f32,
  
@@ -2232,7 +2452,7 @@ index 1569071..e4d356f 100644
      /// The minimum block-axis coordinate of the line's content.
      ///
      /// This covers, roughly, the line's glyphs and inline boxes. This does not take into account
-@@ -231,6 +318,21 @@ pub struct LineMetrics {
+@@ -231,6 +310,21 @@ pub struct LineMetrics {
      ///
      /// For horizontal text, this would be the bottom of the line's content.
      pub content_block_max_coord: f32,
@@ -2254,7 +2474,7 @@ index 1569071..e4d356f 100644
  }
  
  impl LineMetrics {
-@@ -266,6 +368,7 @@ pub enum PositionedLayoutItem<'a, B: Brush> {
+@@ -266,6 +360,7 @@ pub enum PositionedLayoutItem<'a, B: Brush> {
  /// The computed position of an inline box within a layout
  #[derive(Debug, Clone)]
  pub struct PositionedInlineBox {
@@ -2262,7 +2482,7 @@ index 1569071..e4d356f 100644
      pub x: f32,
      pub y: f32,
      pub width: f32,
-@@ -277,6 +380,12 @@ pub struct PositionedInlineBox {
+@@ -277,12 +372,20 @@ pub struct PositionedInlineBox {
      pub baseline: Option<f32>,
      pub id: u64,
      pub kind: InlineBoxKind,
@@ -2275,7 +2495,15 @@ index 1569071..e4d356f 100644
  }
  
  /// Sequence of fully positioned glyphs with the same style.
-@@ -299,6 +408,28 @@ impl<'a, B: Brush> GlyphRun<'a, B> {
+ #[derive(Clone)]
+ pub struct GlyphRun<'a, B: Brush> {
+     run: Run<'a, B>,
++    origin: Option<(Run<'a, B>, Range<usize>)>,
++    glyph_slice: (usize, usize),
+     style_index: u16,
+     /// The glyph run's shaped clusters, indexing into the shaped run this [`Run`] belongs to.
+     ///
+@@ -299,11 +402,35 @@ impl<'a, B: Brush> GlyphRun<'a, B> {
          &self.run
      }
  
@@ -2290,21 +2518,29 @@ index 1569071..e4d356f 100644
 +        } else {
 +            slice.atoms_start()
 +        };
++        let origin = self.origin.as_ref().map(|(_, range)| range.clone());
++        let trim = self.glyph_slice.0 + self.glyph_slice.1;
 +        core::iter::from_fn(move || {
 +            let atom = if rtl { atoms.prev() } else { atoms.next() }?;
-+            let glyphs = atom
-+                .shaped_clusters()
-+                .iter()
-+                .map(|cluster| usize::from(cluster.glyph_len()))
-+                .sum();
-+            Some((slice.text_byte_range(atom.char_range()), glyphs))
++            let glyphs: usize = atom.shaped_clusters().iter().map(|cluster| usize::from(cluster.glyph_len())).sum();
++            Some((origin.clone().unwrap_or_else(|| slice.text_byte_range(atom.char_range())), glyphs - trim))
 +        })
 +    }
 +
      /// Returns the associated style.
      ///
      /// See also [`Self::style_index`].
-@@ -313,6 +444,79 @@ impl<'a, B: Brush> GlyphRun<'a, B> {
+     pub fn style(&self) -> &Style<B> {
+-        &self.run.layout.styles()[usize::from(self.style_index)]
++        &self.source_run().layout.styles()[usize::from(self.style_index)]
++    }
++
++    fn source_run(&self) -> Run<'a, B> {
++        self.origin.as_ref().map_or(self.run, |(source, _)| *source)
+     }
+ 
+     /// Returns the associated style index.
+@@ -313,6 +440,79 @@ impl<'a, B: Brush> GlyphRun<'a, B> {
          self.style_index
      }
  
@@ -2319,7 +2555,7 @@ index 1569071..e4d356f 100644
 +    /// where a baseline-aligned run moves to the line's central baseline.
 +    pub fn edge_aligned(&self) -> bool {
 +        use crate::style::{AlignmentBaseline, BaselineShift};
-+        let styles = self.run.layout.styles();
++        let styles = self.source_run().layout.styles();
 +        let mut index = self.style_index;
 +        loop {
 +            let Some(style) = styles.get(usize::from(index)) else {
@@ -2345,7 +2581,7 @@ index 1569071..e4d356f 100644
 +    /// moving as its parent does.
 +    pub fn named_aligned(&self) -> bool {
 +        use crate::style::AlignmentBaseline;
-+        let styles = self.run.layout.styles();
++        let styles = self.source_run().layout.styles();
 +        let mut index = self.style_index;
 +        loop {
 +            let Some(style) = styles.get(usize::from(index)) else {
@@ -2384,7 +2620,18 @@ index 1569071..e4d356f 100644
      /// Returns the offset to the baseline.
      pub fn baseline(&self) -> f32 {
          self.baseline
-@@ -356,6 +560,8 @@ impl<'a, B: Brush> GlyphRun<'a, B> {
+@@ -330,7 +530,9 @@ impl<'a, B: Brush> GlyphRun<'a, B> {
+ 
+     /// Returns an iterator over the glyphs in the run.
+     pub fn glyphs(&'a self) -> impl Iterator<Item = Glyph> + 'a + Clone {
+-        self.run.glyphs_in(self.shaped_clusters.clone())
++        let glyphs = self.run.glyphs_in(self.shaped_clusters.clone());
++        let count = if self.glyph_slice.1 != 0 { glyphs.clone().count() - self.glyph_slice.1 } else { usize::MAX };
++        glyphs.take(count).skip(self.glyph_slice.0)
+     }
+ 
+     /// Returns an iterator over the fully positioned glyphs in the run.
+@@ -356,6 +558,8 @@ impl<'a, B: Brush> GlyphRun<'a, B> {
  struct AtomIter<'a> {
      atoms: Atoms<'a>,
      spacing: EffectiveSpacing,
@@ -2393,7 +2640,7 @@ index 1569071..e4d356f 100644
      is_rtl: bool,
      /// The next atom in visual order, if it has been peeked but not yet consumed.
      peeked: Option<Atom<'a>>,
-@@ -372,6 +578,7 @@ impl<'a> AtomIter<'a> {
+@@ -372,6 +576,7 @@ impl<'a> AtomIter<'a> {
                  slice.atoms_start()
              },
              spacing: run.line_spacing(),
@@ -2401,7 +2648,7 @@ index 1569071..e4d356f 100644
              is_rtl,
              peeked: None,
          }
-@@ -404,7 +611,8 @@ impl<'a> AtomIter<'a> {
+@@ -404,7 +609,8 @@ impl<'a> AtomIter<'a> {
              .iter()
              .map(|cluster| usize::from(cluster.glyph_len()))
              .sum();
@@ -2411,7 +2658,25 @@ index 1569071..e4d356f 100644
          if glyph_count != 0 && !self.spacing.is_zero() {
              advance += self.spacing.gaps(atom).total();
          }
-@@ -433,23 +641,35 @@ impl<'a, B: Brush> Iterator for GlyphRunIter<'a, B> {
+@@ -419,6 +625,7 @@ struct GlyphRunIter<'a, B: Brush> {
+     /// Iterator over the visual atoms of the run at `item_index`, positioned at the first atom
+     /// not yet yielded as part of a glyph run. `None` before entering a run.
+     atoms: Option<AtomIter<'a>>,
++    pending: alloc::vec::Vec<GlyphRun<'a, B>>,
+     offset: f32,
+ }
+ 
+@@ -426,6 +633,9 @@ impl<'a, B: Brush> Iterator for GlyphRunIter<'a, B> {
+     type Item = PositionedLayoutItem<'a, B>;
+ 
+     fn next(&mut self) -> Option<Self::Item> {
++        if let Some(run) = self.pending.pop() {
++            return Some(PositionedLayoutItem::GlyphRun(run));
++        }
+         loop {
+             let item = self.line.item(self.item_index)?;
+             match item {
+@@ -433,23 +643,35 @@ impl<'a, B: Brush> Iterator for GlyphRunIter<'a, B> {
                      let x = self.offset
                          + self.line.data.metrics.inline_min_coord
                          + self.line.data.metrics.offset;
@@ -2453,8 +2718,80 @@ index 1569071..e4d356f 100644
                      }));
                  }
                  LineItem::Run(run) => {
+@@ -467,6 +689,62 @@ impl<'a, B: Brush> Iterator for GlyphRunIter<'a, B> {
+                     let mut glyph_run: Option<(u16, Range<u32>)> = None;
+                     while let Some(atom) = atoms.peek() {
+                         let (atom_glyph_count, atom_advance) = atoms.measure(&atom);
++                        let data = &self.line.layout.data;
++                        if let Some((_, _, Some((index, keep)))) =
++                            data.shown_hyphens.iter().find(|(cluster, _, replacement)| {
++                                replacement.is_some() && atom.shaped_clusters_range().contains(cluster)
++                            })
++                        {
++                            if glyph_run.is_some() {
++                                break;
++                            }
++                            let replacement = &data.replacements[*index].2;
++                            let style_index = atom.characters().last().unwrap().style_index;
++                            let baseline = self.line.style_baseline(style_index);
++                            let range = atom.characters().last().unwrap().text_byte_range();
++                            let offset =
++                                self.offset + self.line.data.metrics.inline_min_coord + self.line.data.metrics.offset;
++                            let scale = run.text_fit_scale();
++                            let replacement_width = replacement.full_width() * scale;
++                            let own_width = atom_advance - replacement_width;
++                            let rtl = run.is_rtl();
++                            let own = (*keep).then(|| GlyphRun {
++                                run,
++                                style_index,
++                                shaped_clusters: atom.shaped_clusters_range(),
++                                origin: None,
++                                glyph_slice: (usize::from(rtl), usize::from(!rtl)),
++                                advance: own_width,
++                                baseline,
++                                offset: offset + if rtl { replacement_width } else { 0.0 },
++                            });
++                            if !rtl {
++                                self.pending.extend(own.clone());
++                            }
++                            if let Some(line) = replacement.get(0) {
++                                for item in line.items() {
++                                    if let PositionedLayoutItem::GlyphRun(mut part) = item {
++                                        part.origin = Some((run, range.clone()));
++                                        part.style_index = style_index;
++                                        part.run.replacement_source = Some((range.start, range.end, scale));
++                                        part.offset = part.offset * scale + offset + if rtl { 0.0 } else { own_width };
++                                        part.advance *= scale;
++                                        part.baseline = baseline;
++                                        self.pending.push(part);
++                                    }
++                                }
++                            }
++                            if rtl {
++                                self.pending.extend(own);
++                            }
++                            self.offset += atom_advance;
++                            atoms.consume();
++                            self.pending.reverse();
++                            if let Some(run) = self.pending.pop() {
++                                return Some(PositionedLayoutItem::GlyphRun(run));
++                            }
++                            continue;
++                        }
+                         if atom_glyph_count != 0 {
+                             let atom_style_index = atom.characters()[0].style_index;
+                             let atom_clusters = atom.shaped_clusters_range();
+@@ -500,6 +778,8 @@ impl<'a, B: Brush> Iterator for GlyphRunIter<'a, B> {
+                         self.offset += advance;
+                         return Some(PositionedLayoutItem::GlyphRun(GlyphRun {
+                             run,
++                            origin: None,
++                            glyph_slice: (0, 0),
+                             style_index,
+                             shaped_clusters,
+                             offset: offset
 diff --git a/src/layout/line_break.rs b/src/layout/line_break.rs
-index 3c3798c..2035de7 100644
+index 3c3798c..408c58a 100644
 --- a/src/layout/line_break.rs
 +++ b/src/layout/line_break.rs
 @@ -10,7 +10,8 @@ use alloc::vec::Vec;
@@ -2510,13 +2847,13 @@ index 3c3798c..2035de7 100644
 +    /// The shaped cluster that shows the hyphen.
 +    cluster: u32,
 +    /// The hyphen's glyphs and advances, the first `len` of them.
-+    glyphs: [(u32, f32); 4],
-+    len: u8,
++    glyph: Option<(u32, f32)>,
 +    /// The hyphen's advance.
 +    advance: f32,
 +    /// The cluster keeps its own glyphs (shaping merged the soft hyphen into it).
 +    keep: bool,
 +    rtl: bool,
++    replacement: Option<usize>,
 +}
 +
  #[derive(Clone, Default)]
@@ -2753,7 +3090,7 @@ index 3c3798c..2035de7 100644
          }
      }
  }
-@@ -674,16 +792,100 @@ impl BreakerState {
+@@ -674,16 +792,88 @@ impl BreakerState {
          self.line.clusters.end = atom.shaped_clusters_range().end;
          self.cluster_idx = atom.shaped_clusters_range().end;
          self.line.x = next_x;
@@ -2805,25 +3142,12 @@ index 3c3798c..2035de7 100644
 +            use crate::style::SoftHyphen;
 +            let run = data.shaped_text.runs().get(self.run_idx);
 +            let font_hyphen = || run.and_then(|run| run.hyphen);
-+            let replacement = |ch| {
-+                if matches!(ch, ' ' | '\u{a0}') {
-+                    let (glyph, width) = data.shaped_text.glyph_of(self.run_idx, ' ')?;
-+                    Some((glyph, run.and_then(|run| run.upright_advance).or(data.style_metrics[usize::from(shy_style)].hyphen_space).unwrap_or(width)))
-+                } else {
-+                    data.shaped_text.glyph_of(self.run_idx, ch)
-+                }
-+            };
-+            let mut glyphs = [(0, 0.0); 4];
-+            let len = match data.styles[shy_style as usize].soft_hyphen {
-+                SoftHyphen::Auto => font_hyphen().map(|glyph| { glyphs[0] = glyph; 1 }),
-+                SoftHyphen::Char(ch) => replacement(ch)
-+                    .or_else(font_hyphen)
-+                    .map(|glyph| { glyphs[0] = glyph; 1 }),
-+                SoftHyphen::Chars(chars, len) => {
-+                    let found = chars[..usize::from(len)].iter().enumerate().all(|(index, &ch)| {
-+                        replacement(ch).map(|glyph| glyphs[index] = glyph).is_some()
-+                    });
-+                    if found { Some(len) } else { font_hyphen().map(|glyph| { glyphs[0] = glyph; 1 }) }
++            let rtl = run.is_some_and(|run| run.bidi_level.is_rtl());
++            let replacement = data.replacements.iter().position(|entry| (entry.0, entry.1) == (shy_style, rtl));
++            let glyph = match data.styles[shy_style as usize].soft_hyphen {
++                SoftHyphen::Auto => font_hyphen(),
++                SoftHyphen::Char(_) | SoftHyphen::Chars(_, _) => {
++                    replacement.map(|index| (0, data.replacements[index].2.full_width()))
 +                }
 +                SoftHyphen::Hidden => None,
 +                SoftHyphen::NoBreak => {
@@ -2831,13 +3155,14 @@ index 3c3798c..2035de7 100644
 +                    None
 +                }
 +            };
-+            self.line.shy = len.map(|len| Shy {
++            let form = data.broken_forms.iter().find(|entry| entry.0 == cluster);
++            self.line.shy = (glyph.is_some() || form.is_some() && !self.line.no_break_after).then(|| Shy {
 +                cluster,
-+                glyphs,
-+                len,
-+                advance: glyphs[..usize::from(len)].iter().map(|glyph| glyph.1).sum(),
++                glyph,
++                advance: glyph.map_or(0., |g| g.1) + form.map_or(0., |entry| entry.2),
 +                keep,
-+                rtl: run.is_some_and(|run| run.bidi_level.is_rtl()),
++                rtl,
++                replacement,
 +            });
 +        }
 +        // pyro: a tab that goes to a tab stop keeps what is before it where it is.
@@ -2864,7 +3189,7 @@ index 3c3798c..2035de7 100644
          self.update_max_height_exceeded();
      }
  
-@@ -711,9 +913,16 @@ impl BreakerState {
+@@ -711,9 +901,16 @@ impl BreakerState {
          placement: InlineBoxPlacement,
          quantize: bool,
      ) {
@@ -2881,7 +3206,7 @@ index 3c3798c..2035de7 100644
          if inline_box.vertical_align.is_line_relative() {
              self.line.box_metrics.add_line_relative_inline_box(
                  inline_box.vertical_align,
-@@ -758,6 +967,35 @@ impl BreakerState {
+@@ -758,6 +955,35 @@ impl BreakerState {
          });
      }
  
@@ -2917,7 +3242,7 @@ index 3c3798c..2035de7 100644
      /// Revert boundary state to prev state
      fn reset_to(&mut self, prev_state: PrevBoundaryState) {
          self.item_idx = prev_state.item_idx;
-@@ -768,6 +1006,34 @@ impl BreakerState {
+@@ -768,6 +994,34 @@ impl BreakerState {
          self.subtrees.restore(prev_state.subtrees_len);
      }
  
@@ -2952,7 +3277,7 @@ index 3c3798c..2035de7 100644
      #[inline(always)]
      fn update_max_height_exceeded(&mut self) {
          self.line.max_height_exceeded = self.line_max_height != f32::MAX
-@@ -796,6 +1062,20 @@ impl BreakerState {
+@@ -796,6 +1050,20 @@ impl BreakerState {
          self.line_max_advance = advance;
      }
  
@@ -2973,7 +3298,7 @@ index 3c3798c..2035de7 100644
      /// Get the max-height of the current line
      #[inline(always)]
      pub fn line_max_height(&self) -> f32 {
-@@ -829,6 +1109,21 @@ impl BreakerState {
+@@ -829,6 +1097,21 @@ impl BreakerState {
      pub fn set_line_y(&mut self, y: f64) {
          self.line_y = y;
      }
@@ -2995,7 +3320,7 @@ index 3c3798c..2035de7 100644
  }
  
  /// Line breaking support for a paragraph.
-@@ -838,28 +1133,126 @@ pub struct BreakLines<'a, B: Brush> {
+@@ -838,28 +1121,126 @@ pub struct BreakLines<'a, B: Brush> {
      state: BreakerState,
      prev_state: Option<BreakerState>,
      done: bool,
@@ -3125,7 +3450,7 @@ index 3c3798c..2035de7 100644
      /// Reset the per-line running state in preparation for building a new line.
      ///
      /// The line starts out containing the root span box (the "strut", CSS 2 §10.8).
-@@ -868,15 +1261,45 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -868,15 +1249,45 @@ impl<'a, B: Brush> BreakLines<'a, B> {
          state.line.reset();
          state.contributed.clear();
          state.subtrees.clear();
@@ -3177,7 +3502,7 @@ index 3c3798c..2035de7 100644
      /// Add the layout's inline box `index` to the current line. Out-of-flow boxes contribute
      /// nothing to the line's metrics.
      fn append_layout_inline_box(&mut self, index: usize, next_x: f32) {
-@@ -889,8 +1312,13 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -889,8 +1300,13 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                  layout_box.parent_style_index,
                  &self.layout.data.style_metrics,
                  quantize,
@@ -3191,7 +3516,7 @@ index 3c3798c..2035de7 100644
              self.state
                  .append_aligned_inline_box_to_line(next_x, inline_box, placement, quantize);
          } else {
-@@ -899,6 +1327,161 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -899,6 +1315,161 @@ impl<'a, B: Brush> BreakLines<'a, B> {
          }
      }
  
@@ -3353,7 +3678,7 @@ index 3c3798c..2035de7 100644
      /// Reset state when a line has been committed
      fn start_new_line(
          &mut self,
-@@ -906,6 +1489,99 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -906,6 +1477,101 @@ impl<'a, B: Brush> BreakLines<'a, B> {
          max_advance: f32,
          line_indent: f32,
      ) -> Option<YieldData> {
@@ -3366,7 +3691,7 @@ index 3c3798c..2035de7 100644
 +        let clusters = self.state.line.clusters.clone();
 +        let data = &mut self.layout.data;
 +        let mut shown = false;
-+        data.shown_hyphens.retain(|&(cluster, saved)| {
++        data.shown_hyphens.retain(|&(cluster, saved, _)| {
 +            if shy.is_some_and(|shy| shy.cluster == cluster) {
 +                shown = true;
 +                true
@@ -3379,14 +3704,16 @@ index 3c3798c..2035de7 100644
 +        });
 +        if let Some(shy) = shy {
 +            if !shown
-+                && let Some(saved) = data.shaped_text.show_hyphen(
-+                    shy.cluster,
-+                    &shy.glyphs[..usize::from(shy.len)],
-+                    shy.keep,
-+                    shy.rtl,
-+                )
++                && let Some(&(_, [left, right], _)) = data.broken_forms.iter().find(|entry| entry.0 == shy.cluster)
 +            {
-+                data.shown_hyphens.push((shy.cluster, saved));
++                let old_left = data.shaped_text.swap_cluster_form(shy.cluster, left);
++                let old_right = data.shaped_text.swap_cluster_form(shy.cluster + 1, right);
++                data.active_forms.push((shy.cluster, [old_left, old_right]));
++            }
++            if !shown
++                && let Some(saved) = data.shaped_text.show_hyphen(shy.cluster, shy.glyph.as_slice(), shy.keep, shy.rtl)
++            {
++                data.shown_hyphens.push((shy.cluster, saved, shy.replacement.map(|index| (index, shy.keep))));
 +                shown = true;
 +            }
 +            if shown {
@@ -3453,7 +3780,7 @@ index 3c3798c..2035de7 100644
          commit_line(
              self.layout,
              &mut self.lines,
-@@ -914,6 +1590,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -914,6 +1580,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
              reason,
              line_indent,
          );
@@ -3462,7 +3789,7 @@ index 3c3798c..2035de7 100644
  
          // A line containing only empty inline boxes (and no text) is an invisible line box with
          // zero height; the strut only applies once the line has content. The trailing empty line
-@@ -925,17 +1603,20 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -925,17 +1593,20 @@ impl<'a, B: Brush> BreakLines<'a, B> {
          } else {
              self.state.line.box_metrics.line_height()
          };
@@ -3485,7 +3812,7 @@ index 3c3798c..2035de7 100644
          self.reset_line();
  
          self.state.line_y += line_height as f64;
-@@ -952,6 +1633,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -952,6 +1623,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
              metrics: self.lines.lines.last().unwrap().metrics,
              line_y_start,
              line_y_end: self.state.line_y,
@@ -3493,7 +3820,7 @@ index 3c3798c..2035de7 100644
          }
      }
  
-@@ -987,6 +1669,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -987,6 +1659,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
      // than blink, for reasons which haven't been fully understood.
      #[doc(hidden)]
      pub fn set_prior_line_width(&mut self, advance: f32) {
@@ -3501,15 +3828,32 @@ index 3c3798c..2035de7 100644
          if let Some(line) = self.lines.lines.last_mut() {
              line.metrics.inline_max_coord = line.metrics.inline_min_coord + advance;
          }
-@@ -994,6 +1677,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -994,7 +1667,24 @@ impl<'a, B: Brush> BreakLines<'a, B> {
  
      /// Reverts the to an externally saved state.
      pub fn revert_to(&mut self, state: BreakerState) {
 +        self.resumable = false;
          self.state = state;
++        let data = &mut self.layout.data;
++        data.shown_hyphens.retain(|&(cluster, saved, _)| {
++            if cluster < self.state.cluster_idx {
++                return true;
++            }
++            data.shaped_text.restore_cluster(cluster, saved);
++            false
++        });
++        data.active_forms.retain(|&(cluster, [left, right])| {
++            if cluster < self.state.cluster_idx {
++                return true;
++            }
++            data.shaped_text.restore_cluster(cluster, left);
++            data.shaped_text.restore_cluster(cluster + 1, right);
++            false
++        });
          self.lines.truncate(self.state.lines);
          self.lines.line_items.truncate(self.state.items);
-@@ -1026,6 +1710,18 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+         self.done = false;
+@@ -1026,6 +1716,18 @@ impl<'a, B: Brush> BreakLines<'a, B> {
      /// Computes the next line in the paragraph. Returns the advance and size
      /// (width and height for horizontal layouts) of the line.
      pub fn break_next(&mut self) -> Option<YieldData> {
@@ -3528,7 +3872,7 @@ index 3c3798c..2035de7 100644
          assert!(
              self.state.layout_max_advance == f32::INFINITY
                  || self.state.line_max_advance - self.state.layout_max_advance < 1.0
-@@ -1035,6 +1731,14 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1035,6 +1737,14 @@ impl<'a, B: Brush> BreakLines<'a, B> {
          if self.done {
              return None;
          }
@@ -3543,7 +3887,7 @@ index 3c3798c..2035de7 100644
          match &mut self.prev_state {
              Some(prev_state) => prev_state.clone_from(&self.state),
              None => self.prev_state = Some(self.state.clone()),
-@@ -1052,6 +1756,10 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1052,6 +1762,10 @@ impl<'a, B: Brush> BreakLines<'a, B> {
          let line_indent = self.resolve_indent();
  
          let max_advance = max_advance - line_indent;
@@ -3554,7 +3898,7 @@ index 3c3798c..2035de7 100644
  
          // Iterate over remaining runs in the Layout
          let item_count = self.layout.data.items.len();
-@@ -1060,6 +1768,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1060,6 +1774,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
  
              match item.kind {
                  LayoutItemKind::InlineBox => {
@@ -3563,7 +3907,7 @@ index 3c3798c..2035de7 100644
                      let inline_box = &self.layout.data.inline_boxes[item.index].inline_box;
  
                      // In-flow boxes are aligned relative to their containing style's span box
-@@ -1082,36 +1792,134 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1082,36 +1798,134 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                                  advance: self.state.line.x,
                              }));
                          }
@@ -3658,7 +4002,7 @@ index 3c3798c..2035de7 100644
 +                        if let Some(prev) = self.state.prev_boundary.take() {
 +                            self.state.reset_to(prev);
 +                            return self.start_new_line(BreakReason::Regular, max_advance, line_indent);
-+                        }
+                         }
 +                        self.append_layout_inline_box(item.index, next_x);
 +                        self.state.line.text_wrap_mode = box_wrap_mode;
 +                        if glue || glued_after {
@@ -3667,7 +4011,7 @@ index 3c3798c..2035de7 100644
 +                            self.state.mark_line_break_opportunity_at_depth(
 +                                self.layout.data.styles[usize::from(box_style)].wrap_avoid_depth,
 +                            );
-                         }
++                        }
 +                    } else if self.state.line.x == 0.0 || !self.state.line.has_inline_content {
 +                        // pyro: at the start of the line (after nothing but span edges: a 200px
 +                        // start margin in a 200px block, WPT css-text `text-indent-overflow-ref`)
@@ -3710,7 +4054,7 @@ index 3c3798c..2035de7 100644
                      }
                  }
                  LayoutItemKind::TextRun => {
-@@ -1126,6 +1934,9 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1126,6 +1940,9 @@ impl<'a, B: Brush> BreakLines<'a, B> {
  
                      // Iterate over the remaining atoms in the Run
                      for atom in slice.atoms_from(self.state.cluster_idx) {
@@ -3720,7 +4064,7 @@ index 3c3798c..2035de7 100644
                          // Retrieve metadata about the atom
                          let first_character = &atom.characters()[0];
                          let whitespace = first_character.whitespace;
-@@ -1161,34 +1972,138 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1161,34 +1978,138 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                                  max_advance,
                                  line_indent,
                              );
@@ -3866,7 +4210,7 @@ index 3c3798c..2035de7 100644
                              if max_height_exceeded {
                                  return self.max_height_break_data(line_height);
                              }
-@@ -1216,7 +2131,31 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1216,7 +2137,68 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                                  spacing,
                                  item.bidi_level.is_rtl(),
                              );
@@ -3896,13 +4240,17 @@ index 3c3798c..2035de7 100644
 +                                && !past_first_line
 +                                && (all_hang || next_x - hanging <= fit_advance + FIT_TOLERANCE)
 +                            {
-                                 if max_height_exceeded {
-                                     return self.max_height_break_data(line_height);
-                                 }
-@@ -1228,6 +2167,44 @@ impl<'a, B: Brush> BreakLines<'a, B> {
-                                     is_separator,
-                                 );
-                             }
++                                if max_height_exceeded {
++                                    return self.max_height_break_data(line_height);
++                                }
++                                self.state.append_atom_to_line(
++                                    &atom,
++                                    next_x,
++                                    style_index,
++                                    &self.layout.data,
++                                    is_separator,
++                                );
++                            }
 +                            // pyro: closing punctuation that does not fit is set half-width
 +                            // if the line then ends with it (CSS `text-spacing-trim`, not
 +                            // `space-all`).
@@ -3929,22 +4277,18 @@ index 3c3798c..2035de7 100644
 +                                    |next| next.is_soft_wrap_opportunity_before() || next.whitespace() != Whitespace::None,
 +                                )
 +                            {
-+                                if max_height_exceeded {
-+                                    return self.max_height_break_data(line_height);
-+                                }
-+                                self.state.append_atom_to_line(
-+                                    &atom,
-+                                    next_x,
-+                                    style_index,
-+                                    &self.layout.data,
-+                                    is_separator,
-+                                );
+                                 if max_height_exceeded {
+                                     return self.max_height_break_data(line_height);
+                                 }
+@@ -1227,6 +2209,7 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+                                     &self.layout.data,
+                                     is_separator,
+                                 );
 +                                hang_now = hanging;
-+                            }
+                             }
                              // Case: we have previously encountered a REGULAR line-breaking opportunity in the current line
                              //
-                             // We "take" the line-breaking opportunity by starting a new line and resetting our
-@@ -1244,6 +2221,27 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1244,6 +2227,27 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                              //
                              // We "take" the line-breaking opportunity by starting a new line and resetting our
                              // item/run/cluster iteration state back to how it was when the line-breaking opportunity was encountered
@@ -3972,7 +4316,7 @@ index 3c3798c..2035de7 100644
                              else if let Some(prev_emergency) =
                                  self.state.emergency_boundary.take()
                              {
-@@ -1273,6 +2271,10 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1273,6 +2277,10 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                                  );
                              }
                          }
@@ -3983,7 +4327,7 @@ index 3c3798c..2035de7 100644
                      }
                      self.state.run_idx += 1;
                      self.state.item_idx += 1;
-@@ -1283,6 +2285,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1283,6 +2291,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
          if self.state.line.items.end == 0 {
              self.state.line.items.end = 1;
          }
@@ -3992,7 +4336,7 @@ index 3c3798c..2035de7 100644
          self.done = true;
          self.start_new_line(BreakReason::None, max_advance, line_indent)
      }
-@@ -1300,6 +2304,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1300,6 +2310,8 @@ impl<'a, B: Brush> BreakLines<'a, B> {
      /// ligature or a multi-character grapheme), the whole atom is placed on the line before
      /// breaking.
      pub fn break_next_with_length(&mut self, max_chars: u32) -> Option<()> {
@@ -4001,7 +4345,7 @@ index 3c3798c..2035de7 100644
          if self.done {
              return None;
          }
-@@ -1318,7 +2324,13 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1318,7 +2330,13 @@ impl<'a, B: Brush> BreakLines<'a, B> {
                      let inline_box = &self.layout.data.inline_boxes[item.index].inline_box;
  
                      if inline_box.kind != InlineBoxKind::InFlow {
@@ -4016,7 +4360,7 @@ index 3c3798c..2035de7 100644
                          continue;
                      }
  
-@@ -1469,12 +2481,16 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1469,12 +2487,16 @@ impl<'a, B: Brush> BreakLines<'a, B> {
      }
  
      fn finish_line(&mut self, line_idx: usize, line_height: f32, invisible: bool) -> f32 {
@@ -4033,7 +4377,7 @@ index 3c3798c..2035de7 100644
  
          if line.item_range.is_empty() {
              line.text_range = self.layout.data.text_len..self.layout.data.text_len;
-@@ -1599,6 +2615,33 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1599,6 +2621,33 @@ impl<'a, B: Brush> BreakLines<'a, B> {
              );
          }
  
@@ -4067,7 +4411,7 @@ index 3c3798c..2035de7 100644
          let top = if quantize {
              self.state.line_y.round() as f32
          } else {
-@@ -1617,6 +2660,9 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1617,6 +2666,9 @@ impl<'a, B: Brush> BreakLines<'a, B> {
          } else {
              line.metrics.baseline + line_box_extents.under
          };
@@ -4077,7 +4421,7 @@ index 3c3798c..2035de7 100644
          line.metrics.content_block_min_coord = line.metrics.baseline - content_box_extents.over;
          line.metrics.content_block_max_coord = line.metrics.baseline + content_box_extents.under;
  
-@@ -1628,6 +2674,10 @@ impl<'a, B: Brush> BreakLines<'a, B> {
+@@ -1628,6 +2680,10 @@ impl<'a, B: Brush> BreakLines<'a, B> {
  
  impl<B: Brush> Drop for BreakLines<'_, B> {
      fn drop(&mut self) {
@@ -4088,7 +4432,7 @@ index 3c3798c..2035de7 100644
          // Compute the overall width and height of the entire layout
          // The "width" excludes hanging whitespace. The "full_width" includes it.
          let mut layout_width = 0_f32;
-@@ -1639,6 +2689,8 @@ impl<B: Brush> Drop for BreakLines<'_, B> {
+@@ -1639,6 +2695,8 @@ impl<B: Brush> Drop for BreakLines<'_, B> {
              layout_full_width = layout_full_width.max(line_max);
              layout_width = layout_width.max(line_max - line.metrics.hanging_advance);
              height += line.metrics.line_height as f64;
@@ -4097,7 +4441,7 @@ index 3c3798c..2035de7 100644
          }
  
          // If laying out with infinite width constraint, then set all lines' "max_width"
-@@ -1715,6 +2767,9 @@ fn commit_line<B: Brush>(
+@@ -1715,6 +2773,9 @@ fn commit_line<B: Brush>(
                      shaped_cluster_range: 0..0,
                      text_range: 0..0,
                  });
@@ -4107,7 +4451,7 @@ index 3c3798c..2035de7 100644
  
                  last_item_kind = item.kind;
              }
-@@ -1773,6 +2828,12 @@ fn commit_line<B: Brush>(
+@@ -1773,6 +2834,12 @@ fn commit_line<B: Brush>(
              }
          }
      }
@@ -4120,7 +4464,7 @@ index 3c3798c..2035de7 100644
      // let end_run_idx = lines.line_items.last().map(|item| item.index).unwrap_or(0);
      let end_item_idx = lines.line_items.len();
  
-@@ -1789,19 +2850,53 @@ fn commit_line<B: Brush>(
+@@ -1789,19 +2856,53 @@ fn commit_line<B: Brush>(
          BreakReason::Regular | BreakReason::Emergency => f32::INFINITY,
          BreakReason::Explicit | BreakReason::None => state.x - max_advance,
      };
@@ -4176,7 +4520,7 @@ index 3c3798c..2035de7 100644
      }
  
      lines.lines.push(LineData {
-@@ -1812,15 +2907,19 @@ fn commit_line<B: Brush>(
+@@ -1812,15 +2913,19 @@ fn commit_line<B: Brush>(
          num_justification_opportunities,
          justification: Justification {
              justification_end_cluster,
@@ -4197,7 +4541,7 @@ index 3c3798c..2035de7 100644
      });
  
      // Reset state for the new line
-@@ -1866,8 +2965,11 @@ fn hanging_whitespace<B: Brush>(
+@@ -1866,8 +2971,11 @@ fn hanging_whitespace<B: Brush>(
      layout: &Layout<B>,
      line_items: &[LineItemData],
      overflow: f32,
@@ -4210,7 +4554,7 @@ index 3c3798c..2035de7 100644
      // Atoms with shaped clusters before this index may be stretched by justification.
      let mut justification_end_cluster = u32::MAX;
      let mut hanging_opportunities = 0;
-@@ -1888,8 +2990,8 @@ fn hanging_whitespace<B: Brush>(
+@@ -1888,8 +2996,8 @@ fn hanging_whitespace<B: Brush>(
              LayoutItemKind::InlineBox => {
                  let item = &layout.data.inline_boxes[line_item.index].inline_box;
  
@@ -4221,7 +4565,7 @@ index 3c3798c..2035de7 100644
                      break;
                  }
              }
-@@ -1898,7 +3000,7 @@ fn hanging_whitespace<B: Brush>(
+@@ -1898,7 +3006,7 @@ fn hanging_whitespace<B: Brush>(
                  // reordering. We don't currently apply UAX #9 L1 (resetting trailing whitespace to
                  // paragraph level), so only logically-last items that match the paragraph level are
                  // guaranteed to be at that edge.
@@ -4230,7 +4574,7 @@ index 3c3798c..2035de7 100644
                      break;
                  }
  
-@@ -1943,12 +3045,32 @@ fn hanging_whitespace<B: Brush>(
+@@ -1943,12 +3051,32 @@ fn hanging_whitespace<B: Brush>(
                          }
                      }
                      hanging_whitespace_advance += hanging;
@@ -4264,7 +4608,7 @@ index 3c3798c..2035de7 100644
                      if !all_hang {
                          break 'items;
                      }
-@@ -1965,9 +3087,283 @@ fn hanging_whitespace<B: Brush>(
+@@ -1965,9 +3093,283 @@ fn hanging_whitespace<B: Brush>(
          hanging_whitespace_advance,
          justification_end_cluster,
          hanging_opportunities,
@@ -4548,7 +4892,7 @@ index 3c3798c..2035de7 100644
  /// Reorder items within line according to the bidi levels of the items
  fn reorder_line_items(runs: &mut [LineItemData]) {
      let run_count = runs.len();
-@@ -2015,12 +3411,7 @@ mod tests {
+@@ -2015,12 +3417,7 @@ mod tests {
  
      #[test]
      fn subtree_extents_restored_at_break_opportunities() {
@@ -4828,10 +5172,26 @@ index 0000000..0a4cf55
 +    kept
 +}
 diff --git a/src/layout/run.rs b/src/layout/run.rs
-index 852bc48..e314b9b 100644
+index 852bc48..88efd60 100644
 --- a/src/layout/run.rs
 +++ b/src/layout/run.rs
-@@ -96,7 +96,22 @@ impl<'a, B: Brush> Run<'a, B> {
+@@ -27,6 +27,7 @@ pub struct Run<'a, B: Brush> {
+     pub(crate) shaped: &'a ShapedRun,
+     pub(crate) data: &'a RunData,
+     pub(crate) line_data: Option<&'a LineItemData>,
++    pub(crate) replacement_source: Option<(usize, usize, f32)>,
+ }
+ 
+ // `Run` is `Copy` and `Clone` regardless of `B`.
+@@ -54,6 +55,7 @@ impl<'a, B: Brush> Run<'a, B> {
+             shaped: &layout.data.shaped_text.runs()[run_index],
+             data: &layout.data.runs[run_index],
+             line_data,
++            replacement_source: None,
+         }
+     }
+ 
+@@ -96,7 +98,25 @@ impl<'a, B: Brush> Run<'a, B> {
  
      /// Returns the font size for the run.
      pub fn font_size(&self) -> f32 {
@@ -4843,6 +5203,9 @@ index 852bc48..e314b9b 100644
 +    /// font size, metrics, advances and glyphs are at that scale.
 +    #[inline]
 +    pub fn text_fit_scale(&self) -> f32 {
++        if let Some((_, _, scale)) = self.replacement_source {
++            return scale;
++        }
 +        match self.line_data {
 +            Some(_) => self
 +                .layout
@@ -4855,7 +5218,7 @@ index 852bc48..e314b9b 100644
      }
  
      /// Returns the font attributes for the run.
-@@ -121,8 +136,15 @@ impl<'a, B: Brush> Run<'a, B> {
+@@ -121,8 +141,15 @@ impl<'a, B: Brush> Run<'a, B> {
      }
  
      /// Returns metrics for the run.
@@ -4873,7 +5236,7 @@ index 852bc48..e314b9b 100644
      }
  
      #[inline]
-@@ -132,7 +154,7 @@ impl<'a, B: Brush> Run<'a, B> {
+@@ -132,7 +159,7 @@ impl<'a, B: Brush> Run<'a, B> {
          } else {
              Justification::NONE
          };
@@ -4882,7 +5245,7 @@ index 852bc48..e314b9b 100644
      }
  
      /// Returns the advance for the run.
-@@ -142,7 +164,14 @@ impl<'a, B: Brush> Run<'a, B> {
+@@ -142,15 +169,22 @@ impl<'a, B: Brush> Run<'a, B> {
      /// justification.
      pub fn advance(&self) -> f32 {
          let spacing = self.line_spacing();
@@ -4898,7 +5261,19 @@ index 852bc48..e314b9b 100644
      }
  
      /// Returns the original text range for the run.
-@@ -255,6 +284,7 @@ impl<'a, B: Brush> Run<'a, B> {
+     pub fn text_range(&self) -> Range<usize> {
+-        self.line_data
+-            .map(|d| &d.text_range)
+-            .unwrap_or(&self.shaped.range.byte_range)
+-            .clone()
++        if let Some((start, end, _)) = self.replacement_source {
++            return start..end;
++        }
++        self.line_data.map(|d| &d.text_range).unwrap_or(&self.shaped.range.byte_range).clone()
+     }
+ 
+     /// Returns `true` if the run has right-to-left directionality.
+@@ -255,6 +289,7 @@ impl<'a, B: Brush> Run<'a, B> {
              self.full_slice().narrow(shaped_clusters),
              self.is_rtl(),
              self.line_spacing(),
@@ -4906,7 +5281,7 @@ index 852bc48..e314b9b 100644
          )
      }
  }
-@@ -281,10 +311,12 @@ pub(crate) struct Glyphs<'a> {
+@@ -281,10 +316,12 @@ pub(crate) struct Glyphs<'a> {
      atom_glyph: usize,
      /// The number of glyphs of the current atom. The last one gets `gaps.after`.
      atom_glyph_count: usize,
@@ -4920,7 +5295,7 @@ index 852bc48..e314b9b 100644
          let clusters = slice.shaped_clusters_range();
          Self {
              slice,
-@@ -305,6 +337,7 @@ impl<'a> Glyphs<'a> {
+@@ -305,6 +342,7 @@ impl<'a> Glyphs<'a> {
              gaps: Gaps::ZERO,
              atom_glyph: 0,
              atom_glyph_count: 0,
@@ -4928,7 +5303,7 @@ index 852bc48..e314b9b 100644
          }
      }
  }
-@@ -316,6 +349,12 @@ impl Iterator for Glyphs<'_> {
+@@ -316,6 +354,12 @@ impl Iterator for Glyphs<'_> {
      fn next(&mut self) -> Option<Glyph> {
          loop {
              if let Some(mut glyph) = self.glyphs.next() {
@@ -5085,7 +5460,7 @@ index 4eccc6c..b7e49a5 100644
  
          gaps
 diff --git a/src/layout/style_metrics.rs b/src/layout/style_metrics.rs
-index 7b7b147..b29420c 100644
+index 7b7b147..cca543c 100644
 --- a/src/layout/style_metrics.rs
 +++ b/src/layout/style_metrics.rs
 @@ -56,7 +56,7 @@ use fontique::{Query, QueryFamily};
@@ -5097,14 +5472,7 @@ index 7b7b147..b29420c 100644
  use crate::{AlignmentBaseline, BaselineShift, FontContext, FontData, InlineBox, VerticalAlign};
  
  /// Metrics of the span box generated by one style table entry.
-@@ -65,12 +65,28 @@ use crate::{AlignmentBaseline, BaselineShift, FontContext, FontData, InlineBox,
- /// extend upwards, `under`/`descent` downwards.
- #[derive(Clone, Copy, Debug, Default, PartialEq)]
- pub(crate) struct StyleMetrics {
-+    pub(crate) hyphen_space: Option<f32>,
-     /// Ascent of the first available font (the top of the content area).
-     pub(crate) ascent: f32,
-     /// Descent of the first available font (the bottom of the content area).
+@@ -71,6 +71,21 @@ pub(crate) struct StyleMetrics {
      pub(crate) descent: f32,
      /// x-height of the first available font, used by `vertical-align: middle`.
      pub(crate) x_height: f32,
@@ -5126,7 +5494,7 @@ index 7b7b147..b29420c 100644
      /// Distance from the baseline to the top of the line-height expanded span box.
      pub(crate) over: f32,
      /// Distance from the baseline to the bottom of the line-height expanded span box.
-@@ -94,6 +110,14 @@ pub(crate) struct StyleMetrics {
+@@ -94,6 +109,14 @@ pub(crate) struct StyleMetrics {
      pub(crate) parent: u16,
      /// The style's font size, against which `sub`/`super` of children are resolved.
      pub(crate) font_size: f32,
@@ -5141,7 +5509,7 @@ index 7b7b147..b29420c 100644
  }
  
  /// Resolve the [`StyleMetrics`] of every style in `styles`, in table order.
-@@ -101,38 +125,108 @@ pub(crate) struct StyleMetrics {
+@@ -101,38 +124,100 @@ pub(crate) struct StyleMetrics {
  /// Relies on the style table being ordered parent-first (`style.parent <= index`), which both
  /// style builders guarantee. `shaped_text` is the already shaped text of the layout, whose run
  /// metrics are reused where a style's first available font was also used for shaping.
@@ -5203,14 +5571,6 @@ index 7b7b147..b29420c 100644
 -        let mut metrics = StyleMetrics::from_font(&font_metrics, line_height, quantize);
 +        let mut metrics = StyleMetrics::from_font(&font_metrics, line_height, quantum);
          metrics.font_size = style.font_size;
-+        use crate::style::SoftHyphen;
-+        if match style.soft_hyphen {
-+            SoftHyphen::Char(ch) => matches!(ch, ' ' | '\u{a0}'),
-+            SoftHyphen::Chars(chars, len) => chars[..usize::from(len)].iter().any(|ch| matches!(ch, ' ' | '\u{a0}')),
-+            _ => false,
-+        } {
-+            metrics.hyphen_space = font.and_then(|font| font.space_advance(style.font_size, rcx.variations(style.font_variations).unwrap_or(&[])));
-+        }
 +        metrics.font = Some(font_metrics);
 +        // pyro: the ideographic boxes: the font's `BASE` table, else derived from the em box as
 +        // Blink derives them (the em box sits on the descent; the face box is 5% of the em in).
@@ -5258,7 +5618,7 @@ index 7b7b147..b29420c 100644
              metrics.baseline_offset = 0.;
              metrics.exact_baseline_offset = 0.;
              metrics.aligned_subtree_root = 0;
-@@ -156,12 +250,14 @@ pub(crate) fn resolve_style_metrics<B: Brush>(
+@@ -156,12 +241,14 @@ pub(crate) fn resolve_style_metrics<B: Brush>(
                  metrics.exact_baseline_offset = 0.;
                  metrics.aligned_subtree_root = index as u16;
              } else {
@@ -5275,7 +5635,7 @@ index 7b7b147..b29420c 100644
                  } else {
                      metrics.exact_baseline_offset
                  };
-@@ -173,6 +269,83 @@ pub(crate) fn resolve_style_metrics<B: Brush>(
+@@ -173,6 +260,82 @@ pub(crate) fn resolve_style_metrics<B: Brush>(
      }
  }
  
@@ -5308,7 +5668,6 @@ index 7b7b147..b29420c 100644
 +        let mut metrics = StyleMetrics::from_font(&font, line_height, quantum);
 +        metrics.font = Some(font);
 +        metrics.font_size = font_size;
-+        metrics.hyphen_space = base.hyphen_space.map(|width| width * scale);
 +        metrics.ideographic = base.ideographic.map(|value| value * scale);
 +        metrics.named = base.named.map(|value| value * scale);
 +        // A side `text-box-trim` trims stays trimmed (to its scaled edge).
@@ -5359,7 +5718,7 @@ index 7b7b147..b29420c 100644
  /// The metrics of a shaped run using `font` at `font_size`, if any: the shaper has then already
  /// computed the metrics this style needs. Only used at the font's default variation location,
  /// which covers the common non-variable-font case without re-resolving axes.
-@@ -215,31 +388,57 @@ pub(crate) struct BoxMetrics {
+@@ -215,31 +378,57 @@ pub(crate) struct BoxMetrics {
      pub(crate) over: f32,
      /// Distance from the baseline to the bottom of the line-height expanded box.
      pub(crate) under: f32,
@@ -5427,7 +5786,7 @@ index 7b7b147..b29420c 100644
          }
      }
  }
-@@ -248,16 +447,23 @@ impl StyleMetrics {
+@@ -248,8 +437,9 @@ impl StyleMetrics {
      /// The font-derived metrics of a span box: its [`BoxMetrics`] and x-height. The remaining
      /// fields describe the box's place in the style tree and are filled in by
      /// [`resolve_style_metrics`].
@@ -5439,10 +5798,8 @@ index 7b7b147..b29420c 100644
          // Fonts without an `OS/2.sxHeight` get the same estimate Gecko and Blink use
          // (`DEFAULT_XHEIGHT_FACTOR`); css-inline-3 §A.2 suggests measuring the `x` glyph or
          // `0.5em` instead, but this keeps us in line with browsers.
-         let x_height = font.x_height.unwrap_or(box_metrics.ascent * 0.56);
-         Self {
+@@ -258,6 +448,11 @@ impl StyleMetrics {
              ascent: box_metrics.ascent,
-+            hyphen_space: None,
              descent: box_metrics.descent,
              x_height: if quantize { x_height.round() } else { x_height },
 +            cap_height: font.cap_height.unwrap_or(box_metrics.ascent),
@@ -5453,7 +5810,7 @@ index 7b7b147..b29420c 100644
              over: box_metrics.over,
              under: box_metrics.under,
              baseline_offset: 0.,
-@@ -265,6 +471,55 @@ impl StyleMetrics {
+@@ -265,6 +460,55 @@ impl StyleMetrics {
              aligned_subtree_root: 0,
              parent: 0,
              font_size: 0.,
@@ -5509,7 +5866,7 @@ index 7b7b147..b29420c 100644
          }
      }
  }
-@@ -277,16 +532,49 @@ pub(crate) fn shift_from_parent(
+@@ -277,16 +521,49 @@ pub(crate) fn shift_from_parent(
      align: VerticalAlign,
      over: f32,
      under: f32,
@@ -5565,7 +5922,7 @@ index 7b7b147..b29420c 100644
          // Constants as used by WebKit and Blink.
          BaselineShift::Sub => -(parent.font_size / 5.),
          BaselineShift::Super => parent.font_size / 3.,
-@@ -321,21 +609,39 @@ pub(crate) fn inline_box_placement(
+@@ -321,21 +598,39 @@ pub(crate) fn inline_box_placement(
      parent_style: u16,
      style_metrics: &[StyleMetrics],
      quantize: bool,
@@ -5609,7 +5966,7 @@ index 7b7b147..b29420c 100644
          },
          ascent,
          descent,
-@@ -366,3 +672,11 @@ fn first_available_font<B: Brush>(
+@@ -366,3 +661,11 @@ fn first_available_font<B: Brush>(
          synthesis: font.synthesis,
      })
  }
