@@ -189,6 +189,7 @@ where
     crate::paint_worklet::define_globals(def);
     crate::typed_om::define_globals(def);
     crate::trusted_types::define_globals(def);
+    crate::trusted_types::define_parser_options_global(def);
     // `Highlight` and `HighlightRegistry` (CSS Custom Highlight API), made on first use.
     def.global_value_accessor(
         "Highlight",

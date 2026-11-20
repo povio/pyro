@@ -155,6 +155,7 @@ pub use xhr::XhrLimits;
 pub fn register(engine: &pyro_js::Engine) {
     engine.set_wrapper_property_hook(target::pin_wrapper_with_properties);
     engine.register::<target::EventTarget>();
+    trusted_types::register(engine);
     event::register(engine);
     popup::register(engine);
     node::register(engine);

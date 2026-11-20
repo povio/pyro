@@ -42,25 +42,8 @@ fn insert<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>, position: Position) -> J
     a.require(1, sink)?;
     // WebIDL converts the HTML union before it reads the options dictionary.
     // Applying the default policy is a separate step, after options vetting.
-    let input = trusted_types::HtmlInput::convert(s, page, a.get(0))?;
-    let options = a.get(1);
-    let run_scripts = if options.is_null() || options.is_undefined() {
-        false
-    } else {
-        let obj = options.as_object().ok_or_else(|| JsError::Type("Expected HTML parser options".into()))?;
-        let run_scripts = obj.get_atom("runScripts")?.to_bool();
-        if !obj.get_atom("sanitizer")?.is_undefined() {
-            return Err(JsError::Type("HTML sanitizer options are unsupported".into()));
-        }
-        run_scripts
-    };
-    // Trusted Types uses the receiver's relevant global, including for nodes
-    // in inert documents such as a template's content owner.
-    if run_scripts && trusted_types::requires_for_script(page) && trusted_types::sink_violation(s, page, sink, "")? {
-        // Only a vetted parser option can enable scripts under Trusted Types.
-        return Err(JsError::Type("This document requires trusted HTML parser options".into()));
-    }
-    let html = input.compliant(s, page, sink)?;
+    let input = trusted_types::HtmlInput::convert(s, a.get(0))?;
+    let (html, run_scripts) = input.for_positional(s, page, a.get(1), sink)?;
     let (target, fragment, before) = {
         let mut dom = page.dom.borrow_mut();
         let target = match position {

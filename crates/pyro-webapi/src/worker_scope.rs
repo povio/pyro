@@ -1228,6 +1228,7 @@ pub(crate) fn is_worker(s: &Scope<'_>) -> bool {
 /// The classes a worker's realm exposes; returns its global's class.
 fn register(engine: &Engine, service: bool, shared_worker: bool) -> pyro_js::ClassId {
     engine.register::<EventTarget>();
+    crate::trusted_types::register(engine);
     crate::event::register_for_worker(engine);
     crate::abort::register(engine);
     crate::message_channel::register(engine);
