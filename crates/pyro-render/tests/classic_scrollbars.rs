@@ -26,6 +26,18 @@ fn client(doc: &HtmlDocument, selector: &str) -> (f32, f32) {
 }
 
 #[test]
+fn projected_overflow_selects_the_viewport_scrollbar_axis() {
+    let document = doc(
+        "<div style='position:absolute;inset:50px auto auto 50px;width:400px;height:400px;perspective:300px'>\
+         <div style='width:400px;height:400px;transform:rotateY(50deg);perspective:100px'>\
+         <div style='width:2000px;height:200px;transform:rotateY(70deg)'></div></div></div>",
+        true,
+    );
+    assert!(!document.viewport_scrollbars.shown.x);
+    assert!(document.viewport_scrollbars.shown.y);
+}
+
+#[test]
 fn overlay_scrollbars_take_no_space() {
     let d = doc("<div id=s style='width:100px;height:100px;overflow:scroll;scrollbar-gutter:stable both-edges'></div>", false);
     assert_eq!(client(&d, "#s"), (100.0, 100.0));

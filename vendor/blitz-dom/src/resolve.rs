@@ -5,7 +5,7 @@ use blitz_traits::node_id::NodeId;
 use std::cell::RefCell;
 
 use debug_timer::debug_timer;
-use kurbo::{Affine, Rect};
+use kurbo::Rect;
 use parley::LayoutContext;
 use selectors::Element as _;
 use style::dom::TDocument;
@@ -984,10 +984,10 @@ impl BaseDocument {
             let node = &self.nodes[node_id];
             let location = layout.location.map(|v| v as f64 * scale);
             let overflow = self.overflow_contribution(node_id, *node.scrollable_overflow(), layout.size, scale);
-            return placement((location.x, location.y), node.transform().as_deref())(overflow);
+            return place_overflow(node, (location.x, location.y), scale, overflow);
         }
 
-        let (transform, accumulated) = self.nodes[node_id].set_transform(scale as f32, &containing.context);
+        let (_, accumulated) = self.nodes[node_id].set_transform(scale as f32, &containing.context);
         self.nodes[node_id].layout_data_mut().hit_stale = true;
         // pyro: what this box gives the transforms of its children: they are resolved again
         // while it gives them a perspective or a 3D rendering context, and once more after.
@@ -1274,7 +1274,7 @@ impl BaseDocument {
         let scaled_y = layout.location.y as f64 * scale;
 
         let contribution = self.overflow_contribution(node_id, overflow, layout.size, scale);
-        placement((scaled_x, scaled_y), transform.as_ref())(contribution)
+        place_overflow(&self.nodes[node_id], (scaled_x, scaled_y), scale, contribution)
     }
 
     /// pyro: an in-flow child's border box in its scroll container (device px), grown on each
@@ -2781,11 +2781,26 @@ impl BaseDocument {
     }
 }
 
-fn placement(location: (f64, f64), transform: Option<&Affine>) -> impl Fn(Rect) -> Rect {
-    let full = transform.map(|t| Affine::translate(location) * *t);
-    move |r: Rect| match &full {
-        Some(full) => full.transform_rect_bbox(r),
-        None => r + kurbo::Vec2::new(location.0, location.1),
+fn place_overflow(node: &crate::Node, location: (f64, f64), scale: f64, rect: Rect) -> Rect {
+    let offset = kurbo::Vec2::new(location.0, location.1);
+    if let Some(plane) = node.plane_3d().filter(|plane| plane.places_by_local || plane.crosses_viewer) {
+        let matrix = plane.local;
+        let project = |x: f64, y: f64| {
+            let (x, y) = (x / scale, y / scale);
+            let divisor = matrix[6] * x + matrix[7] * y + matrix[8];
+            let factor = if divisor.is_normal() { scale / divisor } else { scale };
+            kurbo::Point::new(
+                (matrix[0] * x + matrix[1] * y + matrix[2]) * factor,
+                (matrix[3] * x + matrix[4] * y + matrix[5]) * factor,
+            )
+        };
+        return Rect::from_points(project(rect.x0, rect.y0), project(rect.x1, rect.y1))
+            .union_pt(project(rect.x0, rect.y1))
+            .union_pt(project(rect.x1, rect.y0)) + offset;
+    }
+    match node.transform().as_deref() {
+        Some(transform) => transform.transform_rect_bbox(rect) + offset,
+        None => rect + offset,
     }
 }
 
