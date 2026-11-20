@@ -1637,8 +1637,8 @@ impl JsClass for Element {
             let parent = dom.parent(n.id).js()?;
             let ctx = match pos.as_str() {
                 "beforebegin" | "afterend" => match parent {
-                    Some(p) if dom.node_type(p).js()? == NodeType::Element => p,
-                    _ => return Err(JsError::dom("NoModificationAllowedError", "The element has no parent.")),
+                    Some(p) if dom.node_type(p).js()? != NodeType::Document => p,
+                    _ => return Err(JsError::dom("NoModificationAllowedError", "An insertion parent other than Document is required.")),
                 },
                 "afterbegin" | "beforeend" => n.id,
                 _ => {
@@ -1648,7 +1648,7 @@ impl JsClass for Element {
                     ));
                 }
             };
-            let frag = pyro_dom::parse::parse_fragment(&mut dom, ctx, &html).js()?;
+            let frag = pyro_dom::parse::parse_insertion_fragment(&mut dom, ctx, &html).js()?;
             insert_adjacent(&mut dom, n.id, &pos, frag)?;
             Ok(s.undefined())
         });

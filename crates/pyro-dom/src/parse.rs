@@ -1179,7 +1179,13 @@ pub fn parse_document_bytes(dom: &DomRef, url: &str, bytes: &[u8], charset: Opti
 /// createContextualFragment). Returns a new DocumentFragment owned by the
 /// context element's node document.
 pub fn parse_fragment(dom: &mut Dom, context: NodeId, html: &str) -> DomResult<NodeId> {
-    parse_fragment_with(dom, context, html, false)
+    parse_fragment_with(dom, context, html, FragmentMode::Element)
+}
+
+/// Fragment insertion APIs use an HTML body context when there is no context
+/// element or when the context is an HTML html element in an HTML document.
+pub fn parse_insertion_fragment(dom: &mut Dom, context: NodeId, html: &str) -> DomResult<NodeId> {
+    parse_fragment_with(dom, context, html, FragmentMode::Insertion)
 }
 
 /// `Range.createContextualFragment` (DOM Parsing): [`parse_fragment`], then
@@ -1187,7 +1193,7 @@ pub fn parse_fragment(dom: &mut Dom, context: NodeId, html: &str) -> DomResult<N
 /// fragment parser's), so it runs once the fragment is inserted into a
 /// document, unlike `innerHTML`'s.
 pub fn parse_contextual_fragment(dom: &mut Dom, context: NodeId, html: &str) -> DomResult<NodeId> {
-    let frag = parse_fragment_with(dom, context, html, false)?;
+    let frag = parse_insertion_fragment(dom, context, html)?;
     let scripts: Vec<u32> = dom
         .descendants(frag)?
         .filter_map(|id| {
@@ -1203,14 +1209,28 @@ pub fn parse_contextual_fragment(dom: &mut Dom, context: NodeId, html: &str) -> 
     Ok(frag)
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FragmentMode {
+    Element,
+    Insertion,
+    DeclarativeShadowRoots,
+}
+
 fn parse_fragment_with(
     dom: &mut Dom,
     context: NodeId,
     html: &str,
-    allow_declarative_shadow_roots: bool,
+    mode: FragmentMode,
 ) -> DomResult<NodeId> {
     let ctx = dom.check(context)?;
+    let owner = dom.n(ctx).owner_doc;
+    let owner_id = dom.id_of(owner);
+    let body_context = mode == FragmentMode::Insertion && dom.n(ctx).element().is_none_or(|el| {
+        el.is_html() && el.name.local == local_name!("html") && !dom.is_xml_document(owner_id)
+    });
     let (ctx_name, ctx_attrs) = match &dom.n(ctx).kind {
+        // html5ever creates the context element from its qualified name.
+        _ if body_context => (QualName::new(None, ns!(html), local_name!("body")), Vec::new()),
         // The tree builder reads one attribute of the context element: a
         // MathML `annotation-xml`'s `encoding` (HTML integration point).
         // Others' copies would only be parsed (id, classes) and dropped.
@@ -1224,14 +1244,12 @@ fn parse_fragment_with(
         NodeKind::Element(e) => (e.name.clone(), Vec::new()),
         _ => return Err(DomError::Type("fragment context must be an element")),
     };
-    let owner = dom.n(ctx).owner_doc;
-    let owner_id = dom.id_of(owner);
     // HTML fragment parsing: the scripting flag is that of the context
     // element's node document (`noscript` content is text only with it).
     let scripting_enabled = dom.scripting_of(owner);
     // Temporary document for the parser; nodes are adopted into `owner`.
     let tmp_id = dom.create_document(crate::node::DocumentKind::Html, "about:blank");
-    dom.set_allow_declarative_shadow_roots(tmp_id, allow_declarative_shadow_roots)?;
+    dom.set_allow_declarative_shadow_roots(tmp_id, mode == FragmentMode::DeclarativeShadowRoots)?;
     let tmp = tmp_id.idx;
     dom.make_fragment_parse_host(tmp);
     let flags = element_flags::FRAGMENT_PARSED | element_flags::SCRIPT_ALREADY_STARTED;
@@ -1353,6 +1371,6 @@ pub fn set_html_unsafe(dom: &mut Dom, target: NodeId, html: &str) -> DomResult<(
         NodeKind::Element(_) => (target, target),
         _ => return Err(DomError::Type("setHTMLUnsafe context must be an element")),
     };
-    let frag = parse_fragment_with(dom, ctx, html, true)?;
+    let frag = parse_fragment_with(dom, ctx, html, FragmentMode::DeclarativeShadowRoots)?;
     dom.replace_all(into, Some(frag))
 }

@@ -599,13 +599,11 @@ impl JsClass for Range {
             let ctx = {
                 let dom = page.dom.borrow();
                 let sn = points(r).0;
-                if dom.node_type(sn).js()? == NodeType::Element {
-                    sn
-                } else {
-                    dom.parent_element(sn)
-                        .js()?
-                        .or(dom.body(page.document()).js()?)
-                        .ok_or_else(|| JsError::Type("no context element".into()))?
+                match dom.node_type(sn).js()? {
+                    NodeType::Text | NodeType::CDataSection | NodeType::Comment => {
+                        dom.parent_element(sn).js()?.unwrap_or(sn)
+                    }
+                    _ => sn,
                 }
             };
             let frag = pyro_dom::parse::parse_contextual_fragment(&mut page.dom.borrow_mut(), ctx, &html).js()?;
