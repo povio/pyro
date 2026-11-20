@@ -164,8 +164,18 @@ impl ElementCx<'_, '_> {
         let layer_count = svg_styles.mask_image.0.len();
         // pyro: while one of its images is loading the mask lets nothing through: the element
         // stays hidden, all of its layers waiting (as Chromium shows it; WPT css-masking
-        // `mask-image-multi-layer-while-loading`).
-        if image_data.iter().flatten().any(|image| image.status == blitz_dom::node::Status::Loading) {
+        // `mask-image-multi-layer-while-loading`). A `url(#mask)` of this document is drawn from
+        // its `<mask>`, never waited for; a mask that failed is not loading.
+        let this_document = |url: &str| {
+            let document = |url: &str| url.split_once('#').map_or(url, |(document, _)| document).to_owned();
+            let url = document(url);
+            url == document(self.context.dom.url().as_str()) || url == document(self.context.dom.base_url().as_str())
+        };
+        if image_data
+            .iter()
+            .flatten()
+            .any(|image| image.status == blitz_dom::node::Status::Loading && !this_document(image.url.as_str()))
+        {
             return;
         }
 

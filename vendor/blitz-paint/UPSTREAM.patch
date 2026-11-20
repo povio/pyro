@@ -21451,7 +21451,7 @@ diff --git a/packages/blitz-paint/src/render/mask.rs b/packages/blitz-paint/src/
      /// Apply the CSS mask to the content drawn since the corresponding
      /// [`maybe_push_css_mask_layer`](Self::maybe_push_css_mask_layer) by drawing the
      /// mask image layers with `Compose::DestIn`, then pop the isolation layer.
-@@ -67,41 +115,63 @@
+@@ -67,41 +115,73 @@
              return;
          }
  
@@ -21516,8 +21516,18 @@ diff --git a/packages/blitz-paint/src/render/mask.rs b/packages/blitz-paint/src/
          let layer_count = svg_styles.mask_image.0.len();
 +        // pyro: while one of its images is loading the mask lets nothing through: the element
 +        // stays hidden, all of its layers waiting (as Chromium shows it; WPT css-masking
-+        // `mask-image-multi-layer-while-loading`).
-+        if image_data.iter().flatten().any(|image| image.status == blitz_dom::node::Status::Loading) {
++        // `mask-image-multi-layer-while-loading`). A `url(#mask)` of this document is drawn from
++        // its `<mask>`, never waited for; a mask that failed is not loading.
++        let this_document = |url: &str| {
++            let document = |url: &str| url.split_once('#').map_or(url, |(document, _)| document).to_owned();
++            let url = document(url);
++            url == document(self.context.dom.url().as_str()) || url == document(self.context.dom.base_url().as_str())
++        };
++        if image_data
++            .iter()
++            .flatten()
++            .any(|image| image.status == blitz_dom::node::Status::Loading && !this_document(image.url.as_str()))
++        {
 +            return;
 +        }
  
@@ -21539,7 +21549,7 @@ diff --git a/packages/blitz-paint/src/render/mask.rs b/packages/blitz-paint/src/
              // Each mask layer is composited with the (already drawn) layers below it
              // using the Porter-Duff operator given by its `mask-composite` value. The
              // bottommost layer has no layers below it and is always drawn with SrcOver.
-@@ -119,18 +189,257 @@
+@@ -119,18 +199,257 @@
  
              // The layer is pushed unconditionally (even for `mask-image: none` layers,
              // which draw nothing) as compositing a transparent black layer with e.g.

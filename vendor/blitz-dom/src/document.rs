@@ -2355,11 +2355,24 @@ impl BaseDocument {
                             self.show_image_alt_text(*node_id);
                         }
                     }
-                    // pyro: a list item whose image fails keeps its `list-style-type` marker.
+                    // pyro: a layer image that fails is no longer loading: a list item keeps its
+                    // `list-style-type` marker, and a mask or a referenced document that failed is
+                    // not waited for (a mask still loading hides its element).
                     for (node_id, image_type) in &waiting_nodes {
-                        if let (ImageType::ListStyle(idx), Some(node)) = (image_type, self.nodes.get_mut(*node_id)) {
-                            if let Some(Some(image)) =
-                                node.element_data_mut().and_then(|el| el.list_style_images.get_mut(*idx))
+                        let Some(el) = self.nodes.get_mut(*node_id).and_then(|node| node.element_data_mut()) else {
+                            continue;
+                        };
+                        let slot = match *image_type {
+                            ImageType::ListStyle(idx) => el.list_style_images.get_mut(idx),
+                            ImageType::Background(idx) => el.background_images.get_mut(idx),
+                            ImageType::Mask(idx) => el.mask_images.get_mut(idx),
+                            ImageType::BorderImage(idx) => el.border_images.get_mut(idx),
+                            ImageType::Reference(idx) => el.reference_images.get_mut(idx),
+                            ImageType::Image | ImageType::Shape(_) => None,
+                        };
+                        if let Some(Some(image)) = slot {
+                            if image.status == Status::Loading
+                                && (matches!(image_type, ImageType::ListStyle(_)) || image.request_key() == *url)
                             {
                                 image.status = Status::Error;
                             }
