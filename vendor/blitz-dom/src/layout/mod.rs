@@ -1667,7 +1667,7 @@ impl LayoutPassState<'_> {
                     // document is as tall as its content (css-sizing-4; the height comes from pyro through the
                     // render tree's `data-pyro-frame-content-height`; WPT css-sizing `responsive-iframe/*`)
                     let (intrinsic_sizes, default_object_size) = match element_data
-                        .attr(markup5ever::LocalName::from("data-pyro-frame-content-height"))
+                        .reserved_attr("data-pyro-frame-content-height")
                         .filter(|_| crate::engine_marked(&frames.nonce, element_data))
                         .and_then(|value| value.parse::<f32>().ok())
                     {

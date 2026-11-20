@@ -1935,6 +1935,11 @@ impl NodeData {
         self.downcast_element()?.attr(name)
     }
 
+    /// pyro: [`crate::node::ElementData::reserved_attr`].
+    pub fn reserved_attr(&self, local: &str) -> Option<&str> {
+        self.downcast_element()?.reserved_attr(local)
+    }
+
     pub fn has_attr(&self, name: impl PartialEq<LocalName>) -> bool {
         self.downcast_element()
             .is_some_and(|elem| elem.has_attr(name))
@@ -2144,6 +2149,11 @@ impl Node {
     pub fn attr(&self, name: LocalName) -> Option<&str> {
         let attr = self.attrs()?.iter().find(|id| id.name.local == name)?;
         Some(&attr.value)
+    }
+
+    /// pyro: [`crate::node::ElementData::reserved_attr`].
+    pub fn reserved_attr(&self, local: &str) -> Option<&str> {
+        self.element_data()?.reserved_attr(local)
     }
 
     pub fn primary_styles(&self) -> Option<impl Deref<Target = ServoArc<ComputedValues>>> {

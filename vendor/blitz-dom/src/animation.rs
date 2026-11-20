@@ -376,7 +376,7 @@ impl BaseDocument {
             .nodes
             .iter()
             .filter(|(_, node)| node.element_data().is_some_and(|e| crate::engine_marked(&self.frames.nonce, e)))
-            .filter_map(|(id, node)| Some((node.attr(attr.clone())?.parse::<u64>().ok()?, id)))
+            .filter_map(|(id, node)| Some((node.reserved_attr(&attr)?.parse::<u64>().ok()?, id)))
             .collect();
         let effects: Vec<_> = frame.iter().filter_map(|(key, e)| Some((*keyed.get(key)?, e.clone()))).collect();
         self.set_sampled_animations(effects);

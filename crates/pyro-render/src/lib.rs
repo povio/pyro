@@ -1388,23 +1388,9 @@ impl Renderer {
                 let bridge = net::Bridge::new(snap, fetcher.clone(), self.resources.scoped(&snap.resource_scope));
                 let doc = blitz_html::HtmlDocument::from_html(&snap.html, self.config(snap, bridge.provider()));
                 let mut doc = doc.into_inner();
-                for id in doc.query_selector_all("[data-pyro-scroll-left],[data-pyro-scroll-top]").unwrap_or_default() {
-                    // pyro: only an element the snapshot marked with its nonce (`engine_marked`).
-                    let nonce = doc.snapshot_nonce().to_owned();
-                    if !doc.get_node(id).and_then(|n| n.element_data()).is_some_and(|e| blitz_dom::engine_marked(&nonce, e)) {
-                        continue;
-                    }
-                    if let Some(node) = doc.get_node_mut(id) {
-                        let offset = |name| {
-                            node.attr(name).and_then(|s| s.parse::<f64>().ok()).filter(|v| v.is_finite()).unwrap_or(0.0)
-                        };
-                        let point = blitz_dom::Point {
-                            x: offset("data-pyro-scroll-left".into()),
-                            y: offset("data-pyro-scroll-top".into()),
-                        };
-                        *node.scroll_offset_mut() = point;
-                    }
-                }
+                // pyro: the scrolled elements, by their engine attributes (with this snapshot's
+                // nonce: `engine_nodes`; selectors never see the reserved family).
+                apply_engine_offsets(&mut doc);
 
                 svg_use::resolve(&mut doc, &snap.base_url, fetcher, self.fetch_timeout)
                     .map_err(RenderError::Resource)?;
@@ -1421,9 +1407,7 @@ impl Renderer {
                     );
                 }
                 let (doc, bridge) = fresh.insert((doc, bridge));
-                let clip = doc.query_selector_all(&format!("[{CLIP_ATTRIBUTE}]")).unwrap_or_default().into_iter().find(|&id| {
-                    doc.get_node(id).and_then(|n| n.element_data()).is_some_and(|e| blitz_dom::engine_marked(doc.snapshot_nonce(), e))
-                });
+                let clip = doc.engine_nodes(CLIP_ATTRIBUTE).into_iter().next();
                 (doc, &*bridge, clip)
             }
         };
@@ -4255,24 +4239,9 @@ impl blitz_dom::HtmlParserProvider for SvgImageParser {
         config.html_parser_provider = Some(Arc::new(SvgImageParser));
         let mut doc = blitz_html::HtmlDocument::from_html(html, config);
         // The frame's scrolled elements and moved sticky boxes, as the page has them.
-        for id in doc.query_selector_all("[data-pyro-scroll-left],[data-pyro-sticky]").unwrap_or_default() {
-            let Some(node) = doc.get_node_mut(id) else { continue };
-            let number = |s: &str| s.parse::<f64>().ok().filter(|v| v.is_finite());
-            let scroll = (
-                node.attr("data-pyro-scroll-left".into()).and_then(number),
-                node.attr("data-pyro-scroll-top".into()).and_then(number),
-            );
-            let sticky = node.attr("data-pyro-sticky".into()).and_then(|value| {
-                let mut parts = value.split(' ').map(number);
-                Some((parts.next()??, parts.next()??))
-            });
-            if let (Some(x), Some(y)) = scroll {
-                *node.scroll_offset_mut() = blitz_dom::Point { x, y };
-            }
-            if let Some((x, y)) = sticky {
-                node.set_sticky_offset(blitz_dom::Point { x, y });
-            }
-        }
+        // The frame's scrolled elements and moved sticky boxes, as the page has them (by their
+        // engine attributes, with the frame document's nonce).
+        apply_engine_offsets(&mut doc);
         Box::new(doc)
     }
 }
@@ -4305,5 +4274,34 @@ mod svg_shape_alpha_tests {
         );
         assert!(a[50 * 200 + 40] > 200, "left half, scaled to 200px wide");
         assert_eq!(a[50 * 200 + 150], 0, "masked out");
+    }
+}
+
+/// pyro: the scroll offsets (`data-pyro-scroll-left`/`-top`) and sticky offsets
+/// (`data-pyro-sticky="x y"`) the snapshot wrote, applied to their elements: only elements with
+/// the document's nonce (`BaseDocument::engine_attr`), found by an engine walk (no selector sees
+/// the reserved family).
+fn apply_engine_offsets(doc: &mut blitz_dom::BaseDocument) {
+    let mut ids = doc.engine_nodes("data-pyro-scroll-left");
+    ids.extend(doc.engine_nodes("data-pyro-scroll-top"));
+    ids.extend(doc.engine_nodes("data-pyro-sticky"));
+    ids.sort_unstable();
+    ids.dedup();
+    let number = |s: &str| s.parse::<f64>().ok().filter(|v| v.is_finite());
+    for id in ids {
+        let left = doc.engine_attr(id, "data-pyro-scroll-left").map(|s| number(s));
+        let top = doc.engine_attr(id, "data-pyro-scroll-top").map(|s| number(s));
+        let sticky = doc.engine_attr(id, "data-pyro-sticky").and_then(|value| {
+            let mut parts = value.split(' ').map(number);
+            Some((parts.next()??, parts.next()??))
+        });
+        let Some(node) = doc.get_node_mut(id) else { continue };
+        if left.is_some() || top.is_some() {
+            *node.scroll_offset_mut() =
+                blitz_dom::Point { x: left.flatten().unwrap_or(0.0), y: top.flatten().unwrap_or(0.0) };
+        }
+        if let Some((x, y)) = sticky {
+            node.set_sticky_offset(blitz_dom::Point { x, y });
+        }
     }
 }

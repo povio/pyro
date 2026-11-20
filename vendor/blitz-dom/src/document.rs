@@ -1876,7 +1876,7 @@ impl BaseDocument {
                         request.options.destination = blitz_traits::net::Destination::Style;
                         let marked = crate::engine_marked(&self.frames.nonce, element);
                         request.options.sheet =
-                            element.attr(markup5ever::LocalName::from(SHEET_ATTRIBUTE)).filter(|_| marked).map(str::to_owned);
+                            element.reserved_attr(SHEET_ATTRIBUTE).filter(|_| marked).map(str::to_owned);
                         self.net_provider.fetch(
                             self.id(),
                             request,
@@ -1892,7 +1892,7 @@ impl BaseDocument {
                                     abort_signal: self.abort_signal.clone(),
                                     client: self.request_client(),
                                     policy: element
-                                        .attr(markup5ever::LocalName::from(SHEET_POLICY_ATTRIBUTE))
+                                        .reserved_attr(SHEET_POLICY_ATTRIBUTE)
                                         .filter(|_| marked)
                                         .map(str::to_owned),
                                     policies: self.sheet_policies.clone(),
@@ -5675,6 +5675,13 @@ impl BaseDocument {
                     media_type: Some(self.media_type.clone()),
                     subdocument_depth: self.subdocument_depth + 1,
                     xml_document: true,
+                    // pyro: an SVG image's document is no render snapshot: nothing legitimate gives
+                    // it engine attributes, so every one is rejected (a nonce no parsed attribute
+                    // value can hold: `engine_marked`), and its frame elements load nothing.
+                    frames: std::sync::Arc::new(crate::FrameTableData {
+                        nonce: crate::REJECT_ALL_NONCE.to_owned(),
+                        entries: Default::default(),
+                    }),
                     ..Default::default()
                 };
                 let Some(document) = self.html_parser_provider.clone().parse_svg_document(&source, config) else {

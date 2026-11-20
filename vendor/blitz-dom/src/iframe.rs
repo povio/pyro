@@ -134,7 +134,7 @@ impl BaseDocument {
 
     /// pyro: the frame table entry the frame element `node_id` names (`data-pyro-frame`), if any.
     pub(crate) fn frame_entry(&self, node_id: NodeId) -> Option<crate::FrameContent> {
-        let value = self.get_node(node_id)?.attr(markup5ever::LocalName::from(crate::FRAME_ATTRIBUTE))?;
+        let value = self.get_node(node_id)?.reserved_attr(crate::FRAME_ATTRIBUTE)?;
         self.frames.lookup(value).cloned()
     }
 
@@ -153,13 +153,25 @@ impl BaseDocument {
     /// document's nonce ([`crate::engine_marked`]).
     pub fn engine_attr(&self, node_id: NodeId, name: &str) -> Option<&str> {
         let element = self.get_node(node_id)?.element_data()?;
-        crate::engine_marked(&self.frames.nonce, element).then(|| element.attr(markup5ever::LocalName::from(name))).flatten()
+        crate::engine_marked(&self.frames.nonce, element).then(|| element.reserved_attr(name)).flatten()
+    }
+
+    /// pyro: the elements carrying engine attribute `name` and this document's nonce, in no
+    /// particular order (an engine reader's walk: selectors never see the reserved family).
+    pub fn engine_nodes(&self, name: &str) -> Vec<NodeId> {
+        self.nodes
+            .iter()
+            .filter(|(_, node)| {
+                node.element_data().is_some_and(|e| e.reserved_attr(name).is_some() && crate::engine_marked(&self.frames.nonce, e))
+            })
+            .map(|(id, _)| id)
+            .collect()
     }
 
     /// pyro: whether the frame element `node_id` names a frame table entry (it then shows that
     /// entry's document or none, never its own attributes').
     pub(crate) fn names_frame(&self, node_id: NodeId) -> bool {
-        self.get_node(node_id).is_some_and(|node| node.attr(markup5ever::LocalName::from(crate::FRAME_ATTRIBUTE)).is_some())
+        self.get_node(node_id).is_some_and(|node| node.reserved_attr(crate::FRAME_ATTRIBUTE).is_some())
     }
 
     /// pyro: attach the frame table entry `frame` as `node_id`'s sub-document: its markup at its

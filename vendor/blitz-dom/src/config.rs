@@ -92,6 +92,22 @@ mod same_secret_tests {
         assert!(!super::same_secret("00f", "00ff"));
         assert!(!super::same_secret("", "00ff"));
     }
+
+    /// A document with the reject-all nonce (an SVG image's) takes no engine attribute, whatever
+    /// the element carries; one without a nonce takes them as written (cycle 7, 1).
+    #[test]
+    fn the_reject_all_nonce_takes_no_engine_attribute() {
+        let element = crate::node::ElementData::new(
+            markup5ever::QualName::new(None, markup5ever::ns!(html), "div".into()),
+            vec![crate::node::Attribute {
+                name: markup5ever::QualName::new(None, markup5ever::ns!(), "data-pyro-n".into()),
+                value: "\0".into(),
+            }],
+        );
+        assert!(!super::engine_marked(super::REJECT_ALL_NONCE, &element));
+        assert!(super::engine_marked("", &element));
+        assert!(!super::engine_marked("00ff", &element));
+    }
 }
 
 /// pyro: see [`FrameTableData`].
@@ -107,13 +123,20 @@ pub const FRAME_ATTRIBUTE: &str = "data-pyro-frame";
 /// one ([`engine_marked`]).
 pub const NONCE_ATTRIBUTE: &str = "data-pyro-n";
 
+/// pyro: the nonce of a document that takes no engine attribute at all (an SVG image's): NUL,
+/// which no parsed attribute value holds (the HTML parser replaces it, XML forbids it).
+pub const REJECT_ALL_NONCE: &str = "\0";
+
 /// pyro: whether the engine attributes of element `element` count in a document whose markup was
 /// serialised with `nonce`: it carries that nonce ([`NONCE_ATTRIBUTE`], compared in constant
 /// time). A document without a nonce is no render snapshot's (markup written by hand): its
 /// markup is taken as written.
 pub fn engine_marked(nonce: &str, element: &crate::node::ElementData) -> bool {
+    if nonce == REJECT_ALL_NONCE {
+        return false;
+    }
     nonce.is_empty()
-        || element.attr(markup5ever::LocalName::from(NONCE_ATTRIBUTE)).is_some_and(|value| same_secret(value, nonce))
+        || element.reserved_attr(NONCE_ATTRIBUTE).is_some_and(|value| same_secret(value, nonce))
 }
 
 /// Options used when constructing a [`BaseDocument`](crate::BaseDocument)

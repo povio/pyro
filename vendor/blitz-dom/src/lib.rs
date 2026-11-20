@@ -125,7 +125,7 @@ pub use blitz_traits::node_id::NodeId;
 // `Node::final_layout`)
 pub use document::SHEET_ATTRIBUTE;
 pub use config::{
-    DocumentConfig, FRAME_ATTRIBUTE, FrameContent, FrameTable, FrameTableData, NONCE_ATTRIBUTE, StyleThreading, engine_marked,
+    DocumentConfig, REJECT_ALL_NONCE, FRAME_ATTRIBUTE, FrameContent, FrameTable, FrameTableData, NONCE_ATTRIBUTE, StyleThreading, engine_marked,
     same_secret,
 };
 pub use document::{SvgImageDocument, 

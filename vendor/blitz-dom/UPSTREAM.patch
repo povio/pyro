@@ -978,7 +978,7 @@ new file mode 100644
 +            .nodes
 +            .iter()
 +            .filter(|(_, node)| node.element_data().is_some_and(|e| crate::engine_marked(&self.frames.nonce, e)))
-+            .filter_map(|(id, node)| Some((node.attr(attr.clone())?.parse::<u64>().ok()?, id)))
++            .filter_map(|(id, node)| Some((node.reserved_attr(&attr)?.parse::<u64>().ok()?, id)))
 +            .collect();
 +        let effects: Vec<_> = frame.iter().filter_map(|(key, e)| Some((*keyed.get(key)?, e.clone()))).collect();
 +        self.set_sampled_animations(effects);
@@ -2061,7 +2061,7 @@ diff --git a/packages/blitz-dom/src/config.rs b/packages/blitz-dom/src/config.rs
  use std::sync::Arc;
  use style::media_queries::MediaType;
  
-@@ -28,12 +28,107 @@
+@@ -28,12 +28,130 @@
      Sequential,
  }
  
@@ -2129,6 +2129,22 @@ diff --git a/packages/blitz-dom/src/config.rs b/packages/blitz-dom/src/config.rs
 +        assert!(!super::same_secret("00f", "00ff"));
 +        assert!(!super::same_secret("", "00ff"));
 +    }
++
++    /// A document with the reject-all nonce (an SVG image's) takes no engine attribute, whatever
++    /// the element carries; one without a nonce takes them as written (cycle 7, 1).
++    #[test]
++    fn the_reject_all_nonce_takes_no_engine_attribute() {
++        let element = crate::node::ElementData::new(
++            markup5ever::QualName::new(None, markup5ever::ns!(html), "div".into()),
++            vec![crate::node::Attribute {
++                name: markup5ever::QualName::new(None, markup5ever::ns!(), "data-pyro-n".into()),
++                value: "\0".into(),
++            }],
++        );
++        assert!(!super::engine_marked(super::REJECT_ALL_NONCE, &element));
++        assert!(super::engine_marked("", &element));
++        assert!(!super::engine_marked("00ff", &element));
++    }
 +}
 +
 +/// pyro: see [`FrameTableData`].
@@ -2144,13 +2160,20 @@ diff --git a/packages/blitz-dom/src/config.rs b/packages/blitz-dom/src/config.rs
 +/// one ([`engine_marked`]).
 +pub const NONCE_ATTRIBUTE: &str = "data-pyro-n";
 +
++/// pyro: the nonce of a document that takes no engine attribute at all (an SVG image's): NUL,
++/// which no parsed attribute value holds (the HTML parser replaces it, XML forbids it).
++pub const REJECT_ALL_NONCE: &str = "\0";
++
 +/// pyro: whether the engine attributes of element `element` count in a document whose markup was
 +/// serialised with `nonce`: it carries that nonce ([`NONCE_ATTRIBUTE`], compared in constant
 +/// time). A document without a nonce is no render snapshot's (markup written by hand): its
 +/// markup is taken as written.
 +pub fn engine_marked(nonce: &str, element: &crate::node::ElementData) -> bool {
++    if nonce == REJECT_ALL_NONCE {
++        return false;
++    }
 +    nonce.is_empty()
-+        || element.attr(markup5ever::LocalName::from(NONCE_ATTRIBUTE)).is_some_and(|value| same_secret(value, nonce))
++        || element.reserved_attr(NONCE_ATTRIBUTE).is_some_and(|value| same_secret(value, nonce))
 +}
 +
  /// Options used when constructing a [`BaseDocument`](crate::BaseDocument)
@@ -2169,7 +2192,7 @@ diff --git a/packages/blitz-dom/src/config.rs b/packages/blitz-dom/src/config.rs
      /// User Agent stylesheets, in cascade order. Defaults to `vec![UserAgentStylesheet::default_sheet()]`.
      ///
      /// The list is used as given, so replacing it removes the default sheet unless it is
-@@ -68,6 +163,25 @@
+@@ -68,6 +186,25 @@
      /// How deeply this document is nested within other documents
      /// (0 for a root document). Used to limit `<iframe>` nesting depth.
      pub subdocument_depth: usize,
@@ -2195,7 +2218,7 @@ diff --git a/packages/blitz-dom/src/config.rs b/packages/blitz-dom/src/config.rs
      /// Devtools provider notified of DOM mutations (e.g. by a remote inspector)
      #[cfg(feature = "devtools")]
      pub devtools_provider: Option<Arc<dyn DevtoolsProvider>>,
-@@ -78,6 +192,8 @@
+@@ -78,6 +215,8 @@
          Self {
              viewport: None,
              base_url: None,
@@ -2204,7 +2227,7 @@ diff --git a/packages/blitz-dom/src/config.rs b/packages/blitz-dom/src/config.rs
              ua_stylesheets: vec![UserAgentStylesheet::default_sheet()],
              net_provider: None,
              navigation_provider: None,
-@@ -89,6 +205,11 @@
+@@ -89,6 +228,11 @@
              incremental: None,
              abort_signal: None,
              subdocument_depth: 0,
@@ -3283,7 +3306,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
 +                        request.options.destination = blitz_traits::net::Destination::Style;
 +                        let marked = crate::engine_marked(&self.frames.nonce, element);
 +                        request.options.sheet =
-+                            element.attr(markup5ever::LocalName::from(SHEET_ATTRIBUTE)).filter(|_| marked).map(str::to_owned);
++                            element.reserved_attr(SHEET_ATTRIBUTE).filter(|_| marked).map(str::to_owned);
                          self.net_provider.fetch(
                              self.id(),
 -                            self.build_request(resolved_href.clone()),
@@ -3297,7 +3320,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                                      abort_signal: self.abort_signal.clone(),
 +                                    client: self.request_client(),
 +                                    policy: element
-+                                        .attr(markup5ever::LocalName::from(SHEET_POLICY_ATTRIBUTE))
++                                        .reserved_attr(SHEET_POLICY_ATTRIBUTE)
 +                                        .filter(|_| marked)
 +                                        .map(str::to_owned),
 +                                    policies: self.sheet_policies.clone(),
@@ -4837,7 +4860,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  }
  
  #[cfg(test)]
-@@ -3846,3 +5616,121 @@
+@@ -3846,3 +5616,128 @@
          assert!(doc.has_changes());
      }
  }
@@ -4900,6 +4923,13 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
 +                    media_type: Some(self.media_type.clone()),
 +                    subdocument_depth: self.subdocument_depth + 1,
 +                    xml_document: true,
++                    // pyro: an SVG image's document is no render snapshot: nothing legitimate gives
++                    // it engine attributes, so every one is rejected (a nonce no parsed attribute
++                    // value can hold: `engine_marked`), and its frame elements load nothing.
++                    frames: std::sync::Arc::new(crate::FrameTableData {
++                        nonce: crate::REJECT_ALL_NONCE.to_owned(),
++                        entries: Default::default(),
++                    }),
 +                    ..Default::default()
 +                };
 +                let Some(document) = self.html_parser_provider.clone().parse_svg_document(&source, config) else {
@@ -6317,7 +6347,7 @@ diff --git a/packages/blitz-dom/src/iframe.rs b/packages/blitz-dom/src/iframe.rs
          let sub_doc = self
              .html_parser_provider
              .clone()
-@@ -115,6 +126,52 @@
+@@ -115,6 +126,64 @@
          self.shell_provider.request_redraw();
      }
  
@@ -6329,7 +6359,7 @@ diff --git a/packages/blitz-dom/src/iframe.rs b/packages/blitz-dom/src/iframe.rs
 +
 +    /// pyro: the frame table entry the frame element `node_id` names (`data-pyro-frame`), if any.
 +    pub(crate) fn frame_entry(&self, node_id: NodeId) -> Option<crate::FrameContent> {
-+        let value = self.get_node(node_id)?.attr(markup5ever::LocalName::from(crate::FRAME_ATTRIBUTE))?;
++        let value = self.get_node(node_id)?.reserved_attr(crate::FRAME_ATTRIBUTE)?;
 +        self.frames.lookup(value).cloned()
 +    }
 +
@@ -6348,13 +6378,25 @@ diff --git a/packages/blitz-dom/src/iframe.rs b/packages/blitz-dom/src/iframe.rs
 +    /// document's nonce ([`crate::engine_marked`]).
 +    pub fn engine_attr(&self, node_id: NodeId, name: &str) -> Option<&str> {
 +        let element = self.get_node(node_id)?.element_data()?;
-+        crate::engine_marked(&self.frames.nonce, element).then(|| element.attr(markup5ever::LocalName::from(name))).flatten()
++        crate::engine_marked(&self.frames.nonce, element).then(|| element.reserved_attr(name)).flatten()
++    }
++
++    /// pyro: the elements carrying engine attribute `name` and this document's nonce, in no
++    /// particular order (an engine reader's walk: selectors never see the reserved family).
++    pub fn engine_nodes(&self, name: &str) -> Vec<NodeId> {
++        self.nodes
++            .iter()
++            .filter(|(_, node)| {
++                node.element_data().is_some_and(|e| e.reserved_attr(name).is_some() && crate::engine_marked(&self.frames.nonce, e))
++            })
++            .map(|(id, _)| id)
++            .collect()
 +    }
 +
 +    /// pyro: whether the frame element `node_id` names a frame table entry (it then shows that
 +    /// entry's document or none, never its own attributes').
 +    pub(crate) fn names_frame(&self, node_id: NodeId) -> bool {
-+        self.get_node(node_id).is_some_and(|node| node.attr(markup5ever::LocalName::from(crate::FRAME_ATTRIBUTE)).is_some())
++        self.get_node(node_id).is_some_and(|node| node.reserved_attr(crate::FRAME_ATTRIBUTE).is_some())
 +    }
 +
 +    /// pyro: attach the frame table entry `frame` as `node_id`'s sub-document: its markup at its
@@ -6370,7 +6412,7 @@ diff --git a/packages/blitz-dom/src/iframe.rs b/packages/blitz-dom/src/iframe.rs
      /// Attach a sub-document parsed from the iframe's `srcdoc` attribute.
      /// Relative URLs within a `srcdoc` document resolve against the parent
      /// document's base URL.
-@@ -137,7 +194,11 @@
+@@ -137,7 +206,11 @@
          let signal = self.new_iframe_generation(node_id, Some(handler.request_id()));
          self.net_provider.fetch(
              self.id(),
@@ -20783,7 +20825,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +                    // document is as tall as its content (css-sizing-4; the height comes from pyro through the
 +                    // render tree's `data-pyro-frame-content-height`; WPT css-sizing `responsive-iframe/*`)
 +                    let (intrinsic_sizes, default_object_size) = match element_data
-+                        .attr(markup5ever::LocalName::from("data-pyro-frame-content-height"))
++                        .reserved_attr("data-pyro-frame-content-height")
 +                        .filter(|_| crate::engine_marked(&frames.nonce, element_data))
 +                        .and_then(|value| value.parse::<f32>().ok())
 +                    {
@@ -37964,7 +38006,7 @@ diff --git a/packages/blitz-dom/src/lib.rs b/packages/blitz-dom/src/lib.rs
 -pub use document::{
 +pub use document::SHEET_ATTRIBUTE;
 +pub use config::{
-+    DocumentConfig, FRAME_ATTRIBUTE, FrameContent, FrameTable, FrameTableData, NONCE_ATTRIBUTE, StyleThreading, engine_marked,
++    DocumentConfig, REJECT_ALL_NONCE, FRAME_ATTRIBUTE, FrameContent, FrameTable, FrameTableData, NONCE_ATTRIBUTE, StyleThreading, engine_marked,
 +    same_secret,
 +};
 +pub use document::{SvgImageDocument, 
@@ -38863,7 +38905,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
 +                // pyro: an `<embed>` shows the image its `src` names, as an `<img>` does, or the frame
 +                // document the render snapshot gives it (`srcdoc`) as an iframe does (plugins are
 +                // not done).
-+                "embed" if element.attr(local_name!("srcdoc")).is_some() || element.attr(markup5ever::LocalName::from(crate::FRAME_ATTRIBUTE)).is_some() => {
++                "embed" if element.attr(local_name!("srcdoc")).is_some() || element.reserved_attr(crate::FRAME_ATTRIBUTE).is_some() => {
 +                    self.eager_op_queue.push(SpecialOp::LoadIframe(node_id))
 +                }
 +                "embed" => self.eager_op_queue.push(SpecialOp::LoadImage(node_id)),
@@ -38873,7 +38915,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
 +                "object" => {
 +                    // pyro: an `<object>` the render snapshot gives a frame document (`srcdoc`)
 +                    // shows it as an iframe does.
-+                    if element.attr(local_name!("srcdoc")).is_some() || element.attr(markup5ever::LocalName::from(crate::FRAME_ATTRIBUTE)).is_some() {
++                    if element.attr(local_name!("srcdoc")).is_some() || element.reserved_attr(crate::FRAME_ATTRIBUTE).is_some() {
 +                        self.eager_op_queue.push(SpecialOp::LoadIframe(node_id));
 +                    } else {
 +                        self.eager_op_queue.push(SpecialOp::LoadImage(node_id));
@@ -40326,7 +40368,7 @@ diff --git a/packages/blitz-dom/src/node/attributes.rs b/packages/blitz-dom/src/
  use thin_vec::ThinVec;
  
  /// A tag attribute, e.g. `class="test"` in `<div class="test" ...>`.
-@@ -12,15 +16,46 @@
+@@ -12,23 +16,85 @@
      pub value: String,
  }
  
@@ -40341,8 +40383,23 @@ diff --git a/packages/blitz-dom/src/node/attributes.rs b/packages/blitz-dom/src/
 +    pub cells: Box<[ServoArc<Locked<PropertyDeclarationBlock>>]>,
 +}
 +
++/// pyro: the attribute family render snapshots carry engine data in (`data-pyro-*`, no
++/// namespace): never one of an element's attributes in the renderer's document; see
++/// [`Attributes::reserved`].
++pub const RESERVED_PREFIX: &str = "data-pyro-";
++
++/// pyro: whether `name` is of the [`RESERVED_PREFIX`] family.
++pub fn is_reserved(name: &QualName) -> bool {
++    name.ns == markup5ever::ns!() && name.local.starts_with(RESERVED_PREFIX)
++}
++
  pub struct Attributes {
      inner: ThinVec<Attribute>,
++    /// pyro: the [`RESERVED_PREFIX`] attributes the markup or tree carried, kept apart: no
++    /// selector, `attr()`, serialisation or iteration of the element's attributes sees them (author
++    /// CSS could otherwise probe the snapshot's nonce through layout); only the engine's readers
++    /// ([`Attributes::reserved`]) do.
++    reserved: ThinVec<Attribute>,
 +    /// pyro: the hints these attributes map to, built at the
 +    /// first cascade that asks and dropped by every write (`set`, `remove`,
 +    /// `DerefMut`). They depend on the attributes and the element's name
@@ -40355,6 +40412,7 @@ diff --git a/packages/blitz-dom/src/node/attributes.rs b/packages/blitz-dom/src/
 +    fn clone(&self) -> Self {
 +        Self {
 +            inner: self.inner.clone(),
++            reserved: self.reserved.clone(),
 +            presentational_hints: OnceLock::new(),
 +        }
 +    }
@@ -40368,24 +40426,43 @@ diff --git a/packages/blitz-dom/src/node/attributes.rs b/packages/blitz-dom/src/
  
  impl Attributes {
      pub fn new(inner: Vec<Attribute>) -> Self {
++        let (reserved, inner): (Vec<Attribute>, Vec<Attribute>) = inner.into_iter().partition(|a| is_reserved(&a.name));
          Self {
              inner: inner.into_iter().collect(),
++            reserved: reserved.into_iter().collect(),
 +            presentational_hints: OnceLock::new(),
          }
      }
  
-@@ -29,6 +64,7 @@
++    /// pyro: the engine's reserved attribute `local` ([`RESERVED_PREFIX`]), for engine readers only.
++    pub fn reserved(&self, local: &str) -> Option<&str> {
++        self.reserved.iter().find(|a| &*a.name.local == local).map(|a| a.value.as_str())
++    }
++
+     pub fn get(&mut self, name: &QualName) -> Option<&Attribute> {
+         self.inner.iter().find(|attr| attr.name == *name)
      }
  
      pub fn set(&mut self, name: QualName, value: &str) {
++        if is_reserved(&name) {
++            match self.reserved.iter_mut().find(|a| a.name == name) {
++                Some(a) => value.clone_into(&mut a.value),
++                None => self.reserved.push(Attribute { name, value: value.to_owned() }),
++            }
++            return;
++        }
 +        self.presentational_hints.take();
          let existing_attr = self.inner.iter_mut().find(|a| a.name == name);
          if let Some(existing_attr) = existing_attr {
              existing_attr.value.clear();
-@@ -42,9 +78,16 @@
+@@ -42,9 +108,20 @@
      }
  
      pub fn remove(&mut self, name: &QualName) -> Option<Attribute> {
++        if is_reserved(name) {
++            let idx = self.reserved.iter().position(|attr| attr.name == *name);
++            return idx.map(|idx| self.reserved.remove(idx));
++        }
 +        self.presentational_hints.take();
          let idx = self.inner.iter().position(|attr| attr.name == *name);
          idx.map(|idx| self.inner.remove(idx))
@@ -40399,7 +40476,7 @@ diff --git a/packages/blitz-dom/src/node/attributes.rs b/packages/blitz-dom/src/
  }
  
  impl Deref for Attributes {
-@@ -55,6 +98,7 @@
+@@ -55,6 +132,37 @@
  }
  impl DerefMut for Attributes {
      fn deref_mut(&mut self) -> &mut Self::Target {
@@ -40407,6 +40484,36 @@ diff --git a/packages/blitz-dom/src/node/attributes.rs b/packages/blitz-dom/src/
          &mut self.inner
      }
  }
++
++#[cfg(test)]
++mod reserved_tests {
++    use super::*;
++
++    fn name(local: &str) -> QualName {
++        QualName::new(None, markup5ever::ns!(), local.into())
++    }
++
++    /// The reserved family is never among an element's attributes (iteration, lookup), only the
++    /// engine's accessor sees it, through construction, `set` and `remove` alike (security review
++    /// cycle 7, 1).
++    #[test]
++    fn reserved_attributes_are_kept_apart() {
++        let mut attrs = Attributes::new(vec![
++            Attribute { name: name("id"), value: "a".into() },
++            Attribute { name: name("data-pyro-n"), value: "0f".into() },
++        ]);
++        attrs.set(name("data-pyro-sheet"), "k");
++        attrs.set(name("data-x"), "y");
++        let visible: Vec<&str> = attrs.iter().map(|a| &*a.name.local).collect();
++        assert_eq!(visible, ["id", "data-x"]);
++        assert_eq!((attrs.reserved("data-pyro-n"), attrs.reserved("data-pyro-sheet")), (Some("0f"), Some("k")));
++        // (Another namespace is no reserved attribute.)
++        attrs.set(QualName::new(None, markup5ever::ns!(xlink), "data-pyro-n".into()), "z");
++        assert_eq!(attrs.iter().count(), 3);
++        assert_eq!(attrs.remove(&name("data-pyro-n")).map(|a| a.value), Some("0f".into()));
++        assert_eq!(attrs.reserved("data-pyro-n"), None);
++    }
++}
 diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/node/element.rs
 --- a/packages/blitz-dom/src/node/element.rs
 +++ b/packages/blitz-dom/src/node/element.rs
@@ -40693,7 +40800,21 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
  
          // The element state needs to be modified if the element can be disabled.
          if data.can_be_disabled() {
-@@ -504,6 +673,12 @@
+@@ -494,6 +663,13 @@
+         Some(&attr.value)
+     }
+ 
++    /// pyro: the engine's reserved attribute `local` (`data-pyro-*`), which no author-visible path
++    /// sees ([`crate::node::Attributes::reserved`]). Engine readers check the snapshot's nonce
++    /// (`BaseDocument::engine_attr`).
++    pub fn reserved_attr(&self, local: &str) -> Option<&str> {
++        self.attrs.reserved(local)
++    }
++
+     pub fn attr_parsed<T: FromStr>(&self, name: impl PartialEq<LocalName>) -> Option<T> {
+         let attr = self.attrs.iter().find(|attr| name == attr.name.local)?;
+         attr.value.parse::<T>().ok()
+@@ -504,6 +680,12 @@
          self.attrs.iter().any(|attr| name == attr.name.local)
      }
  
@@ -40706,7 +40827,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
      pub fn can_be_disabled(&self) -> bool {
          local_names!("button", "input", "select", "textarea").contains(&self.name.local)
      }
-@@ -529,6 +704,23 @@
+@@ -529,6 +711,23 @@
          }
      }
  
@@ -40730,7 +40851,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
      pub fn flush_open_state(&mut self) {
          let is_open = matches!(
              self.name.local,
-@@ -648,6 +840,30 @@
+@@ -648,6 +847,30 @@
          self.element_state.set(ElementState::CHECKED, checked);
      }
  
@@ -40761,7 +40882,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
      #[cfg(feature = "file-input")]
      pub fn file_data(&self) -> Option<&FileData> {
          match &self.special_data {
-@@ -875,6 +1091,9 @@
+@@ -875,6 +1098,9 @@
      pub height: u32,
      /// The raw image data in RGBA8 format
      pub data: Blob<u8>,
@@ -40771,7 +40892,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
  }
  impl RasterImageData {
      pub fn new(width: u32, height: u32, data: Arc<Vec<u8>>) -> Self {
-@@ -882,6 +1101,35 @@
+@@ -882,6 +1108,35 @@
              width,
              height,
              data: Blob::new(data),
@@ -40807,7 +40928,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
          }
      }
  }
-@@ -909,6 +1157,10 @@
+@@ -909,6 +1164,10 @@
      pub status: Status,
      /// The image data
      pub image: ImageData,
@@ -40818,7 +40939,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
  }
  
  impl ImageResourceData {
-@@ -917,8 +1169,25 @@
+@@ -917,8 +1176,25 @@
              url,
              status: Status::Loading,
              image: ImageData::None,
@@ -40844,7 +40965,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
  }
  
  #[derive(Debug, Clone)]
-@@ -953,11 +1222,26 @@
+@@ -953,11 +1229,26 @@
  #[derive(Clone)]
  pub struct ListItemLayout {
      pub marker: Marker,
@@ -40871,7 +40992,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
  }
  
  //We seperate chars from strings in order to optimise rendering - ie not needing to
-@@ -966,6 +1250,9 @@
+@@ -966,6 +1257,9 @@
  pub enum Marker {
      Char(char),
      String(String),
@@ -40881,7 +41002,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
  }
  
  //Value depends on list-style-position, determining whether a seperate layout is created for it
-@@ -1054,9 +1341,10 @@
+@@ -1054,9 +1348,10 @@
                  data.scroll_offset > 0.0,
                  "expected horizontal scroll for overflowing single-line input"
              );
@@ -40906,7 +41027,7 @@ diff --git a/packages/blitz-dom/src/node/mod.rs b/packages/blitz-dom/src/node/mo
  mod text;
  
 -pub use attributes::{Attribute, Attributes};
-+pub use attributes::{Attribute, Attributes, PresentationalHints};
++pub use attributes::{Attribute, Attributes, PresentationalHints, RESERVED_PREFIX, is_reserved};
  #[cfg(feature = "custom-widget")]
  pub use custom_widget::{
      ComputedStyles, CustomWidgetData, CustomWidgetStatus, ProxyRenderContext, Widget,
@@ -42186,7 +42307,19 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
                  return y_offset as f64;
              }
-@@ -965,11 +1955,14 @@
+@@ -945,6 +1935,11 @@
+         self.downcast_element()?.attr(name)
+     }
+ 
++    /// pyro: [`crate::node::ElementData::reserved_attr`].
++    pub fn reserved_attr(&self, local: &str) -> Option<&str> {
++        self.downcast_element()?.reserved_attr(local)
++    }
++
+     pub fn has_attr(&self, name: impl PartialEq<LocalName>) -> bool {
+         self.downcast_element()
+             .is_some_and(|elem| elem.has_attr(name))
+@@ -965,11 +1960,14 @@
  pub struct TextNodeData {
      /// The textual content of the text node
      pub content: String,
@@ -42202,7 +42335,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      }
  }
  
-@@ -1061,6 +2054,11 @@
+@@ -1061,6 +2059,11 @@
          matches!(self.data, NodeData::Element { .. })
      }
  
@@ -42214,7 +42347,19 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      pub fn is_anonymous(&self) -> bool {
          matches!(self.data, NodeData::AnonymousBlock { .. })
      }
-@@ -1161,35 +2159,159 @@
+@@ -1148,6 +2151,11 @@
+         Some(&attr.value)
+     }
+ 
++    /// pyro: [`crate::node::ElementData::reserved_attr`].
++    pub fn reserved_attr(&self, local: &str) -> Option<&str> {
++        self.element_data()?.reserved_attr(local)
++    }
++
+     pub fn primary_styles(&self) -> Option<impl Deref<Target = ServoArc<ComputedValues>>> {
+         self.try_stylo_element_data()
+             .and_then(|stylo| stylo.primary_styles())
+@@ -1161,37 +2169,161 @@
      pub fn layout_style(&self) -> stylo_taffy::TaffyStyloStyle<ComputedStyleRef<'_>> {
          let styles = self
              .try_stylo_element_data()
@@ -42299,9 +42444,9 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +            style.custom_scrollbars = self.used_custom_scrollbar_size();
 +            style.natural_ratio = natural_ratio;
 +            style
-+        }
-+    }
-+
+         }
+     }
+ 
 +    /// The half collapsed borders of a cell in a table without uniform ones.
 +    pub(crate) fn collapsed_border(&self) -> Option<[f32; 4]> {
 +        match &self.data {
@@ -42335,7 +42480,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +    pub(crate) fn set_collapsed_border(&mut self, collapsed_border: Option<[f32; 4]>) {
 +        if self.collapsed_border() == collapsed_border {
 +            return;
-         }
++        }
 +        self.layout_data_mut().collapsed_border = collapsed_border;
 +        self.clear_layout_cache();
 +        let Some(stylo) = self.try_stylo_element_data_mut() else {
@@ -42376,10 +42521,12 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +    #[inline]
 +    pub(crate) fn is_fieldset(&self) -> bool {
 +        self.data.downcast_element().is_some_and(|el| el.name.local == local_name!("fieldset"))
-     }
- 
++    }
++
      /// The node's style for Taffy, expressed in the axes of the writing mode `layout_wm` (the writing
-@@ -1234,6 +2356,19 @@
+     /// mode of the box laying this node out). Used for the child-style getters.
+     #[cfg(feature = "writing-mode")]
+@@ -1234,6 +2366,19 @@
              .unwrap_or(stylo_taffy::WritingMode::empty())
      }
  
@@ -42399,7 +42546,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      /// The node's `display` as a [`taffy::Display`]. Returns [`taffy::Display::Block`]
      /// for nodes without computed styles (e.g. text nodes).
      pub fn taffy_display(&self) -> taffy::Display {
-@@ -1290,7 +2425,7 @@
+@@ -1290,7 +2435,7 @@
              }
              NodeData::Element(..) | NodeData::AnonymousBlock(..) => {
                  for child_id in self.children.iter() {
@@ -42408,7 +42555,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  }
              }
              _ => {}
-@@ -1327,8 +2462,47 @@
+@@ -1327,8 +2472,47 @@
              .unwrap_or(0)
      }
  
@@ -42457,7 +42604,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          let Some(style) = self.primary_styles() else {
              return false;
          };
-@@ -1358,10 +2532,37 @@
+@@ -1358,10 +2542,37 @@
              return true;
          }
  
@@ -42495,7 +42642,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          if style.get_box().isolation == Isolation::Isolate {
              return true;
          }
-@@ -1369,7 +2570,48 @@
+@@ -1369,7 +2580,48 @@
          if style.get_effects().mix_blend_mode != style::computed_values::mix_blend_mode::T::Normal {
              return true;
          }
@@ -42545,7 +42692,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          false
      }
-@@ -1397,12 +2639,14 @@
+@@ -1397,12 +2649,14 @@
              return true;
          }
  
@@ -42566,7 +42713,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      }
  
      /// Takes an (x, y) position (relative to the *parent's* top-left corner) and returns:
-@@ -1434,6 +2678,22 @@
+@@ -1434,6 +2688,22 @@
      ) -> Option<HitResult> {
          use style::computed_values::pointer_events::T as PointerEvents;
          use style::computed_values::visibility::T as Visibility;
@@ -42589,7 +42736,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          // Don't hit on visbility:hidden elements
          if let Some(style) = self.primary_styles() {
-@@ -1500,11 +2760,15 @@
+@@ -1500,11 +2770,15 @@
              || y < overflow_rect.top() + client_y
              || y > overflow_rect.bottom() + client_y);
  
@@ -42605,7 +42752,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  x >= bbox.left && x <= bbox.right && y >= bbox.top && y <= bbox.bottom
              }
              None => false,
-@@ -1519,7 +2783,25 @@
+@@ -1519,7 +2793,25 @@
              && y >= (overflow.y0 / scale) as f32
              && y <= (overflow.y1 / scale) as f32;
  
@@ -42632,7 +42779,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              return None;
          }
  
-@@ -1533,6 +2815,8 @@
+@@ -1533,6 +2825,8 @@
          {
              *scrollbar = Some(sb);
          }
@@ -42641,7 +42788,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          // Text clusters and callers of the returned coordinates work in the
          // inline root's content box, but embedded boxes store border-box
-@@ -1541,10 +2825,7 @@
+@@ -1541,10 +2835,7 @@
          // padded inline root are hit one padding down and right of where
          // they are painted.
          let content_box_offset = if self.flags.is_inline_root() {
@@ -42653,7 +42800,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          } else {
              taffy::Point { x: 0.0, y: 0.0 }
          };
-@@ -1556,30 +2837,41 @@
+@@ -1556,30 +2847,41 @@
                      let Some(child) = self.tree().get(hoisted_child.node_id) else {
                          continue;
                      };
@@ -42707,7 +42854,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                      child_x -= self.scroll_offset().x as f32;
                      child_y -= self.scroll_offset().y as f32;
                      let viewport_scroll = self.tree().viewport_scroll();
-@@ -1590,26 +2882,93 @@
+@@ -1590,25 +2892,92 @@
                  child_x -= offset.x;
                  child_y -= offset.y;
              }
@@ -42765,7 +42912,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +                if let Some(offset) = child.lifted_paint_offset(self.id) {
 +                    child_x -= offset.x;
 +                    child_y -= offset.y;
-+                }
+                 }
 +                ITEMS_ONLY.set(true);
 +                let hit = crate::util::ensure_stack(|| child.hit_inner(child_x, child_y, scale, scrollbar));
 +                ITEMS_ONLY.set(false);
@@ -42781,8 +42928,8 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +                let Some(child) = self.tree().get(*child_id) else { continue };
 +                if let Some(hit) = crate::util::ensure_stack(|| child.hit_inner(x, y, scale, scrollbar)) {
 +                    return Some(hit);
-                 }
-             }
++                }
++            }
 +            return None;
 +        }
 +
@@ -42812,11 +42959,10 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +            NO_ITEMS.set(false);
 +            if let Some(hit) = hit {
 +                return Some(hit);
-+            }
+             }
          }
  
-         // Inline children
-@@ -1642,6 +3001,24 @@
+@@ -1642,6 +3011,24 @@
              }
          }
  
@@ -42841,7 +42987,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          // Self (this node)
          if matches_self && !pointer_events_none {
              return Some(HitResult {
-@@ -1716,7 +3093,7 @@
+@@ -1716,7 +3103,7 @@
              return false;
          };
          if self.flags.is_inline_root()
@@ -42850,7 +42996,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          {
              return false;
          }
-@@ -1741,8 +3118,13 @@
+@@ -1741,8 +3128,13 @@
          let y = y + self.final_layout().location.y - self.scroll_offset().y as f32;
  
          // Recurse up the positioning hierarchy
@@ -42865,7 +43011,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              .unwrap_or(crate::util::Point { x, y })
      }
  
-@@ -1818,8 +3200,28 @@
+@@ -1818,8 +3210,28 @@
  
          let root_layout = inline_root.unrounded_layout();
          let content_box_inset = root_layout.padding + root_layout.border;
@@ -42896,7 +43042,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          fn union(acc: &mut Option<taffy::Rect<f32>>, left: f32, top: f32, right: f32, bottom: f32) {
              *acc = Some(match *acc {
-@@ -1877,11 +3279,36 @@
+@@ -1877,11 +3289,36 @@
                  }
              }
  
@@ -42938,7 +43084,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              })
          }))
      }
-@@ -1938,14 +3365,14 @@
+@@ -1938,14 +3375,14 @@
      /// borders and scrollbar)
      pub fn client_width(&self) -> f32 {
          let layout = self.final_layout();
@@ -47859,7 +48005,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +            // (Its client and scroll position from its frame table entry, `DocumentConfig::frames`.)
 +            let frames = self.frames.clone();
 +            let entry = node
-+                .attr(markup5ever::LocalName::from(crate::FRAME_ATTRIBUTE))
++                .reserved_attr(crate::FRAME_ATTRIBUTE)
 +                .and_then(|value| frames.lookup(value));
 +            let frame_effects = entry.and_then(|frame| frame_animations.get(&frame.client).cloned());
 +            let frame_scroll = entry
@@ -52557,7 +52703,19 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      fn has_local_name(&self, local_name: &LocalName) -> bool {
-@@ -493,7 +827,7 @@
+@@ -480,6 +814,11 @@
+         let Some(attrs) = self.data.attrs() else {
+             return false;
+         };
++        // pyro: the reserved family (`data-pyro-*`) matches nothing, as if absent (its attributes
++        // are kept apart anyway: `Attributes::reserved`).
++        if author_hidden(&local_name.0) {
++            return false;
++        }
+         attrs.iter().any(|attr| {
+             attr.name.local == local_name.0
+                 && match ns {
+@@ -493,7 +832,7 @@
      fn match_non_ts_pseudo_class(
          &self,
          pseudo_class: &<Self::Impl as selectors::SelectorImpl>::NonTSPseudoClass,
@@ -52566,7 +52724,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      ) -> bool {
          match *pseudo_class {
              NonTSPseudoClass::Active => self.element_state().contains(ElementState::ACTIVE),
-@@ -501,44 +835,116 @@
+@@ -501,44 +840,116 @@
                  .element_state()
                  .intersects(ElementState::VISITED_OR_UNVISITED),
              NonTSPseudoClass::Checked => self.element_state().contains(ElementState::CHECKED),
@@ -52708,7 +52866,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          }
      }
  
-@@ -547,6 +953,23 @@
+@@ -547,6 +958,23 @@
          pe: &PseudoElement,
          _context: &mut MatchingContext<Self::Impl>,
      ) -> bool {
@@ -52732,7 +52890,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          let pseudo = match self.try_stylo_element_data().and_then(|s| s.get()) {
              Some(el) => el
                  .styles
-@@ -581,12 +1004,15 @@
+@@ -581,12 +1009,15 @@
          }
      }
  
@@ -52749,7 +52907,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      fn has_id(
-@@ -612,15 +1038,21 @@
+@@ -612,15 +1043,21 @@
          })
      }
  
@@ -52775,7 +52933,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      fn is_empty(&self) -> bool {
-@@ -641,6 +1073,16 @@
+@@ -641,6 +1078,16 @@
      }
  
      fn add_element_unique_hashes(&self, filter: &mut selectors::bloom::BloomFilter) -> bool {
@@ -52792,7 +52950,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          each_relevant_element_hash(*self, |hash| filter.insert_hash(hash & BLOOM_HASH_MASK));
          true
      }
-@@ -651,19 +1093,51 @@
+@@ -651,19 +1098,51 @@
  
      type TraversalChildrenIterator = Traverser<'a>;
  
@@ -52848,7 +53006,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      fn traversal_children(&self) -> style::dom::LayoutIterator<Self::TraversalChildrenIterator> {
-@@ -674,18 +1148,18 @@
+@@ -674,18 +1153,18 @@
          })
      }
  
@@ -52872,7 +53030,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      fn style_attribute(&self) -> Option<ArcBorrow<'_, Locked<PropertyDeclarationBlock>>> {
-@@ -701,11 +1175,35 @@
+@@ -701,11 +1180,35 @@
      }
  
      fn has_part_attr(&self) -> bool {
@@ -52910,7 +53068,16 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      fn id(&self) -> Option<&style::Atom> {
-@@ -806,6 +1304,8 @@
+@@ -728,7 +1231,7 @@
+         F: FnMut(&style::LocalName),
+     {
+         if let Some(attrs) = self.data.attrs() {
+-            for attr in attrs.iter() {
++            for attr in attrs.iter().filter(|attr| !author_hidden(&attr.name.local)) {
+                 callback(GenericAtomIdent::cast(&attr.name.local));
+             }
+         }
+@@ -806,6 +1309,8 @@
      fn may_have_animations(&self) -> bool {
          self.element_data()
              .is_some_and(|data| data.may_have_animations.load(Ordering::Relaxed))
@@ -52919,7 +53086,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      fn set_may_have_animations(&self) {
-@@ -818,6 +1318,10 @@
+@@ -818,6 +1323,10 @@
          if !self.may_have_animations() {
              return false;
          }
@@ -52930,7 +53097,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          let key = AnimationSetKey::new_for_non_pseudo(TNode::opaque(&TElement::as_node(self)));
          context
              .animations
-@@ -852,6 +1356,10 @@
+@@ -852,6 +1361,10 @@
          &self,
          context: &SharedStyleContext,
      ) -> Option<Arc<Locked<PropertyDeclarationBlock>>> {
@@ -52941,7 +53108,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          let opaque = TNode::opaque(&TElement::as_node(self));
          context.animations.get_animation_declarations(
              &AnimationSetKey::new_for_non_pseudo(opaque),
-@@ -864,6 +1372,9 @@
+@@ -864,6 +1377,9 @@
          &self,
          context: &SharedStyleContext,
      ) -> Option<Arc<Locked<PropertyDeclarationBlock>>> {
@@ -52951,7 +53118,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          let opaque = TNode::opaque(&TElement::as_node(self));
          context.animations.get_transition_declarations(
              &AnimationSetKey::new_for_non_pseudo(opaque),
-@@ -873,31 +1384,61 @@
+@@ -873,31 +1389,65 @@
      }
  
      fn shadow_root(&self) -> Option<<Self::ConcreteNode as TNode>::ConcreteShadowRoot> {
@@ -52973,6 +53140,10 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +            && attr.0.bytes().any(|b| b.is_ascii_uppercase()))
 +        .then(|| markup5ever::LocalName::from(attr.0.to_ascii_lowercase()));
 +        let name = lowered.as_ref().unwrap_or(&attr.0);
++        // pyro: `attr()` of the reserved family is nothing.
++        if author_hidden(name) {
++            return None;
++        }
 +        // pyro: for a pseudo-element's box (the marker style of a `::before` or `::after` list
 +        // item is cascaded on it), the attribute of its originating element.
 +        // pyro: and of a scroll pseudo-element's box, of its originating element.
@@ -53021,7 +53192,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      fn is_html_document_body_element(&self) -> bool {
-@@ -917,110 +1458,282 @@
+@@ -917,106 +1467,278 @@
          root_element.children.contains(&self.id)
      }
  
@@ -53205,10 +53376,6 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 -                .trim_end_matches(|c: char| c.is_ascii_alphabetic())
 -                .len();
 -            let (number, unit) = value.split_at(number_len);
--            let val: f32 = number.trim().parse().ok().filter(|v| *v >= 0.0)?;
--            let length = if unit.is_empty() {
--                NoCalcLength::from_px(val)
--            } else {
 +    fn has_selector_flags(&self, flags: ElementSelectorFlags) -> bool {
 +        self.selector_flags().get().contains(flags)
 +    }
@@ -53379,14 +53546,10 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +                .trim_end_matches(|c: char| c.is_ascii_alphabetic())
 +                .len();
 +            let (number, unit) = value.split_at(number_len);
-+            let val: f32 = number.trim().parse().ok().filter(|v| *v >= 0.0)?;
-+            let length = if unit.is_empty() {
-+                NoCalcLength::from_px(val)
-+            } else {
-                 NoCalcLength::parse_dimension_with_flags(ParsingMode::DEFAULT, false, val, unit)
-                     .ok()?
-             };
-@@ -1083,6 +1796,37 @@
+             let val: f32 = number.trim().parse().ok().filter(|v| *v >= 0.0)?;
+             let length = if unit.is_empty() {
+                 NoCalcLength::from_px(val)
+@@ -1083,6 +1805,37 @@
                  .find(|declaration| matches!(declaration, PropertyDeclaration::FontFamily(_)))
          }
  
@@ -53424,7 +53587,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          // `<input type=image>` is the only input type that is replaced
          // content, and it is the only one that takes the embedded-content
          // presentational attributes. The type attribute is matched ASCII
-@@ -1100,6 +1844,28 @@
+@@ -1100,6 +1853,28 @@
              let name = &attr.name.local;
              let value = attr.value.as_str();
  
@@ -53453,7 +53616,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              if *name == local_name!("lang") {
                  if attr.name.ns == ns!(xml) {
                      lang = Some(value);
-@@ -1125,6 +1891,24 @@
+@@ -1125,6 +1900,24 @@
                  }
              }
  
@@ -53478,7 +53641,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              if *name == local_name!("align") {
                  use style::values::specified::TextAlign;
                  let keyword = match value {
-@@ -1164,7 +1948,7 @@
+@@ -1164,7 +1957,7 @@
                          BaselineShift::Keyword(BaselineShiftKeyword::Top),
                      ))
                  } else if value.eq_ignore_ascii_case("middle") {
@@ -53487,7 +53650,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
                  } else if value.eq_ignore_ascii_case("bottom") {
                      Some((
                          AlignmentBaseline::Baseline,
-@@ -1270,7 +2054,9 @@
+@@ -1270,7 +2063,9 @@
              // presentation attributes that map to the CSS `width`/`height`
              // properties, so e.g. `width="1em"` must resolve against the
              // element's font-size like any other CSS length.
@@ -53498,7 +53661,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
                  && (*name == local_name!("width") || *name == local_name!("height"))
              {
                  if let Some(size) = parse_svg_size_attr(value) {
-@@ -1358,6 +2144,15 @@
+@@ -1358,6 +2153,15 @@
                  }
              }
  
@@ -53514,7 +53677,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              if *name == local_name!("bgcolor") {
                  use style::values::specified::Color;
                  if let Some((r, g, b, a)) = parse_color_attr(value) {
-@@ -1373,148 +2168,59 @@
+@@ -1373,148 +2177,59 @@
              }
          }
  
@@ -53702,7 +53865,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          None
      }
  }
-@@ -1527,6 +2233,41 @@
+@@ -1527,6 +2242,41 @@
      /// dedicated storage on the node (see `flush_image_layers_from_style`)
      /// because their style changed during this traversal.
      nodes_needing_style_image_flush: Mutex<Vec<NodeId>>,
@@ -53744,7 +53907,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  }
  
  impl<'a> RecalcStyle<'a> {
-@@ -1534,11 +2275,206 @@
+@@ -1534,11 +2284,206 @@
          RecalcStyle {
              context,
              nodes_needing_style_image_flush: Mutex::new(Vec::new()),
@@ -53951,7 +54114,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
      fn process_preorder<F: FnMut(BlitzNode<'dom>)>(
          &self,
-@@ -1546,14 +2482,259 @@
+@@ -1546,14 +2491,259 @@
          node: BlitzNode<'dom>,
          note_child: F,
      ) {
@@ -54211,7 +54374,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              }
  
              if !data.damage.is_empty() {
-@@ -1597,6 +2778,12 @@
+@@ -1597,6 +2787,12 @@
      }
  }
  
@@ -54224,7 +54387,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Flush updated pseudo-element (`::before`/`::after`) styles from the owning
  /// element's freshly-computed stylo data to the pseudo-element's anonymous node.
  ///
-@@ -1669,12 +2856,41 @@
+@@ -1669,12 +2865,41 @@
                      .push(pe_node_id);
              }
          }
@@ -54266,7 +54429,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Whether a node's `background-image`/`mask-image` layers need flushing to
  /// dedicated storage on the node: the URLs referenced by the new style differ
  /// from the image data currently stored on the node.
-@@ -1689,24 +2905,46 @@
+@@ -1689,24 +2914,46 @@
              // (a style list of `none` layers and empty storage are in sync).
              return style_images
                  .iter()
@@ -54321,7 +54484,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      })
  }
  
-@@ -1737,3 +2975,745 @@
+@@ -1737,3 +2984,753 @@
  
      // let val = CSSInlineStyleDeclaration();
  }
@@ -55066,6 +55229,14 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +        d.doc.resolve(0.0);
 +        assert_eq!(boxes(&d.doc, ids[1]), (false, true), "the last child again");
 +    }
++}
++
++/// pyro: the ONE predicate author-controlled style uses to hide the engine's reserved attribute
++/// family (`data-pyro-*`): attribute selectors (in `:is()`/`:has()` too) and `attr()` behave as if
++/// those attributes did not exist, so author CSS cannot probe a snapshot's nonce or frame tokens
++/// through layout.
++pub(crate) fn author_hidden(local: &markup5ever::LocalName) -> bool {
++    local.starts_with(crate::node::RESERVED_PREFIX)
 +}
 diff --git a/packages/blitz-dom/src/stylo_device.rs b/packages/blitz-dom/src/stylo_device.rs
 --- a/packages/blitz-dom/src/stylo_device.rs

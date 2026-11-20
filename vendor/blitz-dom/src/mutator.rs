@@ -1688,7 +1688,7 @@ impl<'doc> DocumentMutator<'doc> {
                 // pyro: an `<embed>` shows the image its `src` names, as an `<img>` does, or the frame
                 // document the render snapshot gives it (`srcdoc`) as an iframe does (plugins are
                 // not done).
-                "embed" if element.attr(local_name!("srcdoc")).is_some() || element.attr(markup5ever::LocalName::from(crate::FRAME_ATTRIBUTE)).is_some() => {
+                "embed" if element.attr(local_name!("srcdoc")).is_some() || element.reserved_attr(crate::FRAME_ATTRIBUTE).is_some() => {
                     self.eager_op_queue.push(SpecialOp::LoadIframe(node_id))
                 }
                 "embed" => self.eager_op_queue.push(SpecialOp::LoadImage(node_id)),
@@ -1698,7 +1698,7 @@ impl<'doc> DocumentMutator<'doc> {
                 "object" => {
                     // pyro: an `<object>` the render snapshot gives a frame document (`srcdoc`)
                     // shows it as an iframe does.
-                    if element.attr(local_name!("srcdoc")).is_some() || element.attr(markup5ever::LocalName::from(crate::FRAME_ATTRIBUTE)).is_some() {
+                    if element.attr(local_name!("srcdoc")).is_some() || element.reserved_attr(crate::FRAME_ATTRIBUTE).is_some() {
                         self.eager_op_queue.push(SpecialOp::LoadIframe(node_id));
                     } else {
                         self.eager_op_queue.push(SpecialOp::LoadImage(node_id));

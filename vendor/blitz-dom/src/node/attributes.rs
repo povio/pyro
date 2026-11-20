@@ -26,8 +26,23 @@ pub struct PresentationalHints {
     pub cells: Box<[ServoArc<Locked<PropertyDeclarationBlock>>]>,
 }
 
+/// pyro: the attribute family render snapshots carry engine data in (`data-pyro-*`, no
+/// namespace): never one of an element's attributes in the renderer's document; see
+/// [`Attributes::reserved`].
+pub const RESERVED_PREFIX: &str = "data-pyro-";
+
+/// pyro: whether `name` is of the [`RESERVED_PREFIX`] family.
+pub fn is_reserved(name: &QualName) -> bool {
+    name.ns == markup5ever::ns!() && name.local.starts_with(RESERVED_PREFIX)
+}
+
 pub struct Attributes {
     inner: ThinVec<Attribute>,
+    /// pyro: the [`RESERVED_PREFIX`] attributes the markup or tree carried, kept apart: no
+    /// selector, `attr()`, serialisation or iteration of the element's attributes sees them (author
+    /// CSS could otherwise probe the snapshot's nonce through layout); only the engine's readers
+    /// ([`Attributes::reserved`]) do.
+    reserved: ThinVec<Attribute>,
     /// pyro: the hints these attributes map to, built at the
     /// first cascade that asks and dropped by every write (`set`, `remove`,
     /// `DerefMut`). They depend on the attributes and the element's name
@@ -40,6 +55,7 @@ impl Clone for Attributes {
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone(),
+            reserved: self.reserved.clone(),
             presentational_hints: OnceLock::new(),
         }
     }
@@ -53,10 +69,17 @@ impl std::fmt::Debug for Attributes {
 
 impl Attributes {
     pub fn new(inner: Vec<Attribute>) -> Self {
+        let (reserved, inner): (Vec<Attribute>, Vec<Attribute>) = inner.into_iter().partition(|a| is_reserved(&a.name));
         Self {
             inner: inner.into_iter().collect(),
+            reserved: reserved.into_iter().collect(),
             presentational_hints: OnceLock::new(),
         }
+    }
+
+    /// pyro: the engine's reserved attribute `local` ([`RESERVED_PREFIX`]), for engine readers only.
+    pub fn reserved(&self, local: &str) -> Option<&str> {
+        self.reserved.iter().find(|a| &*a.name.local == local).map(|a| a.value.as_str())
     }
 
     pub fn get(&mut self, name: &QualName) -> Option<&Attribute> {
@@ -64,6 +87,13 @@ impl Attributes {
     }
 
     pub fn set(&mut self, name: QualName, value: &str) {
+        if is_reserved(&name) {
+            match self.reserved.iter_mut().find(|a| a.name == name) {
+                Some(a) => value.clone_into(&mut a.value),
+                None => self.reserved.push(Attribute { name, value: value.to_owned() }),
+            }
+            return;
+        }
         self.presentational_hints.take();
         let existing_attr = self.inner.iter_mut().find(|a| a.name == name);
         if let Some(existing_attr) = existing_attr {
@@ -78,6 +108,10 @@ impl Attributes {
     }
 
     pub fn remove(&mut self, name: &QualName) -> Option<Attribute> {
+        if is_reserved(name) {
+            let idx = self.reserved.iter().position(|attr| attr.name == *name);
+            return idx.map(|idx| self.reserved.remove(idx));
+        }
         self.presentational_hints.take();
         let idx = self.inner.iter().position(|attr| attr.name == *name);
         idx.map(|idx| self.inner.remove(idx))
@@ -100,5 +134,35 @@ impl DerefMut for Attributes {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.presentational_hints.take();
         &mut self.inner
+    }
+}
+
+#[cfg(test)]
+mod reserved_tests {
+    use super::*;
+
+    fn name(local: &str) -> QualName {
+        QualName::new(None, markup5ever::ns!(), local.into())
+    }
+
+    /// The reserved family is never among an element's attributes (iteration, lookup), only the
+    /// engine's accessor sees it, through construction, `set` and `remove` alike (security review
+    /// cycle 7, 1).
+    #[test]
+    fn reserved_attributes_are_kept_apart() {
+        let mut attrs = Attributes::new(vec![
+            Attribute { name: name("id"), value: "a".into() },
+            Attribute { name: name("data-pyro-n"), value: "0f".into() },
+        ]);
+        attrs.set(name("data-pyro-sheet"), "k");
+        attrs.set(name("data-x"), "y");
+        let visible: Vec<&str> = attrs.iter().map(|a| &*a.name.local).collect();
+        assert_eq!(visible, ["id", "data-x"]);
+        assert_eq!((attrs.reserved("data-pyro-n"), attrs.reserved("data-pyro-sheet")), (Some("0f"), Some("k")));
+        // (Another namespace is no reserved attribute.)
+        attrs.set(QualName::new(None, markup5ever::ns!(xlink), "data-pyro-n".into()), "z");
+        assert_eq!(attrs.iter().count(), 3);
+        assert_eq!(attrs.remove(&name("data-pyro-n")).map(|a| a.value), Some("0f".into()));
+        assert_eq!(attrs.reserved("data-pyro-n"), None);
     }
 }

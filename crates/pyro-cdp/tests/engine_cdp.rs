@@ -7422,6 +7422,75 @@ mod screenshot {
         harness.until_event(|event| event["method"] == "Network.requestWillBeSent" && event["params"]["request"]["url"] == url);
     }
 
+    /// Author CSS cannot see the engine's reserved attributes in the geometry mirror: attribute
+    /// selectors on each reserved name and on every one-character prefix or suffix of the
+    /// snapshot nonce, inside `:is()`/`:has()` too, match nothing, and `attr()` of them is empty,
+    /// so no geometry a page script reads depends on the nonce (security review cycle 7, 1).
+    #[test]
+    fn author_css_cannot_see_the_engines_attributes() {
+        let mut rules = String::from(
+            "iframe { border: 0; display: block; width: 50px; height: 20px } link { display: inline-block }\
+             link::before { content: attr(data-pyro-sheet) attr(data-pyro-n) attr(data-pyro-frame) }\
+             iframe[data-pyro-frame] { height: 31px } iframe[data-pyro-n] { height: 32px }\
+             :is(iframe[data-pyro-n], iframe[data-pyro-frame]) { height: 33px } body:has([data-pyro-n]) iframe { margin-left: 9px }\
+             link[data-pyro-sheet], link[data-pyro-n], link[data-pyro-sheet-referrer-policy] { width: 40px }",
+        );
+        for (i, c) in "0123456789abcdef".chars().enumerate() {
+            rules.push_str(&format!(
+                "iframe[data-pyro-n^=\"{c}\"] {{ width: {w}px }} iframe[data-pyro-n$=\"{c}\"] {{ height: {w}px }} \
+                 iframe[data-pyro-n*=\"{c}{c}\"] {{ padding-left: {w}px }} iframe[data-pyro-frame^=\"{c}\"] {{ margin-top: {w}px }} \
+                 iframe[data-pyro-n|=\"{c}\"], iframe[data-pyro-n~=\"{c}\"] {{ padding-top: {w}px }}",
+                w = i + 1
+            ));
+        }
+        let page = format!(
+            "<!doctype html><style>{rules}</style><link id=l rel=stylesheet href=/s.css><iframe id=f srcdoc=\"<p>x</p>\"></iframe>"
+        );
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let page = page.clone();
+                std::thread::spawn(move || {
+                    let mut request = Vec::new();
+                    let mut chunk = [0; 1024];
+                    while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                        match stream.read(&mut chunk) {
+                            Ok(n) if n > 0 => request.extend_from_slice(&chunk[..n]),
+                            _ => return,
+                        }
+                    }
+                    let head = String::from_utf8_lossy(&request).to_string();
+                    let (kind, body) = if head.starts_with("GET /s.css") { ("text/css", "q { }".to_owned()) } else { ("text/html", page) };
+                    let out = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = stream.write_all(out.as_bytes());
+                });
+            }
+        });
+        let mut h = Harness::new();
+        h.page("Page.enable", json!({}));
+        h.page("Page.navigate", json!({"url": format!("http://{address}/")}));
+        h.until_event(|m| m["method"] == "Page.loadEventFired");
+        h.run_for(100);
+        // (A capture gives the frame its document, whose marker the mirror then carries.)
+        let shot = h.page("Page.captureScreenshot", json!({}));
+        assert!(shot["result"]["data"].is_string(), "{shot}");
+        let r = h.page(
+            "Runtime.evaluate",
+            json!({"expression": "const f = document.getElementById('f').getBoundingClientRect(), l = document.getElementById('l').getBoundingClientRect(); [f.left, f.top, f.width, f.height, l.width, getComputedStyle(document.getElementById('f')).paddingLeft].join()", "returnByValue": true}),
+        );
+        let top = |r: &Value| r["result"]["result"]["value"].as_str().unwrap_or_default().to_owned();
+        let got = top(&r);
+        let fields: Vec<&str> = got.split(',').collect();
+        assert_eq!((fields.get(2).copied(), fields.get(3).copied(), fields.get(4).copied(), fields.get(5).copied()), (Some("50"), Some("20"), Some("0"), Some("0px")), "{got}");
+        assert_eq!(fields.first().copied(), Some("8"), "{got}");
+    }
+
     /// How long `load` took from navigating to the gate server.
     fn load_time(address: std::net::SocketAddr) -> Duration {
         let mut h = Harness::new();

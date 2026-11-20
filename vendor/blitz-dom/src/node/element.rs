@@ -663,6 +663,13 @@ impl ElementData {
         Some(&attr.value)
     }
 
+    /// pyro: the engine's reserved attribute `local` (`data-pyro-*`), which no author-visible path
+    /// sees ([`crate::node::Attributes::reserved`]). Engine readers check the snapshot's nonce
+    /// (`BaseDocument::engine_attr`).
+    pub fn reserved_attr(&self, local: &str) -> Option<&str> {
+        self.attrs.reserved(local)
+    }
+
     pub fn attr_parsed<T: FromStr>(&self, name: impl PartialEq<LocalName>) -> Option<T> {
         let attr = self.attrs.iter().find(|attr| name == attr.name.local)?;
         attr.value.parse::<T>().ok()

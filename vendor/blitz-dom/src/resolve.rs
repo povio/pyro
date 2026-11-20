@@ -354,7 +354,7 @@ impl BaseDocument {
             // (Its client and scroll position from its frame table entry, `DocumentConfig::frames`.)
             let frames = self.frames.clone();
             let entry = node
-                .attr(markup5ever::LocalName::from(crate::FRAME_ATTRIBUTE))
+                .reserved_attr(crate::FRAME_ATTRIBUTE)
                 .and_then(|value| frames.lookup(value));
             let frame_effects = entry.and_then(|frame| frame_animations.get(&frame.client).cloned());
             let frame_scroll = entry
