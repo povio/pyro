@@ -150,6 +150,7 @@ function run() {
 function load(files) {
   if (!files.length) throw new Error('no result files given');
   const runs = files.map(readJson);
+  if (runs.some((r) => r.dedicatedWorkers)) throw new Error('dedicated worker measurements cannot be used to check or update the gate baseline');
   const problems = [];
   const parsed = runs.map((r) => (r.shard ?? '0/1').split('/').map(Number));
   const n = parsed[0][1];
@@ -418,6 +419,7 @@ function diff(sets) {
 }
 
 try {
+  if (flag('--dedicated-workers')) throw new Error('--dedicated-workers is a run.mjs measurement option');
   if (cmd === 'run') run();
   else if (cmd === 'check') check(positional());
   else if (cmd === 'update') update(positional());

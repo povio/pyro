@@ -660,6 +660,14 @@ restart: testharness 487 of 492 completed (5 timeouts, 285 s wall, 1.06 s per pa
 
 ## wptserve
 
+For generated dedicated worker testharness pages, pass `--dedicated-workers /path/to/MANIFEST.json` with
+`--server wptserve`. Use the root WPT manifest for the checkout revision. The runner checks the worker source's
+git blob against the manifest and selects its declared classic and module worker URLs, including query variants.
+WPT's wrappers launch the worker and forward its named results to the harness. In this mode every window and
+worker page reports its harness status and each named result in sequence. Duplicate names remain separate entries.
+An early harness error can have zero named results, and a timeout retains results already received. HTTP/2 pages
+are excluded because this wptserve configuration disables HTTP/2. The default gate keeps its existing corpus and output.
+
 `run.mjs --server wptserve` (and `gate.mjs run --server wptserve`) serves the pages with WPT's own server instead of
 `serve.mjs` (`wptserve.mjs`): every origin a test names (`web-platform.test`, `www`/`www1`/`www2` and the IDN
 subdomains, `not-web-platform.test`; http, https with WPT's test certificates, ws, wss; no h2), the Python handlers,

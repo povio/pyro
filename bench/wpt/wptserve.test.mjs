@@ -107,3 +107,55 @@ test.skipIf(!HAS_WPT || !BIN)('a run whose wptserve dies fails as a whole', asyn
   expect(fs.existsSync(out)).toBe(false);
   fs.rmSync(out + '.partial', { force: true });
 }, 120000);
+
+// Exercise upstream testharness.js in an actual window, including its duplicate-name
+// validation. Serve two local fixtures at an external base to keep the WPT checkout intact.
+test.skipIf(!HAS_WPT || !BIN)('inventory mode retains both duplicate window tests and an empty harness error', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wpt-window-outcomes-'));
+  const fixture = path.join(dir, 'cases');
+  fs.mkdirSync(fixture);
+  fs.symlinkSync(path.join(WPT, 'fonts'), path.join(dir, 'fonts'));
+  const scripts = '<script src="/resources/testharness.js"></script><script src="/resources/testharnessreport.js"></script>';
+  const duplicateName = 'duplicate|name\nsecond line';
+  const name = JSON.stringify(duplicateName);
+  fs.writeFileSync(path.join(fixture, 'duplicates.html'), scripts + '<script>test(() => {}, ' + name
+    + '); test(() => assert_unreached("second occurrence"), ' + name + ');</script>');
+  fs.writeFileSync(path.join(fixture, 'empty-error.html'), scripts + '<script>setup(() => { throw Error("early setup error") });</script>');
+  const manifest = path.join(dir, 'MANIFEST.json');
+  fs.writeFileSync(manifest, JSON.stringify({ url_base: '/', items: { testharness: {} } }));
+  const files = new Map([
+    ['/cases/duplicates.html', path.join(fixture, 'duplicates.html')],
+    ['/cases/empty-error.html', path.join(fixture, 'empty-error.html')],
+    ['/resources/testharness.js', path.join(WPT, 'resources/testharness.js')],
+    ['/resources/testharnessreport.js', path.join(import.meta.dir, 'testharnessreport.js')],
+  ]);
+  const server = http.createServer((req, res) => {
+    const file = files.get(req.url);
+    if (!file) { res.writeHead(404); res.end(); return; }
+    res.setHeader('Content-Type', file.endsWith('.html') ? 'text/html; charset=utf-8' : 'text/javascript');
+    res.end(fs.readFileSync(file));
+  });
+  try {
+    const port = await new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server.address().port)));
+    const out = path.join(dir, 'results.json');
+    const run = spawn(process.execPath, [path.join(import.meta.dir, 'run.mjs'), '--wpt', dir,
+      '--dirs', 'cases', '--base', 'http://127.0.0.1:' + port, '--server', 'wptserve',
+      '--dedicated-workers', manifest, '--jobs', '1', '--bin', 'browser=' + BIN, '--out', out], { stdio: 'ignore' });
+    expect(await new Promise((resolve) => run.once('exit', resolve))).toBe(0);
+    const results = new Map(JSON.parse(fs.readFileSync(out)).results.map((r) => [r.url, r]));
+    expect(results.size).toBe(2);
+    const duplicates = results.get('cases/duplicates.html');
+    const empty = results.get('cases/empty-error.html');
+    expect(duplicates.harnessStatus).toBe('Error');
+    expect(duplicates.status).toBe('error');
+    expect(duplicates.error).toContain('duplicate test name');
+    expect(duplicates.subtests.map((t) => [t.name, t.status])).toEqual([[duplicateName, 'Pass'], [duplicateName, 'Fail']]);
+    expect(empty.harnessStatus).toBe('Error');
+    expect(empty.status).toBe('error');
+    expect(empty.error).toContain('early setup error');
+    expect(empty.subtests).toEqual([]);
+  } finally {
+    server.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}, 60000);

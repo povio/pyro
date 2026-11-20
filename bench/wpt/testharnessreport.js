@@ -16,6 +16,16 @@ var report = {
   complete: false,
   // Number of subtests with a result. wptrunner polls it to detect progress.
   completed: 0,
+  tests: [],
+  // The inventory runner reads structured Test and RemoteTest results, including
+  // duplicate names and a harness failure before any named result arrived.
+  snapshot: function() {
+    return {
+      subtests: report.tests.map(test => ({ name: test.name, status: test.format_status(), msg: (test.message || "").slice(0, 200) })),
+      harnessStatus: report.status,
+      error: report.error,
+    };
+  },
   status: "",
   cases: {},
 
@@ -49,9 +59,13 @@ add_test_state_callback(function (test) {
 
 add_result_callback(function (test) {
   report.completed++;
+  report.tests.push(test);
   report.cases[report.name(test)] = report.format(test);
 });
 
 add_completion_callback(function (tests, status) {
+  report.tests = tests;
+  report.status = status.format_status();
+  report.error = status.message || null;
   report.complete = true;
 });

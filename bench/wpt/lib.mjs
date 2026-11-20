@@ -197,26 +197,52 @@ TESTHARNESS_SKIP.push(
   { path: 'streams/transferable/deserialize-error.window.js', why: 'times out: a transferred stream whose chunk fails to deserialize never errors' },
 );
 
+// wptserve supplies the actual worker and module-worker scripts, their imports and the
+// outer testharness page. Use the upstream manifest's global expansion and query variants.
+export function dedicatedWorkerEntries(manifest) {
+  if (manifest.url_base !== '/' || !manifest.items?.testharness) throw new Error('expected the root WPT testharness manifest');
+  const bySource = new Map();
+  function visit(tree, prefix) {
+    for (const [name, entry] of Object.entries(tree)) {
+      const source = prefix + name;
+      if (!Array.isArray(entry)) { visit(entry, source + '/'); continue; }
+      if (!/\.(any|worker)\.js$/.test(source)) continue;
+      const [blob, ...items] = entry;
+      const urls = items.map(([url]) => url?.replace(/^\//, '')).filter((url) => url && /\.worker(?:-module)?\.html$/.test(url.split(/[?#]/, 1)[0]));
+      if (urls.length) bySource.set(source, { blob, urls });
+    }
+  }
+  visit(manifest.items.testharness, '');
+  return bySource;
+}
+
 // Every testharness page under `dirs` that our static server can run, one entry per variant.
 // `excluded` counts what was left out and why (identical for every binary).
 // `reasons` (a Map, optional) receives each left-out file's reason, keyed by its path (coverage.mjs).
 // `wptserve`: the server is wptserve (run.mjs --server wptserve), so pages that need it are kept.
-export function discover(wpt, dirs, { sampleEncoding = 1, reasons, wptserve = false, testdriver = false } = {}) {
+export function discover(wpt, dirs, { sampleEncoding = 1, reasons, wptserve = false, testdriver = false, dedicatedWorkers } = {}) {
+  if (dedicatedWorkers && !wptserve) throw new Error('dedicated worker discovery needs --server wptserve');
   const tests = [];
   const excluded = {};
   let rel;
-  const exclude = (why) => { excluded[why] = (excluded[why] ?? 0) + 1; reasons?.set(rel, why); };
+  const exclude = (why, at = rel) => { excluded[why] = (excluded[why] ?? 0) + 1; reasons?.set(at, why); };
   for (const d of dirs) {
     for (const f of walk(path.join(wpt, d))) {
       rel = path.relative(wpt, f).split(path.sep).join('/');
       const base = path.basename(f);
       // `code`: the source the wptserve check reads (markup without its comments).
       let src, code, url, variants = [''], long = false;
-      if (/\.(any|window)\.js$/.test(base)) {
-        src = code = fs.readFileSync(f, 'utf8');
+      const worker = dedicatedWorkers?.get(rel);
+      if (/\.(any|window)\.js$/.test(base) || worker) {
+        const bytes = fs.readFileSync(f);
+        if (worker && crypto.createHash('sha1').update('blob ' + bytes.length + '\0').update(bytes).digest('hex') !== worker.blob) {
+          throw new Error('dedicated worker manifest does not match source: ' + rel);
+        }
+        src = code = bytes.toString('utf8');
         const g = src.match(/^\/\/\s*META:\s*global=(.*)$/m);
-        if (base.endsWith('.any.js') && g && !g[1].split(',').map((s) => s.trim()).some((x) => x === 'window' || x === 'default')) { exclude('no window global'); continue; }
-        url = rel.replace(/\.js$/, '.html');
+        const hasWindow = !base.endsWith('.worker.js') && (!base.endsWith('.any.js') || !g || g[1].split(',').some((s) => ['window', 'default'].includes(s.trim())));
+        if (!hasWindow && !worker) { exclude('no window global'); continue; }
+        if (hasWindow) url = rel.replace(/\.js$/, '.html');
         const v = [...src.matchAll(/^\/\/\s*META:\s*variant=(.*)$/gm)].map((m) => m[1].trim());
         if (v.length) variants = v;
         long = /META:\s*timeout=long/.test(src);
@@ -242,12 +268,21 @@ export function discover(wpt, dirs, { sampleEncoding = 1, reasons, wptserve = fa
       // other pages (wpt-full.yml --jobs 16) the larger SIMD ones outran the normal timeout, so they get the long one.
       if (rel.startsWith('wasm/core/')) long = true;
       const viewport = LEGACY_VIEWPORT_DIRS.includes(d) ? {} : { viewport: WPTRUNNER_VIEWPORT };
-      for (const v of variants) tests.push({ dir: d, url: url + v, long, ...viewport });
+      if (dedicatedWorkers && H2_NAME.test(base)) {
+        if (url) for (const v of variants) exclude(NEEDS_H2, url + v);
+        for (const u of worker?.urls ?? []) exclude(NEEDS_H2, u);
+        continue;
+      }
+      if (url) for (const v of variants) tests.push({ dir: d, url: url + v, long, ...viewport });
+      for (const workerUrl of worker?.urls ?? []) {
+        tests.push({ dir: d, url: workerUrl, long, ...viewport, environment: 'dedicatedworker' });
+      }
     }
   }
   // sampleEncoding N: keep every Nth encoding/ page (identical selection for every browser)
-  let k = 0;
-  return { tests: tests.filter((t) => t.dir !== 'encoding' || (k++ % sampleEncoding === 0)), excluded };
+  let windowIndex = 0, workerIndex = 0;
+  return { tests: tests.filter((t) => t.dir !== 'encoding'
+    || (t.environment === 'dedicatedworker' ? workerIndex++ : windowIndex++) % sampleEncoding === 0), excluded };
 }
 
 // ---------- reftest discovery ----------

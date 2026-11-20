@@ -10,6 +10,7 @@
 // --server wptserve: WPT's own server (wptserve.mjs) instead of serve.mjs, every context behind its host-mapping
 //   proxy; discovery then keeps the pages that need wptserve (names, Python handlers, pipes). README "wptserve".
 // --testdriver: with --server wptserve, testdriver pages too (testdriver.mjs).
+// --dedicated-workers MANIFEST: include generated dedicated worker testharness pages using upstream wptserve.
 // --tests FILE: only these URLs (a JSON array of URLs, or a results or baseline file).
 // --repeat N: run every selected page N times (the gate's reruns), one result each; copies run side by side.
 // --baseline: per-page durations order the run longest first and balance --shard I/N (0-based).
@@ -27,7 +28,7 @@ import net from 'node:net';
 import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
-import { DEFAULT_DIRS, REFTEST_DIRS, allDirs, discover, discoverReftests, plan, shard, readBaselineAt, readJson } from './lib.mjs';
+import { DEFAULT_DIRS, REFTEST_DIRS, allDirs, dedicatedWorkerEntries, discover, discoverReftests, plan, shard, readBaselineAt, readJson } from './lib.mjs';
 import { REFTEST_CONTEXT, ahemEnv, reftestEnv, runReftest } from './reftest.mjs';
 import { CRASHTEST_DIRS, discoverCrashtests, runCrashtest } from './crashtest.mjs';
 import { BROWSER_HOST, startProxy, startWptserve } from './wptserve.mjs';
@@ -60,19 +61,24 @@ const WPTSERVE = SERVER === 'wptserve';
 // runner (testdriver.mjs). README "testdriver".
 const TESTDRIVER = argv.includes('--testdriver');
 if (TESTDRIVER && !WPTSERVE) throw new Error('--testdriver needs --server wptserve');
+const WORKER_MANIFEST = opt('--dedicated-workers');
+if (argv.includes('--dedicated-workers') && (!WORKER_MANIFEST || WORKER_MANIFEST.startsWith('--') || !WPTSERVE || KIND !== 'testharness')) {
+  throw new Error('--dedicated-workers MANIFEST requires --kind testharness --server wptserve');
+}
+if (WORKER_MANIFEST && (GATE || argv.includes('--baseline'))) throw new Error('dedicated worker measurements cannot use the gate or its baseline');
 const BASELINE = opt('--baseline') && readBaselineAt(opt('--baseline'));
 const [SHARD, SHARDS] = (opt('--shard', '0/1')).split('/').map(Number);
 const REUSE = argv.includes('--reuse-context');
 const REPEAT = Number(opt('--repeat', 1));
 // A run over part of the suite: the gate does not report baseline pages it did not run as missing.
 // --dirs all is every page there is: not a restricted run (a whole-suite baseline can start from it).
-const RESTRICTED = (opt('--dirs') !== 'all' && DIRS.join(',') !== KIND_DIRS.join(',')) || !!opt('--match') || !!opt('--tests') || SAMPLE !== 1;
+const RESTRICTED = !!WORKER_MANIFEST || (opt('--dirs') !== 'all' && DIRS.join(',') !== KIND_DIRS.join(',')) || !!opt('--match') || !!opt('--tests') || SAMPLE !== 1;
 if (GATE && !BASELINE) throw new Error('--gate needs --baseline');
 if (!(SHARD >= 0 && SHARD < SHARDS)) throw new Error(`--shard ${opt('--shard')}: expected I/N with 0 <= I < N`);
 if (!(REPEAT >= 1)) throw new Error(`--repeat ${opt('--repeat')}: expected N >= 1`);
 
 function selectTests() {
-  const { tests, excluded, info } = KIND === 'reftest' ? discoverReftests(WPT, DIRS, { wptserve: WPTSERVE, testdriver: TESTDRIVER }) : KIND === 'crashtest' ? discoverCrashtests(WPT, DIRS, { wptserve: WPTSERVE, testdriver: TESTDRIVER }) : discover(WPT, DIRS, { sampleEncoding: SAMPLE, wptserve: WPTSERVE, testdriver: TESTDRIVER });
+  const { tests, excluded, info } = KIND === 'reftest' ? discoverReftests(WPT, DIRS, { wptserve: WPTSERVE, testdriver: TESTDRIVER }) : KIND === 'crashtest' ? discoverCrashtests(WPT, DIRS, { wptserve: WPTSERVE, testdriver: TESTDRIVER }) : discover(WPT, DIRS, { sampleEncoding: SAMPLE, wptserve: WPTSERVE, testdriver: TESTDRIVER, dedicatedWorkers: WORKER_MANIFEST && dedicatedWorkerEntries(readJson(WORKER_MANIFEST)) });
   let sel = tests;
   const M = opt('--match') && new RegExp(opt('--match'));
   if (M) sel = sel.filter((t) => M.test(t.url));
@@ -215,13 +221,15 @@ process.on('exit', () => { try { process.kill(-child.pid, 'SIGKILL'); } catch {}
 
 // Runs in the page: resolves once the harness completes (an add_completion_callback, no polling), or after `ms`.
 // `report` is the shim's object; until testharness.js and the shim have loaded, look again every 5 ms.
-function waitForReport(ms) {
+function waitForReport({ ms, structured }) {
   return new Promise((resolve) => {
     let settled = false;
     const finish = (complete) => {
       if (settled) return;
       settled = true;
-      resolve({ complete, log: typeof report === 'object' && report ? report.log : null });
+      const ready = typeof report === 'object' && report;
+      if (structured) resolve({ complete, ...(ready ? report.snapshot() : { subtests: [] }) });
+      else resolve({ complete, log: ready ? report.log : null });
     };
     setTimeout(() => finish(false), ms);
     const hook = () => {
@@ -278,7 +286,16 @@ async function runOne(slot, t, gen) {
   for (;;) {
     const left = t.limit - (Date.now() - t0);
     // A navigation inside the test destroys the context the wait runs in: wait again in the new one.
-    const r = left > 0 ? await page.evaluate(waitForReport, left).catch(() => null) : null;
+    const structured = !!WORKER_MANIFEST;
+    const r = left > 0 ? await page.evaluate(waitForReport, { ms: left, structured }).catch(() => null) : null;
+    if (structured && (r?.complete || Date.now() - t0 >= t.limit)) {
+      const snapshot = r ?? await page.evaluate(() => globalThis.report?.snapshot()).catch(() => null);
+      if (!snapshot) replaced();
+      const harnessStatus = snapshot?.harnessStatus || null;
+      const status = !r?.complete || harnessStatus === 'Timeout' ? 'timeout' : harnessStatus === 'OK' ? 'complete' : 'error';
+      const subtests = (snapshot?.subtests ?? []).map((t) => ({ ...t, name: stableName(t.name) }));
+      return { status, subtests, harnessStatus, error: snapshot?.error, ms: Date.now() - t0 };
+    }
     if (r?.complete) return { status: 'complete', log: r.log, ms: Date.now() - t0 };
     if (!r) replaced();
     if (Date.now() - t0 >= t.limit) {
@@ -489,12 +506,12 @@ async function worker(q) {
     trace(`end ${w} ${t.url} ${r.status} ${r.ms ?? ''}`);
     // A reftest's stage timings, and the worker's own time around the page (`gap`: from the previous page's end to
     // this page's start, i.e. queueing, solo waits and context resets).
-    results.push({ ...meta, status: r.status, ms: r.ms, error: r.error, subtests: r.subtests ?? parse(r.log), ...(r.stages ? { stages: { ...r.stages, gap: startedAt - (slot.lastEnd ?? startedAt) } } : {}) });
+    results.push({ ...meta, status: r.status, ms: r.ms, error: r.error, subtests: r.subtests ?? parse(r.log), ...(WORKER_MANIFEST && { harnessStatus: r.harnessStatus ?? null }), ...(r.stages ? { stages: { ...r.stages, gap: startedAt - (slot.lastEnd ?? startedAt) } } : {}) });
     slot.lastEnd = Date.now();
     lastFinish = Date.now();
     if (++done % 100 === 0 || Date.now() - lastProgress > 30000) {
       lastProgress = Date.now();
-      if (OUT) fs.writeFileSync(OUT + '.partial', JSON.stringify({ label: LABEL, results }));
+      if (OUT) fs.writeFileSync(OUT + '.partial', JSON.stringify({ label: LABEL, ...(WORKER_MANIFEST && { dedicatedWorkers: true, restricted: true }), results }));
       console.error(`${LABEL}: ${done}/${PLAN.length} (${((Date.now() - t0) / 1000).toFixed(0)} s)`);
     }
   }
@@ -511,7 +528,7 @@ function finish(stalled) {
   finishing = true;
   if (stalled) {
     const have = new Set(results.map((t) => t.url));
-    for (const t of tests) if (!have.has(t.url)) { have.add(t.url); results.push({ dir: t.dir, url: t.url, status: 'error', error: stalled, subtests: [] }); }
+    for (const t of tests) if (!have.has(t.url)) { have.add(t.url); results.push({ dir: t.dir, url: t.url, status: 'error', error: stalled, subtests: [], ...(WORKER_MANIFEST && { harnessStatus: null }) }); }
   }
 const wallMs = Date.now() - t0;
 clearInterval(lagTimer);
@@ -522,7 +539,7 @@ const serverCpuS = server ? cpuOf(server.pid) : 0;
 const ru = process.resourceUsage();
 const run = {
   label: LABEL, bin: BIN, kind: KIND, mode: GATE ? 'gate' : 'full', shard: `${SHARD}/${SHARDS}`, dirs: opt('--dirs') === 'all' ? ['all'] : DIRS, jobs: JOBS,
-  restricted: RESTRICTED, reuseContext: REUSE, server: SERVER, testdriver: TESTDRIVER, wptRevision: WPT_REVISION, discovered, plan: PLAN, skipped,
+  restricted: RESTRICTED, reuseContext: REUSE, server: SERVER, testdriver: TESTDRIVER, ...(WORKER_MANIFEST && { dedicatedWorkers: true }), wptRevision: WPT_REVISION, discovered, plan: PLAN, skipped,
   wallMs, loopLagMs, browserCpuS, runnerCpuS: (ru.userCPUTime + ru.systemCPUTime) / 1e6, serverCpuS, restarts, watchdogKills, excluded, ...(info ? { info } : {}), results,
 };
 if (OUT) { fs.writeFileSync(OUT, JSON.stringify(run)); try { fs.unlinkSync(OUT + '.partial'); } catch {} }
