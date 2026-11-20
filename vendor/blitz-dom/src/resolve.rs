@@ -1091,7 +1091,23 @@ impl BaseDocument {
         let mut child = child;
         child.margin.bottom = self.collapsed_end_margin(child_id, child.margin.bottom, 0);
         let pad = |padding: f32, margin: f32| (padding + margin).max(0.0) as f64;
-        let (x, y) = (child.location.x as f64, child.location.y as f64);
+        // pyro: at its place before its relative offset (Chrome's in-flow bounds: an item moved
+        // 10px past its scroll container's content edge adds no padding after that; WPT
+        // css-flexbox overflow-area-003, scrollWidth 80, not 90).
+        let offset = self.nodes[child_id]
+            .primary_styles()
+            .filter(|s| s.clone_position() == style::computed_values::position::T::Relative && !s.writing_mode.is_vertical())
+            .map(|s| {
+                let parent = self.nodes[child_id].layout_parent.get().or(self.nodes[child_id].parent);
+                let cb = parent.map_or(taffy::Size { width: 0.0, height: 0.0 }, |p| {
+                    let l = self.nodes[p].final_layout();
+                    taffy::Size { width: l.content_box_width(), height: l.content_box_height() }
+                });
+                let rtl = parent.and_then(|p| self.nodes[p].primary_styles()).is_some_and(|ps| !ps.writing_mode.is_bidi_ltr());
+                crate::layout::inline::relative::relative_offset(&s, cb, rtl)
+            })
+            .unwrap_or(taffy::Point { x: 0.0, y: 0.0 });
+        let (x, y) = ((child.location.x - offset.x) as f64, (child.location.y - offset.y) as f64);
         let (w, h) = (child.size.width as f64, child.size.height as f64);
         if !(w > 0.0 && h > 0.0) {
             return Rect::ZERO;
