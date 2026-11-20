@@ -267,6 +267,10 @@ impl LayoutPassState<'_> {
 /// pyro: the advance at which the lines of a `text-wrap-style: balance` block wrap: the least
 /// one that breaks `layout` into as many lines as `max_advance` does. `None` when there is
 /// nothing to balance (one line) or too much (more than Blink's six lines).
+/// pyro: the most widths a `text-wrap: balance` search tries (a bisection to a quarter pixel of
+/// widths up to 2^30 px takes about 32).
+const MAX_BALANCE_TRIALS: usize = 40;
+
 fn balanced_wrap_limit(
     mut break_at: impl FnMut(f32) -> (usize, usize, usize),
     max_advance: f32,
@@ -282,9 +286,16 @@ fn balanced_wrap_limit(
         return None;
     }
     let (mut low, mut high) = (0.0f32, max_advance);
-    // To a quarter of a CSS pixel.
-    while high - low > 0.25 * scale {
+    // To a quarter of a CSS pixel, and at most `MAX_BALANCE_TRIALS` widths: a midpoint that
+    // rounds to an endpoint (adjacent large f32 widths further apart than the tolerance) ends the
+    // search instead of trying it again forever.
+    let mut trials = 0;
+    while high - low > 0.25 * scale && trials < MAX_BALANCE_TRIALS {
         let middle = (low + high) / 2.0;
+        if middle <= low || middle >= high {
+            break;
+        }
+        trials += 1;
         let now = break_at(middle);
         if now.0 <= lines && now.1 <= emergency && now.2 <= overflows {
             high = middle;
@@ -326,6 +337,8 @@ struct FloatBalance {
     high: f32,
     /// The reduction the last layout was made with.
     reduction: f32,
+    /// The widths tried so far (`MAX_BALANCE_TRIALS` at most).
+    trials: usize,
 }
 
 #[cfg(feature = "floats")]
@@ -348,8 +361,15 @@ impl FloatBalance {
         } else {
             self.high = self.reduction;
         }
-        if self.high - self.low > 0.25 * scale {
-            return Some((self.low + self.high) / 2.0);
+        self.trials += 1;
+        let middle = (self.low + self.high) / 2.0;
+        // (A midpoint that rounds to an endpoint, or too many widths tried, ends the search.)
+        if self.high - self.low > 0.25 * scale
+            && self.trials < MAX_BALANCE_TRIALS
+            && middle > self.low
+            && middle < self.high
+        {
+            return Some(middle);
         }
         (self.reduction != self.low).then_some(self.low)
     }
@@ -1773,6 +1793,7 @@ impl LayoutPassState<'_> {
                     low: 0.0,
                     high: max_advance,
                     reduction: 0.0,
+                    trials: 0,
                 });
                 let kept = loop {
                     let mut breaker = inline_layout.layout.break_lines();
