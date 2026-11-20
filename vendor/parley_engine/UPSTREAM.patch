@@ -1210,7 +1210,7 @@
          );
          let instance = scx.shape_instance_cache.entry(
              cache::ShapeInstanceKey::new(
-@@ -291,12 +454,127 @@
+@@ -291,12 +454,125 @@
              ),
              || {
                  harfrust::ShaperInstance::from_variations(
@@ -1223,8 +1223,16 @@
  
 +        // Use the entire run text including newlines.
 +        let run_text = &text[range.byte_range.clone()];
-+        let pre_context = context_before(&text[..range.byte_range.start]);
-+        let post_context = context_after(&text[range.byte_range.end..]);
++        let pre = if range.byte_range.start == text_range.start && at_item_start && options.isolated_before {
++            ""
++        } else {
++            &text[..range.byte_range.start]
++        };
++        let post = if range.byte_range.end == text_range.end && at_item_end && options.isolated_after {
++            ""
++        } else {
++            &text[range.byte_range.end..]
++        };
 +
 +        // pyro: fullwidth punctuation next to punctuation is shaped with the font's `halt`
 +        // (CSS `text-spacing-trim`); the plan takes the feature without its ranges.
@@ -1285,16 +1293,6 @@
 +                font_ref.vmtx().ok()?;
 +                let data = harfrust::ShaperData::new(&font_ref);
 +                let shaper = data.shaper(&font_ref).instance(Some(instance)).build();
-+                let pre = if range.byte_range.start == text_range.start && at_item_start && options.isolated_before {
-+                    ""
-+                } else {
-+                    &text[..range.byte_range.start]
-+                };
-+                let post = if range.byte_range.end == text_range.end && at_item_end && options.isolated_after {
-+                    ""
-+                } else {
-+                    &text[range.byte_range.end..]
-+                };
 +                vertical_positions(&shaper, run_text, pre, post, hb_script, language.as_ref(), run_features, options.point_size)
 +            })
 +            .flatten();
@@ -1311,8 +1309,8 @@
 +            font_size: options.font_size,
 +            point_size: options.point_size,
 +            text: run_text,
-+            pre_context,
-+            post_context,
++            pre_context: context_before(pre),
++            post_context: context_after(post),
 +        };
 +        let cached = with_glyph_cache!(scx, |cache: &mut cache::GlyphCache| {
 +            let (glyphs, metrics) = cache.get(&glyph_key)?;
@@ -1339,7 +1337,7 @@
          let harf_shaper = shaper_data
              .shaper(&font_ref)
              .instance(Some(instance))
-@@ -309,7 +587,7 @@
+@@ -309,7 +585,7 @@
                  direction,
                  hb_script,
                  language.clone(),
@@ -1348,7 +1346,7 @@
                  Some(options.variations),
              ),
              || {
-@@ -318,7 +596,7 @@
+@@ -318,7 +594,7 @@
                      direction,
                      Some(hb_script),
                      language.as_ref(),
@@ -1357,7 +1355,7 @@
                  )
              },
          );
-@@ -328,11 +606,13 @@
+@@ -328,11 +604,13 @@
          buffer.clear();
          buffer.set_cluster_level(harfrust::BufferClusterLevel::MonotoneCharacters);
  
@@ -1373,7 +1371,7 @@
              // Ensure that each cluster's index matches the index into `infos`. This is required
              // for efficient cluster lookup within `data.rs`.
              //
-@@ -340,11 +620,37 @@
+@@ -340,11 +618,26 @@
              // with `char_indices`, push each char individually via `.chars` with a cluster index
              // that matches its `infos` counterpart. This allows us to lookup `infos` via cluster
              // index in `data.rs`.
@@ -1397,23 +1395,12 @@
  
 -        buffer.set_pre_context(&text[..range.byte_range.start]);
 -        buffer.set_post_context(&text[range.byte_range.end..]);
-+        // pyro: no context across an isolating box at the item's edges (`ShapeOptions::isolated_before`).
-+        let pre = if range.byte_range.start == text_range.start && at_item_start && options.isolated_before {
-+            ""
-+        } else {
-+            &text[..range.byte_range.start]
-+        };
-+        let post = if range.byte_range.end == text_range.end && at_item_end && options.isolated_after {
-+            ""
-+        } else {
-+            &text[range.byte_range.end..]
-+        };
 +        buffer.set_pre_context(pre);
 +        buffer.set_post_context(post);
          buffer.set_direction(direction);
          buffer.set_script(hb_script);
  
-@@ -356,11 +662,11 @@
+@@ -356,11 +649,11 @@
              buffer,
              HarfShapeOptions::new()
                  .plan(Some(shaper_plan))
@@ -1428,7 +1415,7 @@
              text,
              range,
              segment,
-@@ -370,15 +676,25 @@
+@@ -370,15 +663,25 @@
              font,
              &glyph_buffer,
              harf_shaper.coords(),
@@ -1456,7 +1443,7 @@
  
      // The segment's characters with their analysis data and style indices.
      let mut chars = segment_text
-@@ -395,12 +711,23 @@
+@@ -395,12 +698,23 @@
      // The end of the previous grapheme.
      let mut byte_end = text_range.start;
      let mut char_end = char_range.start;
@@ -1481,7 +1468,7 @@
              byte_range: byte_start..byte_end,
              char_range: char_start..char_end,
          };
-@@ -409,26 +736,249 @@
+@@ -409,26 +723,249 @@
              .select_font(segment, options, char_cluster)
              .ok_or(())?;
  

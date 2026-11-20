@@ -462,8 +462,16 @@ fn shape_segment(
 
         // Use the entire run text including newlines.
         let run_text = &text[range.byte_range.clone()];
-        let pre_context = context_before(&text[..range.byte_range.start]);
-        let post_context = context_after(&text[range.byte_range.end..]);
+        let pre = if range.byte_range.start == text_range.start && at_item_start && options.isolated_before {
+            ""
+        } else {
+            &text[..range.byte_range.start]
+        };
+        let post = if range.byte_range.end == text_range.end && at_item_end && options.isolated_after {
+            ""
+        } else {
+            &text[range.byte_range.end..]
+        };
 
         // pyro: fullwidth punctuation next to punctuation is shaped with the font's `halt`
         // (CSS `text-spacing-trim`); the plan takes the feature without its ranges.
@@ -524,16 +532,6 @@ fn shape_segment(
                 font_ref.vmtx().ok()?;
                 let data = harfrust::ShaperData::new(&font_ref);
                 let shaper = data.shaper(&font_ref).instance(Some(instance)).build();
-                let pre = if range.byte_range.start == text_range.start && at_item_start && options.isolated_before {
-                    ""
-                } else {
-                    &text[..range.byte_range.start]
-                };
-                let post = if range.byte_range.end == text_range.end && at_item_end && options.isolated_after {
-                    ""
-                } else {
-                    &text[range.byte_range.end..]
-                };
                 vertical_positions(&shaper, run_text, pre, post, hb_script, language.as_ref(), run_features, options.point_size)
             })
             .flatten();
@@ -550,8 +548,8 @@ fn shape_segment(
             font_size: options.font_size,
             point_size: options.point_size,
             text: run_text,
-            pre_context,
-            post_context,
+            pre_context: context_before(pre),
+            post_context: context_after(post),
         };
         let cached = with_glyph_cache!(scx, |cache: &mut cache::GlyphCache| {
             let (glyphs, metrics) = cache.get(&glyph_key)?;
@@ -638,17 +636,6 @@ fn shape_segment(
             buffer.add(ch, i as u32);
         }
 
-        // pyro: no context across an isolating box at the item's edges (`ShapeOptions::isolated_before`).
-        let pre = if range.byte_range.start == text_range.start && at_item_start && options.isolated_before {
-            ""
-        } else {
-            &text[..range.byte_range.start]
-        };
-        let post = if range.byte_range.end == text_range.end && at_item_end && options.isolated_after {
-            ""
-        } else {
-            &text[range.byte_range.end..]
-        };
         buffer.set_pre_context(pre);
         buffer.set_post_context(post);
         buffer.set_direction(direction);

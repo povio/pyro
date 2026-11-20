@@ -145,6 +145,12 @@ fn a_hyphenate_character_string_shows_all_its_characters() {
 }
 
 #[test]
+fn cached_arabic_glyphs_respect_isolating_inline_edges() {
+    let widths = sizes("<section dir=rtl style='font:40px sans-serif'><p>ع<u style='color:red'>ع</u>ع</p><p>ع<u id=a style='padding:4px'>ع</u>ع</p><p>ع&zwnj;<u id=b style='padding:4px'>&zwnj;ع&zwnj;</u>&zwnj;ع</p></section>", &["a", "b"]);
+    assert_near(widths[0][0], widths[1][0]);
+}
+
+#[test]
 fn an_unused_soft_hyphen_preserves_cursive_joining() {
     let widths = sizes(
         "<div dir=rtl style='width:auto;font:32px sans-serif'><u id=a>قىل&shy;مىغانلىقى</u><br><u id=b>قىلمىغانلىقى</u></div>",
