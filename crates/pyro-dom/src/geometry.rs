@@ -292,7 +292,7 @@ pub enum FontLoad {
 /// did fetch it: a capture waits for it as for one with a body, and it is not asked again).
 #[derive(Clone)]
 enum Slot {
-    Pending,
+    Pending(u64),
     Ready(std::sync::Arc<LayoutBody>),
     Failed,
 }
@@ -302,6 +302,7 @@ enum Slot {
 /// [`Self::start`], [`Self::finish`], [`Self::fail`], [`Self::pending`].
 #[derive(Default)]
 pub struct SubresourceBodies {
+    next_request: std::sync::atomic::AtomicU64,
     slots: std::sync::Mutex<std::collections::HashMap<LayoutBodyKey, Slot>>,
     arrivals: std::sync::atomic::AtomicU64,
     /// pyro: when each body arrived and when its document first needed it: one timeline for a
@@ -315,6 +316,28 @@ fn locked<T>(m: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 }
 
 impl SubresourceBodies {
+    pub fn invalidate_image(&self, key: &LayoutBodyKey) {
+        if key.destination == SubresourceKind::Image && locked(&self.slots).remove(key).is_some() {
+            self.arrived();
+        }
+    }
+
+    pub fn refresh_image(&self, key: &LayoutBodyKey, body: Option<LayoutBody>) -> bool {
+        if key.destination != SubresourceKind::Image || key.options.integrity.is_some() {
+            return false;
+        }
+        let mut slots = locked(&self.slots);
+        let Some(slot) = slots.get_mut(key) else { return false };
+        match body {
+            Some(body) => *slot = Slot::Ready(std::sync::Arc::new(body)),
+            None if matches!(slot, Slot::Pending(_)) => return false,
+            None => { slots.remove(key); }
+        }
+        drop(slots);
+        self.arrived();
+        true
+    }
+
     /// The body of `key`, once loaded.
     pub fn get(&self, key: &LayoutBodyKey) -> Option<std::sync::Arc<LayoutBody>> {
         match locked(&self.slots).get(key) {
@@ -325,7 +348,7 @@ impl SubresourceBodies {
 
     /// Whether a load of `key` is in flight.
     pub fn pending(&self, key: &LayoutBodyKey) -> bool {
-        matches!(locked(&self.slots).get(key), Some(Slot::Pending))
+        matches!(locked(&self.slots).get(key), Some(Slot::Pending(_)))
     }
 
     /// Whether `key` has a body, a load in flight or a failed load (its document fetched it).
@@ -336,25 +359,34 @@ impl SubresourceBodies {
     /// Marks a load of `key` in flight: `false` when one is, or its body or failure is here,
     /// already.
     pub fn start(&self, key: &LayoutBodyKey) -> bool {
+        self.start_request(key).is_some()
+    }
+
+    pub fn start_request(&self, key: &LayoutBodyKey) -> Option<u64> {
         let mut slots = locked(&self.slots);
         if slots.contains_key(key) {
-            return false;
+            return None;
         }
-        slots.insert(key.clone(), Slot::Pending);
-        true
+        let generation = self.next_request.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        slots.insert(key.clone(), Slot::Pending(generation));
+        Some(generation)
     }
 
     /// `key`'s response arrived and passed its checks: its body, final URL, tainting and status,
     /// written together. The document's layout lays out again.
     pub fn finish(&self, key: LayoutBodyKey, body: LayoutBody) {
+        self.finish_request(key, body, None);
+    }
+
+    pub fn finish_request(&self, key: LayoutBodyKey, body: LayoutBody, generation: Option<u64>) {
         if body.bytes.is_empty() {
-            return self.fail(&key);
+            return self.fail_request(&key, generation);
         }
         // pyro: only into the slot of a load in flight (`start`): a document forgotten since, or a
         // load nobody started, writes nothing.
         {
             let mut slots = locked(&self.slots);
-            if !matches!(slots.get(&key), Some(Slot::Pending)) {
+            if !matches!(slots.get(&key), Some(Slot::Pending(id)) if generation.is_none_or(|expected| expected == *id)) {
                 return;
             }
             slots.insert(key.clone(), Slot::Ready(std::sync::Arc::new(body)));
@@ -366,16 +398,24 @@ impl SubresourceBodies {
     /// `key`'s load failed: recorded as such (not asked again; a capture waits for it); a body
     /// stays.
     pub fn fail(&self, key: &LayoutBodyKey) {
+        self.fail_request(key, None);
+    }
+
+    pub fn fail_request(&self, key: &LayoutBodyKey, generation: Option<u64>) {
         let mut slots = locked(&self.slots);
-        if matches!(slots.get(key), Some(Slot::Pending)) {
+        if matches!(slots.get(key), Some(Slot::Pending(id)) if generation.is_none_or(|expected| expected == *id)) {
             slots.insert(key.clone(), Slot::Failed);
         }
     }
 
     /// `key`'s load got no answer (its document went first): no longer in flight, nothing kept.
     pub fn abandon(&self, key: &LayoutBodyKey) {
+        self.abandon_request(key, None);
+    }
+
+    pub fn abandon_request(&self, key: &LayoutBodyKey, generation: Option<u64>) {
         let mut slots = locked(&self.slots);
-        if matches!(slots.get(key), Some(Slot::Pending)) {
+        if matches!(slots.get(key), Some(Slot::Pending(id)) if generation.is_none_or(|expected| expected == *id)) {
             slots.remove(key);
         }
     }
@@ -385,7 +425,7 @@ impl SubresourceBodies {
     /// (still loading, never confused with a failure), else not asked at all.
     pub fn font_load(&self, key: &LayoutBodyKey, asked: Option<&[LayoutBodyKey]>) -> FontLoad {
         match locked(&self.slots).get(key) {
-            Some(Slot::Pending) => FontLoad::Loading,
+            Some(Slot::Pending(_)) => FontLoad::Loading,
             Some(Slot::Ready(_)) => FontLoad::Loaded,
             Some(Slot::Failed) => FontLoad::Failed,
             None if asked.is_some_and(|asked| asked.contains(key)) => FontLoad::Loading,
@@ -400,7 +440,7 @@ impl SubresourceBodies {
 
     /// pyro: whether any load in flight for `document` is one `matches` picks.
     pub fn any_pending(&self, document: &str, matches: impl Fn(&LayoutBodyKey) -> bool) -> bool {
-        locked(&self.slots).iter().any(|(k, slot)| matches!(slot, Slot::Pending) && k.document == document && matches(k))
+        locked(&self.slots).iter().any(|(k, slot)| matches!(slot, Slot::Pending(_)) && k.document == document && matches(k))
     }
 
     /// pyro: drops what `document` loaded (it is gone: navigated away from, closed); a load still
@@ -895,6 +935,29 @@ impl LayoutResult {
 #[cfg(test)]
 mod font_load_tests {
     use super::*;
+
+    #[test]
+    fn image_refresh_only_updates_requested_slots() {
+        let bodies = SubresourceBodies::default();
+        let key = LayoutBodyKey::new("doc", "http://site.test/image", &Default::default(), SubresourceKind::Image);
+        let body = |value| LayoutBody::local(key.url(), vec![value]);
+        assert!(!bodies.refresh_image(&key, Some(body(1))));
+        let older = bodies.start_request(&key).unwrap();
+        assert!(bodies.refresh_image(&key, Some(body(2))));
+        bodies.finish(key.clone(), body(1));
+        bodies.abandon(&key);
+        assert_eq!(bodies.get(&key).unwrap().bytes.as_slice(), [2]);
+        assert!(bodies.refresh_image(&key, Some(body(3))));
+        assert_eq!(bodies.get(&key).unwrap().bytes.as_slice(), [3]);
+        assert!(bodies.refresh_image(&key, None));
+        let current = bodies.start_request(&key).unwrap();
+        bodies.finish_request(key.clone(), body(1), Some(older));
+        bodies.abandon_request(&key, Some(older));
+        assert!(bodies.pending(&key));
+        bodies.fail_request(&key, Some(current));
+        assert!(bodies.refresh_image(&key, Some(body(4))));
+        assert_eq!(bodies.get(&key).unwrap().bytes.as_slice(), [4]);
+    }
 
     /// A font request its layout asked for is loading until answered, whether or not it went out
     /// yet; a failed one is failed, never "not asked"; the state is the request's (document,

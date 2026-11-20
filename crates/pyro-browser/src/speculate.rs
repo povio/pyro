@@ -84,27 +84,39 @@ pub(crate) struct Speculation {
 }
 
 /// What, besides the URL, makes two document requests interchangeable.
-#[derive(Clone, PartialEq, Eq)]
-struct Shape {
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct Shape {
+    url: String,
+    frame: Option<String>,
+    loader: Option<String>,
     kind: ResourceKind,
-    crossorigin: Option<String>,
+    cors: bool,
+    credentials: pyro_net::Credentials,
+    pub(crate) referrer_source: Option<url::Url>,
+    pub(crate) referer: Option<String>,
+    pub(crate) policy: pyro_net::ReferrerPolicy,
     module: Option<ModuleType>,
 }
 
 impl Shape {
-    fn of(request: &FetchRequest) -> Option<Shape> {
+    pub(crate) fn of(browser: &Browser, request: &FetchRequest) -> Option<Shape> {
         if request.post.is_some() || request.part.is_some() {
             return None;
         }
-        Some(Shape { kind: request.kind, crossorigin: request.crossorigin.clone(), module: request.module })
-    }
-
-    fn matches(&self, request: &FetchRequest) -> bool {
-        request.post.is_none()
-            && request.part.is_none()
-            && self.kind == request.kind
-            && self.module == request.module
-            && self.crossorigin.as_deref() == request.crossorigin.as_deref()
+        let chain = crate::loader::request_referrer(browser, request);
+        let referer = url::Url::parse(&request.url).ok().and_then(|url| chain.header(&url));
+        Some(Shape {
+            url: request.url.clone(),
+            frame: request.frame_id.clone(),
+            loader: request.loader_id.clone(),
+            kind: request.kind,
+            cors: request.kind == ResourceKind::ModuleScript || request.crossorigin.is_some(),
+            credentials: request.effective_credentials(),
+            referer,
+            referrer_source: chain.referrer,
+            policy: chain.policy,
+            module: request.module,
+        })
     }
 }
 
@@ -384,26 +396,30 @@ impl Browser {
         let Some(loader) = self.loader_for(page) else { return };
         let loader_id = self.current_loader(page);
         loop {
-            let next = {
+            let request = {
                 let Some(mut load) = self.load_mut(page) else { return };
                 let spec = &mut load.speculation;
                 if spec.in_flight >= MAX_IN_FLIGHT {
                     return;
                 }
                 let Some(request) = spec.queue.pop_front() else { return };
+                request
+            };
+            let shape = Shape::of(self, &request).expect("no body, no part");
+            let slot = {
+                let Some(mut load) = self.load_mut(page) else { return };
+                let spec = &mut load.speculation;
                 match spec.entries.get_mut(&request.url) {
                     Some(entry @ Entry::Queued) => {
                         let slot = Rc::new(RefCell::new(Slot::default()));
-                        let shape = Shape::of(&request).expect("no body, no part");
                         *entry = Entry::Started(shape, slot.clone());
                         spec.in_flight += 1;
-                        (request, slot)
+                        slot
                     }
                     // Claimed before it started: the element fetches it.
                     _ => continue,
                 }
             };
-            let (request, slot) = next;
             let weak = Rc::downgrade(&slot);
             let loader_id = loader_id.clone();
             let url = request.url.clone();
@@ -456,6 +472,7 @@ impl Browser {
     }
 
     fn claim_speculated(&mut self, page: FrameKey, request: &FetchRequest) -> Claim {
+        let shape = Shape::of(self, request);
         let Some(mut load) = self.load_mut(page) else { return Claim::Fetch };
         let spec = &mut load.speculation;
         if spec.entries.is_empty() {
@@ -469,7 +486,7 @@ impl Browser {
                 Claim::Fetch
             }
             // Another shape of request for the URL: its own fetch.
-            Some(Entry::Started(shape, _)) if !shape.matches(request) => Claim::Fetch,
+            Some(Entry::Started(dispatched, _)) if Some(dispatched) != shape.as_ref() => Claim::Fetch,
             Some(Entry::Started(_, slot)) => {
                 let slot = slot.clone();
                 let result = slot.borrow_mut().result.take();

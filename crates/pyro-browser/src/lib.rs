@@ -1377,7 +1377,12 @@ impl Browser {
                 .post(pyro_runtime::TaskSource::Networking, move |b| done(b, Err("no resource loader".into())));
             return;
         };
-        loader.fetch(self, request, done);
+        if kind == ResourceKind::Image {
+            let frame = options.client.as_deref().and_then(|client| self.live_client_frame(page, client)).map_or_else(|| page.into(), |pair| pair.0);
+            if let Some(cancel) = self.dispatch_image(frame, &loader, request, done, true) { cancel.disarm(); }
+        } else {
+            loader.fetch(self, request, done);
+        }
     }
 
     /// Loads what the layout of `frame`'s document is laid out with (an
@@ -1407,16 +1412,24 @@ impl Browser {
             )
         };
         let cors = options.crossorigin.is_some();
+        if kind == ResourceKind::Image && options.integrity.is_none() {
+            let shape = speculate::Shape::of(self, &request).expect("whole image");
+            if let Some(mut state) = self.doc_mut(frame) {
+                let raw = pyro_dom::layout::SubresourceOptions {
+                    crossorigin: options.crossorigin.clone(), integrity: None, referrer: options.referrer.clone(),
+                    referrer_policy: options.referrer_policy.map(|policy| policy.as_str().to_owned()),
+                };
+                let slot = pyro_dom::layout::LayoutBodyKey::new(&document_client(&state.main_frame), &request.url, &raw, pyro_dom::layout::SubresourceKind::Image);
+                state.images.layout_requests.entry(request.url.clone()).or_default().insert(slot, shape);
+            }
+        }
         let integrity = options.integrity;
         let Some(resource_loader) = self.loader_for(frame) else {
             done(Err("no resource loader".into()));
             return;
         };
         let environment = self.frame_document_encoding(frame);
-        resource_loader.fetch(
-            self,
-            request,
-            Box::new(move |_, result| {
+        let completion: FetchDone = Box::new(move |_, result| {
                 done(result.and_then(|r| {
                     // pyro: a response that fails its integrity check (`integrity()`) is an error.
                     if let Some(message) = loader::integrity_error(&r, integrity.as_deref(), cors, &origin) {
@@ -1428,14 +1441,18 @@ impl Browser {
                         200..=299 => {
                             let (final_url, opaque, status) = (r.url.clone(), loader::is_opaque(&r, cors, &origin), r.status);
                             let referrer_policy = r.referrer_policy.map(|p| p.as_str().to_owned());
-                            let bytes = std::sync::Arc::new(r.render_body(environment.as_slice()));
+                            let bytes = if kind == ResourceKind::Image { r.body } else { std::sync::Arc::new(r.render_body(environment.as_slice())) };
                             Ok(pyro_dom::layout::LayoutBody { bytes, final_url, opaque, status, referrer_policy })
                         }
                         status => Err(format!("HTTP {status}")),
                     }
                 }))
-            }),
-        );
+            });
+        if kind == ResourceKind::Image {
+            if let Some(cancel) = self.dispatch_image(frame, &resource_loader, request, completion, true) { cancel.disarm(); }
+        } else {
+            resource_loader.fetch(self, request, completion);
+        }
     }
 
     /// pyro: the sub-resource bodies `page`'s documents' layouts fetched (their own fetches of

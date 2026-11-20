@@ -66,7 +66,7 @@ fn trace_epoch() -> std::time::Instant {
     *T0.get_or_init(std::time::Instant::now)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ResourceKind {
     Document,
     Script,
@@ -120,6 +120,13 @@ pub struct FetchRequest {
     pub part: Option<pyro_webapi::BodyPart>,
 }
 
+impl FetchRequest {
+    pub(crate) fn effective_credentials(&self) -> pyro_net::Credentials {
+        if self.kind == ResourceKind::Stylesheet && self.crossorigin.is_none() { return pyro_net::Credentials::Include; }
+        self.credentials.unwrap_or_else(|| if self.crossorigin.as_deref().is_some_and(|value| value.eq_ignore_ascii_case("use-credentials")) { pyro_net::Credentials::Include } else { pyro_net::Credentials::SameOrigin })
+    }
+}
+
 /// Where a `BodyPart` fetch cuts `body` (a prefix of the response body of
 /// `total` bytes, if known): the length to keep, if any. `checked` is the
 /// size `enough` is next asked at; it doubles past `body`'s length.
@@ -144,7 +151,8 @@ pub struct Resource {
     /// Lowercased MIME essence (e.g. `text/html`).
     pub mime: String,
     pub charset: Option<String>,
-    pub body: Vec<u8>,
+    pub body: std::sync::Arc<Vec<u8>>,
+    pub immutable_local: bool,
     /// The `Content-Disposition` response header, if any.
     pub content_disposition: Option<String>,
     /// The response carried a `Content-Security-Policy` header (the policy
@@ -192,7 +200,7 @@ impl Resource {
     /// any other body as it came.
     pub fn render_body(self, environment: &[impl AsRef<str>]) -> Vec<u8> {
         if !self.mime.eq_ignore_ascii_case("text/css") {
-            return self.body;
+            return std::sync::Arc::unwrap_or_clone(self.body);
         }
         let environment: Vec<&str> = environment.iter().map(AsRef::as_ref).collect();
         let (text, _) = pyro_dom::cssom::decode_stylesheet(&self.body, self.charset.as_deref(), &environment);
@@ -381,12 +389,7 @@ impl ResourceLoader for NetLoader {
         if request.kind == ResourceKind::ModuleScript || request.crossorigin.is_some() {
             req.mode = pyro_net::RequestMode::Cors;
         }
-        if request.crossorigin.as_deref().is_some_and(|v| v.eq_ignore_ascii_case("use-credentials")) {
-            req.credentials = pyro_net::Credentials::Include;
-        }
-        if let Some(credentials) = request.credentials {
-            req.credentials = credentials;
-        }
+        req.credentials = request.effective_credentials();
         if req.url.scheme() == "blob" {
             req.blob = blob_body(browser, request.page, req.url.as_str());
         }
@@ -400,9 +403,6 @@ impl ResourceLoader for NetLoader {
             );
         }
         if request.kind == ResourceKind::Stylesheet {
-            if request.crossorigin.is_none() {
-                req.credentials = pyro_net::Credentials::Include;
-            }
             req.max_body = Some(crate::stylesheets::MAX_SHEET_BYTES.min(self.client.config().max_body));
         }
         let referrer = request_referrer(browser, &request);
@@ -486,7 +486,8 @@ impl ResourceLoader for NetLoader {
                         .header(&req.url)
                         .unwrap_or_default()
                 }),
-                body: hit.file.body.to_vec(),
+                body: hit.file.body.to_vec().into(),
+                immutable_local: false,
                 timing: report.filter(|_| document).map(Box::new),
                 partial: None,
                 nosniff: false,
@@ -554,7 +555,8 @@ impl ResourceLoader for NetLoader {
                     status: h.status.as_u16(),
                     mime: h.mime,
                     charset: h.charset,
-                    body: std::mem::take(&mut body),
+                    body: std::mem::take(&mut body).into(),
+                    immutable_local: false,
                     content_disposition: None,
                     header_csp: None,
                     refresh: None,
@@ -629,7 +631,8 @@ impl ResourceLoader for NetLoader {
                             h.headers.get_all("referrer-policy").iter().filter_map(|v| v.to_str().ok()),
                         ),
                         sent_referrer: chain.as_ref().map(|c| c.header(&h.url).unwrap_or_default()),
-                        body: std::mem::take(&mut body),
+                        body: std::mem::take(&mut body).into(),
+                        immutable_local: false,
                     }),
                     None => Err("net::ERR_EMPTY_RESPONSE".to_string()),
                 };
@@ -852,7 +855,8 @@ impl ResourceLoader for StaticLoader {
                         status,
                         mime,
                         charset: None,
-                        body,
+                        body: body.into(),
+                        immutable_local: true,
                         content_disposition: None,
                         header_csp: csp.clone(),
                         refresh: None,
@@ -1395,7 +1399,7 @@ impl Browser {
                                     frame_id,
                                     url: resource.url,
                                     suggested_filename: suggested,
-                                    body: Ok(bytes::Bytes::from(resource.body)),
+                                    body: Ok(bytes::Bytes::from(std::sync::Arc::unwrap_or_clone(resource.body))),
                                 },
                             );
                         }
@@ -1486,7 +1490,8 @@ impl Browser {
             status: 200,
             mime: "text/html".into(),
             charset: None,
-            body: Vec::new(),
+            body: Default::default(),
+            immutable_local: false,
             content_disposition: None,
             header_csp: None,
             refresh: None,
@@ -1645,7 +1650,7 @@ impl Browser {
             format!("<html><head><meta name=\"viewport\" content=\"width=device-width, minimum-scale=0.1\"></head><body style=\"{body}\"><img style=\"{img}\" src=\"{src}\"></body></html>")
                 .into_bytes()
         } else {
-            resource.body
+            std::sync::Arc::unwrap_or_clone(resource.body)
         };
         let mut p = self.doc_mut(page).ok_or(JsError::Type("no such page".into()))?;
         p.main_frame.dom = Some(dom.clone());
@@ -2294,7 +2299,7 @@ impl Browser {
                                 } else if attribute.is_empty() {
                                     suggested = suggested_filename("", &r.url);
                                 }
-                                Ok(bytes::Bytes::from(r.body))
+                                Ok(bytes::Bytes::from(std::sync::Arc::unwrap_or_clone(r.body)))
                             }
                             Ok(r) => Err(format!("HTTP {} for {}", r.status, r.url)),
                             Err(e) => Err(e),
@@ -3036,7 +3041,8 @@ mod disposition_tests {
             status: 200,
             mime: "text/javascript".into(),
             charset: None,
-            body: body.clone(),
+            body: body.clone().into(),
+            immutable_local: false,
             content_disposition: None,
             header_csp: None,
             refresh: None,

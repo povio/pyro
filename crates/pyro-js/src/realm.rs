@@ -144,7 +144,7 @@ pub trait ModuleFetcher {
 /// The `type` import attribute of a module request (HTML "module type").
 /// Engines without import-attribute support report every request as
 /// [`ModuleType::JavaScript`] ([`crate::Capabilities::typed_modules`]).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ModuleType {
     /// No `type` attribute: a JavaScript module script.
     JavaScript,

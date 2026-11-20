@@ -533,7 +533,7 @@ fn media_lists_and_imports_are_their_sheet_objects() {
             let from_a = request.url.ends_with("/x.css") && request.referrer.as_deref().is_some_and(|r| r.ends_with("/a.css"));
             self.0.fetch(browser, request, Box::new(move |b, result| done(b, result.map(|mut r| {
                 if from_a {
-                    r.body = b"from-a { }".to_vec();
+                    r.body = b"from-a { }".to_vec().into();
                 }
                 r
             }))));

@@ -55,6 +55,7 @@ struct LocalFiles {
 
 /// A layout fetch in flight, counted until the loader drops its callback.
 struct InFlight {
+    generation: u64,
     bodies: Arc<SubresourceBodies>,
     key: LayoutBodyKey,
     /// The document whose geometry made it (counted under it).
@@ -64,7 +65,7 @@ struct InFlight {
 impl Drop for InFlight {
     fn drop(&mut self) {
         // No answer (the document went first): not in flight. (A failure is recorded below.)
-        self.bodies.abandon(&self.key);
+        self.bodies.abandon_request(&self.key, Some(self.generation));
         let last = {
             let mut counts = IN_FLIGHT.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             let counts = counts.get_or_insert_with(Default::default);
@@ -150,16 +151,16 @@ impl LocalFiles {
             SubresourceKind::Image | SubresourceKind::CorsImage => loader.image_asked(&key),
             SubresourceKind::Style => {}
         }
-        if !bodies.start(&key) {
+        let Some(generation) = bodies.start_request(&key) else {
             // In flight already (this document asked before).
             return None;
-        }
+        };
         let owner = loader.document();
         {
             let mut counts = IN_FLIGHT.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             *counts.get_or_insert_with(Default::default).entry(owner.clone()).or_insert(0) += 1;
         }
-        let fetch = InFlight { bodies, key, owner };
+        let fetch = InFlight { bodies, key, owner, generation };
         loader.load(
             &document,
             url.as_str().to_owned(),
@@ -167,9 +168,9 @@ impl LocalFiles {
             options,
             Box::new(move |result| match result {
                 // The body with its final URL, tainting and status, written together.
-                Ok(body) if !body.bytes.is_empty() => fetch.bodies.finish(fetch.key.clone(), body),
+                Ok(body) if !body.bytes.is_empty() => fetch.bodies.finish_request(fetch.key.clone(), body, Some(fetch.generation)),
                 // An empty body counts as a failure (nothing to lay out with).
-                _ => fetch.bodies.fail(&fetch.key),
+                _ => fetch.bodies.fail_request(&fetch.key, Some(fetch.generation)),
             }),
         );
         None

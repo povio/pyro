@@ -73,7 +73,7 @@ impl Browser {
                     done(result.map(|r| {
                         // CORS-checked (a `crossorigin` request), or same origin.
                         let clean = cors || (!r.opaque && b.image_origin_clean(page, &r.url));
-                        MediaResponse { status: r.status, mime: r.mime, body: r.body, partial: r.partial, clean }
+                        MediaResponse { status: r.status, mime: r.mime, body: std::sync::Arc::unwrap_or_clone(r.body), partial: r.partial, clean }
                     }));
                 }
             }),

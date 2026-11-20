@@ -34,17 +34,18 @@ const MAX_AVAILABLE_IMAGE_BYTES: usize = 16 * 1024 * 1024;
 /// asks for the same URL in the same CORS mode has it at once.
 #[derive(Clone)]
 pub struct AvailableImage {
+    pub request_referrer: Option<(pyro_net::ReferrerPolicy, Option<pyro_net::Url>, Option<String>)>,
     /// The natural size (a raster image's, or an SVG's with natural dimensions).
     pub natural: Option<(f64, f64)>,
     /// The size an SVG reports when it has no natural size of its own.
     pub reported: Option<(f64, f64)>,
     /// A raster image's encoded bytes and whether its pixels may be read back.
-    pub bytes: Option<(std::rc::Rc<Vec<u8>>, bool)>,
+    pub bytes: Option<(std::sync::Arc<Vec<u8>>, bool)>,
 }
 
 /// A loaded `<img>`'s encoded bytes ([`PageDom::set_image_bytes`]).
 struct ImageBytes {
-    bytes: Vec<u8>,
+    bytes: std::sync::Arc<Vec<u8>>,
     clean: bool,
     /// The decoded pixels once a canvas used them (`Some(None)`: they do
     /// not decode).
@@ -2514,6 +2515,12 @@ impl PageDom {
         list.iter().rev().find(|(key, _)| key.0 == url && key.1 == cors).map(|(_, image)| image.clone())
     }
 
+    pub fn available_html_image(&self, url: &str, cors: u8, policy: pyro_net::ReferrerPolicy, source: Option<pyro_net::Url>) -> Option<AvailableImage> {
+        let chain = pyro_net::referrer::ReferrerChain::new(source, policy);
+        let referer = chain.header(&pyro_net::Url::parse(url).ok()?);
+        self.available_image(url, cors).filter(|image| image.request_referrer.as_ref() == Some(&(policy, chain.referrer, referer)))
+    }
+
     /// pyro: HTML "update the image data" step 7, done when the image's state is asked for before
     /// the embedder saw its new source: an `<img>` whose `src` (no `srcset`, not in a `<picture>`)
     /// is in the list of available images is completely available at once, with its natural
@@ -2544,7 +2551,9 @@ impl PageDom {
         if self.images.borrow().get(&el).is_some_and(|(loading, _, _)| *loading == src) {
             return false;
         }
-        let Some(image) = self.available_image(&url, cors) else { return false };
+        let policy = pyro_net::ReferrerPolicy::from_attribute(self.dom.borrow().get_attribute(el, "referrerpolicy").ok().flatten())
+            .unwrap_or_else(|| self.referrer_policy());
+        let Some(image) = self.available_html_image(&url, cors, policy, self.document_url_parsed()) else { return false };
         self.set_image_state(el, Some(&src), false);
         {
             let mut dom = self.dom.borrow_mut();
@@ -2552,7 +2561,7 @@ impl PageDom {
             dom.set_reported_natural_size(el, image.reported);
         }
         if let Some((bytes, clean)) = image.bytes {
-            self.set_image_bytes(el, (*bytes).clone(), clean);
+            self.set_image_bytes(el, bytes, clean);
         }
         true
     }
@@ -2569,7 +2578,8 @@ impl PageDom {
     /// first use). `clean`: the response was same-origin (or CORS), so its
     /// pixels may be read back. At most [`MAX_IMAGE_BYTES_KEPT`] are kept
     /// per document; images past that draw nothing.
-    pub fn set_image_bytes(&self, el: NodeId, bytes: Vec<u8>, clean: bool) {
+    pub fn set_image_bytes(&self, el: NodeId, bytes: impl Into<std::sync::Arc<Vec<u8>>>, clean: bool) {
+        let bytes = bytes.into();
         self.forget_image_bytes(el);
         let mut map = self.image_bytes.borrow_mut();
         if self.image_bytes_kept.get().0 + bytes.len() > MAX_IMAGE_BYTES_KEPT {

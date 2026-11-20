@@ -76,6 +76,23 @@ fn parsed_images_report_natural_size_and_delay_window_load() {
 }
 
 #[test]
+fn available_image_checks_inherited_referrer_policy() {
+    let (mut thread, page, loader) = setup("<!doctype html><img src='/asset.png'>");
+    let url = "http://site.test/asset.png";
+    loader.insert_bytes(url, "image/png", &png(3, 2), Duration::ZERO);
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    assert_eq!(loader.referer_of(url), Some(Some("http://site.test/".into())));
+    eval(&thread, page, "const policy = document.createElement('meta'); policy.name='referrer'; policy.content='no-referrer'; document.head.append(policy); 1");
+    settle(&mut thread);
+    eval(&thread, page, "const next = new Image(); document.body.append(next); next.src='/asset.png'; 1");
+    settle(&mut thread);
+    assert_eq!(loader.log.borrow().iter().filter(|seen| *seen == url).count(), 2);
+    assert_eq!(loader.referer_of(url), Some(None));
+    assert_eq!(eval(&thread, page, "next.naturalWidth"), "3");
+}
+
+#[test]
 fn src_changes_reload_once_and_report_pending_state() {
     let (mut thread, page, loader) = setup("<img id=a src=/a.png>");
     loader.insert_bytes("http://site.test/a.png", "image/png", &png(3, 2), Duration::ZERO);
@@ -537,9 +554,40 @@ fn completed_image_body_is_ready_for_layout() {
     assert_eq!(eval(&thread, page, "document.images[0].naturalWidth"), "3");
     let client = pyro_browser::document_client(&thread.browser.page(page).unwrap().main_frame);
     let key = pyro_dom::layout::LayoutBodyKey::new(&client, url, &Default::default(), pyro_dom::layout::SubresourceKind::Image);
-    let body = thread.browser.layout_bodies(page).unwrap().get(&key).expect("the loaded image is ready to paint");
-    assert_eq!(body.bytes.as_slice(), image.as_slice());
-    assert!(body.opaque);
+    assert!(!thread.browser.layout_bodies(page).unwrap().known(&key));
+    let bytes = thread.browser.page(page).unwrap().main_frame.page_dom.as_ref().unwrap().available_image(url, 0).unwrap().bytes.unwrap().0;
+    for count in [1, 2] {
+        let bytes = bytes.clone();
+        thread.browser.fetch_subresource(page, url.into(), pyro_browser::ResourceKind::Image, Box::new(move |_, result| {
+            let image = result.unwrap();
+            assert_eq!(std::sync::Arc::ptr_eq(&bytes, &image.body), count == 1);
+            assert!(image.opaque);
+        }));
+        settle(&mut thread);
+        assert_eq!(loader.log.borrow().iter().filter(|entry| *entry == url).count(), count);
+    }
+}
+
+#[test]
+fn image_handoff_budget_and_detachment_bound_allocations() {
+    let (mut thread, page, loader) = setup("<img src='/one'><img src='/two'><img src='/three'>");
+    let mut large = png(3, 2);
+    large.resize(6 * 1024 * 1024, 0);
+    for name in ["one", "two", "three"] {
+        loader.insert_bytes(&format!("http://site.test/{name}"), "image/png", &large, Duration::ZERO);
+    }
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    eval(&thread, page, "globalThis.detached = document.images[2]; detached.remove()");
+    settle(&mut thread);
+    for (name, expected) in [("one", 2), ("two", 1), ("three", 2)] {
+        let url = format!("http://site.test/{name}");
+        thread.browser.fetch_subresource(page, url.clone(), pyro_browser::ResourceKind::Image, Box::new(|_, response| {
+            assert_eq!(response.unwrap().body.len(), 6 * 1024 * 1024);
+        }));
+        settle(&mut thread);
+        assert_eq!(loader.log.borrow().iter().filter(|seen| **seen == url).count(), expected, "{name}");
+    }
 }
 
 /// What the page fetched itself and hands its layout (an `<object>`'s image) is stored for the
