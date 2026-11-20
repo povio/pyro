@@ -2944,22 +2944,6 @@ impl Node {
             }
         }
 
-        // Negative z_index hoisted children
-        if matches_hoisted_content {
-            if let Some(hoisted) = &self.stacking_context {
-                for hoisted_child in hoisted.neg_z_hoisted_children().rev() {
-                    let Some(child) = self.tree().get(hoisted_child.node_id) else {
-                        continue;
-                    };
-                    for (x, y) in self.hoisted_hit_points(hoisted_child, x, y) {
-                        if let Some(hit) = crate::util::ensure_stack(|| child.hit_inner(x, y, scale, scrollbar)) {
-                            return Some(hit);
-                        }
-                    }
-                }
-            }
-        }
-
         // Inline children
         if self.flags.is_inline_root() {
             let x = x - content_box_offset.x;
@@ -2985,6 +2969,24 @@ impl Node {
                             y,
                             is_text: true,
                         });
+                    }
+                }
+            }
+        }
+
+        // Negative z_index hoisted children
+        // pyro: after the inline content, which paints over them (CSS 2.1 Appendix E: step 3 before
+        // step 7): text in front of a `z-index: -1` box takes the hit.
+        if matches_hoisted_content {
+            if let Some(hoisted) = &self.stacking_context {
+                for hoisted_child in hoisted.neg_z_hoisted_children().rev() {
+                    let Some(child) = self.tree().get(hoisted_child.node_id) else {
+                        continue;
+                    };
+                    for (x, y) in self.hoisted_hit_points(hoisted_child, x, y) {
+                        if let Some(hit) = crate::util::ensure_stack(|| child.hit_inner(x, y, scale, scrollbar)) {
+                            return Some(hit);
+                        }
                     }
                 }
             }

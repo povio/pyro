@@ -3294,6 +3294,38 @@ mod tests {
         assert!(steps > 0 && steps <= 8 * boxes, "{steps} child-list steps for {boxes} boxes");
     }
 
+    /// pyro: (hit order) text over a `z-index: -1` box behind it takes the hit: the negative
+    /// z-index boxes paint under the inline content (CSS 2.1 Appendix E steps 3 and 7) and are hit
+    /// after it. They were hit before the root's text. Review cycle 5, finding 3.
+    #[test]
+    fn text_over_a_negative_z_index_box_takes_the_hit() {
+        let mut doc = BaseDocument::new(DocumentConfig {
+            viewport: Some(Viewport::new(800, 600, 1.0, ColorScheme::Light)),
+            ..Default::default()
+        });
+        let root = doc.root_node().id;
+        let mut m = doc.mutate();
+        let html = m.create_element(qual_name!("html", html), vec![]);
+        let body = m.create_element(qual_name!("body", html), vec![Attribute { name: qual_name!("style"), value: "margin:0".into() }]);
+        let para = m.create_element(
+            qual_name!("div", html),
+            vec![Attribute { name: qual_name!("style"), value: "font:20px/20px monospace;width:400px;position:relative;z-index:0".into() }],
+        );
+        let text = m.create_text_node("XXXXXXXXXX");
+        let behind = m.create_element(
+            qual_name!("div", html),
+            vec![Attribute { name: qual_name!("style"), value: "position:absolute;z-index:-1;left:0;top:0;width:400px;height:20px".into() }],
+        );
+        m.append_children(para, &[text, behind]);
+        m.append_children(body, &[para]);
+        m.append_children(html, &[body]);
+        m.append_children(root, &[html]);
+        drop(m);
+        doc.resolve(0.0);
+        let hit = doc.hit(10.0, 10.0).map(|h| h.node_id);
+        assert!(hit.is_some_and(|hit| hit == text || hit == para), "the text (or its block), not the box behind it ({behind:?}): {hit:?}");
+    }
+
     /// pyro: a hoisted box is hit only where paint shows it: in the columns its strip range
     /// reaches, not in a spanner's row (paint leaves those out), even where it reaches into one.
     #[test]

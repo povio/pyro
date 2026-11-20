@@ -22189,7 +22189,7 @@ diff --git a/packages/blitz-dom/src/layout/multicol.rs b/packages/blitz-dom/src/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/multicol.rs
-@@ -0,0 +1,3607 @@
+@@ -0,0 +1,3639 @@
 +//! pyro: CSS Multi-column Layout (<https://drafts.csswg.org/css-multicol/>).
 +//!
 +//! A multi-column container lays its content out once, in a strip one column wide (its flow
@@ -25484,6 +25484,38 @@ new file mode 100644
 +        let _ = doc.hit(200.0, 5.0);
 +        let steps = crate::util::HIT_STEPS.with(|steps| steps.get());
 +        assert!(steps > 0 && steps <= 8 * boxes, "{steps} child-list steps for {boxes} boxes");
++    }
++
++    /// pyro: (hit order) text over a `z-index: -1` box behind it takes the hit: the negative
++    /// z-index boxes paint under the inline content (CSS 2.1 Appendix E steps 3 and 7) and are hit
++    /// after it. They were hit before the root's text. Review cycle 5, finding 3.
++    #[test]
++    fn text_over_a_negative_z_index_box_takes_the_hit() {
++        let mut doc = BaseDocument::new(DocumentConfig {
++            viewport: Some(Viewport::new(800, 600, 1.0, ColorScheme::Light)),
++            ..Default::default()
++        });
++        let root = doc.root_node().id;
++        let mut m = doc.mutate();
++        let html = m.create_element(qual_name!("html", html), vec![]);
++        let body = m.create_element(qual_name!("body", html), vec![Attribute { name: qual_name!("style"), value: "margin:0".into() }]);
++        let para = m.create_element(
++            qual_name!("div", html),
++            vec![Attribute { name: qual_name!("style"), value: "font:20px/20px monospace;width:400px;position:relative;z-index:0".into() }],
++        );
++        let text = m.create_text_node("XXXXXXXXXX");
++        let behind = m.create_element(
++            qual_name!("div", html),
++            vec![Attribute { name: qual_name!("style"), value: "position:absolute;z-index:-1;left:0;top:0;width:400px;height:20px".into() }],
++        );
++        m.append_children(para, &[text, behind]);
++        m.append_children(body, &[para]);
++        m.append_children(html, &[body]);
++        m.append_children(root, &[html]);
++        drop(m);
++        doc.resolve(0.0);
++        let hit = doc.hit(10.0, 10.0).map(|h| h.node_id);
++        assert!(hit.is_some_and(|hit| hit == text || hit == para), "the text (or its block), not the box behind it ({behind:?}): {hit:?}");
 +    }
 +
 +    /// pyro: a hoisted box is hit only where paint shows it: in the columns its strip range
@@ -41704,7 +41736,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      pub fn is_anonymous(&self) -> bool {
          matches!(self.data, NodeData::AnonymousBlock { .. })
      }
-@@ -1161,37 +2144,159 @@
+@@ -1161,35 +2144,157 @@
      pub fn layout_style(&self) -> stylo_taffy::TaffyStyloStyle<ComputedStyleRef<'_>> {
          let styles = self
              .try_stylo_element_data()
@@ -41795,9 +41827,9 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +        match &self.data {
 +            NodeData::Element(data) | NodeData::AnonymousBlock(data) => data.layout_data().collapsed_border,
 +            _ => None,
-         }
-     }
- 
++        }
++    }
++
 +    /// pyro: rewrite the layout styles derived from the node's primary style
 +    /// ([`LayoutStyles`]). Called wherever the primary style is replaced outside the style
 +    /// traversal, and when a cell's collapsed borders change.
@@ -41823,7 +41855,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +    pub(crate) fn set_collapsed_border(&mut self, collapsed_border: Option<[f32; 4]>) {
 +        if self.collapsed_border() == collapsed_border {
 +            return;
-+        }
+         }
 +        self.layout_data_mut().collapsed_border = collapsed_border;
 +        self.clear_layout_cache();
 +        let Some(stylo) = self.try_stylo_element_data_mut() else {
@@ -41864,11 +41896,9 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +    #[inline]
 +    pub(crate) fn is_fieldset(&self) -> bool {
 +        self.data.downcast_element().is_some_and(|el| el.name.local == local_name!("fieldset"))
-+    }
-+
+     }
+ 
      /// The node's style for Taffy, expressed in the axes of the writing mode `layout_wm` (the writing
-     /// mode of the box laying this node out). Used for the child-style getters.
-     #[cfg(feature = "writing-mode")]
 @@ -1234,6 +2339,19 @@
              .unwrap_or(stylo_taffy::WritingMode::empty())
      }
@@ -42187,14 +42217,28 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                      child_x -= self.scroll_offset().x as f32;
                      child_y -= self.scroll_offset().y as f32;
                      let viewport_scroll = self.tree().viewport_scroll();
-@@ -1590,7 +2855,91 @@
+@@ -1590,26 +2855,93 @@
                  child_x -= offset.x;
                  child_y -= offset.y;
              }
 -            if let Some(hit) = child.hit_inner(child_x, child_y, scale, scrollbar) {
+-                return Some(hit);
+-            }
+-        }
 +            crate::util::ensure_stack(|| child.hit_inner(child_x, child_y, scale, scrollbar))
 +        };
-+
+ 
+-        // Negative z_index hoisted children
+-        if matches_hoisted_content {
+-            if let Some(hoisted) = &self.stacking_context {
+-                for hoisted_child in hoisted.neg_z_hoisted_children().rev() {
+-                    let Some(child) = self.tree().get(hoisted_child.node_id) else {
+-                        continue;
+-                    };
+-                    let pos = hoisted_child.position(self.tree(), self.id);
+-                    let x = x - pos.x;
+-                    let y = y - pos.y;
+-                    if let Some(hit) = child.hit_inner(x, y, scale, scrollbar) {
 +        // pyro: the items of a flex or grid child painted with the inline content of this box's
 +        // painter (`Node::items_in_phases`) lie over every child's own box painted with the block
 +        // backgrounds: they are hit first, as they paint (a later empty block's background does not
@@ -42219,8 +42263,8 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +                        || child.primary_styles().is_some_and(|s| s.clone_position() != Position::Static));
 +                if positioned_level {
 +                    if let Some(hit) = hit_child(child, scrollbar) {
-+                        return Some(hit);
-+                    }
+                         return Some(hit);
+                     }
 +                    tested.insert(*child_id);
 +                    continue;
 +                }
@@ -42247,8 +42291,8 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +                let Some(child) = self.tree().get(*child_id) else { continue };
 +                if let Some(hit) = crate::util::ensure_stack(|| child.hit_inner(x, y, scale, scrollbar)) {
 +                    return Some(hit);
-+                }
-+            }
+                 }
+             }
 +            return None;
 +        }
 +
@@ -42277,26 +42321,37 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +            let hit = hit_child(child, scrollbar);
 +            NO_ITEMS.set(false);
 +            if let Some(hit) = hit {
-                 return Some(hit);
++                return Some(hit);
++            }
+         }
+ 
+         // Inline children
+@@ -1642,6 +2974,24 @@
              }
          }
-@@ -1602,11 +2951,10 @@
-                     let Some(child) = self.tree().get(hoisted_child.node_id) else {
-                         continue;
-                     };
--                    let pos = hoisted_child.position(self.tree(), self.id);
--                    let x = x - pos.x;
--                    let y = y - pos.y;
--                    if let Some(hit) = child.hit_inner(x, y, scale, scrollbar) {
--                        return Some(hit);
+ 
++        // Negative z_index hoisted children
++        // pyro: after the inline content, which paints over them (CSS 2.1 Appendix E: step 3 before
++        // step 7): text in front of a `z-index: -1` box takes the hit.
++        if matches_hoisted_content {
++            if let Some(hoisted) = &self.stacking_context {
++                for hoisted_child in hoisted.neg_z_hoisted_children().rev() {
++                    let Some(child) = self.tree().get(hoisted_child.node_id) else {
++                        continue;
++                    };
 +                    for (x, y) in self.hoisted_hit_points(hoisted_child, x, y) {
 +                        if let Some(hit) = crate::util::ensure_stack(|| child.hit_inner(x, y, scale, scrollbar)) {
 +                            return Some(hit);
 +                        }
-                     }
-                 }
-             }
-@@ -1716,7 +3064,7 @@
++                    }
++                }
++            }
++        }
++
+         // Self (this node)
+         if matches_self && !pointer_events_none {
+             return Some(HitResult {
+@@ -1716,7 +3066,7 @@
              return false;
          };
          if self.flags.is_inline_root()
@@ -42305,7 +42360,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          {
              return false;
          }
-@@ -1741,8 +3089,13 @@
+@@ -1741,8 +3091,13 @@
          let y = y + self.final_layout().location.y - self.scroll_offset().y as f32;
  
          // Recurse up the positioning hierarchy
@@ -42320,7 +42375,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              .unwrap_or(crate::util::Point { x, y })
      }
  
-@@ -1818,8 +3171,28 @@
+@@ -1818,8 +3173,28 @@
  
          let root_layout = inline_root.unrounded_layout();
          let content_box_inset = root_layout.padding + root_layout.border;
@@ -42351,7 +42406,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          fn union(acc: &mut Option<taffy::Rect<f32>>, left: f32, top: f32, right: f32, bottom: f32) {
              *acc = Some(match *acc {
-@@ -1877,11 +3250,36 @@
+@@ -1877,11 +3252,36 @@
                  }
              }
  
