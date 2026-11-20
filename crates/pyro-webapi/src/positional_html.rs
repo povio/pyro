@@ -17,12 +17,14 @@ enum Position {
 }
 
 pub(crate) fn define_sibling_methods<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
+    crate::streaming_html::siblings(def);
     def.method("beforeHTMLUnsafe", 1, |s, n, a| insert(s, n, a, Position::Before));
     def.method("afterHTMLUnsafe", 1, |s, n, a| insert(s, n, a, Position::After));
     def.method("replaceWithHTMLUnsafe", 1, |s, n, a| insert(s, n, a, Position::Replace));
 }
 
 pub(crate) fn define_parent_methods<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
+    crate::streaming_html::parents(def);
     def.method("appendHTMLUnsafe", 1, |s, n, a| insert(s, n, a, Position::Append));
     def.method("prependHTMLUnsafe", 1, |s, n, a| insert(s, n, a, Position::Prepend));
 }

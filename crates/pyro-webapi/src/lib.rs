@@ -82,6 +82,7 @@ pub mod navigator_extras;
 pub mod node;
 mod positional_html;
 mod sanitizer_options;
+mod streaming_html;
 pub mod observable;
 pub mod page;
 pub mod performance;

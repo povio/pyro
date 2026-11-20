@@ -622,6 +622,9 @@ pub enum FrameContainer {
 }
 
 /// Embedder (pyro-browser) services the bindings need.
+pub type StreamScriptJob = Box<dyn FnOnce(Box<dyn FnOnce()>)>;
+pub type StreamScriptReady = Box<dyn FnOnce(StreamScriptJob)>;
+
 pub trait PageHooks {
     /// Where the document is shown: geometry across frames (an
     /// IntersectionObserver's implicit root is the top-level document's
@@ -758,6 +761,7 @@ pub trait PageHooks {
     /// loader (a blocking one reports through
     /// `lifecycle::written_script_fetched`). False when the embedder cannot
     /// load scripts; the write then reports them as unsupported.
+    fn streamed_script(&self, _node: NodeId, _live: Rc<dyn Fn() -> bool>, ready: StreamScriptReady) { ready(Box::new(|done| done())); }
     fn written_script_queued(&self) -> bool {
         false
     }
@@ -1853,6 +1857,12 @@ impl PageDom {
     pub fn current_script(&self) -> Option<NodeId> {
         self.current_script.get()
     }
+    pub fn set_executing_classic_script(&self, script: NodeId) {
+        let dom = self.dom.borrow();
+        let in_shadow = dom.root_node(script, false).and_then(|root| dom.is_shadow_root(root)).unwrap_or(false);
+        self.current_script.set((!in_shadow).then_some(script));
+    }
+
     pub fn set_current_script(&self, script: Option<NodeId>) {
         self.current_script.set(script);
     }

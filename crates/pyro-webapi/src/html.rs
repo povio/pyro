@@ -4406,7 +4406,11 @@ fn open_document(page: &Rc<PageDom>, doc: NodeId) -> JsResult<()> {
         let dom = page.dom.borrow();
         dom.descendants(doc).js()?.filter_map(|id| dom.node_key(id)).collect()
     };
-    keys.extend(page.window_target());
+    // An inactive document has no associated Window. Its creator's
+    // listeners belong to the displayed document.
+    if doc == page.document() {
+        keys.extend(page.window_target());
+    }
     {
         let mut dom = page.dom.borrow_mut();
         for key in keys {
@@ -4599,7 +4603,7 @@ fn eval_parser_script(page: &Rc<PageDom>, doc: NodeId, node: NodeId, text: &str,
     let Some(realm) = page.main_world_realm() else { return Ok(()) };
     let scope = realm.scope()?;
     let outer_script = page.current_script();
-    page.set_current_script(Some(node));
+    page.set_executing_classic_script(node);
     page.script_nesting.set(page.script_nesting.get() + 1);
     with_parser(page, doc, |p| p.open_insertion_point());
     crate::trusted_types::sync_compile_strings(&scope, page);

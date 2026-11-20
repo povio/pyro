@@ -1945,6 +1945,7 @@
     ReadableStreamBYOBRequest, WritableStream, WritableStreamDefaultWriter, WritableStreamDefaultController, TransformStream,
     TransformStreamDefaultController, ByteLengthQueuingStrategy, CountQueuingStrategy, TextEncoderStream, TextDecoderStream,
     CompressionStream, DecompressionStream,
+    errorWritableController: (controller, error) => wcErrorIfNeeded(WritableStreamDefaultController$c.get(controller), error),
     isStream: isRS,
     transferKind,
     transferOut,
