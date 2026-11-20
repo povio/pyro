@@ -184,7 +184,7 @@ fn name_arg(a: &Args<'_>, what: &str) -> JsResult<String> {
 
 /// HTML "submit button": `<input type=submit|image>` or a `<button>` in the
 /// Submit Button state (`type=submit`, or Auto without `command`/`commandfor`).
-fn is_submit_button(dom: &pyro_dom::Dom, id: pyro_dom::NodeId) -> bool {
+pub(crate) fn is_submit_button(dom: &pyro_dom::Dom, id: pyro_dom::NodeId) -> bool {
     let Ok(e) = dom.element(id) else { return false };
     if !e.is_html() {
         return false;
