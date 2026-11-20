@@ -41,6 +41,20 @@ fn render(body: &str, scale: f64) -> RgbaImage {
     Renderer::new().render(&snapshot, Area::Viewport, Backend::Cpu, &fetcher).unwrap().0
 }
 
+#[test]
+fn magnified_fractional_inset_retains_polygon_coverage() {
+    let img = render("<style>div{width:100px;height:30px;background:red;transform:scaleX(400);clip-path:inset(0 49.998%)}div+div{clip-path:polygon(49.998% 0,50.002% 0,50.002% 100%,49.998% 100%)}</style><div></div><div></div>", 1.0);
+    for x in 48..52 {
+        let inset = pixel(&img, 1.0, x as f64, 15.0);
+        assert_eq!(inset, pixel(&img, 1.0, x as f64, 45.0));
+        if x == 49 || x == 50 {
+            assert!(inset[1].abs_diff(51) <= 2, "{x}: {inset:?}");
+        } else {
+            assert_eq!(inset, [255; 3]);
+        }
+    }
+}
+
 /// The pixel at CSS px (x, y), its centre.
 fn pixel(img: &RgbaImage, scale: f64, x: f64, y: f64) -> [u8; 3] {
     let (x, y) = (((x + 0.5) * scale) as usize, ((y + 0.5) * scale) as usize);

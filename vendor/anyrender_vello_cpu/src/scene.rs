@@ -444,7 +444,13 @@ impl PaintScene for VelloCpuScenePainter {
     }
 
     fn push_clip_layer(&mut self, fill: Fill, transform: Affine, clip: &impl Shape) {
-        let (clip, transform) = device_path(clip.into_path(DEFAULT_TOLERANCE), transform, self.raster_bounds());
+        let path = clip.into_path(DEFAULT_TOLERANCE);
+        let (clip, transform) = if let Some(rect) = device_rect(&path, transform) {
+            let sample_edge = |y: f64| (y * 4.0).round() / 4.0;
+            (Rect::new(rect.x0, sample_edge(rect.y0), rect.x1, sample_edge(rect.y1)).to_path(DEFAULT_TOLERANCE), Affine::IDENTITY)
+        } else {
+            device_path(path, transform, self.raster_bounds())
+        };
         self.render_ctx.set_transform(transform);
         self.render_ctx.set_fill_rule(fill);
         self.render_ctx.push_clip_layer(&clip);
@@ -1542,9 +1548,9 @@ mod clip_rule_tests {
             }, 100, 100)
         };
         let edge_alpha = |top| render(top)[(10 * 100 + 12) * 4 + 3];
-        assert!(edge_alpha(5.0) > edge_alpha(5.05));
+        assert_eq!(edge_alpha(5.0), edge_alpha(5.05));
         assert!(edge_alpha(5.05) > edge_alpha(5.09));
-        assert!(edge_alpha(5.09) > edge_alpha(5.14));
+        assert_eq!(edge_alpha(5.09), edge_alpha(5.14));
     }
 
     #[test]
