@@ -707,6 +707,15 @@ impl Node {
                         if y { offset.y -= actual.y; }
                     }
                 }
+                if (offset.x != 0.0 || offset.y != 0.0) && node.has_transform_style() {
+                    if let Some(transform) = node.transform().as_deref() {
+                        let [xx, yx, xy, yy, _, _] = transform.as_coeffs();
+                        offset = crate::Point { x: xx * offset.x + xy * offset.y, y: yx * offset.x + yy * offset.y };
+                    }
+                }
+                let sticky = node.layout_data().sticky_offset;
+                offset.x += sticky.x;
+                offset.y += sticky.y;
                 if node.taffy_position() == taffy::Position::Fixed && node.containing_block().and_then(|cb| tree.get(cb)).is_some_and(|cb| cb.is_root_element() && !cb.root_contains_fixed()) { break; }
                 cursor = node.containing_block();
             }

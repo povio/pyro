@@ -312,9 +312,9 @@ struct HitIndex {
 }
 
 impl HitIndex {
-    /// `hit_select`'s test of a point against a box's rect (edges included).
+    /// `hit_select`'s test of a point against a half-open box.
     fn holds(r: &Rect, x: f64, y: f64) -> bool {
-        x >= r.x && x <= r.x + r.width && y >= r.y && y <= r.y + r.height
+        x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height
     }
 }
 
@@ -2472,7 +2472,7 @@ impl Layout {
         ignore_x: bool,
         geometry: &mut HitTestGeometry,
     ) -> Option<NodeId> {
-        let inside = |r: &Rect| (ignore_x || (x >= r.x && x <= r.x + r.width)) && y >= r.y && y <= r.y + r.height;
+        let inside = |r: &Rect| (ignore_x || (x >= r.x && x < r.x + r.width)) && y >= r.y && y < r.y + r.height;
         let mut best: Option<(Rc<[PaintEntry]>, NodeId)> = None;
         for el in candidates {
             let Some(b) = result.get(el) else { continue };

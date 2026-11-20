@@ -600,14 +600,10 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             y: self.initial_y - (viewport_scroll.y * self.scale),
         });
         // The transform `draw_children` gives the root element's children.
-        let root_children = (root_transform * Affine::translate(Vec2::new(
+        let root_children = self.scrolled_transform(root, root_transform * Affine::translate(Vec2::new(
             root_location.x as f64 * self.scale,
             root_location.y as f64 * self.scale,
-        )) * root.transform().as_deref().copied().unwrap_or_default())
-        .then_translate(Vec2 {
-            x: -root.scroll_offset().x * self.scale,
-            y: -root.scroll_offset().y * self.scale,
-        });
+        )) * root.transform().as_deref().copied().unwrap_or_default());
         for &id in &self.top_layer {
             let node = &tree[id];
             // An element not rendered (its own or an ancestor's `display:
@@ -905,7 +901,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
     }
 
     fn scrolled_transform(&self, node: &Node, transform: Affine) -> Affine {
-        transform.then_translate(Vec2 {
+        transform * Affine::translate(Vec2 {
             x: -node.scroll_offset().x * self.scale,
             y: -node.scroll_offset().y * self.scale,
         })

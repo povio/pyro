@@ -301,6 +301,28 @@ fn clipped_scroll_axis_and_removed_scrollport_ignore_stale_offsets() {
 }
 
 #[test]
+fn transformed_scroll_offset_is_a_vector_with_one_source_read() {
+    let html = "<!doctype html><style>main{position:relative}section{transform:translateY(40px) scale(2,3);overflow:auto;width:50px;height:50px}i{display:block;width:200px;height:200px;anchor-name:--a}b{position:absolute;position-anchor:--a;position-area:right}</style><main><section><i></i></section><b></b></main>";
+    let mut doc = blitz_html::HtmlDocument::from_html(html, blitz_dom::DocumentConfig::default());
+    doc.viewport_mut().window_size = (400, 300);
+    doc.resolve(0.0);
+    let scroller = doc.query_selector("section").unwrap().unwrap();
+    let target = doc.query_selector("b").unwrap().unwrap();
+    let reads = std::cell::Cell::new(0);
+    let visits = doc.anchor_candidate_visits();
+    for amount in 1..=64 {
+        let delta = doc.get_node(target).unwrap().anchor_scroll_offset_with(|id| {
+            assert_eq!(id, Some(scroller));
+            reads.set(reads.get() + 1);
+            blitz_dom::Point { x: amount.into(), y: amount.into() }
+        });
+        assert_eq!((delta.x, delta.y), (f64::from(-2 * amount), f64::from(-3 * amount)));
+    }
+    assert_eq!(reads.get(), 64);
+    assert_eq!(visits, doc.anchor_candidate_visits());
+}
+
+#[test]
 fn scroll_compensation_does_not_repeat_name_lookup() {
     let html = "<!doctype html><style>main{position:relative}section{height:50px;overflow:auto}i{display:block;height:200px;anchor-name:--ref}b{position:absolute;position-anchor:--ref;top:anchor(bottom)}</style><main><section><i></i></section><b></b></main>";
     let mut doc = blitz_html::HtmlDocument::from_html(html, blitz_dom::DocumentConfig::default());

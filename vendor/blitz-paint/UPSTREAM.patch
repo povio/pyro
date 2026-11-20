@@ -6222,7 +6222,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          // Render debug overlay
          if self.dom.devtools().highlight_hover {
              if let Some(node_id) = self.dom.as_ref().get_hover_node_id() {
-@@ -288,13 +512,398 @@
+@@ -288,15 +512,396 @@
          }
      }
  
@@ -6315,14 +6315,10 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            y: self.initial_y - (viewport_scroll.y * self.scale),
 +        });
 +        // The transform `draw_children` gives the root element's children.
-+        let root_children = (root_transform * Affine::translate(Vec2::new(
++        let root_children = self.scrolled_transform(root, root_transform * Affine::translate(Vec2::new(
 +            root_location.x as f64 * self.scale,
 +            root_location.y as f64 * self.scale,
-+        )) * root.transform().as_deref().copied().unwrap_or_default())
-+        .then_translate(Vec2 {
-+            x: -root.scroll_offset().x * self.scale,
-+            y: -root.scroll_offset().y * self.scale,
-+        });
++        )) * root.transform().as_deref().copied().unwrap_or_default());
 +        for &id in &self.top_layer {
 +            let node = &tree[id];
 +            // An element not rendered (its own or an ancestor's `display:
@@ -6621,9 +6617,12 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +    }
 +
      fn scrolled_transform(&self, node: &Node, transform: Affine) -> Affine {
-         transform.then_translate(Vec2 {
+-        transform.then_translate(Vec2 {
++        transform * Affine::translate(Vec2 {
              x: -node.scroll_offset().x * self.scale,
-@@ -309,16 +918,32 @@
+             y: -node.scroll_offset().y * self.scale,
+         })
+@@ -309,16 +914,32 @@
              let is_internal_table_box_other_than_cell = display.outside()
                  == DisplayOutside::InternalTable
                  && display.inside() != DisplayInside::TableCell;
@@ -6660,7 +6659,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      }
  
      fn draw_text_mask(
-@@ -328,6 +953,10 @@
+@@ -328,6 +949,10 @@
          transform: Affine,
          root: bool,
      ) {
@@ -6671,7 +6670,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let node = &self.dom.as_ref().tree()[node_id];
          if matches!(node.taffy_display(), taffy::Display::None) || (!root && node.is_out_of_flow())
          {
-@@ -345,7 +974,7 @@
+@@ -345,7 +970,7 @@
          let clip = if cx.text_input.is_some() {
              cx.frame.text_input_clip_path()
          } else {
@@ -6680,7 +6679,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          };
          let pushed = self.layer_manager.maybe_push_layer(
              scene,
-@@ -360,26 +989,52 @@
+@@ -360,26 +985,52 @@
          let transform = self.scrolled_transform(node, transform);
          if node.flags.is_inline_root() {
              if let Some(layout) = &cx.element.inline_layout_data {
@@ -6742,7 +6741,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              }
          }
          if let Some(children) = &*node.layout_children.borrow() {
-@@ -405,7 +1060,23 @@
+@@ -405,7 +1056,23 @@
      ///
      /// Approaching rendering this way guarantees we have all the styles we need when rendering text with not having
      /// to traverse back to the parent for its styles, or needing to pass down styles
@@ -6767,7 +6766,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          &self,
          scene: &mut impl PaintScene,
          node_id: NodeId,
-@@ -413,12 +1084,33 @@
+@@ -413,12 +1080,33 @@
          clip_rect: Rect,
      ) {
          let node = &self.dom.as_ref().tree()[node_id];
@@ -6801,7 +6800,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          // Only draw elements with a style
          let Some(styles) = node.primary_styles() else {
              return;
-@@ -430,18 +1122,40 @@
+@@ -430,18 +1118,40 @@
              return;
          }
  
@@ -6845,7 +6844,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let should_clip = self.should_clip_node(node, &styles);
          let is_text_input = node
              .element_data()
-@@ -460,7 +1174,8 @@
+@@ -460,7 +1170,8 @@
              size.height as f64 * self.scale,
          );
          let border_box = Rect::from_origin_size(Point::ORIGIN, box_size);
@@ -6855,7 +6854,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let content_position = kurbo::Point {
              x: scaled_pb.left,
              y: scaled_pb.top,
-@@ -482,10 +1197,71 @@
+@@ -482,10 +1193,71 @@
          // Cull elements that fall entirely outside the current clip rectangle. In addition to
          // the viewport, `clip_rect` is narrowed by any ancestor scrollport (see below), so this
          // also culls elements scrolled out of view inside a clipping/scrolling container.
@@ -6931,7 +6930,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          {
              return;
          }
-@@ -508,10 +1284,23 @@
+@@ -508,10 +1280,23 @@
          }
  
          // Optimise zero-area (/very small area) clips by not rendering at all
@@ -6956,7 +6955,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              return;
          }
  
-@@ -528,192 +1317,873 @@
+@@ -528,192 +1313,873 @@
          // rectangle passed to descendants to the visible (clipped) region so that content
          // scrolled out of view is culled rather than drawn and clipped away. The box used
          // here matches the clip applied to the content below.
@@ -7985,7 +7984,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      fn render_node(
          &self,
          scene: &mut impl PaintScene,
-@@ -722,11 +2192,28 @@
+@@ -722,11 +2188,28 @@
          clip_rect: Rect,
      ) {
          let node = &self.dom.as_ref().tree()[node_id];
@@ -8016,7 +8015,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              NodeData::Text(TextNodeData { .. }) => {
                  // Text nodes should never be rendered directly
                  // (they should always be rendered as part of an inline layout)
-@@ -738,116 +2225,1030 @@
+@@ -738,118 +2221,1032 @@
          }
      }
  
@@ -8141,6 +8140,8 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 -    /// out after a delay ([`BaseDocument::scrollbar_opacity`]); never-scrolled
 -    /// containers paint nothing, keeping thumbs out of static reftest
 -    /// screenshots.
+-    ///
+-    /// Geometry comes from [`Node::scrollbar_thumb`], shared with the
 +    /// pyro: one entry of `draw_inline_pass_entry`: `span_id`'s content laid out by the inline root
 +    /// `root_id` at `transform` and content position `pos`; its lines and atomic inlines clipped to
 +    /// `column` (a column's range of a multi-column container, in `transform`'s space), the
@@ -9148,10 +9149,12 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +    /// out after a delay ([`BaseDocument::scrollbar_opacity`]); never-scrolled
 +    /// containers paint nothing, keeping thumbs out of static reftest
 +    /// screenshots.
-     ///
-     /// Geometry comes from [`Node::scrollbar_thumb`], shared with the
++    ///
++    /// Geometry comes from [`Node::scrollbar_thumb`], shared with the
      /// thumb-drag hit testing in blitz-dom.
-@@ -967,271 +3368,3850 @@
+     #[cfg(feature = "scrollbars")]
+     fn draw_scrollbars(&self, scene: &mut impl PaintScene) {
+@@ -967,271 +3364,3850 @@
          }
      }
  
@@ -13250,7 +13253,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let svg_size = svg.tree.size();
  
          let x = self.frame.content_box.origin().x;
-@@ -1253,9 +7233,20 @@
+@@ -1253,9 +7229,20 @@
  
          // Apply object-fit algorithm
          let container_size = taffy::Size { width, height };
@@ -13274,7 +13277,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          };
          let paint_size = compute_object_fit(container_size, Some(object_size), object_fit);
  
-@@ -1266,26 +7257,209 @@
+@@ -1266,26 +7253,209 @@
          let y_offset = object_position.vertical.resolve(
              CSSPixelLength::new(container_size.height - paint_size.height) / self.scale as f32,
          ) * self.scale as f32;
@@ -13486,7 +13489,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      fn with_replaced_content_clip<S: PaintScene>(
          &self,
          scene: &mut S,
-@@ -1293,15 +7467,38 @@
+@@ -1293,15 +7463,38 @@
          paint_size: taffy::Size<f32>,
          x_offset: f32,
          y_offset: f32,
@@ -13526,7 +13529,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              BlendMode::default(),
              1.0,
              self.transform,
-@@ -1312,7 +7509,108 @@
+@@ -1312,7 +7505,108 @@
          );
      }
  
@@ -13635,7 +13638,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          if let Some(image) = self.element.raster_image_data() {
              let width = self.frame.content_box.width() as u32;
              let height = self.frame.content_box.height() as u32;
-@@ -1329,9 +7627,22 @@
+@@ -1329,9 +7623,22 @@
                  width: width as f32,
                  height: height as f32,
              };
@@ -13661,7 +13664,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              };
              let paint_size = compute_object_fit(container_size, Some(object_size), object_fit);
  
-@@ -1347,10 +7658,28 @@
+@@ -1347,10 +7654,28 @@
  
              let x_scale = paint_size.width as f64 / object_size.width as f64;
              let y_scale = paint_size.height as f64 / object_size.height as f64;
@@ -13690,7 +13693,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  
              self.with_replaced_content_clip(
                  scene,
-@@ -1358,8 +7687,23 @@
+@@ -1358,8 +7683,23 @@
                  paint_size,
                  x_offset.px(),
                  y_offset.px(),
@@ -13715,7 +13718,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  },
              );
          }
-@@ -1383,22 +7727,32 @@
+@@ -1383,22 +7723,32 @@
              let width = self.frame.content_box.width() as u32;
              let height = self.frame.content_box.height() as u32;
  
@@ -13758,7 +13761,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          }
      }
  
-@@ -1427,6 +7781,32 @@
+@@ -1427,6 +7777,32 @@
      }
  }
  
@@ -13791,7 +13794,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  fn insets_from_taffy_rect(input: taffy::Rect<f64>) -> Insets {
      Insets {
          x0: input.left,
-@@ -1438,6 +7818,13 @@
+@@ -1438,6 +7814,13 @@
  
  /// Convert Stylo and Taffy types into Kurbo types
  fn create_css_rect(style: &ComputedValues, layout: &Layout, scale: f64) -> CssBox {
@@ -13805,7 +13808,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      // Resolve and rescale
      // We have to scale since document pixels are not same same as rendered pixels
      let width: f64 = layout.size.width as f64;
-@@ -1457,12 +7844,364 @@
+@@ -1457,12 +7840,364 @@
          }
      };
      let s_border = style.get_border();
