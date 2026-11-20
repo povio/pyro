@@ -353,6 +353,7 @@ struct Breaks {
     trims: Vec<(f32, f32, f32, f32)>,
     /// pyro: forced breaks (`break-before`/`break-after: column`, `page`, ...), sorted.
     forced: Vec<f32>,
+    overflow_breaks: Vec<(crate::NodeId, f32, f32)>,
     /// pyro: the multi-column containers in the strip's flow (no other break context between
     /// them and the container) and their tops.
     nested: Vec<(crate::NodeId, f32)>,
@@ -919,6 +920,32 @@ impl LayoutPassState<'_> {
                 breaks.forced.dedup_by(|a, b| (*a - *b).abs() <= EPSILON);
             }
             pass += 1;
+            if pass <= 5 && self.nested_pass_budget > 0 && !breaks.overflow_breaks.is_empty() {
+                let height = self.nested_fragmentation.get(&dom_id).map(|ctx| ctx.0).or(fragmentainer)
+                    .unwrap_or_else(|| breaks.balance(count, limit));
+                let run = breaks.fill(height, MAX_COLUMNS);
+                let mut changed = false;
+                for &(id, parent_top, position) in &breaks.overflow_breaks {
+                    let next = run.columns.partition_point(|&(start, _)| start < position - EPSILON);
+                    if let Some(&(boundary, _)) = run.columns.get(next) {
+                        let floor = boundary - parent_top;
+                        if floor > self.nodes[id].unrounded_layout().location.y + EPSILON {
+                            self.spanner_floors.insert(id, floor);
+                            use taffy::CacheTree as _;
+                            let mut at = Some(id);
+                            while let Some(node) = at.filter(|&n| n != dom_id) {
+                                self.cache_clear(crate::taffy_node_id(node));
+                                at = self.nodes[node].layout_parent.get();
+                            }
+                            changed = true;
+                        }
+                    }
+                }
+                if changed {
+                    self.nested_pass_budget -= 1;
+                    continue;
+                }
+            }
             // pyro: a column spanner comes after the content before it, also what overflows the
             // boxes before it (Chromium lays that content out in the row of columns the spanner
             // ends; WPT css-multicol `multicol-span-all-children-height-013`): it is pushed below
@@ -2579,6 +2606,7 @@ impl BaseDocument {
             gaps: found.gaps,
             trims: found.trims,
             forced: found.forced,
+            overflow_breaks: found.overflow_breaks,
             nested: found.nested,
             baselines: found.baselines,
             clones: found.clones,
@@ -2892,7 +2920,12 @@ impl BaseDocument {
                         && !contains_layout
                         && self.first_descendant_forces_break(child_id))
                 {
-                    found.forced.push(child_top - layout.margin.top.max(0.0));
+                    let boundary = child_top - layout.margin.top.max(0.0);
+                    if found.container != Some(parent) && previous.is_some() && boundary > top + node.unrounded_layout().size.height + EPSILON {
+                        found.overflow_breaks.push((child_id, top, boundary));
+                    } else {
+                        found.forced.push(boundary);
+                    }
                 }
                 // pyro: and its last descendants', which a box the columns do not look into takes
                 // as its own (WPT css-multicol `spanner-fragmentation-011`).
@@ -3102,6 +3135,7 @@ struct Found {
     /// pyro: see [`Breaks::forced`]; `forced_after` from `break-after` (dropped after the last child).
     forced: Vec<f32>,
     forced_after: Vec<f32>,
+    overflow_breaks: Vec<(crate::NodeId, f32, f32)>,
     /// The floats' block ranges.
     floats: Vec<(f32, f32)>,
     /// pyro: see [`Breaks::baselines`].
@@ -3538,6 +3572,7 @@ mod tests {
             gaps: Vec::new(),
             trims: Vec::new(),
             forced: Vec::new(),
+            overflow_breaks: Vec::new(),
             nested: Vec::new(),
             baselines: Vec::new(),
             clones: Vec::new(),
