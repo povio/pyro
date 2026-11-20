@@ -1833,30 +1833,46 @@ const MAX_UNITED_OUTLINE_RECTS: usize = 256;
 /// bounding box.
 pub(crate) fn rect_union_outline(rects: &[Rect]) -> BezPath {
     use std::collections::HashMap;
-    let rects: Vec<Rect> = rects.iter().copied().filter(|r| r.width() > 0.0 && r.height() > 0.0).collect();
-    if rects.is_empty() {
-        return BezPath::new();
-    }
-    if rects.len() > MAX_UNITED_OUTLINE_RECTS {
-        let bounds = rects.iter().skip(1).fold(rects[0], |a, r| a.union(*r));
-        return bounds.to_path(0.1);
-    }
-    // Coordinates snapped to 1/64 px, compared exactly.
+    // Coordinates snapped to 1/64 px, compared exactly; whether a rect has an area is decided
+    // after snapping (one thinner than the grid unites as nothing: it is a line).
     let q = |v: f64| (v * 64.0).round() as i64;
-    let mut xs: Vec<i64> = rects.iter().flat_map(|r| [q(r.x0), q(r.x1)]).collect();
+    let snapped = rects.iter().map(|r| [q(r.x0), q(r.y0), q(r.x1), q(r.y1)]);
+    let (rects, lines): (Vec<[i64; 4]>, Vec<[i64; 4]>) =
+        snapped.filter(|r| r[2] >= r[0] && r[3] >= r[1] && (r[2] > r[0] || r[3] > r[1])).partition(|r| r[2] > r[0] && r[3] > r[1]);
+    let point = |(x, y): (i64, i64)| Point::new(x as f64 / 64.0, y as f64 / 64.0);
+    if rects.len() + lines.len() > MAX_UNITED_OUTLINE_RECTS {
+        let b = rects.iter().chain(&lines).fold([i64::MAX, i64::MAX, i64::MIN, i64::MIN], |b, r| {
+            [b[0].min(r[0]), b[1].min(r[1]), b[2].max(r[2]), b[3].max(r[3])]
+        });
+        return Rect::from_points(point((b[0], b[1])), point((b[2], b[3]))).to_path(0.1);
+    }
+    let mut path = BezPath::new();
+    // A rect of no width or no height outside the others: its outline, a line (the ring around
+    // it).
+    for l in &lines {
+        if !rects.iter().any(|r| r[0] <= l[0] && r[1] <= l[1] && l[2] <= r[2] && l[3] <= r[3]) {
+            path.move_to(point((l[0], l[1])));
+            path.line_to(point((l[2], l[3])));
+            path.close_path();
+        }
+    }
+    if rects.is_empty() {
+        return path;
+    }
+    let mut xs: Vec<i64> = rects.iter().flat_map(|r| [r[0], r[2]]).collect();
     xs.sort_unstable();
     xs.dedup();
     // The merged y-intervals of each slab [xs[i], xs[i + 1]).
     let mut slabs: Vec<Vec<(i64, i64)>> = Vec::with_capacity(xs.len().saturating_sub(1));
-    let mut by_x0: Vec<&Rect> = rects.iter().collect();
-    by_x0.sort_by_key(|r| q(r.x0));
+    let mut by_x0: Vec<&[i64; 4]> = rects.iter().collect();
+    by_x0.sort_by_key(|r| r[0]);
     let mut next = 0;
     let mut active: Vec<(i64, i64, i64)> = Vec::new(); // (y0, y1, x1)
     for w in xs.windows(2) {
         let (x0, _) = (w[0], w[1]);
-        while next < by_x0.len() && q(by_x0[next].x0) <= x0 {
+        while next < by_x0.len() && by_x0[next][0] <= x0 {
             let r = by_x0[next];
-            active.push((q(r.y0), q(r.y1), q(r.x1)));
+            active.push((r[1], r[3], r[2]));
             next += 1;
         }
         active.retain(|&(_, _, x1)| x1 > x0);
@@ -1906,8 +1922,6 @@ pub(crate) fn rect_union_outline(rects: &[Rect]) -> BezPath {
         from.entry(e.0).or_default().push(i);
     }
     let mut used = vec![false; edges.len()];
-    let mut path = BezPath::new();
-    let point = |(x, y): (i64, i64)| Point::new(x as f64 / 64.0, y as f64 / 64.0);
     for start in 0..edges.len() {
         if used[start] {
             continue;
@@ -1979,6 +1993,22 @@ mod rect_union_tests {
             Rect::new(2.0, 2.0, 8.0, 8.0),
         ]);
         assert_eq!(loops(&path), vec![4, 4]);
+    }
+
+    /// pyro: a rect thinner than the 1/64 px grid is a line once snapped: outlined as one (out and
+    /// back) where no other rect covers it, not dropped with the degenerate loop its edges made.
+    #[test]
+    fn a_rect_that_snaps_to_no_height_or_width_is_outlined_as_a_line() {
+        let path = rect_union_outline(&[Rect::new(0.0, 0.0, 10.0, 10.0), Rect::new(20.0, 0.0, 30.0, 0.004)]);
+        assert_eq!(loops(&path), vec![2, 4]);
+        let path = rect_union_outline(&[Rect::new(0.0, 0.0, 10.0, 10.0), Rect::new(20.0, 0.0, 20.0, 10.0)]);
+        assert_eq!(loops(&path), vec![2, 4]);
+        // Covered by the other rect, or alone: no ring beside it, or the line alone.
+        let path = rect_union_outline(&[Rect::new(0.0, 0.0, 10.0, 10.0), Rect::new(2.0, 2.0, 2.004, 8.0)]);
+        assert_eq!(loops(&path), vec![4]);
+        assert_eq!(loops(&rect_union_outline(&[Rect::new(5.0, 0.0, 5.004, 8.0)])), vec![2]);
+        // A rect just past the grid in both directions keeps its area.
+        assert_eq!(loops(&rect_union_outline(&[Rect::new(5.0, 0.0, 5.01, 0.01)])), vec![4]);
     }
 
     #[test]
