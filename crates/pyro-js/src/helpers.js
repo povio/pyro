@@ -470,7 +470,7 @@
     // the iterator protocol of `v` itself (arrays included: an overridden
     // @@iterator or %ArrayIteratorPrototype%.next is honoured, holes read
     // through the prototype), as a fresh array of the yielded values.
-    sequence(v, what) {
+    sequence(v, what, convert) {
       if (v === null || (typeof v !== 'object' && typeof v !== 'function')) {
         throw new TypeError(`${what}: The provided value cannot be converted to a sequence.`);
       }
@@ -478,17 +478,22 @@
       if (typeof method !== 'function') {
         throw new TypeError(`${what}: The object must have a callable @@iterator property.`);
       }
-      const out = [];
+      const out = convert === undefined ? [] : undefined;
       const iterator = apply(method, v, []);
-      if (iterator === null || typeof iterator !== 'object') throw new TypeError(`${what}: Iterator result is not an object.`);
+      if (iterator === null || (typeof iterator !== 'object' && typeof iterator !== 'function')) throw new TypeError(`${what}: Iterator result is not an object.`);
       const next = iterator.next;
       for (let n = 0; ; n++) {
         const r = apply(next, iterator, []);
-        if (r === null || typeof r !== 'object') throw new TypeError(`${what}: Iterator result is not an object.`);
+        if (r === null || (typeof r !== 'object' && typeof r !== 'function')) throw new TypeError(`${what}: Iterator result is not an object.`);
         if (r.done) return out;
-        // CreateDataProperty: a [[Set]] would reach accessors a page put on
-        // Array.prototype's indices.
-        reflectDefine(out, n, { value: r.value, writable: true, enumerable: true, configurable: true });
+        const item = r.value;
+        if (convert !== undefined) {
+          // WebIDL 3.2.21.1 propagates member conversion errors directly.
+          convert(item);
+        } else {
+          // CreateDataProperty avoids accessors on Array.prototype's indices.
+          reflectDefine(out, n, { value: item, writable: true, enumerable: true, configurable: true });
+        }
       }
     },
     // Population steps (see `descriptorIndex` and defineAccessor):

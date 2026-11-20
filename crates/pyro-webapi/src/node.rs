@@ -1221,9 +1221,10 @@ fn set_html_unsafe<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Val
     a.require(1, "setHTMLUnsafe")?;
     let shadow = n.page().dom.borrow().node(n.id).is_ok_and(|node| matches!(node.kind, pyro_dom::node::NodeKind::Fragment(_)));
     let sink = if shadow { "ShadowRoot setHTMLUnsafe" } else { "Element setHTMLUnsafe" };
-    let html = crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::Html, a.get(0), sink, false)?;
+    let input = crate::trusted_types::HtmlInput::convert(s, a.get(0))?;
+    let (html, options) = input.for_html_insertion(s, n.page(), a.get(1), sink)?;
     crate::input::blur_before_removal(n.page(), n.id, true);
-    pyro_dom::parse::set_html_unsafe(&mut n.page().dom.borrow_mut(), n.id, &html).js()?;
+    pyro_dom::parse::set_html_unsafe_with(&mut n.page().dom.borrow_mut(), n.id, &html, options.run_scripts, options.filter).js()?;
     Ok(s.undefined())
 }
 

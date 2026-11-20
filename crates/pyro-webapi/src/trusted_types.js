@@ -145,7 +145,7 @@
         if (callback === undefined) throw new TypeError('This policy does not define createParserOptions');
         const result = callback(input, ...args);
         if (result === null || result === undefined) throw new TypeError('Expected parser options from policy');
-        return parserDictionary(result).runScripts;
+        return result;
       };
       const policy = native.makeValue('policy', TrustedTypePolicy.prototype, createOptions, TrustedHTMLParserOptions.prototype);
       policies.set(policy, { name, options: callbacks });
@@ -282,12 +282,13 @@
 
   const exports = {
     TrustedHTML, TrustedScript, TrustedScriptURL, TrustedHTMLParserOptions, TrustedTypePolicy, TrustedTypePolicyFactory, SecurityPolicyViolationEvent,
-    defaultParserOptions(runScripts, sink) {
+    defaultParserOptions(runScripts, sink, hasSanitizer) {
       const callback = defaultParserCallback;
       if (callback === undefined) return undefined;
+      if (hasSanitizer) throw new TypeError('Sanitizer objects for policy callback input are unsupported');
       const result = callback({ runScripts }, 'TrustedHTMLParserOptions', sink);
       if (result === null || result === undefined) return null;
-      return parserDictionary(result).runScripts;
+      return result;
     },
     // A sink violation ("Should sink type mismatch violation be blocked"): reported to each
     // policy with `require-trusted-types-for 'script'`; whether one of them is enforced.

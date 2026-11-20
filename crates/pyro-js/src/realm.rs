@@ -1914,6 +1914,25 @@ impl<'s> Scope<'s> {
         seq.as_object().ok_or_else(|| JsError::Type("sequence conversion produced no array".into()))
     }
 
+    /// WebIDL sequence conversion with observable per-item conversions.
+    pub fn convert_sequence<T: 'static>(
+        &self,
+        value: Value<'_>,
+        what: &str,
+        convert: impl for<'a> Fn(&Scope<'a>, Value<'a>) -> JsResult<T> + 'static,
+    ) -> JsResult<Vec<T>> {
+        let values = Rc::new(RefCell::new(Vec::new()));
+        let output = values.clone();
+        let item = self.function("", move |s, _, args| {
+            let converted = convert(s, args.get(0))?;
+            output.borrow_mut().push(converted);
+            Ok(s.undefined())
+        })?;
+        self.realm.cached_helper(self, "sequence")?.call(None, &[value, self.string(what), item.value()])?;
+        let converted = std::mem::take(&mut *values.borrow_mut());
+        Ok(converted)
+    }
+
     // -- host objects ------------------------------------------------------
 
     /// Returns the wrapper for `data`, reusing the existing one for `key` in this
