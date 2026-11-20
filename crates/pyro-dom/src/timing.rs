@@ -1017,7 +1017,11 @@ pub fn changed_longhands_with(
         }
     };
     let Some(shorthand) = shorthand else { return Vec::new() };
-    shorthand.longhands().filter(|l| differs(*l)).map(|l| l.name()).collect()
+    shorthand.longhands()
+        .filter(|id| shorthand != ShorthandId::All || !id.is_logical())
+        .filter(|id| differs(*id))
+        .map(|id| id.name())
+        .collect()
 }
 
 /// The keyframes a transition of `longhand` runs between: its computed value

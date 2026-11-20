@@ -2626,7 +2626,7 @@ pub mod font {
         let mut variant_caps = None;
         let mut weight = None;
         let mut width = None;
-        if let Ok(sys) = input.try_parse(|i| SystemFont::parse(context, i)) {
+        if let Ok(sys) = input.try_parse(|i| <SystemFont as Parse>::parse(context, i)) {
             return Ok(Longhands {
                 font_family: font_family::SpecifiedValue::system_font(sys),
                 font_size: font_size::SpecifiedValue::system_font(sys),
@@ -2726,12 +2726,6 @@ pub mod font {
         where
             W: fmt::Write,
         {
-            match self.check_system() {
-                CheckSystemResult::AllSystem(sys) => return sys.to_css(dest),
-                CheckSystemResult::SomeSystem => return Ok(()),
-                CheckSystemResult::None => {},
-            }
-
             #[cfg(feature = "gecko")]
             if self.font_optical_sizing != &font_optical_sizing::get_initial_specified_value() {
                 return Ok(());
@@ -2806,6 +2800,12 @@ pub mod font {
                 return Ok(());
             }
 
+            match self.check_system() {
+                CheckSystemResult::AllSystem(sys) if self.font_variant_caps == &font_variant_caps::get_initial_specified_value() => return sys.to_css(dest),
+                CheckSystemResult::AllSystem(_) | CheckSystemResult::SomeSystem => return Ok(()),
+                CheckSystemResult::None => {},
+            }
+
             let font_width = match self.font_width {
                 FontWidth::Keyword(kw) => *kw,
                 FontWidth::Width(percentage) => {
@@ -2871,7 +2871,7 @@ pub mod font {
                 ($v:expr) => {
                     match $v.get_system() {
                         Some(s) => {
-                            debug_assert!(sys.is_none() || s == sys.unwrap());
+                            if sys.is_some_and(|previous| previous != s) { all = false; }
                             sys = Some(s);
                         },
                         None => {

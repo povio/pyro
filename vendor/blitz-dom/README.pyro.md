@@ -14,6 +14,9 @@ the whole diff: every section below.
 
 ## Updating or dropping the patch
 
+Preserve the macOS `objc2-core-text` manifest dependency when regenerating `Cargo.toml`.
+The font metrics provider resolves the six standard CSS system font roles using Core Text UI fonts at their default sizes, routing family selection through `system-ui`.
+
 - To move to a newer blitz main: in a blitz checkout, commit this directory's `src/` and `assets/` over
   `packages/blitz-dom` at the commit above (or apply `UPSTREAM.patch`) and merge or cherry-pick onto the new
   main; copy `src/` and `assets/` back, regenerate `Cargo.toml` from the package and workspace manifests,

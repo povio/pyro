@@ -901,7 +901,9 @@ impl Source {
         let now = self.now(&page);
         let state = &page.animation_events;
         let (_, transitions) = state.try_timelines()?;
-        let t = transitions.iter().rev().find(|t| t.is_live() && t.el() == el && t.pseudo() == pseudo && t.name() == longhand)?;
+        let t = transitions.iter().rev().find(|t| t.is_live() && t.el() == el && t.pseudo() == pseudo &&
+            (t.name() == longhand || t.styles.as_ref().is_some_and(|(_, after)|
+                pyro_dom::animation::physical_property(longhand, after) == Some(t.name()))))?;
         // (One script controls through its `CSSTransition` object follows that object: left out.)
         if t.has_ended()
             || state.scripted.try_borrow().ok()?.values().any(|s| s.css == Some(t.id()))

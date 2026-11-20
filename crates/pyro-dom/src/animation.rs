@@ -275,6 +275,13 @@ fn easing_function(text: &str) -> Option<style::values::computed::TimingFunction
     })
 }
 
+/// The physical property corresponding to a longhand in a given writing mode.
+pub fn physical_property(name: &str, style: &crate::timing::StyleSnapshot) -> Option<&'static str> {
+    let id = crate::stylo::property_id(name)?;
+    let style::properties::PropertyDeclarationId::Longhand(id) = id.as_shorthand().err()? else { return None };
+    Some(id.to_physical(style.writing_mode).name())
+}
+
 /// The longhands of the shorthand `name` (`None`: a longhand, `all` or unknown).
 pub fn shorthand_longhands(name: &str) -> Option<Vec<&'static str>> {
     let id = crate::stylo::property_id(name)?;

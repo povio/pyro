@@ -8,6 +8,8 @@ crate (`diff -ruN`).
 
 ## The change
 
+- The six standard system-font shorthands resolve through the Servo device font provider for both cascade and interpolation. Internal Gecko keywords remain Gecko-only.
+
 - Gap decoration inset offsets are signed length-percentages or `overlap-join`. Row and column cap and junction offsets participate in the cascade and animation. The inset shorthands expand into those same eight longhands. This is style-system support, not gap-decoration painting.
 
 - `rule_cache.rs`, `properties/helpers.mako.rs`: a style that inherits a reset property explicitly

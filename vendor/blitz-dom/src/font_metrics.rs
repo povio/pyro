@@ -49,6 +49,37 @@ impl core::fmt::Debug for BlitzFontMetricsProvider {
 }
 
 impl FontMetricsProvider for BlitzFontMetricsProvider {
+    #[cfg(target_os = "macos")]
+    fn system_font(&self, role: style::values::specified::font::SystemFont) -> style::device::servo::SystemFontMetrics {
+        use objc2_core_text::{CTFont, CTFontSymbolicTraits, CTFontUIFontType};
+        use style::device::servo::SystemFontMetrics;
+        use style::values::{computed::font, specified::font::SystemFont};
+        use std::sync::OnceLock;
+
+        static ROLES: [OnceLock<Option<(f32, CTFontSymbolicTraits)>>; 6] = [const { OnceLock::new() }; 6];
+        let ui_type = match role {
+            SystemFont::Caption => CTFontUIFontType::WindowTitle,
+            SystemFont::Icon => CTFontUIFontType::Label,
+            SystemFont::Menu => CTFontUIFontType::MenuItem,
+            SystemFont::MessageBox => CTFontUIFontType::Message,
+            SystemFont::SmallCaption => CTFontUIFontType::UtilityWindowTitle,
+            SystemFont::StatusBar => CTFontUIFontType::SystemDetail,
+        };
+        let platform = ROLES[role as usize].get_or_init(|| unsafe {
+            let face = CTFont::new_ui_font_for_language(ui_type, 0.0, None)?;
+            Some((face.size() as f32, face.symbolic_traits()))
+        });
+        let mut result = SystemFontMetrics::regular(self.base_size_for_generic(font::GenericFontFamily::SystemUi));
+        if let Some((size, traits)) = platform {
+            result.font_size = CSSPixelLength::new(*size);
+            if traits.contains(CTFontSymbolicTraits::TraitBold) { result.font_weight = font::FontWeight::BOLD; }
+            if traits.contains(CTFontSymbolicTraits::TraitItalic) { result.font_style = font::FontStyle::ITALIC; }
+            if traits.contains(CTFontSymbolicTraits::TraitExpanded) { result.font_width = font::FontWidth::EXPANDED; }
+            if traits.contains(CTFontSymbolicTraits::TraitCondensed) { result.font_width = font::FontWidth::CONDENSED; }
+        }
+        result
+    }
+
     fn query_font_metrics(
         &self,
         vertical: bool,

@@ -270,7 +270,7 @@ impl ::selectors::parser::PseudoElement for PseudoElement {
     // accepts them too, or the parser would reject them after its `::scroll-marker` as well
     // (`::column::scroll-marker:target-current`: the state the first pseudo-element sets stays).
     fn accepts_state_pseudo_classes(&self) -> bool {
-        self.is_scroll_marker() || self.is_scroll_button() || matches!(self, Self::Column | Self::WebkitScrollbar | Self::WebkitScrollbarThumb | Self::WebkitScrollbarTrack | Self::WebkitScrollbarTrackPiece | Self::WebkitScrollbarButton | Self::WebkitScrollbarCorner | Self::WebkitResizer)
+        self.is_in_pseudo_element_tree() || self.is_scroll_marker() || self.is_scroll_button() || matches!(self, Self::Column | Self::WebkitScrollbar | Self::WebkitScrollbarThumb | Self::WebkitScrollbarTrack | Self::WebkitScrollbarTrackPiece | Self::WebkitScrollbarButton | Self::WebkitScrollbarCorner | Self::WebkitResizer)
     }
 
     // pyro: `::slotted()` can be followed by a tree-abiding pseudo-element (CSS Scoping 1 § 3.2.2),

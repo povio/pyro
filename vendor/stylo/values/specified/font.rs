@@ -46,7 +46,7 @@ macro_rules! system_font_methods {
             }
             #[cfg(feature = "servo")]
             {
-                unreachable!()
+                _context.device().system_font(self.get_system().unwrap()).$field
             }
         }
     };
@@ -74,7 +74,6 @@ macro_rules! system_font_methods {
     Clone, Copy, Debug, Eq, Hash, MallocSizeOf, Parse, PartialEq, SpecifiedValueInfo, ToCss, ToShmem,
 )]
 #[allow(missing_docs)]
-#[cfg(feature = "gecko")]
 pub enum SystemFont {
     /// https://drafts.csswg.org/css-fonts/#valdef-font-caption
     Caption,
@@ -89,42 +88,24 @@ pub enum SystemFont {
     /// https://drafts.csswg.org/css-fonts/#valdef-font-status-bar
     StatusBar,
     /// Internal system font, used by the `<menupopup>`s on macOS.
+    #[cfg(feature = "gecko")]
     #[parse(condition = "ParserContext::chrome_rules_enabled")]
     MozPullDownMenu,
     /// Internal system font, used for `<button>` elements.
+    #[cfg(feature = "gecko")]
     #[parse(condition = "ParserContext::chrome_rules_enabled")]
     MozButton,
     /// Internal font, used by `<select>` elements.
+    #[cfg(feature = "gecko")]
     #[parse(condition = "ParserContext::chrome_rules_enabled")]
     MozList,
     /// Internal font, used by `<input>` elements.
+    #[cfg(feature = "gecko")]
     #[parse(condition = "ParserContext::chrome_rules_enabled")]
     MozField,
+    #[cfg(feature = "gecko")]
     #[css(skip)]
     End, // Just for indexing purposes.
-}
-
-// We don't parse system fonts in servo, but in the interest of not
-// littering a lot of code with `if engine == "gecko"` conditionals,
-// we have a dummy system font module that does nothing
-
-#[derive(
-    Clone, Copy, Debug, Eq, Hash, MallocSizeOf, PartialEq, SpecifiedValueInfo, ToCss, ToShmem,
-)]
-#[allow(missing_docs)]
-#[cfg(feature = "servo")]
-/// Dummy struct for system font, can never be constructed.
-pub struct SystemFont {
-    #[css(skip)]
-    _forbid_construction: (),
-}
-
-#[allow(missing_docs)]
-#[cfg(feature = "servo")]
-impl SystemFont {
-    pub fn parse(_context: &ParserContext, _input: &mut Parser) -> Result<Self, ()> {
-        Err(())
-    }
 }
 
 const DEFAULT_SCRIPT_MIN_SIZE_PT: u32 = 8;
@@ -964,10 +945,10 @@ impl FontSize {
                         line_height_base,
                     )
                 },
-                FontSize::System(_) => {
+                FontSize::System(_role) => {
                     #[cfg(feature = "servo")]
                     {
-                        unreachable!()
+                        context.device().system_font(_role).font_size.zoom(context.builder.effective_zoom)
                     }
                     #[cfg(feature = "gecko")]
                     {

@@ -38,6 +38,31 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use style_traits::{CSSPixel, DevicePixel};
 
 use crate::device::Device;
+use crate::values::{computed::font, specified::font::SystemFont};
+
+/// Platform values selected by a system font shorthand.
+#[allow(missing_docs)]
+#[derive(Clone)]
+pub struct SystemFontMetrics {
+    pub font_size: Length,
+    pub font_weight: font::FontWeight,
+    pub font_style: font::FontStyle,
+    pub font_width: font::FontWidth,
+    pub font_family: font::FontFamily,
+}
+
+impl SystemFontMetrics {
+    /// Default system UI face at the supplied size.
+    pub fn regular(size: Length) -> Self {
+        Self {
+            font_size: size,
+            font_weight: font::FontWeight::NORMAL,
+            font_style: font::FontStyle::NORMAL,
+            font_width: font::FontWidth::NORMAL,
+            font_family: font::FontFamily::generic(GenericFontFamily::SystemUi).clone(),
+        }
+    }
+}
 
 /// A trait used to query font metrics in clients of Stylo. This is used by Device to
 /// query font metrics in a way that is specific to the client using Stylo.
@@ -52,6 +77,10 @@ pub trait FontMetricsProvider: Debug + Sync {
     ) -> FontMetrics;
     /// Gets the base size given a generic font family.
     fn base_size_for_generic(&self, generic: GenericFontFamily) -> Length;
+    /// Gets the UI font corresponding to a system role.
+    fn system_font(&self, _role: SystemFont) -> SystemFontMetrics {
+        SystemFontMetrics::regular(self.base_size_for_generic(GenericFontFamily::SystemUi))
+    }
     /// pyro: the used `line-height: normal` of `font` at `size` (from its first available
     /// font's metrics), when the client can measure it: what the `lh` unit resolves against.
     fn normal_line_height(&self, _font: &Font, _size: CSSPixelLength) -> Option<CSSPixelLength> {
@@ -179,6 +208,11 @@ impl Device {
         self.extra
             .font_metrics_provider
             .base_size_for_generic(generic)
+    }
+
+    /// Gets the platform font for a CSS system role.
+    pub fn system_font(&self, role: SystemFont) -> SystemFontMetrics {
+        self.extra.font_metrics_provider.system_font(role)
     }
 
     /// Whether a given animation name may be referenced from style.
