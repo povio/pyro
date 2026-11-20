@@ -2491,7 +2491,7 @@ impl Browser {
         }
         let outer = bindings.as_ref().and_then(|dom| dom.current_script());
         if let Some(dom) = &bindings {
-            dom.set_current_script(Some(element.node));
+            dom.set_executing_classic_script(element.node);
             pyro_webapi::trusted_types::sync_compile_strings(&scope, dom);
         }
         if let Err(e) = scope.eval(text, Some(url), 1) {
@@ -2567,6 +2567,68 @@ impl Browser {
         let Some(bindings) = self.doc(page).and_then(|p| p.main_frame.page_dom.clone()) else { return };
         for node in bindings.take_written_scripts() {
             self.prepare_written_script(page, &bindings, node);
+        }
+    }
+
+    /// Start the fetch at the script end tag. The stream schedules the ready
+    /// script immediately, after a blocking predecessor, or after its own EOF.
+    pub(crate) fn fetch_streamed_script(
+        &mut self, page: FrameKey, node: NodeId, live: Rc<dyn Fn() -> bool>, ready: pyro_webapi::page::StreamScriptReady,
+    ) {
+        let empty = || Box::new(|done: Box<dyn FnOnce()>| done()) as pyro_webapi::page::StreamScriptJob;
+        let Some(state) = self.doc(page) else { ready(empty()); return };
+        let Some(bindings) = state.main_frame.page_dom.clone() else { ready(empty()); return };
+        if state.main_frame.sandbox.scripts_disabled { ready(empty()); return }
+        let base = state.main_frame.base_url.clone();
+        drop(state);
+        let dom = bindings.dom.clone();
+        let Ok(info) = dom.borrow().script_info(node) else { ready(empty()); return };
+        if dom.borrow_mut().add_ref(node).is_err() { ready(empty()); return }
+        let element = Rc::new(ResourceNode { dom, node });
+        let module = info.kind == ScriptKind::Module;
+        let external = info.src.is_some();
+        let url = match info.src.as_deref() {
+            Some(src) => (!src.is_empty()).then(|| resolve_url(node_base_str(&element.dom.borrow(), node).unwrap_or(&base), src)).flatten(),
+            None if module => Some(dynamic_inline_module_url(&base)),
+            None => None,
+        };
+        let Some(url) = url else { self.script_loaded(page, &element, false); ready(empty()); return };
+        let source = url.clone();
+        let on_fetched = move |browser: &mut Browser, result: Result<String, String>| {
+            let scheduler = browser.scheduler();
+            ready(Box::new(move |done| scheduler.post(TaskSource::Networking, move |browser| {
+                if !live() || !browser.doc(page).and_then(|p| p.main_frame.page_dom.clone()).is_some_and(|p| Rc::ptr_eq(&bindings, &p)) {
+                    done();
+                    return;
+                }
+                match result {
+                    Ok(text) if module => {
+                        let once = std::cell::RefCell::new(Some(done));
+                        let after: Rc<dyn Fn()> = Rc::new(move || {
+                            if let Some(f) = once.borrow_mut().take() { f(); }
+                        });
+                        if !browser.execute_module_then(page, &text, &source, false, Some(element), external, Some(after.clone())) {
+                            after();
+                        }
+                    }
+                    Ok(text) => {
+                        browser.execute_external(page, &text, &source, &element);
+                        browser.script_loaded(page, &element, true);
+                        done();
+                    }
+                    Err(e) => {
+                        browser.report_load_error(page, &e);
+                        browser.script_loaded(page, &element, false);
+                        done();
+                    }
+                }
+            })));
+        };
+        if external {
+            let kind = if module { ResourceKind::ModuleScript } else { ResourceKind::Script };
+            self.fetch_script(page, url, kind, ScriptFetch::of(&info), on_fetched);
+        } else {
+            on_fetched(self, Ok(info.inline_text));
         }
     }
 
@@ -2651,6 +2713,19 @@ impl Browser {
         element: Option<Rc<ResourceNode>>,
         external: bool,
     ) -> bool {
+        self.execute_module_then(page, text, url, deferred, element, external, None)
+    }
+
+    fn execute_module_then(
+        &mut self,
+        page: FrameKey,
+        text: &str,
+        url: &str,
+        deferred: bool,
+        element: Option<Rc<ResourceNode>>,
+        external: bool,
+        after: Option<Rc<dyn Fn()>>,
+    ) -> bool {
         let Some(realm) = self.main_realm(page) else { return false };
         let Ok(scope) = realm.scope() else { return false };
         let loader_id = self.frame_loader(page);
@@ -2663,7 +2738,9 @@ impl Browser {
             Rc::new(move |event: Option<bool>| {
                 let loader_id = loader_id.clone();
                 let element = element.clone();
+                let after = after.clone();
                 sched.post(TaskSource::Networking, move |b| {
+                    let complete = || {
                     if b.frame_loader(page) != loader_id {
                         return;
                     }
@@ -2688,6 +2765,10 @@ impl Browser {
                     } else {
                         b.maybe_fire_load(page);
                     }
+                    };
+                    let mut complete = complete;
+                    complete();
+                    if let Some(after) = after { after(); }
                 });
             })
         };
@@ -2915,7 +2996,7 @@ pub(crate) fn prepare_inserted_script(frame: &crate::Frame, node: NodeId) {
     };
     let Ok(scope) = realm.scope() else { return };
     let outer = bindings.current_script();
-    bindings.set_current_script(Some(node));
+    bindings.set_executing_classic_script(node);
     pyro_webapi::trusted_types::sync_compile_strings(&scope, &bindings);
     realm.reenter_native_callback_hook(|| {
         if let Err(e) = scope.eval(&text, Some(&frame.base_url), 1) {

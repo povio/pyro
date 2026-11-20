@@ -301,36 +301,9 @@ impl HtmlInput {
         options: Value<'_>,
         sink: &str,
     ) -> JsResult<(String, bool)> {
-        let vetted = |input: Self, scripts| match input {
-            Self::Trusted(html) | Self::String(html) => Ok((html, scripts)),
-        };
-        if let Some(object) = options.as_object() {
-            if let Some(scripts) = s.get_hidden(object, PARSER_OPTIONS)? {
-                return vetted(self, scripts.to_bool());
-            }
-        }
-        let scripts = if options.is_undefined() || options.is_null() {
-            false
-        } else {
-            let obj = options.as_object().ok_or_else(|| JsError::Type("Expected HTML parser options".into()))?;
-            let scripts = obj.get_atom("runScripts")?.to_bool();
-            if !obj.get_atom("sanitizer")?.is_undefined() {
-                return Err(JsError::Type("HTML sanitizer options are unsupported".into()));
-            }
-            scripts
-        };
-        if requires_for_script(page) {
-            let module = MODULE.module(s, page)?;
-            let callback = module.get("defaultParserOptions")?.as_object()
-                .ok_or_else(|| JsError::Type("Trusted Types are unavailable".into()))?;
-            let result = callback.call(None, &[s.boolean(scripts), s.string(sink)])?;
-            // undefined: no policy callback. null: the callback rejected.
-            if !result.is_null() && !result.is_undefined() {
-                return vetted(self, result.to_bool());
-            }
-            if (scripts || result.is_null()) && sink_violation(s, page, sink, "")? {
-                return Err(JsError::Type("This document requires trusted HTML parser options".into()));
-            }
+        let (scripts, vetted) = parser_options(s, page, options, sink, false)?;
+        if vetted {
+            return Ok((match self { Self::Trusted(html) | Self::String(html) => html }, scripts));
         }
         Ok((self.compliant(s, page, sink)?, scripts))
     }
@@ -344,6 +317,40 @@ impl HtmlInput {
             Self::String(html) => Ok(html),
         }
     }
+}
+
+/// Returns the scripts flag and whether a branded or policy-approved option
+/// has authorized parsing. A streaming sink has no separate HTML input to vet.
+pub(crate) fn parser_options(s: &Scope<'_>, page: &Rc<PageDom>, options: Value<'_>, sink: &str, streaming: bool) -> JsResult<(bool, bool)> {
+    if let Some(object) = options.as_object() {
+        if let Some(scripts) = s.get_hidden(object, PARSER_OPTIONS)? {
+            return Ok((scripts.to_bool(), true));
+        }
+    }
+    let scripts = if options.is_undefined() || options.is_null() {
+        false
+    } else {
+        let obj = options.as_object().ok_or_else(|| JsError::Type("Expected HTML parser options".into()))?;
+        let scripts = obj.get_atom("runScripts")?.to_bool();
+        if !obj.get_atom("sanitizer")?.is_undefined() {
+            return Err(JsError::Type("HTML sanitizer options are unsupported".into()));
+        }
+        scripts
+    };
+    if requires_for_script(page) {
+        let module = MODULE.module(s, page)?;
+        let callback = module.get("defaultParserOptions")?.as_object()
+            .ok_or_else(|| JsError::Type("Trusted Types are unavailable".into()))?;
+        let result = callback.call(None, &[s.boolean(scripts), s.string(sink)])?;
+        // undefined: no policy callback. null: the callback rejected.
+        if !result.is_null() && !result.is_undefined() {
+            return Ok((result.to_bool(), true));
+        }
+        if (streaming || scripts || result.is_null()) && sink_violation(s, page, sink, "")? {
+            return Err(JsError::Type("This document requires trusted HTML parser options".into()));
+        }
+    }
+    Ok((scripts, false))
 }
 
 /// The Trusted Types a sink takes.

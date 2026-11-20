@@ -560,6 +560,18 @@ impl PageHooks for Hooks {
         true
     }
 
+    fn streamed_script(&self, node: pyro_dom::NodeId, live: Rc<dyn Fn() -> bool>, ready: pyro_webapi::page::StreamScriptReady) {
+        let page = self.page;
+        let loader = self.loader.clone();
+        self.sched.post(TaskSource::Networking, move |b| {
+            if live() && b.doc(page).is_some_and(|p| p.main_frame.loader_id == loader) {
+                b.fetch_streamed_script(page, node, live, ready);
+            } else {
+                ready(Box::new(|done| done()));
+            }
+        });
+    }
+
     fn written_script_queued(&self) -> bool {
         let page = self.page;
         let loader = self.loader.clone();
