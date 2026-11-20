@@ -33,7 +33,7 @@
   const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
   const queueMicrotaskC = queueMicrotask;
   const reportErrorC = typeof reportError === 'function' ? reportError : () => {};
-  const { sin, exp, pow, floor, ceil, min, max, PI, abs } = Math;
+  const { sin, cos, exp, pow, floor, ceil, min, max, PI, abs } = Math;
   // Captured now: page fake timers installed later do not stall audio.
   const setTimer = setTimeout;
   const perf = performance;
@@ -377,7 +377,9 @@
     }
     for (let i = 0; i < QUANTUM; i++) {
       const v = out[i];
-      if (v < p.minValue) out[i] = p.minValue; else if (v > p.maxValue) out[i] = p.maxValue;
+      if (v !== v) out[i] = p.defaultValue;
+      else if (v < p.minValue) out[i] = p.minValue;
+      else if (v > p.maxValue) out[i] = p.maxValue;
     }
     return out;
   }
@@ -491,6 +493,9 @@
       const n = nodeOf(this);
       const mode = `${v}`;
       if (mode !== 'max' && mode !== 'clamped-max' && mode !== 'explicit') return;
+      if (mode === 'max' && n.disallowMaxMode) {
+        throw new DE('This node supports only explicit or clamped-max channel count.', 'NotSupportedError');
+      }
       if (n.fixedMode && mode !== n.mode) {
         throw new DE(`Failed to set the 'channelCountMode' property on 'AudioNode': ChannelCountMode cannot be changed from '${n.mode}' to '${mode}'`, 'InvalidStateError');
       }
@@ -660,6 +665,58 @@
   }
   webidl(GainNode, 'GainNode');
 
+  class StereoPannerNode extends AudioNode {
+    constructor(context, options = {}) {
+      contextArg(context, 'StereoPannerNode');
+      const settings = readNodeOptions(options, 'StereoPannerNode');
+      const initialPan = options?.pan;
+      const value = initialPan === undefined ? 0 : finite(Math.fround(initialPan), 'construct', 'StereoPannerNode');
+      super(secret, context, {
+        mode: 'clamped-max',
+        disallowMaxMode: true,
+        checkCount(count) {
+          if (count < 1 || count > 2) throw new DE('A stereo panner accepts one or two input channels.', 'NotSupportedError');
+          this.channelCount = count;
+        },
+      });
+      applyNodeOptions(this, settings);
+      const n = nodeOf(this);
+      const pan = new AudioParam(secret, context, 0, -1, 1);
+      pan.value = value;
+      n.pan = pan;
+      n.process = (f0, q) => {
+        const bus = input(n, q, f0);
+        const left = new F32(QUANTUM), right = new F32(QUANTUM);
+        if (bus) {
+          const values = paramValues(params.get(pan), f0, ctxOf(context).rate, q);
+          for (let i = 0; i < QUANTUM; i++) {
+            const position = values[i];
+            if (bus.length === 1) {
+              const angle = (position + 1) * PI / 4;
+              left[i] = bus[0][i] * cos(angle);
+              right[i] = bus[0][i] * sin(angle);
+            } else if (position <= 0) {
+              const angle = (position + 1) * PI / 2;
+              left[i] = bus[0][i] + bus[1][i] * cos(angle);
+              right[i] = bus[1][i] * sin(angle);
+            } else {
+              const angle = position * PI / 2;
+              left[i] = bus[0][i] * cos(angle);
+              right[i] = bus[1][i] + bus[0][i] * sin(angle);
+            }
+          }
+        }
+        return [left, right];
+      };
+    }
+    get pan() {
+      const n = nodeOf(this);
+      if (!n.pan) throw invocation();
+      return n.pan;
+    }
+  }
+  webidl(StereoPannerNode, 'StereoPannerNode');
+
   // ---- Recursive filters -----------------------------------------------------
   const F64 = Float64Array;
   const typedArrayPrototype = Object.getPrototypeOf(F32.prototype);
@@ -668,7 +725,7 @@
   const arrayLength = getOwnPropertyDescriptor(typedArrayPrototype, 'length').get;
   const bufferLength = getOwnPropertyDescriptor(ArrayBufferC.prototype, 'byteLength').get;
   const resizable = getOwnPropertyDescriptor(ArrayBufferC.prototype, 'resizable')?.get;
-  const { cos, sqrt, hypot, atan2 } = Math;
+  const { sqrt, hypot, atan2 } = Math;
 
   // Both nodes implement a rational transfer function B(z)/A(z). Keep input
   // and output samples separately: a biquad's coefficients can change at each
@@ -1201,6 +1258,7 @@
     }
     createBufferSource() { return new AudioBufferSourceNode(this); }
     createGain() { return new GainNode(this); }
+    createStereoPanner() { return new StereoPannerNode(this); }
     createBiquadFilter() { return new BiquadFilterNode(this); }
     createIIRFilter(feedforward, feedback) {
       ctxOf(this);
@@ -1490,6 +1548,6 @@
   return {
     BaseAudioContext, AudioContext, OfflineAudioContext, AudioBuffer, AudioParam, AudioNode,
     AudioDestinationNode, AudioScheduledSourceNode, AudioBufferSourceNode, OscillatorNode,
-    ConstantSourceNode, GainNode, BiquadFilterNode, IIRFilterNode, ChannelMergerNode, OfflineAudioCompletionEvent,
+    ConstantSourceNode, GainNode, StereoPannerNode, BiquadFilterNode, IIRFilterNode, ChannelMergerNode, OfflineAudioCompletionEvent,
   };
 })
