@@ -140,9 +140,9 @@ impl BaseDocument {
         name: &style::values::DashedIdent,
         level: style::rule_tree::CascadeLevel,
     ) -> Option<(crate::NodeId, taffy::Point<f32>, taffy::Size<f32>)> {
-        let candidates = self.named_anchor_nodes.get(name)?;
         let origin = node.scroll_pseudo().map_or(node.id, |(_, id)| id);
         let scope = level.get_shadow_root_for_scoped(&self.nodes[origin]).map(|root| root.id);
+        let candidates = self.named_anchor_nodes.get(&(scope, name.clone()))?;
         let scope_boundary = |start| {
             let mut cursor = start;
             for _ in 0..self.nodes.len() {
@@ -167,13 +167,10 @@ impl BaseDocument {
                 continue;
             }
             let Some(anchor_style) = anchor.primary_styles() else { continue };
-            let names = &anchor_style.get_box().anchor_name;
             if anchor_style.get_box().display.is_none() {
                 continue;
             }
-            if names.scope.get_shadow_root_for_scoped(anchor).map(|root| root.id) != scope
-                || scope_boundary(id) != boundary
-            {
+            if scope_boundary(id) != boundary {
                 continue;
             }
             let mut cursor = id;

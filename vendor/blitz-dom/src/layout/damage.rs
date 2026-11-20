@@ -137,8 +137,11 @@ impl BaseDocument {
             if !visibility || !out_of_flow { node.anchor_hidden.set(false); }
             if !queries { node.anchor_scroll_axes.set((None,None)); node.anchor_visibility_target.set(None); node.anchor_invalid.set(false); }
             let names = self.nodes[node_id].primary_styles().and_then(|s| {
-                let names = &s.get_box().anchor_name.value;
-                (!names.0.is_empty()).then(|| names.clone())
+                let names = &s.get_box().anchor_name;
+                (!names.value.0.is_empty()).then(|| {
+                    let scope = names.scope.get_shadow_root_for_scoped(&self.nodes[node_id]);
+                    (scope.map(|root| root.id), names.value.clone())
+                })
             });
             self.update_anchor_names(node_id, names);
         }

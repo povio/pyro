@@ -2,6 +2,31 @@ use pyro_dom::cssom::{ParsedRule, parse_one_rule};
 use pyro_dom::stylo::declarations::DeclarationBlock;
 
 #[test]
+fn duplicate_names_in_unrelated_shadow_trees_cost_no_candidate_visits() {
+    fn measure(count: usize) -> u64 {
+        let mut html = String::from("<!doctype html><style>body{margin:0}</style>");
+        for index in 0..count {
+            html.push_str(&format!("<section id=h{index}><i style='display:block;anchor-name:--ref;width:99px'></i></section>"));
+        }
+        html.push_str("<i style='display:block;anchor-name:--ref;width:32px'></i><b style='position:absolute;left:anchor(--ref right)'></b>");
+        let mut doc = blitz_html::HtmlDocument::from_html(&html, blitz_dom::DocumentConfig::default());
+        let marker = blitz_dom::QualName::new(None, blitz_dom::PYRO_STATE_NS.into(), "shadow-host".into());
+        for index in 0..count {
+            let host = doc.query_selector(&format!("#h{index}")).unwrap().unwrap();
+            doc.mutate().set_attribute(host, marker.clone(), "");
+        }
+        doc.viewport_mut().window_size = (400, 300);
+        doc.resolve(0.0);
+        let target = doc.query_selector("b").unwrap().unwrap();
+        assert_eq!(doc.get_node(target).unwrap().final_layout().location.x, 32.0);
+        doc.anchor_candidate_visits()
+    }
+    let baseline = measure(0);
+    assert!(baseline > 0);
+    assert_eq!(measure(64), baseline);
+}
+
+#[test]
 fn resolved_minimum_size_preserves_unanchored_auto() {
     let html = "<!doctype html><style>main{anchor-name:--ref;width:42px}b{position:absolute;min-width:anchor-size(--ref width);max-width:anchor-size(--missing width)}</style><main></main><b></b>";
     let mut doc = blitz_html::HtmlDocument::from_html(html, blitz_dom::DocumentConfig::default());

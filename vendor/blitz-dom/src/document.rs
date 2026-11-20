@@ -663,8 +663,8 @@ pub struct BaseDocument {
     /// pyro: the scroll pseudo-element boxes may be out of date: a style traversal ran or the
     /// tree changed since `resolve_scroll_markers` (`layout::scroll_markers`).
     pub(crate) scroll_markers_dirty: bool,
-    pub(crate) named_anchor_nodes: HashMap<style::values::DashedIdent, HashSet<NodeId>>,
-    anchor_node_names: HashMap<NodeId, style::values::specified::position::AnchorNameIdent>,
+    pub(crate) named_anchor_nodes: HashMap<(Option<NodeId>, style::values::DashedIdent), HashSet<NodeId>>,
+    anchor_node_names: HashMap<NodeId, (Option<NodeId>, style::values::specified::position::AnchorNameIdent)>,
     pub(crate) anchor_lookup_visits: std::cell::Cell<u64>,
     pub(crate) anchor_try_visits: std::cell::Cell<u64>,
     /// pyro: an element styled with a `scroll-marker-group` that names a side, or with
@@ -1457,20 +1457,21 @@ impl BaseDocument {
         self.nodes.remove(node_id)
     }
 
-    pub(crate) fn update_anchor_names(&mut self, node_id: NodeId, names: Option<style::values::specified::position::AnchorNameIdent>) {
+    pub(crate) fn update_anchor_names(&mut self, node_id: NodeId, names: Option<(Option<NodeId>, style::values::specified::position::AnchorNameIdent)>) {
         if names.is_none() && self.anchor_node_names.is_empty() { return; }
         if self.anchor_node_names.get(&node_id) == names.as_ref() { return; }
-        if let Some(old) = self.anchor_node_names.remove(&node_id) {
+        if let Some((scope, old)) = self.anchor_node_names.remove(&node_id) {
             for name in old.0.iter() {
-                if let Some(ids) = self.named_anchor_nodes.get_mut(name) {
+                let key = (scope, name.clone());
+                if let Some(ids) = self.named_anchor_nodes.get_mut(&key) {
                     ids.remove(&node_id);
-                    if ids.is_empty() { self.named_anchor_nodes.remove(name); }
+                    if ids.is_empty() { self.named_anchor_nodes.remove(&key); }
                 }
             }
         }
-        if let Some(names) = names {
-            for name in names.0.iter() { self.named_anchor_nodes.entry(name.clone()).or_default().insert(node_id); }
-            self.anchor_node_names.insert(node_id, names);
+        if let Some((scope, names)) = names {
+            for name in names.0.iter() { self.named_anchor_nodes.entry((scope, name.clone())).or_default().insert(node_id); }
+            self.anchor_node_names.insert(node_id, (scope, names));
         }
     }
 
