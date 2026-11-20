@@ -185,6 +185,16 @@ bitflags! {
         /// first inline box, its parent has no box for it, and its style says `inline`
         /// (`layout::construct::resolve_run_ins`).
         const RUNS_IN = 1 << 31;
+        /// pyro: a `content-visibility: auto` element that is not relevant to the user: its
+        /// contents are skipped as `hidden` skips them, with size containment
+        /// (`BaseDocument::update_content_visibility`).
+        const CV_SKIPPED = 1 << 32;
+        /// pyro: a `content-visibility: auto` element whose relevance was determined once (a new
+        /// one is skipped until then).
+        const CV_DETERMINED = 1 << 33;
+        /// pyro: a `content-visibility: auto` element a query needs rendered: relevant at the next
+        /// determination (`BaseDocument::force_content_visibility`).
+        const CV_FORCED = 1 << 34;
     }
 }
 

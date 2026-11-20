@@ -1394,7 +1394,8 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                     // pyro: a block-level frame's document, its replaced content
                     // (`block_level_frame_in_phases`).
                     let skipped = cx.style.get_box().slow_clone_content_visibility()
-                        == style::values::specified::box_::ContentVisibility::Hidden;
+                        == style::values::specified::box_::ContentVisibility::Hidden
+                        || node.flags.contains(blitz_dom::node::NodeFlags::CV_SKIPPED);
                     if !hidden && !skipped {
                         cx.draw_sub_document(scene);
                     }
@@ -1792,7 +1793,8 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                 // pyro: `content-visibility: hidden` skips a replaced element's content (its image,
                 // canvas, video frame, inline SVG or document; CSS Contain 2 § 4.1).
                 let skipped = cx.style.get_box().slow_clone_content_visibility()
-                    == style::values::specified::box_::ContentVisibility::Hidden;
+                    == style::values::specified::box_::ContentVisibility::Hidden
+                    || node.flags.contains(blitz_dom::node::NodeFlags::CV_SKIPPED);
                 // pyro: a `content: filter(<image>, ...)` image is drawn through its filters, in a
                 // layer over the content box (WPT filter-effects `filter-function-001`).
                 let content_filter = cx.content_image_filter();

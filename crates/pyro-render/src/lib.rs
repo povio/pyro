@@ -240,6 +240,9 @@ pub struct Snapshot {
     /// pyro: the animations of the frames' documents now, by frame client (`srcdoc` frames'
     /// `data-pyro-frame-client`; their elements by `data-pyro-key`).
     pub frame_animations: Vec<(String, Arc<AnimationFrame>)>,
+    /// pyro: the `content-visibility: auto` elements' state as the layout engine determined it
+    /// (by key: skipped, last remembered size); `None` leaves the document's.
+    pub content_visibility: Option<Vec<(u64, bool, Option<(f32, f32)>)>>,
     /// An XML document (XHTML, SVG, other XML): selectors match element and
     /// attribute names case-sensitively. A [`Live`] document whose value
     /// changes is built anew.
@@ -1258,6 +1261,13 @@ impl Renderer {
                 self.apply_animations(live.page);
                 if let Some(m) = self.mirrors.get_mut(&live.page) {
                     m.doc.set_frame_animations(snap.frame_animations.iter().cloned().collect());
+                    // pyro: the `content-visibility: auto` state the layout engine determined (which
+                    // contents it skips, the remembered sizes), so this document paints what the page's
+                    // queries saw.
+                    if let Some(state) = &snap.content_visibility {
+                        let state = state.iter().filter_map(|&(key, skipped, size)| Some((m.node(key)?, skipped, size))).collect();
+                        m.doc.set_content_visibility_state(state);
+                    }
                 }
                 let images = mirror::take_svg_image_hrefs();
                 if let (false, Some(m)) = (images.is_empty(), self.mirrors.get_mut(&live.page)) {
@@ -1443,6 +1453,13 @@ impl Renderer {
         let physical = |css: f64| (css * dpr).round() as u32;
 
         let mut fresh = None;
+        // pyro: a frame determines `content-visibility: auto` relevance anew: what queries
+        // forced to render since the last one is no longer (CSS Contain 2 § 4.1).
+        if let Some(live) = &snap.live {
+            if let Some(m) = self.mirrors.get_mut(&live.page) {
+                m.doc.clear_content_visibility_forcing();
+            }
+        }
         let (doc, clip) = self.prepare(snap, fetcher, &mut fresh, &mut timings, true)?;
 
         let t = Instant::now();
@@ -1574,6 +1591,10 @@ impl Renderer {
             snap.live.as_ref().ok_or_else(|| RenderError::BadArea("layout queries need a live snapshot".into()))?;
         let mut timings = Timings::default();
         let mut fresh = None;
+        // pyro: a new state of the page determines `content-visibility: auto` relevance anew.
+        if let Some(m) = self.mirrors.get_mut(&live.page) {
+            m.doc.clear_content_visibility_forcing();
+        }
         self.prepare(snap, fetcher, &mut fresh, &mut timings, false)?;
         self.geometry.entry(live.page).or_default();
         Ok(timings)
@@ -1608,6 +1629,8 @@ impl Renderer {
             return Err(RenderError::BadArea("the viewport changed".into()));
         }
         m.apply_delta(ops).map_err(|_| RenderError::BadArea("the delta does not fit the document".into()))?;
+        // pyro: a new state of the page determines `content-visibility: auto` relevance anew.
+        m.doc.clear_content_visibility_forcing();
         self.apply_animations(page);
         let m = self.mirrors.get_mut(&page).ok_or(RenderError::NoElement)?;
         let profiling = profiling::on();
@@ -1933,6 +1956,29 @@ impl Renderer {
     /// pyro: whether `page`'s viewport scrolls from its right edge (`BaseDocument::viewport_scrolls_leftward`).
     pub fn viewport_scrolls_leftward(&self, page: u64) -> Option<bool> {
         Some(self.mirrors.get(&page)?.doc.viewport_scrolls_leftward())
+    }
+
+    /// pyro: the `content-visibility: auto` elements of `page`'s persistent document, by key:
+    /// whether they skip their contents, and their last remembered size.
+    pub fn content_visibility_state(&self, page: u64) -> Vec<(u64, bool, Option<(f32, f32)>)> {
+        let Some(m) = self.mirrors.get(&page) else { return Vec::new() };
+        m.doc
+            .content_visibility_state()
+            .into_iter()
+            .filter_map(|(id, skipped, size)| Some((m.key_of(id)?, skipped, size)))
+            .collect()
+    }
+
+    /// pyro: renders the contents `content-visibility: auto` skips around the element keyed `key`
+    /// in `page`'s persistent document, laying it out again (`BaseDocument::force_content_visibility`).
+    pub fn force_content_visibility(&mut self, page: u64, key: u64) -> bool {
+        let Some(m) = self.mirrors.get_mut(&page) else { return false };
+        let Some(node) = m.node(key) else { return false };
+        if !m.doc.force_content_visibility(node) {
+            return false;
+        }
+        m.doc.resolve(0.0);
+        true
     }
 
     pub fn element_pseudo_style(

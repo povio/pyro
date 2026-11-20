@@ -788,7 +788,16 @@ impl Layout {
     /// changed: no whole-document work per query.
     fn layout_box(&self, dom: &Dom, el: NodeId) -> Option<LayoutBox> {
         let source = self.synced_geometry_source(dom)?;
-        source.element_box(crate::snapshot::render_key(el)).map(|b| LayoutBox::from_external(&b, 0))
+        let key = crate::snapshot::render_key(el);
+        let b = source.element_box(key);
+        // pyro: no box, or an empty one: perhaps in contents `content-visibility: auto` skips, which
+        // a query renders (CSS Contain 2 § 4.1, as Chromium): read again once rendered.
+        let b = match b {
+            Some(b) if b.width > 0.0 || b.height > 0.0 => Some(b),
+            b if source.force_content_visibility(key) => source.element_box(key).or(b),
+            b => b,
+        };
+        b.map(|b| LayoutBox::from_external(&b, 0))
     }
 
     /// Changes when DOM/style/viewport/focus/hover or a scroll offset changes.
@@ -1310,6 +1319,8 @@ impl Layout {
     /// the element isn't rendered.
     pub fn bounding_client_rect(&self, dom: &Dom, el: NodeId) -> Rect {
         self.sync_before_rect_query(dom);
+        // (Its box first: it renders skipped `content-visibility: auto` contents it is in.)
+        let _ = self.layout_box(dom, el);
         if !self.is_visible(dom, el) {
             return Rect::default();
         }
@@ -2556,6 +2567,20 @@ impl Layout {
         self.window_scroll.1
     }
 
+    /// pyro: the `content-visibility: auto` state the layout engine determined (see
+    /// `GeometrySource::content_visibility_state`).
+    pub fn content_visibility_state(&self, dom: &Dom) -> Vec<(u64, bool, Option<(f32, f32)>)> {
+        self.synced_geometry_source(dom).map(|s| s.content_visibility_state()).unwrap_or_default()
+    }
+
+    /// pyro: the contents `content-visibility: auto` skips around `el` are rendered for a query
+    /// that needs its layout (`scrollIntoView`): the renderer lays them out (CSS Contain 2 § 4.1).
+    fn force_content_visibility(&self, dom: &Dom, el: NodeId) {
+        if let Some(source) = self.synced_geometry_source(dom) {
+            source.force_content_visibility(crate::snapshot::render_key(el));
+        }
+    }
+
     /// pyro: whether the viewport's horizontal scroll origin is at its right edge: the root
     /// element's writing mode is `vertical-rl`/`sideways-rl`, or horizontal with `direction: rtl`
     /// (its scroll offsets then run from 0 to negative values).
@@ -3718,6 +3743,7 @@ impl Layout {
     /// container's scroll event followed by the document's viewport event.
     /// Vertical start reveal and horizontal nearest-edge reveal; not full CSS alignment.
     pub fn scroll_into_view_targets(&mut self, dom: &Dom, el: NodeId) -> Vec<ScrollTarget> {
+        self.force_content_visibility(dom, el);
         if !self.is_visible(dom, el) {
             return Vec::new();
         }
@@ -3916,6 +3942,7 @@ impl Layout {
         offset_y: fn(f64, f64, f64, i64) -> Option<i32>,
         script: bool,
     ) -> Vec<ScrollTarget> {
+        self.force_content_visibility(dom, el);
         if !self.is_visible(dom, el) {
             return Vec::new();
         }

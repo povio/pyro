@@ -591,6 +591,17 @@ pub trait GeometrySource {
     fn viewport_scrolls_leftward(&self) -> Option<bool> {
         None
     }
+    /// pyro: renders the contents `content-visibility: auto` skips around the element keyed
+    /// `key`, for a query that needs its layout (`scrollIntoView`; CSS Contain 2 § 4.1). Whether
+    /// any were skipped (laid out again then).
+    fn force_content_visibility(&self, _key: u64) -> bool {
+        false
+    }
+    /// pyro: the `content-visibility: auto` elements as of the last sync, by key: whether they
+    /// skip their contents, and their last remembered size (for the renderer that paints).
+    fn content_visibility_state(&self) -> Vec<(u64, bool, Option<(f32, f32)>)> {
+        Vec::new()
+    }
     fn timeline_state(
         &self,
         _source: Option<u64>,

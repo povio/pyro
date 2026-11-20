@@ -332,7 +332,7 @@ impl LayoutPassState<'_> {
         // pyro: size containment (`Self::size_contained_size`) and inline-size containment
         // (`Self::inline_size_contained_width`)
         let (contain, calc_size) = match self.nodes[dom_node_id(node_id)].primary_styles() {
-            Some(styles) => (Some(effective_size_containment(&styles)), has_calc_size(&styles)),
+            Some(styles) => (Some(node_size_containment(&self.nodes[dom_node_id(node_id)], &styles)), has_calc_size(&styles)),
             None => (None, false),
         };
         if contain.is_some_and(|contain| contain.contains(style::values::computed::Contain::BLOCK_SIZE)) {
@@ -526,7 +526,7 @@ impl LayoutPassState<'_> {
         let node = &self.nodes[dom_node_id(node_id)];
         let content = {
             let styles = node.primary_styles()?;
-            if !effective_size_containment(&styles).contains(Contain::INLINE_SIZE | Contain::BLOCK_SIZE) {
+            if !node_size_containment(node, &styles).contains(Contain::INLINE_SIZE | Contain::BLOCK_SIZE) {
                 return None;
             }
             let display = styles.clone_display();
@@ -556,13 +556,27 @@ impl LayoutPassState<'_> {
             if !contained {
                 return None;
             }
-            let length = |size: &style::values::computed::ContainIntrinsicSize| match size {
+            // pyro: `auto` takes the last remembered size when there is one (CSS Sizing 4 § 5.1);
+            // `content-visibility: auto` adds `auto` to `contain-intrinsic-size` (CSS Contain 2
+            // § 4.1, csswg-drafts#8407).
+            let remembered = node.layout_data().remembered_size;
+            let cv_auto = styles.get_box().slow_clone_content_visibility()
+                == style::values::specified::box_::ContentVisibility::Auto;
+            let length = |size: &style::values::computed::ContainIntrinsicSize, axis: usize| match size {
+                ContainIntrinsicSize::None | ContainIntrinsicSize::Length(_) if cv_auto && remembered.is_some() => {
+                    let (w, h) = remembered.unwrap();
+                    if axis == 0 { w } else { h }
+                }
+                ContainIntrinsicSize::AutoNone | ContainIntrinsicSize::AutoLength(_) if remembered.is_some() => {
+                    let (w, h) = remembered.unwrap();
+                    if axis == 0 { w } else { h }
+                }
                 ContainIntrinsicSize::None | ContainIntrinsicSize::AutoNone => 0.0,
                 ContainIntrinsicSize::Length(length) | ContainIntrinsicSize::AutoLength(length) => length.0.px(),
             };
             let position = styles.get_position();
             let (mut width, mut height) =
-                (length(&position.contain_intrinsic_width), length(&position.contain_intrinsic_height));
+                (length(&position.contain_intrinsic_width, 0), length(&position.contain_intrinsic_height, 1));
             #[cfg(feature = "writing-mode")]
             let vertical = self.layout_wm.is_vertical();
             #[cfg(not(feature = "writing-mode"))]
@@ -3193,6 +3207,18 @@ fn empty_container_size(styles: &style::properties::ComputedValues, min_content:
             taffy::Size { width, height: 0.0 }
         }
         _ => taffy::Size::ZERO,
+    }
+}
+
+/// pyro: [`effective_size_containment`] of `node`, with size containment while its contents are
+/// skipped by `content-visibility: auto` (`NodeFlags::CV_SKIPPED`).
+pub(crate) fn node_size_containment(node: &crate::Node, styles: &style::properties::ComputedValues) -> style::values::computed::Contain {
+    use style::values::computed::Contain;
+    let contain = effective_size_containment(styles);
+    if node.flags.contains(crate::node::NodeFlags::CV_SKIPPED) {
+        contain | Contain::INLINE_SIZE | Contain::BLOCK_SIZE
+    } else {
+        contain
     }
 }
 

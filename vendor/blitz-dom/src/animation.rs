@@ -394,7 +394,13 @@ impl BaseDocument {
                 continue;
             }
             let mut element = state.elements.remove(&id).unwrap_or_default();
-            element.effects = self.drive(id, &effects);
+            // pyro: in skipped `content-visibility` contents its scroll-driven animations hold
+            // where they were (Chromium does not update them; WPT css-contain
+            // `content-visibility-animation-with-scroll-timeline-in-auto-subtree`).
+            let frozen = element.given == effects && self.in_skipped_contents(id);
+            if !frozen {
+                element.effects = self.drive(id, &effects);
+            }
             element.given = effects;
             element.resolved.retain(|(k, _)| element.effects.all().any(|e| e.keyframes == *k));
             for (state, effects) in element.pseudos.iter_mut().zip(&element.effects.pseudos) {
@@ -794,6 +800,19 @@ impl BaseDocument {
         })
     }
 
+    /// pyro: whether `id` is in contents `content-visibility: auto` skips (an ancestor's).
+    fn in_skipped_contents(&self, id: NodeId) -> bool {
+        let mut at = self.get_node(id).and_then(|n| n.parent);
+        while let Some(n) = at {
+            let Some(node) = self.get_node(n) else { return false };
+            if node.flags.contains(crate::node::NodeFlags::CV_SKIPPED) {
+                return true;
+            }
+            at = node.parent;
+        }
+        false
+    }
+
     /// `true`: an element's values changed (marked for restyle).
     pub(crate) fn resample_scroll_driven(&mut self) -> bool {
         if self.sampled_animations.is_empty() {
@@ -811,6 +830,10 @@ impl BaseDocument {
             .map(|(id, _)| *id)
             .collect();
         for id in ids {
+            // (Held in skipped contents: see `set_sampled_animations`.)
+            if self.in_skipped_contents(id) {
+                continue;
+            }
             let element = state.elements.get_mut(&id).unwrap();
             let effects = self.drive(id, &element.given);
             if effects == element.effects {

@@ -830,9 +830,10 @@ fn collect_layout_children_with_wrap(
                 && display.inside() == DisplayInside::Flow)
             && display.inside() != DisplayInside::Table
             && display.outside() != style::values::specified::box_::DisplayOutside::InternalTable
-    }) && doc.nodes[container_node_id].primary_styles().is_some_and(|style| {
-        style.get_box().slow_clone_content_visibility() == style::values::specified::box_::ContentVisibility::Hidden
-    });
+    }) && (doc.nodes[container_node_id].flags.contains(crate::node::NodeFlags::CV_SKIPPED)
+        || doc.nodes[container_node_id].primary_styles().is_some_and(|style| {
+            style.get_box().slow_clone_content_visibility() == style::values::specified::box_::ContentVisibility::Hidden
+        }));
     if skips_contents {
         return;
     }

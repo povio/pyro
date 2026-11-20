@@ -1729,7 +1729,8 @@ impl BaseDocument {
             let Some(node) = self.nodes.get(ancestor) else { return false };
             let hidden = node.primary_styles().is_some_and(|style| {
                 let display = style.get_box().display;
-                style.get_box().slow_clone_content_visibility() == ContentVisibility::Hidden
+                (style.get_box().slow_clone_content_visibility() == ContentVisibility::Hidden
+                    || node.flags.contains(crate::node::NodeFlags::CV_SKIPPED))
                     && !display.is_contents()
                     && !display.is_none()
                     && !(display.outside() == DisplayOutside::Inline && display.inside() == DisplayInside::Flow)
@@ -1745,7 +1746,7 @@ impl BaseDocument {
     /// pyro: whether top-layer element `id` is rendered in the top layer: its `overlay` is `auto`
     /// (css-position-4 §4.1; the UA sheet sets it on `:modal` and `:popover-open`, and a discrete
     /// transition of it keeps it on after the element leaves them, or off after it enters).
-    fn renders_in_top_layer(&self, id: NodeId) -> bool {
+    pub(crate) fn renders_in_top_layer(&self, id: NodeId) -> bool {
         self.nodes.get(id).and_then(|n| n.primary_styles()).is_none_or(|style| {
             style.get_box().overlay == style::values::computed::TopLayer::Auto
         })

@@ -151,6 +151,11 @@ impl BaseDocument {
         for pass in 0..32 {
             // we need to resolve stylist first since it will need to drive our layout bits
             self.resolve_stylist(current_time_for_animations);
+            // pyro: a new `content-visibility: auto` element is skipped until its relevance is
+            // determined after a layout (as in Chromium).
+            if pass == 0 {
+                self.skip_new_content_visibility_auto();
+            }
             // pyro: classic scrollbars: viewport units see the viewport less the root's
             // `scroll`/`stable` gutters (Chrome), known once the root is styled: a change styles
             // the document again.
@@ -226,7 +231,10 @@ impl BaseDocument {
             // pyro: scroll-driven animations at this layout (the first sample of a new document
             // had none: no scroll range yet); a change styles and lays out once more.
             let timelines_changed = !container_sizes_changed && pass < 2 && self.resample_scroll_driven();
-            if (!container_sizes_changed && !scroll_states_changed && !marker_counters && !timelines_changed)
+            // pyro: `content-visibility: auto` elements skip or render their contents as they are
+            // relevant to the user at this layout; a change lays out again.
+            let visibility_changed = !container_sizes_changed && pass < 8 && self.update_content_visibility();
+            if (!container_sizes_changed && !scroll_states_changed && !marker_counters && !timelines_changed && !visibility_changed)
                 || pass == 31
             {
                 break;
@@ -383,6 +391,254 @@ impl BaseDocument {
         phase_profile::mark(8, &mut phase_t);
 
         timer.print_times(&format!("Resolve({}): ", self.id()));
+    }
+
+    /// pyro: whether `style` makes a `content-visibility: auto` element whose contents can be
+    /// skipped (containment applies: not `display: contents`/`none`, a non-atomic inline, a table
+    /// or an internal table box).
+    fn is_cv_auto(node: &crate::Node) -> bool {
+        use style::values::specified::box_::{ContentVisibility, DisplayInside, DisplayOutside};
+        node.is_element()
+            && node.primary_styles().is_some_and(|style| {
+                let display = style.get_box().display;
+                style.get_box().slow_clone_content_visibility() == ContentVisibility::Auto
+                    && !display.is_contents()
+                    && !display.is_none()
+                    && !(display.outside() == DisplayOutside::Inline && display.inside() == DisplayInside::Flow)
+                    && display.inside() != DisplayInside::Table
+                    && display.outside() != DisplayOutside::InternalTable
+            })
+    }
+
+    /// pyro: skips the contents of the `content-visibility: auto` elements whose relevance was not
+    /// determined yet (`update_content_visibility` determines it after their first layout).
+    fn skip_new_content_visibility_auto(&mut self) {
+        use crate::node::NodeFlags;
+        let new: Vec<NodeId> = self
+            .nodes
+            .iter()
+            .filter(|(_, node)| !node.flags.contains(NodeFlags::CV_DETERMINED) && Self::is_cv_auto(node))
+            .map(|(id, _)| id)
+            .collect();
+        for id in new {
+            let node = &mut self.nodes[id];
+            node.flags.insert(NodeFlags::CV_DETERMINED | NodeFlags::CV_SKIPPED);
+            node.insert_damage(ALL_DAMAGE);
+        }
+    }
+
+    /// pyro: `content-visibility: auto` (CSS Contain 2 § 4.1): each such element (outside skipped
+    /// contents) is relevant to the user when its border box is near the viewport (within half
+    /// the viewport's size of it, as Chromium's margin), it holds the focus, or a query needs it
+    /// (`force_content_visibility`); an irrelevant one skips its contents, sized by
+    /// `contain-intrinsic-size` (its last remembered size for `auto`). Remembers the content box
+    /// size of each one shown. Returns whether one changed, which the caller lays out again.
+    pub(crate) fn update_content_visibility(&mut self) -> bool {
+        use crate::node::NodeFlags;
+        let candidates: Vec<NodeId> =
+            self.nodes.iter().filter(|(_, node)| node.flags.contains(NodeFlags::CV_DETERMINED)).map(|(id, _)| id).collect();
+        if candidates.is_empty() {
+            return false;
+        }
+        let scale = self.viewport.scale_f64();
+        let (w, h) = (self.viewport.window_size.0 as f64 / scale, self.viewport.window_size.1 as f64 / scale);
+        // (The page's scroll position: the one its embedder gives for scroll timelines, which this
+        // document's own viewport may not have yet.)
+        let scroll = match &self.timeline_scroll {
+            Some((_, (x, y))) => crate::Point { x: *x, y: *y },
+            None => self.viewport_scroll(),
+        };
+        let view = kurbo::Rect::new(scroll.x - w / 2.0, scroll.y - h / 2.0, scroll.x + w * 1.5, scroll.y + h * 1.5);
+        let focus = self.focus_node_id;
+        // (The top layer's elements whatever skips them: not `top_layer_nodes`, which leaves out
+        // those in skipped contents.)
+        let top_layer: Vec<NodeId> = self
+            .top_layer
+            .iter()
+            .filter(|&t| {
+                self.nodes.get(t).is_some_and(|n| n.flags.is_in_document() && n.is_element())
+                    && self.renders_in_top_layer(t)
+            })
+            .collect();
+        let mut changed = false;
+        for id in candidates {
+            if !Self::is_cv_auto(&self.nodes[id]) {
+                // No longer `auto`: shown as its style says.
+                let node = &mut self.nodes[id];
+                if node.flags.contains(NodeFlags::CV_SKIPPED) {
+                    node.flags.remove(NodeFlags::CV_SKIPPED);
+                    node.insert_damage(ALL_DAMAGE);
+                    changed = true;
+                }
+                node.flags.remove(NodeFlags::CV_DETERMINED | NodeFlags::CV_FORCED);
+                continue;
+            }
+            // Inside skipped contents it is not laid out and keeps its state.
+            let mut skipped_above = false;
+            let mut up = self.nodes[id].parent;
+            while let Some(n) = up {
+                if self.nodes[n].flags.contains(NodeFlags::CV_SKIPPED) {
+                    skipped_above = true;
+                    break;
+                }
+                up = self.nodes[n].parent;
+            }
+            if skipped_above {
+                continue;
+            }
+            // Its position in the document (CSS px), up its containing blocks (an out-of-flow or
+            // top-layer box's are not its layout parents); a box fixed to the viewport is where
+            // the viewport is scrolled to.
+            let (mut x, mut y) = (0.0f64, 0.0f64);
+            let mut fixed = false;
+            let mut at = Some(id);
+            while let Some(n) = at {
+                let node = &self.nodes[n];
+                let l = node.final_layout();
+                x += l.location.x as f64;
+                y += l.location.y as f64;
+                fixed |= node.primary_styles().is_some_and(|s| {
+                    s.clone_position() == style::computed_values::position::T::Fixed
+                });
+                at = node.containing_block();
+                if let Some(p) = at {
+                    let o = self.nodes[p].scroll_offset();
+                    x -= o.x;
+                    y -= o.y;
+                }
+            }
+            if fixed {
+                x += scroll.x;
+                y += scroll.y;
+            }
+            let node = &self.nodes[id];
+            let l = *node.final_layout();
+            let rect = kurbo::Rect::new(x, y, x + l.size.width as f64, y + l.size.height as f64);
+            let focused = focus.is_some_and(|f| {
+                let mut at = Some(f);
+                while let Some(n) = at {
+                    if n == id {
+                        return true;
+                    }
+                    at = self.nodes[n].parent;
+                }
+                false
+            });
+            // (A query forced it: rendered until the next frame, `clear_content_visibility_forcing`.)
+            let forced = node.flags.contains(NodeFlags::CV_FORCED);
+            // (Holding a top-layer element makes it relevant too, CSS Contain 2 § 4.1.)
+            let holds_top_layer = top_layer.iter().any(|&t| {
+                let mut at = self.nodes.get(t).and_then(|n| n.parent);
+                while let Some(n) = at {
+                    if n == id {
+                        return true;
+                    }
+                    at = self.nodes[n].parent;
+                }
+                false
+            });
+            let relevant = forced || focused || holds_top_layer || (rect.x0 < view.x1 && rect.x1 > view.x0 && rect.y0 < view.y1 && rect.y1 > view.y0);
+            let node = &mut self.nodes[id];
+            if node.flags.contains(NodeFlags::CV_SKIPPED) == relevant {
+                node.flags.set(NodeFlags::CV_SKIPPED, !relevant);
+                node.insert_damage(ALL_DAMAGE);
+                if relevant {
+                    self.unskip_contents(id);
+                }
+                changed = true;
+            } else if relevant {
+                // Shown and laid out with its contents: its last remembered size.
+                let content = (
+                    (l.size.width - l.border.left - l.border.right - l.padding.left - l.padding.right).max(0.0),
+                    (l.size.height - l.border.top - l.border.bottom - l.padding.top - l.padding.bottom).max(0.0),
+                );
+                node.layout_data_mut().remembered_size = Some(content);
+            }
+        }
+        changed
+    }
+
+    /// pyro: the contents of `id`, skipped until now, are styled and built again: every node of
+    /// its subtree is damaged (boxes never built under it, an absolutely positioned box its
+    /// containing block hoists).
+    fn unskip_contents(&mut self, id: NodeId) {
+        self.nodes[id].set_restyle_hint(style::invalidation::element::restyle_hints::RestyleHint::restyle_subtree());
+        self.iter_subtree_mut(id, |node_id: NodeId, doc: &mut BaseDocument| {
+            doc.nodes[node_id].insert_damage(ALL_DAMAGE);
+        });
+    }
+
+    /// pyro: the `content-visibility: auto` elements whose relevance was determined: whether
+    /// they skip their contents, and their last remembered size.
+    pub fn content_visibility_state(&self) -> Vec<(NodeId, bool, Option<(f32, f32)>)> {
+        use crate::node::NodeFlags;
+        self.nodes
+            .iter()
+            .filter(|(_, n)| n.flags.contains(NodeFlags::CV_DETERMINED))
+            .map(|(id, n)| (id, n.flags.contains(NodeFlags::CV_SKIPPED), n.layout_data().remembered_size))
+            .collect()
+    }
+
+    /// pyro: takes the `content-visibility: auto` state another document of the page determined
+    /// (`content_visibility_state`): its elements skip or show their contents as there, with its
+    /// remembered sizes, until relevance is determined here again.
+    pub fn set_content_visibility_state(&mut self, state: Vec<(NodeId, bool, Option<(f32, f32)>)>) {
+        use crate::node::NodeFlags;
+        for (id, skipped, size) in state {
+            let Some(node) = self.nodes.get_mut(id) else { continue };
+            node.layout_data_mut().remembered_size = size;
+            let determined = node.flags.contains(NodeFlags::CV_DETERMINED);
+            if determined && node.flags.contains(NodeFlags::CV_SKIPPED) == skipped {
+                continue;
+            }
+            node.flags.insert(NodeFlags::CV_DETERMINED);
+            node.flags.set(NodeFlags::CV_SKIPPED, skipped);
+            node.insert_damage(ALL_DAMAGE);
+            if !skipped {
+                self.unskip_contents(id);
+            }
+        }
+    }
+
+    /// pyro: the elements queries forced to render are rendered only as relevance gives them now:
+    /// called at each frame (`update_content_visibility` determines them at its next layout).
+    pub fn clear_content_visibility_forcing(&mut self) {
+        use crate::node::NodeFlags;
+        let forced: Vec<NodeId> =
+            self.nodes.iter().filter(|(_, n)| n.flags.contains(NodeFlags::CV_FORCED)).map(|(id, _)| id).collect();
+        for id in forced {
+            let node = &mut self.nodes[id];
+            node.flags.remove(NodeFlags::CV_FORCED);
+            node.insert_damage(ALL_DAMAGE);
+        }
+    }
+
+    /// pyro: renders the contents of the `content-visibility: auto` ancestors of `node` that skip
+    /// them, for a query that needs its layout (a geometry read, `scrollIntoView`): they are
+    /// relevant at the next determination (CSS Contain 2 § 4.1, as Chromium forces them).
+    /// Returns whether one was skipped (the caller resolves again).
+    pub fn force_content_visibility(&mut self, node: NodeId) -> bool {
+        use crate::node::NodeFlags;
+        let mut forced = false;
+        let mut at = self.nodes.get(node).and_then(|n| n.parent);
+        while let Some(id) = at {
+            let n = &mut self.nodes[id];
+            if n.flags.contains(NodeFlags::CV_SKIPPED) {
+                n.flags.remove(NodeFlags::CV_SKIPPED);
+                n.flags.insert(NodeFlags::CV_FORCED);
+                n.insert_damage(ALL_DAMAGE);
+                let parent = n.parent;
+                self.unskip_contents(id);
+                forced = true;
+                at = parent;
+                continue;
+            } else if n.flags.contains(NodeFlags::CV_DETERMINED) {
+                // (Kept rendered until the next frame, as the query read it.)
+                n.flags.insert(NodeFlags::CV_FORCED);
+            }
+            at = n.parent;
+        }
+        forced
     }
 
     /// pyro: restyles and lays out again the subtrees of `containers` (see the caller in

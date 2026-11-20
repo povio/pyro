@@ -479,6 +479,7 @@ impl BlitzGeometry {
             scroll_targets: None,
             animations: None,
             frame_animations: Vec::new(),
+            content_visibility: None,
             xml_document: dom.is_xml_document(style.document()),
             quirks_mode: dom.is_quirks_mode(style.document()),
             limited_quirks_mode: dom.is_limited_quirks_mode(style.document()),
@@ -886,6 +887,16 @@ impl GeometrySource for BlitzGeometry {
 
     fn viewport_scrolls_leftward(&self) -> Option<bool> {
         RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.viewport_scrolls_leftward(self.page))
+    }
+
+    fn content_visibility_state(&self) -> Vec<(u64, bool, Option<(f32, f32)>)> {
+        RENDERER.with(|r| r.try_borrow().ok().and_then(|r| Some(r.as_ref()?.content_visibility_state(self.page)))).unwrap_or_default()
+    }
+
+    fn force_content_visibility(&self, key: u64) -> bool {
+        RENDERER.with(|r| {
+            r.try_borrow_mut().ok().and_then(|mut r| Some(r.as_mut()?.force_content_visibility(self.page, key))).unwrap_or(false)
+        })
     }
 
     fn element_box(&self, key: u64) -> Option<ExternalBox> {

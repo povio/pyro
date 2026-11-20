@@ -489,6 +489,11 @@ impl EngineHost {
                 (s, tree)
             }
         };
+        let content_visibility = {
+            let d = dom.dom.borrow();
+            let l = dom.layout();
+            l.content_visibility_state(&d)
+        };
         // pyro: the frames' documents' animations, sampled into them by the renderer.
         let frame_animations: Vec<(String, Arc<pyro_render::AnimationFrame>)> = dom
             .dom
@@ -543,6 +548,8 @@ impl EngineHost {
             scroll_targets: Some(s.scroll_targets),
             // CSS animations, transitions and Web Animations as they are now.
             animations: Some(Arc::new(pyro_layout::animation_frame(&dom.animation_frame()))),
+            // pyro: what `content-visibility: auto` skips as the page's layout engine determined it.
+            content_visibility: Some(content_visibility),
             // pyro: the frames' documents' animations, sampled into them by the renderer.
             frame_animations,
             xml_document: s.xml_document,
