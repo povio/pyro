@@ -394,7 +394,7 @@ impl StyleData {
             StyleSource::Rule { owner, node } => {
                 match &node.kind {
                     RuleKind::Style { block, .. } => *block.borrow_mut() = text,
-                    RuleKind::Other { .. } if is_page(node) => write_page(&owner.model(), node, Some(&text)),
+                    RuleKind::Other { .. } if is_page(node) => write_page(&*owner.rules()?, node, Some(&text)),
                     RuleKind::Other { text: rule, .. } => {
                         let head = split_block(&rule.borrow()).map(|(h, _)| h.to_owned());
                         let Some(head) = head else { return Ok(()) };
@@ -402,12 +402,12 @@ impl StyleData {
                             if text.trim().is_empty() { format!("{head} {{ }}") } else { format!("{head} {{ {} }}", text.trim()) };
                         // A margin rule lives in its `@page` rule's text.
                         if let Some(page) = node.parent.upgrade().filter(|p| is_page(p)) {
-                            write_page(&owner.model(), &page, None);
+                            write_page(&*owner.rules()?, &page, None);
                         }
                     }
                     RuleKind::Group { .. } => return Ok(()),
                 }
-                owner.commit(&owner.model());
+                owner.commit(&*owner.rules()?);
                 Ok(())
             }
         }
@@ -865,15 +865,18 @@ pub struct RuleListData {
 }
 
 impl RuleListData {
-    fn rules(&self) -> Vec<Rc<RuleNode>> {
-        match &self.group {
+    /// pyro: through the sheet's one accessor (`SheetOwner::rules`), a grouping rule's too: a
+    /// retained list of a sheet object that is detached, or not origin-clean, gives nothing.
+    fn rules(&self) -> JsResult<Vec<Rc<RuleNode>>> {
+        let model = self.owner.rules()?;
+        Ok(match &self.group {
             Some(node) => match &node.kind {
-                RuleKind::Group { list, .. } => list.rules.borrow().clone(),
-                _ if is_page(node) => page_margins(&self.owner.model(), node),
+                RuleKind::Group { list, .. } if is_attached(&model, node) => list.rules.borrow().clone(),
+                _ if is_page(node) && is_attached(&model, node) => page_margins(&model, node),
                 _ => Vec::new(),
             },
-            None => self.owner.model().list.rules.borrow().clone(),
-        }
+            None => model.list.rules.borrow().clone(),
+        })
     }
 }
 
@@ -884,15 +887,15 @@ impl JsClass for CssRuleList {
     type Data = RuleListData;
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
-        def.getter("length", |s, l| Ok(s.number(l.rules().len() as f64)));
-        def.pure_method("item", 1, |s, l, a| match l.rules().get({
+        def.getter("length", |s, l| Ok(s.number(l.rules()?.len() as f64)));
+        def.pure_method("item", 1, |s, l, a| match l.rules()?.get({
             a.require(1, "CSSRuleList.item")?;
             to_u32(a.get(0))? as usize
         }) {
             Some(rule) => Ok(rule_wrapper(s, rule, &l.owner)?.value()),
             None => Ok(s.null()),
         });
-        def.indexed(|s, l, i| match l.rules().get(i as usize) {
+        def.indexed(|s, l, i| match l.rules()?.get(i as usize) {
             Some(rule) => rule_wrapper(s, rule, &l.owner).map(|o| Some(o.value())),
             None => Ok(None),
         });
@@ -942,11 +945,34 @@ fn rule_wrapper<'s>(s: &Scope<'s>, rule: &Rc<RuleNode>, owner: &SheetOwner) -> J
     }
 }
 
+/// pyro: which sheet object of its node a sheet is: the node's style block generation and the
+/// response generation (`PageDom::sheet_response`) it was made for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SheetGeneration {
+    style: u32,
+    response: u64,
+}
+
+impl SheetGeneration {
+    fn now(page: &PageDom, owner: NodeId) -> Self {
+        SheetGeneration {
+            style: page.dom.borrow().style_sheet_generation(owner),
+            response: page.sheet_response(owner).generation,
+        }
+    }
+}
+
 fn sheet_key(page: &PageDom, owner: NodeId) -> IdentityKey {
+    sheet_key_of(page, owner, SheetGeneration::now(page, owner))
+}
+
+/// The identity of `owner`'s sheet object of `generation`: a `<style>` whose children changed
+/// has a new one (HTML "update a style block"), pyro: and a `<link>` that applied another
+/// response.
+fn sheet_key_of(page: &PageDom, owner: NodeId, generation: SheetGeneration) -> IdentityKey {
     let base = page.node_identity(owner);
-    // A `<style>` whose children changed has a new sheet object (HTML "update a style block").
-    let generation = u64::from(page.dom.borrow().style_sheet_generation(owner));
-    IdentityKey(base.0 | (1 << 61) | (23 << 48), base.1.wrapping_add(generation << 40))
+    let mixed = u64::from(generation.style).wrapping_add(generation.response.wrapping_mul(0x9E37_79B9));
+    IdentityKey(base.0 | (1 << 61) | (23 << 48), base.1.wrapping_add(mixed << 24))
 }
 
 pub struct RuleData {
@@ -992,7 +1018,7 @@ fn define_rule<C: JsClass<Data = RuleData>>(def: &mut ClassDef<C>) {
         while let Some(parent) = top.parent.upgrade() {
             top = parent;
         }
-        let attached = r.owner.model().list.rules.borrow().iter().any(|n| Rc::ptr_eq(n, &top));
+        let attached = r.owner.rules()?.list.rules.borrow().iter().any(|n| Rc::ptr_eq(n, &top));
         if attached { Ok(r.owner.wrapper(s)?.value()) } else { Ok(s.null()) }
     });
 }
@@ -1042,7 +1068,7 @@ impl JsClass for CssStyleRule {
             },
             |_s, r, v| {
                 let text = dom_string(v)?;
-                let model = r.owner.model();
+                let model = r.owner.rules()?;
                 let normalized = normalize_selector(&text, &model.namespaces.borrow());
                 // An invalid selector leaves the rule unchanged.
                 if let (Some(normalized), RuleKind::Style { selector, .. }) = (normalized, &r.node.kind) {
@@ -1062,12 +1088,15 @@ impl JsClass for CssGroupRule {
     type Parent = CssRule;
     fn define(def: &mut ClassDef<Self>) {
         // A grouping rule kept as text (`@page`, `@layer` blocks) lists no child rules.
-        def.getter("cssRules", |s, r| rule_list(s, r.node.identity, &r.owner, Some(r.node.clone())));
+        def.getter("cssRules", |s, r| {
+            r.owner.rules()?;
+            rule_list(s, r.node.identity, &r.owner, Some(r.node.clone()))
+        });
         def.method("insertRule", 1, |s, r, a| {
             let rule = arg_string(&a, 0, "CSSGroupingRule.insertRule")?;
             let index = if a.get(1).is_undefined() { 0 } else { to_u32(a.get(1))? as usize };
             let RuleKind::Group { list, .. } = &r.node.kind else { return Ok(s.undefined()) };
-            let model = r.owner.model();
+            let model = r.owner.rules()?;
             let namespaces = model.namespaces.borrow().clone();
             insert_into(list, &namespaces, Rc::downgrade(&r.node), &rule, index, r.owner.is_constructed())?;
             r.owner.commit(&model);
@@ -1078,7 +1107,7 @@ impl JsClass for CssGroupRule {
             let index = to_u32(a.get(0))? as usize;
             let RuleKind::Group { list, .. } = &r.node.kind else { return Ok(s.undefined()) };
             delete_from(list, index)?;
-            r.owner.commit(&r.owner.model());
+            r.owner.commit(&*r.owner.rules()?);
             Ok(s.undefined())
         });
     }
@@ -1436,7 +1465,7 @@ rule_class!(CssPageRule, "CSSPageRule", CssGroupRule, |def| {
                 };
                 let prefix = if selector.is_empty() { String::new() } else { format!("{selector} ") };
                 *text.borrow_mut() = format!("@page {prefix}{block}");
-                r.owner.commit(&r.owner.model());
+                r.owner.commit(&*r.owner.rules()?);
             }
             Ok(())
         },
@@ -1561,7 +1590,10 @@ impl JsClass for CssCounterStyleRule {
             if let RuleKind::Other { text, .. } = &r.node.kind {
                 let body: String = declarations.iter().map(|(n, v)| format!(" {n}: {v};")).collect();
                 *text.borrow_mut() = format!("@counter-style {name} {{{body} }}");
-                r.owner.commit(&r.owner.model());
+                // (Not for a detached or not origin-clean sheet: `SheetOwner::rules`.)
+                if let Ok(model) = r.owner.rules() {
+                    r.owner.commit(&model);
+                }
             }
         }
         def.accessor(
@@ -1759,8 +1791,9 @@ impl Constructed {
 
 /// Whose sheet a CSSOM object belongs to.
 pub enum SheetOwner {
-    /// A `<style>`'s or `<link>`'s.
-    Node(NodeHold),
+    /// A `<style>`'s or `<link>`'s, for the response it was made for (`PageDom::sheet_response`:
+    /// a link's next response is another sheet object).
+    Node(NodeHold, SheetGeneration),
     Constructed(Rc<Constructed>),
 }
 
@@ -1768,51 +1801,85 @@ impl SheetOwner {
     /// Another reference to the same sheet.
     fn hold(&self) -> JsResult<SheetOwner> {
         Ok(match self {
-            SheetOwner::Node(h) => SheetOwner::Node(NodeHold::new(&h.page, h.id)?),
+            SheetOwner::Node(h, generation) => SheetOwner::Node(NodeHold::new(&h.page, h.id)?, *generation),
             SheetOwner::Constructed(c) => SheetOwner::Constructed(c.clone()),
         })
     }
-    fn model(&self) -> Rc<SheetModel> {
+    /// pyro: the ONE way to a sheet's rules (CSSOM's rule lists, retained ones included, item,
+    /// index and length, insertRule/deleteRule, an import rule's sheet, rule edits): a sheet
+    /// object of a response that is no longer its node's (a link loaded another) is detached and
+    /// has no rules; one whose response is not origin-clean throws a SecurityError.
+    fn rules(&self) -> JsResult<Rc<SheetModel>> {
         match self {
-            SheetOwner::Node(h) => sheet_model(&h.page, h.id),
-            SheetOwner::Constructed(c) => c.model.clone(),
+            SheetOwner::Node(h, generation) => {
+                let response = h.page.sheet_response(h.id);
+                if response.generation != generation.response {
+                    return Ok(detached_model());
+                }
+                if !response.origin_clean {
+                    return Err(not_origin_clean());
+                }
+                Ok(sheet_model(&h.page, h.id))
+            }
+            SheetOwner::Constructed(c) if c.import.as_ref().is_some_and(|i| i.opaque) => Err(not_origin_clean()),
+            SheetOwner::Constructed(c) => Ok(c.model.clone()),
         }
     }
-    /// A CSSOM edit of `model`'s rules.
+    /// A CSSOM edit of `model`'s rules (got from [`Self::rules`]); a detached sheet's go nowhere.
     fn commit(&self, model: &SheetModel) {
         match self {
-            SheetOwner::Node(h) => commit_edit(&h.page, h.id, model),
+            SheetOwner::Node(h, generation) => {
+                if h.page.sheet_response(h.id).generation == generation.response {
+                    commit_edit(&h.page, h.id, model)
+                }
+            }
             SheetOwner::Constructed(c) => c.commit(),
         }
     }
     fn key(&self) -> IdentityKey {
         match self {
-            SheetOwner::Node(h) => sheet_key(&h.page, h.id),
+            SheetOwner::Node(h, generation) => sheet_key_of(&h.page, h.id, *generation),
             SheetOwner::Constructed(c) => c.identity,
         }
     }
     fn is_constructed(&self) -> bool {
         matches!(self, SheetOwner::Constructed(c) if c.import.is_none())
     }
-    /// pyro: CSSOM: reading or changing the rules of a sheet that is not origin-clean (its
-    /// response was CORS-cross-origin, a redirect through another origin too) throws.
-    fn check_origin_clean(&self) -> JsResult<()> {
-        let clean = match self {
-            SheetOwner::Node(h) => h.page.sheet_origin_clean(h.id),
-            SheetOwner::Constructed(c) => !c.import.as_ref().is_some_and(|i| i.opaque),
-        };
-        if clean {
-            Ok(())
-        } else {
-            Err(JsError::dom("SecurityError", "Cannot access rules"))
-        }
-    }
     fn wrapper<'s>(&self, s: &Scope<'s>) -> JsResult<Object<'s>> {
         match self {
-            SheetOwner::Node(h) => sheet_wrapper(s, &h.page, h.id),
+            SheetOwner::Node(h, _) => sheet_wrapper(s, &h.page, h.id),
             SheetOwner::Constructed(c) => constructed_wrapper(s, c),
         }
     }
+}
+
+/// pyro: whether `node` is (still) one of `model`'s rules, at any depth: a grouping rule kept
+/// from a sheet whose text has been replaced since lists none of the new text's rules.
+fn is_attached(model: &SheetModel, node: &Rc<RuleNode>) -> bool {
+    fn within(rules: &[Rc<RuleNode>], node: &Rc<RuleNode>) -> bool {
+        rules.iter().any(|r| {
+            Rc::ptr_eq(r, node)
+                || matches!(&r.kind, RuleKind::Group { list, .. } if within(&list.rules.borrow(), node))
+        })
+    }
+    within(&model.list.rules.borrow(), node)
+}
+
+/// pyro: CSSOM: the rules of a sheet that is not origin-clean are not to be read or changed.
+fn not_origin_clean() -> JsError {
+    JsError::dom("SecurityError", "Cannot access rules")
+}
+
+/// pyro: the rules of a detached sheet object: none.
+fn detached_model() -> Rc<SheetModel> {
+    Rc::new(SheetModel {
+        source: RefCell::new(String::new()),
+        edited: Cell::new(false),
+        list: RuleList::default(),
+        namespaces: RefCell::default(),
+        checked: Cell::new(0),
+        margins: RefCell::default(),
+    })
 }
 
 /// The media queries of a media list's text (split at top-level commas).
@@ -1861,7 +1928,7 @@ fn import_href(r: &RuleData) -> String {
 fn import_url(r: &RuleData) -> Option<(Rc<PageDom>, String)> {
     let href = import_href(r);
     match &r.owner {
-        SheetOwner::Node(h) => {
+        SheetOwner::Node(h, _) => {
             let url = crate::html::resolve_url(&h.page.dom.borrow(), h.id, &href);
             Some((h.page.clone(), url))
         }
@@ -1919,7 +1986,7 @@ impl MediaList {
             }
         };
         match sh {
-            SheetOwner::Node(h) => {
+            SheetOwner::Node(h, _) => {
                 media_text(h.page.dom.borrow().get_attribute(h.id, "media").ok().flatten().unwrap_or(""))
             }
             SheetOwner::Constructed(c) => c.media.borrow().clone(),
@@ -1939,12 +2006,12 @@ impl MediaList {
                     }
                     RuleKind::Style { .. } => return Ok(()),
                 }
-                r.owner.commit(&r.owner.model());
+                r.owner.commit(&*r.owner.rules()?);
                 return Ok(());
             }
         };
         match sh {
-            SheetOwner::Node(h) => h.page.dom.borrow_mut().set_attribute(h.id, "media", &text).js(),
+            SheetOwner::Node(h, _) => h.page.dom.borrow_mut().set_attribute(h.id, "media", &text).js(),
             SheetOwner::Constructed(c) => {
                 if c.media.replace(text.clone()) != text {
                     c.push();
@@ -2062,7 +2129,7 @@ impl JsClass for StyleSheet {
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
         def.getter("ownerNode", |s, sh| match &sh.owner {
-            SheetOwner::Node(h) => Ok(crate::node::wrap_node(s, &h.page, h.id)?.value()),
+            SheetOwner::Node(h, _) => Ok(crate::node::wrap_node(s, &h.page, h.id)?.value()),
             SheetOwner::Constructed(_) => Ok(s.null()),
         });
         def.getter("parentStyleSheet", |s, sh| match &sh.owner {
@@ -2070,10 +2137,10 @@ impl JsClass for StyleSheet {
                 Some(i) => Ok(i.rule.owner.wrapper(s)?.value()),
                 None => Ok(s.null()),
             },
-            SheetOwner::Node(_) => Ok(s.null()),
+            SheetOwner::Node(..) => Ok(s.null()),
         });
         def.getter("title", |s, sh| match &sh.owner {
-            SheetOwner::Node(h) => {
+            SheetOwner::Node(h, _) => {
                 let dom = h.page.dom.borrow();
                 Ok(dom.get_attribute(h.id, "title").js()?.filter(|t| !t.is_empty()).map_or(s.null(), |t| s.string(t)))
             }
@@ -2085,7 +2152,7 @@ impl JsClass for StyleSheet {
             "media",
             |s, sh| {
                 let key = match &sh.owner {
-                    SheetOwner::Node(h) => {
+                    SheetOwner::Node(h, _) => {
                         let base = h.page.node_identity(h.id);
                         IdentityKey(base.0 | (1 << 61) | (25 << 48), base.1)
                     }
@@ -2099,7 +2166,7 @@ impl JsClass for StyleSheet {
             |_s, sh, v| MediaList::set(&MediaOwner::Sheet(sh.owner.hold()?), &dom_string(v)?),
         );
         def.getter("href", |s, sh| match &sh.owner {
-            SheetOwner::Node(h) => {
+            SheetOwner::Node(h, _) => {
                 let dom = h.page.dom.borrow();
                 Ok(match dom.get_attribute(h.id, "href").js()? {
                     Some(href) => s.string(&crate::html::resolve_url(&dom, h.id, href)),
@@ -2121,7 +2188,7 @@ impl JsClass for StyleSheet {
             |s, sh| {
                 Ok(s.boolean(match &sh.owner {
                     SheetOwner::Constructed(c) => c.disabled.get(),
-                    SheetOwner::Node(h) => h.page.layout.borrow().style().sheet_disabled(h.id),
+                    SheetOwner::Node(h, _) => h.page.layout.borrow().style().sheet_disabled(h.id),
                 }))
             },
             |_s, sh, v| {
@@ -2132,7 +2199,7 @@ impl JsClass for StyleSheet {
                         }
                     }
                     // A `<style>`'s or `<link>`'s sheet: it applies nothing while disabled.
-                    SheetOwner::Node(h) => h.page.layout.borrow_mut().style_mut().set_sheet_disabled(h.id, v.to_bool()),
+                    SheetOwner::Node(h, _) => h.page.layout.borrow_mut().style_mut().set_sheet_disabled(h.id, v.to_bool()),
                 }
                 Ok(())
             },
@@ -2158,15 +2225,14 @@ impl JsClass for CssStyleSheet {
                 Some(i) => Ok(rule_wrapper(s, &i.rule.node, &i.rule.owner)?.value()),
                 None => Ok(s.null()),
             },
-            SheetOwner::Node(_) => Ok(s.null()),
+            SheetOwner::Node(..) => Ok(s.null()),
         });
         def.getter("cssRules", rules_value);
         def.getter("rules", rules_value);
         def.method("insertRule", 1, |s, sh, a| {
             let rule = arg_string(&a, 0, "CSSStyleSheet.insertRule")?;
-            sh.owner.check_origin_clean()?;
-            let index = if a.get(1).is_undefined() { 0 } else { to_u32(a.get(1))? as usize };
-            let model = sh.owner.model();
+                    let index = if a.get(1).is_undefined() { 0 } else { to_u32(a.get(1))? as usize };
+            let model = sh.owner.rules()?;
             let namespaces = model.namespaces.borrow().clone();
             insert_into(&model.list, &namespaces, Weak::new(), &rule, index, sh.owner.is_constructed())?;
             sh.owner.commit(&model);
@@ -2176,9 +2242,8 @@ impl JsClass for CssStyleSheet {
             // Legacy: `addRule(selector, style, index)` inserts
             // `selector { style }` at `index` (the end by default); -1.
             let selector = if a.get(0).is_undefined() { "undefined".to_owned() } else { dom_string(a.get(0))? };
-            sh.owner.check_origin_clean()?;
-            let block = if a.get(1).is_undefined() { "undefined".to_owned() } else { dom_string(a.get(1))? };
-            let model = sh.owner.model();
+                    let block = if a.get(1).is_undefined() { "undefined".to_owned() } else { dom_string(a.get(1))? };
+            let model = sh.owner.rules()?;
             let index =
                 if a.get(2).is_undefined() { model.list.rules.borrow().len() } else { to_u32(a.get(2))? as usize };
             let namespaces = model.namespaces.borrow().clone();
@@ -2190,16 +2255,14 @@ impl JsClass for CssStyleSheet {
         def.method("deleteRule", 1, |s, sh, a| {
             a.require(1, "CSSStyleSheet.deleteRule")?;
             let index = to_u32(a.get(0))? as usize;
-            sh.owner.check_origin_clean()?;
-            let model = sh.owner.model();
+                    let model = sh.owner.rules()?;
             delete_from(&model.list, index)?;
             sh.owner.commit(&model);
             Ok(s.undefined())
         });
         def.method("removeRule", 0, |s, sh, a| {
             let index = if a.get(0).is_undefined() { 0 } else { to_u32(a.get(0))? as usize };
-            sh.owner.check_origin_clean()?;
-            let model = sh.owner.model();
+                    let model = sh.owner.rules()?;
             delete_from(&model.list, index)?;
             sh.owner.commit(&model);
             Ok(s.undefined())
@@ -2239,7 +2302,8 @@ impl JsClass for CssStyleSheet {
 }
 
 fn rules_value<'s>(s: &Scope<'s>, sh: &SheetData) -> JsResult<Value<'s>> {
-    sh.owner.check_origin_clean()?;
+    // pyro: the getter throws too, not only the list's members (`SheetOwner::rules`).
+    sh.owner.rules()?;
     rule_list(s, sh.owner.key(), &sh.owner, None)
 }
 
@@ -2248,7 +2312,7 @@ fn sheet_wrapper<'s>(s: &Scope<'s>, page: &Rc<PageDom>, owner: NodeId) -> JsResu
     if let Some(o) = s.lookup_identity(key) {
         return Ok(o);
     }
-    s.wrap::<CssStyleSheet>(SheetData { owner: SheetOwner::Node(NodeHold::new(page, owner)?) }, Some(key))
+    s.wrap::<CssStyleSheet>(SheetData { owner: SheetOwner::Node(NodeHold::new(page, owner)?, SheetGeneration::now(page, owner)) }, Some(key))
 }
 
 pub(crate) fn element_sheet<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
@@ -2265,7 +2329,7 @@ fn sheet_object<'s>(s: &Scope<'s>, page: &Rc<PageDom>, owner: NodeId) -> JsResul
     if let Some(o) = s.lookup_identity(key) {
         return Ok(o.value());
     }
-    Ok(s.wrap::<CssStyleSheet>(SheetData { owner: SheetOwner::Node(NodeHold::new(page, owner)?) }, Some(key))?.value())
+    Ok(s.wrap::<CssStyleSheet>(SheetData { owner: SheetOwner::Node(NodeHold::new(page, owner)?, SheetGeneration::now(page, owner)) }, Some(key))?.value())
 }
 
 /// `document.styleSheets`: the sheets of the document's `<style>` elements
@@ -2393,8 +2457,10 @@ fn adoptable(s: &Scope<'_>, page: &PageDom, scope: NodeId, v: Value<'_>) -> JsRe
             "Failed to set the 'adoptedStyleSheets' property: Failed to convert value to 'CSSStyleSheet'.".into(),
         ));
     };
-    let SheetOwner::Constructed(c) = &sheet.owner else {
-        return Err(JsError::dom("NotAllowedError", "Can't adopt non-constructed stylesheets."));
+    // pyro: an `@import`ed sheet (`CSSImportRule.styleSheet`) is not a constructed one either.
+    let c = match &sheet.owner {
+        SheetOwner::Constructed(c) if c.import.is_none() => c,
+        _ => return Err(JsError::dom("NotAllowedError", "Can't adopt non-constructed stylesheets.")),
     };
     let document = page.dom.borrow().node_document(scope).js()?;
     if c.document != document {

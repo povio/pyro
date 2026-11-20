@@ -359,9 +359,10 @@ pub struct PageDom {
     /// the sheet's URL after redirects and its text.
     /// pyro: and whether the response was CORS-cross-origin (not origin-clean, CSSOM).
     pub(crate) imported_sheets: RefCell<FxHashMap<String, (String, String, bool)>>,
-    /// pyro: the `<link>`s whose style sheet's response was CORS-cross-origin (its tainting
-    /// "opaque", Fetch): their sheet's origin-clean flag is unset (CSSOM), its rules unreadable.
-    pub(crate) opaque_sheets: RefCell<rustc_hash::FxHashSet<NodeId>>,
+    /// pyro: the response each `<link>`'s style sheet is of: a generation (each response
+    /// applied is a new sheet object, CSSOM) and whether it is origin-clean (not
+    /// CORS-cross-origin, Fetch tainting "basic"/"cors"). `SheetOwner::rules` checks both.
+    pub(crate) sheet_responses: RefCell<FxHashMap<NodeId, SheetResponse>>,
     /// The constructed sheets each document or shadow root adopts
     /// (`adoptedStyleSheets`), in order; empty unless a script adopted one.
     pub(crate) adopted_sheets: RefCell<FxHashMap<NodeId, Vec<Rc<crate::css::Constructed>>>>,
@@ -936,7 +937,7 @@ impl PageDom {
             nonces: RefCell::new(FxHashMap::default()),
             sheet_models: RefCell::new(FxHashMap::default()),
             imported_sheets: RefCell::new(FxHashMap::default()),
-            opaque_sheets: RefCell::default(),
+            sheet_responses: RefCell::default(),
             adopted_sheets: RefCell::new(FxHashMap::default()),
             css_font_faces: RefCell::new(None),
             posted_tasks: Cell::new(0),
@@ -1784,10 +1785,6 @@ impl PageDom {
         use pyro_dom::script::{ResourceKind, ResourceReason};
         let mut layout = self.layout.borrow_mut();
         let style = layout.style_mut();
-        if ev.kind == ResourceKind::StyleText && ev.reason != ResourceReason::Removed {
-            // pyro: a `<style>`'s sheet is always origin-clean (a node reused from a link's).
-            self.opaque_sheets.borrow_mut().remove(&ev.node);
-        }
         match (ev.kind, ev.reason) {
             (ResourceKind::StyleText | ResourceKind::Stylesheet, ResourceReason::Removed) => {
                 style.remove_sheet(ev.node);
@@ -2883,6 +2880,13 @@ impl PageDom {
     }
 }
 
+/// pyro: see [`PageDom::set_sheet_response`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct SheetResponse {
+    pub(crate) generation: u64,
+    pub(crate) origin_clean: bool,
+}
+
 impl PageDom {
     /// A sheet a `<style>` imported loaded: `CSSImportRule.styleSheet` lists
     /// its rules. pyro: `key` is the import's request (`pyro_dom::cssom::import_key`: the absolute
@@ -2894,18 +2898,17 @@ impl PageDom {
         self.imported_sheets.borrow_mut().insert(key.to_owned(), (final_url.to_owned(), text.to_owned(), opaque));
     }
 
-    /// pyro: whether the style sheet `node` (a `<link>`) loaded is origin-clean (CSSOM): its
-    /// response was not CORS-cross-origin.
-    pub fn set_sheet_origin_clean(&self, node: NodeId, clean: bool) {
-        let mut opaque = self.opaque_sheets.borrow_mut();
-        if clean {
-            opaque.remove(&node);
-        } else {
-            opaque.insert(node);
-        }
+    /// pyro: the style sheet of `node` (a `<link>`) is now a new response's (CSSOM: a new sheet
+    /// object; the old one's rule lists are detached), origin-clean or not (its response was
+    /// CORS-cross-origin, or a network error's).
+    pub fn set_sheet_response(&self, node: NodeId, origin_clean: bool) {
+        let mut responses = self.sheet_responses.borrow_mut();
+        let generation = responses.get(&node).map_or(1, |r| r.generation + 1);
+        responses.insert(node, SheetResponse { generation, origin_clean });
     }
 
-    pub(crate) fn sheet_origin_clean(&self, node: NodeId) -> bool {
-        !self.opaque_sheets.borrow().contains(&node)
+    /// pyro: the response `node`'s sheet is of now (a `<style>`'s: generation 0, origin-clean).
+    pub(crate) fn sheet_response(&self, node: NodeId) -> SheetResponse {
+        self.sheet_responses.borrow().get(&node).copied().unwrap_or(SheetResponse { generation: 0, origin_clean: true })
     }
 }

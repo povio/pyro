@@ -328,10 +328,10 @@ impl Browser {
         if let Some(text) = text {
             sheet.bytes = text.len();
             sheets.bytes += text.len();
-            bindings.set_sheet_origin_clean(node, !opaque);
+            bindings.set_sheet_response(node, !opaque);
             bindings.set_stylesheet_text(node, &text);
         } else {
-            bindings.set_sheet_origin_clean(node, !opaque);
+            bindings.set_sheet_response(node, !opaque);
             remove_sheet(bindings, node);
         }
         drop(state);

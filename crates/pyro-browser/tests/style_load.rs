@@ -307,3 +307,64 @@ fn rules_of_a_sheet_that_is_not_origin_clean_throw() {
     // A CORS request: the static loader answers it as a CORS-same-origin response.
     assert_eq!(probe("cors"), "ok,ok,ok,ok");
 }
+
+/// Origin-cleanness is the sheet object's own response's, checked at every rule access: a
+/// `CSSRuleList` kept from a clean `<link>` sheet (top level, or an `@media` rule's) sees none of
+/// the rules of the cross-origin no-CORS sheet the link is repointed to, through `length`,
+/// `item()` or an index; the link's `sheet` is a new object whose rules throw; an edit through
+/// the old object changes nothing of the new. An `@import`ed sheet is never adoptable, a
+/// readable parent's opaque import included (security review cycle 3, HIGH 2).
+#[test]
+fn a_repointed_link_gets_a_new_sheet_and_retained_rule_lists_see_none_of_it() {
+    let (mut thread, page, loader) = setup(
+        "<link id=l rel=stylesheet href=clean.css><style id=s>@import url(\"http://other.test/i.css\"); @import url(\"same.css\");</style>",
+    );
+    for (url, css) in [
+        ("http://site.test/clean.css", "p { color: green } @media all { q { color: green } }"),
+        ("http://other.test/secret.css", "p { color: red } @media all { q { --secret: 1 } } r { }"),
+        ("http://other.test/i.css", "p { padding: 0 }"),
+        ("http://site.test/same.css", "p { margin: 0 }"),
+    ] {
+        loader.insert(url, "text/css", css, Duration::ZERO);
+    }
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    eval(
+        &thread,
+        page,
+        "globalThis.old = document.getElementById('l').sheet; globalThis.kept = old.cssRules; \
+         globalThis.inner = kept[1].cssRules; String(kept.length) + inner.length",
+    );
+    eval(
+        &thread,
+        page,
+        "{ const link = document.getElementById('l'); globalThis.loaded = false; \
+         link.addEventListener('load', () => loaded = true); link.addEventListener('error', () => loaded = true); \
+         link.href = 'http://other.test/secret.css'; } ''",
+    );
+    for _ in 0..20 {
+        settle(&mut thread);
+        if eval(&thread, page, "String(loaded)") == "true" {
+            break;
+        }
+    }
+    assert_eq!(eval(&thread, page, "String(loaded)"), "true", "the repointed sheet loaded");
+    let seen = eval(
+        &thread,
+        page,
+        "globalThis.thrown = f => { try { f(); return 'ok'; } catch (e) { return e.name; } }; \
+         globalThis.l = document.getElementById('l'); \
+         [kept.length, kept.item(0), kept[0], inner.length, inner.item(0), l.sheet === old, \
+          thrown(() => l.sheet.cssRules), thrown(() => l.sheet.cssRules.item(0)), \
+          thrown(() => old.insertRule('s { --leak: 1 }', 0)), old.cssRules.length].join('|')",
+    );
+    assert_eq!(seen, "0|||0||false|SecurityError|SecurityError|ok|0");
+    let adopted = eval(
+        &thread,
+        page,
+        "globalThis.rules = document.getElementById('s').sheet.cssRules; \
+         [thrown(() => rules[0].styleSheet.cssRules), thrown(() => { document.adoptedStyleSheets = [rules[0].styleSheet]; }), \
+          thrown(() => { document.adoptedStyleSheets = [rules[1].styleSheet]; }), document.adoptedStyleSheets.length].join('|')",
+    );
+    assert_eq!(adopted, "SecurityError|NotAllowedError|NotAllowedError|0");
+}
