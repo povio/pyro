@@ -680,6 +680,15 @@ fn static_point(
 }
 
 impl StaticRangeData {
+    pub(crate) fn from_points(page: &Rc<PageDom>, start: Point, end: Point) -> JsResult<Self> {
+        Ok(Self {
+            start: NodeHold::new(page, start.0)?,
+            start_offset: start.1,
+            end: NodeHold::new(page, end.0)?,
+            end_offset: end.1,
+        })
+    }
+
     /// Its boundary points.
     pub(crate) fn points(&self) -> ((NodeId, u32), (NodeId, u32)) {
         ((self.start.id, self.start_offset), (self.end.id, self.end_offset))
