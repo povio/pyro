@@ -401,6 +401,8 @@ pub struct PageDom {
     font_delay_since: Cell<Option<std::time::Instant>>,
     /// pyro: when the load gate laid the document out (`css_images_delay_load`), once per load.
     load_layout_since: Cell<Option<std::time::Instant>>,
+    /// pyro: the DOM version the load gate last laid the document out at.
+    load_layout_version: Cell<u64>,
     /// The font families elements name, as of a DOM version (`used_face_loading`).
     used_font_families: RefCell<Option<(u64, std::collections::HashSet<String>)>>,
     /// Files selected into `<input type=file>` (CDP DOM.setFileInputFiles).
@@ -955,6 +957,7 @@ impl PageDom {
             font_loads: Cell::new(0),
             font_delay_since: Cell::new(None),
             load_layout_since: Cell::new(None),
+            load_layout_version: Cell::new(0),
             used_font_families: RefCell::new(None),
             files: RefCell::new(FxHashMap::default()),
             layout: RefCell::new(pyro_dom::layout::Layout::new(document)),
@@ -1515,10 +1518,19 @@ impl PageDom {
                 crate::animation_events::track_before_layout(self);
                 if let (Ok(dom), Some(layout)) = (self.dom.try_borrow(), self.try_layout()) {
                     layout.synced_geometry_source(&dom);
+                    self.load_layout_version.set(dom.version());
                 }
                 now
             }
         };
+        // pyro: a document changed since (a rule or element using a stalled image removed) is laid
+        // out again: what it still references is what load waits for.
+        if let (Ok(dom), Some(layout)) = (self.dom.try_borrow(), self.try_layout()) {
+            if dom.version() != self.load_layout_version.get() {
+                layout.synced_geometry_source(&dom);
+                self.load_layout_version.set(dom.version());
+            }
+        }
         let pending = self.try_layout().is_some_and(|layout| layout.images_pending_as_laid_out());
         pending && since.elapsed() < std::time::Duration::from_secs(10)
     }

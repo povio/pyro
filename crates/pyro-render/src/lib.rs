@@ -1144,6 +1144,12 @@ impl Renderer {
         out
     }
 
+    /// pyro: the image URLs `page`'s persistent document references now
+    /// (`BaseDocument::referenced_image_urls`); `None` when it has none.
+    pub fn referenced_image_urls(&self, page: u64) -> Option<std::collections::HashSet<String>> {
+        self.mirrors.get(&page).map(|m| m.doc.referenced_image_urls())
+    }
+
     /// The markup of `page`'s persistent document (tests, diagnostics).
     #[doc(hidden)]
     pub fn mirrored_html(&self, page: u64) -> Option<String> {

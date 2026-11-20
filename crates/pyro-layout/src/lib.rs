@@ -840,7 +840,14 @@ impl GeometrySource for BlitzGeometry {
         let loader = self.loader.borrow();
         let Some(loader) = loader.as_ref() else { return false };
         let Some(asked) = loader.asked_images() else { return false };
-        asked.iter().any(|key| loader.bodies().pending(key))
+        // pyro: only images the document still references (as laid out last): one whose only
+        // rule or element went away is not waited for.
+        let referenced = RENDERER.with(|r| {
+            r.try_borrow().ok().and_then(|r| r.as_ref().and_then(|r| r.referenced_image_urls(self.page)))
+        });
+        asked.iter().any(|key| {
+            loader.bodies().pending(key) && referenced.as_ref().is_none_or(|urls| urls.contains(key.url()))
+        })
     }
 
     fn font_url_state(&self, url: &str) -> Option<bool> {

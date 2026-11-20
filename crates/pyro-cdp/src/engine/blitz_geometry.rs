@@ -419,6 +419,10 @@ mod document_bodies_tests {
         assert!(bodies.start(&pending));
         bodies.forget_document("F1#L1");
         assert!(bodies.get(&key).is_none() && !bodies.pending(&pending));
+        // A load of it that answers late stores nothing, and it starts none (cycle 3, D).
+        bodies.finish(pending.clone(), LayoutBody::local("http://img.test/b.png", b"b".to_vec()));
+        assert!(bodies.get(&pending).is_none());
+        assert!(!bodies.start(&key));
     }
 
     /// A request's destination is where it was made, never its URL: a CSS image at `image.css`

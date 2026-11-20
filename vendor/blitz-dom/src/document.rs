@@ -1970,6 +1970,32 @@ impl BaseDocument {
         }
     }
 
+    /// pyro: the URLs of the images the document's elements reference now (their CSS image slots:
+    /// backgrounds, masks, border images, references, list markers, shapes), in the document only.
+    /// An image no element references any more is no longer the document's to wait for.
+    pub fn referenced_image_urls(&self) -> std::collections::HashSet<String> {
+        let mut urls = std::collections::HashSet::new();
+        for (_, node) in self.nodes.iter() {
+            if !node.flags.is_in_document() {
+                continue;
+            }
+            let Some(element) = node.element_data() else { continue };
+            for slot in element
+                .background_images
+                .iter()
+                .chain(element.mask_images.iter())
+                .chain(element.border_images.iter())
+                .chain(element.reference_images.iter())
+                .chain(element.list_style_images.iter())
+                .chain(element.shape_images.iter())
+                .flatten()
+            {
+                urls.insert(slot.url.as_str().to_owned());
+            }
+        }
+        urls
+    }
+
     /// The document's base URL
     pub fn url(&self) -> &url::Url {
         &self.url

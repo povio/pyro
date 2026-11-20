@@ -7370,6 +7370,54 @@ mod screenshot {
         }
     }
 
+    /// The load event waits for the CSS images the document still references: once the only
+    /// element using a stalled image is removed, load fires without it (it waited out the image or
+    /// the 10 s cap: security review cycle 3, D).
+    #[test]
+    fn removing_the_only_user_of_a_stalled_css_image_releases_load() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                std::thread::spawn(move || {
+                    let mut request = Vec::new();
+                    let mut chunk = [0; 1024];
+                    while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                        match stream.read(&mut chunk) {
+                            Ok(n) if n > 0 => request.extend_from_slice(&chunk[..n]),
+                            _ => return,
+                        }
+                    }
+                    let (kind, body) = if request.starts_with(b"GET /slow.png") {
+                        std::thread::sleep(Duration::from_secs(4));
+                        ("image/png", "")
+                    } else {
+                        (
+                            "text/html",
+                            "<!doctype html><div id=d style='width:20px;height:20px;background-image:url(/slow.png)'></div>\
+                             <script>setTimeout(() => document.getElementById('d').remove(), 300)</script>",
+                        )
+                    };
+                    let head = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    );
+                    let _ = stream.write_all(head.as_bytes());
+                    let _ = stream.write_all(body.as_bytes());
+                });
+            }
+        });
+        let mut h = Harness::new();
+        h.page("Page.enable", json!({}));
+        let started = Instant::now();
+        h.page("Page.navigate", json!({"url": format!("http://{address}/")}));
+        h.until_event(|m| m["method"] == "Page.loadEventFired");
+        let waited = started.elapsed();
+        assert!(waited < Duration::from_millis(2500), "load waited for an image nothing uses: {waited:?}");
+    }
+
     /// A layout sub-resource still downloading delays the PDF, not the
     /// browser thread: commands sent after printToPDF answer first.
     #[test]

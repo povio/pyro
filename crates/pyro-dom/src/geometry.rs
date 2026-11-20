@@ -283,6 +283,9 @@ pub struct SubresourceBodies {
     /// document's layout and its screenshots ([`Self::late`], `font-display: optional`).
     came: std::sync::Mutex<std::collections::HashMap<LayoutBodyKey, std::time::Instant>>,
     needed: std::sync::Mutex<std::collections::HashMap<LayoutBodyKey, std::time::Instant>>,
+    /// pyro: documents that are gone ([`Self::forget_document`]): a load of theirs that answers
+    /// late stores nothing.
+    forgotten: std::sync::Mutex<std::collections::VecDeque<String>>,
 }
 
 fn locked<T>(m: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -311,6 +314,9 @@ impl SubresourceBodies {
     /// Marks a load of `key` in flight: `false` when one is, or its body or failure is here,
     /// already.
     pub fn start(&self, key: &LayoutBodyKey) -> bool {
+        if self.is_forgotten(&key.document) {
+            return false;
+        }
         let mut slots = locked(&self.slots);
         if slots.contains_key(key) {
             return false;
@@ -324,6 +330,9 @@ impl SubresourceBodies {
     pub fn finish(&self, key: LayoutBodyKey, body: LayoutBody) {
         if body.bytes.is_empty() {
             return self.fail(&key);
+        }
+        if self.is_forgotten(&key.document) {
+            return;
         }
         locked(&self.came).entry(key.clone()).or_insert_with(std::time::Instant::now);
         let previous = locked(&self.slots).insert(key, Slot::Ready(std::sync::Arc::new(body.clone())));
@@ -371,7 +380,18 @@ impl SubresourceBodies {
 
     /// pyro: drops what `document` loaded (it is gone: navigated away from, closed); a load still
     /// in flight for it is no longer waited for, and nothing of it serves another document.
+    fn is_forgotten(&self, document: &str) -> bool {
+        locked(&self.forgotten).iter().any(|d| d == document)
+    }
+
     pub fn forget_document(&self, document: &str) {
+        {
+            let mut forgotten = locked(&self.forgotten);
+            forgotten.push_back(document.to_owned());
+            if forgotten.len() > 256 {
+                forgotten.pop_front();
+            }
+        }
         locked(&self.slots).retain(|k, _| k.document != document);
         locked(&self.came).retain(|k, _| k.document != document);
         locked(&self.needed).retain(|k, _| k.document != document);
