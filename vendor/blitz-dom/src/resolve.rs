@@ -2182,6 +2182,8 @@ impl BaseDocument {
     pub fn resolve_layout(&mut self) {
         self.anchor_flush_choices.clear();
         self.resolve_layout_in_flush();
+        // pyro: a layout outside `resolve` (which bumps once after all its passes) changes geometry.
+        self.nodes.bump_geometry_generation();
     }
 
     fn resolve_layout_in_flush(&mut self) {
@@ -2317,7 +2319,9 @@ impl BaseDocument {
         // println!("\n\n");
         // taffy::print_tree(self, root_node_id)
         self.anchor_scroll_dirty.clear();
-        self.nodes.bump_geometry_generation();
+        // pyro: the anchor caches memoised during this pass are stale for the next one (another pass
+        // of the same flush); the geometry generation itself advances once per resolve, not per pass.
+        self.nodes.clear_anchor_caches();
     }
 
     /// pyro: the viewport's overflow (CSS Overflow 3 § 3.3): the root's, or the `<body>`'s when the

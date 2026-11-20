@@ -51738,7 +51738,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                  }
              }
          }
-@@ -430,39 +2148,1179 @@
+@@ -430,39 +2148,1183 @@
          self.deferred_construction_nodes.clear();
      }
  
@@ -51776,6 +51776,8 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
      pub fn resolve_layout(&mut self) {
 +        self.anchor_flush_choices.clear();
 +        self.resolve_layout_in_flush();
++        // pyro: a layout outside `resolve` (which bumps once after all its passes) changes geometry.
++        self.nodes.bump_geometry_generation();
 +    }
 +
 +    fn resolve_layout_in_flush(&mut self) {
@@ -51923,7 +51925,9 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
          // println!("\n\n");
          // taffy::print_tree(self, root_node_id)
 +        self.anchor_scroll_dirty.clear();
-+        self.nodes.bump_geometry_generation();
++        // pyro: the anchor caches memoised during this pass are stale for the next one (another pass
++        // of the same flush); the geometry generation itself advances once per resolve, not per pass.
++        self.nodes.clear_anchor_caches();
 +    }
 +
 +    /// pyro: the viewport's overflow (CSS Overflow 3 § 3.3): the root's, or the `<body>`'s when the
@@ -59650,7 +59654,19 @@ diff --git a/packages/blitz-dom/src/tree.rs b/packages/blitz-dom/src/tree.rs
          }
      }
  
-@@ -77,6 +128,10 @@
+@@ -72,11 +123,22 @@
+         self.geometry_generation.fetch_add(1, Ordering::Relaxed);
+     }
+ 
++    /// pyro: forgets the anchor visibility and scroll offsets memoised for this generation (a
++    /// layout pass changed what they were computed from).
++    pub(crate) fn clear_anchor_caches(&self) {
++        self.anchor_visibility.lock().unwrap().1.clear();
++        self.anchor_offsets.lock().unwrap().1.clear();
++    }
++
+     /// The number of live nodes in the map.
+     pub fn len(&self) -> usize {
          self.map.len()
      }
  
@@ -59661,7 +59677,7 @@ diff --git a/packages/blitz-dom/src/tree.rs b/packages/blitz-dom/src/tree.rs
      pub fn is_empty(&self) -> bool {
          self.map.is_empty()
      }
-@@ -103,6 +158,8 @@
+@@ -103,6 +165,8 @@
  
      /// Remove the node with the given id, returning it if it was still live.
      pub(crate) fn remove(&mut self, id: NodeId) -> Option<Node> {

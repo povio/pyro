@@ -123,6 +123,13 @@ impl NodeTree {
         self.geometry_generation.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// pyro: forgets the anchor visibility and scroll offsets memoised for this generation (a
+    /// layout pass changed what they were computed from).
+    pub(crate) fn clear_anchor_caches(&self) {
+        self.anchor_visibility.lock().unwrap().1.clear();
+        self.anchor_offsets.lock().unwrap().1.clear();
+    }
+
     /// The number of live nodes in the map.
     pub fn len(&self) -> usize {
         self.map.len()
