@@ -242,7 +242,7 @@ impl State {
         match self.task_clock.get() {
             Some((at, now)) if at == seq => now,
             _ => {
-                let now = crate::event::page_now_ms(page);
+                let now = page.timeline_now_ms();
                 self.task_clock.set(Some((seq, now)));
                 now
             }

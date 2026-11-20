@@ -8,6 +8,10 @@ Same Studio, stable Chrome, WPT revision and JSC key as README. At `0702fd16`, 2
 
 ## Previously uncovered inventory
 
+### Document animation clock follow-up
+
+Style sampling previously took its own wall-clock reading even if script had already read the document timeline in the same task. Sharing the document's first reading fixed the CSS animation seek assertion in three of three additional 50-URL runs (six concurrent jobs); it failed in all three runs on the preceding controls binary. On all 255 matched URLs in `css/css-animations`, `css/css-transitions`, and `css/scroll-animations`, controls passed 144 strict pages / 3,891 names, shared-clock 145 / 3,892 and stable 236 / 4,493. No lost pages or names. Exact outcomes: `shared-clock.json.gz`. These focused results do not supersede the full-corpus totals.
+
 Keep the historical 8,082-URL series intact. Of its 80 uncovered URLs, **41 now have a separate matched run**; the remaining 39 crash/security targets stay excluded. BOM-aware discovery reads markup without altering the served bytes. Opt-in `--worker-globals` uses real WPT wrappers and their declared globals and query strings; no expectations or WPT sources changed.
 
 | Environment | URLs | LP strict / named | Stable strict / named |
