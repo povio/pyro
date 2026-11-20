@@ -68,3 +68,23 @@ test('list output and startup checkpoints describe the non-CSS plan and every en
     expect(partial.manifestSha256).toBe(listed.manifestSha256);
   } finally { fs.rmSync(root,{recursive:true,force:true}); }
 });
+
+test('historical skip review matches an exact URL and source blob and preserves transport exclusions', () => {
+  const reviewed = JSON.parse(fs.readFileSync(new URL('./reviewed-gate-skips.json', import.meta.url)));
+  const url = 'navigation-api/navigate-event/navigate-history-go-0.html';
+  const source = 'navigate-history-go-0.html';
+  const entry = [reviewed[url], [null, {}], [url + '?unreviewed', {}]];
+  const manifest = {url_base:'/', items:{testharness:{
+    'navigation-api':{'navigate-event':{[source]:entry}},
+    fetch:{'h1-parsing':{'ordinary.html':['unused',[null,{}]]}}
+  }}};
+  const options = {dirs:['navigation-api','fetch'],http2:true,testdriver:true};
+  const legacy = manifestInventory('.',manifest,options);
+  expect(legacy.tests).toHaveLength(0);
+  const measured = manifestInventory('.',manifest,{...options,measureReviewedSkips:true});
+  expect(measured.tests.map(t=>t.url)).toEqual([url]);
+  expect(measured.tests[0].gateSkipReason).toBe(legacy.info.inventoryOnly.find(t=>t.url===url).reason);
+  expect(measured.info.inventoryOnly.find(t=>t.url.startsWith('fetch/')).reason).toBe('requires direct HTTP/1 origin bytes');
+  entry[0]='unreviewed blob';
+  expect(manifestInventory('.',manifest,{...options,measureReviewedSkips:true}).tests).toHaveLength(0);
+});

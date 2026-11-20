@@ -5,8 +5,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { H2_NAME, NEEDS_H2, TESTHARNESS_SKIP, WPTRUNNER_VIEWPORT } from './lib.mjs';
 
-export function manifestInventory(wpt, manifest, { dirs, all, http2, testdriver, selected }) {
+export function manifestInventory(wpt, manifest, { dirs, all, http2, testdriver, selected, measureReviewedSkips = false }) {
   if (manifest.url_base !== '/' || !manifest.items?.testharness) throw new Error('expected the root WPT testharness manifest');
+  const reviewed = measureReviewedSkips ? JSON.parse(fs.readFileSync(new URL('./reviewed-gate-skips.json', import.meta.url), 'utf8')) : {};
   const tests = [], omissions = [], excluded = {};
   const unmatched = new Set(selected);
   const byDir = [...dirs].sort((a, b) => b.length - a.length);
@@ -32,7 +33,11 @@ export function manifestInventory(wpt, manifest, { dirs, all, http2, testdriver,
         const environment = meta.jsshell ? 'jsshell' : source.startsWith('web-extensions/') ? 'extension' : suffix?.replace(/^worker/, 'dedicatedworker') ?? 'window';
         const record = { dir, url, source, blob, environment };
         const skip = TESTHARNESS_SKIP.find(s => s.path === source || (s.prefix && source.startsWith(s.prefix)));
-        if (skip) { omit(record, skip.why); continue; }
+        if (skip && reviewed[url] !== blob) { omit(record, skip.why); continue; }
+        if (skip) record.gateSkipReason = skip.why;
+        // The HTTP forward proxy parses and reserializes responses. Byte-level
+        // HTTP/1 parsing fixtures need a direct browser-to-origin connection.
+        if (source.startsWith('fetch/h1-parsing/')) { omit(record, 'requires direct HTTP/1 origin bytes'); continue; }
         if (meta.jsshell) { omit(record, 'requires JS shell'); continue; }
         if (source.startsWith('web-extensions/')) { omit(record, 'requires browser extension harness'); continue; }
         if (/(?:^|\/)(?:crashtests?|crashes)(?:\/|$)|(?:^|[./_-])(?:crash|mxss|xss|exploit|cve-\d+)(?:[./_-]|$)/i.test(source)) {

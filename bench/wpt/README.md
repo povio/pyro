@@ -698,6 +698,12 @@ every manifest-first URL regardless of directory selector. Earlier results with 
 only certify viewport-independent behavior. Each manifest-first partial result atomically records the plan and
 completed results, beginning before server startup; compare its eligible URLs with its results to identify omissions.
 
+`--measure-reviewed-skips` in manifest-inventory mode includes the exact ordinary URLs and source blobs listed in
+`reviewed-gate-skips.json`. Their original gate reasons remain in both the plan and the observed records. Without
+this flag those pages retain the gate exclusions. The opt-in leaves all protocol and environment checks in place.
+The local HTTP forward proxy reserializes responses, so manifest-inventory records `fetch/h1-parsing/` as
+inventory-only until a direct origin transport is available.
+
 `run.mjs --server wptserve` (and `gate.mjs run --server wptserve`) serves the pages with WPT's own server instead of
 `serve.mjs` (`wptserve.mjs`): every origin a test names (`web-platform.test`, `www`/`www1`/`www2` and the IDN
 subdomains, `not-web-platform.test`; http, https with WPT's test certificates, ws, wss; no h2), the Python handlers,

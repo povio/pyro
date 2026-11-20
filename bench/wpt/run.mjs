@@ -67,6 +67,8 @@ const TESTDRIVER = argv.includes('--testdriver');
 if (TESTDRIVER && !WPTSERVE) throw new Error('--testdriver needs --server wptserve');
 const ALL_GLOBALS = argv.includes('--generated-globals');
 const MANIFEST_FIRST = argv.includes('--manifest-inventory');
+const MEASURE_REVIEWED = argv.includes('--measure-reviewed-skips');
+if (MEASURE_REVIEWED && !MANIFEST_FIRST) throw new Error('--measure-reviewed-skips requires --manifest-inventory');
 if (MANIFEST_FIRST && (!ALL_GLOBALS || (!argv.includes('--list') && !argv.includes('--tests')) || SAMPLE !== 1)) {
   throw new Error('--manifest-inventory needs --generated-globals MANIFEST, no sampling, and --list or an explicit --tests selection');
 }
@@ -105,7 +107,7 @@ function selectTests() {
   const manifestDirs = NON_CSS ? Object.keys(manifest.items.testharness).filter(d => d !== 'css') : DIRS;
   const wrappers = !MANIFEST_FIRST && WORKER_MANIFEST && (ALL_GLOBALS ? generatedGlobalEntries : dedicatedWorkerEntries)(manifest);
   const { tests, excluded, info } = MANIFEST_FIRST
-    ? manifestInventory(WPT, manifest, { dirs: manifestDirs, all: opt('--dirs') === 'all', http2: HTTP2, testdriver: TESTDRIVER, selected })
+    ? manifestInventory(WPT, manifest, { dirs: manifestDirs, all: opt('--dirs') === 'all', http2: HTTP2, testdriver: TESTDRIVER, selected, measureReviewedSkips: MEASURE_REVIEWED })
     : KIND === 'reftest' ? discoverReftests(WPT, DIRS, { wptserve: WPTSERVE, testdriver: TESTDRIVER }) : KIND === 'crashtest' ? discoverCrashtests(WPT, DIRS, { wptserve: WPTSERVE, testdriver: TESTDRIVER }) : discover(WPT, DIRS, { sampleEncoding: SAMPLE, wptserve: WPTSERVE, testdriver: TESTDRIVER, generatedGlobals: wrappers, http2: HTTP2 });
   let sel = tests;
   const M = opt('--match') && new RegExp(opt('--match'));
@@ -125,8 +127,8 @@ const inventoryPlan = MANIFEST_FIRST ? {
   manifestSha256: createHash('sha256').update(fs.readFileSync(WORKER_MANIFEST)).digest('hex'),
   viewport: { ...WPTRUNNER_VIEWPORT, deviceScaleFactor: 1 },
   selector: { dirs: opt('--dirs', DIRS.join(',')), match: opt('--match', null), shard: `${SHARD}/${SHARDS}`, repeat: REPEAT,
-    server: SERVER, testdriver: TESTDRIVER, http2: HTTP2 },
-  eligible: tests.map(({ url, dir, source, blob, environment, limit }) => ({ url, dir, source, blob, environment, timeoutMs: limit })),
+    server: SERVER, testdriver: TESTDRIVER, http2: HTTP2, measureReviewedSkips: MEASURE_REVIEWED },
+  eligible: tests.map(({ url, dir, source, blob, environment, limit, gateSkipReason }) => ({ url, dir, source, blob, environment, timeoutMs: limit, ...(gateSkipReason && { gateSkipReason }) })),
   inventoryOnly: info.inventoryOnly,
 } : null;
 if (argv.includes('--list')) {
