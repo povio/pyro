@@ -27,6 +27,13 @@ fn render(body: &str) -> Vec<u8> {
 }
 
 #[test]
+fn bottom_aligned_atom_reaches_fractional_line_end() {
+    let data = render("<div style='margin-top:0.4px;font:16px/19.2px serif;background:red'>\
+        <span style='display:inline-block;vertical-align:bottom;width:100%;height:19.2px;background:green'></span></div>");
+    assert_eq!(&data[(19 * 300 + 10) * 4..][..3], &[0, 128, 0]);
+}
+
+#[test]
 fn the_longhand_aligns_baselines_of_its_name() {
     let plain = render("<div>X<span>X</span></div>");
     for value in ["middle", "text-top", "text-bottom"] {

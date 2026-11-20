@@ -155,7 +155,9 @@ impl<'a, B: Brush> Line<'a, B> {
         let inline_box = &layout_box.inline_box;
         match inline_box.vertical_align.shift {
             BaselineShift::Top => self.data.metrics.block_min_coord,
-            BaselineShift::Bottom => self.data.metrics.block_max_coord - inline_box.height,
+            BaselineShift::Bottom => {
+                self.data.metrics.unquantized_block_min_coord + self.data.metrics.line_height - inline_box.height
+            }
             _ => {
                 let aligned_subtree_root = self
                     .style_metrics()
