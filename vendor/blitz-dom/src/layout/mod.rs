@@ -1540,12 +1540,27 @@ impl LayoutPassState<'_> {
                                 let mut width = svg.intrinsic_width();
                                 let mut height = svg.intrinsic_height();
                                 let ratio = if is_root_element {
-                                    if width.is_none() && height.is_none() && svg.viewbox_aspect_ratio().is_none() {
-                                        let size = svg.tree.size();
-                                        width = Some(size.width());
-                                        height = Some(size.height());
+                                    // pyro: a root `<svg>` with neither an absolute `width` nor an
+                                    // absolute `height` (100% by default) fills the viewport, the
+                                    // initial containing block, as in browsers (Chrome: 800x600, not
+                                    // usvg's size stretched to the width by its ratio, 800x800; WPT
+                                    // css-masking clip-path-svg-content/*, mask-svg-content/*, whose
+                                    // overflow showed with classic scrollbars).
+                                    if width.is_none()
+                                        && height.is_none()
+                                        && let (Some(w), Some(h)) = (inputs.parent_size.width, inputs.parent_size.height)
+                                    {
+                                        width = Some(w);
+                                        height = Some(h);
+                                        None
+                                    } else {
+                                        if width.is_none() && height.is_none() && svg.viewbox_aspect_ratio().is_none() {
+                                            let size = svg.tree.size();
+                                            width = Some(size.width());
+                                            height = Some(size.height());
+                                        }
+                                        Some(svg.aspect_ratio())
                                     }
-                                    Some(svg.aspect_ratio())
                                 } else {
                                     match (width, height) {
                                         (Some(width), Some(height)) if width > 0.0 && height > 0.0 => {
