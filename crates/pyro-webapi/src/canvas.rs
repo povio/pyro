@@ -222,7 +222,12 @@ fn security_error() -> JsError {
 /// A CSS color as canvas serializes it: `#rrggbb` when opaque, else
 /// `rgba(r, g, b, a)`. `currentcolor` is black (no element style applies).
 pub(crate) fn canvas_color(value: &str) -> Option<String> {
-    let css = pyro_dom::computed::serialize_color(value, &mut || Some("rgb(0, 0, 0)".into()))?;
+    let css = pyro_dom::computed::serialize_color(value, &mut || Some("rgb(0, 0, 0)".into()))
+        .or_else(|| {
+            let value = value.trim();
+            value.get(..6).filter(|p| p.eq_ignore_ascii_case("color("))?;
+            pyro_canvas::peniko::color::parse_color(value).ok().map(|c| c.to_string())
+        })?;
     let Some(inner) = css.strip_prefix("rgb(").and_then(|r| r.strip_suffix(')')) else { return Some(css) };
     let mut hex = String::from("#");
     for part in inner.split(',') {
@@ -237,6 +242,11 @@ fn color_of(serialized: &str) -> Color {
     if let Some(hex) = serialized.strip_prefix('#') {
         let v = u32::from_str_radix(hex, 16).unwrap_or(0);
         return Color::from_rgba8((v >> 16) as u8, (v >> 8) as u8, v as u8, 255);
+    }
+    if !serialized.starts_with("rgb") {
+        if let Ok(color) = pyro_canvas::peniko::color::parse_color(serialized) {
+            return color.to_alpha_color();
+        }
     }
     let inner = serialized
         .strip_prefix("rgba(")
@@ -791,7 +801,8 @@ fn image_source(
         }
         2 => {
             let (w, h) = (size_u32(desc.get_index(2)?.to_number()?), size_u32(desc.get_index(3)?.to_number()?));
-            let data = typed_bytes(s, desc.get_index(1)?)?;
+            let mut data = typed_bytes(s, desc.get_index(1)?)?;
+            image_data_space(&desc.get_index(4)?.to_string()?)?.to_srgb(&mut data);
             let pixmap = pyro_canvas::pixmap_from_straight(data, w, h).and_then(Bitmap::new);
             Ok(Some(ImageHandle { pixmap, width: w, height: h, clean: true }))
         }
@@ -1163,6 +1174,16 @@ fn finite_args_from(a: &Args<'_>, from: usize, n: usize) -> JsResult<Option<Vec<
     Ok(v.iter().all(|x| x.is_finite()).then_some(v))
 }
 
+fn image_data_space(space: &str) -> JsResult<pyro_canvas::ImageDataSpace> {
+    match space {
+        "srgb" => Ok(pyro_canvas::ImageDataSpace::Srgb),
+        "display-p3" => Ok(pyro_canvas::ImageDataSpace::DisplayP3),
+        "srgb-linear" => Ok(pyro_canvas::ImageDataSpace::LinearSrgb),
+        "display-p3-linear" => Ok(pyro_canvas::ImageDataSpace::LinearDisplayP3),
+        _ => Err(JsError::Type(format!("The provided value '{space}' is not a valid PredefinedColorSpace.").into())),
+    }
+}
+
 /// `getImageData(sx, sy, sw, sh, settings)`.
 fn get_image_data<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>) -> JsResult<Value<'s>> {
     a.require(4, "CanvasRenderingContext2D.getImageData")?;
@@ -1183,11 +1204,7 @@ fn get_image_data<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>) -> JsResult<V
     } else {
         "srgb".to_owned()
     };
-    if space != "srgb" && space != "display-p3" {
-        return Err(JsError::Type(format!(
-            "The provided value '{space}' is not a valid enum value of type PredefinedColorSpace."
-        ).into()));
-    }
+    let output_space = image_data_space(&space)?;
     if !c.clean.get() {
         return Err(security_error());
     }
@@ -1203,7 +1220,8 @@ fn get_image_data<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>) -> JsResult<V
         return Err(JsError::Range("Out of memory at ImageData creation.".into()));
     }
     c.sync_size();
-    let pixels = c.surface.borrow_mut().get_image_data(x, y, w as u32, h as u32);
+    let mut pixels = c.surface.borrow_mut().get_image_data(x, y, w as u32, h as u32);
+    output_space.from_srgb(&mut pixels);
     let data = clamped_array(s, &pixels)?;
     module_helper(s, c, "imageDataOf", &[data, s.number(w as f64), s.number(h as f64), s.string(&space)])
 }
@@ -1247,13 +1265,15 @@ fn put_image_data<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>) -> JsResult<V
     }
     let data = typed_bytes(s, info.get_index(2)?)?;
     c.sync_size();
-    c.surface.borrow_mut().put_image_data(
+    let space = image_data_space(&info.get_index(3)?.to_string()?)?;
+    c.surface.borrow_mut().put_image_data_in_space(
         &data,
         iw as u32,
         ih as u32,
         dx,
         dy,
         (bx as u32, by as u32, bw as u32, bh as u32),
+        space,
     );
     Ok(s.undefined())
 }

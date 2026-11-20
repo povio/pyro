@@ -37,7 +37,7 @@ pub use vello_cpu::Pixmap;
 
 use guard::guard_path;
 use kurbo::{Affine, BezPath, PathEl, Point, Rect, Shape, Stroke, Vec2};
-use peniko::color::{AlphaColor, Srgb};
+use peniko::color::{AlphaColor, ColorSpace, DisplayP3, LinearSrgb, Srgb};
 use peniko::{Extend, Fill, ImageQuality, ImageSampler};
 use vello_cpu::{
     Image, ImageSource, PaintType, RasterizerSettings, RenderContext, RenderSettings, Resources, TargetInit,
@@ -45,6 +45,46 @@ use vello_cpu::{
 
 /// A straight-alpha sRGB color.
 pub type Color = AlphaColor<Srgb>;
+
+/// Color encoding of straight unorm8 RGBA ImageData. The raster surface is sRGB.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ImageDataSpace {
+    Srgb,
+    DisplayP3,
+    LinearSrgb,
+    LinearDisplayP3,
+}
+
+impl ImageDataSpace {
+    pub fn from_srgb(self, rgba: &mut [u8]) {
+        match self {
+            Self::Srgb => {}
+            Self::DisplayP3 => convert_pixels(rgba, Srgb::convert::<DisplayP3>),
+            Self::LinearSrgb => convert_pixels(rgba, Srgb::convert::<LinearSrgb>),
+            // Display P3 and sRGB share the same transfer function.
+            Self::LinearDisplayP3 => convert_pixels(rgba, |c| Srgb::to_linear_srgb(Srgb::convert::<DisplayP3>(c))),
+        }
+    }
+
+    pub fn to_srgb(self, rgba: &mut [u8]) {
+        match self {
+            Self::Srgb => {}
+            Self::DisplayP3 => convert_pixels(rgba, DisplayP3::convert::<Srgb>),
+            Self::LinearSrgb => convert_pixels(rgba, LinearSrgb::convert::<Srgb>),
+            Self::LinearDisplayP3 => convert_pixels(rgba, |c| DisplayP3::convert::<Srgb>(Srgb::from_linear_srgb(c))),
+        }
+    }
+}
+
+fn convert_pixels(rgba: &mut [u8], convert: impl Fn([f32; 3]) -> [f32; 3]) {
+    for pixel in rgba.chunks_exact_mut(4) {
+        let encoded = [pixel[0], pixel[1], pixel[2]].map(|v| f32::from(v) / 255.0);
+        let converted = convert(encoded);
+        for (channel, value) in pixel[..3].iter_mut().zip(converted) {
+            *channel = (value.clamp(0.0, 1.0) * 255.0).round() as u8;
+        }
+    }
+}
 
 /// Largest bitmap side, in pixels.
 pub const MAX_SIDE: u32 = 16_384;
@@ -652,6 +692,19 @@ impl Surface {
         dy: i64,
         dirty: (u32, u32, u32, u32),
     ) {
+        self.put_image_data_in_space(data, width, height, dx, dy, dirty, ImageDataSpace::Srgb);
+    }
+
+    pub fn put_image_data_in_space(
+        &mut self,
+        data: &[u8],
+        width: u32,
+        height: u32,
+        dx: i64,
+        dy: i64,
+        dirty: (u32, u32, u32, u32),
+        space: ImageDataSpace,
+    ) {
         if data.len() < width as usize * height as usize * 4 {
             return;
         }
@@ -680,6 +733,7 @@ impl Surface {
             let dst_start = ((y * pw + x0) * 4) as usize;
             let dst = &mut out[dst_start..dst_start + src.len()];
             dst.copy_from_slice(src);
+            space.to_srgb(dst);
             premultiply(dst);
         }
         self.changed();
