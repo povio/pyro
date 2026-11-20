@@ -48,6 +48,35 @@ const MARKERS: &str = "<style>
 </style>";
 
 #[test]
+fn targeted_marker_follows_the_fractional_column_break() {
+    use pyro_dom::parse::parse_document;
+    use pyro_dom::snapshot::{RenderHtml, RenderNodeKind, render_key};
+    use std::{cell::RefCell, rc::Rc};
+    let fetcher: Arc<dyn Fetcher> = Arc::new(NoFetch);
+    for (count, leading, active, scroll) in [(1, "", 1, 100.), (2, "", 1, 50.), (1, "<aside></aside>", 2, 200.)] {
+        let html = format!("<!doctype html><style>*{{margin:0}}main{{width:100px;height:40px;columns:{count};column-fill:auto;gap:0;overflow:auto;scroll-snap-type:x mandatory;scroll-marker-group:after}}main::column::scroll-marker{{content:\"\";width:12px;height:12px;background:red}}main::column::scroll-marker:target-current{{background:lime}}main::scroll-marker-group{{display:flex}}header,aside{{height:10.75px}}header{{break-before:column}}section,footer{{break-before:column;height:20px;scroll-snap-align:start}}</style><main id=sc>{leading}<header></header><section id=t></section><footer></footer><footer></footer></main>");
+        let dom = Rc::new(RefCell::new(pyro_dom::Dom::new()));
+        let doc = parse_document(&dom, "http://test/", &html);
+        let dom = dom.borrow();
+        let key = |id| render_key(dom.get_element_by_id(doc, id).unwrap().unwrap());
+        let tree = dom.render_tree(doc, &RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None, adopted: None }).unwrap();
+        let nodes = tree.nodes.into_iter().map(|node| TreeNode { key: node.key, parent: node.parent, kind: match node.kind {
+            RenderNodeKind::Element { name, attrs } => TreeKind::Element { name, attrs },
+            RenderNodeKind::Text(text) => TreeKind::Text(text),
+        }}).collect();
+        let mut snapshot = Snapshot { base_url: "http://test/".into(), width: 300, height: 100, device_scale_factor: 1., live: Some(Live { page: 1, tree: Arc::new(Tree { nodes }), clip: None, interaction: None }), ..Default::default() };
+        let mut renderer = Renderer::new();
+        renderer.sync_layout(&snapshot, &fetcher).unwrap();
+        snapshot.element_scroll = Some(vec![(key("sc"), (scroll, 0.))]);
+        snapshot.scroll_targets = Some(vec![(key("sc"), key("t"))]);
+        let img = renderer.render(&snapshot, Area::Viewport, Backend::Cpu, &fetcher).unwrap().0;
+        for index in 0..3 {
+            assert_eq!(pixel(&img, 12 * index + 5, 45), if index == active { [0, 255, 0] } else { RED });
+        }
+    }
+}
+
+#[test]
 fn the_group_is_a_box_beside_the_scroll_container() {
     // After: the group's box follows the scroll container's (at y = 50).
     let after = render(&format!("{MARKERS}<div class=s style='scroll-marker-group:after'><div></div><div></div></div>"));

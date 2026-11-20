@@ -1605,22 +1605,19 @@ impl BaseDocument {
         }
         let path = self.tree_path(target);
         let mut chosen = None;
+        let mut target_columns = std::collections::HashMap::new();
         for &candidate in candidates {
             let at_or_before = match candidate {
-                (container, Some(index)) => {
-                    // The column showing the target (in the container's strip).
+                (container, Some(index)) => target_columns.entry(container).or_insert_with(|| {
                     let (_, y, _, _) = self.layout_rect_in_scroller(container, target, true);
-                    let border_top = self.nodes[container].unrounded_layout().border.top;
-                    let column = self.nodes[container].column_fragments().and_then(|columns| {
-                        let fragment = columns.fragment_at(y + border_top)?;
-                        columns
-                            .fragments
-                            .iter()
-                            .filter(|f| !f.spanner)
-                            .position(|f| f.start == fragment.start && f.x == fragment.x && f.top == fragment.top)
-                    });
-                    column.is_some_and(|column| index as usize <= column)
-                }
+                    let strip_y = y + self.nodes[container].unrounded_layout().border.top;
+                    let mut ordinal = 0;
+                    for fragment in &self.nodes[container].column_fragments()?.fragments {
+                        if strip_y < fragment.strip_end { return (!fragment.spanner).then_some(ordinal); }
+                        ordinal += usize::from(!fragment.spanner);
+                    }
+                    None
+                }).is_some_and(|column| index as usize <= column),
                 (id, None) => self.tree_path(id) <= path,
             };
             if at_or_before {

@@ -106,6 +106,7 @@ impl FragmentSink {
             ColumnFragment {
                 start,
                 end: f32::INFINITY,
+                strip_end: f32::INFINITY,
                 x: self.x,
                 width: self.width,
                 top: fragment.top,
@@ -205,6 +206,7 @@ pub struct ColumnFragment {
     /// start is `-inf`, the last column's end `+inf`: what overflows the strip's ends shows).
     pub start: f32,
     pub end: f32,
+    pub(crate) strip_end: f32,
     /// The column box: its left edge, width, top and height.
     pub x: f32,
     pub width: f32,
@@ -1448,6 +1450,7 @@ impl LayoutPassState<'_> {
                 sink.push(ColumnFragment {
                     start,
                     end: snap(end),
+                    strip_end: end,
                     x,
                     width: column_width,
                     top: row,
@@ -1500,6 +1503,7 @@ impl LayoutPassState<'_> {
                     sink.push(ColumnFragment {
                         start: a,
                         end: snap(b),
+                        strip_end: b,
                         x,
                         width: column_width,
                         top,
@@ -1601,6 +1605,7 @@ impl LayoutPassState<'_> {
                         sink.push(ColumnFragment {
                             start: a,
                             end: snap(b),
+                            strip_end: b,
                             x,
                             width: column_width,
                             top,
@@ -1619,6 +1624,7 @@ impl LayoutPassState<'_> {
                     }
                 }
                 if let Some(&(start, end, indent)) = spanners.get(part) {
+                    let strip_end = end;
                     let (start, end) = (snap(start), snap(end));
                     let (before, after) = forced.get(part).copied().unwrap_or((false, false));
                     if before && top > content_top + EPSILON {
@@ -1634,6 +1640,7 @@ impl LayoutPassState<'_> {
                     sink.push(ColumnFragment {
                         start,
                         end,
+                        strip_end,
                         x: pb.left,
                         width: content_width,
                         top: spanner_top,
@@ -1688,6 +1695,7 @@ impl LayoutPassState<'_> {
                         sink.push(ColumnFragment {
                             start,
                             end: snap(end),
+                            strip_end: end,
                             x,
                             width: column_width,
                             top,
@@ -1701,11 +1709,13 @@ impl LayoutPassState<'_> {
                     }
                     row_top = last_top + last_height;
                     if let Some(&(start, end, indent)) = spanners.get(part) {
+                        let strip_end = end;
                         let (start, end) = (snap(start), snap(end));
                         let top = rows.spanner_top(row_top, end - start) - lift(part);
                         sink.push(ColumnFragment {
                             start,
                             end,
+                            strip_end,
                             x: pb.left,
                             width: content_width,
                             top,
@@ -1745,6 +1755,7 @@ impl LayoutPassState<'_> {
                             sink.push(ColumnFragment {
                                 start,
                                 end: snap(end),
+                                strip_end: end,
                                 x,
                                 width: column_width,
                                 top,
@@ -1811,6 +1822,7 @@ impl LayoutPassState<'_> {
                     sink.push(ColumnFragment {
                         start,
                         end,
+                        strip_end: end,
                         x,
                         width: column_width,
                         top,
@@ -1836,6 +1848,7 @@ impl LayoutPassState<'_> {
                 sink.push(ColumnFragment {
                     start,
                     end,
+                    strip_end: end,
                     x: pb.left,
                     width: content_width,
                     top: row_top,
@@ -1913,6 +1926,7 @@ impl LayoutPassState<'_> {
         }
         if let Some(last) = fragments.last_mut() {
             last.end = f32::INFINITY;
+            last.strip_end = f32::INFINITY;
         }
         let columns_height = row_top - content_top;
         // pyro: what a fieldset's rendered legend adds above its content box (see `content_top`).
@@ -4001,6 +4015,7 @@ mod tests {
         ColumnFragment {
             start,
             end,
+            strip_end: end,
             x,
             width: 100.0,
             top,
@@ -4073,6 +4088,7 @@ mod tests {
         let spanner = ColumnFragment {
             start: 200.0,
             end: 230.0,
+            strip_end: 230.0,
             x: 0.0,
             width: 220.0,
             top: 100.0,

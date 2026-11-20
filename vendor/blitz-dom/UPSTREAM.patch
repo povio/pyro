@@ -23253,7 +23253,7 @@ diff --git a/packages/blitz-dom/src/layout/multicol.rs b/packages/blitz-dom/src/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/multicol.rs
-@@ -0,0 +1,4113 @@
+@@ -0,0 +1,4129 @@
 +//! pyro: CSS Multi-column Layout (<https://drafts.csswg.org/css-multicol/>).
 +//!
 +//! A multi-column container lays its content out once, in a strip one column wide (its flow
@@ -23362,6 +23362,7 @@ new file mode 100644
 +            ColumnFragment {
 +                start,
 +                end: f32::INFINITY,
++                strip_end: f32::INFINITY,
 +                x: self.x,
 +                width: self.width,
 +                top: fragment.top,
@@ -23461,6 +23462,7 @@ new file mode 100644
 +    /// start is `-inf`, the last column's end `+inf`: what overflows the strip's ends shows).
 +    pub start: f32,
 +    pub end: f32,
++    pub(crate) strip_end: f32,
 +    /// The column box: its left edge, width, top and height.
 +    pub x: f32,
 +    pub width: f32,
@@ -24704,6 +24706,7 @@ new file mode 100644
 +                sink.push(ColumnFragment {
 +                    start,
 +                    end: snap(end),
++                    strip_end: end,
 +                    x,
 +                    width: column_width,
 +                    top: row,
@@ -24756,6 +24759,7 @@ new file mode 100644
 +                    sink.push(ColumnFragment {
 +                        start: a,
 +                        end: snap(b),
++                        strip_end: b,
 +                        x,
 +                        width: column_width,
 +                        top,
@@ -24857,6 +24861,7 @@ new file mode 100644
 +                        sink.push(ColumnFragment {
 +                            start: a,
 +                            end: snap(b),
++                            strip_end: b,
 +                            x,
 +                            width: column_width,
 +                            top,
@@ -24875,6 +24880,7 @@ new file mode 100644
 +                    }
 +                }
 +                if let Some(&(start, end, indent)) = spanners.get(part) {
++                    let strip_end = end;
 +                    let (start, end) = (snap(start), snap(end));
 +                    let (before, after) = forced.get(part).copied().unwrap_or((false, false));
 +                    if before && top > content_top + EPSILON {
@@ -24890,6 +24896,7 @@ new file mode 100644
 +                    sink.push(ColumnFragment {
 +                        start,
 +                        end,
++                        strip_end,
 +                        x: pb.left,
 +                        width: content_width,
 +                        top: spanner_top,
@@ -24944,6 +24951,7 @@ new file mode 100644
 +                        sink.push(ColumnFragment {
 +                            start,
 +                            end: snap(end),
++                            strip_end: end,
 +                            x,
 +                            width: column_width,
 +                            top,
@@ -24957,11 +24965,13 @@ new file mode 100644
 +                    }
 +                    row_top = last_top + last_height;
 +                    if let Some(&(start, end, indent)) = spanners.get(part) {
++                        let strip_end = end;
 +                        let (start, end) = (snap(start), snap(end));
 +                        let top = rows.spanner_top(row_top, end - start) - lift(part);
 +                        sink.push(ColumnFragment {
 +                            start,
 +                            end,
++                            strip_end,
 +                            x: pb.left,
 +                            width: content_width,
 +                            top,
@@ -25001,6 +25011,7 @@ new file mode 100644
 +                            sink.push(ColumnFragment {
 +                                start,
 +                                end: snap(end),
++                                strip_end: end,
 +                                x,
 +                                width: column_width,
 +                                top,
@@ -25067,6 +25078,7 @@ new file mode 100644
 +                    sink.push(ColumnFragment {
 +                        start,
 +                        end,
++                        strip_end: end,
 +                        x,
 +                        width: column_width,
 +                        top,
@@ -25092,6 +25104,7 @@ new file mode 100644
 +                sink.push(ColumnFragment {
 +                    start,
 +                    end,
++                    strip_end: end,
 +                    x: pb.left,
 +                    width: content_width,
 +                    top: row_top,
@@ -25169,6 +25182,7 @@ new file mode 100644
 +        }
 +        if let Some(last) = fragments.last_mut() {
 +            last.end = f32::INFINITY;
++            last.strip_end = f32::INFINITY;
 +        }
 +        let columns_height = row_top - content_top;
 +        // pyro: what a fieldset's rendered legend adds above its content box (see `content_top`).
@@ -27257,6 +27271,7 @@ new file mode 100644
 +        ColumnFragment {
 +            start,
 +            end,
++            strip_end: end,
 +            x,
 +            width: 100.0,
 +            top,
@@ -27329,6 +27344,7 @@ new file mode 100644
 +        let spanner = ColumnFragment {
 +            start: 200.0,
 +            end: 230.0,
++            strip_end: 230.0,
 +            x: 0.0,
 +            width: 220.0,
 +            top: 100.0,
@@ -29523,7 +29539,7 @@ diff --git a/packages/blitz-dom/src/layout/scroll_markers.rs b/packages/blitz-do
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/scroll_markers.rs
-@@ -0,0 +1,1644 @@
+@@ -0,0 +1,1641 @@
 +//! pyro: CSS Overflow 5's scroll markers and scroll buttons: the boxes of `::scroll-marker-group`,
 +//! `::scroll-marker` and `::scroll-button()`, and `:target-current`.
 +//!
@@ -31131,22 +31147,19 @@ new file mode 100644
 +        }
 +        let path = self.tree_path(target);
 +        let mut chosen = None;
++        let mut target_columns = std::collections::HashMap::new();
 +        for &candidate in candidates {
 +            let at_or_before = match candidate {
-+                (container, Some(index)) => {
-+                    // The column showing the target (in the container's strip).
++                (container, Some(index)) => target_columns.entry(container).or_insert_with(|| {
 +                    let (_, y, _, _) = self.layout_rect_in_scroller(container, target, true);
-+                    let border_top = self.nodes[container].unrounded_layout().border.top;
-+                    let column = self.nodes[container].column_fragments().and_then(|columns| {
-+                        let fragment = columns.fragment_at(y + border_top)?;
-+                        columns
-+                            .fragments
-+                            .iter()
-+                            .filter(|f| !f.spanner)
-+                            .position(|f| f.start == fragment.start && f.x == fragment.x && f.top == fragment.top)
-+                    });
-+                    column.is_some_and(|column| index as usize <= column)
-+                }
++                    let strip_y = y + self.nodes[container].unrounded_layout().border.top;
++                    let mut ordinal = 0;
++                    for fragment in &self.nodes[container].column_fragments()?.fragments {
++                        if strip_y < fragment.strip_end { return (!fragment.spanner).then_some(ordinal); }
++                        ordinal += usize::from(!fragment.spanner);
++                    }
++                    None
++                }).is_some_and(|column| index as usize <= column),
 +                (id, None) => self.tree_path(id) <= path,
 +            };
 +            if at_or_before {
