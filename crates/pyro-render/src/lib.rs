@@ -1398,8 +1398,13 @@ impl Renderer {
                 let bridge = net::Bridge::new(snap, fetcher.clone(), self.resources.scoped(&snap.resource_scope));
                 let doc = blitz_html::HtmlDocument::from_html(&snap.html, self.config(snap, bridge.provider()));
                 let mut doc = doc.into_inner();
-                // pyro: the scrolled elements, by their engine attributes (with this snapshot's
-                // nonce: `engine_nodes`; selectors never see the reserved family).
+                // pyro: the scrolled elements and stuck sticky boxes, by their engine attributes
+                // (with this snapshot's nonce: `engine_nodes`; selectors never see the reserved
+                // family). Sticky shifts too: this markup path has no other source of them (the
+                // live path's `Snapshot::sticky_offsets` go to the mirror), and the renderer lays
+                // sticky boxes out as static; without them a scrolled page's stuck box painted at
+                // its static place, unlike Chrome (cycle 8b test
+                // `a_markup_snapshot_paints_a_stuck_sticky_box_where_the_page_holds_it`).
                 apply_engine_offsets(&mut doc);
 
                 svg_use::resolve(&mut doc, &snap.base_url, fetcher, self.fetch_timeout)
