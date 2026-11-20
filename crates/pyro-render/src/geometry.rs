@@ -408,6 +408,10 @@ impl Geometry {
                 if shows {
                     let piece = Rect::new(strip.x0, y0, strip.x1, y1) + kurbo::Vec2::new(f.offset.x as f64, f.offset.y as f64);
                     out.push((piece, y1 - y0));
+                } else if !for_hit && f.start as f64 >= strip.y1 && columns.continuation_end(chain[0].id).is_some_and(|end| f.start < end) {
+                    let top = f64::from(f.top);
+                    let dx = f64::from(f.offset.x);
+                    out.push((Rect::new(strip.x0 + dx, top, strip.x1 + dx, top), f64::INFINITY));
                 }
             }
         };

@@ -130,6 +130,28 @@ fn rects(p: &crate::hit_descent::Page, id: &str) -> Vec<[f64; 4]> {
     p.layout.client_rects(&p.dom, p.id(id)).iter().map(|r| [r.x, r.y, r.width, r.height]).collect()
 }
 
+#[test]
+fn a_parallel_break_allocates_its_own_continuation() {
+    for (count, header, after) in [(3, 20, false), (4, 20, false), (3, 10, false), (3, 20, true)] {
+        let before_style = if after { "" } else { "break-before:column" };
+        let after_style = if after { "break-after:column" } else { "" };
+        let p = page(&format!("<!doctype html><style>*{{margin:0}}main{{width:150px;columns:{count};height:100px;column-fill:auto;gap:0}}</style>\
+            <main><section id=owner style='height:10px'><header style='height:{header}px;{after_style}'></header>\
+            <article id=resume style='height:10px;{before_style}'></article></section><footer id=other style='height:50px'></footer></main>"));
+        let width = 150.0 / f64::from(count);
+        let check = |actual: [f64; 4], expected: [f64; 4]| {
+            assert!((actual[0] - expected[0]).abs() <= 0.5, "{actual:?} vs {expected:?}");
+            assert_eq!(actual[1..], expected[1..]);
+        };
+        check(rect(&p, "resume"), [width, 0.0, width, 10.0]);
+        check(rect(&p, "other"), if after { [width, 0.0, width, 50.0] } else { [0.0, 10.0, width, 50.0] });
+        let owner = rects(&p, "owner");
+        assert_eq!(owner.len(), 2);
+        check(owner[0], [0.0, 0.0, width, 10.0]);
+        check(owner[1], [width, 0.0, width, 0.0]);
+    }
+}
+
 /// pyro: a nested container laid out in rows of an outer container's columns is laid out again
 /// when that fragmentation goes away (a sibling becomes a spanner, the outer box stops being a
 /// multi-column container): it is where a fresh layout of the final page puts it.

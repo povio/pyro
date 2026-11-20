@@ -191,6 +191,7 @@ pub struct ColumnFragments {
     pub strip_end: f32,
     pub first_after_spanner: std::collections::BTreeMap<crate::NodeId, usize>,
     pub run_wrappers: std::collections::BTreeSet<crate::NodeId>,
+    continuation_ends: std::collections::HashMap<crate::NodeId, f32>,
 }
 
 /// One column of a multi-column container, or a column spanner (`column-span: all`) between
@@ -227,6 +228,9 @@ impl ColumnFragment {
 }
 
 impl ColumnFragments {
+    pub fn continuation_end(&self, owner: crate::NodeId) -> Option<f32> {
+        self.continuation_ends.get(&owner).copied()
+    }
     pub fn child_start(&self, child: crate::NodeId, start: f32) -> Option<f32> {
         let Some(first) = self.first_after_spanner.get(&child).map(|&index| &self.fragments[index]) else { return Some(start) };
         (start >= first.start).then_some(if start == first.start { f32::NEG_INFINITY } else { start })
@@ -370,7 +374,7 @@ struct Breaks {
     trims: Vec<(f32, f32, f32, f32)>,
     /// pyro: forced breaks (`break-before`/`break-after: column`, `page`, ...), sorted.
     forced: Vec<f32>,
-    overflow_breaks: Vec<(crate::NodeId, f32, f32)>,
+    overflow_breaks: Vec<FlowContinuation>,
     overflow_parents: Vec<(crate::NodeId, f32, f32, f32)>,
     parallel_floats: Vec<(crate::NodeId, f32, f32, f32)>,
     /// pyro: the multi-column containers in the strip's flow (no other break context between
@@ -462,6 +466,25 @@ struct FillRun {
     shortage: Option<f32>,
     /// Breaks through what `Breaks::strict` keeps together.
     violations: usize,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct FlowContinuation {
+    owner: crate::NodeId,
+    resume: crate::NodeId,
+    origin: f32,
+    consumed: f32,
+}
+
+impl FlowContinuation {
+    fn next_start(self, run: &FillRun, slot_height: Option<f32>) -> Option<f32> {
+        let position = self.origin + self.consumed;
+        let next = run.columns.partition_point(|&(start, _)| start < position - EPSILON);
+        run.columns.get(next).map(|column| column.0).or_else(|| {
+            let height = slot_height?;
+            run.columns.last().filter(|_| next < MAX_COLUMNS).map(|column| column.0 + height)
+        })
+    }
 }
 
 /// The merged form of `ranges`: sorted, overlapping ranges joined (touching ones kept apart, as a
@@ -1036,14 +1059,14 @@ impl LayoutPassState<'_> {
                 }
             }
             if pass <= 5 && self.nested_pass_budget > 0 && !breaks.overflow_breaks.is_empty() {
-                let height = self.nested_fragmentation.get(&dom_id).map(|ctx| ctx.0).or(fragmentainer)
-                    .unwrap_or_else(|| breaks.balance(count, limit));
+                let slot_height = self.nested_fragmentation.get(&dom_id).map(|ctx| ctx.0).or(fragmentainer);
+                let height = slot_height.unwrap_or_else(|| breaks.balance(count, limit));
                 let run = breaks.fill(height, MAX_COLUMNS);
                 let mut changed = false;
-                for &(id, parent_top, position) in &breaks.overflow_breaks {
-                    let next = run.columns.partition_point(|&(start, _)| start < position - EPSILON);
-                    if let Some(&(boundary, _)) = run.columns.get(next) {
-                        let floor = boundary - parent_top;
+                for token in &breaks.overflow_breaks {
+                    let id = token.resume;
+                    if let Some(boundary) = token.next_start(&run, slot_height) {
+                        let floor = boundary - token.origin;
                         if floor > self.nodes[id].unrounded_layout().location.y + EPSILON {
                             self.spanner_floors.insert(id, floor);
                             use taffy::CacheTree as _;
@@ -1925,7 +1948,14 @@ impl LayoutPassState<'_> {
                 }
             }
         }
-        let columns = ColumnFragments { fragments, first_after_spanner, run_wrappers, nested: nested_ctx.or(nested_rows_ctx).or(nested_span_ctx), pushed, strip_end: breaks.end };
+        let mut continuation_ends = std::collections::HashMap::<_, f32>::new();
+        for token in &breaks.overflow_breaks {
+            let layout = self.nodes[token.resume].unrounded_layout();
+            let end = token.origin + layout.location.y + layout.size.height;
+            let entry = continuation_ends.entry(token.owner).or_insert(end);
+            *entry = entry.max(end);
+        }
+        let columns = ColumnFragments { fragments, first_after_spanner, run_wrappers, continuation_ends, nested: nested_ctx.or(nested_rows_ctx).or(nested_span_ctx), pushed, strip_end: breaks.end };
         if columns.fragments.len() > 1 && !vertical {
             for candidate in oof_candidates.as_mut_slice() {
                 if candidate.containing_block.is_some() {
@@ -3063,7 +3093,7 @@ impl BaseDocument {
             }
             if style.clone_float() == Float::None {
                 if std::mem::take(&mut next_parallel_break) {
-                    found.overflow_breaks.push((child_id, top, child_top - layout.margin.top.max(0.0)));
+                    found.overflow_breaks.push(FlowContinuation { owner: parent, resume: child_id, origin: top, consumed: previous.map_or(child_top, |(end, _)| end) - top });
                 }
                 // pyro: forced breaks between in-flow siblings (margins after them kept).
                 let forces = |b: style::values::computed::BreakBetween| {
@@ -3098,10 +3128,10 @@ impl BaseDocument {
                 {
                     let boundary = child_top - layout.margin.top.max(0.0);
                     if found.container != Some(parent) && previous.is_some()
-                        && boundary > top + node.unrounded_layout().size.height + EPSILON
-                        && boundary < found.parallel_end
+                        && boundary >= parent_bottom - EPSILON
+                        && (found.fixed_columns || boundary < found.parallel_end)
                     {
-                        found.overflow_breaks.push((child_id, top, boundary));
+                        found.overflow_breaks.push(FlowContinuation { owner: parent, resume: child_id, origin: top, consumed: previous.unwrap().0 - top });
                     } else {
                         found.forced.push(boundary);
                     }
@@ -3112,7 +3142,7 @@ impl BaseDocument {
                     || (!fragmentable(child, &style) && self.last_descendant_forces_break_after(child_id))
                 {
                     let boundary = child_bottom + layout.margin.bottom.max(0.0);
-                    if found.container != Some(parent) && boundary > parent_bottom + EPSILON && boundary < found.parallel_end {
+                    if found.container != Some(parent) && boundary >= parent_bottom - EPSILON && (found.fixed_columns || boundary < found.parallel_end) {
                         next_parallel_break = true;
                         found.parallel_break_after = true;
                     } else {
@@ -3337,7 +3367,7 @@ struct Found {
     forced: Vec<f32>,
     forced_after: Vec<f32>,
     parallel_break_after: bool,
-    overflow_breaks: Vec<(crate::NodeId, f32, f32)>,
+    overflow_breaks: Vec<FlowContinuation>,
     overflow_parents: Vec<(crate::NodeId, f32, f32, f32)>,
     /// The floats' block ranges.
     floats: Vec<(f32, f32)>,
@@ -3882,6 +3912,7 @@ mod tests {
     #[test]
     fn fragments_map_both_ways() {
         let columns = ColumnFragments {
+            continuation_ends: Default::default(),
             run_wrappers: Default::default(),
             first_after_spanner: Default::default(),
             strip_end: f32::INFINITY,
@@ -3908,6 +3939,7 @@ mod tests {
         // The first column ends at 100 where a margin starts, the second starts past it at 120;
         // a third follows.
         let columns = ColumnFragments {
+            continuation_ends: Default::default(),
             run_wrappers: Default::default(),
             first_after_spanner: Default::default(),
             strip_end: f32::INFINITY,
@@ -3943,6 +3975,7 @@ mod tests {
             exact_x: f32::NAN,
         };
         let columns = ColumnFragments {
+            continuation_ends: Default::default(),
             run_wrappers: Default::default(),
             first_after_spanner: Default::default(),
             strip_end: f32::INFINITY,
