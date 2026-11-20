@@ -6917,7 +6917,7 @@ diff -ruN a/values/computed/image.rs b/values/computed/image.rs
      }
 diff -ruN a/values/computed/length.rs b/values/computed/length.rs
 --- a/values/computed/length.rs	2026-11-11 19:55:57
-+++ b/values/computed/length.rs	2026-11-20 22:25:07
++++ b/values/computed/length.rs	2026-11-20 22:47:50
 @@ -453,6 +453,8 @@
  pub type NonNegativeLengthPercentageOrNormal =
      GenericLengthPercentageOrNormal<NonNegativeLengthPercentage>;
@@ -6927,10 +6927,11 @@ diff -ruN a/values/computed/length.rs b/values/computed/length.rs
  /// A computed `fit-tolerance` value.
  pub type FitTolerance = GenericFitTolerance<NonNegativeLengthPercentage>;
  
-@@ -462,6 +464,90 @@
+@@ -461,6 +463,96 @@
+ 
  /// A computed value for `min-width`, `min-height`, `width` or `height` property.
  pub type Size = GenericSize<NonNegativeLengthPercentage>;
- 
++
 +impl crate::values::animated::Animate for Size {
 +    fn animate(&self, other: &Self, procedure: crate::values::animated::Procedure) -> Result<Self, ()> {
 +        self.animate_size(other, procedure, false)
@@ -6948,6 +6949,8 @@ diff -ruN a/values/computed/length.rs b/values/computed/length.rs
 +
 +    pub(crate) fn compose_size(&self, calculation: &NonNegativeLengthPercentage) -> Self {
 +        let (basis, wrap): (_, fn(NonNegativeLengthPercentage) -> Self) = match self {
++            Self::LengthPercentage(value) if value.0.has_percentage() => (value, Self::CalcSizePercentage),
++            Self::CalcSizePercentage(value) => (value, Self::CalcSizePercentage),
 +            Self::LengthPercentage(value) | Self::CalcSizeAny(value) => (value, Self::CalcSizeAny),
 +            Self::CalcSizeAuto(value) => (value, Self::CalcSizeAuto),
 +            Self::CalcSizeStretch(value) => (value, Self::CalcSizeStretch),
@@ -6981,6 +6984,10 @@ diff -ruN a/values/computed/length.rs b/values/computed/length.rs
 +            }
 +        };
 +        match (self, other) {
++            (Self::CalcSizePercentage(from), Self::CalcSizePercentage(to) | Self::LengthPercentage(to)) |
++            (Self::LengthPercentage(from), Self::CalcSizePercentage(to)) => Ok(Self::CalcSizePercentage(from.animate(to, procedure)?)),
++            (Self::CalcSizeAny(from), Self::CalcSizePercentage(to)) if !from.0.has_percentage() => Ok(Self::CalcSizePercentage(from.animate(to, procedure)?)),
++            (Self::CalcSizePercentage(from), Self::CalcSizeAny(to)) if !to.0.has_percentage() => Ok(Self::CalcSizePercentage(from.animate(to, procedure)?)),
 +            (Self::Auto, Self::Auto) => Ok(Self::Auto),
 +            (Self::CalcSizeAny(from), Self::CalcSizeAny(to) | Self::LengthPercentage(to)) |
 +            (Self::LengthPercentage(from), Self::CalcSizeAny(to)) => Ok(Self::CalcSizeAny(from.animate(to, procedure)?)),
@@ -7014,21 +7021,21 @@ diff -ruN a/values/computed/length.rs b/values/computed/length.rs
 +        }
 +    }
 +}
-+
+ 
  /// A computed value for `max-width` or `max-height` property.
  pub type MaxSize = GenericMaxSize<NonNegativeLengthPercentage>;
- 
-@@ -537,7 +623,9 @@
+@@ -537,7 +629,10 @@
              "Sizes should only change axes"
          );
          match self {
 +            Self::CalcSizeBasis(_) => {},
              Self::FitContentFunction(lp)
 +            | Self::CalcSizeAny(lp)
++            | Self::CalcSizePercentage(lp)
              | Self::LengthPercentage(lp)
              | Self::AnchorContainingCalcFunction(lp) => {
                  lp.try_tactic_adjustment(old_side, new_side);
-@@ -548,7 +636,12 @@
+@@ -548,7 +643,12 @@
              | Self::MinContent
              | Self::FitContent
              | Self::WebkitFillAvailable
@@ -7714,7 +7721,7 @@ diff -ruN a/values/generics/image.rs b/values/generics/image.rs
  }
 diff -ruN a/values/generics/length.rs b/values/generics/length.rs
 --- a/values/generics/length.rs	2026-11-11 19:55:57
-+++ b/values/generics/length.rs	2026-11-20 22:25:07
++++ b/values/generics/length.rs	2026-11-20 22:47:50
 @@ -138,7 +138,6 @@
  /// Note that it only accepts non-negative values.
  #[allow(missing_docs)]
@@ -7732,7 +7739,7 @@ diff -ruN a/values/generics/length.rs b/values/generics/length.rs
      ToResolvedValue,
      ToShmem,
      ToTyped,
-@@ -174,8 +171,92 @@
+@@ -174,6 +171,95 @@
      FitContentFunction(LengthPercent),
      AnchorSizeFunction(Box<GenericAnchorSizeFunction<Self>>),
      AnchorContainingCalcFunction(LengthPercent),
@@ -7762,9 +7769,13 @@ diff -ruN a/values/generics/length.rs b/values/generics/length.rs
 +    #[animation(error)]
 +    #[css(function = "calc-size")]
 +    #[typed(skip)]
++    CalcSizePercentage(LengthPercent),
++    #[animation(error)]
++    #[css(function = "calc-size")]
++    #[typed(skip)]
 +    CalcSizeBasis(Box<GenericSizeBasis<LengthPercent>>),
- }
- 
++}
++
 +#[allow(missing_docs)]
 +#[derive(Clone, Debug, PartialEq, MallocSizeOf, ToShmem, ToAnimatedValue, ToResolvedValue)]
 +pub struct GenericSizeBasis<L> {
@@ -7795,6 +7806,7 @@ diff -ruN a/values/generics/length.rs b/values/generics/length.rs
 +            Self::CalcSizeMinContent(value) => ("min-content", value),
 +            Self::CalcSizeMaxContent(value) => ("max-content", value),
 +            Self::CalcSizeStretch(value) => ("stretch", value),
++            Self::CalcSizePercentage(value) => ("100%", value),
 +            Self::CalcSizeAny(value) => {
 +                dest.write_str("calc-size(any, ")?;
 +                value.calculation_css::<false, _>(dest)?;
@@ -7820,15 +7832,14 @@ diff -ruN a/values/generics/length.rs b/values/generics/length.rs
 +        calculation.calculation_css::<true, _>(dest)?;
 +        dest.write_char(')')
 +    }
-+}
-+
+ }
+ 
  impl<LengthPercent> SpecifiedValueInfo for GenericSize<LengthPercent>
- where
-     LengthPercent: SpecifiedValueInfo,
-@@ -368,6 +449,32 @@
+@@ -367,6 +453,32 @@
+ }
  
  pub use self::GenericLengthPercentageOrNormal as LengthPercentageOrNormal;
- 
++
 +/// A gap decoration inset offset.
 +#[derive(
 +    Animate,
@@ -7854,10 +7865,9 @@ diff -ruN a/values/generics/length.rs b/values/generics/length.rs
 +    LengthPercentage(LengthPercent),
 +    OverlapJoin,
 +}
-+
+ 
  /// A generic `normal | <length-percentage> | infinite` value, as used by `fit-tolerance`.
  #[derive(
-     Animate,
 diff -ruN a/values/generics/mod.rs b/values/generics/mod.rs
 --- a/values/generics/mod.rs	2026-11-11 19:55:57
 +++ b/values/generics/mod.rs	2026-11-11 19:55:57
@@ -9813,7 +9823,7 @@ diff -ruN a/values/specified/image.rs b/values/specified/image.rs
      /// <cf-image> = <percentage>? && [ <image> | <color> ]
 diff -ruN a/values/specified/length.rs b/values/specified/length.rs
 --- a/values/specified/length.rs	2026-11-11 19:55:57
-+++ b/values/specified/length.rs	2026-11-20 22:26:57
++++ b/values/specified/length.rs	2026-11-20 22:47:50
 @@ -187,13 +187,14 @@
              "lvi" if !in_page_rule => Self::Lvi,
              "dvi" if !in_page_rule => Self::Dvi,
@@ -9869,11 +9879,10 @@ diff -ruN a/values/specified/length.rs b/values/specified/length.rs
  
          let allow_anchor = allow_anchor_functions == ParseAnchorFunctions::Yes
              && crate::pref!("layout.css.anchor-positioning.enabled", gecko = true);
-@@ -1942,9 +1958,93 @@
-     #[inline]
+@@ -1943,8 +1959,87 @@
      pub fn zero_percent() -> Self {
          GenericSize::LengthPercentage(NonNegativeLengthPercentage::zero_percent())
-+    }
+     }
 +    /// pyro: `calc-size(auto | fit-content | min-content | max-content, <calculation>)`.
 +    fn parse_calc_size(context: &ParserContext, input: &mut Parser, depth: usize, expanded: &mut usize) -> Result<Self, ParseError> {
 +        if depth >= 32 { return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError)); }
@@ -9891,12 +9900,7 @@ diff -ruN a/values/specified/length.rs b/values/specified/length.rs
 +                Some(input.parse_until_before(cssparser::Delimiter::Comma, |input| {
 +                    if let Ok(nested) = input.try_parse(|input| Self::parse_calc_size(context, input, depth + 1, expanded)) { return Ok(nested); }
 +                    let mut calc = CalcNode::parse_calc_size_calculation(context, input, AllowedNumericType::All, false)?;
-+                    let mut percentage = false;
-+                    calc.0.node.visit_depth_first(|node| {
-+                        *expanded += 1;
-+                        percentage |= matches!(node, CalcNode::Leaf(super::calc::Leaf::Percentage(_)));
-+                    });
-+                    if percentage { return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError)); }
++                    calc.0.node.visit_depth_first(|_| *expanded += 1);
 +                    Ok(Self::LengthPercentage(NonNegative(LengthPercentage::Calc(Box::new(calc)))))
 +                })?)
 +            } else { None };
@@ -9923,7 +9927,7 @@ diff -ruN a/values/specified/length.rs b/values/specified/length.rs
 +                _ => GenericSize::CalcSizeAny(length),
 +            })
 +        })
-     }
++    }
  }
  
 +macro_rules! convert_size {
@@ -9937,7 +9941,7 @@ diff -ruN a/values/specified/length.rs b/values/specified/length.rs
 +    ($source:expr, $from:ident, $to:ident, $convert:expr, $pair:expr) => {
 +        convert_size!($source, $from, $to, $convert, $pair; Auto, MaxContent, MinContent, FitContent, Stretch, WebkitFillAvailable;
 +            LengthPercentage, FitContentFunction, AnchorSizeFunction, AnchorContainingCalcFunction,
-+            CalcSizeAuto, CalcSizeStretch, CalcSizeMinContent, CalcSizeMaxContent, CalcSizeFitContent, CalcSizeAny)
++            CalcSizeAuto, CalcSizeStretch, CalcSizeMinContent, CalcSizeMaxContent, CalcSizeFitContent, CalcSizeAny, CalcSizePercentage)
 +    };
 +}
 +

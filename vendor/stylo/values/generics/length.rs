@@ -197,6 +197,10 @@ pub enum GenericSize<LengthPercent> {
     #[animation(error)]
     #[css(function = "calc-size")]
     #[typed(skip)]
+    CalcSizePercentage(LengthPercent),
+    #[animation(error)]
+    #[css(function = "calc-size")]
+    #[typed(skip)]
     CalcSizeBasis(Box<GenericSizeBasis<LengthPercent>>),
 }
 
@@ -230,6 +234,7 @@ impl<LengthPercent: SizeCalculationCss> ToCss for GenericSize<LengthPercent> {
             Self::CalcSizeMinContent(value) => ("min-content", value),
             Self::CalcSizeMaxContent(value) => ("max-content", value),
             Self::CalcSizeStretch(value) => ("stretch", value),
+            Self::CalcSizePercentage(value) => ("100%", value),
             Self::CalcSizeAny(value) => {
                 dest.write_str("calc-size(any, ")?;
                 value.calculation_css::<false, _>(dest)?;

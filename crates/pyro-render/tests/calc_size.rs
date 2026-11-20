@@ -56,6 +56,12 @@ fn nested_basis_keeps_negative_intermediates() {
 }
 
 #[test]
+fn nested_percent_basis_uses_the_containing_axis() {
+    let img = render("<div style='width:200px;height:80px'><div style='background:green;width:calc-size(calc-size(25%, size + 10px), size * 2);height:calc-size(50%, size - 5px)'></div></div>");
+    check(&img, &[(119, 34, GREEN), (120, 34, WHITE), (119, 35, WHITE)]);
+}
+
+#[test]
 fn a_shrink_to_fit_parent_takes_the_calculated_contributions() {
     // Min-content 20px + 70px, max-content 40px + 70px: in 100px the parent is 100px wide.
     let img = render(

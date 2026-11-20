@@ -100,7 +100,7 @@ pub fn length_percentage(val: &stylo::LengthPercentage) -> taffy::LengthPercenta
 pub fn dimension(val: &stylo::Size) -> taffy::Dimension {
     match val {
         stylo::Size::CalcSizeBasis(_) => dimension(val.prepared_size()),
-        stylo::Size::LengthPercentage(val) | stylo::Size::CalcSizeAny(val) => length_percentage(&val.0).into(),
+        stylo::Size::LengthPercentage(val) | stylo::Size::CalcSizePercentage(val) | stylo::Size::CalcSizeAny(val) => length_percentage(&val.0).into(),
         stylo::Size::Auto => taffy::Dimension::AUTO,
 
         stylo::Size::MaxContent => taffy::Dimension::max_content(),
@@ -160,7 +160,7 @@ pub fn calc_size_auto(val: &stylo::Size) -> Option<taffy::CalcSizeFunction> {
 pub fn min_size(val: &stylo::Size) -> taffy::LengthPercentageAuto {
     match val {
         stylo::Size::CalcSizeBasis(_) => min_size(val.prepared_size()),
-        stylo::Size::LengthPercentage(val) | stylo::Size::CalcSizeAny(val) => length_percentage(&val.0).into(),
+        stylo::Size::LengthPercentage(val) | stylo::Size::CalcSizePercentage(val) | stylo::Size::CalcSizeAny(val) => length_percentage(&val.0).into(),
         stylo::Size::Auto => taffy::LengthPercentageAuto::AUTO,
 
         // Sizing keywords are not supported for min/max size properties in Taffy
@@ -190,6 +190,7 @@ pub fn min_size_keyword(val: &stylo::Size) -> taffy::Dimension {
     match val.prepared_size() {
         stylo::Size::LengthPercentage(_)
         | stylo::Size::CalcSizeAny(_)
+        | stylo::Size::CalcSizePercentage(_)
         | stylo::Size::Auto
         | stylo::Size::CalcSizeStretch(_)
         | stylo::Size::CalcSizeAuto(_)

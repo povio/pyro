@@ -481,6 +481,8 @@ impl Size {
 
     pub(crate) fn compose_size(&self, calculation: &NonNegativeLengthPercentage) -> Self {
         let (basis, wrap): (_, fn(NonNegativeLengthPercentage) -> Self) = match self {
+            Self::LengthPercentage(value) if value.0.has_percentage() => (value, Self::CalcSizePercentage),
+            Self::CalcSizePercentage(value) => (value, Self::CalcSizePercentage),
             Self::LengthPercentage(value) | Self::CalcSizeAny(value) => (value, Self::CalcSizeAny),
             Self::CalcSizeAuto(value) => (value, Self::CalcSizeAuto),
             Self::CalcSizeStretch(value) => (value, Self::CalcSizeStretch),
@@ -514,6 +516,10 @@ impl Size {
             }
         };
         match (self, other) {
+            (Self::CalcSizePercentage(from), Self::CalcSizePercentage(to) | Self::LengthPercentage(to)) |
+            (Self::LengthPercentage(from), Self::CalcSizePercentage(to)) => Ok(Self::CalcSizePercentage(from.animate(to, procedure)?)),
+            (Self::CalcSizeAny(from), Self::CalcSizePercentage(to)) if !from.0.has_percentage() => Ok(Self::CalcSizePercentage(from.animate(to, procedure)?)),
+            (Self::CalcSizePercentage(from), Self::CalcSizeAny(to)) if !to.0.has_percentage() => Ok(Self::CalcSizePercentage(from.animate(to, procedure)?)),
             (Self::Auto, Self::Auto) => Ok(Self::Auto),
             (Self::CalcSizeAny(from), Self::CalcSizeAny(to) | Self::LengthPercentage(to)) |
             (Self::LengthPercentage(from), Self::CalcSizeAny(to)) => Ok(Self::CalcSizeAny(from.animate(to, procedure)?)),
@@ -626,6 +632,7 @@ impl TryTacticAdjustment for Size {
             Self::CalcSizeBasis(_) => {},
             Self::FitContentFunction(lp)
             | Self::CalcSizeAny(lp)
+            | Self::CalcSizePercentage(lp)
             | Self::LengthPercentage(lp)
             | Self::AnchorContainingCalcFunction(lp) => {
                 lp.try_tactic_adjustment(old_side, new_side);

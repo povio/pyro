@@ -1976,12 +1976,7 @@ impl Size {
                 Some(input.parse_until_before(cssparser::Delimiter::Comma, |input| {
                     if let Ok(nested) = input.try_parse(|input| Self::parse_calc_size(context, input, depth + 1, expanded)) { return Ok(nested); }
                     let mut calc = CalcNode::parse_calc_size_calculation(context, input, AllowedNumericType::All, false)?;
-                    let mut percentage = false;
-                    calc.0.node.visit_depth_first(|node| {
-                        *expanded += 1;
-                        percentage |= matches!(node, CalcNode::Leaf(super::calc::Leaf::Percentage(_)));
-                    });
-                    if percentage { return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError)); }
+                    calc.0.node.visit_depth_first(|_| *expanded += 1);
                     Ok(Self::LengthPercentage(NonNegative(LengthPercentage::Calc(Box::new(calc)))))
                 })?)
             } else { None };
@@ -2022,7 +2017,7 @@ macro_rules! convert_size {
     ($source:expr, $from:ident, $to:ident, $convert:expr, $pair:expr) => {
         convert_size!($source, $from, $to, $convert, $pair; Auto, MaxContent, MinContent, FitContent, Stretch, WebkitFillAvailable;
             LengthPercentage, FitContentFunction, AnchorSizeFunction, AnchorContainingCalcFunction,
-            CalcSizeAuto, CalcSizeStretch, CalcSizeMinContent, CalcSizeMaxContent, CalcSizeFitContent, CalcSizeAny)
+            CalcSizeAuto, CalcSizeStretch, CalcSizeMinContent, CalcSizeMaxContent, CalcSizeFitContent, CalcSizeAny, CalcSizePercentage)
     };
 }
 
