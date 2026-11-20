@@ -8467,7 +8467,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      /// Paint overlay scrollbar thumbs for scroll containers: `overflow:
      /// scroll`, or `auto` when the content overflows (never `hidden`/`clip`,
      /// which scroll only programmatically). Thumbs appear on scroll and fade
-@@ -967,259 +3238,3579 @@
+@@ -967,259 +3238,3592 @@
          }
      }
  
@@ -11243,14 +11243,20 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +    /// as far as the column shows it, its block-start border and padding repeated above where it is
 +    /// cut at the column's start and its block-end ones below where it is cut at its end (the
 +    /// column's content is moved down for the first: `Breaks::clones`). Nothing for any other box.
-+    fn draw_clone_fragment(&self, scene: &mut impl PaintScene, container: NodeId, child_id: NodeId, start: f32, end: f32, transform: Affine) {
++    /// `after`: the pass after the child's own painting, for borders repeated inside its slice
++    /// (its background there is its own); the one before paints those repeated outside it, with
++    /// the background they enclose.
++    #[allow(clippy::too_many_arguments)]
++    fn draw_clone_fragment(&self, scene: &mut impl PaintScene, container: NodeId, child_id: NodeId, start: f32, end: f32, transform: Affine, after: bool) {
 +        let tree = self.context.dom.as_ref().tree();
 +        let child = &tree[child_id];
 +        let Some(style) = child.primary_styles() else { return };
 +        let clone = style.get_border().box_decoration_break == style::values::computed::BoxDecorationBreak::Clone;
 +        // (Of `box-sizing: border-box`, its repeated borders take its content's room, inside the
 +        // slice: `Breaks::clones`.)
-+        let border_box = style.get_position().box_sizing == style::computed_values::box_sizing::T::BorderBox;
++        // (So are a nested multi-column container's: its rows leave room for them.)
++        let border_box = style.get_position().box_sizing == style::computed_values::box_sizing::T::BorderBox
++            || child.column_fragments().is_some_and(|columns| columns.nested.is_some());
 +        drop(style);
 +        let layout = *child.final_layout();
 +        // (Not one whose content overflows it: `Breaks::clones`.)
@@ -11289,7 +11295,12 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        piece.size.height = (to - from).max(0.0);
 +        let box_transform = transform.pre_translate(Vec2::new(origin.x * self.scale, from as f64 * self.scale));
 +        let cx = self.context.element_cx(child, piece, box_transform, None);
-+        cx.draw_background(scene);
++        if after != border_box {
++            return;
++        }
++        if !border_box {
++            cx.draw_background(scene);
++        }
 +        cx.draw_border(scene);
 +    }
 +
@@ -11531,7 +11542,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                ColumnShare::Inside | ColumnShare::Cut => {
 +                    // pyro: a box of `box-decoration-break: clone` a break goes through has its
 +                    // fragment's background and borders, all four, here (under its content).
-+                    self.draw_clone_fragment(scene, container, child_id, start, end, transform);
++                    self.draw_clone_fragment(scene, container, child_id, start, end, transform, false);
 +                    let range = match share {
 +                        ColumnShare::Inside => Rect::new(range.x0, -1e9, range.x1, range.y1),
 +                        _ => range,
@@ -11551,6 +11562,8 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                    self.draw_paint_child(scene, child_id, parent_style_transform, clip_rect);
 +                    self.context.column_range.set(Some((container, start, end, transform, outer_range)));
 +                    self.context.layer_manager.maybe_pop_layer(scene, pushed);
++                    // (Repeated borders inside the slice go over its own painting.)
++                    self.draw_clone_fragment(scene, container, child_id, start, end, transform, true);
 +                    return;
 +                }
 +            }
@@ -12275,7 +12288,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      }
  
      #[cfg(feature = "svg")]
-@@ -1229,9 +6820,60 @@
+@@ -1229,9 +6833,60 @@
          let Some(svg) = self.svg else {
              return;
          };
@@ -12338,7 +12351,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let svg_size = svg.tree.size();
  
          let x = self.frame.content_box.origin().x;
-@@ -1253,9 +6895,20 @@
+@@ -1253,9 +6908,20 @@
  
          // Apply object-fit algorithm
          let container_size = taffy::Size { width, height };
@@ -12362,7 +12375,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          };
          let paint_size = compute_object_fit(container_size, Some(object_size), object_fit);
  
-@@ -1266,26 +6919,209 @@
+@@ -1266,26 +6932,209 @@
          let y_offset = object_position.vertical.resolve(
              CSSPixelLength::new(container_size.height - paint_size.height) / self.scale as f32,
          ) * self.scale as f32;
@@ -12574,7 +12587,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      fn with_replaced_content_clip<S: PaintScene>(
          &self,
          scene: &mut S,
-@@ -1293,15 +7129,38 @@
+@@ -1293,15 +7142,38 @@
          paint_size: taffy::Size<f32>,
          x_offset: f32,
          y_offset: f32,
@@ -12614,7 +12627,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              BlendMode::default(),
              1.0,
              self.transform,
-@@ -1312,7 +7171,108 @@
+@@ -1312,7 +7184,108 @@
          );
      }
  
@@ -12723,7 +12736,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          if let Some(image) = self.element.raster_image_data() {
              let width = self.frame.content_box.width() as u32;
              let height = self.frame.content_box.height() as u32;
-@@ -1329,9 +7289,22 @@
+@@ -1329,9 +7302,22 @@
                  width: width as f32,
                  height: height as f32,
              };
@@ -12749,7 +12762,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              };
              let paint_size = compute_object_fit(container_size, Some(object_size), object_fit);
  
-@@ -1347,10 +7320,28 @@
+@@ -1347,10 +7333,28 @@
  
              let x_scale = paint_size.width as f64 / object_size.width as f64;
              let y_scale = paint_size.height as f64 / object_size.height as f64;
@@ -12778,7 +12791,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  
              self.with_replaced_content_clip(
                  scene,
-@@ -1358,8 +7349,23 @@
+@@ -1358,8 +7362,23 @@
                  paint_size,
                  x_offset.px(),
                  y_offset.px(),
@@ -12803,7 +12816,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  },
              );
          }
-@@ -1383,22 +7389,27 @@
+@@ -1383,22 +7402,27 @@
              let width = self.frame.content_box.width() as u32;
              let height = self.frame.content_box.height() as u32;
  
@@ -12840,7 +12853,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          }
      }
  
-@@ -1427,6 +7438,32 @@
+@@ -1427,6 +7451,32 @@
      }
  }
  
@@ -12873,7 +12886,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  fn insets_from_taffy_rect(input: taffy::Rect<f64>) -> Insets {
      Insets {
          x0: input.left,
-@@ -1438,6 +7475,13 @@
+@@ -1438,6 +7488,13 @@
  
  /// Convert Stylo and Taffy types into Kurbo types
  fn create_css_rect(style: &ComputedValues, layout: &Layout, scale: f64) -> CssBox {
@@ -12887,7 +12900,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      // Resolve and rescale
      // We have to scale since document pixels are not same same as rendered pixels
      let width: f64 = layout.size.width as f64;
-@@ -1457,12 +7501,364 @@
+@@ -1457,12 +7514,364 @@
          }
      };
      let s_border = style.get_border();

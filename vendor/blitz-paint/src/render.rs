@@ -5838,14 +5838,20 @@ impl ElementCx<'_, '_> {
     /// as far as the column shows it, its block-start border and padding repeated above where it is
     /// cut at the column's start and its block-end ones below where it is cut at its end (the
     /// column's content is moved down for the first: `Breaks::clones`). Nothing for any other box.
-    fn draw_clone_fragment(&self, scene: &mut impl PaintScene, container: NodeId, child_id: NodeId, start: f32, end: f32, transform: Affine) {
+    /// `after`: the pass after the child's own painting, for borders repeated inside its slice
+    /// (its background there is its own); the one before paints those repeated outside it, with
+    /// the background they enclose.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_clone_fragment(&self, scene: &mut impl PaintScene, container: NodeId, child_id: NodeId, start: f32, end: f32, transform: Affine, after: bool) {
         let tree = self.context.dom.as_ref().tree();
         let child = &tree[child_id];
         let Some(style) = child.primary_styles() else { return };
         let clone = style.get_border().box_decoration_break == style::values::computed::BoxDecorationBreak::Clone;
         // (Of `box-sizing: border-box`, its repeated borders take its content's room, inside the
         // slice: `Breaks::clones`.)
-        let border_box = style.get_position().box_sizing == style::computed_values::box_sizing::T::BorderBox;
+        // (So are a nested multi-column container's: its rows leave room for them.)
+        let border_box = style.get_position().box_sizing == style::computed_values::box_sizing::T::BorderBox
+            || child.column_fragments().is_some_and(|columns| columns.nested.is_some());
         drop(style);
         let layout = *child.final_layout();
         // (Not one whose content overflows it: `Breaks::clones`.)
@@ -5884,7 +5890,12 @@ impl ElementCx<'_, '_> {
         piece.size.height = (to - from).max(0.0);
         let box_transform = transform.pre_translate(Vec2::new(origin.x * self.scale, from as f64 * self.scale));
         let cx = self.context.element_cx(child, piece, box_transform, None);
-        cx.draw_background(scene);
+        if after != border_box {
+            return;
+        }
+        if !border_box {
+            cx.draw_background(scene);
+        }
         cx.draw_border(scene);
     }
 
@@ -6126,7 +6137,7 @@ impl ElementCx<'_, '_> {
                 ColumnShare::Inside | ColumnShare::Cut => {
                     // pyro: a box of `box-decoration-break: clone` a break goes through has its
                     // fragment's background and borders, all four, here (under its content).
-                    self.draw_clone_fragment(scene, container, child_id, start, end, transform);
+                    self.draw_clone_fragment(scene, container, child_id, start, end, transform, false);
                     let range = match share {
                         ColumnShare::Inside => Rect::new(range.x0, -1e9, range.x1, range.y1),
                         _ => range,
@@ -6146,6 +6157,8 @@ impl ElementCx<'_, '_> {
                     self.draw_paint_child(scene, child_id, parent_style_transform, clip_rect);
                     self.context.column_range.set(Some((container, start, end, transform, outer_range)));
                     self.context.layer_manager.maybe_pop_layer(scene, pushed);
+                    // (Repeated borders inside the slice go over its own painting.)
+                    self.draw_clone_fragment(scene, container, child_id, start, end, transform, true);
                     return;
                 }
             }

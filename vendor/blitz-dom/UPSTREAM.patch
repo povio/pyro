@@ -21879,7 +21879,7 @@ diff --git a/packages/blitz-dom/src/layout/multicol.rs b/packages/blitz-dom/src/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/multicol.rs
-@@ -0,0 +1,3412 @@
+@@ -0,0 +1,3443 @@
 +//! pyro: CSS Multi-column Layout (<https://drafts.csswg.org/css-multicol/>).
 +//!
 +//! A multi-column container lays its content out once, in a strip one column wide (its flow
@@ -22930,8 +22930,33 @@ new file mode 100644
 +        };
 +        let mut sink = FragmentSink::new(start_budget, breaks.end, column_x(0), column_width, pb.left);
 +        let mut pushed = false;
++        // pyro: the rows a nested container of `box-decoration-break: clone` adds after its first,
++        // each with its borders and padding repeated (`nested_ctx` below; its height grows by them).
++        let mut clone_rows = 0usize;
++        let mut clone_insets = 0.0f32;
 +        if let Some((outer_height, offset)) = nested_ctx {
-+            let box_end = definite_height.map(|height| content_top + height);
++            let box_end_of_content = definite_height.map(|height| content_top + height);
++            // pyro: of `box-decoration-break: clone`, each row (each outer fragment of the box)
++            // ends with the box's block-end border and padding, and each after the first starts
++            // with its block-start ones: the rows are that much shorter, and end when the content
++            // height is used up, not where the box's own height ends (Chromium; WPT css-multicol
++            // `multicol-breaking-004`).
++            let clone = self.nodes[dom_id]
++                .primary_styles()
++                .is_some_and(|style| style.get_border().box_decoration_break == style::values::computed::BoxDecorationBreak::Clone);
++            let (clone_top, clone_bottom) = if clone { (pb.top, pb.bottom) } else { (0.0, 0.0) };
++            clone_insets = clone_top + clone_bottom;
++            // (As many fragments as its content height needs, rows of it or not: the first as
++            // much as is left of its outer column, the others a whole one, less the decorations.)
++            if let (true, Some(height)) = (clone, definite_height) {
++                let first_left = outer_height - offset - content_top;
++                let first_room = (if first_left >= 1.0 { first_left } else { outer_height }) - clone_bottom;
++                let room = outer_height - clone_top - clone_bottom;
++                if first_room >= 1.0 && room >= 1.0 && height > first_room + EPSILON {
++                    clone_rows = (((height - first_room) / room - EPSILON).ceil() as usize).min(MAX_FRAGMENTS);
++                }
++            }
++            let mut consumed = 0.0f32;
 +            let first = outer_height - offset - content_top;
 +            let (mut top, mut available) = if first >= 1.0 { (content_top, first) } else { (content_top, outer_height) };
 +            let mut start = breaks.start;
@@ -22939,14 +22964,17 @@ new file mode 100644
 +            let mut placed: Vec<(f32, f32, f32, f32)> = Vec::new(); // (start, end, row top, row height)
 +            let mut last_row_extended = (f32::NAN, 0.0f32);
 +            loop {
-+                let row_height = box_end.map_or(available, |end| available.min(end - top).max(1.0));
++                let box_end = box_end_of_content.map(|end| if clone { top + (end - content_top - consumed) } else { end });
++                // (What the row may hold: its outer column's room less the repeated decorations.)
++                let room = (available - clone_bottom - if !placed.is_empty() { clone_top } else { 0.0 }).max(1.0);
++                let row_height = box_end.map_or(room, |end| room.min(end - top).max(1.0));
 +                // (Past the fragment cap, what is left goes to one last column.)
 +                if placed.len() + count + 1 >= sink.room() {
 +                    placed.push((start, end, top, row_height));
 +                    row_top = top + row_height;
 +                    break;
 +                }
-+                let last_box_row = box_end.is_some_and(|end| top + available >= end - EPSILON);
++                let last_box_row = box_end.is_some_and(|end| top + room >= end - EPSILON);
 +                let run = breaks.fill_range(start, end, row_height, count + 1);
 +                if placed.is_empty() && offset > EPSILON && first >= 1.0 {
 +                    let violates = |a: f32| containing(&breaks.strict, a + row_height).is_some_and(|(s, _)| s <= a + EPSILON);
@@ -22966,7 +22994,8 @@ new file mode 100644
 +                        let at = run.columns[i].0;
 +                        placed.extend((i..count).map(|_| (at, at, top, row_height)));
 +                        start = at;
-+                        top += row_height;
++                        consumed += row_height;
++                        top += row_height + clone_bottom + clone_top;
 +                        available = outer_height;
 +                        row_top = top;
 +                        continue;
@@ -22995,7 +23024,8 @@ new file mode 100644
 +                }
 +                placed.extend(run.columns.iter().take(count).map(|&(a, b)| (a, b, top, row_height)));
 +                start = run.columns[count].0;
-+                top += row_height;
++                consumed += row_height;
++                top += row_height + clone_bottom + clone_top;
 +                available = outer_height;
 +                row_top = top;
 +            }
@@ -23483,7 +23513,8 @@ new file mode 100644
 +                    .unwrap_or(columns_height + pb_sum.height + legend_extra)
 +                    .maybe_clamp(min_size.height, max_size.height)
 +            })
-+            .max(pb_sum.height + legend_extra);
++            .max(pb_sum.height + legend_extra)
++            + clone_rows as f32 * clone_insets;
 +
 +        // pyro: a table cell's `vertical-align` (as `align-content`) moves its columns down in a
 +        // taller cell (`stylo_taffy::convert::table_cell_vertical_align`).
