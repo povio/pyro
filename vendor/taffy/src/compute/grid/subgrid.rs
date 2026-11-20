@@ -549,12 +549,6 @@ fn collect_virtual_items<Tree: LayoutGridContainer>(
         AbsoluteAxis::Horizontal => (extra.left, extra.right) = if rtl { (end, start) } else { (start, end) },
         AbsoluteAxis::Vertical => (extra.top, extra.bottom) = (start, end),
     };
-    let first_new = out.len();
-    // This subgrid's own items as they were pushed (index in `out`), for the edge items
-    let mut direct: Vec<usize> = Vec::new();
-    // pyro: the areas of the nested subgrids (and the axes they are nested in), which take this subgrid's
-    // tracks as its items do for where its margin, border and padding go (`orthogonal-writing-mode-001`)
-    let mut nested_areas: Vec<(Size<bool>, InBothAbsAxis<Line<OriginZeroLine>>)> = Vec::new();
     for mut item in items {
         let local = InBothAbsAxis { horizontal: item.column, vertical: item.row };
         item.subgrid_owner = Some(node);
@@ -622,7 +616,6 @@ fn collect_virtual_items<Tree: LayoutGridContainer>(
             let mapped_area = InBothAbsAxis { horizontal: item.column, vertical: item.row };
             let nested_context = child_context(tree, item.node, nested, mapped_area, &nested_parent, nested_maps);
             collect_virtual_items(tree, item.node, &nested_context, mapped_area, nested, extra, parent, nested_maps, out, false);
-            nested_areas.push((nested, mapped_area));
             stretch_subgrid_item(&mut item, nested);
             excluded.width |= nested.width;
             excluded.height |= nested.height;
@@ -658,7 +651,6 @@ fn collect_virtual_items<Tree: LayoutGridContainer>(
                 }
             }
             let mapped_area = InBothAbsAxis { horizontal: item.column, vertical: item.row };
-            nested_areas.push((nested, mapped_area));
             let before = out.len();
             collect_virtual_items(tree, item.node, &nested_context, mapped_area, nested, extra, parent, nested_maps, out, false);
             // pyro: a nested subgrid in both its axes has no tracks of its own: its items belong to this subgrid's
@@ -684,7 +676,6 @@ fn collect_virtual_items<Tree: LayoutGridContainer>(
         }
         item.excluded = excluded;
         if !(excluded.width && excluded.height) {
-            direct.push(out.len());
             out.push(item);
         } else if nested.width || nested.height {
             // A nested subgrid that sizes nothing here itself: kept (taking no part in sizing) for where it
@@ -697,14 +688,6 @@ fn collect_virtual_items<Tree: LayoutGridContainer>(
         if !sizing.get_abs(axis) {
             continue;
         }
-        let excluded_in = |item: &GridItem| match axis {
-            AbsoluteAxis::Horizontal => item.excluded.width,
-            AbsoluteAxis::Vertical => item.excluded.height,
-        };
-        let lines_of = |item: &GridItem| match axis {
-            AbsoluteAxis::Horizontal => item.column,
-            AbsoluteAxis::Vertical => item.row,
-        };
         let span = area.get(axis);
         let (edge_start, edge_end) = edge_margins(axis);
         // A zero-size item over `lines` of the subgrid's tracks that carries its margin, border and padding
@@ -750,32 +733,23 @@ fn collect_virtual_items<Tree: LayoutGridContainer>(
             spacer.extra_margin = extra;
             spacer
         };
-        // Where no item of the subgrid starts at its start (ends at its end), its margin, border and padding
-        // there go into its edge track alone, not across the empty tracks between it and the edge-most item;
-        // an empty subgrid has both in its edge tracks (Chromium; WPT css-grid `subgrid/grid-gap-002`,
-        // `orthogonal-writing-mode-002`, `-003`)
-        let empty = !out[first_new..].iter().any(|item| !excluded_in(item));
-        let own: Vec<Line<OriginZeroLine>> = direct
-            .iter()
-            .filter(|&&index| !excluded_in(&out[index]))
-            .map(|&index| lines_of(&out[index]))
-            .chain(nested_areas.iter().filter(|(nested, _)| nested.get_abs(axis)).map(|(_, area)| area.get(axis)))
-            .collect();
-        if own.is_empty() && !empty {
-            continue;
-        }
-        let first = own.iter().map(|lines| lines.start.0).min().unwrap_or(span.end.0);
-        let last = own.iter().map(|lines| lines.end.0).max().unwrap_or(span.start.0);
-        if span.span() == 1 && first != span.start.0 && last != span.end.0 {
+        // Its edge tracks take at least its margin, border and padding there, whatever its items (which an
+        // item at the edge may not hold: the half gap difference at its other edge can be negative), and not
+        // the empty tracks between the edge and its edge-most item (Blink's `AccommodateSubgridExtraMargins`;
+        // WPT css-grid `subgrid/grid-gap-002`, `orthogonal-writing-mode-001`..`-003`,
+        // `item-percentage-height-001`)
+        if span.span() == 1 {
             // (one track holds both edges)
-            out.push(spacer_over(span, edge_start, edge_end));
+            if edge_start + edge_end != 0.0 {
+                out.push(spacer_over(span, edge_start, edge_end));
+            }
             continue;
         }
-        if first != span.start.0 && edge_start != 0.0 {
+        if edge_start != 0.0 {
             let lines = Line { start: span.start, end: OriginZeroLine(span.start.0 + 1) };
             out.push(spacer_over(lines, edge_start, 0.0));
         }
-        if last != span.end.0 && edge_end != 0.0 {
+        if edge_end != 0.0 {
             let lines = Line { start: OriginZeroLine(span.end.0 - 1), end: span.end };
             out.push(spacer_over(lines, 0.0, edge_end));
         }
