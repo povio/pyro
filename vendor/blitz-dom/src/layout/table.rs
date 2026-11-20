@@ -410,34 +410,29 @@ impl TableTreeWrapper<'_, '_> {
         for c in 0..n {
             max[c] = max[c].max(min[c]);
         }
-        // A spanning cell wider than the columns it spans widens those without a percentage,
-        // in proportion to their max-content widths (all of them when each has one).
+        // pyro: a spanning cell's min-content and max-content widths are distributed over the columns
+        // it spans as Blink's `DistributeColspanCellToColumnsAuto` does: with the table's own width
+        // distribution (`blink_distribute_auto`), its min-content width as a constrained target (WPT
+        // css-tables `table-colspan-percent-auto`, `colspan-004`).
         for (column, span, lo, hi) in spanning {
             let end = (column + span).min(n);
-            let columns = column.min(end)..end;
-            let spacing = gap * columns.len().saturating_sub(1) as f32;
-            // pyro: auto columns first, then fixed ones, then percentage ones (Blink's
-            // `DistributeColspanCellToColumns`: unconstrained columns take a spanning cell's excess).
-            let auto: Vec<usize> = columns.clone().filter(|&c| percent[c].is_none() && !fixed[c]).collect();
-            let free: Vec<usize> = columns.clone().filter(|&c| percent[c].is_none()).collect();
-            let group = if !auto.is_empty() {
-                auto
-            } else if free.is_empty() {
-                columns.collect()
-            } else {
-                free
+            let start = column.min(end);
+            if start == end {
+                continue;
+            }
+            let spacing = gap * (end - start).saturating_sub(1) as f32;
+            let columns_of = |min: &[f32], max: &[f32]| -> Vec<DistColumn> {
+                (start..end)
+                    .map(|c| DistColumn { min: min[c], max: max[c].max(min[c]), percent: percent[c], constrained: fixed[c] })
+                    .collect()
             };
-            let total: f32 = group.iter().map(|&c| max[c]).sum();
-            let snapshot = max.clone();
-            let max_share = |c: usize, total: f32| snapshot[c] / total;
-            for (want, sizes) in [(lo, &mut min), (hi, &mut max)] {
-                let have = (column.min(end)..end).map(|c| sizes[c]).sum::<f32>() + spacing;
-                if want > have {
-                    for &c in &group {
-                        let part = if total > 0.0 { max_share(c, total) } else { 1.0 / group.len() as f32 };
-                        sizes[c] += (want - have) * part;
-                    }
-                }
+            let sizes = blink_distribute_auto((lo - spacing).max(0.0), &columns_of(&min, &max), true);
+            for (i, c) in (start..end).enumerate() {
+                min[c] = min[c].max(sizes[i]);
+            }
+            let sizes = blink_distribute_auto((hi - spacing).max(0.0), &columns_of(&min, &max), false);
+            for (i, c) in (start..end).enumerate() {
+                max[c] = max[c].max(min[c]).max(sizes[i]);
             }
         }
         for c in 0..n {
@@ -4728,4 +4723,114 @@ fn cell_own_min_width(style: &taffy::Style<Atom>, parent: Option<f32>) -> Option
             taffy::BoxSizing::BorderBox => w.max(extra),
         }
     })
+}
+
+/// pyro: a column as Blink's table width distribution sees it (`TableTypes::Column`): its
+/// min-content and max-content widths, its percentage (a fraction) and whether it is constrained
+/// (has a length width).
+#[derive(Clone, Copy)]
+struct DistColumn {
+    min: f32,
+    max: f32,
+    percent: Option<f32>,
+    constrained: bool,
+}
+
+/// pyro: Blink's `DistributeInlineSizeToComputedInlineSizeAuto` (css-tables-3 width distribution:
+/// the min, percentage, specified and max guesses): the widths `columns` get of `target`.
+fn blink_distribute_auto(target: f32, columns: &[DistColumn], constrained_target: bool) -> Vec<f32> {
+    let resolve_percent = |c: &DistColumn, target: f32| c.min.max(c.percent.unwrap_or(0.0) * target);
+    let (mut min_guess, mut percent_guess, mut specified_guess, mut max_guess) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
+    let (mut percent_increase, mut fixed_increase, mut auto_increase) = (0.0f32, 0.0f32, 0.0f32);
+    let (mut percent_count, mut fixed_count, mut auto_count) = (0usize, 0usize, 0usize);
+    let (mut total_percent, mut total_auto_max, mut total_fixed_max) = (0.0f32, 0.0f32, 0.0f32);
+    for c in columns {
+        if c.percent.is_some() {
+            percent_count += 1;
+            total_percent += c.percent.unwrap_or(0.0);
+            let size = resolve_percent(c, target);
+            min_guess += c.min;
+            percent_guess += size;
+            specified_guess += size;
+            max_guess += size;
+            percent_increase += size - c.min;
+        } else if c.constrained {
+            fixed_count += 1;
+            total_fixed_max += c.max;
+            min_guess += c.min;
+            percent_guess += c.min;
+            specified_guess += c.max;
+            max_guess += c.max;
+            fixed_increase += c.max - c.min;
+        } else {
+            auto_count += 1;
+            total_auto_max += c.max;
+            min_guess += c.min;
+            percent_guess += c.min;
+            specified_guess += c.min;
+            max_guess += c.max;
+            auto_increase += c.max - c.min;
+        }
+    }
+    let target = target.max(min_guess);
+    let n = columns.len();
+    let mut sizes = vec![0.0f32; n];
+    // Spreads `amount` over the columns `pick` selects, by `weight`, from `base`; the last one takes
+    // what rounding leaves (none here: f32 math).
+    let mut spread = |sizes: &mut Vec<f32>,
+                      pick: &dyn Fn(&DistColumn) -> bool,
+                      weight: &dyn Fn(&DistColumn) -> f32,
+                      total_weight: f32,
+                      count: usize,
+                      base: &dyn Fn(&DistColumn) -> f32,
+                      amount: f32| {
+        for (i, c) in columns.iter().enumerate() {
+            if pick(c) {
+                let delta = if total_weight > 0.0 { amount * weight(c) / total_weight } else { amount / count.max(1) as f32 };
+                sizes[i] = base(c) + delta;
+            }
+        }
+    };
+    if min_guess >= target {
+        for (i, c) in columns.iter().enumerate() {
+            sizes[i] = c.min;
+        }
+    } else if percent_guess >= target {
+        for (i, c) in columns.iter().enumerate() {
+            sizes[i] = c.min;
+        }
+        spread(&mut sizes, &|c| c.percent.is_some(), &|c| resolve_percent(c, target) - c.min, percent_increase, percent_count, &|c| c.min, target - min_guess);
+    } else if specified_guess >= target {
+        for (i, c) in columns.iter().enumerate() {
+            sizes[i] = if c.percent.is_some() { resolve_percent(c, target) } else { c.min };
+        }
+        spread(&mut sizes, &|c| c.percent.is_none() && c.constrained, &|c| c.max - c.min, fixed_increase, fixed_count, &|c| c.min, target - percent_guess);
+    } else if max_guess >= target {
+        let exact = (target - max_guess).abs() < 0.001;
+        for (i, c) in columns.iter().enumerate() {
+            sizes[i] = if c.percent.is_some() {
+                resolve_percent(c, target)
+            } else if c.constrained || exact {
+                c.max
+            } else {
+                c.min
+            };
+        }
+        if !exact {
+            spread(&mut sizes, &|c| c.percent.is_none() && !c.constrained, &|c| c.max - c.min, auto_increase, auto_count, &|c| c.min, target - specified_guess);
+        }
+    } else {
+        let extra = target - max_guess;
+        for (i, c) in columns.iter().enumerate() {
+            sizes[i] = if c.percent.is_some() { resolve_percent(c, target) } else { c.max };
+        }
+        if auto_count > 0 {
+            spread(&mut sizes, &|c| c.percent.is_none() && !c.constrained, &|c| c.max, total_auto_max, auto_count, &|c| c.max, extra);
+        } else if fixed_count > 0 && constrained_target {
+            spread(&mut sizes, &|c| c.percent.is_none() && c.constrained, &|c| c.max, total_fixed_max, fixed_count, &|c| c.max, extra);
+        } else if percent_count > 0 {
+            spread(&mut sizes, &|c| c.percent.is_some(), &|c| c.percent.unwrap_or(0.0), total_percent, percent_count, &|c| resolve_percent(c, target), extra);
+        }
+    }
+    sizes
 }
