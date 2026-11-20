@@ -1676,7 +1676,7 @@
 
   // ----- Compression streams ---------------------------------------------
 
-  const FORMATS = ['deflate', 'deflate-raw', 'gzip'];
+  const FORMATS = ['deflate', 'deflate-raw', 'gzip', 'brotli'];
   // A transform over a native codec: each chunk must be a BufferSource; the
   // codec's TypeErrors (corrupt or truncated data) error both sides.
   const codecTransform = (kind, format, compress) => {
@@ -1686,10 +1686,10 @@
     }
     const codec = zlib(name, compress);
     const push = codec.push, finish = codec.finish;
+    const enqueue = out => tcEnqueue(t.controller, out);
     const t = makeTransform(undefined, (chunk) => {
       try {
-        const out = push(chunk);
-        if (out.length > 0) tcEnqueue(t.controller, out);
+        push(chunk, enqueue);
         return resolved();
       } catch (e) {
         return rejected(e);
