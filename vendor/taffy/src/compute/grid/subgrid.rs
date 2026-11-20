@@ -366,7 +366,10 @@ pub(super) fn place_subgrid_items<Tree: LayoutGridContainer>(
     (items, names)
 }
 
-/// The margin, border and padding of a box, `auto` margins as zero, percentages against `basis`
+/// The margin, border and padding of a box, `auto` margins as zero, percentages against `basis`, with its
+/// scrollbar gutters (pyro: a scroll container subgrid's tracks are the parent's less its classic scrollbar
+/// gutters too, as in Blink: WPT css-grid `subgrid/scrollbar-gutter-001`, a 75px column's `overflow: auto;
+/// scrollbar-gutter: stable` subgrid has a 60px track and no horizontal scrollbar)
 fn margin_border_padding<Tree: LayoutGridContainer>(
     tree: &Tree,
     style: &impl CoreStyle,
@@ -376,7 +379,7 @@ fn margin_border_padding<Tree: LayoutGridContainer>(
     let margin = style.margin().map(|margin| margin.resolve_or_zero(basis, calc));
     let border = style.border().map(|border| border.resolve_or_zero(basis, calc));
     let padding = style.padding().map(|padding| padding.resolve_or_zero(basis, calc));
-    margin + border + padding
+    margin + border + padding + style.scrollbar_gutter()
 }
 
 /// The used gap of a subgrid in `axis`: its own, or with `normal` its parent's (`parent_gap`)
