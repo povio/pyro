@@ -79,11 +79,11 @@ pub(super) fn measure(page: &PageDom, options: &options::Options, target_page: &
         let root_is_document = dom.node_type(root).ok() == Some(pyro_dom::NodeType::Document);
         let root_rect = match (same_document, root_is_document) {
             (true, true) => viewport(&dom, &layout),
-            (true, false) => layout.bounding_client_rect(&dom, root),
+            (true, false) => layout.observer_root_rect(&dom, root),
             (false, true) => viewport(&page.dom.borrow(), &page.layout()),
             (false, false) => {
                 let pdom = page.dom.borrow();
-                page.layout().bounding_client_rect(&pdom, root)
+                page.layout().observer_root_rect(&pdom, root)
             }
         };
         let bounds = options::expand(root_rect, &options.margin);

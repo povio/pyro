@@ -1578,6 +1578,34 @@ impl Layout {
         Some(q)
     }
 
+    pub fn observer_root_rect(&self, dom: &Dom, root: NodeId) -> Rect {
+        let axes = self.style.overflow_clip_axes(dom, root);
+        let table = self.style.stylo_style(dom, root).is_some_and(|style| {
+            style.slow_clone_display().inside() == style::values::specified::box_::DisplayInside::Table
+        });
+        if (axes.x || axes.y) && !table {
+            if let (Some(bounds), Some(quad)) = (self.layout_box(dom, root), self.box_quads(dom, root)) {
+                if quad.width > 0.0 && quad.height > 0.0 {
+                    let left = bounds.border[LEFT] / quad.width;
+                    let top = bounds.border[TOP] / quad.height;
+                    let right = left + bounds.client_width / quad.width;
+                    let bottom = top + bounds.client_height / quad.height;
+                    let span = |axis: usize| {
+                        let origin = quad.border[axis];
+                        let dx = quad.border[2 + axis] - origin;
+                        let dy = quad.border[6 + axis] - origin;
+                        (origin + (dx * left).min(dx * right) + (dy * top).min(dy * bottom),
+                         (dx * (right - left)).abs() + (dy * (bottom - top)).abs())
+                    };
+                    let (x, width) = span(0);
+                    let (y, height) = span(1);
+                    return Rect { x, y, width, height };
+                }
+            }
+        }
+        self.bounding_client_rect(dom, root)
+    }
+
     /// `getClientRects`: none when not rendered; an inline box over several
     /// lines has one border box per line (the engine's fragments), any other
     /// element one rect.
