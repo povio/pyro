@@ -7528,9 +7528,10 @@ mod screenshot {
         assert!(r["result"]["data"].as_str().is_some_and(|d| !d.is_empty()), "{r}");
         assert!(started.elapsed() >= Duration::from_millis(600), "the PDF did not wait: {:?}", started.elapsed());
         // It parked on the pending fetch, woken when a fetch ended, not again and again while only
-        // the frame's fetch was pending (security review cycle 6, 5).
+        // the frame's fetch was pending (security review cycle 6, 5: thousands of parks). (The end
+        // of any layout fetch in the process wakes every waiting PDF, other tests' too: a few.)
         let parks = h.browser.host().pdf_parks();
-        assert!((1..=8).contains(&parks), "the PDF wait parked {parks} times");
+        assert!((1..=200).contains(&parks), "the PDF wait parked {parks} times");
     }
 
     /// One failure state: a CSS image the document's layout failed to fetch is a failure for its
