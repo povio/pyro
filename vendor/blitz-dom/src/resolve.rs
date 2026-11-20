@@ -1379,6 +1379,18 @@ impl BaseDocument {
                 if Some(i) == clamp_line { w.min(content_width) } else { w }
             })
             .fold(0.0, f64::max);
+        // pyro: where the lines start: an overflowing right-to-left line is right-aligned and
+        // overflows its inline start (parley's negative offset; its hanging trailing whitespace
+        // is on its left), which is scrollable overflow (Chrome: `direction: rtl` 4ch of Ahem in
+        // a 35px `overflow: auto` box has scrollWidth 40).
+        let start = text_layout
+            .lines()
+            .take(kept)
+            .map(|line| {
+                let m = line.metrics();
+                (m.offset + if line.is_rtl() { m.hanging_advance } else { 0.0 }) as f64
+            })
+            .fold(0.0, f64::min);
         // The empty line parley adds after a final hard break (`<br>`)
         // is not content.
         let height = text_layout
@@ -1404,7 +1416,7 @@ impl BaseDocument {
         };
         // The lines of a vertical writing mode are logical: `width` runs along y, `height` along x.
         let lines = match self.nodes[node_id].vertical_block_axis() {
-            None => Rect::new(x0, y0, x0 + width + end_x, y0 + height + end_y),
+            None => Rect::new(x0 + start, y0, x0 + width + end_x, y0 + height + end_y),
             Some(block_lr) => {
                 let offset = block_offset as f64 * scale;
                 let top = y0 - offset;
@@ -1419,9 +1431,9 @@ impl BaseDocument {
                 if stylo_taffy::WritingModeExt::line_left_is_bottom(self.nodes[node_id].layout_data().writing_mode) {
                     let bottom = (l.size.height - l.border.bottom - l.padding.bottom - g.bottom) as f64 * scale;
                     let end_top = if scrolls { l.padding.top as f64 * scale } else { 0.0 };
-                    return Some((Rect::new(b0, bottom - width - end_top, b1, bottom), width > 0.0 || height > 0.0));
+                    return Some((Rect::new(b0, bottom - width - end_top, b1, bottom - start), width > 0.0 || height > 0.0));
                 }
-                Rect::new(b0, top, b1, top + width + end_y)
+                Rect::new(b0, top + start, b1, top + width + end_y)
             }
         };
         Some((lines, width > 0.0 || height > 0.0))
