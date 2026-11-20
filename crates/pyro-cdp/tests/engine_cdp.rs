@@ -7408,6 +7408,20 @@ mod screenshot {
         address
     }
 
+    #[test]
+    fn animation_frame_starts_a_changed_content_image_without_a_geometry_read() {
+        let address = gate_server("<!doctype html><div id='target'></div>", |_| None);
+        let mut harness = Harness::new();
+        harness.page("Page.enable", json!({}));
+        harness.page("Network.enable", json!({}));
+        harness.page("Page.navigate", json!({"url": format!("http://{address}/")}));
+        harness.until_event(|event| event["method"] == "Page.loadEventFired");
+        harness.page("Runtime.evaluate", json!({"expression":
+            "requestAnimationFrame(() => document.getElementById('target').style.content = 'url(/replacement.svg)')"}));
+        let url = format!("http://{address}/replacement.svg");
+        harness.until_event(|event| event["method"] == "Network.requestWillBeSent" && event["params"]["request"]["url"] == url);
+    }
+
     /// How long `load` took from navigating to the gate server.
     fn load_time(address: std::net::SocketAddr) -> Duration {
         let mut h = Harness::new();

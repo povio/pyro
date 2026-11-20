@@ -1527,6 +1527,13 @@ impl PageDom {
         // pyro: laid out again whenever the document or its style changed since the gate's last
         // pass (a rule or element using a stalled image removed, a `replaceSync()` on an adopted
         // sheet): what it still references, by request, is what load waits for.
+        self.sync_frame_resources();
+        let pending = self.try_layout().is_some_and(|layout| layout.images_pending_as_laid_out());
+        pending && self.created.elapsed() < std::time::Duration::from_secs(10)
+    }
+
+    /// Starts layout-dependent resource requests when a rendering opportunity observes changed styles.
+    pub fn sync_frame_resources(&self) {
         if let (Ok(dom), Some(layout)) = (self.dom.try_borrow(), self.try_layout()) {
             let stamp = { let s = layout.style().observation_stamp(&dom); (s.0, s.1) };
             if stamp != self.load_layout_version.get() || self.load_layout_version.get() == (0, 0) {
@@ -1534,8 +1541,6 @@ impl PageDom {
                 self.load_layout_version.set(stamp);
             }
         }
-        let pending = self.try_layout().is_some_and(|layout| layout.images_pending_as_laid_out());
-        pending && self.created.elapsed() < std::time::Duration::from_secs(10)
     }
 
     /// Whether a face of the document's sheets that the layout engine is still fetching has a
