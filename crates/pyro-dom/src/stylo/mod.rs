@@ -59,6 +59,7 @@ pub(crate) fn enable_features() {
         // pyro: `closest-corner`/`farthest-corner` radii in `ellipse()` (CSS Shapes 2).
         style_config::set_pref!("layout.css.ellipse-corners.enabled", true);
         style_config::set_pref!("layout.css.counters.enabled", true);
+        style_config::set_pref!("layout.css.first-line.enabled", true);
         style_config::set_pref!("layout.css.font-size-adjust.enabled", true);
         // pyro: `font-synthesis-style`, `-small-caps` and `-position` (and the shorthand).
         style_config::set_pref!("layout.css.font-synthesis.enabled", true);
@@ -311,8 +312,8 @@ pub enum PseudoArg {
 
 /// Parses `getComputedStyle`'s `pseudoElt` (CSSOM): text without a leading
 /// colon is ignored; otherwise exactly one `<pseudo-element-selector>` with
-/// nothing after it, the legacy single-colon forms of `::before`, `::after`
-/// and `::first-letter` included.
+/// nothing after it, the legacy single-colon forms of `::before`, `::after`,
+/// `::first-line`, and `::first-letter` included.
 pub fn parse_pseudo_arg(text: &str) -> PseudoArg {
     if !text.starts_with(':') {
         return PseudoArg::Element;
@@ -363,6 +364,7 @@ pub fn parse_pseudo_arg(text: &str) -> PseudoArg {
     let pseudo = match name.as_str() {
         "before" => PseudoElement::Before,
         "after" => PseudoElement::After,
+        "first-line" => PseudoElement::FirstLine,
         "first-letter" => PseudoElement::FirstLetter,
         "selection" if double => PseudoElement::Selection,
         "view-transition" if double => PseudoElement::ViewTransition,

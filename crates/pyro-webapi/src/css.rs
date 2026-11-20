@@ -993,6 +993,7 @@ fn rule_wrapper<'s>(s: &Scope<'s>, rule: &Rc<RuleNode>, owner: &SheetOwner) -> J
         RuleKind::Group { name, .. } if name == "media" => s.wrap::<CssMediaRule>(data, key),
         RuleKind::Group { name, .. } if name == "supports" => s.wrap::<CssSupportsRule>(data, key),
         RuleKind::Group { name, .. } if name == "layer" => s.wrap::<CssLayerBlockRule>(data, key),
+        RuleKind::Group { name, .. } if name == "container" => s.wrap::<CssContainerRule>(data, key),
         RuleKind::Group { .. } => s.wrap::<CssConditionRule>(data, key),
         RuleKind::Other { rule_type: COUNTER_STYLE_RULE, .. } => s.wrap::<CssCounterStyleRule>(data, key),
         RuleKind::Other { rule_type: MARGIN_RULE, .. } => s.wrap::<CssMarginRule>(data, key),
@@ -1007,7 +1008,6 @@ fn rule_wrapper<'s>(s: &Scope<'s>, rule: &Rc<RuleNode>, owner: &SheetOwner) -> J
                 "font-feature-values" => s.wrap::<CssFontFeatureValuesRule>(data, key),
                 "layer" if text.trim_end().ends_with(';') => s.wrap::<CssLayerStatementRule>(data, key),
                 "layer" => s.wrap::<CssLayerBlockRule>(data, key),
-                "container" => s.wrap::<CssContainerRule>(data, key),
                 "property" => s.wrap::<CssPropertyRule>(data, key),
                 "font-palette-values" => s.wrap::<CssFontPaletteValuesRule>(data, key),
                 "starting-style" => s.wrap::<CssStartingStyleRule>(data, key),
@@ -1415,18 +1415,12 @@ rule_class!(CssMediaRule, "CSSMediaRule", CssConditionRule, |def| define_rule_me
 rule_class!(CssSupportsRule, "CSSSupportsRule", CssConditionRule);
 /// The conditions of an `@container` rule (style engine serialization).
 fn container_conditions(r: &RuleData) -> Vec<(String, String)> {
-    pyro_dom::cssom::container_conditions(&rule_prelude(r)).unwrap_or_default()
+    let Ok(node) = r.node() else { return Vec::new() };
+    let RuleKind::Group { condition, .. } = &node.kind else { return Vec::new() };
+    pyro_dom::cssom::container_conditions(&condition.borrow()).unwrap_or_default()
 }
 
 rule_class!(CssContainerRule, "CSSContainerRule", CssConditionRule, |def| {
-    def.getter("conditionText", |s, r| {
-        let conditions = container_conditions(r);
-        let text: Vec<String> = conditions
-            .iter()
-            .map(|(n, q)| [n.as_str(), q.as_str()].into_iter().filter(|p| !p.is_empty()).collect::<Vec<_>>().join(" "))
-            .collect();
-        Ok(s.string(&if conditions.is_empty() { rule_prelude(r) } else { text.join(", ") }))
-    });
     // The name and query of a single condition; "" with several.
     def.getter("containerName", |s, r| {
         let c = container_conditions(r);

@@ -12,7 +12,7 @@ pub type Namespaces = Vec<(String, String)>;
 pub enum ParsedRule {
     /// A style rule: serialized selector and the block's raw text.
     Style { selector: String, block: String },
-    /// `@media` / `@supports`: name, condition and child rules.
+    /// A grouping rule: at-keyword, serialized prelude and child rules.
     Group { name: String, condition: String, rules: Vec<ParsedRule> },
     /// Any other known at-rule, kept as written. `rule_type` is `CSSRule.type`.
     Other { rule_type: u16, text: String },
@@ -236,6 +236,15 @@ fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces) ->
         return Some(ParsedRule::Group { name: lower, condition, rules: rules? });
     }
     let (prelude, block) = parse_prelude_and_block(p, start, raw_block);
+    if lower == "container" {
+        let block = block?;
+        let conditions = container_conditions(&prelude)?;
+        let condition = conditions.into_iter().map(|(name, query)| {
+            if name.is_empty() { query } else if query.is_empty() { name } else { format!("{name} {query}") }
+        }).collect::<Vec<_>>().join(", ");
+        let rules = parse_list(&mut Parser::new(&block), &mut namespaces.clone(), false);
+        return Some(ParsedRule::Group { name: lower, condition, rules });
+    }
     if lower == "font-feature-values" {
         use style::shared_lock::{SharedRwLock, ToCssWithGuard};
         use style::stylesheets::{font_feature_values_rule::parse_family_name_list, CssRuleType, FontFeatureValuesRule, Origin, UrlExtraData};
@@ -316,7 +325,7 @@ fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces) ->
         "page" => 6,
         "namespace" => 10,
         "counter-style" => 11,
-        "container" | "property" | "font-palette-values" | "starting-style" | "scope"
+        "property" | "font-palette-values" | "starting-style" | "scope"
         | "view-transition" => 0,
         _ => return None,
     };
@@ -640,6 +649,14 @@ mod tests {
         assert_eq!((text.as_str(), used), ("@charset \"shift-JIS\";.é{}", UTF_8));
         // As bytes for a parser that decodes them itself: UTF-8 behind a mark.
         assert_eq!(stylesheet_utf8_bytes("é"), b"\xEF\xBB\xBF\xC3\xA9");
+    }
+
+    #[test]
+    fn container_groups_keep_children_and_reject_invalid_preludes() {
+        assert_eq!(parse_rules("@container (width), { b {} } @container sidebar (width) { p {color:red} }", &mut Vec::new()), [
+            ParsedRule::Group { name: "container".into(), condition: "sidebar (width)".into(), rules: vec![style("p", "color:red")] },
+        ]);
+        assert!(parse_one_rule("@container sidebar;", &mut Vec::new()).is_err());
     }
 
     #[test]
