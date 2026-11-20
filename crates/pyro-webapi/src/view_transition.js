@@ -3,18 +3,22 @@
 (function (native) {
   'use strict';
   const {captureValid, transitionAnimations} = native;
-  const global = globalThis;
-  const rafFn = global.requestAnimationFrame, setTimeoutFn = global.setTimeout;
-  const clearTimeoutFn = global.clearTimeout;
-  const raf = (fn) => rafFn.call(global, fn);
-  const setTimeout_ = (fn, ms) => setTimeoutFn.call(global, fn, ms);
-  const PromiseCtor = Promise;
-  const promiseThen = Promise.prototype.then;
+  const {DOMException, intrinsics: p} = native;
+  const {apply, global, Promise: PromiseCtor, WeakMap, Map, TypeError} = p;
+  const raf = fn => apply(p.raf, global, [fn]);
+  const setTimeout_ = (fn, ms) => apply(p.timer, global, [fn, ms]);
+  const cancel = id => apply(p.cancel, global, [id]);
+  const resolve = value => apply(p.promiseResolve, PromiseCtor, [value]);
+  const then = (promise, ok, fail) => apply(p.promiseThen, promise, [ok, fail]);
+  const get = (map, key) => apply(p.get, map, [key]);
+  const set = (map, key, value) => apply(p.set, map, [key, value]);
+  const remove = (map, key) => apply(p.remove, map, [key]);
   const isFunction = (v) => typeof v === 'function';
   const states = new WeakMap();
   // The running transition of each scope (a document or an element).
   const active = new WeakMap();
-  const pending = new Map();
+  let pending = new Map();
+  const skipped = new WeakMap();
   let pumpQueued = false;
 
   function deferred() {
@@ -22,7 +26,7 @@
     const promise = new PromiseCtor((res, rej) => { resolve = res; reject = rej; });
     return { promise, resolve, reject };
   }
-  const handled = (promise) => { promiseThen.call(promise, undefined, () => {}); };
+  const handled = (promise) => { then(promise, undefined, () => {}); };
   const later = (fn) => {
     // The scope's frame: a realm without frames (a destroyed window's) still
     // settles its transitions.
@@ -35,7 +39,7 @@
     if (st.admitted) { captureValid(st.root, false, true, st.scope); st.admitted = false; }
     if (st.waiting) return;
     st.phase = 'done';
-    if (active.get(st.scope) === st.self) active.delete(st.scope);
+    if (get(active, st.scope) === st.self) remove(active, st.scope);
     st.finished.resolve();
   }
   function capture(st) {
@@ -48,11 +52,11 @@
     throw new TypeError('Illegal constructor');
   };
   const state = (self, name) => {
-    const st = states.get(self);
+    const st = get(states, self);
     if (st === undefined) throw new TypeError(`Illegal invocation: ViewTransition.${name}`);
     return st;
   };
-  Object.defineProperties(ViewTransition.prototype, {
+  p.defineProperties(ViewTransition.prototype, {
     updateCallbackDone: { get() { return state(this, 'updateCallbackDone').updateCallbackDone.promise; }, enumerable: true, configurable: true },
     ready: { get() { return state(this, 'ready').ready.promise; }, enumerable: true, configurable: true },
     finished: { get() { return state(this, 'finished').finished.promise; }, enumerable: true, configurable: true },
@@ -66,7 +70,7 @@
         if (st.waiting >= 1024) throw new DOMException('Too many pending promises', 'QuotaExceededError');
         ++st.waiting;
         const settled = () => { --st.waiting; finish(st); };
-        promiseThen.call(PromiseCtor.resolve(promise), settled, settled);
+        then(resolve(promise), settled, settled);
       }, writable: true, enumerable: true, configurable: true,
     },
     skipTransition: {
@@ -76,7 +80,7 @@
       },
       writable: true, enumerable: true, configurable: true,
     },
-    [Symbol.toStringTag]: { value: 'ViewTransition', configurable: true },
+    [p.tag]: { value: 'ViewTransition', configurable: true },
   });
 
   // "Skip the view transition": `ready` rejects with `reason` unless it has
@@ -85,14 +89,22 @@
     if (st.phase === 'done') return;
     const before = st.phase === 'pending-capture';
     if (st.runs) { st.runs.release(); st.runs = null; }
-    if (before) pending.delete(st.scope);
+    if (before) apply(p.mapDelete, pending, [st.scope]);
     if (st.admitted) { captureValid(st.root, false, true, st.scope); st.admitted = false; }
     st.phase = 'done';
-    if (st.timer !== null) { clearTimeoutFn.call(global, st.timer); st.timer = null; }
-    if (active.get(st.scope) === st.self) active.delete(st.scope);
+    if (st.timer !== null) { cancel(st.timer); st.timer = null; }
+    if (get(active, st.scope) === st.self) remove(active, st.scope);
     if (!st.readySettled) { st.readySettled = true; st.ready.reject(reason); }
-    if (before) setTimeout_(() => callUpdate(st), 0);
-    promiseThen.call(st.updateCallbackDone.promise, () => st.finished.resolve(), (e) => st.finished.reject(e));
+    if (before) {
+      set(skipped, st.scope, (get(skipped, st.scope) || 0) + 1);
+      setTimeout_(() => {
+        try { callUpdate(st); } finally {
+          const left = get(skipped, st.scope) - 1;
+          if (left) set(skipped, st.scope, left); else remove(skipped, st.scope);
+        }
+      }, 0);
+    }
+    then(st.updateCallbackDone.promise, () => st.finished.resolve(), (e) => st.finished.reject(e));
   }
 
   function callUpdate(st) {
@@ -101,12 +113,12 @@
     if (st.phase !== 'done') st.timer = setTimeout_(() => skip(st, new DOMException('Update callback timed out', 'TimeoutError')), 4000);
     let result;
     try {
-      result = isFunction(st.update) ? PromiseCtor.resolve(st.update.call(undefined)) : PromiseCtor.resolve();
+      result = resolve(isFunction(st.update) ? apply(st.update, undefined, []) : undefined);
     } catch (e) {
-      result = PromiseCtor.reject(e);
+      result = apply(p.promiseReject, PromiseCtor, [e]);
     }
-    promiseThen.call(result, () => {
-      if (st.timer !== null) { clearTimeoutFn.call(global, st.timer); st.timer = null; }
+    then(result, () => {
+      if (st.timer !== null) { cancel(st.timer); st.timer = null; }
       st.updateCallbackDone.resolve();
       if (st.phase === 'done' || !capture(st)) return;
       try { st.runs = transitionAnimations(st.root); } catch (_) { st.runs = null; }
@@ -134,7 +146,7 @@
 
   function start(scope, root, arg, hidden) {
     let update = null;
-    let types = [];
+    const types = new p.Set();
     if (isFunction(arg)) {
       update = arg;
     } else if (arg !== undefined && arg !== null) {
@@ -145,19 +157,19 @@
         update = u;
       }
       const t = arg.types;
-      if (t !== undefined && t !== null) types = Array.from(t, String);
+      if (t !== undefined && t !== null) for (const type of t) apply(p.add, types, [p.String(type)]);
     }
-    const self = Object.create(ViewTransition.prototype);
+    const self = p.create(ViewTransition.prototype);
     const st = {
       self, scope, root, update, phase: 'pending-capture', called: false, readySettled: false,
-      types: new Set(types), timer: null, waiting: 0, animationDone: false,
+      types, timer: null, waiting: 0, animationDone: false,
       updateCallbackDone: deferred(), ready: deferred(), finished: deferred(),
     };
     handled(st.ready.promise);
-    states.set(self, st);
-    const prior = active.get(scope);
-    if (prior !== undefined) skip(states.get(prior), abortError('Old view transition aborted by new view transition.'));
-    active.set(scope, self);
+    set(states, self, st);
+    const prior = get(active, scope);
+    if (prior !== undefined) skip(get(states, prior), abortError('Old view transition aborted by new view transition.'));
+    set(active, scope, self);
     if (hidden) {
       skip(st, new DOMException('Document is hidden', 'InvalidStateError'));
       return self;
@@ -167,22 +179,28 @@
       skip(st, new DOMException('View transition capture limit reached', 'InvalidStateError'));
       return self;
     }
-    pending.set(scope, st);
-    if (!pumpQueued) {
-      pumpQueued = true;
-      later(() => {
-        const batch = Array.from(pending.values());
-        pending.clear();
-        pumpQueued = false;
-        for (const next of batch) {
-          if (next.phase !== 'pending-capture' || !capture(next)) continue;
-          next.phase = 'update-callback-called';
-          callUpdate(next);
-        }
-      });
-    }
+    enqueue(st);
     return self;
   }
 
-  return { start, ViewTransition, active: scope => active.get(scope) || null };
+  function enqueue(st) {
+    apply(p.mapSet, pending, [st.scope, st]);
+    if (!pumpQueued) {
+      pumpQueued = true;
+      later(() => {
+        const batch = pending;
+        pending = new Map();
+        pumpQueued = false;
+        apply(p.mapEach, batch, [next => {
+          if (next.phase !== 'pending-capture') return;
+          if (get(skipped, next.scope)) { enqueue(next); return; }
+          if (!capture(next)) return;
+          next.phase = 'update-callback-called';
+          callUpdate(next);
+        }]);
+      });
+    }
+  }
+
+  return { start, ViewTransition, active: scope => get(active, scope) || null };
 })

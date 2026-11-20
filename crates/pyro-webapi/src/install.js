@@ -237,6 +237,12 @@
   };
 
   return {
+    transitionIntrinsics: { apply, create, defineProperties: Object.defineProperties, Promise, promiseThen: Promise.prototype.then,
+      promiseResolve: Promise.resolve, promiseReject: Promise.reject, Map, WeakMap, Set, add: Set.prototype.add,
+      get: WeakMap.prototype.get, set: WeakMap.prototype.set, remove: WeakMap.prototype.delete,
+      mapSet: Map.prototype.set, mapDelete: Map.prototype.delete, mapEach: Map.prototype.forEach,
+      TypeError, String, tag: Symbol.toStringTag, raf: globalThis.requestAnimationFrame,
+      timer: globalThis.setTimeout, cancel: globalThis.clearTimeout, global: globalThis },
     blobParts,
     dataView,
     mutationOptions,

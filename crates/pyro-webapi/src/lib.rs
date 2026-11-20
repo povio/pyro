@@ -360,6 +360,8 @@ fn install_page<'s>(scope: &Scope<'s>, page: Rc<PageDom>) -> JsResult<Object<'s>
     realm.set_unhandled_rejection_handler(event::dispatch_unhandled_rejection);
     realm.set_rejection_hooks(event::REJECTION_HOOKS);
     let helpers = install_helpers(scope)?;
+    let holder = worker_scope::module_holder(scope, &page)?;
+    scope.set_hidden(holder, "lpTransitionIntrinsics", helpers.get_atom("transitionIntrinsics")?)?;
     file::install(scope, helpers.get_atom("blobParts")?)?;
     mutation_observer::install(scope, &page, helpers.get_atom("mutationOptions")?)?;
     intersection_observer::install(scope, &page, helpers.get_atom("intersection")?)?;

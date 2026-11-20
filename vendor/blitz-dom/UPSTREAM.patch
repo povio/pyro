@@ -60035,7 +60035,7 @@ diff --git a/packages/blitz-dom/src/view_transition.rs b/packages/blitz-dom/src/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/view_transition.rs
-@@ -0,0 +1,358 @@
+@@ -0,0 +1,359 @@
 +use crate::{BaseDocument, ElementData, NodeData, NodeId};
 +use markup5ever::{QualName, local_name, ns};
 +use style::context::CascadeInputs;
@@ -60180,6 +60180,7 @@ new file mode 100644
 +            self.transition_trees = None;
 +        }
 +        if let Some(tree) = removed {
++            if let Some(root) = tree.nodes.first() { self.nodes[root.id].parent = None; }
 +            for node in tree.nodes.into_iter().rev() {
 +                self.remove_node_from_tree(node.id);
 +            }

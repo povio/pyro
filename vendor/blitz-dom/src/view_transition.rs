@@ -142,6 +142,7 @@ impl BaseDocument {
             self.transition_trees = None;
         }
         if let Some(tree) = removed {
+            if let Some(root) = tree.nodes.first() { self.nodes[root.id].parent = None; }
             for node in tree.nodes.into_iter().rev() {
                 self.remove_node_from_tree(node.id);
             }

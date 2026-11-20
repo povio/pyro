@@ -192,6 +192,10 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<pyro_js::Object<'s>> {
         if args.get(1).to_bool() { Ok(entries) } else { crate::animations::view_runs(s, &page, args.get(0), entries) }
     })?;
     let out = s.object();
+    let page = crate::target::page_of(s)?;
+    let holder = crate::worker_scope::module_holder(s, &page)?;
+    out.set_atom("intrinsics", s.get_hidden(holder, "lpTransitionIntrinsics")?.ok_or_else(unavailable)?)?;
+    out.set_atom("DOMException", s.dom_exception().ok_or_else(unavailable)?.value())?;
     out.set_atom("captureValid", capture.value())?;
     out.set_atom("transitionAnimations", animations.value())?;
     let sample = s.function("sample",|s,_,args| {

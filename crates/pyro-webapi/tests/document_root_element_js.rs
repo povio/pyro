@@ -80,7 +80,9 @@ fn realm_env(engine: Rc<Engine>, html: &str) -> Env {
             target: EventTargetData::window(&page, key),
         })
         .unwrap();
-    install(&realm.scope().unwrap(), page.clone()).unwrap();
+    let scope = realm.scope().unwrap();
+    scope.eval("const frames=[],tasks=[]; globalThis.requestAnimationFrame=fn=>frames.push(fn); globalThis.setTimeout=(fn,ms)=>ms===0?tasks.push(fn):1; globalThis.clearTimeout=()=>{}", None, 1).unwrap();
+    install(&scope, page.clone()).unwrap();
     Env { engine, page, main: realm }
 }
 
@@ -219,7 +221,7 @@ fn view_transition_capture_bytes_and_recording_work_shared_across_frame_realms()
     let probe = Rc::new(Probe(RefCell::new(Vec::new())));
     for frame in [&child, &parent] {
         frame.page.layout.borrow_mut().set_geometry_source(Some(probe.clone()));
-        assert_eq!(eval(&frame.main, "let frame; globalThis.requestAnimationFrame = fn => {frame = fn}; globalThis.setTimeout = () => 1; globalThis.clearTimeout = () => {}; const start = () => {document.startViewTransition(() => new Promise(() => {})); frame()}; start(); 'ok'"), "ok");
+        assert_eq!(eval(&frame.main, "const start = () => {document.startViewTransition(() => new Promise(() => {})); frames.shift()()}; start(); 'ok'"), "ok");
     }
     let parent_prep = u64::from(parent.page.dom.borrow().slot_count()) + 1;
     let child_prep = u64::from(child.page.dom.borrow().slot_count()) + 1;
@@ -254,7 +256,7 @@ fn view_transition_failed_capture_debit_precedes_viewport_sync() {
         let layouts = layouts.clone();
         move || { layouts.update(|count| count + 1); None }
     })));
-    assert_eq!(eval(&environment.main, "let pump; globalThis.requestAnimationFrame = fn => pump = fn; globalThis.setTimeout = () => 1; function start(){document.startViewTransition().ready.catch(()=>{}); pump()} start(); 'ok'"), "ok");
+    assert_eq!(eval(&environment.main, "function start(){document.startViewTransition().ready.catch(()=>{}); tasks.splice(0).forEach(fn=>fn()); frames.shift()()} start(); 'ok'"), "ok");
     let baseline = layouts.get();
     assert!(baseline > 0);
     assert_eq!(eval(&environment.main, "for(let i=0;i<32;i++)start(); 'ok'"), "ok");
@@ -266,7 +268,7 @@ fn view_transition_wait_until_keeps_promise_not_frame_slots() {
     let parent = env("<!doctype html><body></body>");
     let child = realm_env(parent.engine.clone(), "<!doctype html><style>*::view-transition-group(*),*::view-transition-old(*),*::view-transition-new(*){animation:none}</style><body></body>");
     child.page.set_hooks(Some(Rc::new(Child(parent.page.clone()))));
-    assert_eq!(eval(&child.main, r#"let frames=[],done=0,ready=0,held=[]; globalThis.requestAnimationFrame=fn=>frames.push(fn); globalThis.setTimeout=()=>1; globalThis.clearTimeout=()=>{};
+    assert_eq!(eval(&child.main, r#"let done=0,ready=0,held=[];
         function start(){let el=document.createElement('div');document.body.append(el);let t=el.startViewTransition();t.waitUntil(new Promise(()=>{}));t.ready.then(()=>++ready,()=>{});t.finished.then(()=>++done);held.push(t);return el.activeViewTransition===t}
         Array.from({length:4},start).every(Boolean)"#), "true");
     for _ in 0..4 { eval(&child.main, "frames.splice(0).forEach(fn=>fn())"); }
@@ -278,21 +280,29 @@ fn view_transition_capture_slots_shared_across_frame_realms() {
     let parent = env("<!doctype html><body></body>");
     let child = realm_env(parent.engine.clone(), "<!doctype html><body></body>");
     child.page.set_hooks(Some(Rc::new(Child(parent.page.clone()))));
-    for realm in [&parent.main, &child.main] {
-        eval(realm, "let pumps = 0; globalThis.requestAnimationFrame = () => ++pumps; globalThis.setTimeout = () => 1;");
-    }
-    assert_eq!(eval(&child.main, "let admitted = 0; for(let i=0;i<16;i++){let el=document.createElement('div'); document.body.appendChild(el); el.startViewTransition(); if(el.activeViewTransition) ++admitted;} [pumps,admitted].join()"), "1,4");
-    assert_eq!(eval(&parent.main, "document.startViewTransition(); [pumps, document.activeViewTransition !== null].join()"), "1,true");
+    assert_eq!(eval(&child.main, "let admitted = 0; for(let i=0;i<16;i++){let el=document.createElement('div'); document.body.appendChild(el); el.startViewTransition(); if(el.activeViewTransition) ++admitted;} [frames.length,admitted].join()"), "1,4");
+    assert_eq!(eval(&parent.main, "document.startViewTransition(); [frames.length, document.activeViewTransition !== null].join()"), "1,true");
     child.page.detach();
-    assert_eq!(eval(&parent.main, "document.startViewTransition(); [pumps, document.activeViewTransition !== null].join()"), "1,true");
+    assert_eq!(eval(&parent.main, "document.startViewTransition(); [frames.length, document.activeViewTransition !== null].join()"), "1,true");
 }
 
 #[test]
 fn view_transition_capture_pump_coalesces_rapid_starts() {
     let environment = env("<!doctype html><html><body></body></html>");
-    assert_eq!(eval(&environment.main, r#"let pumps = [], updates = 0; globalThis.requestAnimationFrame = fn => pumps.push(fn); globalThis.setTimeout = () => 1;
+    assert_eq!(eval(&environment.main, r#"let updates = 0;
         for (let index = 0; index < 1000; ++index) document.startViewTransition(() => ++updates);
-        const queued = pumps.length; pumps.shift()(); [queued, updates].join()"#), "1,1");
+        const queued = frames.length; frames.shift()(); const before=updates;
+        tasks.splice(0).forEach(fn=>fn()); const skipped=updates; frames.shift()(); [queued,before,skipped,updates].join()"#), "1,0,999,1000");
+}
+
+#[test]
+fn view_transition_skipped_callback_invocation_ignores_page_scheduling() {
+    let environment = env("<!doctype html><body></body>");
+    assert_eq!(eval(&environment.main, r#"const original=Promise.prototype.then; const broken=()=>{throw Error('page scheduling')};
+        globalThis.setTimeout=globalThis.clearTimeout=globalThis.requestAnimationFrame=Promise.prototype.then=Array.from=broken;
+        let order=''; const first=document.startViewTransition(()=>{order+='a';return new Promise(()=>{})}); first.skipTransition();
+        document.startViewTransition(()=>{order+='b'}); frames.shift()(); const before=order;
+        tasks.shift()(); frames.shift()(); Promise.prototype.then=original; before+':'+order"#), ":ab");
 }
 
 #[test]
