@@ -292,3 +292,35 @@ fn many_inline_owners_build_their_paint_tree_in_bounded_time() {
     let _ = render(&format!("<div style='font:10px/10px monospace;width:390px'>{spans}</div>"));
     assert!(start.elapsed() < std::time::Duration::from_secs(20), "took {:?}", start.elapsed());
 }
+
+/// An absolutely positioned box escaping the clip of an `overflow: hidden` box (no stacking
+/// context) that paints no positioned box of its own keeps its tree-order place among its stacking
+/// context's positioned boxes: over an earlier positioned box. It was painted with the clipping
+/// box's in-flow content, under it (cycle-3 regression; WPT css/CSS2 `abspos/static-inside-inline-001`).
+#[test]
+fn a_box_escaping_a_clip_paints_over_an_earlier_positioned_box() {
+    let img = render(
+        "<style>body{margin:0}#w{overflow:hidden;width:100px;height:100px}\
+         #a{position:absolute;background:#0f0;width:100px;height:100px}\
+         #r{position:absolute;width:100px;height:100px;background:red}</style>\
+         <div id=r></div><div id=w><span style='line-height:100px'><div id=a></div>X</span></div>",
+    );
+    let [r, g, b] = pixel(&img, 50, 50);
+    assert!(r < 10 && g > 245 && b < 10, "the escaping box over the earlier one: {:?}", [r, g, b]);
+}
+
+/// A `perspective` on an inline that is not atomic (not transformable) does not make it keep its
+/// absolutely positioned child: a child of negative z-index stays under the in-flow content
+/// (cycle-3 regression; WPT css-transforms `perspective-untransformable-no-stacking-context`).
+#[test]
+fn an_untransformable_inline_keeps_no_positioned_child() {
+    let img = render(
+        "<style>*{margin:0}div,span{width:100px;height:100px}\
+         #p{background:#0f0;padding-top:100px;perspective:100px}\
+         #c{display:inline-block;z-index:-1;position:absolute;background:red}\
+         #s{display:inline-block}</style>\
+         <div style='overflow:hidden'><span id=p><div id=c></div><span id=s></span></span></div>",
+    );
+    let [r, g, b] = pixel(&img, 50, 50);
+    assert!(r < 10 && g > 245 && b < 10, "the inline's background over the child: {:?}", [r, g, b]);
+}

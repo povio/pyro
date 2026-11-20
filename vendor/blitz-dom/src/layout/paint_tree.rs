@@ -441,6 +441,19 @@ impl BaseDocument {
                 }
             }
         }
+        // Whether the clip owner `owner` paints a positioned box (or a stacking context of z-index 0
+        // or auto) itself, one its clip applies to: not one hoisted past it ([`nested_positioned`]).
+        let holds_positioned = |doc: &Self, owner: NodeId| {
+            let mut nested = Vec::new();
+            nested_positioned(doc, owner, owner, &mut nested);
+            let own = doc.nodes[owner].paint_children.borrow().iter().flatten().any(|&child| {
+                let node = &doc.nodes[child];
+                node.z_index() == 0
+                    && (node.stacking_context.is_some()
+                        || node.primary_styles().is_some_and(|s| s.clone_position() != Position::Static))
+            });
+            own || !nested.is_empty()
+        };
         // Whether `ancestor` is `id` or one of its containing blocks.
         let contains = |doc: &Self, ancestor: NodeId, mut id: Option<NodeId>| {
             while let Some(current) = id {
@@ -464,7 +477,24 @@ impl BaseDocument {
                 if !style.clone_display().is_inline_flow() || node.flags.is_inline_root() {
                     return None;
                 }
-                if node.is_stacking_context_root(false) {
+                // (By what applies to an inline box: not a transform, `perspective` or 3D property,
+                // which an inline that is not atomic is not transformable for; WPT css-transforms
+                // `perspective-untransformable-no-stacking-context`.)
+                let box_style = style.get_box();
+                let untransformable = box_style.transform.0.is_empty()
+                    && matches!(box_style.rotate, style::values::computed::Rotate::None)
+                    && matches!(box_style.scale, style::values::computed::Scale::None)
+                    && matches!(box_style.translate, style::values::computed::Translate::None)
+                    && matches!(box_style.perspective, style::values::generics::box_::GenericPerspective::None)
+                    && box_style.transform_style != style::computed_values::transform_style::T::Preserve3d
+                    && box_style.backface_visibility != style::computed_values::backface_visibility::T::Hidden;
+                if node.is_stacking_context_root(false)
+                    && (untransformable
+                        || style.clone_opacity() != 1.0
+                        || node.applies_atomic_paint_effect()
+                        || matches!(style.clone_position(), Position::Fixed | Position::Sticky)
+                        || (style.clone_position() != Position::Static && !style.clone_z_index().is_auto()))
+                {
                     return Some(parent);
                 }
                 current = node.parent;
@@ -497,9 +527,14 @@ impl BaseDocument {
             if !node.flags.is_in_document() { return None; }
             let cb = node.oof_containing_block.get()?;
             let box_parent = crate::layout::scroll_markers::box_parent(&self.nodes, id);
+            // (Only an owner that paints positioned boxes itself: the escaping box keeps its place
+            // among them there. With none, it keeps its place among its stacking context's
+            // positioned boxes, which come before and after the owner in tree order; WPT css/CSS2
+            // `abspos/static-inside-inline-001`.)
             if node.z_index() == 0
                 && let Some(owner) = clip_owner_of(self, box_parent)
                 && !contains(self, owner, Some(cb))
+                && holds_positioned(self, owner)
             {
                 if clip_owner_set.insert(owner) {
                     clip_owners.push(owner);
