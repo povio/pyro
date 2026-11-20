@@ -6972,7 +6972,7 @@ diff -ruN a/values/specified/border.rs b/values/specified/border.rs
      #[inline]
 diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 --- a/values/specified/box.rs	2026-11-11 19:55:57
-+++ b/values/specified/box.rs	2026-11-20 08:53:30
++++ b/values/specified/box.rs	2026-11-20 13:17:37
 @@ -15,7 +15,7 @@
      GenericLineClamp, GenericOverflowClipMargin, GenericPerspective, GenericScrollbarInset,
      MaxLines, OverflowClipMarginBox,
@@ -7075,19 +7075,19 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      pub const WebkitInlineBox: Self = Self(
          ((DisplayOutside::Inline as u16) << Self::OUTSIDE_SHIFT) | DisplayInside::WebkitBox as u16,
      );
-@@ -370,6 +377,12 @@
+@@ -368,6 +375,12 @@
+     #[inline]
+     pub fn is_inline_flow(&self) -> bool {
          self.outside() == DisplayOutside::Inline && self.inside() == DisplayInside::Flow
-     }
- 
++    }
++
 +    /// pyro: whether this is `display: run-in` (see [`Self::RUN_IN_MASK`]).
 +    #[inline]
 +    pub const fn is_run_in(&self) -> bool {
 +        (self.0 & Self::RUN_IN_MASK) != 0
-+    }
-+
+     }
+ 
      /// Returns whether this `display` value is some kind of list-item.
-     #[inline]
-     pub const fn is_list_item(&self) -> bool {
 @@ -440,6 +453,10 @@
          if is_root_element && (self.is_contents() || self.is_list_item()) {
              return Display::Block;
@@ -7346,7 +7346,25 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      #[inline]
      /// Get default `touch-action` as `auto`
      pub fn auto() -> TouchAction {
-@@ -2013,8 +2134,12 @@
+@@ -1593,7 +1714,7 @@
+ )]
+ #[css(bitflags(
+     single = "normal",
+-    mixed = "size,inline-size,scroll-state",
++    mixed = "size,inline-size,scroll-state,anchored",
+     validate_mixed = "Self::validate_mixed_flags",
+ ))]
+ #[repr(C)]
+@@ -1614,6 +1735,8 @@
+         const SIZE = 1 << 1;
+         /// The `scroll-state` variant.
+         const SCROLL_STATE = 1 << 2;
++        #[allow(missing_docs)]
++        const ANCHORED = 1 << 3;
+     }
+ }
+ 
+@@ -2013,8 +2136,12 @@
      Auto,
      Page,
      Avoid,
@@ -7359,7 +7377,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
  }
  
  impl BreakBetween {
-@@ -2030,7 +2155,9 @@
+@@ -2030,7 +2157,9 @@
              BreakBetween::Auto | BreakBetween::Avoid | BreakBetween::Left | BreakBetween::Right => {
                  Ok(break_value)
              },
@@ -7370,7 +7388,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
          }
      }
  
-@@ -2047,7 +2174,7 @@
+@@ -2047,7 +2176,7 @@
                  self.to_css(dest)
              },
              BreakBetween::Page => dest.write_str("always"),
@@ -7379,10 +7397,12 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
          }
      }
  }
-@@ -2320,6 +2447,15 @@
+@@ -2318,6 +2447,15 @@
+ pub enum Isolation {
+     Auto,
      Isolate,
- }
- 
++}
++
 +/// Which view transition names are scoped to this element.
 +#[allow(missing_docs)]
 +#[derive(Clone, Copy, Debug, Eq, Hash, MallocSizeOf, Parse, PartialEq, SpecifiedValueInfo, ToComputedValue, ToCss, ToResolvedValue, ToShmem, ToTyped)]
@@ -7390,12 +7410,10 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +pub enum ViewTransitionScope {
 +    Auto,
 +    All,
-+}
-+
+ }
+ 
  /// https://drafts.csswg.org/css-transforms/#backface-visibility-property
- #[allow(missing_docs)]
- #[derive(
-@@ -2628,4 +2764,91 @@
+@@ -2628,4 +2766,91 @@
  pub enum DirectionProperty {
      Ltr,
      Rtl,

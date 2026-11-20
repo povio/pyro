@@ -9697,7 +9697,7 @@ diff --git a/packages/blitz-dom/src/layout/counters.rs b/packages/blitz-dom/src/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/counters.rs
-@@ -0,0 +1,1158 @@
+@@ -0,0 +1,1160 @@
 +//! pyro: CSS counters and quotes in generated content (CSS Lists 3 4, CSS 2.1 12.3-12.4).
 +//!
 +//! Before construction, a walk over the document in tree order applies each box's
@@ -10216,7 +10216,8 @@ new file mode 100644
 +    // its `::before` and `::after` included (CSS Contain 2 § 3.3); the element's own counter
 +    // properties (above) are outside it.
 +    let contains_style = !display.is_contents()
-+        && style.get_box().slow_clone_contain().contains(style::values::specified::box_::Contain::STYLE);
++        && (style.get_box().slow_clone_contain().contains(style::values::specified::box_::Contain::STYLE)
++            || style.get_box().container_type.contains(style::values::specified::ContainerType::ANCHORED));
 +    let saved_quote_depth = walk.quote_depth;
 +    if contains_style {
 +        let base = walk.counters.iter().map(|(name, stack)| (name.clone(), stack.len())).collect();
@@ -10427,7 +10428,8 @@ new file mode 100644
 +        // pyro: style containment keeps its descendants' counter changes in its subtree
 +        // (CSS Contain 2 § 3.3; WPT css-contain `contain-style-ol-ordinal-reversed`).
 +        let contains_style = !display.is_contents()
-+            && style.get_box().slow_clone_contain().contains(style::values::specified::box_::Contain::STYLE);
++            && (style.get_box().slow_clone_contain().contains(style::values::specified::box_::Contain::STYLE)
++                || style.get_box().container_type.contains(style::values::specified::ContainerType::ANCHORED));
 +        if contains_style {
 +            return false;
 +        }

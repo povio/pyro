@@ -1714,7 +1714,7 @@ pub enum ContentVisibility {
 )]
 #[css(bitflags(
     single = "normal",
-    mixed = "size,inline-size,scroll-state",
+    mixed = "size,inline-size,scroll-state,anchored",
     validate_mixed = "Self::validate_mixed_flags",
 ))]
 #[repr(C)]
@@ -1735,6 +1735,8 @@ bitflags! {
         const SIZE = 1 << 1;
         /// The `scroll-state` variant.
         const SCROLL_STATE = 1 << 2;
+        #[allow(missing_docs)]
+        const ANCHORED = 1 << 3;
     }
 }
 

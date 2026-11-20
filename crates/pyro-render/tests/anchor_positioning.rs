@@ -2,6 +2,13 @@ use pyro_dom::cssom::{ParsedRule, parse_one_rule};
 use pyro_dom::stylo::declarations::DeclarationBlock;
 
 #[test]
+fn anchored_container_type_is_independent_of_size_containment() {
+    for (input, expected) in [("anchored", "anchored"), ("anchored size", "size anchored"), ("anchored inline-size", "inline-size anchored"), ("normal anchored", ""), ("anchored anchored", "")] {
+        assert_eq!(DeclarationBlock::parse(&format!("container-type:{input}")).value("container-type"), expected);
+    }
+}
+
+#[test]
 fn popover_sources_use_direct_default_anchor_lookup() {
     for count in [16, 64] {
         let html = format!("<!doctype html><style>main{{position:relative}}i,em{{display:block;width:30px;height:10px}}em{{width:70px}}b{{position:absolute;position-anchor:auto;left:anchor(right,7px);width:anchor-size(width,2px);height:5px}}</style><main>{}<i></i><em></em><b></b></main>", "<span></span>".repeat(count));
