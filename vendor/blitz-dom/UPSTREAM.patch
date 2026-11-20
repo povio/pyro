@@ -48185,7 +48185,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
      /// Walk the nodes now that they're properly styled and transfer their styles to the taffy style system
      ///
      /// TODO: update taffy to use an associated type instead of slab key
-@@ -437,32 +1896,1106 @@
+@@ -437,32 +1896,1107 @@
      pub fn resolve_layout(&mut self) {
          let size = self.stylist.device().au_viewport_size();
  
@@ -48544,7 +48544,8 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +                node.clear_layout_cache();
 +                // (Up the boxes that lay it out: an inline-block's anonymous block too, which its
 +                // DOM parent chain skips; css-flexbox overflow-auto-006 measures its scrollbar.)
-+                current = node.layout_parent.get().or(node.parent);
++                let (layout_parent, parent) = (node.layout_parent.get(), node.parent);
++                current = layout_parent.filter(|&p| self.nodes.contains_key(p)).or(parent);
 +            }
 +        }
 +        !changed.is_empty()

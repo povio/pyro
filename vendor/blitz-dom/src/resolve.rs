@@ -2239,7 +2239,8 @@ impl BaseDocument {
                 node.clear_layout_cache();
                 // (Up the boxes that lay it out: an inline-block's anonymous block too, which its
                 // DOM parent chain skips; css-flexbox overflow-auto-006 measures its scrollbar.)
-                current = node.layout_parent.get().or(node.parent);
+                let (layout_parent, parent) = (node.layout_parent.get(), node.parent);
+                current = layout_parent.filter(|&p| self.nodes.contains_key(p)).or(parent);
             }
         }
         !changed.is_empty()
