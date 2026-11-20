@@ -36814,7 +36814,27 @@ diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/
  /// Map the static positions of `output`'s out-of-flow candidates (relative to the border box of a
  /// node laid out in `child_wm`) into `parent_wm`, ahead of [`LayoutOutput::transpose`],
  /// which leaves them untouched. The block axis of `vertical-rl` runs against Taffy's
-@@ -486,6 +864,16 @@
+@@ -372,7 +750,18 @@
+                 x = mirror_static_position(x, size.width);
+             }
+         }
+-        candidate.static_position = Point { x: y, y: x };
++        // pyro: the `safe` overflow position stays with its logical axis (inline or block) instead of its physical
++        // one, as in Blink: a vertical flex container's `align-self: safe` falls back in the containing block's
++        // axis of the same name (WPT css-flexbox `abspos/flex-abspos-align-self-safe-outer-cb-001/002`)
++        let (x_safety, y_safety) = (x.align.safety, y.align.safety);
++        let (mut new_x, mut new_y) = (y, x);
++        for (axis, safety) in [(&mut new_x, x_safety), (&mut new_y, y_safety)] {
++            if axis.align.safety != safety {
++                axis.align.safety = safety;
++                axis.align.fallback = if safety == taffy::AlignmentSafety::Safe { AxisStaticEdge::Start } else { axis.align.keyword };
++            }
++        }
++        candidate.static_position = Point { x: new_x, y: new_y };
+     }
+ }
+ 
+@@ -486,6 +875,16 @@
  
  /// `logical`, written by a placing algorithm running in `placer_wm` within a box of physical size
  /// `placer_size`, in physical coordinates.
@@ -36831,7 +36851,7 @@ diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/
  fn physical_layout(
      logical: Layout,
      placer_wm: WritingMode,
-@@ -531,11 +919,23 @@
+@@ -531,11 +930,23 @@
  }
  
  impl BaseDocument {
@@ -36856,7 +36876,7 @@ diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/
          &self,
          node_id: crate::NodeId,
      ) -> (crate::util::Point<f32>, Layout) {
-@@ -549,6 +949,10 @@
+@@ -549,6 +960,10 @@
              pos.y += node.unrounded_layout().location.y - node.scroll_offset().y as f32;
              has_vertical |= node.layout_data().writing_mode.is_vertical();
              current = node.containing_block();
@@ -36867,7 +36887,7 @@ diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/
          }
          if !has_vertical {
              return (pos, *self.nodes[node_id].unrounded_layout());
-@@ -557,12 +961,11 @@
+@@ -557,12 +972,11 @@
          let root_id = self.try_root_element().map(|root| root.id);
          let node = &self.nodes[node_id];
          let (mut pos, placer_wm, placer_size) = self.placer_geometry(node, node_id, root_id);
@@ -36881,7 +36901,7 @@ diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/
          );
          pos.x += layout.location.x - node.scroll_offset().x as f32;
          pos.y += layout.location.y - node.scroll_offset().y as f32;
-@@ -570,41 +973,46 @@
+@@ -570,41 +984,46 @@
      }
  
      /// Document-relative position, writing mode and physical size of the box that places `node`.

@@ -750,7 +750,18 @@ fn transpose_static_positions(
                 x = mirror_static_position(x, size.width);
             }
         }
-        candidate.static_position = Point { x: y, y: x };
+        // pyro: the `safe` overflow position stays with its logical axis (inline or block) instead of its physical
+        // one, as in Blink: a vertical flex container's `align-self: safe` falls back in the containing block's
+        // axis of the same name (WPT css-flexbox `abspos/flex-abspos-align-self-safe-outer-cb-001/002`)
+        let (x_safety, y_safety) = (x.align.safety, y.align.safety);
+        let (mut new_x, mut new_y) = (y, x);
+        for (axis, safety) in [(&mut new_x, x_safety), (&mut new_y, y_safety)] {
+            if axis.align.safety != safety {
+                axis.align.safety = safety;
+                axis.align.fallback = if safety == taffy::AlignmentSafety::Safe { AxisStaticEdge::Start } else { axis.align.keyword };
+            }
+        }
+        candidate.static_position = Point { x: new_x, y: new_y };
     }
 }
 
