@@ -647,7 +647,7 @@ impl FrameHost {
     /// The pending `<object>`/`<embed>` elements (not rendered when connected) that are rendered
     /// now get their child navigable; those no longer connected, or no longer showing a document,
     /// are dropped. HTML runs the element's steps again when its rendering changes.
-    pub fn connect_rendered_objects(self: &Rc<Self>) {
+    pub fn connect_rendered_objects(self: &Rc<Self>, mut before_connect: impl FnMut(FrameKey)) {
         if self.pending_objects.borrow().is_empty() {
             return;
         }
@@ -659,6 +659,7 @@ impl FrameHost {
             };
             if keep && self.owner(node).is_none() {
                 // Puts it back when it is still not rendered.
+                before_connect(parent);
                 let _ = self.connected(parent, &loader, node);
             }
         }
