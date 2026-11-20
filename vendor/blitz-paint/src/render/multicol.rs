@@ -109,6 +109,11 @@ impl ElementCx<'_, '_> {
                 &self.context.column_pass_container,
                 (!fragment.spanner && vertical.is_none()).then_some(self.node.id),
             );
+            let _inline_origin = Restore::set(
+                &self.context.column_inline_origin,
+                (!fragment.spanner && vertical.is_none() && fragment.exact_x.is_finite())
+                    .then_some((self.node.id, fragment.offset.x + (fragment.exact_x - fragment.x))),
+            );
             let spanner_row_guard = Restore::set(
                 &self.context.spanner_row_container,
                 (fragment.spanner && vertical.is_none()).then_some(self.node.id),

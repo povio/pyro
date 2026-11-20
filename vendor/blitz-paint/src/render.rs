@@ -202,6 +202,7 @@ pub struct BlitzDomPainter<'dom, 'a> {
     /// pyro: while a multi-column container paints one of its columns (not a spanner's row): the
     /// container, whose spanners that pass leaves out (they are painted in their own rows).
     pub(crate) column_pass_container: std::cell::Cell<Option<NodeId>>,
+    column_inline_origin: std::cell::Cell<Option<(NodeId, f32)>>,
     /// pyro: while a multi-column container paints a column without a block-axis clip: the
     /// container, the column's strip range (CSS px), its transform and its clip rectangle (the
     /// container's space, device px) for the boxes a break goes through (`draw_paint_child`).
@@ -348,6 +349,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             inline_pass_entries: RefCell::new(HashMap::new()),
             multicol_pass: std::cell::Cell::new(None),
             column_pass_container: std::cell::Cell::new(None),
+            column_inline_origin: std::cell::Cell::new(None),
             column_range: std::cell::Cell::new(None),
             spanner_row_container: std::cell::Cell::new(None),
             spanner_row_spanner: std::cell::Cell::new(None),
@@ -2340,6 +2342,14 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         // out with (half of its outer collapsed borders) and no padding: its background is positioned
         // in them.
         let mut layout = layout;
+        if let Some((container, origin)) = self.column_inline_origin.get()
+            && node.layout_parent.get() == Some(container)
+        {
+            let exact = node.unrounded_layout();
+            let left = f64::from(origin + exact.location.x) * scale;
+            let right = left + f64::from(exact.size.width) * scale;
+            layout.size.width = ((right.round() - left.round()) / scale) as f32;
+        }
         if let blitz_dom::node::SpecialElementData::TableRoot(table) = &element.special_data
             && table.border_collapse == style::computed_values::border_collapse::T::Collapse
             && !table.cells.is_empty()
