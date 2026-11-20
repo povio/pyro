@@ -2808,18 +2808,25 @@ impl BaseDocument {
 
 fn place_overflow(node: &crate::Node, location: (f64, f64), scale: f64, rect: Rect) -> Rect {
     let offset = kurbo::Vec2::new(location.0, location.1);
-    if let Some(plane) = node.plane_3d().filter(|plane| plane.places_by_local || plane.crosses_viewer) {
+    let plane = node.plane_3d();
+    if plane.is_some_and(|plane| !plane.matrix.to_array().iter().all(|v| v.is_finite())) {
+        return Rect::ZERO;
+    }
+    let bounds = if let Some(plane) = plane.filter(|plane| plane.places_by_local || plane.crosses_viewer) {
         use crate::projection::{project, PROJECT_LIMIT};
         let mut points = project(&plane.local, rect.scale_from_origin(1.0 / scale)).into_iter().map(|(x, y)| {
             kurbo::Point::new(x.clamp(-PROJECT_LIMIT, PROJECT_LIMIT) * scale, y.clamp(-PROJECT_LIMIT, PROJECT_LIMIT) * scale)
         });
         let Some(first) = points.next() else { return Rect::ZERO };
-        return points.fold(Rect::from_points(first, first), |bounds, point| bounds.union_pt(point)) + offset;
-    }
-    match node.transform().as_deref() {
-        Some(transform) => transform.transform_rect_bbox(rect) + offset,
-        None => rect + offset,
-    }
+        points.fold(Rect::from_points(first, first), |bounds, point| bounds.union_pt(point)) + offset
+    } else {
+        match node.transform().as_deref() {
+            Some(transform) if transform.is_finite() => transform.transform_rect_bbox(rect) + offset,
+            Some(_) => return Rect::ZERO,
+            None => rect + offset,
+        }
+    };
+    if bounds.is_finite() { bounds } else { Rect::ZERO }
 }
 
 /// pyro: `hit` with what a child adds to it: as `unite_overflow`, but

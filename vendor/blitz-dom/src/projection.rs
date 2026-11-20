@@ -5,6 +5,9 @@ pub const PROJECT_LIMIT: f64 = 1e5;
 
 /// The projection of `rect` through the homography `h`, cut at the viewer's plane.
 pub fn project(h: &[f64; 9], rect: Rect) -> Vec<(f64, f64)> {
+    if !rect.is_finite() || !h.iter().all(|v| v.is_finite()) {
+        return Vec::new();
+    }
     let corners = [(rect.x0, rect.y0), (rect.x1, rect.y0), (rect.x1, rect.y1), (rect.x0, rect.y1)];
     let homogeneous: Vec<[f64; 4]> = corners
         .iter()
@@ -18,6 +21,9 @@ pub fn project(h: &[f64; 9], rect: Rect) -> Vec<(f64, f64)> {
 
 /// A polygon of homogeneous points cut at the viewer's plane (W below [`MIN_W`]) and divided by W.
 pub fn clip_w(points: &[[f64; 4]]) -> Vec<[f64; 3]> {
+    if !points.iter().flatten().all(|v| v.is_finite()) {
+        return Vec::new();
+    }
     let mut out = Vec::with_capacity(points.len() + 2);
     for i in 0..points.len() {
         let (a, b) = (points[i], points[(i + 1) % points.len()]);
@@ -26,10 +32,33 @@ pub fn clip_w(points: &[[f64; 4]]) -> Vec<[f64; 3]> {
             out.push([a[0] / a[3], a[1] / a[3], a[2] / a[3]]);
         }
         if a_in != b_in {
-            let t = (MIN_W - a[3]) / (b[3] - a[3]);
+            let span = b[3] - a[3];
+            if !span.is_finite() {
+                return Vec::new();
+            }
+            let t = (MIN_W - a[3]) / span;
             let p: [f64; 4] = std::array::from_fn(|k| a[k] + (b[k] - a[k]) * t);
             out.push([p[0] / MIN_W, p[1] / MIN_W, p[2] / MIN_W]);
         }
     }
-    out
+    if out.iter().flatten().all(|v| v.is_finite()) { out } else { Vec::new() }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn projection_requires_finite_coordinates() {
+        let rect = Rect::new(0.0, 0.0, 2.0, 2.0);
+        let matrix = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.5, 1.0];
+        assert_eq!(project(&matrix, rect).len(), 4);
+        for coefficient in [1e200_f64 * 1e200, f64::NAN, f64::MAX] {
+            let mut invalid = matrix;
+            invalid[0] = coefficient;
+            assert!(project(&invalid, rect).is_empty());
+        }
+        assert!(clip_w(&[[f64::MAX, 0.0, 0.0, MIN_W]]).is_empty());
+        assert!(clip_w(&[[0.0, 1.0, 0.0, f64::MAX], [1.0, 0.0, 0.0, -f64::MAX]]).is_empty());
+    }
 }

@@ -195,6 +195,9 @@ impl BlitzDomPainter<'_, '_> {
     /// (recorded with its context's planes, then drawn sorted). Returns whether it did.
     pub(super) fn paint_plane(&self, scene: &mut impl PaintScene, node: &Node, parent_transform: Affine) -> bool {
         let Some(plane) = node.plane_3d() else { return false };
+        if !plane.matrix.to_array().iter().all(|v| v.is_finite()) {
+            return true;
+        }
         if self.three_d.entered.get() == Some(node.id) {
             self.three_d.entered.set(None);
             return false;
@@ -274,12 +277,15 @@ impl BlitzDomPainter<'_, '_> {
         for (plane, commands) in chunks {
             let Some(record) = collector.planes[plane].as_ref() else { continue };
             let (recorded, matrix) = (record.recorded, record.matrix);
-            if record.own_hidden || !(recorded.determinant().abs() > 1e-12) {
+            let determinant = recorded.determinant();
+            if record.own_hidden || !recorded.is_finite() || !determinant.is_finite() || determinant.abs() <= 1e-12
+                || !matrix.0.iter().flatten().all(|v| v.is_finite()) {
                 continue;
             }
             let local = transformed(&commands, recorded.inverse());
             let Some(bounds) = crate::bounds::scene_bounds(&local) else { continue };
             let (draw, local) = match matrix.flat(bounds) {
+                Some(Some(affine)) if !affine.is_finite() => continue,
                 Some(None) => continue,
                 Some(Some(affine)) if close(affine, recorded) => (Draw::AsRecorded, local),
                 Some(Some(affine)) => (Draw::Affine(affine), local),
@@ -335,7 +341,7 @@ impl BlitzDomPainter<'_, '_> {
                     clip_w(&homogeneous)
                 }
             };
-            if points.len() < 3 {
+            if points.len() < 3 || !points.iter().flatten().all(|v| v.is_finite()) {
                 continue;
             }
             polygons.push(bsp::Polygon::new(points, prepared.len(), prepared.len()));
@@ -540,7 +546,7 @@ fn project_path(path: &BezPath, transform: Affine, h: &[f64; 9]) -> BezPath {
             // `perspective()` function or the `perspective` property) lands on the same pixels,
             // where rounding noise moved an edge's coverage by a level (WPT
             // `transform3d-perspective-001`).
-            let snap = |v: f64| (v * 1024.0).round() / 1024.0;
+            let snap = |v: f64| if v.abs() <= PROJECT_LIMIT { (v * 1024.0).round() / 1024.0 } else { v };
             let points: Vec<[f64; 3]> =
                 clip_w(&homogeneous).into_iter().map(|p| [snap(p[0]), snap(p[1]), p[2]]).collect();
             for (k, p) in points.iter().enumerate() {
