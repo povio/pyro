@@ -30,6 +30,46 @@ fn pixel(img: &RgbaImage, x: usize, y: usize) -> [u8; 3] {
     [img.data[i], img.data[i + 1], img.data[i + 2]]
 }
 
+#[test]
+fn overflow_corner_coverage_is_independent_of_background_brush() {
+    for positioning in ["", "position:relative;z-index:0"] {
+        let sample = |background: &str| render(&format!(
+            "<div style='width:48px;height:48px;border-radius:12px;overflow:clip;{positioning};background:{background}'><div style='width:48px;height:48px;background:red'></div></div>"
+        ));
+        let reference = sample("transparent");
+        for brush in ["red", "linear-gradient(red,red)"] {
+            let image = sample(brush);
+            for y in 0..48 {
+                for x in 0..48 {
+                    assert_eq!(pixel(&image, x, y), pixel(&reference, x, y), "{positioning} {brush} at {x},{y}");
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn phased_overflow_corner_coverage_survives_disjoint_float_paint() {
+    let sample = |background: &str| render(&format!(
+        "<div style='display:flow-root'><div style='float:right;width:10px;height:10px;background:blue'></div><div style='width:48px;height:48px;border-radius:12px;overflow:clip;line-height:0;background:{background}'><span style='display:inline-block;width:48px;height:48px;background:red'></span></div></div>"
+    ));
+    let reference = sample("transparent");
+    for brush in ["red", "linear-gradient(red,red)"] {
+        let image = sample(brush);
+        for y in 0..48 {
+            for x in 0..48 {
+                assert_eq!(pixel(&image, x, y), pixel(&reference, x, y), "{brush} at {x},{y}");
+            }
+        }
+    }
+}
+
+#[test]
+fn phased_overflow_corner_keeps_overlapping_float_below_foreground() {
+    let image = render("<div style='display:flow-root'><div style='float:left;width:16px;height:16px;background:blue'></div><div style='width:48px;height:48px;border-radius:12px;overflow:clip;line-height:0;background:red'><span style='display:inline-block;width:48px;height:48px;background:lime;margin-left:-16px'></span></div></div>");
+    assert_eq!(pixel(&image, 8, 8), [0, 255, 0]);
+}
+
 /// A wrapping inline with `filter: blur(4px)` and `clip-path: inset(0)` is blurred inside its
 /// clip: its background's edge, a pixel inside the box, is lighter than the background. The blur
 /// was dropped (the spatial filter path left out elements with a clip path).

@@ -161,22 +161,22 @@ impl<'a> ImageLayerStyles<'a> {
 }
 
 impl ElementCx<'_, '_> {
-    pub(super) fn shared_overflow_color(&self, clip: &BezPath) -> Option<Color> {
+    pub(super) fn background_inside_overflow(&self, clip: &BezPath) -> bool {
         use style::dom::TElement as _;
-        let background = self.style.get_background();
-        if self.frame.corner_curvature.is_none() || self.frame.border_width != kurbo::Insets::ZERO
+        if !self.frame.has_border_radius() || self.frame.border_width != kurbo::Insets::ZERO
             || self.devtools.show_layout || self.node.local_name() == "input"
             || !matches!(self.style.clone_display().inside(), style::values::specified::box_::DisplayInside::Flow | style::values::specified::box_::DisplayInside::FlowRoot)
             || self.style.clone_overflow_x() != Overflow::Clip || self.style.clone_overflow_y() != Overflow::Clip
             || !matches!(self.element.special_data, SpecialElementData::None)
             || !self.style.get_effects().box_shadow.0.is_empty() || self.border_shape().is_some()
             || !matches!(self.style.get_border().border_image_source, GenericImage::None)
-            || !matches!(background.background_image.0.as_ref(), [GenericImage::None])
-            || background.background_clip.0.first() != Some(&StyloBackgroundClip::BorderBox)
             || *clip != self.frame.border_box_path()
-        { return None; }
-        let color = background.background_color.resolve_to_absolute(&self.style.clone_color()).as_srgb_color();
-        (color != Color::TRANSPARENT).then_some(color)
+        { return false; }
+        true
+    }
+
+    pub(super) fn draw_background_inside_overflow(&self, scene: &mut impl PaintScene, clip: &BezPath) {
+        self.draw_background_layers(scene, &self.style, &self.element.background_images, None, None, Some(clip));
     }
 
     pub(super) fn draw_background(&self, scene: &mut impl PaintScene) {
@@ -193,7 +193,7 @@ impl ElementCx<'_, '_> {
             return;
         }
         let style = self.style.clone();
-        self.draw_background_layers(scene, &style, &self.element.background_images, None, None);
+        self.draw_background_layers(scene, &style, &self.element.background_images, None, None, None);
     }
 
     /// pyro: the canvas background (CSS Backgrounds 3 §2.11.2), drawn by the root element in place
@@ -218,7 +218,7 @@ impl ElementCx<'_, '_> {
         }
         let canvas = self.transform.inverse().transform_rect_bbox(canvas);
         let style = (*style).clone();
-        self.draw_background_layers(scene, &style, &element.background_images, Some(canvas), None);
+        self.draw_background_layers(scene, &style, &element.background_images, Some(canvas), None, None);
     }
 
     /// The background of `style` with the images `image_data`, over this element's background
@@ -233,6 +233,7 @@ impl ElementCx<'_, '_> {
         image_data: &[Option<ImageResourceData>],
         canvas: Option<Rect>,
         text_mask: Option<(NodeId, Affine)>,
+        overflow_clip: Option<&BezPath>,
     ) {
         let text_clips = canvas.is_none() || text_mask.is_some();
         let bg_styles = &style.get_background();
@@ -274,7 +275,7 @@ impl ElementCx<'_, '_> {
         let clip_path = |clip: BoxModelBox,
                          border_area: bool,
                          attachment: StyloBackgroundAttachment| {
-            match (canvas, local_cx(attachment)) {
+            let path = match (canvas, local_cx(attachment)) {
                 (Some(canvas), _) => canvas.to_path(0.1),
                 (None, Some(local)) => local.box_path(clip),
                 (None, None) if border_area => self.border_area_path(),
@@ -297,7 +298,8 @@ impl ElementCx<'_, '_> {
                         .unwrap_or_else(|| self.box_path(clip)),
                     _ => self.box_path(clip),
                 },
-            }
+            };
+            if overflow_clip == Some(&path) { self.frame.border_box.to_path(0.1) } else { path }
         };
 
         // pyro: `background-blend-mode`: each layer blends with the layers and the colour under it,
@@ -1276,7 +1278,7 @@ impl ElementCx<'_, '_> {
         let canvas = *clip - Vec2::new(part.x0, part.y0) * self.scale;
         if let (Some(style), Some(element)) = (node.primary_styles(), node.element_data()) {
             let style = (*style).clone();
-            part_cx.draw_background_layers(scene, &style, &element.background_images, Some(canvas), Some((cell, cell_transform)));
+            part_cx.draw_background_layers(scene, &style, &element.background_images, Some(canvas), Some((cell, cell_transform)), None);
         }
         scene.pop_layer();
     }

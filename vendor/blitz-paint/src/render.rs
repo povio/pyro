@@ -238,6 +238,7 @@ pub struct BlitzDomPainter<'dom, 'a> {
     pub(crate) local_raster_depth: std::cell::Cell<u32>,
     /// pyro: the paint phase the element painted is painted in (`FlowPhase`).
     pub(crate) flow_phase: std::cell::Cell<FlowPhase>,
+    phased_corner: std::cell::Cell<Option<NodeId>>,
     /// pyro: a box painted in the foreground phase had an outline, left for the outline phase.
     pub(crate) deferred_outlines: std::cell::Cell<bool>,
     /// pyro: the clipping stacking-context root whose content is being painted in its clip: the
@@ -368,6 +369,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             composite_3d: false,
             local_raster_depth: std::cell::Cell::new(0),
             flow_phase: std::cell::Cell::new(FlowPhase::All),
+            phased_corner: std::cell::Cell::new(None),
             deferred_outlines: std::cell::Cell::new(false),
             clip_escapes_of: std::cell::Cell::new(None),
             handed_clips: RefCell::new(None),
@@ -1362,13 +1364,13 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         // scrollbars over its inline content, its classic ones with its box.
         if phase != FlowPhase::All && should_clip && node.scroller_paints_in_ancestor_phases() {
             let clip = cx.overflow_clip_path(&styles);
-            let mut shared_color = None;
+            let mut shared_background = false;
             match phase {
                 FlowPhase::Background if !hidden => {
                     cx.draw_outset_box_shadow(scene);
                     if cx.context.backgrounds && self.canvas_background != Some(node_id) {
-                        shared_color = cx.shared_overflow_color(&clip);
-                        if shared_color.is_none() { cx.draw_background(scene); }
+                        shared_background = cx.background_inside_overflow(&clip);
+                        if !shared_background { cx.draw_background(scene); }
                     }
                     cx.draw_inset_box_shadow(scene);
                     cx.draw_border(scene);
@@ -1383,8 +1385,12 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             }
             let unscrolled = cx.transform;
             scene.push_clip_layer(Fill::NonZero, unscrolled, &clip);
-            if let Some(color) = shared_color {
-                scene.fill(Fill::NonZero, unscrolled, color, None, &cx.frame.border_box);
+            if shared_background {
+                self.phased_corner.set(Some(node.id));
+                cx.draw_background_inside_overflow(scene, &clip);
+            }
+            if phase == FlowPhase::Foreground && cx.background_inside_overflow(&clip) {
+                self.phased_corner.set(Some(node.id));
             }
             cx.transform = self.scrolled_transform(node, unscrolled);
             if phase == FlowPhase::Foreground {
@@ -1692,7 +1698,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         // its owner does not contain.
         let handed = self.handed_clip.borrow_mut().take();
         let own_clip = if is_text_input { cx.frame.text_input_clip_path() } else { cx.overflow_clip_path(&cx.style) };
-        let mut shared_color = None;
+        let mut shared_background = false;
         let outer_escape_owner = self.escape_owner.get();
         if let Some((owner, device_clip)) = &handed {
             self.escape_owner.set(Some((node.id, *owner)));
@@ -1732,10 +1738,10 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                 cx.draw_positioned_table_part_backgrounds(scene);
             }
             if cx.context.backgrounds && !is_root && self.canvas_background != Some(node.id) {
-                if should_clip && handed.is_none() && !is_text_input {
-                    shared_color = cx.shared_overflow_color(&own_clip);
+                if should_clip && handed.is_none() && wrapper_clip.is_none() && !is_text_input {
+                    shared_background = cx.background_inside_overflow(&own_clip);
                 }
-                if shared_color.is_none() { cx.draw_background(scene); }
+                if !shared_background { cx.draw_background(scene); }
             }
             cx.draw_inset_box_shadow(scene);
         }
@@ -1798,8 +1804,9 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         // painted before the clip layer, the positioned level and positive `z-index` after it,
         // each in the clip unless it escapes it.
         let escapes = should_clip && cx.has_clip_escapes();
-        if (!should_clip || escapes) && let Some(color) = shared_color.take() {
-            scene.fill(Fill::NonZero, cx.transform, color, None, &own_clip);
+        if (!should_clip || escapes) && shared_background {
+            cx.draw_background(scene);
+            shared_background = false;
         }
         let outer_escapes = self.clip_escapes_of.replace(None);
         // pyro: a box with an outline paints it before its positioned descendants (z-index auto
@@ -1838,11 +1845,11 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             None,
             None,
         );
-        if let Some(color) = shared_color {
+        if shared_background {
             if content_layer {
-                scene.fill(Fill::NonZero, cx.transform, color, None, &cx.frame.border_box);
+                cx.draw_background_inside_overflow(scene, &own_clip);
             } else {
-                scene.fill(Fill::NonZero, cx.transform, color, None, &own_clip);
+                cx.draw_background(scene);
             }
         }
         'content: {
@@ -6559,12 +6566,57 @@ impl ElementCx<'_, '_> {
         content_position: Point,
     ) {
         self.draw_neg_z_children(scene, parent_style_transform, clip_rect);
-        self.draw_flow_children(
-            scene,
-            parent_style_transform,
-            clip_rect,
-            FlowPhase::Background,
-        );
+        let mut background = Scene::new();
+        let outer_corner = self.context.phased_corner.replace(None);
+        self.draw_flow_children(&mut background, parent_style_transform, clip_rect, FlowPhase::Background);
+        if let Some(owner) = self.context.phased_corner.replace(None) {
+            let mut between = Scene::new();
+            let mut foreground = Scene::new();
+            self.draw_between_flow_phases(&mut between, parent_style_transform, clip_rect, content_position);
+            let outer_outlines = self.context.deferred_outlines.replace(false);
+            self.draw_flow_children(&mut foreground, parent_style_transform, clip_rect, FlowPhase::Foreground);
+            use anyrender::recording::RenderCommand;
+            let edge = match (background.commands.first(), background.commands.last(), foreground.commands.first()) {
+                (Some(RenderCommand::PushClipLayer(first)), Some(RenderCommand::PopLayer), Some(RenderCommand::PushClipLayer(second))) if first == second => Some(first.transform.transform_rect_bbox(first.clip.bounding_box()).inflate(1.0, 1.0)),
+                _ => None,
+            };
+            let single_group = |commands: &[RenderCommand]| {
+                let mut depth = 0;
+                matches!(commands.last(), Some(RenderCommand::PopLayer)) && commands[..commands.len()-1].iter().all(|command| {
+                    match command {
+                        RenderCommand::PushClipLayer(_) | RenderCommand::PushLayer(_) => depth += 1,
+                        RenderCommand::PopLayer => depth -= 1,
+                        _ => {}
+                    }
+                    depth > 0
+                })
+            };
+            let local_paint = |commands: &[RenderCommand]| commands.iter().all(|command| !matches!(command, RenderCommand::PushLayer(layer) if layer.filter.is_some() || layer.backdrop_filter.is_some() || layer.blend != BlendMode::default()));
+            if self.context.phased_corner.get() == Some(owner) && single_group(&background.commands) && single_group(&foreground.commands)
+                && local_paint(&background.commands) && local_paint(&between.commands) && local_paint(&foreground.commands)
+                && edge.is_some_and(|edge| crate::bounds::scene_bounds(&between.commands).is_none_or(|bounds| edge.intersect(bounds).area() == 0.0)) {
+                background.commands.pop();
+                background.commands.extend(foreground.commands.into_iter().skip(1));
+                scene.append_scene(background, Affine::IDENTITY);
+                scene.append_scene(between, Affine::IDENTITY);
+            } else {
+                scene.append_scene(background, Affine::IDENTITY);
+                scene.append_scene(between, Affine::IDENTITY);
+                scene.append_scene(foreground, Affine::IDENTITY);
+            }
+            self.draw_after_flow_foreground(scene, parent_style_transform, clip_rect, content_position, outer_outlines);
+            self.context.phased_corner.set(outer_corner);
+            return;
+        }
+        scene.append_scene(background, Affine::IDENTITY);
+        self.draw_between_flow_phases(scene, parent_style_transform, clip_rect, content_position);
+        let outer_outlines = self.context.deferred_outlines.replace(false);
+        self.draw_flow_children(scene, parent_style_transform, clip_rect, FlowPhase::Foreground);
+        self.draw_after_flow_foreground(scene, parent_style_transform, clip_rect, content_position, outer_outlines);
+        self.context.phased_corner.set(outer_corner);
+    }
+
+    fn draw_between_flow_phases(&self, scene: &mut impl PaintScene, parent_style_transform: Affine, clip_rect: Rect, content_position: Point) {
         // pyro: a collapsed table's borders, over the backgrounds of the blocks in its cells
         // (Blink paints them after its descendants' block backgrounds), under their floats and
         // inline content.
@@ -6599,13 +6651,13 @@ impl ElementCx<'_, '_> {
         }
         self.draw_marker(scene, content_position);
         self.draw_inline_layout(scene, content_position);
-        let outer_outlines = self.context.deferred_outlines.replace(false);
-        self.draw_flow_children(
-            scene,
-            parent_style_transform,
-            clip_rect,
-            FlowPhase::Foreground,
-        );
+    }
+
+    fn draw_after_flow_foreground(&self, scene: &mut impl PaintScene, parent_style_transform: Affine, clip_rect: Rect, content_position: Point, outer_outlines: bool) {
+        let clamp_clip = {
+            let clamp = &self.style.get_box().line_clamp;
+            (!clamp.webkit_legacy && !clamp.max_lines.is_none()).then(|| Rect::new(-1e7, -1e7, 1e7, self.frame.content_box.y1))
+        };
         self.draw_inline_boxes_over_atomics(scene, content_position);
         if self.context.deferred_outlines.get() {
             self.draw_flow_children(scene, parent_style_transform, clip_rect, FlowPhase::Outline);
