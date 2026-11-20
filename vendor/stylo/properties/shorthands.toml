@@ -555,6 +555,18 @@ engine = "servo"
 spec = "https://drafts.csswg.org/css-gaps-1/#propdef-row-rule"
 kind = "single_border"
 
+[rule-break]
+sub_properties = ["column-rule-break", "row-rule-break"]
+engine = "servo"
+spec = "https://drafts.csswg.org/css-gaps-1/#propdef-rule-break"
+kind = "mirrored"
+
+[rule-visibility-items]
+sub_properties = ["column-rule-visibility-items", "row-rule-visibility-items"]
+engine = "servo"
+spec = "https://drafts.csswg.org/css-gaps-1/#propdef-rule-visibility-items"
+kind = "mirrored"
+
 [rule-color]
 sub_properties = ["column-rule-color", "row-rule-color"]
 engine = "servo"

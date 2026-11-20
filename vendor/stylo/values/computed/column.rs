@@ -6,6 +6,7 @@
 
 use crate::values::computed::PositiveInteger;
 use crate::values::generics::column::GenericColumnCount;
+pub use crate::values::specified::column::{RuleBreak, RuleOverlap, RuleVisibilityItems};
 pub use crate::values::specified::column::{ColumnFill, ColumnSpan, ColumnWrap};
 
 /// A computed type for `column-count` values.

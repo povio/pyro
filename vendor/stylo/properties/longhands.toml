@@ -694,6 +694,51 @@ initial_specified_value = "specified::BorderSideWidth::medium()"
 spec = "https://drafts.csswg.org/css-multicol/#propdef-column-rule-width"
 affects = "layout"
 
+[column-rule-break]
+type = "column::RuleBreak"
+initial = "computed::column::RuleBreak::Normal"
+struct = "column"
+engine = "servo"
+animation_type = "discrete"
+spec = "https://drafts.csswg.org/css-gaps-1/#propdef-column-rule-break"
+affects = "paint"
+
+[row-rule-break]
+type = "column::RuleBreak"
+initial = "computed::column::RuleBreak::Normal"
+struct = "column"
+engine = "servo"
+animation_type = "discrete"
+spec = "https://drafts.csswg.org/css-gaps-1/#propdef-row-rule-break"
+affects = "paint"
+
+[column-rule-visibility-items]
+type = "column::RuleVisibilityItems"
+initial = "computed::column::RuleVisibilityItems::Normal"
+struct = "column"
+engine = "servo"
+animation_type = "discrete"
+spec = "https://drafts.csswg.org/css-gaps-1/#propdef-column-rule-visibility-items"
+affects = "paint"
+
+[row-rule-visibility-items]
+type = "column::RuleVisibilityItems"
+initial = "computed::column::RuleVisibilityItems::Normal"
+struct = "column"
+engine = "servo"
+animation_type = "discrete"
+spec = "https://drafts.csswg.org/css-gaps-1/#propdef-row-rule-visibility-items"
+affects = "paint"
+
+[rule-overlap]
+type = "column::RuleOverlap"
+initial = "computed::column::RuleOverlap::RowOverColumn"
+struct = "column"
+engine = "servo"
+animation_type = "discrete"
+spec = "https://drafts.csswg.org/css-gaps-1/#propdef-rule-overlap"
+affects = "paint"
+
 [row-rule-color]
 type = "Color"
 initial = "computed_value::T::currentcolor()"

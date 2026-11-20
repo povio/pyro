@@ -8,6 +8,33 @@ use crate::derives::*;
 use crate::values::generics::column::GenericColumnCount;
 use crate::values::specified::PositiveInteger;
 
+#[allow(missing_docs)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, FromPrimitive, Hash, MallocSizeOf, Parse, PartialEq, Serialize, SpecifiedValueInfo, ToComputedValue, ToCss, ToResolvedValue, ToShmem, ToTyped)]
+#[repr(u8)]
+pub enum RuleBreak {
+    Normal,
+    None,
+    Intersection,
+}
+
+#[allow(missing_docs)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, FromPrimitive, Hash, MallocSizeOf, Parse, PartialEq, Serialize, SpecifiedValueInfo, ToComputedValue, ToCss, ToResolvedValue, ToShmem, ToTyped)]
+#[repr(u8)]
+pub enum RuleVisibilityItems {
+    Normal,
+    All,
+    Around,
+    Between,
+}
+
+#[allow(missing_docs)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, FromPrimitive, Hash, MallocSizeOf, Parse, PartialEq, Serialize, SpecifiedValueInfo, ToComputedValue, ToCss, ToResolvedValue, ToShmem, ToTyped)]
+#[repr(u8)]
+pub enum RuleOverlap {
+    RowOverColumn,
+    ColumnOverRow,
+}
+
 /// A specified type for `column-count` values.
 pub type ColumnCount = GenericColumnCount<PositiveInteger>;
 
