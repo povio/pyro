@@ -302,6 +302,15 @@ fn get_computed_style_reads_pseudo_elements() {
 }
 
 #[test]
+fn registering_a_property_recomputes_existing_declarations() {
+    let env = env("<div id=t style='font-size:10px; --gap:2em'><span id=child></span></div>");
+    let read = |script: &str| eval(&env.main, script);
+    assert_eq!(read("const style = getComputedStyle(t); style.getPropertyValue('--gap')"), "2em");
+    assert_eq!(read("CSS.registerProperty({name:'--gap',syntax:'<length>',inherits:false,initialValue:'1px'}); [style.getPropertyValue('--gap'),getComputedStyle(child).getPropertyValue('--gap')].join('|')"), "20px|1px");
+    env.page.dispose();
+}
+
+#[test]
 fn css_register_property_validates_and_supplies_initial_values() {
     let e = env("<div id=t style='--set:4px'></div>");
     let v = |js: &str| eval(&e.main, js);
@@ -315,6 +324,10 @@ fn css_register_property_validates_and_supplies_initial_values() {
     assert_eq!(err("{name:'--wrong',syntax:'<length>',inherits:false,initialValue:'red'}"), "SyntaxError");
     assert_eq!(err("{name:'--relative',syntax:'<length>',inherits:false,initialValue:'1em'}"), "SyntaxError");
     assert_eq!(err("{name:'--keyword',syntax:'<length>',inherits:false,initialValue:'inherit'}"), "SyntaxError");
+    assert_eq!(err("{name:'--single',syntax:'<transform-function>',inherits:false,initialValue:'scale(2) rotate(1deg)'}"), "SyntaxError");
+    assert_eq!(err("{name:'--list',syntax:'<transform-list>',inherits:false,initialValue:'scale(2) rotate(1deg)'}"), "ok");
+    assert_eq!(err("{name:'--not-list',syntax:'<transform-list>',inherits:false,initialValue:'none'}"), "SyntaxError");
+    assert_eq!(err("{name:'--union',syntax:'<transform-list>|none',inherits:false,initialValue:'none'}"), "ok");
     assert_eq!(err("{syntax:'*',inherits:false}"), "TypeError");
     assert_eq!(err("{name:'--x'}"), "TypeError");
     assert_eq!(err("{name:'--set',syntax:'<length>',inherits:false,initialValue:'1px'}"), "ok");

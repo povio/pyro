@@ -3687,8 +3687,27 @@ diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
  spec = "https://drafts.csswg.org/css-overflow-4/#webkit-line-clamp"
 diff -ruN a/properties_and_values/value.rs b/properties_and_values/value.rs
 --- a/properties_and_values/value.rs	2026-11-11 19:55:57
-+++ b/properties_and_values/value.rs	2026-11-20 23:24:22
-@@ -647,6 +647,14 @@
++++ b/properties_and_values/value.rs	2026-11-20 23:33:34
+@@ -559,9 +559,15 @@
+             DataType::Resolution => {
+                 SpecifiedValueComponent::Resolution(specified::Resolution::parse(context, input)?)
+             },
+-            DataType::TransformFunction => SpecifiedValueComponent::TransformFunction(
+-                specified::Transform::parse(context, input)?,
+-            ),
++            DataType::TransformFunction => {
++                let transform = specified::Transform::parse(context, input)?;
++                if transform.0.is_empty()
++                    || (component.multiplier() != Some(Multiplier::Space) && transform.0.len() != 1)
++                {
++                    return Err(StyleParseError::custom(StyleParseErrorKind::UnspecifiedError));
++                }
++                SpecifiedValueComponent::TransformFunction(transform)
++            },
+             DataType::CustomIdent => {
+                 let name = CustomIdent::parse(input, &[])?;
+                 SpecifiedValueComponent::CustomIdent(name)
+@@ -647,6 +653,14 @@
              return Err(());
          }
          let value = self.value.animate(&other.value, procedure)?;

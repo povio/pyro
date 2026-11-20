@@ -1163,6 +1163,7 @@ impl StyleEngine {
             return false;
         }
         self.registered_properties.push(property);
+        self.invalidate();
         true
     }
 

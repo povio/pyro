@@ -559,9 +559,15 @@ impl<'a> Parser<'a> {
             DataType::Resolution => {
                 SpecifiedValueComponent::Resolution(specified::Resolution::parse(context, input)?)
             },
-            DataType::TransformFunction => SpecifiedValueComponent::TransformFunction(
-                specified::Transform::parse(context, input)?,
-            ),
+            DataType::TransformFunction => {
+                let transform = specified::Transform::parse(context, input)?;
+                if transform.0.is_empty()
+                    || (component.multiplier() != Some(Multiplier::Space) && transform.0.len() != 1)
+                {
+                    return Err(StyleParseError::custom(StyleParseErrorKind::UnspecifiedError));
+                }
+                SpecifiedValueComponent::TransformFunction(transform)
+            },
             DataType::CustomIdent => {
                 let name = CustomIdent::parse(input, &[])?;
                 SpecifiedValueComponent::CustomIdent(name)
