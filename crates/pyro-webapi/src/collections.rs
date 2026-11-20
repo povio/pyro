@@ -1406,9 +1406,9 @@ pub struct AnimatedEnumData {
 impl AnimatedEnumData {
     fn value(&self) -> u16 {
         let dom = self.el.page.dom.borrow();
-        let keyword = dom.get_attribute(self.el.id, self.e.attr).ok().flatten();
+        let keyword = dom.get_attribute_ns(self.el.id, None, self.e.attr).ok().flatten();
         keyword
-            .and_then(|k| self.e.keywords.iter().position(|w| *w == k.trim()))
+            .and_then(|k| self.e.keywords.iter().position(|w| *w == k))
             .map_or(self.e.initial, |i| i as u16 + 1)
     }
 }
@@ -1434,7 +1434,15 @@ impl JsClass for SvgAnimatedEnumeration {
                         format!("The enumeration value provided ({n}) is not a valid value for '{}'.", t.e.attr).into(),
                     ));
                 };
-                t.el.page.dom.borrow_mut().set_attribute(t.el.id, t.e.attr, keyword).js()
+                // Selecting ANGLE preserves a current angle and resets a keyword
+                // or invalid attribute to the initial zero angle.
+                if t.e.attr == "orient" && n == 2 {
+                    let dom = t.el.page.dom.borrow();
+                    if dom.get_attribute_ns(t.el.id, None, "orient").js()?.and_then(Angle::parse).is_some() {
+                        return Ok(());
+                    }
+                }
+                t.el.page.dom.borrow_mut().set_attribute_ns(t.el.id, None, t.e.attr, keyword).js()
             },
         );
         def.getter("animVal", |s, t| Ok(s.number(t.value() as f64)));
@@ -1464,6 +1472,7 @@ pub fn animated_enumeration<'s>(
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SvgPart {
     Whole,
+    NumberOrPercentage,
     First,
     Second,
 }
@@ -1484,30 +1493,59 @@ pub struct AnimatedAttrData {
 }
 
 impl AnimatedAttrData {
+    /// SVG 2 linking: href is reflected in no namespace unless only the
+    /// legacy XLink attribute exists. Its DOM prefix is immaterial.
+    fn name(&self, dom: &Dom) -> (Option<&'static str>, &'static str) {
+        let primary = self.a.attrs[0];
+        if self.a.attrs.len() == 1 || dom.get_attribute_ns(self.el.id, None, primary).ok().flatten().is_some() {
+            return (None, primary);
+        }
+        for alias in &self.a.attrs[1..] {
+            let (ns, local) = match alias.strip_prefix("xlink:") {
+                Some(local) => (Some("http://www.w3.org/1999/xlink"), local),
+                None => (None, *alias),
+            };
+            if dom.get_attribute_ns(self.el.id, ns, local).ok().flatten().is_some() {
+                return (ns, local);
+            }
+        }
+        (None, primary)
+    }
     fn text(&self) -> Option<String> {
         let dom = self.el.page.dom.borrow();
-        self.a.attrs.iter().find_map(|name| dom.get_attribute(self.el.id, name).ok().flatten().map(|v| v.to_string()))
-    }
-    /// The attribute to write: the first present one, else the first name.
-    fn write_name(&self) -> &'static str {
-        let dom = self.el.page.dom.borrow();
-        self.a.attrs.iter().copied().find(|name| dom.has_attribute(self.el.id, name).unwrap_or(false)).unwrap_or(self.a.attrs[0])
+        let (ns, name) = self.name(&dom);
+        dom.get_attribute_ns(self.el.id, ns, name).ok().flatten().map(str::to_owned)
     }
     fn set(&self, value: &str) -> JsResult<()> {
-        let name = self.write_name();
-        self.el.page.dom.borrow_mut().set_attribute(self.el.id, name, value).js()
+        let mut dom = self.el.page.dom.borrow_mut();
+        let (ns, name) = self.name(&dom);
+        dom.set_attribute_ns(self.el.id, ns, name, value).js()
     }
     /// The attribute's numbers (separated by whitespace and/or a comma); `None` when it does not parse
     /// as one number (or, for a pair, one or two).
     fn numbers(&self) -> Option<Vec<f64>> {
         let text = self.text()?;
-        let parts: Vec<&str> =
-            text.split(|c: char| c.is_ascii_whitespace() || c == ',').filter(|p| !p.is_empty()).collect();
-        let max = if self.a.part == SvgPart::Whole { 1 } else { 2 };
-        if parts.is_empty() || parts.len() > max {
+        let text = text.trim_matches(|c: char| c.is_ascii_whitespace());
+        if self.a.part == SvgPart::NumberOrPercentage {
+            let n = match text.strip_suffix('%') {
+                Some(percent) => svg_number(percent)? / 100.0,
+                None => svg_number(text)?,
+            };
+            return Some(vec![n]);
+        }
+        if self.a.part == SvgPart::Whole {
+            return Some(vec![svg_number(text)?]);
+        }
+        let parts: Vec<_> = if let Some((x, y)) = text.split_once(',') {
+            let whitespace = |c: char| c.is_ascii_whitespace();
+            vec![x.trim_matches(whitespace), y.trim_matches(whitespace)]
+        } else {
+            text.split_ascii_whitespace().collect()
+        };
+        if parts.is_empty() || parts.len() > 2 {
             return None;
         }
-        parts.iter().map(|p| svg_number(p)).collect()
+        parts.into_iter().map(svg_number).collect()
     }
     fn number(&self) -> f64 {
         self.number_as(self.a.part)
@@ -1515,7 +1553,7 @@ impl AnimatedAttrData {
     /// Writes `v` as this part, keeping the other number of a pair.
     fn set_number(&self, v: f64) -> JsResult<()> {
         let text = match self.a.part {
-            SvgPart::Whole => fmt_number(v),
+            SvgPart::Whole | SvgPart::NumberOrPercentage => fmt_number(v),
             SvgPart::First => format!("{} {}", fmt_number(v), fmt_number(self.number_as(SvgPart::Second))),
             SvgPart::Second => format!("{} {}", fmt_number(self.number_as(SvgPart::First)), fmt_number(v)),
         };
@@ -1535,6 +1573,9 @@ fn svg_number(text: &str) -> Option<f64> {
     if text.is_empty() || text.contains(|c: char| !(c.is_ascii_digit() || matches!(c, '.' | '-' | '+' | 'e' | 'E'))) {
         return None;
     }
+    if text.split(['e', 'E']).next()?.ends_with('.') {
+        return None;
+    }
     text.parse::<f64>().ok().filter(|v| v.is_finite())
 }
 
@@ -1542,7 +1583,9 @@ fn fmt_number(v: f64) -> String {
     if v == v.trunc() && v.abs() < 1e15 {
         format!("{}", v as i64)
     } else {
-        format!("{v}")
+        // SVGAnimatedNumber is a WebIDL float. Serializing the widened
+        // JS double would expose extra digits for values such as 0.2.
+        (v as f32).to_string()
     }
 }
 
@@ -1563,6 +1606,20 @@ impl JsClass for SvgAnimatedString {
     fn define(def: &mut ClassDef<Self>) {
         def.accessor("baseVal", |s, t| Ok(s.string(&t.text().unwrap_or_default())), |_s, t, v| t.set(&dom_string(v)?));
         def.getter("animVal", |s, t| Ok(s.string(&t.text().unwrap_or_default())));
+    }
+}
+
+/// A detached SVG number object, as returned by SVGSVGElement.createSVGNumber().
+pub struct SvgNumber;
+impl JsClass for SvgNumber {
+    const NAME: &'static str = "SVGNumber";
+    type Data = Cell<f32>;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        def.accessor("value", |s, n| Ok(s.number(f64::from(n.get()))), |_s, n, v| {
+            n.set(finite_float(v, "SVGNumber")? as f32);
+            Ok(())
+        });
     }
 }
 
@@ -1632,6 +1689,195 @@ pub fn animated_attr<'s, C: JsClass<Data = AnimatedAttrData>>(
     }
     let page = page_rc(s)?;
     s.wrap::<C>(AnimatedAttrData { el: NodeHold::new(&page, id)?, a }, Some(key))
+}
+
+// SVG angles are stored in their specified units. The unitless form is in
+// degrees, and a turn is accepted by CSS but has no SVGAngle unit constant.
+#[derive(Clone, Copy)]
+struct Angle {
+    value: f32,
+    unit: u16,
+}
+impl Angle {
+    const ZERO: Self = Self { value: 0.0, unit: 1 };
+    const UNITS: [&'static str; 6] = ["", "", "deg", "rad", "grad", "turn"];
+    fn parse(text: &str) -> Option<Self> {
+        let text = text.trim_matches(|c: char| c.is_ascii_whitespace());
+        // grad precedes rad because the suffixes overlap.
+        for unit in [4, 3, 2, 5, 1] {
+            let suffix = Self::UNITS[unit];
+            let Some(n) = text.len().checked_sub(suffix.len()) else { continue };
+            if text.is_char_boundary(n) && text[n..].eq_ignore_ascii_case(suffix) {
+                let value = svg_number(&text[..n])? as f32;
+                return value.is_finite().then_some(Self { value, unit: unit as u16 });
+            }
+        }
+        None
+    }
+    fn factor(unit: u16) -> f64 {
+        match unit {
+            3 => 180.0 / std::f64::consts::PI,
+            4 => 0.9,
+            5 => 360.0,
+            _ => 1.0,
+        }
+    }
+    fn degrees(self) -> f64 {
+        f64::from(self.value) * Self::factor(self.unit)
+    }
+    fn clamp(value: f64) -> f32 {
+        value.clamp(-f64::from(f32::MAX), f64::from(f32::MAX)) as f32
+    }
+    fn string(self) -> String {
+        let value = if self.value == 0.0 { 0.0 } else { self.value };
+        format!("{value}{}", Self::UNITS[self.unit as usize])
+    }
+}
+
+pub enum SvgAngleData {
+    Detached(Cell<(f32, u16)>),
+    Reflected { el: NodeHold, anim: bool },
+}
+impl SvgAngleData {
+    fn get(&self) -> Angle {
+        match self {
+            Self::Detached(cell) => {
+                let (value, unit) = cell.get();
+                Angle { value, unit }
+            }
+            Self::Reflected { el, .. } => el
+                .page
+                .dom
+                .borrow()
+                .get_attribute_ns(el.id, None, "orient")
+                .ok()
+                .flatten()
+                .and_then(Angle::parse)
+                .unwrap_or(Angle::ZERO),
+        }
+    }
+    fn writable(&self) -> JsResult<()> {
+        if matches!(self, Self::Reflected { anim: true, .. }) {
+            return Err(JsError::dom("NoModificationAllowedError", "The animated value is read-only."));
+        }
+        Ok(())
+    }
+    fn set(&self, angle: Angle) -> JsResult<()> {
+        self.writable()?;
+        match self {
+            Self::Detached(cell) => {
+                cell.set((angle.value, angle.unit));
+                Ok(())
+            }
+            Self::Reflected { el, .. } => el.page.dom.borrow_mut().set_attribute_ns(el.id, None, "orient", &angle.string()).js(),
+        }
+    }
+}
+
+pub struct SvgAngle;
+impl JsClass for SvgAngle {
+    const NAME: &'static str = "SVGAngle";
+    type Data = SvgAngleData;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        for (i, key) in [
+            "SVG_ANGLETYPE_UNKNOWN",
+            "SVG_ANGLETYPE_UNSPECIFIED",
+            "SVG_ANGLETYPE_DEG",
+            "SVG_ANGLETYPE_RAD",
+            "SVG_ANGLETYPE_GRAD",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            def.constant(key, i as f64);
+        }
+        def.getter("unitType", |s, t| {
+            let k = t.get().unit;
+            Ok(s.number(if k == 5 { 0.0 } else { f64::from(k) }))
+        });
+        def.accessor(
+            "value",
+            |s, t| Ok(s.number(f64::from(Angle::clamp(t.get().degrees())))),
+            |_s, t, v| {
+                let n = finite_float(v, "SVGAngle")?;
+                let unit = t.get().unit;
+                t.set(Angle { value: Angle::clamp(n / Angle::factor(unit)), unit })
+            },
+        );
+        def.accessor(
+            "valueInSpecifiedUnits",
+            |s, t| Ok(s.number(f64::from(t.get().value))),
+            |_s, t, v| {
+                let value = finite_float(v, "SVGAngle")? as f32;
+                t.set(Angle { value, unit: t.get().unit })
+            },
+        );
+        def.accessor(
+            "valueAsString",
+            |s, t| Ok(s.string(&t.get().string())),
+            |_s, t, v| {
+                let input = dom_string(v)?;
+                t.writable()?;
+                t.set(Angle::parse(&input).ok_or_else(|| JsError::dom("SyntaxError", "Invalid SVG angle."))?)
+            },
+        );
+        def.method("newValueSpecifiedUnits", 2, |s, t, a| {
+            a.require(2, "SVGAngle.newValueSpecifiedUnits")?;
+            let unit = to_u32(a.get(0))? as u16;
+            let value = finite_float(a.get(1), "SVGAngle")? as f32;
+            t.writable()?;
+            check_angle_unit(unit)?;
+            t.set(Angle { value, unit })?;
+            Ok(s.undefined())
+        });
+        def.method("convertToSpecifiedUnits", 1, |s, t, a| {
+            a.require(1, "SVGAngle.convertToSpecifiedUnits")?;
+            let unit = to_u32(a.get(0))? as u16;
+            t.writable()?;
+            check_angle_unit(unit)?;
+            t.set(Angle { value: Angle::clamp(t.get().degrees() / Angle::factor(unit)), unit })?;
+            Ok(s.undefined())
+        });
+    }
+}
+fn check_angle_unit(unit: u16) -> JsResult<()> {
+    if (1..=4).contains(&unit) {
+        Ok(())
+    } else {
+        Err(JsError::dom("NotSupportedError", "Unsupported SVG angle unit."))
+    }
+}
+pub fn create_svg_angle<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
+    s.wrap::<SvgAngle>(SvgAngleData::Detached(Cell::new((0.0, 1))), None)
+}
+pub fn angle_string(s: &Scope<'_>, value: Value<'_>) -> JsResult<String> {
+    let angle = s.unwrap::<SvgAngle>(value).ok_or_else(|| JsError::Type("Expected an SVGAngle.".into()))?;
+    Ok(angle.get().string())
+}
+pub struct SvgAnimatedAngle;
+impl JsClass for SvgAnimatedAngle {
+    const NAME: &'static str = "SVGAnimatedAngle";
+    type Data = NodeHold;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        def.getter("baseVal", |s, el| Ok(reflected_angle(s, el, false)?.value()));
+        def.getter("animVal", |s, el| Ok(reflected_angle(s, el, true)?.value()));
+    }
+}
+fn reflected_angle<'s>(s: &Scope<'s>, el: &NodeHold, anim: bool) -> JsResult<Object<'s>> {
+    let key = coll_identity(&el.page, 429 + u64::from(anim), el.id);
+    if let Some(o) = s.lookup_identity(key) {
+        return Ok(o);
+    }
+    s.wrap::<SvgAngle>(SvgAngleData::Reflected { el: NodeHold::new(&el.page, el.id)?, anim }, Some(key))
+}
+pub fn animated_angle<'s>(s: &Scope<'s>, page: &PageDom, id: NodeId) -> JsResult<Object<'s>> {
+    let key = coll_identity(page, 428, id);
+    if let Some(o) = s.lookup_identity(key) {
+        return Ok(o);
+    }
+    s.wrap::<SvgAnimatedAngle>(NodeHold::new(&page_rc(s)?, id)?, Some(key))
 }
 
 // ----- SVGAnimatedLength, SVGLength ------------------------------------------------------------
@@ -2119,9 +2365,12 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<SvgMatrix>();
     engine.register::<SvgAnimatedEnumeration>();
     engine.register::<SvgAnimatedString>();
+    engine.register::<SvgNumber>();
     engine.register::<SvgAnimatedNumber>();
     engine.register::<SvgAnimatedInteger>();
     engine.register::<SvgAnimatedBoolean>();
+    engine.register::<SvgAngle>();
+    engine.register::<SvgAnimatedAngle>();
     engine.register::<SvgAnimatedLength>();
     engine.register::<SvgLength>();
     engine.register::<SvgCurrentTranslate>();
