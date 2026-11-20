@@ -669,8 +669,11 @@ impl WorkerPerformanceData {
 /// Milliseconds since `origin`, in steps of 100 microseconds (the
 /// resolution of `performance.now()` without cross-origin isolation).
 pub(crate) fn now_since(origin: Instant) -> f64 {
-    let ms = origin.elapsed().as_secs_f64() * 1000.0;
-    (ms * 10.0).floor() / 10.0
+    time_since(origin, Instant::now())
+}
+
+pub(crate) fn time_since(origin: Instant, at: Instant) -> f64 {
+    (at.saturating_duration_since(origin).as_micros() / 100) as f64 / 10.0
 }
 
 /// `PerformanceObserver.supportedEntryTypes` in a worker.

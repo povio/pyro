@@ -56,9 +56,13 @@ pub(crate) fn reset() {
 /// The page clock now, as an `Instant` (comparable to timer deadlines kept
 /// on this clock).
 pub fn now() -> Instant {
+    at(Instant::now())
+}
+
+pub(crate) fn at(real: Instant) -> Instant {
     match FROZEN.get() {
         Some((now, _)) => now,
-        None => Instant::now() + SKEW.get(),
+        None => real + SKEW.get(),
     }
 }
 

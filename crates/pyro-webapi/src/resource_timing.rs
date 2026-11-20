@@ -182,13 +182,16 @@ fn protocol_name(v: pyro_net::http::Version) -> &'static str {
 /// A response that failed the Timing-Allow-Origin check keeps only its
 /// start, `fetchStart` and end ("opaque timing info").
 pub fn entry_of(report: &FetchReport, base: Instant, base_ms: f64) -> ResourceEntry {
-    let ms = |t: Instant| {
+    entry_with_clock(report, |t: Instant| {
         let at = match t.checked_duration_since(base) {
             Some(after) => base_ms + after.as_secs_f64() * 1000.0,
             None => base_ms - base.duration_since(t).as_secs_f64() * 1000.0,
         };
         (at.max(0.0) * 10.0).floor() / 10.0
-    };
+    })
+}
+
+fn entry_with_clock(report: &FetchReport, ms: impl Fn(Instant) -> f64) -> ResourceEntry {
     let start = ms(report.start);
     let end = ms(report.end).max(start);
     let mut e = ResourceEntry {
@@ -401,9 +404,9 @@ impl PageDom {
         if self.is_disposed() || !(report.url.starts_with("http:") || report.url.starts_with("https:")) {
             return;
         }
-        let Some(now_ms) = self.event_time() else { return };
+        let Some(clock) = self.clock_for_entries() else { return };
         let rt = &self.resource_timings;
-        let mut entry = entry_of(report, Instant::now(), now_ms);
+        let mut entry = entry_with_clock(report, |at| clock(at));
         if !entry.server_timing.is_empty() && !self.exposes_server_timing() {
             entry.server_timing.clear();
         }
@@ -619,6 +622,18 @@ mod tests {
             render_blocking: false,
         };
         (r, base)
+    }
+
+    #[test]
+    fn fetch_start_uses_the_same_clock_bucket_as_the_script() {
+        let (mut fetch, origin) = report("https://a.test/x", None);
+        let clock = |at| crate::performance::time_since(origin, at);
+        let script_start = origin + Duration::from_micros(22301);
+        fetch.start = script_start + Duration::from_micros(10);
+        fetch.end = origin + Duration::from_micros(22401);
+        let entry = entry_with_clock(&fetch, clock);
+        assert_eq!(entry.fetch_start, clock(script_start));
+        assert_eq!((entry.start, entry.response_end), (22.3, 22.4));
     }
 
     #[test]

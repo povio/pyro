@@ -757,8 +757,12 @@ impl PageNav {
     /// frame times and `Event.timeStamp` in a document that is not
     /// cross-origin isolated (as in Chrome).
     pub fn now_ms(&self) -> f64 {
-        let ms = crate::clock::now().saturating_duration_since(self.time_origin.get()).as_secs_f64() * 1000.0;
-        (ms * 10.0).floor() / 10.0
+        self.time_at(Instant::now())
+    }
+
+    pub(crate) fn time_at(&self, real: Instant) -> f64 {
+        let elapsed = crate::clock::at(real).saturating_duration_since(self.time_origin.get());
+        (elapsed.as_micros() / 100) as f64 / 10.0
     }
 
     /// Time of the current document's first paint, once it had one.

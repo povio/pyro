@@ -132,7 +132,7 @@ impl WindowData {
         let key = page.window_target().expect("document window target");
         // `Event.timeStamp` reads the clock `performance.now()` reads.
         let clock = nav.clone();
-        page.set_event_clock(Rc::new(move || clock.now_ms()));
+        page.set_event_clock(Rc::new(move |at| clock.time_at(at)));
         WindowData {
             sched,
             nav,

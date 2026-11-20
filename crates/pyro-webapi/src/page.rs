@@ -191,7 +191,7 @@ pub struct PageDom {
     pub(crate) error_event_world: Cell<Option<(u64, RealmId)>>,
     /// The document's clock (`performance.now()`), which `Event.timeStamp`
     /// reads so both share a time origin and a resolution.
-    event_clock: RefCell<Option<Rc<dyn Fn() -> f64>>>,
+    event_clock: RefCell<Option<Rc<dyn Fn(std::time::Instant) -> f64>>>,
     /// Each realm's installer of `isTrusted`, a [LegacyUnforgeable] accessor:
     /// an own property of every event (`event::define_unforgeables`).
     pub(crate) event_unforgeables: RefCell<FxHashMap<RealmId, Persistent>>,
@@ -1992,12 +1992,15 @@ impl PageDom {
     }
     /// Installs the clock `Event.timeStamp` reads: milliseconds since the
     /// document's time origin, as `performance.now()` reports them.
-    pub fn set_event_clock(&self, clock: Rc<dyn Fn() -> f64>) {
+    pub fn set_event_clock(&self, clock: Rc<dyn Fn(std::time::Instant) -> f64>) {
         *self.event_clock.borrow_mut() = Some(clock);
     }
     /// The document's clock now, if the embedder installed one.
     pub(crate) fn event_time(&self) -> Option<f64> {
-        self.event_clock.borrow().as_ref().map(|clock| clock())
+        self.event_clock.borrow().as_ref().map(|clock| clock(std::time::Instant::now()))
+    }
+    pub(crate) fn clock_for_entries(&self) -> Option<Rc<dyn Fn(std::time::Instant) -> f64>> {
+        self.event_clock.borrow().clone()
     }
     pub(crate) fn next_event_id(&self) -> u64 {
         let n = self.next_event.get();

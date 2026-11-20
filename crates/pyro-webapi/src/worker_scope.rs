@@ -554,7 +554,7 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
     // its Resource Timing entries count from here.
     let started = Instant::now();
     let origin_wall_ms = epoch_ms();
-    page.set_event_clock(Rc::new(move || crate::performance::now_since(started)));
+    page.set_event_clock(Rc::new(move |at| crate::performance::time_since(started, at)));
     page.set_user_agent_override(start.user_agent.clone()).map_err(|e| JsError::Type(e.to_string().into()))?;
     page.set_extra_http_headers(start.extra_headers.clone());
     page.set_cache_disabled(start.cache_disabled);
