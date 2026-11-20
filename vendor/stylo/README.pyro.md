@@ -46,7 +46,7 @@ crate (`diff -ruN`).
 
 - `properties/longhands.toml`, `properties/counted_unknown_properties.py`: `orphans` and `widows`
   are added (upstream has neither; both were counted unknown properties), inherited, in
-  `inherited_text`. pyro-render's PDF output reads them to place page cuts of paper-cut documents.
+  `inherited_text`. Both interpolate as positive integers. pyro-render's PDF output reads them to place page cuts of paper-cut documents.
 
 - `stylist.rs`, `style_resolver.rs`: each origin's `CascadeData` also files its single-level
   `::before`/`::after` rules that declare `content`, `display` or `animation-name` (on the
