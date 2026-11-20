@@ -1221,7 +1221,7 @@ fn parse_fragment_with(
     let body_context = mode == FragmentMode::Insertion && dom.n(ctx).element().is_none_or(|el| {
         el.is_html() && el.name.local == local_name!("html") && !dom.is_xml_document(owner_id)
     });
-    if !matches!(mode, FragmentMode::Modern { .. }) && dom.is_xml_document(owner_id) {
+    if mode == FragmentMode::Insertion && dom.is_xml_document(owner_id) {
         return crate::xml::parse_fragment(dom, context, html, body_context);
     }
     if !body_context && dom.n(ctx).element().is_none() {
@@ -1314,7 +1314,7 @@ pub fn set_inner_html(dom: &mut Dom, element: NodeId, html: &str) -> DomResult<(
     };
     let ctx = match &dom.n(i).kind {
         NodeKind::Element(e) => {
-            if !dom.is_xml_document(dom.id_of(dom.n(i).owner_doc)) && parses_as_text(e, html) {
+            if parses_as_text(e, html) {
                 // What the fragment parser would build: one text node with
                 // the string (none for ""), replacing all children.
                 let text = if html.is_empty() {
