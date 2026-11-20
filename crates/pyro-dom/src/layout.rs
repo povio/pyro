@@ -2496,7 +2496,14 @@ impl Layout {
             }
             let r = self.hit_test_client_rect(dom, result, el, geometry);
             // (Nor is a box a line clamp discarded: `ExternalBox::hidden`.)
-            if b.hidden || !inside(&r) || !self.is_visible(dom, el) || !self.style.is_hit_testable(dom, el) {
+            if b.hidden || !inside(&r) || !self.is_visible(dom, el) {
+                continue;
+            }
+            let svg_viewport = !ignore_x && dom.element(el).is_ok_and(|e| {
+                e.name.ns == markup5ever::ns!(svg) && e.name.local == local_name!("svg")
+            });
+            let self_hit = self.style.is_hit_testable(dom, el);
+            if !self_hit && (!svg_viewport || self.computed(dom, el).inert) {
                 continue;
             }
             // A box split into fragments (columns) is hit in one of them: its rect is their union.
@@ -2552,7 +2559,22 @@ impl Layout {
                 out_x || out_y
             });
             if !clipped {
-                best = Some((key, el));
+                let target = if svg_viewport {
+                    // SVG graphics are painted inside the viewport's CSS box and
+                    // have no CSS boxes of their own. Hit them in local user space.
+                    let left = b.border[LEFT] + b.padding[LEFT];
+                    let top = b.border[TOP] + b.padding[TOP];
+                    let viewport = (
+                        b.client_width - b.padding[LEFT] - b.padding[RIGHT],
+                        b.client_height - b.padding[TOP] - b.padding[BOTTOM],
+                    );
+                    crate::svg_geometry::hit_test(dom, &self.style, el, viewport, x - r.x - left, y - r.y - top)
+                } else {
+                    None
+                };
+                if let Some(target) = target.or_else(|| self_hit.then_some(el)) {
+                    best = Some((key, target));
+                }
             }
         }
         // Outside the topmost modal dialog everything is inert: the point
