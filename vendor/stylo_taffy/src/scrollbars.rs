@@ -95,6 +95,14 @@ pub struct GutterInputs {
 }
 
 impl GutterInputs {
+    pub fn bounded_thickness(&self, available: taffy::Size<f32>) -> taffy::Size<f32> {
+        let edges = self.gutters().edges;
+        if edges == taffy::Rect::zero() { return self.thickness; }
+        let width = if edges.left > 0.0 && edges.right > 0.0 { available.width * 0.5 } else { available.width };
+        let height = if edges.top > 0.0 && edges.bottom > 0.0 { available.height * 0.5 } else { available.height };
+        self.thickness.zip_map(taffy::Size { width, height }, f32::min)
+    }
+
     /// The physical gutters (as Chrome lays them out): the vertical scrollbar on the right (on the
     /// left for `direction: rtl` in a horizontal writing mode), the horizontal one at the bottom;
     /// `scrollbar-gutter` reserves the gutter at the inline-end edge (both inline edges with

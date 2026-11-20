@@ -166,12 +166,20 @@ fn custom_scrollbar_review_large_gutters() {
     for length in ["100000px", "3e38px"] {
         let document = doc(&format!("<style>html,section{{overflow:scroll;scrollbar-gutter:stable both-edges}}::-webkit-scrollbar{{width:{length};height:{length}}}section{{box-sizing:border-box;width:100px;height:80px;border:4px solid}}</style><section><div></div></section>"), true);
         let viewport = document.viewport_scrollbars;
-        assert!(viewport.gutters.left <= 800.0 && viewport.gutters.right <= 800.0 && viewport.gutters.bottom <= 600.0);
+        assert!(viewport.gutters.left + viewport.gutters.right <= 800.0 && viewport.gutters.bottom <= 600.0);
         let scroller = node(&document, "section");
         let gutters = scroller.classic_scrollbars().unwrap().gutters;
-        assert_eq!((gutters.left, gutters.right, gutters.bottom), (92.0, 92.0, 72.0));
+        assert_eq!((gutters.left, gutters.right, gutters.bottom), (46.0, 46.0, 72.0));
         assert_eq!(client(&document, "section"), (0.0, 0.0));
-        assert_eq!(node(&document, "section > div").final_layout().location.x, 96.0);
+        assert_eq!(node(&document, "section > div").final_layout().location.x, 50.0);
+    }
+}
+
+#[test]
+fn custom_scrollbar_review_constraints() {
+    for (rule, expected) in [("width:20px;max-width:5px", 95.0), ("width:5px;min-width:20px", 80.0), ("width:calc(5px + 20%)", 95.0)] {
+        let document = doc(&format!("<style>section{{width:100px;height:80px;overflow:scroll}}section::-webkit-scrollbar{{{rule}}}</style><section></section>"), true);
+        assert_eq!(client(&document, "section").0, expected, "{rule}");
     }
 }
 

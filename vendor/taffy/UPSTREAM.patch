@@ -8811,7 +8811,7 @@ index 70838fe7..674c80a0 100644
      pub(crate) fn area_column_count(&self) -> u16 {
          self.area_column_count
 diff --git a/src/compute/leaf.rs b/src/compute/leaf.rs
-index 40570991..8f82c608 100644
+index 40570991..c2d9ecca 100644
 --- a/src/compute/leaf.rs
 +++ b/src/compute/leaf.rs
 @@ -68,14 +68,10 @@ where
@@ -8833,6 +8833,24 @@ index 40570991..8f82c608 100644
  
      let has_styles_preventing_being_collapsed_through = !style.is_block()
          || style.overflow().x.is_scroll_container()
+@@ -123,7 +119,7 @@ where
+             .maybe_set(known_dimensions.width)
+             .maybe_set(node_size.width)
+             .map_definite_value(|size| {
+-                size.maybe_clamp(node_min_size.width, node_max_size.width) - content_box_inset.horizontal_axis_sum()
++                (size.maybe_clamp(node_min_size.width, node_max_size.width) - content_box_inset.horizontal_axis_sum()).max(0.0)
+             }),
+         height: known_dimensions
+             .height
+@@ -132,7 +128,7 @@ where
+             .maybe_set(known_dimensions.height)
+             .maybe_set(node_size.height)
+             .map_definite_value(|size| {
+-                size.maybe_clamp(node_min_size.height, node_max_size.height) - content_box_inset.vertical_axis_sum()
++                (size.maybe_clamp(node_min_size.height, node_max_size.height) - content_box_inset.vertical_axis_sum()).max(0.0)
+             }),
+     };
+ 
 @@ -149,9 +145,17 @@ where
          .or(node_size)
          .unwrap_or(measured_size + content_box_inset.sum_axes())

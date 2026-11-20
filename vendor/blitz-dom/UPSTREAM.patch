@@ -43824,7 +43824,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 diff --git a/packages/blitz-dom/src/node/scrollbar.rs b/packages/blitz-dom/src/node/scrollbar.rs
 --- a/packages/blitz-dom/src/node/scrollbar.rs
 +++ b/packages/blitz-dom/src/node/scrollbar.rs
-@@ -48,7 +48,151 @@
+@@ -48,7 +48,159 @@
      },
  }
  
@@ -43843,7 +43843,7 @@ diff --git a/packages/blitz-dom/src/node/scrollbar.rs b/packages/blitz-dom/src/n
  impl Node {
 +    pub(crate) fn custom_scrollbar_size(&self) -> Option<taffy::Size<f32>> {
 +        use style::selector_parser::PseudoElement;
-+        use style::values::computed::{Display, Size};
++        use style::values::computed::{CSSPixelLength, Display, MaxSize, Size};
 +        if !self.tree().classic_scrollbars {
 +            return None;
 +        }
@@ -43858,24 +43858,31 @@ diff --git a/packages/blitz-dom/src/node/scrollbar.rs b/packages/blitz-dom/src/n
 +            if pseudo.clone_display() == Display::None { return 0.0; }
 +            let position = pseudo.get_position();
 +            let value = if vertical { &position.width } else { &position.height };
-+            if let Size::LengthPercentage(value) = value && let Some(length) = value.0.to_length() {
-+                return length.px().max(0.0).min(app_units::MAX_AU.to_f32_px());
-+            }
-+            stylo_taffy::scrollbars::CLASSIC_THICKNESS
++            let minimum = if vertical { &position.min_width } else { &position.min_height };
++            let maximum = if vertical { &position.max_width } else { &position.max_height };
++            let resolve = |value: &Size, default| match value {
++                Size::LengthPercentage(value) => value.0.resolve(CSSPixelLength::new(0.0)).px(),
++                _ => default,
++            };
++            let maximum = match maximum {
++                MaxSize::LengthPercentage(value) => value.0.resolve(CSSPixelLength::new(0.0)).px(),
++                _ => f32::MAX,
++            };
++            resolve(value, stylo_taffy::scrollbars::CLASSIC_THICKNESS).min(maximum).max(resolve(minimum, 0.0)).max(0.0).min(app_units::MAX_AU.to_f32_px())
 +        };
 +        Some(taffy::Size { width: length(true), height: length(false) })
 +    }
 +
 +    pub(crate) fn used_custom_scrollbar_size(&self) -> Option<taffy::Size<f32>> {
-+        let size = self.custom_scrollbar_size()?;
-+        Some(self.layout_data().scrollbar_size_limit.map_or(size, |limit| size.zip_map(limit, f32::min)))
++        self.layout_data().scrollbar_size_limit.or_else(|| self.custom_scrollbar_size())
 +    }
 +    /// pyro: the box's classic scrollbars, when the process has classic scrollbars
 +    /// (`stylo_taffy::scrollbars`) and the box has any gutter; as layout reserved them
 +    /// (`TaffyStyloStyle::scrollbar_gutter`).
 +    pub fn classic_scrollbars(&self) -> Option<ClassicScrollbars> {
 +        use style::values::computed::Overflow;
-+        let inputs = self.classic_gutter_inputs()?;
++        let mut inputs = self.classic_gutter_inputs()?;
++        if let Some(limit) = self.layout_data().scrollbar_size_limit { inputs.thickness = limit; }
 +        let gutters = inputs.gutters().edges;
 +        if gutters.left == 0.0 && gutters.right == 0.0 && gutters.top == 0.0 && gutters.bottom == 0.0 {
 +            return None;
@@ -43901,12 +43908,13 @@ diff --git a/packages/blitz-dom/src/node/scrollbar.rs b/packages/blitz-dom/src/n
 +    pub fn container_query_gutters(&self) -> taffy::Size<f32> {
 +        let Some(mut inputs) = self.classic_gutter_inputs() else { return taffy::Size { width: 0.0, height: 0.0 } };
 +        inputs.auto_shows = taffy::Point { x: false, y: false };
++        if let Some(limit) = self.layout_data().scrollbar_size_limit { inputs.thickness = limit; }
 +        inputs.gutters().total()
 +    }
 +
 +    /// What decides the box's classic scrollbar gutters, when the process has classic scrollbars
 +    /// and the box can have them.
-+    fn classic_gutter_inputs(&self) -> Option<stylo_taffy::scrollbars::GutterInputs> {
++    pub(crate) fn classic_gutter_inputs(&self) -> Option<stylo_taffy::scrollbars::GutterInputs> {
 +        use style::values::computed::ScrollbarGutter;
 +        use stylo_taffy::scrollbars::{GutterInputs, ScrollbarMode, thickness_in};
 +        let thickness = |w| thickness_in(ScrollbarMode::Classic, w);
@@ -43938,7 +43946,7 @@ diff --git a/packages/blitz-dom/src/node/scrollbar.rs b/packages/blitz-dom/src/n
 +        };
 +        let wm = style.writing_mode;
 +        let inputs = GutterInputs {
-+            thickness: self.used_custom_scrollbar_size().unwrap_or(taffy::Size { width: thickness, height: thickness }),
++            thickness: self.custom_scrollbar_size().unwrap_or(taffy::Size { width: thickness, height: thickness }),
 +            overflow,
 +            auto_shows,
 +            stable: box_styles.scrollbar_gutter.contains(ScrollbarGutter::STABLE),
@@ -50594,7 +50602,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
      /// Walk the nodes now that they're properly styled and transfer their styles to the taffy style system
      ///
      /// TODO: update taffy to use an associated type instead of slab key
-@@ -437,32 +2148,1134 @@
+@@ -437,32 +2148,1135 @@
      pub fn resolve_layout(&mut self) {
          let size = self.stylist.device().au_viewport_size();
  
@@ -50820,10 +50828,8 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +        };
 +        let gutter = html.get_box().scrollbar_gutter;
 +        let viewport = self.stylist.device().au_viewport_size();
-+        let thickness = self.root_element().custom_scrollbar_size().map_or(taffy::Size { width: thickness, height: thickness }, |size| {
-+            taffy::Size { width: size.width.min(viewport.width.to_f32_px()), height: size.height.min(viewport.height.to_f32_px()) }
-+        });
-+        let inputs = stylo_taffy::scrollbars::GutterInputs {
++        let thickness = self.root_element().custom_scrollbar_size().unwrap_or(taffy::Size { width: thickness, height: thickness });
++        let mut inputs = stylo_taffy::scrollbars::GutterInputs {
 +            thickness,
 +            overflow,
 +            auto_shows: shown,
@@ -50833,6 +50839,8 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +            // The viewport's vertical scrollbar is on the right whatever the direction (Chrome).
 +            rtl: false,
 +        };
++        let thickness = inputs.bounded_thickness(taffy::Size { width: viewport.width.to_f32_px(), height: viewport.height.to_f32_px() });
++        inputs.thickness = thickness;
 +        let shown = taffy::Point { x: shown.x && thickness.height > 0.0, y: shown.y && thickness.width > 0.0 };
 +        crate::ViewportScrollbars { gutters: inputs.gutters().edges, shown, thickness }
 +    }
@@ -50895,10 +50903,11 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +            };
 +            let (x, y) = (style.clone_overflow_x(), style.clone_overflow_y());
 +            let old_limit = node.layout_data().scrollbar_size_limit;
-+            let limit = if !node.is_root_element() && let Some(size) = node.custom_scrollbar_size() {
++            let limit = if let Some(inputs) = node.classic_gutter_inputs() {
 +                let layout = node.unrounded_layout();
 +                let available = (layout.size - layout.border.sum_axes()).map(|length| length.max(0.0));
-+                (available.width < size.width || available.height < size.height).then_some(available)
++                let bounded = inputs.bounded_thickness(available);
++                (bounded != inputs.thickness).then_some(bounded)
 +            } else { None };
 +            if x != Overflow::Auto && y != Overflow::Auto && had.is_empty() && limit == old_limit {
 +                continue;

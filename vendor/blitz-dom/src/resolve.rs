@@ -2358,10 +2358,8 @@ impl BaseDocument {
         };
         let gutter = html.get_box().scrollbar_gutter;
         let viewport = self.stylist.device().au_viewport_size();
-        let thickness = self.root_element().custom_scrollbar_size().map_or(taffy::Size { width: thickness, height: thickness }, |size| {
-            taffy::Size { width: size.width.min(viewport.width.to_f32_px()), height: size.height.min(viewport.height.to_f32_px()) }
-        });
-        let inputs = stylo_taffy::scrollbars::GutterInputs {
+        let thickness = self.root_element().custom_scrollbar_size().unwrap_or(taffy::Size { width: thickness, height: thickness });
+        let mut inputs = stylo_taffy::scrollbars::GutterInputs {
             thickness,
             overflow,
             auto_shows: shown,
@@ -2371,6 +2369,8 @@ impl BaseDocument {
             // The viewport's vertical scrollbar is on the right whatever the direction (Chrome).
             rtl: false,
         };
+        let thickness = inputs.bounded_thickness(taffy::Size { width: viewport.width.to_f32_px(), height: viewport.height.to_f32_px() });
+        inputs.thickness = thickness;
         let shown = taffy::Point { x: shown.x && thickness.height > 0.0, y: shown.y && thickness.width > 0.0 };
         crate::ViewportScrollbars { gutters: inputs.gutters().edges, shown, thickness }
     }
@@ -2433,10 +2433,11 @@ impl BaseDocument {
             };
             let (x, y) = (style.clone_overflow_x(), style.clone_overflow_y());
             let old_limit = node.layout_data().scrollbar_size_limit;
-            let limit = if !node.is_root_element() && let Some(size) = node.custom_scrollbar_size() {
+            let limit = if let Some(inputs) = node.classic_gutter_inputs() {
                 let layout = node.unrounded_layout();
                 let available = (layout.size - layout.border.sum_axes()).map(|length| length.max(0.0));
-                (available.width < size.width || available.height < size.height).then_some(available)
+                let bounded = inputs.bounded_thickness(available);
+                (bounded != inputs.thickness).then_some(bounded)
             } else { None };
             if x != Overflow::Auto && y != Overflow::Auto && had.is_empty() && limit == old_limit {
                 continue;
