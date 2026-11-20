@@ -9,6 +9,8 @@
 //! explicitly, and a boundary node that leaves the document clears the
 //! selection when read.
 
+mod whitespace;
+
 use std::rc::Rc;
 
 use pyro_dom::{Dom, NodeId, NodeType};
@@ -327,12 +329,27 @@ pub(crate) fn deep_backward(dom: &Dom, (mut n, mut off): Point) -> Point {
     }
 }
 
+/// Descend into a nearby leaf only while each edge stays in the same
+/// editing host. A non-editable child is an atomic boundary for typing.
+fn editable_edge(dom: &Dom, mut point: Point, forward: bool) -> Point {
+    let host = editing_host(dom, point.0);
+    while !is_text(dom, point.0) {
+        let index = if forward { Some(point.1) } else { point.1.checked_sub(1) };
+        let Some(child) = index.and_then(|i| dom.child_at(point.0, i).ok().flatten()) else { break };
+        if (!is_text(dom, child) && !is_container(dom, child)) || editing_host(dom, child) != host {
+            break;
+        }
+        point = (child, if forward { 0 } else { len(dom, child) });
+    }
+    point
+}
+
 pub fn host_start(dom: &Dom, host: NodeId) -> Point {
-    deep_forward(dom, (host, 0))
+    editable_edge(dom, (host, 0), true)
 }
 
 pub fn host_end(dom: &Dom, host: NodeId) -> Point {
-    deep_backward(dom, (host, len(dom, host)))
+    editable_edge(dom, (host, len(dom, host)), false)
 }
 
 /// Next/previous text node after/before `n` in tree order inside `within`.
@@ -547,15 +564,12 @@ pub(crate) fn insertion_point(dom: &Dom, caret: Point) -> Point {
     if is_text(dom, caret.0) {
         return caret;
     }
-    let f = deep_forward(dom, caret);
-    if is_text(dom, f.0) {
-        return f;
+    let forward = editable_edge(dom, caret, true);
+    if is_text(dom, forward.0) {
+        return forward;
     }
-    let b = deep_backward(dom, caret);
-    if is_text(dom, b.0) {
-        return b;
-    }
-    f
+    let backward = editable_edge(dom, caret, false);
+    if is_text(dom, backward.0) { backward } else { forward }
 }
 
 pub(crate) fn insert_at(dom: &mut Dom, caret: Point, text: &str) -> Point {
@@ -590,9 +604,27 @@ pub fn insert_text(page: &Rc<PageDom>, host: NodeId, text: &str) {
         let caret = {
             let mut dom = page.dom.borrow_mut();
             let caret = if start != end { delete_range(&mut dom, host, start, end, false) } else { start };
-            let inserted_end = insert_at(&mut dom, caret, text);
-            crate::edit_commands::inline_value::format_typed(page, &mut dom, (start, end), inserted_end, text)
-                .unwrap_or(inserted_end)
+            let mut caret = caret;
+            for (index, part) in text.split('\n').enumerate() {
+                if index != 0 {
+                    // An inserted linefeed performs insertParagraph within
+                    // the same edit and undo step as the surrounding text.
+                    caret = split_block(page, &mut dom, host, caret);
+                }
+                if !part.is_empty() {
+                    let inserted_end = insert_at(&mut dom, caret, part);
+                    whitespace::inserted(page, &mut dom, host, inserted_end, part);
+                    caret = crate::edit_commands::inline_value::format_typed(
+                        page,
+                        &mut dom,
+                        (start, end),
+                        inserted_end,
+                        part,
+                    )
+                    .unwrap_or(inserted_end);
+                }
+            }
+            caret
         };
         set_selection(page, caret, caret);
     });
@@ -670,11 +702,16 @@ pub fn delete(page: &Rc<PageDom>, host: NodeId, backward: bool) {
     edit(page, host, input_type, None, |page| {
         let caret = {
             let mut dom = page.dom.borrow_mut();
-            if start != end {
+            let repair_space = start == end && whitespace::exposes_space(page, &dom, host, start, backward);
+            let caret = if start != end {
                 delete_range(&mut dom, host, start, end, true)
             } else {
                 delete_char(&mut dom, host, start, backward)
+            };
+            if repair_space {
+                whitespace::at(page, &mut dom, host, caret);
             }
+            caret
         };
         set_selection(page, caret, caret);
     });
@@ -763,7 +800,7 @@ pub fn insert_paragraph(page: &Rc<PageDom>, host: NodeId) {
         let caret = {
             let mut dom = page.dom.borrow_mut();
             let caret = if start != end { delete_range(&mut dom, host, start, end, true) } else { start };
-            split_block(&mut dom, host, caret)
+            split_block(page, &mut dom, host, caret)
         };
         set_selection(page, caret, caret);
     });
@@ -781,7 +818,7 @@ fn in_text_only_element(dom: &Dom, node: NodeId) -> bool {
     })
 }
 
-fn split_block(dom: &mut Dom, host: NodeId, caret: Point) -> Point {
+fn split_block(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point) -> Point {
     let caret = insertion_point(dom, caret);
     // Content that is text only (a `<script>` or `<style>` in the head of a designMode
     // document) gets a linefeed, as in browsers: no element goes into it.
@@ -802,7 +839,16 @@ fn split_block(dom: &mut Dom, host: NodeId, caret: Point) -> Point {
     }
     let mut block = block_of(dom, caret.0, host);
     let mut caret = caret;
+    let display = page.layout().computed_style_value(dom, block, "display");
+    let inline_box = display == "inline" || display.starts_with("inline-");
     if block == host {
+        if inline_box {
+            return if crate::edit_commands::newlines_significant_in(page, dom, caret.0) {
+                preserved_break_at(page, dom, host, caret)
+            } else {
+                line_break_at(dom, host, caret)
+            };
+        }
         // An inline editing host, heading, term or paragraph can't acquire
         // child paragraphs. Its surrounding block may lie outside this host.
         if !is_block(dom, host) && local(dom, host) != "body"
@@ -852,9 +898,10 @@ fn split_block(dom: &mut Dom, host: NodeId, caret: Point) -> Point {
         block = wrapper;
     }
     let tag = local(dom, block);
-    let Ok(new_block) = dom.create_element(doc, &tag) else {
+    let Ok(new_block) = dom.clone_node(block, false, None) else {
         return caret;
     };
+    let _ = dom.remove_attribute(new_block, "id");
     // Move everything after the caret (within the block) into the new block.
     let (n, off) = caret;
     let mut split_from = if is_text(dom, n) {
@@ -901,6 +948,18 @@ fn split_block(dom: &mut Dom, host: NodeId, caret: Point) -> Point {
     let parent = dom.parent(block).ok().flatten().unwrap_or(host);
     let next = dom.next_sibling(block).ok().flatten();
     let _ = dom.insert_before(parent, new_block, next);
+    // Duplicating an inline-styled p or div alone does not start a new
+    // visual paragraph. Keep its styles and put each half in a block.
+    if inline_box && matches!(tag.as_str(), "p" | "div") {
+        for child in [block, new_block] {
+            let Ok(wrapper) = dom.create_element(doc, "div") else {
+                break;
+            };
+            if dom.insert_before(parent, wrapper, Some(child)).is_ok() {
+                let _ = dom.append_child(wrapper, child);
+            }
+        }
+    }
     // A break at the end of a link is the new paragraph's placeholder.
     // Starting the next line inside that link would continue its href.
     let mut only_child = new_block;
@@ -1323,21 +1382,24 @@ pub fn insert_line_break(page: &Rc<PageDom>, host: NodeId) {
             let mut dom = page.dom.borrow_mut();
             let caret = if start != end { delete_range(&mut dom, host, start, end, true) } else { start };
             if newline {
-                let p = insertion_point(&dom, caret);
-                let at_end =
-                    !is_text(&dom, p.0) || (p.1 >= len(&dom, p.0) && dom.next_sibling(p.0).ok().flatten().is_none());
-                let after = insert_at(&mut dom, caret, if at_end { "\n\n" } else { "\n" });
-                if at_end {
-                    (after.0, after.1 - 1)
-                } else {
-                    after
-                }
+                preserved_break_at(page, &mut dom, host, caret)
             } else {
                 line_break_at(&mut dom, host, caret)
             }
         };
         set_selection(page, caret, caret);
     });
+}
+
+fn preserved_break_at(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point) -> Point {
+    let point = insertion_point(dom, caret);
+    let at_end = whitespace::at_line_end(page, dom, host, point);
+    let after = insert_at(dom, caret, if at_end { "\n\n" } else { "\n" });
+    if at_end {
+        (after.0, after.1.saturating_sub(1))
+    } else {
+        after
+    }
 }
 
 fn line_break_at(dom: &mut Dom, host: NodeId, caret: Point) -> Point {

@@ -453,7 +453,7 @@ impl Flat {
 /// Whether linefeeds in `node`'s text render as line breaks (`white-space`
 /// pre, pre-wrap, pre-line, break-spaces). Computed style is read only for
 /// text that has linefeeds.
-fn newlines_significant_in(page: &PageDom, dom: &Dom, node: NodeId) -> bool {
+pub(crate) fn newlines_significant_in(page: &PageDom, dom: &Dom, node: NodeId) -> bool {
     let el = if editing::is_text(dom, node) { dom.parent_element(node).ok().flatten() } else { Some(node) };
     let Some(el) = el else { return false };
     let layout = page.layout();
