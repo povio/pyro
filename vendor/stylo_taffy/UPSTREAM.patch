@@ -1,7 +1,14 @@
 diff --git a/packages/stylo_taffy/src/convert.rs b/packages/stylo_taffy/src/convert.rs
 --- a/packages/stylo_taffy/src/convert.rs
 +++ b/packages/stylo_taffy/src/convert.rs
-@@ -105,24 +105,53 @@
+@@ -99,37 +99,66 @@
+ #[inline]
+ pub fn dimension(val: &stylo::Size) -> taffy::Dimension {
+     match val {
+-        stylo::Size::LengthPercentage(val) => length_percentage(&val.0).into(),
++        stylo::Size::LengthPercentage(val) | stylo::Size::CalcSizeAny(val) => length_percentage(&val.0).into(),
+         stylo::Size::Auto => taffy::Dimension::AUTO,
+ 
          stylo::Size::MaxContent => taffy::Dimension::max_content(),
          stylo::Size::MinContent => taffy::Dimension::min_content(),
          stylo::Size::FitContent => taffy::Dimension::fit_content(),
@@ -70,7 +77,15 @@ diff --git a/packages/stylo_taffy/src/convert.rs b/packages/stylo_taffy/src/conv
      }
  }
  
-@@ -139,10 +168,48 @@
+ #[inline]
+ pub fn min_size(val: &stylo::Size) -> taffy::LengthPercentageAuto {
+     match val {
+-        stylo::Size::LengthPercentage(val) => length_percentage(&val.0).into(),
++        stylo::Size::LengthPercentage(val) | stylo::Size::CalcSizeAny(val) => length_percentage(&val.0).into(),
+         stylo::Size::Auto => taffy::LengthPercentageAuto::AUTO,
+ 
+         // Sizing keywords are not supported for min/max size properties in Taffy
+@@ -139,10 +168,49 @@
          stylo::Size::FitContentFunction(_) => taffy::LengthPercentageAuto::AUTO,
          stylo::Size::Stretch => taffy::LengthPercentageAuto::AUTO,
          stylo::Size::WebkitFillAvailable => taffy::LengthPercentageAuto::AUTO,
@@ -96,6 +111,7 @@ diff --git a/packages/stylo_taffy/src/convert.rs b/packages/stylo_taffy/src/conv
 +pub fn min_size_keyword(val: &stylo::Size) -> taffy::Dimension {
 +    match val {
 +        stylo::Size::LengthPercentage(_)
++        | stylo::Size::CalcSizeAny(_)
 +        | stylo::Size::Auto
 +        | stylo::Size::CalcSizeStretch(_)
 +        | stylo::Size::CalcSizeAuto(_)
@@ -122,7 +138,7 @@ diff --git a/packages/stylo_taffy/src/convert.rs b/packages/stylo_taffy/src/conv
      }
  }
  
-@@ -160,9 +227,8 @@
+@@ -160,9 +228,8 @@
          stylo::MaxSize::Stretch => taffy::LengthPercentageAuto::AUTO,
          stylo::MaxSize::WebkitFillAvailable => taffy::LengthPercentageAuto::AUTO,
  
@@ -134,7 +150,7 @@ diff --git a/packages/stylo_taffy/src/convert.rs b/packages/stylo_taffy/src/conv
      }
  }
  
-@@ -172,9 +238,8 @@
+@@ -172,9 +239,8 @@
          stylo::MarginVal::Auto => taffy::LengthPercentageAuto::AUTO,
          stylo::MarginVal::LengthPercentage(val) => length_percentage(val).into(),
  
@@ -146,7 +162,7 @@ diff --git a/packages/stylo_taffy/src/convert.rs b/packages/stylo_taffy/src/conv
      }
  }
  
-@@ -195,10 +260,9 @@
+@@ -195,10 +261,9 @@
          stylo::InsetVal::Auto => taffy::LengthPercentageAuto::AUTO,
          stylo::InsetVal::LengthPercentage(val) => length_percentage(val).into(),
  
@@ -160,7 +176,7 @@ diff --git a/packages/stylo_taffy/src/convert.rs b/packages/stylo_taffy/src/conv
      }
  }
  
-@@ -211,6 +275,20 @@
+@@ -211,6 +276,20 @@
      }
  }
  
@@ -181,7 +197,7 @@ diff --git a/packages/stylo_taffy/src/convert.rs b/packages/stylo_taffy/src/conv
  #[inline]
  pub fn is_block(input: stylo::Display) -> bool {
      self::display(input) == taffy::Display::Block
-@@ -316,7 +394,7 @@
+@@ -316,7 +395,7 @@
  /// <https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_positioned_layout/Containing_block#identifying_the_containing_block>
  pub fn establishes_fixed_containing_block(style: &stylo::ComputedValues) -> bool {
      use style::values::computed::{Perspective, Rotate, Scale, Translate};
@@ -190,7 +206,7 @@ diff --git a/packages/stylo_taffy/src/convert.rs b/packages/stylo_taffy/src/conv
  
      let box_style = style.get_box();
      if !box_style.transform.0.is_empty()
-@@ -335,18 +413,23 @@
+@@ -335,18 +414,23 @@
      ) {
          return true;
      }
@@ -220,7 +236,7 @@ diff --git a/packages/stylo_taffy/src/convert.rs b/packages/stylo_taffy/src/conv
  
      let effects = style.get_effects();
      !effects.filter.0.is_empty() || !effects.backdrop_filter.0.is_empty()
-@@ -473,6 +556,10 @@
+@@ -473,6 +557,10 @@
          stylo::AlignFlags::FLEX_START => taffy::AlignContent::FLEX_START,
          stylo::AlignFlags::STRETCH => taffy::AlignContent::STRETCH,
          stylo::AlignFlags::FLEX_END => taffy::AlignContent::FLEX_END,
@@ -231,7 +247,7 @@ diff --git a/packages/stylo_taffy/src/convert.rs b/packages/stylo_taffy/src/conv
          stylo::AlignFlags::CENTER => taffy::AlignContent::CENTER,
          stylo::AlignFlags::SPACE_BETWEEN => taffy::AlignContent::SPACE_BETWEEN,
          stylo::AlignFlags::SPACE_AROUND => taffy::AlignContent::SPACE_AROUND,
-@@ -517,7 +604,10 @@
+@@ -517,7 +605,10 @@
          (_, stylo::BaselineShift::Keyword(stylo::BaselineShiftKeyword::Bottom)) => {
              taffy::AlignContent::END
          }
@@ -243,7 +259,7 @@ diff --git a/packages/stylo_taffy/src/convert.rs b/packages/stylo_taffy/src/conv
          _ => return None,
      };
      align.safety = taffy::AlignmentSafety::Safe;
-@@ -582,6 +672,9 @@
+@@ -582,6 +673,9 @@
          stylo::AlignFlags::STRETCH => taffy::AlignItems::STRETCH,
          stylo::AlignFlags::FLEX_START => taffy::AlignItems::FLEX_START,
          stylo::AlignFlags::FLEX_END => taffy::AlignItems::FLEX_END,
@@ -253,7 +269,7 @@ diff --git a/packages/stylo_taffy/src/convert.rs b/packages/stylo_taffy/src/conv
          stylo::AlignFlags::SELF_START => taffy::AlignItems::SELF_START,
          stylo::AlignFlags::SELF_END => taffy::AlignItems::SELF_END,
          stylo::AlignFlags::START => taffy::AlignItems::START,
-@@ -591,10 +684,12 @@
+@@ -591,10 +685,12 @@
          stylo::AlignFlags::RIGHT if is_horiz_rtl => taffy::AlignItems::START,
          stylo::AlignFlags::RIGHT => taffy::AlignItems::END,
          stylo::AlignFlags::CENTER => taffy::AlignItems::CENTER,
@@ -269,7 +285,7 @@ diff --git a/packages/stylo_taffy/src/convert.rs b/packages/stylo_taffy/src/conv
          // Should never be hit. But no real reason to panic here.
          _ => return None,
      };
-@@ -967,6 +1062,8 @@
+@@ -967,6 +1063,8 @@
          display: self::display(display),
          box_sizing: self::box_sizing(style.clone_box_sizing()),
          item_is_table: display.inside() == stylo::DisplayInside::Table,
@@ -278,7 +294,7 @@ diff --git a/packages/stylo_taffy/src/convert.rs b/packages/stylo_taffy/src/conv
          item_is_replaced: false,
          item_is_compressible_replaced: false,
          position: self::position(style.clone_position()),
-@@ -995,7 +1092,21 @@
+@@ -995,7 +1093,21 @@
              width: self::max_size(&pos.max_width),
              height: self::max_size(&pos.max_height),
          },

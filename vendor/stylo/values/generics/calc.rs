@@ -2554,8 +2554,8 @@ impl<L: CalcNodeLeaf> CalcNode<L> {
         res
     }
 
-    pub(crate) fn write_size_calculation<W: Write>(&self, dest: &mut CssWriter<W>) -> fmt::Result {
-        self.write_calculation::<true, _>(dest, ArgumentLevel::ArgumentRoot)
+    pub(crate) fn write_size_calculation<const SIZE: bool, W: Write>(&self, dest: &mut CssWriter<W>) -> fmt::Result {
+        self.write_calculation::<SIZE, _>(dest, ArgumentLevel::ArgumentRoot)
     }
 
     fn to_css_impl<W: Write>(&self, dest: &mut CssWriter<W>, level: ArgumentLevel) -> fmt::Result {

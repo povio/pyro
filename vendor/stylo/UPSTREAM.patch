@@ -6572,7 +6572,7 @@ diff -ruN a/values/computed/image.rs b/values/computed/image.rs
      }
 diff -ruN a/values/computed/length.rs b/values/computed/length.rs
 --- a/values/computed/length.rs	2026-11-11 19:55:57
-+++ b/values/computed/length.rs	2026-11-20 19:54:57
++++ b/values/computed/length.rs	2026-11-20 20:06:40
 @@ -453,6 +453,8 @@
  pub type NonNegativeLengthPercentageOrNormal =
      GenericLengthPercentageOrNormal<NonNegativeLengthPercentage>;
@@ -6582,7 +6582,7 @@ diff -ruN a/values/computed/length.rs b/values/computed/length.rs
  /// A computed `fit-tolerance` value.
  pub type FitTolerance = GenericFitTolerance<NonNegativeLengthPercentage>;
  
-@@ -462,6 +464,50 @@
+@@ -462,6 +464,59 @@
  /// A computed value for `min-width`, `min-height`, `width` or `height` property.
  pub type Size = GenericSize<NonNegativeLengthPercentage>;
  
@@ -6601,18 +6601,26 @@ diff -ruN a/values/computed/length.rs b/values/computed/length.rs
 +                | (Self::MinContent, Self::CalcSizeMinContent(_))
 +                | (Self::MaxContent, Self::CalcSizeMaxContent(_))
 +                | (Self::FitContent, Self::CalcSizeFitContent(_)) => Some(identity.clone()),
-+                (Self::LengthPercentage(value), _) if !value.0.has_percentage() => Some(value.clone()),
++                (Self::LengthPercentage(value) | Self::CalcSizeAny(value), _) if !value.0.has_percentage() => Some(value.clone()),
 +                _ => None,
 +            }
 +        };
 +        match (self, other) {
 +            (Self::Auto, Self::Auto) => Ok(Self::Auto),
++            (Self::CalcSizeAny(from), Self::CalcSizeAny(to) | Self::LengthPercentage(to)) |
++            (Self::LengthPercentage(from), Self::CalcSizeAny(to)) => Ok(Self::CalcSizeAny(from.animate(to, procedure)?)),
 +            (Self::LengthPercentage(from), Self::LengthPercentage(to)) => Ok(Self::LengthPercentage(from.animate(to, procedure)?)),
 +            (Self::AnchorContainingCalcFunction(from), Self::AnchorContainingCalcFunction(to)) => Ok(Self::AnchorContainingCalcFunction(from.animate(to, procedure)?)),
 +            (Self::AnchorSizeFunction(from), Self::AnchorSizeFunction(to)) => Ok(Self::AnchorSizeFunction(from.animate(to, procedure)?)),
 +            _ => {
++                let any = matches!(self, Self::CalcSizeAny(_)) || matches!(other, Self::CalcSizeAny(_));
 +                for basis in [self, other] {
 +                    let wrap: fn(NonNegativeLengthPercentage) -> Self = match basis {
++                        Self::Auto if any => Self::CalcSizeAuto,
++                        Self::Stretch if any => Self::CalcSizeStretch,
++                        Self::MinContent if any => Self::CalcSizeMinContent,
++                        Self::MaxContent if any => Self::CalcSizeMaxContent,
++                        Self::FitContent if any => Self::CalcSizeFitContent,
 +                        Self::CalcSizeAuto(_) => Self::CalcSizeAuto,
 +                        Self::CalcSizeStretch(_) => Self::CalcSizeStretch,
 +                        Self::CalcSizeMinContent(_) => Self::CalcSizeMinContent,
@@ -6620,8 +6628,9 @@ diff -ruN a/values/computed/length.rs b/values/computed/length.rs
 +                        Self::CalcSizeFitContent(_) => Self::CalcSizeFitContent,
 +                        _ => continue,
 +                    };
-+                    let from = calculation(self, basis).ok_or(())?;
-+                    let to = calculation(other, basis).ok_or(())?;
++                    let basis = wrap(identity.clone());
++                    let from = calculation(self, &basis).ok_or(())?;
++                    let to = calculation(other, &basis).ok_or(())?;
 +                    return Ok(wrap(from.animate(&to, procedure)?));
 +                }
 +                Err(())
@@ -6633,7 +6642,15 @@ diff -ruN a/values/computed/length.rs b/values/computed/length.rs
  /// A computed value for `max-width` or `max-height` property.
  pub type MaxSize = GenericMaxSize<NonNegativeLengthPercentage>;
  
-@@ -548,7 +594,12 @@
+@@ -538,6 +593,7 @@
+         );
+         match self {
+             Self::FitContentFunction(lp)
++            | Self::CalcSizeAny(lp)
+             | Self::LengthPercentage(lp)
+             | Self::AnchorContainingCalcFunction(lp) => {
+                 lp.try_tactic_adjustment(old_side, new_side);
+@@ -548,7 +604,12 @@
              | Self::MinContent
              | Self::FitContent
              | Self::WebkitFillAvailable
@@ -6649,7 +6666,7 @@ diff -ruN a/values/computed/length.rs b/values/computed/length.rs
          }
 diff -ruN a/values/computed/length_percentage.rs b/values/computed/length_percentage.rs
 --- a/values/computed/length_percentage.rs	2026-11-11 19:55:57
-+++ b/values/computed/length_percentage.rs	2026-11-20 19:39:33
++++ b/values/computed/length_percentage.rs	2026-11-20 20:06:02
 @@ -640,6 +640,28 @@
  }
  
@@ -6684,8 +6701,8 @@ diff -ruN a/values/computed/length_percentage.rs b/values/computed/length_percen
  pub type NonNegativeLengthPercentage = NonNegative<LengthPercentage>;
  
 +impl crate::values::generics::length::SizeCalculationCss for NonNegativeLengthPercentage {
-+    fn calculation_css<W: Write>(&self, dest: &mut CssWriter<W>) -> fmt::Result {
-+        self.0.to_calc_node().write_size_calculation(dest)
++    fn calculation_css<const SIZE: bool, W: Write>(&self, dest: &mut CssWriter<W>) -> fmt::Result {
++        self.0.to_calc_node().write_size_calculation::<SIZE, _>(dest)
 +    }
 +}
 +
@@ -6912,14 +6929,14 @@ diff -ruN a/values/generics/basic_shape.rs b/values/generics/basic_shape.rs
  #[derive(
 diff -ruN a/values/generics/calc.rs b/values/generics/calc.rs
 --- a/values/generics/calc.rs	2026-11-11 19:55:57
-+++ b/values/generics/calc.rs	2026-11-20 19:39:33
++++ b/values/generics/calc.rs	2026-11-20 20:06:02
 @@ -2554,10 +2554,29 @@
          res
      }
  
 -    fn to_css_impl<W>(&self, dest: &mut CssWriter<W>, level: ArgumentLevel) -> fmt::Result
-+    pub(crate) fn write_size_calculation<W: Write>(&self, dest: &mut CssWriter<W>) -> fmt::Result {
-+        self.write_calculation::<true, _>(dest, ArgumentLevel::ArgumentRoot)
++    pub(crate) fn write_size_calculation<const SIZE: bool, W: Write>(&self, dest: &mut CssWriter<W>) -> fmt::Result {
++        self.write_calculation::<SIZE, _>(dest, ArgumentLevel::ArgumentRoot)
 +    }
 +
 +    fn to_css_impl<W: Write>(&self, dest: &mut CssWriter<W>, level: ArgumentLevel) -> fmt::Result {
@@ -7297,7 +7314,7 @@ diff -ruN a/values/generics/image.rs b/values/generics/image.rs
  }
 diff -ruN a/values/generics/length.rs b/values/generics/length.rs
 --- a/values/generics/length.rs	2026-11-11 19:55:57
-+++ b/values/generics/length.rs	2026-11-20 19:54:57
++++ b/values/generics/length.rs	2026-11-20 20:06:02
 @@ -138,7 +138,6 @@
  /// Note that it only accepts non-negative values.
  #[allow(missing_docs)]
@@ -7314,7 +7331,7 @@ diff -ruN a/values/generics/length.rs b/values/generics/length.rs
      ToResolvedValue,
      ToShmem,
      ToTyped,
-@@ -174,6 +172,60 @@
+@@ -174,6 +172,68 @@
      FitContentFunction(LengthPercent),
      AnchorSizeFunction(Box<GenericAnchorSizeFunction<Self>>),
      AnchorContainingCalcFunction(LengthPercent),
@@ -7338,10 +7355,13 @@ diff -ruN a/values/generics/length.rs b/values/generics/length.rs
 +    #[animation(error)]
 +    #[css(function = "calc-size")]
 +    CalcSizeStretch(LengthPercent),
++    #[animation(error)]
++    #[css(function = "calc-size")]
++    CalcSizeAny(LengthPercent),
 +}
 +
 +pub(crate) trait SizeCalculationCss: ToCss {
-+    fn calculation_css<W: Write>(&self, dest: &mut CssWriter<W>) -> std::fmt::Result;
++    fn calculation_css<const SIZE: bool, W: Write>(&self, dest: &mut CssWriter<W>) -> std::fmt::Result;
 +}
 +
 +impl<LengthPercent: SizeCalculationCss> ToCss for GenericSize<LengthPercent> {
@@ -7352,6 +7372,11 @@ diff -ruN a/values/generics/length.rs b/values/generics/length.rs
 +            Self::CalcSizeMinContent(value) => ("min-content", value),
 +            Self::CalcSizeMaxContent(value) => ("max-content", value),
 +            Self::CalcSizeStretch(value) => ("stretch", value),
++            Self::CalcSizeAny(value) => {
++                dest.write_str("calc-size(any, ")?;
++                value.calculation_css::<false, _>(dest)?;
++                return dest.write_char(')');
++            },
 +            Self::Auto => return dest.write_str("auto"),
 +            Self::MaxContent => return dest.write_str("max-content"),
 +            Self::MinContent => return dest.write_str("min-content"),
@@ -7369,13 +7394,13 @@ diff -ruN a/values/generics/length.rs b/values/generics/length.rs
 +            },
 +        };
 +        write!(dest, "calc-size({basis}, ")?;
-+        calculation.calculation_css(dest)?;
++        calculation.calculation_css::<true, _>(dest)?;
 +        dest.write_char(')')
 +    }
  }
  
  impl<LengthPercent> SpecifiedValueInfo for GenericSize<LengthPercent>
-@@ -367,6 +419,32 @@
+@@ -367,6 +427,32 @@
  }
  
  pub use self::GenericLengthPercentageOrNormal as LengthPercentageOrNormal;
@@ -8577,7 +8602,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +}
 diff -ruN a/values/specified/calc.rs b/values/specified/calc.rs
 --- a/values/specified/calc.rs	2026-11-11 19:55:57
-+++ b/values/specified/calc.rs	2026-11-18 13:37:07
++++ b/values/specified/calc.rs	2026-11-20 20:06:02
 @@ -305,6 +305,9 @@
          const ANCHOR = 1 << 0;
          /// `anchor-size()` function.
@@ -8600,11 +8625,10 @@ diff -ruN a/values/specified/calc.rs b/values/specified/calc.rs
                  Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError))
              },
              &Token::Percentage { unit_value, .. } => {
-@@ -969,6 +977,15 @@
-             Token::Function(name) => {
+@@ -970,6 +978,15 @@
                  let function = CalcNode::math_function(context, name)?;
                  CalcNode::parse(context, input, function, flags)
-+            },
+             },
 +            Token::Ident(ident)
 +                if flags.additional_functions.intersects(AdditionalFunctions::CALC_SIZE)
 +                    && ident.eq_ignore_ascii_case("size") =>
@@ -8613,33 +8637,35 @@ diff -ruN a/values/specified/calc.rs b/values/specified/calc.rs
 +                    1.0,
 +                    Optional::Some(NumericBaseType::Length),
 +                ))))
-             },
++            },
              Token::Ident(ident) => {
                  let leaf = match_ignore_ascii_case! { &**ident,
-@@ -1631,6 +1648,22 @@
-             .map_err(|()| ParseError::custom(StyleParseErrorKind::UnspecifiedError))
-     }
- 
+                     "e" => Leaf::Number(NoCalcNumber::new(std::f32::consts::E)),
+@@ -1627,6 +1644,23 @@
+             ..Default::default()
+         };
+         Self::parse(context, input, function, flags)?
++            .into_length_or_percentage(clamping_mode)
++            .map_err(|()| ParseError::custom(StyleParseErrorKind::UnspecifiedError))
++    }
++
 +    /// pyro: the calculation of a `calc-size()`, its `size` keyword as `100%`.
 +    pub fn parse_calc_size_calculation(
 +        context: &ParserContext,
 +        input: &mut Parser,
 +        clamping_mode: AllowedNumericType,
++        allow_size: bool,
 +    ) -> Result<CalcLengthPercentage, ParseError> {
 +        let flags = CalcParseFlags {
-+            additional_functions: AdditionalFunctions::CALC_SIZE,
++            additional_functions: if allow_size { AdditionalFunctions::CALC_SIZE } else { AdditionalFunctions::empty() },
 +            percentage_context: PercentageContext::allowed_with_hint(NumericBaseType::Length),
 +            ..Default::default()
 +        };
 +        Self::parse_argument(context, input, flags)?
-+            .into_length_or_percentage(clamping_mode)
-+            .map_err(|()| ParseError::custom(StyleParseErrorKind::UnspecifiedError))
-+    }
-+
-     /// Convenience parsing function for percentages.
-     pub fn parse_percentage(
-         context: &ParserContext,
-@@ -1703,6 +1736,30 @@
+             .into_length_or_percentage(clamping_mode)
+             .map_err(|()| ParseError::custom(StyleParseErrorKind::UnspecifiedError))
+     }
+@@ -1703,6 +1737,30 @@
          .map_err(|()| ParseError::custom(StyleParseErrorKind::UnspecifiedError))
      }
  
@@ -9271,7 +9297,7 @@ diff -ruN a/values/specified/image.rs b/values/specified/image.rs
      /// <cf-image> = <percentage>? && [ <image> | <color> ]
 diff -ruN a/values/specified/length.rs b/values/specified/length.rs
 --- a/values/specified/length.rs	2026-11-11 19:55:57
-+++ b/values/specified/length.rs	2026-11-20 19:54:57
++++ b/values/specified/length.rs	2026-11-20 20:06:02
 @@ -187,13 +187,14 @@
              "lvi" if !in_page_rule => Self::Lvi,
              "dvi" if !in_page_rule => Self::Dvi,
@@ -9294,20 +9320,19 @@ diff -ruN a/values/specified/length.rs b/values/specified/length.rs
              _ => return Err(()),
          })
      }
-@@ -1678,11 +1679,22 @@
- 
+@@ -1679,10 +1680,21 @@
  /// A wrapper of LengthPercentage, whose value must be >= 0.
  pub type NonNegativeLengthPercentage = NonNegative<LengthPercentage>;
-+
+ 
 +impl crate::values::generics::length::SizeCalculationCss for NonNegativeLengthPercentage {
-+    fn calculation_css<W: Write>(&self, dest: &mut CssWriter<W>) -> fmt::Result {
++    fn calculation_css<const SIZE: bool, W: Write>(&self, dest: &mut CssWriter<W>) -> fmt::Result {
 +        match &self.0 {
-+            LengthPercentage::Calc(calc) => calc.0.node.write_size_calculation(dest),
++            LengthPercentage::Calc(calc) => calc.0.node.write_size_calculation::<SIZE, _>(dest),
 +            other => other.to_css(dest),
 +        }
 +    }
 +}
- 
++
  /// Either a NonNegativeLengthPercentage or the `normal` keyword.
  pub type NonNegativeLengthPercentageOrNormal =
      GenericLengthPercentageOrNormal<NonNegativeLengthPercentage>;
@@ -9328,7 +9353,7 @@ diff -ruN a/values/specified/length.rs b/values/specified/length.rs
  
          let allow_anchor = allow_anchor_functions == ParseAnchorFunctions::Yes
              && crate::pref!("layout.css.anchor-positioning.enabled", gecko = true);
-@@ -1943,6 +1959,29 @@
+@@ -1943,6 +1959,31 @@
      pub fn zero_percent() -> Self {
          GenericSize::LengthPercentage(NonNegativeLengthPercentage::zero_percent())
      }
@@ -9342,16 +9367,18 @@ diff -ruN a/values/specified/length.rs b/values/specified/length.rs
 +                "min-content" => 2u8,
 +                "max-content" => 3u8,
 +                "stretch" => 4u8,
++                "any" => 5u8,
 +            };
 +            input.expect_comma()?;
-+            let calc = CalcNode::parse_calc_size_calculation(context, input, AllowedNumericType::NonNegative)?;
++            let calc = CalcNode::parse_calc_size_calculation(context, input, AllowedNumericType::NonNegative, basis != 5)?;
 +            let length = NonNegative(LengthPercentage::Calc(Box::new(calc)));
 +            Ok(match basis {
 +                0 => GenericSize::CalcSizeAuto(length),
 +                1 => GenericSize::CalcSizeFitContent(length),
 +                2 => GenericSize::CalcSizeMinContent(length),
 +                3 => GenericSize::CalcSizeMaxContent(length),
-+                _ => GenericSize::CalcSizeStretch(length),
++                4 => GenericSize::CalcSizeStretch(length),
++                _ => GenericSize::CalcSizeAny(length),
 +            })
 +        })
 +    }

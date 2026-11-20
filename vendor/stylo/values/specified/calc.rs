@@ -1653,9 +1653,10 @@ impl CalcNode {
         context: &ParserContext,
         input: &mut Parser,
         clamping_mode: AllowedNumericType,
+        allow_size: bool,
     ) -> Result<CalcLengthPercentage, ParseError> {
         let flags = CalcParseFlags {
-            additional_functions: AdditionalFunctions::CALC_SIZE,
+            additional_functions: if allow_size { AdditionalFunctions::CALC_SIZE } else { AdditionalFunctions::empty() },
             percentage_context: PercentageContext::allowed_with_hint(NumericBaseType::Length),
             ..Default::default()
         };

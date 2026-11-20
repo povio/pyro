@@ -479,18 +479,26 @@ impl crate::values::animated::Animate for Size {
                 | (Self::MinContent, Self::CalcSizeMinContent(_))
                 | (Self::MaxContent, Self::CalcSizeMaxContent(_))
                 | (Self::FitContent, Self::CalcSizeFitContent(_)) => Some(identity.clone()),
-                (Self::LengthPercentage(value), _) if !value.0.has_percentage() => Some(value.clone()),
+                (Self::LengthPercentage(value) | Self::CalcSizeAny(value), _) if !value.0.has_percentage() => Some(value.clone()),
                 _ => None,
             }
         };
         match (self, other) {
             (Self::Auto, Self::Auto) => Ok(Self::Auto),
+            (Self::CalcSizeAny(from), Self::CalcSizeAny(to) | Self::LengthPercentage(to)) |
+            (Self::LengthPercentage(from), Self::CalcSizeAny(to)) => Ok(Self::CalcSizeAny(from.animate(to, procedure)?)),
             (Self::LengthPercentage(from), Self::LengthPercentage(to)) => Ok(Self::LengthPercentage(from.animate(to, procedure)?)),
             (Self::AnchorContainingCalcFunction(from), Self::AnchorContainingCalcFunction(to)) => Ok(Self::AnchorContainingCalcFunction(from.animate(to, procedure)?)),
             (Self::AnchorSizeFunction(from), Self::AnchorSizeFunction(to)) => Ok(Self::AnchorSizeFunction(from.animate(to, procedure)?)),
             _ => {
+                let any = matches!(self, Self::CalcSizeAny(_)) || matches!(other, Self::CalcSizeAny(_));
                 for basis in [self, other] {
                     let wrap: fn(NonNegativeLengthPercentage) -> Self = match basis {
+                        Self::Auto if any => Self::CalcSizeAuto,
+                        Self::Stretch if any => Self::CalcSizeStretch,
+                        Self::MinContent if any => Self::CalcSizeMinContent,
+                        Self::MaxContent if any => Self::CalcSizeMaxContent,
+                        Self::FitContent if any => Self::CalcSizeFitContent,
                         Self::CalcSizeAuto(_) => Self::CalcSizeAuto,
                         Self::CalcSizeStretch(_) => Self::CalcSizeStretch,
                         Self::CalcSizeMinContent(_) => Self::CalcSizeMinContent,
@@ -498,8 +506,9 @@ impl crate::values::animated::Animate for Size {
                         Self::CalcSizeFitContent(_) => Self::CalcSizeFitContent,
                         _ => continue,
                     };
-                    let from = calculation(self, basis).ok_or(())?;
-                    let to = calculation(other, basis).ok_or(())?;
+                    let basis = wrap(identity.clone());
+                    let from = calculation(self, &basis).ok_or(())?;
+                    let to = calculation(other, &basis).ok_or(())?;
                     return Ok(wrap(from.animate(&to, procedure)?));
                 }
                 Err(())
@@ -584,6 +593,7 @@ impl TryTacticAdjustment for Size {
         );
         match self {
             Self::FitContentFunction(lp)
+            | Self::CalcSizeAny(lp)
             | Self::LengthPercentage(lp)
             | Self::AnchorContainingCalcFunction(lp) => {
                 lp.try_tactic_adjustment(old_side, new_side);

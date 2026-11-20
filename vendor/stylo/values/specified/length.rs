@@ -1681,9 +1681,9 @@ impl NonNegativeLengthPercentageOrAuto {
 pub type NonNegativeLengthPercentage = NonNegative<LengthPercentage>;
 
 impl crate::values::generics::length::SizeCalculationCss for NonNegativeLengthPercentage {
-    fn calculation_css<W: Write>(&self, dest: &mut CssWriter<W>) -> fmt::Result {
+    fn calculation_css<const SIZE: bool, W: Write>(&self, dest: &mut CssWriter<W>) -> fmt::Result {
         match &self.0 {
-            LengthPercentage::Calc(calc) => calc.0.node.write_size_calculation(dest),
+            LengthPercentage::Calc(calc) => calc.0.node.write_size_calculation::<SIZE, _>(dest),
             other => other.to_css(dest),
         }
     }
@@ -1969,16 +1969,18 @@ impl Size {
                 "min-content" => 2u8,
                 "max-content" => 3u8,
                 "stretch" => 4u8,
+                "any" => 5u8,
             };
             input.expect_comma()?;
-            let calc = CalcNode::parse_calc_size_calculation(context, input, AllowedNumericType::NonNegative)?;
+            let calc = CalcNode::parse_calc_size_calculation(context, input, AllowedNumericType::NonNegative, basis != 5)?;
             let length = NonNegative(LengthPercentage::Calc(Box::new(calc)));
             Ok(match basis {
                 0 => GenericSize::CalcSizeAuto(length),
                 1 => GenericSize::CalcSizeFitContent(length),
                 2 => GenericSize::CalcSizeMinContent(length),
                 3 => GenericSize::CalcSizeMaxContent(length),
-                _ => GenericSize::CalcSizeStretch(length),
+                4 => GenericSize::CalcSizeStretch(length),
+                _ => GenericSize::CalcSizeAny(length),
             })
         })
     }

@@ -192,10 +192,13 @@ pub enum GenericSize<LengthPercent> {
     #[animation(error)]
     #[css(function = "calc-size")]
     CalcSizeStretch(LengthPercent),
+    #[animation(error)]
+    #[css(function = "calc-size")]
+    CalcSizeAny(LengthPercent),
 }
 
 pub(crate) trait SizeCalculationCss: ToCss {
-    fn calculation_css<W: Write>(&self, dest: &mut CssWriter<W>) -> std::fmt::Result;
+    fn calculation_css<const SIZE: bool, W: Write>(&self, dest: &mut CssWriter<W>) -> std::fmt::Result;
 }
 
 impl<LengthPercent: SizeCalculationCss> ToCss for GenericSize<LengthPercent> {
@@ -206,6 +209,11 @@ impl<LengthPercent: SizeCalculationCss> ToCss for GenericSize<LengthPercent> {
             Self::CalcSizeMinContent(value) => ("min-content", value),
             Self::CalcSizeMaxContent(value) => ("max-content", value),
             Self::CalcSizeStretch(value) => ("stretch", value),
+            Self::CalcSizeAny(value) => {
+                dest.write_str("calc-size(any, ")?;
+                value.calculation_css::<false, _>(dest)?;
+                return dest.write_char(')');
+            },
             Self::Auto => return dest.write_str("auto"),
             Self::MaxContent => return dest.write_str("max-content"),
             Self::MinContent => return dest.write_str("min-content"),
@@ -223,7 +231,7 @@ impl<LengthPercent: SizeCalculationCss> ToCss for GenericSize<LengthPercent> {
             },
         };
         write!(dest, "calc-size({basis}, ")?;
-        calculation.calculation_css(dest)?;
+        calculation.calculation_css::<true, _>(dest)?;
         dest.write_char(')')
     }
 }
