@@ -12,62 +12,11 @@ use crate::node::{wrap_node, NodeData};
 use crate::page::PageDom;
 use crate::util::*;
 
-/// `DOMRect` / `DOMRectReadOnly` values as a plain JS object with the
-/// DOMRect shape (x, y, width, height, top, right, bottom, left, toJSON).
-pub fn rect_value<'s>(s: &Scope<'s>, r: pyro_dom::layout::Rect) -> JsResult<Value<'s>> {
-    let o = s.wrap::<DomRect>(r, None)?;
-    Ok(o.value())
-}
-
-pub struct DomRect;
-impl JsClass for DomRect {
-    const NAME: &'static str = "DOMRect";
-    type Data = pyro_dom::layout::Rect;
-    type Parent = NoParent;
-    fn define(def: &mut ClassDef<Self>) {
-        def.constructor(0, |s, nt, a| {
-            let n = |i: usize| -> JsResult<f64> {
-                if a.get(i).is_undefined() {
-                    Ok(0.0)
-                } else {
-                    a.get(i).to_number()
-                }
-            };
-            let r = pyro_dom::layout::Rect { x: n(0)?, y: n(1)?, width: n(2)?, height: n(3)? };
-            s.wrap_new::<DomRect>(r, nt, None)
-        });
-        def.getter("x", |s, r| Ok(s.number(r.x)));
-        def.getter("y", |s, r| Ok(s.number(r.y)));
-        def.getter("width", |s, r| Ok(s.number(r.width)));
-        def.getter("height", |s, r| Ok(s.number(r.height)));
-        def.getter("left", |s, r| Ok(s.number(r.left())));
-        def.getter("top", |s, r| Ok(s.number(r.top())));
-        def.getter("right", |s, r| Ok(s.number(r.right())));
-        def.getter("bottom", |s, r| Ok(s.number(r.bottom())));
-        def.method("toJSON", 0, |s, r, _a| {
-            let o = s.object();
-            for (k, v) in [
-                ("x", r.x),
-                ("y", r.y),
-                ("width", r.width),
-                ("height", r.height),
-                ("top", r.top()),
-                ("right", r.right()),
-                ("bottom", r.bottom()),
-                ("left", r.left()),
-            ] {
-                o.set(k, s.number(v))?;
-            }
-            Ok(o.value())
-        });
-    }
-}
-
 pub(crate) fn bounding_rect<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
     let page = n.page();
     crate::animation_events::layout_flush(page, n.id);
     let r = page.layout().bounding_client_rect(&page.dom.borrow(), n.id);
-    rect_value(s, r.layout_units())
+    crate::canvas::rect_value(s, page, false, r.layout_units())
 }
 
 pub(crate) fn client_rects<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
@@ -76,7 +25,7 @@ pub(crate) fn client_rects<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s
     let rects = page.layout().client_rects(&page.dom.borrow(), n.id);
     let mut vals = pyro_js::RootedVec::new();
     for r in rects {
-        vals.push(s, rect_value(s, r.layout_units())?);
+        vals.push(s, crate::canvas::rect_value(s, page, false, r.layout_units())?);
     }
     Ok(s.array(&vals.iter(s).collect::<Vec<_>>())?.value())
 }
@@ -106,11 +55,11 @@ pub(crate) fn range_rect<'s>(
     if let Some(t) = text {
         if t == start && start == end {
             if let Some(rect) = page.layout().text_range_rect(&page.dom.borrow(), t, start_offset, end_offset) {
-                return rect_value(s, rect.layout_units());
+                return crate::canvas::rect_value(s, page, false, rect.layout_units());
             }
         }
         if let Some(r) = page.layout().text_rect(&page.dom.borrow(), t) {
-            return rect_value(s, r.layout_units());
+            return crate::canvas::rect_value(s, page, false, r.layout_units());
         }
     }
     // A range over the children of one node (`selectNodeContents`,
@@ -131,7 +80,7 @@ pub(crate) fn range_rect<'s>(
             for c in children {
                 unite_node_rects(&dom, &layout, c, &mut union);
             }
-            return rect_value(s, union.unwrap_or_default().layout_units());
+            return crate::canvas::rect_value(s, page, false, union.unwrap_or_default().layout_units());
         }
     }
     let el = {
@@ -146,7 +95,7 @@ pub(crate) fn range_rect<'s>(
         Some(e) => page.layout().bounding_client_rect(&page.dom.borrow(), e),
         None => pyro_dom::layout::Rect::default(),
     };
-    rect_value(s, r.layout_units())
+    crate::canvas::rect_value(s, page, false, r.layout_units())
 }
 
 /// Adds `node`'s rect to `union`: a text node's line box, an element's
@@ -1117,7 +1066,6 @@ pub(crate) fn media_query_object<'s>(
 }
 
 pub(crate) fn register(engine: &pyro_js::Engine) {
-    engine.register::<DomRect>();
     engine.register::<ComputedStyle>();
     engine.register::<MediaQueryList>();
 }

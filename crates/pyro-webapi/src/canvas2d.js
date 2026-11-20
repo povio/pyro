@@ -55,12 +55,12 @@
     constructor(x = 0, y = 0, z = 0, w = 1) {
       pointState.set(this, { x: +x, y: +y, z: +z, w: +w });
     }
-    static fromPoint(other) { return pointFrom(DOMPointReadOnly, other); }
+    static fromPoint(other = {}) { return pointFrom(DOMPointReadOnly, other); }
     get x() { return pt(this).x; }
     get y() { return pt(this).y; }
     get z() { return pt(this).z; }
     get w() { return pt(this).w; }
-    matrixTransform(matrix) {
+    matrixTransform(matrix = {}) {
       const m = matrixFromInit(matrix);
       const p = pt(this);
       return transformPoint(m, p.x, p.y, p.z, p.w);
@@ -68,7 +68,7 @@
     toJSON() { const p = pt(this); return { x: p.x, y: p.y, z: p.z, w: p.w }; }
   }
   class DOMPoint extends DOMPointReadOnly {
-    static fromPoint(other) { return pointFrom(DOMPoint, other); }
+    static fromPoint(other = {}) { return pointFrom(DOMPoint, other); }
     get x() { return pt(this).x; }
     set x(v) { pt(this).x = +v; }
     get y() { return pt(this).y; }
@@ -86,6 +86,69 @@
   function pointFrom(C, other) {
     const o = dict(other);
     return new C(unrestricted(o.x, 0), unrestricted(o.y, 0), unrestricted(o.z, 0), unrestricted(o.w, 1));
+  }
+  function rectFrom(C, other) {
+    const source = dict(other);
+    const height = unrestricted(source.height, 0), width = unrestricted(source.width, 0);
+    return new C(unrestricted(source.x, 0), unrestricted(source.y, 0), width, height);
+  }
+  let setRect;
+  class DOMRectReadOnly {
+    #x; #y; #width; #height;
+    constructor(x = 0, y = 0, width = 0, height = 0) {
+      this.#x = +x; this.#y = +y; this.#width = +width; this.#height = +height;
+    }
+    static fromRect(other = {}) { return rectFrom(DOMRectReadOnly, other); }
+    get x() { return this.#x; }
+    get y() { return this.#y; }
+    get width() { return this.#width; }
+    get height() { return this.#height; }
+    get left() { return MathC.min(this.#x, this.#x + this.#width); }
+    get right() { return MathC.max(this.#x, this.#x + this.#width); }
+    get top() { return MathC.min(this.#y, this.#y + this.#height); }
+    get bottom() { return MathC.max(this.#y, this.#y + this.#height); }
+    toJSON() {
+      return { x: this.#x, y: this.#y, width: this.#width, height: this.#height,
+        top: MathC.min(this.#y, this.#y + this.#height), right: MathC.max(this.#x, this.#x + this.#width),
+        bottom: MathC.max(this.#y, this.#y + this.#height), left: MathC.min(this.#x, this.#x + this.#width) };
+    }
+    static { setRect = (rect, key, value) => {
+      switch (key) {
+        case 'x': rect.#x = +value; break;
+        case 'y': rect.#y = +value; break;
+        case 'width': rect.#width = +value; break;
+        case 'height': rect.#height = +value; break;
+      }
+    }; }
+  }
+  class DOMRect extends DOMRectReadOnly {
+    static fromRect(other = {}) { return rectFrom(DOMRect, other); }
+    get x() { return super.x; } set x(value) { setRect(this, 'x', value); }
+    get y() { return super.y; } set y(value) { setRect(this, 'y', value); }
+    get width() { return super.width; } set width(value) { setRect(this, 'width', value); }
+    get height() { return super.height; } set height(value) { setRect(this, 'height', value); }
+  }
+  class DOMQuad {
+    #points;
+    constructor(p1 = {}, p2 = {}, p3 = {}, p4 = {}) {
+      this.#points = [pointFrom(DOMPoint, p1), pointFrom(DOMPoint, p2), pointFrom(DOMPoint, p3), pointFrom(DOMPoint, p4)];
+    }
+    static fromRect(other = {}) {
+      const {x, y, width, height} = rectFrom(DOMRect, other);
+      return new DOMQuad({x,y}, {x:x+width,y}, {x:x+width,y:y+height}, {x,y:y+height});
+    }
+    static fromQuad(other = {}) {
+      const source = dict(other);
+      return new DOMQuad(source.p1, source.p2, source.p3, source.p4);
+    }
+    get p1() { return this.#points[0]; } get p2() { return this.#points[1]; }
+    get p3() { return this.#points[2]; } get p4() { return this.#points[3]; }
+    getBounds() {
+      const xs = this.#points.map(point => pt(point).x), ys = this.#points.map(point => pt(point).y);
+      const x = MathC.min(...xs), y = MathC.min(...ys);
+      return new DOMRect(x, y, MathC.max(...xs) - x, MathC.max(...ys) - y);
+    }
+    toJSON() { const [p1,p2,p3,p4] = this.#points; return {p1,p2,p3,p4}; }
   }
   function transformPoint(m, x, y, z, w) {
     return new DOMPoint(
@@ -456,6 +519,9 @@
       enumerable: true, configurable: true,
     });
   });
+  webidl(DOMRectReadOnly, 'DOMRectReadOnly');
+  webidl(DOMRect, 'DOMRect');
+  webidl(DOMQuad, 'DOMQuad');
   webidl(DOMPointReadOnly, 'DOMPointReadOnly');
   webidl(DOMPoint, 'DOMPoint');
   webidl(DOMMatrixReadOnly, 'DOMMatrixReadOnly');
@@ -830,7 +896,8 @@
   webidl(TextMetrics, 'TextMetrics');
 
   return {
-    DOMPointReadOnly, DOMPoint, DOMMatrixReadOnly, DOMMatrix, WebKitCSSMatrix: DOMMatrix,
+    DOMRectReadOnly, DOMRect, SVGRect: DOMRect, DOMQuad, DOMPointReadOnly, DOMPoint, DOMMatrixReadOnly, DOMMatrix, WebKitCSSMatrix: DOMMatrix,
+    rectValue(x,y,width,height,readonly) { return readonly ? new DOMRectReadOnly(x,y,width,height) : new DOMRect(x,y,width,height); },
     Path2D, ImageData, CanvasGradient, CanvasPattern, TextMetrics,
     ImageBitmap, OffscreenCanvas, OffscreenCanvasRenderingContext2D, createImageBitmap,
     // Helpers for canvas.rs.

@@ -3605,7 +3605,7 @@ simple_class!(SvgGraphicsElement, "SVGGraphicsElement", SvgElement, |def| {
         let page = n.page();
         let dom = page.dom.borrow();
         let layout = page.layout();
-        crate::layout_api::rect_value(s, pyro_dom::svg_geometry::bbox(&dom, layout.style(), n.id))
+        crate::canvas::rect_value(s, page, false, pyro_dom::svg_geometry::bbox(&dom, layout.style(), n.id))
     });
 });
 simple_class!(SvgSvgElement, "SVGSVGElement", SvgGraphicsElement, |def| {

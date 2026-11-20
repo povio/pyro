@@ -329,7 +329,7 @@ impl JsClass for ResizeObserverEntry {
         def.getter("target", |s, d| Ok(crate::node::wrap_node(s, &d.target.page, d.target.id)?.value()));
         def.getter("contentRect", |s, d| {
             let Sizes { origin: (x, y), content: (width, height), .. } = d.sizes;
-            crate::layout_api::rect_value(s, Rect { x, y, width, height })
+            crate::canvas::rect_value(s, &d.target.page, true, Rect { x, y, width, height })
         });
         def.getter("borderBoxSize", |s, d| sizes(s, d.sizes.border));
         def.getter("contentBoxSize", |s, d| sizes(s, d.sizes.content));

@@ -85,6 +85,21 @@ fn eval(realm: &Realm, src: &str) -> String {
 const CANVAS: &str = "<!doctype html><canvas id=c width=100 height=50></canvas>";
 
 #[test]
+fn geometry_rects_and_quad_bounds_are_independent_snapshots() {
+    let env = env(CANVAS);
+    assert_eq!(eval(&env.main, r#"(() => {
+        const target = document.querySelector('canvas');
+        const snapshot = target.getBoundingClientRect();
+        snapshot.width = -10;
+        const quad = DOMQuad.fromRect(snapshot);
+        const bounds = quad.getBounds();
+        quad.p2.x = quad.p1.x + 20;
+        return [snapshot instanceof DOMRectReadOnly, snapshot instanceof DOMRect,
+                bounds.width, quad.getBounds().width, target.getBoundingClientRect().width].join('|');
+    })()"#), "true|true|10|30|100");
+}
+
+#[test]
 fn styles_gradients_and_patterns_are_kept_like_chrome() {
     let e = env(CANVAS);
     let r = &e.main;

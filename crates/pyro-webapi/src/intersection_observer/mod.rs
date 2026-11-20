@@ -224,9 +224,9 @@ impl JsClass for IntersectionObserverEntry {
         def.getter("time", |s, d| Ok(s.number(d.time)));
         def.getter("isIntersecting", |s, d| Ok(s.boolean(d.geometry.intersecting)));
         def.getter("intersectionRatio", |s, d| Ok(s.number(d.geometry.ratio)));
-        def.getter("boundingClientRect", |s, d| crate::layout_api::rect_value(s, d.geometry.target));
-        def.getter("intersectionRect", |s, d| crate::layout_api::rect_value(s, d.geometry.intersection));
-        def.getter("rootBounds", |s, d| crate::layout_api::rect_value(s, d.geometry.bounds));
+        def.getter("boundingClientRect", |s, d| crate::canvas::rect_value(s, &d.target.page, true, d.geometry.target));
+        def.getter("intersectionRect", |s, d| crate::canvas::rect_value(s, &d.target.page, true, d.geometry.intersection));
+        def.getter("rootBounds", |s, d| crate::canvas::rect_value(s, &d.target.page, true, d.geometry.bounds));
     }
 }
 fn entries<'s>(s: &Scope<'s>, records: Vec<PendingEntry>) -> JsResult<Value<'s>> {

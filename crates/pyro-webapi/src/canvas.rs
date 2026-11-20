@@ -71,10 +71,14 @@ where
     lazy_globals!(
         def,
         MODULE,
+        "DOMRectReadOnly",
+        "DOMRect",
+        "DOMQuad",
         "DOMPointReadOnly",
         "DOMPoint",
         "DOMMatrixReadOnly",
         "DOMMatrix",
+        "SVGRect",
         "WebKitCSSMatrix",
         "Path2D",
         "ImageData",
@@ -97,6 +101,9 @@ where
     lazy_globals!(
         def,
         MODULE,
+        "DOMRectReadOnly",
+        "DOMRect",
+        "DOMQuad",
         "DOMPointReadOnly",
         "DOMPoint",
         "DOMMatrixReadOnly",
@@ -111,6 +118,10 @@ where
         "OffscreenCanvasRenderingContext2D",
         "createImageBitmap",
     );
+}
+
+pub(crate) fn rect_value<'s>(s: &Scope<'s>, page: &Rc<PageDom>, readonly: bool, rect: pyro_dom::layout::Rect) -> JsResult<Value<'s>> {
+    MODULE.helper(s, page, "rectValue", &[s.number(rect.x), s.number(rect.y), s.number(rect.width), s.number(rect.height), s.boolean(readonly)])
 }
 
 fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
