@@ -725,6 +725,17 @@ fn jpeg_screenshots_decode_close_to_the_render() {
     assert!(low_size < mid_size && mid_size < high_size, "sizes {low_size} < {mid_size} < {high_size}");
 }
 
+#[test]
+fn jpeg_raster_decode_matches_the_reference_integer_transform() {
+    let data = (0..64 * 32).flat_map(|index| {
+        [(index * 37) as u8, (index * 83 + index / 3) as u8, (index * 29) as u8, 255]
+    }).collect();
+    let jpeg = encode_jpeg(&RgbaImage { width: 64, height: 32, data }, 86).unwrap();
+    let reference = turbojpeg::decompress(&jpeg, turbojpeg::PixelFormat::RGBA).unwrap();
+    let (pixels, _) = blitz_dom::net::decode_jpeg(&jpeg).unwrap();
+    assert_eq!(pixels.into_rgba8().into_raw(), reference.pixels);
+}
+
 /// An outset shadow without blur is a solid ring the spread wide around the box, antialiased
 /// where its rounded edge cuts pixels, and nothing inside the box; a 6000 px spread (a
 /// spotlight) dims everything around it. Both are filled as paths, not blurred rectangles.

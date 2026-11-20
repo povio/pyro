@@ -68,6 +68,7 @@ bitflags = { version = "2.8.0" }
 tracing = { version = "0.1.40", optional = true }
 rayon = { version = "1" }
 image = { version = "0.25.6", default-features = false }
+libjpeg-turbo-rs = "0.9.0"
 # pyro: ICC profiles of tagged images (`icc.rs`); the image crate's own dependency.
 moxcms = { version = "0.8" }
 usvg = { version = "0.48.1", optional = true }
