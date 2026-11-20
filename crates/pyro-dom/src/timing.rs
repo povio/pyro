@@ -151,7 +151,7 @@ fn longhands_of(property: &str) -> Option<&'static [Longhand]> {
 #[derive(Clone, Debug, PartialEq)]
 enum Value {
     /// Its list, each item as its computed value serializes (`0.15s`,
-    /// `cubic-bezier(0.4, 0, 0.2, 1)`, `opacity`; animation names unquoted;
+    /// `cubic-bezier(0.4, 0, 0.2, 1)`, `opacity`;
     /// times in full precision).
     List(Vec<String>),
     /// `initial`, `unset`, `revert`, `revert-layer`: the initial value (none
@@ -723,13 +723,17 @@ impl TimingRules {
         };
         if let Some(names) = lists.get(Longhand::AnimationName) {
             for (i, name) in names.iter().enumerate() {
-                if name == "none" || !self.has_keyframes(keyframes_name(name)) {
+                if name == "none" {
                     continue;
                 }
-                let name = &keyframes_name(name).to_owned();
+                let mut parser = Parser::new(name);
+                let Ok(name) = parser.expect_ident_or_string() else { continue };
+                if !self.has_keyframes(name) {
+                    continue;
+                }
                 let easing = lists.item(Longhand::AnimationTimingFunction, i);
                 out.animations.push(AnimationTiming {
-                    name: name.clone(),
+                    name: name.to_string(),
                     // (Not declared: `auto`, css-animations-2's initial value; shown as `0s`.)
                     duration_auto: lists.get(Longhand::AnimationDuration).is_none()
                         || lists.item(Longhand::AnimationDuration, i) == "auto",
@@ -824,29 +828,8 @@ fn shown(longhand: Longhand, item: &str) -> String {
             Some(ms) => format!("{}s", crate::computed::fmt_num(ms / 1000.0)),
             None => item.to_owned(),
         },
-        Longhand::AnimationName if item == QUOTED_NONE => item.to_owned(),
-        Longhand::AnimationName if item != "none" && !is_ident(item) => {
-            let mut out = String::new();
-            let _ = cssparser::serialize_string(item, &mut out);
-            out
-        }
         _ => item.to_owned(),
     }
-}
-
-/// An `animation-name` item that is the string "none" (`animation-name: "none"`, naming
-/// `@keyframes "none"`), told apart from the keyword `none` in the timing lists.
-const QUOTED_NONE: &str = "\"none\"";
-
-/// The `@keyframes` name an `animation-name` item names.
-fn keyframes_name(item: &str) -> &str {
-    if item == QUOTED_NONE { "none" } else { item }
-}
-
-/// Whether `text` is one CSS identifier (and not a word the shorthand would read otherwise).
-fn is_ident(text: &str) -> bool {
-    let mut p = Parser::new(text);
-    matches!(p.next(), Ok(Token::Ident(_))) && p.is_exhausted()
 }
 
 /// Chromium's computed `transition`: an item per `transition-property`
@@ -1318,17 +1301,7 @@ fn parse_property(property: &str, value: &str) -> Option<Vec<(Longhand, Value)>>
                 _ => Value::Initial,
             },
             PropertyDeclaration::WithVariables(_) => Value::Initial,
-            // (The string "none" names `@keyframes "none"`: kept apart from the keyword, `QUOTED_NONE`.)
-            PropertyDeclaration::AnimationName(list) => Value::List(
-                list.0
-                    .iter()
-                    .map(|n| match n.as_atom() {
-                        None => "none".to_owned(),
-                        Some(a) if &**a == "none" => QUOTED_NONE.to_owned(),
-                        Some(a) => a.to_string(),
-                    })
-                    .collect(),
-            ),
+            PropertyDeclaration::AnimationName(list) => Value::List(list.0.iter().map(style_traits::ToCss::to_css_string).collect()),
             PropertyDeclaration::AnimationTimingFunction(list) => Value::List(list.0.iter().map(easing_text).collect()),
             PropertyDeclaration::TransitionTimingFunction(list) => {
                 Value::List(list.0.iter().map(easing_text).collect())
@@ -1483,11 +1456,11 @@ mod tests {
             "allow-discrete"
         );
         assert_eq!(one(&declared("transition", ".3s"), "transition-property"), "all");
-        // Computed easings and times; names keep their case, quoted ones lose the quotes.
+        // Computed easings and times; names keep their case.
         let e = declared("transition-timing-function", "step-start, step-end, cubic-bezier(.4,0,.2,1), EASE-IN");
         assert_eq!(e[0].1, ["steps(1, start)", "steps(1)", "cubic-bezier(0.4, 0, 0.2, 1)", "ease-in"]);
         assert_eq!(declared("transition-duration", "calc(1s + 100ms), 150ms")[0].1, ["1.1s", "0.15s"]);
-        assert_eq!(declared("animation-name", "Spin, \"a b\", none")[0].1, ["Spin", "a b", "none"]);
+        assert_eq!(declared("animation-name", "Spin, \"a b\", none")[0].1, ["Spin", r"a\ b", "none"]);
         assert_eq!(declared("transition-property", "OPACITY, --Foo")[0].1, ["opacity", "--Foo"]);
         // Invalid declarations are dropped; CSS-wide keywords apply.
         assert!(parse_property("transition-duration", "-1s").is_none());
@@ -1539,7 +1512,7 @@ mod tests {
         set(&mut lists, Longhand::AnimationIterationCount, &["infinite"]);
         assert_eq!(animation_shorthand(&lists), "1s infinite a, 2s 0.5s infinite b");
         assert_eq!(shown(Longhand::TransitionDuration, "0.150000001s"), "0.15s");
-        assert_eq!(shown(Longhand::AnimationName, "a b"), "\"a b\"");
+        assert_eq!(declared("animation-name", r#""INITIAL", "none", none"#)[0].1, [r#""INITIAL""#, r#""none""#, "none"]);
     }
 }
 
