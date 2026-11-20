@@ -68,6 +68,11 @@ pub struct DocumentMutator<'doc> {
     pub doc: &'doc mut BaseDocument,
 
     eager_op_queue: Vec<SpecialOp>,
+    /// pyro: the attribute being set or cleared is the engine's state (`crate::engine_state`,
+    /// authenticated by the document's nonce), under its canonical `urn:x-pyro:state` name: it goes
+    /// to the engine's store, and only it drives the top layer, shadow markers and state tokens. A
+    /// page's attribute in that namespace is an ordinary attribute.
+    state_write: bool,
 
     // Tracked nodes for deferred processing when mutations have completed
     title_node: Option<NodeId>,
@@ -106,6 +111,7 @@ impl DocumentMutator<'_> {
         DocumentMutator {
             doc,
             eager_op_queue: Vec::new(),
+            state_write: false,
             title_node: None,
             style_nodes: HashSet::new(),
             link_media_nodes: HashSet::new(),
@@ -171,14 +177,14 @@ impl DocumentMutator<'_> {
     }
 
     pub fn create_element(&mut self, name: QualName, attrs: Vec<Attribute>) -> NodeId {
-        // pyro: the top layer is marked in pyro-dom's state attribute.
-        let pyro_state = attrs
-            .iter()
-            .find(|a| is_lp_state(&a.name))
-            .map(|a| a.value.clone());
         // pyro: the engine's attributes (under this document's nonce names) go to its store, by
         // canonical name; every other attribute, the page's `data-pyro-*` too, is the element's.
         let nonce = self.doc.frames.nonce.clone();
+        // pyro: and its state attributes (`urn:x-pyro:state:<nonce>`), by local name.
+        let (state, attrs): (Vec<Attribute>, Vec<Attribute>) =
+            attrs.into_iter().partition(|a| crate::engine_state(&nonce, &a.name).is_some());
+        // pyro: the top layer is marked in pyro-dom's state attribute.
+        let pyro_state = state.iter().find(|a| &*a.name.local == "state").map(|a| a.value.clone());
         let (engine, attrs): (Vec<(String, Attribute)>, Vec<(String, Attribute)>) = attrs
             .into_iter()
             .map(|a| (crate::engine_field(&nonce, &a.name).unwrap_or_default(), a))
@@ -186,6 +192,12 @@ impl DocumentMutator<'_> {
         let mut data = ElementData::new(name, attrs.into_iter().map(|(_, a)| a).collect());
         for (field, a) in engine {
             data.attrs.set_reserved(&field, &a.value);
+        }
+        for a in &state {
+            data.attrs.set_state(&a.name.local, &a.value);
+        }
+        if !state.is_empty() {
+            data.sync_lp_attribute_state();
         }
         data.flush_style_attribute(self.doc.guard(), &self.doc.url.url_extra_data());
         // pyro: a link to the document itself is visited.
@@ -207,10 +219,7 @@ impl DocumentMutator<'_> {
             self.doc.note_lp_state(id, Some(&state));
         }
         // pyro: a shadow host or an assigned slot (`crate::shadow`).
-        if self.doc.nodes[id]
-            .element_data()
-            .is_some_and(|e| e.attrs.iter().any(|a| crate::shadow::is_shadow_marker(&a.name)))
-        {
+        if state.iter().any(|a| crate::shadow::is_shadow_marker(&QualName::new(None, crate::PYRO_STATE_NS.into(), a.name.local.clone()))) {
             self.doc.sync_shadow_markers(id);
         }
         id
@@ -390,7 +399,20 @@ impl DocumentMutator<'_> {
             self.engine_attribute_changed(node_id, &field, true);
             return;
         }
-        if is_lp_state(&name) && self.doc.nodes[node_id].is_element() {
+        // pyro: the engine's state, under its canonical name (`state_write`).
+        if let Some(local) = crate::engine_state(&self.doc.frames.nonce.clone(), &name) {
+            let previous = std::mem::replace(&mut self.state_write, true);
+            self.set_attribute_inner(node_id, QualName::new(None, crate::PYRO_STATE_NS.into(), local.into()), value);
+            self.state_write = previous;
+            return;
+        }
+        let previous = std::mem::replace(&mut self.state_write, false);
+        self.set_attribute_inner(node_id, name, value);
+        self.state_write = previous;
+    }
+
+    fn set_attribute_inner(&mut self, node_id: NodeId, name: QualName, value: &str) {
+        if self.state_write && is_lp_state(&name) && self.doc.nodes[node_id].is_element() {
             self.doc.note_lp_state(node_id, Some(value));
         }
         // pyro: `:has()` anchors that can see the element follow
@@ -399,7 +421,7 @@ impl DocumentMutator<'_> {
         let change = crate::has_invalidation::AttributeChange::before(self.doc, node_id, &name);
         self.rebuild_select_for_attribute(node_id, &name);
         self.rebuild_text_input_for_attribute(node_id, &name);
-        let shadow_marker = crate::shadow::is_shadow_marker(&name);
+        let shadow_marker = self.state_write && crate::shadow::is_shadow_marker(&name);
         // pyro: `quotes: auto` follows the language (`layout::counters`).
         // pyro: `start`, `reversed` and `value` number list items (`layout::counters`).
         if matches!(
@@ -423,6 +445,7 @@ impl DocumentMutator<'_> {
     }
 
     fn set_attribute_impl(&mut self, node_id: NodeId, name: QualName, value: &str) {
+        let engine = self.state_write;
         // pyro: what a link's visited state is decided against (`flush_link_visited`), for an
         // `href` change only.
         let link_urls = (name.local == local_name!("href")).then(|| self.doc.link_urls());
@@ -477,8 +500,13 @@ impl DocumentMutator<'_> {
                 .attribute_changed(&name.local, old_value, Some(value));
         }
 
-        element.attrs.set(name.clone(), value);
-        if is_state_attribute(&element.name, &name) {
+        // pyro: the engine's state goes to its store (`state_write`).
+        if engine {
+            element.attrs.set_state(&name.local, value);
+        } else {
+            element.attrs.set(name.clone(), value);
+        }
+        if is_state_attribute(&element.name, &name, engine) {
             element.sync_lp_attribute_state();
         }
         if node_is_in_document {
@@ -634,14 +662,26 @@ impl DocumentMutator<'_> {
             self.engine_attribute_changed(node_id, &field, false);
             return;
         }
-        if is_lp_state(&name) {
+        if let Some(local) = crate::engine_state(&self.doc.frames.nonce.clone(), &name) {
+            let previous = std::mem::replace(&mut self.state_write, true);
+            self.clear_attribute_inner(node_id, QualName::new(None, crate::PYRO_STATE_NS.into(), local.into()));
+            self.state_write = previous;
+            return;
+        }
+        let previous = std::mem::replace(&mut self.state_write, false);
+        self.clear_attribute_inner(node_id, name);
+        self.state_write = previous;
+    }
+
+    fn clear_attribute_inner(&mut self, node_id: NodeId, name: QualName) {
+        if self.state_write && is_lp_state(&name) {
             self.doc.note_lp_state(node_id, None);
         }
         // pyro: as in `set_attribute`.
         let change = crate::has_invalidation::AttributeChange::before(self.doc, node_id, &name);
         self.rebuild_select_for_attribute(node_id, &name);
         self.rebuild_text_input_for_attribute(node_id, &name);
-        let shadow_marker = crate::shadow::is_shadow_marker(&name);
+        let shadow_marker = self.state_write && crate::shadow::is_shadow_marker(&name);
         // pyro: `quotes: auto` follows the language (`layout::counters`).
         // pyro: `start`, `reversed` and `value` number list items (`layout::counters`).
         if matches!(
@@ -665,6 +705,7 @@ impl DocumentMutator<'_> {
     }
 
     fn clear_attribute_impl(&mut self, node_id: NodeId, name: QualName) {
+        let engine = self.state_write;
         // pyro: what a link's visited state is decided against (`flush_link_visited`), for an
         // `href` change only.
         let link_urls = (name.local == local_name!("href")).then(|| self.doc.link_urls());
@@ -706,12 +747,12 @@ impl DocumentMutator<'_> {
             return;
         };
 
-        let removed_attr = element.attrs.remove(&name);
+        let removed_attr = if engine { element.attrs.remove_state(&name.local) } else { element.attrs.remove(&name) };
         let had_attr = removed_attr.is_some();
         if !had_attr {
             return;
         }
-        if is_state_attribute(&element.name, &name) {
+        if is_state_attribute(&element.name, &name, engine) {
             element.sync_lp_attribute_state();
         }
         self.mutations_occurred |= node_is_in_document;
@@ -973,13 +1014,13 @@ impl DocumentMutator<'_> {
     /// Upstream restyled the parent's subtree on every attribute change; it now hints the element
     /// alone (blitz#1276).
     fn restyle_siblings_for_attribute_change(&mut self, node_id: NodeId, name: &QualName, value: Option<&str>) {
-        if is_lp_state(name) {
+        if self.state_write && is_lp_state(name) {
             let natural =
                 |v: &str| v.split_ascii_whitespace().find(|t| t.starts_with("natural=")).map(str::to_owned);
             let node = &mut self.doc.nodes[node_id];
             let old = node
                 .element_data()
-                .and_then(|e| e.attrs.iter().find(|a| a.name == *name).and_then(|a| natural(&a.value)));
+                .and_then(|e| e.attrs.state(&name.local).and_then(natural));
             if old != value.and_then(natural) {
                 if let Some(mut data) = node.try_stylo_element_data_mut().and_then(|s| s.get_mut()) {
                     data.damage.insert(ALL_DAMAGE);
@@ -2255,8 +2296,8 @@ impl<'doc> DocumentMutator<'doc> {
 /// pyro: attributes whose value is element state
 /// ([`ElementData::sync_lp_attribute_state`]): pyro-dom's `state` tokens and an
 /// `<option>`'s `selected`.
-fn is_state_attribute(element: &QualName, name: &QualName) -> bool {
-    (&*name.ns == crate::PYRO_STATE_NS && &*name.local == "state")
+fn is_state_attribute(element: &QualName, name: &QualName, engine: bool) -> bool {
+    (engine && &*name.ns == crate::PYRO_STATE_NS && &*name.local == "state")
         || (element.local == local_name!("option") && name.local == local_name!("selected"))
 }
 

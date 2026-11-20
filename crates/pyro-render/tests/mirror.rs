@@ -1121,6 +1121,12 @@ fn textarea_attribute_deltas_match_whole_tree_value_geometry_and_paint() {
         let mut tree = (*parsed.tree()).clone();
         for node in &mut tree.nodes {
             if let TreeKind::Element { attrs, .. } = &mut node.kind {
+                // (Each reparse is a page of its own nonce: the engine state's namespace names it.)
+                for (name, _) in attrs.iter_mut() {
+                    if name.ns.starts_with(pyro_dom::snapshot::STATE_NS) {
+                        *name = blitz_dom::QualName::new(name.prefix.clone(), blitz_dom::Namespace::from(pyro_dom::snapshot::STATE_NS), name.local.clone());
+                    }
+                }
                 attrs.sort_by_key(|(name, _)| {
                     (name.ns.to_string(), name.local.to_string(), name.prefix.as_ref().map(ToString::to_string))
                 });

@@ -65,7 +65,7 @@ impl Node {
     pub fn is_details_content_slot(&self) -> bool {
         self.is_assigned_slot()
             && self.element_data().is_some_and(|data| {
-                data.attrs.iter().any(|attr| &*attr.name.ns == crate::PYRO_STATE_NS && &*attr.name.local == "details-content")
+                data.attrs.state("details-content").is_some()
             })
     }
 
@@ -150,11 +150,7 @@ impl Node {
     pub fn light_sibling_element(&self, offset: i64) -> Option<Option<&Node>> {
         self.assigned_slot_id()?;
         let index_of = |node: &Node| -> Option<i64> {
-            node.element_data()?
-                .attrs
-                .iter()
-                .find(|attr| &*attr.name.ns == crate::PYRO_STATE_NS && &*attr.name.local == LIGHT_INDEX_ATTR)
-                .and_then(|attr| attr.value.parse().ok())
+            node.element_data()?.attrs.state(LIGHT_INDEX_ATTR).and_then(|value| value.parse().ok())
         };
         let index = index_of(self)?;
         // The flat-tree neighbour in the same slot, when it is the light-tree one (assigned nodes
@@ -286,17 +282,9 @@ impl BaseDocument {
     pub(crate) fn sync_shadow_markers(&mut self, node_id: NodeId) {
         let Some(node) = self.nodes.get_mut(node_id) else { return };
         let Some(element) = node.element_data() else { return };
-        let mut host = false;
-        let mut slot = false;
-        for attr in element.attrs.iter() {
-            if &*attr.name.ns == crate::PYRO_STATE_NS {
-                match &*attr.name.local {
-                    SHADOW_HOST_ATTR => host = true,
-                    ASSIGNED_SLOT_ATTR => slot = true,
-                    _ => {}
-                }
-            }
-        }
+        // (The engine's store: `Attributes::state`.)
+        let host = element.attrs.state(SHADOW_HOST_ATTR).is_some();
+        let slot = element.attrs.state(ASSIGNED_SLOT_ATTR).is_some();
         node.flags.set(NodeFlags::IS_SHADOW_HOST, host);
         node.flags.set(NodeFlags::IS_ASSIGNED_SLOT, slot);
         if host || slot {

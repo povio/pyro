@@ -1280,11 +1280,9 @@ impl Writer<'_> {
             // pyro: the root's pan and zoom by script (`currentTranslate`, `currentScale`; pyro-dom
             // `SVG_PAN_ATTR`), applied to its content outside its own viewBox transform.
             let pan = is_root
-                .then(|| {
-                    data.attrs.iter().find(|attr| &*attr.name.ns == crate::PYRO_STATE_NS && &*attr.name.local == "svg-pan")
-                })
+                .then(|| data.attrs.state("svg-pan"))
                 .flatten()
-                .map(|attr| attr.value.to_string());
+                .map(str::to_owned);
             if let Some(pan) = &pan {
                 let parts: Vec<f64> = pan.split_ascii_whitespace().filter_map(|v| v.parse().ok()).collect();
                 if let [tx, ty, scale] = parts[..] {

@@ -92,13 +92,10 @@ impl Node {
     /// `:state(name)`: pyro's custom states attribute (names
     /// separated by U+001F).
     fn has_lp_custom_state(&self, state: &str) -> bool {
-        self.element_data().is_some_and(|e| {
-            e.attrs.iter().any(|a| {
-                &*a.name.ns == "urn:x-pyro:state"
-                    && &*a.name.local == "custom-states"
-                    && a.value.split('\u{1f}').any(|s| s == state)
-            })
-        })
+        // (The engine's store: `Attributes::state`.)
+        self.element_data()
+            .and_then(|e| e.attrs.state("custom-states"))
+            .is_some_and(|value| value.split('\u{1f}').any(|s| s == state))
     }
 }
 
@@ -1550,13 +1547,9 @@ impl<'a> TElement for BlitzNode<'a> {
         F: FnMut(&AtomIdent),
     {
         // pyro: pyro-dom's render tree lists them (`has_lp_custom_state`).
-        let value = self.attrs().and_then(|attrs| {
-            attrs
-                .iter()
-                .find(|a| &*a.name.ns == crate::PYRO_STATE_NS && &*a.name.local == "custom-states")
-        });
-        if let Some(attr) = value {
-            for state in crate::has_invalidation::pyro_custom_states(Some(&attr.value)) {
+        let value = self.element_data().and_then(|e| e.attrs.state("custom-states"));
+        if let Some(value) = value {
+            for state in crate::has_invalidation::pyro_custom_states(Some(value)) {
                 callback(AtomIdent::cast(&style::Atom::from(state)));
             }
         }

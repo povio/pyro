@@ -144,6 +144,26 @@ pub const ENGINE_FIELDS: &[&str] = &[
     "data-pyro-render-clip",
 ];
 
+/// pyro: the local name of the engine state attribute (`urn:x-pyro:state`: pseudo-class state,
+/// top layer, shadow and slot markers) that attribute `name` is in a document serialised with
+/// `nonce`, if it is the engine's: one in the namespace `urn:x-pyro:state:<nonce>` (the nonce
+/// compared in constant time; pyro-dom `snapshot::state_ns`); without a nonce, one in
+/// `urn:x-pyro:state` as written; in a document taking none, never. Any other attribute, a page's
+/// `state` in any namespace (`urn:x-pyro:state` too) included, is the element's own.
+pub fn engine_state(nonce: &str, name: &markup5ever::QualName) -> Option<String> {
+    if nonce == REJECT_ALL_NONCE {
+        return None;
+    }
+    let ns: &str = &name.ns;
+    let rest = ns.strip_prefix(crate::PYRO_STATE_NS)?;
+    let authentic = if nonce.is_empty() {
+        rest.is_empty()
+    } else {
+        rest.strip_prefix(':').is_some_and(|given| same_secret(given, nonce))
+    };
+    authentic.then(|| name.local.to_string())
+}
+
 /// pyro: the canonical engine attribute (`data-pyro-<field>`) that attribute `name` is in a
 /// document serialised with `nonce`, if it is the engine's: `data-pyro-<nonce>-<field>`, the nonce
 /// compared in constant time (pyro-dom `snapshot::engine_name`); without a nonce, one of

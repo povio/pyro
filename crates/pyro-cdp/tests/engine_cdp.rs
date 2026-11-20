@@ -7515,6 +7515,34 @@ mod screenshot {
         assert_eq!(r["result"]["result"]["value"].as_str(), Some("33,true,55,44"), "{r}");
     }
 
+    /// The engine's private state (`urn:x-pyro:state`: pseudo-class tokens, top layer, markers) is
+    /// invisible to author CSS in the geometry mirror: `[*|state]` and value selectors on it match
+    /// nothing, while the pseudo-classes it feeds still match; a page's own `state` attribute, in
+    /// no namespace or in `urn:x-pyro:state` itself, is an ordinary attribute (security review
+    /// cycle 9, 2).
+    #[test]
+    fn engine_state_is_invisible_to_author_css() {
+        let page = "<!doctype html><style>input { appearance: none; display: block; margin: 0; border: 0; padding: 0; width: 10px; height: 10px }\
+             input:checked { width: 44px } [*|state] { height: 33px } input[*|state*=\"c\"] { margin-left: 22px }\
+             div { width: 10px; height: 10px } div[*|state=mine] { width: 55px } div[state=plain] { height: 66px }\
+             span { display: inline-block } span::before { content: attr(state) }</style>\
+             <input id=c type=checkbox><div id=a></div><div id=b state=plain></div><span id=s></span>\
+             <script>c.checked = true; a.setAttributeNS('urn:x-pyro:state', 'state', 'mine');</script>";
+        let address = gate_server(page, |_| None);
+        let mut h = Harness::new();
+        h.page("Page.enable", json!({}));
+        h.page("Page.navigate", json!({"url": format!("http://{address}/")}));
+        h.until_event(|m| m["method"] == "Page.loadEventFired");
+        h.run_for(50);
+        let r = h.page(
+            "Runtime.evaluate",
+            json!({"expression": "const r = id => document.getElementById(id).getBoundingClientRect(); [r('c').width, r('c').height, r('c').left, r('a').width, r('a').height, r('b').height, r('s').width].join()", "returnByValue": true}),
+        );
+        // (The page's own `state` attributes match `[*|state]` too: 33px high, 66px by the more
+        // specific `div[state=plain]`.)
+        assert_eq!(r["result"]["result"]["value"].as_str(), Some("44,10,8,55,33,66,0"), "{r}");
+    }
+
     /// How long `load` took from navigating to the gate server.
     fn load_time(address: std::net::SocketAddr) -> Duration {
         let mut h = Harness::new();

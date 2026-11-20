@@ -147,10 +147,8 @@ fn searched(node: &Node) -> bool {
 }
 
 fn custom_states_attr(node: &Node) -> Option<&str> {
-    node.attrs()?
-        .iter()
-        .find(|a| &*a.name.ns == PYRO_STATE_NS && &*a.name.local == "custom-states")
-        .map(|a| a.value.as_str())
+    // (The engine's store: `Attributes::state`.)
+    node.element_data()?.attrs.state("custom-states")
 }
 
 /// The ids, classes or custom states `kind` names on `node`.

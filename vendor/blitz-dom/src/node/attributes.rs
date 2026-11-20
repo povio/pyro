@@ -70,12 +70,61 @@ impl Attributes {
 
     /// pyro: the engine's attribute `canonical` (`data-pyro-sheet`, ...), for engine readers only.
     pub fn reserved(&self, canonical: &str) -> Option<&str> {
-        self.reserved.iter().find(|a| &*a.name.local == canonical).map(|a| a.value.as_str())
+        self.reserved.iter().find(|a| a.name.ns == markup5ever::ns!() && &*a.name.local == canonical).map(|a| a.value.as_str())
+    }
+
+    /// pyro: every attribute as the document's markup or tree carried it, for an embedder that
+    /// diffs a tree against the element: its own, then the engine's under the names a document
+    /// serialised with `nonce` gives them (`data-pyro-<nonce>-<field>`, `urn:x-pyro:state:<nonce>`;
+    /// canonical without a nonce). Never for author-facing paths.
+    pub fn wire(&self, nonce: &str) -> Vec<(QualName, String)> {
+        let mut out: Vec<(QualName, String)> = self.inner.iter().map(|a| (a.name.clone(), a.value.clone())).collect();
+        for a in &self.reserved {
+            let name = if &*a.name.ns == crate::PYRO_STATE_NS {
+                let ns = if nonce.is_empty() { crate::PYRO_STATE_NS.to_owned() } else { format!("{}:{nonce}", crate::PYRO_STATE_NS) };
+                QualName::new(None, ns.into(), a.name.local.clone())
+            } else {
+                let local = match a.name.local.strip_prefix("data-pyro-") {
+                    Some(field) if !nonce.is_empty() => format!("data-pyro-{nonce}-{field}"),
+                    _ => a.name.local.to_string(),
+                };
+                QualName::new(None, markup5ever::ns!(), local.into())
+            };
+            out.push((name, a.value.clone()));
+        }
+        out
+    }
+
+    /// pyro: the engine's state attribute `local` (`urn:x-pyro:state`: pseudo-class state, the top
+    /// layer, shadow markers), kept in the engine's store: no selector (`[*|state]`), `attr()` or
+    /// iteration sees it; only the engine's readers and the pseudo-classes it maps to.
+    pub fn state(&self, local: &str) -> Option<&str> {
+        self.reserved
+            .iter()
+            .find(|a| &*a.name.ns == crate::PYRO_STATE_NS && &*a.name.local == local)
+            .map(|a| a.value.as_str())
+    }
+
+    /// pyro: sets the engine's state attribute `local`.
+    pub fn set_state(&mut self, local: &str, value: &str) {
+        match self.reserved.iter_mut().find(|a| &*a.name.ns == crate::PYRO_STATE_NS && &*a.name.local == local) {
+            Some(a) => value.clone_into(&mut a.value),
+            None => self.reserved.push(Attribute {
+                name: QualName::new(None, crate::PYRO_STATE_NS.into(), local.into()),
+                value: value.to_owned(),
+            }),
+        }
+    }
+
+    /// pyro: removes the engine's state attribute `local`.
+    pub fn remove_state(&mut self, local: &str) -> Option<Attribute> {
+        let idx = self.reserved.iter().position(|a| &*a.name.ns == crate::PYRO_STATE_NS && &*a.name.local == local)?;
+        Some(self.reserved.remove(idx))
     }
 
     /// pyro: sets the engine's attribute `canonical` (never one of the element's own).
     pub fn set_reserved(&mut self, canonical: &str, value: &str) {
-        match self.reserved.iter_mut().find(|a| &*a.name.local == canonical) {
+        match self.reserved.iter_mut().find(|a| a.name.ns == markup5ever::ns!() && &*a.name.local == canonical) {
             Some(a) => value.clone_into(&mut a.value),
             None => self.reserved.push(Attribute {
                 name: QualName::new(None, markup5ever::ns!(), canonical.into()),
@@ -86,7 +135,7 @@ impl Attributes {
 
     /// pyro: removes the engine's attribute `canonical`.
     pub fn remove_reserved(&mut self, canonical: &str) -> Option<Attribute> {
-        let idx = self.reserved.iter().position(|a| &*a.name.local == canonical)?;
+        let idx = self.reserved.iter().position(|a| a.name.ns == markup5ever::ns!() && &*a.name.local == canonical)?;
         Some(self.reserved.remove(idx))
     }
 

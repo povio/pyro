@@ -807,8 +807,11 @@ fn differs(doc: &BaseDocument, id: NodeId, kind: &TreeKind) -> bool {
         TreeKind::Element { attrs, .. } => match node.element_data() {
             None => true,
             Some(el) => {
-                el.attrs.iter().any(|a| !attrs.iter().any(|(n, _)| *n == a.name))
-                    || attrs.iter().any(|(n, v)| !el.attrs.iter().any(|a| a.name == *n && a.value == *v))
+                // pyro: as the tree carries them: the engine's under their nonce names
+                // (`Attributes::wire`), which the element keeps apart from its own.
+                let have = el.attrs.wire(doc.snapshot_nonce());
+                have.iter().any(|(a, _)| !attrs.iter().any(|(n, _)| n == a))
+                    || attrs.iter().any(|(n, v)| !have.iter().any(|(a, w)| a == n && w == v))
             }
         },
     }
@@ -825,8 +828,8 @@ fn update(m: &mut DocumentMutator<'_>, id: NodeId, kind: &TreeKind) -> bool {
         TreeKind::Text(t) => m.set_node_text(id, t),
         TreeKind::Element { name: tag, attrs } => {
             let el = m.doc.get_node(id).and_then(|n| n.element_data());
-            let current: Vec<(QualName, String)> =
-                el.map(|e| e.attrs.iter().map(|a| (a.name.clone(), a.value.clone())).collect()).unwrap_or_default();
+            let nonce = m.doc.snapshot_nonce().to_owned();
+            let current: Vec<(QualName, String)> = el.map(|e| e.attrs.wire(&nonce)).unwrap_or_default();
             let has_checkbox = el.is_some_and(|e| e.checkbox_input_checked().is_some());
             for (name, _) in &current {
                 if !attrs.iter().any(|(n, _)| n == name) {

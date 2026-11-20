@@ -58,6 +58,8 @@ impl Page {
             device_scale_factor: 1.0,
             resource_scope: "doc".into(),
             live: Some(Live { page: 1, tree: Arc::new(tree), clip: None, interaction: None }),
+            // (The document's nonce, which its engine state is named with.)
+            frames: Arc::new(pyro_render::FrameTableData { nonce: self.dom.borrow().frame_table(self.doc).nonce, entries: Default::default() }),
             ..Default::default()
         }
     }

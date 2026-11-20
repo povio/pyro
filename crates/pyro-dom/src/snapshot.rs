@@ -115,6 +115,20 @@ fn page_attribute_allowed(name: &QualName, engine: &[String], nonce: &str) -> bo
 /// engine's (blitz-dom `engine_field`); page content can neither write nor match it (CSS has no
 /// attribute-name wildcards), and the page's own `data-pyro-*` attributes stay its own. Without a
 /// nonce (markup written by hand), the canonical name.
+/// pyro: the namespace the engine's state attributes ([`STATE_NS`]: pseudo-class state, the top
+/// layer, shadow and slot markers) travel in, in a keyed tree serialised with `nonce`:
+/// `urn:x-pyro:state:<nonce>`. Only the renderer, given the nonce, takes them as state (blitz-dom
+/// `engine_state`, into its engine store); a page attribute in any namespace, [`STATE_NS`] itself
+/// included, is the page's own. Without a nonce, [`STATE_NS`].
+pub fn state_ns(nonce: &str) -> String {
+    if nonce.is_empty() {
+        STATE_NS.to_owned()
+    } else {
+        format!("{STATE_NS}:{nonce}")
+    }
+}
+
+/// pyro: [`engine_name`] for the attribute name of an engine attribute.
 pub fn engine_name(nonce: &str, canonical: &str) -> String {
     match canonical.strip_prefix(ENGINE_ATTRIBUTE_PREFIX) {
         Some(field) if !nonce.is_empty() => format!("{ENGINE_ATTRIBUTE_PREFIX}{nonce}-{field}"),
@@ -371,7 +385,7 @@ impl Sink for HtmlSink<'_> {
         // them for `content: attr()`.
         let html = name.ns == ns!(html);
         for a in attrs.iter().filter(|a| {
-            &*a.name.ns != STATE_NS && !(html && a.name.ns == ns!() && a.name.local.starts_with("on"))
+            *a.name.ns != *state_ns(&self.nonce) && !(html && a.name.ns == ns!() && a.name.local.starts_with("on"))
         }) {
             out.push(' ');
             match &a.name.prefix {
@@ -564,6 +578,8 @@ impl Dom {
     /// `single`: stop after the first node written to `sink` (its own
     /// content, no subtree).
     fn render_walk_from(&self, roots: Vec<u32>, opts: &RenderHtml<'_>, sink: &mut dyn Sink, root: u32, single: bool) {
+        // pyro: the nonce of the document walked (its engine attributes' names, [`state_ns`]).
+        let walk_nonce = roots.first().map(|&r| self.snapshot_nonce(self.n(r).owner_doc)).unwrap_or_default();
         let mark = opts.mark.and_then(|(id, _)| self.check(id).ok());
         // Shadow hosts entered: (host, the host's own scope).
         let mut hosts: Vec<(u32, Scope)> = Vec::new();
@@ -598,7 +614,7 @@ impl Dom {
                 Step::DetailsSlot(key, content, kids, kids_scope) => {
                     let name = QualName::new(None, ns!(html), markup5ever::local_name!("slot"));
                     let marker = |name: &str| RAttr {
-                        name: Cow::Owned(QualName::new(None, STATE_NS.into(), name.into())),
+                        name: Cow::Owned(QualName::new(None, state_ns(&walk_nonce).into(), name.into())),
                         value: Cow::Borrowed(""),
                         valueless: true,
                     };
@@ -677,12 +693,8 @@ impl Dom {
                     let mut attrs: Vec<RAttr<'_>> = Vec::with_capacity(e.attrs.len() + 1);
                     for a in &e.attrs {
                         let name: &str = &a.name.local;
-                        // The state namespace is the snapshot's own: a page's
-                        // `setAttributeNS` in it would fake pseudo-classes or
-                        // the top layer for the renderer.
-                        if &*a.name.ns == STATE_NS {
-                            continue;
-                        }
+                        // pyro: a page attribute in the state namespace is the page's own: the
+                        // engine's state travels in the nonce namespace ([`state_ns`]).
                         // pyro: a frame element's source attributes in any other namespace would
                         // reparse as its own `src`/`srcdoc`/`data`: never written (the renderer
                         // loads only frame table entries anyway).
@@ -798,7 +810,7 @@ impl Dom {
                         });
                     }
                     let marker = |name: &str| RAttr {
-                        name: Cow::Owned(QualName::new(None, STATE_NS.into(), name.into())),
+                        name: Cow::Owned(QualName::new(None, state_ns(&walk_nonce).into(), name.into())),
                         value: Cow::Borrowed(""),
                         valueless: true,
                     };
@@ -844,10 +856,16 @@ impl Dom {
                         if a.name.ns == ns!() && a.name.local.starts_with(ENGINE_ATTRIBUTE_PREFIX) {
                             let renamed = engine_name(&nonce, &a.name.local);
                             a.name = Cow::Owned(QualName::new(None, ns!(), renamed.into()));
+                        } else if &*a.name.ns == STATE_NS {
+                            // pyro: and its state in the nonce namespace ([`state_ns`]).
+                            a.name = Cow::Owned(QualName::new(None, state_ns(&nonce).into(), a.name.local.clone()));
                         }
                     }
+                    // (The engine's state, in the nonce namespace, collides with no page attribute.)
+                    let own_state_ns = state_ns(&nonce);
                     let mut engine: Vec<String> = attrs
                         .iter()
+                        .filter(|a| *a.name.ns != *own_state_ns)
                         .map(|a| match &a.name.prefix {
                             Some(prefix) if !prefix.is_empty() => format!("{prefix}:{}", a.name.local),
                             _ => a.name.local.to_string(),

@@ -50,6 +50,8 @@ fn sync(d: &pyro_dom::Dom, doc: pyro_dom::NodeId, renderer: &mut Renderer) {
     let tree = d
         .render_tree(doc, &RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None, adopted: None })
         .unwrap();
+    // (The document's nonce, which its engine state is named with, as the frame table carries it.)
+    let nonce = d.frame_table(doc).nonce;
     let tree = Tree {
         nodes: tree
             .nodes
@@ -70,6 +72,7 @@ fn sync(d: &pyro_dom::Dom, doc: pyro_dom::NodeId, renderer: &mut Renderer) {
         height: 400,
         device_scale_factor: 1.0,
         live: Some(Live { page: 1, tree: Arc::new(tree), clip: None, interaction: None }),
+        frames: Arc::new(pyro_render::FrameTableData { nonce: nonce.clone(), entries: Default::default() }),
         ..Default::default()
     };
     renderer.sync_layout(&snap, &(Arc::new(NoFetch) as Arc<dyn Fetcher>)).unwrap();

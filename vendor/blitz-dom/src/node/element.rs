@@ -686,7 +686,7 @@ impl ElementData {
     /// pyro: whether pyro-dom's render tree gave the element its [`crate::PYRO_STATE_NS`] `state`
     /// tokens (which then carry `:enabled`/`:disabled`).
     pub(crate) fn has_pyro_state(&self) -> bool {
-        self.attrs.iter().any(|a| &*a.name.ns == crate::PYRO_STATE_NS && &*a.name.local == "state")
+        self.attrs.state("state").is_some()
     }
 
     pub fn can_be_disabled(&self) -> bool {
@@ -854,11 +854,8 @@ impl ElementData {
     /// pyro-dom's render tree writes up to the attributes: `:checked` of a
     /// selected `<option>`, and the [`crate::PYRO_STATE_NS`] `state` tokens.
     pub(crate) fn sync_lp_attribute_state(&mut self) {
-        let lp = self
-            .attrs
-            .iter()
-            .find(|a| &*a.name.ns == crate::PYRO_STATE_NS && &*a.name.local == "state")
-            .map(|a| a.value.as_str());
+        // (The engine's store: `Attributes::state`.)
+        let lp = self.attrs.state("state");
         let bits = crate::has_invalidation::pyro_state_bits(lp);
         self.element_state.remove(crate::has_invalidation::PYRO_STATES);
         // pyro: `:enabled`/`:disabled` come from the tokens when they say either (pyro-dom knows

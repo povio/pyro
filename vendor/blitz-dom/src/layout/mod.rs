@@ -3484,9 +3484,8 @@ impl Iterator for RefCellChildIter<'_> {
 /// pyro: the `natural=W,H` token of the element's
 /// `urn:x-pyro:state` attribute.
 fn pyro_natural_size(element: &crate::node::ElementData) -> Option<(f32, f32)> {
-    let attr =
-        element.attrs.iter().find(|a| &*a.name.ns == "urn:x-pyro:state" && &*a.name.local == "state")?;
-    let token = attr.value.split_ascii_whitespace().find_map(|t| t.strip_prefix("natural="))?;
+    let attr = element.attrs.state("state")?;
+    let token = attr.split_ascii_whitespace().find_map(|t| t.strip_prefix("natural="))?;
     let (w, h) = token.split_once(',')?;
     Some((w.parse().ok()?, h.parse().ok()?))
 }
