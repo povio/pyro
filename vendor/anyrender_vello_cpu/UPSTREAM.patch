@@ -2733,10 +2733,10 @@ index 619d5d4..6352428 100644
  
      fn reset(&mut self) {
 diff --git a/src/lib.rs b/src/lib.rs
-index 5bc2e2c..7ab607a 100644
+index 5bc2e2c..142f48a 100644
 --- a/src/lib.rs
 +++ b/src/lib.rs
-@@ -7,12 +7,26 @@ mod image_renderer;
+@@ -7,12 +7,29 @@ mod image_renderer;
  mod scene;
  mod window_renderer;
  
@@ -2762,6 +2762,9 @@ index 5bc2e2c..7ab607a 100644
  pub use image_renderer::VelloCpuImageRenderer;
 -pub use scene::VelloCpuScenePainter;
 +pub use scene::{VelloCpuScenePainter, fine_segments};
++
++pub static TEXT_OUTLINE_GROUP: std::sync::LazyLock<std::sync::Arc<anyrender::Filter>> =
++    std::sync::LazyLock::new(|| std::sync::Arc::new(anyrender::Filter::empty()));
  
  #[cfg(any(
      feature = "pixels_window_renderer",
@@ -4667,10 +4670,10 @@ index 0000000..be15ba9
 +    }
 +}
 diff --git a/src/scene.rs b/src/scene.rs
-index 1b09a33..d463b56 100644
+index 1b09a33..3f238ae 100644
 --- a/src/scene.rs
 +++ b/src/scene.rs
-@@ -1,19 +1,321 @@
+@@ -1,19 +1,322 @@
  use std::sync::Arc;
  
 +use anyrender::recording::{LayerCommand, RenderCommand};
@@ -4988,13 +4991,14 @@ index 1b09a33..d463b56 100644
 +    /// much of it (out of 255), as Chromium draws text when WPT runs it without font
 +    /// antialiasing. `None` (the default): antialiased.
 +    pub(crate) text_aliasing_threshold: Option<u8>,
++    text_outlines: bool,
 +    /// pyro: whether a replay leaves out work that shows in no pixel (see [`crate::occlusion`]);
 +    /// tests turn it off to compare.
 +    pub(crate) occlusion: bool,
  }
  
  impl VelloCpuScenePainter {
-@@ -22,13 +324,38 @@ impl VelloCpuScenePainter {
+@@ -22,13 +325,39 @@ impl VelloCpuScenePainter {
      }
  
      pub fn with_image_cache_config(width: u16, height: u16, config: ImageCacheConfig) -> Self {
@@ -5020,6 +5024,7 @@ index 1b09a33..d463b56 100644
 +            backdrops: Vec::new(),
 +            frame_to_ctx: Affine::IDENTITY,
 +            text_aliasing_threshold: None,
++            text_outlines: false,
 +            occlusion: true,
          }
      }
@@ -5034,7 +5039,7 @@ index 1b09a33..d463b56 100644
      fn convert_paint(&mut self, paint: PaintRef<'_>) -> PaintType {
          match paint {
              Paint::Solid(alpha_color) => PaintType::Solid(alpha_color),
-@@ -64,10 +391,29 @@ impl VelloCpuScenePainter {
+@@ -64,10 +393,29 @@ impl VelloCpuScenePainter {
      }
  }
  
@@ -5064,7 +5069,7 @@ index 1b09a33..d463b56 100644
      }
  
      fn push_layer(
-@@ -77,40 +423,38 @@ impl PaintScene for VelloCpuScenePainter {
+@@ -77,40 +425,38 @@ impl PaintScene for VelloCpuScenePainter {
          alpha: f32,
          transform: Affine,
          clip: &impl Shape,
@@ -5120,7 +5125,7 @@ index 1b09a33..d463b56 100644
      }
  
      fn stroke<'a>(
-@@ -121,14 +465,36 @@ impl PaintScene for VelloCpuScenePainter {
+@@ -121,14 +467,36 @@ impl PaintScene for VelloCpuScenePainter {
          brush_transform: Option<Affine>,
          shape: &impl Shape,
      ) {
@@ -5165,7 +5170,7 @@ index 1b09a33..d463b56 100644
      }
  
      fn fill<'a>(
-@@ -139,14 +505,15 @@ impl PaintScene for VelloCpuScenePainter {
+@@ -139,14 +507,15 @@ impl PaintScene for VelloCpuScenePainter {
          brush_transform: Option<Affine>,
          shape: &impl Shape,
      ) {
@@ -5186,7 +5191,7 @@ index 1b09a33..d463b56 100644
      }
  
      fn draw_glyphs<'a, 's: 'a>(
-@@ -163,6 +530,16 @@ impl PaintScene for VelloCpuScenePainter {
+@@ -163,6 +532,16 @@ impl PaintScene for VelloCpuScenePainter {
          glyph_transform: Option<Affine>,
          glyphs: impl Iterator<Item = anyrender::Glyph> + Clone,
      ) {
@@ -5203,7 +5208,7 @@ index 1b09a33..d463b56 100644
          self.render_ctx.set_transform(transform);
          let paint = self.convert_paint(paint.into());
          self.render_ctx.set_paint(paint);
-@@ -177,7 +554,13 @@ impl PaintScene for VelloCpuScenePainter {
+@@ -177,7 +556,13 @@ impl PaintScene for VelloCpuScenePainter {
                      .font_size(font_size)
                      .hint(hint)
                      .normalized_coords(normalized_coords)
@@ -5218,7 +5223,7 @@ index 1b09a33..d463b56 100644
                      .glyph_transform(glyph_transform.unwrap_or_default())
                      .fill_glyphs(glyphs.map(|g| vello_cpu::Glyph {
                          id: g.id,
-@@ -201,6 +584,7 @@ impl PaintScene for VelloCpuScenePainter {
+@@ -201,6 +586,7 @@ impl PaintScene for VelloCpuScenePainter {
                      }));
              }
          }
@@ -5226,7 +5231,7 @@ index 1b09a33..d463b56 100644
      }
      fn draw_box_shadow(
          &mut self,
-@@ -216,6 +600,867 @@ impl PaintScene for VelloCpuScenePainter {
+@@ -216,6 +602,886 @@ impl PaintScene for VelloCpuScenePainter {
          self.render_ctx
              .fill_blurred_rounded_rect(&rect, radius as f32, std_dev as f32, false);
      }
@@ -5272,6 +5277,16 @@ index 1b09a33..d463b56 100644
 +        let mut unwrapped: Vec<usize> = Vec::new();
 +        let mut i = 0;
 +        while i < commands.len() {
++            if let RenderCommand::PushLayer(layer) = &commands[i]
++                && layer.filter.as_ref().is_some_and(|filter| Arc::ptr_eq(filter, &crate::TEXT_OUTLINE_GROUP))
++            {
++                let end = matching_pop(commands, i);
++                let previous = std::mem::replace(&mut self.text_outlines, true);
++                self.replay(&commands[i + 1..end], transform);
++                self.text_outlines = previous;
++                i = end + 1;
++                continue;
++            }
 +            if unwrapped.last() == Some(&i) {
 +                unwrapped.pop();
 +                i += 1;
@@ -5490,6 +5505,12 @@ index 1b09a33..d463b56 100644
 +
 +    /// One command, its solid paint replaced by `recolor` if given (a colour filter's).
 +    fn replay_command(&mut self, command: &RenderCommand, transform: Affine, recolor: Option<Color>) {
++        let glyph_edge = self.text_outlines && self.text_aliasing_threshold.is_some()
++            && matches!(command, RenderCommand::Fill(_) | RenderCommand::Stroke(_));
++        let transform = if glyph_edge {
++            self.render_ctx.set_aliasing_threshold(self.text_aliasing_threshold);
++            Affine::translate((1.0 / 512.0, 1.0 / 512.0)) * transform
++        } else { transform };
 +        let paint = |brush| recolor.map_or_else(|| paint_ref(brush), Paint::Solid);
 +        match command {
 +            RenderCommand::PushLayer(c) => self.push_layer(
@@ -5533,6 +5554,9 @@ index 1b09a33..d463b56 100644
 +            RenderCommand::BoxShadow(c) => {
 +                self.draw_box_shadow(transform * c.transform, c.rect, c.brush, c.radius, c.std_dev)
 +            }
++        }
++        if glyph_edge {
++            self.render_ctx.set_aliasing_threshold(None);
 +        }
 +    }
 +
@@ -6094,7 +6118,7 @@ index 1b09a33..d463b56 100644
  }
  
  #[cfg(test)]
-@@ -292,4 +1537,314 @@ mod clip_rule_tests {
+@@ -292,4 +1558,314 @@ mod clip_rule_tests {
          assert_pixels(false, true);
          assert_pixels(true, true);
      }

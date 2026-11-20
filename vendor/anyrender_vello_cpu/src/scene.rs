@@ -313,6 +313,7 @@ pub struct VelloCpuScenePainter {
     /// much of it (out of 255), as Chromium draws text when WPT runs it without font
     /// antialiasing. `None` (the default): antialiased.
     pub(crate) text_aliasing_threshold: Option<u8>,
+    text_outlines: bool,
     /// pyro: whether a replay leaves out work that shows in no pixel (see [`crate::occlusion`]);
     /// tests turn it off to compare.
     pub(crate) occlusion: bool,
@@ -345,6 +346,7 @@ impl VelloCpuScenePainter {
             backdrops: Vec::new(),
             frame_to_ctx: Affine::IDENTITY,
             text_aliasing_threshold: None,
+            text_outlines: false,
             occlusion: true,
         }
     }
@@ -642,6 +644,16 @@ impl VelloCpuScenePainter {
         let mut unwrapped: Vec<usize> = Vec::new();
         let mut i = 0;
         while i < commands.len() {
+            if let RenderCommand::PushLayer(layer) = &commands[i]
+                && layer.filter.as_ref().is_some_and(|filter| Arc::ptr_eq(filter, &crate::TEXT_OUTLINE_GROUP))
+            {
+                let end = matching_pop(commands, i);
+                let previous = std::mem::replace(&mut self.text_outlines, true);
+                self.replay(&commands[i + 1..end], transform);
+                self.text_outlines = previous;
+                i = end + 1;
+                continue;
+            }
             if unwrapped.last() == Some(&i) {
                 unwrapped.pop();
                 i += 1;
@@ -860,6 +872,12 @@ impl VelloCpuScenePainter {
 
     /// One command, its solid paint replaced by `recolor` if given (a colour filter's).
     fn replay_command(&mut self, command: &RenderCommand, transform: Affine, recolor: Option<Color>) {
+        let glyph_edge = self.text_outlines && self.text_aliasing_threshold.is_some()
+            && matches!(command, RenderCommand::Fill(_) | RenderCommand::Stroke(_));
+        let transform = if glyph_edge {
+            self.render_ctx.set_aliasing_threshold(self.text_aliasing_threshold);
+            Affine::translate((1.0 / 512.0, 1.0 / 512.0)) * transform
+        } else { transform };
         let paint = |brush| recolor.map_or_else(|| paint_ref(brush), Paint::Solid);
         match command {
             RenderCommand::PushLayer(c) => self.push_layer(
@@ -903,6 +921,9 @@ impl VelloCpuScenePainter {
             RenderCommand::BoxShadow(c) => {
                 self.draw_box_shadow(transform * c.transform, c.rect, c.brush, c.radius, c.std_dev)
             }
+        }
+        if glyph_edge {
+            self.render_ctx.set_aliasing_threshold(None);
         }
     }
 

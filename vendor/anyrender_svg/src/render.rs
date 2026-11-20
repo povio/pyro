@@ -175,6 +175,8 @@ pub(crate) fn render_group<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
                 }
             }
             usvg::Node::Text(text) => {
+                scene.push_layer(Fill::NonZero, BlendMode::default(), 1.0, Affine::IDENTITY,
+                    &ctx.cull, Some(anyrender_vello_cpu::TEXT_OUTLINE_GROUP.clone()), None);
                 // The children of the flattened text group already carry the
                 // text node's absolute transform (in this subtree's space), so
                 // recurse with this subtree's base transform, as for a group.
@@ -186,6 +188,7 @@ pub(crate) fn render_group<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
                     error_handler,
                     ctx,
                 );
+                scene.pop_layer();
             }
         }
     }

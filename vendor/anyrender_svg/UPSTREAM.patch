@@ -1391,7 +1391,7 @@ index 3370fa2..6b6ec48 100644
      fn fill_rule_does_not_control_clipping() {
          assert_eq!(clip_rule("", r#"fill-rule="evenodd""#), Fill::NonZero);
 diff --git a/src/render.rs b/src/render.rs
-index 2e9e1c4..742c430 100644
+index 2e9e1c4..c706375 100644
 --- a/src/render.rs
 +++ b/src/render.rs
 @@ -2,92 +2,73 @@
@@ -1622,7 +1622,7 @@ index 2e9e1c4..742c430 100644
                              scene.draw_image(image.as_ref(), image_ts);
                          }
  
-@@ -141,26 +169,1112 @@ pub(crate) fn render_group<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -141,23 +169,1112 @@ pub(crate) fn render_group<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
                              transform,
                              global_transform,
                              error_handler,
@@ -1632,6 +1632,8 @@ index 2e9e1c4..742c430 100644
                  }
              }
              usvg::Node::Text(text) => {
++                scene.push_layer(Fill::NonZero, BlendMode::default(), 1.0, Affine::IDENTITY,
++                    &ctx.cull, Some(anyrender_vello_cpu::TEXT_OUTLINE_GROUP.clone()), None);
                  // The children of the flattened text group already carry the
 -                // text node's absolute transform, so recurse with the identity
 -                // transform (like the group case) to avoid applying it twice.
@@ -1646,11 +1648,12 @@ index 2e9e1c4..742c430 100644
                      error_handler,
 +                    ctx,
                  );
-             }
-         }
-     }
- }
- 
++                scene.pop_layer();
++            }
++        }
++    }
++}
++
 +/// pyro: the Porter-Duff operator a group made for a CSS mask layer (blitz-dom `svg_css`) is
 +/// composited with onto the layers below it, which its id names (`__pyro_compose_srcout_1`).
 +pub(crate) fn compose_marker(id: &str) -> Option<Compose> {
@@ -1881,7 +1884,7 @@ index 2e9e1c4..742c430 100644
 +            Some(kind) => {
 +                reach = reach.map(|r| function_reach(kind, r));
 +                (reach.unwrap_or(Rect::ZERO), false)
-+            }
+             }
 +            None => {
 +                let region = to_rect(filter.rect());
 +                reach = Some(region);
@@ -1955,7 +1958,7 @@ index 2e9e1c4..742c430 100644
 +            let shadow_rect = (input + kurbo::Vec2::new(shadow.dx() as f64, shadow.dy() as f64))
 +                .inflate(3.0 * sx + 1.0, 3.0 * sy + 1.0);
 +            input.union(shadow_rect)
-+        }
+         }
 +        Kind::GaussianBlur(blur) => input.inflate(
 +            3.0 * blur.std_dev_x().get() as f64 + 1.0,
 +            3.0 * blur.std_dev_y().get() as f64 + 1.0,
@@ -2732,13 +2735,10 @@ index 2e9e1c4..742c430 100644
 +        usvg::Paint::Pattern(pattern) => pattern_brush(pattern, opacity, transform, bounds, ctx)
 +            .map(|(image, ts)| (Paint::Image(image), ts)),
 +        paint => util::to_brush(paint, opacity),
-+    }
-+}
-+
- fn fill<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
-     scene: &mut S,
-     error_handler: &mut F,
-@@ -168,9 +1282,13 @@ fn fill<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+     }
+ }
+ 
+@@ -168,9 +1285,13 @@ fn fill<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
      transform: Affine,
      local_path: &BezPath,
      node: &Node,
@@ -2753,7 +2753,7 @@ index 2e9e1c4..742c430 100644
              scene.fill(
                  match fill.rule() {
                      usvg::FillRule::NonZero => Fill::NonZero,
-@@ -181,7 +1299,7 @@ fn fill<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -181,7 +1302,7 @@ fn fill<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
                  Some(brush_transform),
                  local_path,
              );
@@ -2762,7 +2762,7 @@ index 2e9e1c4..742c430 100644
              error_handler(scene, node);
          }
      }
-@@ -194,9 +1312,14 @@ fn stroke<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -194,9 +1315,14 @@ fn stroke<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
      transform: Affine,
      local_path: &BezPath,
      node: &Node,
@@ -2778,7 +2778,7 @@ index 2e9e1c4..742c430 100644
              let conv_stroke = util::to_stroke(stroke);
              scene.stroke(
                  &conv_stroke,
-@@ -205,7 +1328,7 @@ fn stroke<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -205,7 +1331,7 @@ fn stroke<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
                  Some(brush_transform),
                  local_path,
              );

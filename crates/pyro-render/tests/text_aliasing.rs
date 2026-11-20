@@ -19,7 +19,8 @@ fn render(antialiased: bool, scale: f64) -> RgbaImage {
     let snapshot = Snapshot {
         html: "<!doctype html><body style='margin:0;background:#fff;width:300px;height:200px'>\
                <div style='position:absolute;left:10.3px;top:10.6px;font:30px/40px sans-serif;color:#000'>Hgw</div>\
-               <div style='position:absolute;left:150px;top:100px;width:60px;height:60px;border-radius:50%;background:#000'></div>"
+               <div style='position:absolute;left:150px;top:100px;width:60px;height:60px;border-radius:50%;background:#000'></div>\
+               <svg style='position:absolute;top:70px' width='110' height='60'><text x='8.3' y='36' font-size='28' stroke='black'>Abc</text></svg>"
             .into(),
         base_url: "http://test/".into(),
         width: 300,
@@ -64,6 +65,9 @@ fn text_is_aliased_with_antialiasing_off_and_nothing_else_is() {
         assert!(edge > 0, "scale {scale}: the circle's edge stays antialiased");
 
         let antialiased = render(true, scale);
+        let svg = |img: &RgbaImage| census(img, px(0.0)..px(110.0), px(70.0)..px(130.0));
+        assert!(svg(&aliased).0 > 100 && svg(&aliased).1 == 0);
+        assert!(svg(&antialiased).1 > 0);
         let (_, blended) = text(&antialiased);
         assert!(blended > 0, "scale {scale}: antialiased text has blended edges");
         assert_eq!(circle(&antialiased), circle(&aliased), "scale {scale}: the circle does not change");
