@@ -205,6 +205,19 @@ pub fn frame_table(table: pyro_dom::FrameTable) -> pyro_render::FrameTable {
     std::sync::Arc::new(pyro_render::FrameTableData { nonce: table.nonce, entries })
 }
 
+/// pyro: what layout's loader keys a request's options as (the client aside: the key's document).
+fn request_options(options: &pyro_render::FetchOptions) -> pyro_dom::layout::SubresourceOptions {
+    pyro_dom::layout::SubresourceOptions {
+        crossorigin: options.cors.map(|credentials| match credentials {
+            pyro_render::CorsCredentials::SameOrigin => "anonymous".to_owned(),
+            pyro_render::CorsCredentials::Include => "use-credentials".to_owned(),
+        }),
+        integrity: options.integrity.clone(),
+        referrer: options.referrer.as_ref().map(|url| url.as_str().to_owned()),
+        referrer_policy: options.referrer_policy.clone(),
+    }
+}
+
 struct BaseUrl {
     text: String,
     parsed: Option<url::Url>,
@@ -837,14 +850,18 @@ impl GeometrySource for BlitzGeometry {
         let loader = self.loader.borrow();
         let Some(loader) = loader.as_ref() else { return false };
         let Some(asked) = loader.asked_images() else { return false };
-        // pyro: only images the document still references (as laid out last): one whose only
-        // rule or element went away is not waited for.
+        // pyro: only image requests the document still references (as laid out last), by request
+        // (URL and options), not URL: one whose only rule or element went away is not waited for,
+        // though another variant of its URL remains.
         let referenced = RENDERER.with(|r| {
-            r.try_borrow().ok().and_then(|r| r.as_ref().and_then(|r| r.referenced_image_urls(self.page)))
+            r.try_borrow().ok().and_then(|r| r.as_ref().and_then(|r| r.referenced_images(self.page)))
         });
-        asked.iter().any(|key| {
-            loader.bodies().pending(key) && referenced.as_ref().is_none_or(|urls| urls.contains(key.url()))
-        })
+        let requested = |key: &pyro_dom::layout::LayoutBodyKey| {
+            referenced.as_ref().is_none_or(|images| {
+                images.iter().any(|(url, options)| url == key.url() && request_options(options) == *key.options())
+            })
+        };
+        asked.iter().any(|key| loader.bodies().pending(key) && requested(key))
     }
 
     fn font_url_state(&self, url: &str) -> Option<bool> {

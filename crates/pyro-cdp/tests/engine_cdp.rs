@@ -7370,6 +7370,97 @@ mod screenshot {
         }
     }
 
+    /// A server for load gate tests: `/` answers `page`; a request `stall` picks (by its whole
+    /// head) waits that long, then answers 404 (images) or `font` bytes; others 404 at once.
+    fn gate_server(page: &'static str, stall: fn(&str) -> Option<u64>) -> std::net::SocketAddr {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                std::thread::spawn(move || {
+                    let mut request = Vec::new();
+                    let mut chunk = [0; 1024];
+                    while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                        match stream.read(&mut chunk) {
+                            Ok(n) if n > 0 => request.extend_from_slice(&chunk[..n]),
+                            _ => return,
+                        }
+                    }
+                    let head = String::from_utf8_lossy(&request).to_string();
+                    let (status, kind, body) = if head.starts_with("GET / ") {
+                        ("200 OK", "text/html", page)
+                    } else {
+                        if let Some(ms) = stall(&head) {
+                            std::thread::sleep(Duration::from_millis(ms));
+                        }
+                        ("404 Not Found", "text/plain", "")
+                    };
+                    let out = format!(
+                        "HTTP/1.1 {status}\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = stream.write_all(out.as_bytes());
+                });
+            }
+        });
+        address
+    }
+
+    /// How long `load` took from navigating to the gate server.
+    fn load_time(address: std::net::SocketAddr) -> Duration {
+        let mut h = Harness::new();
+        h.page("Page.enable", json!({}));
+        let started = Instant::now();
+        h.page("Page.navigate", json!({"url": format!("http://{address}/")}));
+        h.until_event(|m| m["method"] == "Page.loadEventFired");
+        started.elapsed()
+    }
+
+    /// A face first made applicable by a style change before load (its fetch starts with the
+    /// gate's own layout pass) delays load: fonts are checked again after that pass (security
+    /// review cycle 4, S3a).
+    #[test]
+    fn a_face_the_gates_layout_starts_delays_load() {
+        let address = gate_server(
+            "<!doctype html><style>@font-face { font-family: F; src: url(/slow.woff2) }</style>\
+             <p id=p>text</p><script>addEventListener('DOMContentLoaded', () => document.getElementById('p').style.fontFamily = 'F')</script>",
+            |head| head.starts_with("GET /slow.woff2").then_some(1500),
+        );
+        let waited = load_time(address);
+        assert!(waited >= Duration::from_millis(1200), "load did not wait for the face: {waited:?}");
+    }
+
+    /// `replaceSync()` on an adopted sheet that drops the last use of a stalled image releases
+    /// load (the gate looked at the DOM version only: S3b).
+    #[test]
+    fn an_adopted_sheet_change_releases_load() {
+        let address = gate_server(
+            "<!doctype html><div style='width:20px;height:20px'></div><script>\
+             const sheet = new CSSStyleSheet(); sheet.replaceSync('div { background-image: url(/stall.png) }');\
+             document.adoptedStyleSheets = [sheet]; setTimeout(() => sheet.replaceSync(''), 300);</script>",
+            |head| head.starts_with("GET /stall.png").then_some(4000),
+        );
+        let waited = load_time(address);
+        assert!(waited < Duration::from_millis(2500), "load waited for an image nothing uses: {waited:?}");
+    }
+
+    /// The gate waits by request, not URL: removing the stalled CORS variant of a URL releases
+    /// load though the plain variant of that URL, which answered, is still used (S3c).
+    #[test]
+    fn the_gate_waits_by_request_not_url() {
+        let address = gate_server(
+            "<!doctype html><div style='width:20px;height:20px;background-image:url(/v.png)'></div>\
+             <div id=c style='width:20px;height:20px;mask-image:url(/v.png)'></div>\
+             <script>setTimeout(() => document.getElementById('c').remove(), 300)</script>",
+            // (A mask's request is a CORS one.)
+            |head| (head.starts_with("GET /v.png") && head.to_ascii_lowercase().contains("sec-fetch-mode: cors")).then_some(4000),
+        );
+        let waited = load_time(address);
+        assert!(waited < Duration::from_millis(2500), "load waited for a variant nothing uses: {waited:?}");
+    }
+
     /// One failure state: a CSS image the document's layout failed to fetch is a failure for its
     /// capture too, which neither fetches it again nor paints what the document never got
     /// (geometry and capture kept apart failure sets: security review cycle 4, 3c).

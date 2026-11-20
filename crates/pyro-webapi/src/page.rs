@@ -403,8 +403,11 @@ pub struct PageDom {
     font_delay_since: Cell<Option<std::time::Instant>>,
     /// pyro: when the load gate laid the document out (`css_images_delay_load`), once per load.
     load_layout_since: Cell<Option<std::time::Instant>>,
-    /// pyro: the DOM version the load gate last laid the document out at.
-    load_layout_version: Cell<u64>,
+    /// pyro: the DOM version and style generation the load gate last laid the document out at.
+    load_layout_version: Cell<(u64, u64)>,
+    /// pyro: when the document was made (its navigation committed): the load gate's safety cap
+    /// counts from here.
+    created: std::time::Instant,
     /// The font families elements name, as of a DOM version (`used_face_loading`).
     used_font_families: RefCell<Option<(u64, std::collections::HashSet<String>)>>,
     /// Files selected into `<input type=file>` (CDP DOM.setFileInputFiles).
@@ -960,7 +963,8 @@ impl PageDom {
             font_loads: Cell::new(0),
             font_delay_since: Cell::new(None),
             load_layout_since: Cell::new(None),
-            load_layout_version: Cell::new(0),
+            load_layout_version: Cell::new((0, 0)),
+            created: std::time::Instant::now(),
             used_font_families: RefCell::new(None),
             files: RefCell::new(FxHashMap::default()),
             layout: RefCell::new(pyro_dom::layout::Layout::new(document)),
@@ -1507,31 +1511,27 @@ impl PageDom {
     /// fetches before `load`. Called once every other blocker of `load` is clear: the first call
     /// lays the document out once (which starts those fetches through the document's network);
     /// then `load` waits while one is in flight, at most 10 s from that layout.
+    /// pyro: Chrome has no cap: a CSS image delays load until it finishes or fails. The 10 s,
+    /// counted from the document's navigation (its creation), are pyro's own safety limit, so an
+    /// image that never answers cannot hold `load` back for good.
     pub fn css_images_delay_load(&self) -> bool {
-        let since = match self.load_layout_since.get() {
-            Some(since) => since,
-            None => {
-                let now = std::time::Instant::now();
-                self.load_layout_since.set(Some(now));
-                // (Style changes the scripts made start their transitions: tracked first.)
-                crate::animation_events::track_before_layout(self);
-                if let (Ok(dom), Some(layout)) = (self.dom.try_borrow(), self.try_layout()) {
-                    layout.synced_geometry_source(&dom);
-                    self.load_layout_version.set(dom.version());
-                }
-                now
-            }
-        };
-        // pyro: a document changed since (a rule or element using a stalled image removed) is laid
-        // out again: what it still references is what load waits for.
+        if self.load_layout_since.get().is_none() {
+            self.load_layout_since.set(Some(std::time::Instant::now()));
+            // (Style changes the scripts made start their transitions: tracked first.)
+            crate::animation_events::track_before_layout(self);
+        }
+        // pyro: laid out again whenever the document or its style changed since the gate's last
+        // pass (a rule or element using a stalled image removed, a `replaceSync()` on an adopted
+        // sheet): what it still references, by request, is what load waits for.
         if let (Ok(dom), Some(layout)) = (self.dom.try_borrow(), self.try_layout()) {
-            if dom.version() != self.load_layout_version.get() {
+            let stamp = { let s = layout.style().observation_stamp(&dom); (s.0, s.1) };
+            if stamp != self.load_layout_version.get() || self.load_layout_version.get() == (0, 0) {
                 layout.synced_geometry_source(&dom);
-                self.load_layout_version.set(dom.version());
+                self.load_layout_version.set(stamp);
             }
         }
         let pending = self.try_layout().is_some_and(|layout| layout.images_pending_as_laid_out());
-        pending && since.elapsed() < std::time::Duration::from_secs(10)
+        pending && self.created.elapsed() < std::time::Duration::from_secs(10)
     }
 
     /// Whether a face of the document's sheets that the layout engine is still fetching has a

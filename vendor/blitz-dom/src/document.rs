@@ -1993,6 +1993,31 @@ impl BaseDocument {
     /// pyro: the URLs of the images the document's elements reference now (their CSS image slots:
     /// backgrounds, masks, border images, references, list markers, shapes), in the document only.
     /// An image no element references any more is no longer the document's to wait for.
+    /// The requests (URL and request options) of those images, not only their URLs: a variant of
+    /// the same URL made otherwise is another request.
+    pub fn referenced_images(&self) -> Vec<(String, blitz_traits::net::FetchOptions)> {
+        let mut out = Vec::new();
+        for (_, node) in self.nodes.iter() {
+            if !node.flags.is_in_document() {
+                continue;
+            }
+            let Some(element) = node.element_data() else { continue };
+            for slot in element
+                .background_images
+                .iter()
+                .chain(element.mask_images.iter())
+                .chain(element.border_images.iter())
+                .chain(element.reference_images.iter())
+                .chain(element.list_style_images.iter())
+                .chain(element.shape_images.iter())
+                .flatten()
+            {
+                out.push((slot.url.as_str().to_owned(), slot.options.clone()));
+            }
+        }
+        out
+    }
+
     pub fn referenced_image_urls(&self) -> std::collections::HashSet<String> {
         let mut urls = std::collections::HashSet::new();
         for (_, node) in self.nodes.iter() {

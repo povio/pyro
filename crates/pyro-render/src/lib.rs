@@ -1150,6 +1150,11 @@ impl Renderer {
         self.mirrors.get(&page).map(|m| m.doc.referenced_image_urls())
     }
 
+    /// pyro: the image requests (URL and options) `page`'s persistent document references now.
+    pub fn referenced_images(&self, page: u64) -> Option<Vec<(String, FetchOptions)>> {
+        self.mirrors.get(&page).map(|m| m.doc.referenced_images())
+    }
+
     /// The markup of `page`'s persistent document (tests, diagnostics).
     #[doc(hidden)]
     pub fn mirrored_html(&self, page: u64) -> Option<String> {

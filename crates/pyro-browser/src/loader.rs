@@ -2347,6 +2347,11 @@ impl Browser {
                 if page_dom.css_images_delay_load() {
                     return;
                 }
+                // pyro: the gate's layout pass may have made a pending face applicable for the
+                // first time (a style change before load): fonts are checked again after it.
+                if page_dom.fonts_delay_load() {
+                    return;
+                }
                 let Some(new_state) = self.doc_mut(page) else { return };
                 state = new_state;
             }
