@@ -344,3 +344,13 @@ fn boxes_escape_a_clip_in_each_of_two_opacity_groups() {
         assert!(r.abs_diff(127) <= 2 && g.abs_diff(127) <= 2 && b > 250, "the box past the clip at y {y}: {:?}", [r, g, b]);
     }
 }
+
+/// The render tree of a `<details>` element with many children is written in linear time: each
+/// child's index among its siblings was counted from the first. Review cycle 3, finding 5.
+#[test]
+fn a_details_with_many_children_renders_in_bounded_time() {
+    let kids: String = (0..20000).map(|_| "<i></i>").collect();
+    let start = std::time::Instant::now();
+    let _ = render(&format!("<details open><summary>s</summary>{kids}</details>"));
+    assert!(start.elapsed() < std::time::Duration::from_secs(20), "took {:?}", start.elapsed());
+}

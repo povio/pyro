@@ -438,6 +438,10 @@ impl Dom {
         let mut tags: Vec<String> = Vec::new();
         // Adopted sheets rendered so far.
         let mut emitted = 0usize;
+        // The element index of each light child of a shadow host or `<details>` (`LIGHT_INDEX_ATTR`),
+        // counted once per parent: one pass over its children, however many it has.
+        let mut light_indices: rustc_hash::FxHashMap<u32, usize> = Default::default();
+        let mut indexed_parents: rustc_hash::FxHashSet<u32> = Default::default();
         let mut stack = Vec::new();
         push_children(&mut stack, roots, NONE);
         while let Some(step) = stack.pop() {
@@ -659,7 +663,11 @@ impl Dom {
                         && (self.n(parent).element().is_some_and(|p| p.shadow_root != NIL && !self.has_ua_shadow_idx(p.shadow_root))
                             || self.renders_details_slots(parent))
                     {
-                        let index = self.child_idx_iter(parent).take_while(|&c| c != n).filter(|&c| self.n(c).is_element()).count();
+                        if indexed_parents.insert(parent) {
+                            let elements = self.child_idx_iter(parent).filter(|&c| self.n(c).is_element());
+                            light_indices.extend(elements.enumerate().map(|(index, c)| (c, index)));
+                        }
+                        let index = light_indices.get(&n).copied().unwrap_or(0);
                         attrs.push(RAttr {
                             name: Cow::Owned(QualName::new(None, STATE_NS.into(), LIGHT_INDEX_ATTR.into())),
                             value: Cow::Owned(index.to_string()),
