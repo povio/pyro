@@ -93,16 +93,21 @@ fully formatted text, removed), `createLink`/`unlink`, `insertOrderedList`/
 `insertUnorderedList` (again inside such a list: its items become `div`
 lines), `formatBlock` (`<h1>`..`<h6>`, `p`, `div`, `pre`, `blockquote`, ...)
 and `removeFormat`. Each fires `beforeinput`/`input` with its inputType.
-Inline formatting of a collapsed selection (Chromium's typing style) is not
-modelled: it returns false. `defaultParagraphSeparator` and `styleWithCSS`
-are not supported.
+The document's `defaultParagraphSeparator` selects `div` or `p` for
+new paragraphs. `styleWithCSS` switches inline formatting between CSS
+declarations and legacy formatting elements. The `fontName`, `fontSize`,
+`foreColor`, `backColor`, and `hiliteColor` commands format the selected
+content. At a collapsed caret their value applies to the next typed text
+until the selection moves. Boolean formatting commands such as `bold`
+still require a non-collapsed selection. The four justification commands
+align the selected paragraphs.
 
 `queryCommandState` reads computed style (bold: `font-weight` >= 600; italic;
 underline and strikethrough from any ancestor's `text-decoration-line`) and
 list ancestors; `queryCommandIndeterm` is true when only part of the
 selection has the style; `queryCommandValue` gives `formatBlock`'s tag,
-`fontName`/`foreColor`/`backColor` computed values, `"true"`/`"false"` for
-states and `defaultParagraphSeparator` "div"; `queryCommandEnabled` needs an
+the current font/color values, `"true"`/`"false"` for boolean formatting
+states, paragraph alignment, and the configured default paragraph separator; `queryCommandEnabled` needs an
 editable target (copy: a selection; undo/redo: a step).
 
 ## Undo
