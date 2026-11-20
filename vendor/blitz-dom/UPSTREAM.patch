@@ -21891,7 +21891,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                      #[cfg(feature = "writing-mode")]
                      let (intrinsic_sizes, default_object_size) =
                          if node.writing_mode().is_vertical() {
-@@ -488,125 +1765,596 @@
+@@ -488,125 +1765,597 @@
                              (intrinsic_sizes, default_object_size)
                          };
  
@@ -21911,6 +21911,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +                                _ => 0.0,
 +                            });
 +                            intrinsic_sizes.height.get_or_insert(default_object_size.height);
++                            intrinsic_sizes.ratio = None;
 +                        }
 +                    }
 +                    let ratio_in_box_sizing_box = node
@@ -22575,7 +22576,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  
  impl TraversePartialTree for LayoutPassState<'_> {
      type ChildIter<'a>
-@@ -667,7 +2415,16 @@
+@@ -667,7 +2416,16 @@
      }
  
      fn set_unrounded_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -22593,7 +22594,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn resolve_calc_value(&self, calc_ptr: *const (), parent_size: f32) -> f32 {
-@@ -675,11 +2432,32 @@
+@@ -675,11 +2433,32 @@
      }
  
      #[inline(always)]
@@ -22626,7 +22627,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          compute_cached_layout(self, node_id, inputs, |tree, node_id, inputs| {
              tree.compute_child_layout_internal(node_id, inputs, None)
          })
-@@ -693,22 +2471,355 @@
+@@ -693,22 +2472,355 @@
          Self: 'a;
  
      fn get_oof_item_style(&self, node_id: NodeId) -> Self::OofItemStyle<'_> {
@@ -22985,7 +22986,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn add_hoisted_children(&mut self, node_id: NodeId, hoisted: &[NodeId]) {
-@@ -718,9 +2829,24 @@
+@@ -718,9 +2830,24 @@
              .borrow_mut()
              .extend(hoisted.iter().copied().map(dom_node_id));
          for &hoisted_id in hoisted {
@@ -23010,7 +23011,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          }
      }
  
-@@ -732,6 +2858,148 @@
+@@ -732,6 +2859,148 @@
      }
  }
  
@@ -23159,7 +23160,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  impl taffy::CacheTree for LayoutPassState<'_> {
      #[inline]
      fn cache_get(
-@@ -739,10 +3007,12 @@
+@@ -739,10 +3008,12 @@
          node_id: NodeId,
          inputs: &taffy::LayoutInput,
      ) -> Option<taffy::LayoutOutput> {
@@ -23176,7 +23177,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -752,9 +3022,11 @@
+@@ -752,9 +3023,11 @@
          inputs: &taffy::LayoutInput,
          layout_output: taffy::LayoutOutput,
      ) {
@@ -23191,7 +23192,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -782,16 +3054,236 @@
+@@ -782,16 +3055,236 @@
          self.child_layout_style(self.node_from_id(child_node_id))
      }
  
@@ -23432,7 +23433,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  }
  
-@@ -844,6 +3336,30 @@
+@@ -844,6 +3337,30 @@
              element.detailed_layout_info = DetailedLayoutInfo::Grid(Box::new(detailed_grid_info));
          }
      }
@@ -23463,7 +23464,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  impl RoundTree for LayoutPassState<'_> {
-@@ -852,7 +3368,19 @@
+@@ -852,7 +3369,19 @@
      }
  
      fn set_final_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -23484,7 +23485,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn is_out_of_flow(&self, node_id: NodeId) -> bool {
-@@ -868,6 +3396,30 @@
+@@ -868,6 +3397,30 @@
      fn get_hoisted_child_id(&self, node_id: NodeId, index: usize) -> NodeId {
          taffy_node_id(self.node_from_id(node_id).hoisted_children.borrow()[index])
      }
@@ -23515,7 +23516,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  pub(crate) struct TaffyDebugTree<'doc>(pub(crate) &'doc BaseDocument);
-@@ -972,3 +3524,212 @@
+@@ -972,3 +3525,212 @@
          })
      }
  }
@@ -44206,7 +44207,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      pub fn primary_styles(&self) -> Option<impl Deref<Target = ServoArc<ComputedValues>>> {
          self.try_stylo_element_data()
              .and_then(|stylo| stylo.primary_styles())
-@@ -1161,37 +2278,163 @@
+@@ -1161,37 +2278,169 @@
      pub fn layout_style(&self) -> stylo_taffy::TaffyStyloStyle<ComputedStyleRef<'_>> {
          let styles = self
              .try_stylo_element_data()
@@ -44226,7 +44227,13 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +                    flags |= stylo_taffy::StyleFlags::IS_CONTENT_REPLACED;
 +                }
 +                // pyro
-+                if styles.get_position().aspect_ratio.auto && crate::layout::replaced::has_natural_ratio(el) {
++                if styles.get_position().aspect_ratio.auto && crate::layout::replaced::has_natural_ratio(el)
++                    && {
++                        use style::values::computed::Contain;
++                        let containment = crate::layout::node_size_containment(self, &styles);
++                        !containment.contains(Contain::INLINE_SIZE) || containment.contains(Contain::BLOCK_SIZE)
++                    }
++                {
 +                    flags |= stylo_taffy::StyleFlags::HAS_NATURAL_RATIO;
 +                    natural_ratio = crate::layout::replaced::natural_ratio(el);
 +                }
@@ -44375,7 +44382,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      /// The node's style for Taffy, expressed in the axes of the writing mode `layout_wm` (the writing
      /// mode of the box laying this node out). Used for the child-style getters.
      #[cfg(feature = "writing-mode")]
-@@ -1234,12 +2477,24 @@
+@@ -1234,12 +2483,24 @@
              .unwrap_or(stylo_taffy::WritingMode::empty())
      }
  
@@ -44403,7 +44410,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  if self.element_data().is_some_and(|el| el.is_button_input())
                      && !matches!(
                          display.inside(),
-@@ -1290,7 +2545,7 @@
+@@ -1290,7 +2551,7 @@
              }
              NodeData::Element(..) | NodeData::AnonymousBlock(..) => {
                  for child_id in self.children.iter() {
@@ -44412,7 +44419,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  }
              }
              _ => {}
-@@ -1327,8 +2582,47 @@
+@@ -1327,8 +2588,47 @@
              .unwrap_or(0)
      }
  
@@ -44461,7 +44468,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          let Some(style) = self.primary_styles() else {
              return false;
          };
-@@ -1336,7 +2630,7 @@
+@@ -1336,7 +2636,7 @@
          let position = style.clone_position();
          let has_z_index = !style.clone_z_index().is_auto();
  
@@ -44470,7 +44477,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              return true;
          }
  
-@@ -1358,10 +2652,37 @@
+@@ -1358,10 +2658,37 @@
              return true;
          }
  
@@ -44508,7 +44515,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          if style.get_box().isolation == Isolation::Isolate {
              return true;
          }
-@@ -1369,7 +2690,48 @@
+@@ -1369,7 +2696,48 @@
          if style.get_effects().mix_blend_mode != style::computed_values::mix_blend_mode::T::Normal {
              return true;
          }
@@ -44558,7 +44565,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          false
      }
-@@ -1397,12 +2759,14 @@
+@@ -1397,12 +2765,14 @@
              return true;
          }
  
@@ -44579,7 +44586,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      }
  
      /// Takes an (x, y) position (relative to the *parent's* top-left corner) and returns:
-@@ -1431,9 +2795,32 @@
+@@ -1431,9 +2801,32 @@
          y: f32,
          scale: f64,
          scrollbar: &mut Option<crate::node::ScrollbarRef>,
@@ -44612,7 +44619,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          // Don't hit on visbility:hidden elements
          if let Some(style) = self.primary_styles() {
-@@ -1500,11 +2887,15 @@
+@@ -1500,11 +2893,15 @@
              || y < overflow_rect.top() + client_y
              || y > overflow_rect.bottom() + client_y);
  
@@ -44628,7 +44635,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  x >= bbox.left && x <= bbox.right && y >= bbox.top && y <= bbox.bottom
              }
              None => false,
-@@ -1519,7 +2910,25 @@
+@@ -1519,7 +2916,25 @@
              && y >= (overflow.y0 / scale) as f32
              && y <= (overflow.y1 / scale) as f32;
  
@@ -44655,7 +44662,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              return None;
          }
  
-@@ -1533,6 +2942,8 @@
+@@ -1533,6 +2948,8 @@
          {
              *scrollbar = Some(sb);
          }
@@ -44664,7 +44671,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          // Text clusters and callers of the returned coordinates work in the
          // inline root's content box, but embedded boxes store border-box
-@@ -1541,10 +2952,7 @@
+@@ -1541,10 +2958,7 @@
          // padded inline root are hit one padding down and right of where
          // they are painted.
          let content_box_offset = if self.flags.is_inline_root() {
@@ -44676,7 +44683,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          } else {
              taffy::Point { x: 0.0, y: 0.0 }
          };
-@@ -1556,30 +2964,46 @@
+@@ -1556,30 +2970,46 @@
                      let Some(child) = self.tree().get(hoisted_child.node_id) else {
                          continue;
                      };
@@ -44735,7 +44742,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                      child_x -= self.scroll_offset().x as f32;
                      child_y -= self.scroll_offset().y as f32;
                      let viewport_scroll = self.tree().viewport_scroll();
-@@ -1590,26 +3014,94 @@
+@@ -1590,26 +3020,94 @@
                  child_x -= offset.x;
                  child_y -= offset.y;
              }
@@ -44845,7 +44852,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          }
  
          // Inline children
-@@ -1642,6 +3134,24 @@
+@@ -1642,6 +3140,24 @@
              }
          }
  
@@ -44870,7 +44877,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          // Self (this node)
          if matches_self && !pointer_events_none {
              return Some(HitResult {
-@@ -1716,7 +3226,7 @@
+@@ -1716,7 +3232,7 @@
              return false;
          };
          if self.flags.is_inline_root()
@@ -44879,7 +44886,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          {
              return false;
          }
-@@ -1741,8 +3251,13 @@
+@@ -1741,8 +3257,13 @@
          let y = y + self.final_layout().location.y - self.scroll_offset().y as f32;
  
          // Recurse up the positioning hierarchy
@@ -44894,7 +44901,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              .unwrap_or(crate::util::Point { x, y })
      }
  
-@@ -1818,8 +3333,28 @@
+@@ -1818,8 +3339,28 @@
  
          let root_layout = inline_root.unrounded_layout();
          let content_box_inset = root_layout.padding + root_layout.border;
@@ -44925,7 +44932,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          fn union(acc: &mut Option<taffy::Rect<f32>>, left: f32, top: f32, right: f32, bottom: f32) {
              *acc = Some(match *acc {
-@@ -1877,11 +3412,36 @@
+@@ -1877,11 +3418,36 @@
                  }
              }
  
@@ -44967,7 +44974,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              })
          }))
      }
-@@ -1938,14 +3498,14 @@
+@@ -1938,14 +3504,14 @@
      /// borders and scrollbar)
      pub fn client_width(&self) -> f32 {
          let layout = self.final_layout();

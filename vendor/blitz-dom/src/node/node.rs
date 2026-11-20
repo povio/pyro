@@ -2292,7 +2292,13 @@ impl Node {
                     flags |= stylo_taffy::StyleFlags::IS_CONTENT_REPLACED;
                 }
                 // pyro
-                if styles.get_position().aspect_ratio.auto && crate::layout::replaced::has_natural_ratio(el) {
+                if styles.get_position().aspect_ratio.auto && crate::layout::replaced::has_natural_ratio(el)
+                    && {
+                        use style::values::computed::Contain;
+                        let containment = crate::layout::node_size_containment(self, &styles);
+                        !containment.contains(Contain::INLINE_SIZE) || containment.contains(Contain::BLOCK_SIZE)
+                    }
+                {
                     flags |= stylo_taffy::StyleFlags::HAS_NATURAL_RATIO;
                     natural_ratio = crate::layout::replaced::natural_ratio(el);
                 }

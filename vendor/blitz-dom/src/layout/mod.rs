@@ -1781,6 +1781,7 @@ impl LayoutPassState<'_> {
                                 _ => 0.0,
                             });
                             intrinsic_sizes.height.get_or_insert(default_object_size.height);
+                            intrinsic_sizes.ratio = None;
                         }
                     }
                     let ratio_in_box_sizing_box = node
