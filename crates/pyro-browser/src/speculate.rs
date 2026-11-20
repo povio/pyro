@@ -183,6 +183,7 @@ impl Requester {
             _ => (self.base_url.clone(), Initiator::Link),
         };
         FetchRequest {
+            parser_priority: false,
             credentials: None,
             post: None,
             url,
@@ -340,6 +341,7 @@ impl Browser {
             let base = crate::loader::node_base_url(&dom, node).unwrap_or_else(|| requester.base_url.clone());
             let Some(url) = crate::loader::resolve_url(&base, src) else { return };
             let mut request = requester.request(url, ResourceKind::Script, info.crossorigin.clone(), None);
+            request.parser_priority = true;
             // As the element's own request will be sent (it takes this one).
             request.referrer_policy = pyro_net::ReferrerPolicy::from_attribute(info.referrerpolicy.as_deref());
             request

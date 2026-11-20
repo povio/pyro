@@ -46,6 +46,7 @@ impl Browser {
         };
         let cors = request.crossorigin.is_some();
         let fetch = FetchRequest {
+            parser_priority: false,
             credentials: None,
             post: None,
             url: request.url,

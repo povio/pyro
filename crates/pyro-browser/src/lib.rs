@@ -146,6 +146,7 @@ fn subresource_request_with(
     options: &SubresourceOptions,
 ) -> FetchRequest {
     FetchRequest {
+        parser_priority: false,
         credentials: None,
         post: None,
         url,
@@ -800,6 +801,7 @@ pub struct Browser {
     local_storage_seed: pyro_webapi::StorageSeed,
     /// Completions of in-flight fetches, keyed by completion id.
     pub(crate) completions: std::collections::HashMap<u64, FetchDone>,
+    ready_responses: loader::ReadyResponses,
 }
 
 impl LoopState for Browser {
@@ -1012,6 +1014,7 @@ impl BrowserThread {
             ignore_certificate_errors: false,
             local_storage_seed: Default::default(),
             completions: std::collections::HashMap::new(),
+            ready_responses: Default::default(),
         };
         BrowserThread { event_loop, browser }
     }

@@ -88,6 +88,7 @@ pub enum ResourceKind {
 
 #[derive(Debug, Clone)]
 pub struct FetchRequest {
+    pub parser_priority: bool,
     /// Body and content type of a form POST (`None`: GET).
     pub post: Option<(Vec<u8>, String)>,
     pub url: String,
@@ -275,6 +276,37 @@ pub struct NetLoader {
     client: pyro_net::NetClient,
 }
 
+#[derive(Default)]
+pub(crate) struct ReadyResponses(std::collections::HashMap<String, std::collections::BTreeMap<(bool, u64), Result<Resource, String>>>);
+
+impl ReadyResponses {
+    fn push(&mut self, document: &str, blocking: bool, id: u64, result: Result<Resource, String>) {
+        self.0.entry(document.to_owned()).or_default().insert((!blocking, id), result);
+    }
+
+    fn take(&mut self, document: &str) -> Option<(u64, Result<Resource, String>)> {
+        let queue = self.0.get_mut(document)?;
+        let ((_, id), result) = queue.pop_first()?;
+        if queue.is_empty() { self.0.remove(document); }
+        Some((id, result))
+    }
+}
+
+#[cfg(test)]
+mod ready_tests {
+    #[test]
+    fn document_responses_deliver_by_priority_then_issue_order() {
+        let mut ready = super::ReadyResponses::default();
+        for (document, blocking, id) in [("first", false, 5), ("other", true, 9), ("first", true, 3), ("first", true, 2)] {
+            ready.push(document, blocking, id, Err(String::new()));
+        }
+        let ids: Vec<_> = std::iter::from_fn(|| ready.take("first")).map(|entry| entry.0).collect();
+        assert_eq!(ids, [2, 3, 5]);
+        assert_eq!(ready.take("other").unwrap().0, 9);
+        assert!(ready.0.is_empty());
+    }
+}
+
 impl NetLoader {
     pub fn new(client: pyro_net::NetClient) -> NetLoader {
         NetLoader { client }
@@ -282,6 +314,18 @@ impl NetLoader {
 
     pub fn client(&self) -> &pyro_net::NetClient {
         &self.client
+    }
+}
+
+impl Browser {
+    fn fetch_ready(&mut self, priority: Option<(String, bool)>, id: u64, result: Result<Resource, String>) {
+        let Some((document, blocking)) = priority else { return self.complete_fetch(id, result) };
+        self.ready_responses.push(&document, blocking, id, result);
+        self.scheduler().post(TaskSource::Networking, move |browser| {
+            if let Some((id, result)) = browser.ready_responses.take(&document) {
+                browser.complete_fetch(id, result);
+            }
+        });
     }
 }
 
@@ -327,7 +371,10 @@ impl ResourceLoader for NetLoader {
         // Resource Timing: the document that gets this fetch's entry.
         let timed = request.initiator.and_then(|i| Some((i, requesting_document(browser, &request)?)));
         let render_blocking = request.kind == ResourceKind::Stylesheet;
+        let priority = request.loader_id.as_ref().filter(|_| request.parser_priority || request.kind == ResourceKind::Image)
+            .map(|document| (document.clone(), request.parser_priority));
         let mut req = pyro_net::Request::get(url, destination);
+        req.parser_priority = request.parser_priority;
         if let Some(page) = browser.page(request.page) {
             req.defaults = page.request_defaults.clone();
         }
@@ -452,7 +499,7 @@ impl ResourceLoader for NetLoader {
                     network_id,
                     pyro_net::NetworkDelivery { response: true, data_bytes: delivery_bytes, terminal: true },
                 );
-                b.complete_fetch(id, Ok(resource));
+                b.fetch_ready(priority, id, Ok(resource));
             });
             return None;
         }
@@ -519,7 +566,8 @@ impl ResourceLoader for NetLoader {
                     nosniff: false,
                     opaque: h.kind == pyro_net::ResponseKind::Opaque,
                 };
-                let _ = handle.post(move |b: &mut Browser| b.complete_fetch(id, Ok(resource)));
+                let priority = priority.clone();
+                let _ = handle.post(move |b: &mut Browser| b.fetch_ready(priority, id, Ok(resource)));
                 // Stop the transfer: a live stream never ends.
                 net.cancel(native_id);
             }
@@ -586,11 +634,13 @@ impl ResourceLoader for NetLoader {
                     None => Err("net::ERR_EMPTY_RESPONSE".to_string()),
                 };
                 // Err: the browser thread has exited; nothing to deliver.
-                let _ = handle.post(move |b: &mut Browser| b.complete_fetch(id, result));
+                let priority = priority.clone();
+                let _ = handle.post(move |b: &mut Browser| b.fetch_ready(priority, id, result));
             }
             pyro_net::ResponseEvent::Failed(e) => {
                 let msg = e.to_string();
-                let _ = handle.post(move |b: &mut Browser| b.complete_fetch(id, Err(msg)));
+                let priority = priority.clone();
+                let _ = handle.post(move |b: &mut Browser| b.fetch_ready(priority, id, Err(msg)));
             }
         });
         let sink = match &timed {
@@ -1126,6 +1176,7 @@ fn node_base_str(dom: &pyro_dom::Dom, node: NodeId) -> Option<&str> {
 /// The `integrity` and `crossorigin` attributes a script fetch honours.
 #[derive(Clone, Default)]
 pub(crate) struct ScriptFetch {
+    parser_priority: bool,
     pub integrity: Option<String>,
     pub crossorigin: Option<String>,
     /// The module type of a [`ResourceKind::ModuleScript`] fetch, whose
@@ -1140,6 +1191,7 @@ pub(crate) struct ScriptFetch {
 impl ScriptFetch {
     fn of(info: &pyro_dom::script::ScriptInfo) -> ScriptFetch {
         ScriptFetch {
+            parser_priority: false,
             integrity: info.integrity.clone().filter(|v| !pyro_webapi::sri::is_empty(v)),
             crossorigin: info.crossorigin.clone(),
             module: None,
@@ -1282,6 +1334,7 @@ impl Browser {
             p.pending_script = script.then(|| (loader_id.clone(), opts.url.clone()));
         }
         let req = FetchRequest {
+            parser_priority: false,
             credentials: None,
             post: opts.post.clone(),
             url: opts.url.clone(),
@@ -1806,7 +1859,8 @@ impl Browser {
                     l.blocked = true;
                 }
                 let u = url.clone();
-                self.fetch_script(page, url, ResourceKind::Script, ScriptFetch::of(&info), move |b, res| {
+                let opts = ScriptFetch { parser_priority: true, ..ScriptFetch::of(&info) };
+                self.fetch_script(page, url, ResourceKind::Script, opts, move |b, res| {
                     if b.current_loader(page) != loader_id {
                         return;
                     }
@@ -1877,11 +1931,12 @@ impl Browser {
         let frame_id = self.doc(page).map(|p| p.main_frame.id.0.clone());
         // Subresources carry the document's loader id (CDP Network.* routing).
         let loader_id = self.doc(page).map(|p| p.main_frame.loader_id.0.clone());
-        let ScriptFetch { integrity, crossorigin, module, referrer_policy, credentials } = opts;
+        let ScriptFetch { integrity, crossorigin, module, referrer_policy, credentials, parser_priority } = opts;
         let module = (kind == ResourceKind::ModuleScript).then(|| module.unwrap_or(ModuleType::JavaScript));
         let cors = kind == ResourceKind::ModuleScript || crossorigin.is_some();
         let initiator = Some(pyro_webapi::resource_timing::Initiator::Script);
         let req = FetchRequest {
+            parser_priority,
             post: None,
             url,
             kind,
@@ -2210,6 +2265,7 @@ impl Browser {
                 let referrer = self.doc(page).map(|p| p.main_frame.url.clone());
                 let loader_id = self.doc(page).map(|p| p.main_frame.loader_id.0.clone());
                 let req = FetchRequest {
+                    parser_priority: false,
                     credentials: None,
                     post: None,
                     url: url.clone(),

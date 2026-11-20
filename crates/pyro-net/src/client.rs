@@ -1403,17 +1403,38 @@ fn io_main(mut rx: mpsc::UnboundedReceiver<Cmd>, shared: Arc<Shared>, cookies: A
             h2_origins: Mutex::new(HashSet::new()),
         });
         let tasks: std::rc::Rc<std::cell::RefCell<HashMap<RequestId, Task>>> = Default::default();
+        let priorities = ParserPriorities::default();
         let idle = IDLE_RELEASE.get().map(|release| IdleRelease::start(*release));
         while let Some(cmd) = rx.recv().await {
             if let Some(idle) = &idle {
                 idle.touch();
             }
             match cmd {
-                Cmd::Fetch(id, req, sink, start, staged) => {
+                Cmd::Fetch(id, req, mut sink, start, staged) => {
                     let destination = req.destination;
+                    let mut head_start = None;
+                    if let Some(document) = req.loader_id.as_ref().filter(|_| matches!(req.url.scheme(), "http" | "https")) {
+                        let origin = req.url.origin();
+                        if req.parser_priority {
+                            let mut signal = Some(priorities.start((document.clone(), origin)));
+                            let mut downstream = sink;
+                            sink = Box::new(move |event| {
+                                if matches!(event, ResponseEvent::Response(_) | ResponseEvent::Finished { .. } | ResponseEvent::Failed(_)) {
+                                    signal.take();
+                                }
+                                downstream(event);
+                            });
+                        } else if destination == Destination::Image {
+                            head_start = priorities.pending(&(document.clone(), origin));
+                        }
+                    }
                     let sink = std::rc::Rc::new(std::cell::RefCell::new(Some(sink)));
                     let (io2, tasks2, sink2, idle2) = (io.clone(), tasks.clone(), sink.clone(), idle.clone());
                     let handle = tokio::task::spawn_local(async move {
+                        if let Some(mut head) = head_start {
+                            const MAX_HEAD_START: Duration = Duration::from_millis(100);
+                            let _ = tokio::time::timeout_at((start + MAX_HEAD_START).into(), head.changed()).await;
+                        }
                         let dest = req.destination;
                         let timing = crate::timing::NetTiming { start: Some(start), ..Default::default() };
                         let running = io2.run(id, *req, &sink2, staged);
@@ -1480,6 +1501,56 @@ fn io_main(mut rx: mpsc::UnboundedReceiver<Cmd>, shared: Arc<Shared>, cookies: A
         }
         flush_deferred_wakes();
     });
+}
+
+type PriorityKey = (String, url::Origin);
+
+#[derive(Default, Clone)]
+struct ParserPriorities(Arc<Mutex<HashMap<PriorityKey, (usize, tokio::sync::watch::Sender<()>)>>>);
+
+impl ParserPriorities {
+    fn start(&self, key: PriorityKey) -> PendingHeaders {
+        let mut table = self.0.lock().unwrap();
+        table.entry(key.clone()).or_insert_with(|| (0, tokio::sync::watch::channel(()).0)).0 += 1;
+        PendingHeaders(self.clone(), key)
+    }
+
+    fn pending(&self, key: &PriorityKey) -> Option<tokio::sync::watch::Receiver<()>> {
+        self.0.lock().unwrap().get(key).map(|(_, signal)| signal.subscribe())
+    }
+}
+
+struct PendingHeaders(ParserPriorities, PriorityKey);
+
+#[cfg(test)]
+mod priority_tests {
+    use super::*;
+
+    #[test]
+    fn image_dispatch_tracks_only_its_documents_origin() {
+        let priorities = ParserPriorities::default();
+        let key = ("document".to_owned(), Url::parse("https://site.test/").unwrap().origin());
+        assert!(priorities.pending(&key).is_none());
+        let stylesheet = priorities.start(key.clone());
+        let script = priorities.start(key.clone());
+        let images: Vec<_> = (0..32).map(|_| priorities.pending(&key).unwrap()).collect();
+        assert!(priorities.pending(&("other".into(), key.1.clone())).is_none());
+        assert!(priorities.pending(&(key.0.clone(), Url::parse("https://other.test/").unwrap().origin())).is_none());
+        drop(stylesheet);
+        assert_eq!(images.iter().filter(|head| head.has_changed().is_err()).count(), 0);
+        drop(script);
+        assert_eq!(images.iter().filter(|head| head.has_changed().is_err()).count(), 32);
+        assert!(priorities.pending(&key).is_none());
+    }
+}
+
+impl Drop for PendingHeaders {
+    fn drop(&mut self) {
+        let mut table = self.0.0.lock().unwrap();
+        let entry = table.get_mut(&self.1).unwrap();
+        entry.0 -= 1;
+        if entry.0 == 0 { table.remove(&self.1); }
+    }
 }
 
 struct Task {
