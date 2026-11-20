@@ -25790,7 +25790,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
      /// Rebuild `paint_children` and `stacking_context` for the tree rooted at
      /// `root_id` from the laid-out box tree.
      ///
-@@ -210,11 +370,256 @@
+@@ -210,11 +370,263 @@
      /// (sorted by paint order) or, when they have a non-zero `z-index` and are
      /// positioned or flex/grid items, in the nearest ancestor stacking context.
      ///
@@ -25867,6 +25867,13 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
 +                }
 +            }
 +        }
++        // Whether the clip owner `owner` clips with the CSS `clip` property, which clips all its
++        // descendants: a box escaping its containing block's clips still paints in it.
++        let clips_all = |doc: &Self, owner: NodeId| {
++            doc.nodes[owner].primary_styles().is_some_and(|style| {
++                matches!(style.get_effects().clip, style::values::generics::ClipRectOrAuto::Rect(_))
++            })
++        };
 +        // Whether the clip owner `owner` paints a positioned box (or a stacking context of z-index 0
 +        // or auto) itself, one its clip applies to: not one hoisted past it ([`nested_positioned`]).
 +        let holds_positioned = |doc: &Self, owner: NodeId| {
@@ -25953,14 +25960,14 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
 +            if !node.flags.is_in_document() { return None; }
 +            let cb = node.oof_containing_block.get()?;
 +            let box_parent = crate::layout::scroll_markers::box_parent(&self.nodes, id);
-+            // (Only an owner that paints positioned boxes itself: the escaping box keeps its place
++            // (Only an owner that paints positioned boxes itself, or clips all it holds (`clip`): the escaping box keeps its place
 +            // among them there. With none, it keeps its place among its stacking context's
 +            // positioned boxes, which come before and after the owner in tree order; WPT css/CSS2
 +            // `abspos/static-inside-inline-001`.)
 +            if node.z_index() == 0
 +                && let Some(owner) = clip_owner_of(self, box_parent)
 +                && !contains(self, owner, Some(cb))
-+                && holds_positioned(self, owner)
++                && (clips_all(self, owner) || holds_positioned(self, owner))
 +            {
 +                if clip_owner_set.insert(owner) {
 +                    clip_owners.push(owner);
@@ -26049,7 +26056,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
      }
  
      /// `stacking_context` is the entry list of the nearest ancestor stacking
-@@ -238,7 +643,23 @@
+@@ -238,7 +650,23 @@
              // node itself, so the role the caller resolved must match the one
              // this node was last built with.
              let role_unchanged = node.stacking_context.is_some() == stacking_context.is_none();
@@ -26073,7 +26080,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
                  && !node
                      .damage()
                      .unwrap_or(ALL_DAMAGE)
-@@ -252,6 +673,17 @@
+@@ -252,6 +680,17 @@
              }
          }
  
@@ -26091,7 +26098,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
          let Some(display) = self.nodes[node_id].display_style() else {
              return;
          };
-@@ -318,33 +750,78 @@
+@@ -318,33 +757,78 @@
  
              let is_layer_root =
                  stacking_context.is_none() || self.nodes[node_id].is_paint_layer_root();
@@ -26176,7 +26183,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
                      } else {
                          self.scratch.keyed_children.push((paint_order, child_id));
                      }
-@@ -352,10 +829,16 @@
+@@ -352,10 +836,16 @@
                      // Positioned descendants lifted out of the static boxes of
                      // this child's subtree join this node's positioned paint
                      // level, in tree order after the child.
@@ -26195,7 +26202,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
                                  self.scratch
                                      .keyed_children
                                      .push(((2, paint_order.1), entry.node_id));
-@@ -369,15 +852,51 @@
+@@ -369,15 +859,51 @@
                  while let Some(&(anchor, hoisted_id)) = hoisted_past_parent.get(next_hoisted)
                      && anchor == index
                  {
@@ -26249,7 +26256,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
  
              let mut paint_children = self.nodes[node_id]
                  .paint_children
-@@ -392,9 +911,14 @@
+@@ -392,9 +918,14 @@
                      .map(|(_, id)| id),
              );
  
@@ -26264,7 +26271,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
          }
  
          let node = &mut self.nodes[node_id];
-@@ -408,6 +932,229 @@
+@@ -408,6 +939,229 @@
          }
      }
  
@@ -26494,7 +26501,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
      /// The layout child of `node_id` whose subtree contains `id`, following
      /// `layout_parent`.
      fn layout_child_containing(&self, node_id: NodeId, id: NodeId) -> Option<NodeId> {
-@@ -426,15 +1173,20 @@
+@@ -426,15 +1180,20 @@
      /// the enclosing stacking context like any other z-indexed positioned
      /// child, the rest join `paint_children` at the same paint level as other
      /// positioned boxes (the caller's stable sort keeps tree order).
@@ -26516,7 +26523,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
                  true => None,
                  false => Some(entries),
              },
-@@ -443,11 +1195,112 @@
+@@ -443,11 +1202,112 @@
          let z_index = self.nodes[child_id].z_index();
          if z_index != 0 {
              entries.push(HoistedPaintChild::new(child_id, z_index));
@@ -26629,7 +26636,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
  }
  
  impl Node {
-@@ -471,22 +1324,283 @@
+@@ -471,22 +1331,283 @@
                      || e.sub_doc_data().is_some()
                      || e.text_input_data().is_some()
              })
@@ -26640,8 +26647,15 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
 +            // pyro: a `line-clamp` container clips its floats, the positioned ones too (CSS
 +            // Overflow 4 § 5.2; WPT css-overflow `line-clamp-with-floats-008`).
 +            || (!box_style.line_clamp.webkit_legacy && !box_style.line_clamp.max_lines.is_none())
-+    }
-+
+     }
+ 
+-    /// Whether this is a `position: relative` or `sticky` box.
+-    fn is_in_flow_positioned(&self) -> bool {
+-        self.primary_styles().is_some_and(|style| {
+-            matches!(
+-                style.clone_position(),
+-                Position::Relative | Position::Sticky
+-            )
 +    /// pyro: whether this box paints in the paint phases of an ancestor (CSS 2.1 Appendix E): a
 +    /// block box of the normal flow whose background goes with the other block backgrounds of
 +    /// its stacking context (step 4), under the floats of its subtree (step 5, lifted to the
@@ -26812,16 +26826,9 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
 +            parent.primary_styles().is_some_and(|parent_style| {
 +                matches!(parent_style.clone_display().inside(), DisplayInside::Flex | DisplayInside::Grid)
 +            })
-+        })
+         })
      }
  
--    /// Whether this is a `position: relative` or `sticky` box.
--    fn is_in_flow_positioned(&self) -> bool {
--        self.primary_styles().is_some_and(|style| {
--            matches!(
--                style.clone_position(),
--                Position::Relative | Position::Sticky
--            )
 +    /// pyro: whether this internal table box (row group, row, cell) paints in the phases of its
 +    /// table's painter (Blink: a table's collapsed borders go after the backgrounds of the blocks
 +    /// in its cells and before their inline content, floats and positioned boxes). Only a part
@@ -26862,9 +26869,9 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
 +                    })
 +                })
 +            })
-         })
-     }
- 
++        })
++    }
++
 +    /// pyro: whether this box is laid out at the inline level (an atomic inline: an inline
 +    /// block, an image): in its parent's paint phases it paints with the inline content.
 +    pub fn is_inline_level(&self) -> bool {
@@ -26920,7 +26927,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
      pub fn lifted_paint_offset(&self, painter_id: NodeId) -> Option<Point<f32>> {
          match self.containing_block() {
              Some(id) if id == painter_id => None,
-@@ -496,6 +1610,21 @@
+@@ -496,6 +1617,21 @@
      }
  }
  
@@ -26942,7 +26949,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
  #[inline(always)]
  fn position_to_order(pos: Position) -> i32 {
      match pos {
-@@ -539,3 +1668,144 @@
+@@ -539,3 +1675,144 @@
          )
      }
  }

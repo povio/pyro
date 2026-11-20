@@ -441,6 +441,13 @@ impl BaseDocument {
                 }
             }
         }
+        // Whether the clip owner `owner` clips with the CSS `clip` property, which clips all its
+        // descendants: a box escaping its containing block's clips still paints in it.
+        let clips_all = |doc: &Self, owner: NodeId| {
+            doc.nodes[owner].primary_styles().is_some_and(|style| {
+                matches!(style.get_effects().clip, style::values::generics::ClipRectOrAuto::Rect(_))
+            })
+        };
         // Whether the clip owner `owner` paints a positioned box (or a stacking context of z-index 0
         // or auto) itself, one its clip applies to: not one hoisted past it ([`nested_positioned`]).
         let holds_positioned = |doc: &Self, owner: NodeId| {
@@ -527,14 +534,14 @@ impl BaseDocument {
             if !node.flags.is_in_document() { return None; }
             let cb = node.oof_containing_block.get()?;
             let box_parent = crate::layout::scroll_markers::box_parent(&self.nodes, id);
-            // (Only an owner that paints positioned boxes itself: the escaping box keeps its place
+            // (Only an owner that paints positioned boxes itself, or clips all it holds (`clip`): the escaping box keeps its place
             // among them there. With none, it keeps its place among its stacking context's
             // positioned boxes, which come before and after the owner in tree order; WPT css/CSS2
             // `abspos/static-inside-inline-001`.)
             if node.z_index() == 0
                 && let Some(owner) = clip_owner_of(self, box_parent)
                 && !contains(self, owner, Some(cb))
-                && holds_positioned(self, owner)
+                && (clips_all(self, owner) || holds_positioned(self, owner))
             {
                 if clip_owner_set.insert(owner) {
                     clip_owners.push(owner);
