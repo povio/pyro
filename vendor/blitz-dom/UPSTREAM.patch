@@ -23310,7 +23310,7 @@ diff --git a/packages/blitz-dom/src/layout/multicol.rs b/packages/blitz-dom/src/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/multicol.rs
-@@ -0,0 +1,4135 @@
+@@ -0,0 +1,4118 @@
 +//! pyro: CSS Multi-column Layout (<https://drafts.csswg.org/css-multicol/>).
 +//!
 +//! A multi-column container lays its content out once, in a strip one column wide (its flow
@@ -23470,7 +23470,7 @@ new file mode 100644
 +/// Whether `style` makes its box a multi-column container: a `column-count` or `column-width`
 +/// other than `auto` on a block container (`block`, `flow-root`, `inline-block`, `list-item`). In
 +/// a vertical writing mode the container is laid out in its logical axes and its columns are shown
-+/// only by paint (`Node::vertical_column_fragments`); geometry queries and hit tests see the strip.
++/// through the container's logical-to-physical column transform.
 +#[inline]
 +pub(crate) fn is_multicol_style(style: &ComputedValues) -> bool {
 +    if !style.get_column().is_multicol() {
@@ -25321,7 +25321,7 @@ new file mode 100644
 +        let mut first_after_spanner = std::collections::BTreeMap::new();
 +        let mut run_wrappers = std::collections::BTreeSet::new();
 +        let mut wrapper_initial_consumption = std::collections::HashMap::new();
-+        if !spanners.is_empty() && !vertical {
++        if !spanners.is_empty() {
 +            let mut owners = std::collections::HashMap::new();
 +            let mut paths = std::collections::HashSet::new();
 +            for ((id, _), (index, _)) in self.doc.column_spanners_of(dom_id).into_iter().zip(fragments.iter().enumerate().filter(|(_, f)| f.spanner)) {
@@ -25819,6 +25819,13 @@ new file mode 100644
 +        (is_multicol_style(&style) && wm.is_vertical()).then_some((columns, !wm.is_vertical_lr()))
 +    }
 +
++    pub fn columns_with_axes(&self) -> Option<(&ColumnFragments, kurbo::Affine)> {
++        if let Some(columns) = self.column_fragments() { return Some((columns, kurbo::Affine::IDENTITY)); }
++        let (columns, rtl) = self.vertical_column_fragments()?;
++        let (sign, origin) = if rtl { (-1.0, f64::from(self.final_layout().size.width)) } else { (1.0, 0.0) };
++        Some((columns, kurbo::Affine::new([0.0, 1.0, sign, 0.0, origin, 0.0])))
++    }
++
 +    /// `(x, y)` in this box's coordinates, moved from its columns into its strip when it is a
 +    /// multi-column container (hit testing).
 +    #[inline]
@@ -25978,35 +25985,11 @@ new file mode 100644
 +    /// pyro: `rect` (device px) of a vertical writing mode's multi-column container's strip,
 +    /// shown in its columns as paint shows them (`draw_columns`): its scrollable overflow (Chrome:
 +    /// WPT css-overflow `no-scrollable-overflow-vertical-rl`). `None`: no such container.
-+    pub(crate) fn vertical_columns_rect(&self, node_id: crate::NodeId, rect: kurbo::Rect, scale: f64) -> Option<kurbo::Rect> {
-+        let node = self.nodes.get(node_id)?;
-+        let (columns, rl) = node.vertical_column_fragments()?;
-+        let width = node.final_layout().size.width as f64;
-+        let mut out: Option<kurbo::Rect> = None;
-+        // (A rect only touching a fragment's range is not in it: `ColumnFragments::map_rect`.)
-+        let empty = rect.x1 <= rect.x0;
-+        // (Only the fragments the rect can reach, in strip order: the strip's block axis runs from
-+        // the right where the block axis does.)
-+        let (from, to) = if rl { (width - rect.x1 / scale, width - rect.x0 / scale) } else { (rect.x0 / scale, rect.x1 / scale) };
-+        let (first, last) = columns.reaching(from, to);
-+        for f in &columns.fragments[first..last] {
-+            #[cfg(test)]
-+            MAPPED_FRAGMENTS.with(|m| m.set(m.get() + 1));
-+            let (start, end) = (f.start as f64, f.end as f64);
-+            let (range, offset) = if rl {
-+                ((width - end, width - start), kurbo::Vec2::new(-f.offset.y as f64, f.offset.x as f64))
-+            } else {
-+                ((start, end), kurbo::Vec2::new(f.offset.y as f64, f.offset.x as f64))
-+            };
-+            let x0 = rect.x0.max(range.0 * scale);
-+            let x1 = rect.x1.min(range.1 * scale);
-+            if x1 < x0 || (!empty && x1 <= x0) || (empty && out.is_some()) {
-+                continue;
-+            }
-+            let piece = kurbo::Rect::new(x0, rect.y0, x1, rect.y1) + offset * scale;
-+            out = Some(out.map_or(piece, |o| o.union(piece)));
-+        }
-+        Some(out.unwrap_or(rect))
++    pub(crate) fn vertical_columns_rect(&self, node_id: crate::NodeId, child: crate::NodeId, rect: kurbo::Rect, scale: f64) -> Option<kurbo::Rect> {
++        let (columns, axes) = self.nodes.get(node_id)?.columns_with_axes()?;
++        let device_axes = kurbo::Affine::scale(scale) * axes;
++        let logical = device_axes.inverse().transform_rect_bbox(rect);
++        Some(device_axes.transform_rect_bbox(columns.map_child_rect(Some(child), logical, 1.0)))
 +    }
 +
 +    pub(crate) fn columns_rect(&self, node_id: crate::NodeId, rect: kurbo::Rect, scale: f64) -> kurbo::Rect {
@@ -50198,7 +50181,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +                } else if in_columns {
 +                    self.nodes[node_id].column_fragments().unwrap().map_child_rect(Some(child_id), child_rect_in_self, scale)
 +                } else if in_vertical_columns {
-+                    self.vertical_columns_rect(node_id, child_rect_in_self, scale).unwrap_or(child_rect_in_self)
++                    self.vertical_columns_rect(node_id, child_id, child_rect_in_self, scale).unwrap_or(child_rect_in_self)
 +                } else {
 +                    child_rect_in_self
 +                };

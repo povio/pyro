@@ -1149,7 +1149,7 @@ impl BaseDocument {
                 } else if in_columns {
                     self.nodes[node_id].column_fragments().unwrap().map_child_rect(Some(child_id), child_rect_in_self, scale)
                 } else if in_vertical_columns {
-                    self.vertical_columns_rect(node_id, child_rect_in_self, scale).unwrap_or(child_rect_in_self)
+                    self.vertical_columns_rect(node_id, child_id, child_rect_in_self, scale).unwrap_or(child_rect_in_self)
                 } else {
                     child_rect_in_self
                 };

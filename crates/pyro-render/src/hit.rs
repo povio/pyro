@@ -175,7 +175,7 @@ impl Descent<'_> {
         let node = self.doc.get_node(id)?;
         if let Some(p) = node.containing_block().filter(|_| self.multicol) {
             let (_, _, above) = self.transform_and_planes(p)?;
-            if self.columns.contains(&p) || self.doc.get_node(p)?.column_fragments().is_some() {
+            if self.columns.contains(&p) || self.doc.get_node(p)?.columns_with_axes().is_some() {
                 self.columns.insert(id);
                 let (t, fixed) = self.g.transform(self.doc, id)?;
                 let projective = above || node.plane_3d().is_some_and(geometry::is_projective_plane);
@@ -315,7 +315,7 @@ impl Descent<'_> {
             // pyro: nor is a multi-column container's subtree: its hit bound (its strip's overflow
             // cut at the breaks, `resolve.rs`) missed content the scan of every box reached
             // (`hit_adversarial`'s interleaved-mutations page 26).
-            let in_columns = self.columns.contains(&id) || (self.multicol && node.column_fragments().is_some());
+            let in_columns = self.columns.contains(&id) || (self.multicol && node.columns_with_axes().is_some());
             let cull = if in_columns { None } else { self.bound(id).map(|(r, _)| r) };
             (candidate, cull)
         } else if is_table_part {

@@ -1708,7 +1708,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         }
 
         let wrapper_clip = self.column_range.get().filter(|(container, _, _, _, _)| {
-            self.dom.as_ref().column_fragments(*container).is_some_and(|columns| columns.run_wrappers.contains(&node.id))
+            self.dom.get_node(*container).and_then(|node| node.columns_with_axes()).is_some_and(|(columns, _)| columns.run_wrappers.contains(&node.id))
         });
         if let Some((_, _, _, transform, rect)) = wrapper_clip {
             scene.push_clip_layer(Fill::NonZero, transform, &rect);
@@ -6116,8 +6116,10 @@ impl ElementCx<'_, '_> {
     fn column_share(&self, container: NodeId, child_id: NodeId, start: f32, end: f32) -> ColumnShare {
         let tree = self.context.dom.as_ref().tree();
         let child = &tree[child_id];
-        let size = child.final_layout().size;
-        let mut top = child.final_layout().location.y;
+        let vertical = tree[container].vertical_column_fragments().is_some();
+        let layout = |id: NodeId| if vertical { tree[id].unrounded_layout() } else { tree[id].final_layout() };
+        let size = layout(child_id).size;
+        let mut top = layout(child_id).location.y;
         let mut at = child.layout_parent.get();
         let mut steps = 0;
         while let Some(parent) = at.filter(|&p| p != container) {
@@ -6125,14 +6127,14 @@ impl ElementCx<'_, '_> {
             if steps > 64 {
                 return ColumnShare::Cut;
             }
-            top += tree[parent].final_layout().location.y;
+            top += layout(parent).location.y;
             at = tree[parent].layout_parent.get();
         }
         if at.is_none() {
             return ColumnShare::Cut;
         }
         // (What overflows it below counts: it goes on in the columns after.)
-        let overflow = child.final_layout().scrollable_overflow_rect.bottom().abs();
+        let overflow = layout(child_id).scrollable_overflow_rect.bottom().abs();
         // (A nested multi-column container may show content in any later column: its spanners'
         // overflow is not in its overflow rectangle.)
         let bottom = if child.column_fragments().is_some() { f32::INFINITY } else { top + size.height.max(overflow) };
@@ -6321,7 +6323,7 @@ impl ElementCx<'_, '_> {
         // column), one that runs in from an earlier column is cut at both edges, and one wholly
         // in another column is left to it.
         if let Some((container, start, end, transform, outer_range)) = self.context.column_range.get()
-            && let Some(columns) = self.context.dom.as_ref().column_fragments(container)
+            && let Some((columns, axes)) = self.context.dom.get_node(container).and_then(|host| host.columns_with_axes())
             && (container == self.node.id || columns.run_wrappers.contains(&self.node.id))
             && !columns.run_wrappers.contains(&child_id)
         {
@@ -6359,7 +6361,12 @@ impl ElementCx<'_, '_> {
                     // fragment's background and borders, all four, here (under its content).
                     self.draw_clone_fragment(scene, container, child_id, start, end, transform, false);
                     let range = match share {
-                        ColumnShare::Inside => Rect::new(range.x0, -1e9, range.x1, range.y1),
+                        ColumnShare::Inside => {
+                            let device_axes = Affine::scale(self.scale) * axes;
+                            let mut logical = device_axes.inverse().transform_rect_bbox(range);
+                            logical.y0 = -1e9;
+                            device_axes.transform_rect_bbox(logical)
+                        }
                         _ => range,
                     };
                     let pushed = self.context.layer_manager.maybe_push_layer(

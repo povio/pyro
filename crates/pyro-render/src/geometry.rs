@@ -372,7 +372,7 @@ impl Geometry {
         let mut chain = vec![doc.get_node(id)?];
         let container = loop {
             let cb = doc.get_node(chain.last()?.containing_block()?)?;
-            if cb.column_fragments().is_some() {
+            if cb.columns_with_axes().is_some() {
                 break cb;
             }
             chain.push(cb);
@@ -391,7 +391,9 @@ impl Geometry {
         // A strip rectangle cut at the container's breaks, each piece where its column shows it
         // (the container's coordinates), with its height in the strip.
         let mut restricted = false;
-        let mut cut = |columns: &blitz_dom::ColumnFragments, chain: &[&blitz_dom::Node], strip: Rect, out: &mut Vec<(Rect, Option<f64>)>| {
+        let mut cut = |(columns, axes): (&blitz_dom::ColumnFragments, Affine), chain: &[&blitz_dom::Node], strip: Rect, out: &mut Vec<(Rect, Option<f64>)>| {
+            let begin = out.len();
+            let strip = axes.inverse().transform_rect_bbox(strip);
             let child = chain.iter().find(|node| columns.first_after_spanner.contains_key(&node.id)).unwrap_or(&chain[0]).id;
             let wrapper = chain.iter()
                     .find(|node| columns.run_wrappers.contains(&node.id) || box_position(node) != BoxPosition::Static || node.is_stacking_context_root(false))
@@ -424,11 +426,14 @@ impl Geometry {
                     out.push((Rect::new(strip.x0 + dx, top, strip.x1 + dx, top), None));
                 }
             }
+            if axes != Affine::IDENTITY {
+                for (piece, _) in &mut out[begin..] { *piece = axes.transform_rect_bbox(*piece); }
+            }
         };
         let l = doc.physical_unrounded_layout(id);
         let strip = to_strip(&chain).transform_rect_bbox(Rect::new(0.0, 0.0, l.size.width as f64, l.size.height as f64));
         let mut out = Vec::new();
-        cut(container.column_fragments()?, &chain, strip, &mut out);
+        cut(container.columns_with_axes()?, &chain, strip, &mut out);
         // pyro: a sliver under a pixel where a box meets a column break (its unrounded strip
         // position against the rounded break) is no fragment of it: a monolithic box a column
         // holds stays one box (WPT css-overflow/scroll-markers/targeted-column-scroll-marker-*).
@@ -442,7 +447,7 @@ impl Geometry {
             let mut outer_chain = vec![container];
             let outer = loop {
                 match outer_chain.last().and_then(|n| n.containing_block()).and_then(|cb| doc.get_node(cb)) {
-                    Some(cb) if cb.column_fragments().is_some() => break Some(cb),
+                    Some(cb) if cb.columns_with_axes().is_some() => break Some(cb),
                     Some(cb) => outer_chain.push(cb),
                     None => break None,
                 }
@@ -450,7 +455,7 @@ impl Geometry {
             let Some(outer) = outer else { break };
             let scroll = container.scroll_offset();
             let into = to_strip(&outer_chain) * Affine::translate((-scroll.x, -scroll.y));
-            let columns = outer.column_fragments()?;
+            let columns = outer.columns_with_axes()?;
             let mut next = Vec::new();
             for (piece, height) in out {
                 let before = next.len();

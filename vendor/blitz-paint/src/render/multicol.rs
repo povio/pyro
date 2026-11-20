@@ -25,13 +25,8 @@ impl ElementCx<'_, '_> {
     pub(super) fn draw_columns(&mut self, scene: &mut impl PaintScene, pos: Point, clip_rect: Rect) -> bool {
         // pyro: a vertical writing mode's columns are in its logical axes (block = y): its block
         // axis is physical x, running right to left in `vertical-rl` from the border box's width.
-        let (columns, vertical) = match self.context.dom.column_fragments(self.node.id) {
-            Some(columns) => (columns, None),
-            None => match self.node.vertical_column_fragments() {
-                Some((columns, rl)) => (columns, Some((rl, self.node.final_layout().size.width as f64))),
-                None => return false,
-            },
-        };
+        let Some((columns, axes)) = self.node.columns_with_axes() else { return false };
+        let vertical = self.node.vertical_column_fragments();
         let base = self.transform;
         // pyro: `pos` is the content box less the scroll offset, which `self.transform` (scrolled
         // for the content) applies already: the columns' content takes it once (WPT css-overflow
@@ -48,39 +43,13 @@ impl ElementCx<'_, '_> {
         let mut spanner_row = 0usize;
         for fragment in &columns.fragments {
             let (start, end) = (fragment.start as f64, fragment.end as f64);
-            let (offset, range) = match vertical {
-                None => (
-                    Vec2::new(fragment.offset.x as f64 * scale, f64::from(fragment.offset.y) * scale),
-                    Rect::new(
-                        -UNBOUNDED,
-                        (start * scale).max(-UNBOUNDED),
-                        UNBOUNDED,
-                        (end * scale).min(UNBOUNDED),
-                    ),
-                ),
-                Some((false, _)) => (
-                    Vec2::new(fragment.offset.y as f64 * scale, fragment.offset.x as f64 * scale),
-                    Rect::new(
-                        (start * scale).max(-UNBOUNDED),
-                        -UNBOUNDED,
-                        (end * scale).min(UNBOUNDED),
-                        UNBOUNDED,
-                    ),
-                ),
-                Some((true, width)) => (
-                    Vec2::new(-fragment.offset.y as f64 * scale, fragment.offset.x as f64 * scale),
-                    Rect::new(
-                        ((width - end) * scale).max(-UNBOUNDED),
-                        -UNBOUNDED,
-                        ((width - start) * scale).min(UNBOUNDED),
-                        UNBOUNDED,
-                    ),
-                ),
-            };
+            let offset = (axes * Point::new(fragment.offset.x as f64, fragment.offset.y as f64) - axes * Point::ORIGIN) * scale;
+            let block_range = |low: f64, high: f64| (Affine::scale(scale) * axes).transform_rect_bbox(Rect::new(-UNBOUNDED / scale, low.max(-UNBOUNDED / scale), UNBOUNDED / scale, high.min(UNBOUNDED / scale)));
+            let range = block_range(start, end);
             // pyro: a spanner's row shows its outline over the row's edges too.
             // pyro: a spanner's row paints its spanner alone (`spanner_row_spanner`), unclipped in
             // the block axis: what overflows it shows (the rows are in the spanners' order).
-            let row_spanner = if fragment.spanner && vertical.is_none() {
+            let row_spanner = if fragment.spanner {
                 spanner_row += 1;
                 row_spanners.get(spanner_row - 1).copied()
             } else {
@@ -90,14 +59,14 @@ impl ElementCx<'_, '_> {
             // pass, clipped at its start, without the spanner.)
             let last_row_rest = row_spanner.filter(|_| fragment.end.is_infinite()).map(|spanner| {
                 let outline = self.spanner_ink_outset() * scale;
-                (spanner, Rect::new(range.x0, range.y0 - outline, range.x1, UNBOUNDED))
+                (spanner, block_range(start - outline / scale, f64::INFINITY))
             });
-            let range = if fragment.spanner && vertical.is_none() {
+            let range = if fragment.spanner {
                 match row_spanner {
-                    Some(_) => Rect::new(range.x0, -UNBOUNDED, range.x1, UNBOUNDED),
+                    Some(_) => block_range(f64::NEG_INFINITY, f64::INFINITY),
                     None => {
                         let outline = self.spanner_ink_outset() * scale;
-                        Rect::new(range.x0, range.y0 - outline, range.x1, range.y1 + outline)
+                        block_range(start - outline / scale, end + outline / scale)
                     }
                 }
             } else {
@@ -107,7 +76,7 @@ impl ElementCx<'_, '_> {
             let row_guard = Restore::set(&self.context.spanner_row_spanner, row_spanner);
             let column_guard = Restore::set(
                 &self.context.column_pass_container,
-                (!fragment.spanner && vertical.is_none()).then_some(self.node.id),
+                (!fragment.spanner).then_some(self.node.id),
             );
             let _inline_origin = Restore::set(
                 &self.context.column_inline_origin,
@@ -118,7 +87,7 @@ impl ElementCx<'_, '_> {
             let _rounding = Restore::set(&self.context.column_block_rounding_error, self.context.column_block_rounding_error.get() + f64::from(fragment.block_rounding_error));
             let spanner_row_guard = Restore::set(
                 &self.context.spanner_row_container,
-                (fragment.spanner && vertical.is_none()).then_some(self.node.id),
+                fragment.spanner.then_some(self.node.id),
             );
             let transform = base.pre_translate(offset);
             // The column's part of what is visible, for culling its content; a column out of
@@ -155,7 +124,7 @@ impl ElementCx<'_, '_> {
             if row_spanner.is_none() {
                 self.draw_marker(scene, pos);
             } else {
-                let row = Rect::new(-UNBOUNDED, (start * scale).max(-UNBOUNDED), UNBOUNDED, (end * scale).min(UNBOUNDED));
+                let row = block_range(start, end);
                 let pushed = self.context.layer_manager.maybe_push_layer(scene, true, BlendMode::default(), 1.0, transform, &row, None, None);
                 self.draw_marker(scene, pos);
                 self.context.layer_manager.maybe_pop_layer(scene, pushed);
@@ -165,7 +134,7 @@ impl ElementCx<'_, '_> {
             // below; a box a break goes through is sliced; a box another column holds is left to
             // it (`PaintContext::column_range`, `draw_paint_child`). (Vertical writing modes keep
             // the clip.)
-            let unclipped = !single && vertical.is_none();
+            let unclipped = !single && (vertical.is_none() || !columns.first_after_spanner.is_empty());
             if unclipped {
                 self.context.layer_manager.maybe_pop_layer(scene, pushed);
             }

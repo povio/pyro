@@ -166,6 +166,21 @@ fn nested_layout_shares_the_wrapped_run_slots() {
 }
 
 #[test]
+fn vertical_spanner_continuations_keep_geometry_and_hits_together() {
+    for (mode, starts, tails) in [("vertical-lr", [15., 50.], [30., 65.]), ("vertical-rl", [35., 0.], [35., 0.])] {
+        let p = page(&format!("<!doctype html><style>*{{margin:0}}main{{writing-mode:{mode};inline-size:120px;columns:2;gap:0}}h2{{column-span:all;block-size:30px}}article{{margin-block-start:-15px;block-size:25px}}</style><main><section id=s><h2></h2><article id=a></article><h2></h2><article id=b></article></section></main>"));
+        assert_eq!(rects(&p, "s").len(), 5, "{mode}");
+        for ((id, start), tail) in ["a", "b"].into_iter().zip(starts).zip(tails) {
+            let pieces = rects(&p, id);
+            assert_eq!(pieces, [[start, 0., 20., 60.], [tail, 60., 5., 60.]], "{mode} {id}");
+            for [x, y, width, height] in pieces {
+                assert_eq!(p.layout.element_from_point(&p.dom, x + width / 2., y + height / 2.), Some(p.id(id)), "{mode} {id} at {x},{y}");
+            }
+        }
+    }
+}
+
+#[test]
 fn shared_wrapper_resumes_each_overlapping_column_run() {
     for (count, first_spans) in [(2, true), (3, true), (2, false)] {
         let first = if first_spans { "all" } else { "none" };
