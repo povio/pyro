@@ -158,6 +158,7 @@ pub struct BlitzDomPainter<'dom, 'a> {
     pub(crate) top_layer: Vec<NodeId>,
     /// The top-layer element being painted as such (not skipped).
     pub(crate) top_layer_root: std::cell::Cell<Option<NodeId>>,
+    pub(crate) transition_children: Option<&'a HashSet<NodeId>>,
     /// Scrollbar hover/drag state, resolved once per scene like the root element
     #[cfg(feature = "scrollbars")]
     pub(crate) hovered_scrollbar: Option<blitz_dom::node::ScrollbarRef>,
@@ -334,6 +335,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                 Vec::new()
             },
             top_layer_root: std::cell::Cell::new(None),
+            transition_children: None,
             #[cfg(feature = "scrollbars")]
             hovered_scrollbar: dom.hovered_scrollbar(),
             #[cfg(feature = "scrollbars")]
@@ -733,7 +735,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         (opacity, filtered)
     }
 
-    fn node_transform(&self, node: &Node, parent: Affine) -> Affine {
+    pub(crate) fn node_transform(&self, node: &Node, parent: Affine) -> Affine {
         let location = node.final_layout().location;
         // pyro: a `position: sticky` box is painted where its scroll container holds it
         // (`Node::sticky_offset`), with its descendants.
@@ -1049,13 +1051,14 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
     ///
     /// Approaching rendering this way guarantees we have all the styles we need when rendering text with not having
     /// to traverse back to the parent for its styles, or needing to pass down styles
-    fn render_element(
+    pub(crate) fn render_element(
         &self,
         scene: &mut impl PaintScene,
         node_id: NodeId,
         parent_style_transform: Affine,
         clip_rect: Rect,
     ) {
+        if self.transition_children.is_some_and(|children| children.contains(&node_id)) && self.top_layer_root.get() != Some(node_id) { return; }
         // pyro: the element's clip while it paints (`PaintContext::paint_clip`).
         let outer_clip = self.paint_clip.replace(clip_rect);
         self.render_element_clipped(scene, node_id, parent_style_transform, clip_rect);

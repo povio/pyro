@@ -436,10 +436,21 @@ impl SubresourceBodies {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct TransitionBox {
+    pub name: String,
+    pub key: u64,
+    pub size: (f64, f64),
+    pub transform: [f64; 6],
+    pub ink: [f64; 4],
+    pub rgba: Option<std::sync::Arc<Vec<u8>>>,
+}
+
 /// The engine laying the document out (Blitz in `render` builds).
 pub trait GeometrySource {
     /// Whether the painted subtree can participate in a named view transition.
     fn view_transition_names_valid(&self, _root: u64) -> bool { true }
+    fn capture_transition(&self, _root: u64, _old: bool, _pixels: u64) -> Option<Vec<TransitionBox>> { Some(Vec::new()) }
     /// Brings the engine's layout up to the document; the other queries
     /// answer from it.
     fn sync(&self, dom: &Dom, layout: &Layout);

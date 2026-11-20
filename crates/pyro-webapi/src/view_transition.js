@@ -1,11 +1,5 @@
 // CSS View Transitions 1 and 2 (`document.startViewTransition`, element-scoped
-// `Element.startViewTransition`): the lifecycle only, made on a realm's first
-// call (view_transition.rs). Nothing is captured or painted: the update
-// callback runs at the next animation frame, as after the old state's capture,
-// and the transition finishes at the frame after the update, as one whose
-// animations take no time. `ready`, `updateCallbackDone` and `finished` settle
-// as the specification says for that, and a new transition on the same scope
-// (or `skipTransition()`) skips the running one.
+// `Element.startViewTransition`): per-scope lifecycle and native capture.
 (function (captureValid) {
   'use strict';
   const global = globalThis;
@@ -34,12 +28,13 @@
   const abortError = (message) => new DOMException(message, 'AbortError');
   function finish(st) {
     if (st.phase !== 'animating' || !st.animationDone || st.waiting) return;
+    if (st.captured) { captureValid(st.root, false, true, st.scope); st.captured = false; }
     st.phase = 'done';
     if (active.get(st.scope) === st.self) active.delete(st.scope);
     st.finished.resolve();
   }
   function capture(st) {
-    if (captureValid(st.root)) return true;
+    if (captureValid(st.root, st.phase === 'pending-capture', false, st.scope)) { st.captured = true; return true; }
     skip(st, new DOMException('Cannot capture view transition state', 'InvalidStateError'));
     return false;
   }
@@ -84,6 +79,7 @@
   function skip(st, reason) {
     if (st.phase === 'done') return;
     const before = st.phase === 'pending-capture';
+    if (st.captured) { captureValid(st.root, false, true, st.scope); st.captured = false; }
     st.phase = 'done';
     if (st.timer !== null) { clearTimeoutFn.call(global, st.timer); st.timer = null; }
     if (active.get(st.scope) === st.self) active.delete(st.scope);

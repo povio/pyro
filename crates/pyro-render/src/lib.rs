@@ -632,6 +632,16 @@ pub struct RgbaImage {
     pub data: Vec<u8>,
 }
 
+#[derive(Clone, Debug)]
+pub struct TransitionBox {
+    pub key: u64,
+    pub name: String,
+    pub size: (f64, f64),
+    pub transform: [f64; 6],
+    pub ink: [f64; 4],
+    pub image: Option<RgbaImage>,
+}
+
 /// Stages 1 and 2: the display list, not rasterized yet.
 pub struct Painted {
     scene: Scene,
@@ -1746,6 +1756,10 @@ impl Renderer {
 
     /// Validate names in a transition scope. The second result counts nodes examined.
     pub fn view_transition_names(&self, page: u64, root: u64) -> (bool, usize) {
+        self.collect_transition_boxes(page, root, |_, _, _| true)
+    }
+
+    fn collect_transition_boxes(&self, page: u64, root: u64, mut accept: impl FnMut(blitz_dom::NodeId, u64, &str) -> bool) -> (bool, usize) {
         use style::properties::generated::longhands::visibility::computed_value::T as Visibility;
         use style::values::specified::box_::ContentVisibility;
         const MAX_NODES: usize = 16_384;
@@ -1769,6 +1783,7 @@ impl Renderer {
                 if count > MAX_NAMES || (&**name != "match-element" && !names.insert(name.clone())) {
                     return (false, visited);
                 }
+                if !mirror.key_of(id).is_some_and(|key| accept(id, key, name)) { return (false, visited); }
             }
             if style.get_box().slow_clone_content_visibility() != ContentVisibility::Hidden {
                 if node.children.len() > MAX_NODES - visited - pending.len() { return (false, visited) }
@@ -1776,6 +1791,64 @@ impl Renderer {
             }
         }
         (true, visited)
+    }
+
+    pub fn capture_transition_boxes(&mut self, page: u64, root: u64, old: bool, remaining_pixels: u64) -> Option<Vec<TransitionBox>> {
+        let mut ids = Vec::new();
+        let mut boxes = Vec::new();
+        let mirror = self.mirrors.get(&page)?;
+        let doc = &mirror.doc;
+        if doc.tree().len() > 16_384 { return None; }
+        let scale = doc.viewport().scale_f64();
+        let mut remaining = remaining_pixels.min(SVG_CANVAS_MAX_PIXELS as u64);
+        let document_root = doc.try_root_element().map(|node| node.id);
+        let (viewport_width, viewport_height) = doc.viewport().window_size;
+        let viewport_size = (f64::from(viewport_width), f64::from(viewport_height));
+        let (valid, _) = self.collect_transition_boxes(page, root, |id, key, name| {
+            if name.len() > 1024 { return false; }
+            let Some(node) = doc.get_node(id) else { return false; };
+            let size = node.final_layout().size;
+            let mut transform = Affine::IDENTITY;
+            let mut current = Some(id);
+            while let Some(ancestor) = current.and_then(|id| doc.get_node(id)) {
+                let location = ancestor.final_layout().location;
+                let scroll = ancestor.scroll_offset();
+                let offset = if ancestor.id == id { Affine::IDENTITY } else { Affine::translate((-scroll.x * scale, -scroll.y * scale)) };
+                transform = Affine::translate((location.x as f64 * scale, location.y as f64 * scale)) * ancestor.transform().as_deref().copied().unwrap_or_default() * offset * transform;
+                current = ancestor.containing_block();
+            }
+            let scroll = doc.viewport_scroll();
+            transform = Affine::translate((-scroll.x * scale, -scroll.y * scale)) * transform;
+            if !transform.is_finite() { return false; }
+            let size = if Some(id) == document_root { viewport_size } else { (size.width as f64 * scale, size.height as f64 * scale) };
+            boxes.push(TransitionBox { key, name: name.to_owned(), size, transform: transform.as_coeffs(), ink: [0.0, 0.0, size.0, size.1], image: None });
+            ids.push(id);
+            true
+        });
+        if !valid { return None; }
+        if old {
+            let mut records = boxes.iter_mut();
+            let doc = &mut self.mirrors.get_mut(&page)?.doc;
+            blitz_paint::record_transition_boxes(doc, &ids, |id, scene, ink| {
+                let record = records.next()?;
+                let ink = if Some(id) == document_root {
+                    let [_, _, _, _, left, top] = record.transform;
+                    kurbo::Rect::new(-left, -top, viewport_size.0 - left, viewport_size.1 - top)
+                } else { ink };
+                record.ink = [ink.x0, ink.y0, ink.x1, ink.y1];
+                if !ink.is_finite() { return None; }
+                let (width, height) = (ink.width() as u32, ink.height() as u32);
+                if width == 0 || height == 0 { return Some(()); }
+                if !pyro_canvas::valid_size(width, height) { return None; }
+                remaining = remaining.checked_sub(u64::from(width) * u64::from(height))?;
+                let mut renderer = VelloCpuImageRenderer::new(width, height);
+                let mut data = Vec::new();
+                renderer.render_to_vec(|out| out.append_scene(scene, Affine::translate((-ink.x0, -ink.y0))), &mut data);
+                record.image = Some(RgbaImage { width, height, data });
+                Some(())
+            })?;
+        }
+        Some(boxes)
     }
 
     /// The resolved value of `property` of the element keyed `key` in `page`'s persistent document as of

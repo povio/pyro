@@ -239,6 +239,7 @@ pub struct PageDom {
     /// HTML "visibility state" of the document is "hidden": set as it is
     /// unloaded (`lifecycle::unload`).
     hidden: Cell<bool>,
+    pub(crate) transition_captures: RefCell<Option<Box<crate::view_transition::Captures>>>,
     /// The document's unload events (`pagehide` ...) have started: set before the first is
     /// dispatched, so a listener whose actions unload it again (removing an ancestor frame) does
     /// not run them twice.
@@ -894,6 +895,7 @@ impl PageDom {
             hooks: RefCell::new(None),
             ready: RefCell::new(FxHashMap::default()),
             hidden: Cell::new(false),
+            transition_captures: RefCell::new(None),
             unloading: Cell::new(false),
             timing: Cell::new(DocumentTiming::default()),
             resource_timings: Default::default(),

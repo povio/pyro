@@ -86,6 +86,7 @@ pub(crate) fn enable_features() {
         style_config::set_pref!("layout.css.text-overflow.enabled", true);
         style_config::set_pref!("layout.css.text-underline-position.enabled", true);
         style_config::set_pref!("layout.css.view-transitions.enabled", true);
+        style_config::set_pref!("dom.viewTransitions.cross-document.enabled", true);
         style_config::set_pref!("layout.css.writing-mode.text-orientation.enabled", true);
         style_config::set_pref!("layout.css.text-autospace.enabled", true);
         style_config::set_pref!("layout.css.text-combine-upright.enabled", true);

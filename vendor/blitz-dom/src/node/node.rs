@@ -2520,7 +2520,7 @@ impl Node {
         let position = style.clone_position();
         let has_z_index = !style.clone_z_index().is_auto();
 
-        if style.clone_opacity() != 1.0 {
+        if style.clone_opacity() != 1.0 || &**style.get_view_transition_name().value.as_atom() != "none" {
             return true;
         }
 

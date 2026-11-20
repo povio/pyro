@@ -1,16 +1,18 @@
 diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/default.css
 --- a/packages/blitz-dom/assets/default.css
 +++ b/packages/blitz-dom/assets/default.css
-@@ -5,6 +5,8 @@
+@@ -5,6 +5,10 @@
  @namespace url(http://www.w3.org/1999/xhtml);
  /* set default namespace to HTML */
  @namespace xul url(http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul);
 +/* pyro: for the `svg|svg` rule below. */
 +@namespace svg url(http://www.w3.org/2000/svg);
++
++*|*:root { view-transition-name: root; }
  
  @font-face {
      font-family: -moz-bullet-font;
-@@ -13,25 +15,26 @@
+@@ -13,25 +17,26 @@
  
  /* bidi
   *
@@ -48,7 +50,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      unicode-bidi: isolate;
  }
  
-@@ -43,13 +46,25 @@
+@@ -43,13 +48,25 @@
  a[href] {
      color: rgb(0, 0, 238);
      text-decoration: underline;
@@ -64,20 +66,20 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
 +   (`a[href]` above). A `::scroll-button()` takes the rules for `button`. */
 +::scroll-marker-group {
 +    display: block;
- }
- 
++}
++
 +::scroll-marker,
 +::column::scroll-marker {
 +    color: rgb(0, 0, 238);
 +    text-decoration: underline;
 +    cursor: pointer;
-+}
-+
+ }
+ 
 +/* https://html.spec.whatwg.org/#bidi-rendering */
  input {
      display: inline-block;
  }
-@@ -59,25 +74,104 @@
+@@ -59,25 +76,104 @@
      display: none !important;
  }
  
@@ -190,7 +192,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  }
  
  input,
-@@ -86,10 +180,49 @@
+@@ -86,10 +182,49 @@
      font-family: system-ui, sans-serif;
  }
  
@@ -240,7 +242,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  /* https://html.spec.whatwg.org/multipage/rendering.html#form-controls */
  input,
  button,
-@@ -121,17 +254,38 @@
+@@ -121,17 +256,38 @@
      outline: 2px solid #4D90FE;
  }
  
@@ -281,7 +283,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  }
  
  /* Button-flavored inputs clip their contents to the border box and never
-@@ -150,6 +304,42 @@
+@@ -150,6 +306,42 @@
      background-color: transparent;
  }
  
@@ -324,7 +326,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  /* https://html.spec.whatwg.org/#the-fieldset-and-legend-elements */
  fieldset {
      display: block;
-@@ -169,8 +359,45 @@
+@@ -169,8 +361,45 @@
      padding-inline-end: 2px;
  }
  
@@ -371,7 +373,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  }
  
  source {
-@@ -249,15 +476,16 @@
+@@ -249,15 +478,16 @@
      unicode-bidi: isolate;
  }
  
@@ -393,7 +395,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      unicode-bidi: plaintext;
  }
  
-@@ -569,6 +797,19 @@
+@@ -569,6 +799,19 @@
      text-align: center;
  }
  
@@ -413,7 +415,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  table[align="center"]>caption {
      margin-inline-start: auto;
      margin-inline-end: auto;
-@@ -838,10 +1079,42 @@
+@@ -838,10 +1081,42 @@
      border-radius: 0 ! important;
  }
  
@@ -456,7 +458,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  spacer {
      position: static ! important;
      float: none ! important;
-@@ -851,8 +1124,18 @@
+@@ -851,8 +1126,18 @@
      user-select: none;
  }
  
@@ -475,7 +477,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  html:focus-visible {
      /* These elements historically don't show outlines when focused by default.
     * We could consider changing that if needed. */
-@@ -886,14 +1169,15 @@
+@@ -886,14 +1171,15 @@
      display: none;
  }
  
@@ -494,7 +496,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      padding: unset !important;
  }
  
-@@ -922,6 +1206,11 @@
+@@ -922,6 +1208,11 @@
      display: none !important;
  }
  
@@ -506,7 +508,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  /* media elements */
  video {
      object-fit: contain;
-@@ -996,7 +1285,9 @@
+@@ -996,7 +1287,9 @@
      display: none;
  }
  
@@ -517,7 +519,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      -moz-top-layer: top !important;
      position: fixed;
      overflow: auto;
-@@ -1128,37 +1419,48 @@
+@@ -1128,37 +1421,48 @@
  }
  
  /* Popover UA style, https://html.spec.whatwg.org/#flow-content-3 */
@@ -42673,6 +42675,15 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          let Some(style) = self.primary_styles() else {
              return false;
          };
+@@ -1336,7 +2520,7 @@
+         let position = style.clone_position();
+         let has_z_index = !style.clone_z_index().is_auto();
+ 
+-        if style.clone_opacity() != 1.0 {
++        if style.clone_opacity() != 1.0 || &**style.get_view_transition_name().value.as_atom() != "none" {
+             return true;
+         }
+ 
 @@ -1358,10 +2542,37 @@
              return true;
          }

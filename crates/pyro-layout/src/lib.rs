@@ -1082,6 +1082,12 @@ impl GeometrySource for BlitzGeometry {
         RENDERER.with(|renderer| renderer.try_borrow().ok().and_then(|renderer| renderer.as_ref().map(|renderer| renderer.view_transition_names(self.page, root).0)).unwrap_or(false))
     }
 
+    fn capture_transition(&self, root: u64, old: bool, pixels: u64) -> Option<Vec<pyro_dom::geometry::TransitionBox>> {
+        RENDERER.with(|renderer| Some(renderer.try_borrow_mut().ok()?.as_mut()?.capture_transition_boxes(self.page, root, old, pixels)?.into_iter().map(|item| pyro_dom::geometry::TransitionBox {
+            key: item.key, name: item.name, size: item.size, transform: item.transform, ink: item.ink, rgba: item.image.map(|image| Arc::new(image.data)),
+        }).collect()))
+    }
+
     fn element_displayed(&self, key: u64) -> Option<bool> {
         RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.element_displayed(self.page, key))
     }

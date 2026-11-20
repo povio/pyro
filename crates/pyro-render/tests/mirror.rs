@@ -97,6 +97,27 @@ fn view_transition_collection_bounds_work_before_visiting_children() {
     }
 }
 
+#[test]
+fn view_transition_capture_counts_pixels_and_excludes_nested_participants() {
+    let page = Page::new("<!doctype html><body style='opacity:0.2'><div id='parent' style='background:red;width:10px;height:10px;view-transition-name:parent'><div style='background:blue;width:4px;height:4px;view-transition-name:child'></div></div>");
+    let mut renderer = Renderer::new();
+    renderer.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+    let root = pyro_dom::snapshot::render_key(page.find("#parent"));
+    assert!(renderer.capture_transition_boxes(1, root, true, 115).is_none());
+    let captured = renderer.capture_transition_boxes(1, root, true, 116).unwrap();
+    assert_eq!(captured.iter().map(|item| item.image.as_ref().unwrap().data.len()).sum::<usize>(), 464);
+    assert_eq!(&captured[0].image.as_ref().unwrap().data[..4], &[255, 0, 0, 255]);
+    assert_eq!(&captured[1].image.as_ref().unwrap().data[..4], &[0, 0, 255, 255]);
+    assert!(renderer.capture_transition_boxes(1, root, false, 0).unwrap().iter().all(|item| item.image.is_none()));
+
+    let tall = Page::new("<!doctype html><html style='view-transition-name:root'><body style='height:100000px;background:red'></body></html>");
+    renderer.sync_layout(&tall.snapshot(2, tall.tree()), &fetcher()).unwrap();
+    let root = pyro_dom::snapshot::render_key(tall.find("html"));
+    assert!(renderer.capture_transition_boxes(2, root, true, 640 * 480 - 1).is_none());
+    let captured = renderer.capture_transition_boxes(2, root, true, 640 * 480).unwrap();
+    assert_eq!(captured[0].image.as_ref().unwrap().data.len(), 640 * 480 * 4);
+}
+
 /// Renders the page with the persistent renderer and with a fresh one;
 /// returns the persistent render's stats.
 #[track_caller]

@@ -83,6 +83,36 @@ pub fn paint_scene_for_device(
     paint_scene_inner(scene, doc, scale, width, height, x_offset, y_offset, true, true, true, Some(device))
 }
 
+/// Record isolated named boxes in border-local device pixels. Each nested participant is omitted.
+pub fn record_transition_boxes(
+    doc: &mut BaseDocument,
+    participants: &[NodeId],
+    mut consume: impl FnMut(NodeId, Scene, kurbo::Rect) -> Option<()>,
+) -> Option<()> {
+    if participants.len() > 256 || doc.tree().len() > 16_384 { return None; }
+    if participants.is_empty() { return Some(()); }
+    doc.ensure_paint_tree();
+    let scale = doc.viewport().scale_f64();
+    let (width, height) = doc.viewport().window_size;
+    let widgets = HashMap::new();
+    let named = participants.iter().copied().collect();
+    let mut painter = BlitzDomPainter::new(doc, scale, width, height, 0.0, 0.0, &widgets);
+    painter.transition_children = Some(&named);
+    for &id in participants {
+        let node = doc.get_node(id)?;
+        let size = node.final_layout().size;
+        let local = kurbo::Rect::new(0.0, 0.0, size.width as f64 * scale, size.height as f64 * scale);
+        let parent = painter.node_transform(node, kurbo::Affine::IDENTITY).inverse();
+        if !parent.is_finite() { return None; }
+        painter.top_layer_root.set(Some(id));
+        let mut scene = Scene::new();
+        painter.render_element(&mut scene, id, parent, kurbo::Rect::new(-1e7, -1e7, 1e7, 1e7));
+        let ink = bounds::scene_bounds(&scene.commands).map_or(local, |bounds| local.union(bounds));
+        consume(id, scene, ink.expand())?;
+    }
+    Some(())
+}
+
 /// pyro: the top Chromium paints a line of text at, in CSS px of the document: the line's unrounded
 /// top (`origin`, the unrounded top of its layout in the document in CSS px, plus the line's
 /// `unquantized_top` in layout units, `scale` to a CSS px) in Blink's layout units of 1/64 px,
