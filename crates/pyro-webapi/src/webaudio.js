@@ -23,6 +23,7 @@
   const TypeErrorC = TypeError;
   const RangeErrorC = RangeError;
   const PromiseC = Promise;
+  const WeakRefC = WeakRef;
   const F32 = Float32Array;
   const ArrayBufferC = ArrayBuffer;
   const detachedOf = (Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, 'detached') || {}).get;
@@ -290,6 +291,11 @@
     if (at >= 0) p.events[at].value = value;
     else if (p.events.length) insertEvent(p, {type: SET, time: t, value});
     p.value = Math.fround(value);
+  }
+  function nodeParam(n, ...options) {
+    const param = new AudioParam(secret, n.ctx, ...options);
+    (n.audioParams ??= []).push(params.get(param));
+    return param;
   }
   function time(v, method) {
     const t = finite(v, 'execute', `${method}' on 'AudioParam`, 'double');
@@ -665,7 +671,7 @@
       contextArg(context, 'GainNode');
       super(secret, context, {});
       const n = nodeOf(this);
-      const gain = new AudioParam(secret, context, 1);
+      const gain = nodeParam(n, 1);
       n.gain = gain;
       const o = nodeOptions(n, options, 'GainNode');
       if (o.gain !== undefined) params.get(gain).value = Math.fround(finite(o.gain, 'construct', 'GainNode'));
@@ -723,7 +729,7 @@
       });
       applyNodeOptions(this, settings);
       const n = nodeOf(this);
-      const pan = new AudioParam(secret, context, 0, -1, 1);
+      const pan = nodeParam(n, 0, -1, 1);
       pan.value = value;
       n.pan = pan;
       n.process = (f0, q) => {
@@ -886,6 +892,8 @@
         ...pannerDefaults, distanceModel: 'inverse', spatial: spatialParams(context, pannerNames, [0, 0, 0, 1, 0, 0])});
       applyNodeOptions(this, inherited);
       const n = nodeOf(this);
+      const listener = listenerOf(contextListener(context)).spatial;
+      n.audioParams = [...pannerNames.map(k => params.get(n.spatial[k])), ...listenerNames.map(k => params.get(listener[k]))];
       for (const name of Object.keys(settings)) {
         if (pannerNames.includes(name)) params.get(n.spatial[name]).value = settings[name];
         else if (name === 'panningModel') setPanningModel(settings[name]);
@@ -913,6 +921,104 @@
     });
   }
   webidl(PannerNode, 'PannerNode');
+
+  // A delay in a feedback path reads the previous render quantum before its
+  // current input is pulled. Include signal connections to AudioParams when
+  // finding the path. Topology is stable between offline render suspensions.
+  function delayInCycle(delay) {
+    const ctx = ctxOf(delay.ctx);
+    if (delay.graphEpoch === ctx.graphEpoch) return delay.inCycle;
+    const pending = [delay], seen = new Set([delay]);
+    let cyclic = false;
+    function visit(connection) {
+      const source = connection.node;
+      if (source === delay) cyclic = true;
+      else if (!seen.has(source)) { seen.add(source); pending.push(source); }
+    }
+    while (pending.length && !cyclic) {
+      const node = pending.pop();
+      for (const edge of node.inputs) visit(edge);
+      if (node.audioParams) for (const p of node.audioParams) for (const edge of p.inputs) visit(edge);
+    }
+    delay.graphEpoch = ctx.graphEpoch;
+    delay.inCycle = cyclic;
+    return cyclic;
+  }
+  function writeDelay(n, q, f0) {
+    const bus = input(n, q, f0), slot = q % n.slots;
+    if (bus) n.blocks.set(slot, {q, bus});
+    else n.blocks.delete(slot);
+  }
+  function delayBlock(n, frame) {
+    if (frame < 0) return null;
+    const q = floor(frame / QUANTUM), block = n.blocks.get(q % n.slots);
+    return block?.q === q ? block.bus : null;
+  }
+  function readDelay(n, q, f0) {
+    const ctx = ctxOf(n.ctx), cyclic = delayInCycle(n);
+    if (cyclic) (ctx.delayWriters ??= new Set()).add(n);
+    else writeDelay(n, q, f0);
+    const times = paramValues(params.get(n.delayTime), f0, ctx.rate, q);
+    const positions = n.positions;
+    let channels = 1;
+    // Delay the channel layout with the samples. Where interpolation or
+    // automation touches two layouts, mix them to this quantum's output width.
+    for (let i = 0; i < QUANTUM; i++) {
+      const duration = max(cyclic ? QUANTUM : 0, fround(times[i] * ctx.rate));
+      const pos = f0 + i - duration, prev = floor(pos);
+      positions[i] = pos;
+      channels = max(channels, delayBlock(n, prev)?.length ?? 1);
+      if (prev !== pos) channels = max(channels, delayBlock(n, prev + 1)?.length ?? 1);
+    }
+    const out = Array.from({length: channels}, () => new F32(QUANTUM));
+    const converted = new Map();
+    function source(frame) {
+      const bus = delayBlock(n, frame);
+      if (!bus || bus.length === channels) return bus;
+      if (!converted.has(bus)) {
+        const normalized = Array.from({length: channels}, () => new F32(QUANTUM));
+        mix(bus, normalized, n.interp);
+        converted.set(bus, normalized);
+      }
+      return converted.get(bus);
+    }
+    for (let i = 0; i < QUANTUM; i++) {
+      const pos = positions[i], a = floor(pos), frac = pos - a;
+      const first = source(a), second = frac ? source(a + 1) : null;
+      for (let ch = 0; ch < channels; ch++) {
+        const v = first ? first[ch][a % QUANTUM] : 0;
+        out[ch][i] = frac ? v + frac * ((second ? second[ch][(a + 1) % QUANTUM] : 0) - v) : v;
+      }
+    }
+    return out;
+  }
+  class DelayNode extends AudioNode {
+    constructor(context, options = {}) {
+      contextArg(context, 'DelayNode');
+      const inherited = readNodeOptions(options, 'DelayNode');
+      const initial = options?.delayTime, delay = initial === undefined ? 0 : finite(initial, 'construct', 'DelayNode', 'double');
+      const requested = options?.maxDelayTime, limit = requested === undefined ? 1 : finite(requested, 'construct', 'DelayNode', 'double');
+      if (limit <= 0 || limit >= 180) throw new DE('Maximum delay must be greater than zero and below 180 seconds.', 'NotSupportedError');
+      super(secret, context, {});
+      applyNodeOptions(this, inherited);
+      const n = nodeOf(this);
+      n.delayTime = nodeParam(n, 0, 0, fround(limit));
+      params.get(n.delayTime).value = fround(delay);
+      // Store only the rendered part of the delay line, bounded by its maximum
+      // age. Two extra quanta cover the neighboring sample and the current write.
+      n.slots = max(1, ceil(limit * ctxOf(context).rate / QUANTUM)) + 2;
+      n.blocks = new Map();
+      n.positions = new Float64Array(QUANTUM);
+      n.process = (f0, q) => readDelay(n, q, f0);
+      (ctxOf(context).delayNodes ??= new Set()).add(new WeakRefC(n));
+    }
+    get delayTime() {
+      const n = nodeOf(this);
+      if (!n.delayTime) throw invocation();
+      return n.delayTime;
+    }
+  }
+  webidl(DelayNode, 'DelayNode');
 
   // ---- Recursive filters -----------------------------------------------------
   const F64 = Float64Array;
@@ -1071,7 +1177,7 @@
       const inherited = readNodeOptions(options, 'BiquadFilterNode');
       const rate = ctxOf(context).rate;
       const parameter = (name, value, lo, hi) => {
-        const param = new AudioParam(secret, context, value, lo, hi);
+        const param = nodeParam(n, value, lo, hi);
         const supplied = options?.[name];
         if (supplied !== undefined) {
           const rounded = Math.fround(+supplied);
@@ -1246,8 +1352,8 @@
       contextArg(context, 'AudioBufferSourceNode');
       super(secret, context, { buffer: null, loop: false, loopStart: 0, loopEnd: 0, pos: undefined, played: 0 });
       const n = nodeOf(this);
-      n.playbackRate = new AudioParam(secret, context, 1, -F32_MAX, F32_MAX, 'k-rate', true);
-      n.detune = new AudioParam(secret, context, 0, -F32_MAX, F32_MAX, 'k-rate', true);
+      n.playbackRate = nodeParam(n, 1, -F32_MAX, F32_MAX, 'k-rate', true);
+      n.detune = nodeParam(n, 0, -F32_MAX, F32_MAX, 'k-rate', true);
       const o = nodeOptions(n, options, 'AudioBufferSourceNode');
       if (o.buffer !== undefined && o.buffer !== null) this.buffer = o.buffer;
       if (o.loop !== undefined) n.loop = !!o.loop;
@@ -1364,8 +1470,8 @@
       super(secret, context, { type: 'sine', phase: 0 });
       const n = nodeOf(this);
       const nyquist = context.sampleRate / 2;
-      n.frequency = new AudioParam(secret, context, 440, -nyquist, nyquist);
-      n.detune = new AudioParam(secret, context, 0, -153600, 153600);
+      n.frequency = nodeParam(n, 440, -nyquist, nyquist);
+      n.detune = nodeParam(n, 0, -153600, 153600);
       const o = nodeOptions(n, options, 'OscillatorNode');
       if (o.type !== undefined) {
         if (o.type === 'custom') throw new DE("Failed to construct 'OscillatorNode': A PeriodicWave must be specified if the type is set to \"custom\"", 'InvalidStateError');
@@ -1420,7 +1526,7 @@
       contextArg(context, 'ConstantSourceNode');
       super(secret, context, {});
       const n = nodeOf(this);
-      n.offset = new AudioParam(secret, context, 1);
+      n.offset = nodeParam(n, 1);
       const o = nodeOptions(n, options, 'ConstantSourceNode');
       if (o.offset !== undefined) params.get(n.offset).value = Math.fround(finite(o.offset, 'construct', 'ConstantSourceNode'));
       n.process = (f0, q) => {
@@ -1477,6 +1583,7 @@
     }
     createBufferSource() { return new AudioBufferSourceNode(this); }
     createGain() { return new GainNode(this); }
+    createDelay(maxDelayTime = 1) { return new DelayNode(this, {maxDelayTime}); }
     createPanner() { return new PannerNode(this); }
     createStereoPanner() { return new StereoPannerNode(this); }
     createBiquadFilter() { return new BiquadFilterNode(this); }
@@ -1721,6 +1828,7 @@
   // Renders quanta until the end or a suspend point.
   function render(c) {
     setState(c, 'running');
+    c.graphEpoch = (c.graphEpoch ?? 0) + 1;
     const dest = nodes.get(c.destination);
     while (c.frames < c.length) {
       const pause = c.suspends.get(c.frames);
@@ -1738,6 +1846,17 @@
       for (let ch = 0; ch < c.channels; ch++) c.output[ch].set(count === QUANTUM ? bus[ch] : bus[ch].subarray(0, count), f0);
       // Started sources nothing pulled still play (and end) on time.
       for (const n of c.sources) if (n.q !== q) pull(n, q, f0);
+      // A fed delay keeps the signal it will output even while downstream is
+      // disconnected. A weak registration does not keep an unused node alive.
+      if (c.delayNodes) for (const ref of c.delayNodes) {
+        const n = ref.deref();
+        if (!n) c.delayNodes.delete(ref);
+        else if (n.q !== q && (n.inputs.length || n.blocks.size)) pull(n, q, f0);
+      }
+      if (c.delayWriters?.size) {
+        for (const n of c.delayWriters) writeDelay(n, q, f0);
+        c.delayWriters.clear();
+      }
       c.frames += QUANTUM;
     }
     c.frames = c.length;
@@ -1769,6 +1888,6 @@
   return {
     BaseAudioContext, AudioContext, OfflineAudioContext, AudioBuffer, AudioParam, AudioNode,
     AudioDestinationNode, AudioScheduledSourceNode, AudioBufferSourceNode, OscillatorNode,
-    ConstantSourceNode, GainNode, AudioListener, PannerNode, StereoPannerNode, BiquadFilterNode, IIRFilterNode, ChannelMergerNode, ChannelSplitterNode, OfflineAudioCompletionEvent,
+    ConstantSourceNode, GainNode, DelayNode, AudioListener, PannerNode, StereoPannerNode, BiquadFilterNode, IIRFilterNode, ChannelMergerNode, ChannelSplitterNode, OfflineAudioCompletionEvent,
   };
 })
