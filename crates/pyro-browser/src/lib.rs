@@ -1467,7 +1467,7 @@ impl Browser {
     /// pyro: the `Referrer-Policy` the style sheet at `sheet` of `frame`'s document was served
     /// with, if any.
     pub(crate) fn sheet_referrer_policy(&self, frame: FrameKey, sheet: &str) -> Option<pyro_net::ReferrerPolicy> {
-        self.doc(frame)?.stylesheets.referrer_policies.get(sheet).copied()
+        self.doc(frame)?.stylesheets.referrer_policy_of(sheet)
     }
 
     /// The encoding `page`'s document was decoded with, the environment

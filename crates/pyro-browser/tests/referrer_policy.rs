@@ -320,3 +320,41 @@ fn a_sheets_requests_follow_its_referrer_policy() {
     assert!(*done.borrow());
     assert_eq!(loader.referer_of(&format!("{SAME}/i.png")), Some(None), "a url() of the sheet");
 }
+
+/// A sheet's `Referrer-Policy` is its response's, gone with it: once the link is removed, a
+/// request naming that URL as referrer follows the document's policy. The policy sat in a slot by
+/// URL that outlived every response at that URL (security review cycles 2-3, 2b).
+#[test]
+fn a_sheets_referrer_policy_goes_with_its_response() {
+    use std::cell::RefCell;
+    let (mut thread, page, loader) = setup();
+    let sheet = format!("{SAME}/strict.css");
+    loader.insert(&sheet, "text/css", "p { color: red }", Duration::ZERO);
+    loader.set_referrer_policy(&sheet, "no-referrer");
+    loader.insert(PAGE, "text/html", &format!("<!doctype html><link id=l rel=stylesheet href=\"{sheet}\">"), Duration::ZERO);
+    loader.set_referrer_policy(PAGE, "unsafe-url");
+    thread.browser.navigate(page, NavigateOpts::address_bar(PAGE)).unwrap();
+    settle(&mut thread);
+    let request = |thread: &mut BrowserThread, query: &str| {
+        let done: Rc<RefCell<bool>> = Rc::default();
+        let flag = done.clone();
+        thread.browser.fetch_subresource_options(
+            page,
+            format!("{SAME}/i.png?{query}"),
+            pyro_browser::ResourceKind::Image,
+            pyro_browser::SubresourceOptions { referrer: Some(sheet.clone()), ..Default::default() },
+            Box::new(move |_, _| *flag.borrow_mut() = true),
+        );
+        settle(thread);
+        assert!(*done.borrow());
+    };
+    request(&mut thread, "with");
+    assert_eq!(loader.referer_of(&format!("{SAME}/i.png?with")), Some(None), "the sheet's policy");
+    let realm = thread.browser.page(page).unwrap().main_frame.main_realm().unwrap();
+    let scope = realm.scope().unwrap();
+    scope.eval("document.getElementById('l').remove()", None, 1).unwrap();
+    drop(scope);
+    settle(&mut thread);
+    request(&mut thread, "without");
+    assert_eq!(loader.referer_of(&format!("{SAME}/i.png?without")), Some(Some(sheet.clone())), "the document's policy");
+}

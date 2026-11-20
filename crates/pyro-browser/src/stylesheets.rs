@@ -67,10 +67,36 @@ pub(crate) struct Stylesheets {
     /// `load` / `error` events of `<style>` elements queued and not fired
     /// yet: like the imports, they delay the document's load event.
     style_events: usize,
-    /// pyro: the `Referrer-Policy` of the style sheets (linked and imported) whose response named
-    /// one, by their URL after redirects: the policy of the requests they make (as Chrome sends
-    /// them; `Browser::sheet_referrer_policy`).
-    pub(crate) referrer_policies: HashMap<String, pyro_net::ReferrerPolicy>,
+    /// pyro: each style sheet response the document applied (a link's, by its node; an import's,
+    /// by its request), with its URL after redirects and the `Referrer-Policy` it was served with:
+    /// the policy of the requests that sheet makes (as Chrome sends them;
+    /// `Browser::sheet_referrer_policy`). A sheet's next response replaces its record.
+    pub(crate) responses: HashMap<SheetResponseId, SheetResponseRecord>,
+}
+
+/// pyro: which sheet a response record is of.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum SheetResponseId {
+    Link(NodeId),
+    Import(String),
+}
+
+/// pyro: one sheet response's URL after redirects and `Referrer-Policy`.
+#[derive(Clone, Debug)]
+pub(crate) struct SheetResponseRecord {
+    pub(crate) url: String,
+    pub(crate) referrer_policy: Option<pyro_net::ReferrerPolicy>,
+}
+
+impl Stylesheets {
+    /// pyro: the policy of the requests the sheet at `url` makes: its response's. The URL only
+    /// finds the record (a request names its sheet by its URL); where responses at one URL say
+    /// different things, none is taken for another: `no-referrer`.
+    pub(crate) fn referrer_policy_of(&self, url: &str) -> Option<pyro_net::ReferrerPolicy> {
+        let mut policies = self.responses.values().filter(|r| r.url == url).map(|r| r.referrer_policy);
+        let first = policies.next()?;
+        if policies.all(|p| p == first) { first } else { Some(pyro_net::ReferrerPolicy::NoReferrer) }
+    }
 }
 impl Stylesheets {
     pub(crate) fn pending(&self) -> usize {
@@ -89,6 +115,8 @@ impl Stylesheets {
             self.bytes -= sheet.bytes;
             // Dropping the cancellation handle stops the native request.
         }
+        // pyro: its response goes with it (its policy no longer applies to anything).
+        self.responses.remove(&SheetResponseId::Link(node));
     }
 }
 impl Page {
@@ -303,8 +331,15 @@ impl Browser {
         // pyro: a CORS-cross-origin response's sheet is not origin-clean (CSSOM), nor (as
         // Chrome) a network error's, which is no CORS-same-origin response either.
         let opaque = result.as_ref().map_or(true, |r| r.opaque);
-        if let Some(policy) = result.as_ref().ok().and_then(|r| r.referrer_policy) {
-            sheets.referrer_policies.insert(sheet_url.clone(), policy);
+        // pyro: this link's response now, with its policy (replacing its previous response's).
+        match result.as_ref() {
+            Ok(r) => {
+                let record = SheetResponseRecord { url: r.url.clone(), referrer_policy: r.referrer_policy };
+                sheets.responses.insert(SheetResponseId::Link(node), record);
+            }
+            Err(_) => {
+                sheets.responses.remove(&SheetResponseId::Link(node));
+            }
         }
         let text = result
             .ok()
@@ -662,8 +697,9 @@ impl Browser {
             entry.failed |= if entry.link { !ok || !css } else { (!ok || !css) && depth == 1 };
         }
         if let Some(r) = result.as_ref().ok().filter(|r| ok && r.mime.eq_ignore_ascii_case("text/css")) {
-            if let (Some(policy), Some(mut doc)) = (r.referrer_policy, self.doc_mut(page)) {
-                doc.stylesheets.referrer_policies.insert(r.url.clone(), policy);
+            if let Some(mut doc) = self.doc_mut(page) {
+                let record = SheetResponseRecord { url: r.url.clone(), referrer_policy: r.referrer_policy };
+                doc.stylesheets.responses.insert(SheetResponseId::Import(request_key.to_owned()), record);
             }
             let (text, encoding) = pyro_dom::cssom::decode_stylesheet(&r.body, r.charset.as_deref(), &[environment]);
             // CSSOM: `CSSImportRule.styleSheet` lists the imported rules.
