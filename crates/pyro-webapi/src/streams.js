@@ -418,7 +418,7 @@
     return st;
   };
 
-  function rsTee(st) {
+  function rsTee(st, cloneForBranch2) {
     const byte = st.controller.byte;
     const rd = newReader(st);
     let reading = false;
@@ -440,8 +440,22 @@
         chunk(value) {
           microtask(() => {
             readAgain = false;
+            let value2 = value;
+            if (!canceled2) {
+              try {
+                // Fetch clones default-stream chunks for branch 2, even if
+                // branch 1 canceled. Public tee() shares default chunks.
+                if (!byte && cloneForBranch2) value2 = cloneForBranch2(value);
+                else if (byte && !canceled1) value2 = new Uint8ArrayC(value);
+              } catch (error) {
+                rcError(c1, error);
+                rcError(c2, error);
+                cancelP.resolve(rsCancel(st, error));
+                return;
+              }
+            }
             if (!canceled1) (byte ? bcEnqueue(c1, value) : rcEnqueue(c1, value));
-            if (!canceled2) (byte ? bcEnqueue(c2, canceled1 ? value : value.slice()) : rcEnqueue(c2, value));
+            if (!canceled2) (byte ? bcEnqueue(c2, value2) : rcEnqueue(c2, value2));
             reading = false;
             if (readAgain) pull();
           });
@@ -1983,7 +1997,7 @@
         }
       });
     },
-    tee: (stream) => rsTee(rsOf(stream)),
+    cloneBody: (stream, cloneChunk) => rsTee(rsOf(stream), cloneChunk),
     // fetch() with a stream body: the bytes are sent once the stream ends.
     fetchBuffered(input, init, stream) {
       const st = rsOf(stream);

@@ -66,7 +66,7 @@ pub(crate) fn install(s: &Scope<'_>, page: &crate::page::PageDom, factory: pyro_
     s.global().set_atom("structuredClone", public)
 }
 
-fn realm_clone<'s>(s: &Scope<'s>) -> JsResult<pyro_js::Object<'s>> {
+pub(crate) fn realm_clone<'s>(s: &Scope<'s>) -> JsResult<pyro_js::Object<'s>> {
     let page = crate::target::page_of(s)?;
     let clone = page.structured_clones.borrow().get(&s.realm_id()).map(|p| p.get(s));
     clone

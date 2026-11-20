@@ -171,7 +171,8 @@ impl JsClass for Response {
             }
             if d.script_stream.get() {
                 let page = crate::target::page_of(s)?;
-                let pair = crate::streams::helper(s, &page, "tee", &[hidden(s, d, STREAM)?])?;
+                let clone_chunk = crate::structured_clone::realm_clone(s)?;
+                let pair = crate::streams::helper(s, &page, "cloneBody", &[hidden(s, d, STREAM)?, clone_chunk.value()])?;
                 let pair = pair.as_object().ok_or_else(|| JsError::Type("tee".into()))?;
                 let realm = d.realm.upgrade().ok_or(JsError::ContextDestroyed)?;
                 let owner = realm.scope()?;
