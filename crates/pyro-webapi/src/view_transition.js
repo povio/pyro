@@ -30,9 +30,10 @@
   };
   const abortError = (message) => new DOMException(message, 'AbortError');
   function finish(st) {
-    if (st.phase !== 'animating' || !st.animationDone || st.waiting) return;
+    if (st.phase !== 'animating' || !st.animationDone) return;
     if (st.runs) { st.runs.release(); st.runs = null; }
     if (st.admitted) { captureValid(st.root, false, true, st.scope); st.admitted = false; }
+    if (st.waiting) return;
     st.phase = 'done';
     if (active.get(st.scope) === st.self) active.delete(st.scope);
     st.finished.resolve();

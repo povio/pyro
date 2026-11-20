@@ -221,10 +221,22 @@ fn view_transition_capture_bytes_and_recording_work_shared_across_frame_realms()
         frame.page.layout.borrow_mut().set_geometry_source(Some(probe.clone()));
         assert_eq!(eval(&frame.main, "let frame; globalThis.requestAnimationFrame = fn => {frame = fn}; globalThis.setTimeout = () => 1; globalThis.clearTimeout = () => {}; const start = () => {document.startViewTransition(() => new Promise(() => {})); frame()}; start(); 'ok'"), "ok");
     }
-    assert_eq!(*probe.0.borrow(), vec![(1 << 24, 1 << 18), ((1 << 24) - 3, (1 << 18) - 137)]);
+    assert_eq!(*probe.0.borrow(), vec![(3 << 22, 3 << 16), ((1 << 24) - 3, (1 << 18) - 137)]);
     child.page.detach();
     assert_eq!(eval(&parent.main, "start(); 'ok'"), "ok");
     assert_eq!(probe.0.borrow()[2..], [(1 << 24, 1 << 18)]);
+}
+
+#[test]
+fn view_transition_wait_until_keeps_promise_not_frame_slots() {
+    let parent = env("<!doctype html><body></body>");
+    let child = realm_env(parent.engine.clone(), "<!doctype html><style>*::view-transition-group(*),*::view-transition-old(*),*::view-transition-new(*){animation:none}</style><body></body>");
+    child.page.set_hooks(Some(Rc::new(Child(parent.page.clone()))));
+    assert_eq!(eval(&child.main, r#"let frames=[],done=0,ready=0,held=[]; globalThis.requestAnimationFrame=fn=>frames.push(fn); globalThis.setTimeout=()=>1; globalThis.clearTimeout=()=>{};
+        function start(){let el=document.createElement('div');document.body.append(el);let t=el.startViewTransition();t.waitUntil(new Promise(()=>{}));t.ready.then(()=>++ready,()=>{});t.finished.then(()=>++done);held.push(t);return el.activeViewTransition===t}
+        Array.from({length:4},start).every(Boolean)"#), "true");
+    for _ in 0..4 { eval(&child.main, "frames.splice(0).forEach(fn=>fn())"); }
+    assert_eq!(eval(&child.main, "[ready,done,start()].join()"), "4,0,true");
 }
 
 #[test]
@@ -235,8 +247,8 @@ fn view_transition_capture_slots_shared_across_frame_realms() {
     for realm in [&parent.main, &child.main] {
         eval(realm, "let pumps = 0; globalThis.requestAnimationFrame = () => ++pumps; globalThis.setTimeout = () => 1;");
     }
-    assert_eq!(eval(&child.main, "for(let i=0;i<16;i++){let el=document.createElement('div'); document.body.appendChild(el); el.startViewTransition();} pumps"), "1");
-    assert_eq!(eval(&parent.main, "document.startViewTransition(); [pumps, document.activeViewTransition === null].join()"), "0,true");
+    assert_eq!(eval(&child.main, "let admitted = 0; for(let i=0;i<16;i++){let el=document.createElement('div'); document.body.appendChild(el); el.startViewTransition(); if(el.activeViewTransition) ++admitted;} [pumps,admitted].join()"), "1,4");
+    assert_eq!(eval(&parent.main, "document.startViewTransition(); [pumps, document.activeViewTransition !== null].join()"), "1,true");
     child.page.detach();
     assert_eq!(eval(&parent.main, "document.startViewTransition(); [pumps, document.activeViewTransition !== null].join()"), "1,true");
 }

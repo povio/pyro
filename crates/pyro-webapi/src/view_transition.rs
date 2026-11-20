@@ -24,6 +24,7 @@ struct Usage {
 
 #[derive(Debug)]
 struct Reservation {
+    child: bool,
     quota: Arc<Quota>,
     pixels: u64,
     work: u64,
@@ -52,8 +53,8 @@ impl Drop for Capture {
     }
 }
 
-fn admit(mut page: Rc<PageDom>) -> Option<Capture> {
-    for _ in 0..64 {
+fn admit(mut page: Rc<PageDom>, local_slots: usize) -> Option<Capture> {
+    for depth in 0..64 {
         if page.is_detached() || page.is_disposed() { return None; }
         if page.hooks().is_some() {
             match page.container() {
@@ -64,10 +65,11 @@ fn admit(mut page: Rc<PageDom>) -> Option<Capture> {
         }
         let quota = page.transition_quota.borrow_mut().get_or_insert_with(Default::default).clone();
         let mut used = quota.used.lock().unwrap();
-        if used.slots >= 16 { return None; }
+        let child = depth > 0;
+        if used.slots >= 16 || (child && (used.slots >= 12 || local_slots >= 4)) { return None; }
         used.slots += 1;
         drop(used);
-        return Some(Capture { reservation: Arc::new(Reservation { quota, pixels: 0, work: 0 }), old: Default::default(), new: Default::default(), samples: Default::default(), tree: None });
+        return Some(Capture { reservation: Arc::new(Reservation { child, quota, pixels: 0, work: 0 }), old: Default::default(), new: Default::default(), samples: Default::default(), tree: None });
     }
     None
 }
@@ -94,7 +96,7 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<pyro_js::Object<'s>> {
         let old = args.get(1).to_bool();
         if args.get(4).to_bool() {
             if captures.as_ref().is_some_and(|map| map.contains_key(&scope_key)) { return Ok(s.boolean(false)); }
-            let Some(record) = admit(page.clone()) else { return Ok(s.boolean(false)); };
+            let Some(record) = admit(page.clone(), captures.as_ref().map_or(0, |map| map.len())) else { return Ok(s.boolean(false)); };
             captures.get_or_insert_with(Default::default).insert(scope_key, record);
             return Ok(s.boolean(true));
         }
@@ -107,11 +109,13 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<pyro_js::Object<'s>> {
         let mut quota = reservation.quota.used.lock().unwrap();
         let used_pixels = quota.pixels;
         let used_work = quota.work;
-        if used_work == 1 << 18 || (old && used_pixels == 1 << 24) { return Ok(s.boolean(false)); }
-        let mut work = (1 << 18) - used_work;
-        let result = source.capture_transition(key, old, (1 << 24) - used_pixels, &mut work);
+        let work_limit: u64 = if reservation.child { 3 << 16 } else { 1 << 18 };
+        let pixel_limit: u64 = if reservation.child { 3 << 22 } else { 1 << 24 };
+        if used_work >= work_limit || (old && used_pixels >= pixel_limit) { return Ok(s.boolean(false)); }
+        let mut work = work_limit - used_work;
+        let result = source.capture_transition(key, old, pixel_limit.saturating_sub(used_pixels), &mut work);
         let Some(boxes) = result else { return Ok(s.boolean(false)); };
-        let charged = (1 << 18) - used_work - work;
+        let charged = work_limit - used_work - work;
         reservation.work += charged;
         quota.work += charged;
         if old {
