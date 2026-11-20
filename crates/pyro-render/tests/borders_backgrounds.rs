@@ -407,6 +407,8 @@ fn a_broken_image_shows_its_alt_text() {
     assert!(ink(&format!("<img src='missing.png' alt='Broken' {style}>")) > 100, "failed load");
     assert!(ink(&format!("<img alt='Broken' {style}>")) > 100, "no source");
     assert_eq!(ink(&format!("<img src='missing.png' alt='' {style}>")), 0, "empty alt");
+    let fallback = render("<img src='missing.png' alt='X' width=200 height=100 style='background:red'>", 1.0);
+    assert_eq!(pixel(&fallback, 1.0, 150.0, 75.0), WHITE, "inline alt text ignores replaced dimensions");
 }
 
 /// A broken image draws Chromium's broken-image icon: before its alt text, and, given a size

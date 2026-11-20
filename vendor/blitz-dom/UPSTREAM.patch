@@ -27736,7 +27736,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
  use markup5ever::{LocalName, local_name};
  use taffy::{
      AvailableSpace, BoxSizing, CoreStyle, LayoutInput, LayoutOutput, MaybeMath, MaybeResolve,
-@@ -16,6 +17,150 @@
+@@ -16,6 +17,153 @@
          || *tag_name == local_name!("iframe")
  }
  
@@ -27881,13 +27881,16 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
 +/// pyro: whether `element` is laid out as an atomic inline box when inline-level:
 +/// an inline box tag ([`is_inline_box_element`]) or an `<object>` showing an image or a document.
 +pub(crate) fn is_inline_box(element: &ElementData) -> bool {
++    if element.image_broken && !is_content_image(element) {
++        return false;
++    }
 +    is_inline_box_element(&element.name.local) || is_image_object(element) || is_document_object(element)
 +}
 +
  /// The intrinsic dimensions of a replaced element per CSS Images 3
  /// (https://drafts.csswg.org/css-images/#intrinsic-dimensions): an intrinsic
  /// width, an intrinsic height, and an intrinsic aspect ratio, each of which
-@@ -35,6 +180,14 @@
+@@ -35,6 +183,14 @@
      /// used to fill in dimensions the intrinsic sizes leave unresolved. 300x150
      /// for most replaced elements; zero for an image with no loaded resource.
      pub default_object_size: taffy::Size<f32>,
@@ -27902,7 +27905,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
  }
  
  /// Whether a height/width value is violating it's min- and max- constraints
-@@ -51,7 +204,7 @@
+@@ -51,7 +207,7 @@
  
  pub fn compute_replaced_layout(
      inputs: LayoutInput,
@@ -27911,7 +27914,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
      resolve_calc_value: impl Fn(*const (), f32) -> f32,
      context: &ReplacedContext,
  ) -> LayoutOutput {
-@@ -154,6 +307,19 @@
+@@ -154,6 +310,19 @@
      let intrinsic = context.intrinsic_sizes;
      let style_aspect_ratio = style.aspect_ratio().filter(is_usable_ratio);
      let aspect_ratio: Option<f32> = style_aspect_ratio.or(intrinsic.ratio.filter(is_usable_ratio));
@@ -27931,7 +27934,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
  
      // Concrete object size per the CSS default sizing algorithm with no
      // specified size (https://drafts.csswg.org/css-images/#default-sizing):
-@@ -187,10 +353,23 @@
+@@ -187,10 +356,23 @@
                  // A ratio-only replaced element stretches to fit the width it is laid out
                  // in: the available width if definite, else (under a max-content constraint)
                  // its containing block, per CSS2 §10.3.2.
@@ -27957,7 +27960,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
                  };
                  if let Some(width) = stretch_fit_width {
                      Size {
-@@ -220,6 +399,32 @@
+@@ -220,6 +402,32 @@
          },
          None => inherent_size,
      };
@@ -27990,7 +27993,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
  
      // Percentages are only resolved against zero in the inline axis.
      // See https://www.w3.org/TR/css-sizing-3/#replaced-percentage-min-contribution
-@@ -276,6 +481,48 @@
+@@ -276,6 +484,48 @@
          .maybe_max(min_size)
          .maybe_sub(box_sizing_adjustment);
  
@@ -28039,7 +28042,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
      // For ContentSize mode, ignore preferred/min size styles in the axis being measured: the
      // parent layout algorithm applies them itself, and content-based measurement should return
      // the content size (the intrinsic size for replaced elements). Constraints in the opposite
-@@ -286,6 +533,13 @@
+@@ -286,6 +536,13 @@
              RequestedAxis::Horizontal => {
                  style_size.width = None;
                  min_size.width = None;
@@ -28053,7 +28056,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
              }
              RequestedAxis::Vertical => {
                  style_size.height = None;
-@@ -295,6 +549,18 @@
+@@ -295,6 +552,18 @@
          }
      }
  
@@ -28072,7 +28075,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
      // Known dimensions are the parent's current sizing inputs. Clamp them before transferring
      // an aspect ratio so provisional cross-axis sizes do not bypass replaced-element limits.
      if known_dimensions.width.is_some() | known_dimensions.height.is_some() {
-@@ -308,9 +574,8 @@
+@@ -308,9 +577,8 @@
  
          let content_box_known_dimensions = known_dimensions.maybe_sub(pb_sum);
          let transferred = content_box_known_dimensions
@@ -28084,7 +28087,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
  
          // Known axes are authoritative (already resolved by the parent); only the axis
          // derived via aspect-ratio transfer (or falling back to the intrinsic size) is
-@@ -323,9 +588,7 @@
+@@ -323,9 +591,7 @@
      }
  
      let unclamped_size = if style_size.width.is_some() | style_size.height.is_some() {

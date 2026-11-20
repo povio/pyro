@@ -158,6 +158,9 @@ pub(crate) fn natural_ratio(element: &ElementData) -> Option<f32> {
 /// pyro: whether `element` is laid out as an atomic inline box when inline-level:
 /// an inline box tag ([`is_inline_box_element`]) or an `<object>` showing an image or a document.
 pub(crate) fn is_inline_box(element: &ElementData) -> bool {
+    if element.image_broken && !is_content_image(element) {
+        return false;
+    }
     is_inline_box_element(&element.name.local) || is_image_object(element) || is_document_object(element)
 }
 
