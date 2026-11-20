@@ -378,3 +378,19 @@ fn a_hoisted_box_is_painted_in_its_columns() {
         );
     }
 }
+
+/// pyro: an out-of-flow box the columns fragment (its containing block, of no height, in them) is
+/// painted in the overflow columns that show it, past the container's box: its container's
+/// overflow reaches them (a box carrying no spanner counts with what it holds; WPT css-break
+/// `out-of-flow-in-multicolumn-003`).
+#[test]
+fn a_fragmented_out_of_flow_box_is_painted_in_its_overflow_columns() {
+    for scale in [1.0, 2.0] {
+        let img = render(
+            "<div style='column-count:2;column-fill:auto;column-gap:0;height:100px;width:100px;position:relative;left:-150px'>\
+             <div style='position:relative'><div style='position:absolute;top:300px;width:50px;height:200px;background:green'></div></div></div>",
+            scale,
+        );
+        check(&img, scale, &[(25.0, 50.0, GREEN), (75.0, 50.0, GREEN)], "the box in columns 4 and 5");
+    }
+}

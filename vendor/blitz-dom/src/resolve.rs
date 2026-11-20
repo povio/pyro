@@ -967,6 +967,9 @@ impl BaseDocument {
         // (Chromium; WPT css-multicol `multicol-list-item-003`, `abspos-after-spanner`, ... with
         // classic scrollbars).
         let in_columns = columns_base.is_some();
+        // (Its spanners, for the boxes they are in.)
+        let spanners: Vec<NodeId> =
+            if in_columns { self.column_spanners_of(node_id).into_iter().map(|(id, _)| id).collect() } else { Vec::new() };
         // (So with a vertical writing mode's.)
         let in_vertical_columns = vertical_columns_base.is_some();
 
@@ -1035,7 +1038,19 @@ impl BaseDocument {
                 };
                 // (A box carrying spanners: its own box, the spanners in their rows below; what
                 // they make it reach in the strip is no column's.)
-                let child_rect_in_self = if in_columns && self.carries_spanners_of(node_id, child_id) {
+                // (A spanner inside it: `carries_spanners_of` also holds for a box whose out-of-flow
+                // boxes the columns fragment, whose overflow counts as any other's.)
+                let holds_spanner = spanners.iter().any(|&spanner| {
+                    let mut at = self.nodes[spanner].parent;
+                    while let Some(id) = at.filter(|&id| id != node_id) {
+                        if id == child_id {
+                            return true;
+                        }
+                        at = self.nodes[id].parent;
+                    }
+                    false
+                });
+                let child_rect_in_self = if in_columns && holds_spanner {
                     let l = self.nodes[child_id].final_layout();
                     let own = Rect::new(
                         l.location.x as f64 * scale,
