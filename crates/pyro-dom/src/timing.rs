@@ -362,7 +362,7 @@ impl TimingRules {
     pub fn parse<'a>(sheets: impl Iterator<Item = &'a str>, viewport: &Viewport) -> TimingRules {
         let mut out = TimingRules::default();
         for text in sheets {
-            if mentions(text) || text.contains("keyframes") {
+            if mentions(text) || contains_ignore_case(text, "keyframes") {
                 rule_list(&mut Parser::new(text), text, viewport, &mut out);
             }
         }
@@ -375,7 +375,7 @@ impl TimingRules {
     pub fn parse_scoped<'a>(sheets: impl Iterator<Item = (NodeId, &'a str)>, viewport: &Viewport) -> TimingRules {
         let mut out = TimingRules::default();
         for (scope, text) in sheets {
-            if mentions(text) || text.contains("keyframes") {
+            if mentions(text) || contains_ignore_case(text, "keyframes") {
                 let first = out.rules.len();
                 rule_list(&mut Parser::new(text), text, viewport, &mut out);
                 for rule in &mut out.rules[first..] {
@@ -1051,7 +1051,13 @@ pub fn transition_keyframes(
 fn mentions(text: &str) -> bool {
     // (`timeline-trigger` too: a rule may declare only that, for another element's
     // `animation-trigger`.)
-    text.contains("animation") || text.contains("transition") || text.contains("timeline-trigger")
+    // Property names and at-keywords are ASCII case-insensitive (`TIMELINE-TRIGGER: --t`).
+    ["animation", "transition", "timeline-trigger"].iter().any(|word| contains_ignore_case(text, word))
+}
+
+/// Whether `text` contains `word` (lowercase ASCII), ignoring ASCII case.
+fn contains_ignore_case(text: &str, word: &str) -> bool {
+    text.as_bytes().windows(word.len()).any(|w| w.eq_ignore_ascii_case(word.as_bytes()))
 }
 
 fn next_tok<'i>(p: &mut Parser<'i>) -> Option<Token<'i>> {
@@ -1524,5 +1530,5 @@ fn inline_declares(dom: &Dom, id: NodeId, word: &str) -> bool {
     dom.element(id)
         .ok()
         .and_then(|e| e.attr_local(&markup5ever::local_name!("style")))
-        .is_some_and(|s| s.contains(word))
+        .is_some_and(|s| contains_ignore_case(s, word))
 }
