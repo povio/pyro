@@ -449,8 +449,8 @@
   }
   // Input 0 of `n` for the quantum, mixed to its computed channel count;
   // null without connections.
-  function input(n, q, f0) {
-    const sources = n.inputs;
+  function input(n, q, f0, port = 0) {
+    const sources = n.numberOfInputs > 1 ? n.inputs.filter(s => s.input === port) : n.inputs;
     if (!sources.length) return null;
     const buses = sources.map((s) => pull(s.node, q, f0));
     let channels = 0;
@@ -524,15 +524,17 @@
       if (inp >= d.numberOfInputs) {
         throw new DE(`Failed to execute 'connect' on 'AudioNode': input index (${inp}) exceeds number of inputs (${d.numberOfInputs}).`, 'IndexSizeError');
       }
-      if (!d.inputs.some((s) => s.node === n)) d.inputs.push({ node: n, output: out });
-      if (!n.outs.some((o) => o.node === d)) n.outs.push({ node: d, target: destination, output: out });
+      if (!d.inputs.some(s => s.node === n && s.output === out && s.input === inp)) {
+        d.inputs.push({ node: n, output: out, input: inp });
+        n.outs.push({ node: d, target: destination, output: out, input: inp });
+      }
       return destination;
     }
     disconnect(destination, output, input) {
       const n = nodeOf(this);
       const drop = (o) => {
         if (o.param) o.param.inputs = o.param.inputs.filter((s) => s.node !== n);
-        else o.node.inputs = o.node.inputs.filter((s) => s.node !== n);
+        else o.node.inputs = o.node.inputs.filter(s => s.node !== n || s.output !== o.output || s.input !== o.input);
       };
       if (arguments.length === 0) {
         for (const o of n.outs) drop(o);
@@ -561,7 +563,9 @@
           throw new DE(`Failed to execute 'disconnect' on 'AudioNode': The input index provided (${inp}) is outside the range [0, ${d.numberOfInputs - 1}].`, 'IndexSizeError');
         }
       }
-      const matching = n.outs.filter((o) => o.target === destination && (output === undefined || o.output === ulong(output)));
+      const matching = n.outs.filter(o => o.target === destination
+        && (output === undefined || o.output === ulong(output))
+        && (input === undefined || o.input === ulong(input)));
       if (!matching.length) {
         throw new DE("Failed to execute 'disconnect' on 'AudioNode': the given destination is not connected.", 'InvalidAccessError');
       }
@@ -571,16 +575,35 @@
   }
   webidl(AudioNode, 'AudioNode');
 
-  // AudioNodeOptions shared by the node constructors.
-  function nodeOptions(n, options, iface) {
-    if (options === undefined || options === null) return {};
+  // WebIDL converts inherited dictionary members before derived members.
+  function readNodeOptions(options, iface) {
+    if (options == null) return {};
     if (typeof options !== 'object' && typeof options !== 'function') {
       throw new TypeErrorC(`Failed to construct '${iface}': The provided value is not of type '${iface}Options'.`);
     }
-    if (options.channelCount !== undefined) n.self.channelCount = options.channelCount;
-    if (options.channelCountMode !== undefined) n.self.channelCountMode = options.channelCountMode;
-    if (options.channelInterpretation !== undefined) n.self.channelInterpretation = options.channelInterpretation;
-    return options;
+    const result = {};
+    const count = options.channelCount;
+    if (count !== undefined) result.channelCount = ulong(count);
+    const mode = options.channelCountMode;
+    if (mode !== undefined) {
+      result.channelCountMode = `${mode}`;
+      if (!['max', 'clamped-max', 'explicit'].includes(result.channelCountMode)) throw new TypeErrorC('Invalid ChannelCountMode.');
+    }
+    const interpretation = options.channelInterpretation;
+    if (interpretation !== undefined) {
+      result.channelInterpretation = `${interpretation}`;
+      if (!['speakers', 'discrete'].includes(result.channelInterpretation)) throw new TypeErrorC('Invalid ChannelInterpretation.');
+    }
+    return result;
+  }
+  function applyNodeOptions(node, options) {
+    if (options.channelCount !== undefined) node.channelCount = options.channelCount;
+    if (options.channelCountMode !== undefined) node.channelCountMode = options.channelCountMode;
+    if (options.channelInterpretation !== undefined) node.channelInterpretation = options.channelInterpretation;
+  }
+  function nodeOptions(n, options, iface) {
+    applyNodeOptions(n.self, readNodeOptions(options, iface));
+    return options ?? {};
   }
 
   // ---- AudioDestinationNode ------------------------------------------------------
@@ -636,6 +659,261 @@
     get gain() { return nodeOf(this).gain; }
   }
   webidl(GainNode, 'GainNode');
+
+  // ---- Recursive filters -----------------------------------------------------
+  const F64 = Float64Array;
+  const typedArrayPrototype = Object.getPrototypeOf(F32.prototype);
+  const arrayKind = getOwnPropertyDescriptor(typedArrayPrototype, Symbol.toStringTag).get;
+  const arrayBufferOf = getOwnPropertyDescriptor(typedArrayPrototype, 'buffer').get;
+  const arrayLength = getOwnPropertyDescriptor(typedArrayPrototype, 'length').get;
+  const bufferLength = getOwnPropertyDescriptor(ArrayBufferC.prototype, 'byteLength').get;
+  const resizable = getOwnPropertyDescriptor(ArrayBufferC.prototype, 'resizable')?.get;
+  const { cos, sqrt, hypot, atan2 } = Math;
+
+  // Both nodes implement a rational transfer function B(z)/A(z). Keep input
+  // and output samples separately: a biquad's coefficients can change at each
+  // sample, while its previous samples still belong to the same channel.
+  function filterProcess(n, f0, q, update) {
+    const bus = input(n, q, f0);
+    const channels = bus || silentBus();
+    // A channel disappearing from the input remains audible for its tail.
+    // Retire it once its delay line no longer contributes to any output.
+    while (n.history.length > channels.length) {
+      const last = n.history[n.history.length - 1];
+      if (last.x.some(v => v !== 0) || last.y.some(v => v !== 0)) break;
+      n.history.pop();
+    }
+    const count = max(channels.length, n.history.length);
+    while (channels.length < count) channels.push(new F32(QUANTUM));
+    const size = max(n.a.length, n.b.length);
+    while (n.history.length < count) n.history.push({x: new F64(size), y: new F64(size)});
+    for (let i = 0; i < QUANTUM; i++) {
+      if (update) update(i);
+      const position = n.position;
+      for (let c = 0; c < count; c++) {
+        const {x, y} = n.history[c];
+        const sample = channels[c][i];
+        x[position] = sample;
+        let filtered = n.b[0] * sample;
+        for (let k = 1, previous = position; k < size; k++) {
+          if (--previous < 0) previous = size - 1;
+          if (k < n.b.length) filtered += n.b[k] * x[previous];
+          if (k < n.a.length) filtered -= n.a[k] * y[previous];
+        }
+        y[position] = filtered;
+        channels[c][i] = filtered;
+      }
+      n.position = (position + 1) % size;
+    }
+    return channels;
+  }
+
+  function polynomial(coefficients, re, im) {
+    let real = 0, imaginary = 0;
+    for (let k = coefficients.length - 1; k >= 0; k--) {
+      const nextReal = real * re - imaginary * im + coefficients[k];
+      imaginary = real * im + imaginary * re;
+      real = nextReal;
+    }
+    return [real, imaginary];
+  }
+
+  function frequencyResponse(n, frequencies, magnitudes, phases) {
+    const lengths = [frequencies, magnitudes, phases].map(a => {
+      if (apply(arrayKind, a, []) !== 'Float32Array') throw new TypeErrorC('Expected a Float32Array');
+      const buffer = apply(arrayBufferOf, a, []);
+      // The ArrayBuffer getter brand-checks the backing buffer, excluding
+      // SharedArrayBuffer even when it belongs to another realm.
+      apply(bufferLength, buffer, []);
+      if (resizable && apply(resizable, buffer, [])) throw new TypeErrorC('Expected a fixed-length ArrayBuffer');
+      return apply(arrayLength, a, []);
+    });
+    const length = lengths[0];
+    if (length !== lengths[1] || length !== lengths[2]) {
+      throw new DE('The frequency and response arrays must have the same length.', 'InvalidAccessError');
+    }
+    const rate = ctxOf(n.ctx).rate;
+    for (let i = 0; i < length; i++) {
+      const hz = frequencies[i];
+      if (!(hz >= 0 && hz <= rate / 2)) {
+        magnitudes[i] = phases[i] = NaN;
+        continue;
+      }
+      const angle = -2 * PI * hz / rate;
+      const re = cos(angle), im = sin(angle);
+      const [br, bi] = polynomial(n.b, re, im);
+      const [ar, ai] = polynomial(n.a, re, im);
+      magnitudes[i] = hypot(br, bi) / hypot(ar, ai);
+      phases[i] = atan2(bi * ar - br * ai, br * ar + bi * ai);
+    }
+  }
+
+  function filterOf(receiver, kind) {
+    const n = nodeOf(receiver);
+    if (n.filterKind !== kind) throw invocation();
+    return n;
+  }
+
+  const biquadTypes = ['lowpass', 'highpass', 'bandpass', 'lowshelf', 'highshelf', 'peaking', 'notch', 'allpass'];
+
+  // Web Audio's Audio EQ Cookbook transfer functions, normalized to a0=1.
+  // At DC, Nyquist and zero Q use the limits; a pole and a cancelling zero
+  // on the unit circle would otherwise produce a spurious singularity.
+  function biquadCoefficients(n, hz, cents, quality, gain) {
+    const f = max(0, min(1, hz * pow(2, cents / 1200) / (ctxOf(n.ctx).rate / 2)));
+    if (n.lastType === n.type && n.lastF === f && n.lastQ === quality && n.lastGain === gain) return;
+    n.lastType = n.type; n.lastF = f; n.lastQ = quality; n.lastGain = gain;
+    const t = n.type;
+    const A = pow(10, gain / 40);
+    let a0 = 1, a1 = 0, a2 = 0, b0 = 1, b1 = 0, b2 = 0;
+    if (f === 0 || f === 1) {
+      if (t === 'lowpass') b0 = f;
+      else if (t === 'highpass') b0 = 1 - f;
+      else if (t === 'bandpass') b0 = 0;
+      else if ((t === 'lowshelf' && f === 1) || (t === 'highshelf' && f === 0)) b0 = A * A;
+    } else if (t === 'highshelf' || t === 'lowshelf') {
+      const c = cos(PI * f), beta = sqrt(2 * A) * sin(PI * f);
+      const sum = A + 1, diff = A - 1;
+      const sign = t === 'highshelf' ? 1 : -1;
+      b0 = A * (sum + sign * diff * c + beta);
+      b1 = -2 * A * (sign * diff + sum * c);
+      b2 = A * (sum + sign * diff * c - beta);
+      a0 = sum - sign * diff * c + beta;
+      a1 = 2 * (sign * diff - sum * c);
+      a2 = sum - sign * diff * c - beta;
+    } else if (t === 'lowpass' || t === 'highpass') {
+      const c = cos(PI * f), alpha = sin(PI * f) / (2 * pow(10, max(-20 * Math.log10(F32_MAX), min(20 * Math.log10(F32_MAX), quality)) / 20));
+      const sign = t === 'lowpass' ? 1 : -1;
+      b0 = b2 = (1 - sign * c) / 2;
+      b1 = 2 * sign * b0;
+      a0 = 1 + alpha; a1 = -2 * c; a2 = 1 - alpha;
+    } else if (quality <= 0) {
+      if (t === 'notch') b0 = 0;
+      else if (t === 'allpass') b0 = -1;
+      else if (t === 'peaking') b0 = A * A;
+    } else {
+      const c = cos(PI * f), alpha = sin(PI * f) / (2 * quality);
+      a0 = 1 + alpha; a1 = -2 * c; a2 = 1 - alpha;
+      if (t === 'bandpass') {
+        b0 = alpha; b2 = -alpha;
+      } else if (t === 'notch') {
+        b0 = b2 = 1; b1 = a1;
+      } else if (t === 'allpass') {
+        b0 = a2; b1 = a1; b2 = a0;
+      } else {
+        a0 = 1 + alpha / A; a2 = 1 - alpha / A;
+        b0 = 1 + alpha * A; b1 = a1; b2 = 1 - alpha * A;
+      }
+    }
+    n.b[0] = b0 / a0; n.b[1] = b1 / a0; n.b[2] = b2 / a0;
+    n.a[1] = a1 / a0; n.a[2] = a2 / a0;
+  }
+
+  class BiquadFilterNode extends AudioNode {
+    constructor(context, options) {
+      contextArg(context, 'BiquadFilterNode');
+      super(secret, context, {filterKind: 'biquad', type: 'lowpass', a: [1, 0, 0], b: [0, 0, 0], history: [], position: 0});
+      const n = nodeOf(this);
+      const inherited = readNodeOptions(options, 'BiquadFilterNode');
+      const rate = ctxOf(context).rate;
+      const parameter = (name, value, lo, hi) => {
+        const param = new AudioParam(secret, context, value, lo, hi);
+        const supplied = options?.[name];
+        if (supplied !== undefined) {
+          const rounded = Math.fround(+supplied);
+          if (!Number.isFinite(rounded)) throw new TypeErrorC(`Expected a finite float for ${name}.`);
+          param.value = rounded;
+        }
+        return param;
+      };
+      n.Q = parameter('Q', 1, -F32_MAX, F32_MAX);
+      n.detune = parameter('detune', 0, -153600, 153600);
+      n.frequency = parameter('frequency', 350, 0, rate / 2);
+      n.gain = parameter('gain', 0, -F32_MAX, Math.fround(40 * Math.log10(F32_MAX)));
+      const suppliedType = options?.type;
+      if (suppliedType !== undefined) {
+        const type = `${suppliedType}`;
+        if (!biquadTypes.includes(type)) throw new TypeErrorC('Unknown BiquadFilterType');
+        n.type = type;
+      }
+      applyNodeOptions(this, inherited);
+      n.process = (f0, q) => {
+        const values = [n.frequency, n.detune, n.Q, n.gain].map(p => paramValues(params.get(p), f0, rate, q));
+        return filterProcess(n, f0, q, i => biquadCoefficients(n, values[0][i], values[1][i], values[2][i], values[3][i]));
+      };
+    }
+    get type() { return filterOf(this, 'biquad').type; }
+    set type(value) {
+      const n = filterOf(this, 'biquad'), type = String(value);
+      if (biquadTypes.includes(type)) n.type = type;
+    }
+    get Q() { return filterOf(this, 'biquad').Q; }
+    get frequency() { return filterOf(this, 'biquad').frequency; }
+    get detune() { return filterOf(this, 'biquad').detune; }
+    get gain() { return filterOf(this, 'biquad').gain; }
+    getFrequencyResponse(frequencies, magnitudes, phases) {
+      const n = filterOf(this, 'biquad');
+      const current = p => clampParam(params.get(p), p.value);
+      biquadCoefficients(n, current(n.frequency), current(n.detune), current(n.Q), current(n.gain));
+      frequencyResponse(n, frequencies, magnitudes, phases);
+    }
+  }
+  webidl(BiquadFilterNode, 'BiquadFilterNode');
+
+  function coefficients(value) {
+    const iterator = value != null && (typeof value === 'object' || typeof value === 'function')
+      ? value[Symbol.iterator] : undefined;
+    if (typeof iterator !== 'function') throw new TypeErrorC('Filter coefficients must be an iterable sequence.');
+    // Fetch the iterator method only once, including for proxies/getters.
+    return Array.from({[Symbol.iterator]: () => apply(iterator, value, [])},
+      v => finite(v, 'construct', 'IIRFilterNode', 'double'));
+  }
+  class IIRFilterNode extends AudioNode {
+    constructor(context, options, converted = undefined) {
+      contextArg(context, 'IIRFilterNode');
+      const inherited = readNodeOptions(options, 'IIRFilterNode');
+      const feedback = converted === secret ? options.feedback : coefficients(options?.feedback);
+      const feedforward = converted === secret ? options.feedforward : coefficients(options?.feedforward);
+      if (![feedback, feedforward].every(a => a.length >= 1 && a.length <= 20)) {
+        throw new DE('Filter coefficient lengths must be between 1 and 20.', 'NotSupportedError');
+      }
+      if (feedback[0] === 0 || feedforward.every(x => x === 0)) {
+        throw new DE('The first feedback coefficient and at least one feedforward coefficient must be nonzero.', 'InvalidStateError');
+      }
+      super(secret, context, {
+        filterKind: 'iir', a: feedback.map(v => v / feedback[0]), b: feedforward.map(v => v / feedback[0]), history: [], position: 0,
+      });
+      const n = nodeOf(this);
+      applyNodeOptions(this, inherited);
+      n.process = (f0, q) => filterProcess(n, f0, q);
+    }
+    getFrequencyResponse(frequencies, magnitudes, phases) {
+      frequencyResponse(filterOf(this, 'iir'), frequencies, magnitudes, phases);
+    }
+  }
+  webidl(IIRFilterNode, 'IIRFilterNode');
+
+  // Each connected input is down-mixed to mono; unconnected inputs still
+  // occupy their channel in the output.
+  class ChannelMergerNode extends AudioNode {
+    constructor(context, options) {
+      contextArg(context, 'ChannelMergerNode');
+      const inherited = readNodeOptions(options, 'ChannelMergerNode');
+      const suppliedCount = options?.numberOfInputs;
+      const count = suppliedCount === undefined ? 6 : ulong(suppliedCount);
+      if (!count || count > MAX_CHANNELS) throw new DE('Unsupported number of merger inputs.', 'IndexSizeError');
+      super(secret, context, {
+        numberOfInputs: count, channelCount: 1, mode: 'explicit', fixedMode: true,
+        checkCount(value) {
+          if (value !== 1) throw new DE('A merger input has one channel.', 'InvalidStateError');
+        },
+      });
+      const n = nodeOf(this);
+      applyNodeOptions(this, inherited);
+      n.process = (f0, q) => Array.from({length: count}, (_, port) => input(n, q, f0, port)?.[0] || new F32(QUANTUM));
+    }
+  }
+  webidl(ChannelMergerNode, 'ChannelMergerNode');
 
   // ---- Scheduled sources ------------------------------------------------------
   class AudioScheduledSourceNode extends AudioNode {
@@ -923,6 +1201,17 @@
     }
     createBufferSource() { return new AudioBufferSourceNode(this); }
     createGain() { return new GainNode(this); }
+    createBiquadFilter() { return new BiquadFilterNode(this); }
+    createIIRFilter(feedforward, feedback) {
+      ctxOf(this);
+      if (arguments.length < 2) throw new TypeErrorC('Two coefficient sequences are required.');
+      // Positional arguments are converted left to right; the IIR options
+      // dictionary instead enumerates feedback before feedforward.
+      const b = coefficients(feedforward);
+      const a = coefficients(feedback);
+      return new IIRFilterNode(this, {feedforward: b, feedback: a}, secret);
+    }
+    createChannelMerger(numberOfInputs = 6) { return new ChannelMergerNode(this, {numberOfInputs}); }
     createOscillator() { return new OscillatorNode(this); }
     createConstantSource() { return new ConstantSourceNode(this); }
     decodeAudioData(audioData, successCallback, errorCallback) {
@@ -1201,6 +1490,6 @@
   return {
     BaseAudioContext, AudioContext, OfflineAudioContext, AudioBuffer, AudioParam, AudioNode,
     AudioDestinationNode, AudioScheduledSourceNode, AudioBufferSourceNode, OscillatorNode,
-    ConstantSourceNode, GainNode, OfflineAudioCompletionEvent,
+    ConstantSourceNode, GainNode, BiquadFilterNode, IIRFilterNode, ChannelMergerNode, OfflineAudioCompletionEvent,
   };
 })

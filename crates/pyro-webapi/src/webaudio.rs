@@ -50,6 +50,9 @@ where
         "OscillatorNode",
         "ConstantSourceNode",
         "GainNode",
+        "BiquadFilterNode",
+        "IIRFilterNode",
+        "ChannelMergerNode",
         "OfflineAudioCompletionEvent",
     );
 }
