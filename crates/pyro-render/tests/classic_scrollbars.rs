@@ -179,7 +179,22 @@ fn custom_scrollbar_review_large_gutters() {
         let gutters = scroller.classic_scrollbars().unwrap().gutters;
         assert_eq!((gutters.left, gutters.right, gutters.bottom), (46.0, 46.0, 72.0));
         assert_eq!(client(&document, "section"), (0.0, 0.0));
-        assert_eq!(node(&document, "section > div").final_layout().location.x, 50.0);
+        assert_eq!(node(&document, "section > div").final_layout().location.x, 96.0);
+    }
+}
+
+#[test]
+fn narrow_both_edges_preserves_content_placement() {
+    for (width, client_left, client_width, child_x) in [(8, 4.0, 0.0, 8.0), (20, 10.0, 0.0, 15.0), (40, 15.0, 10.0, 15.0)] {
+        let document = doc(&format!("<style>section{{width:{width}px;overflow:hidden;scrollbar-gutter:stable both-edges}}section::-webkit-scrollbar{{width:15px}}</style><section><div></div></section><section id=text><span>x</span></section>"), true);
+        let scroller = node(&document, "section");
+        assert_eq!(scroller.classic_scrollbars().unwrap().gutters.left, client_left);
+        assert_eq!(scroller.client_width(), client_width);
+        assert_eq!(node(&document, "section > div").final_layout().location.x, child_x);
+        assert_eq!(scroller.content_box_origin().x, child_x);
+        let text = node(&document, "#text");
+        assert_eq!(text.final_layout().size.width, width as f32);
+        assert_eq!(text.content_box_origin().x, child_x);
     }
 }
 

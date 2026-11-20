@@ -1017,7 +1017,7 @@ impl LayoutPassState<'_> {
                 width: node_size.width.unwrap_or(0.0),
                 height: node_size.height.unwrap_or(0.0),
             }
-            .maybe_max(container_pb.sum_axes().map(Some));
+            .maybe_max(pb_sum.map(Some));
             // pyro: with no line it is empty, and margins collapse through it when it has no
             // height (an empty piece of a split inline between two blocks, a div holding only an
             // empty span), as through an empty block.
@@ -1594,7 +1594,7 @@ impl LayoutPassState<'_> {
                 .or(node_size)
                 .unwrap_or(measured_size + content_box_inset.sum_axes())
                 .maybe_clamp(node_min_size, node_max_size)
-                .maybe_max(container_pb.sum_axes().map(Some));
+                .maybe_max(pb_sum.map(Some));
 
             return LayoutOutput::from_outer_size(clamped_size);
         }
@@ -2439,7 +2439,7 @@ impl LayoutPassState<'_> {
                     .unwrap_or(0.0),
             ),
         }
-        .maybe_max(container_pb.sum_axes().map(Some));
+        .maybe_max(pb_sum.map(Some));
 
         let container_direction = self.nodes[node_id].layout_style().direction();
 

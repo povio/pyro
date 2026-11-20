@@ -16261,7 +16261,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 +                width: node_size.width.unwrap_or(0.0),
 +                height: node_size.height.unwrap_or(0.0),
 +            }
-+            .maybe_max(container_pb.sum_axes().map(Some));
++            .maybe_max(pb_sum.map(Some));
 +            // pyro: with no line it is empty, and margins collapse through it when it has no
 +            // height (an empty piece of a split inline between two blocks, a div holding only an
 +            // empty span), as through an empty block.
@@ -16675,6 +16675,15 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                  // Height is ignored if RequestedAxis if Horizontal
                  height: 0.0,
              });
+@@ -762,7 +1594,7 @@
+                 .or(node_size)
+                 .unwrap_or(measured_size + content_box_inset.sum_axes())
+                 .maybe_clamp(node_min_size, node_max_size)
+-                .maybe_max(container_pb.sum_axes().map(Some));
++                .maybe_max(pb_sum.map(Some));
+ 
+             return LayoutOutput::from_outer_size(clamped_size);
+         }
 @@ -773,16 +1605,33 @@
              .px();
          inline_layout
@@ -17570,7 +17579,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                  height = height.max(float_height_contribution * scale)
              };
          }
-@@ -1073,12 +2410,32 @@
+@@ -1073,16 +2410,36 @@
              .or(node_size)
              .unwrap_or(measured_size + content_box_inset.sum_axes())
              .maybe_clamp(node_min_size, node_max_size);
@@ -17604,6 +17613,11 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                      .unwrap_or(0.0),
              ),
          }
+-        .maybe_max(container_pb.sum_axes().map(Some));
++        .maybe_max(pb_sum.map(Some));
+ 
+         let container_direction = self.nodes[node_id].layout_style().direction();
+ 
 @@ -1097,8 +2454,25 @@
                  final_size.height - content_box_inset.vertical_axis_sum() - measured_size.height;
              taffy::compute_block_align_content_offset(align_content, free_space)
@@ -44043,7 +44057,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      pub fn primary_styles(&self) -> Option<impl Deref<Target = ServoArc<ComputedValues>>> {
          self.try_stylo_element_data()
              .and_then(|stylo| stylo.primary_styles())
-@@ -1161,37 +2277,161 @@
+@@ -1161,37 +2277,163 @@
      pub fn layout_style(&self) -> stylo_taffy::TaffyStyloStyle<ComputedStyleRef<'_>> {
          let styles = self
              .try_stylo_element_data()
@@ -44117,7 +44131,8 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              let layout_wm = styles.writing_mode;
 -            stylo_taffy::TaffyStyloStyle::new_in(styles, flags, layout_wm)
 +            let mut style = stylo_taffy::TaffyStyloStyle::new_in(styles, flags, layout_wm);
-+            style.custom_scrollbars = self.used_custom_scrollbar_size();
++            style.custom_scrollbars = self.custom_scrollbar_size();
++            style.scrollbar_size_limit = self.layout_data().scrollbar_size_limit;
 +            style.natural_ratio = natural_ratio;
 +            style
          }
@@ -44125,7 +44140,8 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          {
 -            stylo_taffy::TaffyStyloStyle::new(styles, flags)
 +            let mut style = stylo_taffy::TaffyStyloStyle::new(styles, flags);
-+            style.custom_scrollbars = self.used_custom_scrollbar_size();
++            style.custom_scrollbars = self.custom_scrollbar_size();
++            style.scrollbar_size_limit = self.layout_data().scrollbar_size_limit;
 +            style.natural_ratio = natural_ratio;
 +            style
 +        }
@@ -44210,7 +44226,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      /// The node's style for Taffy, expressed in the axes of the writing mode `layout_wm` (the writing
      /// mode of the box laying this node out). Used for the child-style getters.
      #[cfg(feature = "writing-mode")]
-@@ -1234,12 +2474,24 @@
+@@ -1234,12 +2476,24 @@
              .unwrap_or(stylo_taffy::WritingMode::empty())
      }
  
@@ -44238,7 +44254,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  if self.element_data().is_some_and(|el| el.is_button_input())
                      && !matches!(
                          display.inside(),
-@@ -1290,7 +2542,7 @@
+@@ -1290,7 +2544,7 @@
              }
              NodeData::Element(..) | NodeData::AnonymousBlock(..) => {
                  for child_id in self.children.iter() {
@@ -44247,7 +44263,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  }
              }
              _ => {}
-@@ -1327,8 +2579,47 @@
+@@ -1327,8 +2581,47 @@
              .unwrap_or(0)
      }
  
@@ -44296,7 +44312,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          let Some(style) = self.primary_styles() else {
              return false;
          };
-@@ -1336,7 +2627,7 @@
+@@ -1336,7 +2629,7 @@
          let position = style.clone_position();
          let has_z_index = !style.clone_z_index().is_auto();
  
@@ -44305,7 +44321,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              return true;
          }
  
-@@ -1358,10 +2649,37 @@
+@@ -1358,10 +2651,37 @@
              return true;
          }
  
@@ -44343,7 +44359,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          if style.get_box().isolation == Isolation::Isolate {
              return true;
          }
-@@ -1369,7 +2687,48 @@
+@@ -1369,7 +2689,48 @@
          if style.get_effects().mix_blend_mode != style::computed_values::mix_blend_mode::T::Normal {
              return true;
          }
@@ -44393,7 +44409,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          false
      }
-@@ -1397,12 +2756,14 @@
+@@ -1397,12 +2758,14 @@
              return true;
          }
  
@@ -44414,7 +44430,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      }
  
      /// Takes an (x, y) position (relative to the *parent's* top-left corner) and returns:
-@@ -1431,9 +2792,32 @@
+@@ -1431,9 +2794,32 @@
          y: f32,
          scale: f64,
          scrollbar: &mut Option<crate::node::ScrollbarRef>,
@@ -44447,7 +44463,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          // Don't hit on visbility:hidden elements
          if let Some(style) = self.primary_styles() {
-@@ -1500,11 +2884,15 @@
+@@ -1500,11 +2886,15 @@
              || y < overflow_rect.top() + client_y
              || y > overflow_rect.bottom() + client_y);
  
@@ -44463,7 +44479,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  x >= bbox.left && x <= bbox.right && y >= bbox.top && y <= bbox.bottom
              }
              None => false,
-@@ -1519,7 +2907,25 @@
+@@ -1519,7 +2909,25 @@
              && y >= (overflow.y0 / scale) as f32
              && y <= (overflow.y1 / scale) as f32;
  
@@ -44490,7 +44506,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              return None;
          }
  
-@@ -1533,6 +2939,8 @@
+@@ -1533,6 +2941,8 @@
          {
              *scrollbar = Some(sb);
          }
@@ -44499,7 +44515,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          // Text clusters and callers of the returned coordinates work in the
          // inline root's content box, but embedded boxes store border-box
-@@ -1541,10 +2949,7 @@
+@@ -1541,10 +2951,7 @@
          // padded inline root are hit one padding down and right of where
          // they are painted.
          let content_box_offset = if self.flags.is_inline_root() {
@@ -44511,7 +44527,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          } else {
              taffy::Point { x: 0.0, y: 0.0 }
          };
-@@ -1556,30 +2961,46 @@
+@@ -1556,30 +2963,46 @@
                      let Some(child) = self.tree().get(hoisted_child.node_id) else {
                          continue;
                      };
@@ -44570,7 +44586,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                      child_x -= self.scroll_offset().x as f32;
                      child_y -= self.scroll_offset().y as f32;
                      let viewport_scroll = self.tree().viewport_scroll();
-@@ -1590,26 +3011,94 @@
+@@ -1590,26 +3013,94 @@
                  child_x -= offset.x;
                  child_y -= offset.y;
              }
@@ -44680,7 +44696,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          }
  
          // Inline children
-@@ -1642,6 +3131,24 @@
+@@ -1642,6 +3133,24 @@
              }
          }
  
@@ -44705,7 +44721,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          // Self (this node)
          if matches_self && !pointer_events_none {
              return Some(HitResult {
-@@ -1716,7 +3223,7 @@
+@@ -1716,7 +3225,7 @@
              return false;
          };
          if self.flags.is_inline_root()
@@ -44714,7 +44730,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          {
              return false;
          }
-@@ -1741,8 +3248,13 @@
+@@ -1741,8 +3250,13 @@
          let y = y + self.final_layout().location.y - self.scroll_offset().y as f32;
  
          // Recurse up the positioning hierarchy
@@ -44729,7 +44745,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              .unwrap_or(crate::util::Point { x, y })
      }
  
-@@ -1818,8 +3330,28 @@
+@@ -1818,8 +3332,28 @@
  
          let root_layout = inline_root.unrounded_layout();
          let content_box_inset = root_layout.padding + root_layout.border;
@@ -44760,7 +44776,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          fn union(acc: &mut Option<taffy::Rect<f32>>, left: f32, top: f32, right: f32, bottom: f32) {
              *acc = Some(match *acc {
-@@ -1877,11 +3409,36 @@
+@@ -1877,11 +3411,36 @@
                  }
              }
  
@@ -44802,7 +44818,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              })
          }))
      }
-@@ -1938,14 +3495,14 @@
+@@ -1938,14 +3497,14 @@
      /// borders and scrollbar)
      pub fn client_width(&self) -> f32 {
          let layout = self.final_layout();
@@ -44822,7 +44838,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 diff --git a/packages/blitz-dom/src/node/scrollbar.rs b/packages/blitz-dom/src/node/scrollbar.rs
 --- a/packages/blitz-dom/src/node/scrollbar.rs
 +++ b/packages/blitz-dom/src/node/scrollbar.rs
-@@ -48,7 +48,159 @@
+@@ -48,7 +48,155 @@
      },
  }
  
@@ -44871,9 +44887,6 @@ diff --git a/packages/blitz-dom/src/node/scrollbar.rs b/packages/blitz-dom/src/n
 +        Some(taffy::Size { width: length(true), height: length(false) })
 +    }
 +
-+    pub(crate) fn used_custom_scrollbar_size(&self) -> Option<taffy::Size<f32>> {
-+        self.layout_data().scrollbar_size_limit.or_else(|| self.custom_scrollbar_size())
-+    }
 +    /// pyro: the box's classic scrollbars, when the process has classic scrollbars
 +    /// (`stylo_taffy::scrollbars`) and the box has any gutter; as layout reserved them
 +    /// (`TaffyStyloStyle::scrollbar_gutter`).
@@ -44959,10 +44972,9 @@ diff --git a/packages/blitz-dom/src/node/scrollbar.rs b/packages/blitz-dom/src/n
 +    /// without classic scrollbars): its content box is its padding box less them and its
 +    /// padding, which every reader of where its inline content goes takes them from.
 +    pub fn gutter_insets(&self) -> taffy::Rect<f32> {
-+        match self.classic_scrollbars() {
-+            Some(bars) => bars.gutters,
-+            None => taffy::Rect { left: 0.0, right: 0.0, top: 0.0, bottom: 0.0 },
-+        }
++        self.classic_gutter_inputs().map_or(taffy::Rect::zero(), |inputs| {
++            inputs.layout_edges(self.layout_data().scrollbar_size_limit)
++        })
 +    }
 +
 +    /// pyro: the gutters at the left and top edges ([`Self::gutter_insets`]).

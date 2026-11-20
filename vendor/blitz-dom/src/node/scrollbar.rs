@@ -93,9 +93,6 @@ impl Node {
         Some(taffy::Size { width: length(true), height: length(false) })
     }
 
-    pub(crate) fn used_custom_scrollbar_size(&self) -> Option<taffy::Size<f32>> {
-        self.layout_data().scrollbar_size_limit.or_else(|| self.custom_scrollbar_size())
-    }
     /// pyro: the box's classic scrollbars, when the process has classic scrollbars
     /// (`stylo_taffy::scrollbars`) and the box has any gutter; as layout reserved them
     /// (`TaffyStyloStyle::scrollbar_gutter`).
@@ -181,10 +178,9 @@ impl Node {
     /// without classic scrollbars): its content box is its padding box less them and its
     /// padding, which every reader of where its inline content goes takes them from.
     pub fn gutter_insets(&self) -> taffy::Rect<f32> {
-        match self.classic_scrollbars() {
-            Some(bars) => bars.gutters,
-            None => taffy::Rect { left: 0.0, right: 0.0, top: 0.0, bottom: 0.0 },
-        }
+        self.classic_gutter_inputs().map_or(taffy::Rect::zero(), |inputs| {
+            inputs.layout_edges(self.layout_data().scrollbar_size_limit)
+        })
     }
 
     /// pyro: the gutters at the left and top edges ([`Self::gutter_insets`]).

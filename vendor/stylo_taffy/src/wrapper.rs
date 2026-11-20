@@ -95,6 +95,8 @@ pub struct TaffyStyloStyle<T: Deref<Target = ComputedValues>> {
     pub natural_ratio: Option<f32>,
     #[allow(missing_docs)]
     pub custom_scrollbars: Option<taffy::Size<f32>>,
+    #[allow(missing_docs)]
+    pub scrollbar_size_limit: Option<taffy::Size<f32>>,
 }
 
 impl<T: Deref<Target = ComputedValues>> TaffyStyloStyle<T> {
@@ -127,6 +129,7 @@ impl<T: Deref<Target = ComputedValues>> TaffyStyloStyle<T> {
             percent_basis: None,
             natural_ratio: None,
             custom_scrollbars: None,
+            scrollbar_size_limit: None,
         }
     }
 
@@ -145,6 +148,7 @@ impl<T: Deref<Target = ComputedValues>> TaffyStyloStyle<T> {
             percent_basis: None,
             natural_ratio: None,
             custom_scrollbars: None,
+            scrollbar_size_limit: None,
         }
     }
 
@@ -321,7 +325,7 @@ impl<T: Deref<Target = ComputedValues>> taffy::CoreStyle for TaffyStyloStyle<T> 
             vertical: own_wm.is_vertical(),
             rtl: !own_wm.is_bidi_ltr(),
         };
-        self.rect(inputs.gutters().edges)
+        self.rect(inputs.layout_edges(self.scrollbar_size_limit))
     }
 
     #[inline]

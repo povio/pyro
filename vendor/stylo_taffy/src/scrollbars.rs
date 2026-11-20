@@ -95,6 +95,21 @@ pub struct GutterInputs {
 }
 
 impl GutterInputs {
+    pub fn layout_edges(&self, limit: Option<taffy::Size<f32>>) -> taffy::Rect<f32> {
+        let Some(thickness) = limit else { return self.gutters().edges };
+        let mut edges = Self { thickness, ..*self }.gutters().edges;
+        let place = |start: &mut f32, end: &mut f32, requested: f32| {
+            if *start > 0.0 && *end > 0.0 {
+                let shift = (requested - *start).max(0.0).min(*end);
+                *start += shift;
+                *end -= shift;
+            }
+        };
+        place(&mut edges.left, &mut edges.right, self.thickness.width);
+        place(&mut edges.top, &mut edges.bottom, self.thickness.height);
+        edges
+    }
+
     pub fn bounded_thickness(&self, available: taffy::Size<f32>) -> taffy::Size<f32> {
         let edges = self.gutters().edges;
         if edges == taffy::Rect::zero() { return self.thickness; }

@@ -314,7 +314,7 @@ diff --git a/packages/stylo_taffy/src/scrollbars.rs b/packages/stylo_taffy/src/s
 new file mode 100644
 --- /dev/null
 +++ b/packages/stylo_taffy/src/scrollbars.rs
-@@ -0,0 +1,235 @@
+@@ -0,0 +1,250 @@
 +//! pyro: the scrollbar mode of the process: overlay scrollbars (the default), which take no layout
 +//! space, or classic scrollbars, which take a fixed thickness out of the scroll container's padding
 +//! box (as Chrome's on Linux, the platform wpt.fyi runs it on: 15 CSS px, 11 for
@@ -412,6 +412,21 @@ new file mode 100644
 +}
 +
 +impl GutterInputs {
++    pub fn layout_edges(&self, limit: Option<taffy::Size<f32>>) -> taffy::Rect<f32> {
++        let Some(thickness) = limit else { return self.gutters().edges };
++        let mut edges = Self { thickness, ..*self }.gutters().edges;
++        let place = |start: &mut f32, end: &mut f32, requested: f32| {
++            if *start > 0.0 && *end > 0.0 {
++                let shift = (requested - *start).max(0.0).min(*end);
++                *start += shift;
++                *end -= shift;
++            }
++        };
++        place(&mut edges.left, &mut edges.right, self.thickness.width);
++        place(&mut edges.top, &mut edges.bottom, self.thickness.height);
++        edges
++    }
++
 +    pub fn bounded_thickness(&self, available: taffy::Size<f32>) -> taffy::Size<f32> {
 +        let edges = self.gutters().edges;
 +        if edges == taffy::Rect::zero() { return self.thickness; }
@@ -601,7 +616,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      }
  }
  
-@@ -58,6 +90,11 @@
+@@ -58,6 +90,13 @@
      /// `parent_size.width`, i.e. the containing block's block size.
      #[cfg(feature = "writing-mode")]
      pub percent_basis: Option<f32>,
@@ -610,10 +625,12 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
 +    pub natural_ratio: Option<f32>,
 +    #[allow(missing_docs)]
 +    pub custom_scrollbars: Option<taffy::Size<f32>>,
++    #[allow(missing_docs)]
++    pub scrollbar_size_limit: Option<taffy::Size<f32>>,
  }
  
  impl<T: Deref<Target = ComputedValues>> TaffyStyloStyle<T> {
-@@ -67,6 +104,8 @@
+@@ -67,6 +106,8 @@
          let display = self.style.clone_display();
          if self.flags.contains(StyleFlags::IS_BUTTON_INPUT) {
              convert::button_input_display(display)
@@ -622,25 +639,27 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
          } else {
              display
          }
-@@ -86,6 +125,8 @@
+@@ -86,6 +127,9 @@
              align_axis_is_inline: false,
              #[cfg(feature = "writing-mode")]
              percent_basis: None,
 +            natural_ratio: None,
 +            custom_scrollbars: None,
++            scrollbar_size_limit: None,
          }
      }
  
-@@ -102,6 +143,8 @@
+@@ -102,6 +146,9 @@
              align_axis_is_inline: false,
              #[cfg(feature = "writing-mode")]
              percent_basis: None,
 +            natural_ratio: None,
 +            custom_scrollbars: None,
++            scrollbar_size_limit: None,
          }
      }
  
-@@ -198,6 +241,23 @@
+@@ -198,6 +245,23 @@
          self.flags.contains(StyleFlags::IS_REPLACED)
      }
  
@@ -664,7 +683,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn box_sizing(&self) -> taffy::BoxSizing {
          convert::box_sizing(self.style.get_position().box_sizing)
-@@ -210,6 +270,9 @@
+@@ -210,6 +274,9 @@
  
      #[inline]
      fn overflow(&self) -> taffy::Point<taffy::Overflow> {
@@ -674,7 +693,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
          let box_styles = self.style.get_box();
          let overflow = taffy::Point {
              x: convert::overflow(box_styles.overflow_x),
-@@ -218,9 +281,47 @@
+@@ -218,9 +285,47 @@
          self.layout_wm().logical_point(overflow)
      }
  
@@ -719,11 +738,11 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
 +            vertical: own_wm.is_vertical(),
 +            rtl: !own_wm.is_bidi_ltr(),
 +        };
-+        self.rect(inputs.gutters().edges)
++        self.rect(inputs.layout_edges(self.scrollbar_size_limit))
      }
  
      #[inline]
-@@ -249,6 +350,9 @@
+@@ -249,6 +354,9 @@
  
      #[inline]
      fn size(&self) -> taffy::Size<taffy::Dimension> {
@@ -733,7 +752,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
          let position_styles = self.style.get_position();
          self.size(taffy::Size {
              width: convert::dimension(&position_styles.width),
-@@ -256,8 +360,20 @@
+@@ -256,8 +364,20 @@
          })
      }
  
@@ -754,7 +773,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
          let position_styles = self.style.get_position();
          self.size(taffy::Size {
              width: convert::min_size(&position_styles.min_width),
-@@ -267,6 +383,9 @@
+@@ -267,6 +387,9 @@
  
      #[inline]
      fn max_size(&self) -> taffy::Size<taffy::LengthPercentageAuto> {
@@ -764,7 +783,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
          let position_styles = self.style.get_position();
          self.size(taffy::Size {
              width: convert::max_size(&position_styles.max_width),
-@@ -276,12 +395,51 @@
+@@ -276,12 +399,51 @@
  
      #[inline]
      fn aspect_ratio(&self) -> Option<f32> {
@@ -817,7 +836,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
          let margin_styles = self.style.get_margin();
          self.rect(taffy::Rect {
              left: convert::margin(&margin_styles.margin_left),
-@@ -293,6 +451,9 @@
+@@ -293,6 +455,9 @@
  
      #[inline]
      fn padding(&self) -> taffy::Rect<taffy::LengthPercentage> {
@@ -827,7 +846,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
          let padding_styles = self.style.get_padding();
          if let Some(basis) = self.percent_basis() {
              let resolve = |value: &stylo::LengthPercentage| {
-@@ -318,6 +479,9 @@
+@@ -318,6 +483,9 @@
  
      #[inline]
      fn border(&self) -> taffy::Rect<taffy::LengthPercentage> {
@@ -837,7 +856,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
          let border_styles = self.style.get_border();
          self.rect(taffy::Rect {
              left: convert::border(
-@@ -343,12 +507,63 @@
+@@ -343,12 +511,63 @@
  // BlockContainerStyle impl
  #[cfg(feature = "block")]
  impl<T: Deref<Target = ComputedValues>> taffy::BlockContainerStyle for TaffyStyloStyle<T> {
@@ -901,7 +920,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn align_content(&self) -> taffy::AlignContent {
          let display = self.effective_display();
-@@ -375,12 +590,27 @@
+@@ -375,12 +594,27 @@
  
      #[inline]
      fn justify_items(&self) -> taffy::AlignItems {
@@ -929,7 +948,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      /// Item alignment in the layout writing mode's inline axis; `left`/`right` resolve against it.
      #[inline]
      fn inline_item_alignment(&self, input: stylo::AlignFlags) -> Option<taffy::AlignItems> {
-@@ -479,11 +709,61 @@
+@@ -479,11 +713,61 @@
  // BlockItemStyle impl
  #[cfg(feature = "block")]
  impl<T: Deref<Target = ComputedValues>> taffy::BlockItemStyle for TaffyStyloStyle<T> {
@@ -991,7 +1010,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn align_self(&self) -> Option<taffy::AlignSelf> {
          self.oof_self_alignment(
-@@ -494,10 +774,11 @@
+@@ -494,10 +778,11 @@
  
      #[inline]
      fn justify_self(&self) -> Option<taffy::AlignSelf> {
@@ -1007,7 +1026,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      }
  
      #[inline]
-@@ -508,14 +789,28 @@
+@@ -508,14 +793,28 @@
      #[cfg(feature = "floats")]
      #[inline]
      fn float(&self) -> taffy::Float {
@@ -1038,7 +1057,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
          self.layout_wm().logical_clear(clear)
      }
  }
-@@ -523,6 +818,21 @@
+@@ -523,6 +822,21 @@
  // FlexboxContainerStyle impl
  #[cfg(feature = "flexbox")]
  impl<T: Deref<Target = ComputedValues>> taffy::FlexboxContainerStyle for TaffyStyloStyle<T> {
@@ -1060,7 +1079,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn flex_direction(&self) -> taffy::FlexDirection {
          convert::flex_direction(self.style.get_position().flex_direction)
-@@ -595,6 +905,26 @@
+@@ -595,6 +909,26 @@
          self.style.get_position().flex_shrink.0
      }
  
@@ -1087,7 +1106,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn align_self(&self) -> Option<taffy::AlignSelf> {
          self.self_alignment(
-@@ -874,6 +1204,70 @@
+@@ -874,6 +1208,70 @@
          convert::grid_auto_flow(self.style.get_position().grid_auto_flow)
      }
  
@@ -1158,7 +1177,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn gap(&self) -> taffy::Size<taffy::LengthPercentage> {
          let position_styles = self.style.get_position();
-@@ -922,11 +1316,66 @@
+@@ -922,11 +1320,66 @@
  // GridItemStyle impl
  #[cfg(feature = "grid")]
  impl<T: Deref<Target = ComputedValues>> taffy::GridItemStyle for TaffyStyloStyle<T> {
@@ -1225,7 +1244,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn grid_column(&self) -> taffy::Line<taffy::GridPlacement<Atom>> {
          self.grid_column_placement()
-@@ -950,6 +1399,16 @@
+@@ -950,6 +1403,16 @@
  }
  
  impl<T: Deref<Target = ComputedValues>> taffy::OofItemStyle for TaffyStyloStyle<T> {
