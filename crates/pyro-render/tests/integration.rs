@@ -4,6 +4,7 @@
 
 mod abspos_percentage_heights;
 mod alignment_baseline;
+mod anchor_positioning;
 mod aspect_ratio;
 mod backdrop_filter;
 mod background_images_and_edges;

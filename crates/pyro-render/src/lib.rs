@@ -1860,6 +1860,25 @@ impl Renderer {
         Some(m.doc.resolved_style_value(id, property))
     }
 
+    pub fn anchor_scroll_shift(&self, page: u64, key: u64, scroll: &dyn Fn(Option<u64>) -> (f64, f64)) -> Option<(f64, f64)> {
+        let mirror = self.mirrors.get(&page)?;
+        if !mirror.doc.has_named_anchors() { return None; }
+        let mut node = mirror.doc.get_node(mirror.node(key)?)?;
+        let mut shift = (0.0, 0.0);
+        for _ in 0..node.tree().len() {
+            let live = node.anchor_scroll_offset_with(|id| {
+                let value = match id { Some(id) => mirror.key_of(id).map(|key| scroll(Some(key))).unwrap_or_default(), None => scroll(None) };
+                blitz_dom::Point { x: value.0, y: value.1 }
+            });
+            let applied = node.anchor_scroll_offset();
+            shift.0 += live.x - applied.x;
+            shift.1 += live.y - applied.y;
+            let Some(parent) = node.containing_block().and_then(|id| mirror.doc.get_node(id)) else { break };
+            node = parent;
+        }
+        Some(shift)
+    }
+
     /// Resolves a sampled transform against the mirrored element's layout,
     /// leaving the mirror's own style unchanged.
     pub fn resolved_transform_value(

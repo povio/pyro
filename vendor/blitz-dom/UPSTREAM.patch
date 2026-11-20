@@ -2410,9 +2410,11 @@ new file mode 100644
 diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/document.rs
 --- a/packages/blitz-dom/src/document.rs
 +++ b/packages/blitz-dom/src/document.rs
-@@ -87,14 +87,43 @@
+@@ -86,15 +86,45 @@
+ pub(crate) fn init_stylo_prefs() {
      static INIT: Once = Once::new();
      INIT.call_once(|| {
++        style_config::set_pref!("layout.css.anchor-positioning.enabled", true);
          style_config::set_pref!("layout.css.flexbox-balance.enabled", true);
 +        // pyro: `offset-path: url()` to an SVG shape element (resolve.rs `motion_url_path`).
 +        style_config::set_pref!("layout.css.motion-path-url.enabled", true);
@@ -2454,7 +2456,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          style_config::set_pref!("layout.css.word-break.break-word.enabled", true);
          #[cfg(feature = "writing-mode")]
          {
-@@ -108,8 +137,20 @@
+@@ -108,8 +138,20 @@
          style_config::set_pref!("layout.css.contain.enabled", true);
          style_config::set_pref!("layout.css.content.alt-text.enabled", true);
          style_config::set_pref!("layout.css.corner-shape.enabled", true);
@@ -2475,7 +2477,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          style_config::set_pref!("layout.css.forced-color-adjust.enabled", true);
          style_config::set_pref!("layout.css.masking.enabled", true);
          style_config::set_pref!("layout.css.math-properties.enabled", true);
-@@ -119,11 +160,27 @@
+@@ -119,11 +161,27 @@
          style_config::set_pref!("layout.css.scroll-behavior.enabled", true);
          style_config::set_pref!("layout.css.scrollbar-styling.enabled", true);
          style_config::set_pref!("layout.css.text-decoration-inset.enabled", true);
@@ -2504,7 +2506,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          style_config::set_pref!("layout.threads", -1);
      });
  }
-@@ -277,6 +334,36 @@
+@@ -277,6 +335,36 @@
      },
  }
  
@@ -2541,7 +2543,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  pub struct BaseDocument {
      /// ID of the document
      id: usize,
-@@ -290,10 +377,41 @@
+@@ -290,10 +378,41 @@
      pub(crate) viewport: Viewport,
      /// CSS media type used to evaluate `@media` rules.
      pub(crate) media_type: MediaType,
@@ -2583,7 +2585,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Document-wide work for the next [`resolve`](Self::resolve).
      pub(crate) flags: DocumentFlags,
      /// Strategy for Stylo's style traversal during `resolve`.
-@@ -305,6 +423,14 @@
+@@ -305,6 +424,14 @@
      /// How deeply this document is nested within other documents
      /// (0 for a root document). Used to limit `<iframe>` nesting depth.
      pub(crate) subdocument_depth: usize,
@@ -2598,7 +2600,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
      // Events
      pub(crate) tx: Sender<DocumentEvent>,
-@@ -337,6 +463,10 @@
+@@ -337,6 +464,10 @@
      pub(crate) thread_font_contexts: ThreadLocal<RefCell<Box<FontContext>>>,
      /// A Parley layout context
      pub(crate) layout_ctx: parley::LayoutContext<TextBrush>,
@@ -2609,7 +2611,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
      /// The real (non-anonymous) node which is currently hovered (if any).
      /// This is never a layout-generated (anonymous) node, so it remains valid
-@@ -354,6 +484,9 @@
+@@ -354,6 +485,9 @@
      pub(crate) focus_node_id: Option<NodeId>,
      /// The node which is currently active (if any)
      pub(crate) active_node_id: Option<NodeId>,
@@ -2619,7 +2621,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// The node which recieved a mousedown event (if any)
      pub(crate) mousedown_node_id: Option<NodeId>,
      /// The last time a mousedown was made (for double-click detection)
-@@ -378,6 +511,8 @@
+@@ -378,6 +512,8 @@
      // TODO: collapse animating state into a bitflags
      /// Whether there are active CSS animations/transitions (so we should re-render every frame)
      pub(crate) has_active_animations: bool,
@@ -2628,7 +2630,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Whether there is a `<canvas>` element in the DOM (so we should re-render every frame)
      pub(crate) has_canvas: bool,
      /// Whether there are subdocuments that are animating (so we should re-render every frame)
-@@ -389,6 +524,12 @@
+@@ -389,6 +525,12 @@
      pub(crate) nodes_to_id: HashMap<String, SmallVec<[NodeId; 1]>>,
      /// Map of `<style>` and `<link>` node IDs to their associated stylesheet
      pub(crate) nodes_to_stylesheet: BTreeMap<NodeId, DocumentStyleSheet>,
@@ -2641,7 +2643,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Incremented whenever `nodes_to_stylesheet` changes (a stylesheet is
      /// added, replaced or removed), so that CSSOM wrappers can detect that
      /// their cached rule data is stale.
-@@ -397,6 +538,26 @@
+@@ -397,6 +539,26 @@
      pub(crate) controls_to_form: HashMap<NodeId, NodeId>,
      /// Nodes that contain sub documents
      pub(crate) sub_document_nodes: HashSet<NodeId>,
@@ -2668,7 +2670,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Load state (abort controller and in-flight request id) for each
      /// `<iframe>` element whose sub-document is loaded automatically
      pub(crate) iframe_loads: HashMap<NodeId, crate::iframe::IframeLoad>,
-@@ -404,6 +565,64 @@
+@@ -404,6 +566,64 @@
      pub(crate) has_changes: bool,
      /// Set of changed nodes for updating the accessibility tree
      pub(crate) deferred_construction_nodes: Vec<ConstructionTask>,
@@ -2733,7 +2735,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
      /// Nodes that contain custom widgets
      #[cfg(feature = "custom-widget")]
-@@ -426,6 +645,97 @@
+@@ -426,6 +646,101 @@
      /// the style traversal and by pseudo-element box construction).
      pub(crate) pending_style_image_nodes: Vec<NodeId>,
  
@@ -2754,6 +2756,10 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
 +    /// pyro: the scroll pseudo-element boxes may be out of date: a style traversal ran or the
 +    /// tree changed since `resolve_scroll_markers` (`layout::scroll_markers`).
 +    pub(crate) scroll_markers_dirty: bool,
++    pub(crate) named_anchor_nodes: HashMap<style::values::DashedIdent, HashSet<NodeId>>,
++    anchor_node_names: HashMap<NodeId, style::values::specified::position::AnchorNameIdent>,
++    pub(crate) anchor_lookup_visits: std::cell::Cell<u64>,
++    pub(crate) anchor_try_visits: std::cell::Cell<u64>,
 +    /// pyro: an element styled with a `scroll-marker-group` that names a side, or with
 +    /// `scroll-target-group: auto` (sticky).
 +    pub(crate) scroll_marker_groups: bool,
@@ -2831,7 +2837,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      // Tracks in-flight "critical" resources (e.g. stylesheets linked from the `<head>`),
      // keyed by request id
      pub(crate) pending_critical_resources: HashSet<usize>,
-@@ -477,6 +787,13 @@
+@@ -477,6 +792,13 @@
      }
  }
  
@@ -2845,7 +2851,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  impl BaseDocument {
      /// Create a new (empty) [`BaseDocument`] with the specified configuration
      pub fn new(config: DocumentConfig) -> Self {
-@@ -485,6 +802,13 @@
+@@ -485,6 +807,13 @@
          static ID_GENERATOR: AtomicUsize = AtomicUsize::new(1);
  
          let id = ID_GENERATOR.fetch_add(1, Ordering::SeqCst);
@@ -2859,7 +2865,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
          let font_ctx = config
              .font_ctx
-@@ -514,17 +838,24 @@
+@@ -514,17 +843,24 @@
  
          let viewport = config.viewport.unwrap_or_default();
          let media_type = config.media_type.unwrap_or_else(MediaType::screen);
@@ -2887,7 +2893,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
          let net_provider = config
              .net_provider
-@@ -555,19 +886,41 @@
+@@ -555,19 +891,41 @@
              nodes_to_id,
              viewport,
              media_type,
@@ -2930,7 +2936,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
              hover_node_id: None,
              hover_hit_node_id: None,
-@@ -575,11 +928,20 @@
+@@ -575,11 +933,20 @@
              last_client_pointer_position: None,
              focus_node_id: None,
              active_node_id: None,
@@ -2951,7 +2957,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
              iframe_loads: HashMap::new(),
  
              #[cfg(feature = "custom-widget")]
-@@ -589,9 +951,55 @@
+@@ -589,9 +956,59 @@
  
              has_changes: false,
              deferred_construction_nodes: Vec::new(),
@@ -2980,6 +2986,10 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
 +            first_letter_changed: Vec::new(),
 +            marker_items_restyled: Vec::new(),
 +            scroll_markers_dirty: true,
++            named_anchor_nodes: HashMap::new(),
++            anchor_node_names: HashMap::new(),
++            anchor_lookup_visits: Default::default(),
++            anchor_try_visits: Default::default(),
 +            scroll_marker_groups: false,
 +            scroll_pseudo_owners: Default::default(),
 +            scroll_target_groups: Vec::new(),
@@ -3007,7 +3017,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
              pending_critical_resources: HashSet::new(),
              controls_to_form: HashMap::new(),
              net_provider,
-@@ -686,6 +1094,8 @@
+@@ -686,6 +1103,8 @@
      /// Set base url for resolving linked resources (stylesheets, images, fonts, etc)
      pub fn set_base_url(&mut self, url: &str) {
          self.url = DocumentUrl::from(Url::parse(url).unwrap());
@@ -3016,7 +3026,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      }
  
      /// The base url used for resolving linked resources (stylesheets, images, fonts, etc)
-@@ -732,6 +1142,22 @@
+@@ -732,6 +1151,22 @@
          self.nodes.get(node_id)
      }
  
@@ -3039,7 +3049,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub fn get_node_mut(&mut self, node_id: NodeId) -> Option<&mut Node> {
          self.nodes.get_mut(node_id)
      }
-@@ -741,6 +1167,12 @@
+@@ -741,6 +1176,12 @@
              .or(self.try_root_element().map(|el| el.id))
      }
  
@@ -3052,7 +3062,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub fn mutate<'doc>(&'doc mut self) -> DocumentMutator<'doc> {
          DocumentMutator::new(self)
      }
-@@ -991,9 +1423,89 @@
+@@ -991,9 +1432,111 @@
      /// it so that stale NodeIds are never dereferenced after the slot is freed.
      pub(crate) fn remove_node_from_tree(&mut self, node_id: NodeId) -> Option<Node> {
          self.clear_interaction_state_for_removed_node(node_id);
@@ -3077,9 +3087,31 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
 +                }
 +            }
 +        }
++        self.update_anchor_names(node_id, None);
          self.nodes.remove(node_id)
      }
  
++    pub(crate) fn update_anchor_names(&mut self, node_id: NodeId, names: Option<style::values::specified::position::AnchorNameIdent>) {
++        if names.is_none() && self.anchor_node_names.is_empty() { return; }
++        if self.anchor_node_names.get(&node_id) == names.as_ref() { return; }
++        if let Some(old) = self.anchor_node_names.remove(&node_id) {
++            for name in old.0.iter() {
++                if let Some(ids) = self.named_anchor_nodes.get_mut(name) {
++                    ids.remove(&node_id);
++                    if ids.is_empty() { self.named_anchor_nodes.remove(name); }
++                }
++            }
++        }
++        if let Some(names) = names {
++            for name in names.0.iter() { self.named_anchor_nodes.entry(name.clone()).or_default().insert(node_id); }
++            self.anchor_node_names.insert(node_id, names);
++        }
++    }
++
++    pub fn anchor_candidate_visits(&self) -> u64 { self.anchor_lookup_visits.get() }
++    pub fn has_named_anchors(&self) -> bool { !self.named_anchor_nodes.is_empty() }
++    pub fn anchor_try_visits(&self) -> u64 { self.anchor_try_visits.get() }
++
 +    /// pyro: takes `id` out of the hoisted list of `containing_block` and lays that box out
 +    /// again: it lists the boxes it laid out, and `id` is no longer one of them.
 +    fn unlist_hoisted(&mut self, containing_block: NodeId, id: NodeId) {
@@ -3142,7 +3174,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// The nearest element ancestor of `node_id` that is still in the
      /// document. Used to retarget hover/active state when the node they
      /// reference is removed. Tolerates already-removed ancestors (subtree
-@@ -1105,14 +1617,50 @@
+@@ -1105,14 +1648,50 @@
          if let Some(node) = &mut node {
              on_drop(node_id);
              if let Some(before) = node.before() {
@@ -3196,7 +3228,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
              }
  
              // Anonymous blocks live only in the slab, so deallocate the ones this
-@@ -1136,12 +1684,93 @@
+@@ -1136,12 +1715,93 @@
          // Free any anonymous blocks that this block owns before removing it.
          let nested = std::mem::take(&mut self.nodes[anon_id].anonymous_blocks);
          for nested_id in nested {
@@ -3291,7 +3323,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Whether the DOM or focus changed since the last [`Self::clear_changes`]
      /// (i.e. whether the accessibility tree is out of date)
      pub fn has_changes(&self) -> bool {
-@@ -1198,7 +1827,7 @@
+@@ -1198,7 +1858,7 @@
              let mut node = doc.remove_node_from_tree(node_id);
              if let Some(node) = &mut node {
                  for &child in &node.children {
@@ -3300,7 +3332,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                  }
                  for &anon_id in &node.anonymous_blocks {
                      doc.deallocate_anonymous_block(anon_id);
-@@ -1243,9 +1872,14 @@
+@@ -1243,9 +1903,14 @@
                      if href == href_to_reload
                          && let Some(resolved_href) = self.resolve_url(href)
                      {
@@ -3316,7 +3348,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                              ResourceHandler::boxed(
                                  self.tx.clone(),
                                  self.id,
-@@ -1256,6 +1890,12 @@
+@@ -1256,6 +1921,12 @@
                                      guard: self.guard.clone(),
                                      net_provider: self.net_provider.clone(),
                                      abort_signal: self.abort_signal.clone(),
@@ -3329,7 +3361,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                                  },
                              ),
                          );
-@@ -1266,12 +1906,101 @@
+@@ -1266,12 +1937,101 @@
      }
  
      pub fn process_style_element(&mut self, target_id: NodeId) {
@@ -3433,7 +3465,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub fn remove_user_agent_stylesheet(&mut self, sheet: &UserAgentStylesheet) {
          if self.useragent_stylesheets().any(|s| *s == sheet.0) {
              self.stylist
-@@ -1279,11 +2008,94 @@
+@@ -1279,11 +2039,94 @@
          }
      }
  
@@ -3528,7 +3560,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Iterate over the author stylesheets (from `<style>` and `<link>` nodes)
      /// currently associated with this document
      pub fn author_stylesheets(&self) -> impl Iterator<Item = &DocumentStyleSheet> {
-@@ -1305,11 +2117,58 @@
+@@ -1305,11 +2148,58 @@
      }
  
      pub fn make_stylesheet(&self, css: impl AsRef<str>, origin: Origin) -> DocumentStyleSheet {
@@ -3589,7 +3621,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
              self.guard.clone(),
              Some(&StylesheetLoader {
                  tx: self.tx.clone(),
-@@ -1318,22 +2177,48 @@
+@@ -1318,22 +2208,48 @@
                  shell_provider: self.shell_provider.clone(),
                  abort_signal: self.abort_signal.clone(),
                  import_depth: 0,
@@ -3642,7 +3674,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let old = self.nodes_to_stylesheet.insert(node_id, stylesheet.clone());
          self.stylesheet_generation += 1;
  
-@@ -1351,6 +2236,7 @@
+@@ -1351,6 +2267,7 @@
              &self.shell_provider,
              &self.guard.read(),
              self.abort_signal.as_ref(),
@@ -3650,7 +3682,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          );
  
          // Store data on element
-@@ -1396,6 +2282,138 @@
+@@ -1396,6 +2313,138 @@
          }
      }
  
@@ -3789,7 +3821,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Whether the Document has pending requests for "critical" resources (that should block rendering)
      pub fn has_pending_critical_resources(&self) -> bool {
          !self.pending_critical_resources.is_empty()
-@@ -1409,6 +2427,41 @@
+@@ -1409,6 +2458,41 @@
              Err(err) => {
                  if let Some(url) = res.resolved_url.as_ref() {
                      let waiting_nodes = self.pending_images.remove(url).unwrap_or_default();
@@ -3831,7 +3863,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                      #[cfg(feature = "tracing")]
                      tracing::warn!(
                          url = url.as_str(),
-@@ -1429,9 +2482,31 @@
+@@ -1429,9 +2513,31 @@
          };
  
          match resource {
@@ -3865,7 +3897,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
              }
              Resource::ImportedCss(import_rule, sheet) => {
                  let mut guard = self.guard.write();
-@@ -1441,9 +2516,11 @@
+@@ -1441,9 +2547,11 @@
                  self.stylist
                      .force_stylesheet_origins_dirty(style::stylesheets::OriginSet::all());
              }
@@ -3879,7 +3911,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
                  let Some(url) = res.resolved_url.as_ref() else {
                      return;
-@@ -1453,6 +2530,8 @@
+@@ -1453,6 +2561,8 @@
              }
              #[cfg(feature = "svg")]
              Resource::Svg(_kind, svg) => {
@@ -3888,7 +3920,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                  // Create the ImageData and cache it
                  let image = ImageData::Svg(svg);
  
-@@ -1469,18 +2548,33 @@
+@@ -1469,18 +2579,33 @@
                  self.apply_iframe_html(node_id, res.request_id, res.resolved_url, &html);
              }
              Resource::Font(bytes, overrides) => {
@@ -3923,7 +3955,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                      ..Default::default()
                  };
  
-@@ -1489,6 +2583,12 @@
+@@ -1489,6 +2614,12 @@
                  global_font_ctx
                      .collection
                      .register_fonts(font.clone(), Some(info_override));
@@ -3936,7 +3968,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
                  #[cfg(feature = "parallel-construct")]
                  {
-@@ -1513,6 +2613,49 @@
+@@ -1513,6 +2644,49 @@
          }
      }
  
@@ -3986,7 +4018,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Cache a loaded image and apply it to all nodes waiting on it
      /// (`<img>` elements, `background-image` layers and `mask-image` layers).
      fn apply_loaded_image(&mut self, url: &str, image: ImageData) {
-@@ -1541,25 +2684,92 @@
+@@ -1541,25 +2715,92 @@
                      if element.custom_widget_data().is_some() {
                          continue;
                      }
@@ -4081,7 +4113,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                  }
              }
          }
-@@ -1580,7 +2790,75 @@
+@@ -1580,7 +2821,75 @@
          self.snapshot_node_impl(node_id, None)
      }
  
@@ -4157,7 +4189,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let node = &mut self.nodes[node_id];
  
          // Do not snapshot nodes that have never been styled. A snapshot records an element's
-@@ -1700,14 +2978,24 @@
+@@ -1700,14 +3009,24 @@
          state: ElementState,
          cb: impl FnOnce(&mut Node),
      ) {
@@ -4185,7 +4217,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          self.hit_with_scrollbar(x, y).0
      }
  
-@@ -1718,7 +3006,7 @@
+@@ -1718,7 +3037,7 @@
      /// This implements the hit-testing semantics of `document.elementFromPoint()`.
      /// Hit testing consults layout, so [`resolve`](Self::resolve) should be called
      /// before this method to ensure layout is up to date.
@@ -4194,7 +4226,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let viewport = self.viewport();
          let scale = viewport.scale();
          let (viewport_width, viewport_height) = (
-@@ -1753,7 +3041,7 @@
+@@ -1753,7 +3072,7 @@
      /// by its ancestor elements (which is correct for non-overlapping content).
      /// As with [`element_from_point`](Self::element_from_point), layout should be
      /// resolved before calling this method.
@@ -4203,7 +4235,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let mut element_ids = Vec::new();
          let mut current = self.element_from_point(x, y);
          while let Some(node_id) = current {
-@@ -1813,9 +3101,36 @@
+@@ -1813,9 +3132,36 @@
          Some(id)
      }
  
@@ -4240,7 +4272,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
              let shell_provider = self.shell_provider.clone();
              self.snapshot_node_and(id, ElementState::FOCUS | ElementState::FOCUSRING, |node| {
                  node.blur(shell_provider)
-@@ -1853,17 +3168,25 @@
+@@ -1853,17 +3199,25 @@
  
          // Remove focus from the old node
          if let Some(id) = self.focus_node_id {
@@ -4267,7 +4299,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
          // Update :focus-within on the ancestor chains (shared prefix stays)
          let old_node_path = self.maybe_node_element_ancestors(self.focus_node_id);
-@@ -1895,6 +3218,38 @@
+@@ -1895,6 +3249,38 @@
          true
      }
  
@@ -4306,7 +4338,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub fn active_node(&mut self) -> bool {
          let Some(hover_node_id) = self.get_hover_node_id() else {
              return false;
-@@ -1991,10 +3346,12 @@
+@@ -1991,10 +3377,12 @@
      /// thumb under the point (shares the traversal, so it costs nothing
      /// extra).
      pub(crate) fn hit_with_scrollbar(
@@ -4320,7 +4352,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          if TDocument::as_node(&self.root_node())
              .first_element_child()
              .is_none()
-@@ -2078,6 +3435,54 @@
+@@ -2078,6 +3466,54 @@
          true
      }
  
@@ -4375,7 +4407,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub fn clear_hover(&mut self) -> bool {
          // The pointer is no longer over the document, so stop re-resolving
          // hover state against it.
-@@ -2147,12 +3552,150 @@
+@@ -2147,12 +3583,150 @@
          self.mousedown_node_id
      }
  
@@ -4526,7 +4558,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Returns the current CSS media type used to evaluate `@media` rules.
      pub fn media_type(&self) -> &MediaType {
          &self.media_type
-@@ -2188,6 +3731,12 @@
+@@ -2188,6 +3762,12 @@
          self.viewport.clone()
      }
  
@@ -4539,7 +4571,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Returns whether incremental layout is currently enabled for this document.
      ///
      /// Both modes run the same style → damage → box construction → layout
-@@ -2248,6 +3797,111 @@
+@@ -2248,6 +3828,111 @@
  
      /// Record pending [`DeviceChanges`] and request a redraw so that they are
      /// flushed (via [`Self::flush_pending_device_changes`]) on the next resolve.
@@ -4651,7 +4683,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub(crate) fn queue_device_changes(&mut self, changes: DeviceChanges) {
          if changes.is_empty() {
              return;
-@@ -2264,12 +3918,13 @@
+@@ -2264,12 +3949,13 @@
              return;
          }
  
@@ -4670,7 +4702,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
          // Text is shaped at a specific scale factor, so cached inline layouts
          // must be invalidated when the scale changes, as must every node's
-@@ -2314,9 +3969,19 @@
+@@ -2314,9 +4000,19 @@
          drop(root_styles);
  
          let old_device = self.stylist.device();
@@ -4691,7 +4723,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let origins = {
              let guard = &self.guard;
              let guards = StylesheetGuards {
-@@ -2460,10 +4125,19 @@
+@@ -2460,10 +4156,19 @@
              pos.x += node.unrounded_layout().location.x - node.scroll_offset().x as f32;
              pos.y += node.unrounded_layout().location.y - node.scroll_offset().y as f32;
              current = node.containing_block();
@@ -4711,7 +4743,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Computes the size and position of the `Node` relative to the viewport
      pub fn get_client_bounding_rect(&self, node_id: NodeId) -> Option<BoundingRect> {
          // Non-atomic inline elements have no layout box of their own: return
-@@ -2620,6 +4294,35 @@
+@@ -2620,6 +4325,35 @@
          self.find_element_by_tag_name(&local_name!("title"))
      }
  
@@ -4747,7 +4779,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub fn with_text_input(
          &mut self,
          node_id: NodeId,
-@@ -2643,12 +4346,22 @@
+@@ -2643,12 +4377,22 @@
      /// Recompute the scroll offset of the text input at `node_id` (if any) so that its caret
      /// remains visible within the input's content box.
      pub(crate) fn clamp_text_input_scroll(&mut self, node_id: NodeId) {
@@ -4775,7 +4807,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
          if let Some(text_input) = node
              .element_data_mut()
-@@ -2677,7 +4390,7 @@
+@@ -2677,7 +4421,7 @@
      /// Find the text position (inline_root_id, byte_offset) at a given point.
      /// Uses hit() for proper coordinate transformation, then finds the inline root
      /// and byte offset.
@@ -4784,7 +4816,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let hit = self.hit(x, y)?;
          let hit_node = self.get_node(hit.node_id)?;
          let inline_root = hit_node.inline_root_ancestor()?;
-@@ -2835,6 +4548,10 @@
+@@ -2835,6 +4579,10 @@
      /// Get all selection ranges as Vec<(node_id, start_offset, end_offset)>.
      /// Returns empty vec if no selection.
      pub fn get_text_selection_ranges(&self) -> Vec<(NodeId, usize, usize)> {
@@ -4795,7 +4827,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let lookup = |parent_id, idx| self.find_anonymous_block_by_index(parent_id, idx);
  
          let anchor_node = match self.text_selection.anchor.resolve_node_id(lookup) {
-@@ -3782,6 +5499,7 @@
+@@ -3782,6 +5530,7 @@
                      family_name: Some(String::from(ALIAS)),
                      weight: Some(800.0),
                      style: Some(parley::fontique::FontStyle::Italic),
@@ -4803,7 +4835,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                  },
              )),
          };
-@@ -3804,6 +5522,52 @@
+@@ -3804,6 +5553,52 @@
               not the font file's internal `name` table entry",
          );
      }
@@ -4856,7 +4888,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  }
  
  #[cfg(test)]
-@@ -3846,3 +5610,128 @@
+@@ -3846,3 +5641,128 @@
          assert!(doc.has_changes());
      }
  }
@@ -6567,6 +6599,243 @@ new file mode 100644
 +        ] {
 +            assert!(!range_matches(tag, range), "{tag} {range}");
 +        }
++    }
++}
+diff --git a/packages/blitz-dom/src/layout/anchor.rs b/packages/blitz-dom/src/layout/anchor.rs
+new file mode 100644
+--- /dev/null
++++ b/packages/blitz-dom/src/layout/anchor.rs
+@@ -0,0 +1,232 @@
++use crate::{BaseDocument, Node};
++use stylo_taffy::CopyStyleGetters;
++
++impl Node {
++    pub fn hidden_by_anchor(&self) -> bool {
++        if self.anchor_visibility_target.get().is_none() {return self.anchor_hidden.get() || self.anchor_invalid.get();}
++        let mut target = self;
++        let tree = self.tree();
++        for _ in 0..tree.len() {
++            if target.anchor_hidden.get() || target.anchor_invalid.get() {
++                return true;
++            }
++            let Some(anchor) = target.anchor_visibility_target.get().and_then(|id| tree.get(id)) else { return false };
++            if anchor
++                .primary_styles()
++                .is_some_and(|s| s.clone_visibility() != style::computed_values::visibility::T::Visible)
++            {
++                return true;
++            }
++            let layout = anchor.final_layout();
++            let (mut x, mut y) = (layout.location.x, layout.location.y);
++            let mut right = x + layout.size.width;
++            let mut bottom = y + layout.size.height;
++            let mut cursor = anchor.containing_block();
++            for _ in 0..tree.len() {
++                if cursor == target.containing_block() {
++                    break;
++                }
++                let Some(parent) = cursor.and_then(|id| tree.get(id)) else { break };
++                let layout = parent.final_layout();
++                let scroll = parent.scroll_offset();
++                x -= scroll.x as f32;
++                right -= scroll.x as f32;
++                y -= scroll.y as f32;
++                bottom -= scroll.y as f32;
++                if let Some(style) = parent.primary_styles() {
++                    use style::values::computed::Overflow;
++                    if style.clone_overflow_x() != Overflow::Visible {
++                        x = x.max(layout.border.left);
++                        right = right.min(layout.size.width - layout.border.right);
++                        if x >= right && anchor.final_layout().size.width > 0.0 {
++                            return true;
++                        }
++                    }
++                    if style.clone_overflow_y() != Overflow::Visible {
++                        y = y.max(layout.border.top);
++                        bottom = bottom.min(layout.size.height - layout.border.bottom);
++                        if y >= bottom && anchor.final_layout().size.height > 0.0 {
++                            return true;
++                        }
++                    }
++                }
++                x += layout.location.x;
++                right += layout.location.x;
++                y += layout.location.y;
++                bottom += layout.location.y;
++                cursor = parent.containing_block();
++            }
++            target = anchor;
++        }
++        false
++    }
++}
++
++impl BaseDocument {
++    pub(super) fn uses_anchor_queries(style: &style::properties::ComputedValues) -> bool {
++        use style::values::computed::length::{Margin, MaxSize, Size};
++        use style::values::computed::position::Inset;
++        use style::values::specified::align::AlignFlags;
++        let pos = style.get_position();
++        let margin = style.get_margin();
++        !pos.position_area.is_none()
++            || !pos.position_try_fallbacks.value.is_none()
++            || [pos.justify_self.0, pos.align_self.0].iter().any(|v| v.value() == AlignFlags::ANCHOR_CENTER)
++            || [&pos.left, &pos.top, &pos.right, &pos.bottom].iter().any(|v| {
++                matches!(
++                    v,
++                    Inset::AnchorFunction(_) | Inset::AnchorSizeFunction(_) | Inset::AnchorContainingCalcFunction(_)
++                )
++            })
++            || [&pos.width, &pos.height, &pos.min_width, &pos.min_height]
++                .iter()
++                .any(|v| matches!(v, Size::AnchorSizeFunction(_) | Size::AnchorContainingCalcFunction(_)))
++            || [&pos.max_width, &pos.max_height]
++                .iter()
++                .any(|v| matches!(v, MaxSize::AnchorSizeFunction(_) | MaxSize::AnchorContainingCalcFunction(_)))
++            || [&margin.margin_top, &margin.margin_right, &margin.margin_bottom, &margin.margin_left]
++                .iter()
++                .any(|v| matches!(v, Margin::AnchorSizeFunction(_) | Margin::AnchorContainingCalcFunction(_)))
++    }
++    pub(crate) fn anchor_calc_size(
++        &self,
++        value: &style::values::computed::LengthPercentage,
++        node: &Node,
++        container: &Node,
++        horizontal: bool,
++        style: &style::properties::ComputedValues,
++    ) -> Option<style::values::computed::LengthPercentage> {
++        use style::values::computed::length_percentage::{CalcNode, Unpacked};
++        let Unpacked::Calc(calc) = value.unpack() else { return Some(value.clone()) };
++        calc.substitute_anchors(|term| match term {
++            CalcNode::AnchorSize(func) => self.anchor_dimension(func, node, container, horizontal, style),
++            _ => None,
++        })
++    }
++
++    pub(crate) fn anchor_dimension<Fallback>(
++        &self,
++        func: &style::values::generics::length::GenericAnchorSizeFunction<Fallback>,
++        node: &Node,
++        container: &Node,
++        horizontal: bool,
++        style: &style::properties::ComputedValues,
++    ) -> Option<f32> {
++        use style::values::generics::length::AnchorSizeKeyword as Axis;
++        use style::values::specified::position::PositionAnchorKeyword;
++        let default = &style.get_position().position_anchor;
++        let (name, level) = if func.target_element.value.0.is_empty() {
++            let PositionAnchorKeyword::Ident(name) = &default.value else { return None };
++            (name, default.scope)
++        } else {
++            (&func.target_element.value, func.target_element.scope)
++        };
++        let (_, _, extent) = self.anchor_rect(node, container, name, level)?;
++        let width = match func.size {
++            Axis::None => horizontal,
++            Axis::Width => true,
++            Axis::Height => false,
++            Axis::Block => container.primary_styles()?.writing_mode.is_vertical(),
++            Axis::Inline => !container.primary_styles()?.writing_mode.is_vertical(),
++            Axis::SelfBlock => style.writing_mode.is_vertical(),
++            Axis::SelfInline => !style.writing_mode.is_vertical(),
++        };
++        Some(if width { extent.width } else { extent.height })
++    }
++    pub(super) fn anchor_rect(
++        &self,
++        node: &Node,
++        container: &Node,
++        name: &style::values::DashedIdent,
++        level: style::rule_tree::CascadeLevel,
++    ) -> Option<(crate::NodeId, taffy::Point<f32>, taffy::Size<f32>)> {
++        let candidates = self.named_anchor_nodes.get(name)?;
++        let origin = node.scroll_pseudo().map_or(node.id, |(_, id)| id);
++        let scope = level.get_shadow_root_for_scoped(&self.nodes[origin]).map(|root| root.id);
++        let scope_boundary = |start| {
++            let mut cursor = start;
++            for _ in 0..self.nodes.len() {
++                let current = &self.nodes[cursor];
++                if current.primary_styles().is_some_and(|s| {
++                    let boundary = &s.get_box().anchor_scope;
++                    boundary.value.includes(name)
++                        && boundary.scope.get_shadow_root_for_scoped(current).map(|root| root.id) == scope
++                }) {
++                    return Some(cursor);
++                }
++                cursor = current.parent?;
++            }
++            None
++        };
++        let boundary = scope_boundary(origin);
++        let mut selected = None;
++        for &id in candidates {
++            self.anchor_lookup_visits.set(self.anchor_lookup_visits.get().saturating_add(1));
++            let anchor = &self.nodes[id];
++            if id == node.id {
++                continue;
++            }
++            let Some(anchor_style) = anchor.primary_styles() else { continue };
++            let names = &anchor_style.get_box().anchor_name;
++            if anchor_style.get_box().display.is_none() {
++                continue;
++            }
++            if names.scope.get_shadow_root_for_scoped(anchor).map(|root| root.id) != scope
++                || scope_boundary(id) != boundary
++            {
++                continue;
++            }
++            let mut cursor = id;
++            let mut point = taffy::Point::ZERO;
++            let mut extent = anchor.unrounded_layout().size;
++            if let Some(fragments) = anchor.inline_fragment_boxes() {
++                let Some(rect) = fragments.reduce(|a, b| taffy::Rect {
++                    left: a.left.min(b.left),
++                    right: a.right.max(b.right),
++                    top: a.top.min(b.top),
++                    bottom: a.bottom.max(b.bottom),
++                }) else {
++                    continue;
++                };
++                point = taffy::Point { x: rect.left, y: rect.top };
++                extent = taffy::Size { width: rect.right - rect.left, height: rect.bottom - rect.top };
++                cursor = anchor.inline_root_ancestor()?.id;
++            }
++            for _ in 0..self.nodes.len() {
++                if cursor == container.id || cursor == node.id {
++                    break;
++                }
++                let current = &self.nodes[cursor];
++                let Some(parent) = current.containing_block() else { break };
++                point.x += current.unrounded_layout().location.x;
++                point.y += current.unrounded_layout().location.y;
++                if let Some(columns) = self.nodes[parent].column_fragments() {
++                    let bottom = point.y + extent.height;
++                    let pieces = columns.hoisted_columns(point.y, bottom).map(|fragment| taffy::Rect {
++                        left: point.x + fragment.offset.x,
++                        right: point.x + extent.width + fragment.offset.x,
++                        top: point.y.max(fragment.start) + fragment.offset.y,
++                        bottom: bottom.min(fragment.end) + fragment.offset.y,
++                    });
++                    if let Some(rect) = pieces.reduce(|a, b| taffy::Rect {
++                        left: a.left.min(b.left),
++                        right: a.right.max(b.right),
++                        top: a.top.min(b.top),
++                        bottom: a.bottom.max(b.bottom),
++                    }) {
++                        point = taffy::Point { x: rect.left, y: rect.top };
++                        extent = taffy::Size { width: rect.right - rect.left, height: rect.bottom - rect.top };
++                    }
++                }
++                cursor = parent;
++            }
++            if cursor != container.id || (anchor.is_out_of_flow() && !self.compare_document_order(id, origin).is_lt()) {
++                continue;
++            }
++            if selected.is_none_or(|(prev, _, _)| self.compare_document_order(prev, id).is_lt()) {
++                selected = Some((id, point, extent));
++            }
++        }
++        selected
 +    }
 +}
 diff --git a/packages/blitz-dom/src/layout/combined_text.rs b/packages/blitz-dom/src/layout/combined_text.rs
@@ -10118,7 +10387,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
  impl BaseDocument {
      /// Union `RestyleDamage` up the tree and clear the layout caches of every
      /// node whose subtree needs relayout.
-@@ -59,11 +117,15 @@
+@@ -59,11 +117,33 @@
              .try_stylo_element_data_mut()
              .and_then(|s| s.get_mut())
          {
@@ -10130,12 +10399,30 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
              return RestyleDamage::empty();
          };
          let mut damage = own_damage;
++        if !own_damage.is_empty() {
++            let (options,visibility,out_of_flow,queries) = self.nodes[node_id].primary_styles().map_or((false,false,false,false),|style| {
++                let pos = style.get_position();
++                let positioned = style.get_box().position.is_absolutely_positioned();
++                (!pos.position_try_fallbacks.value.is_none(),pos.position_visibility.contains(style::values::computed::PositionVisibility::NO_OVERFLOW),positioned,positioned && Self::uses_anchor_queries(&style))
++            });
++            let node = &mut self.nodes[node_id];
++            node.flags.set(NodeFlags::POSITION_TRY_OPTIONS, options);
++            node.flags.set(NodeFlags::ANCHOR_QUERIES, queries);
++            node.flags.set(NodeFlags::POSITION_VISIBILITY_CHECK, visibility);
++            if !visibility || !out_of_flow { node.anchor_hidden.set(false); }
++            if !queries { node.anchor_scroll_axes.set((None,None)); node.anchor_visibility_target.set(None); node.anchor_invalid.set(false); }
++            let names = self.nodes[node_id].primary_styles().and_then(|s| {
++                let names = &s.get_box().anchor_name.value;
++                (!names.0.is_empty()).then(|| names.clone())
++            });
++            self.update_anchor_names(node_id, names);
++        }
 +        self.nodes[node_id].flags.set(NodeFlags::OWN_DAMAGE, !own_damage.is_empty());
 +        self.nodes[node_id].flags.set(NodeFlags::OWN_LAYOUT_DAMAGE, reaches_layout(own_damage));
  
          // Skip subtrees which contain no damage. Anonymous nodes are never
          // skipped themselves because damage marking walks the DOM parent
-@@ -79,42 +141,75 @@
+@@ -79,42 +159,75 @@
          let mut damage_from_children = RestyleDamage::empty();
          let children = std::mem::take(&mut self.nodes[node_id].children);
          for child in children.iter() {
@@ -10225,7 +10512,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
          }
  
          // An inline `<svg>` is rendered from a snapshot of its subtree (with
-@@ -130,26 +225,64 @@
+@@ -130,26 +243,64 @@
          }
  
          // Reconstruction replaces the anonymous boxes with freshly styled ones.
@@ -10293,7 +10580,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
          // Anonymous boxes between this node and its nearest element ancestor
          // are not visited by the DOM walk, so invalidate them here by walking
          // `layout_parent`. Stop at the first non-anonymous node: elements are
-@@ -169,7 +302,7 @@
+@@ -169,7 +320,7 @@
                  if !ancestor.is_anonymous() {
                      break;
                  }
@@ -10302,7 +10589,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
                  current = ancestor.layout_parent.get();
              }
          }
-@@ -195,6 +328,90 @@
+@@ -195,6 +346,90 @@
          damage_for_parent
      }
  
@@ -10393,7 +10680,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
      /// Refresh owned anonymous boxes without revisiting their DOM children.
      fn refresh_anonymous_block_styles(&mut self, node_id: NodeId) -> RestyleDamage {
          // Skip owners with no anonymous boxes to refresh.
-@@ -220,7 +437,21 @@
+@@ -220,7 +455,21 @@
          let anonymous_blocks = std::mem::take(&mut self.nodes[node_id].anonymous_blocks);
          let mut damage_for_parent = RestyleDamage::empty();
          for &anonymous_id in &anonymous_blocks {
@@ -10416,7 +10703,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
                  // Skip boxes whose node, style data, or previous style is unavailable.
                  let Some(node) = self.nodes.get_mut(anonymous_id) else {
                      continue;
-@@ -234,18 +465,26 @@
+@@ -234,18 +483,26 @@
                  };
  
                  // Compute precise damage, retaining the old style allocation if unchanged.
@@ -10446,7 +10733,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
              }
  
              // Reconstruction also requires relayout; propagate all damage to the owner.
-@@ -257,7 +496,7 @@
+@@ -257,7 +514,7 @@
              // Invalidate cached layout and consume only the relayout bit.
              let node = &mut self.nodes[anonymous_id];
              if damage.intersects(ONLY_RELAYOUT | CONSTRUCT_BOX) {
@@ -10455,7 +10742,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
                  damage.remove(ONLY_RELAYOUT);
              }
  
-@@ -293,6 +532,18 @@
+@@ -293,6 +550,18 @@
      /// anonymous boxes through their owner's `anonymous_blocks`. An anonymous
      /// box's `children` are DOM nodes already reached through its owner, so
      /// they are not recursed into.
@@ -10474,7 +10761,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
      pub(crate) fn clear_damage_and_dirty_flags(&mut self, node_id: NodeId) {
          // Anonymous boxes can be freed during construction while still
          // listed in their owner's `anonymous_blocks`.
-@@ -307,31 +558,146 @@
+@@ -307,31 +576,146 @@
          let anonymous_blocks = std::mem::take(&mut node.anonymous_blocks);
          let children = std::mem::take(&mut node.children);
          let (before, after) = (node.before(), node.after());
@@ -10627,7 +10914,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
  // fn is_fc_root(style: &ComputedValues) -> bool {
  //     let display = style.clone_display();
  //     let display_inside = display.inside();
-@@ -364,11 +730,12 @@
+@@ -364,11 +748,12 @@
          let old_box = old.get_box();
          let new_box = new.get_box();
  
@@ -10641,7 +10928,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
          {
              return true;
          }
-@@ -377,6 +744,12 @@
+@@ -377,6 +762,12 @@
              return true;
          }
  
@@ -10654,7 +10941,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
          if new_box.display.outside() == DisplayOutside::Block
              && new_box.display.inside() == DisplayInside::Flow
          {
-@@ -415,6 +788,8 @@
+@@ -415,6 +806,8 @@
          false
      };
  
@@ -10663,7 +10950,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
      let text_shaping_needs_recollect = || {
          if old.clone_direction() != new.clone_direction()
              || old.clone_unicode_bidi() != new.clone_unicode_bidi()
-@@ -426,13 +801,40 @@
+@@ -426,13 +819,40 @@
          let new_text = new.get_inherited_text();
          if !std::ptr::eq(old_text, new_text)
              && (old_text.white_space_collapse != new_text.white_space_collapse
@@ -10705,7 +10992,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
          {
              return true;
          }
-@@ -440,22 +842,12 @@
+@@ -440,22 +860,12 @@
          false
      };
  
@@ -10733,7 +11020,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
      };
  
      #[allow(
-@@ -467,7 +859,7 @@
+@@ -467,7 +877,7 @@
      } else if text_shaping_needs_recollect() {
          ALL_DAMAGE
      } else if table_needs_rebuild() {
@@ -10742,7 +11029,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
      } else if old.get_position().order != new.get_position().order
          // `position` is unchanged here (else the box tree would be rebuilt), so
          // checking the new style suffices. Out-of-flow children are not flex/grid
-@@ -502,6 +894,8 @@
+@@ -502,6 +912,8 @@
  impl BaseDocument {
      pub(crate) fn invalidate_inline_contexts(&mut self) {
          let scale = self.viewport.scale();
@@ -10751,7 +11038,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
  
          let font_ctx = &self.font_ctx;
          let layout_ctx = &mut self.layout_ctx;
-@@ -527,6 +921,11 @@
+@@ -527,6 +939,11 @@
                  input.editor.set_scale(scale);
                  let mut font_ctx = font_ctx.lock().unwrap();
                  input.editor.refresh_layout(&mut font_ctx, layout_ctx);
@@ -10763,7 +11050,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
                  node.insert_damage(ONLY_RELAYOUT);
              }
          }
-@@ -538,6 +937,66 @@
+@@ -538,6 +955,66 @@
          }
      }
  
@@ -10830,7 +11117,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
      /// Flush the image layers of nodes whose style changed during the last
      /// style traversal (or whose pseudo-element boxes were (re)constructed).
      pub(crate) fn flush_pending_style_images(&mut self) {
-@@ -552,13 +1011,139 @@
+@@ -552,13 +1029,139 @@
              }
              self.flush_image_layers_from_style(node_id, ImageLayerKind::Background);
              self.flush_image_layers_from_style(node_id, ImageLayerKind::Mask);
@@ -10971,7 +11258,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
          let node = self.nodes.get_mut(node_id).unwrap();
          // Clone the primary style `Arc` into an owned value so the immutable
          // borrow of `node` (held by the stylo element data guard) is released
-@@ -577,29 +1162,68 @@
+@@ -577,29 +1180,68 @@
              return;
          };
  
@@ -11049,7 +11336,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
                      if let Some(cached_image) = self.image_cache.get(url_str) {
                          #[cfg(feature = "tracing")]
                          tracing::info!("Loading image {url_str} from cache");
-@@ -607,13 +1231,14 @@
+@@ -607,13 +1249,14 @@
                              url: new_url.clone(),
                              status: Status::Ok,
                              image: cached_image.clone(),
@@ -11065,7 +11352,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
                      } else {
                          // Start fetch and track as pending
                          #[cfg(feature = "tracing")]
-@@ -621,22 +1246,22 @@
+@@ -621,22 +1264,22 @@
                          self.pending_images
                              .insert(url_str.to_string(), vec![(node_id, kind.image_type(idx))]);
  
@@ -11094,7 +11381,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
                      }
                  }
                  _ => None,
-@@ -647,3 +1272,154 @@
+@@ -647,3 +1290,154 @@
          }
      }
  }
@@ -19269,10 +19556,11 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  use std::cell::Ref;
  use std::ops::{Deref, DerefMut};
  use std::sync::Arc;
-@@ -23,19 +23,31 @@
+@@ -23,19 +23,32 @@
      compute_oof_layout, prelude::*,
  };
  
++mod anchor;
 +pub(crate) mod combined_text;
  pub(crate) mod construct;
 +pub(crate) mod counters;
@@ -19303,7 +19591,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  };
  use self::table::TableTreeWrapper;
  
-@@ -47,16 +59,21 @@
+@@ -47,16 +60,21 @@
  };
  
  /// The intrinsic dimensions and default object size for a replaced element
@@ -19332,7 +19620,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          return (IntrinsicSizes::default(), taffy::Size::ZERO);
      }
      if *tag_name == local_name!("canvas") {
-@@ -74,6 +91,43 @@
+@@ -74,6 +92,43 @@
      (IntrinsicSizes::default(), DEFAULT_OBJECT_SIZE)
  }
  
@@ -19376,7 +19664,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  pub(crate) fn resolve_calc_value(calc_ptr: *const (), parent_size: f32) -> f32 {
      let calc = unsafe { &*(calc_ptr as *const CalcLengthPercentage) };
      let result = calc.resolve(CSSPixelLength::new(parent_size));
-@@ -101,9 +155,66 @@
+@@ -101,9 +156,67 @@
      /// size, against which its percentage padding resolves (see `layout::writing_mode`).
      #[cfg(feature = "writing-mode")]
      pub(crate) orthogonal_percent_basis: Option<(crate::NodeId, f32)>,
@@ -19392,6 +19680,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +    /// pyro: the sizes `calc_size_inputs` measured for boxes this pass (box, axis 0 width or 1
 +    /// height, size): a parent that hands one back as a known size hands back the result.
 +    calc_size_results: Vec<(NodeId, u8, f32)>,
++    try_styles: std::collections::HashMap<NodeId, style::servo_arc::Arc<style::properties::ComputedValues>>,
 +    /// pyro: the multi-column container whose strip is being laid out and the border-box height
 +    /// its content's percentage heights resolve against (its column height, `layout::multicol`).
 +    pub(crate) multicol_percent_height: Option<(crate::NodeId, f32)>,
@@ -19443,7 +19732,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      /// The containing block's inline size when `dom_id` is the box currently laid out in an orthogonal
      /// flow: its percentage padding resolves against it (see `layout::writing_mode`).
      #[inline]
-@@ -138,6 +249,23 @@
+@@ -138,6 +251,24 @@
              current_align_axis_is_inline: false,
              #[cfg(feature = "writing-mode")]
              orthogonal_percent_basis: None,
@@ -19452,6 +19741,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +            round_counts: (0, 0),
 +            column_spanners: None,
 +            calc_size_results: Vec::new(),
++            try_styles: Default::default(),
 +            multicol_percent_height: None,
 +            nested_fragmentation: std::collections::HashMap::new(),
 +            spanner_floors: std::collections::HashMap::new(),
@@ -19467,7 +19757,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          }
      }
  }
-@@ -174,14 +302,25 @@
+@@ -174,14 +305,25 @@
          inputs: taffy::tree::LayoutInput,
          block_ctx: Option<&mut BlockContext<'_>>,
      ) -> taffy::tree::LayoutOutput {
@@ -19501,7 +19791,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      /// Lay out `node_id` in the writing mode of the currently running algorithm (its parent's)
-@@ -191,13 +330,558 @@
+@@ -191,13 +333,558 @@
          inputs: taffy::tree::LayoutInput,
          block_ctx: Option<&mut BlockContext<'_>>,
      ) -> taffy::tree::LayoutOutput {
@@ -20062,7 +20352,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      /// The style of a node being laid out *by* the node whose algorithm is currently running,
      /// expressed in that node's writing mode (see `layout::writing_mode`).
      #[inline]
-@@ -217,13 +901,190 @@
+@@ -217,13 +904,190 @@
          }
      }
  
@@ -20253,7 +20543,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          let node = &mut self.nodes[dom_node_id(node_id)];
  
          let font_styles = node.primary_styles().map(|style| {
-@@ -239,8 +1100,43 @@
+@@ -239,8 +1103,43 @@
              (font_size, line_height)
          });
          let font_size = font_styles.map(|s| s.0);
@@ -20298,7 +20588,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          match &mut node.data {
              NodeData::Text(data) => {
                  // With the new "inline context" architecture all text nodes should be wrapped in an "inline layout context"
-@@ -255,7 +1151,7 @@
+@@ -255,7 +1154,7 @@
                  #[cfg(not(feature = "tracing"))]
                  let _ = data;
  
@@ -20307,7 +20597,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                  // unreachable!();
  
                  // compute_leaf_layout(inputs, &node.style, |known_dimensions, available_space| {
-@@ -283,19 +1179,71 @@
+@@ -283,19 +1182,71 @@
                          .and_then(|val| val.parse::<f32>().ok())
                          .unwrap_or(2.0);
  
@@ -20387,7 +20677,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                          },
                      );
                      if inputs.run_mode == RunMode::PerformLayout {
-@@ -308,87 +1256,278 @@
+@@ -308,87 +1259,278 @@
                                      .border()
                                      .resolve_or_zero(inputs.parent_size.width, resolve_calc_value)
                          };
@@ -20439,9 +20729,8 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +                                    taffy::ScrollableOverflow::new(rect, overflow.is_reversed());
 +                                return ChildLayout::Done(output);
 +                            }
-                         }
-                     }
--                    return output;
++                        }
++                    }
 +                    return ChildLayout::Done(output);
 +                }
 +
@@ -20500,8 +20789,9 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +                                ..inputs
 +                            };
 +                            output = compute_leaf_layout(wider, &style, resolve_calc_value, |_known_size, _available_space| content);
-+                        }
-+                    }
+                         }
+                     }
+-                    return output;
 +                    // pyro: layout containment leaves it no baseline (css-contain-2 § 3.2; WPT
 +                    // css-contain `contain-layout-suppress-baseline-002`).
 +                    if let Some(line) = select_line.filter(|_| !style.contain().suppresses_baseline()) {
@@ -20709,7 +20999,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                      };
  
                      // Get the element's intrinsic dimensions and default object size
-@@ -407,39 +1546,65 @@
+@@ -407,39 +1549,65 @@
                              }
                              #[cfg(feature = "svg")]
                              ImageData::Svg(svg) => {
@@ -20796,7 +21086,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                              // A canvas's content attributes determine its intrinsic size,
                              // overriding the widget-reported one; the widget-reported size
                              // in turn overrides the tag's fallback.
-@@ -472,6 +1637,91 @@
+@@ -472,6 +1640,91 @@
                          _ => unreachable!(),
                      };
  
@@ -20888,7 +21178,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                      #[cfg(feature = "writing-mode")]
                      let (intrinsic_sizes, default_object_size) =
                          if node.writing_mode().is_vertical() {
-@@ -488,126 +1738,579 @@
+@@ -488,131 +1741,584 @@
                              (intrinsic_sizes, default_object_size)
                          };
  
@@ -21053,17 +21343,27 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                          }
 -                        compute_flexbox_layout(self, node_id, inputs)
 +                        ChildLayout::Flex
-+                    }
+                     }
+-                    Display::Grid => compute_grid_layout(self, node_id, inputs),
+-                    Display::None => taffy::LayoutOutput::HIDDEN,
 +                    Display::Grid => ChildLayout::Grid,
 +                    Display::None => ChildLayout::Done(taffy::LayoutOutput::HIDDEN),
-+                }
-+            }
+                 }
+             }
+-            NodeData::Document(_) => compute_block_layout(self, node_id, inputs, None),
 +            NodeData::Document(_) => ChildLayout::FlowRoot,
-+
+ 
+-            _ => taffy::LayoutOutput::HIDDEN,
 +            _ => ChildLayout::Done(taffy::LayoutOutput::HIDDEN),
-+        }
-+    }
-+
+         }
+     }
+-}
+ 
+-impl TraversePartialTree for LayoutPassState<'_> {
+-    type ChildIter<'a>
+-        = RefCellChildIter<'a>
+-    where
+-        Self: 'a;
 +    /// A table root's layout (see [`Self::dispatch_child_layout`]).
 +    #[inline(never)]
 +    fn compute_table_root_layout(&mut self, node_id: NodeId, inputs: taffy::tree::LayoutInput) -> taffy::LayoutOutput {
@@ -21188,9 +21488,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +                    taffy::BoxSizing::ContentBox => {
 +                        own + style.padding.resolve_or_zero(parent.width, resolve_calc_value).vertical_axis_sum()
 +                            + style.border.resolve_or_zero(parent.width, resolve_calc_value).vertical_axis_sum()
-                     }
--                    Display::Grid => compute_grid_layout(self, node_id, inputs),
--                    Display::None => taffy::LayoutOutput::HIDDEN,
++                    }
 +                })
 +            };
 +            // An inflexible item of a column flex container has its definite flex basis as its height: the
@@ -21229,12 +21527,10 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +                    };
 +                    table_wrapper.style = table_wrapper.auto_column_widths(&inner);
 +                    output = table_wrapper.layout_grid(node_id, inner);
-                 }
-             }
--            NodeData::Document(_) => compute_block_layout(self, node_id, inputs, None),
++                }
++            }
 +        }
- 
--            _ => taffy::LayoutOutput::HIDDEN,
++
 +        // Absolutely positioned children take no part in the table grid. Their
 +        // static position is the top-left of the table's content box.
 +        let context = table_wrapper.ctx;
@@ -21268,7 +21564,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +                    static_position,
 +                });
 +            }
-         }
++        }
 +
 +        // pyro: an absolutely positioned box whose containing block is a positioned row or row
 +        // group of this table (they have no boxes of their own) is laid out here, against the
@@ -21301,9 +21597,9 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +        );
 +
 +        output
-     }
- }
- 
++    }
++}
++
 +impl LayoutPassState<'_> {
 +    /// pyro: the containing block of the absolutely positioned box `box_id` when it is a
 +    /// positioned row or row group of the table `table_id` (the nearest positioned ancestor of the
@@ -21551,10 +21847,15 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +    Multicol { inline_root: bool },
 +}
 +
- impl TraversePartialTree for LayoutPassState<'_> {
-     type ChildIter<'a>
-         = RefCellChildIter<'a>
-@@ -667,7 +2370,16 @@
++impl TraversePartialTree for LayoutPassState<'_> {
++    type ChildIter<'a>
++        = RefCellChildIter<'a>
++    where
++        Self: 'a;
+ 
+     fn child_ids(&self, node_id: NodeId) -> Self::ChildIter<'_> {
+         let layout_children = self.node_from_id(node_id).layout_children.borrow(); //.unwrap().as_ref();
+@@ -667,7 +2373,16 @@
      }
  
      fn set_unrounded_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -21572,7 +21873,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn resolve_calc_value(&self, calc_ptr: *const (), parent_size: f32) -> f32 {
-@@ -675,11 +2387,32 @@
+@@ -675,11 +2390,32 @@
      }
  
      #[inline(always)]
@@ -21605,7 +21906,205 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          compute_cached_layout(self, node_id, inputs, |tree, node_id, inputs| {
              tree.compute_child_layout_internal(node_id, inputs, None)
          })
-@@ -698,17 +2431,54 @@
+@@ -693,22 +2429,251 @@
+         Self: 'a;
+ 
+     fn get_oof_item_style(&self, node_id: NodeId) -> Self::OofItemStyle<'_> {
+-        self.child_layout_style(self.node_from_id(node_id))
++        let mut style = self.child_layout_style(self.node_from_id(node_id));
++        if !self.try_styles.is_empty() {
++            if let Some(value) = self.try_styles.get(&node_id) { style.style.use_fallback(value); }
++        }
++        style
++    }
++
++    fn position_try_options(&self, id: NodeId) -> (usize, Option<bool>) {
++        use style::values::specified::position::PositionTryOrder::*;
++        let node = self.node_from_id(id);
++        if !node.flags.contains(NodeFlags::POSITION_TRY_OPTIONS) { return (0,None); }
++        let Some(style) = node.primary_styles() else { return (0,None) };
++        let pos = style.get_position();
++        (pos.position_try_fallbacks.value.0.len(), match pos.position_try_order {
++            Normal => None, MostWidth => Some(true), MostHeight => Some(false),
++            MostInlineSize => Some(!style.writing_mode.is_vertical()), MostBlockSize => Some(style.writing_mode.is_vertical()),
++        })
++    }
++
++    fn uses_anchor_queries(&self,id: NodeId) -> bool { self.node_from_id(id).flags.contains(NodeFlags::ANCHOR_QUERIES) }
++    fn checks_position_overflow(&self,id: NodeId) -> bool { self.node_from_id(id).flags.contains(NodeFlags::POSITION_VISIBILITY_CHECK) }
++
++    fn oof_anchor_center(&self, id: NodeId, container: NodeId) -> taffy::Point<Option<f32>> {
++        use style::values::specified::{align::AlignFlags,position::{PositionAnchorKeyword,PositionAreaTrack}};
++        let none = taffy::Point { x:None,y:None };
++        if self.named_anchor_nodes.is_empty() { return none; }
++        let item = self.get_oof_item_style(id);
++        let pos = item.style.get_position();
++        let PositionAnchorKeyword::Ident(name) = &pos.position_anchor.value else { return none };
++        let container = self.node_from_id(container);
++        let Some(cb) = container.primary_styles() else { return none };
++        let area = pos.position_area.to_physical(cb.writing_mode,item.style.writing_mode);
++        let (inline,block) = (pos.justify_self.0.value(),pos.align_self.0.value());
++        let (x,y) = if cb.writing_mode.is_vertical() {(block,inline)} else {(inline,block)};
++        let center = |value,track| value == AlignFlags::ANCHOR_CENTER || ((value == AlignFlags::NORMAL || value == AlignFlags::AUTO) && track == Some(PositionAreaTrack::SpanAll));
++        let (x,y)=(center(x,area.first.track()),center(y,area.second.track()));
++        if !x && !y {return none;}
++        let node = self.node_from_id(id);
++        let Some((anchor,point,extent)) = self.anchor_rect(node,container,name,pos.position_anchor.scope) else {return none};
++        let old = node.anchor_scroll_axes.get();
++        node.anchor_scroll_axes.set((if x {Some(anchor)} else {old.0}, if y {Some(anchor)} else {old.1}));
++        taffy::Point {x:x.then_some(point.x+extent.width*0.5),y:y.then_some(point.y+extent.height*0.5)}
++    }
++
++    fn set_position_overflow(&mut self, id: NodeId, overflow: bool) {
++        let node = self.node_from_id(id);
++        if node.flags.contains(NodeFlags::POSITION_VISIBILITY_CHECK) {node.anchor_hidden.set(overflow);}
++    }
++
++    fn set_position_try_option(&mut self, id: NodeId, index: Option<usize>) -> bool {
++        let Some(index) = index else { self.try_styles.remove(&id); return true };
++        let computed = {
++            let node = self.node_from_id(id);
++            let Some(style) = node.primary_styles() else { return false };
++            let list = &style.get_position().position_try_fallbacks;
++            let guard = self.guard.read();
++            self.anchor_try_visits.set(self.anchor_try_visits.get().saturating_add(1));
++            self.stylist.resolve_position_try(&style, &style::shared_lock::StylesheetGuards::same(&guard), list.scope, node, &list.value.0[index])
++        };
++        if let Some(value) = computed { self.try_styles.insert(id,value); true } else { false }
++    }
++
++    fn oof_anchor_sizes(&self, node: NodeId, container: NodeId, basis: taffy::Size<f32>) -> Option<([taffy::Size<Option<f32>>;3],taffy::Rect<Option<f32>>)> {
++        use style::values::computed::length::{Size,MaxSize,Margin};
++        let node = self.node_from_id(node);
++        let container = self.node_from_id(container);
++        let item = self.get_oof_item_style(taffy_node_id(node.id));
++        let pos = item.style.get_position();
++        let margins = item.style.get_margin();
++        let calc = |lp:&style::values::computed::LengthPercentage,h,b| self.anchor_calc_size(lp,node,container,h,&item.style).map(|v|v.resolve(CSSPixelLength::new(b)).px());
++        let size = |v:&Size,h| match v { Size::AnchorSizeFunction(f) => self.anchor_dimension(f,node,container,h,&item.style), Size::AnchorContainingCalcFunction(lp) => calc(&lp.0,h,if h {basis.width} else {basis.height}), _ => None };
++        let max = |v:&MaxSize,h| match v { MaxSize::AnchorSizeFunction(f) => self.anchor_dimension(f,node,container,h,&item.style), MaxSize::AnchorContainingCalcFunction(lp) => calc(&lp.0,h,if h {basis.width} else {basis.height}), _ => None };
++        let margin = |v:&Margin,h| match v { Margin::AnchorSizeFunction(f) => self.anchor_dimension(f,node,container,h,&item.style), Margin::AnchorContainingCalcFunction(lp) => calc(lp,h,basis.width), _ => None };
++        Some(([
++            taffy::Size { width:size(&pos.width,true),height:size(&pos.height,false) },
++            taffy::Size { width:size(&pos.min_width,true),height:size(&pos.min_height,false) },
++            taffy::Size { width:max(&pos.max_width,true),height:max(&pos.max_height,false) }
++        ],taffy::Rect { left:margin(&margins.margin_left,true),right:margin(&margins.margin_right,true),top:margin(&margins.margin_top,false),bottom:margin(&margins.margin_bottom,false) }))
++    }
++
++    fn oof_anchor_insets(&self, node: NodeId, container: NodeId, size: taffy::Size<f32>, offset: taffy::Point<f32>) -> taffy::Rect<Option<f32>> {
++        use style::logical_geometry::{PhysicalSide, WritingMode};
++        use style::values::computed::position::Inset;
++        use style::values::generics::position::{GenericAnchorSide, AnchorSideKeyword as Side};
++        use style::values::specified::position::PositionAnchorKeyword;
++        let node = self.node_from_id(node);
++        let container = self.node_from_id(container);
++        let item = self.get_oof_item_style(taffy_node_id(node.id));
++        let style = &item.style;
++        let pos = style.get_position();
++        let coordinate = |target: &style::values::generics::position::TreeScoped<style::values::DashedIdent>, anchor_side: &style::values::computed::position::AnchorSide, side: PhysicalSide| {
++            if !anchor_side.valid_for(side) { return None; }
++            let (name, level) = if target.value.0.is_empty() {
++                let PositionAnchorKeyword::Ident(name) = &pos.position_anchor.value else { return None };
++                (name,pos.position_anchor.scope)
++            } else { (&target.value,target.scope) };
++            let (anchor,point, extent) = self.anchor_rect(node,container,name,level)?;
++            let horizontal = side.parallel_to(PhysicalSide::Left);
++            if matches!(&pos.position_anchor.value, PositionAnchorKeyword::Ident(default) if default == name) {
++                let (old_x,old_y) = node.anchor_scroll_axes.get();
++                node.anchor_scroll_axes.set(if horizontal {(Some(anchor),old_y)} else {(old_x,Some(anchor))});
++            }
++            let (start, length, available) = if horizontal { (point.x-offset.x,extent.width,size.width) } else { (point.y-offset.y,extent.height,size.height) };
++            let reversed = matches!(side, PhysicalSide::Right | PhysicalSide::Bottom);
++            let axis_reversed = |wm: WritingMode| {
++                let start = if wm.is_vertical() == horizontal { wm.block_start_physical_side() } else { wm.inline_start_physical_side() };
++                matches!(start, PhysicalSide::Right | PhysicalSide::Bottom)
++            };
++            let cb_wm = container.primary_styles()?.writing_mode;
++            let fraction = match *anchor_side {
++                GenericAnchorSide::Percentage(pct) => if axis_reversed(cb_wm) {1.0-pct.0} else {pct.0},
++                GenericAnchorSide::Keyword(keyword) => match keyword {
++                    Side::Center => 0.5, Side::Left | Side::Top => 0.0, Side::Right | Side::Bottom => 1.0,
++                    Side::Inside => reversed as u8 as f32, Side::Outside => !reversed as u8 as f32,
++                    Side::Start => axis_reversed(cb_wm) as u8 as f32, Side::End => !axis_reversed(cb_wm) as u8 as f32,
++                    Side::SelfStart => axis_reversed(style.writing_mode) as u8 as f32, Side::SelfEnd => !axis_reversed(style.writing_mode) as u8 as f32,
++                },
++            };
++            let coord = start + length*fraction;
++            Some(if reversed {available-coord} else {coord})
++        };
++        let resolve = |mut value: &Inset, side: PhysicalSide| {
++            use style::values::computed::length_percentage::{CalcNode,Unpacked};
++            let horizontal = side.parallel_to(PhysicalSide::Left);
++            let basis = CSSPixelLength::new(if horizontal {size.width} else {size.height});
++            for depth in 0..64 {
++                match value {
++                    Inset::AnchorFunction(func) => { if let Some(v) = coordinate(&func.target_element,&func.side,side) {return Some(v)} value = func.fallback.as_ref()?; }
++                    Inset::AnchorSizeFunction(func) => { if let Some(v) = self.anchor_dimension(func,node,container,horizontal,style) {return Some(v)} value = func.fallback.as_ref()?; }
++                    Inset::AnchorContainingCalcFunction(lp) => {
++                        let Unpacked::Calc(calc) = lp.unpack() else { return None };
++                        return calc.substitute_anchors(|term| match term {
++                            CalcNode::Anchor(func) => coordinate(&func.target_element,&(&func.side).into(),side),
++                            CalcNode::AnchorSize(func) => self.anchor_dimension(func,node,container,horizontal,style),
++                            _ => None,
++                        }).map(|v|v.resolve(basis).px());
++                    }
++                    Inset::LengthPercentage(lp) if depth != 0 => return Some(lp.resolve(basis).px()),
++                    _ => return None,
++                }
++            }
++            None
++        };
++        taffy::Rect { left:resolve(&pos.left,PhysicalSide::Left), right:resolve(&pos.right,PhysicalSide::Right), top:resolve(&pos.top,PhysicalSide::Top), bottom:resolve(&pos.bottom,PhysicalSide::Bottom) }
++    }
++
++    fn oof_anchor_area(&self, node: NodeId, container: NodeId, size: taffy::Size<f32>, offset: taffy::Point<f32>) -> Option<(taffy::Size<f32>, taffy::Point<f32>, taffy::Point<taffy::AlignSelf>)> {
++        use style::values::specified::position::{PositionAnchorKeyword, PositionAreaTrack};
++        let node = self.node_from_id(node);
++        if node.anchor_scroll_axes.get() != (None,None) { node.anchor_scroll_axes.set((None,None)); }
++        node.anchor_visibility_target.set(None);
++        node.anchor_invalid.set(false);
++        let container = self.node_from_id(container);
++        let item = self.get_oof_item_style(taffy_node_id(node.id));
++        let style = &item.style;
++        let pos = style.get_position();
++        let valid = pos.position_visibility.contains(style::values::computed::PositionVisibility::ANCHOR_VALID);
++        let visible = pos.position_visibility.contains(style::values::computed::PositionVisibility::ANCHOR_VISIBLE);
++        if pos.position_area.is_none() && !valid && !visible {return None;}
++        let default = match &pos.position_anchor.value {
++            PositionAnchorKeyword::Ident(name) => self.anchor_rect(node,container,name,pos.position_anchor.scope),
++            _ => None,
++        };
++        if visible { node.anchor_visibility_target.set(default.map(|(id,_,_)|id)); }
++        if valid && default.is_none() {
++            use style::values::computed::{position::Inset,length::{Size,MaxSize,Margin}};
++            use style::values::specified::align::AlignFlags;
++            let margin = style.get_margin();
++            let referenced = !pos.position_area.is_none() || [pos.justify_self.0,pos.align_self.0].iter().any(|v|v.value()==AlignFlags::ANCHOR_CENTER)
++                || [&pos.left,&pos.right,&pos.top,&pos.bottom].iter().any(|v|match v {Inset::AnchorFunction(f)=>f.target_element.value.0.is_empty(),Inset::AnchorSizeFunction(f)=>f.target_element.value.0.is_empty(),_=>false})
++                || [&pos.width,&pos.height,&pos.min_width,&pos.min_height].iter().any(|v|matches!(v,Size::AnchorSizeFunction(f) if f.target_element.value.0.is_empty()))
++                || [&pos.max_width,&pos.max_height].iter().any(|v|matches!(v,MaxSize::AnchorSizeFunction(f) if f.target_element.value.0.is_empty()))
++                || [&margin.margin_left,&margin.margin_top,&margin.margin_bottom,&margin.margin_right].iter().any(|v|matches!(v,Margin::AnchorSizeFunction(f) if f.target_element.value.0.is_empty()));
++            node.anchor_invalid.set(referenced);
++        }
++        if pos.position_area.is_none() { return None; }
++        let (anchor,point, extent) = default?;
++        node.anchor_scroll_axes.set((Some(anchor),Some(anchor)));
++        let area = pos.position_area.to_physical(container.primary_styles()?.writing_mode, style.writing_mode);
++        fn axis(track: PositionAreaTrack, start: f32, end: f32, low: f32, high: f32) -> (f32, f32, taffy::AlignSelf) {
++            use taffy::AlignSelf as Align;
++            match track {
++                PositionAreaTrack::Start => (low.min(start), start, Align::END),
++                PositionAreaTrack::End => (end, high.max(end), Align::START),
++                PositionAreaTrack::Center => (start, end, Align::CENTER),
++                PositionAreaTrack::SpanStart => (low.min(end), end, Align::END),
++                PositionAreaTrack::SpanEnd => (start, high.max(start), Align::START),
++                PositionAreaTrack::SpanAll => (low, high, Align::CENTER),
++            }
++        }
++        let (left,right,horizontal) = axis(area.first.track()?, point.x, point.x + extent.width, offset.x, offset.x + size.width);
++        let (top,bottom,vertical) = axis(area.second.track()?, point.y, point.y + extent.height, offset.y, offset.y + size.height);
++        Some((taffy::Size { width: right-left, height: bottom-top }, taffy::Point { x:left, y:top }, taffy::Point { x:horizontal, y:vertical }))
+     }
  
      fn clear_hoisted_children(&mut self, node_id: NodeId) {
          let containing_block = dom_node_id(node_id);
@@ -21618,10 +22117,9 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                  if node.oof_containing_block.get() == Some(containing_block) {
                      node.oof_containing_block.set(None);
 +                    self.doc.oof_hoisted.remove(&hoisted_id);
-                 }
-             }
-         }
--        hoisted.clear();
++                }
++            }
++        }
 +        let mut list = hoisted;
 +        list.clear();
 +        *self.node_from_id(node_id).hoisted_children.borrow_mut() = list;
@@ -21649,11 +22147,12 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +                        return between;
 +                    }
 +                    up = self.nodes[m].layout_parent.get();
-+                }
+                 }
 +                return false;
-+            }
+             }
 +            at = self.nodes[node].parent;
-+        }
+         }
+-        hoisted.clear();
 +        false
 +    }
 +
@@ -21662,7 +22161,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn add_hoisted_children(&mut self, node_id: NodeId, hoisted: &[NodeId]) {
-@@ -721,6 +2491,7 @@
+@@ -721,6 +2686,7 @@
              self.node_from_id(hoisted_id)
                  .oof_containing_block
                  .set(Some(containing_block));
@@ -21670,7 +22169,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          }
      }
  
-@@ -732,6 +2503,148 @@
+@@ -732,6 +2698,148 @@
      }
  }
  
@@ -21819,7 +22318,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  impl taffy::CacheTree for LayoutPassState<'_> {
      #[inline]
      fn cache_get(
-@@ -739,10 +2652,12 @@
+@@ -739,10 +2847,12 @@
          node_id: NodeId,
          inputs: &taffy::LayoutInput,
      ) -> Option<taffy::LayoutOutput> {
@@ -21836,7 +22335,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -752,9 +2667,11 @@
+@@ -752,9 +2862,11 @@
          inputs: &taffy::LayoutInput,
          layout_output: taffy::LayoutOutput,
      ) {
@@ -21851,7 +22350,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -782,16 +2699,236 @@
+@@ -782,16 +2894,236 @@
          self.child_layout_style(self.node_from_id(child_node_id))
      }
  
@@ -22092,7 +22591,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  }
  
-@@ -844,6 +2981,30 @@
+@@ -844,6 +3176,30 @@
              element.detailed_layout_info = DetailedLayoutInfo::Grid(Box::new(detailed_grid_info));
          }
      }
@@ -22123,7 +22622,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  impl RoundTree for LayoutPassState<'_> {
-@@ -852,7 +3013,19 @@
+@@ -852,7 +3208,19 @@
      }
  
      fn set_final_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -22144,7 +22643,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn is_out_of_flow(&self, node_id: NodeId) -> bool {
-@@ -868,6 +3041,30 @@
+@@ -868,6 +3236,30 @@
      fn get_hoisted_child_id(&self, node_id: NodeId, index: usize) -> NodeId {
          taffy_node_id(self.node_from_id(node_id).hoisted_children.borrow()[index])
      }
@@ -22175,7 +22674,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  pub(crate) struct TaffyDebugTree<'doc>(pub(crate) &'doc BaseDocument);
-@@ -972,3 +3169,213 @@
+@@ -972,3 +3364,213 @@
          })
      }
  }
@@ -41184,7 +41683,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          /// Whether the node is the root node of an Inline Formatting Context
          const IS_INLINE_ROOT = 0b00000001;
          /// Whether the node is the root node of an Table formatting context
-@@ -60,9 +60,319 @@
+@@ -60,9 +60,322 @@
          const IS_IN_DOCUMENT = 0b00000100;
          /// Whether the node is an inline box whose in-flow content is block-level only
          const IS_INLINE_WITH_ONLY_BLOCK_CHILDREN = 0b00001000;
@@ -41323,6 +41822,9 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +        /// pyro: a `content-visibility: auto` element a query needs rendered: relevant at the next
 +        /// determination (`BaseDocument::force_content_visibility`).
 +        const CV_FORCED = 1 << 37;
++        const POSITION_TRY_OPTIONS = 1 << 38;
++        const POSITION_VISIBILITY_CHECK = 1 << 39;
++        const ANCHOR_QUERIES = 1 << 40;
      }
  }
  
@@ -41504,7 +42006,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  impl NodeFlags {
      #[inline(always)]
      pub fn is_inline_root(&self) -> bool {
-@@ -84,6 +394,7 @@
+@@ -84,6 +397,7 @@
          self.remove(Self::IS_INLINE_ROOT);
          self.remove(Self::IS_TABLE_ROOT);
          self.remove(Self::IS_INLINE_WITH_ONLY_BLOCK_CHILDREN);
@@ -41512,7 +42014,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      }
  }
  
-@@ -101,6 +412,14 @@
+@@ -101,6 +415,14 @@
      pub layout_parent: Cell<Option<NodeId>>,
      /// A separate child list that includes anonymous collections of inline elements
      pub layout_children: RefCell<Option<ThinVec<NodeId>>>,
@@ -41527,7 +42029,18 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      /// Out-of-flow (absolutely/fixed positioned) boxes for which this node is the
      /// containing block. Recorded by Taffy's out-of-flow positioning pass. The
      /// `Layout.location` of these boxes is relative to this node's border box.
-@@ -147,7 +466,15 @@
+@@ -110,6 +432,10 @@
+     /// block). The box's `Layout.location` is relative to this node rather than
+     /// to its `layout_parent`. `None` for in-flow boxes.
+     pub oof_containing_block: Cell<Option<NodeId>>,
++    pub(crate) anchor_scroll_axes: Cell<(Option<NodeId>, Option<NodeId>)>,
++    pub anchor_hidden: Cell<bool>,
++    pub(crate) anchor_visibility_target: Cell<Option<NodeId>>,
++    pub(crate) anchor_invalid: Cell<bool>,
+     /// Anonymous block boxes created for this node during layout construction.
+     ///
+     /// Anonymous blocks live only in the slab (they are not part of the DOM
+@@ -147,7 +473,15 @@
  /// (element / anonymous block nodes) and [`DocumentData`] (the document node).
  macro_rules! universal_accessors {
      ($($(#[$meta:meta])* $field:ident / $field_mut:ident : $ty:ty),* $(,)?) => {
@@ -41544,7 +42057,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              $(
                  $(#[$meta])*
                  #[inline]
-@@ -239,19 +566,6 @@
+@@ -239,19 +573,6 @@
          }
      }
  
@@ -41564,7 +42077,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      #[inline]
      pub fn cache(&self) -> &Cache {
          &self.layout_data().cache
-@@ -267,9 +581,23 @@
+@@ -267,9 +588,23 @@
          &self.layout_data().unrounded_layout
      }
  
@@ -41591,7 +42104,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      }
  
      #[inline]
-@@ -292,6 +620,36 @@
+@@ -292,6 +627,77 @@
          &mut self.layout_data_mut().scroll_offset
      }
  
@@ -41614,7 +42127,48 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +    }
 +
 +    pub fn sticky_offset(&self) -> crate::Point<f64> {
-+        self.layout_data().sticky_offset
++        let sticky = self.layout_data().sticky_offset;
++        let delta = self.anchor_scroll_offset();
++        crate::Point { x:sticky.x+delta.x, y:sticky.y+delta.y }
++    }
++
++    pub fn anchor_scroll_offset(&self) -> crate::Point<f64> {
++        self.anchor_scroll_offset_with(|id| match id {
++            Some(id) => *self.tree()[id].scroll_offset(),
++            None => self.tree().viewport_scroll(),
++        })
++    }
++
++    pub fn anchor_scroll_offset_with(&self, scroll: impl Fn(Option<NodeId>) -> crate::Point<f64>) -> crate::Point<f64> {
++        let (anchor_x, anchor_y) = self.anchor_scroll_axes.get();
++        if anchor_x.is_none() && anchor_y.is_none() { return crate::Point::ZERO; }
++        let tree = self.tree();
++        let container = self.containing_block();
++        let sum = |id: NodeId| {
++            let mut offset = crate::Point::ZERO;
++            let mut cursor = Some(id);
++            for _ in 0..tree.len() {
++                let Some(node) = cursor.and_then(|id| tree.get(id)) else { break };
++                if cursor == container {
++                    if self.taffy_position() == taffy::Position::Fixed && node.is_root_element() && !node.root_contains_fixed() {
++                        let viewport = scroll(None);
++                        offset.x -= viewport.x;
++                        offset.y -= viewport.y;
++                    }
++                    break;
++                }
++                if node.id != id {
++                    let actual = scroll(Some(node.id));
++                    offset.x -= actual.x;
++                    offset.y -= actual.y;
++                }
++                if node.taffy_position() == taffy::Position::Fixed && node.containing_block().and_then(|cb| tree.get(cb)).is_some_and(|cb| cb.is_root_element() && !cb.root_contains_fixed()) { break; }
++                cursor = node.containing_block();
++            }
++            offset
++        };
++        if anchor_x == anchor_y { return anchor_x.map_or(crate::Point::ZERO,sum); }
++        crate::Point { x:anchor_x.map_or(0.0,|id|sum(id).x), y:anchor_y.map_or(0.0,|id|sum(id).y) }
 +    }
 +
 +    /// pyro: sets [`Self::sticky_offset`].
@@ -41628,7 +42182,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      #[inline]
      pub fn scrollable_overflow(&self) -> &KurboRect {
          &self.layout_data().scrollable_overflow
-@@ -302,6 +660,17 @@
+@@ -302,6 +708,17 @@
          &mut self.layout_data_mut().scrollable_overflow
      }
  
@@ -41646,16 +42200,21 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      /// Style data from stylo, if this node kind carries it (element or document
      /// nodes). Returns `None` for text/comment nodes.
      #[inline]
-@@ -417,6 +786,8 @@
+@@ -417,7 +834,13 @@
              parent: None,
              children: ThinVec::new(),
              layout_parent: Cell::new(None),
 +            layout_child_of: Cell::new(None),
 +            inline_table: Cell::new(None),
              oof_containing_block: Cell::new(None),
++            anchor_scroll_axes: Cell::new((None,None)),
++            anchor_hidden: Cell::new(false),
++            anchor_visibility_target: Cell::new(None),
++            anchor_invalid: Cell::new(false),
              layout_children: RefCell::new(None),
              hoisted_children: RefCell::new(ThinVec::new()),
-@@ -425,30 +796,467 @@
+             anonymous_blocks: ThinVec::new(),
+@@ -425,30 +848,467 @@
              stacking_context: None,
              sc_contribution_cache: RefCell::new(ThinVec::new()),
  
@@ -42139,7 +42698,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          let slot = self.transform_mut();
          match (slot.as_deref_mut(), transform) {
-@@ -456,7 +1264,7 @@
+@@ -456,7 +1316,7 @@
              (None, Some(new)) => *slot = Some(Box::new(new)),
              (_, None) => *slot = None,
          }
@@ -42148,7 +42707,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      }
  
      pub fn pe_by_index(&self, index: usize) -> Option<NodeId> {
-@@ -483,13 +1291,47 @@
+@@ -483,13 +1343,47 @@
          Some(
              if self.element_data().is_some_and(|el| el.is_button_input()) {
                  stylo_taffy::convert::button_input_display(display)
@@ -42196,7 +42755,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          let style = self.primary_styles();
          let style = style.as_ref();
  
-@@ -514,14 +1356,35 @@
+@@ -514,14 +1408,35 @@
          }
          let display = self.display_style().unwrap_or(StyloDisplay::inline());
          match display.outside() {
@@ -42236,7 +42795,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  } else {
                      false
                  }
-@@ -537,6 +1400,26 @@
+@@ -537,6 +1452,26 @@
              .contains(NodeFlags::IS_INLINE_WITH_ONLY_BLOCK_CHILDREN)
      }
  
@@ -42263,7 +42822,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      pub fn is_whitespace_node(&self) -> bool {
          match &self.data {
              NodeData::Text(data) => data.content.chars().all(|c| c.is_ascii_whitespace()),
-@@ -633,6 +1516,56 @@
+@@ -633,6 +1568,56 @@
              .is_some_and(|flag| flag.load(Ordering::Relaxed))
      }
  
@@ -42320,7 +42879,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      /// Clears the damaged_descendants flag on this node.
      pub fn unset_damaged_descendants(&self) {
          if let Some(flag) = self.damaged_descendants_flag() {
-@@ -649,6 +1582,8 @@
+@@ -649,6 +1634,8 @@
      pub fn mark_damaged(&self) {
          if let Some(flag) = self.damaged_descendants_flag() {
              if flag.swap(true, Ordering::Relaxed) {
@@ -42329,7 +42888,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  return;
              }
          }
-@@ -659,6 +1594,8 @@
+@@ -659,6 +1646,8 @@
              // because all further ancestors must also have it set
              if let Some(flag) = parent.damaged_descendants_flag() {
                  if flag.swap(true, Ordering::Relaxed) {
@@ -42338,7 +42897,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                      break;
                  }
              }
-@@ -666,6 +1603,55 @@
+@@ -666,6 +1655,55 @@
          }
      }
  
@@ -42394,7 +42953,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      // pub fn damage_mut(&mut self) -> Option<&mut RestyleDamage> {
      //     self.stylo_element_data
      //         .get_mut()
-@@ -761,8 +1747,8 @@
+@@ -761,8 +1799,8 @@
  
      pub fn focus(&mut self, shell_provider: Arc<dyn ShellProvider>) {
          if let Some(data) = self.element_data_mut() {
@@ -42405,7 +42964,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          }
          self.mark_ancestors_dirty();
  
-@@ -864,9 +1850,13 @@
+@@ -864,9 +1902,13 @@
              .and_then(|el| el.text_input_data())
          {
              if !input_data.is_multiline {
@@ -42421,7 +42980,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
                  return y_offset as f64;
              }
-@@ -945,6 +1935,11 @@
+@@ -945,6 +1987,11 @@
          self.downcast_element()?.attr(name)
      }
  
@@ -42433,7 +42992,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      pub fn has_attr(&self, name: impl PartialEq<LocalName>) -> bool {
          self.downcast_element()
              .is_some_and(|elem| elem.has_attr(name))
-@@ -965,11 +1960,14 @@
+@@ -965,11 +2012,14 @@
  pub struct TextNodeData {
      /// The textual content of the text node
      pub content: String,
@@ -42449,7 +43008,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      }
  }
  
-@@ -1061,6 +2059,11 @@
+@@ -1061,6 +2111,11 @@
          matches!(self.data, NodeData::Element { .. })
      }
  
@@ -42461,7 +43020,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      pub fn is_anonymous(&self) -> bool {
          matches!(self.data, NodeData::AnonymousBlock { .. })
      }
-@@ -1148,6 +2151,11 @@
+@@ -1148,6 +2203,11 @@
          Some(&attr.value)
      }
  
@@ -42473,7 +43032,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      pub fn primary_styles(&self) -> Option<impl Deref<Target = ServoArc<ComputedValues>>> {
          self.try_stylo_element_data()
              .and_then(|stylo| stylo.primary_styles())
-@@ -1161,37 +2169,161 @@
+@@ -1161,37 +2221,161 @@
      pub fn layout_style(&self) -> stylo_taffy::TaffyStyloStyle<ComputedStyleRef<'_>> {
          let styles = self
              .try_stylo_element_data()
@@ -42640,7 +43199,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      /// The node's style for Taffy, expressed in the axes of the writing mode `layout_wm` (the writing
      /// mode of the box laying this node out). Used for the child-style getters.
      #[cfg(feature = "writing-mode")]
-@@ -1234,6 +2366,19 @@
+@@ -1234,6 +2418,19 @@
              .unwrap_or(stylo_taffy::WritingMode::empty())
      }
  
@@ -42660,7 +43219,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      /// The node's `display` as a [`taffy::Display`]. Returns [`taffy::Display::Block`]
      /// for nodes without computed styles (e.g. text nodes).
      pub fn taffy_display(&self) -> taffy::Display {
-@@ -1290,7 +2435,7 @@
+@@ -1290,7 +2487,7 @@
              }
              NodeData::Element(..) | NodeData::AnonymousBlock(..) => {
                  for child_id in self.children.iter() {
@@ -42669,7 +43228,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  }
              }
              _ => {}
-@@ -1327,8 +2472,47 @@
+@@ -1327,8 +2524,47 @@
              .unwrap_or(0)
      }
  
@@ -42718,7 +43277,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          let Some(style) = self.primary_styles() else {
              return false;
          };
-@@ -1336,7 +2520,7 @@
+@@ -1336,7 +2572,7 @@
          let position = style.clone_position();
          let has_z_index = !style.clone_z_index().is_auto();
  
@@ -42727,7 +43286,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              return true;
          }
  
-@@ -1358,10 +2542,37 @@
+@@ -1358,10 +2594,37 @@
              return true;
          }
  
@@ -42765,7 +43324,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          if style.get_box().isolation == Isolation::Isolate {
              return true;
          }
-@@ -1369,7 +2580,48 @@
+@@ -1369,7 +2632,48 @@
          if style.get_effects().mix_blend_mode != style::computed_values::mix_blend_mode::T::Normal {
              return true;
          }
@@ -42815,7 +43374,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          false
      }
-@@ -1397,12 +2649,14 @@
+@@ -1397,12 +2701,14 @@
              return true;
          }
  
@@ -42836,7 +43395,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      }
  
      /// Takes an (x, y) position (relative to the *parent's* top-left corner) and returns:
-@@ -1431,9 +2685,32 @@
+@@ -1431,9 +2737,32 @@
          y: f32,
          scale: f64,
          scrollbar: &mut Option<crate::node::ScrollbarRef>,
@@ -42863,13 +43422,13 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +            return None;
 +        }
 +        // pyro: nor is a box a line clamp discarded (`layout::line_clamp`): it is not painted.
-+        if self.flags.contains(NodeFlags::HIDDEN_BY_CLAMP) {
++        if self.flags.contains(NodeFlags::HIDDEN_BY_CLAMP) || self.hidden_by_anchor() {
 +            return None;
 +        }
  
          // Don't hit on visbility:hidden elements
          if let Some(style) = self.primary_styles() {
-@@ -1500,11 +2777,15 @@
+@@ -1500,11 +2829,15 @@
              || y < overflow_rect.top() + client_y
              || y > overflow_rect.bottom() + client_y);
  
@@ -42885,7 +43444,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  x >= bbox.left && x <= bbox.right && y >= bbox.top && y <= bbox.bottom
              }
              None => false,
-@@ -1519,7 +2800,25 @@
+@@ -1519,7 +2852,25 @@
              && y >= (overflow.y0 / scale) as f32
              && y <= (overflow.y1 / scale) as f32;
  
@@ -42912,7 +43471,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              return None;
          }
  
-@@ -1533,6 +2832,8 @@
+@@ -1533,6 +2884,8 @@
          {
              *scrollbar = Some(sb);
          }
@@ -42921,7 +43480,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          // Text clusters and callers of the returned coordinates work in the
          // inline root's content box, but embedded boxes store border-box
-@@ -1541,10 +2842,7 @@
+@@ -1541,10 +2894,7 @@
          // padded inline root are hit one padding down and right of where
          // they are painted.
          let content_box_offset = if self.flags.is_inline_root() {
@@ -42933,7 +43492,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          } else {
              taffy::Point { x: 0.0, y: 0.0 }
          };
-@@ -1556,30 +2854,46 @@
+@@ -1556,30 +2906,46 @@
                      let Some(child) = self.tree().get(hoisted_child.node_id) else {
                          continue;
                      };
@@ -42992,7 +43551,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                      child_x -= self.scroll_offset().x as f32;
                      child_y -= self.scroll_offset().y as f32;
                      let viewport_scroll = self.tree().viewport_scroll();
-@@ -1590,25 +2904,93 @@
+@@ -1590,25 +2956,93 @@
                  child_x -= offset.x;
                  child_y -= offset.y;
              }
@@ -43051,13 +43610,13 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +                if let Some(offset) = child.lifted_paint_offset(self.id) {
 +                    child_x -= offset.x;
 +                    child_y -= offset.y;
-+                }
+                 }
 +                ITEMS_ONLY.set(true);
 +                let hit = crate::util::ensure_stack(|| child.hit_inner(child_x, child_y, scale, scrollbar));
 +                ITEMS_ONLY.set(false);
 +                if let Some(hit) = hit {
 +                    return Some(hit);
-                 }
++                }
 +                items_done.insert(*child_id);
 +            }
 +        }
@@ -43101,7 +43660,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              }
          }
  
-@@ -1642,6 +3024,24 @@
+@@ -1642,6 +3076,24 @@
              }
          }
  
@@ -43126,7 +43685,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          // Self (this node)
          if matches_self && !pointer_events_none {
              return Some(HitResult {
-@@ -1716,7 +3116,7 @@
+@@ -1716,7 +3168,7 @@
              return false;
          };
          if self.flags.is_inline_root()
@@ -43135,7 +43694,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          {
              return false;
          }
-@@ -1741,8 +3141,13 @@
+@@ -1741,8 +3193,13 @@
          let y = y + self.final_layout().location.y - self.scroll_offset().y as f32;
  
          // Recurse up the positioning hierarchy
@@ -43150,7 +43709,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              .unwrap_or(crate::util::Point { x, y })
      }
  
-@@ -1818,8 +3223,28 @@
+@@ -1818,8 +3275,28 @@
  
          let root_layout = inline_root.unrounded_layout();
          let content_box_inset = root_layout.padding + root_layout.border;
@@ -43181,7 +43740,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          fn union(acc: &mut Option<taffy::Rect<f32>>, left: f32, top: f32, right: f32, bottom: f32) {
              *acc = Some(match *acc {
-@@ -1877,11 +3302,36 @@
+@@ -1877,11 +3354,36 @@
                  }
              }
  
@@ -43223,7 +43782,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              })
          }))
      }
-@@ -1938,14 +3388,14 @@
+@@ -1938,14 +3440,14 @@
      /// borders and scrollbar)
      pub fn client_width(&self) -> f32 {
          let layout = self.final_layout();
@@ -43674,7 +44233,7 @@ diff --git a/packages/blitz-dom/src/node/stylo_data.rs b/packages/blitz-dom/src/
      }
  }
  
-@@ -131,12 +251,104 @@
+@@ -131,12 +251,110 @@
  /// Borrow of a node's stylo element data that `Deref`s directly to the primary
  /// [`ComputedValues`](style::properties::ComputedValues), suitable for wrapping
  /// in [`stylo_taffy::TaffyStyloStyle`].
@@ -43683,6 +44242,12 @@ diff --git a/packages/blitz-dom/src/node/stylo_data.rs b/packages/blitz-dom/src/
 +    primary: StyleDataRef<'a>,
 +    // Layout-derived table internals never replace the authored primary style.
 +    layout: Option<&'a style::properties::ComputedValues>,
++}
++
++impl<'a> ComputedStyleRef<'a> {
++    pub(crate) fn use_fallback(&mut self, style: &'a style::properties::ComputedValues) {
++        self.layout = Some(style);
++    }
 +}
 +
 +/// A table cell's style as its own layout reads it, when that differs from its primary style
@@ -51146,11 +51711,48 @@ diff --git a/packages/blitz-dom/src/resolved_style.rs b/packages/blitz-dom/src/r
 @@ -364,6 +379,7 @@
              },
          };
-
+ 
 +        let styles = sampled_style.unwrap_or(styles);
          let display = styles.clone_display();
          // Non-atomic inline elements are laid out as style spans within their
          // inline root's text layout rather than as boxes of their own, so their
+@@ -398,6 +414,36 @@
+         let format_used_px = |px: f32| format_px(px / zoom);
+ 
+         // Layout-dependent "used value" special cases
++        if has_layout_box && matches!(property_name, "min-width" | "min-height" | "max-width" | "max-height") {
++                use style::values::computed::length::{MaxSize, Size};
++                let horizontal = property_name.ends_with("width");
++                let container = node.containing_block().and_then(|id| self.get_node(id)).filter(|_| node.is_out_of_flow());
++                let pos = styles.get_position();
++                macro_rules! resolved_size {
++                    ($kind:ident,$value:expr,$initial:expr) => {{
++                        let mut value = $value;
++                        for _ in 0..64 {
++                            match value {
++                                $kind::AnchorSizeFunction(func) => {
++                                    if let Some(size) = container.and_then(|cb|self.anchor_dimension(func,node,cb,horizontal,styles)) { return format_used_px(size); }
++                                    let Some(fallback) = func.fallback.as_ref() else {return $initial.into()};
++                                    value = fallback;
++                                }
++                                $kind::AnchorContainingCalcFunction(lp) => return container.and_then(|cb| self.anchor_calc_size(&lp.0,node,cb,horizontal,styles)).map_or_else(||$initial.into(),|v|v.to_css_string()),
++                                _ => return value.to_css_string(),
++                            }
++                        }
++                        return $initial.into();
++                    }}
++                }
++                if property_name.starts_with("min") {
++                    let val = if horizontal {&pos.min_width} else {&pos.min_height};
++                    if matches!(val, Size::AnchorSizeFunction(_) | Size::AnchorContainingCalcFunction(_)) {resolved_size!(Size,val,"0px");}
++                } else {
++                    let val = if horizontal {&pos.max_width} else {&pos.max_height};
++                    if matches!(val, MaxSize::AnchorSizeFunction(_) | MaxSize::AnchorContainingCalcFunction(_)) {resolved_size!(MaxSize,val,"none");}
++                }
++        }
+         match property_name {
+             // Shorthands of longhands that resolve to used values
+             "margin" | "margin-block" | "margin-inline" | "padding" | "padding-block"
 diff --git a/packages/blitz-dom/src/scroll_timeline.rs b/packages/blitz-dom/src/scroll_timeline.rs
 new file mode 100644
 --- /dev/null

@@ -910,6 +910,10 @@ impl GeometrySource for BlitzGeometry {
         RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.resolved_style_value(self.page, key, property))
     }
 
+    fn anchor_scroll_shift(&self, key: u64, scroll: &dyn Fn(Option<u64>) -> (f64, f64)) -> (f64, f64) {
+        RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.anchor_scroll_shift(self.page, key, scroll)).unwrap_or_default()
+    }
+
     fn resolved_transform_value(&self, key: u64, style: &style::properties::ComputedValues) -> Option<String> {
         RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.resolved_transform_value(self.page, key, style))
     }

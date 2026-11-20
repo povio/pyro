@@ -86,6 +86,7 @@ pub struct UserAgentStylesheet(DocumentStyleSheet);
 pub(crate) fn init_stylo_prefs() {
     static INIT: Once = Once::new();
     INIT.call_once(|| {
+        style_config::set_pref!("layout.css.anchor-positioning.enabled", true);
         style_config::set_pref!("layout.css.flexbox-balance.enabled", true);
         // pyro: `offset-path: url()` to an SVG shape element (resolve.rs `motion_url_path`).
         style_config::set_pref!("layout.css.motion-path-url.enabled", true);
@@ -662,6 +663,10 @@ pub struct BaseDocument {
     /// pyro: the scroll pseudo-element boxes may be out of date: a style traversal ran or the
     /// tree changed since `resolve_scroll_markers` (`layout::scroll_markers`).
     pub(crate) scroll_markers_dirty: bool,
+    pub(crate) named_anchor_nodes: HashMap<style::values::DashedIdent, HashSet<NodeId>>,
+    anchor_node_names: HashMap<NodeId, style::values::specified::position::AnchorNameIdent>,
+    pub(crate) anchor_lookup_visits: std::cell::Cell<u64>,
+    pub(crate) anchor_try_visits: std::cell::Cell<u64>,
     /// pyro: an element styled with a `scroll-marker-group` that names a side, or with
     /// `scroll-target-group: auto` (sticky).
     pub(crate) scroll_marker_groups: bool,
@@ -976,6 +981,10 @@ impl BaseDocument {
             first_letter_changed: Vec::new(),
             marker_items_restyled: Vec::new(),
             scroll_markers_dirty: true,
+            named_anchor_nodes: HashMap::new(),
+            anchor_node_names: HashMap::new(),
+            anchor_lookup_visits: Default::default(),
+            anchor_try_visits: Default::default(),
             scroll_marker_groups: false,
             scroll_pseudo_owners: Default::default(),
             scroll_target_groups: Vec::new(),
@@ -1444,8 +1453,30 @@ impl BaseDocument {
                 }
             }
         }
+        self.update_anchor_names(node_id, None);
         self.nodes.remove(node_id)
     }
+
+    pub(crate) fn update_anchor_names(&mut self, node_id: NodeId, names: Option<style::values::specified::position::AnchorNameIdent>) {
+        if names.is_none() && self.anchor_node_names.is_empty() { return; }
+        if self.anchor_node_names.get(&node_id) == names.as_ref() { return; }
+        if let Some(old) = self.anchor_node_names.remove(&node_id) {
+            for name in old.0.iter() {
+                if let Some(ids) = self.named_anchor_nodes.get_mut(name) {
+                    ids.remove(&node_id);
+                    if ids.is_empty() { self.named_anchor_nodes.remove(name); }
+                }
+            }
+        }
+        if let Some(names) = names {
+            for name in names.0.iter() { self.named_anchor_nodes.entry(name.clone()).or_default().insert(node_id); }
+            self.anchor_node_names.insert(node_id, names);
+        }
+    }
+
+    pub fn anchor_candidate_visits(&self) -> u64 { self.anchor_lookup_visits.get() }
+    pub fn has_named_anchors(&self) -> bool { !self.named_anchor_nodes.is_empty() }
+    pub fn anchor_try_visits(&self) -> u64 { self.anchor_try_visits.get() }
 
     /// pyro: takes `id` out of the hoisted list of `containing_block` and lays that box out
     /// again: it lists the boxes it laid out, and `id` is no longer one of them.

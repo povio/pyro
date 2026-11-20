@@ -2160,6 +2160,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
     ) {
         let node = &self.dom.as_ref().tree()[node_id];
         // pyro: a table cell in collapsed columns only is not rendered (CSS 2.1 § 17.5.5).
+        if node.hidden_by_anchor() { return; }
         if let Some(table) = node.layout_parent.get().and_then(|parent| self.dom.as_ref().get_node(parent))
             && let Some(element) = table.element_data()
             && let blitz_dom::node::SpecialElementData::TableRoot(context) = &element.special_data

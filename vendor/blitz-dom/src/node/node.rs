@@ -195,6 +195,9 @@ bitflags! {
         /// pyro: a `content-visibility: auto` element a query needs rendered: relevant at the next
         /// determination (`BaseDocument::force_content_visibility`).
         const CV_FORCED = 1 << 37;
+        const POSITION_TRY_OPTIONS = 1 << 38;
+        const POSITION_VISIBILITY_CHECK = 1 << 39;
+        const ANCHOR_QUERIES = 1 << 40;
     }
 }
 
@@ -429,6 +432,10 @@ pub struct Node {
     /// block). The box's `Layout.location` is relative to this node rather than
     /// to its `layout_parent`. `None` for in-flow boxes.
     pub oof_containing_block: Cell<Option<NodeId>>,
+    pub(crate) anchor_scroll_axes: Cell<(Option<NodeId>, Option<NodeId>)>,
+    pub anchor_hidden: Cell<bool>,
+    pub(crate) anchor_visibility_target: Cell<Option<NodeId>>,
+    pub(crate) anchor_invalid: Cell<bool>,
     /// Anonymous block boxes created for this node during layout construction.
     ///
     /// Anonymous blocks live only in the slab (they are not part of the DOM
@@ -639,7 +646,48 @@ impl Node {
     }
 
     pub fn sticky_offset(&self) -> crate::Point<f64> {
-        self.layout_data().sticky_offset
+        let sticky = self.layout_data().sticky_offset;
+        let delta = self.anchor_scroll_offset();
+        crate::Point { x:sticky.x+delta.x, y:sticky.y+delta.y }
+    }
+
+    pub fn anchor_scroll_offset(&self) -> crate::Point<f64> {
+        self.anchor_scroll_offset_with(|id| match id {
+            Some(id) => *self.tree()[id].scroll_offset(),
+            None => self.tree().viewport_scroll(),
+        })
+    }
+
+    pub fn anchor_scroll_offset_with(&self, scroll: impl Fn(Option<NodeId>) -> crate::Point<f64>) -> crate::Point<f64> {
+        let (anchor_x, anchor_y) = self.anchor_scroll_axes.get();
+        if anchor_x.is_none() && anchor_y.is_none() { return crate::Point::ZERO; }
+        let tree = self.tree();
+        let container = self.containing_block();
+        let sum = |id: NodeId| {
+            let mut offset = crate::Point::ZERO;
+            let mut cursor = Some(id);
+            for _ in 0..tree.len() {
+                let Some(node) = cursor.and_then(|id| tree.get(id)) else { break };
+                if cursor == container {
+                    if self.taffy_position() == taffy::Position::Fixed && node.is_root_element() && !node.root_contains_fixed() {
+                        let viewport = scroll(None);
+                        offset.x -= viewport.x;
+                        offset.y -= viewport.y;
+                    }
+                    break;
+                }
+                if node.id != id {
+                    let actual = scroll(Some(node.id));
+                    offset.x -= actual.x;
+                    offset.y -= actual.y;
+                }
+                if node.taffy_position() == taffy::Position::Fixed && node.containing_block().and_then(|cb| tree.get(cb)).is_some_and(|cb| cb.is_root_element() && !cb.root_contains_fixed()) { break; }
+                cursor = node.containing_block();
+            }
+            offset
+        };
+        if anchor_x == anchor_y { return anchor_x.map_or(crate::Point::ZERO,sum); }
+        crate::Point { x:anchor_x.map_or(0.0,|id|sum(id).x), y:anchor_y.map_or(0.0,|id|sum(id).y) }
     }
 
     /// pyro: sets [`Self::sticky_offset`].
@@ -789,6 +837,10 @@ impl Node {
             layout_child_of: Cell::new(None),
             inline_table: Cell::new(None),
             oof_containing_block: Cell::new(None),
+            anchor_scroll_axes: Cell::new((None,None)),
+            anchor_hidden: Cell::new(false),
+            anchor_visibility_target: Cell::new(None),
+            anchor_invalid: Cell::new(false),
             layout_children: RefCell::new(None),
             hoisted_children: RefCell::new(ThinVec::new()),
             anonymous_blocks: ThinVec::new(),
@@ -2708,7 +2760,7 @@ impl Node {
             return None;
         }
         // pyro: nor is a box a line clamp discarded (`layout::line_clamp`): it is not painted.
-        if self.flags.contains(NodeFlags::HIDDEN_BY_CLAMP) {
+        if self.flags.contains(NodeFlags::HIDDEN_BY_CLAMP) || self.hidden_by_anchor() {
             return None;
         }
 

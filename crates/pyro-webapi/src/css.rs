@@ -355,6 +355,13 @@ enum StyleSource {
 }
 
 impl StyleData {
+    fn is_position_try(&self) -> bool {
+        matches!(&self.source, StyleSource::Rule { node, .. } if matches!(&node.kind, RuleKind::Other { rule_type: 0, text } if text.borrow().starts_with("@position-try ")))
+    }
+
+    fn allows(&self, name: &str) -> bool {
+        !self.is_position_try() || DeclarationBlock::position_try_allows(name)
+    }
     /// The block's text: the `style` attribute, or the rule's block.
     fn text(&self) -> String {
         match &self.source {
@@ -454,6 +461,9 @@ impl StyleData {
     /// declaration replaces its own in place and the others stay as written;
     /// otherwise the whole block is parsed, updated and serialized.
     fn set(&self, name: &str, value: &str, important: bool) -> JsResult<()> {
+        if !self.allows(name) || (important && self.is_position_try()) {
+            return Ok(());
+        }
         let value = value.trim();
         if value.is_empty() {
             self.remove(name)?;
@@ -531,6 +541,9 @@ impl StyleData {
     }
     /// `cssText = text`: the block parsed from `text`, serialized.
     fn set_css_text(&self, text: &str) -> JsResult<()> {
+        if self.is_position_try() {
+            return self.write_raw(DeclarationBlock::position_try(text).css_text());
+        }
         self.write(&Block::parse(text))
     }
 }
@@ -598,10 +611,12 @@ impl JsClass for CssStyleDeclaration {
         });
         def.named(false, |s, st, name| {
             let Some(property) = named_property(name) else { return Ok(None) };
+            if !st.allows(&property) { return Ok(None); }
             Ok(Some(s.string(&st.get(&property))))
         });
         def.named_setter(|_s, st, name, v| {
             let Some(property) = named_property(name) else { return Ok(false) };
+            if !st.allows(&property) { return Ok(false); }
             let value = if v.is_null() { String::new() } else { dom_string(v)? };
             st.set(&property, &value, false)?;
             Ok(true)
@@ -1168,7 +1183,7 @@ impl JsClass for CssRule {
 
 /// `(head, body)` of an at-rule kept as text: before its `{` and inside it.
 fn split_block(text: &str) -> Option<(&str, &str)> {
-    let open = text.find('{')?;
+    let open = if text.starts_with("@position-try ") { text.find(" { ")? + 1 } else { text.find('{')? };
     let close = text.rfind('}').filter(|&c| c > open)?;
     Some((text[..open].trim_end(), &text[open + 1..close]))
 }
@@ -1579,8 +1594,23 @@ rule_class!(CssFontPaletteValuesRule, "CSSFontPaletteValuesRule", CssRule, |def|
 rule_class!(CssStartingStyleRule, "CSSStartingStyleRule", CssGroupRule);
 rule_class!(CssScopeRule, "CSSScopeRule", CssGroupRule);
 rule_class!(CssPositionTryRule, "CSSPositionTryRule", CssRule, |def| {
-    def.getter("name", |s, r| Ok(s.string(&rule_prelude(r))));
+    def.getter("name", |s, r| {
+        let text = rule_text(r);
+        Ok(s.string(split_block(&text).and_then(|(head, _)| head.strip_prefix("@position-try ")).unwrap_or("")))
+    });
+    def.accessor("style", rule_style::<CssPositionTryDescriptors>, |_s, r, v| {
+        let source = StyleSource::Rule { owner: r.owner.hold()?, node: r.node()?.clone() };
+        StyleData { source }.set_css_text(&dom_string(v)?)
+    });
 });
+
+pub struct CssPositionTryDescriptors;
+impl JsClass for CssPositionTryDescriptors {
+    const NAME: &'static str = "CSSPositionTryDescriptors";
+    type Data = StyleData;
+    type Parent = CssStyleDeclaration;
+    fn define(_: &mut ClassDef<Self>) {}
+}
 rule_class!(CssViewTransitionRule, "CSSViewTransitionRule", CssRule);
 
 /// `CSSRule.type` of `@import`.
@@ -2697,6 +2727,7 @@ pub(crate) fn set_adopted_style_sheets(s: &Scope<'_>, n: &NodeData, value: Value
 
 pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<CssStyleDeclaration>();
+    engine.register::<CssPositionTryDescriptors>();
     engine.register::<CssStyleProperties>();
     engine.register::<StyleSheet>();
     engine.register::<CssStyleSheet>();

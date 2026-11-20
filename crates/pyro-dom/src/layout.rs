@@ -1639,9 +1639,10 @@ impl Layout {
                 (0.0, 0.0)
             };
             let (kx, ky) = if cache.has_sticky { self.sticky_shift(dom, result, el) } else { (0.0, 0.0) };
+            let (ax, ay) = self.anchor_shift(dom, el);
             let (sx, sy) =
                 if b.fixed { (0.0, 0.0) } else { (self.window_scroll.0 as f64, self.window_scroll.1 as f64) };
-            Rect { x: b.rect.x - sx - dx + kx, y: b.rect.y - sy - dy + ky, width: b.rect.width, height: b.rect.height }
+            Rect { x: b.rect.x - sx - dx + kx + ax, y: b.rect.y - sy - dy + ky + ay, width: b.rect.width, height: b.rect.height }
         } else {
             Rect::default()
         };
@@ -1749,6 +1750,20 @@ impl Layout {
     /// many sticky table heads no longer gets every sticky box after each
     /// write.
     fn sticky_shift_lazy(&self, dom: &Dom, node: NodeId) -> (f64, f64) {
+        let (x,y) = self.anchor_shift(dom,node);
+        let (sx,sy) = self.sticky_only_shift_lazy(dom,node);
+        (x+sx,y+sy)
+    }
+
+    fn anchor_shift(&self, dom: &Dom, node: NodeId) -> (f64, f64) {
+        if self.element_scroll.is_empty() && self.window_scroll == (0,0) { return (0.0,0.0); }
+        self.external.as_ref().map_or((0.0,0.0),|source| source.anchor_scroll_shift(crate::snapshot::render_key(node), &|key| {
+            let value = match key { Some(key) => node_of(dom,key).and_then(|el| self.element_scroll.get(&el).copied()).unwrap_or_default(), None => self.window_scroll };
+            (f64::from(value.0),f64::from(value.1))
+        }))
+    }
+
+    fn sticky_only_shift_lazy(&self, dom: &Dom, node: NodeId) -> (f64, f64) {
         let styled_without_sticky = self.external.as_ref().filter(|s| s.active()).is_some_and(|source| {
             self.style.engine_styled(dom).is_some() && !source.has_sticky()
         });
@@ -1760,7 +1775,7 @@ impl Layout {
         if let Some((k, m)) = self.sticky.borrow().as_ref() {
             if *k == key {
                 let m = m.clone();
-                return self.sticky_shift_in(dom, &m, node);
+                return self.sticky_only_shift_in(dom, &m, node);
             }
         }
         {
@@ -1787,6 +1802,12 @@ impl Layout {
     }
 
     fn sticky_shift_in(&self, dom: &Dom, sticky: &FxHashMap<NodeId, ExternalSticky>, node: NodeId) -> (f64, f64) {
+        let (x,y) = self.anchor_shift(dom,node);
+        let (sx,sy) = self.sticky_only_shift_in(dom,sticky,node);
+        (x+sx,y+sy)
+    }
+
+    fn sticky_only_shift_in(&self, dom: &Dom, sticky: &FxHashMap<NodeId, ExternalSticky>, node: NodeId) -> (f64, f64) {
         if sticky.is_empty() {
             return (0.0, 0.0);
         }
@@ -4298,6 +4319,9 @@ impl Layout {
     fn resolved_value(&self, dom: &Dom, el: NodeId, name: &str, value: &str) -> Option<String> {
         let position = || self.position_of(dom, el);
         match name {
+            "min-width" | "min-height" | "max-width" | "max-height" if value.contains("anchor-size(") => {
+                self.synced_geometry_source(dom)?.resolved_style_value(crate::snapshot::render_key(el),name)
+            }
             "min-width" | "min-height" if value == "auto" => {
                 // The box's parent: display:contents ancestors generate none.
                 let mut parent = dom.parent_element(el).ok().flatten();
@@ -4309,7 +4333,7 @@ impl Layout {
                 let out_of_flow = matches!(position(), Position::Absolute | Position::Fixed);
                 (!item || out_of_flow).then(|| "0px".into())
             }
-            "top" | "bottom" | "left" | "right" if value == "auto" || value.contains('%') => {
+            "top" | "bottom" | "left" | "right" if value == "auto" || value.contains('%') || value.contains("anchor(") || value.contains("anchor-size(") => {
                 self.resolved_inset(dom, el, name, value, position()).or_else(|| clamp_layout_units(value))
             }
             _ => clamp_layout_units(value),
@@ -4417,7 +4441,7 @@ impl Layout {
                 // A specified inset (percentage or calc()) is the computed value
                 // absolutized against the containing block, also when the box is
                 // over-constrained; only `auto` reports the box's used position.
-                if value != "auto" {
+                if value != "auto" && !value.contains("anchor(") && !value.contains("anchor-size(") {
                     let basis = if horizontal { block.width } else { block.height };
                     let (len, percent) =
                         crate::computed::resolve_len(value, &crate::computed::LengthContext::fonts(16.0, 16.0))?;

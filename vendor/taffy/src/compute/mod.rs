@@ -130,6 +130,7 @@ pub fn compute_root_layout_in(
         let oof::OofBoxLayout { layout, surfaced, .. } = oof::layout_oof_box(
             tree,
             candidate,
+            None,
             area_size,
             Point::ZERO,
             direction,

@@ -24,6 +24,7 @@ use style::values::computed::CSSPixelLength;
 pub(crate) fn enable_features() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
+        style_config::set_pref!("layout.css.anchor-positioning.enabled", true);
         style_config::set_pref!("layout.css.flexbox-balance.enabled", true);
         style_config::set_pref!("layout.css.text-box.enabled", true);
         // pyro: `font-format()`/`font-tech()` in `@supports`, `tech()` in `@font-face` sources.

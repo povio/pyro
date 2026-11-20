@@ -274,7 +274,7 @@ impl Descent<'_> {
 
     fn visit(&mut self, id: NodeId) {
         let Some(node) = self.doc.get_node(id) else { return };
-        if !node.is_element() {
+        if !node.is_element() || node.hidden_by_anchor() {
             return;
         }
         // Not rendered (display: none, or inside it: never styled): no box

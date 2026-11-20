@@ -257,6 +257,12 @@ pub struct ComputedStyleRef<'a> {
     layout: Option<&'a style::properties::ComputedValues>,
 }
 
+impl<'a> ComputedStyleRef<'a> {
+    pub(crate) fn use_fallback(&mut self, style: &'a style::properties::ComputedValues) {
+        self.layout = Some(style);
+    }
+}
+
 /// A table cell's style as its own layout reads it, when that differs from its primary style
 /// `style`. `collapsed_border` is the cell's half of the collapsed borders around it in a table
 /// without uniform ones. Stored as [`LayoutStyles::cell`].

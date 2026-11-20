@@ -427,6 +427,10 @@ pub struct ScopedNameList(
 );
 
 impl ScopedNameList {
+    /// Whether this scope captures the given dashed identifier.
+    pub fn includes(&self, name: &DashedIdent) -> bool {
+        self.0.iter().any(|ident| ident.0 == name.0 || ident.0 == atom!("all"))
+    }
     /// Return the `none` value.
     pub fn none() -> Self {
         Self(crate::ArcSlice::default())
@@ -827,7 +831,7 @@ impl PositionTryOrder {
     ToShmem,
     ToTyped,
 )]
-#[css(bitflags(single = "always", mixed = "anchors-valid,anchors-visible,no-overflow"))]
+#[css(bitflags(single = "always", mixed = "anchor-valid,anchor-visible,no-overflow"))]
 #[repr(C)]
 /// Specified keyword values for the position-visibility property.
 pub struct PositionVisibility(u8);
@@ -835,10 +839,10 @@ bitflags! {
     impl PositionVisibility: u8 {
         /// Element is displayed without regard for its anchors or its overflowing status.
         const ALWAYS = 0;
-        /// anchors-valid
-        const ANCHORS_VALID = 1 << 0;
-        /// anchors-visible
-        const ANCHORS_VISIBLE = 1 << 1;
+        /// anchor-valid
+        const ANCHOR_VALID = 1 << 0;
+        /// anchor-visible
+        const ANCHOR_VISIBLE = 1 << 1;
         /// no-overflow
         const NO_OVERFLOW = 1 << 2;
     }

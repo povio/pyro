@@ -230,6 +230,29 @@ pub trait LayoutContainingBlock: LayoutPartialTree {
     /// Interpreted in the containing block's axes (see [`LayoutPartialTree::get_core_container_style`]).
     fn get_oof_item_style(&self, node_id: NodeId) -> Self::OofItemStyle<'_>;
 
+    fn position_try_options(&self, _node: NodeId) -> (usize, Option<bool>) { (0,None) }
+    fn uses_anchor_queries(&self, _node: NodeId) -> bool { false }
+    fn checks_position_overflow(&self, _node: NodeId) -> bool { false }
+
+    fn oof_anchor_center(&self, _node: NodeId, _container: NodeId) -> crate::Point<Option<f32>> { crate::Point { x:None,y:None } }
+
+    fn set_position_overflow(&mut self, _node: NodeId, _overflows: bool) {}
+
+    fn set_position_try_option(&mut self, _node: NodeId, _index: Option<usize>) -> bool { false }
+
+    /// Anchor-dependent preferred, minimum and maximum dimensions, and margins.
+    fn oof_anchor_sizes(&self, _node: NodeId, _container: NodeId, _basis: Size<f32>) -> Option<([Size<Option<f32>>; 3], crate::Rect<Option<f32>>)> { None }
+
+    /// Used lengths supplied by anchor functions in the physical insets.
+    fn oof_anchor_insets(&self, _node: NodeId, _container: NodeId, _size: Size<f32>, _offset: crate::Point<f32>) -> crate::Rect<Option<f32>> {
+        crate::Rect::NONE
+    }
+
+    /// Resolve the position-area rectangle and its normal alignment in the containing block.
+    fn oof_anchor_area(&self, _node: NodeId, _container: NodeId, _size: Size<f32>, _offset: crate::Point<f32>) -> Option<(Size<f32>, crate::Point<f32>, crate::Point<crate::AlignSelf>)> {
+        None
+    }
+
     /// Clear the list of out-of-flow (absolute/fixed) boxes whose containing block is `node_id`.
     ///
     /// This is called (exactly once) for each node laid out with `RunMode::PerformLayout`, before

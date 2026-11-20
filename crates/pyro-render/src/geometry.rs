@@ -92,7 +92,8 @@ pub(crate) fn placement(doc: &BaseDocument, node: &blitz_dom::Node, scale: f64) 
         let [a, b, c, d, e, f] = t.as_coeffs();
         Affine::new([a, b, c, d, e / scale, f / scale])
     });
-    Affine::translate((location.x as f64, location.y as f64)) * own
+    let delta = node.anchor_scroll_offset();
+    Affine::translate((location.x as f64 + delta.x, location.y as f64 + delta.y)) * own
 }
 
 /// pyro: the move into its column of the box `chain[0]` in a multi-column container's strip:
@@ -257,7 +258,8 @@ impl Geometry {
                 base *= column_shift(doc, columns, &chain[..=index], scale);
             }
             let location = doc.physical_unrounded_layout(node.id).location;
-            t = base * Affine::translate((location.x as f64, location.y as f64));
+            let delta = node.anchor_scroll_offset();
+            t = base * Affine::translate((location.x as f64 + delta.x, location.y as f64 + delta.y));
             parent = Some(node);
         }
         let origin = t * kurbo::Point::ZERO;

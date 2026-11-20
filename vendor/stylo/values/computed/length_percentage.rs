@@ -640,6 +640,28 @@ impl From<&CalcAnchorSide> for AnchorSide {
 }
 
 impl CalcLengthPercentage {
+    /// Substitute layout-dependent anchor leaves while retaining percentage terms.
+    #[cfg(feature = "servo")]
+    pub fn substitute_anchors(&self, mut lookup: impl FnMut(&CalcNode) -> Option<f32>) -> Option<LengthPercentage> {
+        fn substitute(node: &mut CalcNode, remaining: &mut usize, lookup: &mut impl FnMut(&CalcNode) -> Option<f32>) -> Result<(), ()> {
+            node.map_node(|term| {
+                *remaining = remaining.checked_sub(1).ok_or(())?;
+                let fallback = match term {
+                    CalcNode::Anchor(func) => func.fallback.as_ref(),
+                    CalcNode::AnchorSize(func) => func.fallback.as_ref(),
+                    _ => return Ok(None),
+                };
+                if let Some(value) = lookup(term) { return Ok(Some(CalcNode::Leaf(ComputedLeaf::Length(Length::new(value))))); }
+                let mut replacement = fallback.ok_or(())?.node.clone();
+                substitute(&mut replacement, remaining, lookup)?;
+                Ok(Some(replacement))
+            })
+        }
+        let mut node = self.node.clone();
+        substitute(&mut node, &mut 4096, &mut lookup).ok()?;
+        Some(LengthPercentage::new_calc(node,self.clamping_mode))
+    }
+
     /// Resolves the percentage.
     #[inline]
     pub fn resolve(&self, basis: Length) -> Length {

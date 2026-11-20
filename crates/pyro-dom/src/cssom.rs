@@ -236,6 +236,23 @@ fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces) ->
         return Some(ParsedRule::Group { name: lower, condition, rules: rules? });
     }
     let (prelude, block) = parse_prelude_and_block(p, start, raw_block);
+    if lower == "position-try" {
+        let mut parser = Parser::new(&prelude);
+        let ident = parser.expect_ident().ok()?.clone();
+        if !ident.starts_with("--") || parser.expect_exhausted().is_err() {
+            return None;
+        }
+        let mut text = String::from("@position-try ");
+        cssparser::serialize_identifier(&ident, &mut text).ok()?;
+        text.push_str(" { ");
+        let descriptors = crate::stylo::declarations::DeclarationBlock::position_try(&block?).css_text();
+        if !descriptors.is_empty() {
+            text.push_str(&descriptors);
+            text.push(' ');
+        }
+        text.push('}');
+        return Some(ParsedRule::Other { rule_type: 0, text });
+    }
     let rule_type = match lower.as_str() {
         "import" => 3,
         "font-face" => 5,
@@ -244,7 +261,7 @@ fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces) ->
         "namespace" => 10,
         "counter-style" => 11,
         "font-feature-values" => 14,
-        "layer" | "container" | "property" | "font-palette-values" | "starting-style" | "scope" | "position-try"
+        "layer" | "container" | "property" | "font-palette-values" | "starting-style" | "scope"
         | "view-transition" => 0,
         _ => return None,
     };

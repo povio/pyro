@@ -944,7 +944,7 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
                              if !context.builder.effective_zoom_for_inheritance.is_one() {
 diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 --- a/properties/longhands.toml	2026-11-11 19:55:57
-+++ b/properties/longhands.toml	2026-11-20 08:54:21
++++ b/properties/longhands.toml	2026-11-20 09:33:11
 @@ -129,7 +129,6 @@
  type = "ColorOrAuto"
  initial = "generics::color::ColorOrAuto::Auto"
@@ -953,6 +953,24 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-ui-4/#widget-accent"
  ignored_when_colors_disabled = true
  affects = "paint"
+@@ -183,7 +182,7 @@
+ servo_pref = "layout.css.anchor-positioning.enabled"
+ animation_type = "discrete"
+ spec = "https://drafts.csswg.org/css-anchor-position-1/#propdef-anchor-name"
+-affects = ""
++affects = "layout"
+ 
+ [anchor-scope]
+ type = "ScopedName"
+@@ -192,7 +191,7 @@
+ servo_pref = "layout.css.anchor-positioning.enabled"
+ animation_type = "discrete"
+ spec = "https://drafts.csswg.org/css-anchor-position-1/#propdef-scope"
+-affects = ""
++affects = "layout"
+ 
+ [animation-delay]
+ type = "Time"
 @@ -325,7 +324,9 @@
  spec = "https://drafts.csswg.org/css-ui-4/#propdef-appearance"
  animation_type = "discrete"
@@ -994,7 +1012,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +initial = "From::from(2)"
 +struct = "inherited_text"
 +spec = "https://drafts.csswg.org/css-break/#propdef-orphans"
- animation_type = "discrete"
++animation_type = "discrete"
 +servo_restyle_damage = "repaint"
 +affects = "layout"
 +
@@ -1003,7 +1021,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +initial = "From::from(2)"
 +struct = "inherited_text"
 +spec = "https://drafts.csswg.org/css-break/#propdef-widows"
-+animation_type = "discrete"
+ animation_type = "discrete"
 +servo_restyle_damage = "repaint"
  affects = "layout"
  
@@ -1270,6 +1288,15 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  spec = "https://svgwg.org/svg2-draft/painting.html#PaintOrder"
  affects = "paint"
+@@ -1761,7 +1788,7 @@
+ 
+ [position-visibility]
+ type = "PositionVisibility"
+-initial = "computed::PositionVisibility::ANCHORS_VISIBLE"
++initial = "computed::PositionVisibility::ANCHOR_VISIBLE"
+ struct = "position"
+ servo_pref = "layout.css.anchor-positioning.enabled"
+ animation_type = "discrete"
 @@ -1791,7 +1818,6 @@
  type = "Resize"
  initial = "computed::Resize::None"
@@ -1292,9 +1319,9 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  struct = "box"
 -engine = "gecko"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#scroll-snap-stop"
-+animation_type = "discrete"
-+affects = "paint"
-+
+ animation_type = "discrete"
+ affects = "paint"
+ 
 +[scroll-marker-group]
 +type = "ScrollMarkerGroup"
 +initial = "computed::ScrollMarkerGroup::NONE"
@@ -1310,11 +1337,11 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +initial = "computed::ScrollTargetGroup::None"
 +struct = "box"
 +engine = "servo"
- animation_type = "discrete"
++animation_type = "discrete"
 +servo_restyle_damage = "repaint"
 +spec = "https://drafts.csswg.org/css-overflow-5/#scroll-target-group"
- affects = "paint"
- 
++affects = "paint"
++
  [scroll-snap-type]
  type = "ScrollSnapType"
  initial = "computed::ScrollSnapType::none()"
@@ -1858,10 +1885,11 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [object-fit]
  struct = "position"
  spec = "https://drafts.csswg.org/css-images/#propdef-object-fit"
-@@ -4110,6 +4256,61 @@
+@@ -4109,7 +4255,62 @@
+ affects = "paint"
  type = "MaskType"
  initial = "computed::MaskType::Luminance"
- 
++
 +[mask-border-source]
 +type = "Image"
 +initial = "computed::Image::None"
@@ -1880,7 +1908,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +spec = "https://drafts.fxtf.org/css-masking-1/#propdef-mask-border-slice"
 +boxed = true
 +affects = "paint"
-+
+ 
 +[mask-border-width]
 +type = "BorderImageWidth"
 +initial = "computed::BorderImageWidth::all(computed::BorderImageSideWidth::auto())"
@@ -1929,10 +1957,13 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-ui/#field-sizing"
  animation_type = "discrete"
  affects = "layout"
-@@ -4290,6 +4491,61 @@
- type = "BoxOrient"
- initial = "computed::BoxOrient::Horizontal"
- 
+@@ -4287,9 +4488,64 @@
+ affects = "layout"
+ gecko_ffi_name = "mBoxOrient"
+ aliases = ["-webkit-box-orient"]
++type = "BoxOrient"
++initial = "computed::BoxOrient::Horizontal"
++
 +# pyro: `-webkit-box-orient` for the servo engine (the gecko one is `-moz-box-orient`'s alias):
 +# with `display: -webkit-box` and `-webkit-line-clamp` it makes the legacy line clamp apply
 +# (`StyleAdjuster::adjust_for_webkit_box`).
@@ -1943,9 +1974,9 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +animation_type = "discrete"
 +affects = "layout"
 +servo_restyle_damage = "rebuild_box"
-+type = "BoxOrient"
-+initial = "computed::BoxOrient::Horizontal"
-+
+ type = "BoxOrient"
+ initial = "computed::BoxOrient::Horizontal"
+ 
 +# pyro: the other legacy `-webkit-box` properties for the servo engine (the gecko ones are the
 +# `-moz-box-*` aliases): `StyleAdjuster::adjust_for_webkit_box` maps them onto flex layout.
 +[-webkit-box-align]
@@ -5827,6 +5858,38 @@ diff -ruN a/values/computed/length.rs b/values/computed/length.rs
              #[cfg(feature = "gecko")]
              Self::MozAvailable => {},
          }
+diff -ruN a/values/computed/length_percentage.rs b/values/computed/length_percentage.rs
+--- a/values/computed/length_percentage.rs	2026-11-11 19:55:57
++++ b/values/computed/length_percentage.rs	2026-11-20 09:33:11
+@@ -640,6 +640,28 @@
+ }
+ 
+ impl CalcLengthPercentage {
++    /// Substitute layout-dependent anchor leaves while retaining percentage terms.
++    #[cfg(feature = "servo")]
++    pub fn substitute_anchors(&self, mut lookup: impl FnMut(&CalcNode) -> Option<f32>) -> Option<LengthPercentage> {
++        fn substitute(node: &mut CalcNode, remaining: &mut usize, lookup: &mut impl FnMut(&CalcNode) -> Option<f32>) -> Result<(), ()> {
++            node.map_node(|term| {
++                *remaining = remaining.checked_sub(1).ok_or(())?;
++                let fallback = match term {
++                    CalcNode::Anchor(func) => func.fallback.as_ref(),
++                    CalcNode::AnchorSize(func) => func.fallback.as_ref(),
++                    _ => return Ok(None),
++                };
++                if let Some(value) = lookup(term) { return Ok(Some(CalcNode::Leaf(ComputedLeaf::Length(Length::new(value))))); }
++                let mut replacement = fallback.ok_or(())?.node.clone();
++                substitute(&mut replacement, remaining, lookup)?;
++                Ok(Some(replacement))
++            })
++        }
++        let mut node = self.node.clone();
++        substitute(&mut node, &mut 4096, &mut lookup).ok()?;
++        Some(LengthPercentage::new_calc(node,self.clamping_mode))
++    }
++
+     /// Resolves the percentage.
+     #[inline]
+     pub fn resolve(&self, basis: Length) -> Length {
 diff -ruN a/values/computed/mod.rs b/values/computed/mod.rs
 --- a/values/computed/mod.rs	2026-11-11 19:55:57
 +++ b/values/computed/mod.rs	2026-11-20 08:53:30
@@ -8257,8 +8320,43 @@ diff -ruN a/values/specified/number.rs b/values/specified/number.rs
          match self.0.unpack_mut() {
 diff -ruN a/values/specified/position.rs b/values/specified/position.rs
 --- a/values/specified/position.rs	2026-11-11 19:55:57
-+++ b/values/specified/position.rs	2026-11-17 14:08:59
-@@ -2164,6 +2164,38 @@
++++ b/values/specified/position.rs	2026-11-20 09:33:11
+@@ -427,6 +427,10 @@
+ );
+ 
+ impl ScopedNameList {
++    /// Whether this scope captures the given dashed identifier.
++    pub fn includes(&self, name: &DashedIdent) -> bool {
++        self.0.iter().any(|ident| ident.0 == name.0 || ident.0 == atom!("all"))
++    }
+     /// Return the `none` value.
+     pub fn none() -> Self {
+         Self(crate::ArcSlice::default())
+@@ -827,7 +831,7 @@
+     ToShmem,
+     ToTyped,
+ )]
+-#[css(bitflags(single = "always", mixed = "anchors-valid,anchors-visible,no-overflow"))]
++#[css(bitflags(single = "always", mixed = "anchor-valid,anchor-visible,no-overflow"))]
+ #[repr(C)]
+ /// Specified keyword values for the position-visibility property.
+ pub struct PositionVisibility(u8);
+@@ -835,10 +839,10 @@
+     impl PositionVisibility: u8 {
+         /// Element is displayed without regard for its anchors or its overflowing status.
+         const ALWAYS = 0;
+-        /// anchors-valid
+-        const ANCHORS_VALID = 1 << 0;
+-        /// anchors-visible
+-        const ANCHORS_VISIBLE = 1 << 1;
++        /// anchor-valid
++        const ANCHOR_VALID = 1 << 0;
++        /// anchor-visible
++        const ANCHOR_VISIBLE = 1 << 1;
+         /// no-overflow
+         const NO_OVERFLOW = 1 << 2;
+     }
+@@ -2164,6 +2168,38 @@
  pub enum BoxSizing {
      ContentBox,
      BorderBox,

@@ -124,6 +124,24 @@ impl BaseDocument {
             return RestyleDamage::empty();
         };
         let mut damage = own_damage;
+        if !own_damage.is_empty() {
+            let (options,visibility,out_of_flow,queries) = self.nodes[node_id].primary_styles().map_or((false,false,false,false),|style| {
+                let pos = style.get_position();
+                let positioned = style.get_box().position.is_absolutely_positioned();
+                (!pos.position_try_fallbacks.value.is_none(),pos.position_visibility.contains(style::values::computed::PositionVisibility::NO_OVERFLOW),positioned,positioned && Self::uses_anchor_queries(&style))
+            });
+            let node = &mut self.nodes[node_id];
+            node.flags.set(NodeFlags::POSITION_TRY_OPTIONS, options);
+            node.flags.set(NodeFlags::ANCHOR_QUERIES, queries);
+            node.flags.set(NodeFlags::POSITION_VISIBILITY_CHECK, visibility);
+            if !visibility || !out_of_flow { node.anchor_hidden.set(false); }
+            if !queries { node.anchor_scroll_axes.set((None,None)); node.anchor_visibility_target.set(None); node.anchor_invalid.set(false); }
+            let names = self.nodes[node_id].primary_styles().and_then(|s| {
+                let names = &s.get_box().anchor_name.value;
+                (!names.0.is_empty()).then(|| names.clone())
+            });
+            self.update_anchor_names(node_id, names);
+        }
         self.nodes[node_id].flags.set(NodeFlags::OWN_DAMAGE, !own_damage.is_empty());
         self.nodes[node_id].flags.set(NodeFlags::OWN_LAYOUT_DAMAGE, reaches_layout(own_damage));
 

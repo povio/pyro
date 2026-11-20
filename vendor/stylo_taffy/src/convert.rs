@@ -116,9 +116,8 @@ pub fn dimension(val: &stylo::Size) -> taffy::Dimension {
         stylo::Size::CalcSizeMinContent(_) => taffy::Dimension::min_content(),
         stylo::Size::CalcSizeMaxContent(_) => taffy::Dimension::max_content(),
 
-        // Anchor positioning will be flagged off for time being
-        stylo::Size::AnchorSizeFunction(_) => unreachable!(),
-        stylo::Size::AnchorContainingCalcFunction(_) => unreachable!(),
+        stylo::Size::AnchorSizeFunction(anchor) => anchor.fallback.as_ref().map_or(taffy::Dimension::AUTO, dimension),
+        stylo::Size::AnchorContainingCalcFunction(_) => taffy::Dimension::AUTO,
     }
 }
 
@@ -176,9 +175,8 @@ pub fn min_size(val: &stylo::Size) -> taffy::LengthPercentageAuto {
         | stylo::Size::CalcSizeMinContent(_)
         | stylo::Size::CalcSizeMaxContent(_) => taffy::LengthPercentageAuto::AUTO,
 
-        // Anchor positioning will be flagged off for time being
-        stylo::Size::AnchorSizeFunction(_) => unreachable!(),
-        stylo::Size::AnchorContainingCalcFunction(_) => unreachable!(),
+        stylo::Size::AnchorSizeFunction(anchor) => anchor.fallback.as_ref().map_or(taffy::LengthPercentageAuto::AUTO, min_size),
+        stylo::Size::AnchorContainingCalcFunction(_) => taffy::LengthPercentageAuto::AUTO,
     }
 }
 
@@ -227,9 +225,8 @@ pub fn max_size(val: &stylo::MaxSize) -> taffy::LengthPercentageAuto {
         stylo::MaxSize::Stretch => taffy::LengthPercentageAuto::AUTO,
         stylo::MaxSize::WebkitFillAvailable => taffy::LengthPercentageAuto::AUTO,
 
-        // Anchor positioning will be flagged off for time being
-        stylo::MaxSize::AnchorSizeFunction(_) => unreachable!(),
-        stylo::MaxSize::AnchorContainingCalcFunction(_) => unreachable!(),
+        stylo::MaxSize::AnchorSizeFunction(anchor) => anchor.fallback.as_ref().map_or(taffy::LengthPercentageAuto::AUTO, max_size),
+        stylo::MaxSize::AnchorContainingCalcFunction(_) => taffy::LengthPercentageAuto::AUTO,
     }
 }
 
@@ -239,9 +236,8 @@ pub fn margin(val: &stylo::MarginVal) -> taffy::LengthPercentageAuto {
         stylo::MarginVal::Auto => taffy::LengthPercentageAuto::AUTO,
         stylo::MarginVal::LengthPercentage(val) => length_percentage(val).into(),
 
-        // Anchor positioning will be flagged off for time being
-        stylo::MarginVal::AnchorSizeFunction(_) => unreachable!(),
-        stylo::MarginVal::AnchorContainingCalcFunction(_) => unreachable!(),
+        stylo::MarginVal::AnchorSizeFunction(anchor) => anchor.fallback.as_ref().map_or(zero(), margin),
+        stylo::MarginVal::AnchorContainingCalcFunction(_) => zero(),
     }
 }
 
@@ -262,10 +258,9 @@ pub fn inset(val: &stylo::InsetVal) -> taffy::LengthPercentageAuto {
         stylo::InsetVal::Auto => taffy::LengthPercentageAuto::AUTO,
         stylo::InsetVal::LengthPercentage(val) => length_percentage(val).into(),
 
-        // Anchor positioning will be flagged off for time being
-        stylo::InsetVal::AnchorSizeFunction(_) => unreachable!(),
-        stylo::InsetVal::AnchorFunction(_) => unreachable!(),
-        stylo::InsetVal::AnchorContainingCalcFunction(_) => unreachable!(),
+        stylo::InsetVal::AnchorSizeFunction(anchor) => anchor.fallback.as_ref().map_or(taffy::LengthPercentageAuto::AUTO, inset),
+        stylo::InsetVal::AnchorFunction(anchor) => anchor.fallback.as_ref().map_or(taffy::LengthPercentageAuto::AUTO, inset),
+        stylo::InsetVal::AnchorContainingCalcFunction(_) => taffy::LengthPercentageAuto::AUTO,
     }
 }
 

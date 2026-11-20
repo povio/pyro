@@ -23,6 +23,7 @@ use taffy::{
     compute_oof_layout, prelude::*,
 };
 
+mod anchor;
 pub(crate) mod combined_text;
 pub(crate) mod construct;
 pub(crate) mod counters;
@@ -167,6 +168,7 @@ pub(crate) struct LayoutPassState<'doc> {
     /// pyro: the sizes `calc_size_inputs` measured for boxes this pass (box, axis 0 width or 1
     /// height, size): a parent that hands one back as a known size hands back the result.
     calc_size_results: Vec<(NodeId, u8, f32)>,
+    try_styles: std::collections::HashMap<NodeId, style::servo_arc::Arc<style::properties::ComputedValues>>,
     /// pyro: the multi-column container whose strip is being laid out and the border-box height
     /// its content's percentage heights resolve against (its column height, `layout::multicol`).
     pub(crate) multicol_percent_height: Option<(crate::NodeId, f32)>,
@@ -254,6 +256,7 @@ impl<'doc> LayoutPassState<'doc> {
             round_counts: (0, 0),
             column_spanners: None,
             calc_size_results: Vec::new(),
+            try_styles: Default::default(),
             multicol_percent_height: None,
             nested_fragmentation: std::collections::HashMap::new(),
             spanner_floors: std::collections::HashMap::new(),
@@ -2426,7 +2429,199 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
         Self: 'a;
 
     fn get_oof_item_style(&self, node_id: NodeId) -> Self::OofItemStyle<'_> {
-        self.child_layout_style(self.node_from_id(node_id))
+        let mut style = self.child_layout_style(self.node_from_id(node_id));
+        if !self.try_styles.is_empty() {
+            if let Some(value) = self.try_styles.get(&node_id) { style.style.use_fallback(value); }
+        }
+        style
+    }
+
+    fn position_try_options(&self, id: NodeId) -> (usize, Option<bool>) {
+        use style::values::specified::position::PositionTryOrder::*;
+        let node = self.node_from_id(id);
+        if !node.flags.contains(NodeFlags::POSITION_TRY_OPTIONS) { return (0,None); }
+        let Some(style) = node.primary_styles() else { return (0,None) };
+        let pos = style.get_position();
+        (pos.position_try_fallbacks.value.0.len(), match pos.position_try_order {
+            Normal => None, MostWidth => Some(true), MostHeight => Some(false),
+            MostInlineSize => Some(!style.writing_mode.is_vertical()), MostBlockSize => Some(style.writing_mode.is_vertical()),
+        })
+    }
+
+    fn uses_anchor_queries(&self,id: NodeId) -> bool { self.node_from_id(id).flags.contains(NodeFlags::ANCHOR_QUERIES) }
+    fn checks_position_overflow(&self,id: NodeId) -> bool { self.node_from_id(id).flags.contains(NodeFlags::POSITION_VISIBILITY_CHECK) }
+
+    fn oof_anchor_center(&self, id: NodeId, container: NodeId) -> taffy::Point<Option<f32>> {
+        use style::values::specified::{align::AlignFlags,position::{PositionAnchorKeyword,PositionAreaTrack}};
+        let none = taffy::Point { x:None,y:None };
+        if self.named_anchor_nodes.is_empty() { return none; }
+        let item = self.get_oof_item_style(id);
+        let pos = item.style.get_position();
+        let PositionAnchorKeyword::Ident(name) = &pos.position_anchor.value else { return none };
+        let container = self.node_from_id(container);
+        let Some(cb) = container.primary_styles() else { return none };
+        let area = pos.position_area.to_physical(cb.writing_mode,item.style.writing_mode);
+        let (inline,block) = (pos.justify_self.0.value(),pos.align_self.0.value());
+        let (x,y) = if cb.writing_mode.is_vertical() {(block,inline)} else {(inline,block)};
+        let center = |value,track| value == AlignFlags::ANCHOR_CENTER || ((value == AlignFlags::NORMAL || value == AlignFlags::AUTO) && track == Some(PositionAreaTrack::SpanAll));
+        let (x,y)=(center(x,area.first.track()),center(y,area.second.track()));
+        if !x && !y {return none;}
+        let node = self.node_from_id(id);
+        let Some((anchor,point,extent)) = self.anchor_rect(node,container,name,pos.position_anchor.scope) else {return none};
+        let old = node.anchor_scroll_axes.get();
+        node.anchor_scroll_axes.set((if x {Some(anchor)} else {old.0}, if y {Some(anchor)} else {old.1}));
+        taffy::Point {x:x.then_some(point.x+extent.width*0.5),y:y.then_some(point.y+extent.height*0.5)}
+    }
+
+    fn set_position_overflow(&mut self, id: NodeId, overflow: bool) {
+        let node = self.node_from_id(id);
+        if node.flags.contains(NodeFlags::POSITION_VISIBILITY_CHECK) {node.anchor_hidden.set(overflow);}
+    }
+
+    fn set_position_try_option(&mut self, id: NodeId, index: Option<usize>) -> bool {
+        let Some(index) = index else { self.try_styles.remove(&id); return true };
+        let computed = {
+            let node = self.node_from_id(id);
+            let Some(style) = node.primary_styles() else { return false };
+            let list = &style.get_position().position_try_fallbacks;
+            let guard = self.guard.read();
+            self.anchor_try_visits.set(self.anchor_try_visits.get().saturating_add(1));
+            self.stylist.resolve_position_try(&style, &style::shared_lock::StylesheetGuards::same(&guard), list.scope, node, &list.value.0[index])
+        };
+        if let Some(value) = computed { self.try_styles.insert(id,value); true } else { false }
+    }
+
+    fn oof_anchor_sizes(&self, node: NodeId, container: NodeId, basis: taffy::Size<f32>) -> Option<([taffy::Size<Option<f32>>;3],taffy::Rect<Option<f32>>)> {
+        use style::values::computed::length::{Size,MaxSize,Margin};
+        let node = self.node_from_id(node);
+        let container = self.node_from_id(container);
+        let item = self.get_oof_item_style(taffy_node_id(node.id));
+        let pos = item.style.get_position();
+        let margins = item.style.get_margin();
+        let calc = |lp:&style::values::computed::LengthPercentage,h,b| self.anchor_calc_size(lp,node,container,h,&item.style).map(|v|v.resolve(CSSPixelLength::new(b)).px());
+        let size = |v:&Size,h| match v { Size::AnchorSizeFunction(f) => self.anchor_dimension(f,node,container,h,&item.style), Size::AnchorContainingCalcFunction(lp) => calc(&lp.0,h,if h {basis.width} else {basis.height}), _ => None };
+        let max = |v:&MaxSize,h| match v { MaxSize::AnchorSizeFunction(f) => self.anchor_dimension(f,node,container,h,&item.style), MaxSize::AnchorContainingCalcFunction(lp) => calc(&lp.0,h,if h {basis.width} else {basis.height}), _ => None };
+        let margin = |v:&Margin,h| match v { Margin::AnchorSizeFunction(f) => self.anchor_dimension(f,node,container,h,&item.style), Margin::AnchorContainingCalcFunction(lp) => calc(lp,h,basis.width), _ => None };
+        Some(([
+            taffy::Size { width:size(&pos.width,true),height:size(&pos.height,false) },
+            taffy::Size { width:size(&pos.min_width,true),height:size(&pos.min_height,false) },
+            taffy::Size { width:max(&pos.max_width,true),height:max(&pos.max_height,false) }
+        ],taffy::Rect { left:margin(&margins.margin_left,true),right:margin(&margins.margin_right,true),top:margin(&margins.margin_top,false),bottom:margin(&margins.margin_bottom,false) }))
+    }
+
+    fn oof_anchor_insets(&self, node: NodeId, container: NodeId, size: taffy::Size<f32>, offset: taffy::Point<f32>) -> taffy::Rect<Option<f32>> {
+        use style::logical_geometry::{PhysicalSide, WritingMode};
+        use style::values::computed::position::Inset;
+        use style::values::generics::position::{GenericAnchorSide, AnchorSideKeyword as Side};
+        use style::values::specified::position::PositionAnchorKeyword;
+        let node = self.node_from_id(node);
+        let container = self.node_from_id(container);
+        let item = self.get_oof_item_style(taffy_node_id(node.id));
+        let style = &item.style;
+        let pos = style.get_position();
+        let coordinate = |target: &style::values::generics::position::TreeScoped<style::values::DashedIdent>, anchor_side: &style::values::computed::position::AnchorSide, side: PhysicalSide| {
+            if !anchor_side.valid_for(side) { return None; }
+            let (name, level) = if target.value.0.is_empty() {
+                let PositionAnchorKeyword::Ident(name) = &pos.position_anchor.value else { return None };
+                (name,pos.position_anchor.scope)
+            } else { (&target.value,target.scope) };
+            let (anchor,point, extent) = self.anchor_rect(node,container,name,level)?;
+            let horizontal = side.parallel_to(PhysicalSide::Left);
+            if matches!(&pos.position_anchor.value, PositionAnchorKeyword::Ident(default) if default == name) {
+                let (old_x,old_y) = node.anchor_scroll_axes.get();
+                node.anchor_scroll_axes.set(if horizontal {(Some(anchor),old_y)} else {(old_x,Some(anchor))});
+            }
+            let (start, length, available) = if horizontal { (point.x-offset.x,extent.width,size.width) } else { (point.y-offset.y,extent.height,size.height) };
+            let reversed = matches!(side, PhysicalSide::Right | PhysicalSide::Bottom);
+            let axis_reversed = |wm: WritingMode| {
+                let start = if wm.is_vertical() == horizontal { wm.block_start_physical_side() } else { wm.inline_start_physical_side() };
+                matches!(start, PhysicalSide::Right | PhysicalSide::Bottom)
+            };
+            let cb_wm = container.primary_styles()?.writing_mode;
+            let fraction = match *anchor_side {
+                GenericAnchorSide::Percentage(pct) => if axis_reversed(cb_wm) {1.0-pct.0} else {pct.0},
+                GenericAnchorSide::Keyword(keyword) => match keyword {
+                    Side::Center => 0.5, Side::Left | Side::Top => 0.0, Side::Right | Side::Bottom => 1.0,
+                    Side::Inside => reversed as u8 as f32, Side::Outside => !reversed as u8 as f32,
+                    Side::Start => axis_reversed(cb_wm) as u8 as f32, Side::End => !axis_reversed(cb_wm) as u8 as f32,
+                    Side::SelfStart => axis_reversed(style.writing_mode) as u8 as f32, Side::SelfEnd => !axis_reversed(style.writing_mode) as u8 as f32,
+                },
+            };
+            let coord = start + length*fraction;
+            Some(if reversed {available-coord} else {coord})
+        };
+        let resolve = |mut value: &Inset, side: PhysicalSide| {
+            use style::values::computed::length_percentage::{CalcNode,Unpacked};
+            let horizontal = side.parallel_to(PhysicalSide::Left);
+            let basis = CSSPixelLength::new(if horizontal {size.width} else {size.height});
+            for depth in 0..64 {
+                match value {
+                    Inset::AnchorFunction(func) => { if let Some(v) = coordinate(&func.target_element,&func.side,side) {return Some(v)} value = func.fallback.as_ref()?; }
+                    Inset::AnchorSizeFunction(func) => { if let Some(v) = self.anchor_dimension(func,node,container,horizontal,style) {return Some(v)} value = func.fallback.as_ref()?; }
+                    Inset::AnchorContainingCalcFunction(lp) => {
+                        let Unpacked::Calc(calc) = lp.unpack() else { return None };
+                        return calc.substitute_anchors(|term| match term {
+                            CalcNode::Anchor(func) => coordinate(&func.target_element,&(&func.side).into(),side),
+                            CalcNode::AnchorSize(func) => self.anchor_dimension(func,node,container,horizontal,style),
+                            _ => None,
+                        }).map(|v|v.resolve(basis).px());
+                    }
+                    Inset::LengthPercentage(lp) if depth != 0 => return Some(lp.resolve(basis).px()),
+                    _ => return None,
+                }
+            }
+            None
+        };
+        taffy::Rect { left:resolve(&pos.left,PhysicalSide::Left), right:resolve(&pos.right,PhysicalSide::Right), top:resolve(&pos.top,PhysicalSide::Top), bottom:resolve(&pos.bottom,PhysicalSide::Bottom) }
+    }
+
+    fn oof_anchor_area(&self, node: NodeId, container: NodeId, size: taffy::Size<f32>, offset: taffy::Point<f32>) -> Option<(taffy::Size<f32>, taffy::Point<f32>, taffy::Point<taffy::AlignSelf>)> {
+        use style::values::specified::position::{PositionAnchorKeyword, PositionAreaTrack};
+        let node = self.node_from_id(node);
+        if node.anchor_scroll_axes.get() != (None,None) { node.anchor_scroll_axes.set((None,None)); }
+        node.anchor_visibility_target.set(None);
+        node.anchor_invalid.set(false);
+        let container = self.node_from_id(container);
+        let item = self.get_oof_item_style(taffy_node_id(node.id));
+        let style = &item.style;
+        let pos = style.get_position();
+        let valid = pos.position_visibility.contains(style::values::computed::PositionVisibility::ANCHOR_VALID);
+        let visible = pos.position_visibility.contains(style::values::computed::PositionVisibility::ANCHOR_VISIBLE);
+        if pos.position_area.is_none() && !valid && !visible {return None;}
+        let default = match &pos.position_anchor.value {
+            PositionAnchorKeyword::Ident(name) => self.anchor_rect(node,container,name,pos.position_anchor.scope),
+            _ => None,
+        };
+        if visible { node.anchor_visibility_target.set(default.map(|(id,_,_)|id)); }
+        if valid && default.is_none() {
+            use style::values::computed::{position::Inset,length::{Size,MaxSize,Margin}};
+            use style::values::specified::align::AlignFlags;
+            let margin = style.get_margin();
+            let referenced = !pos.position_area.is_none() || [pos.justify_self.0,pos.align_self.0].iter().any(|v|v.value()==AlignFlags::ANCHOR_CENTER)
+                || [&pos.left,&pos.right,&pos.top,&pos.bottom].iter().any(|v|match v {Inset::AnchorFunction(f)=>f.target_element.value.0.is_empty(),Inset::AnchorSizeFunction(f)=>f.target_element.value.0.is_empty(),_=>false})
+                || [&pos.width,&pos.height,&pos.min_width,&pos.min_height].iter().any(|v|matches!(v,Size::AnchorSizeFunction(f) if f.target_element.value.0.is_empty()))
+                || [&pos.max_width,&pos.max_height].iter().any(|v|matches!(v,MaxSize::AnchorSizeFunction(f) if f.target_element.value.0.is_empty()))
+                || [&margin.margin_left,&margin.margin_top,&margin.margin_bottom,&margin.margin_right].iter().any(|v|matches!(v,Margin::AnchorSizeFunction(f) if f.target_element.value.0.is_empty()));
+            node.anchor_invalid.set(referenced);
+        }
+        if pos.position_area.is_none() { return None; }
+        let (anchor,point, extent) = default?;
+        node.anchor_scroll_axes.set((Some(anchor),Some(anchor)));
+        let area = pos.position_area.to_physical(container.primary_styles()?.writing_mode, style.writing_mode);
+        fn axis(track: PositionAreaTrack, start: f32, end: f32, low: f32, high: f32) -> (f32, f32, taffy::AlignSelf) {
+            use taffy::AlignSelf as Align;
+            match track {
+                PositionAreaTrack::Start => (low.min(start), start, Align::END),
+                PositionAreaTrack::End => (end, high.max(end), Align::START),
+                PositionAreaTrack::Center => (start, end, Align::CENTER),
+                PositionAreaTrack::SpanStart => (low.min(end), end, Align::END),
+                PositionAreaTrack::SpanEnd => (start, high.max(start), Align::START),
+                PositionAreaTrack::SpanAll => (low, high, Align::CENTER),
+            }
+        }
+        let (left,right,horizontal) = axis(area.first.track()?, point.x, point.x + extent.width, offset.x, offset.x + size.width);
+        let (top,bottom,vertical) = axis(area.second.track()?, point.y, point.y + extent.height, offset.y, offset.y + size.height);
+        Some((taffy::Size { width: right-left, height: bottom-top }, taffy::Point { x:left, y:top }, taffy::Point { x:horizontal, y:vertical }))
     }
 
     fn clear_hoisted_children(&mut self, node_id: NodeId) {

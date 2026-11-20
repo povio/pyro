@@ -463,6 +463,7 @@ pub trait GeometrySource {
     fn set_scroll(&self, _elements: Vec<(u64, (f64, f64))>, _viewport: (f64, f64)) {}
     /// One element's box as of the last sync (`None`: not rendered).
     fn element_box(&self, key: u64) -> Option<ExternalBox>;
+    fn anchor_scroll_shift(&self, _key: u64, _scroll: &dyn Fn(Option<u64>) -> (f64, f64)) -> (f64, f64) { (0.0, 0.0) }
     /// The engine's resolved value of one element's `property` as of the last sync (`None`: the engine
     /// has none, and the document's own cascade answers). Asked for what only layout knows: a subgrid's
     /// `grid-template-columns`/`-rows` (`subgrid` with each line's names).
