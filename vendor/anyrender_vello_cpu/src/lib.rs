@@ -26,7 +26,7 @@ pub use projective::{Homography, projective_marker};
 
 pub use image_cache::ImageCacheConfig;
 pub use image_renderer::VelloCpuImageRenderer;
-pub use scene::VelloCpuScenePainter;
+pub use scene::{VelloCpuScenePainter, fine_segments};
 
 #[cfg(any(
     feature = "pixels_window_renderer",

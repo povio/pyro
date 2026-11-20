@@ -33,9 +33,154 @@ fn device_path(path: BezPath, transform: Affine, bounds: Rect) -> (BezPath, Affi
     if !near_raster(transform.transform_rect_bbox(curves_bbox(&path)), bounds) {
         return (path, transform);
     }
+    // (At most `MAX_FINE_SEGMENTS`, counted before: past them, vello_cpu's own coarser flattening.)
+    let device = transform * path;
+    if flattened_segments(&device, FINE) > MAX_FINE_SEGMENTS {
+        return (transform.inverse() * device, transform);
+    }
     let mut out = BezPath::new();
-    kurbo::flatten(transform * path, FINE, |el| out.push(el));
+    kurbo::flatten(device, FINE, |el| out.push(el));
+    count_segments(out.elements().len());
     (out, Affine::IDENTITY)
+}
+
+/// pyro: the most segments one path is flattened into at [`FINE`] here (a path of countless tiny
+/// curves in view would otherwise be cut into as many pieces at a fiftieth of a pixel): past it,
+/// the path goes to vello_cpu as it is, which flattens it at its own, coarser tolerance.
+const MAX_FINE_SEGMENTS: usize = 1 << 16;
+
+/// pyro: an upper bound of how many lines flattening the device-space `path` at `tolerance` makes
+/// (Wang's formula for each curve, from its control points' second differences), in time linear in
+/// its elements.
+fn flattened_segments(path: &BezPath, tolerance: f64) -> usize {
+    use kurbo::PathEl;
+    let mut last = kurbo::Point::ZERO;
+    let mut total = 0usize;
+    for el in path.elements() {
+        total = total.saturating_add(match *el {
+            PathEl::MoveTo(p) | PathEl::LineTo(p) => {
+                last = p;
+                1
+            }
+            PathEl::QuadTo(a, p) => {
+                let d = (last.to_vec2() - 2.0 * a.to_vec2() + p.to_vec2()).hypot();
+                last = p;
+                ((0.25 * d / tolerance).sqrt().ceil() as usize).max(1)
+            }
+            PathEl::CurveTo(a, b, p) => {
+                let d1 = (last.to_vec2() - 2.0 * a.to_vec2() + b.to_vec2()).hypot();
+                let d2 = (a.to_vec2() - 2.0 * b.to_vec2() + p.to_vec2()).hypot();
+                last = p;
+                let n = (0.75 * d1.max(d2) / tolerance).sqrt().ceil();
+                if n.is_finite() { (n as usize).max(1) } else { usize::MAX }
+            }
+            PathEl::ClosePath => 1,
+        });
+    }
+    total
+}
+
+/// pyro: `path` (in the space `transform` maps to device px) without its segments that lie wholly
+/// outside `bounds` grown by `reach` (a stroke's half width, joins and caps): a subpath is broken
+/// where they were (no join or cap there can reach into `bounds`), so expanding a stroke costs what
+/// lies near the raster, not the whole of a huge path.
+fn cull_far_segments(path: &BezPath, transform: Affine, bounds: Rect, reach: f64) -> BezPath {
+    use kurbo::PathEl;
+    let near = bounds.inflate(reach + 1.0, reach + 1.0);
+    let mut out = BezPath::new();
+    let (mut last, mut start) = (kurbo::Point::ZERO, kurbo::Point::ZERO);
+    // Whether the last point written is `last` (the pen is there), and whether this subpath lost
+    // a segment (it is then not closed: its closing line would cross the gap).
+    let (mut at_last, mut broken) = (false, false);
+    let mut keep = |out: &mut BezPath, from: kurbo::Point, points: &[kurbo::Point], at_last: &mut bool, el: PathEl| {
+        let bbox = points.iter().fold(Rect::from_points(from, from), |b, &p| b.union_pt(p));
+        if !transform.transform_rect_bbox(bbox).overlaps(near) && !near.contains(transform * from) {
+            *at_last = false;
+            return false;
+        }
+        if !*at_last {
+            out.move_to(from);
+        }
+        out.push(el);
+        *at_last = true;
+        true
+    };
+    // A curve much larger than the raster (an arc of a huge circle in view) is cut in halves until
+    // its pieces lie far outside (left out) or are no larger than the raster: what is kept is near.
+    // Whether all of it was kept.
+    fn split_far(
+        out: &mut BezPath,
+        c: kurbo::CubicBez,
+        depth: u32,
+        keep: &mut impl FnMut(&mut BezPath, kurbo::Point, &[kurbo::Point], &mut bool, PathEl) -> bool,
+        at_last: &mut bool,
+    ) -> bool {
+        use kurbo::ParamCurve as _;
+        let (_, size) = SPLIT.with(|s| s.get());
+        let bbox = Rect::from_points(c.p0, c.p0).union_pt(c.p1).union_pt(c.p2).union_pt(c.p3);
+        let big = bbox.width().max(bbox.height()) > size;
+        if depth < 40 && big {
+            let (a, b) = c.subdivide();
+            let first = split_far(out, a, depth + 1, keep, at_last);
+            let second = split_far(out, b, depth + 1, keep, at_last);
+            return first && second;
+        }
+        keep(out, c.p0, &[c.p1, c.p2, c.p3], at_last, PathEl::CurveTo(c.p1, c.p2, c.p3))
+    }
+    // (The largest piece kept whole, in the path's space: the raster's size there.)
+    let inverse_scale = {
+        let [a, b, c, d, _, _] = transform.as_coeffs();
+        let scale = (a * a + b * b).sqrt().min((c * c + d * d).sqrt());
+        if scale > 1e-12 { 1.0 / scale } else { f64::INFINITY }
+    };
+    SPLIT.with(|s| s.set((0, near.width().max(near.height()) * inverse_scale)));
+    for el in path.elements() {
+        match *el {
+            PathEl::MoveTo(p) => {
+                out.move_to(p);
+                (last, start, at_last, broken) = (p, p, true, false);
+            }
+            PathEl::LineTo(p) => {
+                broken |= !keep(&mut out, last, &[p], &mut at_last, *el);
+                last = p;
+            }
+            PathEl::QuadTo(a, p) => {
+                let cubic = kurbo::QuadBez::new(last, a, p).raise();
+                broken |= !split_far(&mut out, cubic, 0, &mut keep, &mut at_last);
+                last = p;
+            }
+            PathEl::CurveTo(a, b, p) => {
+                broken |= !split_far(&mut out, kurbo::CubicBez::new(last, a, b, p), 0, &mut keep, &mut at_last);
+                last = p;
+            }
+            PathEl::ClosePath => {
+                if broken {
+                    // Its closing line, as any segment.
+                    keep(&mut out, last, &[start], &mut at_last, PathEl::LineTo(start));
+                } else {
+                    out.close_path();
+                }
+                last = start;
+            }
+        }
+    }
+    out
+}
+
+thread_local! {
+    static SEGMENTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// (`cull_far_segments`: the size of the largest curve piece kept whole.)
+    static SPLIT: std::cell::Cell<(usize, f64)> = const { std::cell::Cell::new((0, f64::INFINITY)) };
+}
+
+fn count_segments(n: usize) {
+    SEGMENTS.with(|segments| segments.set(segments.get().saturating_add(n)));
+}
+
+/// pyro: how many path segments this thread's painters flattened or expanded finely here (fills,
+/// clips and stroke outlines): a measure of their work, which tests bound.
+pub fn fine_segments() -> usize {
+    SEGMENTS.with(|segments| segments.get())
 }
 
 /// pyro: the bounding box of `path`'s curved segments (their ends and control points): what
@@ -256,19 +401,24 @@ impl PaintScene for VelloCpuScenePainter {
         // a stroked circle and a filled ring of the same curve are then one shape.
         let [a, b, c, d, _, _] = transform.as_coeffs();
         let scale = (a * a + b * b).sqrt().max((c * c + d * d).sqrt());
-        // (Only near the raster, as `device_path`: the stroke's reach counts too.)
-        let reach = style.width * scale * style.miter_limit.max(1.0);
-        let near = near_raster(
-            transform.transform_rect_bbox(curves_bbox(&shape.path_elements(DEFAULT_TOLERANCE).collect())).inflate(reach, reach),
-            self.raster_bounds(),
-        );
-        if near && scale.is_finite() && scale > 1e-9 {
-            let outline = kurbo::stroke(
-                shape.path_elements(DEFAULT_TOLERANCE),
-                style,
-                &kurbo::StrokeOpts::default(),
-                FINE / scale,
-            );
+        // (Only near the raster, as `device_path`: the stroke's reach counts too.) Its segments far
+        // outside the raster are left out first, whichever way it is expanded.
+        let reach = (style.width * scale * style.miter_limit.max(1.0)).max(style.width * scale);
+        let path = shape.into_path(DEFAULT_TOLERANCE);
+        let path = if reach.is_finite() { cull_far_segments(&path, transform, self.raster_bounds(), reach) } else { path };
+        let near = near_raster(transform.transform_rect_bbox(curves_bbox(&path)).inflate(reach, reach), self.raster_bounds());
+        // (An outline is about twice the path's lines, and a join or cap for each element: at most
+        // `MAX_FINE_SEGMENTS` in all, as a fill.)
+        let fine = near
+            && scale.is_finite()
+            && scale > 1e-9
+            && flattened_segments(&(transform * path.clone()), FINE)
+                .saturating_mul(2)
+                .saturating_add(path.elements().len().saturating_mul(8))
+                <= MAX_FINE_SEGMENTS;
+        if fine {
+            let outline = kurbo::stroke(path.elements().iter().copied(), style, &kurbo::StrokeOpts::default(), FINE / scale);
+            count_segments(outline.elements().len());
             self.fill(Fill::NonZero, transform, paint, brush_transform, &outline);
             return;
         }
@@ -278,8 +428,9 @@ impl PaintScene for VelloCpuScenePainter {
         self.render_ctx.set_paint(paint);
         self.render_ctx
             .set_paint_transform(brush_transform.unwrap_or(Affine::IDENTITY));
-        self.render_ctx
-            .stroke_path(&shape.into_path(DEFAULT_TOLERANCE));
+        // (Counted as what vello_cpu expands: both sides at its quarter-pixel tolerance.)
+        count_segments(flattened_segments(&(transform * path.clone()), 0.25).saturating_mul(2));
+        self.render_ctx.stroke_path(&path);
     }
 
     fn fill<'a>(

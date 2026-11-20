@@ -378,3 +378,39 @@ fn a_box_escapes_a_clip_through_nested_opacity_groups() {
     let [r, g, b] = pixel(&img, 125, 50);
     assert!(r > 250 && g > 250 && b > 250, "no yellow past the clip: {:?}", [r, g, b]);
 }
+
+/// A huge stroked circle of which only an arc is in view costs the segments near the raster: its
+/// segments far outside are left out before the stroke is expanded (the whole circle was expanded),
+/// counted, not timed. Review cycle 4, finding 4.
+#[test]
+fn a_huge_stroke_with_an_arc_in_view_expands_what_is_near_the_raster() {
+    let before = anyrender_vello_cpu::fine_segments();
+    let img = render(
+        "<svg width='400' height='300' style='display:block'>\
+         <circle cx='200' cy='-2999850' r='3000000' fill='none' stroke='blue' stroke-width='20'/>\
+         <circle cx='200' cy='690' r='550' fill='none' stroke='green' stroke-width='4'/></svg>",
+    );
+    let segments = anyrender_vello_cpu::fine_segments() - before;
+    assert!(segments > 0, "the paint ran on this thread");
+    // (15672 with the whole circles expanded.)
+    assert!(segments < 2_000, "{segments} segments");
+    // The arc crosses y 150 at x 200: blue there.
+    let [r, g, b] = pixel(&img, 200, 150);
+    assert!(b > 200 && r < 60 && g < 60, "the arc: {:?}", [r, g, b]);
+}
+
+/// A path of a great many tiny curves in view is flattened into at most a bounded number of
+/// segments (past it, vello_cpu flattens it more coarsely): the fine flattening has a hard cap.
+/// Review cycle 4, finding 4.
+#[test]
+fn a_path_of_countless_curves_is_flattened_within_a_cap() {
+    let mut d = String::from("M0 150");
+    for i in 0..100_000 {
+        let x = i as f64 * 0.004;
+        d.push_str(&format!(" C{:.3} 0 {:.3} 300 {:.3} 150", x + 0.001, x + 0.003, x + 0.004));
+    }
+    let before = anyrender_vello_cpu::fine_segments();
+    let _ = render(&format!("<svg width='400' height='300' style='display:block'><path d='{d}' fill='green'/></svg>"));
+    let segments = anyrender_vello_cpu::fine_segments() - before;
+    assert!(segments <= 200_000, "{segments} segments");
+}
