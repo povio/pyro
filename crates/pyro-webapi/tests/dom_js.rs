@@ -5652,17 +5652,21 @@ fn scroll_offsets_round_like_chromium_so_synced_panes_settle() {
 fn single_axis_overflow_makes_a_scroll_container_like_chromium() {
     // TOS bookkeeping exports (bookkeeping-vat-lines.e2e.ts:65): the table's
     // scroller is `flex h-full grow flex-col overflow-x-auto`. CSS Overflow 3
-    // computes the other axis's `visible` to `auto` (and `clip` to `hidden`),
+    // computes the other axis's `visible` to `auto`,
     // so it scrolls vertically; Rust reported overflowY "" and refused
     // scrollTop = 1000, so the virtualized rows never moved. Chromium
     // (Playwright 1.59.1), 100px boxes with 300px content, scrollTop = 120:
-    // computed x/y/shorthand, scrollTop, scroll events.
+    // computed x/y/shorthand, scrollTop, scroll events. Chrome 158.0.8127.37
+    // preserves clip in both axis orders with scroll, and with auto or hidden.
     let cases = [
         ("xauto", "overflow-x:auto", "auto|auto|auto|120|1"),
         ("yauto", "overflow-y:auto", "auto|auto|auto|120|1"),
         ("xhidden", "overflow-x:hidden", "hidden|auto|hidden auto|120|1"),
         ("xclip", "overflow-x:clip", "clip|visible|clip visible|0|0"),
-        ("xclipyscroll", "overflow-x:clip;overflow-y:scroll", "hidden|scroll|hidden scroll|120|1"),
+        ("xclipyscroll", "overflow-x:clip;overflow-y:scroll", "clip|scroll|clip scroll|120|1"),
+        ("xscrollyclip", "overflow:scroll clip", "scroll|clip|scroll clip|0|0"),
+        ("xclipyauto", "overflow:clip auto", "clip|auto|clip auto|120|1"),
+        ("xclipyhidden", "overflow:clip hidden", "clip|hidden|clip hidden|120|1"),
         ("none", "", "visible|visible|visible|0|0"),
         ("both", "overflow:hidden auto", "hidden|auto|hidden auto|120|1"),
     ];
@@ -5697,6 +5701,19 @@ fn single_axis_overflow_makes_a_scroll_container_like_chromium() {
             ),
         );
         assert_eq!(got, want, "{k}");
+    }
+    e.page.dispose();
+}
+
+#[test]
+fn single_axis_clip_exposes_extent_but_neither_scrolls_nor_extends_hit_testing() {
+    let e = env("<!doctype html><body style='margin:40px'><div id=s style='width:100px;height:100px;padding:6px;overflow:clip scroll'><div id=c style='margin-left:-30px;width:300px;height:300px'></div></div>");
+    for margin in [0, 12] {
+        let got = eval(&e.main, &format!("(()=>{{const box=document.getElementById('s'),child=document.getElementById('c');
+            box.style.overflowClipMargin='{margin}px';const rect=box.getBoundingClientRect();box.scrollLeft=11;
+            const left=box.scrollLeft;box.scrollTo(19,23);return [box.scrollWidth,left,box.scrollLeft,box.scrollTop,
+            ...[-14,-8,-1,2].map(x=>document.elementFromPoint(rect.left+x,rect.top+40)===child)].join('|')}})()"));
+        assert_eq!(got, "282|0|0|23|false|false|false|true", "overflow-clip-margin: {margin}px");
     }
     e.page.dispose();
 }
