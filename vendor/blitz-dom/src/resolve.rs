@@ -1384,6 +1384,20 @@ impl BaseDocument {
         (width > 0.0).then(|| (width, marker.height() as f64 / scale))
     }
 
+    /// pyro: whether `node_id` is a box of combined text in a vertical line, whose text paint
+    /// compresses into it (blitz-paint's `combined_text_compression`).
+    fn is_compressed_combined_text(&self, node_id: NodeId) -> bool {
+        let node = &self.nodes[node_id];
+        let Some(style) = node.primary_styles() else { return false };
+        if !style.flags.contains(style::computed_value_flags::ComputedValueFlags::IS_TEXT_COMBINED) || style.writing_mode.is_vertical() {
+            return false;
+        }
+        node.layout_parent
+            .get()
+            .and_then(|parent| self.nodes[parent].primary_styles().map(|p| p.writing_mode))
+            .is_some_and(|wm| wm.is_vertical() && !wm.is_sideways())
+    }
+
     /// pyro: whether `node_id` is `position: fixed`.
     fn is_fixed(&self, node_id: NodeId) -> bool {
         self.nodes[node_id]
@@ -1418,6 +1432,11 @@ impl BaseDocument {
                 if Some(i) == clamp_line { w.min(content_width) } else { w }
             })
             .fold(0.0, f64::max);
+        // pyro: combined text (`text-combine-upright` in a vertical line, a horizontal box one em
+        // square) is compressed to fit its box (blitz-paint's `combined_text_compression`): it
+        // reaches no further than the box (Chrome: WPT css-writing-modes
+        // `text-combine-upright-compression-007`, nine 72px characters combined overflow nothing).
+        let width = if self.is_compressed_combined_text(node_id) { width.min(content_width) } else { width };
         // pyro: where the lines start: an overflowing right-to-left line is right-aligned and
         // overflows its inline start (parley's negative offset; its hanging trailing whitespace
         // is on its left), which is scrollable overflow (Chrome: `direction: rtl` 4ch of Ahem in
