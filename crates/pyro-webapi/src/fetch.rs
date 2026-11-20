@@ -47,6 +47,8 @@ pub struct RequestContext {
     pub loader_id: Option<String>,
 }
 
+const DEFAULT_FETCH_MAX_PENDING_REQUESTS: usize = 1024;
+
 pub(crate) struct FetchState {
     limits: Cell<FetchLimits>,
     budget: Arc<Budget>,
@@ -60,7 +62,7 @@ pub(crate) struct FetchState {
 impl Default for FetchState {
     fn default() -> Self {
         Self {
-            limits: Cell::new(FetchLimits::default()),
+            limits: Cell::new(FetchLimits { max_requests: DEFAULT_FETCH_MAX_PENDING_REQUESTS, ..FetchLimits::default() }),
             budget: Arc::new(Budget::default()),
             keepalive_bytes: Arc::default(),
             context: RefCell::new(RequestContext::default()),

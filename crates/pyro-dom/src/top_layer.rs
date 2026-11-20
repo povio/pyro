@@ -180,7 +180,7 @@ impl Dom {
         self.top_layer.leave(el);
     }
 
-        /// Whether the popover's visibility state is "showing".
+    /// Whether the popover's visibility state is "showing".
     pub fn is_popover_showing(&self, el: NodeId) -> bool {
         self.top_layer.popovers.contains(&el)
     }
@@ -345,5 +345,34 @@ impl Dom {
                 self.bump();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::node::DocumentKind;
+
+    #[test]
+    fn dropping_stale_popover_exposes_next_stack_entry() {
+        let mut dom = Dom::new();
+        let doc = dom.create_document(DocumentKind::Html, "about:blank");
+        let next = dom.create_element(doc, "div").unwrap();
+        let stale = dom.create_element(doc, "div").unwrap();
+        for popover in [next, stale] {
+            dom.set_popover_showing(popover, true).unwrap();
+            dom.push_popover_stack(popover, PopoverStack::Auto);
+        }
+        dom.set_popover_invoker(stale, Some(next));
+        assert!(dom.top_layer.popovers.remove(&stale));
+
+        dom.set_popover_showing(stale, false).unwrap();
+        assert_eq!(dom.popover_stack(PopoverStack::Auto), [next, stale]);
+
+        dom.drop_popover(stale);
+        assert_eq!(dom.popover_stack(PopoverStack::Auto), [next]);
+        assert_eq!(dom.top_layer(), [next]);
+        assert_eq!(dom.popover_invoker(stale), None);
+        assert!(dom.is_popover_showing(next));
     }
 }

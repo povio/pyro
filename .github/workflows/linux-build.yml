@@ -1,7 +1,7 @@
 name: Linux build
 
 # Builds the render-enabled browser and comparison worker for Linux x64 and
-# arm64 with the patched JavaScriptCore linked in (jsc.yml's linux job: a
+# arm64 with the patched JavaScriptCore linked in (jsc-linux.yml: a
 # static archive), bundles the ICU libraries it needs beside the browser
 # (scripts/release/bundle-icu-linux.sh), smoke-tests the bundle and runs the
 # client's test suite against it.
@@ -17,8 +17,12 @@ name: Linux build
 on:
   workflow_call:
     inputs:
+      arch:
+        description: Linux architecture (x64 or arm64)
+        type: string
+        required: true
       jsc-dir:
-        description: jsc.yml's `dir` output
+        description: jsc-linux.yml's `dir` output
         required: true
         type: string
       release:
@@ -38,15 +42,7 @@ permissions:
 
 jobs:
   build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: ubuntu-24.04
-            arch: x64
-          - runner: ubuntu-24.04-arm
-            arch: arm64
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ inputs.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     timeout-minutes: 150
     env:
       CC: clang
@@ -61,7 +57,7 @@ jobs:
           path: .
       - uses: actions/download-artifact@v4
         with:
-          name: patched-jsc-linux-${{ matrix.arch }}
+          name: patched-jsc-linux-${{ inputs.arch }}
           path: patched-jsc
       - name: Install build dependencies
         run: scripts/linux/setup.sh
@@ -69,6 +65,13 @@ jobs:
         run: |
           rustup toolchain install stable --profile minimal --component llvm-tools --no-self-update
           rustup default stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: linux-registry-${{ inputs.arch }}
+          cache-targets: false
+          cache-bin: false
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: mozilla-actions/sccache-action@v0.0.9
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: '1.4.0'
@@ -109,6 +112,9 @@ jobs:
           df -h . /mnt 2>/dev/null || df -h .
       - name: Build browser and comparison worker against the patched JavaScriptCore
         env:
+          # Install the wrapper before enabling it; PGO scripts disable it for profile-sensitive builds.
+          RUSTC_WRAPPER: sccache
+          SCCACHE_GHA_ENABLED: 'true'
           PGO: ${{ inputs.pgo }}
         run: |
           export PYRO_JSC_DIR="$HOME/.cache/pyro/jsc/$JSC_DIR"
@@ -140,7 +146,7 @@ jobs:
           fi
       - name: Bundle ICU and check the bundle
         env:
-          ARCH: ${{ matrix.arch }}
+          ARCH: ${{ inputs.arch }}
           VERSION: ${{ inputs.version }}
         run: |
           stage="archive/linux-$ARCH"
@@ -167,7 +173,7 @@ jobs:
           cp "$stage"/lib/* "native/linux-$ARCH/lib/"
       - name: Test the client against the bundled browser
         env:
-          ARCH: ${{ matrix.arch }}
+          ARCH: ${{ inputs.arch }}
         working-directory: packages/pyro
         run: |
           bun install --frozen-lockfile
@@ -177,19 +183,19 @@ jobs:
         if: always() && inputs.pgo
         uses: actions/upload-artifact@v4
         with:
-          name: pgo-training-logs-linux-${{ matrix.arch }}
+          name: pgo-training-logs-linux-${{ inputs.arch }}
           path: target/pgo/*.log
           if-no-files-found: ignore
           retention-days: 7
       - uses: actions/upload-artifact@v4
         with:
-          name: native-linux-${{ matrix.arch }}
+          name: native-linux-${{ inputs.arch }}
           path: native/
           if-no-files-found: error
           retention-days: 7
       - uses: actions/upload-artifact@v4
         with:
-          name: archive-linux-${{ matrix.arch }}
-          path: archive/linux-${{ matrix.arch }}/
+          name: archive-linux-${{ inputs.arch }}
+          path: archive/linux-${{ inputs.arch }}/
           if-no-files-found: error
           retention-days: 7

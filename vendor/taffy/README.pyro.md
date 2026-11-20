@@ -66,6 +66,14 @@ Upstream's generated tests expect exact fractions and are not run against this c
 `grid_parity_tailwind_columns` and `grid_parity_calendar_fr_rows_with_min_height` in
 `crates/pyro-layout/tests/flow.rs` cover it.
 
+`compute/grid/track_sizing.rs`, `resolve_intrinsic_track_sizes`: an item occupying a single track with an
+automatic minimum always uses its minimum contribution, under a min- or max-content constraint too, as Blink
+does ("kForIntrinsicMinimums"; the spec's limited min-content contributions are never used there). An item
+with an explicit zero minimum therefore adds nothing to a min-content measurement, so a long word does not
+widen a nested grid that can wrap it (`nested_grid` tests in `crates/pyro-layout/tests/flow.rs`; WPT
+css-sizing `range-percent-intrinsic-size-1`). Items spanning several tracks: the zero-minimum rule in the
+min-content inline case, and the minimum contribution where no flexible track is spanned.
+
 `style/block.rs` and `compute/block.rs`: `BlockContainerStyle::margin_trim` (default: neither edge) is
 `margin-trim` in the block axis (css-box-4 §3.3; stylo_taffy answers from the computed value). With `start`,
 the top margins of the in-flow children at the container's top edge are truncated to zero together with every
