@@ -2745,7 +2745,9 @@ impl taffy::LayoutBlockContainer for LayoutPassState<'_> {
         use taffy::{CoreStyle as _, ResolveOrZero as _};
         let layout_style = node.layout_style();
         let inset = layout_style.padding().resolve_or_zero(None, resolve_calc_value).horizontal_axis_sum()
-            + layout_style.border().resolve_or_zero(None, resolve_calc_value).horizontal_axis_sum();
+            + layout_style.border().resolve_or_zero(None, resolve_calc_value).horizontal_axis_sum()
+            // (the recorded size is less the gutters: `Node::container_query_gutters`)
+            + node.container_query_gutters().width;
         Some(Some(content.to_f32_px() + inset))
     }
 

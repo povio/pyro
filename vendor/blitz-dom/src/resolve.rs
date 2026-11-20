@@ -907,9 +907,11 @@ impl BaseDocument {
             }
             let size = if rendered {
                 let layout = node.final_layout();
+                // pyro: less its scrollbar gutters (`Node::container_query_gutters`)
+                let g = node.container_query_gutters();
                 euclid::default::Size2D::new(
-                    entry.axes.width.then(|| app_units::Au::from_f32_px(layout.content_box_width())),
-                    entry.axes.height.then(|| app_units::Au::from_f32_px(layout.content_box_height())),
+                    entry.axes.width.then(|| app_units::Au::from_f32_px((layout.content_box_width() - g.width).max(0.0))),
+                    entry.axes.height.then(|| app_units::Au::from_f32_px((layout.content_box_height() - g.height).max(0.0))),
                 )
             } else {
                 Default::default()

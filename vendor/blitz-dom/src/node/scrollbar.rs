@@ -65,7 +65,38 @@ impl Node {
     /// (`stylo_taffy::scrollbars`) and the box has any gutter; as layout reserved them
     /// (`TaffyStyloStyle::scrollbar_gutter`).
     pub fn classic_scrollbars(&self) -> Option<ClassicScrollbars> {
-        use style::values::computed::{Overflow, ScrollbarGutter};
+        use style::values::computed::Overflow;
+        let inputs = self.classic_gutter_inputs()?;
+        let gutters = inputs.gutters().edges;
+        if gutters.left + gutters.right + gutters.top + gutters.bottom <= 0.0 {
+            return None;
+        }
+        let (overflow, auto_shows) = (inputs.overflow, inputs.auto_shows);
+        let shows = |overflow: Overflow, auto: bool| overflow == Overflow::Scroll || (overflow == Overflow::Auto && auto);
+        Some(ClassicScrollbars {
+            gutters,
+            shown: taffy::Point { x: shows(overflow.x, auto_shows.x), y: shows(overflow.y, auto_shows.y) },
+            vertical_on_left: inputs.rtl && !inputs.vertical,
+        })
+    }
+
+    /// pyro: the space the box's classic scrollbar gutters take out of its content box in each
+    /// axis for container query lengths and conditions: an `overflow: scroll` scrollbar's and a
+    /// `scrollbar-gutter` reservation, not an `overflow: auto` scrollbar's (its showing depends
+    /// on the layout those lengths give). Chrome: WPT css-conditional
+    /// `container-queries/scrollbar-container-units-block`, `100cqh` in a 100px tall
+    /// `overflow-x: scroll` size container is 85px, in an `overflow-x: auto` one 100px.
+    pub fn container_query_gutters(&self) -> taffy::Size<f32> {
+        let Some(mut inputs) = self.classic_gutter_inputs() else { return taffy::Size { width: 0.0, height: 0.0 } };
+        inputs.auto_shows = taffy::Point { x: false, y: false };
+        let g = inputs.gutters().edges;
+        taffy::Size { width: g.left + g.right, height: g.top + g.bottom }
+    }
+
+    /// What decides the box's classic scrollbar gutters, when the process has classic scrollbars
+    /// and the box can have them.
+    fn classic_gutter_inputs(&self) -> Option<stylo_taffy::scrollbars::GutterInputs> {
+        use style::values::computed::ScrollbarGutter;
         use stylo_taffy::scrollbars::{GutterInputs, ScrollbarMode, thickness_in};
         let thickness = |w| thickness_in(ScrollbarMode::Classic, w);
         if !self.tree().classic_scrollbars
@@ -104,16 +135,7 @@ impl Node {
             vertical: wm.is_vertical(),
             rtl: !wm.is_bidi_ltr(),
         };
-        let gutters = inputs.gutters().edges;
-        if gutters.left + gutters.right + gutters.top + gutters.bottom <= 0.0 {
-            return None;
-        }
-        let shows = |overflow: Overflow, auto: bool| overflow == Overflow::Scroll || (overflow == Overflow::Auto && auto);
-        Some(ClassicScrollbars {
-            gutters,
-            shown: taffy::Point { x: shows(overflow.x, auto_shows.x), y: shows(overflow.y, auto_shows.y) },
-            vertical_on_left: inputs.rtl && !inputs.vertical,
-        })
+        Some(inputs)
     }
 
     /// pyro: the box's classic scrollbar gutters at each physical edge of its padding box (zero
