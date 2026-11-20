@@ -2879,6 +2879,7 @@ dependencies = [
  "stylo_dom",
  "stylo_static_prefs",
  "stylo_traits",
+ "svgtypes",
  "unicode-bidi",
  "url",
 ]
@@ -3029,6 +3030,7 @@ dependencies = [
  "aes",
  "aes-kw",
  "base64 0.23.1",
+ "brotli-decompressor 6.1.0",
  "bytes",
  "crypto-bigint 0.7.10",
  "crypto-primes",

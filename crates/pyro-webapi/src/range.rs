@@ -283,7 +283,7 @@ fn clone_substring(dom: &mut Dom, node: NodeId, from: u32, to: u32) -> JsResult<
 
 /// "Clone the contents" or, with `extract`, "extract" of `s..e`, leaving
 /// the boundary points to the caller.
-fn contents(dom: &mut Dom, s: Point, e: Point, extract: bool) -> JsResult<NodeId> {
+pub(crate) fn contents(dom: &mut Dom, s: Point, e: Point, extract: bool) -> JsResult<NodeId> {
     let doc = dom.node_document(s.0).js()?;
     let frag = dom.create_fragment(doc).js()?;
     if s == e {

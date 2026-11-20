@@ -962,6 +962,7 @@ impl JsClass for WorkerGlobalScope {
         );
         crate::crypto::define_globals(def);
         crate::streams::define_globals(def);
+        crate::observable::define_globals(def);
         crate::scheduler::define_global(def);
         crate::canvas::define_worker_globals(def);
         // CSS Font Loading: `FontFace` and the worker's `FontFaceSet`.

@@ -3613,6 +3613,7 @@ simple_class!(SvgGraphicsElement, "SVGGraphicsElement", SvgElement, |def| {
     });
 });
 simple_class!(SvgSvgElement, "SVGSVGElement", SvgGraphicsElement, |def| {
+    def.method("createSVGPoint", 0, |s, _, _| collections::detached_point(s, 0.0, 0.0));
     def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_324)?.value()));
     def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_327)?.value()));
     def.getter("width", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_306)?.value()));
@@ -3649,7 +3650,7 @@ simple_class!(SvgSvgElement, "SVGSVGElement", SvgGraphicsElement, |def| {
     // pyro: the user agent's pan and zoom (SVG 2 `currentTranslate`, `currentScale`), which the
     // renderer applies to the `<svg>`'s content (pyro-dom `SVG_PAN_ATTR`).
     def.getter("currentTranslate", |s, n| {
-        Ok(s.wrap::<collections::SvgCurrentTranslate>(collections::NodeHold::new(n.page(), n.id)?, None)?.value())
+        Ok(s.wrap::<collections::SvgPoint>(collections::SvgPointData::Translate(collections::NodeHold::new(n.page(), n.id)?), None)?.value())
     });
     def.accessor(
         "currentScale",
@@ -3718,6 +3719,19 @@ static PATH_LENGTH: collections::SvgAttr = collections::SvgAttr { attrs: &["path
 static STOP_OFFSET: collections::SvgAttr = collections::SvgAttr { attrs: &["offset"], part: collections::SvgPart::NumberOrPercentage, initial: 0.0, slot: 422 };
 
 simple_class!(SvgGeometryElement, "SVGGeometryElement", SvgGraphicsElement, |def| {
+    def.method("getTotalLength", 0, |s, n, _| {
+        Ok(s.number(pyro_dom::svg_geometry::total_length(&n.page().dom.borrow(), &n.page().layout(), n.id) as f32 as f64))
+    });
+    def.method("getPointAtLength", 1, |s, n, args| {
+        args.require(1, "SVGGeometryElement.getPointAtLength")?;
+        let distance = args.get(0).to_number()? as f32;
+        if !distance.is_finite() {
+            return Err(JsError::Type("The distance must be a finite float.".into()));
+        }
+        let point = pyro_dom::svg_geometry::point_at_length(&n.page().dom.borrow(), &n.page().layout(), n.id, f64::from(distance))
+            .ok_or_else(|| JsError::dom("InvalidStateError", "The element has no path to measure."))?;
+        collections::detached_point(s, point.x, point.y)
+    });
     def.getter("pathLength", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &PATH_LENGTH)?.value()));
 });
 simple_class!(SvgPathElement, "SVGPathElement", SvgGeometryElement);

@@ -2036,6 +2036,42 @@ impl Renderer {
         Some(m.doc.resolved_transform_value(id, property, style))
     }
 
+    pub fn svg_geometry_properties(&self, page: u64, key: u64) -> Option<Vec<(&'static str, String)>> {
+        use style::properties::{LonghandId, PropertyDeclarationId};
+        use style::rule_tree::CascadeOrigin;
+        let mirror = self.mirrors.get(&page)?;
+        let element = mirror.doc.get_node(mirror.node(key)?)?.element_data()?;
+        let computed = self.element_style(page, key)?;
+        let guard = element.guard.as_ref()?.read();
+        let mut result = Vec::new();
+        for rule in computed.rules.as_ref()?.self_and_ancestors() {
+            let Some(source) = rule.style_source() else { continue };
+            if matches!(rule.cascade_level().origin(), CascadeOrigin::UA | CascadeOrigin::User | CascadeOrigin::PresHints) {
+                continue;
+            }
+            for declaration in source.read(&guard).declarations() {
+                let PropertyDeclarationId::Longhand(id) = declaration.id() else { continue };
+                let name = match id {
+                    LonghandId::X => "x",
+                    LonghandId::Y => "y",
+                    LonghandId::Cx => "cx",
+                    LonghandId::Cy => "cy",
+                    LonghandId::R => "r",
+                    LonghandId::Rx => "rx",
+                    LonghandId::Ry => "ry",
+                    LonghandId::Width => "width",
+                    LonghandId::Height => "height",
+                    LonghandId::D => "d",
+                    _ => continue,
+                };
+                if !result.iter().any(|(n, _)| *n == name) {
+                    result.push((name, computed.computed_value_to_string(declaration.id())));
+                }
+            }
+        }
+        Some(result)
+    }
+
     pub fn sampled_calc_size(&self, page: u64, key: u64, width: bool, style: &style::properties::ComputedValues) -> Option<f32> {
         let mirror = self.mirrors.get(&page)?;
         mirror.doc.sampled_calc_size(mirror.node(key)?, width, style)

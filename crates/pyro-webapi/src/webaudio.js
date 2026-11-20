@@ -33,7 +33,7 @@
   const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
   const queueMicrotaskC = queueMicrotask;
   const reportErrorC = typeof reportError === 'function' ? reportError : () => {};
-  const { sin, exp, pow, floor, ceil, min, max, PI, abs } = Math;
+  const { sin, cos, exp, pow, floor, ceil, min, max, PI, abs } = Math;
   // Captured now: page fake timers installed later do not stall audio.
   const setTimer = setTimeout;
   const perf = performance;
@@ -377,7 +377,9 @@
     }
     for (let i = 0; i < QUANTUM; i++) {
       const v = out[i];
-      if (v < p.minValue) out[i] = p.minValue; else if (v > p.maxValue) out[i] = p.maxValue;
+      if (v !== v) out[i] = p.defaultValue;
+      else if (v < p.minValue) out[i] = p.minValue;
+      else if (v > p.maxValue) out[i] = p.maxValue;
     }
     return out;
   }
@@ -435,7 +437,12 @@
     return context;
   }
   // The output of `node` (state) for quantum q at frame f0.
-  function pull(n, q, f0) {
+  function pull(n, q, f0, output = 0) {
+    const bus = renderNode(n, q, f0);
+    // A splitter exposes each discrete input channel as its own mono output port.
+    return n.splitChannels ? (bus[output] ? [bus[output]] : silentBus()) : bus;
+  }
+  function renderNode(n, q, f0) {
     if (n.q === q) return n.out;
     if (n.busy) return silentBus();
     n.busy = true;
@@ -452,7 +459,7 @@
   function input(n, q, f0, port = 0) {
     const sources = n.numberOfInputs > 1 ? n.inputs.filter(s => s.input === port) : n.inputs;
     if (!sources.length) return null;
-    const buses = sources.map((s) => pull(s.node, q, f0));
+    const buses = sources.map((s) => pull(s.node, q, f0, s.output));
     let channels = 0;
     for (const b of buses) channels = max(channels, b.length);
     if (n.mode === 'clamped-max') channels = min(channels, n.channelCount);
@@ -491,6 +498,9 @@
       const n = nodeOf(this);
       const mode = `${v}`;
       if (mode !== 'max' && mode !== 'clamped-max' && mode !== 'explicit') return;
+      if (mode === 'max' && n.disallowMaxMode) {
+        throw new DE('This node supports only explicit or clamped-max channel count.', 'NotSupportedError');
+      }
       if (n.fixedMode && mode !== n.mode) {
         throw new DE(`Failed to set the 'channelCountMode' property on 'AudioNode': ChannelCountMode cannot be changed from '${n.mode}' to '${mode}'`, 'InvalidStateError');
       }
@@ -500,7 +510,9 @@
     set channelInterpretation(v) {
       const n = nodeOf(this);
       const interp = `${v}`;
-      if (interp === 'speakers' || interp === 'discrete') n.interp = interp;
+      if (interp !== 'speakers' && interp !== 'discrete') return;
+      if (n.fixedInterpretation && interp !== n.interp) throw new DE('The channel interpretation is fixed.', 'InvalidStateError');
+      n.interp = interp;
     }
     connect(destination, output = 0, input = 0) {
       const n = nodeOf(this);
@@ -516,8 +528,8 @@
         throw new DE(`Failed to execute 'connect' on 'AudioNode': output index (${out}) exceeds number of outputs (${n.numberOfOutputs}).`, 'IndexSizeError');
       }
       if (p) {
-        if (!p.inputs.some((s) => s.node === n)) p.inputs.push({ node: n, output: out });
-        if (!n.outs.some((o) => o.param === p)) n.outs.push({ param: p, target: destination, output: out });
+        if (!p.inputs.some((s) => s.node === n && s.output === out)) p.inputs.push({ node: n, output: out });
+        if (!n.outs.some((o) => o.param === p && o.output === out)) n.outs.push({ param: p, target: destination, output: out });
         return undefined;
       }
       const inp = ulong(input);
@@ -533,7 +545,7 @@
     disconnect(destination, output, input) {
       const n = nodeOf(this);
       const drop = (o) => {
-        if (o.param) o.param.inputs = o.param.inputs.filter((s) => s.node !== n);
+        if (o.param) o.param.inputs = o.param.inputs.filter((s) => s.node !== n || s.output !== o.output);
         else o.node.inputs = o.node.inputs.filter(s => s.node !== n || s.output !== o.output || s.input !== o.input);
       };
       if (arguments.length === 0) {
@@ -550,22 +562,23 @@
         n.outs = n.outs.filter((o) => o.output !== out);
         return;
       }
-      if (output !== undefined) {
-        const out = ulong(output);
+      if (arguments.length >= 3 && params.has(destination)) throw new TypeErrorC('The three-argument overload requires an AudioNode.');
+      const out = arguments.length >= 2 ? ulong(output) : null;
+      if (out !== null) {
         if (out >= n.numberOfOutputs) {
           throw new DE(`Failed to execute 'disconnect' on 'AudioNode': The output index provided (${out}) is outside the range [0, ${n.numberOfOutputs - 1}].`, 'IndexSizeError');
         }
       }
-      if (input !== undefined && nodes.has(destination)) {
-        const inp = ulong(input);
+      const inp = arguments.length >= 3 ? ulong(input) : null;
+      if (inp !== null && nodes.has(destination)) {
         const d = nodes.get(destination);
         if (inp >= d.numberOfInputs) {
           throw new DE(`Failed to execute 'disconnect' on 'AudioNode': The input index provided (${inp}) is outside the range [0, ${d.numberOfInputs - 1}].`, 'IndexSizeError');
         }
       }
       const matching = n.outs.filter(o => o.target === destination
-        && (output === undefined || o.output === ulong(output))
-        && (input === undefined || o.input === ulong(input)));
+        && (out === null || o.output === out)
+        && (inp === null || o.input === inp));
       if (!matching.length) {
         throw new DE("Failed to execute 'disconnect' on 'AudioNode': the given destination is not connected.", 'InvalidAccessError');
       }
@@ -660,6 +673,58 @@
   }
   webidl(GainNode, 'GainNode');
 
+  class StereoPannerNode extends AudioNode {
+    constructor(context, options = {}) {
+      contextArg(context, 'StereoPannerNode');
+      const settings = readNodeOptions(options, 'StereoPannerNode');
+      const initialPan = options?.pan;
+      const value = initialPan === undefined ? 0 : finite(Math.fround(initialPan), 'construct', 'StereoPannerNode');
+      super(secret, context, {
+        mode: 'clamped-max',
+        disallowMaxMode: true,
+        checkCount(count) {
+          if (count < 1 || count > 2) throw new DE('A stereo panner accepts one or two input channels.', 'NotSupportedError');
+          this.channelCount = count;
+        },
+      });
+      applyNodeOptions(this, settings);
+      const n = nodeOf(this);
+      const pan = new AudioParam(secret, context, 0, -1, 1);
+      pan.value = value;
+      n.pan = pan;
+      n.process = (f0, q) => {
+        const bus = input(n, q, f0);
+        const left = new F32(QUANTUM), right = new F32(QUANTUM);
+        if (bus) {
+          const values = paramValues(params.get(pan), f0, ctxOf(context).rate, q);
+          for (let i = 0; i < QUANTUM; i++) {
+            const position = values[i];
+            if (bus.length === 1) {
+              const angle = (position + 1) * PI / 4;
+              left[i] = bus[0][i] * cos(angle);
+              right[i] = bus[0][i] * sin(angle);
+            } else if (position <= 0) {
+              const angle = (position + 1) * PI / 2;
+              left[i] = bus[0][i] + bus[1][i] * cos(angle);
+              right[i] = bus[1][i] * sin(angle);
+            } else {
+              const angle = position * PI / 2;
+              left[i] = bus[0][i] * cos(angle);
+              right[i] = bus[1][i] + bus[0][i] * sin(angle);
+            }
+          }
+        }
+        return [left, right];
+      };
+    }
+    get pan() {
+      const n = nodeOf(this);
+      if (!n.pan) throw invocation();
+      return n.pan;
+    }
+  }
+  webidl(StereoPannerNode, 'StereoPannerNode');
+
   // ---- Recursive filters -----------------------------------------------------
   const F64 = Float64Array;
   const typedArrayPrototype = Object.getPrototypeOf(F32.prototype);
@@ -668,7 +733,7 @@
   const arrayLength = getOwnPropertyDescriptor(typedArrayPrototype, 'length').get;
   const bufferLength = getOwnPropertyDescriptor(ArrayBufferC.prototype, 'byteLength').get;
   const resizable = getOwnPropertyDescriptor(ArrayBufferC.prototype, 'resizable')?.get;
-  const { cos, sqrt, hypot, atan2 } = Math;
+  const { sqrt, hypot, atan2 } = Math;
 
   // Both nodes implement a rational transfer function B(z)/A(z). Keep input
   // and output samples separately: a biquad's coefficients can change at each
@@ -892,6 +957,27 @@
     }
   }
   webidl(IIRFilterNode, 'IIRFilterNode');
+
+  class ChannelSplitterNode extends AudioNode {
+    constructor(context, options = {}) {
+      contextArg(context, 'ChannelSplitterNode');
+      const inherited = readNodeOptions(options, 'ChannelSplitterNode');
+      const outputs = options?.numberOfOutputs;
+      const count = outputs === undefined ? 6 : ulong(outputs);
+      if (!count || count > MAX_CHANNELS) throw new DE('Unsupported number of splitter outputs.', 'IndexSizeError');
+      super(secret, context, {
+        numberOfOutputs: count, channelCount: count, mode: 'explicit', interp: 'discrete',
+        fixedMode: true, fixedInterpretation: true, splitChannels: true,
+        checkCount(value) {
+          if (value !== count) throw new DE('Splitter channel count must match the number of outputs.', 'InvalidStateError');
+        },
+      });
+      applyNodeOptions(this, inherited);
+      const n = nodeOf(this);
+      n.process = (f0, q) => input(n, q, f0) || [];
+    }
+  }
+  webidl(ChannelSplitterNode, 'ChannelSplitterNode');
 
   // Each connected input is down-mixed to mono; unconnected inputs still
   // occupy their channel in the output.
@@ -1201,6 +1287,7 @@
     }
     createBufferSource() { return new AudioBufferSourceNode(this); }
     createGain() { return new GainNode(this); }
+    createStereoPanner() { return new StereoPannerNode(this); }
     createBiquadFilter() { return new BiquadFilterNode(this); }
     createIIRFilter(feedforward, feedback) {
       ctxOf(this);
@@ -1211,6 +1298,7 @@
       const a = coefficients(feedback);
       return new IIRFilterNode(this, {feedforward: b, feedback: a}, secret);
     }
+    createChannelSplitter(numberOfOutputs = 6) { return new ChannelSplitterNode(this, {numberOfOutputs}); }
     createChannelMerger(numberOfInputs = 6) { return new ChannelMergerNode(this, {numberOfInputs}); }
     createOscillator() { return new OscillatorNode(this); }
     createConstantSource() { return new ConstantSourceNode(this); }
@@ -1490,6 +1578,6 @@
   return {
     BaseAudioContext, AudioContext, OfflineAudioContext, AudioBuffer, AudioParam, AudioNode,
     AudioDestinationNode, AudioScheduledSourceNode, AudioBufferSourceNode, OscillatorNode,
-    ConstantSourceNode, GainNode, BiquadFilterNode, IIRFilterNode, ChannelMergerNode, OfflineAudioCompletionEvent,
+    ConstantSourceNode, GainNode, StereoPannerNode, BiquadFilterNode, IIRFilterNode, ChannelMergerNode, ChannelSplitterNode, OfflineAudioCompletionEvent,
   };
 })

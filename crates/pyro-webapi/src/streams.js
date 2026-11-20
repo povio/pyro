@@ -35,6 +35,18 @@
   // %TypedArray%.prototype[@@toStringTag] reads), as WebIDL's conversion checks.
   const typedArrayName = Object.getOwnPropertyDescriptor(getPrototypeOf(Uint8Array.prototype), Symbol.toStringTag).get;
   const isUint8Array = (v) => isView(v) && apply(typedArrayName, v, []) === 'Uint8Array';
+  // Pull-into descriptors use the view's intrinsic kind and offsets. A typed
+  // array subclass can replace its public constructor and instance properties.
+  const viewGetters = prototype => ({
+    buffer: Object.getOwnPropertyDescriptor(prototype, 'buffer').get,
+    offset: Object.getOwnPropertyDescriptor(prototype, 'byteOffset').get,
+    length: Object.getOwnPropertyDescriptor(prototype, 'byteLength').get,
+  });
+  const typedView = viewGetters(getPrototypeOf(Uint8ArrayC.prototype));
+  const dataView = viewGetters(DataViewC.prototype);
+  const typedCtors = { Int8Array, Uint8Array, Uint8ClampedArray, Int16Array, Uint16Array,
+    Int32Array, Uint32Array, Float32Array, Float64Array, BigInt64Array, BigUint64Array };
+  if (typeof Float16Array !== 'undefined') typedCtors.Float16Array = Float16Array;
   const transferBuffer = ArrayBuffer.prototype.transfer;
   const parseJSON = JSON.parse;
   const BlobC = Blob;
@@ -162,14 +174,14 @@
   const rsLocked = (st) => st.reader !== undefined;
   const rsNew = () => ({ state: 'readable', reader: undefined, storedError: undefined, disturbed: false, controller: undefined, wrapper: undefined });
 
-  function rsClose(st) {
+  function rsClose(st, canceled = false) {
     st.state = 'closed';
     const rd = st.reader;
     if (!rd) return;
     rd.closed.resolve(undefined);
     const reqs = rd.reqs;
     rd.reqs = [];
-    for (let i = 0; i < reqs.length; i++) reqs[i].close();
+    for (let i = 0; i < reqs.length; i++) reqs[i].close(canceled);
   }
   function rsError(st, e) {
     st.state = 'errored';
@@ -186,7 +198,7 @@
     st.disturbed = true;
     if (st.state === 'closed') return resolved();
     if (st.state === 'errored') return rejected(st.storedError);
-    rsClose(st);
+    rsClose(st, true);
     const c = st.controller;
     c.queue = [];
     c.queueSize = 0;
@@ -337,28 +349,41 @@
   // Copies queued bytes into pending BYOB reads.
   function bcFill(c) {
     const rd = c.stream.reader;
-    while (rd.reqs.length > 0 && c.queue.length > 0) {
+    const ready = [];
+    while (rd.reqs.length > 0 && c.queueSize > 0) {
       const req = rd.reqs[0];
-      const head = c.queue[0];
-      const n = Math.min(head.value.length, req.length - req.filled);
-      req.target.set(n === head.value.length ? head.value : head.value.subarray(0, n), req.filled);
-      req.filled += n;
-      c.queueSize -= n;
-      if (n === head.value.length) {
-        c.queue.shift();
+      // FillPullIntoDescriptorFromQueue: use as many whole elements as
+      // possible once the minimum is reachable, preserving any trailing bytes.
+      const available = Math.min(req.filled + c.queueSize, req.length);
+      const aligned = available - available % req.element;
+      const end = aligned >= req.min ? aligned : available;
+      while (req.filled < end) {
+        const head = c.queue[0];
+        const n = Math.min(head.size, end - req.filled);
+        req.target.set(n === head.size ? head.value : head.value.subarray(0, n), req.filled);
+        req.filled += n;
+        c.queueSize -= n;
+        if (n === head.size) {
+          c.queue.shift();
+        } else {
+          head.value = head.value.subarray(n);
+          head.size -= n;
+        }
+      }
+      if (aligned < req.min) break;
+      ready.push(rd.reqs.shift());
+    }
+    if (c.closeRequested && c.queueSize === 0 && c.stream.state === 'readable') {
+      if (rd.reqs.length && rd.reqs[0].filled > 0) {
+        rcError(c, new TypeErrorC('Insufficient bytes to fill the requested view'));
       } else {
-        head.value = head.value.subarray(n);
-        head.size -= n;
-      }
-      if (req.filled >= req.min) {
-        rd.reqs.shift();
-        req.chunk();
+        rcClear(c);
+        rsClose(c.stream);
       }
     }
-    if (c.closeRequested && c.queue.length === 0 && c.stream.state === 'readable') {
-      rcClear(c);
-      rsClose(c.stream);
-    }
+    // Resolving a read result can run script. Move every ready request out
+    // of the reader before notifying any reader of its completed view.
+    for (let i = 0; i < ready.length; i++) ready[i].chunk();
   }
   function bcRequest(c) {
     if (c.byobRequest) return c.byobRequest;
@@ -930,35 +955,45 @@
     read(view, options = undefined) {
       if (!ReadableStreamBYOBReader.#is(this)) return rejected(invalid('ReadableStreamBYOBReader', 'read'));
       if (!isView(view)) return rejected(new TypeErrorC("Failed to execute 'read' on 'ReadableStreamBYOBReader': parameter 1 is not of type 'ArrayBufferView'."));
-      if (view.byteLength === 0) return rejected(new TypeErrorC('view must have non-zero byteLength'));
-      if (view.buffer.byteLength === 0) return rejected(new TypeErrorC("view's buffer has been detached"));
       let min = 1;
       try {
         const raw = dictionary(options, 'read').min;
-        if (raw !== undefined) min = NumberC(raw);
+        if (raw !== undefined) {
+          min = Math.trunc(+raw);
+          if (!(min >= 0 && min <= NumberC.MAX_SAFE_INTEGER)) throw new TypeErrorC('options.min is outside the unsigned long long range');
+        }
       } catch (e) {
         return rejected(e);
       }
+      const kind = apply(typedArrayName, view, []);
+      const Ctor = kind === undefined ? DataViewC : typedCtors[kind];
+      const getters = kind === undefined ? dataView : typedView;
+      let buffer, offset, length;
+      try {
+        buffer = apply(getters.buffer, view, []);
+        offset = apply(getters.offset, view, []);
+        length = apply(getters.length, view, []);
+      } catch (e) { return rejected(e); }
+      if (length === 0) return rejected(new TypeErrorC('view must have non-zero byteLength'));
       if (!(min > 0)) return rejected(new TypeErrorC('options.min must be greater than 0'));
-      const element = view.BYTES_PER_ELEMENT || 1;
-      const elements = view.byteLength / element;
+      const element = kind === undefined ? 1 : Ctor.BYTES_PER_ELEMENT;
+      const elements = length / element;
       if (min > elements) return rejected(new RangeErrorC('options.min must be less than or equal to view\'s length'));
       const rd = ReadableStreamBYOBReader$r.get(this);
       if (!rd.stream) return rejected(released('read from'));
       const st = rd.stream;
       st.disturbed = true;
       if (st.state === 'errored') return rejected(st.storedError);
-      const Ctor = view.constructor;
-      const offset = view.byteOffset;
-      const length = view.byteLength;
-      const buffer = transferBuffer ? apply(transferBuffer, view.buffer, []) : view.buffer;
+      try {
+        if (transferBuffer) buffer = apply(transferBuffer, buffer, []);
+      } catch (e) { return rejected(e); }
       const answer = (filled) => new Ctor(buffer, offset, Ctor === DataViewC ? filled : filled / element);
       if (st.state === 'closed') return resolved(result(answer(0), true));
       const d = defer();
       const req = {
         target: new Uint8ArrayC(buffer, offset, length), length, min: min * element, filled: 0, element,
         chunk: () => d.resolve(result(answer(req.filled), false)),
-        close: () => d.resolve(result(answer(req.filled), true)),
+        close: (canceled) => d.resolve(result(canceled ? undefined : answer(req.filled), true)),
         error: (e) => d.reject(e),
       };
       rd.reqs.push(req);
@@ -1676,7 +1711,7 @@
 
   // ----- Compression streams ---------------------------------------------
 
-  const FORMATS = ['deflate', 'deflate-raw', 'gzip'];
+  const FORMATS = ['deflate', 'deflate-raw', 'gzip', 'brotli'];
   // A transform over a native codec: each chunk must be a BufferSource; the
   // codec's TypeErrors (corrupt or truncated data) error both sides.
   const codecTransform = (kind, format, compress) => {
@@ -1686,10 +1721,10 @@
     }
     const codec = zlib(name, compress);
     const push = codec.push, finish = codec.finish;
+    const enqueue = out => tcEnqueue(t.controller, out);
     const t = makeTransform(undefined, (chunk) => {
       try {
-        const out = push(chunk);
-        if (out.length > 0) tcEnqueue(t.controller, out);
+        push(chunk, enqueue);
         return resolved();
       } catch (e) {
         return rejected(e);
