@@ -26,6 +26,14 @@ fn client(doc: &HtmlDocument, selector: &str) -> (f32, f32) {
 }
 
 #[test]
+fn projected_overflow_clips_and_bounds_the_visible_horizon() {
+    let document = doc("<div id=panel style='overflow:auto;width:200px;height:200px'><div style='width:100px;height:400px;transform-origin:0 0;transform:perspective(100px) rotateX(45deg)'></div></div>", true);
+    let panel = node(&document, "#panel");
+    assert_eq!(panel.scrollable_overflow().y1, 100_000.0);
+    assert!(panel.client_height() < 200.0);
+}
+
+#[test]
 fn projected_overflow_selects_the_viewport_scrollbar_axis() {
     let document = doc(
         "<div style='position:absolute;inset:50px auto auto 50px;width:400px;height:400px;perspective:300px'>\

@@ -147,8 +147,7 @@ impl M4 {
     }
 }
 
-/// The smallest W a plane point is drawn at: the plane is cut at the viewer's plane there.
-const MIN_W: f64 = 1e-6;
+use blitz_dom::projection::{clip_w, project, MIN_W, PROJECT_LIMIT};
 
 /// The clip rect a plane is recorded with: Blitz culls nothing in a plane (its stand-in can lie
 /// elsewhere than the plane does).
@@ -492,8 +491,7 @@ fn project_commands(commands: &[RenderCommand], h: &[f64; 9], bounds: Rect) -> O
         // each pixel samples only what it shows.
         let projected = project_path(path, transform, h);
         let far = kurbo::Shape::bounding_box(&projected);
-        const LIMIT: f64 = 1e5;
-        (far.x0 > -LIMIT && far.y0 > -LIMIT && far.x1 < LIMIT && far.y1 < LIMIT).then_some(projected)
+        (far.x0 > -PROJECT_LIMIT && far.y0 > -PROJECT_LIMIT && far.x1 < PROJECT_LIMIT && far.y1 < PROJECT_LIMIT).then_some(projected)
     };
     let mut out = Vec::with_capacity(commands.len());
     for command in commands {
@@ -712,36 +710,6 @@ fn close(a: Affine, b: Affine) -> bool {
     (0..4).all(|i| (a[i] - b[i]).abs() <= 1e-9) && (4..6).all(|i| (a[i] - b[i]).abs() <= 1e-7)
 }
 
-/// The projection of `rect` through the homography `h`, cut at the viewer's plane.
-fn project(h: &[f64; 9], rect: Rect) -> Vec<(f64, f64)> {
-    let corners = [(rect.x0, rect.y0), (rect.x1, rect.y0), (rect.x1, rect.y1), (rect.x0, rect.y1)];
-    let homogeneous: Vec<[f64; 4]> = corners
-        .iter()
-        .map(|&(x, y)| {
-            let [a, b, c, d, e, f, g, i, j] = *h;
-            [a * x + b * y + c, d * x + e * y + f, 0.0, g * x + i * y + j]
-        })
-        .collect();
-    clip_w(&homogeneous).into_iter().map(|p| (p[0], p[1])).collect()
-}
-
-/// A polygon of homogeneous points cut at the viewer's plane (W below [`MIN_W`]) and divided by W.
-fn clip_w(points: &[[f64; 4]]) -> Vec<[f64; 3]> {
-    let mut out = Vec::with_capacity(points.len() + 2);
-    for i in 0..points.len() {
-        let (a, b) = (points[i], points[(i + 1) % points.len()]);
-        let (a_in, b_in) = (a[3] >= MIN_W, b[3] >= MIN_W);
-        if a_in {
-            out.push([a[0] / a[3], a[1] / a[3], a[2] / a[3]]);
-        }
-        if a_in != b_in {
-            let t = (MIN_W - a[3]) / (b[3] - a[3]);
-            let p: [f64; 4] = std::array::from_fn(|k| a[k] + (b[k] - a[k]) * t);
-            out.push([p[0] / MIN_W, p[1] / MIN_W, p[2] / MIN_W]);
-        }
-    }
-    out
-}
 
 #[cfg(test)]
 mod tests {

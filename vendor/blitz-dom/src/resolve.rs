@@ -2796,19 +2796,12 @@ impl BaseDocument {
 fn place_overflow(node: &crate::Node, location: (f64, f64), scale: f64, rect: Rect) -> Rect {
     let offset = kurbo::Vec2::new(location.0, location.1);
     if let Some(plane) = node.plane_3d().filter(|plane| plane.places_by_local || plane.crosses_viewer) {
-        let matrix = plane.local;
-        let project = |x: f64, y: f64| {
-            let (x, y) = (x / scale, y / scale);
-            let divisor = matrix[6] * x + matrix[7] * y + matrix[8];
-            let factor = if divisor.is_normal() { scale / divisor } else { scale };
-            kurbo::Point::new(
-                (matrix[0] * x + matrix[1] * y + matrix[2]) * factor,
-                (matrix[3] * x + matrix[4] * y + matrix[5]) * factor,
-            )
-        };
-        return Rect::from_points(project(rect.x0, rect.y0), project(rect.x1, rect.y1))
-            .union_pt(project(rect.x0, rect.y1))
-            .union_pt(project(rect.x1, rect.y0)) + offset;
+        use crate::projection::{project, PROJECT_LIMIT};
+        let mut points = project(&plane.local, rect.scale_from_origin(1.0 / scale)).into_iter().map(|(x, y)| {
+            kurbo::Point::new(x.clamp(-PROJECT_LIMIT, PROJECT_LIMIT) * scale, y.clamp(-PROJECT_LIMIT, PROJECT_LIMIT) * scale)
+        });
+        let Some(first) = points.next() else { return Rect::ZERO };
+        return points.fold(Rect::from_points(first, first), |bounds, point| bounds.union_pt(point)) + offset;
     }
     match node.transform().as_deref() {
         Some(transform) => transform.transform_rect_bbox(rect) + offset,
