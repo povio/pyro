@@ -19,6 +19,7 @@ pub struct PropertyRule {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParsedRule {
+    Declarations(String),
     Scope { start: Option<String>, end: Option<String>, rules: Vec<ParsedRule> },
     Property(PropertyRule),
     /// A style rule: serialized selector and the block's raw text.
@@ -75,6 +76,33 @@ fn parse_list(p: &mut Parser<'_>, namespaces: &mut Namespaces, top: bool, scoped
     loop {
         let start = p.position();
         let Ok(token) = p.next_including_whitespace_and_comments().cloned() else { return rules };
+        if scoped && matches!(token, Token::Semicolon) { continue; }
+        if scoped && matches!(token, Token::Ident(_)) {
+            let after_name = p.state();
+            if p.expect_colon().is_ok() {
+                let end = loop {
+                    let before = p.position();
+                    match p.next_including_whitespace_and_comments() {
+                        Err(_) | Ok(Token::Semicolon) => break Some(before),
+                        Ok(Token::CurlyBracketBlock) if !matches!(&token, Token::Ident(name) if name.starts_with("--")) => break None,
+                        Ok(Token::CurlyBracketBlock | Token::Function(_) | Token::ParenthesisBlock | Token::SquareBracketBlock) => skip_block(p),
+                        _ => {},
+                    }
+                };
+                if let Some(end) = end {
+                    let declaration = p.slice(start..end);
+                    if crate::stylo::declarations::DeclarationBlock::parse(declaration).is_empty() { continue; }
+                    if let Some(ParsedRule::Declarations(text)) = rules.last_mut() {
+                        text.push_str(declaration);
+                        text.push(';');
+                    } else {
+                        rules.push(ParsedRule::Declarations(format!("{declaration};")));
+                    }
+                    continue;
+                }
+            }
+            p.reset(&after_name);
+        }
         let rule = match token {
             Token::WhiteSpace(_) | Token::Comment(_) => continue,
             Token::CDO | Token::CDC if top => continue,
@@ -724,6 +752,12 @@ mod tests {
         assert_eq!((text.as_str(), used), ("@charset \"shift-JIS\";.é{}", UTF_8));
         // As bytes for a parser that decodes them itself: UTF-8 behind a mark.
         assert_eq!(stylesheet_utf8_bytes("é"), b"\xEF\xBB\xBF\xC3\xA9");
+    }
+
+    #[test]
+    fn scoped_declarations_keep_their_order_around_style_rules() {
+        let ParsedRule::Scope { rules, .. } = parse_one_rule("@scope { color: red; color: invalid; width:1px; a:hover {} --blocks: {a:b}; }", &mut Vec::new()).unwrap() else { panic!() };
+        assert_eq!(rules, [ParsedRule::Declarations("color: red;width:1px;".into()), style("a:hover", ""), ParsedRule::Declarations("--blocks: {a:b};".into())]);
     }
 
     #[test]

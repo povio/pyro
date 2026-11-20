@@ -401,7 +401,7 @@ impl StyleData {
             // pyro: (through the sheet object's accessor: nothing of a sheet not origin-clean.)
             StyleSource::Rule { owner, .. } if owner.access().is_err() => String::new(),
             StyleSource::Rule { node, .. } => match &node.kind {
-                RuleKind::Style { block, .. } => block.borrow().clone(),
+                RuleKind::Style { block, .. } | RuleKind::Declarations(block) => block.borrow().clone(),
                 // `@page` (its declarations, not its margin rules), margin and descriptor rules.
                 RuleKind::Other { text, .. } => {
                     let text = text.borrow();
@@ -430,7 +430,7 @@ impl StyleData {
             StyleSource::Rule { owner, node } => {
                 owner.access()?;
                 match &node.kind {
-                    RuleKind::Style { block, .. } => *block.borrow_mut() = text,
+                    RuleKind::Style { block, .. } | RuleKind::Declarations(block) => *block.borrow_mut() = text,
                     RuleKind::Other { .. } if is_page(node) => write_page(&*owner.rules()?, node, Some(&text)),
                     RuleKind::Other { text: rule, .. } => {
                         let head = split_block(&rule.borrow()).map(|(h, _)| h.to_owned());
@@ -723,6 +723,7 @@ impl RuleList {
 }
 
 enum RuleKind {
+    Declarations(RefCell<String>),
     Property(PropertyRule),
     Style { selector: RefCell<String>, block: RefCell<String> },
     Group { name: String, condition: RefCell<String>, list: RuleList, bounds: Option<(Option<String>, Option<String>)> },
@@ -741,6 +742,7 @@ impl RuleNode {
         let identity = IdentityKey(1 << 56, NEXT_RULE.fetch_add(1, Ordering::Relaxed));
         Rc::new_cyclic(|me| {
             let kind = match parsed {
+                ParsedRule::Declarations(text) => RuleKind::Declarations(RefCell::new(text)),
                 ParsedRule::Scope { start, end, rules } => {
                     let mut parts = Vec::new();
                     if let Some(start) = &start { parts.push(format!("({start})")); }
@@ -767,6 +769,7 @@ impl RuleNode {
     /// The text given to the style engine: blocks stay as written.
     fn source_text(&self) -> String {
         match &self.kind {
+            RuleKind::Declarations(text) => text.borrow().clone(),
             RuleKind::Property(rule) => rule.text.clone(),
             RuleKind::Style { selector, block } => format!("{} {{{}}}", selector.borrow(), block.borrow()),
             RuleKind::Group { name, condition, list, .. } => {
@@ -779,6 +782,7 @@ impl RuleNode {
 
     fn css_text(&self) -> String {
         match &self.kind {
+            RuleKind::Declarations(text) => DeclarationBlock::parse(&text.borrow()).css_text(),
             RuleKind::Property(rule) => rule.text.clone(),
             RuleKind::Style { selector, block } => {
                 // As the rule's `style.cssText` serializes the block.
@@ -1002,6 +1006,7 @@ fn rule_wrapper<'s>(s: &Scope<'s>, rule: &Rc<RuleNode>, owner: &SheetOwner) -> J
     let data = RuleData { owner: owner.hold()?, rule_node: rule.clone() };
     let key = Some(rule.identity);
     match &rule.kind {
+        RuleKind::Declarations(_) => s.wrap::<CssNestedDeclarations>(data, key),
         RuleKind::Property(_) => s.wrap::<CssPropertyRule>(data, key),
         RuleKind::Style { .. } => s.wrap::<CssStyleRule>(data, key),
         RuleKind::Group { name, .. } if name == "media" => s.wrap::<CssMediaRule>(data, key),
@@ -1121,7 +1126,7 @@ fn define_rule<C: JsClass<Data = RuleData>>(def: &mut ClassDef<C>) {
             RuleKind::Style { .. } => 1.0,
             RuleKind::Group { name, .. } if name == "media" => 4.0,
             RuleKind::Group { name, .. } if name == "supports" => 12.0,
-            RuleKind::Group { .. } | RuleKind::Property(_) => 0.0,
+            RuleKind::Group { .. } | RuleKind::Property(_) | RuleKind::Declarations(_) => 0.0,
             RuleKind::Other { rule_type, .. } => f64::from(*rule_type),
         }))
     });
@@ -1682,6 +1687,13 @@ fn property_rule(data: &RuleData) -> JsResult<&PropertyRule> {
         _ => unreachable!(),
     }
 }
+
+rule_class!(CssNestedDeclarations, "CSSNestedDeclarations", CssRule, |def| {
+    def.accessor("style", rule_style::<CssStyleProperties>, |_s, r, v| {
+        let source = StyleSource::Rule { owner: r.owner.hold()?, node: r.node()?.clone() };
+        StyleData { source }.set_css_text(&dom_string(v)?)
+    });
+});
 
 rule_class!(CssPropertyRule, "CSSPropertyRule", CssRule, |def| {
     def.getter("name", |s, r| Ok(s.string(&property_rule(r)?.name)));
@@ -2248,7 +2260,7 @@ impl MediaList {
                         let media = if text.is_empty() { String::new() } else { format!(" {text}") };
                         *rule.borrow_mut() = format!("@import {head}{media};");
                     }
-                    RuleKind::Style { .. } | RuleKind::Property(_) => return Ok(()),
+                    RuleKind::Style { .. } | RuleKind::Property(_) | RuleKind::Declarations(_) => return Ok(()),
                 }
                 r.owner.commit(&*r.owner.rules()?);
                 return Ok(());
@@ -2909,6 +2921,7 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<CssLayerBlockRule>();
     engine.register::<CssLayerStatementRule>();
     engine.register::<CssPropertyRule>();
+    engine.register::<CssNestedDeclarations>();
     engine.register::<CssFontPaletteValuesRule>();
     engine.register::<CssStartingStyleRule>();
     engine.register::<CssScopeRule>();
