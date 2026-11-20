@@ -270,6 +270,22 @@ impl PageDom {
     pub(crate) fn document_url_parsed(&self) -> Option<pyro_net::Url> {
         self.dom.borrow().document_url_parsed(self.document()).ok().flatten().cloned()
     }
+    /// Determine a client referrer from the document, before the network layer
+    /// applies its referrer policy. An iframe srcdoc document uses the URL
+    /// of the first enclosing document that is not itself srcdoc.
+    pub(crate) fn client_referrer(&self) -> Option<pyro_net::Url> {
+        if self.has_opaque_origin() {
+            return None;
+        }
+        let url = self.document_url_parsed()?;
+        if url.scheme() == "about" && url.path() == "srcdoc" {
+            return match self.container() {
+                crate::page::FrameContainer::Frame(parent, _) => parent.client_referrer(),
+                _ => None,
+            };
+        }
+        Some(url)
+    }
     pub(crate) fn document_url(&self) -> String {
         self.dom.borrow().document_data(self.document()).map(|d| d.url.to_string()).unwrap_or_default()
     }
@@ -509,7 +525,7 @@ fn parse_request<'s>(
     };
     request.referrer = match referrer.as_str() {
         "no-referrer" => None,
-        "client" => page.document_url_parsed(),
+        "client" => page.client_referrer(),
         url => pyro_net::Url::parse(url).ok(),
     };
     let policy = match option(s, init, "referrerPolicy")? {
@@ -636,7 +652,7 @@ pub(crate) fn send_beacon(s: &Scope<'_>, page: &Rc<PageDom>, url: pyro_net::Url,
     request.origin = Some(s.realm().origin().unwrap_or_else(|| {
         document_url.as_ref().map(|u| u.origin().ascii_serialization()).unwrap_or_else(|| "null".into())
     }));
-    request.referrer = document_url;
+    request.referrer = page.client_referrer();
     request.referrer_policy = page.referrer_policy();
     let context = page.request_context();
     request.frame_id = context.frame_id;
