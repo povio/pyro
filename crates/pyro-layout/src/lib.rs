@@ -890,8 +890,7 @@ impl GeometrySource for BlitzGeometry {
         RENDERER.with(|r| {
             if let Ok(mut r) = r.try_borrow_mut() {
                 let r = r.get_or_insert_with(Renderer::new);
-                r.set_timeline_scroll(self.page, elements, viewport);
-                if r.uses_scroll_markers(self.page) {
+                if r.set_timeline_scroll(self.page, elements, viewport) || r.uses_scroll_markers(self.page) {
                     self.scroll_stale.set(true);
                 }
             }

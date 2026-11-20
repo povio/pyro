@@ -233,6 +233,7 @@ pub trait LayoutContainingBlock: LayoutPartialTree {
     fn position_try_options(&self, _node: NodeId) -> (usize, Option<bool>) { (0,None) }
     fn uses_anchor_queries(&self, _node: NodeId) -> bool { false }
     fn checks_position_overflow(&self, _node: NodeId) -> bool { false }
+    fn position_try_scroll_offset(&self, _container: NodeId) -> crate::Point<f32> { crate::Point::ZERO }
 
     fn oof_anchor_center(&self, _node: NodeId, _container: NodeId) -> crate::Point<Option<f32>> { crate::Point { x:None,y:None } }
 

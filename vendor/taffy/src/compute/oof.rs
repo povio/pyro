@@ -920,13 +920,22 @@ fn solve_oof_box<Tree: LayoutContainingBlock>(
     .maybe_clamp(min_size, max_size);
 
     if trial || tree.checks_position_overflow(candidate.node) {
-    let fits = final_size.width <= stretch_fit_size.width && final_size.height <= stretch_fit_size.height
-        && left.unwrap_or(0.) + right.unwrap_or(0.) <= area_width && top.unwrap_or(0.) + bottom.unwrap_or(0.) <= area_height;
-    if trial {
-        let space = Size { width: horizontal.inset_modified_containing_block_size(), height: vertical.inset_modified_containing_block_size() };
-        return Err((fits, space));
-    }
-    tree.set_position_overflow(candidate.node, !fits);
+        let shift = anchor_container.map_or(Point::ZERO, |container| tree.position_try_scroll_offset(container));
+        let visual_axis = |mut axis: OofAxis, delta: f32, anchored_start: bool, anchored_end: bool| {
+            if anchored_start { axis.inset.start = axis.inset.start.map(|start| start - delta); }
+            if anchored_end { axis.inset.end = axis.inset.end.map(|end| end + delta); }
+            axis
+        };
+        let horizontal = visual_axis(horizontal, shift.x, insets.is_some_and(|r| r.left.is_some()), insets.is_some_and(|r| r.right.is_some()));
+        let vertical = visual_axis(vertical, shift.y, insets.is_some_and(|r| r.top.is_some()), insets.is_some_and(|r| r.bottom.is_some()));
+        let fits_axis = |axis: OofAxis, extent| extent <= axis.stretch_fit_size()
+            && axis.inset.start.unwrap_or_default() + axis.inset.end.unwrap_or_default() <= axis.cb_size;
+        let fits = fits_axis(horizontal, final_size.width) && fits_axis(vertical, final_size.height);
+        if trial {
+            let space = Size { width: horizontal.inset_modified_containing_block_size(), height: vertical.inset_modified_containing_block_size() };
+            return Err((fits, space));
+        }
+        tree.set_position_overflow(candidate.node, !fits);
     }
     let layout_input = LayoutInput {
         known_dimensions: final_size.map(Some),

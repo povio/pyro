@@ -667,6 +667,7 @@ pub struct BaseDocument {
     anchor_node_names: HashMap<NodeId, (Option<NodeId>, style::values::specified::position::AnchorNameIdent)>,
     pub(crate) anchor_lookup_visits: std::cell::Cell<u64>,
     pub(crate) anchor_try_visits: std::cell::Cell<u64>,
+    pub(crate) anchor_try_scrollports: HashSet<NodeId>,
     /// pyro: an element styled with a `scroll-marker-group` that names a side, or with
     /// `scroll-target-group: auto` (sticky).
     pub(crate) scroll_marker_groups: bool,
@@ -985,6 +986,7 @@ impl BaseDocument {
             anchor_node_names: HashMap::new(),
             anchor_lookup_visits: Default::default(),
             anchor_try_visits: Default::default(),
+            anchor_try_scrollports: Default::default(),
             scroll_marker_groups: false,
             scroll_pseudo_owners: Default::default(),
             scroll_target_groups: Vec::new(),
@@ -1454,6 +1456,7 @@ impl BaseDocument {
             }
         }
         self.update_anchor_names(node_id, None);
+        if !self.anchor_try_scrollports.is_empty() { self.anchor_try_scrollports.remove(&node_id); }
         self.nodes.remove(node_id)
     }
 
@@ -2332,8 +2335,21 @@ impl BaseDocument {
     /// and after-change styles. An element styled for the first time, or whose
     /// styles were dropped, is no change. O(elements restyled), not a scan.
     /// pyro: the page's scroll offsets that scroll-driven animations follow (`timeline_scroll`).
-    pub fn set_timeline_scroll(&mut self, elements: std::collections::HashMap<NodeId, (f64, f64)>, viewport: (f64, f64)) {
+    pub fn set_timeline_scroll(&mut self, elements: std::collections::HashMap<NodeId, (f64, f64)>, viewport: (f64, f64)) -> bool {
+        let mut invalidated = false;
+        if !self.anchor_try_scrollports.is_empty() {
+            let old = self.timeline_scroll.as_ref().map(|(elements, _)| elements);
+            for id in elements.keys().chain(old.into_iter().flat_map(|map| map.keys()).filter(|id| !elements.contains_key(id))) {
+                if self.anchor_try_scrollports.contains(id)
+                    && elements.get(id).copied().unwrap_or_default() != old.and_then(|map| map.get(id)).copied().unwrap_or_default()
+                {
+                    self.nodes[*id].insert_damage(crate::layout::damage::ONLY_RELAYOUT);
+                    invalidated = true;
+                }
+            }
+        }
         self.timeline_scroll = Some((elements, viewport));
+        invalidated
     }
 
     /// pyro: see [`Self::scroll_group_moves`].

@@ -1095,15 +1095,16 @@ impl Renderer {
         self.mirrors.get(&page).is_some_and(|m| m.doc.uses_scroll_markers())
     }
 
-    pub fn set_timeline_scroll(&mut self, page: u64, elements: Vec<(u64, (f64, f64))>, viewport: (f64, f64)) {
+    pub fn set_timeline_scroll(&mut self, page: u64, elements: Vec<(u64, (f64, f64))>, viewport: (f64, f64)) -> bool {
         // A document that exists takes them now: the animated values of the next sync are computed
         // (from its scroll timelines) before that sync applies anything.
-        if let Some(m) = self.mirrors.get_mut(&page) {
+        let invalidated = self.mirrors.get_mut(&page).is_some_and(|m| {
             let map = elements.iter().filter_map(|&(key, o)| Some((m.node(key)?, o))).collect();
-            m.doc.set_timeline_scroll(map, viewport);
-        }
+            m.doc.set_timeline_scroll(map, viewport)
+        });
         // (Applied again at the next sync: an element scrolled before the document has it.)
         self.timeline_scroll.insert(page, TimelineScroll { elements, viewport, applied: false });
+        invalidated
     }
 
     fn apply_animations(&mut self, page: u64) {

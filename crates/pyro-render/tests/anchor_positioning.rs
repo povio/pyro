@@ -2,6 +2,63 @@ use pyro_dom::cssom::{ParsedRule, parse_one_rule};
 use pyro_dom::stylo::declarations::DeclarationBlock;
 
 #[test]
+fn moving_and_resizing_anchor_updates_geometry_in_one_resolve() {
+    let html = "<!doctype html><style>body{margin:0}main{position:relative;width:100px;height:100px}i{display:block;width:10px;height:20px;anchor-name:--a}b{position:absolute;position-anchor:--a;top:anchor(bottom);width:anchor-size(width);height:20px;position-try-fallbacks:--up}@position-try --up{top:auto;bottom:anchor(top)}</style><main><i></i><b></b></main>";
+    let mut doc = blitz_html::HtmlDocument::from_html(html, blitz_dom::DocumentConfig::default());
+    doc.viewport_mut().window_size = (400, 300);
+    doc.resolve(0.0);
+    let anchor = doc.query_selector("i").unwrap().unwrap();
+    let target = doc.query_selector("b").unwrap().unwrap();
+    let before = doc.anchor_try_visits();
+    assert_eq!(doc.get_node(target).unwrap().final_layout().location.y, 20.0);
+    doc.set_style_property(anchor, "position", "relative");
+    doc.set_style_property(anchor, "top", "75px");
+    doc.set_style_property(anchor, "width", "37px");
+    doc.resolve(0.0);
+    let layout = doc.get_node(target).unwrap().final_layout();
+    assert_eq!((layout.location.y, layout.size.width), (55.0, 37.0));
+    assert!(doc.anchor_try_visits() - before <= 2);
+}
+
+#[test]
+fn cyclic_anchor_references_do_not_schedule_another_pass() {
+    let html = "<!doctype html><style>main{position:relative}i,b{position:absolute;width:10px;height:10px}i{anchor-name:--a;left:anchor(--b right,4px)}b{anchor-name:--b;left:anchor(--a right,8px)}</style><main><i></i><b></b></main>";
+    let mut doc = blitz_html::HtmlDocument::from_html(html, blitz_dom::DocumentConfig::default());
+    doc.viewport_mut().window_size = (400, 300);
+    doc.resolve(0.0);
+    let first = doc.query_selector("i").unwrap().unwrap();
+    let second = doc.query_selector("b").unwrap().unwrap();
+    assert_eq!(doc.get_node(first).unwrap().final_layout().location.x, 4.0);
+    assert_eq!(doc.get_node(second).unwrap().final_layout().location.x, 14.0);
+    let visits = doc.anchor_candidate_visits();
+    assert!((2..=8).contains(&visits));
+    doc.resolve(0.0);
+    assert_eq!(doc.anchor_candidate_visits(), visits);
+}
+
+#[test]
+fn scroll_fit_invalidation_coalesces_before_layout() {
+    let html = "<!doctype html><style>section{width:100px;height:100px;overflow:auto;position:relative}i{display:block;height:25px;margin-top:75px;anchor-name:--a}b{position:absolute;width:20px;height:25px;position-anchor:--a;top:anchor(bottom);position-try-fallbacks:--up}@position-try --up{top:auto;bottom:anchor(top)}p{height:300px}</style><section><i></i><b></b><p></p></section><aside></aside>";
+    let mut doc = blitz_html::HtmlDocument::from_html(html, blitz_dom::DocumentConfig::default());
+    doc.viewport_mut().window_size = (400, 300);
+    doc.resolve(0.0);
+    let target = doc.query_selector("b").unwrap().unwrap();
+    let scroller = doc.query_selector("section").unwrap().unwrap();
+    let unrelated = doc.query_selector("aside").unwrap().unwrap();
+    assert_eq!(doc.get_node(target).unwrap().final_layout().location.y, 50.0);
+    let trials = doc.anchor_try_visits();
+    assert!(!doc.set_timeline_scroll([(unrelated, (0., 30.))].into(), (0., 0.)));
+    for offset in 1..=50 {
+        assert!(doc.set_timeline_scroll([(scroller, (0., f64::from(offset)))].into(), (0., 0.)));
+    }
+    assert_eq!(doc.anchor_try_visits(), trials);
+    doc.resolve(0.0);
+    assert_eq!(doc.get_node(target).unwrap().final_layout().location.y, 100.0);
+    assert!(doc.anchor_try_visits() <= trials + 1);
+    assert!(!doc.set_timeline_scroll([(scroller, (0., 50.))].into(), (0., 0.)));
+}
+
+#[test]
 fn duplicate_names_in_unrelated_shadow_trees_cost_no_candidate_visits() {
     fn measure(count: usize) -> u64 {
         let mut html = String::from("<!doctype html><style>body{margin:0}</style>");

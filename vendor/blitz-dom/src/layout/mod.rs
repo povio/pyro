@@ -2451,6 +2451,15 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
     fn uses_anchor_queries(&self,id: NodeId) -> bool { self.node_from_id(id).flags.contains(NodeFlags::ANCHOR_QUERIES) }
     fn checks_position_overflow(&self,id: NodeId) -> bool { self.node_from_id(id).flags.contains(NodeFlags::POSITION_VISIBILITY_CHECK) }
 
+    fn position_try_scroll_offset(&self, container: NodeId) -> taffy::Point<f32> {
+        let node = self.node_from_id(container);
+        let offset = self.timeline_scroll.as_ref().map_or_else(|| {
+            let point = node.scroll_offset();
+            (point.x, point.y)
+        }, |(map, _)| map.get(&node.id).copied().unwrap_or_default());
+        taffy::Point { x: offset.0 as f32, y: offset.1 as f32 }
+    }
+
     fn oof_anchor_center(&self, id: NodeId, container: NodeId) -> taffy::Point<Option<f32>> {
         use style::values::specified::{align::AlignFlags,position::{PositionAnchorKeyword,PositionAreaTrack}};
         let none = taffy::Point { x:None,y:None };
@@ -2626,6 +2635,7 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
 
     fn clear_hoisted_children(&mut self, node_id: NodeId) {
         let containing_block = dom_node_id(node_id);
+        if !self.doc.anchor_try_scrollports.is_empty() { self.doc.anchor_try_scrollports.remove(&containing_block); }
         let hoisted = std::mem::take(&mut *self.node_from_id(node_id).hoisted_children.borrow_mut());
         for &hoisted_id in hoisted.iter() {
             // A box which has since been claimed by another containing block
@@ -2683,6 +2693,9 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
             .borrow_mut()
             .extend(hoisted.iter().copied().map(dom_node_id));
         for &hoisted_id in hoisted {
+            if self.node_from_id(hoisted_id).flags.contains(NodeFlags::POSITION_TRY_OPTIONS) {
+                self.doc.anchor_try_scrollports.insert(containing_block);
+            }
             self.node_from_id(hoisted_id)
                 .oof_containing_block
                 .set(Some(containing_block));
