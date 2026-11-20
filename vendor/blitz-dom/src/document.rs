@@ -429,6 +429,8 @@ pub struct BaseDocument {
     pub(crate) frames: crate::FrameTable,
     /// pyro: its sheets' `Referrer-Policy`, by sheet object (`net::SheetPolicies`).
     pub(crate) sheet_policies: crate::net::SheetPolicies,
+    /// pyro: the URL data objects of its own CSS (`net::InlineUrls`).
+    pub(crate) inline_urls: crate::net::InlineUrls,
 
     // Events
     pub(crate) tx: Sender<DocumentEvent>,
@@ -896,6 +898,7 @@ impl BaseDocument {
             frame_client: config.frame_client.clone(),
             frames: config.frames.clone(),
             sheet_policies: Default::default(),
+            inline_urls: std::sync::Arc::new(std::sync::Mutex::new(vec![base_url.inline_url_data().clone()])),
             devtool_settings: DevtoolSettings::default(),
             url: base_url,
             nodes_to_stylesheet: BTreeMap::new(),
@@ -1083,6 +1086,7 @@ impl BaseDocument {
     /// Set base url for resolving linked resources (stylesheets, images, fonts, etc)
     pub fn set_base_url(&mut self, url: &str) {
         self.url = DocumentUrl::from(Url::parse(url).unwrap());
+        crate::net::adopt_inline(&self.inline_urls, self.url.inline_url_data());
         self.nodes.base_url = without_fragment(self.url.as_str()).to_owned();
     }
 
@@ -2125,6 +2129,9 @@ impl BaseDocument {
                     }
                 };
                 if !taken {
+                    // pyro: its URL data (the first document's object) is this document's own CSS's.
+                    let url_data = sheet.0.contents.read_with(&sheet.0.shared_lock.read()).url_data.0.clone();
+                    crate::net::adopt_inline(&self.inline_urls, &url_data);
                     return sheet;
                 }
                 return self.parse_stylesheet(css, origin);
@@ -2157,7 +2164,7 @@ impl BaseDocument {
                 abort_signal: self.abort_signal.clone(),
                 import_depth: 0,
                 client: self.request_client(),
-                inline: Some(self.url.inline_url_data().clone()),
+                inline: Some(self.inline_urls.clone()),
                 policies: self.sheet_policies.clone(),
             }),
             None,

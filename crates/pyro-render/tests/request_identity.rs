@@ -489,3 +489,28 @@ fn a_urls_policy_is_its_sheet_objects() {
     assert_eq!(of("/i.png"), Some(Some("no-referrer".to_owned())), "the imported sheet's own: {seen:?}");
     assert_eq!(of("/b.png"), Some(None), "a frame's sheet at the same URL has its own (none): {seen:?}");
 }
+
+/// Two documents at one URL with the same inline sheet share its parsed form (one per thread);
+/// the second document's `url()`s are still its own CSS's (the document as referrer): the shared
+/// sheet's URL data, the first document's object, is adopted as the second's own. It counted as
+/// an external sheet, so its requests named the document explicitly and were another request than
+/// layout asked for (shape-outside images raced `load`: cycle 4 reliability).
+#[test]
+fn a_shared_inline_sheet_is_each_documents_own_css() {
+    let recorder = Arc::new(Recorder::default());
+    let fetcher: Arc<dyn Fetcher> = Arc::new(Shared(recorder.clone()));
+    let snapshot = Snapshot {
+        html: "<!doctype html><style>#d { width: 10px; height: 10px; background-image: url(\"shared.png\" referrer-policy(unsafe-url)) }</style><div id=d></div>"
+            .into(),
+        base_url: "http://test/shared-doc.html".into(),
+        width: 40,
+        height: 20,
+        device_scale_factor: 1.0,
+        ..Default::default()
+    };
+    Renderer::new().render(&snapshot, Area::Viewport, Backend::Cpu, &fetcher).unwrap();
+    Renderer::new().render(&snapshot, Area::Viewport, Backend::Cpu, &fetcher).unwrap();
+    let referrers: Vec<Option<String>> =
+        recorder.2.lock().unwrap().iter().filter(|(url, _)| url.ends_with("shared.png")).map(|(_, r)| r.clone()).collect();
+    assert_eq!(referrers, [None, None], "both documents' own CSS");
+}

@@ -77,11 +77,31 @@ fn sheet_policy(policies: &SheetPolicies, url_data: &ServoArc<Url>) -> Option<St
         .map(|(_, policy)| policy.clone())
 }
 
+/// pyro: the URL data objects of a document's own CSS (inline sheets, style attributes): its
+/// own `DocumentUrl` object, and that of every shared sheet it adopted as its own (a sheet parsed
+/// once per thread for its text and base URL carries the first document's object). Compared by
+/// identity only, never by URL.
+pub type InlineUrls = Arc<std::sync::Mutex<Vec<ServoArc<Url>>>>;
+
+/// pyro: whether `url_data` is one of `inline` (by identity).
+fn is_inline(inline: &InlineUrls, url_data: &ServoArc<Url>) -> bool {
+    inline.lock().is_ok_and(|own| own.iter().any(|o| ServoArc::ptr_eq(o, url_data)))
+}
+
+/// pyro: records `url_data` as one of a document's own (`InlineUrls`).
+pub(crate) fn adopt_inline(inline: &InlineUrls, url_data: &ServoArc<Url>) {
+    if let Ok(mut own) = inline.lock() {
+        if !own.iter().any(|o| ServoArc::ptr_eq(o, url_data)) {
+            own.push(url_data.clone());
+        }
+    }
+}
+
 /// pyro: `policies`: a `url()` without a `referrer-policy()` of its own is sent under the policy
 /// of the sheet it was written in, found by that sheet object (`SheetPolicies`).
 pub fn url_fetch_options(
     modifiers: Option<&style::url::RequestUrlModifiers>,
-    inline: Option<&style::servo_arc::Arc<url::Url>>,
+    inline: Option<&InlineUrls>,
     policies: Option<&SheetPolicies>,
 ) -> blitz_traits::net::FetchOptions {
     use blitz_traits::net::{CorsCredentials, FetchOptions};
@@ -101,7 +121,7 @@ pub fn url_fetch_options(
         referrer: modifiers
             .referrer
             .as_ref()
-            .filter(|url| !inline.is_some_and(|inline| style::servo_arc::Arc::ptr_eq(url, inline)))
+            .filter(|url| !inline.is_some_and(|inline| is_inline(inline, url)))
             .map(|url| (**url).clone()),
         client: None,
         destination: Default::default(),
@@ -358,7 +378,7 @@ pub(crate) struct StylesheetLoader {
     pub(crate) client: Option<String>,
     /// pyro: the document's own URL data (`DocumentUrl::inline_url_data`) for a loader of the
     /// document's own CSS: an `@import` written there has the document as its referrer.
-    pub(crate) inline: Option<style::servo_arc::Arc<url::Url>>,
+    pub(crate) inline: Option<InlineUrls>,
     /// pyro: the document's sheet policies (`SheetPolicies`).
     pub(crate) policies: SheetPolicies,
 }

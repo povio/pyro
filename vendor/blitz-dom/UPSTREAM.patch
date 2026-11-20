@@ -2183,7 +2183,7 @@ diff --git a/packages/blitz-dom/src/cssom.rs b/packages/blitz-dom/src/cssom.rs
              abort_signal: self.abort_signal.clone(),
              import_depth: 0,
 +            client: self.request_client(),
-+            inline: Some(self.url.inline_url_data().clone()),
++            inline: Some(self.inline_urls.clone()),
 +            policies: self.sheet_policies.clone(),
          }
      }
@@ -2517,7 +2517,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Document-wide work for the next [`resolve`](Self::resolve).
      pub(crate) flags: DocumentFlags,
      /// Strategy for Stylo's style traversal during `resolve`.
-@@ -305,6 +423,12 @@
+@@ -305,6 +423,14 @@
      /// How deeply this document is nested within other documents
      /// (0 for a root document). Used to limit `<iframe>` nesting depth.
      pub(crate) subdocument_depth: usize,
@@ -2527,10 +2527,12 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
 +    pub(crate) frames: crate::FrameTable,
 +    /// pyro: its sheets' `Referrer-Policy`, by sheet object (`net::SheetPolicies`).
 +    pub(crate) sheet_policies: crate::net::SheetPolicies,
++    /// pyro: the URL data objects of its own CSS (`net::InlineUrls`).
++    pub(crate) inline_urls: crate::net::InlineUrls,
  
      // Events
      pub(crate) tx: Sender<DocumentEvent>,
-@@ -337,6 +461,10 @@
+@@ -337,6 +463,10 @@
      pub(crate) thread_font_contexts: ThreadLocal<RefCell<Box<FontContext>>>,
      /// A Parley layout context
      pub(crate) layout_ctx: parley::LayoutContext<TextBrush>,
@@ -2541,7 +2543,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
      /// The real (non-anonymous) node which is currently hovered (if any).
      /// This is never a layout-generated (anonymous) node, so it remains valid
-@@ -354,6 +482,9 @@
+@@ -354,6 +484,9 @@
      pub(crate) focus_node_id: Option<NodeId>,
      /// The node which is currently active (if any)
      pub(crate) active_node_id: Option<NodeId>,
@@ -2551,7 +2553,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// The node which recieved a mousedown event (if any)
      pub(crate) mousedown_node_id: Option<NodeId>,
      /// The last time a mousedown was made (for double-click detection)
-@@ -378,6 +509,8 @@
+@@ -378,6 +511,8 @@
      // TODO: collapse animating state into a bitflags
      /// Whether there are active CSS animations/transitions (so we should re-render every frame)
      pub(crate) has_active_animations: bool,
@@ -2560,7 +2562,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Whether there is a `<canvas>` element in the DOM (so we should re-render every frame)
      pub(crate) has_canvas: bool,
      /// Whether there are subdocuments that are animating (so we should re-render every frame)
-@@ -389,6 +522,12 @@
+@@ -389,6 +524,12 @@
      pub(crate) nodes_to_id: HashMap<String, SmallVec<[NodeId; 1]>>,
      /// Map of `<style>` and `<link>` node IDs to their associated stylesheet
      pub(crate) nodes_to_stylesheet: BTreeMap<NodeId, DocumentStyleSheet>,
@@ -2573,7 +2575,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Incremented whenever `nodes_to_stylesheet` changes (a stylesheet is
      /// added, replaced or removed), so that CSSOM wrappers can detect that
      /// their cached rule data is stale.
-@@ -397,6 +536,23 @@
+@@ -397,6 +538,23 @@
      pub(crate) controls_to_form: HashMap<NodeId, NodeId>,
      /// Nodes that contain sub documents
      pub(crate) sub_document_nodes: HashSet<NodeId>,
@@ -2597,7 +2599,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Load state (abort controller and in-flight request id) for each
      /// `<iframe>` element whose sub-document is loaded automatically
      pub(crate) iframe_loads: HashMap<NodeId, crate::iframe::IframeLoad>,
-@@ -404,6 +560,64 @@
+@@ -404,6 +562,64 @@
      pub(crate) has_changes: bool,
      /// Set of changed nodes for updating the accessibility tree
      pub(crate) deferred_construction_nodes: Vec<ConstructionTask>,
@@ -2662,7 +2664,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
      /// Nodes that contain custom widgets
      #[cfg(feature = "custom-widget")]
-@@ -426,6 +640,97 @@
+@@ -426,6 +642,97 @@
      /// the style traversal and by pseudo-element box construction).
      pub(crate) pending_style_image_nodes: Vec<NodeId>,
  
@@ -2760,7 +2762,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      // Tracks in-flight "critical" resources (e.g. stylesheets linked from the `<head>`),
      // keyed by request id
      pub(crate) pending_critical_resources: HashSet<usize>,
-@@ -477,6 +782,9 @@
+@@ -477,6 +784,9 @@
      }
  }
  
@@ -2770,7 +2772,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  impl BaseDocument {
      /// Create a new (empty) [`BaseDocument`] with the specified configuration
      pub fn new(config: DocumentConfig) -> Self {
-@@ -485,6 +793,13 @@
+@@ -485,6 +795,13 @@
          static ID_GENERATOR: AtomicUsize = AtomicUsize::new(1);
  
          let id = ID_GENERATOR.fetch_add(1, Ordering::SeqCst);
@@ -2784,7 +2786,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
          let font_ctx = config
              .font_ctx
-@@ -514,17 +829,24 @@
+@@ -514,17 +831,24 @@
  
          let viewport = config.viewport.unwrap_or_default();
          let media_type = config.media_type.unwrap_or_else(MediaType::screen);
@@ -2812,7 +2814,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
          let net_provider = config
              .net_provider
-@@ -555,19 +877,40 @@
+@@ -555,19 +879,41 @@
              nodes_to_id,
              viewport,
              media_type,
@@ -2835,6 +2837,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
 +            frame_client: config.frame_client.clone(),
 +            frames: config.frames.clone(),
 +            sheet_policies: Default::default(),
++            inline_urls: std::sync::Arc::new(std::sync::Mutex::new(vec![base_url.inline_url_data().clone()])),
              devtool_settings: DevtoolSettings::default(),
              url: base_url,
              nodes_to_stylesheet: BTreeMap::new(),
@@ -2854,7 +2857,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
              hover_node_id: None,
              hover_hit_node_id: None,
-@@ -575,11 +918,19 @@
+@@ -575,11 +921,19 @@
              last_client_pointer_position: None,
              focus_node_id: None,
              active_node_id: None,
@@ -2874,7 +2877,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
              iframe_loads: HashMap::new(),
  
              #[cfg(feature = "custom-widget")]
-@@ -589,9 +940,55 @@
+@@ -589,9 +943,55 @@
  
              has_changes: false,
              deferred_construction_nodes: Vec::new(),
@@ -2930,15 +2933,16 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
              pending_critical_resources: HashSet::new(),
              controls_to_form: HashMap::new(),
              net_provider,
-@@ -686,6 +1083,7 @@
+@@ -686,6 +1086,8 @@
      /// Set base url for resolving linked resources (stylesheets, images, fonts, etc)
      pub fn set_base_url(&mut self, url: &str) {
          self.url = DocumentUrl::from(Url::parse(url).unwrap());
++        crate::net::adopt_inline(&self.inline_urls, self.url.inline_url_data());
 +        self.nodes.base_url = without_fragment(self.url.as_str()).to_owned();
      }
  
      /// The base url used for resolving linked resources (stylesheets, images, fonts, etc)
-@@ -732,6 +1130,22 @@
+@@ -732,6 +1134,22 @@
          self.nodes.get(node_id)
      }
  
@@ -2961,7 +2965,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub fn get_node_mut(&mut self, node_id: NodeId) -> Option<&mut Node> {
          self.nodes.get_mut(node_id)
      }
-@@ -741,6 +1155,12 @@
+@@ -741,6 +1159,12 @@
              .or(self.try_root_element().map(|el| el.id))
      }
  
@@ -2974,7 +2978,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub fn mutate<'doc>(&'doc mut self) -> DocumentMutator<'doc> {
          DocumentMutator::new(self)
      }
-@@ -991,9 +1411,89 @@
+@@ -991,9 +1415,89 @@
      /// it so that stale NodeIds are never dereferenced after the slot is freed.
      pub(crate) fn remove_node_from_tree(&mut self, node_id: NodeId) -> Option<Node> {
          self.clear_interaction_state_for_removed_node(node_id);
@@ -3064,7 +3068,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// The nearest element ancestor of `node_id` that is still in the
      /// document. Used to retarget hover/active state when the node they
      /// reference is removed. Tolerates already-removed ancestors (subtree
-@@ -1105,14 +1605,50 @@
+@@ -1105,14 +1609,50 @@
          if let Some(node) = &mut node {
              on_drop(node_id);
              if let Some(before) = node.before() {
@@ -3118,7 +3122,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
              }
  
              // Anonymous blocks live only in the slab, so deallocate the ones this
-@@ -1136,12 +1672,93 @@
+@@ -1136,12 +1676,93 @@
          // Free any anonymous blocks that this block owns before removing it.
          let nested = std::mem::take(&mut self.nodes[anon_id].anonymous_blocks);
          for nested_id in nested {
@@ -3213,7 +3217,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Whether the DOM or focus changed since the last [`Self::clear_changes`]
      /// (i.e. whether the accessibility tree is out of date)
      pub fn has_changes(&self) -> bool {
-@@ -1198,7 +1815,7 @@
+@@ -1198,7 +1819,7 @@
              let mut node = doc.remove_node_from_tree(node_id);
              if let Some(node) = &mut node {
                  for &child in &node.children {
@@ -3222,7 +3226,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                  }
                  for &anon_id in &node.anonymous_blocks {
                      doc.deallocate_anonymous_block(anon_id);
-@@ -1243,9 +1860,11 @@
+@@ -1243,9 +1864,11 @@
                      if href == href_to_reload
                          && let Some(resolved_href) = self.resolve_url(href)
                      {
@@ -3235,7 +3239,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                              ResourceHandler::boxed(
                                  self.tx.clone(),
                                  self.id,
-@@ -1256,6 +1875,9 @@
+@@ -1256,6 +1879,9 @@
                                      guard: self.guard.clone(),
                                      net_provider: self.net_provider.clone(),
                                      abort_signal: self.abort_signal.clone(),
@@ -3245,7 +3249,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                                  },
                              ),
                          );
-@@ -1266,12 +1888,101 @@
+@@ -1266,12 +1892,101 @@
      }
  
      pub fn process_style_element(&mut self, target_id: NodeId) {
@@ -3349,7 +3353,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub fn remove_user_agent_stylesheet(&mut self, sheet: &UserAgentStylesheet) {
          if self.useragent_stylesheets().any(|s| *s == sheet.0) {
              self.stylist
-@@ -1279,11 +1990,94 @@
+@@ -1279,11 +1994,94 @@
          }
      }
  
@@ -3444,7 +3448,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Iterate over the author stylesheets (from `<style>` and `<link>` nodes)
      /// currently associated with this document
      pub fn author_stylesheets(&self) -> impl Iterator<Item = &DocumentStyleSheet> {
-@@ -1305,11 +2099,55 @@
+@@ -1305,11 +2103,58 @@
      }
  
      pub fn make_stylesheet(&self, css: impl AsRef<str>, origin: Origin) -> DocumentStyleSheet {
@@ -3475,6 +3479,9 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
 +                    }
 +                };
 +                if !taken {
++                    // pyro: its URL data (the first document's object) is this document's own CSS's.
++                    let url_data = sheet.0.contents.read_with(&sheet.0.shared_lock.read()).url_data.0.clone();
++                    crate::net::adopt_inline(&self.inline_urls, &url_data);
 +                    return sheet;
 +                }
 +                return self.parse_stylesheet(css, origin);
@@ -3502,12 +3509,12 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
              self.guard.clone(),
              Some(&StylesheetLoader {
                  tx: self.tx.clone(),
-@@ -1318,22 +2156,48 @@
+@@ -1318,22 +2163,48 @@
                  shell_provider: self.shell_provider.clone(),
                  abort_signal: self.abort_signal.clone(),
                  import_depth: 0,
 +                client: self.request_client(),
-+                inline: Some(self.url.inline_url_data().clone()),
++                inline: Some(self.inline_urls.clone()),
 +                policies: self.sheet_policies.clone(),
              }),
              None,
@@ -3555,7 +3562,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let old = self.nodes_to_stylesheet.insert(node_id, stylesheet.clone());
          self.stylesheet_generation += 1;
  
-@@ -1351,6 +2215,7 @@
+@@ -1351,6 +2222,7 @@
              &self.shell_provider,
              &self.guard.read(),
              self.abort_signal.as_ref(),
@@ -3563,7 +3570,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          );
  
          // Store data on element
-@@ -1396,6 +2261,138 @@
+@@ -1396,6 +2268,138 @@
          }
      }
  
@@ -3702,7 +3709,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Whether the Document has pending requests for "critical" resources (that should block rendering)
      pub fn has_pending_critical_resources(&self) -> bool {
          !self.pending_critical_resources.is_empty()
-@@ -1409,6 +2406,41 @@
+@@ -1409,6 +2413,41 @@
              Err(err) => {
                  if let Some(url) = res.resolved_url.as_ref() {
                      let waiting_nodes = self.pending_images.remove(url).unwrap_or_default();
@@ -3744,7 +3751,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                      #[cfg(feature = "tracing")]
                      tracing::warn!(
                          url = url.as_str(),
-@@ -1429,9 +2461,31 @@
+@@ -1429,9 +2468,31 @@
          };
  
          match resource {
@@ -3778,7 +3785,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
              }
              Resource::ImportedCss(import_rule, sheet) => {
                  let mut guard = self.guard.write();
-@@ -1441,9 +2495,11 @@
+@@ -1441,9 +2502,11 @@
                  self.stylist
                      .force_stylesheet_origins_dirty(style::stylesheets::OriginSet::all());
              }
@@ -3792,7 +3799,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
                  let Some(url) = res.resolved_url.as_ref() else {
                      return;
-@@ -1453,6 +2509,8 @@
+@@ -1453,6 +2516,8 @@
              }
              #[cfg(feature = "svg")]
              Resource::Svg(_kind, svg) => {
@@ -3801,7 +3808,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                  // Create the ImageData and cache it
                  let image = ImageData::Svg(svg);
  
-@@ -1469,18 +2527,33 @@
+@@ -1469,18 +2534,33 @@
                  self.apply_iframe_html(node_id, res.request_id, res.resolved_url, &html);
              }
              Resource::Font(bytes, overrides) => {
@@ -3836,7 +3843,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                      ..Default::default()
                  };
  
-@@ -1489,6 +2562,12 @@
+@@ -1489,6 +2569,12 @@
                  global_font_ctx
                      .collection
                      .register_fonts(font.clone(), Some(info_override));
@@ -3849,7 +3856,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
                  #[cfg(feature = "parallel-construct")]
                  {
-@@ -1513,6 +2592,49 @@
+@@ -1513,6 +2599,49 @@
          }
      }
  
@@ -3899,7 +3906,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Cache a loaded image and apply it to all nodes waiting on it
      /// (`<img>` elements, `background-image` layers and `mask-image` layers).
      fn apply_loaded_image(&mut self, url: &str, image: ImageData) {
-@@ -1541,25 +2663,92 @@
+@@ -1541,25 +2670,92 @@
                      if element.custom_widget_data().is_some() {
                          continue;
                      }
@@ -3994,7 +4001,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                  }
              }
          }
-@@ -1580,7 +2769,75 @@
+@@ -1580,7 +2776,75 @@
          self.snapshot_node_impl(node_id, None)
      }
  
@@ -4070,7 +4077,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let node = &mut self.nodes[node_id];
  
          // Do not snapshot nodes that have never been styled. A snapshot records an element's
-@@ -1700,14 +2957,24 @@
+@@ -1700,14 +2964,24 @@
          state: ElementState,
          cb: impl FnOnce(&mut Node),
      ) {
@@ -4098,7 +4105,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          self.hit_with_scrollbar(x, y).0
      }
  
-@@ -1718,7 +2985,7 @@
+@@ -1718,7 +2992,7 @@
      /// This implements the hit-testing semantics of `document.elementFromPoint()`.
      /// Hit testing consults layout, so [`resolve`](Self::resolve) should be called
      /// before this method to ensure layout is up to date.
@@ -4107,7 +4114,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let viewport = self.viewport();
          let scale = viewport.scale();
          let (viewport_width, viewport_height) = (
-@@ -1753,7 +3020,7 @@
+@@ -1753,7 +3027,7 @@
      /// by its ancestor elements (which is correct for non-overlapping content).
      /// As with [`element_from_point`](Self::element_from_point), layout should be
      /// resolved before calling this method.
@@ -4116,7 +4123,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let mut element_ids = Vec::new();
          let mut current = self.element_from_point(x, y);
          while let Some(node_id) = current {
-@@ -1813,9 +3080,36 @@
+@@ -1813,9 +3087,36 @@
          Some(id)
      }
  
@@ -4153,7 +4160,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
              let shell_provider = self.shell_provider.clone();
              self.snapshot_node_and(id, ElementState::FOCUS | ElementState::FOCUSRING, |node| {
                  node.blur(shell_provider)
-@@ -1853,17 +3147,25 @@
+@@ -1853,17 +3154,25 @@
  
          // Remove focus from the old node
          if let Some(id) = self.focus_node_id {
@@ -4180,7 +4187,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
          // Update :focus-within on the ancestor chains (shared prefix stays)
          let old_node_path = self.maybe_node_element_ancestors(self.focus_node_id);
-@@ -1895,6 +3197,38 @@
+@@ -1895,6 +3204,38 @@
          true
      }
  
@@ -4219,7 +4226,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub fn active_node(&mut self) -> bool {
          let Some(hover_node_id) = self.get_hover_node_id() else {
              return false;
-@@ -1991,10 +3325,12 @@
+@@ -1991,10 +3332,12 @@
      /// thumb under the point (shares the traversal, so it costs nothing
      /// extra).
      pub(crate) fn hit_with_scrollbar(
@@ -4233,7 +4240,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          if TDocument::as_node(&self.root_node())
              .first_element_child()
              .is_none()
-@@ -2078,6 +3414,54 @@
+@@ -2078,6 +3421,54 @@
          true
      }
  
@@ -4288,7 +4295,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub fn clear_hover(&mut self) -> bool {
          // The pointer is no longer over the document, so stop re-resolving
          // hover state against it.
-@@ -2147,12 +3531,156 @@
+@@ -2147,12 +3538,156 @@
          self.mousedown_node_id
      }
  
@@ -4445,7 +4452,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Returns the current CSS media type used to evaluate `@media` rules.
      pub fn media_type(&self) -> &MediaType {
          &self.media_type
-@@ -2188,6 +3716,12 @@
+@@ -2188,6 +3723,12 @@
          self.viewport.clone()
      }
  
@@ -4458,7 +4465,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Returns whether incremental layout is currently enabled for this document.
      ///
      /// Both modes run the same style → damage → box construction → layout
-@@ -2248,6 +3782,111 @@
+@@ -2248,6 +3789,111 @@
  
      /// Record pending [`DeviceChanges`] and request a redraw so that they are
      /// flushed (via [`Self::flush_pending_device_changes`]) on the next resolve.
@@ -4570,7 +4577,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub(crate) fn queue_device_changes(&mut self, changes: DeviceChanges) {
          if changes.is_empty() {
              return;
-@@ -2264,12 +3903,13 @@
+@@ -2264,12 +3910,13 @@
              return;
          }
  
@@ -4589,7 +4596,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
          // Text is shaped at a specific scale factor, so cached inline layouts
          // must be invalidated when the scale changes, as must every node's
-@@ -2314,9 +3954,19 @@
+@@ -2314,9 +3961,19 @@
          drop(root_styles);
  
          let old_device = self.stylist.device();
@@ -4610,7 +4617,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let origins = {
              let guard = &self.guard;
              let guards = StylesheetGuards {
-@@ -2460,10 +4110,19 @@
+@@ -2460,10 +4117,19 @@
              pos.x += node.unrounded_layout().location.x - node.scroll_offset().x as f32;
              pos.y += node.unrounded_layout().location.y - node.scroll_offset().y as f32;
              current = node.containing_block();
@@ -4630,7 +4637,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Computes the size and position of the `Node` relative to the viewport
      pub fn get_client_bounding_rect(&self, node_id: NodeId) -> Option<BoundingRect> {
          // Non-atomic inline elements have no layout box of their own: return
-@@ -2620,6 +4279,35 @@
+@@ -2620,6 +4286,35 @@
          self.find_element_by_tag_name(&local_name!("title"))
      }
  
@@ -4666,7 +4673,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub fn with_text_input(
          &mut self,
          node_id: NodeId,
-@@ -2643,12 +4331,22 @@
+@@ -2643,12 +4338,22 @@
      /// Recompute the scroll offset of the text input at `node_id` (if any) so that its caret
      /// remains visible within the input's content box.
      pub(crate) fn clamp_text_input_scroll(&mut self, node_id: NodeId) {
@@ -4694,7 +4701,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
          if let Some(text_input) = node
              .element_data_mut()
-@@ -2677,7 +4375,7 @@
+@@ -2677,7 +4382,7 @@
      /// Find the text position (inline_root_id, byte_offset) at a given point.
      /// Uses hit() for proper coordinate transformation, then finds the inline root
      /// and byte offset.
@@ -4703,7 +4710,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let hit = self.hit(x, y)?;
          let hit_node = self.get_node(hit.node_id)?;
          let inline_root = hit_node.inline_root_ancestor()?;
-@@ -2835,6 +4533,10 @@
+@@ -2835,6 +4540,10 @@
      /// Get all selection ranges as Vec<(node_id, start_offset, end_offset)>.
      /// Returns empty vec if no selection.
      pub fn get_text_selection_ranges(&self) -> Vec<(NodeId, usize, usize)> {
@@ -4714,7 +4721,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let lookup = |parent_id, idx| self.find_anonymous_block_by_index(parent_id, idx);
  
          let anchor_node = match self.text_selection.anchor.resolve_node_id(lookup) {
-@@ -3782,6 +5484,7 @@
+@@ -3782,6 +5491,7 @@
                      family_name: Some(String::from(ALIAS)),
                      weight: Some(800.0),
                      style: Some(parley::fontique::FontStyle::Italic),
@@ -4722,7 +4729,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                  },
              )),
          };
-@@ -3804,6 +5507,52 @@
+@@ -3804,6 +5514,52 @@
               not the font file's internal `name` table entry",
          );
      }
@@ -4775,7 +4782,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  }
  
  #[cfg(test)]
-@@ -3846,3 +5595,121 @@
+@@ -3846,3 +5602,121 @@
          assert!(doc.has_changes());
      }
  }
@@ -10722,7 +10729,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
 +            .into_iter()
 +            .map(|candidate| match candidate {
 +                ReferenceCandidate::Url(url, modifiers) => {
-+                    Some((url.clone(), crate::net::url_fetch_options(modifiers, Some(self.url.inline_url_data()), Some(&self.sheet_policies))))
++                    Some((url.clone(), crate::net::url_fetch_options(modifiers, Some(&self.inline_urls), Some(&self.sheet_policies))))
 +                }
 +                ReferenceCandidate::Attr(raw) => {
 +                    self.resolve_url(raw).map(|url| (ServoArc::new(url), Default::default()))
@@ -10870,7 +10877,7 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
 +                    // § 4.5.4), its response kept apart from the same URL fetched otherwise.
 +                    // (An inline sheet's referrer is the document: by its identity, `url_fetch_options`.)
 +                    let mut options =
-+                        crate::net::url_fetch_options(modifiers.as_deref(), Some(self.url.inline_url_data()), Some(&self.sheet_policies));
++                        crate::net::url_fetch_options(modifiers.as_deref(), Some(&self.inline_urls), Some(&self.sheet_policies));
 +                    if matches!(kind, ImageLayerKind::Shape | ImageLayerKind::Mask)
 +                        && options.cors.is_none()
 +                        && new_url.scheme() != "data"
@@ -38891,7 +38898,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
  use std::sync::atomic::Ordering as Ao;
  use std::{
      io::Cursor,
-@@ -36,6 +37,99 @@
+@@ -36,6 +37,119 @@
      req
  }
  
@@ -38935,11 +38942,31 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
 +        .map(|(_, policy)| policy.clone())
 +}
 +
++/// pyro: the URL data objects of a document's own CSS (inline sheets, style attributes): its
++/// own `DocumentUrl` object, and that of every shared sheet it adopted as its own (a sheet parsed
++/// once per thread for its text and base URL carries the first document's object). Compared by
++/// identity only, never by URL.
++pub type InlineUrls = Arc<std::sync::Mutex<Vec<ServoArc<Url>>>>;
++
++/// pyro: whether `url_data` is one of `inline` (by identity).
++fn is_inline(inline: &InlineUrls, url_data: &ServoArc<Url>) -> bool {
++    inline.lock().is_ok_and(|own| own.iter().any(|o| ServoArc::ptr_eq(o, url_data)))
++}
++
++/// pyro: records `url_data` as one of a document's own (`InlineUrls`).
++pub(crate) fn adopt_inline(inline: &InlineUrls, url_data: &ServoArc<Url>) {
++    if let Ok(mut own) = inline.lock() {
++        if !own.iter().any(|o| ServoArc::ptr_eq(o, url_data)) {
++            own.push(url_data.clone());
++        }
++    }
++}
++
 +/// pyro: `policies`: a `url()` without a `referrer-policy()` of its own is sent under the policy
 +/// of the sheet it was written in, found by that sheet object (`SheetPolicies`).
 +pub fn url_fetch_options(
 +    modifiers: Option<&style::url::RequestUrlModifiers>,
-+    inline: Option<&style::servo_arc::Arc<url::Url>>,
++    inline: Option<&InlineUrls>,
 +    policies: Option<&SheetPolicies>,
 +) -> blitz_traits::net::FetchOptions {
 +    use blitz_traits::net::{CorsCredentials, FetchOptions};
@@ -38959,7 +38986,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
 +        referrer: modifiers
 +            .referrer
 +            .as_ref()
-+            .filter(|url| !inline.is_some_and(|inline| style::servo_arc::Arc::ptr_eq(url, inline)))
++            .filter(|url| !inline.is_some_and(|inline| is_inline(inline, url)))
 +            .map(|url| (**url).clone()),
 +        client: None,
 +        destination: Default::default(),
@@ -38991,7 +39018,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
  /// Carries `@font-face` descriptors from CSS parsing through to font
  /// registration so `parley::Collection::register_fonts` can alias the bytes
  /// under the `font-family` declared in CSS rather than whatever family name
-@@ -52,16 +146,47 @@
+@@ -52,16 +166,47 @@
      /// parses this as a range; we record the lower bound, which equals the
      /// upper bound in the common single-value case.
      pub weight: Option<f32>,
@@ -39041,7 +39068,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
      /// Stylesheet loaded for an `@import` rule, to be attached to the rule on the document thread
      ImportedCss(ServoArc<Locked<ImportRule>>, ServoArc<Stylesheet>),
      Font(Bytes, FontFaceOverrides),
-@@ -140,6 +265,13 @@
+@@ -140,6 +285,13 @@
      pub guard: SharedRwLock,
      pub net_provider: Arc<dyn NetProvider>,
      pub abort_signal: Option<AbortSignal>,
@@ -39055,7 +39082,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
  }
  
  impl NetHandler for ResourceHandler<StylesheetHandler> {
-@@ -148,12 +280,25 @@
+@@ -148,12 +300,25 @@
      }
  
      fn bytes(self: Box<Self>, resolved_url: String, bytes: Bytes) {
@@ -39082,7 +39109,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
              None,
              None,
              Origin::Author,
-@@ -166,6 +311,9 @@
+@@ -166,6 +331,9 @@
                  shell_provider: self.shell_provider.clone(),
                  abort_signal: self.data.abort_signal.clone(),
                  import_depth: 0,
@@ -39092,7 +39119,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
              }),
              None, // error_reporter
              QuirksMode::NoQuirks,
-@@ -173,11 +321,22 @@
+@@ -173,11 +341,22 @@
  
          self.respond(
              resolved_url,
@@ -39116,7 +39143,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
  /// Maximum depth of nested `@import` rules. Imports nested deeper than this
  /// are refused, preventing unbounded recursion (e.g. a stylesheet whose
  /// resolved `@import` URL yields another stylesheet importing in turn, with
-@@ -194,6 +353,14 @@
+@@ -194,6 +373,14 @@
      /// Depth of `@import` nesting for the stylesheet this loader is parsing
      /// (0 for a top-level stylesheet)
      pub(crate) import_depth: usize,
@@ -39125,13 +39152,13 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
 +    pub(crate) client: Option<String>,
 +    /// pyro: the document's own URL data (`DocumentUrl::inline_url_data`) for a loader of the
 +    /// document's own CSS: an `@import` written there has the document as its referrer.
-+    pub(crate) inline: Option<style::servo_arc::Arc<url::Url>>,
++    pub(crate) inline: Option<InlineUrls>,
 +    /// pyro: the document's sheet policies (`SheetPolicies`).
 +    pub(crate) policies: SheetPolicies,
  }
  impl ServoStylesheetLoader for StylesheetLoader {
      fn request_stylesheet(
-@@ -224,10 +391,21 @@
+@@ -224,10 +411,21 @@
          };
  
          let url = import.url.url().unwrap().clone();
@@ -39154,7 +39181,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
              ResourceHandler::boxed(
                  self.tx.clone(),
                  self.doc_id,
-@@ -262,12 +440,34 @@
+@@ -262,12 +460,34 @@
  
  impl NetHandler for ResourceHandler<NestedStylesheetHandler> {
      fn bytes(self: Box<Self>, resolved_url: String, bytes: Bytes) {
@@ -39190,7 +39217,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
              None,
              None,
              Origin::Author,
-@@ -288,6 +488,7 @@
+@@ -288,6 +508,7 @@
              &self.shell_provider,
              &self.data.lock.read(),
              self.data.loader.abort_signal.as_ref(),
@@ -39198,7 +39225,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
          );
  
          let import_rule = self.data.import_rule.clone();
-@@ -300,6 +501,10 @@
+@@ -300,6 +521,10 @@
      overrides: FontFaceOverrides,
  }
  impl NetHandler for ResourceHandler<FontFaceHandler> {
@@ -39209,7 +39236,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
      fn bytes(mut self: Box<Self>, resolved_url: String, bytes: Bytes) {
          let result = self.data.parse(bytes);
          self.respond(resolved_url, result)
-@@ -387,6 +592,7 @@
+@@ -387,6 +612,7 @@
      shell_provider: &Arc<dyn ShellProvider>,
      read_guard: &SharedRwLockReadGuard,
      abort_signal: Option<&AbortSignal>,
@@ -39217,7 +39244,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
  ) {
      fetch_font_face_rules(
          sheet.contents(read_guard).rules(read_guard).iter(),
-@@ -397,6 +603,7 @@
+@@ -397,6 +623,7 @@
          shell_provider,
          read_guard,
          abort_signal,
@@ -39225,7 +39252,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
      )
  }
  
-@@ -409,10 +616,45 @@
+@@ -409,10 +636,45 @@
      node_id: Option<NodeId>,
      network_provider: &Arc<dyn NetProvider>,
      shell_provider: &Arc<dyn ShellProvider>,
@@ -39273,7 +39300,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
          .filter_map(|rule| match rule {
              CssRule::FontFace(font_face) => {
                  let descriptor = &font_face.read_with(read_guard).descriptors;
-@@ -421,13 +663,71 @@
+@@ -421,13 +683,71 @@
                  // Capture the @font-face descriptors so parley can register
                  // the font under the CSS-declared family name (and weight /
                  // style) rather than whatever metadata the TTF reports.
@@ -39347,7 +39374,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
                  };
                  Some((src, overrides))
              }
-@@ -435,9 +735,11 @@
+@@ -435,9 +755,11 @@
          })
          .for_each(|(source_list, overrides)| {
              if let Some((url, format)) = preferred_font_source(source_list) {
@@ -39360,7 +39387,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
                      ResourceHandler::boxed(
                          tx.clone(),
                          doc_id,
-@@ -450,6 +752,11 @@
+@@ -450,6 +772,11 @@
          })
  }
  
@@ -39372,7 +39399,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
  /// The first source in an `@font-face` `src` list that is in a format we
  /// support, with its resolved url and format.
  fn preferred_font_source(source_list: &SourceList) -> Option<(Url, FontFaceSourceFormatKeyword)> {
-@@ -468,6 +775,11 @@
+@@ -468,6 +795,11 @@
              return None;
          };
  
@@ -39384,7 +39411,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
          let format = match &url_source.format_hint {
              Some(FontFaceSourceFormat::Keyword(keyword)) => *keyword,
              Some(FontFaceSourceFormat::String(string)) => font_format_from_string(string),
-@@ -564,7 +876,10 @@
+@@ -564,7 +896,10 @@
              // Stylo emits `Oblique(0deg, 0deg)` for the literal CSS `normal`
              // keyword. Map that back to `Normal` so parley's font matching
              // doesn't misclassify upright fonts.
@@ -39396,7 +39423,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
                  Fq::Normal
              } else {
                  Fq::Oblique(angle)
-@@ -585,37 +900,143 @@
+@@ -585,37 +920,143 @@
  
  pub struct ImageHandler {
      kind: ImageType,
@@ -39555,7 +39582,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
              }
              Err(e) => e.to_string(),
          };
-@@ -624,12 +1045,46 @@
+@@ -624,12 +1065,46 @@
          let svg_err = {
              use crate::util::parse_svg_image;
              match parse_svg_image(&bytes) {
@@ -39605,7 +39632,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
  
          Err(format!(
              "Could not parse image ({} bytes): image-crate error: {image_err}; svg fallback error: {svg_err}",
-@@ -649,6 +1104,62 @@
+@@ -649,6 +1124,62 @@
          FontStyleRange::Oblique(Angle::from_degrees(min_deg), Angle::from_degrees(max_deg))
      }
  
@@ -39668,7 +39695,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
      /// The source picked from the `src` list of each `@font-face` rule in `css`
      fn preferred_sources(css: &str) -> Vec<Option<(String, FontFaceSourceFormatKeyword)>> {
          let lock = SharedRwLock::new();
-@@ -800,3 +1311,11 @@
+@@ -800,3 +1331,11 @@
          );
      }
  }

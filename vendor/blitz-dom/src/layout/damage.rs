@@ -1048,7 +1048,7 @@ impl BaseDocument {
             .into_iter()
             .map(|candidate| match candidate {
                 ReferenceCandidate::Url(url, modifiers) => {
-                    Some((url.clone(), crate::net::url_fetch_options(modifiers, Some(self.url.inline_url_data()), Some(&self.sheet_policies))))
+                    Some((url.clone(), crate::net::url_fetch_options(modifiers, Some(&self.inline_urls), Some(&self.sheet_policies))))
                 }
                 ReferenceCandidate::Attr(raw) => {
                     self.resolve_url(raw).map(|url| (ServoArc::new(url), Default::default()))
@@ -1199,7 +1199,7 @@ impl BaseDocument {
                     // § 4.5.4), its response kept apart from the same URL fetched otherwise.
                     // (An inline sheet's referrer is the document: by its identity, `url_fetch_options`.)
                     let mut options =
-                        crate::net::url_fetch_options(modifiers.as_deref(), Some(self.url.inline_url_data()), Some(&self.sheet_policies));
+                        crate::net::url_fetch_options(modifiers.as_deref(), Some(&self.inline_urls), Some(&self.sheet_policies));
                     if matches!(kind, ImageLayerKind::Shape | ImageLayerKind::Mask)
                         && options.cors.is_none()
                         && new_url.scheme() != "data"
