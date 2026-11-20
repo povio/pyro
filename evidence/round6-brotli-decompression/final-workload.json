@@ -1,0 +1,42 @@
+{
+  "pages": [
+    {
+      "width": 1,
+      "encoded": 17930,
+      "decoded": 359996,
+      "matches": true
+    },
+    {
+      "width": 7,
+      "encoded": 17930,
+      "decoded": 359996,
+      "matches": true
+    },
+    {
+      "width": 1024,
+      "encoded": 17930,
+      "decoded": 359996,
+      "matches": true
+    },
+    {
+      "width": 16384,
+      "encoded": 17930,
+      "decoded": 359996,
+      "matches": true
+    },
+    {
+      "width": 17930,
+      "encoded": 17930,
+      "decoded": 359996,
+      "matches": true
+    },
+    {
+      "progressive": {
+        "beforeLastChunk": 175291,
+        "decoded": 359996,
+        "matches": true
+      }
+    }
+  ],
+  "requests": []
+}

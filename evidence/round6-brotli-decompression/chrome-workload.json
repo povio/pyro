@@ -1,0 +1,30 @@
+{
+  "pages": [
+    {
+      "width": 1,
+      "error": "TypeError"
+    },
+    {
+      "width": 7,
+      "error": "TypeError"
+    },
+    {
+      "width": 1024,
+      "error": "TypeError"
+    },
+    {
+      "width": 16384,
+      "error": "TypeError"
+    },
+    {
+      "width": 17930,
+      "error": "TypeError"
+    },
+    {
+      "progressive": {
+        "error": "TypeError"
+      }
+    }
+  ],
+  "requests": []
+}

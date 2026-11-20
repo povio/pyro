@@ -1,0 +1,5 @@
+test compression::tests::brotli_stream_preserves_chunk_boundaries_and_checks_termination ... ok
+test compression::tests::corrupt_truncated_and_trailing_input_fail ... ok
+test compression::tests::gzip_output_reads_with_flate2_and_flate2_gzip_reads_here ... ok
+test compression::tests::every_format_round_trips_in_any_chunking ... ok
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 80 filtered out; finished in 0.13s
