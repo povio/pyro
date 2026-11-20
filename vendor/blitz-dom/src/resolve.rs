@@ -1220,20 +1220,14 @@ impl BaseDocument {
         if let Some(base) = columns_base {
             // (Each already in its columns, above.)
             overflow = if overflow.width() > 0.0 || overflow.height() > 0.0 { base.union(overflow) } else { base };
-            // pyro: a scroll container's column boxes are its scrollable overflow whole, the last
-            // one past its content too (Chromium: the columns are the fragments of its content
-            // box; WPT css-overflow `scroll-markers/column-scroll-marker-007`).
-            if scroll_padding.is_some()
-                && let Some(columns) = self.nodes[node_id].column_fragments()
-            {
+            if let Some(columns) = self.nodes[node_id].column_fragments() {
                 for f in columns.fragments.iter().filter(|f| !f.spanner) {
-                    let column = Rect::new(
-                        f.x as f64 * scale,
-                        f.top as f64 * scale,
-                        (f.x + f.width) as f64 * scale,
-                        (f.top + f.height) as f64 * scale,
-                    );
-                    overflow = overflow.union(column);
+                    overflow.x0 = overflow.x0.min(f.x as f64 * scale);
+                    overflow.x1 = overflow.x1.max((f.x + f.width) as f64 * scale);
+                    if scroll_padding.is_some() {
+                        overflow.y0 = overflow.y0.min(f.top as f64 * scale);
+                        overflow.y1 = overflow.y1.max((f.top + f.height) as f64 * scale);
+                    }
                 }
             }
         }
