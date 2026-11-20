@@ -10,6 +10,7 @@
 //! selection when read.
 
 mod paragraph_join;
+mod target_range;
 mod whitespace;
 
 use std::rc::Rc;
@@ -414,11 +415,16 @@ pub(crate) fn input_event_with(
     let ev = EventCore::trusted(page, EventInterface::InputEvent, ty, true, cancelable);
     {
         let mut f = ev.fields.borrow_mut();
+        if ty == "beforeinput" && (page.dom.borrow().listens_for(ty) || page.dom.borrow().has_pending_inline_handlers()) {
+            f.editing_range = target_range::for_input(page, host, input_type).map(|range| Box::new((key, range)));
+        }
         f.input_type = input_type.to_owned();
         f.data = data.map(str::to_owned);
         f.data_transfer = transfer.map(|t| t.reference.clone());
     }
-    fire(page, key, &ev)
+    let proceed = fire(page, key, &ev);
+    ev.fields.borrow_mut().editing_range.take();
+    proceed
 }
 
 /// beforeinput, then the edit, then input (when the edit ran).
@@ -436,13 +442,32 @@ pub(crate) fn edit_with(
     transfer: Option<&crate::data_transfer::NativeTransfer>,
     op: impl FnOnce(&Rc<PageDom>),
 ) {
-    let doc = page.document();
-    if !input_event_with(page, host, "beforeinput", input_type, data, transfer, true)
-        || page.document() != doc
-        || !connected(page, host)
-    {
-        return;
+    if before_edit(page, host, input_type, data, transfer) {
+        apply_edit(page, host, input_type, data, transfer, op);
     }
+}
+
+fn before_edit(
+    page: &Rc<PageDom>,
+    host: NodeId,
+    input_type: &str,
+    data: Option<&str>,
+    transfer: Option<&crate::data_transfer::NativeTransfer>,
+) -> bool {
+    let doc = page.document();
+    input_event_with(page, host, "beforeinput", input_type, data, transfer, true)
+        && page.document() == doc
+        && connected(page, host)
+}
+
+fn apply_edit(
+    page: &Rc<PageDom>,
+    host: NodeId,
+    input_type: &str,
+    data: Option<&str>,
+    transfer: Option<&crate::data_transfer::NativeTransfer>,
+    op: impl FnOnce(&Rc<PageDom>),
+) {
     crate::edit_commands::record_host_edit(page, host, input_type);
     op(page);
     crate::edit_commands::note_host_edited(page, host);
@@ -717,18 +742,36 @@ pub(crate) fn is_text_entry_control(dom: &Dom, el: NodeId) -> bool {
 /// Backspace / Delete: deletes the selection, else one character (merging
 /// blocks at a block edge).
 pub fn delete(page: &Rc<PageDom>, host: NodeId, backward: bool) {
-    let (start, end) = host_range(page, host);
     let input_type = if backward { "deleteContentBackward" } else { "deleteContentForward" };
-    edit(page, host, input_type, None, |page| {
+    let original_selection = selection_range(page);
+    let original_owner = original_selection.and_then(|(s, e)| selection_host(&page.dom.borrow(), s, e));
+    if !before_edit(page, host, input_type, None, None) { return; }
+    // A moved selection may choose another host. When the listeners leave
+    // it alone, retain the command's editing host (including designMode's
+    // document-body editing scope).
+    let Some((start, end)) = selection_range(page) else { return };
+    let current_owner = selection_host(&page.dom.borrow(), start, end);
+    let (host, start, end) = if original_selection == Some((start, end)) && original_owner == current_owner {
+        let (start, end) = host_range(page, host);
+        (host, start, end)
+    } else {
+        let Some(host) = current_owner else { return };
+        (host, start, end)
+    };
+    let span = if start == end {
+        target_range::deletion_span(&page.dom.borrow(), host, start, backward)
+    } else {
+        Some((start, end))
+    };
+    if span.is_some_and(|(from, to)| from == to) { return; }
+    apply_edit(page, host, input_type, None, None, |page| {
         let caret = {
             let mut dom = page.dom.borrow_mut();
             let repair_space = start == end && whitespace::exposes_space(page, &dom, host, start, backward);
             let caret = if let Some(caret) = paragraph_join::at_boundary(page, &mut dom, host, start, end, backward) {
                 caret
-            } else if start != end {
-                delete_range(&mut dom, host, start, end, true)
             } else {
-                delete_char(&mut dom, host, start, backward)
+                delete_content(&mut dom, host, start, end, backward, span)
             };
             if repair_space {
                 whitespace::at(page, &mut dom, host, caret);
@@ -739,24 +782,60 @@ pub fn delete(page: &Rc<PageDom>, host: NodeId, backward: bool) {
     });
 }
 
+fn selection_host(dom: &Dom, start: Point, end: Point) -> Option<NodeId> {
+    let host = editing_host(dom, start.0)?;
+    (editing_host(dom, end.0) == Some(host)).then_some(host)
+}
+
+fn delete_content(
+    dom: &mut Dom, host: NodeId, start: Point, end: Point, backward: bool, span: Option<(Point, Point)>,
+) -> Point {
+    if let Some((from, to)) = span {
+        if let Some(right_list) = adjacent_list_boundary(dom, host, from, to) {
+            // Join the two list items across the paragraph boundary. Other
+            // items keep their original list; remove an exhausted list shell.
+            let caret = delete_range(dom, host, from, to, true);
+            if dom.child_count(right_list).ok() == Some(0) {
+                let _ = dom.remove_node(right_list);
+            }
+            return caret;
+        }
+        if start == end && from.0 == to.0 && !is_text(dom, from.0) && to.1 == from.1 + 1 {
+            if let Ok(Some(child)) = dom.child_at(from.0, from.1) {
+                if matches!(local(dom, child).as_str(), "img" | "br") {
+                    let _ = dom.remove_child(from.0, child);
+                    return placeholder_if_empty(dom, block_of(dom, from.0, host)).unwrap_or(from);
+                }
+            }
+        }
+    }
+    if start != end {
+        delete_range(dom, host, start, end, true)
+    } else {
+        delete_char(dom, host, start, backward)
+    }
+}
+
+fn adjacent_list_boundary(dom: &Dom, host: NodeId, from: Point, to: Point) -> Option<NodeId> {
+    let left = block_of(dom, from.0, host);
+    let right = block_of(dom, to.0, host);
+    if left == right || ![left, right].into_iter().all(|n| matches!(local(dom, n).as_str(), "dt" | "dd" | "li")) {
+        return None;
+    }
+    let a = dom.parent(left).ok()??;
+    let b = dom.parent(right).ok()??;
+    if a == b || dom.next_sibling(a).ok()?? != b {
+        return None;
+    }
+    [a, b].into_iter().all(|n| n != host && matches!(local(dom, n).as_str(), "dl" | "ul" | "ol")).then_some(b)
+}
+
 fn delete_char(dom: &mut Dom, host: NodeId, caret: Point, backward: bool) -> Point {
     let p = if backward { deep_backward(dom, caret) } else { deep_forward(dom, caret) };
     let p = insertion_point(dom, p);
     if is_text(dom, p.0) {
-        let data = dom.char_data(p.0).unwrap_or("").to_owned();
-        let units: Vec<u16> = data.encode_utf16().collect();
-        let (from, to) = if backward && p.1 > 0 {
-            let mut from = p.1 as usize - 1;
-            if from > 0 && (0xDC00..0xE000).contains(&units[from]) {
-                from -= 1;
-            }
-            (from as u32, p.1)
-        } else if !backward && (p.1 as usize) < units.len() {
-            let mut to = p.1 as usize + 1;
-            if to < units.len() && (0xDC00..0xE000).contains(&units[to]) {
-                to += 1;
-            }
-            (p.1, to as u32)
+        let (from, to) = if let Some((from, to)) = target_range::character(dom, p, backward) {
+            (from.1, to.1)
         } else {
             // At a text edge: the adjacent text in the same block, else merge blocks.
             let block = block_of(dom, p.0, host);
@@ -1424,6 +1503,16 @@ fn preserved_break_at(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point)
     }
 }
 
+fn next_in_block(dom: &Dom, host: NodeId, node: NodeId) -> Option<NodeId> {
+    let block = block_of(dom, node, host);
+    let mut current = node;
+    loop {
+        if let Some(next) = dom.next_sibling(current).ok()? { return Some(next); }
+        current = dom.parent(current).ok()??;
+        if current == host || current == block { return None; }
+    }
+}
+
 fn line_break_at(dom: &mut Dom, host: NodeId, caret: Point) -> Point {
     let caret = insertion_point(dom, caret);
     let Ok(doc) = dom.node_document(host) else { return caret };
@@ -1445,17 +1534,7 @@ fn line_break_at(dom: &mut Dom, host: NodeId, caret: Point) -> Point {
     let _ = dom.insert_before(parent, br, before);
     // Nothing follows on the line inside its block: a placeholder <br> keeps
     // the new line visible.
-    let block = block_of(dom, br, host);
-    let mut cur = br;
-    let next = loop {
-        if let Some(n) = dom.next_sibling(cur).ok().flatten() {
-            break Some(n);
-        }
-        match dom.parent(cur).ok().flatten() {
-            Some(p) if p != block && p != host => cur = p,
-            _ => break None,
-        }
-    };
+    let next = next_in_block(dom, host, br);
     if next.is_none_or(|n| is_block(dom, n)) {
         if let Ok(extra) = dom.create_element(doc, "br") {
             let after = dom.next_sibling(br).ok().flatten();
