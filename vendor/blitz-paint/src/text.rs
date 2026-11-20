@@ -2181,7 +2181,15 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
 
         // pyro: what a glyph run draws: its glyphs in a colour (its own, or a shadow's) moved by
         // a transform.
+        let baseline = line.metrics().baseline - line.metrics().block_min_coord;
+        let atomic_baseline_shift = line_tops.filter(|_| baseline.fract() != 0.0 && line.items().any(|item| {
+            matches!(item, PositionedLayoutItem::InlineBox(atom) if atom.baseline.is_some() && !atom.kind.is_span_edge())
+        })).map_or(0.0, |tops| {
+            let top = line.metrics().unquantized_block_min_coord;
+            (crate::snapped_line_top(tops.origin, top + baseline, tops.scale) - crate::snapped_line_top(tops.origin, top, tops.scale)) * tops.scale - f64::from(baseline)
+        });
         let draw_run = |scene: &mut S, glyph_run: &parley::GlyphRun<'_, TextBrush>, paint: &RunPaint, shadow: Option<&TextShadow>, runs: &mut Option<Vec<crate::TextRun>>| {
+            let transform = transform * Affine::translate((0.0, atomic_baseline_shift));
             let run = glyph_run.run();
             // pyro: a colour font is drawn in the palette of the run's element (`font-palette`).
             let palette_font = crate::palette::palette_font(doc, glyph_run.style().brush.id, run.font());
