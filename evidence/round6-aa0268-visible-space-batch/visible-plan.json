@@ -1,0 +1,39 @@
+{
+  "reference": "chrome158",
+  "selected": "merged-aa0268/batch/visible-matched.json",
+  "preservedPartials": [
+    "@merged-aa0268/batch/visible-original.part.json"
+  ],
+  "control": [
+    [
+      "merged-aa-batch-main",
+      "merged-aa0268/batch/main.log"
+    ],
+    [
+      "merged-aa-batch-ext",
+      "merged-aa0268/batch/ext.log"
+    ],
+    [
+      "merged-aa-batch-extra",
+      "merged-aa0268/batch/extra.log"
+    ]
+  ],
+  "candidate": [
+    [
+      "@merged-aa0268/batch/visible-original.part.json",
+      "merged-aa0268/batch/visible-original.part.log"
+    ],
+    [
+      "merged-aa-vspace-remaining",
+      "merged-aa0268/batch/visible-remaining.log"
+    ],
+    [
+      "merged-aa-vspace-ext",
+      "merged-aa0268/batch/visible-ext.log"
+    ],
+    [
+      "merged-aa-vspace-extra",
+      "merged-aa0268/batch/visible-extra.log"
+    ]
+  ]
+}
