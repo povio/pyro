@@ -1375,7 +1375,8 @@ pub(crate) fn define_element_extras(def: &mut ClassDef<Element>) {
     def.getter("activeViewTransition", crate::view_transition::active);
     def.method("startViewTransition", 0, |s, n, a| {
         let el = crate::node::wrap_node(s, n.page(), n.id)?.value();
-        crate::view_transition::start(s, n.page(), el, el, a.get(0))
+        let scope = crate::node::wrap_node(s, n.page(), crate::view_transition::scope_id(n))?.value();
+        crate::view_transition::start(s, n.page(), scope, el, a.get(0))
     });
     // ARIA reflection (ARIAMixin) for the attributes Playwright/Testing
     // Library read through properties.

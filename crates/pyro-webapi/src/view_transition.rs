@@ -279,9 +279,14 @@ fn view_transition_failed_child_jobs_cannot_retry_or_deny_top() {
     assert_eq!(quota.reserve_job(false).unwrap().remaining.lock().unwrap().work, (1 << 18) - cost);
 }
 
+pub(crate) fn scope_id(node: &crate::node::NodeData) -> pyro_dom::NodeId {
+    let dom = node.page().dom.borrow();
+    dom.owner_document(node.id).ok().flatten().filter(|&doc| dom.document_element(doc).ok().flatten() == Some(node.id)).unwrap_or(node.id)
+}
+
 pub(crate) fn active<'s>(s: &Scope<'s>, node: &crate::node::NodeData) -> JsResult<Value<'s>> {
     let Some(module) = MODULE.existing(s, node.page())? else { return Ok(s.null()) };
-    let scope = crate::node::wrap_node(s, node.page(), node.id)?.value();
+    let scope = crate::node::wrap_node(s, node.page(), scope_id(node))?.value();
     module.get("active")?.as_object().ok_or_else(unavailable)?.call(None, &[scope])
 }
 

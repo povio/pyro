@@ -296,6 +296,17 @@ fn view_transition_capture_pump_coalesces_rapid_starts() {
 }
 
 #[test]
+fn view_transition_document_element_shares_document_scope() {
+    let environment = env("<!doctype html><body></body>");
+    assert_eq!(eval(&environment.main, r#"globalThis.requestAnimationFrame = globalThis.setTimeout = () => 1;
+        let error; const first = document.startViewTransition(() => new Promise(() => {}));
+        first.ready.catch(reason => error = reason.name);
+        const root = document.documentElement, second = root.startViewTransition();
+        [document.activeViewTransition === second, root.activeViewTransition === second, second.transitionRoot === root].join()"#), "true,true,true");
+    assert_eq!(eval(&environment.main, "error"), "AbortError");
+}
+
+#[test]
 fn view_transition_active_scope_and_interface_identity() {
     let environment = env("<!doctype html><html><body></body></html>");
     eval(&environment.main, "globalThis.requestAnimationFrame = () => 1; globalThis.setTimeout = () => 1;");
