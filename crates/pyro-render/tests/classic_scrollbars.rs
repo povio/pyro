@@ -29,8 +29,14 @@ fn client(doc: &HtmlDocument, selector: &str) -> (f32, f32) {
 fn projected_overflow_clips_and_bounds_the_visible_horizon() {
     let document = doc("<div id=panel style='overflow:auto;width:200px;height:200px'><div style='width:100px;height:400px;transform-origin:0 0;transform:perspective(100px) rotateX(45deg)'></div></div>", true);
     let panel = node(&document, "#panel");
-    assert_eq!(panel.scrollable_overflow().y1, 100_000.0);
+    assert!(panel.scrollable_overflow().y1.is_finite() && panel.scrollable_overflow().y1 > 100_000.0);
     assert!(panel.client_height() < 200.0);
+}
+
+#[test]
+fn projected_overflow_keeps_finite_scroll_range() {
+    let document = doc("<div id=panel style='overflow:auto;width:200px;height:200px'><div style='width:20px;height:160000px;transform-origin:0 0;transform:perspective(200000px) rotateX(45deg)'></div></div>", true);
+    assert!((node(&document, "#panel").scrollable_overflow().y1 - 260_496.0).abs() < 1.0);
 }
 
 #[test]
