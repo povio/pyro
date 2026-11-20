@@ -2157,7 +2157,8 @@ impl Node {
 
             // pyro: `<body text>` colours the document's text (HTML rendering, "phrasing
             // content"), a legacy colour value (named colours included).
-            if *name == local_name!("text") && *tag == local_name!("body") {
+            if elem.name.ns == ns!(html) && ((*name == local_name!("text") && *tag == local_name!("body"))
+                || (*name == local_name!("color") && *tag == local_name!("font"))) {
                 use style::values::specified::{Color, ColorPropertyValue};
                 if let Ok(color) = style::servo::attr::parse_legacy_color(value) {
                     push_style(PropertyDeclaration::Color(ColorPropertyValue(Color::from_absolute_color(color))));

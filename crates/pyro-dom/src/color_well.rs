@@ -28,12 +28,39 @@ fn parse(raw: &str) -> Option<AbsoluteColor> {
     Some(computed.resolve_to_absolute(&AbsoluteColor::BLACK))
 }
 
+pub fn is_fully_transparent(raw: &str) -> bool {
+    raw == "rgba(0, 0, 0, 0)" || raw == "transparent" || parse(raw).is_some_and(|color| color.alpha() == Some(0.0))
+}
+
+/// The resolved CSS color string and its opaque legacy HTML color (when one
+/// exists). Editing commands reject currentColor and invalid inputs.
+pub fn editing_color(raw: &str) -> Option<(String, Option<String>)> {
+    use style_traits::ToCss;
+    if raw.trim().eq_ignore_ascii_case("currentcolor") {
+        return None;
+    }
+    let color = parse(raw)?;
+    let legacy = if color.alpha() == Some(1.0) && color.is_legacy_syntax() {
+        let rgb = color.to_color_space(ColorSpace::Srgb);
+        let [r, g, b] =
+            [rgb.c0(), rgb.c1(), rgb.c2()].map(|v| (v.unwrap_or(0.0).clamp(0.0, 1.0) * 255.0).round() as u8);
+        Some(format!("#{r:02x}{g:02x}{b:02x}"))
+    } else {
+        None
+    };
+    Some((color.to_css_string(), legacy))
+}
+
 /// A component as CSS color serialization prints it: at most six decimals,
 /// no trailing zeros.
 fn num(v: f32) -> String {
     let s = format!("{:.6}", v);
     let s = s.trim_end_matches('0').trim_end_matches('.');
-    if s == "-0" { "0".into() } else { s.into() }
+    if s == "-0" {
+        "0".into()
+    } else {
+        s.into()
+    }
 }
 
 /// The color state's value sanitization: `raw` as a CSS color (black when it

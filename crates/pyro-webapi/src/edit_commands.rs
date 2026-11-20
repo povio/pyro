@@ -15,6 +15,7 @@
 //! by edits the user (or execCommand) makes.
 
 mod alignment;
+pub(crate) mod inline_value;
 
 use std::rc::Rc;
 
@@ -1008,6 +1009,11 @@ fn format_of(command: &str) -> Option<(&'static str, &'static [&'static str], &'
 
 const SUPPORTED: &[&str] = &[
     "inserttext",
+    "forecolor",
+    "backcolor",
+    "hilitecolor",
+    "fontname",
+    "fontsize",
     "justifycenter",
     "justifyfull",
     "justifyleft",
@@ -1145,6 +1151,9 @@ pub(crate) fn exec_command(page: &Rc<PageDom>, doc: NodeId, command: &str, value
         };
     }
     let Some(Target::Host(host)) = target else { return false };
+    if let Some(kind) = inline_value::Kind::command(&cmd) {
+        return rich_selection(page, host) && inline_value::apply(page, host, kind, value);
+    }
     if let Some(target) = alignment::value_for(&cmd) {
         if !rich_selection(page, host) { return false; }
         alignment::apply(page, host, target);
@@ -1632,6 +1641,9 @@ pub(crate) fn query_state(page: &PageDom, doc: NodeId, command: &str) -> bool {
 /// `document.queryCommandIndeterm(command)`: part of the selection only.
 pub(crate) fn query_indeterm(page: &PageDom, command: &str) -> bool {
     let cmd = command.to_ascii_lowercase();
+    if let Some(kind) = inline_value::Kind::command(&cmd) {
+        return inline_value::mixed(page, kind);
+    }
     if let Some(target) = alignment::value_for(&cmd) {
         let values = alignment::selected_values(page);
         return values.iter().any(|&v| v == target) && values.iter().any(|&v| v != target);
@@ -1648,6 +1660,9 @@ pub(crate) fn query_value(page: &PageDom, doc: NodeId, command: &str) -> String 
     let cmd = command.to_ascii_lowercase();
     if doc != page.document() {
         return String::new();
+    }
+    if let Some(kind) = inline_value::Kind::command(&cmd) {
+        return inline_value::query(page, kind);
     }
     match cmd.as_str() {
         cmd if alignment::value_for(cmd).is_some() => {
@@ -1666,24 +1681,6 @@ pub(crate) fn query_value(page: &PageDom, doc: NodeId, command: &str) -> String 
         }
         "defaultparagraphseparator" => {
             page.dom.borrow().document_data(doc).map(|d| d.default_paragraph_separator.to_owned()).unwrap_or_default()
-        }
-        "fontname" | "forecolor" | "backcolor" => {
-            let Some((start, _)) = editing::selection_range(page) else {
-                return String::new();
-            };
-            let dom = page.dom.borrow();
-            let el = if editing::is_text(&dom, start.0) {
-                dom.parent_element(start.0).ok().flatten()
-            } else {
-                Some(start.0)
-            };
-            let Some(el) = el else { return String::new() };
-            let name = match cmd.as_str() {
-                "fontname" => "font-family",
-                "forecolor" => "color",
-                _ => "background-color",
-            };
-            page.layout().computed_style_value(&dom, el, name)
         }
         _ if format_of(&cmd).is_some() || cmd.starts_with("insert") && cmd.ends_with("list") => {
             query_state(page, doc, &cmd).to_string()
@@ -1725,6 +1722,9 @@ pub(crate) fn query_enabled(page: &PageDom, doc: NodeId, command: &str) -> bool 
     let cmd = command.to_ascii_lowercase();
     if doc != page.document() || !query_supported(&cmd) {
         return false;
+    }
+    if inline_value::Kind::command(&cmd).is_some() {
+        return matches!(command_target(page), Some(Target::Host(h)) if rich_selection(page, h));
     }
     let has_range = || match command_target(page) {
         Some(Target::Control(c)) => page.dom.borrow().selection(c).is_ok_and(|(s, e)| s != e),
