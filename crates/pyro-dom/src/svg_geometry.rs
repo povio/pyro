@@ -976,8 +976,14 @@ fn shape_path(dom: &Dom, el: NodeId, tag: &str, allow_degenerate: bool, length: 
         }
         "circle" if v("r") > 0. => Circle::new((v("cx"), v("cy")), v("r")).to_path(0.01),
         "ellipse" => {
-            let rx = length("rx").unwrap_or(v("ry"));
-            let ry = length("ry").unwrap_or(v("rx"));
+            // Hit testing only supplies the XML lengths. Inferring an auto
+            // radius there would also override a CSS radius of zero. Metrics
+            // receive the cascade, so can resolve SVG 2's auto radii.
+            let (rx, ry) = if allow_degenerate {
+                (length("rx").unwrap_or(v("ry")), length("ry").unwrap_or(v("rx")))
+            } else {
+                (v("rx"), v("ry"))
+            };
             if rx < 0.0 || ry < 0.0 || rx == 0.0 && ry == 0.0 || !allow_degenerate && (rx == 0.0 || ry == 0.0) {
                 return None;
             }
