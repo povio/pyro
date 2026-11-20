@@ -308,55 +308,96 @@ impl PageFetcher {
         // pyro: the same request's key in the requesting document's layout bodies (its own fetch).
         let key = layout_key(&url, &source, &client);
         // A closed loop drops `done`: the render stops waiting at its deadline.
-        let _ = self.handle.post(move |b| {
-            // pyro: the client is checked before anything, the document's own bodies included: a
-            // document that is no longer its frame's has nothing served and nothing sent.
-            if !b.is_live_client(page, &client) {
-                done(Err("the document is no longer its frame's".into()));
-                return;
-            }
-            // pyro: what the document's own layout fetched (an image, a font, an imported sheet:
-            // the same request, `layout_key`) is used as it is, with the final URL, tainting and
-            // policy stored with it, as Chrome paints what the document loaded (settle stage B).
-            // One failure state: what the document's layout failed to fetch is a failure here too
-            // (not fetched again and painted though the document has none).
-            if b.layout_bodies(page).is_some_and(|bodies| bodies.has_failed(&key)) {
-                done(Err("the document's own fetch of it failed".into()));
-                return;
-            }
-            {
-                if let Some(body) = b.layout_bodies(page).and_then(|bodies| bodies.get(&key)) {
-                    let opaque = !cors && body.opaque;
-                    done(Ok(pyro_render::Fetched {
-                        body: body.bytes.to_vec(),
-                        url: body.final_url.clone(),
-                        opaque,
-                        referrer_policy: body.referrer_policy.clone(),
-                    }));
-                    return;
-                }
-            }
-            // An imported sheet without a charset of its own decodes as the document.
-            let environment = b.document_encoding(page);
-            b.fetch_subresource_options(
-                page,
-                url,
-                kind,
-                options,
-                Box::new(move |_, result| {
-                    done(result.and_then(|r| {
-                        if (200..300).contains(&r.status) {
-                            let (url, opaque) = (r.url.clone(), r.opaque);
-                            let referrer_policy = r.referrer_policy.map(|p| p.as_str().to_owned());
-                            Ok(pyro_render::Fetched { body: r.render_body(environment.as_slice()), url, opaque, referrer_policy })
-                        } else {
-                            Err(format!("HTTP {}", r.status))
-                        }
-                    }))
-                }),
-            );
-        });
+        let request = CaptureRequest {
+            page,
+            url,
+            kind,
+            cors,
+            options,
+            client,
+            key,
+            until: Instant::now() + std::time::Duration::from_secs(10),
+        };
+        let _ = self.handle.post(move |b| serve_capture(b, request, done));
     }
+}
+
+/// pyro: a capture's request, served on the browser thread ([`serve_capture`]).
+struct CaptureRequest {
+    page: PageId,
+    url: String,
+    kind: ResourceKind,
+    cors: bool,
+    options: pyro_browser::SubresourceOptions,
+    client: String,
+    key: pyro_dom::layout::LayoutBodyKey,
+    /// How long it waits for the document's own fetch of it to end.
+    until: Instant,
+}
+
+/// pyro: serves a capture's request: the client is checked before anything, then the document's
+/// own layout fetch of the same request answers it (its body, or its failure); while that fetch
+/// is in flight the capture waits for it (it never sends the same request again beside it); only
+/// a request the document never made goes out.
+fn serve_capture(b: &mut Browser, request: CaptureRequest, done: Box<dyn FnOnce(Result<pyro_render::Fetched, String>) + Send>) {
+    let CaptureRequest { page, url, kind, cors, options, client, key, until } = request;
+    // pyro: a document that is no longer its frame's has nothing served and nothing sent.
+    if !b.is_live_client(page, &client) {
+        done(Err("the document is no longer its frame's".into()));
+        return;
+    }
+    let bodies = b.layout_bodies(page);
+    // pyro: the document's own fetch of it is in flight: wait for its outcome (a short timer,
+    // bounded), then serve that.
+    if bodies.as_ref().is_some_and(|bodies| bodies.pending(&key)) && Instant::now() < until {
+        let retry = std::rc::Rc::new(std::cell::RefCell::new(Some((
+            CaptureRequest { page, url, kind, cors, options, client, key, until },
+            done,
+        ))));
+        b.scheduler().set_timer(std::time::Duration::from_millis(5), false, true, move |b| {
+            if let Some((request, done)) = retry.borrow_mut().take() {
+                serve_capture(b, request, done);
+            }
+        });
+        return;
+    }
+    // pyro: what the document's own layout fetched (an image, a font, an imported sheet: the same
+    // request, `layout_key`) is used as it is, with the final URL, tainting and policy stored
+    // with it, as Chrome paints what the document loaded (settle stage B). One failure state: what
+    // the document's layout failed to fetch is a failure here too.
+    if bodies.as_ref().is_some_and(|bodies| bodies.has_failed(&key)) {
+        done(Err("the document's own fetch of it failed".into()));
+        return;
+    }
+    if let Some(body) = bodies.as_ref().and_then(|bodies| bodies.get(&key)) {
+        let opaque = !cors && body.opaque;
+        done(Ok(pyro_render::Fetched {
+            body: body.bytes.to_vec(),
+            url: body.final_url.clone(),
+            opaque,
+            referrer_policy: body.referrer_policy.clone(),
+        }));
+        return;
+    }
+    // An imported sheet without a charset of its own decodes as the document.
+    let environment = b.document_encoding(page);
+    b.fetch_subresource_options(
+        page,
+        url,
+        kind,
+        options,
+        Box::new(move |_, result| {
+            done(result.and_then(|r| {
+                if (200..300).contains(&r.status) {
+                    let (url, opaque) = (r.url.clone(), r.opaque);
+                    let referrer_policy = r.referrer_policy.map(|p| p.as_str().to_owned());
+                    Ok(pyro_render::Fetched { body: r.render_body(environment.as_slice()), url, opaque, referrer_policy })
+                } else {
+                    Err(format!("HTTP {}", r.status))
+                }
+            }))
+        }),
+    );
 }
 
 /// pyro: a renderer's request options (a CSS `url()`'s request URL modifiers) as the browser

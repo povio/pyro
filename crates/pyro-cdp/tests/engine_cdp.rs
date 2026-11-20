@@ -7489,6 +7489,8 @@ mod screenshot {
                     }
                     let (status, body) = if request.starts_with(b"GET /missing.png") {
                         counter.fetch_add(1, Ordering::SeqCst);
+                        // (Answered late: a capture taken meanwhile meets the layout's fetch in flight.)
+                        std::thread::sleep(Duration::from_millis(600));
                         ("404 Not Found", "")
                     } else {
                         ("200 OK", "<!doctype html><div style='width:20px;height:20px;background-image:url(/missing.png)'></div>")
@@ -7505,10 +7507,19 @@ mod screenshot {
         let mut h = Harness::new();
         h.page("Page.enable", json!({}));
         h.page("Page.navigate", json!({"url": format!("http://{address}/")}));
-        h.until_event(|m| m["method"] == "Page.loadEventFired");
-        h.run_for(100);
-        assert_eq!(hits.load(Ordering::SeqCst), 1, "the layout asked once");
         let session = h.session.clone();
+        // The layout asks (its load gate's pass); a capture taken while that fetch is in flight
+        // waits for it instead of sending the request again.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while hits.load(Ordering::SeqCst) == 0 {
+            assert!(Instant::now() < deadline, "the layout never asked");
+            h.run_for(10);
+        }
+        let r = h.call(Some(&session), "Page.captureScreenshot", json!({}));
+        assert!(r["result"]["data"].as_str().is_some_and(|d| !d.is_empty()), "{r}");
+        assert_eq!(hits.load(Ordering::SeqCst), 1, "the capture met the layout's fetch in flight");
+        // Once it failed (the 404 answered), a capture takes the failure as its own.
+        h.run_for(800);
         let r = h.call(Some(&session), "Page.captureScreenshot", json!({}));
         assert!(r["result"]["data"].as_str().is_some_and(|d| !d.is_empty()), "{r}");
         assert_eq!(hits.load(Ordering::SeqCst), 1, "the capture took the layout's failure");
