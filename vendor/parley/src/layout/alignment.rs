@@ -131,18 +131,27 @@ pub(crate) fn align<B: Brush>(
             if line.item_range.len() <= 1 || line.metrics.hanging_advance != 0.0 || line.text_fit.is_some() {
                 return free_space - excess(advance);
             }
-            let mut remaining = advance;
+            let mut owner = None;
+            let mut item_width = 0.0;
             let mut rounding = 0.0;
             for item in &layout.line_items[line.item_range.clone()] {
                 if item.kind == super::data::LayoutItemKind::TextRun {
                     let slice = layout.shaped_text.run_slice(item.index as u32).narrow(item.shaped_cluster_range.clone());
                     let spacing = super::spacing::EffectiveSpacing::new(layout.runs[item.index].spacing, super::spacing::Justification::NONE);
-                    let width = spacing.slice_advance(slice);
-                    rounding += excess(width);
-                    remaining -= width;
+                    let Some(first) = slice.characters().first() else { continue };
+                    if owner != Some(first.style_index) {
+                        rounding += excess(item_width);
+                        item_width = 0.0;
+                        owner = Some(first.style_index);
+                    }
+                    item_width += spacing.slice_advance(slice);
+                } else {
+                    rounding += excess(item_width);
+                    item_width = 0.0;
+                    owner = None;
                 }
             }
-            free_space - rounding - excess(remaining)
+            free_space - rounding - excess(item_width)
         };
         match (line_alignment, is_rtl) {
             (Alignment::Left, _) | (Alignment::Start, false) | (Alignment::End, true) => {

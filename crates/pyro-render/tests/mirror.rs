@@ -1004,11 +1004,14 @@ fn page_layout_reports_words_and_hits() {
     let words: Vec<(u64, u32, u32)> =
         words_out.iter().map(|(k, w)| (*k, w.edges[0].0, w.edges.last().unwrap().0)).collect();
     let (p0, b0, p2) = (text_key("#p", 0), text_key("#b", 0), text_key("#p", 2));
-    assert_eq!(words, vec![(p0, 2, 7), (p0, 10, 15), (b0, 0, 4), (p2, 1, 3), (p2, 3, 4)]);
+    assert_eq!(words, vec![(p0, 2, 7), (p0, 7, 10), (p0, 10, 15), (b0, 0, 4), (p2, 0, 1), (p2, 1, 3), (p2, 3, 4)]);
+    let collapsed = &words_out[1].1;
+    let space = &words_out[4].1;
+    assert!(space.width > 0.0 && (collapsed.width - space.width).abs() < 0.02);
     let hello = &words_out[0].1;
     assert!(hello.width > 20.0 && hello.height > 10.0 && hello.edges.len() == 6, "{hello:?}");
     assert!(hello.edges.windows(2).all(|e| e[0].1 < e[1].1));
-    let bold = &words_out[2].1;
+    let bold = &words_out[3].1;
     let hit = r.elements_from_point(1, bold.x + 2.0, bold.y + 2.0);
     let dom = page.dom.borrow();
     assert_eq!(hit[0], pyro_dom::snapshot::render_key(page.find("#b")));
