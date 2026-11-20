@@ -1059,12 +1059,17 @@ impl BaseDocument {
     /// The border box of `node_id` relative to the padding box of its scroll container
     /// `scroller`, unscrolled (the viewport's: the document's coordinates).
     fn rect_in_scroller(&self, scroller: NodeId, node_id: NodeId) -> (f32, f32, f32, f32) {
-        let size = self.nodes[node_id].final_layout().size;
+        self.layout_rect_in_scroller(scroller, node_id, false)
+    }
+
+    fn layout_rect_in_scroller(&self, scroller: NodeId, node_id: NodeId, strip: bool) -> (f32, f32, f32, f32) {
+        let layout = |id: NodeId| if strip { self.nodes[id].unrounded_layout() } else { self.nodes[id].final_layout() };
+        let size = layout(node_id).size;
         let (mut x, mut y) = (0.0f32, 0.0f32);
         let mut current = node_id;
         loop {
             let node = &self.nodes[current];
-            let location = node.final_layout().location;
+            let location = layout(current).location;
             x += location.x;
             y += location.y;
             match node.containing_block() {
@@ -1081,7 +1086,7 @@ impl BaseDocument {
             }
         }
         if !self.nodes[scroller].is_root_element() {
-            let border = self.nodes[scroller].final_layout().border;
+            let border = layout(scroller).border;
             x -= border.left;
             y -= border.top;
         }
@@ -1604,8 +1609,8 @@ impl BaseDocument {
             let at_or_before = match candidate {
                 (container, Some(index)) => {
                     // The column showing the target (in the container's strip).
-                    let (_, y, _, _) = self.rect_in_scroller(container, target);
-                    let border_top = self.nodes[container].final_layout().border.top;
+                    let (_, y, _, _) = self.layout_rect_in_scroller(container, target, true);
+                    let border_top = self.nodes[container].unrounded_layout().border.top;
                     let column = self.nodes[container].column_fragments().and_then(|columns| {
                         let fragment = columns.fragment_at(y + border_top)?;
                         columns
