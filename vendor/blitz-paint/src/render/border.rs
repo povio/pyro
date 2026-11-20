@@ -1657,15 +1657,14 @@ impl ElementCx<'_, '_> {
             && (outset - width / 2.0).abs() < 1e-6
             && (self.border_shape().is_none() || self.auto_outline_box() == self.frame.border_box)
         {
+            let outline_rects = if self.border_shape().is_none() { self.auto_outline_rects() } else { Vec::new() };
             let path = match self.border_shape() {
                 Some(shape) => shape.outer_edge(),
                 // pyro: descendants' boxes reach out of it: the ring is one path along the union
                 // of the boxes (Chromium's focus ring over the element's outline rects, not their
                 // bounding box), its joins round.
-                None if self.auto_outline_rects().len() > 1 => {
-                    use crate::kurbo_css::contoured::{boolean, flatten};
-                    let shapes: Vec<_> = self.auto_outline_rects().iter().map(|r| flatten(&r.to_path(0.1))).collect();
-                    let union = boolean(&shapes, |inside| inside.iter().any(|&b| b));
+                None if outline_rects.len() > 1 => {
+                    let union = rect_union_outline(&outline_rects);
                     let stroke = Stroke::new(width).with_join(Join::Round);
                     scene.stroke(&stroke, self.transform, color, None, &union);
                     return;
@@ -1822,6 +1821,183 @@ fn same_edge(a: &blitz_dom::CollapsedEdge, b: &blitz_dom::CollapsedEdge) -> bool
     a.width == b.width && a.color == b.color && a.is_double() == b.is_double()
 }
 
+
+/// pyro: at most this many outline rects are united along their edges; more (an element of
+/// thousands of line boxes) are outlined by their bounding box, keeping the ring's cost bounded.
+const MAX_UNITED_OUTLINE_RECTS: usize = 256;
+
+/// pyro: the outline of the union of axis-aligned `rects` (device px) as closed loops, for an
+/// `auto` outline's ring: a sweep over the slabs between the rects' distinct x edges, the merged
+/// y-intervals of each slab giving its horizontal edges and the change between neighbouring slabs
+/// the vertical ones, chained into loops. Past [`MAX_UNITED_OUTLINE_RECTS`] rects, their
+/// bounding box.
+pub(crate) fn rect_union_outline(rects: &[Rect]) -> BezPath {
+    use std::collections::HashMap;
+    let rects: Vec<Rect> = rects.iter().copied().filter(|r| r.width() > 0.0 && r.height() > 0.0).collect();
+    if rects.is_empty() {
+        return BezPath::new();
+    }
+    if rects.len() > MAX_UNITED_OUTLINE_RECTS {
+        let bounds = rects.iter().skip(1).fold(rects[0], |a, r| a.union(*r));
+        return bounds.to_path(0.1);
+    }
+    // Coordinates snapped to 1/64 px, compared exactly.
+    let q = |v: f64| (v * 64.0).round() as i64;
+    let mut xs: Vec<i64> = rects.iter().flat_map(|r| [q(r.x0), q(r.x1)]).collect();
+    xs.sort_unstable();
+    xs.dedup();
+    // The merged y-intervals of each slab [xs[i], xs[i + 1]).
+    let mut slabs: Vec<Vec<(i64, i64)>> = Vec::with_capacity(xs.len().saturating_sub(1));
+    let mut by_x0: Vec<&Rect> = rects.iter().collect();
+    by_x0.sort_by_key(|r| q(r.x0));
+    let mut next = 0;
+    let mut active: Vec<(i64, i64, i64)> = Vec::new(); // (y0, y1, x1)
+    for w in xs.windows(2) {
+        let (x0, _) = (w[0], w[1]);
+        while next < by_x0.len() && q(by_x0[next].x0) <= x0 {
+            let r = by_x0[next];
+            active.push((q(r.y0), q(r.y1), q(r.x1)));
+            next += 1;
+        }
+        active.retain(|&(_, _, x1)| x1 > x0);
+        let mut intervals: Vec<(i64, i64)> = active.iter().map(|&(a, b, _)| (a, b)).collect();
+        intervals.sort_unstable();
+        let mut merged: Vec<(i64, i64)> = Vec::with_capacity(intervals.len());
+        for (a, b) in intervals {
+            match merged.last_mut() {
+                Some(last) if a <= last.1 => last.1 = last.1.max(b),
+                _ => merged.push((a, b)),
+            }
+        }
+        slabs.push(merged);
+    }
+    // Directed boundary edges, the union on their right in y-down coordinates (clockwise loops):
+    // a top edge runs +x, a bottom edge -x, a left edge -y, a right edge +y.
+    let mut edges: Vec<((i64, i64), (i64, i64))> = Vec::new();
+    for (i, merged) in slabs.iter().enumerate() {
+        let (xa, xb) = (xs[i], xs[i + 1]);
+        for &(a, b) in merged {
+            edges.push(((xa, a), (xb, a)));
+            edges.push(((xb, b), (xa, b)));
+        }
+    }
+    // Vertical edges at each x: where only the slab on the right covers y, a left edge (upwards);
+    // where only the slab on the left does, a right edge (downwards).
+    let empty: Vec<(i64, i64)> = Vec::new();
+    for (i, &x) in xs.iter().enumerate() {
+        let left = if i > 0 { &slabs[i - 1] } else { &empty };
+        let right = slabs.get(i).unwrap_or(&empty);
+        let mut cuts: Vec<i64> = left.iter().chain(right.iter()).flat_map(|&(a, b)| [a, b]).collect();
+        cuts.sort_unstable();
+        cuts.dedup();
+        let covers = |set: &[(i64, i64)], y: i64| set.iter().any(|&(a, b)| a <= y && y < b);
+        for c in cuts.windows(2) {
+            let (a, b) = (c[0], c[1]);
+            match (covers(left, a), covers(right, a)) {
+                (false, true) => edges.push(((x, b), (x, a))),
+                (true, false) => edges.push(((x, a), (x, b))),
+                _ => {}
+            }
+        }
+    }
+    // Chain the edges into loops (each point starts as many edges as it ends).
+    let mut from: HashMap<(i64, i64), Vec<usize>> = HashMap::new();
+    for (i, e) in edges.iter().enumerate() {
+        from.entry(e.0).or_default().push(i);
+    }
+    let mut used = vec![false; edges.len()];
+    let mut path = BezPath::new();
+    let point = |(x, y): (i64, i64)| Point::new(x as f64 / 64.0, y as f64 / 64.0);
+    for start in 0..edges.len() {
+        if used[start] {
+            continue;
+        }
+        let mut loop_points: Vec<(i64, i64)> = vec![edges[start].0];
+        let mut at = start;
+        loop {
+            used[at] = true;
+            let end = edges[at].1;
+            if end == edges[start].0 {
+                break;
+            }
+            loop_points.push(end);
+            let Some(nexts) = from.get(&end) else { break };
+            let Some(&n) = nexts.iter().find(|&&n| !used[n]) else { break };
+            at = n;
+        }
+        // Collinear points dropped: the corners alone.
+        let len = loop_points.len();
+        let corners: Vec<(i64, i64)> = (0..len)
+            .filter(|&k| {
+                let (p, c, n) = (loop_points[(k + len - 1) % len], loop_points[k], loop_points[(k + 1) % len]);
+                !((p.0 == c.0 && c.0 == n.0) || (p.1 == c.1 && c.1 == n.1))
+            })
+            .map(|k| loop_points[k])
+            .collect();
+        if corners.len() < 4 {
+            continue;
+        }
+        path.move_to(point(corners[0]));
+        for &c in &corners[1..] {
+            path.line_to(point(c));
+        }
+        path.close_path();
+    }
+    path
+}
+
+#[cfg(test)]
+mod rect_union_tests {
+    use super::*;
+
+    fn loops(path: &BezPath) -> Vec<usize> {
+        let mut out = Vec::new();
+        for el in path.elements() {
+            match el {
+                kurbo::PathEl::MoveTo(_) => out.push(1),
+                kurbo::PathEl::LineTo(_) => *out.last_mut().unwrap() += 1,
+                _ => {}
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn overlapping_rects_make_one_l_shaped_loop() {
+        let path = rect_union_outline(&[Rect::new(0.0, 0.0, 60.0, 10.0), Rect::new(10.0, 0.0, 60.0, 50.0)]);
+        // An L: six corners.
+        assert_eq!(loops(&path), vec![6]);
+        let path = rect_union_outline(&[Rect::new(0.0, 0.0, 10.0, 10.0), Rect::new(5.0, 5.0, 15.0, 15.0)]);
+        assert_eq!(loops(&path), vec![8]);
+    }
+
+    #[test]
+    fn disjoint_rects_make_one_loop_each_and_contained_ones_none() {
+        let path = rect_union_outline(&[
+            Rect::new(0.0, 0.0, 10.0, 10.0),
+            Rect::new(20.0, 0.0, 30.0, 10.0),
+            Rect::new(2.0, 2.0, 8.0, 8.0),
+        ]);
+        assert_eq!(loops(&path), vec![4, 4]);
+    }
+
+    #[test]
+    fn ten_thousand_line_boxes_are_outlined_within_a_bound() {
+        // An element of 10,000 overflowing line boxes: past the cap, their bounding box, at once.
+        let rects: Vec<Rect> =
+            (0..10_000).map(|i| Rect::new(0.0, i as f64 * 20.0, 100.0 + (i % 7) as f64, i as f64 * 20.0 + 18.0)).collect();
+        let t = std::time::Instant::now();
+        let path = rect_union_outline(&rects);
+        assert_eq!(loops(&path), vec![4]);
+        assert!(t.elapsed() < std::time::Duration::from_millis(50), "took {:?}", t.elapsed());
+        // At the cap, the sweep: still fast, one loop per disjoint line.
+        let rects: Vec<Rect> = rects.into_iter().take(MAX_UNITED_OUTLINE_RECTS).collect();
+        let t = std::time::Instant::now();
+        let path = rect_union_outline(&rects);
+        assert_eq!(loops(&path).len(), MAX_UNITED_OUTLINE_RECTS);
+        assert!(t.elapsed() < std::time::Duration::from_millis(200), "took {:?}", t.elapsed());
+    }
+}
 
 #[cfg(test)]
 mod side_marks_tests {

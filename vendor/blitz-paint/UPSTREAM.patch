@@ -15457,14 +15457,6 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
  
 -/// The `(dash, gap)` lengths of a dashed border, as multiples of the border
 -/// thickness.
--///
--/// Matches Chrome: borders that are at least 3px use a 2:1 dash-to-gap ratio,
--/// while thinner borders use longer dashes and gaps (3:2) so they still read as
--/// dashes rather than dots or a solid line. `thickness` and `scale` are in device
--/// pixels; the 3px threshold is applied in CSS pixels.
--fn dashed_ratios(thickness: f64, scale: f64) -> (f64, f64) {
--    if thickness >= 3.0 * scale {
--        (2.0, 1.0)
 +/// A box side as the dotted and dashed painting sees it: its style and colour,
 +/// or `None` for a side without a line.
 +type Side = Option<(BorderStyle, Color)>;
@@ -15490,8 +15482,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +    let max_dashes = min_dashes + 1.0;
 +    let (min_gaps, max_gaps) = if closed {
 +        (min_dashes, max_dashes)
-     } else {
--        (3.0, 2.0)
++    } else {
 +        (min_dashes - 1.0, max_dashes - 1.0)
 +    };
 +    let min_gap = (length - min_dashes * dash) / min_gaps;
@@ -15500,27 +15491,20 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +        min_gap
 +    } else {
 +        max_gap
-     }
- }
- 
--/// Return `count` points spaced `spacing` apart (by arc length) along `path`,
--/// starting at its beginning. Used to place dots along a rounded border.
--fn sample_points_along_path(path: &BezPath, spacing: f64, count: usize) -> Vec<Point> {
--    // Flatten to a polyline so we can walk it by arc length.
--    let mut poly: Vec<Point> = Vec::new();
--    kurbo::flatten(path.iter(), 0.1, |el| match el {
--        PathEl::MoveTo(p) | PathEl::LineTo(p) => poly.push(p),
--        PathEl::ClosePath => {
--            if let Some(&first) = poly.first() {
--                poly.push(first);
--            }
--        }
--        _ => {}
--    });
++    }
++}
++
 +/// The `(dash, gap)` of a line Blink draws as dashes (`stroke_is_dashed`), in
 +/// CSS px, or `None` for a line too short for dashes, which is solid
 +/// (`StyledStrokeData::SetupPaintDashPathEffect`).
-+///
+ ///
+-/// Matches Chrome: borders that are at least 3px use a 2:1 dash-to-gap ratio,
+-/// while thinner borders use longer dashes and gaps (3:2) so they still read as
+-/// dashes rather than dots or a solid line. `thickness` and `scale` are in device
+-/// pixels; the 3px threshold is applied in CSS pixels.
+-fn dashed_ratios(thickness: f64, scale: f64) -> (f64, f64) {
+-    if thickness >= 3.0 * scale {
+-        (2.0, 1.0)
 +/// A dash is twice the width of a line of 3px or more and three times that of
 +/// a thinner one, the gap one width and two; the gap is then adjusted to the
 +/// length. A thin dotted line has dots and gaps of exactly its width.
@@ -15542,15 +15526,13 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +    }
 +    let gap = if dashed {
 +        select_best_dash_gap(length, dash, gap, closed)
-+    } else {
+     } else {
+-        (3.0, 2.0)
 +        gap
 +    };
 +    Some((dash, gap))
 +}
- 
--    let mut points = Vec::with_capacity(count);
--    if poly.len() < 2 {
--        return points;
++
 +/// The distance between the centres of the round dots of a wide dotted line, in
 +/// CSS px (`StyledStrokeData::SetupPaintDashPathEffect`). Blink shortens it by
 +/// an epsilon so that rounding does not drop the last dot.
@@ -15560,22 +15542,19 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +        return width * 2.0;
      }
 +    select_best_dash_gap(length, width, width, closed) + width - 0.01
-+}
+ }
  
--    let mut seg = 0;
--    let mut seg_start = 0.0;
--    let mut seg_len = (poly[1] - poly[0]).hypot();
--    for i in 0..count {
--        let target = i as f64 * spacing;
--        while seg + 2 < poly.len() && target > seg_start + seg_len {
--            seg_start += seg_len;
--            seg += 1;
--            seg_len = (poly[seg + 1] - poly[seg]).hypot();
--        }
--        let t = if seg_len > 0.0 {
--            ((target - seg_start) / seg_len).clamp(0.0, 1.0)
--        } else {
--            0.0
+-/// Return `count` points spaced `spacing` apart (by arc length) along `path`,
+-/// starting at its beginning. Used to place dots along a rounded border.
+-fn sample_points_along_path(path: &BezPath, spacing: f64, count: usize) -> Vec<Point> {
+-    // Flatten to a polyline so we can walk it by arc length.
+-    let mut poly: Vec<Point> = Vec::new();
+-    kurbo::flatten(path.iter(), 0.1, |el| match el {
+-        PathEl::MoveTo(p) | PathEl::LineTo(p) => poly.push(p),
+-        PathEl::ClosePath => {
+-            if let Some(&first) = poly.first() {
+-                poly.push(first);
+-            }
 +/// The marks of one dotted or dashed straight side, appended to `path`, as
 +/// Blink's `GraphicsContext::DrawLine` places them.
 +///
@@ -15615,9 +15594,14 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +    let mut rect = |from: f64, to: f64| {
 +        if to > from {
 +            path.extend(Rect::from_points(at(from, 0.0), at(to, thickness)).path_elements(0.1));
-+        }
+         }
+-        _ => {}
+-    });
 +    };
-+
+ 
+-    let mut points = Vec::with_capacity(count);
+-    if poly.len() < 2 {
+-        return points;
 +    if !stroke_is_dashed(width, style) {
 +        // Round dots, the first and the last touching the ends of the side.
 +        let radius = thickness / 2.0;
@@ -15632,8 +15616,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +                }
 +                path.extend(Circle::new(center, radius).path_elements(0.1));
 +            }
-         };
--        points.push(poly[seg].lerp(poly[seg + 1], t));
++        };
 +        if len <= width {
 +            dot(len / 2.0);
 +            return;
@@ -15647,8 +15630,17 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +            distance += period;
 +        }
 +        return;
-+    }
-+
+     }
+ 
+-    let mut seg = 0;
+-    let mut seg_start = 0.0;
+-    let mut seg_len = (poly[1] - poly[0]).hypot();
+-    for i in 0..count {
+-        let target = i as f64 * spacing;
+-        while seg + 2 < poly.len() && target > seg_start + seg_len {
+-            seg_start += seg_len;
+-            seg += 1;
+-            seg_len = (poly[seg + 1] - poly[seg]).hypot();
 +    let (mut start, mut end) = (0.0, len);
 +    if style == BorderStyle::Dotted {
 +        // `EnforceDotsAtEndpoints`: dots and gaps of exactly the width leave a
@@ -15660,7 +15652,9 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +        let (mut end_dot, mut end_growth) = (false, 0.0);
 +        if (width == 1.0 && mod_2 == 0.0) || (width == 3.0 && mod_6 == 0.0) {
 +            (start_dot, start_growth, start_offset) = (true, 1.0, 1.0);
-+        }
+         }
+-        let t = if seg_len > 0.0 {
+-            ((target - seg_start) / seg_len).clamp(0.0, 1.0)
 +        if (width == 2.0 && (mod_4 == 0.0 || mod_4 == 1.0))
 +            || (width == 3.0 && (mod_6 == 1.0 || mod_6 == 2.0))
 +        {
@@ -15731,7 +15725,8 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +        if depth < 20 && off.x.abs().max(off.y.abs()) > tolerance {
 +            halve(points, (t0, p0), (half_t, half), tolerance, depth + 1, chords);
 +            halve(points, (half_t, half), (t1, p1), tolerance, depth + 1, chords);
-+        } else {
+         } else {
+-            0.0
 +            let distance = chords.last().map_or(0.0, |&(_, distance)| distance);
 +            chords.push((t1, distance + (p1 - p0).hypot()));
 +        }
@@ -15788,7 +15783,8 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +        let radius = |r: Vec2, inset_x: f64, inset_y: f64| {
 +            let r = Vec2::new((r.x - inset_x).max(0.0), (r.y - inset_y).max(0.0));
 +            if r.x == 0.0 || r.y == 0.0 { Vec2::ZERO } else { r }
-+        };
+         };
+-        points.push(poly[seg].lerp(poly[seg + 1], t));
 +        let radii = frame.border_radii;
 +        let tl = radius(radii.top_left, left, top);
 +        let tr = radius(radii.top_right, right, top);
@@ -16062,10 +16058,13 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
          if borders.is_empty() {
              return;
          }
-@@ -341,6 +796,175 @@
-         }
-     }
- 
+@@ -338,9 +793,178 @@
+             }
+             scene.fill(Fill::NonZero, self.transform, color, None, &path);
+             start = next;
++        }
++    }
++
 +    /// pyro: the area this element's border paints, which `background-clip: border-area` (CSS
 +    /// Backgrounds 4) clips to: each side with a style and a width, all of it whatever its
 +    /// colour; a `double` side its two lines; a dotted or dashed side its marks when the corners
@@ -16164,7 +16163,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +            }
 +            colors[i] = Some(color);
 +            inner_colors[i] = Some(inner);
-+        }
+         }
 +        let present: SmallVec<[Color; 8]> = colors.iter().chain(inner_colors.iter()).flatten().copied().collect();
 +        if present.len() < 2 || present.iter().all(|c| *c == present[0]) {
 +            return false;
@@ -16178,8 +16177,8 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +        self.overdraw_square_sides(scene, outer.border_box, outer.border_width, colors);
 +        self.overdraw_square_sides(scene, inner.border_box, inner.border_width, inner_colors);
 +        true
-+    }
-+
+     }
+ 
 +    /// pyro: one ring of square border sides (`bb` its outer edge, `w` its widths) in `colors`
 +    /// (top, right, bottom, left; `None` for a side without a line), by overdraw
 +    /// (`draw_square_solid_sides_overdrawn`).
@@ -16656,7 +16655,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
              if outer_border_style.border_left_style != BorderStyle::Hidden {
                  fill(left, y0, left + border_width.width, y1);
              }
-@@ -589,44 +1246,617 @@
+@@ -589,44 +1246,793 @@
          }
      }
  
@@ -17084,15 +17083,14 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +            && (outset - width / 2.0).abs() < 1e-6
 +            && (self.border_shape().is_none() || self.auto_outline_box() == self.frame.border_box)
 +        {
++            let outline_rects = if self.border_shape().is_none() { self.auto_outline_rects() } else { Vec::new() };
 +            let path = match self.border_shape() {
 +                Some(shape) => shape.outer_edge(),
 +                // pyro: descendants' boxes reach out of it: the ring is one path along the union
 +                // of the boxes (Chromium's focus ring over the element's outline rects, not their
 +                // bounding box), its joins round.
-+                None if self.auto_outline_rects().len() > 1 => {
-+                    use crate::kurbo_css::contoured::{boolean, flatten};
-+                    let shapes: Vec<_> = self.auto_outline_rects().iter().map(|r| flatten(&r.to_path(0.1))).collect();
-+                    let union = boolean(&shapes, |inside| inside.iter().any(|&b| b));
++                None if outline_rects.len() > 1 => {
++                    let union = rect_union_outline(&outline_rects);
 +                    let stroke = Stroke::new(width).with_join(Join::Round);
 +                    scene.stroke(&stroke, self.transform, color, None, &union);
 +                    return;
@@ -17260,6 +17258,183 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +}
 +
 +
++/// pyro: at most this many outline rects are united along their edges; more (an element of
++/// thousands of line boxes) are outlined by their bounding box, keeping the ring's cost bounded.
++const MAX_UNITED_OUTLINE_RECTS: usize = 256;
++
++/// pyro: the outline of the union of axis-aligned `rects` (device px) as closed loops, for an
++/// `auto` outline's ring: a sweep over the slabs between the rects' distinct x edges, the merged
++/// y-intervals of each slab giving its horizontal edges and the change between neighbouring slabs
++/// the vertical ones, chained into loops. Past [`MAX_UNITED_OUTLINE_RECTS`] rects, their
++/// bounding box.
++pub(crate) fn rect_union_outline(rects: &[Rect]) -> BezPath {
++    use std::collections::HashMap;
++    let rects: Vec<Rect> = rects.iter().copied().filter(|r| r.width() > 0.0 && r.height() > 0.0).collect();
++    if rects.is_empty() {
++        return BezPath::new();
+     }
++    if rects.len() > MAX_UNITED_OUTLINE_RECTS {
++        let bounds = rects.iter().skip(1).fold(rects[0], |a, r| a.union(*r));
++        return bounds.to_path(0.1);
++    }
++    // Coordinates snapped to 1/64 px, compared exactly.
++    let q = |v: f64| (v * 64.0).round() as i64;
++    let mut xs: Vec<i64> = rects.iter().flat_map(|r| [q(r.x0), q(r.x1)]).collect();
++    xs.sort_unstable();
++    xs.dedup();
++    // The merged y-intervals of each slab [xs[i], xs[i + 1]).
++    let mut slabs: Vec<Vec<(i64, i64)>> = Vec::with_capacity(xs.len().saturating_sub(1));
++    let mut by_x0: Vec<&Rect> = rects.iter().collect();
++    by_x0.sort_by_key(|r| q(r.x0));
++    let mut next = 0;
++    let mut active: Vec<(i64, i64, i64)> = Vec::new(); // (y0, y1, x1)
++    for w in xs.windows(2) {
++        let (x0, _) = (w[0], w[1]);
++        while next < by_x0.len() && q(by_x0[next].x0) <= x0 {
++            let r = by_x0[next];
++            active.push((q(r.y0), q(r.y1), q(r.x1)));
++            next += 1;
++        }
++        active.retain(|&(_, _, x1)| x1 > x0);
++        let mut intervals: Vec<(i64, i64)> = active.iter().map(|&(a, b, _)| (a, b)).collect();
++        intervals.sort_unstable();
++        let mut merged: Vec<(i64, i64)> = Vec::with_capacity(intervals.len());
++        for (a, b) in intervals {
++            match merged.last_mut() {
++                Some(last) if a <= last.1 => last.1 = last.1.max(b),
++                _ => merged.push((a, b)),
++            }
++        }
++        slabs.push(merged);
++    }
++    // Directed boundary edges, the union on their right in y-down coordinates (clockwise loops):
++    // a top edge runs +x, a bottom edge -x, a left edge -y, a right edge +y.
++    let mut edges: Vec<((i64, i64), (i64, i64))> = Vec::new();
++    for (i, merged) in slabs.iter().enumerate() {
++        let (xa, xb) = (xs[i], xs[i + 1]);
++        for &(a, b) in merged {
++            edges.push(((xa, a), (xb, a)));
++            edges.push(((xb, b), (xa, b)));
++        }
++    }
++    // Vertical edges at each x: where only the slab on the right covers y, a left edge (upwards);
++    // where only the slab on the left does, a right edge (downwards).
++    let empty: Vec<(i64, i64)> = Vec::new();
++    for (i, &x) in xs.iter().enumerate() {
++        let left = if i > 0 { &slabs[i - 1] } else { &empty };
++        let right = slabs.get(i).unwrap_or(&empty);
++        let mut cuts: Vec<i64> = left.iter().chain(right.iter()).flat_map(|&(a, b)| [a, b]).collect();
++        cuts.sort_unstable();
++        cuts.dedup();
++        let covers = |set: &[(i64, i64)], y: i64| set.iter().any(|&(a, b)| a <= y && y < b);
++        for c in cuts.windows(2) {
++            let (a, b) = (c[0], c[1]);
++            match (covers(left, a), covers(right, a)) {
++                (false, true) => edges.push(((x, b), (x, a))),
++                (true, false) => edges.push(((x, a), (x, b))),
++                _ => {}
++            }
++        }
++    }
++    // Chain the edges into loops (each point starts as many edges as it ends).
++    let mut from: HashMap<(i64, i64), Vec<usize>> = HashMap::new();
++    for (i, e) in edges.iter().enumerate() {
++        from.entry(e.0).or_default().push(i);
++    }
++    let mut used = vec![false; edges.len()];
++    let mut path = BezPath::new();
++    let point = |(x, y): (i64, i64)| Point::new(x as f64 / 64.0, y as f64 / 64.0);
++    for start in 0..edges.len() {
++        if used[start] {
++            continue;
++        }
++        let mut loop_points: Vec<(i64, i64)> = vec![edges[start].0];
++        let mut at = start;
++        loop {
++            used[at] = true;
++            let end = edges[at].1;
++            if end == edges[start].0 {
++                break;
++            }
++            loop_points.push(end);
++            let Some(nexts) = from.get(&end) else { break };
++            let Some(&n) = nexts.iter().find(|&&n| !used[n]) else { break };
++            at = n;
++        }
++        // Collinear points dropped: the corners alone.
++        let len = loop_points.len();
++        let corners: Vec<(i64, i64)> = (0..len)
++            .filter(|&k| {
++                let (p, c, n) = (loop_points[(k + len - 1) % len], loop_points[k], loop_points[(k + 1) % len]);
++                !((p.0 == c.0 && c.0 == n.0) || (p.1 == c.1 && c.1 == n.1))
++            })
++            .map(|k| loop_points[k])
++            .collect();
++        if corners.len() < 4 {
++            continue;
++        }
++        path.move_to(point(corners[0]));
++        for &c in &corners[1..] {
++            path.line_to(point(c));
++        }
++        path.close_path();
++    }
++    path
+ }
++
++#[cfg(test)]
++mod rect_union_tests {
++    use super::*;
++
++    fn loops(path: &BezPath) -> Vec<usize> {
++        let mut out = Vec::new();
++        for el in path.elements() {
++            match el {
++                kurbo::PathEl::MoveTo(_) => out.push(1),
++                kurbo::PathEl::LineTo(_) => *out.last_mut().unwrap() += 1,
++                _ => {}
++            }
++        }
++        out
++    }
++
++    #[test]
++    fn overlapping_rects_make_one_l_shaped_loop() {
++        let path = rect_union_outline(&[Rect::new(0.0, 0.0, 60.0, 10.0), Rect::new(10.0, 0.0, 60.0, 50.0)]);
++        // An L: six corners.
++        assert_eq!(loops(&path), vec![6]);
++        let path = rect_union_outline(&[Rect::new(0.0, 0.0, 10.0, 10.0), Rect::new(5.0, 5.0, 15.0, 15.0)]);
++        assert_eq!(loops(&path), vec![8]);
++    }
++
++    #[test]
++    fn disjoint_rects_make_one_loop_each_and_contained_ones_none() {
++        let path = rect_union_outline(&[
++            Rect::new(0.0, 0.0, 10.0, 10.0),
++            Rect::new(20.0, 0.0, 30.0, 10.0),
++            Rect::new(2.0, 2.0, 8.0, 8.0),
++        ]);
++        assert_eq!(loops(&path), vec![4, 4]);
++    }
++
++    #[test]
++    fn ten_thousand_line_boxes_are_outlined_within_a_bound() {
++        // An element of 10,000 overflowing line boxes: past the cap, their bounding box, at once.
++        let rects: Vec<Rect> =
++            (0..10_000).map(|i| Rect::new(0.0, i as f64 * 20.0, 100.0 + (i % 7) as f64, i as f64 * 20.0 + 18.0)).collect();
++        let t = std::time::Instant::now();
++        let path = rect_union_outline(&rects);
++        assert_eq!(loops(&path), vec![4]);
++        assert!(t.elapsed() < std::time::Duration::from_millis(50), "took {:?}", t.elapsed());
++        // At the cap, the sweep: still fast, one loop per disjoint line.
++        let rects: Vec<Rect> = rects.into_iter().take(MAX_UNITED_OUTLINE_RECTS).collect();
++        let t = std::time::Instant::now();
++        let path = rect_union_outline(&rects);
++        assert_eq!(loops(&path).len(), MAX_UNITED_OUTLINE_RECTS);
++        assert!(t.elapsed() < std::time::Duration::from_millis(200), "took {:?}", t.elapsed());
++    }
++}
++
 +#[cfg(test)]
 +mod side_marks_tests {
 +    use super::*;
@@ -17279,7 +17454,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +            })
 +            .collect();
 +        (starts, dots.len())
-     }
++    }
 +
 +    /// pyro: a dotted or dashed side a million pixels long (a column rule) makes the marks in
 +    /// view only, where the whole side has them, and keeps only its corner dots for the
@@ -17296,7 +17471,7 @@ diff --git a/packages/blitz-paint/src/render/border.rs b/packages/blitz-paint/sr
 +            assert!(huge.len() < 400, "{style:?}: {}", huge.len());
 +        }
 +    }
- }
++}
 diff --git a/packages/blitz-paint/src/render/border_image.rs b/packages/blitz-paint/src/render/border_image.rs
 new file mode 100644
 --- /dev/null
