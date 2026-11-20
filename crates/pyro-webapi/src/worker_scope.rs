@@ -1239,6 +1239,7 @@ fn register(engine: &Engine, service: bool, shared_worker: bool) -> pyro_js::Cla
     crate::form_data::register(engine);
     engine.register::<crate::headers::Headers>();
     engine.register::<crate::url::URL>();
+    engine.register::<crate::url_pattern::URLPattern>();
     engine.register::<crate::url_search_params::URLSearchParams>();
     engine.register::<crate::url_search_params::ParamsIterator>();
     engine.register::<crate::response::Response>();

@@ -62,6 +62,8 @@ sha2 = { version = "0.10", features = ["oid"] }
 skrifa = { version = "0.44", default-features = false, features = ["std"] }
 wuff = "0.2"
 url = "2"
+urlpattern = "0.6.0"
+regress = "0.12"
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 
 [[test]]
