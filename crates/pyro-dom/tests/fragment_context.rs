@@ -25,6 +25,19 @@ fn fragment_initializes_form_pointer_from_the_context_tree() {
 }
 
 #[test]
+fn template_fragment_keeps_forms_in_body_and_table_modes() {
+    let dom = DomRef::default();
+    let doc = parse_document(&dom, "about:blank", "<!doctype html><form><template></template></form>");
+    let mut dom = dom.borrow_mut();
+    let template = dom.query_selector(doc, &parse_selectors("template").unwrap()).unwrap().unwrap();
+    let contents = dom.template_contents(template).unwrap().unwrap();
+    set_inner_html(&mut dom, template, "<div><form></div><input></form><table><form></form></table>").unwrap();
+    assert_eq!(dom.query_selector_all(contents, &parse_selectors("form").unwrap()).unwrap().len(), 2);
+    let input = dom.query_selector(contents, &parse_selectors("input").unwrap()).unwrap().unwrap();
+    assert_eq!(dom.form_owner(input).unwrap(), None);
+}
+
+#[test]
 fn table_in_paragraph_inherits_context_document_quirks() {
     for (doctype, expected) in [("", "<p><table></table></p>"), ("<!doctype html>", "<p></p><table></table>")] {
         let dom = DomRef::default();
