@@ -740,7 +740,7 @@ impl Dom {
 #[cfg(test)]
 mod fragment_tests {
     use super::*;
-    use crate::parse::{parse_contextual_fragment, parse_insertion_fragment, set_inner_html};
+    use crate::parse::{parse_contextual_fragment, parse_insertion_fragment};
     use crate::DomErrorKind;
 
     #[test]
@@ -770,7 +770,7 @@ mod fragment_tests {
         let root = dom.document_element(doc).unwrap().unwrap();
         let old = dom.first_child(root).unwrap();
         for source in ["<new/><open>", "<p:x/>", "]]>", "<!DOCTYPE root>", "<?xml version='1.0'?>"] {
-            assert_eq!(set_inner_html(&mut dom, root, source).unwrap_err().kind(), Some(DomErrorKind::Syntax));
+            assert_eq!(parse_insertion_fragment(&mut dom, root, source).unwrap_err().kind(), Some(DomErrorKind::Syntax));
             assert_eq!(dom.first_child(root).unwrap(), old);
         }
     }
