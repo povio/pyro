@@ -53,6 +53,13 @@ fn parallel_overflow_uses_inflow_end_and_parent_used_size() {
     check(&image, 1.0, &[(151.0, 39.0, BLACK), (151.0, 41.0, WHITE), (201.0, 5.0, WHITE), (105.0, 28.0, BLUE)], "four parent fragments");
 }
 
+#[test]
+fn anonymous_content_fills_to_host_content_box() {
+    let image = render(include_str!("fixtures/anonymous-content-column-fill.html"), 1.0);
+    check(&image, 1.0, &[(11.0, 11.0, GREEN), (11.0, 51.0, BLUE), (51.0, 11.0, BLUE), (51.0, 31.0, WHITE),
+        (11.0, 91.0, WHITE), (11.0, 101.0, GREEN), (11.0, 121.0, BLUE), (51.0, 105.0, WHITE)], "sequential fill and short content centering");
+}
+
 fn check(img: &RgbaImage, scale: f64, points: &[(f64, f64, [u8; 3])], what: &str) {
     let wrong: Vec<String> = points
         .iter()

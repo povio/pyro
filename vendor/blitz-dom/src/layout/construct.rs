@@ -838,7 +838,7 @@ fn collect_layout_children_with_wrap(
         return;
     }
 
-    if doc.nodes[container_node_id].data.downcast_element().is_some_and(|el| el.name == qual_name!("button", html))
+    if super::multicol::uses_anonymous_content_box(&doc.nodes[container_node_id])
         && doc.nodes[container_node_id].primary_styles().is_some_and(|style| super::multicol::is_multicol_style(&style))
     {
         out.create_anonymous_block(container_node_id, doc);
@@ -849,10 +849,19 @@ fn collect_layout_children_with_wrap(
         let mut values = (**doc.nodes[wrapper].primary_styles().unwrap()).clone();
         values.mutate_box().set_adjusted_display(Display::Block, false);
         {
-            let button = doc.nodes[container_node_id].primary_styles().unwrap();
-            *values.mutate_column() = button.get_column().clone();
-            values.mutate_position().column_gap = button.get_position().column_gap.clone();
-            values.mutate_position().row_gap = button.get_position().row_gap.clone();
+            let host = doc.nodes[container_node_id].primary_styles().unwrap();
+            *values.mutate_column() = host.get_column().clone();
+            let position = values.mutate_position();
+            position.column_gap = host.get_position().column_gap.clone();
+            position.row_gap = host.get_position().row_gap.clone();
+            let available = style::values::computed::MaxSize::LengthPercentage(style::values::generics::NonNegative(
+                style::values::computed::LengthPercentage::hundred_percent(),
+            ));
+            if host.writing_mode.is_vertical() {
+                position.max_width = available;
+            } else {
+                position.max_height = available;
+            }
         }
         doc.nodes[wrapper].stylo_element_data_mut().get_mut().unwrap().styles.primary = Some(style::servo_arc::Arc::new(values));
         doc.nodes[wrapper].update_layout_styles();
