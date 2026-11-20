@@ -961,6 +961,10 @@ fn solve_oof_box<Tree: LayoutContainingBlock>(
     };
     before_layout(tree, &layout_input);
     let mut layout_output = tree.compute_child_layout(candidate.node, layout_input);
+    let final_size = Size {
+        width: if size_style.width.is_stretch() { layout_output.size.width } else { final_size.width },
+        height: if size_style.height.is_stretch() { layout_output.size.height } else { final_size.height },
+    };
 
     // Resolve auto margins <https://www.w3.org/TR/css-position-3/#abspos-margins>
     let horizontal_margin = horizontal.resolve_margins(final_size.width);

@@ -1968,6 +1968,7 @@ impl Size {
                 "fit-content" => 1u8,
                 "min-content" => 2u8,
                 "max-content" => 3u8,
+                "stretch" => 4u8,
             };
             input.expect_comma()?;
             let calc = CalcNode::parse_calc_size_calculation(context, input, AllowedNumericType::NonNegative)?;
@@ -1976,7 +1977,8 @@ impl Size {
                 0 => GenericSize::CalcSizeAuto(length),
                 1 => GenericSize::CalcSizeFitContent(length),
                 2 => GenericSize::CalcSizeMinContent(length),
-                _ => GenericSize::CalcSizeMaxContent(length),
+                3 => GenericSize::CalcSizeMaxContent(length),
+                _ => GenericSize::CalcSizeStretch(length),
             })
         })
     }

@@ -361,6 +361,7 @@ impl BaseDocument {
         let sizes = if width { (&live.width, &sampled.width) } else { (&live.height, &sampled.height) };
         let calculation = match sizes {
             (Size::CalcSizeAuto(_), Size::CalcSizeAuto(value)) |
+            (Size::CalcSizeStretch(_), Size::CalcSizeStretch(value)) |
             (Size::CalcSizeFitContent(_), Size::CalcSizeFitContent(value)) |
             (Size::CalcSizeMinContent(_), Size::CalcSizeMinContent(value)) |
             (Size::CalcSizeMaxContent(_), Size::CalcSizeMaxContent(value)) => value,

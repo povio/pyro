@@ -470,10 +470,12 @@ impl crate::values::animated::Animate for Size {
         let calculation = |value: &Self, basis: &Self| -> Option<NonNegativeLengthPercentage> {
             match (value, basis) {
                 (Self::CalcSizeAuto(value), Self::CalcSizeAuto(_))
+                | (Self::CalcSizeStretch(value), Self::CalcSizeStretch(_))
                 | (Self::CalcSizeMinContent(value), Self::CalcSizeMinContent(_))
                 | (Self::CalcSizeMaxContent(value), Self::CalcSizeMaxContent(_))
                 | (Self::CalcSizeFitContent(value), Self::CalcSizeFitContent(_)) => Some(value.clone()),
                 (Self::Auto, Self::CalcSizeAuto(_))
+                | (Self::Stretch, Self::CalcSizeStretch(_))
                 | (Self::MinContent, Self::CalcSizeMinContent(_))
                 | (Self::MaxContent, Self::CalcSizeMaxContent(_))
                 | (Self::FitContent, Self::CalcSizeFitContent(_)) => Some(identity.clone()),
@@ -490,6 +492,7 @@ impl crate::values::animated::Animate for Size {
                 for basis in [self, other] {
                     let wrap: fn(NonNegativeLengthPercentage) -> Self = match basis {
                         Self::CalcSizeAuto(_) => Self::CalcSizeAuto,
+                        Self::CalcSizeStretch(_) => Self::CalcSizeStretch,
                         Self::CalcSizeMinContent(_) => Self::CalcSizeMinContent,
                         Self::CalcSizeMaxContent(_) => Self::CalcSizeMaxContent,
                         Self::CalcSizeFitContent(_) => Self::CalcSizeFitContent,
@@ -593,6 +596,7 @@ impl TryTacticAdjustment for Size {
             | Self::WebkitFillAvailable
             | Self::Stretch
             | Self::CalcSizeAuto(_)
+            | Self::CalcSizeStretch(_)
             | Self::CalcSizeFitContent(_)
             | Self::CalcSizeMinContent(_)
             | Self::CalcSizeMaxContent(_) => {},

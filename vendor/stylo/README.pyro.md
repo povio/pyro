@@ -348,7 +348,7 @@ nor keeps a scroll offset. Other mixes still turn `visible` into `auto` and `cli
 - `values/generics/length.rs` (`GenericSize::CalcSizeAuto`, `CalcSizeFitContent`, `CalcSizeMinContent`,
   `CalcSizeMaxContent`), `values/specified/length.rs` (`Size::parse_calc_size`), `values/specified/calc.rs`
   (`AdditionalFunctions::CALC_SIZE`, `CalcNode::parse_calc_size_calculation`), `values/computed/length.rs`:
-  `calc-size(auto | fit-content | min-content | max-content, <calculation>)` in the `Size` properties (`width`,
+  `calc-size(auto | fit-content | min-content | max-content | stretch, <calculation>)` in the `Size` properties (`width`,
   `height`, their logical and min forms). The calculation is kept as a length-percentage whose `size` keyword is
   `100%` (other percentages are rejected), so its percentage basis is the size of the basis: layout resolves it
   against that size (stylo_taffy, blitz-dom). Animation combines calculations with a common intrinsic basis,

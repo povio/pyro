@@ -107,7 +107,7 @@ pub fn dimension(val: &stylo::Size) -> taffy::Dimension {
         stylo::Size::FitContent => taffy::Dimension::fit_content(),
         stylo::Size::FitContentFunction(val) => fit_content_function(&val.0),
 
-        stylo::Size::Stretch => taffy::Dimension::stretch(),
+        stylo::Size::Stretch | stylo::Size::CalcSizeStretch(_) => taffy::Dimension::stretch(),
         stylo::Size::WebkitFillAvailable => taffy::Dimension::stretch(),
 
         // pyro: `calc-size()` is laid out as its basis; blitz-dom applies the calculation.
@@ -171,6 +171,7 @@ pub fn min_size(val: &stylo::Size) -> taffy::LengthPercentageAuto {
         // pyro: `calc-size(auto, ...)` is the automatic minimum through its calculation
         // (`CoreStyle::calc_size_min`); other bases are not supported.
         stylo::Size::CalcSizeAuto(_)
+        | stylo::Size::CalcSizeStretch(_)
         | stylo::Size::CalcSizeFitContent(_)
         | stylo::Size::CalcSizeMinContent(_)
         | stylo::Size::CalcSizeMaxContent(_) => taffy::LengthPercentageAuto::AUTO,
@@ -187,6 +188,7 @@ pub fn min_size_keyword(val: &stylo::Size) -> taffy::Dimension {
     match val {
         stylo::Size::LengthPercentage(_)
         | stylo::Size::Auto
+        | stylo::Size::CalcSizeStretch(_)
         | stylo::Size::CalcSizeAuto(_)
         | stylo::Size::CalcSizeFitContent(_)
         | stylo::Size::CalcSizeMinContent(_)

@@ -124,6 +124,7 @@ fn has_calc_size(styles: &style::properties::ComputedValues) -> bool {
         matches!(
             size,
             Size::CalcSizeAuto(_) | Size::CalcSizeFitContent(_) | Size::CalcSizeMinContent(_) | Size::CalcSizeMaxContent(_)
+            | Size::CalcSizeStretch(_)
         )
     };
     let position = styles.get_position();
@@ -434,6 +435,7 @@ impl LayoutPassState<'_> {
         let calculation = |size: &StyloSize| -> Option<LengthPercentage> {
             match size {
                 StyloSize::CalcSizeAuto(lp)
+                | StyloSize::CalcSizeStretch(lp)
                 | StyloSize::CalcSizeFitContent(lp)
                 | StyloSize::CalcSizeMinContent(lp)
                 | StyloSize::CalcSizeMaxContent(lp) => Some(lp.0.clone()),

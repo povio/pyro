@@ -189,6 +189,9 @@ pub enum GenericSize<LengthPercent> {
     #[animation(error)]
     #[css(function = "calc-size")]
     CalcSizeMaxContent(LengthPercent),
+    #[animation(error)]
+    #[css(function = "calc-size")]
+    CalcSizeStretch(LengthPercent),
 }
 
 pub(crate) trait SizeCalculationCss: ToCss {
@@ -202,6 +205,7 @@ impl<LengthPercent: SizeCalculationCss> ToCss for GenericSize<LengthPercent> {
             Self::CalcSizeFitContent(value) => ("fit-content", value),
             Self::CalcSizeMinContent(value) => ("min-content", value),
             Self::CalcSizeMaxContent(value) => ("max-content", value),
+            Self::CalcSizeStretch(value) => ("stretch", value),
             Self::Auto => return dest.write_str("auto"),
             Self::MaxContent => return dest.write_str("max-content"),
             Self::MinContent => return dest.write_str("min-content"),
