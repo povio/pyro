@@ -361,9 +361,12 @@ impl ElementCx<'_, '_> {
             let local = local_cx(layer.attachment);
             let cx = local.unwrap_or(self);
             let area = canvas.unwrap_or_else(|| cx.box_rect(layer.clip));
-            // pyro: a `border-shape` reaching out of the box takes the painting area with it.
+            // pyro: a `border-shape` reaching out of the box takes the painting area with it, to
+            // the whole pixels its edge reaches into (what is painted is cut to the shape: the
+            // image covers its partly covered pixels too; WPT css-backgrounds
+            // `clip-border-area-border-shape`).
             let area = match &shape_bounds {
-                Some(bounds) if canvas.is_none() => area.union(*bounds),
+                Some(bounds) if canvas.is_none() => area.union(bounds.expand()),
                 _ => area,
             };
 
