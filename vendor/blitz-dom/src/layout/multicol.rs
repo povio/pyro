@@ -1399,6 +1399,39 @@ impl LayoutPassState<'_> {
                 // pyro: `column-wrap: wrap` with `column-height: auto` wraps columns as tall as
                 // the container's definite height.
                 let fixed_height = multicol.height.or(definite_height.filter(|_| multicol.wrap));
+                // pyro: `column-wrap: wrap` with nothing to size the columns (no `column-height`,
+                // no definite height) still wraps where forced breaks fill a row: each column holds
+                // a run up to a forced break, each `count` of them a row as tall as its tallest
+                // column, `row-gap` apart (Chromium; WPT css-multicol
+                // `column-wrap-no-constraints-002`).
+                if multicol.wrap && fixed_height.is_none() && !breaks.forced.is_empty() {
+                    let unbounded = (run_end - run_start).max(1.0) + 1.0;
+                    let columns = run.fill(unbounded, left).columns;
+                    let row_gap = multicol.row_gap(definite_height);
+                    let per_row = count.max(1);
+                    let rows = columns.len().div_ceil(per_row);
+                    for (r, row) in columns.chunks(per_row).enumerate() {
+                        let height = row.iter().map(|&(a, b)| b - a).fold(0.0f32, f32::max);
+                        let top = snap(row_top);
+                        for (index, &(start, end)) in row.iter().enumerate() {
+                            let x = column_x(index);
+                            let start = snap(start);
+                            sink.push(ColumnFragment {
+                                start,
+                                end: snap(end),
+                                x,
+                                width: column_width,
+                                top,
+                                height,
+                                offset: Point { x: x - pb.left, y: snap(top - start) },
+                                spanner: false,
+                                extended: 0.0,
+                                exact_x: f32::NAN,
+                            });
+                        }
+                        row_top += height + if r + 1 < rows { row_gap } else { 0.0 };
+                    }
+                } else {
                 let column_height = if let Some(height) = fixed_height {
                     height.max(0.0)
                 } else if spanners.is_empty() && fill_auto {
@@ -1463,6 +1496,7 @@ impl LayoutPassState<'_> {
                     });
                 }
                 row_top += (rows - 1) as f32 * (column_height + row_gap) + last_height;
+                }
             }
             if let Some(&(start, end, indent)) = spanners.get(part) {
                 let (start, end) = (snap(start), snap(end));
