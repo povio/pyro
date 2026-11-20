@@ -2913,7 +2913,7 @@ impl BaseDocument {
                     && (avoids(style.get_box().break_before) || avoid_after)
                 {
                     let end = if leaf { child_bottom } else { child_top };
-                    found.strict.push((previous_unit_top.min(bottom.min(child_top)) - 2.0 * EPSILON, end + 2.0 * EPSILON));
+                    found.strict.push((previous_unit_top.min(bottom.min(child_top) - 2.0 * EPSILON), end.max(child_top + 2.0 * EPSILON)));
                 }
                 avoid_after = avoids(style.get_box().break_after);
                 previous_unit_top = if leaf { child_top } else { child_bottom };
