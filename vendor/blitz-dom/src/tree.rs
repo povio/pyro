@@ -49,6 +49,9 @@ pub struct NodeTree {
     /// paint child offsets) are memoised against it. Starts at 1 so that a
     /// stamp of 0 is never current.
     geometry_generation: AtomicU64,
+    pub(crate) anchor_clip_steps: AtomicU64,
+    pub(crate) anchor_visibility: Mutex<(u64, HashMap<NodeId,bool>)>,
+    pub(crate) anchor_offsets: Mutex<(u64, HashMap<NodeId,crate::Point<f64>>)>,
     /// Scroll offset of the viewport (the root element scrolls the viewport,
     /// so its offset lives here rather than on the node).
     viewport_scroll: crate::Point<f64>,
@@ -79,6 +82,9 @@ impl NodeTree {
             map: SlotMap::with_key(),
             container_query_sizes: Mutex::new(HashMap::new()),
             geometry_generation: AtomicU64::new(1),
+            anchor_clip_steps: AtomicU64::new(0),
+            anchor_visibility: Default::default(),
+            anchor_offsets: Default::default(),
             viewport_scroll: crate::Point::ZERO,
             xml_document: false,
             quirks_mode: false,

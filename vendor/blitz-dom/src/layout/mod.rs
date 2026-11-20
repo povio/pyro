@@ -170,6 +170,7 @@ pub(crate) struct LayoutPassState<'doc> {
     /// height, size): a parent that hands one back as a known size hands back the result.
     calc_size_results: Vec<(NodeId, u8, f32)>,
     try_styles: std::collections::HashMap<NodeId, style::servo_arc::Arc<style::properties::ComputedValues>>,
+    try_options: std::cell::RefCell<std::collections::HashMap<(Option<crate::NodeId>, usize), ([usize; 5], usize)>>,
     /// pyro: the multi-column container whose strip is being laid out and the border-box height
     /// its content's percentage heights resolve against (its column height, `layout::multicol`).
     pub(crate) multicol_percent_height: Option<(crate::NodeId, f32)>,
@@ -258,6 +259,7 @@ impl<'doc> LayoutPassState<'doc> {
             column_spanners: None,
             calc_size_results: Vec::new(),
             try_styles: Default::default(),
+            try_options: Default::default(),
             multicol_percent_height: None,
             nested_fragmentation: std::collections::HashMap::new(),
             spanner_floors: std::collections::HashMap::new(),
@@ -2437,13 +2439,28 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
         style
     }
 
-    fn position_try_options(&self, id: NodeId) -> (usize, Option<bool>) {
+    fn position_try_options(&self, id: NodeId) -> ([usize; 5], usize, Option<bool>) {
         use style::values::specified::position::PositionTryOrder::*;
         let node = self.node_from_id(id);
-        if !node.flags.contains(NodeFlags::POSITION_TRY_OPTIONS) { return (0,None); }
-        let Some(style) = node.primary_styles() else { return (0,None) };
+        if !node.flags.contains(NodeFlags::POSITION_TRY_OPTIONS) { return ([0;5],0,None); }
+        let Some(style) = node.primary_styles() else { return ([0;5],0,None) };
         let pos = style.get_position();
-        (pos.position_try_fallbacks.value.0.len(), match pos.position_try_order {
+        let list = &pos.position_try_fallbacks;
+        let key = (list.scope.get_shadow_root_for_scoped(node).map(|root| root.id), list.value.0.as_ptr() as usize);
+        let (indices,count) = *self.try_options.borrow_mut().entry(key).or_insert_with(|| {
+            let mut indices = [0;5];
+            let mut count = 0;
+            for (index,item) in list.value.0.iter().enumerate() {
+                self.anchor_list_visits.set(self.anchor_list_visits.get().saturating_add(1));
+                if let style::values::specified::position::PositionTryFallbacksItem::IdentAndOrTactic(item) = item
+                    && !item.ident.is_empty() && self.stylist.lookup_position_try(&item.ident.0,list.scope,node).is_none() { continue; }
+                indices[count] = index;
+                count += 1;
+                if count == indices.len() { break; }
+            }
+            (indices,count)
+        });
+        (indices,count, match pos.position_try_order {
             Normal => None, MostWidth => Some(true), MostHeight => Some(false),
             MostInlineSize => Some(!style.writing_mode.is_vertical()), MostBlockSize => Some(style.writing_mode.is_vertical()),
         })
@@ -2458,7 +2475,15 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
     }
 
     fn selected_option_this_flush(&self, id: NodeId) -> Option<Option<usize>> {
-        self.anchor_flush_choices.get(&dom_node_id(id)).copied()
+        let selected = self.anchor_flush_choices.get(&dom_node_id(id))?;
+        let index = selected.and_then(|index| {
+            let (_, previous) = self.anchor_last_option.get(&dom_node_id(id))?;
+            let current = self.node_from_id(id).primary_styles()?;
+            let old = &previous.get_position().position_try_fallbacks;
+            let new = &current.get_position().position_try_fallbacks;
+            (old.scope == new.scope && old.value.0.get(index)? == new.value.0.get(index)?).then_some(index)
+        });
+        Some(index)
     }
 
     fn record_fitting_option(&mut self, id: NodeId, option: Option<usize>) {
@@ -2525,7 +2550,8 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
             let list = &style.get_position().position_try_fallbacks;
             let guard = self.guard.read();
             self.anchor_try_visits.set(self.anchor_try_visits.get().saturating_add(1));
-            self.stylist.resolve_position_try(&style, &style::shared_lock::StylesheetGuards::same(&guard), list.scope, node, &list.value.0[index])
+            let Some(item) = list.value.0.get(index) else { return false };
+            self.stylist.resolve_position_try(&style, &style::shared_lock::StylesheetGuards::same(&guard), list.scope, node, item)
         };
         if let Some(value) = computed { self.try_styles.insert(id,value); true } else { false }
     }

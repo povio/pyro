@@ -663,7 +663,8 @@ pub struct BaseDocument {
     pub(crate) scroll_markers_dirty: bool,
     pub(crate) named_anchor_nodes: HashMap<(Option<NodeId>, style::values::DashedIdent), HashSet<NodeId>>,
     anchor_node_names: HashMap<NodeId, (Option<NodeId>, style::values::specified::position::AnchorNameIdent)>,
-    anchor_rule_users: HashMap<Atom, HashSet<NodeId>>,
+    anchor_rule_users: HashMap<Atom, HashSet<usize>>,
+    anchor_list_users: HashMap<usize, HashSet<NodeId>>,
     anchor_user_rules: HashMap<NodeId, style::values::specified::position::PositionTryFallbacksList>,
     pub(crate) anchor_lookup_visits: std::cell::Cell<u64>,
     pub(crate) anchor_geometry_steps: std::cell::Cell<u64>,
@@ -672,6 +673,7 @@ pub struct BaseDocument {
     pub(crate) anchor_transform_dirty: HashSet<NodeId>,
     pub(crate) anchor_index: RefCell<crate::layout::anchor_index::AnchorIndex>,
     pub(crate) anchor_try_visits: std::cell::Cell<u64>,
+    pub(crate) anchor_list_visits: std::cell::Cell<u64>,
     pub(crate) anchor_try_scrollports: HashMap<Option<NodeId>, HashSet<NodeId>>,
     pub(crate) anchor_try_sources: HashMap<NodeId, HashSet<Option<NodeId>>>,
     pub(crate) anchor_scroll_dirty: HashSet<NodeId>,
@@ -996,6 +998,7 @@ impl BaseDocument {
             named_anchor_nodes: HashMap::new(),
             anchor_node_names: HashMap::new(),
             anchor_rule_users: HashMap::new(),
+            anchor_list_users: HashMap::new(),
             anchor_user_rules: HashMap::new(),
             anchor_lookup_visits: Default::default(),
             anchor_geometry_steps: Default::default(),
@@ -1004,6 +1007,7 @@ impl BaseDocument {
             anchor_transform_dirty: Default::default(),
             anchor_index: Default::default(),
             anchor_try_visits: Default::default(),
+            anchor_list_visits: Default::default(),
             anchor_try_scrollports: Default::default(),
             anchor_try_sources: Default::default(),
             anchor_scroll_dirty: Default::default(),
@@ -1540,17 +1544,29 @@ impl BaseDocument {
             })
         }
         if rules.is_none() && self.anchor_user_rules.is_empty() { return; }
-        if self.anchor_user_rules.get(&id) == rules.as_ref() { return; }
+        if self.anchor_user_rules.get(&id).map(|list| list.0.as_ptr()) == rules.as_ref().map(|list| list.0.as_ptr()) { return; }
         if let Some(old) = self.anchor_user_rules.remove(&id) {
-            for name in names(&old) {
-                if let Some(users) = self.anchor_rule_users.get_mut(name) {
-                    users.remove(&id);
-                    if users.is_empty() { self.anchor_rule_users.remove(name); }
+            let key = old.0.as_ptr() as usize;
+            if let Some(users) = self.anchor_list_users.get_mut(&key) {
+                users.remove(&id);
+                if users.is_empty() {
+                    self.anchor_list_users.remove(&key);
+                    for name in names(&old) {
+                        if let Some(lists) = self.anchor_rule_users.get_mut(name) {
+                            lists.remove(&key);
+                            if lists.is_empty() { self.anchor_rule_users.remove(name); }
+                        }
+                    }
                 }
             }
         }
         if let Some(list) = rules {
-            for name in names(&list) { self.anchor_rule_users.entry(name.clone()).or_default().insert(id); }
+            let key = list.0.as_ptr() as usize;
+            let users = self.anchor_list_users.entry(key).or_default();
+            if users.is_empty() {
+                for name in names(&list) { self.anchor_rule_users.entry(name.clone()).or_default().insert(key); }
+            }
+            users.insert(id);
             self.anchor_user_rules.insert(id, list);
         }
     }
@@ -1558,8 +1574,9 @@ impl BaseDocument {
     pub(crate) fn invalidate_anchor_rule_users(&mut self, names: impl IntoIterator<Item=Atom>) {
         if self.anchor_rule_users.is_empty() { return; }
         let mut blocks = HashSet::new();
-        for name in names {
-            if let Some(users) = self.anchor_rule_users.get(&name) {
+        let lists: HashSet<_> = names.into_iter().filter_map(|name| self.anchor_rule_users.get(&name)).flatten().copied().collect();
+        for key in lists {
+            if let Some(users) = self.anchor_list_users.get(&key) {
                 for id in users {
                     if let Some(node) = self.nodes.get(*id).filter(|node| node.flags.is_in_document()) {
                         blocks.extend(node.containing_block());
@@ -1571,8 +1588,11 @@ impl BaseDocument {
         for id in blocks { self.nodes[id].insert_damage(crate::layout::damage::ONLY_RELAYOUT); }
     }
     pub fn anchor_index_work(&self) -> u64 { self.anchor_index.borrow().work.get() }
+    pub fn anchor_boundary_entries(&self) -> usize { self.anchor_index.borrow().boundary_entries() }
     pub fn has_named_anchors(&self) -> bool { !self.named_anchor_nodes.is_empty() }
     pub fn anchor_try_visits(&self) -> u64 { self.anchor_try_visits.get() }
+    pub fn anchor_list_visits(&self) -> u64 { self.anchor_list_visits.get() }
+    pub fn anchor_clip_steps(&self) -> u64 { self.nodes.anchor_clip_steps.load(std::sync::atomic::Ordering::Relaxed) }
 
     pub(crate) fn clear_anchor_try_sources(&mut self, block: NodeId) {
         if self.anchor_try_sources.is_empty() { return; }

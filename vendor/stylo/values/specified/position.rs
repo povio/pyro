@@ -427,6 +427,11 @@ pub struct ScopedNameList(
 );
 
 impl ScopedNameList {
+    /// The declared names, including the wildcard keyword.
+    pub fn names(&self) -> impl Iterator<Item = &Atom> {
+        self.0.iter().map(|ident| &ident.0)
+    }
+
     /// Whether this scope captures the given dashed identifier.
     pub fn includes(&self, name: &DashedIdent) -> bool {
         self.0.iter().any(|ident| ident.0 == name.0 || ident.0 == atom!("all"))

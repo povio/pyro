@@ -142,11 +142,24 @@ fn changed_rule_media_updates_only_subscribed_blocks() {
     assert_eq!(doc.get_node(target).unwrap().final_layout().location.x, 999.0);
     for (value, expected) in [("screen", 8.0), ("print", 999.0)] {
         let before = doc.anchor_try_visits();
+        let list_visits = doc.anchor_list_visits();
         doc.mutate().set_attribute(sheet, media.clone(), value);
         doc.resolve(0.0);
         assert_eq!(doc.get_node(target).unwrap().final_layout().location.x, expected);
-        assert_eq!(doc.anchor_try_visits() - before, 1);
+        assert_eq!(doc.anchor_list_visits() - list_visits, 1);
+        assert_eq!(doc.anchor_try_visits() - before, u64::from(value == "screen"));
     }
+}
+
+#[test]
+fn fallback_budget_is_shared_with_container_query_relayout() {
+    let html = "<!doctype html><style>section{position:relative;container-type:inline-size;width:100px;height:100px}b{position:absolute;left:999px;width:10px;height:10px;position-try-fallbacks:--bad,--bad,--bad,--bad,--bad}@position-try --bad{left:800px}@container(min-width:80px){b{width:31px}}</style><section><b></b></section>";
+    let mut doc = blitz_html::HtmlDocument::from_html(html, blitz_dom::DocumentConfig::default());
+    doc.viewport_mut().window_size = (400, 300);
+    doc.resolve(0.0);
+    let target = doc.query_selector("b").unwrap().unwrap();
+    assert_eq!(doc.get_node(target).unwrap().final_layout().size.width, 31.0);
+    assert_eq!(doc.anchor_try_visits(), 5);
 }
 
 #[test]
@@ -252,7 +265,65 @@ fn only_five_valid_fallbacks_get_geometry_trials() {
         doc.resolve(0.0);
         let target = doc.query_selector("b").unwrap().unwrap();
         assert_eq!(doc.get_node(target).unwrap().final_layout().location.x, expected);
-        assert_eq!(doc.anchor_try_visits(), missing as u64 + 5);
+        assert_eq!(doc.anchor_try_visits(), 5);
+        assert_eq!(doc.anchor_list_visits(), missing as u64 + 5);
+    }
+}
+
+#[test]
+fn valid_options_are_shared_but_trial_styles_are_not() {
+    for count in [16, 64] {
+        let list = format!("{}--fit", "--absent,".repeat(count));
+        let html = format!("<!doctype html><style>main{{position:relative;width:100px;height:80px}}b{{position:absolute;left:200px;width:5px;height:5px;position-try-fallbacks:{list}}}@position-try --fit{{left:var(--x)}}</style><main>{}</main>", (0..count).map(|index| format!("<b id=t{index} style='--x:{index}px'></b>")).collect::<String>());
+        let mut doc = blitz_html::HtmlDocument::from_html(&html, Default::default());
+        doc.viewport_mut().window_size = (400,300);
+        doc.resolve(0.0);
+        assert_eq!(doc.anchor_list_visits(), count as u64 + 1);
+        assert_eq!(doc.anchor_try_visits(), count as u64);
+        for index in 0..count {
+            let id = doc.query_selector(&format!("#t{index}")).unwrap().unwrap();
+            assert_eq!(doc.get_node(id).unwrap().final_layout().location.x,index as f32);
+        }
+    }
+}
+
+#[test]
+fn scope_index_stores_declarations_not_name_ancestor_pairs() {
+    for count in [16,64] {
+        let mut html = "<!doctype html><main style='anchor-scope:all;position:relative'>".to_string();
+        html.push_str(&"<section>".repeat(count));
+        for index in 0..count {
+            html.push_str(&format!("<div style='anchor-scope:--a{index}'><i style='anchor-name:--a{index};display:block;width:1px'></i><i style='anchor-name:--a{index};display:block;width:3px'></i><b style='position:absolute;left:anchor(--a{index} right)'></b></div>"));
+        }
+        let mut doc = blitz_html::HtmlDocument::from_html(&html, Default::default());
+        doc.viewport_mut().window_size = (400,300);
+        doc.resolve(0.0);
+        let id = doc.query_selector("b").unwrap().unwrap();
+        assert_eq!(doc.get_node(id).unwrap().final_layout().location.x,3.);
+        assert_eq!(doc.anchor_boundary_entries(), 2 * (count + 1));
+    }
+}
+
+#[test]
+fn visibility_chain_is_solved_once_per_geometry_generation() {
+    for count in [16,64] {
+        let mut html = "<!doctype html><style>main{position:relative}i,b{display:block;width:3px;height:3px}b{position:absolute;top:anchor(bottom);position-visibility:anchor-visible}</style><main><i style='anchor-name:--a0'></i>".to_string();
+        for index in 1..=count {
+            html.push_str(&format!("<b id=t{index} style='anchor-name:--a{index};position-anchor:--a{}'></b>",index-1));
+        }
+        let mut doc = blitz_html::HtmlDocument::from_html(&html, Default::default());
+        doc.viewport_mut().window_size = (400,300);
+        doc.resolve(0.0);
+        for _ in 0..2 {
+            let root = doc.root_element().id;
+            doc.get_node_mut(root).unwrap().scroll_offset_mut().y += 1.;
+            let before = doc.anchor_clip_steps();
+            for index in (1..=count).rev() {
+                let id = doc.query_selector(&format!("#t{index}")).unwrap().unwrap();
+                assert!(!doc.get_node(id).unwrap().hidden_by_anchor());
+            }
+            assert_eq!(doc.anchor_clip_steps() - before, count + 1);
+        }
     }
 }
 

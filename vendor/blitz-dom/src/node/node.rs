@@ -624,6 +624,7 @@ impl Node {
 
     #[inline]
     pub fn scroll_offset_mut(&mut self) -> &mut crate::Point<f64> {
+        self.tree().bump_geometry_generation();
         &mut self.layout_data_mut().scroll_offset
     }
 
@@ -652,10 +653,15 @@ impl Node {
     }
 
     pub fn anchor_scroll_offset(&self) -> crate::Point<f64> {
-        self.anchor_scroll_offset_with(|id| match id {
-            Some(id) => *self.tree()[id].scroll_offset(),
-            None => self.tree().viewport_scroll(),
-        })
+        if self.anchor_scroll_axes.get() == (None,None) { return crate::Point::ZERO; }
+        let tree = self.tree();
+        let generation = tree.geometry_generation();
+        let mut offsets = tree.anchor_offsets.lock().unwrap();
+        if offsets.0 != generation { offsets.1.clear(); offsets.0 = generation; }
+        *offsets.1.entry(self.id).or_insert_with(|| self.anchor_scroll_offset_with(|id| match id {
+            Some(id) => *tree[id].scroll_offset(),
+            None => tree.viewport_scroll(),
+        }))
     }
 
     pub fn anchor_scroll_offset_with(&self, scroll: impl Fn(Option<NodeId>) -> crate::Point<f64>) -> crate::Point<f64> {
@@ -729,6 +735,7 @@ impl Node {
     #[inline]
     pub fn set_sticky_offset(&mut self, offset: crate::Point<f64>) {
         if self.layout_data().sticky_offset != offset {
+            self.tree().bump_geometry_generation();
             self.layout_data_mut().sticky_offset = offset;
         }
     }

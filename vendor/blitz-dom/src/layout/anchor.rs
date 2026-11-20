@@ -21,16 +21,24 @@ impl Node {
         if self.anchor_visibility_target.get().is_none() {return self.anchor_hidden.get() || self.anchor_invalid.get();}
         let mut target = self;
         let tree = self.tree();
-        for _ in 0..tree.len() {
+        let generation = tree.geometry_generation();
+        let mut cache = tree.anchor_visibility.lock().unwrap();
+        if cache.0 != generation { cache.1.clear(); cache.0 = generation; }
+        let mut path = Vec::new();
+        let hidden = 'chain: loop {
+            if let Some(&cached) = cache.1.get(&target.id) { break cached; }
+            if path.len() >= tree.len() { break false; }
+            path.push(target.id);
+            tree.anchor_clip_steps.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
             if target.anchor_hidden.get() || target.anchor_invalid.get() {
-                return true;
+                break true;
             }
-            let Some(anchor) = target.anchor_visibility_target.get().and_then(|id| tree.get(id)) else { return false };
+            let Some(anchor) = target.anchor_visibility_target.get().and_then(|id| tree.get(id)) else { break false };
             if anchor
                 .primary_styles()
                 .is_some_and(|s| s.clone_visibility() != style::computed_values::visibility::T::Visible)
             {
-                return true;
+                break true;
             }
             let layout = anchor.final_layout();
             let (mut x, mut y) = (layout.location.x, layout.location.y);
@@ -42,6 +50,7 @@ impl Node {
                     break;
                 }
                 let Some(parent) = cursor.and_then(|id| tree.get(id)) else { break };
+                tree.anchor_clip_steps.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
                 let layout = parent.final_layout();
                 let scroll = parent.scroll_offset();
                 x -= scroll.x as f32;
@@ -54,14 +63,14 @@ impl Node {
                         x = x.max(layout.border.left);
                         right = right.min(layout.size.width - layout.border.right);
                         if x >= right && anchor.final_layout().size.width > 0.0 {
-                            return true;
+                            break 'chain true;
                         }
                     }
                     if style.clone_overflow_y() != Overflow::Visible {
                         y = y.max(layout.border.top);
                         bottom = bottom.min(layout.size.height - layout.border.bottom);
                         if y >= bottom && anchor.final_layout().size.height > 0.0 {
-                            return true;
+                            break 'chain true;
                         }
                     }
                 }
@@ -72,8 +81,9 @@ impl Node {
                 cursor = parent.containing_block();
             }
             target = anchor;
-        }
-        false
+        };
+        for id in path { cache.1.insert(id,hidden); }
+        hidden
     }
 }
 
@@ -187,7 +197,7 @@ impl BaseDocument {
         };
         let indexed = candidates.len() > 1;
         let id = if indexed {
-            let id = self.anchor_index.borrow_mut().lookup(self, key, origin, node.id, container.id, is_boundary)?;
+            let id = self.anchor_index.borrow_mut().lookup(self, key, origin, node.id, container.id)?;
             visit();
             id
         } else {

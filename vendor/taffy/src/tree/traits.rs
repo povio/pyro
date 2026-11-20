@@ -230,7 +230,7 @@ pub trait LayoutContainingBlock: LayoutPartialTree {
     /// Interpreted in the containing block's axes (see [`LayoutPartialTree::get_core_container_style`]).
     fn get_oof_item_style(&self, node_id: NodeId) -> Self::OofItemStyle<'_>;
 
-    fn position_try_options(&self, _node: NodeId) -> (usize, Option<bool>) { (0,None) }
+    fn position_try_options(&self, _node: NodeId) -> ([usize; 5], usize, Option<bool>) { ([0; 5],0,None) }
     fn preferred_scroll_option(&self, _node: NodeId, _container: NodeId) -> Option<usize> { None }
     fn selected_option_this_flush(&self, _node: NodeId) -> Option<Option<usize>> { None }
     fn record_fitting_option(&mut self, _node: NodeId, _option: Option<usize>) {}

@@ -2025,7 +2025,7 @@ impl Stylist {
 
     /// Returns the registered `@position-try-rule` animation for the specified name.
     #[inline]
-    fn lookup_position_try<'a, E>(
+    pub fn lookup_position_try<'a, E>(
         &'a self,
         name: &Atom,
         scope: CascadeLevel,

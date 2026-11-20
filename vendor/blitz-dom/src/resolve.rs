@@ -108,6 +108,11 @@ impl BaseDocument {
     }
 
     pub fn resolve(&mut self, current_time_for_animations: f64) {
+        self.anchor_flush_choices.clear();
+        self.resolve_in_flush(current_time_for_animations);
+    }
+
+    fn resolve_in_flush(&mut self, current_time_for_animations: f64) {
         if TDocument::as_node(&self.root_node()).first_element_child().is_none() {
             #[cfg(feature = "tracing")]
             tracing::warn!("No DOM - not resolving");
@@ -225,7 +230,7 @@ impl BaseDocument {
             phase_profile::mark(3, &mut phase_t);
 
             // Next we resolve layout with the data resolved by stlist
-            self.resolve_layout();
+            self.resolve_layout_in_flush();
             timer.record_time("layout");
             phase_profile::mark(4, &mut phase_t);
             let changed_containers = self.refresh_container_query_sizes();
@@ -284,7 +289,7 @@ impl BaseDocument {
                     break;
                 }
                 self.last_layout_space = None;
-                self.resolve_layout();
+                self.resolve_layout_in_flush();
                 self.resolve_transforms(root_node_id, false, ContainingTransform::default());
                 for fo in self.foreign_object_roots() {
                     self.resolve_transforms(fo, false, ContainingTransform::default());
@@ -296,7 +301,7 @@ impl BaseDocument {
         // layout passes saw the last ones): a change resolves once more.
         if !self.cv_resolving && self.update_content_visibility() {
             self.cv_resolving = true;
-            self.resolve(current_time_for_animations);
+            self.resolve_in_flush(current_time_for_animations);
             self.cv_resolving = false;
         }
         #[cfg(feature = "svg")]
@@ -2151,6 +2156,11 @@ impl BaseDocument {
     /// TODO: update taffy to use an associated type instead of slab key
     /// TODO: update taffy to support traited styles so we don't even need to rely on taffy for storage
     pub fn resolve_layout(&mut self) {
+        self.anchor_flush_choices.clear();
+        self.resolve_layout_in_flush();
+    }
+
+    fn resolve_layout_in_flush(&mut self) {
         let size = self.stylist.device().au_viewport_size();
 
         let initial_containing_block = taffy::Size {
@@ -2174,7 +2184,6 @@ impl BaseDocument {
         }
         self.last_layout_space = Some(available_space);
         self.anchor_index.get_mut().clear();
-        self.anchor_flush_choices.clear();
         self.layout_ran = true;
         phase_profile::laid_out();
         self.mark_viewport_body();
@@ -2284,6 +2293,7 @@ impl BaseDocument {
         // println!("\n\n");
         // taffy::print_tree(self, root_node_id)
         self.anchor_scroll_dirty.clear();
+        self.nodes.bump_geometry_generation();
     }
 
     /// pyro: the viewport's overflow (CSS Overflow 3 § 3.3): the root's, or the `<body>`'s when the

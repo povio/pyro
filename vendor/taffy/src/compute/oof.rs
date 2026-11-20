@@ -517,7 +517,7 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
     #[cfg(feature = "grid")] grid_owner: Option<NodeId>,
     before_layout: impl FnOnce(&mut Tree, &LayoutInput),
 ) -> OofBoxLayout {
-    let (count, order) = tree.position_try_options(candidate.node);
+    let (indices, count, order) = tree.position_try_options(candidate.node);
     let mut best = None;
     let selected = (count != 0).then(|| tree.selected_option_this_flush(candidate.node)).flatten();
     if let Some(selected) = selected {
@@ -525,8 +525,9 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
     } else if count != 0 {
         const MAX_VALID_FALLBACKS: usize = 5;
         let mut trials = 0;
-        let preferred = anchor_container.and_then(|container| tree.preferred_scroll_option(candidate.node, container)).filter(|&index| index < count && order.is_none());
-        for option in preferred.map(Some).into_iter().chain(core::iter::once(None)).chain((0..count).filter(|index| Some(*index) != preferred).map(Some)) {
+        let options = &indices[..count];
+        let preferred = anchor_container.and_then(|container| tree.preferred_scroll_option(candidate.node, container)).filter(|index| options.contains(index) && order.is_none());
+        for option in preferred.map(Some).into_iter().chain(core::iter::once(None)).chain(options.iter().copied().filter(|index| Some(*index) != preferred).map(Some)) {
             if option.is_some() && trials == MAX_VALID_FALLBACKS { break; }
             if (option.is_some() || preferred.is_some()) && !tree.set_position_try_option(candidate.node, option) { continue; }
             trials += usize::from(option.is_some());

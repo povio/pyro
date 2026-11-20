@@ -9,7 +9,6 @@ type Name = (Option<NodeId>, DashedIdent);
 pub(crate) struct AnchorIndex {
     order: Option<Order>,
     groups: HashMap<Name, HashMap<(Option<NodeId>, bool), Bucket>>,
-    boundaries: HashMap<Name, HashMap<NodeId, Option<NodeId>>>,
     pub(crate) work: std::cell::Cell<u64>,
 }
 
@@ -18,6 +17,7 @@ fn tick(work: &std::cell::Cell<u64>) {
 }
 
 struct Order {
+    boundaries: HashMap<Name, Vec<(usize, Option<NodeId>)>>,
     dom: HashMap<NodeId, usize>,
     boxes: HashMap<NodeId, Range<usize>>,
     ids: Vec<NodeId>,
@@ -27,15 +27,33 @@ impl Order {
     fn new(doc: &BaseDocument, work: &std::cell::Cell<u64>) -> Self {
         let mut dom = HashMap::new();
         let mut ids = Vec::new();
-        let mut stack = vec![doc.root_node().id];
-        while let Some(id) = stack.pop() {
+        let mut boundaries: HashMap<Name, Vec<_>> = HashMap::new();
+        let mut active: HashMap<Name, Vec<NodeId>> = HashMap::new();
+        let mut stack = vec![(doc.root_node().id, false)];
+        while let Some((id, exit)) = stack.pop() {
             tick(work);
-            if dom.contains_key(&id) {
+            let node = &doc.nodes[id];
+            if !exit && dom.contains_key(&id) {
                 continue;
             }
+            if let Some(values) = node.primary_styles() {
+                let scope = &values.get_box().anchor_scope;
+                if !scope.value.is_none() {
+                    let root = scope.scope.get_shadow_root_for_scoped(node).map(|root| root.id);
+                    for name in scope.value.names() {
+                        let key = (root, DashedIdent(name.clone()));
+                        let path = active.entry(key.clone()).or_default();
+                        if exit { path.pop(); } else { path.push(id); }
+                        boundaries.entry(key).or_default().push((ids.len(), path.last().copied()));
+                        tick(work);
+                    }
+                }
+            }
+            if exit { continue; }
             dom.insert(id, ids.len());
             ids.push(id);
-            stack.extend(doc.nodes[id].children.iter().rev().copied());
+            stack.push((id,true));
+            stack.extend(node.children.iter().rev().map(|&child|(child,false)));
         }
         let mut children: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
         let mut roots = Vec::new();
@@ -98,7 +116,7 @@ impl Order {
                 roots.extend(kids.into_iter().map(|id| (id, false)));
             }
         }
-        Self { dom, boxes, ids }
+        Self { dom, boxes, ids, boundaries }
     }
 }
 
@@ -176,10 +194,13 @@ impl Bucket {
 }
 
 impl AnchorIndex {
+    pub(crate) fn boundary_entries(&self) -> usize {
+        self.order.as_ref().map_or(0, |order| order.boundaries.values().map(Vec::len).sum())
+    }
+
     pub(crate) fn clear(&mut self) {
         self.order = None;
         self.groups.clear();
-        self.boundaries.clear();
     }
 
     pub(super) fn lookup(
@@ -189,33 +210,17 @@ impl AnchorIndex {
         origin: NodeId,
         target: NodeId,
         container: NodeId,
-        is_boundary: impl Fn(NodeId) -> bool,
     ) -> Option<NodeId> {
         let work = &self.work;
         let order = self.order.get_or_insert_with(|| Order::new(doc, work));
         let candidates = doc.named_anchor_nodes.get(&key)?;
-        let boundaries = self.boundaries.entry(key.clone()).or_default();
-        let mut boundary = |start| {
-            let mut path = Vec::new();
-            let mut cursor = Some(start);
-            let mut result = None;
-            while let Some(id) = cursor {
-                tick(work);
-                if let Some(&cached) = boundaries.get(&id) {
-                    result = cached;
-                    break;
-                }
-                path.push(id);
-                if is_boundary(id) {
-                    result = Some(id);
-                    break;
-                }
-                cursor = doc.nodes[id].parent;
-            }
-            for id in path {
-                boundaries.insert(id, result);
-            }
-            result
+        let events = [order.boundaries.get(&key), order.boundaries.get(&(key.0, DashedIdent("all".into())))];
+        let boundary = |start| {
+            let rank = order.dom[&start];
+            events.iter().flatten().filter_map(|events| {
+                let index = events.partition_point(|(at,_)| { tick(work); *at <= rank });
+                events.get(index.checked_sub(1)? )?.1
+            }).max_by_key(|id| order.dom[id])
         };
         let buckets = self.groups.entry(key).or_insert_with(|| {
             let mut entries: HashMap<_, Vec<_>> = HashMap::new();
