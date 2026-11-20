@@ -737,7 +737,11 @@ impl RuleNode {
             }
             RuleKind::Group { name, condition, list } => {
                 let prelude = condition.borrow();
-                let mut out = if prelude.is_empty() { format!("@{name} {{\n") } else { format!("@{name} {prelude} {{\n") };
+                let mut out = if name == "layer" && prelude.is_empty() {
+                    format!("@{name} {{\n")
+                } else {
+                    format!("@{name} {prelude} {{\n")
+                };
                 for rule in list.rules.borrow().iter() {
                     out.push_str("  ");
                     out.push_str(&rule.css_text());
