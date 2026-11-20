@@ -594,3 +594,26 @@ fn a_repointed_links_import_is_never_the_previous_sheets() {
         "true|null"
     );
 }
+
+/// `disabled` is the sheet object's: a sheet object kept after its link was repointed cannot
+/// disable the replacement; a disabled sheet keeps its rules (it only stops applying), so a kept
+/// `cssRules` list still reports them after an unrelated DOM change (security review cycle 6, 4).
+#[test]
+fn disabled_is_the_sheet_objects_and_keeps_its_rules() {
+    let (mut thread, page, loader) = setup("<link id=l rel=stylesheet href=a.css><link id=k rel=stylesheet href=k.css><p id=p>p</p>");
+    loader.insert("http://site.test/a.css", "text/css", "p { color: rgb(1, 2, 3) }", Duration::ZERO);
+    loader.insert("http://site.test/b.css", "text/css", "p { color: rgb(4, 5, 6) }", Duration::ZERO);
+    loader.insert("http://site.test/k.css", "text/css", "q { } r { }", Duration::ZERO);
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    eval(&thread, page, "globalThis.old = document.getElementById('l').sheet; document.getElementById('l').href = 'b.css'; ''");
+    settle(&mut thread);
+    assert_eq!(
+        eval(&thread, page, "old.disabled = true; [document.getElementById('l').sheet.disabled, getComputedStyle(p).color].join('|')"),
+        "false|rgb(4, 5, 6)"
+    );
+    assert_eq!(
+        eval(&thread, page, "globalThis.ks = document.getElementById('k').sheet; globalThis.rs = ks.cssRules; ks.disabled = true; document.body.append(document.createElement('i')); [ks.disabled, rs.length, ks.cssRules.length].join('|')"),
+        "true|2|2"
+    );
+}

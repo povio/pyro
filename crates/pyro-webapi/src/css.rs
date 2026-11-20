@@ -740,7 +740,8 @@ fn sheet_source(page: &PageDom, owner: NodeId) -> String {
         // Its child text content, as the style engine reads it.
         return dom.child_text_content(owner).into_owned();
     }
-    page.layout().style().sheet_text(owner).unwrap_or_default().to_owned()
+    // pyro: its own text, disabled or not (a disabled sheet keeps its rules).
+    page.layout().style().sheet_own_text(owner).unwrap_or_default().to_owned()
 }
 
 fn parsed_nodes(text: &str, namespaces: &mut Namespaces) -> Vec<Rc<RuleNode>> {
@@ -2292,7 +2293,10 @@ impl JsClass for StyleSheet {
             |s, sh| {
                 Ok(s.boolean(match &sh.owner {
                     SheetOwner::Constructed(c) => c.disabled.get(),
-                    SheetOwner::Node(h, _) => h.page.layout.borrow().style().sheet_disabled(h.id),
+                    // pyro: the current sheet object's flag; a detached one's is its own (false).
+                    SheetOwner::Node(h, generation) => {
+                        *generation == SheetGeneration::now(&h.page, h.id) && h.page.layout.borrow().style().sheet_disabled(h.id)
+                    }
                 }))
             },
             |_s, sh, v| {
@@ -2303,7 +2307,13 @@ impl JsClass for StyleSheet {
                         }
                     }
                     // A `<style>`'s or `<link>`'s sheet: it applies nothing while disabled.
-                    SheetOwner::Node(h, _) => h.page.layout.borrow_mut().style_mut().set_sheet_disabled(h.id, v.to_bool()),
+                    // pyro: only the current sheet object of its node: a kept old one (a repointed
+                    // link's, a replaced `<style>`'s) never disables its replacement.
+                    SheetOwner::Node(h, generation) => {
+                        if *generation == SheetGeneration::now(&h.page, h.id) {
+                            h.page.layout.borrow_mut().style_mut().set_sheet_disabled(h.id, v.to_bool())
+                        }
+                    }
                 }
                 Ok(())
             },

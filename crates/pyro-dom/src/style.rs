@@ -1581,6 +1581,15 @@ impl StyleEngine {
         })
     }
 
+    /// pyro: the text the loader or CSSOM gave `owner`'s sheet, disabled or not (a disabled sheet
+    /// keeps its rules; it only applies nothing, which [`Self::sheet_text`] says): the CSSOM's.
+    pub fn sheet_own_text(&self, owner: NodeId) -> Option<&str> {
+        self.sheets.iter().find(|s| s.owner == owner).and_then(|s| match &s.source {
+            SheetSource::Text(t) => Some(t.as_str()),
+            SheetSource::StyleElement => None,
+        })
+    }
+
     /// `CSSStyleSheet.disabled` of the sheet `owner` (a `<style>` or `<link>`) owns.
     pub fn sheet_disabled(&self, owner: NodeId) -> bool {
         self.sheets.iter().any(|s| s.owner == owner && s.disabled)
