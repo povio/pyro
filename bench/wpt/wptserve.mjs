@@ -18,6 +18,7 @@ import https from 'node:https';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import { pipeline } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -173,6 +174,15 @@ const endToEnd = (raw) => {
   return out;
 };
 
+// The header pairs Node accepts (a name that is a token, a value without control characters).
+const writable = (raw) => {
+  const out = [];
+  for (let i = 0; i < raw.length; i += 2) {
+    try { http.validateHeaderName(raw[i]); http.validateHeaderValue(raw[i], raw[i + 1]); out.push(raw[i], raw[i + 1]); } catch { /* dropped */ }
+  }
+  return out;
+};
+
 export function startProxy() {
   const agent = new http.Agent({ keepAlive: true, maxSockets: 256 });
   const server = http.createServer((req, res) => {
@@ -180,8 +190,22 @@ export function startProxy() {
     try { u = new URL(req.url); } catch { res.writeHead(400); res.end(); return; }
     const headers = Object.fromEntries(Object.entries(req.headers).filter(([k]) => !HOP.has(k)));
     const up = http.request({ host: '127.0.0.1', port: u.port || 80, method: req.method, path: u.pathname + u.search, headers, agent },
-      (r) => { res.writeHead(r.statusCode, r.statusMessage, endToEnd(r.rawHeaders)); r.pipe(res); });
-    up.on('error', () => { if (!res.headersSent) res.writeHead(502); res.end(); });
+      (r) => {
+        // WPT pages send status texts and header values Node refuses to write (control characters): such a response
+        // goes on with the standard status text, and without the offending headers, never as a throw (an exception
+        // here ends the whole run).
+        const raw = endToEnd(r.rawHeaders);
+        const text = /^[\t\x20-\x7e\x80-\xff]*$/.test(r.statusMessage) ? r.statusMessage : (http.STATUS_CODES[r.statusCode] ?? '');
+        try { res.writeHead(r.statusCode, text, raw); } catch {
+          try { res.writeHead(r.statusCode, text, writable(raw)); } catch { res.statusMessage = ''; res.writeHead(502); res.end(); r.destroy(); return; }
+        }
+        pipeline(r, res, () => {});
+      });
+    // After the head went out the response cannot be ended cleanly while the upstream may still be piped into it.
+    up.on('error', () => { if (res.headersSent) res.destroy(); else { res.writeHead(502); res.end(); } });
+    // A response that ended (the upstream failed, the browser left) while the upstream still sends: without a
+    // listener the "write after end" is an uncaught exception.
+    res.on('error', () => up.destroy());
     res.on('close', () => up.destroy());
     req.pipe(up);
   });
