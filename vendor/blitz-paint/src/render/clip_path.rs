@@ -1518,7 +1518,25 @@ impl ElementCx<'_, '_> {
         if node.primary_styles().is_none_or(|style| matches!(style.get_clip_path(), StyloClipPath::None)) {
             return paint(scene);
         }
-        let Some(first) = dom.inline_fragment_rects(span).and_then(|mut rects| rects.next()) else { return paint(scene) };
+        let Some(mut first) = dom.inline_fragment_rects(span).and_then(|mut rects| rects.next()) else { return paint(scene) };
+        // pyro: the fragment's border box, which its block-axis padding and borders reach past its
+        // content area by (they are not in the line's height, but the box is painted with them;
+        // WPT filter-effects `backdrop-filter-backdrop-root-clip-path-2`).
+        if self.node.vertical_block_axis().is_none()
+            && let Some(style) = node.primary_styles()
+        {
+            let basis = CSSPixelLength::new(self.node.final_layout().size.width);
+            let padding = style.get_padding();
+            let border = style.get_border();
+            let width = |style: style::values::computed::BorderStyle, width: &style::values::computed::BorderSideWidth| {
+                if style.none_or_hidden() { 0.0 } else { width.0.to_f32_px() as f64 }
+            };
+            let top = padding.padding_top.0.resolve(basis).px() as f64 + width(border.border_top_style, &border.border_top_width);
+            let bottom =
+                padding.padding_bottom.0.resolve(basis).px() as f64 + width(border.border_bottom_style, &border.border_bottom_width);
+            first.y -= top;
+            first.height += top + bottom;
+        }
         let scale = self.scale;
         // (Fragment rects are viewport-relative CSS px: the scene's device space, scaled.)
         let first_transform = Affine::translate((first.x * scale, first.y * scale));
