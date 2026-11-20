@@ -61,16 +61,15 @@ impl Default for TabSize {
 
 /// pyro: what a soft hyphen (U+00AD) does where a line could end at it (CSS `hyphens` and
 /// `hyphenate-character`).
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub enum SoftHyphen {
     /// The line may end there and then shows the hyphen of the font (U+2010, else U+002D).
     #[default]
     Auto,
     /// The line may end there and then shows this character, if the font has it.
     Char(char),
-    /// The line may end there and then shows the first `.1` of these characters, if the font has
-    /// them all (a `hyphenate-character` string of two to four characters).
-    Chars([char; 4], u8),
+    /// The line may end there and then shows the shaped replacement string.
+    Chars(alloc::sync::Arc<str>),
     /// The line may end there and shows nothing.
     Hidden,
     /// No line ends there.

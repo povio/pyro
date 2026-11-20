@@ -207,6 +207,14 @@ pub(crate) struct LayoutItem {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub(crate) struct DiscretionaryFragment<B: Brush> {
+    pub clusters: Range<u32>,
+    pub group_end: u32,
+    pub byte_start: usize,
+    pub layout: crate::Layout<B>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct LayoutData<B: Brush> {
     // General settings (directly from the "builder")
     /// The display scale factor
@@ -293,8 +301,8 @@ pub(crate) struct LayoutData<B: Brush> {
     /// cluster with the glyphs it was shaped with.
     pub(crate) shown_hyphens: Vec<(u32, parley_engine::ClusterGlyphs, Option<(usize, bool)>)>,
     pub(crate) replacements: Vec<(u16, bool, crate::Layout<B>)>,
-    pub(crate) broken_forms: Vec<(u32, [parley_engine::ClusterGlyphs; 2], f32)>,
-    pub(crate) active_forms: Vec<(u32, [parley_engine::ClusterGlyphs; 2])>,
+    pub(crate) broken_forms: Vec<DiscretionaryFragment<B>>,
+    pub(crate) active_forms: Vec<(u32, usize, parley_engine::ClusterGlyphs)>,
     /// pyro: the shaped clusters a line's edge changed (fullwidth punctuation set half-width at
     /// a line's start or end, `text-spacing-trim`; the space after an ideograph that ends a line,
     /// `text-autospace`): each one with its glyph's x offset and its advance as shaped. Each line
@@ -590,9 +598,8 @@ impl<B: Brush> LayoutData<B> {
         for (cluster, saved, _) in self.shown_hyphens.drain(..) {
             self.shaped_text.restore_cluster(cluster, saved);
         }
-        for (cluster, [left, right]) in self.active_forms.drain(..) {
-            self.shaped_text.restore_cluster(cluster, left);
-            self.shaped_text.restore_cluster(cluster + 1, right);
+        for (_, index, saved) in self.active_forms.drain(..).rev() {
+            self.shaped_text.restore_cluster(self.broken_forms[index].clusters.start, saved);
         }
     }
 

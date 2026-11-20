@@ -695,25 +695,13 @@ impl ShapedText {
         }
     }
 
-    /// Store an alternate shaping without changing the active cluster.
-    pub fn store_cluster_form(&mut self, index: u32, glyphs: &[Glyph]) -> Option<ClusterGlyphs> {
-        let cluster = self.shaped_clusters[index as usize];
-        let flags = cluster.flags.with_inline_glyph(false).with_glyph_len(glyphs.len().try_into().ok()?);
-        let form = ClusterGlyphs {
-            glyph_offset: self.glyphs.len() as u32,
-            flags: flags.bits(),
-            advance: glyphs.iter().map(|glyph| glyph.advance).sum(),
-        };
-        self.glyphs.extend_from_slice(glyphs);
-        Some(form)
-    }
-
-    /// Select a previously stored shaping and return the previous one.
-    pub fn swap_cluster_form(&mut self, index: u32, form: ClusterGlyphs) -> ClusterGlyphs {
-        let cluster = self.shaped_clusters[index as usize];
-        let old =
-            ClusterGlyphs { glyph_offset: cluster.glyph_offset, flags: cluster.flags.bits(), advance: cluster.advance };
-        self.restore_cluster(index, form);
+    /// Reserve the width of a separately shaped discretionary fragment.
+    pub fn set_fragment_placeholder(&mut self, index: u32, advance: f32) -> ClusterGlyphs {
+        let cluster = &mut self.shaped_clusters[index as usize];
+        let old = ClusterGlyphs { glyph_offset: cluster.glyph_offset, flags: cluster.flags.bits(), advance: cluster.advance };
+        cluster.flags = cluster.flags.with_inline_glyph(true).with_glyph_len(1);
+        cluster.glyph_offset = 0;
+        cluster.advance = advance;
         old
     }
 
@@ -1051,9 +1039,10 @@ fn process_shaped_clusters<'a>(
             )
         };
 
-        let split = (cluster.characters_start..char_end.saturating_sub(1))
-            .find(|&index| characters[index].flags.is_soft_hyphen())
+        let mut breaks = (cluster.characters_start..char_end.saturating_sub(1))
+            .filter(|&index| characters[index].flags.is_soft_hyphen())
             .map(|index| index + 1);
+        let split = breaks.next();
         shaped_clusters.push(ShapedCluster {
             chars_range: (cluster.characters_start as u32, split.unwrap_or(char_end) as u32),
             style_index: first_character.style_index,
@@ -1069,12 +1058,15 @@ fn process_shaped_clusters<'a>(
             glyph_offset,
             advance,
         });
-        if let Some(start) = split {
+        let mut next = split;
+        while let Some(start) = next {
+            next = breaks.next();
             let first = characters[start];
             shaped_clusters.push(ShapedCluster {
-                chars_range: (start as u32, char_end as u32),
+                chars_range: (start as u32, next.unwrap_or(char_end) as u32),
                 style_index: first.style_index,
                 flags: ShapedClusterFlags::new(0)
+                    .discretionary_continuation()
                     .with_grapheme_start(true)
                     .with_first_char(first.flags.is_soft_wrap_opportunity(), first.whitespace),
                 glyph_offset: 0,

@@ -87,6 +87,7 @@ struct Shy {
     keep: bool,
     rtl: bool,
     replacement: Option<usize>,
+    form: Option<usize>,
 }
 
 #[derive(Clone, Default)]
@@ -834,7 +835,7 @@ impl BreakerState {
             let replacement = data.replacements.iter().position(|entry| (entry.0, entry.1) == (shy_style, rtl));
             let glyph = match data.styles[shy_style as usize].soft_hyphen {
                 SoftHyphen::Auto => font_hyphen(),
-                SoftHyphen::Char(_) | SoftHyphen::Chars(_, _) => {
+                SoftHyphen::Char(_) | SoftHyphen::Chars(_) => {
                     replacement.map(|index| (0, data.replacements[index].2.full_width()))
                 }
                 SoftHyphen::Hidden => None,
@@ -843,11 +844,19 @@ impl BreakerState {
                     None
                 }
             };
-            let form = data.broken_forms.iter().find(|entry| entry.0 == cluster);
+            let form = data.broken_forms.iter().position(|part| {
+                part.clusters.end == cluster + 1 && part.clusters.end < part.group_end
+                    && part.clusters.start >= self.line.clusters.start
+            });
+            let delta = form.map_or(0., |index| {
+                let part = &data.broken_forms[index];
+                part.layout.full_width() - data.shaped_text.shaped_clusters()[part.clusters.start as usize].advance
+            });
             self.line.shy = (glyph.is_some() || form.is_some() && !self.line.no_break_after).then(|| Shy {
                 cluster,
                 glyph,
-                advance: glyph.map_or(0., |g| g.1) + form.map_or(0., |entry| entry.2),
+                advance: glyph.map_or(0., |g| g.1) + delta,
+                form,
                 keep,
                 rtl,
                 replacement,
@@ -1499,11 +1508,16 @@ impl<'a, B: Brush> BreakLines<'a, B> {
         });
         if let Some(shy) = shy {
             if !shown
-                && let Some(&(_, [left, right], _)) = data.broken_forms.iter().find(|entry| entry.0 == shy.cluster)
+                && let Some(left) = shy.form
             {
-                let old_left = data.shaped_text.swap_cluster_form(shy.cluster, left);
-                let old_right = data.shaped_text.swap_cluster_form(shy.cluster + 1, right);
-                data.active_forms.push((shy.cluster, [old_left, old_right]));
+                let end = data.broken_forms[left].group_end;
+                let right = data.broken_forms.iter().position(|part| part.clusters == (shy.cluster + 1..end));
+                for index in core::iter::once(left).chain(right) {
+                    let part = &data.broken_forms[index];
+                    let cluster = part.clusters.start;
+                    let saved = data.shaped_text.set_fragment_placeholder(cluster, part.layout.full_width());
+                    data.active_forms.push((shy.cluster, index, saved));
+                }
             }
             if !shown
                 && let Some(saved) = data.shaped_text.show_hyphen(shy.cluster, shy.glyph.as_slice(), shy.keep, shy.rtl)
@@ -1550,7 +1564,14 @@ impl<'a, B: Brush> BreakLines<'a, B> {
         {
             let next = self.state.line.clusters.end;
             let shaped = &self.layout.data.shaped_text;
-            if let (Some(rtl), Some(next_rtl)) = (shaped.cluster_is_rtl(last), shaped.cluster_is_rtl(next))
+            let last = if shy.is_some_and(|shy| !shy.keep && shy.form.is_none()) {
+                (self.state.line.clusters.start..last).rev().find(|&index| {
+                    let chars = shaped.shaped_clusters()[index as usize].chars_range();
+                    !shaped.characters()[chars.start as usize..chars.end as usize].iter().all(|ch| ch.flags.is_soft_hyphen())
+                })
+            } else if shy.is_none() { Some(last) } else { None };
+            if let Some(last) = last
+                && let (Some(rtl), Some(next_rtl)) = (shaped.cluster_is_rtl(last), shaped.cluster_is_rtl(next))
                 && rtl == next_rtl
             {
                 let (left, right) = if rtl { (next, last) } else { (last, next) };
@@ -1677,14 +1698,10 @@ impl<'a, B: Brush> BreakLines<'a, B> {
             data.shaped_text.restore_cluster(cluster, saved);
             false
         });
-        data.active_forms.retain(|&(cluster, [left, right])| {
-            if cluster < self.state.cluster_idx {
-                return true;
-            }
-            data.shaped_text.restore_cluster(cluster, left);
-            data.shaped_text.restore_cluster(cluster + 1, right);
-            false
-        });
+        while data.active_forms.last().is_some_and(|entry| entry.0 >= self.state.cluster_idx) {
+            let (_, index, saved) = data.active_forms.pop().unwrap();
+            data.shaped_text.restore_cluster(data.broken_forms[index].clusters.start, saved);
+        }
         self.lines.truncate(self.state.lines);
         self.lines.line_items.truncate(self.state.items);
         self.done = false;

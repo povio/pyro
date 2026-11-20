@@ -51,6 +51,11 @@ impl ShapedClusterFlags {
     /// [`Whitespace`] class of the cluster's first character (3 bits).
     const WHITESPACE_SHIFT: u16 = 12;
     const WHITESPACE_MASK: u16 = 0b111 << Self::WHITESPACE_SHIFT;
+    const DISCRETIONARY_CONTINUATION: u16 = 1 << 15;
+
+    pub(crate) fn discretionary_continuation(self) -> Self {
+        Self(self.0 | Self::DISCRETIONARY_CONTINUATION)
+    }
 
     #[inline(always)]
     pub(crate) const fn new(glyph_len: u8) -> Self {
@@ -191,6 +196,11 @@ pub struct ShapedCluster {
 }
 
 impl ShapedCluster {
+    /// Whether this part follows a discretionary break inside the original shaping cluster.
+    pub fn is_discretionary_continuation(self) -> bool {
+        self.flags.0 & ShapedClusterFlags::DISCRETIONARY_CONTINUATION != 0
+    }
+
     /// The characters of this cluster, as a range into [`ShapedText::characters`](crate::ShapedText::characters).
     ///
     /// This is also the range of character positions in the source text (in the Unicode scalar

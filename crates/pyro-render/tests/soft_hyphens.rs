@@ -142,6 +142,9 @@ fn a_hyphenate_character_string_shows_all_its_characters() {
     let s = sizes("<div id=d style='width:7.5ch;hyphenate-character:\"/-/\"'><u id=a>high&shy;</u>ways</div>", &["a", "d"]);
     assert_near(s[0][0], 7.0 * ch);
     assert_near(s[1][1], 80.0);
+    let s = sizes("<div id=d style='width:9.5ch;hyphenate-character:\"ABCDE\"'><u id=a>abcd&shy;</u>efghijkl</div>", &["a", "d"]);
+    assert_near(s[0][0], 9.0 * ch);
+    assert_near(s[1][1], 80.0);
 }
 
 #[test]
@@ -177,5 +180,18 @@ fn discretionary_shaping_preserves_ligatures_and_composes_replacements() {
     };
     assert!(render(280, "-", "ل&shy;اميميميم") == render(280, "-", "لاميميميم"));
     assert!(render(56, "-", "ل&shy;اميميميم") == render(56, "-", "ل-<br>اميميميم"));
+    assert!(render(56, "-", "ل&shy;&shy;اميميميم") == render(56, "-", "ل-<br>اميميميم"));
     assert!(render(56, "e\u{301}", "قل&shy;ميميميم") == render(56, "é", "قل&shy;ميميميم"));
+}
+
+#[test]
+fn multiple_discretionary_breaks_in_latin_text() {
+    let render = |body: &str| {
+        let snapshot = Snapshot {
+            html: format!("<!doctype html><meta charset=utf-8><div style=\"width:18px;font:32px/48px Times;hyphenate-character:'-'\">{body}</div>"),
+            base_url: "http://test/".into(), width: 160, height: 160, device_scale_factor: 1., ..Default::default()
+        };
+        Renderer::new().render(&snapshot, Area::Viewport, Backend::Cpu, &(Arc::new(NoFetch) as Arc<dyn Fetcher>)).unwrap().0.data
+    };
+    assert!(render("f&shy;f&shy;izz") == render("f-<br>f-<br>izz"));
 }

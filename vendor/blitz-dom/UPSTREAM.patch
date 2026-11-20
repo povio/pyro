@@ -58681,7 +58681,7 @@ diff --git a/packages/blitz-dom/src/stylo_to_parley.rs b/packages/blitz-dom/src/
      let line_break = match itext_styles.line_break {
          stylo::LineBreak::Loose => parley::LineBreak::Loose,
          stylo::LineBreak::Normal => parley::LineBreak::Normal,
-@@ -541,17 +837,92 @@
+@@ -541,17 +837,83 @@
          font_style,
          font_weight,
          font_variations: parley::FontVariations::List(Cow::Owned(font_variations)),
@@ -58731,16 +58731,7 @@ diff --git a/packages/blitz-dom/src/stylo_to_parley.rs b/packages/blitz-dom/src/
 +                match (chars.next(), chars.next()) {
 +                    (None, _) => parley::SoftHyphen::Hidden,
 +                    (Some(ch), None) => parley::SoftHyphen::Char(ch),
-+                    _ if string.chars().count() <= 4 => {
-+                        let mut chars = ['\0'; 4];
-+                        let mut len = 0;
-+                        for ch in string.chars() {
-+                            chars[len] = ch;
-+                            len += 1;
-+                        }
-+                        parley::SoftHyphen::Chars(chars, len as u8)
-+                    }
-+                    _ => parley::SoftHyphen::Auto,
++                    _ => parley::SoftHyphen::Chars((&**string).into()),
 +                }
 +            }
 +        },
@@ -58775,7 +58766,7 @@ diff --git a/packages/blitz-dom/src/stylo_to_parley.rs b/packages/blitz-dom/src/
  
          // Contains NodeId
          brush: TextBrush::from_id(span_id),
-@@ -569,6 +940,10 @@
+@@ -569,6 +931,10 @@
          strikethrough_offset: Default::default(),
          strikethrough_size: Default::default(),
          strikethrough_brush: Default::default(),

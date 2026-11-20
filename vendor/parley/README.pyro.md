@@ -228,9 +228,10 @@ advance. Covered by `crates/pyro-render/tests/tab_stops.rs`; WPT css-text `tab-s
 
 Soft hyphens (CSS Text 3 § 5.4). A line that wraps right after U+00AD shows a hyphen there: the breaker keeps the
 last atom appended when it ends with a soft hyphen (`LineState::shy`, a `Shy` with the glyphs and advance to show), and
-`start_new_line` gives its shaped cluster those glyphs (`ShapedText::show_hyphen`, round 4: up to four glyphs, a
-`SoftHyphen::Chars` `hyphenate-character` string; after the cluster's own glyphs when HarfRust merged the soft hyphen
-into the cluster before it, which it does in a font without a space glyph) and the line its advance. The
+`start_new_line` reserves the replacement's advance in its shaped cluster (`ShapedText::show_hyphen`); an explicit
+`hyphenate-character` is painted from the entire shaped string, after the cluster's own glyphs when HarfRust merged the soft hyphen
+into the cluster before it. When an opportunity divides a ligature, the broken lines use separately shaped fragments
+with their own fonts and source offsets, leaving the unbroken ligature intact. The
 glyph is the font's hyphen (`ShapedRun::hyphen`: U+2010, else U+002D) or what the style's `SoftHyphen`
 (`style/mod.rs`, `StyleProperty::SoftHyphen`) names: a character of the run's font (`ShapedText::glyph_of`), nothing
 (`Hidden`), or no break at all (`NoBreak`: the opportunity after the soft hyphen is not marked). The opportunity is

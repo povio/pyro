@@ -882,16 +882,7 @@ pub(crate) fn style(
                 match (chars.next(), chars.next()) {
                     (None, _) => parley::SoftHyphen::Hidden,
                     (Some(ch), None) => parley::SoftHyphen::Char(ch),
-                    _ if string.chars().count() <= 4 => {
-                        let mut chars = ['\0'; 4];
-                        let mut len = 0;
-                        for ch in string.chars() {
-                            chars[len] = ch;
-                            len += 1;
-                        }
-                        parley::SoftHyphen::Chars(chars, len as u8)
-                    }
-                    _ => parley::SoftHyphen::Auto,
+                    _ => parley::SoftHyphen::Chars((&**string).into()),
                 }
             }
         },

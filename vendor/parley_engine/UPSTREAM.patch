@@ -436,7 +436,7 @@
      }
  
      /// Get a [`ShapedSlice`] of the run at `run_index`.
-@@ -215,9 +440,303 @@
+@@ -215,9 +440,291 @@
          }
          for shaped_cluster in self.shaped_clusters.iter_mut() {
              shaped_cluster.style_index = remap[shaped_cluster.style_index as usize];
@@ -695,25 +695,13 @@
 +        }
 +    }
 +
-+    /// Store an alternate shaping without changing the active cluster.
-+    pub fn store_cluster_form(&mut self, index: u32, glyphs: &[Glyph]) -> Option<ClusterGlyphs> {
-+        let cluster = self.shaped_clusters[index as usize];
-+        let flags = cluster.flags.with_inline_glyph(false).with_glyph_len(glyphs.len().try_into().ok()?);
-+        let form = ClusterGlyphs {
-+            glyph_offset: self.glyphs.len() as u32,
-+            flags: flags.bits(),
-+            advance: glyphs.iter().map(|glyph| glyph.advance).sum(),
-+        };
-+        self.glyphs.extend_from_slice(glyphs);
-+        Some(form)
-+    }
-+
-+    /// Select a previously stored shaping and return the previous one.
-+    pub fn swap_cluster_form(&mut self, index: u32, form: ClusterGlyphs) -> ClusterGlyphs {
-+        let cluster = self.shaped_clusters[index as usize];
-+        let old =
-+            ClusterGlyphs { glyph_offset: cluster.glyph_offset, flags: cluster.flags.bits(), advance: cluster.advance };
-+        self.restore_cluster(index, form);
++    /// Reserve the width of a separately shaped discretionary fragment.
++    pub fn set_fragment_placeholder(&mut self, index: u32, advance: f32) -> ClusterGlyphs {
++        let cluster = &mut self.shaped_clusters[index as usize];
++        let old = ClusterGlyphs { glyph_offset: cluster.glyph_offset, flags: cluster.flags.bits(), advance: cluster.advance };
++        cluster.flags = cluster.flags.with_inline_glyph(true).with_glyph_len(1);
++        cluster.glyph_offset = 0;
++        cluster.advance = advance;
 +        old
 +    }
 +
@@ -740,7 +728,7 @@
      /// The character data of the text, in logical order.
      ///
      /// [`ShapedRun::characters_range`] indexes into this. The nth [`Character`] corresponds exactly
-@@ -273,7 +792,12 @@
+@@ -273,7 +780,12 @@
          font: &FontInstance,
          glyph_buffer: &harfrust::GlyphBuffer,
          normalized_coords: &[harfrust::NormalizedCoord],
@@ -754,7 +742,7 @@
          debug_assert_eq!(
              range.char_range.len(),
              text[range.byte_range.clone()].chars().count(),
-@@ -302,42 +826,71 @@
+@@ -302,42 +814,71 @@
                  index
              });
  
@@ -844,7 +832,7 @@
                  grapheme_start: info.is_grapheme_start(),
              });
          }
-@@ -395,7 +948,11 @@
+@@ -395,7 +936,11 @@
              bidi_level: segment.bidi_level,
              advance: run_advance,
              font_metrics,
@@ -856,7 +844,7 @@
      }
  }
  
-@@ -423,6 +980,14 @@
+@@ -423,6 +968,14 @@
      pub bidi_level: BidiLevel,
      /// Total advance of the run.
      pub advance: f32,
@@ -871,29 +859,33 @@
      /// The font metrics of this run.
      pub font_metrics: FontMetrics,
  }
-@@ -486,8 +1051,11 @@
+@@ -486,8 +1039,12 @@
              )
          };
  
-+        let split = (cluster.characters_start..char_end.saturating_sub(1))
-+            .find(|&index| characters[index].flags.is_soft_hyphen())
++        let mut breaks = (cluster.characters_start..char_end.saturating_sub(1))
++            .filter(|&index| characters[index].flags.is_soft_hyphen())
 +            .map(|index| index + 1);
++        let split = breaks.next();
          shaped_clusters.push(ShapedCluster {
 -            chars_range: (cluster.characters_start as u32, char_end as u32),
 +            chars_range: (cluster.characters_start as u32, split.unwrap_or(char_end) as u32),
              style_index: first_character.style_index,
              flags: ShapedClusterFlags::new(glyph_len)
                  .with_grapheme_start(first_character.grapheme_start)
-@@ -501,6 +1069,18 @@
+@@ -501,6 +1058,21 @@
              glyph_offset,
              advance,
          });
-+        if let Some(start) = split {
++        let mut next = split;
++        while let Some(start) = next {
++            next = breaks.next();
 +            let first = characters[start];
 +            shaped_clusters.push(ShapedCluster {
-+                chars_range: (start as u32, char_end as u32),
++                chars_range: (start as u32, next.unwrap_or(char_end) as u32),
 +                style_index: first.style_index,
 +                flags: ShapedClusterFlags::new(0)
++                    .discretionary_continuation()
 +                    .with_grapheme_start(true)
 +                    .with_first_char(first.flags.is_soft_wrap_opportunity(), first.whitespace),
 +                glyph_offset: 0,
@@ -903,7 +895,7 @@
      }
  
      let mut cluster = Cluster {
-@@ -534,7 +1114,15 @@
+@@ -534,7 +1106,15 @@
              y: -(glyph_pos.y_offset as f32) * scale_factor,
              advance: (glyph_pos.x_advance as f32) * scale_factor,
          };
@@ -920,7 +912,7 @@
              // Defer this potential zero-offset, single glyph cluster
              cluster.inline_glyph = Some(glyph);
          } else {
-@@ -647,9 +1235,18 @@
+@@ -647,9 +1227,18 @@
              char_end: text.chars().count().try_into().unwrap(),
              options: ShapeOptions {
                  font_size: 32.0,
@@ -939,7 +931,7 @@
              },
          }];
          shaper.shape_text(
-@@ -765,7 +1362,8 @@
+@@ -765,7 +1354,8 @@
  
      #[test]
      fn newlines_removed() {
@@ -949,7 +941,7 @@
              let shaped = shape_with_font(&alloc::format!("a{newline}b"), ROBOTO);
  
              let index = shaped
-@@ -805,18 +1403,36 @@
+@@ -805,18 +1395,36 @@
                  char_end: 1,
                  options: ShapeOptions {
                      font_size: 32.0,
@@ -2526,14 +2518,23 @@
  impl core::fmt::Debug for AnalysisOptions<'_> {
 --- a/src/shape/data.rs
 +++ b/src/shape/data.rs
-@@ -55,9 +55,28 @@
+@@ -51,13 +51,37 @@
+     /// [`Whitespace`] class of the cluster's first character (3 bits).
+     const WHITESPACE_SHIFT: u16 = 12;
+     const WHITESPACE_MASK: u16 = 0b111 << Self::WHITESPACE_SHIFT;
++    const DISCRETIONARY_CONTINUATION: u16 = 1 << 15;
+ 
++    pub(crate) fn discretionary_continuation(self) -> Self {
++        Self(self.0 | Self::DISCRETIONARY_CONTINUATION)
++    }
++
      #[inline(always)]
      pub(crate) const fn new(glyph_len: u8) -> Self {
          Self(glyph_len as u16)
-+    }
-+
+     }
+ 
 +    /// pyro: these flags with `glyph_len` glyphs.
-+    #[inline(always)]
+     #[inline(always)]
 +    pub(crate) const fn with_glyph_len(mut self, glyph_len: u8) -> Self {
 +        self.0 = self.0 & !Self::GLYPH_LEN_MASK | glyph_len as u16;
 +        self
@@ -2543,10 +2544,10 @@
 +    #[inline(always)]
 +    pub(crate) const fn bits(self) -> u16 {
 +        self.0
-     }
- 
++    }
++
 +    /// pyro: flags from [`Self::bits`].
-     #[inline(always)]
++    #[inline(always)]
 +    pub(crate) const fn from_bits(bits: u16) -> Self {
 +        Self(bits)
 +    }
@@ -2555,7 +2556,19 @@
      pub(crate) const fn with_inline_glyph(mut self, set: bool) -> Self {
          self.0 = self.0 & !Self::INLINE_GLYPH | if set { Self::INLINE_GLYPH } else { 0 };
          self
-@@ -253,19 +272,41 @@
+@@ -172,6 +196,11 @@
+ }
+ 
+ impl ShapedCluster {
++    /// Whether this part follows a discretionary break inside the original shaping cluster.
++    pub fn is_discretionary_continuation(self) -> bool {
++        self.flags.0 & ShapedClusterFlags::DISCRETIONARY_CONTINUATION != 0
++    }
++
+     /// The characters of this cluster, as a range into [`ShapedText::characters`](crate::ShapedText::characters).
+     ///
+     /// This is also the range of character positions in the source text (in the Unicode scalar
+@@ -253,19 +282,41 @@
  
  /// Properties of a [`Character`].
  #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -2602,7 +2615,7 @@
  
      #[inline(always)]
      pub fn new(source_char: char, is_word_boundary: bool, is_soft_wrap_opportunity: bool) -> Self {
-@@ -275,7 +316,7 @@
+@@ -275,7 +326,7 @@
              clippy::cast_possible_truncation,
              reason = "`len_utf8` is between 1 and 4 inclusive"
          )]
@@ -2611,7 +2624,7 @@
          Self(
              (len_utf8 - 1)
                  | if is_emoji { Self::EMOJI } else { 0 }
-@@ -288,10 +329,120 @@
+@@ -288,10 +339,120 @@
                      Self::SOFT_WRAP_OPPORTUNITY
                  } else {
                      0

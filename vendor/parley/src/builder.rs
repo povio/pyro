@@ -574,56 +574,44 @@ fn build_into_layout<B: Brush>(
         let mut forms = alloc::vec::Vec::new();
         for run in layout.data.shaped_text.runs() {
             let rtl = run.bidi_level.is_rtl();
-            for cluster in run.shaped_clusters_range.start..run.shaped_clusters_range.end.saturating_sub(1) {
-                let pair = &layout.data.shaped_text.shaped_clusters()[cluster as usize..][..2];
-                let chars = layout.data.shaped_text.characters();
-                let left = pair[0].chars_range();
-                let right = pair[1].chars_range();
-                if pair[1].glyph_len() != 0 || left.len() < 2 || right.is_empty() {
-                    continue;
+            let clusters = layout.data.shaped_text.shaped_clusters();
+            let chars = layout.data.shaped_text.characters();
+            let mut start = run.shaped_clusters_range.start;
+            while start < run.shaped_clusters_range.end {
+                let mut end = start + 1;
+                while end < run.shaped_clusters_range.end && clusters[end as usize].is_discretionary_continuation() {
+                    end += 1;
                 }
-                let last = chars[left.end as usize - 1];
-                if !last.flags.is_soft_hyphen() {
-                    continue;
-                }
-                let ranges = [
-                    chars[left.start as usize].text_byte_start as usize..last.text_byte_start as usize,
-                    chars[right.start as usize].text_byte_start as usize
-                        ..chars[right.end as usize - 1].text_byte_range().end,
-                ];
-                let mut halves = alloc::vec::Vec::new();
-                for (part, range) in pair.iter().zip(ranges) {
-                    let shaped = shape_fragment(lcx, fcx, options, part.style_index, rtl, &text[range]);
-                    let data = &shaped.data.shaped_text;
-                    if data
-                        .runs()
-                        .iter()
-                        .any(|r| data.fonts()[r.font_index] != layout.data.shaped_text.fonts()[run.font_index])
-                    {
-                        break;
-                    }
-                    let glyphs = shaped
-                        .get(0)
-                        .into_iter()
-                        .flat_map(|line| line.items())
-                        .filter_map(|item| match item {
-                            crate::layout::PositionedLayoutItem::GlyphRun(part) => {
-                                Some(part.glyphs().collect::<alloc::vec::Vec<_>>())
-                            }
-                            _ => None,
-                        })
-                        .flatten()
+                if end > start + 1 {
+                    let boundaries = core::iter::once(start)
+                        .chain((start + 1..end).filter(|&index| {
+                            let first = clusters[index as usize].chars_range().start;
+                            !chars[first as usize].flags.is_soft_hyphen()
+                        }))
+                        .chain(core::iter::once(end))
                         .collect::<alloc::vec::Vec<_>>();
-                    halves.push(glyphs);
+                    for (pos, &first) in boundaries.iter().enumerate() {
+                        for &last in &boundaries[pos + 1..] {
+                            if first == start && last == end {
+                                continue;
+                            }
+                            let part = clusters[first as usize];
+                            let byte_start = chars[part.chars_range().start as usize].text_byte_start as usize;
+                            let final_char = chars[clusters[last as usize - 1].chars_range().end as usize - 1];
+                            let byte_end = if final_char.flags.is_soft_hyphen() {
+                                final_char.text_byte_start as usize
+                            } else {
+                                final_char.text_byte_range().end
+                            };
+                            let fragment = text[byte_start..byte_end].trim_end_matches('\u{ad}');
+                            let shaped = shape_fragment(lcx, fcx, options, part.style_index, rtl, fragment, false);
+                            forms.push(crate::layout::data::DiscretionaryFragment {
+                                clusters: first..last, group_end: end, byte_start, layout: shaped,
+                            });
+                        }
+                    }
                 }
-                if let [left, right] = halves.as_slice() {
-                    forms.push((
-                        cluster,
-                        left.clone(),
-                        right.clone(),
-                        left.iter().map(|glyph| glyph.advance).sum::<f32>() - pair[0].advance,
-                    ));
-                }
+                start = end;
             }
             for character in &layout.data.shaped_text.characters()
                 [run.characters_range.start as usize..run.characters_range.end as usize]
@@ -636,23 +624,16 @@ fn build_into_layout<B: Brush>(
                     continue;
                 }
                 let style = &lcx.style_table[usize::from(index)];
-                let replacement: String = match style.soft_hyphen {
-                    crate::SoftHyphen::Chars(chars, len) => chars[..usize::from(len)].iter().collect(),
-                    crate::SoftHyphen::Char(ch) => String::from(ch),
+                let replacement = match &style.soft_hyphen {
+                    crate::SoftHyphen::Chars(text) => text.clone(),
+                    crate::SoftHyphen::Char(ch) => alloc::sync::Arc::from(ch.encode_utf8(&mut [0; 4]) as &str),
                     _ => continue,
                 };
-                let shaped = shape_fragment(lcx, fcx, options, index, rtl, &replacement);
+                let shaped = shape_fragment(lcx, fcx, options, index, rtl, &replacement, true);
                 layout.data.replacements.push((index, rtl, shaped));
             }
         }
-        for (cluster, left, right, delta) in forms {
-            if let (Some(left), Some(right)) = (
-                layout.data.shaped_text.store_cluster_form(cluster, &left),
-                layout.data.shaped_text.store_cluster_form(cluster + 1, &right),
-            ) {
-                layout.data.broken_forms.push((cluster, [left, right], delta));
-            }
-        }
+        layout.data.broken_forms = forms;
     }
 
     // Move inline boxes into the layout
@@ -671,6 +652,7 @@ fn shape_fragment<B: Brush>(
     index: u16,
     rtl: bool,
     replacement: &str,
+    force_direction: bool,
 ) -> Layout<B> {
     let mut style = lcx.style_table[usize::from(index)].clone();
     style.parent = 0;
@@ -681,7 +663,9 @@ fn shape_fragment<B: Brush>(
         &parley_engine::AnalysisOptions { base_direction: direction, ..Default::default() },
         &mut analysis,
     );
-    analysis.set_run_direction(rtl);
+    if force_direction {
+        analysis.set_run_direction(rtl);
+    }
     let mut shaped = Layout::default();
     shaped.data.scale = options.scale;
     shaped.data.quantize = options.quantize;

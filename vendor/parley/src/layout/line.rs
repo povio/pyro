@@ -380,11 +380,26 @@ pub struct PositionedInlineBox {
     pub is_rtl: bool,
 }
 
+#[derive(Clone)]
+enum SourceMapping {
+    Fragment(usize),
+    Replacement(Range<usize>),
+}
+
+impl SourceMapping {
+    fn range(&self, local: Range<usize>) -> Range<usize> {
+        match self {
+            Self::Fragment(base) => base + local.start..base + local.end,
+            Self::Replacement(range) => range.clone(),
+        }
+    }
+}
+
 /// Sequence of fully positioned glyphs with the same style.
 #[derive(Clone)]
 pub struct GlyphRun<'a, B: Brush> {
     run: Run<'a, B>,
-    origin: Option<(Run<'a, B>, Range<usize>)>,
+    origin: Option<(Run<'a, B>, SourceMapping)>,
     glyph_slice: (usize, usize),
     style_index: u16,
     /// The glyph run's shaped clusters, indexing into the shaped run this [`Run`] belongs to.
@@ -418,7 +433,9 @@ impl<'a, B: Brush> GlyphRun<'a, B> {
         core::iter::from_fn(move || {
             let atom = if rtl { atoms.prev() } else { atoms.next() }?;
             let glyphs: usize = atom.shaped_clusters().iter().map(|cluster| usize::from(cluster.glyph_len())).sum();
-            Some((origin.clone().unwrap_or_else(|| slice.text_byte_range(atom.char_range())), glyphs - trim))
+            let range = slice.text_byte_range(atom.char_range());
+            let range = origin.as_ref().map_or_else(|| range.clone(), |mapping| mapping.range(range.clone()));
+            Some((range, glyphs - trim))
         })
     }
 
@@ -695,52 +712,62 @@ impl<'a, B: Brush> Iterator for GlyphRunIter<'a, B> {
                     while let Some(atom) = atoms.peek() {
                         let (atom_glyph_count, atom_advance) = atoms.measure(&atom);
                         let data = &self.line.layout.data;
-                        if let Some((_, _, Some((index, keep)))) =
-                            data.shown_hyphens.iter().find(|(cluster, _, replacement)| {
-                                replacement.is_some() && atom.shaped_clusters_range().contains(cluster)
-                            })
-                        {
-                            if glyph_run.is_some() {
-                                break;
-                            }
-                            let replacement = &data.replacements[*index].2;
+                        let range = atom.shaped_clusters_range();
+                        let shown = data.shown_hyphens.iter().find(|(cluster, _, _)| range.contains(cluster));
+                        let replacement = shown.and_then(|entry| entry.2);
+                        let fragment = data.active_forms.iter().rev().map(|entry| &data.broken_forms[entry.1])
+                            .find(|part| range.contains(&part.clusters.start));
+                        if replacement.is_some() || fragment.is_some() {
+                            if glyph_run.is_some() { break; }
                             let style_index = atom.characters().last().unwrap().style_index;
                             let baseline = self.line.style_baseline(style_index);
-                            let range = atom.characters().last().unwrap().text_byte_range();
-                            let offset =
-                                self.offset + self.line.data.metrics.inline_min_coord + self.line.data.metrics.offset;
+                            let source = atom.characters().last().unwrap().text_byte_range();
+                            let offset = self.offset + self.line.data.metrics.inline_min_coord + self.line.data.metrics.offset;
                             let scale = run.text_fit_scale();
-                            let replacement_width = replacement.full_width() * scale;
-                            let own_width = atom_advance - replacement_width;
                             let rtl = run.is_rtl();
-                            let own = (*keep).then(|| GlyphRun {
-                                run,
-                                style_index,
-                                shaped_clusters: atom.shaped_clusters_range(),
-                                origin: None,
-                                glyph_slice: (usize::from(rtl), usize::from(!rtl)),
-                                advance: own_width,
-                                baseline,
-                                offset: offset + if rtl { replacement_width } else { 0.0 },
-                            });
-                            if !rtl {
-                                self.pending.extend(own.clone());
-                            }
-                            if let Some(line) = replacement.get(0) {
-                                for item in line.items() {
-                                    if let PositionedLayoutItem::GlyphRun(mut part) = item {
-                                        part.origin = Some((run, range.clone()));
-                                        part.style_index = style_index;
-                                        part.run.replacement_source = Some((range.start, range.end, scale));
-                                        part.offset = part.offset * scale + offset + if rtl { 0.0 } else { own_width };
-                                        part.advance *= scale;
-                                        part.baseline = baseline;
-                                        self.pending.push(part);
+                            let own_width = fragment.map_or_else(|| atom_advance - replacement.map_or(0., |(index, _)| {
+                                data.replacements[index].2.full_width() * scale
+                            }), |part| part.layout.full_width() * scale);
+                            let own_offset = offset + if rtl { atom_advance - own_width } else { 0. };
+                            let emit = |pending: &mut alloc::vec::Vec<GlyphRun<'a, B>>, layout: &'a Layout<B>, mapping: SourceMapping, x: f32| {
+                                if let Some(line) = layout.get(0) {
+                                    for item in line.items() {
+                                        if let PositionedLayoutItem::GlyphRun(mut part) = item {
+                                            let bytes = mapping.range(part.run.text_range());
+                                            part.run.replacement_source = Some((bytes.start, bytes.end, scale));
+                                            part.origin = Some((run, mapping.clone()));
+                                            part.style_index = style_index;
+                                            part.offset = x + part.offset * scale;
+                                            part.advance *= scale;
+                                            part.baseline = baseline;
+                                            pending.push(part);
+                                        }
                                     }
                                 }
+                            };
+                            if let Some(part) = fragment {
+                                emit(&mut self.pending, &part.layout, SourceMapping::Fragment(part.byte_start), own_offset);
                             }
-                            if rtl {
-                                self.pending.extend(own);
+                            let own_count = self.pending.len();
+                            let replacement_offset = offset + if rtl { 0. } else { own_width };
+                            if let Some((index, _)) = replacement {
+                                emit(&mut self.pending, &data.replacements[index].2, SourceMapping::Replacement(source.clone()), replacement_offset);
+                            } else if shown.is_some() && atom_glyph_count > 1 {
+                                self.pending.push(GlyphRun {
+                                    run, style_index, shaped_clusters: range.clone(),
+                                    origin: Some((run, SourceMapping::Replacement(source))),
+                                    glyph_slice: (usize::from(!rtl), usize::from(rtl)), advance: atom_advance - own_width,
+                                    baseline, offset: replacement_offset,
+                                });
+                            }
+                            if fragment.is_none() && replacement.is_some_and(|(_, keep)| keep) {
+                                let own = GlyphRun {
+                                    run, style_index, shaped_clusters: range, origin: None,
+                                    glyph_slice: (usize::from(rtl), usize::from(!rtl)), advance: own_width, baseline, offset: own_offset,
+                                };
+                                self.pending.insert(if rtl { self.pending.len() } else { 0 }, own);
+                            } else if rtl {
+                                self.pending.rotate_left(own_count);
                             }
                             self.offset += atom_advance;
                             atoms.consume();

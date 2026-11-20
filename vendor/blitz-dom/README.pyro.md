@@ -2532,7 +2532,7 @@ does not let margins collapse through it, even when its lines have no height (CS
 - `layout/inline/build.rs`, `stylo_to_parley.rs` (round 4 lane A): `<wbr>` is a U+200B soft wrap opportunity (it was
   nothing: no break at all, also under `keep-all`); a quirks-mode `<br>` carries its own `line-height` (parley's line
   height quirk sizes a line holding only it); `word-break: auto-phrase` maps to `keep-all` with parley's phrase
-  breaks; a `hyphenate-character` of two to four characters is `SoftHyphen::Chars`.
+  breaks; a multi-character `hyphenate-character` is preserved in full as `SoftHyphen::Chars`.
 - Round 4 lane B: `layout/mod.rs` `quirky_fill_height` (Quirks Mode §3.6/§3.7): in quirks mode the root html element and
   a body child of it, in flow with `auto` height (flow, flow-root, flex or grid), fill the viewport less margins (the
   body: less the html element's margins, border and padding too). Taffy block uses it through
