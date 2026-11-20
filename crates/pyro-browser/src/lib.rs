@@ -689,7 +689,8 @@ impl Page {
     /// HTML, URL and scroll position; see [`pyro_dom::FrameDocument`]), innermost frames first so a
     /// frame's HTML holds its own frames' documents. pyro: each frame document carries its own
     /// sheets ([`pyro_dom::FrameDocument::sheets`]), never merged with the page's by URL.
-    pub fn update_frame_documents(&self) {
+    pub fn update_frame_documents(&self) -> Vec<pyro_dom::geometry::TransitionFrame> {
+        let mut transitions = Vec::new();
         if !self.frames.has_children() {
             if let Some(page_dom) = &self.main_frame.page_dom {
                 if let Ok(mut dom) = page_dom.dom.try_borrow_mut() {
@@ -697,7 +698,7 @@ impl Page {
                     dom.frame_animations.clear();
                 }
             }
-            return;
+            return transitions;
         }
         let depth = |mut key: frames::FrameKey| {
             let mut depth = 0;
@@ -726,9 +727,11 @@ impl Page {
             // capture takes it (`render_base_url`).
             let frame_base = if base_url.is_empty() { url } else { base_url };
             let base = page_dom.render_base_url(&frame_base);
-            let (snapshot, animations) = page_dom.render_snapshot_frame(&base);
             // pyro: with its own frames' table (set before, deeper first), which its markup names.
             let frames = page_dom.dom.try_borrow().map(|dom| dom.frame_table(page_dom.document())).unwrap_or_default();
+            let start = transitions.len();
+            page_dom.transition_frames(&frames.nonce, &mut transitions);
+            let (snapshot, animations) = page_dom.render_snapshot_frame(&base, &transitions[start..]);
             let document = pyro_dom::FrameDocument {
                 html: snapshot.html,
                 url: base,
@@ -754,7 +757,8 @@ impl Page {
                     .collect();
             }
         }
-        }
+        transitions
+    }
 
 
     /// Copies the page's own request options (extra headers, cache bypass)

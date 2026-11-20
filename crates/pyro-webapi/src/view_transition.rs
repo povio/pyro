@@ -1,37 +1,54 @@
 //! CSS View Transitions (`document.startViewTransition`, `Element.startViewTransition`): the
 //! per-scope lifecycle and captured rendering state, created on first use.
 
-use std::{cell::Cell, rc::Rc};
+use std::{rc::Rc, sync::{Arc, Mutex}};
 
 use pyro_js::{JsError, JsResult, Scope, Value};
 
 use crate::page::PageDom;
 
-type Boxes = Vec<pyro_dom::geometry::TransitionBox>;
+type Boxes = Arc<[pyro_dom::geometry::TransitionBox]>;
 pub(crate) type Captures = rustc_hash::FxHashMap<u64, Capture>;
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub(crate) struct Quota {
-    slots: Cell<usize>,
-    pixels: Cell<u64>,
-    work: Cell<u64>,
+    used: Mutex<Usage>,
+}
+
+#[derive(Default, Debug)]
+struct Usage {
+    slots: usize,
+    pixels: u64,
+    work: u64,
+}
+
+#[derive(Debug)]
+struct Reservation {
+    quota: Arc<Quota>,
+    pixels: u64,
+    work: u64,
+}
+
+impl Drop for Reservation {
+    fn drop(&mut self) {
+        let mut used = self.quota.used.lock().unwrap();
+        used.slots -= 1;
+        used.pixels -= self.pixels;
+        used.work -= self.work;
+    }
 }
 
 pub(crate) struct Capture {
-    quota: Rc<Quota>,
-    pixels: u64,
-    work: u64,
+    reservation: Arc<Reservation>,
     old: Boxes,
     new: Boxes,
+    samples: Arc<[(usize, usize, f64)]>,
     tree: Option<(std::rc::Weak<dyn pyro_dom::geometry::GeometrySource>, u64)>,
 }
 
 impl Drop for Capture {
     fn drop(&mut self) {
         if let Some((source, root)) = self.tree.take() { if let Some(source) = source.upgrade() { source.clear_transition_boxes(root); } }
-        self.quota.slots.set(self.quota.slots.get() - 1);
-        self.quota.pixels.set(self.quota.pixels.get() - self.pixels);
-        self.quota.work.set(self.quota.work.get() - self.work);
     }
 }
 
@@ -46,9 +63,11 @@ fn admit(mut page: Rc<PageDom>) -> Option<Capture> {
             }
         }
         let quota = page.transition_quota.borrow_mut().get_or_insert_with(Default::default).clone();
-        if quota.slots.get() >= 16 { return None; }
-        quota.slots.set(quota.slots.get() + 1);
-        return Some(Capture { quota, pixels: 0, work: 0, old: Vec::new(), new: Vec::new(), tree: None });
+        let mut used = quota.used.lock().unwrap();
+        if used.slots >= 16 { return None; }
+        used.slots += 1;
+        drop(used);
+        return Some(Capture { reservation: Arc::new(Reservation { quota, pixels: 0, work: 0 }), old: Default::default(), new: Default::default(), samples: Default::default(), tree: None });
     }
     None
 }
@@ -80,33 +99,32 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<pyro_js::Object<'s>> {
             return Ok(s.boolean(true));
         }
         let Some(record) = captures.as_mut().and_then(|map| map.get_mut(&scope_key)) else { return Ok(s.boolean(false)); };
-        if record.quota.work.get() == 1 << 18 || (old && record.quota.pixels.get() == 1 << 24) { return Ok(s.boolean(false)); }
+        let Some(reservation) = Arc::get_mut(&mut record.reservation) else { return Ok(s.boolean(false)); };
         let layout = page.layout();
         let dom = page.dom.borrow();
         if page.is_hidden() || !dom.is_connected(root.id).unwrap_or(false) { return Ok(s.boolean(false)); }
         let Some(source) = layout.synced_geometry_source(&dom) else { return Ok(s.boolean(true)); };
-        let quota = &record.quota;
-        let used_pixels = quota.pixels.replace(1 << 24);
-        let used_work = quota.work.replace(1 << 18);
+        let mut quota = reservation.quota.used.lock().unwrap();
+        let used_pixels = quota.pixels;
+        let used_work = quota.work;
+        if used_work == 1 << 18 || (old && used_pixels == 1 << 24) { return Ok(s.boolean(false)); }
         let mut work = (1 << 18) - used_work;
         let result = source.capture_transition(key, old, (1 << 24) - used_pixels, &mut work);
-        quota.pixels.set(used_pixels);
-        quota.work.set(used_work);
         let Some(boxes) = result else { return Ok(s.boolean(false)); };
         let charged = (1 << 18) - used_work - work;
-        record.work += charged;
-        quota.work.set(used_work + charged);
+        reservation.work += charged;
+        quota.work += charged;
         if old {
-            record.pixels = boxes.iter().filter_map(|item| item.rgba.as_ref()).map(|img| img.len() as u64 / 4).sum();
-            quota.pixels.set(used_pixels + record.pixels);
-            record.old = boxes;
+            reservation.pixels = boxes.iter().filter_map(|item| item.rgba.as_ref()).map(|img| img.len() as u64 / 4).sum();
+            quota.pixels += reservation.pixels;
+            record.old = boxes.into();
         } else {
             let cost = 1 + 4 * (record.old.len() + boxes.len()) as u64;
             if cost > work || !source.set_transition_boxes(key, &record.old, &boxes) { return Ok(s.boolean(false)); }
-            record.work += cost;
-            quota.work.set(quota.work.get() + cost);
+            reservation.work += cost;
+            quota.work += cost;
             record.tree = Some((Rc::downgrade(source), key));
-            record.new = boxes;
+            record.new = boxes.into();
         }
         Ok(s.boolean(true))
     })?;
@@ -142,7 +160,14 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<pyro_js::Object<'s>> {
         let page = root.page();
         let dom = page.dom.borrow();
         let layout = page.layout();
-        Ok(s.boolean(layout.synced_geometry_source(&dom).is_none_or(|source|source.set_transition_samples(pyro_dom::snapshot::render_key(root.id),&values))))
+        let key = pyro_dom::snapshot::render_key(root.id);
+        let success = layout.synced_geometry_source(&dom).is_none_or(|source|source.set_transition_samples(key,&values));
+        if success {
+            if let Some(record) = page.transition_captures.borrow_mut().as_mut().and_then(|captures| captures.values_mut().find(|r| r.tree.as_ref().is_some_and(|(_,root)| *root == key))) {
+                record.samples = values.into();
+            }
+        }
+        Ok(s.boolean(success))
     })?;
     out.set_atom("sample",sample.value())?;
     Ok(out)
@@ -150,6 +175,18 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<pyro_js::Object<'s>> {
 
 fn unavailable() -> JsError {
     JsError::Type("ViewTransition is unavailable".into())
+}
+
+impl PageDom {
+    pub fn transition_frames(&self, document: &str, out: &mut Vec<pyro_dom::geometry::TransitionFrame>) {
+        let captures = self.transition_captures.borrow();
+        let Some(map) = captures.as_ref() else { return };
+        for record in map.values() {
+            let Some((_, root)) = record.tree.as_ref() else { continue };
+            out.push(pyro_dom::geometry::TransitionFrame { document: document.to_owned(), root: *root,
+                old: record.old.clone(), new: record.new.clone(), samples: record.samples.clone(), reservation: record.reservation.clone() });
+        }
+    }
 }
 
 pub(crate) fn active<'s>(s: &Scope<'s>, node: &crate::node::NodeData) -> JsResult<Value<'s>> {

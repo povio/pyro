@@ -241,7 +241,7 @@ pub struct PageDom {
     /// unloaded (`lifecycle::unload`).
     hidden: Cell<bool>,
     pub(crate) transition_captures: RefCell<Option<Box<crate::view_transition::Captures>>>,
-    pub(crate) transition_quota: RefCell<Option<Rc<crate::view_transition::Quota>>>,
+    pub(crate) transition_quota: RefCell<Option<std::sync::Arc<crate::view_transition::Quota>>>,
     /// The document's unload events (`pagehide` ...) have started: set before the first is
     /// dispatched, so a listener whose actions unload it again (removing an ancestor frame) does
     /// not run them twice.

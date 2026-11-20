@@ -536,7 +536,7 @@ impl EngineHost {
         // Responsive iframes take their documents' heights (css-sizing-4).
         page.update_responsive_frames();
         // Frames show their documents (the frame table), each with its own sheets.
-        page.update_frame_documents();
+        let mut transition_frames = page.update_frame_documents();
         let frame = &page.main_frame;
         let dom = frame.page_dom.clone().ok_or_else(|| CdpError::server("page has no document"))?;
         let stamp = dom.render_stamp();
@@ -572,7 +572,9 @@ impl EngineHost {
         // pyro: the frame table its frame elements name.
         let table = dom.dom.borrow().frame_table(dom.document());
         let frames = pyro_layout::frame_table(table);
+        dom.transition_frames(&frames.nonce, &mut transition_frames);
         Ok(Snapshot {
+            transition_frames,
             html: String::new(),
             frames,
             base_url,

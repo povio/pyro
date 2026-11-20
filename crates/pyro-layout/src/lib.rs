@@ -496,6 +496,7 @@ impl BlitzGeometry {
             scroll_targets: None,
             animations: None,
             frame_animations: Vec::new(),
+            transition_frames: Vec::new(),
             content_visibility: None,
             xml_document: dom.is_xml_document(style.document()),
             quirks_mode: dom.is_quirks_mode(style.document()),

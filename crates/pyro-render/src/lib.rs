@@ -25,6 +25,7 @@ mod geometry;
 mod hash;
 mod hit;
 mod mirror;
+mod transition_frame;
 mod net;
 mod page_box;
 pub mod pdf;
@@ -185,6 +186,7 @@ pub const MAX_WIDTH: u32 = 16_384;
 /// What the browser thread hands to the renderer: plain data, `Send`.
 #[derive(Clone, Debug, Default)]
 pub struct Snapshot {
+    pub transition_frames: Vec<pyro_dom::geometry::TransitionFrame>,
     /// The document as HTML: current DOM, form state written into
     /// attributes, `<style>` text from the style engine (CSSOM edits
     /// included), no scripts.
@@ -590,6 +592,8 @@ pub enum Backend {
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Timings {
+    pub transition_old_images: usize,
+    pub transition_live_targets: usize,
     /// Sub-resources Blitz waited for.
     pub fetch: Duration,
     /// Parse, style and layout (fetch excluded).
@@ -1264,10 +1268,11 @@ impl Renderer {
         fresh: &'a mut Option<(blitz_dom::BaseDocument, net::Bridge)>,
         timings: &mut Timings,
         selection: bool,
-    ) -> Result<(&'a mut blitz_dom::BaseDocument, Option<blitz_dom::NodeId>), RenderError> {
+    ) -> Result<(&'a mut blitz_dom::BaseDocument, Option<blitz_dom::NodeId>, Vec<transition_frame::Resolved>), RenderError> {
         let started = Instant::now();
         // The focused text control's selection, set once laid out (its editor is made then).
         let mut control = None;
+        let mut transitions = Vec::new();
         let mut pseudo_scrolls: Vec<(blitz_dom::NodeId, u8, (f64, f64))> = Vec::new();
         let (doc, bridge, clip) = match &snap.live {
             Some(live) => {
@@ -1392,6 +1397,9 @@ impl Renderer {
                             .collect();
                         m.doc.set_dom_highlights(highlights);
                         let clip = live.clip.and_then(|k| m.node(k));
+                        if !snap.transition_frames.is_empty() {
+                            transition_frame::resolve_document(&snap.transition_frames, m.doc.snapshot_nonce(), |key| m.node(key), &mut transitions);
+                        }
                         (&mut m.doc, &m.bridge, clip)
                     }
                     None => return Err(RenderError::BadArea("the page's tree has a repeated key".into())),
@@ -1462,7 +1470,14 @@ impl Renderer {
         }
         timings.fetch = fetch;
         timings.layout = started.elapsed().saturating_sub(fetch);
-        Ok((doc, clip))
+        if snap.transition_frames.iter().any(|frame| frame.document != doc.snapshot_nonce()) {
+            transition_frame::resolve_children(doc, &snap.transition_frames, &mut transitions, &mut 16_384, 0);
+        }
+        for scope in &transitions {
+            timings.transition_old_images += scope.frame.old.iter().filter(|item| item.rgba.is_some()).count();
+            timings.transition_live_targets += scope.targets.iter().flatten().count();
+        }
+        Ok((doc, clip, transitions))
     }
 
     /// Stages 1 and 2.
@@ -1482,7 +1497,7 @@ impl Renderer {
                 m.doc.clear_content_visibility_forcing();
             }
         }
-        let (doc, clip) = self.prepare(snap, fetcher, &mut fresh, &mut timings, true)?;
+        let (doc, clip, _transitions) = self.prepare(snap, fetcher, &mut fresh, &mut timings, true)?;
 
         let t = Instant::now();
         // A persistent document keeps the scroll of its last capture; only
@@ -2510,7 +2525,7 @@ impl Renderer {
         let mut fresh = None;
         let mut cache = std::mem::take(&mut self.pdf_cache);
         let out = match self.prepare(snap, fetcher, &mut fresh, &mut timings, false) {
-            Ok((doc, _)) => print_document(doc, (snap.width, snap.height), dpr, opts, timings, &mut cache),
+            Ok((doc, _, _)) => print_document(doc, (snap.width, snap.height), dpr, opts, timings, &mut cache),
             Err(e) => Err(e),
         };
         self.pdf_cache = cache;

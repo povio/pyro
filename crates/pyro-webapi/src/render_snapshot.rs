@@ -110,13 +110,17 @@ impl PageDom {
     /// pyro: a frame's [`PageDom::render_snapshot`] with its animations now: its animated
     /// elements carry their render keys (`data-pyro-key`) for the renderer to sample them into
     /// the frame's document.
-    pub fn render_snapshot_frame(self: &std::rc::Rc<Self>, base_url: &str) -> (RenderSnapshot, Option<pyro_dom::animation::AnimationFrame>) {
+    pub fn render_snapshot_frame(self: &std::rc::Rc<Self>, base_url: &str, transitions: &[pyro_dom::geometry::TransitionFrame]) -> (RenderSnapshot, Option<pyro_dom::animation::AnimationFrame>) {
         let frame = self.animation_frame();
-        if frame.elements.is_empty() {
+        if frame.elements.is_empty() && transitions.is_empty() {
             return (self.snapshot_as(base_url, None, Form::Html, &[]), None);
         }
-        let keys: Vec<u64> = frame.elements.iter().map(|e| e.key).collect();
-        (self.snapshot_as(base_url, None, Form::Html, &keys), Some(frame))
+        let mut keys: Vec<u64> = frame.elements.iter().map(|e| e.key).collect();
+        for scope in transitions {
+            keys.push(scope.root);
+            keys.extend(scope.new.iter().map(|item| item.key));
+        }
+        (self.snapshot_as(base_url, None, Form::Html, &keys), (!frame.elements.is_empty()).then_some(frame))
     }
 
     /// As [`PageDom::render_snapshot`], with the document as a keyed node

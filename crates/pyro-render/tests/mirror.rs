@@ -101,6 +101,73 @@ fn view_transition_collection_bounds_work_before_visiting_children() {
 }
 
 #[test]
+fn view_transition_recycled_document_has_fresh_snapshot_identity() {
+    let mut dom = Dom::new();
+    let old = dom.create_document(pyro_dom::DocumentKind::Html, "about:blank");
+    let nonce = dom.frame_table(old).nonce.clone();
+    dom.set_document_active(old, false).unwrap();
+    assert_eq!(dom.collect_garbage(), 1);
+    let new = dom.create_document(pyro_dom::DocumentKind::Html, "about:blank");
+    assert_eq!(old.index(), new.index());
+    assert_ne!(nonce, dom.frame_table(new).nonce);
+}
+
+#[test]
+fn view_transition_worker_resolves_only_the_snapshot_document_and_generation() {
+    use pyro_dom::{geometry::{TransitionBox, TransitionFrame}, snapshot::render_key};
+    let page = Page::new("<!doctype html><body><b></b></body>");
+    let body = page.find("body");
+    let original = page.find("b");
+    let mut queued = page.snapshot(1, page.tree());
+    let image = TransitionBox { key: render_key(original), name: "item".into(), size: (1.,1.), transform: [1.,0.,0.,1.,0.,0.], ink: [0.,0.,1.,1.], rgba: Some(Arc::new(vec![0;4])) };
+    queued.transition_frames.push(TransitionFrame { document: queued.frames.nonce.clone(), root: render_key(body), old: vec![image.clone()].into(), new: vec![image].into(), samples: Default::default(), reservation: Arc::new(()) });
+    {
+        let mut dom = page.dom.borrow_mut();
+        dom.add_ref(page.doc).unwrap();
+        dom.remove_node(original).unwrap();
+        dom.collect_garbage();
+        let replacement = dom.create_element(page.doc, "b").unwrap();
+        assert_eq!(replacement.index(), original.index());
+        assert_ne!(replacement.generation(), original.generation());
+        dom.append_child(body, replacement).unwrap();
+    }
+    let mut replaced = page.snapshot(1,page.tree());
+    replaced.transition_frames = queued.transition_frames.clone();
+    let next = Page::new("<!doctype html><body><b></b></body>");
+    let mut navigated = next.snapshot(1,next.tree());
+    navigated.transition_frames = queued.transition_frames.clone();
+    let mut worker = Renderer::new();
+    for (snap, counts) in [(&replaced,(1,0)),(&navigated,(0,0)),(&queued,(1,1))] {
+        let stats = paint(&mut worker,snap).timings;
+        assert_eq!((stats.transition_old_images, stats.transition_live_targets), counts);
+    }
+}
+
+#[test]
+fn view_transition_worker_resolves_child_keys_only_in_their_frame() {
+    use blitz_dom::{ns, QualName};
+    use pyro_dom::{geometry::{TransitionBox, TransitionFrame}, snapshot::render_key};
+    let page = Page::new("<!doctype html><body><iframe></iframe></body>");
+    let key = render_key(page.find("iframe"));
+    let mut tree = page.tree();
+    for node in &mut Arc::make_mut(&mut tree).nodes {
+        if node.key != key { continue; }
+        if let TreeKind::Element { attrs, .. } = &mut node.kind {
+            attrs.push((QualName::new(None, ns!(), "data-pyro-n-frame".into()), "n:1:0000000000000001".into()));
+        }
+    }
+    let child = FrameContent { html: format!("<!doctype html><body data-pyro-child-key='{key}'><b data-pyro-child-key='77'></b><b data-pyro-key='88'></b></body>"), frames: Arc::new(FrameTableData { nonce: "child".into(), ..Default::default() }), url: "http://test/child".into(), client: "F#L".into(), version: 1, ..Default::default() };
+    let mut snap = page.snapshot(1,tree);
+    snap.frames = Arc::new(FrameTableData { nonce: "n".into(), entries: [("1".into(), child)].into_iter().collect() });
+    let image = |key| TransitionBox { key, name: "item".into(), size: (1.,1.), transform: [1.,0.,0.,1.,0.,0.], ink: [0.,0.,1.,1.], rgba: None };
+    snap.transition_frames.push(TransitionFrame { document: "child".into(), root: key, new: vec![image(77),image(88)].into(), old: Default::default(), samples: Default::default(), reservation: Arc::new(()) });
+    let mut worker = Renderer::new();
+    assert_eq!(paint(&mut worker,&snap).timings.transition_live_targets,1);
+    snap.transition_frames[0].document = "n".into();
+    assert_eq!(paint(&mut worker,&snap).timings.transition_live_targets,0);
+}
+
+#[test]
 fn view_transition_boxes_cascade_and_charge_created_nodes() {
     use style::properties::{LonghandId, PropertyDeclarationId};
     use style::selector_parser::PseudoElement::*;

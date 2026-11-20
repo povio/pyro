@@ -4204,6 +4204,9 @@ impl Dom {
 
     fn free_slot(&mut self, i: u32, component_root: u32) {
         let owner = self.n(i).owner_doc;
+        if owner == i {
+            self.snapshot_nonces.get_mut().remove(&i);
+        }
         let inert = match &self.n(i).kind {
             NodeKind::Document(d) if d.inert_doc != NIL && d.inert_doc != i => d.inert_doc,
             _ => NIL,
