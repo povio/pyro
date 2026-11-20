@@ -562,7 +562,12 @@ impl BaseDocument {
                 continue;
             }
             let box_parent = crate::layout::scroll_markers::box_parent(&self.nodes, owner);
-            moves.push((owner, context_of(self, box_parent)));
+            // (In the box that clips it before its stacking context, a scroller around it, which
+            // paints its positioned descendants in its clip and under its scrollbars: they and the
+            // boxes it keeps are clipped there; WPT filter-effects `filtered-inline-is-container`
+            // with classic scrollbars.)
+            let target = clip_owner_of(self, box_parent).unwrap_or_else(|| context_of(self, box_parent));
+            moves.push((owner, target));
             moved.insert(owner);
         }
         // The positioned boxes nested in the clip owners that took an escaping box join it there.
