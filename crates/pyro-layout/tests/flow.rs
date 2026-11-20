@@ -4900,6 +4900,19 @@ fn review_misc2_deep_nesting_of_each_algorithm_on_a_browser_thread_stack() {
 }
 
 #[test]
+fn visible_text_overflow_hits_its_owner_without_widening_the_border_box() {
+    for (overflow, hits_text) in [("visible", true), ("hidden", false)] {
+        let document = page(&format!("<body style='margin:0'><div id=leaf style='width:0;white-space:nowrap;overflow:{overflow}'>deep</div>"));
+        let leaf = document.id("leaf");
+        assert_eq!(document.layout.bounding_client_rect(&document.dom, leaf).width, 0.0);
+        for hit in [Layout::element_from_point, Layout::element_from_point_scan, Layout::element_from_point_indexed] {
+            assert_eq!(hit(&document.layout, &document.dom, 5.0, 8.0) == Some(leaf), hits_text, "{overflow}");
+            assert_ne!(hit(&document.layout, &document.dom, 40.0, 8.0), Some(leaf));
+        }
+    }
+}
+
+#[test]
 fn deep_nesting_of_each_algorithm_lays_out_on_any_stack() {
     // Layout grows its stack on demand (blitz-dom `util::ensure_stack`): 5,000 levels of each
     // algorithm lay out on a 256 KB thread, which holds about 100 levels of nested blocks.

@@ -317,7 +317,8 @@ impl Descent<'_> {
             // (`hit_adversarial`'s interleaved-mutations page 26).
             let in_columns = self.columns.contains(&id) || (self.multicol && node.columns_with_axes().is_some());
             let cull = if in_columns { None } else { self.bound(id).map(|(r, _)| r) };
-            (candidate, cull)
+            let may_hit_text = (w == 0.0 || h == 0.0) && (node.flags.is_inline_root() || !node.anonymous_blocks.is_empty());
+            (candidate || (may_hit_text && cull.is_none_or(|r| self.contains_any(&r, shift))), cull)
         } else if is_table_part {
             match self.rows.get(&id).copied() {
                 // Both fixed states: the row's box takes its table's.

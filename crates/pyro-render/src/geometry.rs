@@ -1289,6 +1289,29 @@ pub struct TextWord {
 }
 
 impl Geometry {
+    pub(crate) fn overflowing_text_hits(&self, doc: &BaseDocument, id: NodeId, border: Rect) -> Vec<Rect> {
+        let Some(node) = doc.get_node(id) else { return Vec::new() };
+        if !node.children.iter().any(|&child| doc.get_node(child).is_some_and(|child| child.is_text_node())) {
+            return Vec::new();
+        }
+        let Some(style) = node.primary_styles() else { return Vec::new() };
+        let clips_x = style.clone_overflow_x() != style::values::computed::Overflow::Visible;
+        let clips_y = style.clone_overflow_y() != style::values::computed::Overflow::Visible;
+        if clips_x && clips_y { return Vec::new(); }
+        let mut words = Vec::new();
+        self.root_words(doc, id, &mut words);
+        for &root in &node.anonymous_blocks {
+            self.root_words(doc, root, &mut words);
+        }
+        words.into_iter().filter(|word| doc.get_node(word.node).is_some_and(|text| text.parent == Some(id)))
+            .filter_map(|word| {
+                let mut rect = Rect::new(word.x, word.y, word.x + word.width, word.y + word.height);
+                if clips_x { rect.x0 = rect.x0.max(border.x0); rect.x1 = rect.x1.min(border.x1); }
+                if clips_y { rect.y0 = rect.y0.max(border.y0); rect.y1 = rect.y1.min(border.y1); }
+                (rect.width() > 0.0 && rect.height() > 0.0 && rect.intersect(border) != rect).then_some(rect)
+            }).collect()
+    }
+
     /// Every word laid out in the document's inline formatting contexts, in
     /// layout order.
     pub(crate) fn text_words(&self, doc: &BaseDocument) -> Vec<TextWord> {

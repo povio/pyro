@@ -2320,6 +2320,14 @@ impl Renderer {
         self.geometry.get(&page)?.element_quads(&m.doc, m.node(key)?)
     }
 
+    pub fn overflowing_text_hits(&self, page: u64, key: u64, border: [f64; 4]) -> Vec<[f64; 4]> {
+        let Some(mirror) = self.mirrors.get(&page) else { return Vec::new() };
+        let (Some(geometry), Some(id)) = (self.geometry.get(&page), mirror.node(key)) else { return Vec::new() };
+        let [left, top, width, height] = border;
+        geometry.overflowing_text_hits(&mirror.doc, id, kurbo::Rect::new(left, top, left + width, top + height))
+            .into_iter().map(|rect| [rect.x0, rect.y0, rect.width(), rect.height()]).collect()
+    }
+
     /// Hit regions of a fragmented box in document CSS pixels. Unlike CSSOM border rects,
     /// these only include the part reachable through the owning fragment's hit traversal.
     pub fn element_fragments(&self, page: u64, key: u64) -> Option<Vec<[f64; 4]>> {

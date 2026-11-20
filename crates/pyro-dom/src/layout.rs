@@ -52,6 +52,7 @@ enum ClipEscape {
 /// handlers can mutate the DOM before the next pointer event.
 #[derive(Default)]
 struct HitTestGeometry {
+    text_hits: FxHashMap<NodeId, Rc<[Rect]>>,
     rects: FxHashMap<NodeId, Rect>,
     scroll_offsets: FxHashMap<NodeId, (f64, f64)>,
     has_element_scroll: bool,
@@ -2340,6 +2341,12 @@ impl Layout {
             }
             els.push(el);
             rects.push(r);
+            if r.width == 0.0 || r.height == 0.0 {
+                for &text in &*self.overflowing_text_hits(el, result.boxes[&el].rect, r, &mut geometry) {
+                    els.push(el);
+                    rects.push(text);
+                }
+            }
         }
         let grid = HitGrid::new(&rects);
         HitIndex { result, geometry: RefCell::new(geometry), els, rects, grid }
@@ -2452,6 +2459,17 @@ impl Layout {
         self.hit_select(dom, &result, all.into_iter(), x, y, ignore_x, &mut geometry)
     }
 
+    fn overflowing_text_hits(&self, el: NodeId, border: Rect, client: Rect, geometry: &mut HitTestGeometry) -> Rc<[Rect]> {
+        geometry.text_hits.entry(el).or_insert_with(|| {
+            let pieces = self.external.as_ref().map(|source| source.overflowing_text_hits(
+                crate::snapshot::render_key(el), [border.x, border.y, border.width, border.height],
+            )).unwrap_or_default();
+            pieces.into_iter().map(|[x, y, width, height]| Rect {
+                x: x + (client.x - border.x), y: y + (client.y - border.y), width, height,
+            }).collect()
+        }).clone()
+    }
+
     /// `document.elementFromPoint(x, y)` answered from every box of the
     /// document instead of the engine's candidates: the reference the
     /// descent is checked against (tests).
@@ -2490,7 +2508,9 @@ impl Layout {
             }
             let r = self.hit_test_client_rect(dom, result, el, geometry);
             // (Nor is a box a line clamp discarded: `ExternalBox::hidden`.)
-            if b.hidden || !inside(&r) || !self.is_visible(dom, el) || !self.style.is_hit_testable(dom, el) {
+            let hit = inside(&r) || ((r.width == 0.0 || r.height == 0.0)
+                && self.overflowing_text_hits(el, b.rect, r, geometry).iter().any(inside));
+            if b.hidden || !hit || !self.is_visible(dom, el) || !self.style.is_hit_testable(dom, el) {
                 continue;
             }
             // A box split into fragments (columns) is hit in one of them: its rect is their union.
