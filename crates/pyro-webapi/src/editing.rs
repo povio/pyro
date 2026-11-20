@@ -9,6 +9,7 @@
 //! explicitly, and a boundary node that leaves the document clears the
 //! selection when read.
 
+mod paragraph_join;
 mod whitespace;
 
 use std::rc::Rc;
@@ -722,7 +723,9 @@ pub fn delete(page: &Rc<PageDom>, host: NodeId, backward: bool) {
         let caret = {
             let mut dom = page.dom.borrow_mut();
             let repair_space = start == end && whitespace::exposes_space(page, &dom, host, start, backward);
-            let caret = if start != end {
+            let caret = if let Some(caret) = paragraph_join::at_boundary(page, &mut dom, host, start, end, backward) {
+                caret
+            } else if start != end {
                 delete_range(&mut dom, host, start, end, true)
             } else {
                 delete_char(&mut dom, host, start, backward)
