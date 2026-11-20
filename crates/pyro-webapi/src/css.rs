@@ -725,7 +725,7 @@ impl RuleList {
 enum RuleKind {
     Property(PropertyRule),
     Style { selector: RefCell<String>, block: RefCell<String> },
-    Group { name: String, condition: RefCell<String>, list: RuleList },
+    Group { name: String, condition: RefCell<String>, list: RuleList, bounds: Option<(Option<String>, Option<String>)> },
     Other { rule_type: u16, text: RefCell<String> },
 }
 
@@ -741,6 +741,14 @@ impl RuleNode {
         let identity = IdentityKey(1 << 56, NEXT_RULE.fetch_add(1, Ordering::Relaxed));
         Rc::new_cyclic(|me| {
             let kind = match parsed {
+                ParsedRule::Scope { start, end, rules } => {
+                    let mut parts = Vec::new();
+                    if let Some(start) = &start { parts.push(format!("({start})")); }
+                    if let Some(end) = &end { parts.push(format!("to ({end})")); }
+                    let list = RuleList::default();
+                    list.replace(rules.into_iter().map(|r| RuleNode::new(r, me.clone())).collect());
+                    RuleKind::Group { name: "scope".into(), condition: RefCell::new(parts.join(" ")), list, bounds: Some((start, end)) }
+                }
                 ParsedRule::Property(rule) => RuleKind::Property(rule),
                 ParsedRule::Style { selector, block } => {
                     RuleKind::Style { selector: RefCell::new(selector), block: RefCell::new(block) }
@@ -748,7 +756,7 @@ impl RuleNode {
                 ParsedRule::Group { name, condition, rules } => {
                     let list = RuleList::default();
                     list.replace(rules.into_iter().map(|r| RuleNode::new(r, me.clone())).collect());
-                    RuleKind::Group { name, condition: RefCell::new(condition), list }
+                    RuleKind::Group { name, condition: RefCell::new(condition), list, bounds: None }
                 }
                 ParsedRule::Other { rule_type, text } => RuleKind::Other { rule_type, text: RefCell::new(text) },
             };
@@ -761,7 +769,7 @@ impl RuleNode {
         match &self.kind {
             RuleKind::Property(rule) => rule.text.clone(),
             RuleKind::Style { selector, block } => format!("{} {{{}}}", selector.borrow(), block.borrow()),
-            RuleKind::Group { name, condition, list } => {
+            RuleKind::Group { name, condition, list, .. } => {
                 let body = list.rules.borrow().iter().map(|r| r.source_text()).collect::<Vec<_>>().join("\n");
                 format!("@{name} {} {{\n{body}\n}}", condition.borrow())
             }
@@ -781,9 +789,9 @@ impl RuleNode {
                     format!("{} {{ {decls} }}", selector.borrow())
                 }
             }
-            RuleKind::Group { name, condition, list } => {
+            RuleKind::Group { name, condition, list, .. } => {
                 let prelude = condition.borrow();
-                let mut out = if name == "layer" && prelude.is_empty() {
+                let mut out = if matches!(name.as_str(), "layer" | "scope") && prelude.is_empty() {
                     format!("@{name} {{\n")
                 } else {
                     format!("@{name} {prelude} {{\n")
@@ -874,7 +882,8 @@ fn insert_into(
     let mut scoped = namespaces.clone();
     // CSSOM "parse a CSS rule": one rule, and nothing after it but whitespace.
     let invalid = || JsError::dom("SyntaxError", format!("Failed to parse the rule '{rule}'."));
-    let mut parsed = vec![pyro_dom::cssom::parse_one_rule(rule, &mut scoped).map_err(|_| invalid())?];
+    let in_scope = std::iter::successors(parent.upgrade(), |p| p.parent.upgrade()).any(|p| matches!(&p.kind, RuleKind::Group { bounds: Some(_), .. }));
+    let mut parsed = vec![pyro_dom::cssom::parse_one_rule_in_scope(rule, &mut scoped, in_scope).map_err(|_| invalid())?];
     // CSSOM "insert a CSS rule": past the end is an IndexSizeError; @import and
     // @namespace only belong at the top of a sheet.
     if index > list.rules.borrow().len() {
@@ -999,6 +1008,7 @@ fn rule_wrapper<'s>(s: &Scope<'s>, rule: &Rc<RuleNode>, owner: &SheetOwner) -> J
         RuleKind::Group { name, .. } if name == "supports" => s.wrap::<CssSupportsRule>(data, key),
         RuleKind::Group { name, .. } if name == "layer" => s.wrap::<CssLayerBlockRule>(data, key),
         RuleKind::Group { name, .. } if name == "container" => s.wrap::<CssContainerRule>(data, key),
+        RuleKind::Group { bounds: Some(_), .. } => s.wrap::<CssScopeRule>(data, key),
         RuleKind::Group { .. } => s.wrap::<CssConditionRule>(data, key),
         RuleKind::Other { rule_type: COUNTER_STYLE_RULE, .. } => s.wrap::<CssCounterStyleRule>(data, key),
         RuleKind::Other { rule_type: MARGIN_RULE, .. } => s.wrap::<CssMarginRule>(data, key),
@@ -1015,7 +1025,6 @@ fn rule_wrapper<'s>(s: &Scope<'s>, rule: &Rc<RuleNode>, owner: &SheetOwner) -> J
                 "layer" => s.wrap::<CssLayerBlockRule>(data, key),
                 "font-palette-values" => s.wrap::<CssFontPaletteValuesRule>(data, key),
                 "starting-style" => s.wrap::<CssStartingStyleRule>(data, key),
-                "scope" => s.wrap::<CssScopeRule>(data, key),
                 "position-try" => s.wrap::<CssPositionTryRule>(data, key),
                 "view-transition" => s.wrap::<CssViewTransitionRule>(data, key),
                 _ => s.wrap::<CssRule>(data, key),
@@ -1684,7 +1693,16 @@ rule_class!(CssFontPaletteValuesRule, "CSSFontPaletteValuesRule", CssRule, |def|
     def.getter("name", |s, r| Ok(s.string(&rule_prelude(r))));
 });
 rule_class!(CssStartingStyleRule, "CSSStartingStyleRule", CssGroupRule);
-rule_class!(CssScopeRule, "CSSScopeRule", CssGroupRule);
+rule_class!(CssScopeRule, "CSSScopeRule", CssGroupRule, |def| {
+    def.getter("start", |s, r| match &r.node()?.kind {
+        RuleKind::Group { bounds: Some((Some(start), _)), .. } => Ok(s.string(start)),
+        _ => Ok(s.null()),
+    });
+    def.getter("end", |s, r| match &r.node()?.kind {
+        RuleKind::Group { bounds: Some((_, Some(end))), .. } => Ok(s.string(end)),
+        _ => Ok(s.null()),
+    });
+});
 rule_class!(CssPositionTryRule, "CSSPositionTryRule", CssRule, |def| {
     def.getter("name", |s, r| {
         let text = rule_text(r);
