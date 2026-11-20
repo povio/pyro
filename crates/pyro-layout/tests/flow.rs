@@ -2744,6 +2744,15 @@ fn inline_custom_properties_resolve_through_var() {
 }
 
 #[test]
+fn audio_controls_have_independent_intrinsic_dimensions() {
+    let page = page("<!doctype html><audio id=a controls></audio><audio id=b controls style='width:120px'></audio><audio id=c></audio>");
+    for (id, expected) in [("a", (300.0, 54.0)), ("b", (120.0, 54.0)), ("c", (0.0, 0.0))] {
+        let rect = page.layout.bounding_client_rect(&page.dom, page.id(id));
+        assert_eq!((rect.width, rect.height), expected);
+    }
+}
+
+#[test]
 fn initial_root_snap_scrolls_only_the_viewport() {
     let mut page = page("<!doctype html><style>html{overflow:scroll;scroll-snap-type:x mandatory}body{margin:0;width:3000px}#target{margin-left:200px;scroll-snap-align:start}</style><div id=target>snap</div>");
     let target = page.id("target");
