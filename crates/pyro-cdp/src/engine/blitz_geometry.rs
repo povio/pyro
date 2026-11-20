@@ -25,14 +25,14 @@ use pyro_render::Fetcher;
 
 pub(crate) use pyro_layout::{set_fork_template, take_stats};
 
-/// Network fetches for layouts still in flight.
-static IN_FLIGHT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// Network fetches for layouts still in flight, by the document whose geometry made them (its
+/// client): a PDF waits for its own document's, never another page's.
+static IN_FLIGHT: std::sync::Mutex<Option<std::collections::HashMap<String, usize>>> = std::sync::Mutex::new(None);
 
-/// A `printToPDF` waits for the fetches in flight: the last one to finish
-/// calls [`PDF_WAKER`] (from the network thread).
-static PDF_WAITING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// A `printToPDF` waits for its document's fetches in flight: the last one to finish calls the
+/// wakers waiting for that document (from the network thread). Every waiting PDF keeps its own.
 type Waker = Box<dyn FnOnce() + Send>;
-static PDF_WAKER: std::sync::Mutex<Option<Waker>> = std::sync::Mutex::new(None);
+static PDF_WAKERS: std::sync::Mutex<Vec<(String, Waker)>> = std::sync::Mutex::new(Vec::new());
 
 /// Makes this thread's new documents take their geometry from Blitz, each
 /// loading its sub-resources through its own network.
@@ -57,15 +57,30 @@ struct LocalFiles {
 struct InFlight {
     bodies: Arc<SubresourceBodies>,
     key: LayoutBodyKey,
+    /// The document whose geometry made it (counted under it).
+    owner: String,
 }
 
 impl Drop for InFlight {
     fn drop(&mut self) {
         // No answer (the document went first): not in flight. (A failure is recorded below.)
         self.bodies.abandon(&self.key);
-        let last = IN_FLIGHT.fetch_sub(1, std::sync::atomic::Ordering::AcqRel) == 1;
-        if last && PDF_WAITING.load(std::sync::atomic::Ordering::Acquire) {
-            wake_pdf();
+        let last = {
+            let mut counts = IN_FLIGHT.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let counts = counts.get_or_insert_with(Default::default);
+            match counts.get_mut(&self.owner) {
+                Some(n) if *n > 1 => {
+                    *n -= 1;
+                    false
+                }
+                _ => {
+                    counts.remove(&self.owner);
+                    true
+                }
+            }
+        };
+        if last {
+            wake_pdfs(&self.owner);
         }
     }
 }
@@ -138,8 +153,12 @@ impl LocalFiles {
             // In flight already (this document asked before).
             return None;
         }
-        IN_FLIGHT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let fetch = InFlight { bodies, key };
+        let owner = loader.document();
+        {
+            let mut counts = IN_FLIGHT.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            *counts.get_or_insert_with(Default::default).entry(owner.clone()).or_insert(0) += 1;
+        }
+        let fetch = InFlight { bodies, key, owner };
         loader.load(
             &document,
             url.as_str().to_owned(),
@@ -252,29 +271,30 @@ fn body_only(
     Box::new(move |result| done(result.map(|fetched| fetched.body)))
 }
 
-fn wake_pdf() {
-    PDF_WAITING.store(false, std::sync::atomic::Ordering::Release);
-    let waker = PDF_WAKER.lock().ok().and_then(|mut w| w.take());
-    if let Some(wake) = waker {
+/// Calls the wakers waiting for `document`'s fetches.
+fn wake_pdfs(document: &str) {
+    let woken: Vec<Waker> = {
+        let mut wakers = PDF_WAKERS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let (woken, kept) = std::mem::take(&mut *wakers).into_iter().partition(|(d, _)| d == document);
+        *wakers = kept;
+        woken.into_iter().map(|(_, wake)| wake).collect()
+    };
+    for wake in woken {
         wake();
     }
 }
 
-/// Whether layout sub-resources are still being fetched (a PDF printed now
+/// Whether `document`'s layout sub-resources are still being fetched (a PDF of it printed now
 /// would lack them).
-pub(crate) fn fetching() -> bool {
-    IN_FLIGHT.load(std::sync::atomic::Ordering::Acquire) > 0
+pub(crate) fn fetching(document: &str) -> bool {
+    IN_FLIGHT.lock().unwrap_or_else(std::sync::PoisonError::into_inner).as_ref().is_some_and(|c| c.contains_key(document))
 }
 
-/// Calls `wake` once no layout fetch is in flight (at once if none is),
-/// replacing an earlier waker.
-pub(crate) fn wake_when_fetched(wake: Waker) {
-    if let Ok(mut w) = PDF_WAKER.lock() {
-        *w = Some(wake);
-    }
-    PDF_WAITING.store(true, std::sync::atomic::Ordering::Release);
-    if !fetching() {
-        wake_pdf();
+/// Calls `wake` once no layout fetch of `document` is in flight (at once if none is).
+pub(crate) fn wake_when_fetched(document: &str, wake: Waker) {
+    PDF_WAKERS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push((document.to_owned(), wake));
+    if !fetching(document) {
+        wake_pdfs(document);
     }
 }
 

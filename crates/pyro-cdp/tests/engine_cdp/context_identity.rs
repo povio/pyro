@@ -183,12 +183,13 @@ fn layout_and_render_loads_go_through_the_context_proxy_with_its_user_agent() {
     let want: Vec<String> = ENGINE_LOADS.iter().chain(&PAGE_LOADS).map(|name| format!("/id/{name}")).collect();
     lay_out_until(&mut h, &session, &proxied, &want);
 
-    // A screenshot: the render thread loads the font it paints with again
-    // (the CSS images the document's layout fetched it paints as they are).
-    let before = count(&proxied, "/id/font.ttf");
+    // A screenshot paints what the document's layout fetched (images, the
+    // font, the imported sheet) as it is: it loads none of it again.
+    let before: Vec<usize> = ENGINE_LOADS.iter().map(|name| count(&proxied, &format!("/id/{name}"))).collect();
     let r = h.call(Some(&session), "Page.captureScreenshot", json!({}));
     assert!(r["result"]["data"].as_str().is_some_and(|d| !d.is_empty()), "{r}");
-    assert!(count(&proxied, "/id/font.ttf") > before, "the screenshot loaded its own: {:?}", paths(&proxied, "/id/"));
+    let after: Vec<usize> = ENGINE_LOADS.iter().map(|name| count(&proxied, &format!("/id/{name}"))).collect();
+    assert_eq!(after, before, "the screenshot reused the document's own: {:?}", paths(&proxied, "/id/"));
 
     // A PDF of a document nothing laid out yet: its layout loads what it
     // prints, and the PDF waits for them.

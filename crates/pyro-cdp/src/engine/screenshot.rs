@@ -315,16 +315,16 @@ impl PageFetcher {
                 done(Err("the document is no longer its frame's".into()));
                 return;
             }
-            // pyro: an image the document's own layout has fetched (its load waited for it) is used
-            // as it is, with the final URL and tainting stored with it, as Chrome paints what the
-            // document loaded.
-            // pyro: one failure state: an image the document's layout failed to fetch is a failure
-            // here too (not fetched again and painted though the document has none).
-            if kind == ResourceKind::Image && b.layout_bodies(page).is_some_and(|bodies| bodies.has_failed(&key)) {
+            // pyro: what the document's own layout fetched (an image, a font, an imported sheet:
+            // the same request, `layout_key`) is used as it is, with the final URL, tainting and
+            // policy stored with it, as Chrome paints what the document loaded (settle stage B).
+            // One failure state: what the document's layout failed to fetch is a failure here too
+            // (not fetched again and painted though the document has none).
+            if b.layout_bodies(page).is_some_and(|bodies| bodies.has_failed(&key)) {
                 done(Err("the document's own fetch of it failed".into()));
                 return;
             }
-            if kind == ResourceKind::Image {
+            {
                 if let Some(body) = b.layout_bodies(page).and_then(|bodies| bodies.get(&key)) {
                     let opaque = !cors && body.opaque;
                     done(Ok(pyro_render::Fetched {
@@ -813,7 +813,7 @@ impl EngineHost {
                 stream,
             };
             let wait = PdfWait { capture, pid, opts, deadline: started + PDF_FETCH_WAIT };
-            if super::blitz_geometry::fetching() {
+            if super::blitz_geometry::fetching(&self.pdf_document(pid)) {
                 self.park_pdf(wait);
                 return Ok(None);
             }
@@ -838,8 +838,9 @@ impl EngineHost {
         let at_deadline = deliver.clone();
         let deadline = wait.deadline;
         let first = self.renders.pdf_waits.is_empty();
+        let document = self.pdf_document(wait.pid);
         self.renders.pdf_waits.push(wait);
-        super::blitz_geometry::wake_when_fetched(Box::new(move || deliver(Finished::Fetched)));
+        super::blitz_geometry::wake_when_fetched(&document, Box::new(move || deliver(Finished::Fetched)));
         if first {
             // The deadline of the first parked wait; later ones get theirs
             // from a waker that fires before, or this one.
@@ -854,11 +855,10 @@ impl EngineHost {
     /// passed; the rest keep waiting.
     fn resume_pdfs(&mut self) {
         let now = Instant::now();
-        let fetching = super::blitz_geometry::fetching();
         let waits = std::mem::take(&mut self.renders.pdf_waits);
         let mut parked = Vec::new();
         for wait in waits {
-            if fetching && now < wait.deadline {
+            if super::blitz_geometry::fetching(&self.pdf_document(wait.pid)) && now < wait.deadline {
                 parked.push(wait);
                 continue;
             }
@@ -870,6 +870,11 @@ impl EngineHost {
         for wait in parked {
             self.park_pdf(wait);
         }
+    }
+
+    /// pyro: the document a PDF of page `pid` waits for the layout fetches of (its client).
+    fn pdf_document(&self, pid: PageId) -> String {
+        self.thread.browser.page(pid).map(|p| pyro_browser::document_client(&p.main_frame)).unwrap_or_default()
     }
 
     /// Paints `wait`'s page here and has the render thread write the PDF.
