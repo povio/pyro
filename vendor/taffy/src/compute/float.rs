@@ -677,8 +677,11 @@ impl FloatContext {
 
             let start_y = last_y_end.max(start_y);
 
-            let mut insets = containing_block_insets;
-            insets[direction] += floated_box.width;
+            // pyro: the float occupies its own side only: its containing block's inset on the other
+            // side is no float there (a float of a narrower block made the other side look
+            // occupied to a later, wider block's floats; WPT css-ui `outline-028`).
+            let mut insets = FloatInsets::ZERO;
+            insets[direction] = containing_block_insets[direction] + floated_box.width;
             let mut has_float = [false; 2];
             has_float[slot] = true;
             let mut has_wide_float = [false; 2];
@@ -734,7 +737,8 @@ impl FloatContext {
                 let last_y_end = self.segments[self.segments.len() - 1].y.end;
                 let end_y = start_y + floated_box.height;
                 if end_y > last_y_end {
-                    let insets = containing_block_insets;
+                    // (Its own side set below, with the other segments it spans.)
+                    let insets = FloatInsets::ZERO;
                     self.segments.push(Segment {
                         y: last_y_end..end_y,
                         insets,
