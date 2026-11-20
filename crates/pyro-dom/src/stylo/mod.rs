@@ -136,7 +136,10 @@ pub fn serialize(style: &ComputedValues, name: &str) -> Option<String> {
             // The value all its longhands share...
             let values: Vec<(&str, String)> = shorthand
                 .longhands()
-                .map(|l| (l.name(), style.computed_value_to_string(PropertyDeclarationId::Longhand(l))))
+                .map(|longhand| {
+                    let value = style.computed_value_to_string(PropertyDeclarationId::Longhand(longhand));
+                    (longhand.name(), resolved_alignment(longhand.name(), value))
+                })
                 .collect();
             if values.iter().all(|(_, v)| *v == values[0].1) {
                 return values.into_iter().next().map(|(_, v)| v);
@@ -173,7 +176,7 @@ pub fn serialize(style: &ComputedValues, name: &str) -> Option<String> {
                     return Some(out);
                 }
             }
-            let value = style.computed_value_to_string(declaration);
+            let value = resolved_alignment(name, style.computed_value_to_string(declaration));
             // Gecko's prefixed keywords, as Chrome spells them.
             Some(match value.strip_prefix("-moz-") {
                 Some(rest @ ("center" | "left" | "right")) if name.eq_ignore_ascii_case("text-align") => {
@@ -182,6 +185,16 @@ pub fn serialize(style: &ComputedValues, name: &str) -> Option<String> {
                 _ => value,
             })
         }
+    }
+}
+
+fn resolved_alignment(name: &str, value: String) -> String {
+    if matches!(name, "align-items" | "align-content" | "align-self" | "justify-items" | "justify-content" | "justify-self")
+        && value.contains("flex-")
+    {
+        value.replace("flex-start", "flow-start").replace("flex-end", "flow-end")
+    } else {
+        value
     }
 }
 
