@@ -736,7 +736,8 @@ impl RuleNode {
                 }
             }
             RuleKind::Group { name, condition, list } => {
-                let mut out = format!("@{name} {} {{\n", condition.borrow());
+                let prelude = condition.borrow();
+                let mut out = if prelude.is_empty() { format!("@{name} {{\n") } else { format!("@{name} {prelude} {{\n") };
                 for rule in list.rules.borrow().iter() {
                     out.push_str("  ");
                     out.push_str(&rule.css_text());
@@ -945,6 +946,7 @@ fn rule_wrapper<'s>(s: &Scope<'s>, rule: &Rc<RuleNode>, owner: &SheetOwner) -> J
         RuleKind::Style { .. } => s.wrap::<CssStyleRule>(data, key),
         RuleKind::Group { name, .. } if name == "media" => s.wrap::<CssMediaRule>(data, key),
         RuleKind::Group { name, .. } if name == "supports" => s.wrap::<CssSupportsRule>(data, key),
+        RuleKind::Group { name, .. } if name == "layer" => s.wrap::<CssLayerBlockRule>(data, key),
         RuleKind::Group { .. } => s.wrap::<CssConditionRule>(data, key),
         RuleKind::Other { rule_type: COUNTER_STYLE_RULE, .. } => s.wrap::<CssCounterStyleRule>(data, key),
         RuleKind::Other { rule_type: MARGIN_RULE, .. } => s.wrap::<CssMarginRule>(data, key),
@@ -1059,7 +1061,8 @@ fn define_rule<C: JsClass<Data = RuleData>>(def: &mut ClassDef<C>) {
         Ok(s.number(match &r.node()?.kind {
             RuleKind::Style { .. } => 1.0,
             RuleKind::Group { name, .. } if name == "media" => 4.0,
-            RuleKind::Group { .. } => 12.0,
+            RuleKind::Group { name, .. } if name == "supports" => 12.0,
+            RuleKind::Group { .. } => 0.0,
             RuleKind::Other { rule_type, .. } => f64::from(*rule_type),
         }))
     });
@@ -1144,7 +1147,6 @@ impl JsClass for CssGroupRule {
     type Data = RuleData;
     type Parent = CssRule;
     fn define(def: &mut ClassDef<Self>) {
-        // A grouping rule kept as text (`@page`, `@layer` blocks) lists no child rules.
         def.getter("cssRules", |s, r| {
             r.owner.rules()?;
             rule_list(s, r.node()?.identity, &r.owner, Some(r.node()?.clone()))
@@ -1580,7 +1582,10 @@ rule_class!(CssNamespaceRule, "CSSNamespaceRule", CssRule, |def| {
 });
 rule_class!(CssFontFeatureValuesRule, "CSSFontFeatureValuesRule", CssRule);
 rule_class!(CssLayerBlockRule, "CSSLayerBlockRule", CssGroupRule, |def| {
-    def.getter("name", |s, r| Ok(s.string(&rule_prelude(r))));
+    def.getter("name", |s, r| match &r.node()?.kind {
+        RuleKind::Group { condition, .. } => Ok(s.string(&condition.borrow())),
+        _ => Ok(s.string("")),
+    });
 });
 rule_class!(CssLayerStatementRule, "CSSLayerStatementRule", CssRule, |def| {
     def.getter("nameList", |s, r| {

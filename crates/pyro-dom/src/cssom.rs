@@ -236,6 +236,30 @@ fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces) ->
         return Some(ParsedRule::Group { name: lower, condition, rules: rules? });
     }
     let (prelude, block) = parse_prelude_and_block(p, start, raw_block);
+    if lower == "layer" {
+        use style::parser::Parse;
+        use style::stylesheets::{layer_rule::LayerName, CssRuleType, Origin, UrlExtraData};
+        use style_traits::ToCss;
+
+        let url = UrlExtraData(style::servo_arc::Arc::new(url::Url::parse("about:blank").ok()?));
+        let context = style::parser::ParserContext::new(
+            Origin::Author, &url, Some(CssRuleType::LayerBlock), style_traits::ParsingMode::DEFAULT,
+            style::context::QuirksMode::NoQuirks, Default::default(), None, None, Default::default(),
+        );
+        let mut parser = Parser::new(&prelude);
+        if let Some(block) = block {
+            let condition = if parser.is_exhausted() {
+                String::new()
+            } else {
+                parser.parse_entirely(|p| LayerName::parse(&context, p)).ok()?.to_css_string()
+            };
+            let rules = parse_list(&mut Parser::new(&block), &mut namespaces.clone(), false);
+            return Some(ParsedRule::Group { name: lower, condition, rules });
+        }
+        let names = parser.parse_comma_separated(|p| LayerName::parse(&context, p)).ok()?;
+        let names = names.iter().map(ToCss::to_css_string).collect::<Vec<_>>().join(", ");
+        return Some(ParsedRule::Other { rule_type: 0, text: format!("@layer {names};") });
+    }
     if matches!(lower.as_str(), "keyframes" | "-webkit-keyframes") {
         use style::parser::Parse;
         use style::stylesheets::{CssRuleType, Origin, UrlExtraData};
@@ -275,7 +299,7 @@ fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces) ->
         "namespace" => 10,
         "counter-style" => 11,
         "font-feature-values" => 14,
-        "layer" | "container" | "property" | "font-palette-values" | "starting-style" | "scope"
+        "container" | "property" | "font-palette-values" | "starting-style" | "scope"
         | "view-transition" => 0,
         _ => return None,
     };
