@@ -892,6 +892,7 @@ impl selectors::Element for BlitzNode<'_> {
             NonTSPseudoClass::ReadWrite => self.element_state().contains(ElementState::READWRITE),
             NonTSPseudoClass::ReadOnly => self.element_state().contains(ElementState::READONLY),
             NonTSPseudoClass::ServoNonZeroBorder => false,
+            NonTSPseudoClass::ScrollbarVertical | NonTSPseudoClass::ScrollbarHorizontal => false,
             // pyro: the embedder's indicated element (`BaseDocument::set_url_target`).
             NonTSPseudoClass::Target => self.element_state().contains(ElementState::URLTARGET),
             // pyro: the active scroll marker of its group (`layout::scroll_markers`).

@@ -61,6 +61,25 @@ pub struct ClassicScrollbars {
 }
 
 impl Node {
+    pub(crate) fn custom_scrollbar_size(&self) -> Option<taffy::Size<f32>> {
+        use style::values::computed::{Display, Size};
+        if !self.tree().classic_scrollbars {
+            return None;
+        }
+        let data = self.try_stylo_element_data()?.get()?;
+        let pseudo = data.styles.pseudos.get(&style::selector_parser::PseudoElement::WebkitScrollbar)?;
+        if data.styles.get_primary()?.clone_scrollbar_width() != ScrollbarWidth::Auto {
+            return None;
+        }
+        let length = |value: &Size| {
+            if pseudo.clone_display() == Display::None { return 0.0; }
+            if let Size::LengthPercentage(value) = value && let Some(length) = value.0.to_length() {
+                return length.px();
+            }
+            stylo_taffy::scrollbars::CLASSIC_THICKNESS
+        };
+        Some(taffy::Size { width: length(&pseudo.get_position().width), height: length(&pseudo.get_position().height) })
+    }
     /// pyro: the box's classic scrollbars, when the process has classic scrollbars
     /// (`stylo_taffy::scrollbars`) and the box has any gutter; as layout reserved them
     /// (`TaffyStyloStyle::scrollbar_gutter`).
@@ -75,7 +94,10 @@ impl Node {
         let shows = |overflow: Overflow, auto: bool| overflow == Overflow::Scroll || (overflow == Overflow::Auto && auto);
         Some(ClassicScrollbars {
             gutters,
-            shown: taffy::Point { x: shows(overflow.x, auto_shows.x), y: shows(overflow.y, auto_shows.y) },
+            shown: taffy::Point {
+                x: inputs.thickness.height > 0.0 && shows(overflow.x, auto_shows.x),
+                y: inputs.thickness.width > 0.0 && shows(overflow.y, auto_shows.y),
+            },
             vertical_on_left: inputs.rtl && !inputs.vertical,
         })
     }
@@ -127,7 +149,7 @@ impl Node {
         };
         let wm = style.writing_mode;
         let inputs = GutterInputs {
-            thickness,
+            thickness: self.custom_scrollbar_size().unwrap_or(taffy::Size { width: thickness, height: thickness }),
             overflow,
             auto_shows,
             stable: box_styles.scrollbar_gutter.contains(ScrollbarGutter::STABLE),

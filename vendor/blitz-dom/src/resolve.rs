@@ -2310,7 +2310,7 @@ impl BaseDocument {
     /// pyro: classic scrollbars: sets `viewport_unit_inset` from the root's style (the gutters that
     /// show whatever the document's size); whether it changed (queued as a device change).
     fn update_viewport_unit_inset(&mut self) -> bool {
-        let inset = if self.nodes.classic_scrollbars {
+        let inset = if self.nodes.classic_scrollbars && self.try_root_element().is_none_or(|root| root.custom_scrollbar_size().is_none()) {
             let g = self.viewport_scrollbars_for(taffy::Point { x: false, y: false }).gutters;
             (g.left + g.right, g.top + g.bottom)
         } else {
@@ -2343,6 +2343,7 @@ impl BaseDocument {
             y: overflow.y == Overflow::Scroll || (overflow.y == Overflow::Auto && shown.y),
         };
         let gutter = html.get_box().scrollbar_gutter;
+        let thickness = self.root_element().custom_scrollbar_size().unwrap_or(taffy::Size { width: thickness, height: thickness });
         let inputs = stylo_taffy::scrollbars::GutterInputs {
             thickness,
             overflow,
@@ -2353,7 +2354,7 @@ impl BaseDocument {
             // The viewport's vertical scrollbar is on the right whatever the direction (Chrome).
             rtl: false,
         };
-        let shown = if thickness > 0.0 { shown } else { taffy::Point { x: false, y: false } };
+        let shown = taffy::Point { x: shown.x && thickness.height > 0.0, y: shown.y && thickness.width > 0.0 };
         crate::ViewportScrollbars { gutters: inputs.gutters().edges, shown, thickness }
     }
 

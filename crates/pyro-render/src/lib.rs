@@ -2242,8 +2242,7 @@ impl Renderer {
     pub fn viewport_scrollbar_sizes(&self, page: u64) -> (f64, f64) {
         let Some(m) = self.mirrors.get(&page) else { return (0.0, 0.0) };
         let bars = m.doc.viewport_scrollbars;
-        let size = |shown: bool| if shown { bars.thickness as f64 } else { 0.0 };
-        (size(bars.shown.y), size(bars.shown.x))
+        (if bars.shown.y { bars.thickness.width.into() } else { 0.0 }, if bars.shown.x { bars.thickness.height.into() } else { 0.0 })
     }
 
     /// pyro: `page`'s viewport's classic scrollbar gutters (left, top, right, bottom; CSS px), as
@@ -2259,9 +2258,8 @@ impl Renderer {
         let m = self.mirrors.get(&page)?;
         let doc = &m.doc;
         // pyro: less the viewport's shown classic scrollbars (Chrome's root `scrollWidth`).
-        let bars = doc.viewport_scrollbars;
-        let bar = |shown: bool| if shown { bars.thickness as f64 } else { 0.0 };
-        let (vw, vh) = (m.viewport.0 as f64 - bar(bars.shown.y), m.viewport.1 as f64 - bar(bars.shown.x));
+        let (width, height) = self.viewport_scrollbar_sizes(page);
+        let (vw, vh) = (m.viewport.0 as f64 - width, m.viewport.1 as f64 - height);
         // (`BaseDocument::document_scroll_size`, which its viewport's scroll timelines use too.)
         Some(doc.document_scroll_size((vw, vh)))
     }

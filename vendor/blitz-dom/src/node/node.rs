@@ -2225,12 +2225,14 @@ impl Node {
             // Own-layout_wm by default: the node's own algorithm reads its style in its own axes
             let layout_wm = styles.writing_mode;
             let mut style = stylo_taffy::TaffyStyloStyle::new_in(styles, flags, layout_wm);
+            style.custom_scrollbars = self.custom_scrollbar_size();
             style.natural_ratio = natural_ratio;
             style
         }
         #[cfg(not(feature = "writing-mode"))]
         {
             let mut style = stylo_taffy::TaffyStyloStyle::new(styles, flags);
+            style.custom_scrollbars = self.custom_scrollbar_size();
             style.natural_ratio = natural_ratio;
             style
         }

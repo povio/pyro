@@ -127,6 +127,16 @@ fn the_root_gutters_shrink_the_initial_containing_block_and_viewport_units() {
 }
 
 #[test]
+fn custom_scrollbars_use_their_own_sizes_without_reducing_viewport_units() {
+    let document = doc("<style>html{overflow:scroll} html::-webkit-scrollbar{width:300px;height:8px} section{width:100px;height:100px;overflow:scroll} section::-webkit-scrollbar{width:0;height:12px} #hidden::-webkit-scrollbar{display:none}</style><div id=wide style='width:100vw'></div><section id=s></section><section id=hidden></section>", true);
+    let gutters = document.viewport_scrollbars.gutters;
+    assert_eq!((gutters.right, gutters.bottom), (300.0, 8.0));
+    assert_eq!(node(&document, "#wide").final_layout().size.width, 800.0);
+    assert_eq!(client(&document, "#s"), (100.0, 88.0));
+    assert_eq!(client(&document, "#hidden"), (100.0, 100.0));
+}
+
+#[test]
 fn an_overflowing_document_shows_the_viewport_scrollbar() {
     let d = doc("<div style='height:2000px'></div>", true);
     assert!(d.viewport_scrollbars.shown.y);

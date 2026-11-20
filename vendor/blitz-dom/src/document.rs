@@ -5713,7 +5713,7 @@ pub struct ViewportScrollbars {
     /// with the document overflowing); a `scrollbar-gutter: stable` gutter alone shows none.
     pub shown: taffy::Point<bool>,
     /// The thickness a shown scrollbar has.
-    pub thickness: f32,
+    pub thickness: taffy::Size<f32>,
 }
 
 impl ViewportScrollbars {

@@ -511,7 +511,8 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         scroll: blitz_dom::Point<f64>,
     ) {
         let s = self.scale;
-        let thickness = bars.thickness as f64 * s;
+        let width = f64::from(bars.thickness.width) * s;
+        let height = f64::from(bars.thickness.height) * s;
         let Some(root) = self.root_element_id.and_then(|id| self.dom.get_node(id)) else { return };
         let colors = ClassicScrollbarColors::of(root);
         // The document's extent (CSS px): the root's margin box and its scrollable overflow as
@@ -540,17 +541,17 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         let (port_w, port_h) = (port.width() / s, port.height() / s);
         let port_origin = ((port.x0 - origin.x) / s, (port.y0 - origin.y) / s);
         if bars.shown.y {
-            let track = Rect::new(port.x1, port.y0, port.x1 + thickness, port.y1);
+            let track = Rect::new(port.x1, port.y0, port.x1 + width, port.y1);
             let content = (doc_height - port_origin.1).max(port_h);
             paint_classic_scrollbar(scene, colors, Affine::IDENTITY, track, true, port_h, content, scroll.y, s);
         }
         if bars.shown.x {
-            let track = Rect::new(port.x0, port.y1, port.x1, port.y1 + thickness);
+            let track = Rect::new(port.x0, port.y1, port.x1, port.y1 + height);
             let content = (doc_width - doc_left - port_origin.0).max(port_w);
             paint_classic_scrollbar(scene, colors, Affine::IDENTITY, track, false, port_w, content, scroll.x - doc_left, s);
         }
         if bars.shown.x && bars.shown.y {
-            let corner = Rect::new(port.x1, port.y1, port.x1 + thickness, port.y1 + thickness);
+            let corner = Rect::new(port.x1, port.y1, port.x1 + width, port.y1 + height);
             scene.fill(Fill::NonZero, Affine::IDENTITY, colors.corner, None, &corner);
         }
     }

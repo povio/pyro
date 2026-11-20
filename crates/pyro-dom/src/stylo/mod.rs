@@ -337,6 +337,13 @@ pub fn parse_pseudo_arg(text: &str) -> PseudoArg {
         "placeholder" if double => PseudoElement::Placeholder,
         "backdrop" if double => PseudoElement::Backdrop,
         "file-selector-button" if double => PseudoElement::FileSelectorButton,
+        "-webkit-scrollbar" if double => PseudoElement::WebkitScrollbar,
+        "-webkit-scrollbar-thumb" if double => PseudoElement::WebkitScrollbarThumb,
+        "-webkit-scrollbar-track" if double => PseudoElement::WebkitScrollbarTrack,
+        "-webkit-scrollbar-track-piece" if double => PseudoElement::WebkitScrollbarTrackPiece,
+        "-webkit-scrollbar-button" if double => PseudoElement::WebkitScrollbarButton,
+        "-webkit-scrollbar-corner" if double => PseudoElement::WebkitScrollbarCorner,
+        "-webkit-resizer" if double => PseudoElement::WebkitResizer,
         _ => return PseudoArg::Invalid,
     };
     PseudoArg::Pseudo(pseudo)

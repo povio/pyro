@@ -44,6 +44,7 @@ pub enum PseudoElement {
     // APPLIES_TO_PLACEHOLDER properties expect!
     FirstLetter,
     FirstLine,
+    WebkitScrollbar,
 
     // Non-eager pseudos.
     Backdrop,
@@ -75,6 +76,12 @@ pub enum PseudoElement {
     PickerSelect,
     PickerIcon,
     WebkitSliderThumb,
+    WebkitScrollbarThumb,
+    WebkitScrollbarTrack,
+    WebkitScrollbarTrackPiece,
+    WebkitScrollbarButton,
+    WebkitScrollbarCorner,
+    WebkitResizer,
 
     // Implemented pseudos. These pseudo elements are representing the
     // elements within an UA shadow DOM, and matching the elements with
@@ -169,6 +176,13 @@ impl ToCss for PseudoElement {
             PickerSelect => "::picker(select)",
             PickerIcon => "::picker-icon",
             WebkitSliderThumb => "::-webkit-slider-thumb",
+            WebkitScrollbar => "::-webkit-scrollbar",
+            WebkitScrollbarThumb => "::-webkit-scrollbar-thumb",
+            WebkitScrollbarTrack => "::-webkit-scrollbar-track",
+            WebkitScrollbarTrackPiece => "::-webkit-scrollbar-track-piece",
+            WebkitScrollbarButton => "::-webkit-scrollbar-button",
+            WebkitScrollbarCorner => "::-webkit-scrollbar-corner",
+            WebkitResizer => "::-webkit-resizer",
             ColorSwatch => "::color-swatch",
             FileSelectorButton => "::file-selector-button",
             Placeholder => "::placeholder",
@@ -210,7 +224,7 @@ impl ::selectors::parser::PseudoElement for PseudoElement {
     // accepts them too, or the parser would reject them after its `::scroll-marker` as well
     // (`::column::scroll-marker:target-current`: the state the first pseudo-element sets stays).
     fn accepts_state_pseudo_classes(&self) -> bool {
-        self.is_scroll_marker() || self.is_scroll_button() || *self == Self::Column
+        self.is_scroll_marker() || self.is_scroll_button() || matches!(self, Self::Column | Self::WebkitScrollbar | Self::WebkitScrollbarThumb | Self::WebkitScrollbarTrack | Self::WebkitScrollbarTrackPiece | Self::WebkitScrollbarButton | Self::WebkitScrollbarCorner | Self::WebkitResizer)
     }
 
     // pyro: `::slotted()` can be followed by a tree-abiding pseudo-element (CSS Scoping 1 § 3.2.2),
@@ -231,7 +245,7 @@ impl ::selectors::parser::PseudoElement for PseudoElement {
 }
 
 /// The number of eager pseudo-elements. Keep this in sync with cascade_type.
-pub const EAGER_PSEUDO_COUNT: usize = 5;
+pub const EAGER_PSEUDO_COUNT: usize = 6;
 
 impl PseudoElement {
     /// Gets the canonical index of this eagerly-cascaded pseudo-element.
@@ -270,7 +284,8 @@ impl PseudoElement {
             1 => PseudoElement::Before,
             2 => PseudoElement::Selection,
             3 => PseudoElement::FirstLetter,
-            _ => PseudoElement::FirstLine,
+            4 => PseudoElement::FirstLine,
+            _ => PseudoElement::WebkitScrollbar,
         };
         debug_assert!(result.is_eager());
         debug_assert_eq!(result.eager_index(), i);
@@ -413,6 +428,7 @@ impl PseudoElement {
             | PseudoElement::Before
             | PseudoElement::FirstLetter
             | PseudoElement::FirstLine
+            | PseudoElement::WebkitScrollbar
             | PseudoElement::Selection => PseudoElementCascadeType::Eager,
             PseudoElement::Backdrop
             | PseudoElement::ColorSwatch
@@ -442,6 +458,12 @@ impl PseudoElement {
             | PseudoElement::PickerSelect
             | PseudoElement::PickerIcon
             | PseudoElement::WebkitSliderThumb
+            | PseudoElement::WebkitScrollbarThumb
+            | PseudoElement::WebkitScrollbarTrack
+            | PseudoElement::WebkitScrollbarTrackPiece
+            | PseudoElement::WebkitScrollbarButton
+            | PseudoElement::WebkitScrollbarCorner
+            | PseudoElement::WebkitResizer
             | PseudoElement::Highlight(_) => PseudoElementCascadeType::Lazy,
             PseudoElement::ServoAnonymousBox
             | PseudoElement::ServoAnonymousTable
@@ -626,6 +648,8 @@ pub enum NonTSPseudoClass {
     Target,
     /// pyro: `:target-current` (CSS Overflow 5): the active scroll marker of its group.
     TargetCurrent,
+    ScrollbarVertical,
+    ScrollbarHorizontal,
     /// pyro: `:target-before` and `:target-after` (CSS Overflow 5): the scroll markers of a group
     /// before and after its active one, in tree order.
     TargetBefore,
@@ -657,6 +681,8 @@ impl ::selectors::parser::NonTSPseudoClass for NonTSPseudoClass {
                 | NonTSPseudoClass::Focus
                 | NonTSPseudoClass::FocusVisible
                 | NonTSPseudoClass::TargetCurrent
+                | NonTSPseudoClass::ScrollbarVertical
+                | NonTSPseudoClass::ScrollbarHorizontal
                 | NonTSPseudoClass::TargetBefore
                 | NonTSPseudoClass::TargetAfter
                 | NonTSPseudoClass::Enabled
@@ -735,6 +761,8 @@ impl ToCss for NonTSPseudoClass {
             Self::ServoNonZeroBorder => ":-servo-nonzero-border",
             Self::Target => ":target",
             Self::TargetCurrent => ":target-current",
+            Self::ScrollbarVertical => ":vertical",
+            Self::ScrollbarHorizontal => ":horizontal",
             Self::TargetBefore => ":target-before",
             Self::TargetAfter => ":target-after",
             Self::UserInvalid => ":user-invalid",
@@ -791,6 +819,8 @@ impl NonTSPseudoClass {
             Self::Valid => ElementState::VALID,
             Self::Visited => ElementState::VISITED,
             Self::CustomState(_)
+            | Self::ScrollbarVertical
+            | Self::ScrollbarHorizontal
             | Self::Lang(_)
             | Self::Dir(_)
             | Self::HasSlotted(_)
@@ -910,6 +940,8 @@ impl<'a, 'i> ::selectors::Parser<'i> for SelectorParser<'a> {
             "required" => NonTSPseudoClass::Required,
             "target" => NonTSPseudoClass::Target,
             "target-current" => NonTSPseudoClass::TargetCurrent,
+            "vertical" => NonTSPseudoClass::ScrollbarVertical,
+            "horizontal" => NonTSPseudoClass::ScrollbarHorizontal,
             "target-before" => NonTSPseudoClass::TargetBefore,
             "target-after" => NonTSPseudoClass::TargetAfter,
             "has-slotted" => NonTSPseudoClass::HasSlotted(None),
@@ -1010,6 +1042,13 @@ impl<'a, 'i> ::selectors::Parser<'i> for SelectorParser<'a> {
             "color-swatch" => ColorSwatch,
             "picker-icon" => PickerIcon,
             "-webkit-slider-thumb" => WebkitSliderThumb,
+            "-webkit-scrollbar" => WebkitScrollbar,
+            "-webkit-scrollbar-thumb" => WebkitScrollbarThumb,
+            "-webkit-scrollbar-track" => WebkitScrollbarTrack,
+            "-webkit-scrollbar-track-piece" => WebkitScrollbarTrackPiece,
+            "-webkit-scrollbar-button" => WebkitScrollbarButton,
+            "-webkit-scrollbar-corner" => WebkitScrollbarCorner,
+            "-webkit-resizer" => WebkitResizer,
             "placeholder" => Placeholder,
             "-servo-text-control-inner-container" => {
                 if !self.in_user_agent_stylesheet() {

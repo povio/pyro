@@ -71,7 +71,7 @@ pub struct Gutters {
 #[derive(Clone, Copy, Debug)]
 pub struct GutterInputs {
     /// The scrollbar thickness ([`thickness`]); zero means no gutters at all.
-    pub thickness: f32,
+    pub thickness: taffy::Size<f32>,
     /// Used `overflow-x` and `overflow-y`.
     pub overflow: taffy::Point<Overflow>,
     /// Whether an `overflow: auto` axis shows its scrollbar (its content overflows): x is the
@@ -96,7 +96,7 @@ impl GutterInputs {
     pub fn gutters(&self) -> Gutters {
         let t = self.thickness;
         let mut edges = taffy::Rect { left: 0.0, right: 0.0, top: 0.0, bottom: 0.0 };
-        if t <= 0.0 {
+        if t.width <= 0.0 && t.height <= 0.0 {
             return Gutters { edges };
         }
         let shows = |overflow: Overflow, auto_shows: bool| match overflow {
@@ -112,28 +112,28 @@ impl GutterInputs {
         if self.vertical {
             // The inline axis is vertical: `scrollbar-gutter` is about the horizontal scrollbar.
             if vertical_bar {
-                edges.right = t;
+                edges.right = t.width;
             }
             if horizontal_bar || stable_applies(self.overflow.x) {
-                edges.bottom = t;
+                edges.bottom = t.height;
                 if self.both_edges && stable_applies(self.overflow.x) {
-                    edges.top = t;
+                    edges.top = t.height;
                 }
             }
         } else {
             if vertical_bar || stable_applies(self.overflow.y) {
                 if self.rtl {
-                    edges.left = t;
+                    edges.left = t.width;
                 } else {
-                    edges.right = t;
+                    edges.right = t.width;
                 }
                 if self.both_edges && stable_applies(self.overflow.y) {
-                    edges.left = t;
-                    edges.right = t;
+                    edges.left = t.width;
+                    edges.right = t.width;
                 }
             }
             if horizontal_bar {
-                edges.bottom = t;
+                edges.bottom = t.height;
             }
         }
         Gutters { edges }
@@ -147,7 +147,7 @@ mod tests {
 
     fn inputs(x: Overflow, y: Overflow) -> GutterInputs {
         GutterInputs {
-            thickness: CLASSIC_THICKNESS,
+            thickness: taffy::Size { width: CLASSIC_THICKNESS, height: CLASSIC_THICKNESS },
             overflow: taffy::Point { x, y },
             auto_shows: taffy::Point { x: false, y: false },
             stable: false,

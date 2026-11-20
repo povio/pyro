@@ -93,6 +93,8 @@ pub struct TaffyStyloStyle<T: Deref<Target = ComputedValues>> {
     /// pyro: the natural aspect ratio of a replaced element (width over height, physical), set by the
     /// tree; `CoreStyle::natural_aspect_ratio` answers it while `aspect-ratio` is `auto`.
     pub natural_ratio: Option<f32>,
+    #[allow(missing_docs)]
+    pub custom_scrollbars: Option<taffy::Size<f32>>,
 }
 
 impl<T: Deref<Target = ComputedValues>> TaffyStyloStyle<T> {
@@ -124,6 +126,7 @@ impl<T: Deref<Target = ComputedValues>> TaffyStyloStyle<T> {
             #[cfg(feature = "writing-mode")]
             percent_basis: None,
             natural_ratio: None,
+            custom_scrollbars: None,
         }
     }
 
@@ -141,6 +144,7 @@ impl<T: Deref<Target = ComputedValues>> TaffyStyloStyle<T> {
             #[cfg(feature = "writing-mode")]
             percent_basis: None,
             natural_ratio: None,
+            custom_scrollbars: None,
         }
     }
 
@@ -306,7 +310,7 @@ impl<T: Deref<Target = ComputedValues>> taffy::CoreStyle for TaffyStyloStyle<T> 
         let gutter = box_styles.scrollbar_gutter;
         let own_wm = self.style.writing_mode;
         let inputs = crate::scrollbars::GutterInputs {
-            thickness,
+            thickness: self.custom_scrollbars.unwrap_or(taffy::Size { width: thickness, height: thickness }),
             overflow: taffy::Point { x: box_styles.overflow_x, y: box_styles.overflow_y },
             auto_shows: taffy::Point {
                 x: self.flags.contains(StyleFlags::AUTO_SCROLLBAR_X),

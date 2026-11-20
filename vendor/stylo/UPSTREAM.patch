@@ -3300,7 +3300,7 @@ diff -ruN a/servo/restyle_damage.rs b/servo/restyle_damage.rs
      // so we can skip the diffing process for later flags if an earlier flag is true
 diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 --- a/servo/selector_parser.rs	2026-11-11 19:55:57
-+++ b/servo/selector_parser.rs	2026-11-19 15:09:05
++++ b/servo/selector_parser.rs	2026-11-20 07:26:00
 @@ -24,7 +24,6 @@
  use selectors::attr::{AttrSelectorOperation, CaseSensitivity, NamespaceConstraint};
  use selectors::parser::SelectorParseErrorKind;
@@ -3309,7 +3309,13 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
  use std::ops::{Deref, DerefMut};
  use style_traits::{ParseError, StyleParseErrorKind};
  
-@@ -50,6 +49,32 @@
+@@ -45,11 +44,44 @@
+     // APPLIES_TO_PLACEHOLDER properties expect!
+     FirstLetter,
+     FirstLine,
++    WebkitScrollbar,
+ 
+     // Non-eager pseudos.
      Backdrop,
      DetailsContent,
      Marker,
@@ -3339,10 +3345,16 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +    PickerSelect,
 +    PickerIcon,
 +    WebkitSliderThumb,
++    WebkitScrollbarThumb,
++    WebkitScrollbarTrack,
++    WebkitScrollbarTrackPiece,
++    WebkitScrollbarButton,
++    WebkitScrollbarCorner,
++    WebkitResizer,
  
      // Implemented pseudos. These pseudo elements are representing the
      // elements within an UA shadow DOM, and matching the elements with
-@@ -76,8 +101,36 @@
+@@ -76,8 +108,36 @@
  }
  
  /// The count of all pseudo-elements.
@@ -3380,7 +3392,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
  impl ToCss for PseudoElement {
      fn to_css<W>(&self, dest: &mut W) -> fmt::Result
      where
-@@ -93,6 +146,29 @@
+@@ -93,6 +153,36 @@
              Backdrop => "::backdrop",
              DetailsContent => "::details-content",
              Marker => "::marker",
@@ -3407,14 +3419,20 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +            PickerSelect => "::picker(select)",
 +            PickerIcon => "::picker-icon",
 +            WebkitSliderThumb => "::-webkit-slider-thumb",
++            WebkitScrollbar => "::-webkit-scrollbar",
++            WebkitScrollbarThumb => "::-webkit-scrollbar-thumb",
++            WebkitScrollbarTrack => "::-webkit-scrollbar-track",
++            WebkitScrollbarTrackPiece => "::-webkit-scrollbar-track-piece",
++            WebkitScrollbarButton => "::-webkit-scrollbar-button",
++            WebkitScrollbarCorner => "::-webkit-scrollbar-corner",
++            WebkitResizer => "::-webkit-resizer",
              ColorSwatch => "::color-swatch",
              FileSelectorButton => "::file-selector-button",
              Placeholder => "::placeholder",
-@@ -115,7 +191,43 @@
- impl ::selectors::parser::PseudoElement for PseudoElement {
+@@ -116,28 +206,72 @@
      fn parses_as_element_backed(&self) -> bool {
          matches!(self, Self::DetailsContent)
-+    }
+     }
 +
 +    // pyro: `::before::marker` and `::after::marker` (CSS Pseudo-Elements 4 § 4.1): the marker
 +    // of a `::before` or `::after` box that is a list item.
@@ -3426,14 +3444,14 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +    // `::marker` (`::column::scroll-marker`, Multi-column 2 § 4.8).
 +    fn is_before_or_after(&self) -> bool {
 +        matches!(self, Self::Before | Self::After | Self::Column)
-     }
++    }
 +
 +    // pyro: `::scroll-marker:target-current`, `::scroll-button(*):disabled`, and the user action
 +    // states, match the pseudo-element's own state (its box node's, `blitz-dom`). `::column`
 +    // accepts them too, or the parser would reject them after its `::scroll-marker` as well
 +    // (`::column::scroll-marker:target-current`: the state the first pseudo-element sets stays).
 +    fn accepts_state_pseudo_classes(&self) -> bool {
-+        self.is_scroll_marker() || self.is_scroll_button() || *self == Self::Column
++        self.is_scroll_marker() || self.is_scroll_button() || matches!(self, Self::Column | Self::WebkitScrollbar | Self::WebkitScrollbarThumb | Self::WebkitScrollbarTrack | Self::WebkitScrollbarTrackPiece | Self::WebkitScrollbarButton | Self::WebkitScrollbarCorner | Self::WebkitResizer)
 +    }
 +
 +    // pyro: `::slotted()` can be followed by a tree-abiding pseudo-element (CSS Scoping 1 § 3.2.2),
@@ -3454,7 +3472,11 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
  }
  
  /// The number of eager pseudo-elements. Keep this in sync with cascade_type.
-@@ -126,18 +238,26 @@
+-pub const EAGER_PSEUDO_COUNT: usize = 5;
++pub const EAGER_PSEUDO_COUNT: usize = 6;
+ 
+ impl PseudoElement {
+     /// Gets the canonical index of this eagerly-cascaded pseudo-element.
      #[inline]
      pub fn eager_index(&self) -> usize {
          debug_assert!(self.is_eager());
@@ -3484,7 +3506,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
      }
  
      /// Creates a pseudo-element from an eager index.
-@@ -145,8 +265,15 @@
+@@ -145,8 +279,16 @@
      pub fn from_eager_index(i: usize) -> Self {
          const _: () = assert!(EAGER_PSEUDO_COUNT <= (u8::MAX as usize));
          assert!(i < EAGER_PSEUDO_COUNT);
@@ -3494,14 +3516,15 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +            1 => PseudoElement::Before,
 +            2 => PseudoElement::Selection,
 +            3 => PseudoElement::FirstLetter,
-+            _ => PseudoElement::FirstLine,
++            4 => PseudoElement::FirstLine,
++            _ => PseudoElement::WebkitScrollbar,
 +        };
          debug_assert!(result.is_eager());
 +        debug_assert_eq!(result.eager_index(), i);
          result
      }
  
-@@ -168,6 +295,43 @@
+@@ -168,6 +310,43 @@
          *self == PseudoElement::Marker
      }
  
@@ -3545,7 +3568,15 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
      /// Whether this pseudo-element is the ::selection pseudo.
      #[inline]
      pub fn is_selection(&self) -> bool {
-@@ -261,7 +425,24 @@
+@@ -249,6 +428,7 @@
+             | PseudoElement::Before
+             | PseudoElement::FirstLetter
+             | PseudoElement::FirstLine
++            | PseudoElement::WebkitScrollbar
+             | PseudoElement::Selection => PseudoElementCascadeType::Eager,
+             PseudoElement::Backdrop
+             | PseudoElement::ColorSwatch
+@@ -261,7 +441,30 @@
              | PseudoElement::SliderTrack
              | PseudoElement::MozProgressBar
              | PseudoElement::ServoTextControlInnerContainer
@@ -3567,11 +3598,17 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +            | PseudoElement::PickerSelect
 +            | PseudoElement::PickerIcon
 +            | PseudoElement::WebkitSliderThumb
++            | PseudoElement::WebkitScrollbarThumb
++            | PseudoElement::WebkitScrollbarTrack
++            | PseudoElement::WebkitScrollbarTrackPiece
++            | PseudoElement::WebkitScrollbarButton
++            | PseudoElement::WebkitScrollbarCorner
++            | PseudoElement::WebkitResizer
 +            | PseudoElement::Highlight(_) => PseudoElementCascadeType::Lazy,
              PseudoElement::ServoAnonymousBox
              | PseudoElement::ServoAnonymousTable
              | PseudoElement::ServoAnonymousTableCell
-@@ -292,7 +473,9 @@
+@@ -292,7 +495,9 @@
                  PropertyFlags::APPLIES_TO_MARKER
              },
              PseudoElement::Placeholder => PropertyFlags::APPLIES_TO_PLACEHOLDER,
@@ -3582,7 +3619,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              _ => PropertyFlags::empty(),
          }
      }
-@@ -313,19 +496,22 @@
+@@ -313,19 +518,22 @@
  
      /// Whether this pseudo-element is the ::highlight pseudo.
      pub fn is_highlight(&self) -> bool {
@@ -3608,7 +3645,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
      }
  
      /// Whether this is a highlight pseudo-element that is styled lazily during
-@@ -341,7 +527,10 @@
+@@ -341,7 +549,10 @@
      #[inline]
      pub fn is_element_backed(&self) -> bool {
          use selectors::parser::PseudoElement;
@@ -3619,7 +3656,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              || matches!(
                  self,
                  Self::Placeholder
-@@ -357,6 +546,14 @@
+@@ -357,6 +568,14 @@
      }
  }
  
@@ -3634,7 +3671,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
  /// The type used for storing `:lang` arguments.
  pub type Lang = Box<str>;
  
-@@ -364,6 +561,25 @@
+@@ -364,6 +583,25 @@
  #[derive(Clone, Debug, Eq, Hash, MallocSizeOf, PartialEq, ToCss, ToShmem)]
  pub struct CustomState(pub AtomIdent);
  
@@ -3660,7 +3697,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
  /// A non tree-structural pseudo-class.
  /// See https://drafts.csswg.org/selectors-4/#structural-pseudos
  #[derive(Clone, Debug, Eq, Hash, MallocSizeOf, PartialEq, ToShmem)]
-@@ -376,6 +592,9 @@
+@@ -376,6 +614,9 @@
      /// The :state` pseudo-class.
      CustomState(CustomState),
      Default,
@@ -3670,12 +3707,14 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
      Defined,
      Disabled,
      Enabled,
-@@ -405,6 +624,15 @@
+@@ -405,6 +646,17 @@
      Required,
      ServoNonZeroBorder,
      Target,
 +    /// pyro: `:target-current` (CSS Overflow 5): the active scroll marker of its group.
 +    TargetCurrent,
++    ScrollbarVertical,
++    ScrollbarHorizontal,
 +    /// pyro: `:target-before` and `:target-after` (CSS Overflow 5): the scroll markers of a group
 +    /// before and after its active one, in tree order.
 +    TargetBefore,
@@ -3686,7 +3725,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
      UserInvalid,
      UserValid,
      Valid,
-@@ -417,11 +645,22 @@
+@@ -417,11 +669,24 @@
          matches!(*self, NonTSPseudoClass::Active | NonTSPseudoClass::Hover)
      }
  
@@ -3703,6 +3742,8 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +                | NonTSPseudoClass::Focus
 +                | NonTSPseudoClass::FocusVisible
 +                | NonTSPseudoClass::TargetCurrent
++                | NonTSPseudoClass::ScrollbarVertical
++                | NonTSPseudoClass::ScrollbarHorizontal
 +                | NonTSPseudoClass::TargetBefore
 +                | NonTSPseudoClass::TargetAfter
 +                | NonTSPseudoClass::Enabled
@@ -3710,17 +3751,16 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
          )
      }
  
-@@ -439,8 +678,22 @@
-         if let Lang(ref lang) = *self {
+@@ -440,6 +705,20 @@
              dest.write_str(":lang(")?;
              serialize_identifier(lang, dest)?;
-+            return dest.write_char(')');
+             return dest.write_char(')');
 +        }
 +        if let Dir(ref dir) = *self {
 +            dest.write_str(":dir(")?;
 +            serialize_identifier(dir, dest)?;
-             return dest.write_char(')');
-         }
++            return dest.write_char(')');
++        }
 +        if let HasSlotted(ref argument) = *self {
 +            dest.write_str(":has-slotted")?;
 +            if let Some(argument) = argument {
@@ -3729,15 +3769,16 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +                dest.write_char(')')?;
 +            }
 +            return Ok(());
-+        }
+         }
  
          dest.write_str(match *self {
-             Self::Active => ":active",
-@@ -481,11 +734,14 @@
+@@ -481,11 +760,16 @@
              Self::Required => ":required",
              Self::ServoNonZeroBorder => ":-servo-nonzero-border",
              Self::Target => ":target",
 +            Self::TargetCurrent => ":target-current",
++            Self::ScrollbarVertical => ":vertical",
++            Self::ScrollbarHorizontal => ":horizontal",
 +            Self::TargetBefore => ":target-before",
 +            Self::TargetAfter => ":target-after",
              Self::UserInvalid => ":user-invalid",
@@ -3749,7 +3790,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
          })
      }
  }
-@@ -527,11 +783,18 @@
+@@ -527,11 +811,20 @@
              Self::ReadWrite => ElementState::READWRITE,
              Self::Required => ElementState::REQUIRED,
              Self::Target => ElementState::URLTARGET,
@@ -3762,6 +3803,8 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              Self::Visited => ElementState::VISITED,
 -            Self::CustomState(_) | Self::Lang(_) | Self::ServoNonZeroBorder => {
 +            Self::CustomState(_)
++            | Self::ScrollbarVertical
++            | Self::ScrollbarHorizontal
 +            | Self::Lang(_)
 +            | Self::Dir(_)
 +            | Self::HasSlotted(_)
@@ -3769,21 +3812,24 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
                  ElementState::empty()
              },
          }
-@@ -646,6 +909,10 @@
+@@ -646,6 +939,12 @@
              "read-write" => NonTSPseudoClass::ReadWrite,
              "required" => NonTSPseudoClass::Required,
              "target" => NonTSPseudoClass::Target,
 +            "target-current" => NonTSPseudoClass::TargetCurrent,
++            "vertical" => NonTSPseudoClass::ScrollbarVertical,
++            "horizontal" => NonTSPseudoClass::ScrollbarHorizontal,
 +            "target-before" => NonTSPseudoClass::TargetBefore,
 +            "target-after" => NonTSPseudoClass::TargetAfter,
 +            "has-slotted" => NonTSPseudoClass::HasSlotted(None),
              "user-invalid" => NonTSPseudoClass::UserInvalid,
              "user-valid" => NonTSPseudoClass::UserValid,
              "valid" => NonTSPseudoClass::Valid,
-@@ -697,6 +964,27 @@
+@@ -696,6 +995,27 @@
+             "state" => {
                  let result = AtomIdent::from(parser.expect_ident()?.as_ref());
                  NonTSPseudoClass::CustomState(CustomState(result))
-             },
++            },
 +            "dir" if !after_part => {
 +                NonTSPseudoClass::Dir(parser.expect_ident()?.to_ascii_lowercase().into())
 +            },
@@ -3804,11 +3850,10 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +                    return Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent));
 +                }
 +                NonTSPseudoClass::HasSlotted(Some(HasSlottedArgument(list)))
-+            },
+             },
              _ => return Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent)),
          };
- 
-@@ -714,8 +1002,14 @@
+@@ -714,8 +1034,21 @@
              "first-letter" => FirstLetter,
              "first-line" if crate::pref!("layout.css.first-line.enabled") => FirstLine,
              "marker" => Marker,
@@ -3820,10 +3865,17 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              "color-swatch" => ColorSwatch,
 +            "picker-icon" => PickerIcon,
 +            "-webkit-slider-thumb" => WebkitSliderThumb,
++            "-webkit-scrollbar" => WebkitScrollbar,
++            "-webkit-scrollbar-thumb" => WebkitScrollbarThumb,
++            "-webkit-scrollbar-track" => WebkitScrollbarTrack,
++            "-webkit-scrollbar-track-piece" => WebkitScrollbarTrackPiece,
++            "-webkit-scrollbar-button" => WebkitScrollbarButton,
++            "-webkit-scrollbar-corner" => WebkitScrollbarCorner,
++            "-webkit-resizer" => WebkitResizer,
              "placeholder" => Placeholder,
              "-servo-text-control-inner-container" => {
                  if !self.in_user_agent_stylesheet() {
-@@ -774,6 +1068,41 @@
+@@ -774,6 +1107,41 @@
          };
  
          Ok(pseudo_element)
