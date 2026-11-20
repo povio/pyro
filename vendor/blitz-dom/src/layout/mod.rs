@@ -2341,6 +2341,13 @@ impl LayoutPartialTree for LayoutPassState<'_> {
         node_id: NodeId,
         inputs: taffy::LayoutInput,
     ) -> taffy::LayoutOutput {
+        // pyro: the item of a subgrid measured by a grid whose block axis is not its layout parent's (the
+        // items of an orthogonal subgrid size that grid's tracks: Taffy's virtual items) is measured in that
+        // grid's axes, which the node's cache (kept in its parent's) does not tell apart.
+        #[cfg(feature = "writing-mode")]
+        if inputs.run_mode != taffy::RunMode::PerformLayout && self.measured_across_orthogonal_parent(node_id) {
+            return self.compute_child_layout_internal(node_id, inputs, None);
+        }
         compute_cached_layout(self, node_id, inputs, |tree, node_id, inputs| {
             tree.compute_child_layout_internal(node_id, inputs, None)
         })

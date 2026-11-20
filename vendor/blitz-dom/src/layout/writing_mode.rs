@@ -104,6 +104,16 @@ impl LayoutPassState<'_> {
         self.nodes[id].writing_mode()
     }
 
+    /// pyro: whether `node_id` is measured by a grid whose writing mode is orthogonal to that of its own
+    /// layout parent: an item of an orthogonal subgrid sizing that grid's tracks (its parent's is the one
+    /// its layout cache holds).
+    pub(crate) fn measured_across_orthogonal_parent(&self, node_id: NodeId) -> bool {
+        let Some(parent) = self.nodes[dom_node_id(node_id)].layout_parent.get() else {
+            return false;
+        };
+        self.layout_wm.is_vertical() != self.layout_wm_of(parent).is_vertical()
+    }
+
     /// Lay out `node_id`, translating between the parent's writing mode and the node's own at an
     /// orthogonal-flow boundary.
     pub(crate) fn compute_child_layout_in_own_wm(

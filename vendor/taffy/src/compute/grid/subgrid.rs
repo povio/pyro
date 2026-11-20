@@ -19,8 +19,10 @@
 //! clamped to it), and with the parent's line names added to its own. It then lays them out in fixed
 //! tracks of the sizes its parent gave it ([`subgrid_tracks`]).
 //!
-//! Not done: subgrids in an orthogonal writing mode (they lay out as `none`), the hypothetical items for
-//! a subgrid's margin, border and padding at an edge with no item, baseline alignment across a subgrid.
+//! An orthogonal subgrid's items are read (style, subgrid axes, baseline flow) in the sizing grid's axes, its
+//! own tracks found through [`AxisMap`]s; subgrids nested in it are mapped against the sizing grid directly.
+//!
+//! Not done: the standalone (own-track) sizes of an orthogonal subgrid's items.
 
 use super::explicit_grid::{compute_explicit_grid_size_in_axis, AutoRepeatStrategy};
 use super::implicit_grid::compute_grid_size_estimate;
@@ -550,6 +552,9 @@ fn collect_virtual_items<Tree: LayoutGridContainer>(
     let first_new = out.len();
     // This subgrid's own items as they were pushed (index in `out`), for the edge items
     let mut direct: Vec<usize> = Vec::new();
+    // pyro: the areas of the nested subgrids (and the axes they are nested in), which take this subgrid's
+    // tracks as its items do for where its margin, border and padding go (`orthogonal-writing-mode-001`)
+    let mut nested_areas: Vec<(Size<bool>, InBothAbsAxis<Line<OriginZeroLine>>)> = Vec::new();
     for mut item in items {
         let local = InBothAbsAxis { horizontal: item.column, vertical: item.row };
         item.subgrid_owner = Some(node);
@@ -590,9 +595,9 @@ fn collect_virtual_items<Tree: LayoutGridContainer>(
             _ => alignment,
         };
         if orthogonal {
-            // (its alignment in the subgrid's axes, which are this grid's swapped)
+            // (its alignment in the subgrid's axes, which are this grid's swapped; its baseline flow is read against
+            // this grid's writing mode already, as its style)
             core::mem::swap(&mut item.align_self, &mut item.justify_self);
-            item.baseline_flow = Size { width: item.baseline_flow.height, height: item.baseline_flow.width };
         }
         if !top_level || maps.vertical.reversed {
             item.align_self = no_baseline(item.align_self);
@@ -601,12 +606,27 @@ fn collect_virtual_items<Tree: LayoutGridContainer>(
             item.justify_self = no_baseline(item.justify_self);
         }
         let mut excluded = Size { width: !sizing.width, height: !sizing.height };
-        // (Subgrids nested in an orthogonal one are left to it.)
-        let nested = Size {
-            width: item.subgrid.width && sizing.width && !orthogonal,
-            height: item.subgrid.height && sizing.height && !orthogonal,
-        };
-        if nested.width || nested.height {
+        let nested = Size { width: item.subgrid.width && sizing.width, height: item.subgrid.height && sizing.height };
+        if (nested.width || nested.height) && orthogonal {
+            // pyro: a subgrid nested in an orthogonal one: its flags, like its style, are read in the sizing grid's
+            // axes, as is the area it was mapped to there, so its context is found against the sizing grid's
+            // lines directly (its lines' names: the sizing grid's; its gaps: this subgrid's)
+            let gap_of = |axis: AbsoluteAxis| context.axis(maps.get(axis).own).map_or(parent.gap.get_abs(axis), |sub| sub.gap);
+            let nested_parent = SubgridParent {
+                names: parent.names,
+                gap: Size { width: gap_of(AbsoluteAxis::Horizontal), height: gap_of(AbsoluteAxis::Vertical) },
+                direction: parent.direction,
+                percent_basis: parent.percent_basis,
+            };
+            let nested_maps = axis_maps(&tree.get_grid_child_style(item.node));
+            let mapped_area = InBothAbsAxis { horizontal: item.column, vertical: item.row };
+            let nested_context = child_context(tree, item.node, nested, mapped_area, &nested_parent, nested_maps);
+            collect_virtual_items(tree, item.node, &nested_context, mapped_area, nested, extra, parent, nested_maps, out, false);
+            nested_areas.push((nested, mapped_area));
+            stretch_subgrid_item(&mut item, nested);
+            excluded.width |= nested.width;
+            excluded.height |= nested.height;
+        } else if nested.width || nested.height {
             // A nested subgrid: its lines' names are this subgrid's for its area; its direction is compared
             // with the sizing grid's, whose lines its items are mapped to.
             let nested_parent = SubgridParent {
@@ -638,6 +658,7 @@ fn collect_virtual_items<Tree: LayoutGridContainer>(
                 }
             }
             let mapped_area = InBothAbsAxis { horizontal: item.column, vertical: item.row };
+            nested_areas.push((nested, mapped_area));
             let before = out.len();
             collect_virtual_items(tree, item.node, &nested_context, mapped_area, nested, extra, parent, nested_maps, out, false);
             // pyro: a nested subgrid in both its axes has no tracks of its own: its items belong to this subgrid's
@@ -734,12 +755,17 @@ fn collect_virtual_items<Tree: LayoutGridContainer>(
         // an empty subgrid has both in its edge tracks (Chromium; WPT css-grid `subgrid/grid-gap-002`,
         // `orthogonal-writing-mode-002`, `-003`)
         let empty = !out[first_new..].iter().any(|item| !excluded_in(item));
-        let own: Vec<usize> = direct.iter().copied().filter(|&index| !excluded_in(&out[index])).collect();
+        let own: Vec<Line<OriginZeroLine>> = direct
+            .iter()
+            .filter(|&&index| !excluded_in(&out[index]))
+            .map(|&index| lines_of(&out[index]))
+            .chain(nested_areas.iter().filter(|(nested, _)| nested.get_abs(axis)).map(|(_, area)| area.get(axis)))
+            .collect();
         if own.is_empty() && !empty {
             continue;
         }
-        let first = own.iter().map(|&index| lines_of(&out[index]).start.0).min().unwrap_or(span.end.0);
-        let last = own.iter().map(|&index| lines_of(&out[index]).end.0).max().unwrap_or(span.start.0);
+        let first = own.iter().map(|lines| lines.start.0).min().unwrap_or(span.end.0);
+        let last = own.iter().map(|lines| lines.end.0).max().unwrap_or(span.start.0);
         if span.span() == 1 && first != span.start.0 && last != span.end.0 {
             // (one track holds both edges)
             out.push(spacer_over(span, edge_start, edge_end));

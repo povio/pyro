@@ -21097,7 +21097,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn resolve_calc_value(&self, calc_ptr: *const (), parent_size: f32) -> f32 {
-@@ -675,6 +2322,20 @@
+@@ -675,11 +2322,32 @@
      }
  
      #[inline(always)]
@@ -21118,7 +21118,19 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      fn compute_child_layout(
          &mut self,
          node_id: NodeId,
-@@ -698,17 +2359,54 @@
+         inputs: taffy::LayoutInput,
+     ) -> taffy::LayoutOutput {
++        // pyro: the item of a subgrid measured by a grid whose block axis is not its layout parent's (the
++        // items of an orthogonal subgrid size that grid's tracks: Taffy's virtual items) is measured in that
++        // grid's axes, which the node's cache (kept in its parent's) does not tell apart.
++        #[cfg(feature = "writing-mode")]
++        if inputs.run_mode != taffy::RunMode::PerformLayout && self.measured_across_orthogonal_parent(node_id) {
++            return self.compute_child_layout_internal(node_id, inputs, None);
++        }
+         compute_cached_layout(self, node_id, inputs, |tree, node_id, inputs| {
+             tree.compute_child_layout_internal(node_id, inputs, None)
+         })
+@@ -698,17 +2366,54 @@
  
      fn clear_hoisted_children(&mut self, node_id: NodeId) {
          let containing_block = dom_node_id(node_id);
@@ -21175,7 +21187,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn add_hoisted_children(&mut self, node_id: NodeId, hoisted: &[NodeId]) {
-@@ -721,6 +2419,7 @@
+@@ -721,6 +2426,7 @@
              self.node_from_id(hoisted_id)
                  .oof_containing_block
                  .set(Some(containing_block));
@@ -21183,7 +21195,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          }
      }
  
-@@ -732,6 +2431,148 @@
+@@ -732,6 +2438,148 @@
      }
  }
  
@@ -21332,7 +21344,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  impl taffy::CacheTree for LayoutPassState<'_> {
      #[inline]
      fn cache_get(
-@@ -739,10 +2580,12 @@
+@@ -739,10 +2587,12 @@
          node_id: NodeId,
          inputs: &taffy::LayoutInput,
      ) -> Option<taffy::LayoutOutput> {
@@ -21349,7 +21361,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -752,9 +2595,11 @@
+@@ -752,9 +2602,11 @@
          inputs: &taffy::LayoutInput,
          layout_output: taffy::LayoutOutput,
      ) {
@@ -21364,7 +21376,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -782,16 +2627,233 @@
+@@ -782,16 +2634,233 @@
          self.child_layout_style(self.node_from_id(child_node_id))
      }
  
@@ -21602,7 +21614,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  }
  
-@@ -844,6 +2906,30 @@
+@@ -844,6 +2913,30 @@
              element.detailed_layout_info = DetailedLayoutInfo::Grid(Box::new(detailed_grid_info));
          }
      }
@@ -21633,7 +21645,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  impl RoundTree for LayoutPassState<'_> {
-@@ -852,7 +2938,19 @@
+@@ -852,7 +2945,19 @@
      }
  
      fn set_final_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -21654,7 +21666,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn is_out_of_flow(&self, node_id: NodeId) -> bool {
-@@ -868,6 +2966,30 @@
+@@ -868,6 +2973,30 @@
      fn get_hoisted_child_id(&self, node_id: NodeId, index: usize) -> NodeId {
          taffy_node_id(self.node_from_id(node_id).hoisted_children.borrow()[index])
      }
@@ -21685,7 +21697,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  pub(crate) struct TaffyDebugTree<'doc>(pub(crate) &'doc BaseDocument);
-@@ -972,3 +3094,213 @@
+@@ -972,3 +3101,213 @@
          })
      }
  }
@@ -36016,7 +36028,7 @@ diff --git a/packages/blitz-dom/src/layout/text_transform.rs b/packages/blitz-do
 diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/src/layout/writing_mode.rs
 --- a/packages/blitz-dom/src/layout/writing_mode.rs
 +++ b/packages/blitz-dom/src/layout/writing_mode.rs
-@@ -55,16 +55,53 @@
+@@ -55,16 +55,63 @@
      }
  }
  
@@ -36070,10 +36082,20 @@ diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/
 +            }
 +        }
 +        self.nodes[id].writing_mode()
++    }
++
++    /// pyro: whether `node_id` is measured by a grid whose writing mode is orthogonal to that of its own
++    /// layout parent: an item of an orthogonal subgrid sizing that grid's tracks (its parent's is the one
++    /// its layout cache holds).
++    pub(crate) fn measured_across_orthogonal_parent(&self, node_id: NodeId) -> bool {
++        let Some(parent) = self.nodes[dom_node_id(node_id)].layout_parent.get() else {
++            return false;
++        };
++        self.layout_wm.is_vertical() != self.layout_wm_of(parent).is_vertical()
      }
  
      /// Lay out `node_id`, translating between the parent's writing mode and the node's own at an
-@@ -102,23 +139,7 @@
+@@ -102,23 +149,7 @@
          let mirror_x = node_block_reversed && !parent_wm.is_vertical();
          let mirror_y = (node_block_reversed && parent_wm.is_vertical()) ^ parent_block_reversed;
          if mirror_x || mirror_y {
@@ -36098,7 +36120,7 @@ diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/
          }
  
          self.layout_wm = parent_wm;
-@@ -126,12 +147,68 @@
+@@ -126,12 +157,68 @@
          output
      }
  
@@ -36167,7 +36189,7 @@ diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/
          let percent_basis = self.orthogonal_percent_basis.replace((
              dom_node_id(node_id),
              inputs.parent_size.width.unwrap_or(0.0),
-@@ -139,6 +216,15 @@
+@@ -139,6 +226,15 @@
  
          let mut inputs = inputs.transpose();
  
@@ -36183,7 +36205,7 @@ diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/
          // A block container stretches its in-flow children's inline size and passes it as a known
          // dimension. For an orthogonal child that is its block size, which is content-sized.
          // (An out-of-flow box's known dimensions come from its insets and are kept.)
-@@ -147,8 +233,15 @@
+@@ -147,8 +243,15 @@
              && node
                  .layout_parent
                  .get()
@@ -36200,7 +36222,7 @@ diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/
          if placed_by_block_container
              && taffy::CoreStyle::size(&node.layout_style())
                  .height
-@@ -164,6 +257,33 @@
+@@ -164,6 +267,33 @@
                  AvailableSpace::MinContent | AvailableSpace::MaxContent
              );
  
@@ -36234,7 +36256,7 @@ diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/
          if inputs.run_mode != RunMode::PerformHiddenLayout
              && inputs.known_dimensions.width.is_none()
              && !is_intrinsic_inline_measurement
-@@ -172,23 +292,44 @@
+@@ -172,23 +302,44 @@
                  taffy::CoreStyle::size(&self.nodes[dom_node_id(node_id)].layout_style())
                      .width
                      .is_auto();
@@ -36289,7 +36311,7 @@ diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/
                  let measure = |doc: &mut Self, available_space: AvailableSpace| {
                      let measure_inputs = LayoutInput {
                          run_mode: RunMode::ComputeSize,
-@@ -209,7 +350,43 @@
+@@ -209,7 +360,43 @@
                  };
                  let max_content = measure(self, AvailableSpace::MaxContent);
                  let min_content = measure(self, AvailableSpace::MinContent);
@@ -36334,7 +36356,7 @@ diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/
                  inputs.known_dimensions_are_definite.width = true;
              }
          }
-@@ -220,10 +397,96 @@
+@@ -220,10 +407,96 @@
          output.transpose()
      }
  
@@ -36434,7 +36456,7 @@ diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/
      pub(crate) fn physicalise_and_round_layout(&mut self, root: NodeId) {
          let viewport = self.stylist.device().au_viewport_size();
          let viewport = Size {
-@@ -231,119 +494,224 @@
+@@ -231,119 +504,224 @@
              height: viewport.height.to_f32_px(),
          };
          let root_wm = self.layout_wm_of(dom_node_id(root));
@@ -36735,7 +36757,7 @@ diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/
  /// Map the static positions of `output`'s out-of-flow candidates (relative to the border box of a
  /// node laid out in `child_wm`) into `parent_wm`, ahead of [`LayoutOutput::transpose`],
  /// which leaves them untouched. The block axis of `vertical-rl` runs against Taffy's
-@@ -486,6 +854,16 @@
+@@ -486,6 +864,16 @@
  
  /// `logical`, written by a placing algorithm running in `placer_wm` within a box of physical size
  /// `placer_size`, in physical coordinates.
@@ -36752,7 +36774,7 @@ diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/
  fn physical_layout(
      logical: Layout,
      placer_wm: WritingMode,
-@@ -531,11 +909,23 @@
+@@ -531,11 +919,23 @@
  }
  
  impl BaseDocument {
@@ -36777,7 +36799,7 @@ diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/
          &self,
          node_id: crate::NodeId,
      ) -> (crate::util::Point<f32>, Layout) {
-@@ -549,6 +939,10 @@
+@@ -549,6 +949,10 @@
              pos.y += node.unrounded_layout().location.y - node.scroll_offset().y as f32;
              has_vertical |= node.layout_data().writing_mode.is_vertical();
              current = node.containing_block();
@@ -36788,7 +36810,7 @@ diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/
          }
          if !has_vertical {
              return (pos, *self.nodes[node_id].unrounded_layout());
-@@ -557,12 +951,11 @@
+@@ -557,12 +961,11 @@
          let root_id = self.try_root_element().map(|root| root.id);
          let node = &self.nodes[node_id];
          let (mut pos, placer_wm, placer_size) = self.placer_geometry(node, node_id, root_id);
@@ -36802,7 +36824,7 @@ diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/
          );
          pos.x += layout.location.x - node.scroll_offset().x as f32;
          pos.y += layout.location.y - node.scroll_offset().y as f32;
-@@ -570,41 +963,46 @@
+@@ -570,41 +973,46 @@
      }
  
      /// Document-relative position, writing mode and physical size of the box that places `node`.
