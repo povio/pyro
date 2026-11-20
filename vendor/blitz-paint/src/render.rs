@@ -5654,54 +5654,56 @@ impl ElementCx<'_, '_> {
         // `vertical`: the lines run along the device y axis.
         let paint = |scene: &mut _, fragments: Vec<InlineBoxFragment>, line_transform: &dyn Fn(usize) -> Affine, horizontal: Option<(Affine, Option<crate::text::LineTops>)>, vertical: bool| {
             let along = |rect: Rect| if vertical { (rect.y0, rect.y1) } else { (rect.x0, rect.x1) };
-            // Per line with atomics: their device rects in tree order numbers, sorted by where
-            // they start along the line, and the index of what reaches where (`ReachIndex`:
-            // output-sensitive, whatever boxes lie between).
-            struct LineAtomics {
-                atomics: Vec<(f64, f64, usize, Rect)>,
-                reach: crate::reach::ReachIndex,
-            }
-            let mut lines: Vec<Option<LineAtomics>> = Vec::new();
-            lines.resize_with(atomics.len(), || None);
+            let across = |rect: Rect| if vertical { (rect.x0, rect.x1) } else { (rect.y0, rect.y1) };
+            // Per line with atomics: its fragments and its atomics as device boxes along and across
+            // the line with their tree order numbers, and which atomics before each fragment it
+            // meets (`reach::overlapping_atomics`: a sweep, output-sensitive on both axes).
+            let mut by_line: Vec<Vec<&InlineBoxFragment>> = Vec::new();
+            by_line.resize_with(atomics.len(), Vec::new);
             for fragment in &fragments {
-                let Some(&fragment_order) = order.get(&fragment.node) else { continue };
-                let Some(line_atomics) = atomics.get(fragment.line).filter(|list| !list.is_empty()) else { continue };
-                let line = lines[fragment.line].get_or_insert_with(|| {
-                    let transform = line_transform(fragment.line);
-                    let mut list: Vec<(f64, f64, usize, Rect)> = line_atomics
-                        .iter()
-                        .filter_map(|&(atomic, rect)| {
-                            let atomic_order = *order.get(&atomic)?;
-                            let rect = transform.transform_rect_bbox(rect);
-                            let (start, end) = along(rect);
-                            Some((start, end, atomic_order, rect))
-                        })
-                        .collect();
-                    list.sort_by(|a, b| a.0.total_cmp(&b.0));
-                    let reach = crate::reach::ReachIndex::new(list.iter().map(|a| (a.0, a.1)));
-                    LineAtomics { atomics: list, reach }
-                });
-                let fragment_rect = fragment.transform.transform_rect_bbox(Rect::from_origin_size((0.0, 0.0), fragment.size));
-                let (start, end) = along(fragment_rect);
-                // The atomics that reach into the fragment, in tree order, as the line paints them.
-                let (reaching, _) = line.reach.query(start, end);
-                let mut hits: Vec<(usize, Rect)> = reaching
-                    .into_iter()
-                    .map(|i| &line.atomics[i])
-                    .filter(|a| a.2 < fragment_order)
-                    .filter_map(|a| {
-                        let meet = fragment_rect.intersect(a.3);
-                        (meet.width() > 0.0 && meet.height() > 0.0).then_some((a.2, meet))
+                if atomics.get(fragment.line).is_some_and(|list| !list.is_empty()) && order.contains_key(&fragment.node) {
+                    by_line[fragment.line].push(fragment);
+                }
+            }
+            let item = |rect: Rect, rank: usize| {
+                let ((start, end), (cross_start, cross_end)) = (along(rect), across(rect));
+                crate::reach::ReachItem { start, end, cross_start, cross_end, rank }
+            };
+            for (line, line_fragments) in by_line.iter().enumerate() {
+                if line_fragments.is_empty() {
+                    continue;
+                }
+                let transform = line_transform(line);
+                let line_atomics: Vec<(crate::reach::ReachItem, Rect)> = atomics[line]
+                    .iter()
+                    .filter_map(|&(atomic, rect)| {
+                        let rect = transform.transform_rect_bbox(rect);
+                        Some((item(rect, *order.get(&atomic)?), rect))
                     })
                     .collect();
-                hits.sort_by_key(|hit| hit.0);
-                for (_, meet) in hits {
-                    PaintScene::push_clip_layer(scene, Fill::NonZero, Affine::IDENTITY, &meet);
-                    match horizontal {
-                        Some((transform, tops)) => self.paint_inline_box_fragment(scene, fragment, transform, tops),
-                        None => self.paint_inline_box_fragment(scene, fragment, line_transform(fragment.line), None),
+                let rects: Vec<Rect> = line_fragments
+                    .iter()
+                    .map(|fragment| fragment.transform.transform_rect_bbox(Rect::from_origin_size((0.0, 0.0), fragment.size)))
+                    .collect();
+                let boxes: Vec<crate::reach::ReachItem> =
+                    line_fragments.iter().zip(&rects).map(|(fragment, &rect)| item(rect, order[&fragment.node])).collect();
+                let atomic_items: Vec<crate::reach::ReachItem> = line_atomics.iter().map(|a| a.0).collect();
+                let (met, _) = crate::reach::overlapping_atomics(&atomic_items, &boxes);
+                // Each fragment over the atomics before it that it meets, in tree order, as the
+                // line paints them.
+                for ((fragment, fragment_rect), met) in line_fragments.iter().zip(&rects).zip(met) {
+                    for atomic in met {
+                        let meet = fragment_rect.intersect(line_atomics[atomic].1);
+                        if meet.width() <= 0.0 || meet.height() <= 0.0 {
+                            continue;
+                        }
+                        PaintScene::push_clip_layer(scene, Fill::NonZero, Affine::IDENTITY, &meet);
+                        match horizontal {
+                            Some((transform, tops)) => self.paint_inline_box_fragment(scene, fragment, transform, tops),
+                            None => self.paint_inline_box_fragment(scene, fragment, line_transform(fragment.line), None),
+                        }
+                        PaintScene::pop_layer(scene);
                     }
-                    PaintScene::pop_layer(scene);
                 }
             }
         };

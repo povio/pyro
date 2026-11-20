@@ -5389,60 +5389,192 @@ diff --git a/packages/blitz-paint/src/reach.rs b/packages/blitz-paint/src/reach.
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-paint/src/reach.rs
-@@ -0,0 +1,54 @@
-+//! pyro: which intervals along a line reach into a query interval, output-sensitively (the atomic
-+//! inlines of a line an inline box after them paints over: `ElementCx::draw_inline_boxes_over_atomics`).
+@@ -0,0 +1,186 @@
++//! pyro: which atomic inlines of a line each inline box after them overlaps, output-sensitively
++//! (an inline box after an atomic inline paints over it where they meet:
++//! `ElementCx::draw_inline_boxes_over_atomics`).
++//!
++//! A sweep along the line: the boxes open at each point are kept, per kind, in a segment tree over
++//! the cross axis (the block axis) with a count of live entries in each subtree. A box that opens
++//! queries the tree of the other kind for the open boxes it meets across the line: only subtrees
++//! with live entries in its cross extent are visited, so the work is O((n + k) log² n) for n boxes
++//! and k overlapping pairs, whatever lies between them along or across the line (a wide box early
++//! in the line, small boxes shifted up and down by `vertical-align`).
 +
-+/// Intervals `[start, end)` sorted by start, with a segment tree of the furthest end in each run
-+/// of them: a query visits only the subtrees holding an interval that reaches it, O((k + 1) log n)
-+/// nodes for k answers, whatever intervals lie between (a wide one early in the line keeps
-+/// reaching every later query without making the others answers).
-+pub struct ReachIndex {
-+    starts: Vec<f64>,
-+    /// `max_end[size + i]` is interval `i`'s end; `max_end[n]` the furthest of its children's.
-+    max_end: Vec<f64>,
-+    size: usize,
++/// One box of a line: where it starts and ends along the line, its extent across it, and its
++/// rank in paint order (tree order).
++#[derive(Clone, Copy, Debug)]
++pub struct ReachItem {
++    pub start: f64,
++    pub end: f64,
++    pub cross_start: f64,
++    pub cross_end: f64,
++    pub rank: usize,
 +}
 +
-+impl ReachIndex {
-+    /// `intervals` must be sorted by start.
-+    pub fn new(intervals: impl ExactSizeIterator<Item = (f64, f64)>) -> Self {
-+        let size = intervals.len().next_power_of_two();
-+        let mut starts = Vec::with_capacity(intervals.len());
-+        let mut max_end = vec![f64::NEG_INFINITY; 2 * size];
-+        for (i, (start, end)) in intervals.enumerate() {
-+            debug_assert!(starts.last().is_none_or(|&last| last <= start), "sorted by start");
-+            starts.push(start);
-+            max_end[size + i] = end;
-+        }
-+        for n in (1..size).rev() {
-+            max_end[n] = max_end[2 * n].max(max_end[2 * n + 1]);
-+        }
-+        Self { starts, max_end, size }
++/// The open boxes of one kind, by their cross extents (half-open), over the cross coordinates
++/// of every box of the line.
++struct CrossTree {
++    /// The distinct cross coordinates: leaf `i` is `[coords[i], coords[i + 1])`.
++    coords: Vec<f64>,
++    size: usize,
++    /// Per node: the boxes whose extent covers the node's range and not its parent's (alive or
++    /// not, dead ones dropped when met), and the live entries in its subtree.
++    lists: Vec<Vec<usize>>,
++    live: Vec<usize>,
++}
++
++impl CrossTree {
++    fn new(coords: Vec<f64>) -> Self {
++        let leaves = coords.len().saturating_sub(1).max(1);
++        let size = leaves.next_power_of_two();
++        Self { coords, size, lists: vec![Vec::new(); 2 * size], live: vec![0; 2 * size] }
 +    }
 +
-+    /// The indices (ascending) of the intervals that start before `end` and end after `start`,
-+    /// and how many tree nodes the search visited.
-+    pub fn query(&self, start: f64, end: f64) -> (Vec<usize>, usize) {
-+        let upto = self.starts.partition_point(|&s| s < end);
-+        let mut out = Vec::new();
-+        let mut visited = 0;
-+        let mut stack = vec![(1usize, 0usize, self.size)];
-+        while let Some((node, lo, hi)) = stack.pop() {
-+            visited += 1;
-+            if lo >= upto || self.max_end[node] <= start {
-+                continue;
-+            }
-+            if hi - lo == 1 {
-+                out.push(lo);
-+                continue;
-+            }
-+            let mid = (lo + hi) / 2;
-+            stack.push((2 * node + 1, mid, hi));
-+            stack.push((2 * node, lo, mid));
-+        }
-+        (out, visited)
++    /// The leaves `[lo, hi)` a cross extent covers (empty for an empty extent).
++    fn leaves(&self, start: f64, end: f64) -> (usize, usize) {
++        let lo = self.coords.partition_point(|&c| c < start);
++        let hi = self.coords.partition_point(|&c| c < end);
++        (lo, hi.min(self.size))
 +    }
++
++    /// The canonical nodes covering leaves `[lo, hi)`.
++    fn canonical(&self, lo: usize, hi: usize, out: &mut Vec<usize>) {
++        out.clear();
++        let mut stack = vec![(1usize, 0usize, self.size)];
++        while let Some((node, a, b)) = stack.pop() {
++            if b <= lo || a >= hi {
++                continue;
++            }
++            if lo <= a && b <= hi {
++                out.push(node);
++                continue;
++            }
++            let mid = (a + b) / 2;
++            stack.push((2 * node, a, mid));
++            stack.push((2 * node + 1, mid, b));
++        }
++    }
++
++    fn insert(&mut self, id: usize, nodes: &[usize]) {
++        for &node in nodes {
++            self.lists[node].push(id);
++            let mut n = node;
++            while n >= 1 {
++                self.live[n] += 1;
++                n /= 2;
++            }
++        }
++    }
++
++    fn remove(&mut self, nodes: &[usize]) {
++        for &node in nodes {
++            let mut n = node;
++            while n >= 1 {
++                self.live[n] -= 1;
++                n /= 2;
++            }
++        }
++    }
++
++    /// Calls `found` for each open box whose extent meets leaves `[lo, hi)` (a box may be found
++    /// more than once: once per canonical node of it met); `alive` says which are open. Returns
++    /// the nodes and entries visited.
++    fn query(&mut self, lo: usize, hi: usize, alive: &[bool], mut found: impl FnMut(usize)) -> usize {
++        let mut work = 0;
++        if lo >= hi {
++            return 0;
++        }
++        let mut stack = vec![(1usize, 0usize, self.size)];
++        while let Some((node, a, b)) = stack.pop() {
++            work += 1;
++            if b <= lo || a >= hi || self.live[node] == 0 {
++                continue;
++            }
++            // Every box listed here covers this whole range, which meets the query's.
++            let list = &mut self.lists[node];
++            let mut i = 0;
++            while i < list.len() {
++                work += 1;
++                if alive[list[i]] {
++                    found(list[i]);
++                    i += 1;
++                } else {
++                    list.swap_remove(i);
++                }
++            }
++            if b - a > 1 {
++                let mid = (a + b) / 2;
++                stack.push((2 * node, a, mid));
++                stack.push((2 * node + 1, mid, b));
++            }
++        }
++        work
++    }
++}
++
++/// For each of `boxes` (the inline box fragments of a line), the indices of the `atomics` it
++/// overlaps on both axes and comes after in paint order, ascending by rank; and the work done
++/// (tree nodes and list entries visited), for tests.
++pub fn overlapping_atomics(atomics: &[ReachItem], boxes: &[ReachItem]) -> (Vec<Vec<usize>>, usize) {
++    let n = atomics.len() + boxes.len();
++    let item = |id: usize| if id < atomics.len() { &atomics[id] } else { &boxes[id - atomics.len()] };
++    let mut coords: Vec<f64> = (0..n).flat_map(|id| [item(id).cross_start, item(id).cross_end]).collect();
++    coords.sort_by(f64::total_cmp);
++    coords.dedup();
++    // Ids: atomics first, then boxes. Each kind has its own tree.
++    let mut trees = [CrossTree::new(coords.clone()), CrossTree::new(coords)];
++    let kind = |id: usize| usize::from(id >= atomics.len());
++    // Events along the line: ends before starts at one point (half-open extents); boxes with no
++    // extent open nothing.
++    let mut events: Vec<(f64, bool, usize)> = Vec::with_capacity(2 * n);
++    for id in 0..n {
++        let it = item(id);
++        if it.end > it.start && it.cross_end > it.cross_start {
++            events.push((it.start, true, id));
++            events.push((it.end, false, id));
++        }
++    }
++    events.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
++    let mut alive = vec![false; n];
++    let mut nodes: Vec<Vec<usize>> = vec![Vec::new(); n];
++    let mut out: Vec<Vec<usize>> = vec![Vec::new(); boxes.len()];
++    let mut seen: Vec<usize> = vec![usize::MAX; n];
++    let mut work = 0;
++    for (stamp, &(_, opens, id)) in events.iter().enumerate() {
++        let k = kind(id);
++        if !opens {
++            alive[id] = false;
++            let canonical = core::mem::take(&mut nodes[id]);
++            trees[k].remove(&canonical);
++            continue;
++        }
++        let it = *item(id);
++        let (lo, hi) = trees[k].leaves(it.cross_start, it.cross_end);
++        // The open boxes of the other kind it meets across the line.
++        let mut met: Vec<usize> = Vec::new();
++        work += trees[1 - k].query(lo, hi, &alive, |other| {
++            if seen[other] != stamp {
++                seen[other] = stamp;
++                met.push(other);
++            }
++        });
++        for other in met {
++            let (atomic, fragment) = if k == 0 { (id, other - atomics.len()) } else { (other, id - atomics.len()) };
++            if atomics[atomic].rank < boxes[fragment].rank {
++                out[fragment].push(atomic);
++            }
++        }
++        let mut canonical = Vec::new();
++        trees[k].canonical(lo, hi, &mut canonical);
++        trees[k].insert(id, &canonical);
++        nodes[id] = canonical;
++        alive[id] = true;
++    }
++    for list in &mut out {
++        list.sort_by_key(|&atomic| atomics[atomic].rank);
++    }
++    (out, work)
 +}
 diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/render.rs
 --- a/packages/blitz-paint/src/render.rs
@@ -8467,7 +8599,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      /// Paint overlay scrollbar thumbs for scroll containers: `overflow:
      /// scroll`, or `auto` when the content overflows (never `hidden`/`clip`,
      /// which scroll only programmatically). Thumbs appear on scroll and fade
-@@ -967,259 +3238,3629 @@
+@@ -967,259 +3238,3631 @@
          }
      }
  
@@ -11058,54 +11190,56 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        // `vertical`: the lines run along the device y axis.
 +        let paint = |scene: &mut _, fragments: Vec<InlineBoxFragment>, line_transform: &dyn Fn(usize) -> Affine, horizontal: Option<(Affine, Option<crate::text::LineTops>)>, vertical: bool| {
 +            let along = |rect: Rect| if vertical { (rect.y0, rect.y1) } else { (rect.x0, rect.x1) };
-+            // Per line with atomics: their device rects in tree order numbers, sorted by where
-+            // they start along the line, and the index of what reaches where (`ReachIndex`:
-+            // output-sensitive, whatever boxes lie between).
-+            struct LineAtomics {
-+                atomics: Vec<(f64, f64, usize, Rect)>,
-+                reach: crate::reach::ReachIndex,
-+            }
-+            let mut lines: Vec<Option<LineAtomics>> = Vec::new();
-+            lines.resize_with(atomics.len(), || None);
++            let across = |rect: Rect| if vertical { (rect.x0, rect.x1) } else { (rect.y0, rect.y1) };
++            // Per line with atomics: its fragments and its atomics as device boxes along and across
++            // the line with their tree order numbers, and which atomics before each fragment it
++            // meets (`reach::overlapping_atomics`: a sweep, output-sensitive on both axes).
++            let mut by_line: Vec<Vec<&InlineBoxFragment>> = Vec::new();
++            by_line.resize_with(atomics.len(), Vec::new);
 +            for fragment in &fragments {
-+                let Some(&fragment_order) = order.get(&fragment.node) else { continue };
-+                let Some(line_atomics) = atomics.get(fragment.line).filter(|list| !list.is_empty()) else { continue };
-+                let line = lines[fragment.line].get_or_insert_with(|| {
-+                    let transform = line_transform(fragment.line);
-+                    let mut list: Vec<(f64, f64, usize, Rect)> = line_atomics
-+                        .iter()
-+                        .filter_map(|&(atomic, rect)| {
-+                            let atomic_order = *order.get(&atomic)?;
-+                            let rect = transform.transform_rect_bbox(rect);
-+                            let (start, end) = along(rect);
-+                            Some((start, end, atomic_order, rect))
-+                        })
-+                        .collect();
-+                    list.sort_by(|a, b| a.0.total_cmp(&b.0));
-+                    let reach = crate::reach::ReachIndex::new(list.iter().map(|a| (a.0, a.1)));
-+                    LineAtomics { atomics: list, reach }
-+                });
-+                let fragment_rect = fragment.transform.transform_rect_bbox(Rect::from_origin_size((0.0, 0.0), fragment.size));
-+                let (start, end) = along(fragment_rect);
-+                // The atomics that reach into the fragment, in tree order, as the line paints them.
-+                let (reaching, _) = line.reach.query(start, end);
-+                let mut hits: Vec<(usize, Rect)> = reaching
-+                    .into_iter()
-+                    .map(|i| &line.atomics[i])
-+                    .filter(|a| a.2 < fragment_order)
-+                    .filter_map(|a| {
-+                        let meet = fragment_rect.intersect(a.3);
-+                        (meet.width() > 0.0 && meet.height() > 0.0).then_some((a.2, meet))
++                if atomics.get(fragment.line).is_some_and(|list| !list.is_empty()) && order.contains_key(&fragment.node) {
++                    by_line[fragment.line].push(fragment);
++                }
++            }
++            let item = |rect: Rect, rank: usize| {
++                let ((start, end), (cross_start, cross_end)) = (along(rect), across(rect));
++                crate::reach::ReachItem { start, end, cross_start, cross_end, rank }
++            };
++            for (line, line_fragments) in by_line.iter().enumerate() {
++                if line_fragments.is_empty() {
++                    continue;
++                }
++                let transform = line_transform(line);
++                let line_atomics: Vec<(crate::reach::ReachItem, Rect)> = atomics[line]
++                    .iter()
++                    .filter_map(|&(atomic, rect)| {
++                        let rect = transform.transform_rect_bbox(rect);
++                        Some((item(rect, *order.get(&atomic)?), rect))
 +                    })
 +                    .collect();
-+                hits.sort_by_key(|hit| hit.0);
-+                for (_, meet) in hits {
-+                    PaintScene::push_clip_layer(scene, Fill::NonZero, Affine::IDENTITY, &meet);
-+                    match horizontal {
-+                        Some((transform, tops)) => self.paint_inline_box_fragment(scene, fragment, transform, tops),
-+                        None => self.paint_inline_box_fragment(scene, fragment, line_transform(fragment.line), None),
++                let rects: Vec<Rect> = line_fragments
++                    .iter()
++                    .map(|fragment| fragment.transform.transform_rect_bbox(Rect::from_origin_size((0.0, 0.0), fragment.size)))
++                    .collect();
++                let boxes: Vec<crate::reach::ReachItem> =
++                    line_fragments.iter().zip(&rects).map(|(fragment, &rect)| item(rect, order[&fragment.node])).collect();
++                let atomic_items: Vec<crate::reach::ReachItem> = line_atomics.iter().map(|a| a.0).collect();
++                let (met, _) = crate::reach::overlapping_atomics(&atomic_items, &boxes);
++                // Each fragment over the atomics before it that it meets, in tree order, as the
++                // line paints them.
++                for ((fragment, fragment_rect), met) in line_fragments.iter().zip(&rects).zip(met) {
++                    for atomic in met {
++                        let meet = fragment_rect.intersect(line_atomics[atomic].1);
++                        if meet.width() <= 0.0 || meet.height() <= 0.0 {
++                            continue;
++                        }
++                        PaintScene::push_clip_layer(scene, Fill::NonZero, Affine::IDENTITY, &meet);
++                        match horizontal {
++                            Some((transform, tops)) => self.paint_inline_box_fragment(scene, fragment, transform, tops),
++                            None => self.paint_inline_box_fragment(scene, fragment, line_transform(fragment.line), None),
++                        }
++                        PaintScene::pop_layer(scene);
 +                    }
-+                    PaintScene::pop_layer(scene);
 +                }
 +            }
 +        };
@@ -12324,7 +12458,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      }
  
      #[cfg(feature = "svg")]
-@@ -1229,9 +6870,60 @@
+@@ -1229,9 +6872,60 @@
          let Some(svg) = self.svg else {
              return;
          };
@@ -12387,7 +12521,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let svg_size = svg.tree.size();
  
          let x = self.frame.content_box.origin().x;
-@@ -1253,9 +6945,20 @@
+@@ -1253,9 +6947,20 @@
  
          // Apply object-fit algorithm
          let container_size = taffy::Size { width, height };
@@ -12411,7 +12545,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          };
          let paint_size = compute_object_fit(container_size, Some(object_size), object_fit);
  
-@@ -1266,26 +6969,209 @@
+@@ -1266,26 +6971,209 @@
          let y_offset = object_position.vertical.resolve(
              CSSPixelLength::new(container_size.height - paint_size.height) / self.scale as f32,
          ) * self.scale as f32;
@@ -12623,7 +12757,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      fn with_replaced_content_clip<S: PaintScene>(
          &self,
          scene: &mut S,
-@@ -1293,15 +7179,38 @@
+@@ -1293,15 +7181,38 @@
          paint_size: taffy::Size<f32>,
          x_offset: f32,
          y_offset: f32,
@@ -12663,7 +12797,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              BlendMode::default(),
              1.0,
              self.transform,
-@@ -1312,7 +7221,108 @@
+@@ -1312,7 +7223,108 @@
          );
      }
  
@@ -12772,7 +12906,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          if let Some(image) = self.element.raster_image_data() {
              let width = self.frame.content_box.width() as u32;
              let height = self.frame.content_box.height() as u32;
-@@ -1329,9 +7339,22 @@
+@@ -1329,9 +7341,22 @@
                  width: width as f32,
                  height: height as f32,
              };
@@ -12798,7 +12932,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              };
              let paint_size = compute_object_fit(container_size, Some(object_size), object_fit);
  
-@@ -1347,10 +7370,28 @@
+@@ -1347,10 +7372,28 @@
  
              let x_scale = paint_size.width as f64 / object_size.width as f64;
              let y_scale = paint_size.height as f64 / object_size.height as f64;
@@ -12827,7 +12961,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  
              self.with_replaced_content_clip(
                  scene,
-@@ -1358,8 +7399,23 @@
+@@ -1358,8 +7401,23 @@
                  paint_size,
                  x_offset.px(),
                  y_offset.px(),
@@ -12852,7 +12986,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  },
              );
          }
-@@ -1383,22 +7439,27 @@
+@@ -1383,22 +7441,27 @@
              let width = self.frame.content_box.width() as u32;
              let height = self.frame.content_box.height() as u32;
  
@@ -12889,7 +13023,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          }
      }
  
-@@ -1427,6 +7488,32 @@
+@@ -1427,6 +7490,32 @@
      }
  }
  
@@ -12922,7 +13056,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  fn insets_from_taffy_rect(input: taffy::Rect<f64>) -> Insets {
      Insets {
          x0: input.left,
-@@ -1438,6 +7525,13 @@
+@@ -1438,6 +7527,13 @@
  
  /// Convert Stylo and Taffy types into Kurbo types
  fn create_css_rect(style: &ComputedValues, layout: &Layout, scale: f64) -> CssBox {
@@ -12936,7 +13070,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      // Resolve and rescale
      // We have to scale since document pixels are not same same as rendered pixels
      let width: f64 = layout.size.width as f64;
-@@ -1457,12 +7551,364 @@
+@@ -1457,12 +7553,364 @@
          }
      };
      let s_border = style.get_border();

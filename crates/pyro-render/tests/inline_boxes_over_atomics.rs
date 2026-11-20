@@ -114,21 +114,66 @@ fn a_wide_first_atomic_inline_keeps_the_search_output_sensitive() {
     let blue = (0..800).filter(|&x| (0..60).any(|y| rgb(&image, x, y) == [0, 0, 255])).count();
     assert!(blue > 200, "the spans paint over the wide box ({blue} columns blue)");
 
-    // The search itself (`blitz_paint::reach::ReachIndex`), counted rather than timed: the same
-    // line of 100000 atomics, each span between two of them.
+    // The search itself (`blitz_paint::reach::overlapping_atomics`), counted rather than timed:
+    // the same line of 100000 atomics after a wide one, a span between each two of them.
     let n = 100_000usize;
-    let mut intervals = vec![(0.0, 1e9)];
-    intervals.extend((0..n).map(|i| (i as f64 * 20.0, i as f64 * 20.0 + 6.0)));
-    let index = blitz_paint::reach::ReachIndex::new(intervals.iter().copied());
-    let log = (n + 1).next_power_of_two().trailing_zeros() as usize + 1;
-    let mut total = 0;
-    for i in 0..n {
-        let (start, end) = (i as f64 * 20.0 + 6.0, i as f64 * 20.0 + 14.0);
-        let (hits, visited) = index.query(start, end);
-        assert_eq!(hits, vec![0], "only the wide atomic reaches the span after atomic {i}");
-        assert!(visited <= 4 * (hits.len() + 1) * log, "{visited} nodes visited for {} hits", hits.len());
-        total += visited;
-    }
-    // (The walk back over every earlier atomic visited n * n / 2 = 5e9.)
-    assert!(total < n * 4 * 2 * log, "{total}");
+    let item = |start: f64, end: f64, rank: usize| blitz_paint::reach::ReachItem {
+        start,
+        end,
+        cross_start: 0.0,
+        cross_end: 10.0,
+        rank,
+    };
+    let mut atomics = vec![item(0.0, 1e9, 0)];
+    atomics.extend((0..n).map(|i| item(i as f64 * 20.0, i as f64 * 20.0 + 6.0, 2 * i + 1)));
+    let spans: Vec<_> = (0..n).map(|i| item(i as f64 * 20.0 + 6.0, i as f64 * 20.0 + 14.0, 2 * i + 2)).collect();
+    let (met, work) = blitz_paint::reach::overlapping_atomics(&atomics, &spans);
+    assert!(met.iter().all(|m| m == &vec![0]), "each span meets the wide atomic only");
+    let log = (2 * n).next_power_of_two().trailing_zeros() as usize + 1;
+    // (Walking back over every earlier atomic visited n * n / 2 = 5e9.)
+    // (About 4 n here; O((n + k) log² n) at worst.)
+    assert!(work < 64 * n && work < 3 * n * log * log, "{work}");
+}
+
+/// Boxes that overlap along the line but not across it (a tall line of small boxes shifted up and
+/// down by `vertical-align`): each span reaches every atomic before it along the line, and meets
+/// none across it. The sweep finds no candidates for them, not one per earlier atomic.
+#[test]
+fn boxes_apart_across_the_line_cost_no_search() {
+    // Rendered: small inline-blocks raised high above a line of spans pulled back over them by
+    // negative margins; nothing meets, nothing is painted again, and it stays fast.
+    let item = "<i style='display:inline-block;width:6px;height:6px;vertical-align:200px;background:red'></i>\
+                <b style='background:blue;margin-left:-6px'>x</b>";
+    let html = format!(
+        "<!doctype html><body style='margin:0;font:8px/10px monospace'><div style='white-space:nowrap'>{}</div>",
+        item.repeat(2000)
+    );
+    let image = render(&html, 800, 300);
+    assert!((0..800).any(|x| (0..300).any(|y| rgb(&image, x, y) == [255, 0, 0])), "the raised boxes show");
+
+    // Counted: n atomics all reaching every later span along the line (each starts before it and
+    // ends past the last), alternately above and below the spans' band across it, so that a range
+    // of them always spans the band: none meets a span.
+    let n = 100_000usize;
+    let atomics: Vec<_> = (0..n)
+        .map(|i| {
+            let (cross_start, cross_end) = if i % 2 == 0 { (0.0, 10.0) } else { (100.0, 110.0) };
+            blitz_paint::reach::ReachItem { start: i as f64, end: 1e9, cross_start, cross_end, rank: 2 * i }
+        })
+        .collect();
+    let spans: Vec<_> = (0..n)
+        .map(|i| blitz_paint::reach::ReachItem {
+            start: i as f64 + 0.5,
+            end: i as f64 + 0.9,
+            cross_start: 40.0,
+            cross_end: 60.0,
+            rank: 2 * i + 1,
+        })
+        .collect();
+    let (met, work) = blitz_paint::reach::overlapping_atomics(&atomics, &spans);
+    assert!(met.iter().all(Vec::is_empty), "nothing meets a span");
+    let log = (2 * n).next_power_of_two().trailing_zeros() as usize + 1;
+    // (Enumerating along the line first visited n * n / 2 = 5e9 candidates.)
+    // (About 6 n here; O((n + k) log² n) at worst.)
+    assert!(work < 64 * n && work < 2 * n * log * log, "{work}");
 }
