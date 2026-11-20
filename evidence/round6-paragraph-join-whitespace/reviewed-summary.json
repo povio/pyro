@@ -1,0 +1,17 @@
+{
+  "urls": 710,
+  "counts": {
+    "full-0": 139,
+    "full-1": 139,
+    "full-2": 426,
+    "named-0": 96887,
+    "named-1": 98021,
+    "named-2": 108138,
+    "registered": 0,
+    "missing": 0,
+    "gained": 1134
+  },
+  "gains": {
+    "editing/other/join-different-white-space-style-paragraphs.html": 1134
+  }
+}
