@@ -1,0 +1,29 @@
+{
+  "compared": 24,
+  "agreed": 22,
+  "differed": {
+    "dw-prompt": {
+      "LP": {
+        "result": "default"
+      },
+      "Chrome158": {
+        "result": "denied"
+      }
+    },
+    "swPort-prompt": {
+      "LP": {
+        "result": "default"
+      },
+      "Chrome158": {
+        "result": "denied"
+      }
+    }
+  },
+  "baseMatched": 7,
+  "sameHealthyModuleControls": [
+    "dw-module",
+    "swPort-module",
+    "dw-response-module",
+    "swPort-response-module"
+  ]
+}

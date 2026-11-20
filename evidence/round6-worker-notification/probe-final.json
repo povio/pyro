@@ -1,0 +1,140 @@
+{
+  "dw-surface": {
+    "result": [
+      "function",
+      "undefined"
+    ]
+  },
+  "dw-module": {
+    "result": [
+      "[object WebAssembly.Module]",
+      0,
+      0
+    ]
+  },
+  "dw-response-module": {
+    "result": [
+      true,
+      true,
+      0,
+      0
+    ]
+  },
+  "dw-data": {
+    "result": [
+      "ordinary",
+      "hello",
+      "1,2",
+      true
+    ]
+  },
+  "dw-copied": {
+    "result": [
+      1,
+      3,
+      true,
+      true
+    ]
+  },
+  "dw-order": {
+    "result": [
+      true,
+      "body,data"
+    ]
+  },
+  "dw-sequence": {
+    "result": [
+      "TypeError",
+      true,
+      0
+    ]
+  },
+  "swPort-surface": {
+    "result": [
+      "function",
+      "undefined"
+    ]
+  },
+  "swPort-module": {
+    "result": [
+      "[object WebAssembly.Module]",
+      0,
+      0
+    ]
+  },
+  "swPort-response-module": {
+    "result": [
+      true,
+      true,
+      0,
+      0
+    ]
+  },
+  "swPort-data": {
+    "result": [
+      "ordinary",
+      "hello",
+      "1,2",
+      true
+    ]
+  },
+  "swPort-copied": {
+    "result": [
+      1,
+      3,
+      true,
+      true
+    ]
+  },
+  "swPort-order": {
+    "result": [
+      true,
+      "body,data"
+    ]
+  },
+  "swPort-sequence": {
+    "result": [
+      "TypeError",
+      true,
+      0
+    ]
+  },
+  "window-denied": "denied",
+  "dw-denied": {
+    "result": "denied"
+  },
+  "swPort-denied": {
+    "result": "denied"
+  },
+  "window-granted": "granted",
+  "dw-granted": {
+    "result": "granted"
+  },
+  "swPort-granted": {
+    "result": "granted"
+  },
+  "window-prompt": "default",
+  "dw-prompt": {
+    "result": "default"
+  },
+  "swPort-prompt": {
+    "result": "default"
+  },
+  "service": [
+    {
+      "result": [
+        "function",
+        "undefined"
+      ]
+    },
+    {
+      "result": "TypeError"
+    },
+    {
+      "result": [
+        true,
+        "body,data"
+      ]
+    }
+  ]
+}

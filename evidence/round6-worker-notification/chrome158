@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+: "${CHROME_BIN:?Set CHROME_BIN to the verified Chrome stable 158.0.8127.37 executable}"
+exec "$CHROME_BIN" --headless --disable-gpu --disable-background-networking --no-first-run --remote-debugging-port="$5" --user-data-dir="$(mktemp -d "${TMPDIR:-/tmp}/lp-notification-158.XXXXXX")" about:blank

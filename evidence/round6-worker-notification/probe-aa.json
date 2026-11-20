@@ -1,0 +1,111 @@
+{
+  "dw-surface": {
+    "error": "ReferenceError: Can't find variable: Notification"
+  },
+  "dw-module": {
+    "result": [
+      "[object WebAssembly.Module]",
+      0,
+      0
+    ]
+  },
+  "dw-response-module": {
+    "result": [
+      true,
+      true,
+      0,
+      0
+    ]
+  },
+  "dw-data": {
+    "error": "ReferenceError: Can't find variable: Notification"
+  },
+  "dw-copied": {
+    "error": "ReferenceError: Can't find variable: Notification"
+  },
+  "dw-order": {
+    "result": [
+      false,
+      ""
+    ]
+  },
+  "dw-sequence": {
+    "result": [
+      "ReferenceError",
+      false,
+      0
+    ]
+  },
+  "swPort-surface": {
+    "error": "ReferenceError: Can't find variable: Notification"
+  },
+  "swPort-module": {
+    "result": [
+      "[object WebAssembly.Module]",
+      0,
+      0
+    ]
+  },
+  "swPort-response-module": {
+    "result": [
+      true,
+      true,
+      0,
+      0
+    ]
+  },
+  "swPort-data": {
+    "error": "ReferenceError: Can't find variable: Notification"
+  },
+  "swPort-copied": {
+    "error": "ReferenceError: Can't find variable: Notification"
+  },
+  "swPort-order": {
+    "result": [
+      false,
+      ""
+    ]
+  },
+  "swPort-sequence": {
+    "result": [
+      "ReferenceError",
+      false,
+      0
+    ]
+  },
+  "window-denied": "denied",
+  "dw-denied": {
+    "error": "ReferenceError: Can't find variable: Notification"
+  },
+  "swPort-denied": {
+    "error": "ReferenceError: Can't find variable: Notification"
+  },
+  "window-granted": "granted",
+  "dw-granted": {
+    "error": "ReferenceError: Can't find variable: Notification"
+  },
+  "swPort-granted": {
+    "error": "ReferenceError: Can't find variable: Notification"
+  },
+  "window-prompt": "default",
+  "dw-prompt": {
+    "error": "ReferenceError: Can't find variable: Notification"
+  },
+  "swPort-prompt": {
+    "error": "ReferenceError: Can't find variable: Notification"
+  },
+  "service": [
+    {
+      "error": "ReferenceError: Can't find variable: Notification"
+    },
+    {
+      "result": "ReferenceError"
+    },
+    {
+      "result": [
+        false,
+        ""
+      ]
+    }
+  ]
+}

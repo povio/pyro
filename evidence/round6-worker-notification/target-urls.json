@@ -1,0 +1,4 @@
+[
+ "wasm/serialization/module/serialization-via-notifications-api.any.html",
+ "wasm/serialization/module/serialization-via-notifications-api.any.worker.html"
+]

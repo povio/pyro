@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+q=$(cd "$(dirname "$0")" && pwd)
+: "${RUNNER_DIR:?Set RUNNER_DIR to the Lightningpanda checkout with the manifest runner}"
+: "${WPT_CHECKOUT:?Set WPT_CHECKOUT to the pinned WPT checkout}"
+: "${WPT_MANIFEST:?Set WPT_MANIFEST to its manifest file}"
+cd "$RUNNER_DIR"
+exec bun bench/wpt/run.mjs --kind testharness --wpt "$WPT_CHECKOUT" --server wptserve --testdriver --http2 --generated-globals "$WPT_MANIFEST" --manifest-inventory --dirs wasm,notifications --jobs 2 --tests "$q/$3-urls.json" --bin "$1=$2" --out "$q/$3-$1.json"
