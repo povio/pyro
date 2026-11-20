@@ -4667,7 +4667,7 @@ index 0000000..be15ba9
 +    }
 +}
 diff --git a/src/scene.rs b/src/scene.rs
-index 1b09a33..72ddd98 100644
+index 1b09a33..0e6390f 100644
 --- a/src/scene.rs
 +++ b/src/scene.rs
 @@ -1,19 +1,252 @@
@@ -5156,7 +5156,7 @@ index 1b09a33..72ddd98 100644
      }
      fn draw_box_shadow(
          &mut self,
-@@ -216,6 +536,815 @@ impl PaintScene for VelloCpuScenePainter {
+@@ -216,6 +536,826 @@ impl PaintScene for VelloCpuScenePainter {
          self.render_ctx
              .fill_blurred_rounded_rect(&rect, radius as f32, std_dev as f32, false);
      }
@@ -5228,9 +5228,10 @@ index 1b09a33..72ddd98 100644
 +                && matches!(commands.get(i + 1), Some(RenderCommand::PopLayer))
 +            {
 +                if let Some(RenderCommand::PushClipLayer(clip)) = commands.get(i + 2) {
-+                    self.render_ctx.set_transform(transform * clip.transform);
++                    let (path, path_transform) = device_path(clip.clip.clone(), transform * clip.transform, self.raster_bounds());
++                    self.render_ctx.set_transform(path_transform);
 +                    self.render_ctx.set_fill_rule(clip.fill);
-+                    self.render_ctx.push_clip_path(&clip.clip);
++                    self.render_ctx.push_clip_path(&path);
 +                    self.clip_paths.push(Pushed::ClipPath);
 +                    open.push((i + 2, false));
 +                    i += 3;
@@ -5247,9 +5248,14 @@ index 1b09a33..72ddd98 100644
 +                && pixel_aligned_rect(&clip.clip, transform * clip.transform)
 +                && !(self.backdrop_filters && crate::backdrop::is_root(commands, i))
 +            {
-+                self.render_ctx.set_transform(transform * clip.transform);
++                // pyro: flattened as a fill or clip layer is (`device_path`), so the clip's edge is
++                // the edge of the fills it clips or meets (a blended child in a rounded clip blends
++                // with its parent's background edge at the coverage that edge has: WPT
++                // `mix-blend-mode-parent-element-overflow-hidden-and-border-radius`).
++                let (path, path_transform) = device_path(clip.clip.clone(), transform * clip.transform, self.raster_bounds());
++                self.render_ctx.set_transform(path_transform);
 +                self.render_ctx.set_fill_rule(clip.fill);
-+                self.render_ctx.push_clip_path(&clip.clip);
++                self.render_ctx.push_clip_path(&path);
 +                self.clip_paths.push(Pushed::ClipPath);
 +                open.push((i, false));
 +                i += 1;
@@ -5259,9 +5265,14 @@ index 1b09a33..72ddd98 100644
 +                && self.blending
 +                && blends_inside(commands, i)
 +            {
-+                self.render_ctx.set_transform(transform * clip.transform);
++                // pyro: flattened as a fill or clip layer is (`device_path`), so the clip's edge is
++                // the edge of the fills it clips or meets (a blended child in a rounded clip blends
++                // with its parent's background edge at the coverage that edge has: WPT
++                // `mix-blend-mode-parent-element-overflow-hidden-and-border-radius`).
++                let (path, path_transform) = device_path(clip.clip.clone(), transform * clip.transform, self.raster_bounds());
++                self.render_ctx.set_transform(path_transform);
 +                self.render_ctx.set_fill_rule(clip.fill);
-+                self.render_ctx.push_clip_path(&clip.clip);
++                self.render_ctx.push_clip_path(&path);
 +                self.clip_paths.push(Pushed::ClipPath);
 +                open.push((i, false));
 +                i += 1;
@@ -5972,7 +5983,7 @@ index 1b09a33..72ddd98 100644
  }
  
  #[cfg(test)]
-@@ -292,4 +1421,234 @@ mod clip_rule_tests {
+@@ -292,4 +1432,235 @@ mod clip_rule_tests {
          assert_pixels(false, true);
          assert_pixels(true, true);
      }
@@ -6063,7 +6074,7 @@ index 1b09a33..72ddd98 100644
 +        let buffer = render(Rect::new(0.0, 0.0, 50.5, 50.5), Rect::new(40.0, 40.0, 80.0, 80.0), 1.0);
 +        assert_eq!(pixel(&buffer, 70, 70), [0, 0, 0, 0]);
 +    }
-+}
+ }
 +
 +#[cfg(test)]
 +mod color_filter_tests {
@@ -6206,4 +6217,5 @@ index 1b09a33..72ddd98 100644
 +        let second_horizontal = (b.y - c.y).abs() < 1e-3;
 +        first_horizontal != second_horizontal
 +    }
- }
++}
++

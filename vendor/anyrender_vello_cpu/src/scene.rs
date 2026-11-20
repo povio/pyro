@@ -604,9 +604,10 @@ impl VelloCpuScenePainter {
                 && matches!(commands.get(i + 1), Some(RenderCommand::PopLayer))
             {
                 if let Some(RenderCommand::PushClipLayer(clip)) = commands.get(i + 2) {
-                    self.render_ctx.set_transform(transform * clip.transform);
+                    let (path, path_transform) = device_path(clip.clip.clone(), transform * clip.transform, self.raster_bounds());
+                    self.render_ctx.set_transform(path_transform);
                     self.render_ctx.set_fill_rule(clip.fill);
-                    self.render_ctx.push_clip_path(&clip.clip);
+                    self.render_ctx.push_clip_path(&path);
                     self.clip_paths.push(Pushed::ClipPath);
                     open.push((i + 2, false));
                     i += 3;
@@ -623,9 +624,14 @@ impl VelloCpuScenePainter {
                 && pixel_aligned_rect(&clip.clip, transform * clip.transform)
                 && !(self.backdrop_filters && crate::backdrop::is_root(commands, i))
             {
-                self.render_ctx.set_transform(transform * clip.transform);
+                // pyro: flattened as a fill or clip layer is (`device_path`), so the clip's edge is
+                // the edge of the fills it clips or meets (a blended child in a rounded clip blends
+                // with its parent's background edge at the coverage that edge has: WPT
+                // `mix-blend-mode-parent-element-overflow-hidden-and-border-radius`).
+                let (path, path_transform) = device_path(clip.clip.clone(), transform * clip.transform, self.raster_bounds());
+                self.render_ctx.set_transform(path_transform);
                 self.render_ctx.set_fill_rule(clip.fill);
-                self.render_ctx.push_clip_path(&clip.clip);
+                self.render_ctx.push_clip_path(&path);
                 self.clip_paths.push(Pushed::ClipPath);
                 open.push((i, false));
                 i += 1;
@@ -635,9 +641,14 @@ impl VelloCpuScenePainter {
                 && self.blending
                 && blends_inside(commands, i)
             {
-                self.render_ctx.set_transform(transform * clip.transform);
+                // pyro: flattened as a fill or clip layer is (`device_path`), so the clip's edge is
+                // the edge of the fills it clips or meets (a blended child in a rounded clip blends
+                // with its parent's background edge at the coverage that edge has: WPT
+                // `mix-blend-mode-parent-element-overflow-hidden-and-border-radius`).
+                let (path, path_transform) = device_path(clip.clip.clone(), transform * clip.transform, self.raster_bounds());
+                self.render_ctx.set_transform(path_transform);
                 self.render_ctx.set_fill_rule(clip.fill);
-                self.render_ctx.push_clip_path(&clip.clip);
+                self.render_ctx.push_clip_path(&path);
                 self.clip_paths.push(Pushed::ClipPath);
                 open.push((i, false));
                 i += 1;
@@ -1652,3 +1663,4 @@ fn pixel_aligned_rect(path: &kurbo::BezPath, transform: Affine) -> bool {
         first_horizontal != second_horizontal
     }
 }
+

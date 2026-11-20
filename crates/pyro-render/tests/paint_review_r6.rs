@@ -430,3 +430,20 @@ fn a_faded_inline_inside_a_painted_inline_is_faded_over_it() {
     let [r, g, b] = pixel(&img, 45, 20);
     assert!(r.abs_diff(127) <= 3 && g.abs_diff(127) <= 3 && b.abs_diff(127) <= 3, "blue at half over yellow: {:?}", [r, g, b]);
 }
+
+/// A child blended with `difference` in a rounded `overflow: hidden` stacking context: at the
+/// rounded edge, the clip (a clip path, as blending inside a clip layer needs) has the coverage of
+/// the parent's background edge it blends against, so the edge pixel is lime faded to white. The clip
+/// was flattened coarsely (vello_cpu's tolerance) while the background was the exact curve: the
+/// blend there took red in (99, 175, 7).
+#[test]
+fn a_blended_child_in_a_rounded_clip_blends_at_the_backgrounds_edge_coverage() {
+    let img = render(
+        "<style>body{margin:0}.p{width:140px;height:140px;position:relative;z-index:1;overflow:hidden;\
+         border-radius:1em 5em;margin:40px;background:red}\
+         .b{width:200px;height:200px;background:yellow;mix-blend-mode:difference}</style>\
+         <div class=p><div class=b></div></div>",
+    );
+    let [r, g, b] = pixel(&img, 51, 140);
+    assert!(r <= 70 && g >= 200 && b <= 20, "the edge pixel: {:?}", [r, g, b]);
+}
