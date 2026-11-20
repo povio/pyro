@@ -1263,6 +1263,16 @@ impl BaseDocument {
             ));
         }
 
+        // pyro: a right-to-left item's outside marker, painted after its border box's right edge
+        // (blitz-paint's outside markers), is its overflow there. Chrome: WPT css-lists
+        // `list-style-type-string-003`, a long rtl string marker makes the document 1137px wide.
+        if scroll_padding.is_none() {
+            if let Some((width, height)) = self.outside_marker_after_right_edge(node_id) {
+                let x = layout.size.width as f64;
+                let top = (layout.border.top + layout.padding.top) as f64;
+                overflow = overflow.union(Rect::new(x * scale, top * scale, (x + width) * scale, (top + height) * scale));
+            }
+        }
         *self.nodes[node_id].scrollable_overflow_mut() = overflow;
         *self.nodes[node_id].layout_children.get_mut() = layout_children;
 
@@ -1355,6 +1365,23 @@ impl BaseDocument {
         }
         let (pos, neg) = (margin.max(inner).max(0.0), margin.min(inner).min(0.0));
         pos + neg
+    }
+
+    /// pyro: the width and height (CSS px) of the outside marker of `node_id`, a list item in a
+    /// horizontal right-to-left writing mode, which paint places after its border box's right
+    /// edge, with its padding (8px) for a symbol.
+    fn outside_marker_after_right_edge(&self, node_id: NodeId) -> Option<(f64, f64)> {
+        let element = self.nodes[node_id].element_data()?;
+        let item = element.list_item_data.as_deref()?;
+        let crate::node::ListItemLayoutPosition::Outside(marker) = &item.position else { return None };
+        let style = self.nodes[node_id].primary_styles()?;
+        if style.writing_mode.is_bidi_ltr() || style.writing_mode.is_vertical() {
+            return None;
+        }
+        let scale = marker.scale().max(f32::EPSILON) as f64;
+        let padding = if matches!(item.marker, crate::node::Marker::Char(_)) { 8.0 } else { 0.0 };
+        let width = marker.full_width() as f64 / scale + padding;
+        (width > 0.0).then(|| (width, marker.height() as f64 / scale))
     }
 
     /// pyro: whether `node_id` is `position: fixed`.
