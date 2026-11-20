@@ -207,7 +207,7 @@ TESTHARNESS_SKIP.push(
 // `excluded` counts what was left out and why (identical for every binary).
 // `reasons` (a Map, optional) receives each left-out file's reason, keyed by its path (coverage.mjs).
 // `wptserve`: the server is wptserve (run.mjs --server wptserve), so pages that need it are kept.
-export function discover(wpt, dirs, { sampleEncoding = 1, reasons, wptserve = false, testdriver = false } = {}) {
+export function discover(wpt, dirs, { sampleEncoding = 1, reasons, wptserve = false, testdriver = false, workerGlobals = false } = {}) {
   const tests = [];
   const excluded = {};
   let rel;
@@ -217,11 +217,17 @@ export function discover(wpt, dirs, { sampleEncoding = 1, reasons, wptserve = fa
       rel = path.relative(wpt, f).split(path.sep).join('/');
       const base = path.basename(f);
       // `code`: the source the wptserve check reads (markup without its comments).
-      let src, code, url, variants = [''], long = false;
-      if (/\.(any|window)\.js$/.test(base)) {
+      let src, code, url, variants = [''], long = false, generated;
+      if (/\.(any|window)\.js$/.test(base) || (workerGlobals && wptserve && base.endsWith('.worker.js'))) {
         src = code = fs.readFileSync(f, 'utf8');
         const g = src.match(/^\/\/\s*META:\s*global=(.*)$/m);
-        if (base.endsWith('.any.js') && g && !g[1].split(',').map((s) => s.trim()).some((x) => x === 'window' || x === 'default')) { exclude('no window global'); continue; }
+        if (workerGlobals && wptserve && base.endsWith('.any.js')) {
+          const globals = new Set((g?.[1]?.trim() || 'window,dedicatedworker').split(',').map(s => s.trim()));
+          if (globals.has('worker')) for (const worker of ['dedicatedworker', 'sharedworker', 'serviceworker']) globals.add(worker);
+          generated = [['window', ''], ['dedicatedworker', '.worker'], ['sharedworker', '.sharedworker'], ['serviceworker', '.serviceworker']]
+            .filter(([global]) => globals.has(global)).map(([, suffix]) => rel.replace(/\.js$/, `${suffix}.html`));
+          if (!generated.length) { exclude('no supported global'); continue; }
+        } else if (base.endsWith('.any.js') && g && !g[1].split(',').map((s) => s.trim()).some((x) => x === 'window' || x === 'default')) { exclude('no window global'); continue; }
         url = rel.replace(/\.js$/, '.html');
         const v = [...src.matchAll(/^\/\/\s*META:\s*variant=(.*)$/gm)].map((m) => m[1].trim());
         if (v.length) variants = v;
@@ -248,7 +254,7 @@ export function discover(wpt, dirs, { sampleEncoding = 1, reasons, wptserve = fa
       // other pages (wpt-full.yml --jobs 16) the larger SIMD ones outran the normal timeout, so they get the long one.
       if (rel.startsWith('wasm/core/')) long = true;
       const viewport = LEGACY_VIEWPORT_DIRS.includes(d) ? {} : { viewport: WPTRUNNER_VIEWPORT };
-      for (const v of variants) tests.push({ dir: d, url: url + v, long, ...viewport });
+      for (const page of generated ?? [url]) for (const v of variants) tests.push({ dir: d, url: page + v, long, ...viewport });
     }
   }
   // sampleEncoding N: keep every Nth encoding/ page (identical selection for every browser)

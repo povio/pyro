@@ -29,6 +29,17 @@ test('testharness discovery reads UTF-16 markup with either byte order mark', ()
   }
 });
 
+test('worker discovery expands classic globals and query variants only when requested', () => {
+  const wpt = checkout({ 'css/a.any.js': '// META: global=worker\n// META: variant=?x', 'css/b.any.js': '', 'css/c.worker.js': '' });
+  try {
+    const urls = options => discover(wpt, ['css'], options).tests.map(test => test.url).sort();
+    expect(urls({ wptserve: true })).toEqual(['css/b.any.html']);
+    expect(urls({ wptserve: true, workerGlobals: true })).toEqual(['css/a.any.serviceworker.html?x', 'css/a.any.sharedworker.html?x', 'css/a.any.worker.html?x', 'css/b.any.html', 'css/b.any.worker.html', 'css/c.worker.html']);
+  } finally {
+    fs.rmSync(wpt, { recursive: true, force: true });
+  }
+});
+
 function checkout(files) {
   const wpt = fs.mkdtempSync(path.join(os.tmpdir(), 'server-discovery-'));
   for (const [rel, src] of Object.entries(files)) {
