@@ -1910,10 +1910,22 @@ impl Node {
 
             if *name == local_name!("align") {
                 use style::values::specified::TextAlign;
+                // The HTML rendering rules for divs, table row groups, rows and
+                // cells also accept "middle" and "justify", case-insensitively.
+                let html_alignment = elem.name.ns == ns!(html)
+                    && matches!(*tag, local_name!("div") | local_name!("thead")
+                        | local_name!("tbody") | local_name!("tfoot") | local_name!("tr")
+                        | local_name!("td") | local_name!("th"));
                 let keyword = match value {
                     "left" => Some(StyloTextAlign::MozLeft),
                     "right" => Some(StyloTextAlign::MozRight),
                     "center" => Some(StyloTextAlign::MozCenter),
+                    s if html_alignment && s.eq_ignore_ascii_case("left") => Some(StyloTextAlign::MozLeft),
+                    s if html_alignment && s.eq_ignore_ascii_case("right") => Some(StyloTextAlign::MozRight),
+                    s if html_alignment && (s.eq_ignore_ascii_case("center") || s.eq_ignore_ascii_case("middle")) => {
+                        Some(StyloTextAlign::MozCenter)
+                    }
+                    s if html_alignment && s.eq_ignore_ascii_case("justify") => Some(StyloTextAlign::Justify),
                     _ => None,
                 };
 
