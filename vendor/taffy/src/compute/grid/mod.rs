@@ -1401,7 +1401,14 @@ pub fn compute_grid_layout<Tree: LayoutGridContainer>(
     let absolute_position_offset = Point { x: padding_box_inset.left, y: padding_box_inset.top };
     // pyro: (before the tracks go to the detailed grid info below)
     #[cfg(feature = "content_size")]
-    let grid_area_rect = grid_area_overflow(&columns, &rows, border, padding, direction.is_rtl());
+    // pyro: (an rtl grid's frame starts after its left scrollbar gutter, as its items' overflow does)
+    let grid_area_rect = grid_area_overflow(
+        &columns,
+        &rows,
+        Rect { left: border.left + if direction.is_rtl() { scrollbar_gutter.x } else { 0.0 }, ..border },
+        padding,
+        direction.is_rtl(),
+    );
     // Store the detailed grid info before the out-of-flow positioning pass so that the pass can
     // resolve the grid areas of out-of-flow boxes whose containing block is this grid
     let areas =

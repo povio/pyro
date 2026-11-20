@@ -896,10 +896,12 @@ fn physical_layout(
     }
     let mut overflow = logical.scrollable_overflow_rect.transpose();
     if !placer_wm.is_vertical_lr() {
+        // pyro: across the padding box, as `mirror_child_overflow` mirrors it: the frame of a
+        // layout's overflow (a grid's start-edge classic gutter is in it). Chrome: an `overflow:
+        // scroll` vertical-rl grid in a vertical-rl box has scrollWidth 60 at 75px wide.
         let client_width = logical.size.height
             - logical.border.top
-            - logical.border.bottom
-            - logical.scrollbar_size.height;
+            - logical.border.bottom;
         overflow = mirror_overflow(
             overflow,
             Size {

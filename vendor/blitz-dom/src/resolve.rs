@@ -1240,9 +1240,19 @@ impl BaseDocument {
         // WPT css-grid `grid-overflow-001`).
         if scroll_padding.is_some() && self.nodes[node_id].taffy_display() == taffy::Display::Grid {
             let grid = layout.scrollable_overflow_rect.rect();
-            // (Taffy's frame is the scrollport: the padding box less the start-edge classic gutters.)
-            let g = self.nodes[node_id].gutter_insets();
-            let (bl, bt) = ((layout.border.left + g.left) as f64, (layout.border.top + g.top) as f64);
+            // (Taffy's frame is the padding box: the start-edge classic gutters the grid moves its
+            // content box in by are in it, as padding is. An rtl grid's gutter at its inline end's
+            // physical start edge (the left one, the top one in a vertical writing mode) is not:
+            // its frame starts after it. Chrome: WPT css-grid `grid-overflow-001`, and
+            // `scrollbar-gutter: stable both-edges` grids, scrollWidth 150 for 150px of content.)
+            let (gl, gt) = match self.nodes[node_id].primary_styles() {
+                Some(s) if !s.writing_mode.is_bidi_ltr() => {
+                    let g = self.nodes[node_id].gutter_insets();
+                    if s.writing_mode.is_vertical() { (0.0, g.top) } else { (g.left, 0.0) }
+                }
+                _ => (0.0, 0.0),
+            };
+            let (bl, bt) = ((layout.border.left + gl) as f64, (layout.border.top + gt) as f64);
             overflow = overflow.union(Rect::new(
                 (grid.left as f64 + bl) * scale,
                 (grid.top as f64 + bt) * scale,
