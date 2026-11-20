@@ -109,6 +109,7 @@ pub mod target;
 pub mod thread_state;
 pub mod traversal;
 pub mod url;
+mod url_pattern;
 pub mod url_search_params;
 pub mod util;
 pub mod validity;
@@ -193,6 +194,7 @@ pub fn register(engine: &pyro_js::Engine) {
     engine.register::<cache_storage::StoredBody>();
     engine.register::<headers::Headers>();
     engine.register::<url::URL>();
+    engine.register::<url_pattern::URLPattern>();
     engine.register::<url_search_params::URLSearchParams>();
     engine.register::<url_search_params::ParamsIterator>();
     engine.register::<response::Response>();
