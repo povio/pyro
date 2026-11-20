@@ -1,0 +1,454 @@
+{
+  "loss": {
+    "selected": 159,
+    "counts": {
+      "merged": {
+        "observed": 159,
+        "fully": 38,
+        "names": 65428,
+        "namedPass": 60289,
+        "page_complete": 156,
+        "page_timeout": 3
+      },
+      "prior52a": {
+        "missing": 88,
+        "observed": 71,
+        "fully": 0,
+        "names": 64378,
+        "namedPass": 59521,
+        "page_complete": 71
+      },
+      "prior35df": {
+        "observed": 159,
+        "fully": 45,
+        "names": 65428,
+        "namedPass": 60310,
+        "page_complete": 156,
+        "page_timeout": 3
+      },
+      "localStable": {
+        "observed": 159,
+        "fully": 78,
+        "names": 65385,
+        "namedPass": 60713,
+        "page_complete": 157,
+        "page_timeout": 1,
+        "page_hang": 1
+      },
+      "publicStable": {
+        "observed": 159,
+        "fully": 80,
+        "names": 65442,
+        "namedPass": 60886,
+        "page_OK": 159
+      },
+      "publicCanary": {
+        "observed": 159,
+        "fully": 83,
+        "names": 65442,
+        "namedPass": 60896,
+        "page_OK": 159
+      }
+    },
+    "paired": {
+      "prior52a": {
+        "missingReferencePage": 88,
+        "paired": 71,
+        "onlyHeadFull": 0,
+        "onlyRefFull": 0,
+        "onlyHead": 0,
+        "onlyRef": 0,
+        "both": 59521,
+        "headMissingName": 0,
+        "referenceMissingName": 0
+      },
+      "prior35df": {
+        "paired": 159,
+        "onlyHeadFull": 3,
+        "onlyRefFull": 10,
+        "onlyHead": 50,
+        "onlyRef": 71,
+        "both": 60239,
+        "headMissingName": 12,
+        "referenceMissingName": 12
+      },
+      "localStable": {
+        "paired": 159,
+        "onlyHeadFull": 1,
+        "onlyRefFull": 41,
+        "onlyHead": 1261,
+        "onlyRef": 1685,
+        "both": 59028,
+        "headMissingName": 14,
+        "referenceMissingName": 57
+      },
+      "publicStable": {
+        "paired": 159,
+        "onlyHeadFull": 1,
+        "onlyRefFull": 43,
+        "onlyHead": 1135,
+        "onlyRef": 1732,
+        "both": 59154,
+        "headMissingName": 26,
+        "referenceMissingName": 12
+      },
+      "publicCanary": {
+        "paired": 159,
+        "onlyHeadFull": 0,
+        "onlyRefFull": 45,
+        "onlyHead": 1134,
+        "onlyRef": 1741,
+        "both": 59155,
+        "headMissingName": 26,
+        "referenceMissingName": 12
+      }
+    }
+  },
+  "main": {
+    "selected": 2407,
+    "counts": {
+      "merged": {
+        "observed": 2407,
+        "fully": 988,
+        "names": 197098,
+        "namedPass": 176978,
+        "page_complete": 2287,
+        "page_timeout": 88,
+        "page_error": 32
+      },
+      "prior52a": {
+        "observed": 2407,
+        "fully": 988,
+        "names": 197098,
+        "namedPass": 176978,
+        "page_complete": 2287,
+        "page_timeout": 88,
+        "page_error": 32
+      },
+      "prior35df": {
+        "missing": 2407
+      },
+      "localStable": {
+        "observed": 2407,
+        "fully": 1878,
+        "names": 198139,
+        "namedPass": 188043,
+        "page_complete": 2388,
+        "page_timeout": 13,
+        "page_error": 4,
+        "page_hang": 2
+      },
+      "publicStable": {
+        "observed": 2407,
+        "fully": 1892,
+        "names": 198189,
+        "namedPass": 187967,
+        "page_OK": 2398,
+        "page_ERROR": 4,
+        "page_TIMEOUT": 5
+      },
+      "publicCanary": {
+        "observed": 2407,
+        "fully": 1965,
+        "names": 198876,
+        "namedPass": 189272,
+        "page_OK": 2402,
+        "page_ERROR": 2,
+        "page_TIMEOUT": 3
+      }
+    },
+    "paired": {
+      "prior52a": {
+        "paired": 2407,
+        "onlyHeadFull": 0,
+        "onlyRefFull": 0,
+        "onlyHead": 0,
+        "onlyRef": 0,
+        "both": 176978,
+        "headMissingName": 0,
+        "referenceMissingName": 0
+      },
+      "prior35df": {
+        "missingReferencePage": 2407
+      },
+      "localStable": {
+        "paired": 2407,
+        "onlyHeadFull": 102,
+        "onlyRefFull": 992,
+        "onlyHead": 3623,
+        "onlyRef": 14688,
+        "both": 173355,
+        "headMissingName": 2057,
+        "referenceMissingName": 1016
+      },
+      "publicStable": {
+        "paired": 2407,
+        "onlyHeadFull": 100,
+        "onlyRefFull": 1004,
+        "onlyHead": 3684,
+        "onlyRef": 14673,
+        "both": 173294,
+        "headMissingName": 2097,
+        "referenceMissingName": 1006
+      },
+      "publicCanary": {
+        "paired": 2407,
+        "onlyHeadFull": 87,
+        "onlyRefFull": 1064,
+        "onlyHead": 2916,
+        "onlyRef": 15210,
+        "both": 174062,
+        "headMissingName": 2111,
+        "referenceMissingName": 333
+      }
+    }
+  },
+  "extra": {
+    "selected": 38,
+    "counts": {
+      "merged": {
+        "observed": 38,
+        "fully": 29,
+        "names": 376,
+        "namedPass": 330,
+        "page_complete": 38
+      },
+      "prior52a": {
+        "observed": 38,
+        "fully": 29,
+        "names": 376,
+        "namedPass": 330,
+        "page_complete": 38
+      },
+      "prior35df": {
+        "missing": 38
+      },
+      "localStable": {
+        "observed": 38,
+        "fully": 18,
+        "names": 376,
+        "namedPass": 300,
+        "page_complete": 38
+      },
+      "publicStable": {
+        "observed": 38,
+        "fully": 18,
+        "names": 376,
+        "namedPass": 300,
+        "page_OK": 38
+      },
+      "publicCanary": {
+        "observed": 38,
+        "fully": 18,
+        "names": 376,
+        "namedPass": 300,
+        "page_OK": 38
+      }
+    },
+    "paired": {
+      "prior52a": {
+        "paired": 38,
+        "onlyHeadFull": 0,
+        "onlyRefFull": 0,
+        "onlyHead": 0,
+        "onlyRef": 0,
+        "both": 330,
+        "headMissingName": 0,
+        "referenceMissingName": 0
+      },
+      "prior35df": {
+        "missingReferencePage": 38
+      },
+      "localStable": {
+        "paired": 38,
+        "onlyHeadFull": 12,
+        "onlyRefFull": 1,
+        "onlyHead": 44,
+        "onlyRef": 14,
+        "both": 286,
+        "headMissingName": 0,
+        "referenceMissingName": 0
+      },
+      "publicStable": {
+        "paired": 38,
+        "onlyHeadFull": 12,
+        "onlyRefFull": 1,
+        "onlyHead": 44,
+        "onlyRef": 14,
+        "both": 286,
+        "headMissingName": 0,
+        "referenceMissingName": 0
+      },
+      "publicCanary": {
+        "paired": 38,
+        "onlyHeadFull": 12,
+        "onlyRefFull": 1,
+        "onlyHead": 44,
+        "onlyRef": 14,
+        "both": 286,
+        "headMissingName": 0,
+        "referenceMissingName": 0
+      }
+    }
+  },
+  "css": {
+    "selected": 1050,
+    "counts": {
+      "merged": {
+        "observed": 1050,
+        "fully": 819,
+        "names": 36077,
+        "namedPass": 33321,
+        "page_complete": 1038,
+        "page_timeout": 8,
+        "page_error": 4
+      },
+      "prior52a": {
+        "observed": 1050,
+        "fully": 818,
+        "names": 36077,
+        "namedPass": 33313,
+        "page_complete": 1038,
+        "page_timeout": 8,
+        "page_error": 4
+      },
+      "prior35df": {
+        "missing": 1050
+      },
+      "localStable": {
+        "missing": 1050
+      },
+      "publicStable": {
+        "observed": 1050,
+        "fully": 933,
+        "names": 36094,
+        "namedPass": 34492,
+        "page_OK": 1049,
+        "page_ERROR": 1
+      },
+      "publicCanary": {
+        "observed": 1050,
+        "fully": 948,
+        "names": 36096,
+        "namedPass": 34759,
+        "page_OK": 1049,
+        "page_ERROR": 1
+      }
+    },
+    "paired": {
+      "prior52a": {
+        "paired": 1050,
+        "onlyHeadFull": 1,
+        "onlyRefFull": 0,
+        "onlyHead": 8,
+        "onlyRef": 0,
+        "both": 33313,
+        "headMissingName": 0,
+        "referenceMissingName": 0
+      },
+      "prior35df": {
+        "missingReferencePage": 1050
+      },
+      "localStable": {
+        "missingReferencePage": 1050
+      },
+      "publicStable": {
+        "paired": 1050,
+        "onlyHeadFull": 46,
+        "onlyRefFull": 160,
+        "onlyHead": 795,
+        "onlyRef": 1966,
+        "both": 32526,
+        "headMissingName": 229,
+        "referenceMissingName": 212
+      },
+      "publicCanary": {
+        "paired": 1050,
+        "onlyHeadFull": 39,
+        "onlyRefFull": 168,
+        "onlyHead": 645,
+        "onlyRef": 2083,
+        "both": 32676,
+        "headMissingName": 225,
+        "referenceMissingName": 206
+      }
+    }
+  },
+  "workers": {
+    "selected": 41,
+    "counts": {
+      "merged": {
+        "observed": 41,
+        "fully": 27,
+        "names": 874,
+        "namedPass": 577,
+        "page_complete": 41
+      },
+      "prior52a": {
+        "observed": 41,
+        "fully": 27,
+        "names": 874,
+        "namedPass": 577,
+        "page_complete": 41
+      },
+      "prior35df": {
+        "missing": 41
+      },
+      "localStable": {
+        "missing": 41
+      },
+      "publicStable": {
+        "observed": 41,
+        "fully": 35,
+        "names": 874,
+        "namedPass": 619,
+        "page_OK": 41
+      },
+      "publicCanary": {
+        "observed": 41,
+        "fully": 35,
+        "names": 874,
+        "namedPass": 619,
+        "page_OK": 41
+      }
+    },
+    "paired": {
+      "prior52a": {
+        "paired": 41,
+        "onlyHeadFull": 0,
+        "onlyRefFull": 0,
+        "onlyHead": 0,
+        "onlyRef": 0,
+        "both": 577,
+        "headMissingName": 0,
+        "referenceMissingName": 0
+      },
+      "prior35df": {
+        "missingReferencePage": 41
+      },
+      "localStable": {
+        "missingReferencePage": 41
+      },
+      "publicStable": {
+        "paired": 41,
+        "onlyHeadFull": 0,
+        "onlyRefFull": 8,
+        "onlyHead": 0,
+        "onlyRef": 42,
+        "both": 577,
+        "headMissingName": 0,
+        "referenceMissingName": 0
+      },
+      "publicCanary": {
+        "paired": 41,
+        "onlyHeadFull": 0,
+        "onlyRefFull": 8,
+        "onlyHead": 0,
+        "onlyRef": 42,
+        "both": 577,
+        "headMissingName": 0,
+        "referenceMissingName": 0
+      }
+    }
+  }
+}

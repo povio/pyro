@@ -1,0 +1,237 @@
+{
+  "merged": "aa0268b479a6b463da16910b4b743cf38901d962",
+  "prior52a": "52a207a13cbd4ee9da7daa0ebfda73a0db9b29f1",
+  "prior35df": "35dfb7474ab60c46ba537a98060e2789fb2c4662",
+  "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+  "JSC": "0e0dd7038a7a-6f4649e395e0",
+  "columns": [
+    "merged",
+    "prior52a",
+    "prior35df",
+    "localStable",
+    "publicStable",
+    "publicCanary"
+  ],
+  "receipts": {
+    "platform-loss-final.json": {
+      "binary": "prior35df",
+      "receiptSHA256": "06c92f4ca19a736448851305644c2d3deb4e71c6fc4a588298ffd1be89804f27",
+      "serverLogSHA256": "13ad8685ef21bfd03141ea8aa7bf6900455c66f319848421dbb95853d00f3cb5",
+      "serverConfigSHA256": "56a58720da9fe0576663663140c768ecc44d92802aabe083fc6b921ab07e600b",
+      "jobs": 4,
+      "urls": 159,
+      "http2": true,
+      "manifestInventory": true,
+      "restarts": 0,
+      "watchdogKills": 0,
+      "statuses": {
+        "complete": 156,
+        "timeout": 3
+      }
+    },
+    "merged-aa-loss.json": {
+      "binary": "merged",
+      "receiptSHA256": "5432f01206f468eba437e5a2c07c67d6b55908e0919357fb4dce62e373c76b66",
+      "serverLogSHA256": "0c97dda2858c371a7b31d8fe33e3ec7d3c64f8cbf48ac56a61095b931dc162d2",
+      "serverConfigSHA256": "edeedff2036118095e74ce7610f16ecc41283db8a3ce0691c143676c5991a293",
+      "jobs": 4,
+      "urls": 159,
+      "http2": true,
+      "manifestInventory": true,
+      "restarts": 0,
+      "watchdogKills": 0,
+      "statuses": {
+        "complete": 156,
+        "timeout": 3
+      }
+    },
+    "platform-rebase-a414.json": {
+      "binary": "prior52a",
+      "receiptSHA256": "f550c0c94e7ddfc9cce55361941189f21c2540a1f06dcaa1d0fd1e2b1560386c",
+      "serverLogSHA256": "16286d2d4adc96904f50090e0fef726fe7f4de1c2e9674d28980b0e9b09994ca",
+      "serverConfigSHA256": "f62f42f149462f6243b077ec6b9cd5be0ee9d4120f686fc8ecefd5e9f191936f",
+      "jobs": 4,
+      "urls": 2407,
+      "http2": true,
+      "manifestInventory": true,
+      "restarts": 0,
+      "watchdogKills": 0,
+      "statuses": {
+        "complete": 2287,
+        "timeout": 88,
+        "error": 32
+      }
+    },
+    "merged-aa-main.json": {
+      "binary": "merged",
+      "receiptSHA256": "b11c68b3eb122f947502d941a3d4b1170a8c92674b93b81f2734222dab808e61",
+      "serverLogSHA256": "ff07956a122d6a134518ef70c8f0778e7d73e5a5c6ccd12664b5dc178191c8db",
+      "serverConfigSHA256": "1fb96c8902950e95dbb4c0356628296f7279534a3fbc8e24ff163b12a3a36957",
+      "jobs": 4,
+      "urls": 2407,
+      "http2": true,
+      "manifestInventory": true,
+      "restarts": 0,
+      "watchdogKills": 0,
+      "statuses": {
+        "complete": 2287,
+        "timeout": 88,
+        "error": 32
+      }
+    },
+    "platform-extra-rebase-a414.json": {
+      "binary": "prior52a",
+      "receiptSHA256": "f9b66ce28e7719fe6ec547d941b1965f891ff1f6db4bffa64c2cdf1a981a21d8",
+      "serverLogSHA256": "bd0fa4466558785ed96e7000785c6ca969b5756ee79e324af4860820b69808fd",
+      "serverConfigSHA256": "778661492ca727fc91d0c4803fcb6dc3c47901de2e268deb2954ea71eabacc2b",
+      "jobs": 4,
+      "urls": 38,
+      "http2": true,
+      "manifestInventory": true,
+      "restarts": 0,
+      "watchdogKills": 0,
+      "statuses": {
+        "complete": 38
+      }
+    },
+    "merged-aa-extra.json": {
+      "binary": "merged",
+      "receiptSHA256": "72f4c95fd6b76547f08848fa02f6c196d26f02954b6a13ee2926ac831ab5b3aa",
+      "serverLogSHA256": "4b1b441ab11f553c97543944b83b74a37079ee49b0a091a7f1cc0d11a432c63b",
+      "serverConfigSHA256": "2ce9a399d524e180051c1e023677a8121df1c93951d3930b2a6b398615ea8b50",
+      "jobs": 4,
+      "urls": 38,
+      "http2": true,
+      "manifestInventory": true,
+      "restarts": 0,
+      "watchdogKills": 0,
+      "statuses": {
+        "complete": 38
+      }
+    },
+    "rebase-a414-css.json": {
+      "binary": "prior52a",
+      "receiptSHA256": "3e12ab3e0022d8697c59af5a67f90cc1b15bb8a57c811c654aee7a71a88219ed",
+      "serverLogSHA256": "fc4d3cbd02eb006c01ede0f4ed7c63b952345e17dd00ad04521f91bb8c3521e6",
+      "serverConfigSHA256": "f6857159e9d3f4db1962dda8d3c44e4f0e805e23fbcb9622c1b6b2539f55e0a2",
+      "jobs": 2,
+      "urls": 1050,
+      "http2": false,
+      "manifestInventory": false,
+      "restarts": 0,
+      "watchdogKills": 0,
+      "statuses": {
+        "complete": 1038,
+        "timeout": 8,
+        "error": 4
+      }
+    },
+    "merged-aa-css.json": {
+      "binary": "merged",
+      "receiptSHA256": "b6fe39f4e522d0d3ae621b62a9863dedd94a1a630d8612992893d2346e926882",
+      "serverLogSHA256": "42f7835755fecc16a31b7fc3eb476b56f00ce35f7ea62737eef4deca1ec04661",
+      "serverConfigSHA256": "33cfc5793870df8be4b553b2d54b44bfa75634346e256eabbd3e5b009f2f554f",
+      "jobs": 2,
+      "urls": 1050,
+      "http2": false,
+      "manifestInventory": false,
+      "restarts": 0,
+      "watchdogKills": 0,
+      "statuses": {
+        "complete": 1038,
+        "timeout": 8,
+        "error": 4
+      }
+    },
+    "rebase-a414-extra.json": {
+      "binary": "prior52a",
+      "receiptSHA256": "6792b586472463d81b842268aa1f253cbb251bf8bed3ecf148415b067b1948e0",
+      "serverLogSHA256": "d7ba920e17477f1050db43f93ddb10a6917e247d0e63e4b50bcb26b9018f7e0a",
+      "serverConfigSHA256": "a26880ee4767ca21cb5125535a0b9e134972dfdaef6d285a7903dce02b173bca",
+      "jobs": 2,
+      "urls": 41,
+      "http2": false,
+      "manifestInventory": true,
+      "restarts": 0,
+      "watchdogKills": 0,
+      "statuses": {
+        "complete": 41
+      }
+    },
+    "merged-aa-workers.json": {
+      "binary": "merged",
+      "receiptSHA256": "96e55f9a713c784d3c29f659aeac861dd5cdd008f20b8867c7919ed57f2602dd",
+      "serverLogSHA256": "4872579c59460e38ff929759bdefd84baf73de326cb44cb9e98230a126874ecf",
+      "serverConfigSHA256": "2b91f67157f1e7045e2690d41c495ae2bd3e0ce715e2bad9d2cf4768be4655a9",
+      "jobs": 2,
+      "urls": 41,
+      "http2": false,
+      "manifestInventory": true,
+      "restarts": 0,
+      "watchdogKills": 0,
+      "statuses": {
+        "complete": 41
+      }
+    }
+  },
+  "binSha256": {
+    "merged": "9623217e05de0c6866256ce4f855edabf2ca810eb0d6a3ae51a93fd5ba50f7a8",
+    "prior52a": "32d537d5963af5db4f39b3d33620c14c2f28d7311f7de622cd7303741f0d656b",
+    "prior35df": "e5ddaa6bc18125410917843e328d6680325f99690b202e8e5f573926d876f1a6"
+  },
+  "coverage": {
+    "observed": 2533,
+    "outside this merge guard": 27980,
+    "crash or vulnerability fixture (inventory only)": 43,
+    "unsupported testdriver features: bidi": 209,
+    "previously reviewed outside ordinary execution": 304,
+    "requires manifest proxy auto-configuration": 89,
+    "historical hang": 3,
+    "raw HTTP/1 transport unsupported": 20,
+    "hangs: a custom element the parser reparents into its own shadow or template cycle (lane F3a)": 2,
+    "needs the back/forward cache": 1,
+    "times out in pyro (lane F3b leftover: javascript:/srcdoc/meta refresh/history.go(0), reentrant intercepts, multi-frame traversal, sandboxed back)": 3,
+    "needs CSP connect-src violations (Trusted Types end marker)": 18,
+    "Wasm runtime withheld": 538,
+    "requires JS shell": 78,
+    "requires browser extension harness": 6
+  },
+  "distinctGuardURLs": 3624,
+  "uniquePrimaryNonCSS": 2445,
+  "historicalDisposition": {
+    "Fail": 133,
+    "Pass": 148,
+    "missing-name": 11
+  },
+  "historicalOverlapWith52a": 71,
+  "localStable": {
+    "version": "157.0.8103.80",
+    "os": "macOS 27.2.1 arm64",
+    "source": "corrected same-pin Chrome census",
+    "unmeasuredHere": "local stable CSS receipts unavailable"
+  },
+  "publicStable": {
+    "id": 5478394868006912,
+    "version": "157.0.8103.38",
+    "os": "Linux 22.04",
+    "revision": "1eecaa0c300058f0a47472f8a4733552f929cc63",
+    "unchangedSourceCount": 3624
+  },
+  "publicCanary": {
+    "id": 4907012216061952,
+    "version": "159.0.8143.0",
+    "os": "Linux 22.04",
+    "revision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+  },
+  "jscLibrarySHA256": "3deb71f8e7d14daf174e35340a4ff0c1900b0e9f576503adeb5facbb1201f029",
+  "finishedGuardReceipts": 5,
+  "namedIdentity": "canonical name and one-based occurrence within URL and run",
+  "selectedSourceBlobsChecked": 2823,
+  "referenceReportSHA256": {
+    "stable": "a620da1880353e2d4f8bf8b7aea29458b7517d6e280628a4a91c4efbd95ce36a",
+    "canary": "d86b53353c2b4494dd66bc8928cba7d09b530014ba77f760027e9d2f4f112b38"
+  },
+  "historicalKeysSHA256": "68bdbe91b1eda496adf6e1df9f5b0fde5837a12789b468677e785779a5aaaa01",
+  "baselineCensusCommit": "fdf757052183b8df60dae474f478d20de16aa436",
+  "priorIntegrationEvidenceCommit": "f80be4736"
+}
