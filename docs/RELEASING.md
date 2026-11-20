@@ -24,7 +24,7 @@ A release candidate tag makes a GitHub prerelease and publishes to npm `next`.
 Linux release executables have debug information removed from staged copies
 before bundle tests; build outputs and runtime symbols are retained. Published
 Linux binaries therefore do not include source-line debug information. The
-combined npm tarball must fit the workflow's 175 MiB compressed-size budget;
+combined npm tarball must fit the workflow's 185 MiB compressed-size budget;
 this guards package growth but does not guarantee registry acceptance.
 
 A cold JavaScriptCore build takes about 7 minutes on a hosted runner (measured on
