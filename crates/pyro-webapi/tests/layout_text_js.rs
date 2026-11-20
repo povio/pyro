@@ -87,6 +87,21 @@ fn eval(realm: &Realm, src: &str) -> String {
 }
 
 #[test]
+fn math_auto_preserves_dom_range_and_partial_node_text() {
+    let env = env("<style>#outer { text-transform: math-auto }</style><div id=outer><span id=target>h</span></div>");
+    let read = |source: &str, end: u32| eval(&env.main, &format!(r#"(() => {{
+        const target = document.querySelector('#target');
+        target.textContent = {source:?};
+        const selection = getSelection();
+        selection.setBaseAndExtent(target.firstChild, 0, target.firstChild, {end});
+        return [target.innerText, selection.toString(), selection.getRangeAt(0).toString(), target.textContent].join('|');
+    }})()"#));
+    assert_eq!(read("h", 1), "ℎ|ℎ|h|h");
+    assert_eq!(read("ab", 1), "ab|a|a|ab");
+    assert_eq!(read("∇", 1), "𝛻|𝛻|∇|∇");
+}
+
+#[test]
 fn inner_text_reads_computed_display() {
     let e = env("<div id=t></div>");
     let text = |html: &str| {

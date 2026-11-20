@@ -187,7 +187,7 @@ fn before_after(r: &RangeData, s: &Scope<'_>, a: &Args<'_>, start: bool, after: 
 }
 
 /// Text content of the range (Range.toString()).
-fn range_text(r: &RangeData) -> JsResult<String> {
+fn range_text(r: &RangeData, rendered: bool) -> JsResult<String> {
     let page = r.page();
     let (sn, so, en, eo) = points(r);
     let dom = page.dom.borrow();
@@ -208,6 +208,12 @@ fn range_text(r: &RangeData) -> JsResult<String> {
         }
         let start = if n == sn { so } else { 0 };
         let end = if n == en { eo } else { len };
+        if rendered && start == 0 && end == len {
+            if let Some(character) = dom.math_auto_text(page.layout().style(), n) {
+                out.push(character);
+                continue;
+            }
+        }
         out.push_str(&dom.substring_data(n, start, end.saturating_sub(start)).js()?);
     }
     Ok(out)
@@ -518,7 +524,7 @@ impl JsClass for Range {
             r.page.dom.borrow_mut().set_live_range(&d.live, r.live.start(), r.live.end()).js()?;
             Ok(s.wrap::<Range>(d, None)?.value())
         });
-        def.pure_method("toString", 0, |s, r, _a| Ok(s.string(&range_text(r)?)));
+        def.pure_method("toString", 0, |s, r, _a| Ok(s.string(&range_text(r, false)?)));
         def.method("detach", 0, |s, _r, _a| Ok(s.undefined()));
         def.pure_method("compareBoundaryPoints", 2, |s, r, a| {
             a.require(2, "Range.compareBoundaryPoints")?;
@@ -972,7 +978,7 @@ impl JsClass for Selection {
                 let r = RangeData::new(&sel.page, start.0)?;
                 set_point(&r, start.0, start.1, true)?;
                 set_point(&r, end.0, end.1, false)?;
-                Ok(s.string(&range_text(&r)?))
+                Ok(s.string(&range_text(&r, true)?))
             }
             None => Ok(s.string("")),
         });

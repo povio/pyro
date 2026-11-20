@@ -105,6 +105,7 @@ pub enum TextTransform {
     Capitalize,
     Uppercase,
     Lowercase,
+    MathAuto,
 }
 
 impl TextTransform {
@@ -128,10 +129,9 @@ impl TextTransform {
                 TextTransform::Lowercase
             } else if token.eq_ignore_ascii_case("capitalize") {
                 TextTransform::Capitalize
-            } else if token.eq_ignore_ascii_case("full-width")
-                || token.eq_ignore_ascii_case("full-size-kana")
-                || token.eq_ignore_ascii_case("math-auto")
-            {
+            } else if token.eq_ignore_ascii_case("math-auto") {
+                TextTransform::MathAuto
+            } else if token.eq_ignore_ascii_case("full-width") || token.eq_ignore_ascii_case("full-size-kana") {
                 continue;
             } else {
                 return None;
@@ -154,6 +154,7 @@ impl TextTransform {
             TextTransform::Capitalize => "capitalize",
             TextTransform::Uppercase => "uppercase",
             TextTransform::Lowercase => "lowercase",
+            TextTransform::MathAuto => "math-auto",
         }
     }
 }

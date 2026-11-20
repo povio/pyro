@@ -10021,7 +10021,7 @@ diff -ruN a/values/specified/position.rs b/values/specified/position.rs
  #[derive(
 diff -ruN a/values/specified/text.rs b/values/specified/text.rs
 --- a/values/specified/text.rs	2026-11-11 19:55:57
-+++ b/values/specified/text.rs	2026-11-19 20:09:26
++++ b/values/specified/text.rs	2026-11-20 21:35:22
 @@ -25,6 +25,23 @@
  use style_traits::{CssWriter, ParseError, StyleParseErrorKind, ToCss};
  use style_traits::{KeywordsCollectFn, SpecifiedValueInfo};
@@ -10046,11 +10046,10 @@ diff -ruN a/values/specified/text.rs b/values/specified/text.rs
  /// A specified type for the `initial-letter` property.
  pub type InitialLetter = GenericInitialLetter<Number, Integer>;
  
-@@ -151,12 +168,27 @@
-             .is_ok()
+@@ -152,11 +169,26 @@
          {
              return Ok(Self::normal());
-+        }
+         }
 +        // pyro: `<number> && [ drop | raise ]?` besides `<number> <integer>?` (CSS Inline 3 § 7.2).
 +        use crate::values::generics::text::InitialLetterKeyword;
 +        let keyword = |i: &mut Parser<'_>| -> Result<InitialLetterKeyword, ParseError> {
@@ -10062,7 +10061,7 @@ diff -ruN a/values/specified/text.rs b/values/specified/text.rs
 +        if let Ok(keyword) = input.try_parse(keyword) {
 +            let size = Number::parse_at_least_one(context, input)?;
 +            return Ok(Self { size, sink: crate::Zero::zero(), keyword });
-         }
++        }
          let size = Number::parse_at_least_one(context, input)?;
 +        if let Ok(keyword) = input.try_parse(keyword) {
 +            return Ok(Self { size, sink: crate::Zero::zero(), keyword });
@@ -10075,7 +10074,38 @@ diff -ruN a/values/specified/text.rs b/values/specified/text.rs
      }
  }
  
-@@ -500,6 +532,8 @@
+@@ -358,6 +390,30 @@
+     Capitalize,
+     /// Automatic italicization of math variables.
+     MathAuto,
++}
++
++/// Maps one mathematical identifier character to its italic counterpart.
++pub fn math_auto_char(c: char) -> char {
++    let codepoint = match c {
++        'A'..='Z' => c as u32 + 0x1D3F3,
++        'h' => 0x210E,
++        'a'..='z' => c as u32 + 0x1D3ED,
++        '\u{131}' => 0x1D6A4,
++        '\u{237}' => 0x1D6A5,
++        '\u{391}'..='\u{3A1}' | '\u{3A3}'..='\u{3A9}' => c as u32 + 0x1D351,
++        '\u{3B1}'..='\u{3C9}' => c as u32 + 0x1D34B,
++        '\u{3F4}' => 0x1D6F3,
++        '\u{2207}' => 0x1D6FB,
++        '\u{2202}' => 0x1D715,
++        '\u{3F5}' => 0x1D716,
++        '\u{3D1}' => 0x1D717,
++        '\u{3F0}' => 0x1D718,
++        '\u{3D5}' => 0x1D719,
++        '\u{3F1}' => 0x1D71A,
++        '\u{3D6}' => 0x1D71B,
++        _ => return c,
++    };
++    char::from_u32(codepoint).unwrap_or(c)
+ }
+ 
+ #[derive(
+@@ -500,6 +556,8 @@
      Center,
      Justify,
      End,
@@ -10084,18 +10114,18 @@ diff -ruN a/values/specified/text.rs b/values/specified/text.rs
      #[parse(aliases = "-webkit-center")]
      MozCenter,
      #[parse(aliases = "-webkit-left")]
-@@ -824,6 +858,10 @@
-         self.remove(Self::RIGHT); // Right is the default
-         true
+@@ -826,6 +884,10 @@
      }
-+}
-+
-+fn word_break_manual_enabled(_: &ParserContext) -> bool {
-+    cfg!(feature = "servo")
  }
  
++fn word_break_manual_enabled(_: &ParserContext) -> bool {
++    cfg!(feature = "servo")
++}
++
  fn word_break_break_word_enabled(_: &ParserContext) -> bool {
-@@ -858,6 +896,14 @@
+     crate::pref!("layout.css.word-break.break-word.enabled", gecko = true)
+ }
+@@ -858,6 +920,14 @@
      /// `anywhere`, and `word-break` behave like `normal`.
      #[parse(condition = "word_break_break_word_enabled")]
      BreakWord,
@@ -10110,7 +10140,7 @@ diff -ruN a/values/specified/text.rs b/values/specified/text.rs
  }
  
  /// Values for the `text-justify` CSS property.
-@@ -1330,7 +1376,226 @@
+@@ -1330,7 +1400,226 @@
          /// Auto-spacing may replace an existing U+0020 space with custom space.
          const REPLACE = 1 << 6;
          */
@@ -10337,7 +10367,7 @@ diff -ruN a/values/specified/text.rs b/values/specified/text.rs
  }
  
  /* Bug 1980111: Uncomment the following to support 'replace' value.
-@@ -1654,12 +1919,9 @@
+@@ -1654,12 +1943,9 @@
      FromPrimitive,
      Hash,
      MallocSizeOf,
@@ -10350,7 +10380,7 @@ diff -ruN a/values/specified/text.rs b/values/specified/text.rs
      ToResolvedValue,
      ToShmem,
      ToTyped,
-@@ -1668,8 +1930,60 @@
+@@ -1668,8 +1954,60 @@
  pub enum TextCombineUpright {
      None,
      All,

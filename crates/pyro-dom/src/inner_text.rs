@@ -279,6 +279,17 @@ fn apply_text_transform(text: &str, transform: TextTransform) -> String {
 }
 
 impl Dom {
+    pub fn math_auto_text(&self, style: &StyleEngine, node: NodeId) -> Option<char> {
+        let mut chars = self.char_data(node).ok()?.chars();
+        let character = chars.next()?;
+        if chars.next().is_some() || !self.is_connected(node).ok()? {
+            return None;
+        }
+        let parent = self.parent_element(node).ok()??;
+        (style.text_transform(self, parent) == TextTransform::MathAuto)
+            .then(|| style::values::specified::text::math_auto_char(character))
+    }
+
     /// `HTMLElement.innerText` (and `outerText`) getter: getInnerText
     /// (Html.zig:335-359). An element that isn't being rendered (no owner
     /// frame, disconnected, or in a display:none subtree) returns its
@@ -572,6 +583,14 @@ impl Dom {
 
 /// writeText (Html.zig:936-956).
 fn write_text(s: &str, state: &mut State<'_>) {
+    if state.transform == TextTransform::MathAuto {
+        let mut chars = s.chars();
+        if let Some(character) = chars.next().filter(|_| chars.next().is_none()) {
+            let mapped = style::values::specified::text::math_auto_char(character);
+            write_rendered_text(mapped.encode_utf8(&mut [0; 4]), state);
+            return;
+        }
+    }
     // `capitalize` is recognized but not applied: it needs word-boundary
     // tracking across text runs.
     if state.transform != TextTransform::Uppercase && state.transform != TextTransform::Lowercase {
