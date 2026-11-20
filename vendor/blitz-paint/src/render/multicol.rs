@@ -115,6 +115,7 @@ impl ElementCx<'_, '_> {
                     .then_some((self.node.id, fragment.offset.x + (fragment.exact_x - fragment.x))),
             );
             let _block_offset = Restore::set(&self.context.column_block_offset, self.context.column_block_offset.get() + if vertical.is_none() { f64::from(fragment.offset.y) } else { 0.0 });
+            let _rounding = Restore::set(&self.context.column_block_rounding_error, self.context.column_block_rounding_error.get() + f64::from(fragment.block_rounding_error));
             let spanner_row_guard = Restore::set(
                 &self.context.spanner_row_container,
                 (fragment.spanner && vertical.is_none()).then_some(self.node.id),

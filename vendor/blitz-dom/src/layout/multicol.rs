@@ -114,6 +114,7 @@ impl FragmentSink {
                 spanner: false,
                 extended: 0.0,
                 exact_x: f32::NAN,
+                block_rounding_error: 0.0,
             }
         } else {
             fragment
@@ -218,6 +219,7 @@ pub struct ColumnFragment {
     /// pyro: the column box's left edge before it is snapped to device pixels (`x`): where its
     /// rules are placed in the gaps.
     pub exact_x: f32,
+    pub block_rounding_error: f32,
 }
 
 impl ColumnFragment {
@@ -1387,6 +1389,7 @@ impl LayoutPassState<'_> {
                     spanner: false,
                     extended,
                     exact_x: f32::NAN,
+                    block_rounding_error: 0.0,
                 });
             }
         }
@@ -1438,6 +1441,7 @@ impl LayoutPassState<'_> {
                         spanner: false,
                         extended: 0.0,
                         exact_x: f32::NAN,
+                        block_rounding_error: 0.0,
                     });
                     placed += 1;
                 }
@@ -1538,6 +1542,7 @@ impl LayoutPassState<'_> {
                             spanner: false,
                             extended: 0.0,
                             exact_x: f32::NAN,
+                            block_rounding_error: 0.0,
                         });
                     }
                     top += height;
@@ -1570,6 +1575,7 @@ impl LayoutPassState<'_> {
                         spanner: true,
                         extended: 0.0,
                         exact_x: f32::NAN,
+                        block_rounding_error: 0.0,
                     });
                     top = spanner_top + (end - start);
                     // (After the last of its content the break is after the container, the outer
@@ -1652,6 +1658,7 @@ impl LayoutPassState<'_> {
                             spanner: false,
                             extended: 0.0,
                             exact_x: f32::NAN,
+                            block_rounding_error: 0.0,
                         });
                     }
                     row_top = last_top + last_height;
@@ -1669,6 +1676,7 @@ impl LayoutPassState<'_> {
                             spanner: true,
                             extended: 0.0,
                             exact_x: f32::NAN,
+                            block_rounding_error: 0.0,
                         });
                         row_top = top + (end - start);
                         // (Where the spanner ends in the strip, unsnapped: what follows it starts there.)
@@ -1707,6 +1715,7 @@ impl LayoutPassState<'_> {
                                 spanner: false,
                                 extended: 0.0,
                                 exact_x: f32::NAN,
+                                block_rounding_error: 0.0,
                             });
                         }
                         row_top += height + if r + 1 < rows { row_gap } else { 0.0 };
@@ -1772,6 +1781,7 @@ impl LayoutPassState<'_> {
                         spanner: false,
                         extended: 0.0,
                         exact_x: f32::NAN,
+                        block_rounding_error: 0.0,
                     });
                 }
                 let last_slot = if multicol.height.is_some() { column_height } else { last_height };
@@ -1798,6 +1808,7 @@ impl LayoutPassState<'_> {
                     spanner: true,
                     extended: 0.0,
                     exact_x: f32::NAN,
+                    block_rounding_error: 0.0,
                 });
                 row_top += end - start;
                 // (Where the spanner ends in the strip, unsnapped: what follows it starts there.)
@@ -1900,7 +1911,9 @@ impl LayoutPassState<'_> {
         }
         if !vertical {
             for fragment in &mut fragments {
-                fragment.offset.y = snap(fragment.offset.y);
+                let painted = snap(fragment.offset.y);
+                fragment.block_rounding_error = fragment.offset.y - painted;
+                fragment.offset.y = painted;
             }
         }
         let right = fragments.iter().map(|f| f.x + f.width).fold(width - border.right, f32::max);
@@ -3934,6 +3947,7 @@ mod tests {
             spanner: false,
             extended: 0.0,
             exact_x: f32::NAN,
+            block_rounding_error: 0.0,
         }
     }
 
@@ -4003,6 +4017,7 @@ mod tests {
             spanner: true,
             extended: 0.0,
             exact_x: f32::NAN,
+            block_rounding_error: 0.0,
         };
         let columns = ColumnFragments {
             continuation_ends: Default::default(),

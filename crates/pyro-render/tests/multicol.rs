@@ -55,6 +55,17 @@ fn fractional_column_translation_uses_device_pixels() {
 }
 
 #[test]
+fn fractional_lines_repeat_at_the_same_height_in_each_column() {
+    let rows = "<div>Ag</div>".repeat(11);
+    let image = render(&format!("<main style='columns:2;column-gap:0;font:16px/1.6 serif'>{rows}{rows}</main>"), 1.0);
+    for y in 0..280 {
+        for x in 0..24 {
+            assert_eq!(pixel(&image, 1.0, x as f64, y as f64), pixel(&image, 1.0, (250 + x) as f64, y as f64), "at {x},{y}");
+        }
+    }
+}
+
+#[test]
 fn parallel_overflow_uses_inflow_end_and_parent_used_size() {
     let image = render(include_str!("fixtures/parallel-overflow-used-size.html"), 1.0);
     check(&image, 1.0, &[(151.0, 39.0, BLACK), (151.0, 41.0, WHITE), (201.0, 5.0, WHITE), (105.0, 28.0, BLUE)], "four parent fragments");

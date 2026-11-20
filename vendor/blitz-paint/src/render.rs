@@ -206,6 +206,7 @@ pub struct BlitzDomPainter<'dom, 'a> {
     pub(crate) column_pass_container: std::cell::Cell<Option<NodeId>>,
     column_inline_origin: std::cell::Cell<Option<(NodeId, f32)>>,
     column_block_offset: std::cell::Cell<f64>,
+    column_block_rounding_error: std::cell::Cell<f64>,
     /// pyro: while a multi-column container paints a column without a block-axis clip: the
     /// container, the column's strip range (CSS px), its transform and its clip rectangle (the
     /// container's space, device px) for the boxes a break goes through (`draw_paint_child`).
@@ -357,6 +358,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             column_pass_container: std::cell::Cell::new(None),
             column_inline_origin: std::cell::Cell::new(None),
             column_block_offset: std::cell::Cell::new(0.0),
+            column_block_rounding_error: std::cell::Cell::new(0.0),
             column_range: std::cell::Cell::new(None),
             spanner_row_container: std::cell::Cell::new(None),
             spanner_row_spanner: std::cell::Cell::new(None),
@@ -4448,7 +4450,7 @@ impl ElementCx<'_, '_> {
         let start = position.x as f64 + (layout.border.left + layout.padding.left) as f64 + gx;
         let painted_x = (position.x as f64).round() + (painted.border.left + painted.padding.left) as f64 + gx;
         let tops = crate::text::LineTops {
-            origin: position.y as f64 + (layout.border.top + layout.padding.top) as f64 + gy + block_offset,
+            origin: position.y as f64 + self.context.column_block_rounding_error.get() + (layout.border.top + layout.padding.top) as f64 + gy + block_offset,
             painted: (position.y as f64 - self.context.column_block_offset.get()).round() + self.context.column_block_offset.get().round() + (painted.border.top + painted.padding.top) as f64 + gy + block_offset,
             scale: self.scale,
         };

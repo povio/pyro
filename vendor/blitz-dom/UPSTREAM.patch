@@ -22915,7 +22915,7 @@ diff --git a/packages/blitz-dom/src/layout/multicol.rs b/packages/blitz-dom/src/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/multicol.rs
-@@ -0,0 +1,4033 @@
+@@ -0,0 +1,4048 @@
 +//! pyro: CSS Multi-column Layout (<https://drafts.csswg.org/css-multicol/>).
 +//!
 +//! A multi-column container lays its content out once, in a strip one column wide (its flow
@@ -23032,6 +23032,7 @@ new file mode 100644
 +                spanner: false,
 +                extended: 0.0,
 +                exact_x: f32::NAN,
++                block_rounding_error: 0.0,
 +            }
 +        } else {
 +            fragment
@@ -23136,6 +23137,7 @@ new file mode 100644
 +    /// pyro: the column box's left edge before it is snapped to device pixels (`x`): where its
 +    /// rules are placed in the gaps.
 +    pub exact_x: f32,
++    pub block_rounding_error: f32,
 +}
 +
 +impl ColumnFragment {
@@ -24305,6 +24307,7 @@ new file mode 100644
 +                    spanner: false,
 +                    extended,
 +                    exact_x: f32::NAN,
++                    block_rounding_error: 0.0,
 +                });
 +            }
 +        }
@@ -24356,6 +24359,7 @@ new file mode 100644
 +                        spanner: false,
 +                        extended: 0.0,
 +                        exact_x: f32::NAN,
++                        block_rounding_error: 0.0,
 +                    });
 +                    placed += 1;
 +                }
@@ -24456,6 +24460,7 @@ new file mode 100644
 +                            spanner: false,
 +                            extended: 0.0,
 +                            exact_x: f32::NAN,
++                            block_rounding_error: 0.0,
 +                        });
 +                    }
 +                    top += height;
@@ -24488,6 +24493,7 @@ new file mode 100644
 +                        spanner: true,
 +                        extended: 0.0,
 +                        exact_x: f32::NAN,
++                        block_rounding_error: 0.0,
 +                    });
 +                    top = spanner_top + (end - start);
 +                    // (After the last of its content the break is after the container, the outer
@@ -24570,6 +24576,7 @@ new file mode 100644
 +                            spanner: false,
 +                            extended: 0.0,
 +                            exact_x: f32::NAN,
++                            block_rounding_error: 0.0,
 +                        });
 +                    }
 +                    row_top = last_top + last_height;
@@ -24587,6 +24594,7 @@ new file mode 100644
 +                            spanner: true,
 +                            extended: 0.0,
 +                            exact_x: f32::NAN,
++                            block_rounding_error: 0.0,
 +                        });
 +                        row_top = top + (end - start);
 +                        // (Where the spanner ends in the strip, unsnapped: what follows it starts there.)
@@ -24625,6 +24633,7 @@ new file mode 100644
 +                                spanner: false,
 +                                extended: 0.0,
 +                                exact_x: f32::NAN,
++                                block_rounding_error: 0.0,
 +                            });
 +                        }
 +                        row_top += height + if r + 1 < rows { row_gap } else { 0.0 };
@@ -24690,6 +24699,7 @@ new file mode 100644
 +                        spanner: false,
 +                        extended: 0.0,
 +                        exact_x: f32::NAN,
++                        block_rounding_error: 0.0,
 +                    });
 +                }
 +                let last_slot = if multicol.height.is_some() { column_height } else { last_height };
@@ -24716,6 +24726,7 @@ new file mode 100644
 +                    spanner: true,
 +                    extended: 0.0,
 +                    exact_x: f32::NAN,
++                    block_rounding_error: 0.0,
 +                });
 +                row_top += end - start;
 +                // (Where the spanner ends in the strip, unsnapped: what follows it starts there.)
@@ -24818,7 +24829,9 @@ new file mode 100644
 +        }
 +        if !vertical {
 +            for fragment in &mut fragments {
-+                fragment.offset.y = snap(fragment.offset.y);
++                let painted = snap(fragment.offset.y);
++                fragment.block_rounding_error = fragment.offset.y - painted;
++                fragment.offset.y = painted;
 +            }
 +        }
 +        let right = fragments.iter().map(|f| f.x + f.width).fold(width - border.right, f32::max);
@@ -26852,6 +26865,7 @@ new file mode 100644
 +            spanner: false,
 +            extended: 0.0,
 +            exact_x: f32::NAN,
++            block_rounding_error: 0.0,
 +        }
 +    }
 +
@@ -26921,6 +26935,7 @@ new file mode 100644
 +            spanner: true,
 +            extended: 0.0,
 +            exact_x: f32::NAN,
++            block_rounding_error: 0.0,
 +        };
 +        let columns = ColumnFragments {
 +            continuation_ends: Default::default(),
