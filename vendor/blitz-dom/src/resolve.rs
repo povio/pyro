@@ -545,14 +545,30 @@ impl BaseDocument {
             }
             result
         };
-        // A node's box to the document (CSS px) up its containing blocks, with the transforms on
-        // the way (as the last transform pass placed them; Blitz keeps their translation in
-        // device px), memoized; and whether it is fixed to the viewport.
-        let mut placed: HashMap<NodeId, (kurbo::Affine, bool)> = HashMap::new();
-        let placement = |nodes: &crate::NodeTree, id: NodeId, placed: &mut HashMap<NodeId, (kurbo::Affine, bool)>| -> (kurbo::Affine, bool) {
+        // A node's box to the document (CSS px) up its containing blocks as paint places it
+        // (`Node::paint_placement`: sticky offsets and transforms), memoized: its matrix, whether
+        // it is fixed to the viewport (a fixed box whose containing block is the root, not a
+        // transformed ancestor), the clip of the clipping containing blocks around it (document
+        // coordinates), and whether a 3D plane places it (counted as relevant: not mapped here).
+        #[derive(Clone, Copy)]
+        struct Placed {
+            t: kurbo::Affine,
+            fixed: bool,
+            clip: Option<kurbo::Rect>,
+            planar: bool,
+        }
+        let root = self.try_root_element().map(|r| r.id);
+        let clips = |node: &crate::Node| {
+            node.primary_styles().is_some_and(|s| {
+                use style::values::computed::Overflow;
+                let b = s.get_box();
+                b.overflow_x != Overflow::Visible || b.overflow_y != Overflow::Visible
+            })
+        };
+        let placement = |nodes: &crate::NodeTree, id: NodeId, placed: &mut HashMap<NodeId, Placed>| -> Placed {
             let mut chain = Vec::new();
             let mut at = Some(id);
-            let mut base = (kurbo::Affine::IDENTITY, false);
+            let mut base = Placed { t: kurbo::Affine::IDENTITY, fixed: false, clip: None, planar: false };
             while let Some(n) = at {
                 if let Some(&known) = placed.get(&n) {
                     base = known;
@@ -565,24 +581,40 @@ impl BaseDocument {
             let mut parent = at;
             for &n in chain.iter().rev() {
                 let node = &nodes[n];
-                let mut t = base.0;
+                let mut t = base.t;
+                let mut clip = base.clip;
                 if let Some(p) = parent {
-                    let o = nodes[p].scroll_offset();
+                    let pn = &nodes[p];
+                    // A clipping containing block cuts what it holds at its padding box.
+                    if clips(pn) && Some(p) != root {
+                        let l = pn.final_layout();
+                        let padding = kurbo::Rect::new(
+                            l.border.left as f64,
+                            l.border.top as f64,
+                            (l.size.width - l.border.right) as f64,
+                            (l.size.height - l.border.bottom) as f64,
+                        );
+                        let r = base.t.transform_rect_bbox(padding);
+                        clip = Some(clip.map_or(r, |c| c.intersect(r)));
+                    }
+                    let o = pn.scroll_offset();
                     t = t * kurbo::Affine::translate((-o.x, -o.y));
                 }
-                let l = node.final_layout();
-                let own = node.transform().as_deref().copied().map_or(kurbo::Affine::IDENTITY, |t| {
-                    let [a, b, c, d, e, f] = t.as_coeffs();
-                    kurbo::Affine::new([a, b, c, d, e / scale, f / scale])
-                });
-                let fixed = base.1
-                    || node.primary_styles().is_some_and(|s| s.clone_position() == style::computed_values::position::T::Fixed);
-                base = (t * kurbo::Affine::translate((l.location.x as f64, l.location.y as f64)) * own, fixed);
+                let fixed_box =
+                    node.primary_styles().is_some_and(|s| s.clone_position() == style::computed_values::position::T::Fixed);
+                let fixed = if fixed_box { parent.is_none() || parent == root } else { base.fixed };
+                base = Placed {
+                    t: t * node.paint_placement(scale),
+                    fixed,
+                    clip,
+                    planar: base.planar || node.plane_3d().is_some(),
+                };
                 placed.insert(n, base);
                 parent = Some(n);
             }
             base
         };
+        let mut placed: HashMap<NodeId, Placed> = HashMap::new();
         let mut changed = false;
         for id in candidates {
             steps.set(steps.get() + 1);
@@ -603,25 +635,53 @@ impl BaseDocument {
             if in_skipped(&self.nodes, id, &mut skipped_memo) {
                 continue;
             }
-            let (t, fixed) = placement(&self.nodes, id, &mut placed);
+            let p = placement(&self.nodes, id, &mut placed);
             let l = *self.nodes[id].final_layout();
-            // (What it may paint: its paint containment clips at its `overflow-clip-margin`, so
-            // overflow that reaches the viewport through it is near enough; WPT css-overflow
-            // `overflow-clip-margin-007`, `-012`.)
-            let margin = self.nodes[id]
-                .primary_styles()
-                .map_or(0.0, |s| s.get_margin().overflow_clip_margin.offset.px().max(0.0) as f64);
-            let mut rect = t.transform_rect_bbox(
-                kurbo::Rect::new(0.0, 0.0, l.size.width as f64, l.size.height as f64).inflate(margin, margin),
-            );
-            if fixed {
+            // (What it may paint: its paint containment clips at its `overflow-clip-margin`, from
+            // the margin's reference box, so overflow reaching the viewport through it is near
+            // enough; WPT css-overflow `overflow-clip-margin-007`, `-012`.)
+            let reference = {
+                use style::values::generics::box_::OverflowClipMarginBox;
+                let border = kurbo::Rect::new(0.0, 0.0, l.size.width as f64, l.size.height as f64);
+                let (b, pd) = (l.border, l.padding);
+                let margin = self.nodes[id].primary_styles().map(|s| s.get_margin().overflow_clip_margin.clone());
+                match margin {
+                    Some(m) => {
+                        let inner = match m.visual_box {
+                            OverflowClipMarginBox::BorderBox => border,
+                            OverflowClipMarginBox::PaddingBox => {
+                                kurbo::Rect::new(b.left as f64, b.top as f64, border.x1 - b.right as f64, border.y1 - b.bottom as f64)
+                            }
+                            OverflowClipMarginBox::ContentBox => kurbo::Rect::new(
+                                (b.left + pd.left) as f64,
+                                (b.top + pd.top) as f64,
+                                border.x1 - (b.right + pd.right) as f64,
+                                border.y1 - (b.bottom + pd.bottom) as f64,
+                            ),
+                        };
+                        let o = m.offset.px().max(0.0) as f64;
+                        // (Its border box at least: the margin only reaches further.)
+                        border.union(inner.inflate(o, o))
+                    }
+                    None => border,
+                }
+            };
+            // A transform that collapses it to no area shows nothing.
+            let collapsed = p.t.determinant().abs() < 1e-12;
+            let mut rect = p.t.transform_rect_bbox(reference);
+            if let Some(clip) = p.clip {
+                rect = rect.intersect(clip);
+            }
+            if p.fixed {
                 rect = rect + kurbo::Vec2::new(scroll.0, scroll.1);
             }
+            // (An empty box in view counts, as an IntersectionObserver's edge-adjacent target; one
+            // its clips leave nothing of does not.)
+            let visible = !collapsed && rect.x1 >= rect.x0 && rect.y1 >= rect.y0;
+            let near = p.planar || (visible && rect.x0 < view.x1 && rect.x1 > view.x0 && rect.y0 < view.y1 && rect.y1 > view.y0);
             // (A query forced it: rendered until the next frame, `clear_content_visibility_forcing`.)
             let forced = self.nodes[id].flags.contains(NodeFlags::CV_FORCED);
-            let relevant = forced
-                || holders.contains(&id)
-                || (rect.x0 < view.x1 && rect.x1 > view.x0 && rect.y0 < view.y1 && rect.y1 > view.y0);
+            let relevant = forced || holders.contains(&id) || near;
             let node = &mut self.nodes[id];
             if node.flags.contains(NodeFlags::CV_SKIPPED) == relevant {
                 node.flags.set(NodeFlags::CV_SKIPPED, !relevant);
@@ -629,9 +689,7 @@ impl BaseDocument {
                 if relevant {
                     self.unskip_contents(id);
                 }
-                // (Its contents changed: memoized answers under it no longer hold.)
-                skipped_memo.clear();
-                placed.clear();
+                // (The memos stand: no box moves until the next layout.)
                 changed = true;
             } else if relevant {
                 // Shown and laid out with its contents: its last remembered size.

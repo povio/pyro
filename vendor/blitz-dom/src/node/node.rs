@@ -623,6 +623,21 @@ impl Node {
     /// pyro: the offset of a `position: sticky` box from its laid-out place
     /// (`LayoutData::sticky_offset`).
     #[inline]
+    /// pyro: where paint places this box in its containing block's coordinates (CSS px): at its
+    /// location moved by its sticky offset, then its own transform (Blitz keeps the transform's
+    /// translation in device px, `scale` per CSS px), as blitz-paint's `node_transform` draws it
+    /// (less its device-pixel snapping). Composed up the containing blocks (with their scroll
+    /// offsets) it places the box in the document.
+    pub fn paint_placement(&self, scale: f64) -> kurbo::Affine {
+        let l = self.final_layout();
+        let sticky = self.sticky_offset();
+        let own = self.transform().as_deref().copied().map_or(kurbo::Affine::IDENTITY, |t| {
+            let [a, b, c, d, e, f] = t.as_coeffs();
+            kurbo::Affine::new([a, b, c, d, e / scale, f / scale])
+        });
+        kurbo::Affine::translate((l.location.x as f64 + sticky.x, l.location.y as f64 + sticky.y)) * own
+    }
+
     pub fn sticky_offset(&self) -> crate::Point<f64> {
         self.layout_data().sticky_offset
     }
