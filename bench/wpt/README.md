@@ -678,6 +678,11 @@ in `tools/wptrunner/wptrunner/browsers/chrome_spki_certs.py`. A context configur
 can still reject service worker registration. A runner deadline records a timeout with null harness status and
 retains the named results received before the deadline.
 
+With `--http2 --generated-globals MANIFEST --server wptserve`, native HTTP/2 pages use wptserve's dedicated TLS
+listener. Startup requires curl with HTTP2 support and verifies the negotiated protocol, the run's token and the
+WPT certificate authority before loading any page. Browser traffic uses the same CONNECT proxy as HTTPS.
+The result records `http2: true`. Other runner modes keep their existing discovery and transports.
+
 `run.mjs --server wptserve` (and `gate.mjs run --server wptserve`) serves the pages with WPT's own server instead of
 `serve.mjs` (`wptserve.mjs`): every origin a test names (`web-platform.test`, `www`/`www1`/`www2` and the IDN
 subdomains, `not-web-platform.test`; http, https with WPT's test certificates, ws, wss; no h2), the Python handlers,

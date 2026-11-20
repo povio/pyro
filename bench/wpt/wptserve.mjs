@@ -10,7 +10,7 @@
 //
 // Needs Python 3.9+ with tools/serve/requirements.txt (WPT_PYTHON=/path/to/python; default: the venv
 // fetch-wpt.sh --venv made in the checkout, else python3).
-import { spawn, spawnSync } from 'node:child_process';
+import { execFile, spawn, spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -67,6 +67,17 @@ function fetchLocal(port, host, pathname, { tls = false, timeout = 5000 } = {}) 
   });
 }
 
+// Probe the native TLS HTTP/2 listener with the run's token, the WPT CA and
+// an explicit loopback mapping. A successful HTTP/1 fallback fails the probe.
+function fetchH2Token(wpt, port, tokenPath, token) {
+  const url = `https://${BROWSER_HOST}:${port}${tokenPath}`;
+  return new Promise(resolve => {
+    execFile('curl', ['--disable', '--silent', '--fail', '--max-time', '2', '--noproxy', '*', '--http2',
+      '--cacert', path.join(wpt, 'tools/certs/cacert.pem'), '--resolve', `${BROWSER_HOST}:${port}:127.0.0.1`,
+      '--write-out', '\n%{http_version}', url], (error, stdout) => resolve(!error && stdout === token + '\n2'));
+  });
+}
+
 const PORT_NAMES = ['http', 'http2', 'https', 'https2', 'httpLocal', 'httpPublic', 'httpsLocal', 'httpsPublic', 'ws', 'wss'];
 
 // Starts wptserve on free ports. Resolves { ports, base, stop, alive, onExit, logFile } once it is serving: its
@@ -76,12 +87,16 @@ const PORT_NAMES = ['http', 'http2', 'https', 'https2', 'httpLocal', 'httpPublic
 // The server's process group dies with the runner: stop() on any exit of the runner, and a watchdog process that
 // ends the group once the runner's pid is gone (a runner killed with SIGKILL, a cancelled CI job).
 // `options.ports` (tests): the ports of the first attempt.
-export async function startWptserve(wpt, { log = process.stderr, ports: first = null } = {}) {
+export async function startWptserve(wpt, { log = process.stderr, ports: first = null, http2 = false } = {}) {
+  if (http2 && !/Features:.*\bHTTP2\b/i.test(spawnSync('curl', ['--version'], { encoding: 'utf8' }).stdout ?? '')) {
+    throw new Error('HTTP/2 readiness needs curl with HTTP2 support');
+  }
+  const names = http2 ? [...PORT_NAMES, 'h2'] : PORT_NAMES;
   let lastError;
   for (let attempt = 0; attempt < 3; attempt++) {
     const ports = attempt === 0 && first ? { ...first } : {};
-    for (const k of PORT_NAMES) ports[k] ??= await freePort();
-    try { return await startOnce(wpt, ports, log); } catch (e) {
+    for (const k of names) ports[k] ??= await freePort();
+    try { return await startOnce(wpt, ports, log, names); } catch (e) {
       lastError = e;
       log.write?.(`wptserve: ${e.message}; starting again on new ports\n`);
     }
@@ -89,7 +104,7 @@ export async function startWptserve(wpt, { log = process.stderr, ports: first = 
   throw lastError;
 }
 
-async function startOnce(wpt, ports, log) {
+async function startOnce(wpt, ports, log, names) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pyro-wptserve-'));
   const token = crypto.randomBytes(16).toString('hex');
   const tokenPath = `/pyro-run-${token}/token.txt`;
@@ -103,7 +118,7 @@ async function startOnce(wpt, ports, log) {
       http: [ports.http, ports.http2], https: [ports.https, ports.https2],
       'http-local': [ports.httpLocal], 'http-public': [ports.httpPublic],
       'https-local': [ports.httpsLocal], 'https-public': [ports.httpsPublic],
-      ws: [ports.ws], wss: [ports.wss], h2: [], 'webtransport-h3': [], dns: [],
+      ws: [ports.ws], wss: [ports.wss], h2: ports.h2 ? [ports.h2] : [], 'webtransport-h3': [], dns: [],
     },
     aliases: [
       { 'url-path': '/resources/testharnessreport.js', 'local-dir': HERE },
@@ -120,7 +135,7 @@ async function startOnce(wpt, ports, log) {
   if (py === 'python3') log.write?.(`wptserve: no venv in ${wpt} and no WPT_PYTHON; using python3 (handlers that need tools/serve/requirements.txt fail: bench/wpt/fetch-wpt.sh --venv ${wpt})\n`);
   // `wpt serve` would make its own venv; the server needs only its requirements, so run serve.py's entry directly.
   const child = spawn(py, [path.join(wpt, 'wpt'), '--venv', path.dirname(path.dirname(py)), '--skip-venv-setup',
-    'serve', '--no-h2', '--config', cfg], { cwd: wpt, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+    'serve', ports.h2 ? '--h2' : '--no-h2', '--config', cfg], { cwd: wpt, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
   const out = fs.createWriteStream(path.join(dir, 'serve.log'));
   child.stdout.pipe(out); child.stderr.pipe(out);
   let exited = null, stopped = false;
@@ -141,10 +156,11 @@ async function startOnce(wpt, ports, log) {
   for (;;) {
     if (exited !== null) throw new Error(`wptserve exited (${exited}); log: ${logFile}`);
     const ok = (await fetchLocal(ports.http, BROWSER_HOST, tokenPath, { timeout: 2000 })) === token
-      && (await fetchLocal(ports.https, BROWSER_HOST, tokenPath, { tls: true, timeout: 2000 })) === token;
+      && (await fetchLocal(ports.https, BROWSER_HOST, tokenPath, { tls: true, timeout: 2000 })) === token
+      && (!ports.h2 || await fetchH2Token(wpt, ports.h2, tokenPath, token));
     if (ok) {
       const owned = ownedPorts(child.pid);
-      const foreign = owned ? PORT_NAMES.filter((k) => !owned.has(ports[k])) : [];
+      const foreign = owned ? names.filter((k) => !owned.has(ports[k])) : [];
       if (!foreign.length) break;
       // Each server is a process of its own and some start later; a port another process holds stays foreign.
       if (Date.now() > deadline - 50000) { stop(); throw new Error(`ports not held by this wptserve: ${foreign.map((k) => `${k} ${ports[k]}`).join(', ')}; log: ${logFile}`); }

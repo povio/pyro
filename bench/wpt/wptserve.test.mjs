@@ -3,20 +3,36 @@
 // The parts that start wptserve need WPT_DIR (a checkout with fetch-wpt.sh --venv); the parts that run the browser
 // also need PYRO_BIN. Without them those tests are skipped.
 import { expect, test } from 'bun:test';
-import { spawn, spawnSync } from 'node:child_process';
+import { execFile, spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import { documentError } from './lib.mjs';
 import { refKey } from './reftest.mjs';
-import { listeningPorts, startWptserve } from './wptserve.mjs';
+import { BROWSER_HOST, listeningPorts, startProxy, startWptserve } from './wptserve.mjs';
 
 const WPT = process.env.WPT_DIR;
 const BIN = process.env.PYRO_BIN;
 const HAS_WPT = !!WPT && fs.existsSync(path.join(WPT, 'wpt'));
 const res = (status) => ({ status: () => status });
+
+test.skipIf(!HAS_WPT || !/Features:.*\bHTTP2\b/i.test(spawnSync('curl', ['--version'], { encoding: 'utf8' }).stdout ?? ''))(
+  'the optional WPT HTTP/2 listener negotiates h2 through the browser proxy', async () => {
+    const server = await startWptserve(WPT, { http2: true });
+    try {
+      const proxy = await startProxy();
+      try {
+        const { stdout } = await promisify(execFile)('curl', ['--disable', '--silent', '--fail', '--http2', '--max-time', '5',
+          '--cacert', path.join(WPT, 'tools/certs/cacert.pem'), '--noproxy', '', '--proxy', `http://127.0.0.1:${proxy.port}`,
+          '--output', '/dev/null', '--write-out', '%{http_version}', `https://${BROWSER_HOST}:${server.ports.h2}/resources/testharness.js`]);
+        expect(stdout).toBe('2');
+      } finally { proxy.close(); }
+    } finally { server.stop(); }
+  }, 120000,
+);
 
 test('a main document that is not a 2xx response is an error, never a page to judge', () => {
   expect(documentError(res(200), 'a.html')).toBeNull();

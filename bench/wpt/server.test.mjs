@@ -72,6 +72,8 @@ test('dedicated worker discovery uses manifest variants and requires the matchin
     expect(discover(wpt, ['protocol'], { wptserve: true }).tests).toHaveLength(1);
     expect(discover(wpt, ['protocol'], { ...opts, reasons }).tests).toHaveLength(0);
     expect(reasons.get('protocol/only.h2.html')).toBe(NEEDS_H2);
+    expect(discover(wpt, ['protocol'], { ...opts, http2: true }).tests.map(t => t.url)).toEqual(['protocol/only.h2.html']);
+    expect(urls({ ...opts, http2: true })).toContain('encoding/protocol.h2.worker.html');
     fs.appendFileSync(path.join(wpt, 'encoding/only.worker.js'), 'done();');
     expect(() => urls({ dedicatedWorkers, wptserve: true })).toThrow('does not match source');
   } finally {

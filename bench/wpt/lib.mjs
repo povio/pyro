@@ -233,7 +233,7 @@ export function generatedGlobalEntries(manifest, { dedicatedOnly = false } = {})
 // `excluded` counts what was left out and why (identical for every binary).
 // `reasons` (a Map, optional) receives each left-out file's reason, keyed by its path (coverage.mjs).
 // `wptserve`: the server is wptserve (run.mjs --server wptserve), so pages that need it are kept.
-export function discover(wpt, dirs, { sampleEncoding = 1, reasons, wptserve = false, testdriver = false, dedicatedWorkers, generatedGlobals } = {}) {
+export function discover(wpt, dirs, { sampleEncoding = 1, reasons, wptserve = false, testdriver = false, dedicatedWorkers, generatedGlobals, http2 = false } = {}) {
   const wrappers = generatedGlobals ?? dedicatedWorkers;
   if (wrappers && !wptserve) throw new Error('dedicated worker discovery needs --server wptserve');
   const tests = [];
@@ -282,7 +282,7 @@ export function discover(wpt, dirs, { sampleEncoding = 1, reasons, wptserve = fa
       // other pages (wpt-full.yml --jobs 16) the larger SIMD ones outran the normal timeout, so they get the long one.
       if (rel.startsWith('wasm/core/')) long = true;
       const viewport = LEGACY_VIEWPORT_DIRS.includes(d) ? {} : { viewport: WPTRUNNER_VIEWPORT };
-      if (wrappers && H2_NAME.test(base)) {
+      if (wrappers && !http2 && H2_NAME.test(base)) {
         if (url) for (const v of variants) exclude(NEEDS_H2, url + v);
         for (const page of record?.pages ?? []) exclude(NEEDS_H2, page.url);
         continue;

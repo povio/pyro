@@ -10,6 +10,7 @@
 // --server wptserve: WPT's own server (wptserve.mjs) instead of serve.mjs, every context behind its host-mapping
 //   proxy; discovery then keeps the pages that need wptserve (names, Python handlers, pipes). README "wptserve".
 // --testdriver: with --server wptserve, testdriver pages too (testdriver.mjs).
+// --http2: use native HTTP/2 for .h2. URLs in --generated-globals mode.
 // --dedicated-workers MANIFEST: include generated dedicated worker testharness pages using upstream wptserve.
 // --generated-globals MANIFEST: also include upstream shared worker, service worker and window module wrappers.
 // --tests FILE: only these URLs (a JSON array of URLs, or a results or baseline file).
@@ -63,6 +64,8 @@ const WPTSERVE = SERVER === 'wptserve';
 const TESTDRIVER = argv.includes('--testdriver');
 if (TESTDRIVER && !WPTSERVE) throw new Error('--testdriver needs --server wptserve');
 const ALL_GLOBALS = argv.includes('--generated-globals');
+const HTTP2 = argv.includes('--http2');
+if (HTTP2 && !ALL_GLOBALS) throw new Error('--http2 needs --generated-globals MANIFEST');
 if (ALL_GLOBALS && argv.includes('--dedicated-workers')) throw new Error('select one manifest mode');
 const manifestFlag = ALL_GLOBALS ? '--generated-globals' : '--dedicated-workers';
 const WORKER_MANIFEST = opt(manifestFlag);
@@ -86,7 +89,7 @@ if (!(REPEAT >= 1)) throw new Error(`--repeat ${opt('--repeat')}: expected N >= 
 
 function selectTests() {
   const wrappers = WORKER_MANIFEST && (ALL_GLOBALS ? generatedGlobalEntries : dedicatedWorkerEntries)(readJson(WORKER_MANIFEST));
-  const { tests, excluded, info } = KIND === 'reftest' ? discoverReftests(WPT, DIRS, { wptserve: WPTSERVE, testdriver: TESTDRIVER }) : KIND === 'crashtest' ? discoverCrashtests(WPT, DIRS, { wptserve: WPTSERVE, testdriver: TESTDRIVER }) : discover(WPT, DIRS, { sampleEncoding: SAMPLE, wptserve: WPTSERVE, testdriver: TESTDRIVER, generatedGlobals: wrappers });
+  const { tests, excluded, info } = KIND === 'reftest' ? discoverReftests(WPT, DIRS, { wptserve: WPTSERVE, testdriver: TESTDRIVER }) : KIND === 'crashtest' ? discoverCrashtests(WPT, DIRS, { wptserve: WPTSERVE, testdriver: TESTDRIVER }) : discover(WPT, DIRS, { sampleEncoding: SAMPLE, wptserve: WPTSERVE, testdriver: TESTDRIVER, generatedGlobals: wrappers, http2: HTTP2 });
   let sel = tests;
   const M = opt('--match') && new RegExp(opt('--match'));
   if (M) sel = sel.filter((t) => M.test(t.url));
@@ -128,7 +131,7 @@ for (const [sig, code] of [['SIGINT', 130], ['SIGTERM', 143], ['SIGHUP', 129]]) 
 process.on('uncaughtException', (e) => { console.error(e); process.exit(1); });
 process.on('unhandledRejection', (e) => { console.error(e); process.exit(1); });
 if (!BASE && WPTSERVE) {
-  wptserve = await startWptserve(WPT);
+  wptserve = await startWptserve(WPT, { http2: HTTP2 });
   proxy = await startProxy();
   BASE = wptserve.base;
   wptserve.onExit((code) => serverLost(`(wptserve) exited (${code}); log: ${wptserve.logFile}`));
@@ -152,12 +155,13 @@ if (!BASE && WPTSERVE) {
 }
 
 // The origin a page loads from, as wptrunner picks it from the file name under wptserve: `.https.` (and
-// `.serviceworker.`) pages over https, `.www.` pages from the www subdomain. h2 is not served (wptserve --no-h2).
+// `.serviceworker.`) pages over https, `.www.` pages from the www subdomain. Optional H2 pages use their own TLS listener.
 function baseFor(url) {
   if (!wptserve) return BASE;
   const name = url.replace(/[?#].*$/, '').split('/').pop();
   const https = /\.(https|serviceworker(?:-module)?)\./.test(name);
   const host = /\.www\./.test(name) ? `www.${BROWSER_HOST}` : BROWSER_HOST;
+  if (HTTP2 && /\.h2\./.test(name)) return `https://${host}:${wptserve.ports.h2}`;
   return https ? `https://${host}:${wptserve.ports.https}` : `http://${host}:${wptserve.ports.http}`;
 }
 
@@ -345,7 +349,7 @@ async function resetSlot(slot) {
 // server's origin, whose port differs from run to run: named by wptserve's origin instead, so the name is the same
 // in every run (the baseline keys passes by name).
 // Under wptserve every port is free-picked: each is named by wptserve's default for it.
-const PORT_NAMES = wptserve ? [[wptserve.ports.http, 8000], [wptserve.ports.http2, 8001], [wptserve.ports.https, 8443], [wptserve.ports.https2, 8444], [wptserve.ports.ws, 8888], [wptserve.ports.wss, 8889]] : [];
+const PORT_NAMES = wptserve ? [[wptserve.ports.http, 8000], [wptserve.ports.http2, 8001], [wptserve.ports.https, 8443], [wptserve.ports.https2, 8444], [wptserve.ports.ws, 8888], [wptserve.ports.wss, 8889], ...(HTTP2 ? [[wptserve.ports.h2, 9000]] : [])] : [];
 const stableName = (s) => PORT_NAMES.reduce((x, [from, to]) => x.replaceAll(`:${from}`, `:${to}`), s.replaceAll(BASE, 'http://web-platform.test:8000'));
 const LINE = /^(.*?)\|(Pass|Fail|Timeout|Not Run|Optional Feature Unsupported)(?:\|(.*))?$/s;
 function parse(log) {
@@ -523,7 +527,7 @@ async function worker(q) {
     lastFinish = Date.now();
     if (++done % 100 === 0 || Date.now() - lastProgress > 30000) {
       lastProgress = Date.now();
-      if (OUT) fs.writeFileSync(OUT + '.partial', JSON.stringify({ label: LABEL, ...(WORKER_MANIFEST && { dedicatedWorkers: true, restricted: true }), ...(ALL_GLOBALS && { generatedGlobals: true }), results }));
+      if (OUT) fs.writeFileSync(OUT + '.partial', JSON.stringify({ label: LABEL, ...(WORKER_MANIFEST && { dedicatedWorkers: true, restricted: true }), ...(ALL_GLOBALS && { generatedGlobals: true }), ...(HTTP2 && { http2: true }), results }));
       console.error(`${LABEL}: ${done}/${PLAN.length} (${((Date.now() - t0) / 1000).toFixed(0)} s)`);
     }
   }
@@ -551,7 +555,7 @@ const serverCpuS = server ? cpuOf(server.pid) : 0;
 const ru = process.resourceUsage();
 const run = {
   label: LABEL, bin: BIN, kind: KIND, mode: GATE ? 'gate' : 'full', shard: `${SHARD}/${SHARDS}`, dirs: opt('--dirs') === 'all' ? ['all'] : DIRS, jobs: JOBS,
-  restricted: RESTRICTED, reuseContext: REUSE, server: SERVER, testdriver: TESTDRIVER, ...(WORKER_MANIFEST && { dedicatedWorkers: true }), ...(ALL_GLOBALS && { generatedGlobals: true }), wptRevision: WPT_REVISION, discovered, plan: PLAN, skipped,
+  restricted: RESTRICTED, reuseContext: REUSE, server: SERVER, testdriver: TESTDRIVER, ...(WORKER_MANIFEST && { dedicatedWorkers: true }), ...(ALL_GLOBALS && { generatedGlobals: true }), ...(HTTP2 && { http2: true }), wptRevision: WPT_REVISION, discovered, plan: PLAN, skipped,
   wallMs, loopLagMs, browserCpuS, runnerCpuS: (ru.userCPUTime + ru.systemCPUTime) / 1e6, serverCpuS, restarts, watchdogKills, excluded, ...(info ? { info } : {}), results,
 };
 if (OUT) { fs.writeFileSync(OUT, JSON.stringify(run)); try { fs.unlinkSync(OUT + '.partial'); } catch {} }
