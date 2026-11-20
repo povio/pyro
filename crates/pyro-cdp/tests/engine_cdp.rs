@@ -7488,7 +7488,7 @@ mod screenshot {
                             _ => return,
                         }
                     }
-                    let (kind, body) = if request.starts_with(b"GET /slow.svg") {
+                    let (kind, body) = if request.starts_with(b"GET /slow.svg") || request.starts_with(b"GET /later.svg") {
                         std::thread::sleep(Duration::from_millis(400));
                         (
                             "image/svg+xml",
@@ -7514,6 +7514,13 @@ mod screenshot {
         h.page("Page.navigate", json!({"url": format!("http://{address}/")}));
         h.until_event(|m| m["method"] == "Page.loadEventFired");
         let session = h.session.clone();
+        // pyro: a CSS image asked for after load (the page's own image was fetched by layout
+        // while it loaded): the PDF's layout starts its fetch and the PDF waits for it.
+        h.call(
+            Some(&session),
+            "Runtime.evaluate",
+            json!({"expression": "document.body.style.background = 'url(/later.svg)'; 1", "returnByValue": true}),
+        );
         let started = Instant::now();
         let pdf = h.send(Some(&session), "Page.printToPDF", json!({}));
         let eval = h.send(Some(&session), "Runtime.evaluate", json!({"expression": "1 + 1", "returnByValue": true}));
