@@ -462,26 +462,30 @@ fn trustworthy_url(url: &str) -> bool {
 /// document are potentially trustworthy (also the page's `[SecureContext]` members,
 /// `PageHooks::is_secure_context`).
 pub(crate) fn frame_chain_secure(host: &crate::frames::FrameHost, mut key: crate::frames::FrameKey, url: &str) -> bool {
-    // A popup's about:blank / about:srcdoc document: its creator's state (`FrameHost::creator_secure`).
-    if key.child.is_none() && matches!(url, "about:blank" | "about:srcdoc") {
-        if let Some(secure) = host.creator_secure.get() {
-            return secure;
+    let mut url = url.to_owned();
+    loop {
+        // A popup's about:blank / about:srcdoc document: its creator's state (`FrameHost::creator_secure`),
+        // which already covers the creator's ancestors; it ends the walk, for the popup itself and for
+        // the frames inside it.
+        if key.child.is_none() && matches!(url.as_str(), "about:blank" | "about:srcdoc") {
+            if let Some(secure) = host.creator_secure.get() {
+                return secure;
+            }
         }
-    }
-    if !document_trustworthy(host, key, url) {
-        return false;
-    }
-    while key.child.is_some() {
-        let parent = host.parent_key(key);
-        if parent == key {
-            break;
-        }
-        key = parent;
-        if !host.nav(key).is_some_and(|nav| document_trustworthy(host, key, &nav.url())) {
+        if !document_trustworthy(host, key, &url) {
             return false;
         }
+        if key.child.is_none() {
+            return true;
+        }
+        let parent = host.parent_key(key);
+        if parent == key {
+            return true;
+        }
+        key = parent;
+        let Some(nav) = host.nav(key) else { return false };
+        url = nav.url();
     }
-    true
 }
 
 /// Whether the document of frame `key` at `url` is potentially trustworthy: by its tuple origin
