@@ -2745,8 +2745,8 @@ fn inline_custom_properties_resolve_through_var() {
 
 #[test]
 fn audio_controls_have_independent_intrinsic_dimensions() {
-    let page = page("<!doctype html><audio id=a controls></audio><audio id=b controls style='width:120px'></audio><audio id=c></audio>");
-    for (id, expected) in [("a", (300.0, 54.0)), ("b", (120.0, 54.0)), ("c", (0.0, 0.0))] {
+    let page = page("<!doctype html><style>audio{aspect-ratio:1}</style><audio id=a controls></audio><audio id=b controls style='width:120px'></audio><audio id=c></audio><audio id=d controls style='height:100px'></audio>");
+    for (id, expected) in [("a", (300.0, 54.0)), ("b", (120.0, 54.0)), ("c", (0.0, 0.0)), ("d", (300.0, 100.0))] {
         let rect = page.layout.bounding_client_rect(&page.dom, page.id(id));
         assert_eq!((rect.width, rect.height), expected);
     }
