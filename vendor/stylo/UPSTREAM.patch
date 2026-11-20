@@ -650,7 +650,7 @@ diff -ruN a/invalidation/viewport_units.rs b/invalidation/viewport_units.rs
      if uses_viewport_units {
 diff -ruN a/matching.rs b/matching.rs
 --- a/matching.rs	2026-11-11 19:55:57
-+++ b/matching.rs	2026-11-20 12:39:19
++++ b/matching.rs	2026-11-20 21:31:25
 @@ -712,14 +712,14 @@
              context,
              old_values.as_deref(),
@@ -676,7 +676,17 @@ diff -ruN a/matching.rs b/matching.rs
  
          let new_primary_style = data.styles.primary.as_ref().unwrap();
  
-@@ -1131,6 +1132,12 @@
+@@ -1110,7 +1111,8 @@
+         }
+ 
+         let old_container_type = *old_primary_style.get_container_type();
+-        if old_container_type != new_container_type && !new_container_type.is_size_container_type()
++        if old_container_type != new_container_type
++            && (cfg!(feature = "servo") || !new_container_type.is_size_container_type())
+         {
+             // Stopped being a size container. Re-evaluate container queries and units on all our descendants.
+             // Changes into and between different size containment is handled in `UpdateContainerQueryStyles`.
+@@ -1131,6 +1133,12 @@
              new_primary_style,
              None,
          );
@@ -4837,7 +4847,7 @@ diff -ruN a/stylesheets/stylesheet.rs b/stylesheets/stylesheet.rs
  }
 diff -ruN a/stylesheets/supports_rule.rs b/stylesheets/supports_rule.rs
 --- a/stylesheets/supports_rule.rs	2026-11-11 19:55:57
-+++ b/stylesheets/supports_rule.rs	2026-11-17 11:03:09
++++ b/stylesheets/supports_rule.rs	2026-11-20 21:05:37
 @@ -241,14 +241,22 @@
      unsafe { bindings::Gecko_IsFontTechSupported(*flag) }
  }
@@ -4865,6 +4875,14 @@ diff -ruN a/stylesheets/supports_rule.rs b/stylesheets/supports_rule.rs
  }
  
  /// supports_condition | declaration
+@@ -483,6 +491,6 @@
+     /// <https://drafts.csswg.org/css-conditional-5/#typedef-supports-named-feature-fn>
+     #[cfg(feature = "servo")]
+     pub fn eval(self) -> bool {
+-        false
++        matches!(self, Self::AnchorPositionFollowsTransforms)
+     }
+ }
 diff -ruN a/stylist.rs b/stylist.rs
 --- a/stylist.rs	2026-11-11 19:55:57
 +++ b/stylist.rs	2026-11-20 12:13:59

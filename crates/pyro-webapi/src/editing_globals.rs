@@ -123,7 +123,7 @@ fn caret_at(page: &PageDom, x: f64, y: f64) -> Option<(NodeId, u32)> {
     let hit = crate::layout_api::hit_test(page, x, y)?;
     let dom = page.dom.borrow();
     if !crate::editing::is_container(&dom, hit)
-        || matches!(crate::editing::local(&dom, hit).as_str(), "textarea" | "select" | "button")
+        || matches!(crate::editing::local(&dom, hit).as_str(), "textarea" | "select" | "button" | "audio")
     {
         let parent = dom.parent(hit).ok().flatten()?;
         let index = dom.index_in_parent(hit).ok()?;

@@ -1026,6 +1026,32 @@ impl Dom {
             _ => (0, 0),
         })
     }
+
+    pub fn reset_control_state(&mut self, id: NodeId) -> DomResult<()> {
+        let index = self.check(id)?;
+        let text = self.html_local(index) == Some(&local_name!("textarea")) || (self.is_input(index) && self.input_type_idx(index).is_textual());
+        let Some(state) = self.control_state(id)? else { return Ok(()) };
+        let previous = if text && state.dirty_value { Some(self.value(id)?) } else { None };
+        let state = self.control_state_mut(id)?;
+        *state = crate::node::ControlState {
+            custom_validity: state.custom_validity.take(),
+            selection: state.selection,
+            selection_set: state.selection_set,
+            selection_direction: state.selection_direction,
+            ..Default::default()
+        };
+        if let Some(previous) = previous {
+            let value = self.value(id)?;
+            if value != previous {
+                let end = utf16_len(&value);
+                let state = self.control_state_mut(id)?;
+                state.selection = (end, end);
+                state.selection_set = true;
+                state.selection_direction = None;
+            }
+        }
+        Ok(())
+    }
     pub fn set_selection_range(&mut self, id: NodeId, start: u32, end: u32) -> DomResult<()> {
         let len = utf16_len(&self.edit_text(self.check(id)?)?);
         let end = end.min(len);

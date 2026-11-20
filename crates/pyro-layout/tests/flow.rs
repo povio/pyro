@@ -2744,6 +2744,36 @@ fn inline_custom_properties_resolve_through_var() {
 }
 
 #[test]
+fn audio_controls_have_independent_intrinsic_dimensions() {
+    let page = page("<!doctype html><style>audio{aspect-ratio:1}</style><audio id=a controls></audio><audio id=b controls style='width:120px'></audio><audio id=c></audio><audio id=d controls style='height:100px'></audio>");
+    for (id, expected) in [("a", (300.0, 54.0)), ("b", (120.0, 54.0)), ("c", (0.0, 0.0)), ("d", (300.0, 100.0))] {
+        let rect = page.layout.bounding_client_rect(&page.dom, page.id(id));
+        assert_eq!((rect.width, rect.height), expected);
+    }
+}
+
+#[test]
+fn initial_root_snap_scrolls_only_the_viewport() {
+    let mut page = page("<!doctype html><style>html{overflow:scroll;scroll-snap-type:x mandatory}body{margin:0;width:3000px}#target{margin-left:200px;scroll-snap-align:start}</style><div id=target>snap</div>");
+    let target = page.id("target");
+    let root = page.dom.document_element(page.layout.document()).unwrap().unwrap();
+    page.layout.bounding_client_rect(&page.dom, target);
+    page.layout.snap_initial_positions(&page.dom);
+    assert_eq!(page.layout.scroll_left(root), 0);
+    assert_eq!(page.layout.bounding_client_rect(&page.dom, target).x, 0.0);
+}
+
+#[test]
+fn nested_scroll_into_view_only_snaps_target_in_nearest_container() {
+    use pyro_dom::layout::ScrollAlign;
+    let mut page = page("<!doctype html><style>.scroll{height:100px;width:200px;overflow:scroll;scroll-snap-type:y mandatory}#inner{margin-top:300px}#target{margin-top:200px;height:20px;scroll-snap-align:end}.space{height:500px}</style><div class=scroll id=outer><div class=scroll id=inner><div id=target></div><div class=space></div></div><div class=space></div></div>");
+    let (target, outer, inner) = (page.id("target"), page.id("outer"), page.id("inner"));
+    page.layout.scroll_into_view_aligned_script_targets(&page.dom, target, ScrollAlign::Start, ScrollAlign::Start);
+    assert_eq!(page.layout.scroll_top(inner), 120);
+    assert_eq!(page.layout.scroll_top(outer), 380);
+}
+
+#[test]
 fn scroll_into_view_if_needed_centers_only_when_needed_like_chromium() {
     // CDP DOM.scrollIntoViewIfNeeded, measured in Chromium (800x600, body
     // margin 0): a fully visible box, or one covering the scrollport, does not

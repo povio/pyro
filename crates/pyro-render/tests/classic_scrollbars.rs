@@ -26,6 +26,15 @@ fn client(doc: &HtmlDocument, selector: &str) -> (f32, f32) {
 }
 
 #[test]
+fn container_queries_see_auto_scrollbar_relayout() {
+    let markup = "<style>#s{width:100px;height:100px;overflow:auto}#q{container-type:inline-size}#t{height:101px}@container(max-width:99px){#t{height:50px}}</style><div id=s><div id=q><div id=t></div></div></div>";
+    for (classic, expected) in [(true, (85.0, 50.0)), (false, (100.0, 101.0))] {
+        let document = doc(markup, classic);
+        assert_eq!(client(&document, "#t"), expected);
+    }
+}
+
+#[test]
 fn projected_overflow_clips_and_bounds_the_visible_horizon() {
     let document = doc("<div id=panel style='overflow:auto;width:200px;height:200px'><div style='width:100px;height:400px;transform-origin:0 0;transform:perspective(100px) rotateX(45deg)'></div></div>", true);
     let panel = node(&document, "#panel");

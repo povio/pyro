@@ -37,6 +37,16 @@ fn linked_css_blocks_classic_scripts_and_load_and_reports_failure() {
 }
 
 #[test]
+fn parser_script_waits_for_linked_sheet_imports() {
+    let (mut thread, page, loader) = setup("<!doctype html><link id='theme' rel=stylesheet href=/parent.css><script>globalThis.atScript = theme.sheet.cssRules[0].styleSheet?.cssRules.length</script>");
+    loader.insert("http://site.test/parent.css", "text/css", "@import url(child.css)", Duration::ZERO);
+    loader.insert("http://site.test/child.css", "text/css", "#target { position: fixed }", Duration::from_millis(25));
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    assert_eq!(eval(&thread, page, "atScript"), "1");
+}
+
+#[test]
 fn stylesheet_cascade_follows_discovery_order_not_completion_order() {
     let (mut thread, page, loader) =
         setup("<link rel=stylesheet href=/first.css><link rel=stylesheet href=/second.css>");

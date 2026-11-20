@@ -1578,6 +1578,34 @@ impl Layout {
         Some(q)
     }
 
+    pub fn observer_root_rect(&self, dom: &Dom, root: NodeId) -> Rect {
+        let axes = self.style.overflow_clip_axes(dom, root);
+        let table = self.style.stylo_style(dom, root).is_some_and(|style| {
+            style.slow_clone_display().inside() == style::values::specified::box_::DisplayInside::Table
+        });
+        if (axes.x || axes.y) && !table {
+            if let (Some(bounds), Some(quad)) = (self.layout_box(dom, root), self.box_quads(dom, root)) {
+                if quad.width > 0.0 && quad.height > 0.0 {
+                    let left = bounds.border[LEFT] / quad.width;
+                    let top = bounds.border[TOP] / quad.height;
+                    let right = left + bounds.client_width / quad.width;
+                    let bottom = top + bounds.client_height / quad.height;
+                    let span = |axis: usize| {
+                        let origin = quad.border[axis];
+                        let dx = quad.border[2 + axis] - origin;
+                        let dy = quad.border[6 + axis] - origin;
+                        (origin + (dx * left).min(dx * right) + (dy * top).min(dy * bottom),
+                         (dx * (right - left)).abs() + (dy * (bottom - top)).abs())
+                    };
+                    let (x, width) = span(0);
+                    let (y, height) = span(1);
+                    return Rect { x, y, width, height };
+                }
+            }
+        }
+        self.bounding_client_rect(dom, root)
+    }
+
     /// `getClientRects`: none when not rendered; an inline box over several
     /// lines has one border box per line (the engine's fragments), any other
     /// element one rect.
@@ -3412,6 +3440,9 @@ impl Layout {
         let mut moved = false;
         for key in source.mandatory_snap_containers() {
             let Some(el) = crate::geometry::node_of(dom, key) else { continue };
+            if Some(el) == dom.document_element(self.document()).ok().flatten() {
+                continue;
+            }
             // (An offset of zero is no scroll: a script read or a reveal that found nothing to do.)
             if self.element_scroll.get(&el).is_some_and(|&o| o != (0, 0)) || !self.initially_snapped.insert(el) {
                 continue;
@@ -4060,6 +4091,7 @@ impl Layout {
             }
         };
         let mut cur = flat_parent(el);
+        let mut target_owns_snap_area = script;
         while let Some(node) = cur {
             if self.is_root_container(dom, node) {
                 break;
@@ -4090,7 +4122,8 @@ impl Layout {
                 // pyro: a snap area of a snapping container is scrolled to its snap position (its
                 // `scroll-snap-align` in place of the alignment asked for), as Chromium does (CSS
                 // Scroll Snap 1 § 4; WPT css-overflow `targeted-column-scroll-marker-selection-001`).
-                let (offset_x, offset_y) = if script { self.snap_aligned_offsets(dom, node, el, offset_x, offset_y) } else { (offset_x, offset_y) };
+                let (offset_x, offset_y) = if target_owns_snap_area { self.snap_aligned_offsets(dom, node, el, offset_x, offset_y) } else { (offset_x, offset_y) };
+                target_owns_snap_area = false;
                 let left = (axes.x || explicit)
                     .then(|| offset_x(x, width, self.client_width(dom, node), self.scroll_left(node) as i64))
                     .flatten();

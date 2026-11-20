@@ -2761,6 +2761,15 @@ simple_class!(HtmlFormElement, "HTMLFormElement", HtmlElement, |def| {
     });
     def.method("requestSubmit", 0, |s, n, a| {
         let submitter = crate::node::opt_node_arg(s, a.get(0), "requestSubmit")?;
+        if let Some(id) = submitter {
+            let dom = n.page().dom.borrow();
+            if !crate::form_data::is_submit_button(&dom, id) {
+                return Err(JsError::Type("The specified element is not a submit button.".into()));
+            }
+            if dom.form_owner(id).js()? != Some(n.id) {
+                return Err(JsError::dom("NotFoundError", "The submit button is not owned by this form."));
+            }
+        }
         crate::input::submit_form(n.page(), n.id, submitter, true);
         Ok(s.undefined())
     });

@@ -72,6 +72,14 @@ fn tag_intrinsic_sizes(
     attr_size: taffy::Size<Option<f32>>,
 ) -> (IntrinsicSizes, taffy::Size<f32>) {
     let tag_name = &element.name.local;
+    if *tag_name == local_name!("audio") {
+        let size = if element.attr(local_name!("controls")).is_some() {
+            taffy::Size { width: 300.0, height: 54.0 }
+        } else {
+            taffy::Size::ZERO
+        };
+        return (IntrinsicSizes { width: Some(size.width), height: Some(size.height), ratio: None }, size);
+    }
     if *tag_name == local_name!("img")
         || *tag_name == local_name!("svg")
         || is_image_input(element)
