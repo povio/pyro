@@ -1875,6 +1875,7 @@
     try { t = parseTrigger(decl, source); } catch { t = null; }
     a.trigger = { enter: words[0] || 'play', exit: words[1] || 'none', state: 'idle', spec: t, once: false };
     a.triggerKey = JSON.stringify([actionsText, decl]);
+    a.triggerSource = source;
     a.scripted = true;
     override(a, 'playState');
     // Untriggered: just before its start (Chromium shows only its backwards fill).
@@ -1977,15 +1978,21 @@
     if (a.css !== CSS_ANIMATION) return cssFollowPlayState(a, run);
     const ov = a.overrides || new Set();
     const [, target, , , , delay, duration, iterations, direction, fill, , held, pseudo, timelineText, trigger] = run;
-    // A new `animation-trigger` (or timeline trigger) binds the run to it anew; none unbinds it.
-    const triggerKey = trigger ? JSON.stringify([trigger[0], trigger[2]]) : null;
-    if (triggerKey !== (a.triggerKey || null)) {
-      if (trigger && !timelineText) {
-        armTrigger(a, trigger, null);
+    // A new `animation-trigger` or timeline trigger (its text, or the element declaring it: the
+    // trigger's timeline follows that element) binds the run to it anew; none, or a run that
+    // became scroll-driven (no trigger applies to it), unbinds it.
+    const wanted = trigger && !timelineText ? trigger : null;
+    const bound = wanted
+      ? a.trigger && a.triggerKey === JSON.stringify([wanted[0], wanted[2]]) && a.triggerSource === wanted[1]
+      : !a.trigger;
+    if (!bound) {
+      if (wanted) {
+        armTrigger(a, wanted, null);
       } else if (a.trigger) {
         triggered.delete(a);
         a.trigger = null;
         a.triggerKey = null;
+        a.triggerSource = null;
         if (a.overrides) a.overrides.delete('playState');
         play(a, false);
       }
