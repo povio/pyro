@@ -240,6 +240,12 @@ impl Fetcher for PageFetcher {
     fn defers(&self, url: &str, options: &pyro_render::FetchOptions) -> bool {
         let client = self.client_of(options);
         let image = kind_of(options) == ResourceKind::Image;
+        // pyro: an image the document is still fetching paints as loading now, as Chrome paints
+        // what has arrived; its bytes reach the document at a later render (the capture waits for
+        // that fetch, `serve_capture`, never sending it again).
+        if image && self.bodies.as_ref().is_some_and(|bodies| bodies.pending(&layout_key(url, options, client))) {
+            return true;
+        }
         let Some(document) = self.documents.get(client) else { return false };
         image
             && (url.starts_with("http://") || url.starts_with("https://"))
