@@ -25,6 +25,7 @@ mod direction_text;
 mod display_contents_boxes;
 mod document_facts;
 mod dotted_dashed_lines;
+mod editor_display_text;
 mod filter_color;
 mod filter_drop_shadow;
 mod filter_image_function;
