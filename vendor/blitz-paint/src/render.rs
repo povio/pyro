@@ -5393,38 +5393,40 @@ impl ElementCx<'_, '_> {
         let layout_scale = marker_layout.scale();
         let item_layout = self.node.final_layout();
         // The first line, and its box's border box top from the item's: depth first, past boxes
-        // with no line (an empty block before the first line: Chromium puts the marker on that
-        // line; WPT css-multicol `multicol-list-item-008`).
+        // with no line (an empty block, or a spanner, before the first line: Chromium puts the
+        // marker on that line; WPT css-multicol `multicol-list-item-003`, `-008`).
         let mut first_line = None;
         let mut top = 0.0;
-        let mut stack: Vec<(&Node, f32, usize)> = vec![(self.node, 0.0, 0)];
-        let mut visited = 0;
-        while let Some((node, node_top, depth)) = stack.pop() {
-            visited += 1;
-            if visited > 256 {
-                break;
-            }
-            let text = node.data.downcast_element().and_then(|element| element.inline_layout_data.as_ref());
-            if let Some((text, line)) = text.and_then(|text| Some((text, text.layout.lines().next()?))) {
-                first_line = Some((node, text, line));
-                top = node_top;
-                break;
-            }
-            if depth >= 8 {
-                continue;
-            }
-            let children = node.layout_children.borrow();
-            let in_flow: Vec<&Node> = children
-                .iter()
-                .flatten()
-                .filter_map(|id| self.context.dom.get_node(*id))
-                .filter(|child| {
-                    child.final_layout().size.height > 0.0
-                        && !child.primary_styles().is_some_and(|s| s.clone_position().is_absolutely_positioned())
-                })
-                .collect();
-            for child in in_flow.into_iter().rev() {
-                stack.push((child, node_top + child.final_layout().location.y, depth + 1));
+        {
+            let mut stack: Vec<(&Node, f32, usize)> = vec![(self.node, 0.0, 0)];
+            let mut visited = 0;
+            while let Some((node, node_top, depth)) = stack.pop() {
+                visited += 1;
+                if visited > 256 {
+                    break;
+                }
+                let text = node.data.downcast_element().and_then(|element| element.inline_layout_data.as_ref());
+                if let Some((text, line)) = text.and_then(|text| Some((text, text.layout.lines().next()?))) {
+                    first_line = Some((node, text, line));
+                    top = node_top;
+                    break;
+                }
+                if depth >= 8 {
+                    continue;
+                }
+                let children = node.layout_children.borrow();
+                let in_flow: Vec<&Node> = children
+                    .iter()
+                    .flatten()
+                    .filter_map(|id| self.context.dom.get_node(*id))
+                    .filter(|child| {
+                        child.final_layout().size.height > 0.0
+                            && !child.primary_styles().is_some_and(|s| s.clone_position().is_absolutely_positioned())
+                    })
+                    .collect();
+                for child in in_flow.into_iter().rev() {
+                    stack.push((child, node_top + child.final_layout().location.y, depth + 1));
+                }
             }
         }
         match &first_line {

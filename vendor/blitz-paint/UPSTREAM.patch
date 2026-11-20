@@ -8467,7 +8467,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      /// Paint overlay scrollbar thumbs for scroll containers: `overflow:
      /// scroll`, or `auto` when the content overflows (never `hidden`/`clip`,
      /// which scroll only programmatically). Thumbs appear on scroll and fade
-@@ -967,259 +3238,3592 @@
+@@ -967,259 +3238,3594 @@
          }
      }
  
@@ -10798,38 +10798,40 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        let layout_scale = marker_layout.scale();
 +        let item_layout = self.node.final_layout();
 +        // The first line, and its box's border box top from the item's: depth first, past boxes
-+        // with no line (an empty block before the first line: Chromium puts the marker on that
-+        // line; WPT css-multicol `multicol-list-item-008`).
++        // with no line (an empty block, or a spanner, before the first line: Chromium puts the
++        // marker on that line; WPT css-multicol `multicol-list-item-003`, `-008`).
 +        let mut first_line = None;
 +        let mut top = 0.0;
-+        let mut stack: Vec<(&Node, f32, usize)> = vec![(self.node, 0.0, 0)];
-+        let mut visited = 0;
-+        while let Some((node, node_top, depth)) = stack.pop() {
-+            visited += 1;
-+            if visited > 256 {
-+                break;
-+            }
-+            let text = node.data.downcast_element().and_then(|element| element.inline_layout_data.as_ref());
-+            if let Some((text, line)) = text.and_then(|text| Some((text, text.layout.lines().next()?))) {
-+                first_line = Some((node, text, line));
-+                top = node_top;
-+                break;
-+            }
-+            if depth >= 8 {
-+                continue;
-+            }
-+            let children = node.layout_children.borrow();
-+            let in_flow: Vec<&Node> = children
-+                .iter()
-+                .flatten()
-+                .filter_map(|id| self.context.dom.get_node(*id))
-+                .filter(|child| {
-+                    child.final_layout().size.height > 0.0
-+                        && !child.primary_styles().is_some_and(|s| s.clone_position().is_absolutely_positioned())
-+                })
-+                .collect();
-+            for child in in_flow.into_iter().rev() {
-+                stack.push((child, node_top + child.final_layout().location.y, depth + 1));
++        {
++            let mut stack: Vec<(&Node, f32, usize)> = vec![(self.node, 0.0, 0)];
++            let mut visited = 0;
++            while let Some((node, node_top, depth)) = stack.pop() {
++                visited += 1;
++                if visited > 256 {
++                    break;
++                }
++                let text = node.data.downcast_element().and_then(|element| element.inline_layout_data.as_ref());
++                if let Some((text, line)) = text.and_then(|text| Some((text, text.layout.lines().next()?))) {
++                    first_line = Some((node, text, line));
++                    top = node_top;
++                    break;
++                }
++                if depth >= 8 {
++                    continue;
++                }
++                let children = node.layout_children.borrow();
++                let in_flow: Vec<&Node> = children
++                    .iter()
++                    .flatten()
++                    .filter_map(|id| self.context.dom.get_node(*id))
++                    .filter(|child| {
++                        child.final_layout().size.height > 0.0
++                            && !child.primary_styles().is_some_and(|s| s.clone_position().is_absolutely_positioned())
++                    })
++                    .collect();
++                for child in in_flow.into_iter().rev() {
++                    stack.push((child, node_top + child.final_layout().location.y, depth + 1));
++                }
 +            }
 +        }
 +        match &first_line {
@@ -12288,7 +12290,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      }
  
      #[cfg(feature = "svg")]
-@@ -1229,9 +6833,60 @@
+@@ -1229,9 +6835,60 @@
          let Some(svg) = self.svg else {
              return;
          };
@@ -12351,7 +12353,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let svg_size = svg.tree.size();
  
          let x = self.frame.content_box.origin().x;
-@@ -1253,9 +6908,20 @@
+@@ -1253,9 +6910,20 @@
  
          // Apply object-fit algorithm
          let container_size = taffy::Size { width, height };
@@ -12375,7 +12377,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          };
          let paint_size = compute_object_fit(container_size, Some(object_size), object_fit);
  
-@@ -1266,26 +6932,209 @@
+@@ -1266,26 +6934,209 @@
          let y_offset = object_position.vertical.resolve(
              CSSPixelLength::new(container_size.height - paint_size.height) / self.scale as f32,
          ) * self.scale as f32;
@@ -12587,7 +12589,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      fn with_replaced_content_clip<S: PaintScene>(
          &self,
          scene: &mut S,
-@@ -1293,15 +7142,38 @@
+@@ -1293,15 +7144,38 @@
          paint_size: taffy::Size<f32>,
          x_offset: f32,
          y_offset: f32,
@@ -12627,7 +12629,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              BlendMode::default(),
              1.0,
              self.transform,
-@@ -1312,7 +7184,108 @@
+@@ -1312,7 +7186,108 @@
          );
      }
  
@@ -12736,7 +12738,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          if let Some(image) = self.element.raster_image_data() {
              let width = self.frame.content_box.width() as u32;
              let height = self.frame.content_box.height() as u32;
-@@ -1329,9 +7302,22 @@
+@@ -1329,9 +7304,22 @@
                  width: width as f32,
                  height: height as f32,
              };
@@ -12762,7 +12764,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              };
              let paint_size = compute_object_fit(container_size, Some(object_size), object_fit);
  
-@@ -1347,10 +7333,28 @@
+@@ -1347,10 +7335,28 @@
  
              let x_scale = paint_size.width as f64 / object_size.width as f64;
              let y_scale = paint_size.height as f64 / object_size.height as f64;
@@ -12791,7 +12793,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  
              self.with_replaced_content_clip(
                  scene,
-@@ -1358,8 +7362,23 @@
+@@ -1358,8 +7364,23 @@
                  paint_size,
                  x_offset.px(),
                  y_offset.px(),
@@ -12816,7 +12818,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  },
              );
          }
-@@ -1383,22 +7402,27 @@
+@@ -1383,22 +7404,27 @@
              let width = self.frame.content_box.width() as u32;
              let height = self.frame.content_box.height() as u32;
  
@@ -12853,7 +12855,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          }
      }
  
-@@ -1427,6 +7451,32 @@
+@@ -1427,6 +7453,32 @@
      }
  }
  
@@ -12886,7 +12888,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  fn insets_from_taffy_rect(input: taffy::Rect<f64>) -> Insets {
      Insets {
          x0: input.left,
-@@ -1438,6 +7488,13 @@
+@@ -1438,6 +7490,13 @@
  
  /// Convert Stylo and Taffy types into Kurbo types
  fn create_css_rect(style: &ComputedValues, layout: &Layout, scale: f64) -> CssBox {
@@ -12900,7 +12902,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      // Resolve and rescale
      // We have to scale since document pixels are not same same as rendered pixels
      let width: f64 = layout.size.width as f64;
-@@ -1457,12 +7514,364 @@
+@@ -1457,12 +7516,364 @@
          }
      };
      let s_border = style.get_border();
@@ -21828,7 +21830,7 @@ diff --git a/packages/blitz-paint/src/render/multicol.rs b/packages/blitz-paint/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-paint/src/render/multicol.rs
-@@ -0,0 +1,449 @@
+@@ -0,0 +1,456 @@
 +//! pyro: multi-column containers (blitz-dom `layout/multicol.rs`).
 +//!
 +//! A multi-column container's content is laid out in one strip a column wide; each column shows
@@ -21974,8 +21976,15 @@ new file mode 100644
 +            if row_spanner.is_none() {
 +                self.draw_inline_layout(scene, pos);
 +            }
-+            if row_spanner.is_none() || fragment.start == f32::NEG_INFINITY {
++            // (The marker in a spanner's row only where its line is in that row's strip range: the
++            // row is unclipped, and the marker would show at each row's offset otherwise.)
++            if row_spanner.is_none() {
 +                self.draw_marker(scene, pos);
++            } else {
++                let row = Rect::new(-UNBOUNDED, (start * scale).max(-UNBOUNDED), UNBOUNDED, (end * scale).min(UNBOUNDED));
++                let pushed = self.context.layer_manager.maybe_push_layer(scene, true, BlendMode::default(), 1.0, transform, &row, None, None);
++                self.draw_marker(scene, pos);
++                self.context.layer_manager.maybe_pop_layer(scene, pushed);
 +            }
 +            // pyro: the container's boxes are not clipped to the column in the block axis, as in
 +            // Chromium: a box the column holds whole is painted with what overflows it, above or

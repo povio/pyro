@@ -143,8 +143,15 @@ impl ElementCx<'_, '_> {
             if row_spanner.is_none() {
                 self.draw_inline_layout(scene, pos);
             }
-            if row_spanner.is_none() || fragment.start == f32::NEG_INFINITY {
+            // (The marker in a spanner's row only where its line is in that row's strip range: the
+            // row is unclipped, and the marker would show at each row's offset otherwise.)
+            if row_spanner.is_none() {
                 self.draw_marker(scene, pos);
+            } else {
+                let row = Rect::new(-UNBOUNDED, (start * scale).max(-UNBOUNDED), UNBOUNDED, (end * scale).min(UNBOUNDED));
+                let pushed = self.context.layer_manager.maybe_push_layer(scene, true, BlendMode::default(), 1.0, transform, &row, None, None);
+                self.draw_marker(scene, pos);
+                self.context.layer_manager.maybe_pop_layer(scene, pushed);
             }
             // pyro: the container's boxes are not clipped to the column in the block axis, as in
             // Chromium: a box the column holds whole is painted with what overflows it, above or
