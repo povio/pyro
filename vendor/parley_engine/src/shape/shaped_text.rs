@@ -927,6 +927,7 @@ impl ShapedText {
 
         self.runs.push(ShapedRun {
             range,
+            segment_start: segment.range.byte_range.start,
             font_size: options.font_size,
             font_index,
             characters_range: characters_start as u32..self.characters.len() as u32,
@@ -947,6 +948,8 @@ impl ShapedText {
 /// One shaped run, belonging to a [`ShapedText`].
 #[derive(Clone, Debug, PartialEq)]
 pub struct ShapedRun {
+    /// Source offset of the shaping segment shared by its fallback font runs.
+    pub segment_start: usize,
     /// The range of text this run corresponds to.
     pub range: TextRange,
     /// Font size.

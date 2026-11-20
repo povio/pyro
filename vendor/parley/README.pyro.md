@@ -434,7 +434,8 @@ enabled: under `white-space: pre` the text after it stays on its line (WPT css-o
 Covered by `crates/pyro-render/tests/text_inline_round4.rs` and `soft_hyphens.rs`.
 - `layout/alignment.rs` (`align`, round 4 lane D): right-, end- and centre-aligned lines take their content width rounded
   up to a layout unit (1/64 CSS px), as Blink's snapped text item widths: such a line starts where a shrink-to-fit box
-  of the same text does (WPT CSS2 `positioning-float-002`, `float-applies-to-008`).
+  of the same text does (WPT CSS2 `positioning-float-002`, `float-applies-to-008`). Fallback font runs share a snapped
+  width within their source style and shaping segment; script or bidi segment boundaries start a new width.
 - `layout/layout.rs` `Layout::set_central_baseline`, `layout/style_metrics.rs` `inline_box_placement`, `layout/line.rs`
   `inline_box_top` (round 4 lane F): lines of vertical writing modes whose text is not sideways align on the central
   baseline (Blink's `kCentralBaseline`). An in-flow box marked `InlineBox::central` (a new field) has its central baseline

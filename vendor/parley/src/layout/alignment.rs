@@ -139,12 +139,14 @@ pub(crate) fn align<B: Brush>(
                     let slice = layout.shaped_text.run_slice(item.index as u32).narrow(item.shaped_cluster_range.clone());
                     let spacing = super::spacing::EffectiveSpacing::new(layout.runs[item.index].spacing, super::spacing::Justification::NONE);
                     let Some(first) = slice.characters().first() else { continue };
-                    if owner != Some(first.style_index) {
+                    let shaping_item = (first.style_index, layout.shaped_text.runs()[item.index].segment_start);
+                    if owner != Some(shaping_item) {
                         rounding += excess(item_width);
                         item_width = 0.0;
-                        owner = Some(first.style_index);
+                        owner = Some(shaping_item);
                     }
-                    item_width += spacing.slice_advance(slice);
+                    let width = spacing.slice_advance(slice);
+                    item_width += width;
                 } else {
                     rounding += excess(item_width);
                     item_width = 0.0;
