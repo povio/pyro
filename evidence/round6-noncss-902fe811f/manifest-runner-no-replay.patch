@@ -1,0 +1,29 @@
+--- a/bench/wpt/run.mjs
++++ b/bench/wpt/run-no-native-retry.mjs
+@@ -509,17 +509,6 @@
+     catch (e) {
+       r = { status: 'error', error: String(e.message ?? e).split('\n')[0].slice(0, 200) };
+       await resetSlot(slot);
+-      // Out of ephemeral ports: a page polling a wptserve stash handler in a tight loop (the scroll-to-text-fragment
+-      // pages wait for a popup's results that never come) makes ~1,000 requests a second, each a new connection from
+-      // wptserve to its stash manager, and macOS's 16,384 ports sit in TIME_WAIT for 30 s. Every connect then fails
+-      // (88 pages in a row in the first nightly, as ERR_PROXY_CONNECTION_FAILED). Wait until a connect works again,
+-      // then run the page again.
+-      if (/ERR_PROXY_CONNECTION_FAILED|EADDRNOTAVAIL/.test(r.error) && (t.retried ?? 0) < 3) {
+-        console.error(`${LABEL}: ${t.url}: connections fail (ports exhausted?); waiting for them to drain`);
+-        inflight.delete(w);
+-        await (portsDrained ??= drainPorts().finally(() => { portsDrained = null; }));
+-        t.retried = (t.retried ?? 0) + 1; q.list.push(t); continue;
+-      }
+       const lost = gen !== generation || /ECONNREFUSED|has been closed/.test(r.error);
+       // Whether this page's browser died (or was replaced): a lost connection can arrive before its exit does.
+       const died = gen !== generation || (lost ? await exited(child) : child.exitCode != null || !!child.signalCode);
+@@ -535,7 +524,7 @@
+         }
+       }
+       // The browser was replaced under this page (another slot's page hung it): run the page again.
+-      else if (lost && (t.retried ?? 0) < 3) { t.retried = (t.retried ?? 0) + 1; q.list.push(t); continue; }
++      else if (lost || died) { r.status = 'error'; r.error = 'Browser connection lost; observation withheld without replay.'; }
+     } finally { leave(); inflight.delete(w); }
+     if (KIND === 'crashtest' && r.status !== 'crash' && r.status !== 'hang') {
+       // A panic's lines may still be in the pipe when the page's last answer arrives.

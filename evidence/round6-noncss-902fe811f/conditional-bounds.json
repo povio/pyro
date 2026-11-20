@@ -1,0 +1,26 @@
+{
+  "originalObservedUniverse": 2009549,
+  "additionalNamesAtFrozenHead": 131,
+  "expandedObservedUniverse": 2009680,
+  "conditionalBounds": {
+    "publicStable": {
+      "referencePasses": 1959117,
+      "previousWasmReferenceOnly": 145314,
+      "maximumGivenObservedUniverse": 1864366,
+      "shortfall": 94751
+    },
+    "publicCanary": {
+      "referencePasses": 1965712,
+      "previousWasmReferenceOnly": 145308,
+      "maximumGivenObservedUniverse": 1864372,
+      "shortfall": 101340
+    },
+    "localWptStable": {
+      "referencePasses": 1946896,
+      "previousWasmReferenceOnly": 145314,
+      "maximumGivenObservedUniverse": 1864366,
+      "shortfall": 82530
+    }
+  },
+  "scope": "Non-CSS only. Counts grant LP every observed named occurrence except the prior Wasm reference-only set. Runtime-generated names beyond these runs remain unknown. Later feature topics were not censused in full."
+}

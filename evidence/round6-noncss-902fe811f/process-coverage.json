@@ -1,0 +1,14 @@
+{
+  "totals": {
+    "originalUrls": 16665,
+    "restarts": 0,
+    "watchdogKills": 0,
+    "noReplayUrls": 13848
+  },
+  "interruptions": [],
+  "priorExcluded": {
+    "fetch/api/abort/general.any.html": "hang",
+    "html/semantics/forms/constraints/infinite_backtracking.tentative.html": "hang",
+    "html/semantics/forms/the-fieldset-element/disabled-003.html": "hang"
+  }
+}

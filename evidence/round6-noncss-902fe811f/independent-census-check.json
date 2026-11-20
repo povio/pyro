@@ -1,0 +1,22 @@
+{
+  "checks": {
+    "originalRunnerShardsAudited": 151,
+    "manifest": 31827,
+    "selected": 30513,
+    "withheld": 1314,
+    "observed": 30513,
+    "namedRows": 1810613,
+    "currentPasses": 1672395,
+    "columns": 5,
+    "sourceAndPageReceiptBlobsChecked": 30513,
+    "sampledUrlsFullOriginalNamedParity": 74,
+    "encodedNamesRewrittenAcrossColumns": 630,
+    "rawReceiptRestarts": {},
+    "canonicalHistoricalWithheld": {
+      "fetch/api/abort/general.any.html": "hang",
+      "html/semantics/forms/constraints/infinite_backtracking.tentative.html": "hang",
+      "html/semantics/forms/the-fieldset-element/disabled-003.html": "hang"
+    }
+  },
+  "notices": []
+}

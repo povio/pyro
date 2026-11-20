@@ -1,0 +1,5 @@
+# Historical loss follow-up
+
+Run `python3 historical-losses/update.py` from the census directory to refresh all three JSON files against the finished-shard ledger. Each row retains the original occurrence and the current LP and matched local Chrome stable page, harness, name and status. The recorded SHA-256 for each producing server configuration identifies its authenticated WPT port mapping in server-ports.json. The historical cause and detail describe the earlier observations only. A missing name is distinguished from an unmeasured page. A current pass is a recovery of that observed name; this comparison alone does not attribute recovery to a particular change.
+
+The historical 292 losses are measured between e4ca26f48 and 4c13e694a. The current LP is 902fe811fbef4ff0f3e39ca1f896de3a275d20b5. The WPT pin is a421f2fea5eb7f91e0db399e44b0fb0779ee1603 and JSC is 0e0dd7038a7a-6f4649e395e0. Local stable Chrome 157.0.8103.80 on macOS arm64 uses the historical corrected WPT profile. Its historical results are reused from scores.sqlite. Original names and opaque bytes are retained.

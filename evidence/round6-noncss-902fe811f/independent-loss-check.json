@@ -1,0 +1,12 @@
+{
+  "historicalOccurrences": 292,
+  "affectedUrls": 159,
+  "currentlyObservedUrls": 159,
+  "historicalExportCutoff": 30513,
+  "classifications": {
+    "Pass": 131,
+    "Fail": 149,
+    "missing-name": 12
+  },
+  "rawOriginalFilesComparedWithDB": 94
+}

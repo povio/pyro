@@ -1,0 +1,53 @@
+{
+  "lp": "902fe811fbef4ff0f3e39ca1f896de3a275d20b5",
+  "binarySHA256": "9f2bfe099b2d87b0626040695a0583d460c9f7b3c8a401941761c2d9b6595cb4",
+  "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+  "manifestSHA256": "34a67512a84d43630f7adbecebd4378df5f410446591015cc6a20a3034e02819",
+  "jscKey": "0e0dd7038a7a-6f4649e395e0",
+  "jscLibrarySHA256": "3deb71f8e7d14daf174e35340a4ff0c1900b0e9f576503adeb5facbb1201f029",
+  "platform": "27.2.1 arm64",
+  "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+  },
+  "bun": "1.4.4",
+  "chrome": {
+    "version": "157.0.8103.80",
+    "launchAdapterSHA256": "4eca5733609fe2839db2fd930210e161a41b575ff52a4bc077896c20e93cdbb8",
+    "defaultPlaywright": "1.59.1",
+    "recoveryPlaywright": "1.65.1"
+  },
+  "publicStable": {
+    "runId": 5478394868006912,
+    "version": "157.0.8103.38",
+    "platform": "Linux 22.04",
+    "wpt": "1eecaa0c300058f0a47472f8a4733552f929cc63"
+  },
+  "publicCanary": {
+    "runId": 4907012216061952,
+    "version": "159.0.8143.0",
+    "platform": "Linux 22.04",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+  },
+  "priorLp": {
+    "commit": "4c13e694ab0834e5fe09d3d490d6895a7d88e63d",
+    "binarySHA256": "6f71686ee4106c90c803f3d0093ac38e9302c66f9d0720517dd6f2c45846dcef"
+  },
+  "jobsPerShard": 4,
+  "maxConcurrentCensusShards": 3,
+  "runnerFileHashes": {
+    "manifest-runner": "36655249bafb5a5c20da0a09ca3c4fbfad14a421809d5e376ca95ec3e0158260",
+    "final-manifest-runner": "d14e5699d0807826c28c5f35e819e5d073f30cb8ac413bf1b3dc9f39035b2184"
+  },
+  "reviewedRunnerCommit": "81758fc77afe80f22ac0af3b0cecbf89c706074f",
+  "chromeReferences": "Existing matched same-pin local Chrome receipts; public stable is ten WPT commits earlier; public canary is the exact pin.",
+  "originalRunnerCommits": {
+    "manifest-runner": "1c4657fe5",
+    "final-manifest-runner": "81758fc77afe80f22ac0af3b0cecbf89c706074f"
+  },
+  "noRetryRunnerSHA256": {
+    "manifest-runner": "c3f0a2e0e8919c0394ff81dd0bc08ceace358c863163385a89bcbf3a9dd4add0",
+    "final-manifest-runner": "b82c52329f881a5193e21ceb22634517c4cb776bd39bb080692c24eb21ac594a"
+  }
+}

@@ -1,0 +1,1766 @@
+{
+  "domparsing": {
+    "pages": 90,
+    "lpOnly": 45,
+    "chromeOnly": 1238,
+    "lpFull": 43,
+    "chromeFull": 77
+  },
+  "editing": {
+    "pages": 710,
+    "lpOnly": 2201,
+    "chromeOnly": 13452,
+    "lpFull": 139,
+    "chromeFull": 426
+  },
+  "svg": {
+    "pages": 787,
+    "lpOnly": 75,
+    "chromeOnly": 2145,
+    "lpFull": 288,
+    "chromeFull": 669
+  },
+  "shadow-dom": {
+    "pages": 314,
+    "lpOnly": 929,
+    "chromeOnly": 351,
+    "lpFull": 177,
+    "chromeFull": 238
+  },
+  "xhr": {
+    "pages": 440,
+    "lpOnly": 69,
+    "chromeOnly": 170,
+    "lpFull": 371,
+    "chromeFull": 390
+  },
+  "dom": {
+    "pages": 801,
+    "lpOnly": 76,
+    "chromeOnly": 570,
+    "lpFull": 662,
+    "chromeFull": 728
+  },
+  "FileAPI": {
+    "pages": 113,
+    "lpOnly": 15,
+    "chromeOnly": 160,
+    "lpFull": 72,
+    "chromeFull": 104
+  },
+  "url": {
+    "pages": 77,
+    "lpOnly": 695,
+    "chromeOnly": 4,
+    "lpFull": 73,
+    "chromeFull": 47
+  },
+  "encoding": {
+    "pages": 1343,
+    "lpOnly": 292,
+    "chromeOnly": 209,
+    "lpFull": 1323,
+    "chromeFull": 1322
+  },
+  "html": {
+    "pages": 9060,
+    "lpOnly": 1376,
+    "chromeOnly": 10937,
+    "lpFull": 5512,
+    "chromeFull": 7911
+  },
+  "IndexedDB": {
+    "pages": 816,
+    "lpOnly": 8,
+    "chromeOnly": 653,
+    "lpFull": 709,
+    "chromeFull": 810
+  },
+  "WebCryptoAPI": {
+    "pages": 334,
+    "lpOnly": 3016,
+    "chromeOnly": 6395,
+    "lpFull": 220,
+    "chromeFull": 185
+  },
+  "accelerometer": {
+    "pages": 8,
+    "lpOnly": 0,
+    "chromeOnly": 75,
+    "lpFull": 1,
+    "chromeFull": 7
+  },
+  "accessibility": {
+    "pages": 1,
+    "lpOnly": 0,
+    "chromeOnly": 0,
+    "lpFull": 1,
+    "chromeFull": 1
+  },
+  "accname": {
+    "pages": 21,
+    "lpOnly": 1,
+    "chromeOnly": 0,
+    "lpFull": 7,
+    "chromeFull": 7
+  },
+  "acid": {
+    "pages": 1,
+    "lpOnly": 0,
+    "chromeOnly": 8,
+    "lpFull": 0,
+    "chromeFull": 1
+  },
+  "ai": {
+    "pages": 191,
+    "lpOnly": 1,
+    "chromeOnly": 16,
+    "lpFull": 0,
+    "chromeFull": 4
+  },
+  "ambient-light": {
+    "pages": 8,
+    "lpOnly": 0,
+    "chromeOnly": 0,
+    "lpFull": 1,
+    "chromeFull": 1
+  },
+  "animation-worklet": {
+    "pages": 24,
+    "lpOnly": 0,
+    "chromeOnly": 0,
+    "lpFull": 0,
+    "chromeFull": 0
+  },
+  "apng": {
+    "pages": 1,
+    "lpOnly": 0,
+    "chromeOnly": 0,
+    "lpFull": 1,
+    "chromeFull": 1
+  },
+  "audio-output": {
+    "pages": 10,
+    "lpOnly": 3,
+    "chromeOnly": 2,
+    "lpFull": 1,
+    "chromeFull": 0
+  },
+  "audio-session": {
+    "pages": 3,
+    "lpOnly": 0,
+    "chromeOnly": 0,
+    "lpFull": 0,
+    "chromeFull": 0
+  },
+  "autoplay-policy-detection": {
+    "pages": 3,
+    "lpOnly": 0,
+    "chromeOnly": 0,
+    "lpFull": 0,
+    "chromeFull": 0
+  },
+  "background-fetch": {
+    "pages": 16,
+    "lpOnly": 0,
+    "chromeOnly": 220,
+    "lpFull": 0,
+    "chromeFull": 14
+  },
+  "background-sync": {
+    "pages": 2,
+    "lpOnly": 0,
+    "chromeOnly": 18,
+    "lpFull": 0,
+    "chromeFull": 2
+  },
+  "badging": {
+    "pages": 8,
+    "lpOnly": 0,
+    "chromeOnly": 12,
+    "lpFull": 0,
+    "chromeFull": 2
+  },
+  "battery-status": {
+    "pages": 17,
+    "lpOnly": 0,
+    "chromeOnly": 41,
+    "lpFull": 0,
+    "chromeFull": 7
+  },
+  "beacon": {
+    "pages": 17,
+    "lpOnly": 0,
+    "chromeOnly": 0,
+    "lpFull": 15,
+    "chromeFull": 15
+  },
+  "bluetooth": {
+    "pages": 3,
+    "lpOnly": 0,
+    "chromeOnly": 102,
+    "lpFull": 0,
+    "chromeFull": 1
+  },
+  "captured-mouse-events": {
+    "pages": 4,
+    "lpOnly": 0,
+    "chromeOnly": 7,
+    "lpFull": 0,
+    "chromeFull": 0
+  },
+  "clear-site-data": {
+    "pages": 15,
+    "lpOnly": 6,
+    "chromeOnly": 30,
+    "lpFull": 2,
+    "chromeFull": 11
+  },
+  "client-hints": {
+    "pages": 132,
+    "lpOnly": 0,
+    "chromeOnly": 78,
+    "lpFull": 46,
+    "chromeFull": 123
+  },
+  "clipboard-apis": {
+    "pages": 62,
+    "lpOnly": 32,
+    "chromeOnly": 44,
+    "lpFull": 37,
+    "chromeFull": 23
+  },
+  "close-watcher": {
+    "pages": 68,
+    "lpOnly": 0,
+    "chromeOnly": 65,
+    "lpFull": 8,
+    "chromeFull": 43
+  },
+  "compat": {
+    "pages": 14,
+    "lpOnly": 1,
+    "chromeOnly": 39,
+    "lpFull": 8,
+    "chromeFull": 12
+  },
+  "compression": {
+    "pages": 78,
+    "lpOnly": 0,
+    "chromeOnly": 38,
+    "lpFull": 17,
+    "chromeFull": 18
+  },
+  "compute-pressure": {
+    "pages": 45,
+    "lpOnly": 0,
+    "chromeOnly": 131,
+    "lpFull": 0,
+    "chromeFull": 17
+  },
+  "connection-allowlist": {
+    "pages": 84,
+    "lpOnly": 6,
+    "chromeOnly": 216,
+    "lpFull": 14,
+    "chromeFull": 71
+  },
+  "console": {
+    "pages": 14,
+    "lpOnly": 0,
+    "chromeOnly": 12,
+    "lpFull": 8,
+    "chromeFull": 14
+  },
+  "contacts": {
+    "pages": 1,
+    "lpOnly": 0,
+    "chromeOnly": 0,
+    "lpFull": 0,
+    "chromeFull": 0
+  },
+  "container-timing": {
+    "pages": 31,
+    "lpOnly": 0,
+    "chromeOnly": 0,
+    "lpFull": 0,
+    "chromeFull": 0
+  },
+  "content-dpr": {
+    "pages": 1,
+    "lpOnly": 0,
+    "chromeOnly": 1,
+    "lpFull": 0,
+    "chromeFull": 1
+  },
+  "content-index": {
+    "pages": 5,
+    "lpOnly": 0,
+    "chromeOnly": 0,
+    "lpFull": 0,
+    "chromeFull": 0
+  },
+  "content-security-policy": {
+    "pages": 768,
+    "lpOnly": 61,
+    "chromeOnly": 1645,
+    "lpFull": 231,
+    "chromeFull": 646
+  },
+  "contenteditable": {
+    "pages": 2,
+    "lpOnly": 2,
+    "chromeOnly": 0,
+    "lpFull": 2,
+    "chromeFull": 1
+  },
+  "cookies": {
+    "pages": 89,
+    "lpOnly": 80,
+    "chromeOnly": 176,
+    "lpFull": 49,
+    "chromeFull": 68
+  },
+  "cookiestore": {
+    "pages": 76,
+    "lpOnly": 0,
+    "chromeOnly": 504,
+    "lpFull": 0,
+    "chromeFull": 64
+  },
+  "core-aam": {
+    "pages": 1,
+    "lpOnly": 0,
+    "chromeOnly": 0,
+    "lpFull": 0,
+    "chromeFull": 0
+  },
+  "cors": {
+    "pages": 27,
+    "lpOnly": 0,
+    "chromeOnly": 35,
+    "lpFull": 15,
+    "chromeFull": 21
+  },
+  "cpu-performance": {
+    "pages": 1,
+    "lpOnly": 0,
+    "chromeOnly": 1,
+    "lpFull": 0,
+    "chromeFull": 1
+  },
+  "credential-management": {
+    "pages": 16,
+    "lpOnly": 0,
+    "chromeOnly": 103,
+    "lpFull": 1,
+    "chromeFull": 6
+  },
+  "custom-elements": {
+    "pages": 197,
+    "lpOnly": 12,
+    "chromeOnly": 589,
+    "lpFull": 94,
+    "chromeFull": 169
+  },
+  "delegated-ink": {
+    "pages": 5,
+    "lpOnly": 0,
+    "chromeOnly": 14,
+    "lpFull": 0,
+    "chromeFull": 5
+  },
+  "density-size-correction": {
+    "pages": 2,
+    "lpOnly": 0,
+    "chromeOnly": 6,
+    "lpFull": 0,
+    "chromeFull": 2
+  },
+  "deprecation-reporting": {
+    "pages": 2,
+    "lpOnly": 0,
+    "chromeOnly": 0,
+    "lpFull": 2,
+    "chromeFull": 2
+  },
+  "device-bound-session-credentials": {
+    "pages": 32,
+    "lpOnly": 0,
+    "chromeOnly": 0,
+    "lpFull": 1,
+    "chromeFull": 1
+  },
+  "device-memory": {
+    "pages": 4,
+    "lpOnly": 0,
+    "chromeOnly": 2,
+    "lpFull": 0,
+    "chromeFull": 2
+  },
+  "device-posture": {
+    "pages": 5,
+    "lpOnly": 0,
+    "chromeOnly": 13,
+    "lpFull": 0,
+    "chromeFull": 1
+  },
+  "digital-credentials": {
+    "pages": 24,
+    "lpOnly": 0,
+    "chromeOnly": 83,
+    "lpFull": 3,
+    "chromeFull": 16
+  },
+  "direct-sockets": {
+    "pages": 4,
+    "lpOnly": 0,
+    "chromeOnly": 0,
+    "lpFull": 0,
+    "chromeFull": 0
+  },
+  "document-picture-in-picture": {
+    "pages": 22,
+    "lpOnly": 0,
+    "chromeOnly": 23,
+    "lpFull": 1,
+    "chromeFull": 16
+  },
+  "document-policy": {
+    "pages": 10,
+    "lpOnly": 0,
+    "chromeOnly": 0,
+    "lpFull": 0,
+    "chromeFull": 0
+  },
+  "domxpath": {
+    "pages": 34,
+    "lpOnly": 0,
+    "chromeOnly": 11,
+    "lpFull": 30,
+    "chromeFull": 31
+  },
+  "dpub-aam": {
+    "pages": 1,
+    "lpOnly": 0,
+    "chromeOnly": 0,
+    "lpFull": 0,
+    "chromeFull": 0
+  },
+  "ecmascript": {
+    "pages": 2,
+    "lpOnly": 0,
+    "chromeOnly": 0,
+    "lpFull": 2,
+    "chromeFull": 2
+  },
+  "element-timing": {
+    "pages": 52,
+    "lpOnly": 0,
+    "chromeOnly": 47,
+    "lpFull": 0,
+    "chromeFull": 47
+  },
+  "encoding-detection": {
+    "pages": 75,
+    "lpOnly": 0,
+    "chromeOnly": 61,
+    "lpFull": 0,
+    "chromeFull": 61
+  },
+  "encrypted-media": {
+    "pages": 100,
+    "lpOnly": 0,
+    "chromeOnly": 300,
+    "lpFull": 0,
+    "chromeFull": 69
+  },
+  "entries-api": {
+    "pages": 4,
+    "lpOnly": 0,
+    "chromeOnly": 6,
+    "lpFull": 0,
+    "chromeFull": 0
+  },
+  "event-timing": {
+    "pages": 76,
+    "lpOnly": 0,
+    "chromeOnly": 115,
+    "lpFull": 4,
+    "chromeFull": 71
+  },
+  "eventsource": {
+    "pages": 109,
+    "lpOnly": 6,
+    "chromeOnly": 18,
+    "lpFull": 97,
+    "chromeFull": 103
+  },
+  "eyedropper": {
+    "pages": 2,
+    "lpOnly": 0,
+    "chromeOnly": 7,
+    "lpFull": 0,
+    "chromeFull": 2
+  },
+  "fenced-frame": {
+    "pages": 9,
+    "lpOnly": 0,
+    "chromeOnly": 2,
+    "lpFull": 4,
+    "chromeFull": 5
+  },
+  "fetch": {
+    "pages": 917,
+    "lpOnly": 301,
+    "chromeOnly": 2285,
+    "lpFull": 446,
+    "chromeFull": 715
+  },
+  "file-system-access": {
+    "pages": 10,
+    "lpOnly": 0,
+    "chromeOnly": 103,
+    "lpFull": 0,
+    "chromeFull": 8
+  },
+  "focus": {
+    "pages": 39,
+    "lpOnly": 0,
+    "chromeOnly": 13,
+    "lpFull": 26,
+    "chromeFull": 32
+  },
+  "font-access": {
+    "pages": 12,
+    "lpOnly": 0,
+    "chromeOnly": 27,
+    "lpFull": 0,
+    "chromeFull": 7
+  },
+  "forced-colors-mode": {
+    "pages": 15,
+    "lpOnly": 0,
+    "chromeOnly": 2,
+    "lpFull": 1,
+    "chromeFull": 2
+  },
+  "fs": {
+    "pages": 102,
+    "lpOnly": 0,
+    "chromeOnly": 1020,
+    "lpFull": 1,
+    "chromeFull": 87
+  },
+  "fullscreen": {
+    "pages": 90,
+    "lpOnly": 14,
+    "chromeOnly": 48,
+    "lpFull": 41,
+    "chromeFull": 75
+  },
+  "gamepad": {
+    "pages": 6,
+    "lpOnly": 0,
+    "chromeOnly": 49,
+    "lpFull": 1,
+    "chromeFull": 1
+  },
+  "generic-sensor": {
+    "pages": 3,
+    "lpOnly": 3,
+    "chromeOnly": 36,
+    "lpFull": 0,
+    "chromeFull": 2
+  },
+  "geolocation": {
+    "pages": 13,
+    "lpOnly": 0,
+    "chromeOnly": 63,
+    "lpFull": 3,
+    "chromeFull": 13
+  },
+  "geolocation-sensor": {
+    "pages": 1,
+    "lpOnly": 0,
+    "chromeOnly": 0,
+    "lpFull": 1,
+    "chromeFull": 1
+  },
+  "gpc": {
+    "pages": 7,
+    "lpOnly": 0,
+    "chromeOnly": 0,
+    "lpFull": 0,
+    "chromeFull": 0
+  },
+  "graphics-aria": {
+    "pages": 1,
+    "lpOnly": 0,
+    "chromeOnly": 0,
+    "lpFull": 0,
+    "chromeFull": 0
+  },
+  "gyroscope": {
+    "pages": 8,
+    "lpOnly": 0,
+    "chromeOnly": 27,
+    "lpFull": 1,
+    "chromeFull": 7
+  },
+  "hr-time": {
+    "pages": 18,
+    "lpOnly": 0,
+    "chromeOnly": 9,
+    "lpFull": 10,
+    "chromeFull": 16
+  },
+  "hsts": {
+    "pages": 1,
+    "lpOnly": 1,
+    "chromeOnly": 0,
+    "lpFull": 1,
+    "chromeFull": 0
+  },
+  "html-aam": {
+    "pages": 36,
+    "lpOnly": 54,
+    "chromeOnly": 0,
+    "lpFull": 2,
+    "chromeFull": 2
+  },
+  "html-media-capture": {
+    "pages": 2,
+    "lpOnly": 0,
+    "chromeOnly": 0,
+    "lpFull": 0,
+    "chromeFull": 0
+  },
+  "https-upgrades": {
+    "pages": 6,
+    "lpOnly": 0,
+    "chromeOnly": 0,
+    "lpFull": 1,
+    "chromeFull": 1
+  },
+  "idle-detection": {
+    "pages": 12,
+    "lpOnly": 0,
+    "chromeOnly": 37,
+    "lpFull": 2,
+    "chromeFull": 4
+  },
+  "imagebitmap-renderingcontext": {
+    "pages": 14,
+    "lpOnly": 0,
+    "chromeOnly": 19,
+    "lpFull": 0,
+    "chromeFull": 14
+  },
+  "import-maps": {
+    "pages": 59,
+    "lpOnly": 2,
+    "chromeOnly": 234,
+    "lpFull": 25,
+    "chromeFull": 58
+  },
+  "inert": {
+    "pages": 29,
+    "lpOnly": 0,
+    "chromeOnly": 54,
+    "lpFull": 15,
+    "chromeFull": 28
+  },
+  "infrastructure": {
+    "pages": 107,
+    "lpOnly": 2,
+    "chromeOnly": 2,
+    "lpFull": 59,
+    "chromeFull": 60
+  },
+  "input-device-capabilities": {
+    "pages": 1,
+    "lpOnly": 0,
+    "chromeOnly": 11,
+    "lpFull": 0,
+    "chromeFull": 0
+  },
+  "input-events": {
+    "pages": 34,
+    "lpOnly": 81,
+    "chromeOnly": 1788,
+    "lpFull": 2,
+    "chromeFull": 16
+  },
+  "installedapp": {
+    "pages": 2,
+    "lpOnly": 0,
+    "chromeOnly": 4,
+    "lpFull": 0,
+    "chromeFull": 2
+  },
+  "intersection-observer": {
+    "pages": 153,
+    "lpOnly": 4,
+    "chromeOnly": 221,
+    "lpFull": 47,
+    "chromeFull": 141
+  },
+  "intervention-reporting": {
+    "pages": 2,
+    "lpOnly": 0,
+    "chromeOnly": 0,
+    "lpFull": 2,
+    "chromeFull": 2
+  },
+  "is-input-pending": {
+    "pages": 12,
+    "lpOnly": 0,
+    "chromeOnly": 25,
+    "lpFull": 0,
+    "chromeFull": 10
+  },
+  "jpegxl": {
+    "pages": 12,
+    "lpOnly": 1,
+    "chromeOnly": 12,
+    "lpFull": 4,
+    "chromeFull": 10
+  },
+  "js": {
+    "pages": 35,
+    "lpOnly": 0,
+    "chromeOnly": 3,
+    "lpFull": 14,
+    "chromeFull": 17
+  },
+  "js-self-profiling": {
+    "pages": 26,
+    "lpOnly": 0,
+    "chromeOnly": 34,
+    "lpFull": 0,
+    "chromeFull": 18
+  },
+  "keyboard-lock": {
+    "pages": 7,
+    "lpOnly": 0,
+    "chromeOnly": 22,
+    "lpFull": 0,
+    "chromeFull": 6
+  },
+  "keyboard-map": {
+    "pages": 8,
+    "lpOnly": 0,
+    "chromeOnly": 21,
+    "lpFull": 0,
+    "chromeFull": 7
+  },
+  "largest-contentful-paint": {
+    "pages": 75,
+    "lpOnly": 0,
+    "chromeOnly": 111,
+    "lpFull": 0,
+    "chromeFull": 67
+  },
+  "layout-instability": {
+    "pages": 83,
+    "lpOnly": 0,
+    "chromeOnly": 113,
+    "lpFull": 0,
+    "chromeFull": 80
+  },
+  "loading": {
+    "pages": 53,
+    "lpOnly": 0,
+    "chromeOnly": 39,
+    "lpFull": 15,
+    "chromeFull": 52
+  },
+  "long-animation-frame": {
+    "pages": 53,
+    "lpOnly": 0,
+    "chromeOnly": 89,
+    "lpFull": 0,
+    "chromeFull": 25
+  },
+  "longtask-timing": {
+    "pages": 21,
+    "lpOnly": 0,
+    "chromeOnly": 25,
+    "lpFull": 0,
+    "chromeFull": 18
+  },
+  "magnetometer": {
+    "pages": 8,
+    "lpOnly": 0,
+    "chromeOnly": 0,
+    "lpFull": 1,
+    "chromeFull": 1
+  },
+  "managed": {
+    "pages": 2,
+    "lpOnly": 0,
+    "chromeOnly": 3,
+    "lpFull": 0,
+    "chromeFull": 1
+  },
+  "mathml": {
+    "pages": 216,
+    "lpOnly": 19,
+    "chromeOnly": 2568,
+    "lpFull": 37,
+    "chromeFull": 181
+  },
+  "measure-memory": {
+    "pages": 16,
+    "lpOnly": 0,
+    "chromeOnly": 11,
+    "lpFull": 0,
+    "chromeFull": 11
+  },
+  "media-capabilities": {
+    "pages": 12,
+    "lpOnly": 0,
+    "chromeOnly": 263,
+    "lpFull": 0,
+    "chromeFull": 4
+  },
+  "media-playback-quality": {
+    "pages": 1,
+    "lpOnly": 0,
+    "chromeOnly": 1,
+    "lpFull": 0,
+    "chromeFull": 1
+  },
+  "media-source": {
+    "pages": 89,
+    "lpOnly": 2,
+    "chromeOnly": 497,
+    "lpFull": 2,
+    "chromeFull": 65
+  },
+  "mediacapture-extensions": {
+    "pages": 13,
+    "lpOnly": 0,
+    "chromeOnly": 1,
+    "lpFull": 0,
+    "chromeFull": 0
+  },
+  "mediacapture-fromelement": {
+    "pages": 12,
+    "lpOnly": 0,
+    "chromeOnly": 35,
+    "lpFull": 0,
+    "chromeFull": 8
+  },
+  "mediacapture-handle": {
+    "pages": 1,
+    "lpOnly": 0,
+    "chromeOnly": 5,
+    "lpFull": 0,
+    "chromeFull": 1
+  },
+  "mediacapture-image": {
+    "pages": 23,
+    "lpOnly": 0,
+    "chromeOnly": 45,
+    "lpFull": 0,
+    "chromeFull": 10
+  },
+  "mediacapture-insertable-streams": {
+    "pages": 20,
+    "lpOnly": 0,
+    "chromeOnly": 11,
+    "lpFull": 0,
+    "chromeFull": 1
+  },
+  "mediacapture-record": {
+    "pages": 120,
+    "lpOnly": 0,
+    "chromeOnly": 533,
+    "lpFull": 0,
+    "chromeFull": 58
+  },
+  "mediacapture-region": {
+    "pages": 1,
+    "lpOnly": 0,
+    "chromeOnly": 6,
+    "lpFull": 0,
+    "chromeFull": 1
+  },
+  "mediacapture-streams": {
+    "pages": 59,
+    "lpOnly": 57,
+    "chromeOnly": 34,
+    "lpFull": 6,
+    "chromeFull": 8
+  },
+  "mediasession": {
+    "pages": 9,
+    "lpOnly": 0,
+    "chromeOnly": 98,
+    "lpFull": 0,
+    "chromeFull": 6
+  },
+  "merchant-validation": {
+    "pages": 4,
+    "lpOnly": 0,
+    "chromeOnly": 0,
+    "lpFull": 1,
+    "chromeFull": 1
+  },
+  "mimesniff": {
+    "pages": 7,
+    "lpOnly": 257,
+    "chromeOnly": 648,
+    "lpFull": 1,
+    "chromeFull": 3
+  },
+  "mixed-content": {
+    "pages": 387,
+    "lpOnly": 35,
+    "chromeOnly": 673,
+    "lpFull": 73,
+    "chromeFull": 334
+  },
+  "mst-content-hint": {
+    "pages": 4,
+    "lpOnly": 0,
+    "chromeOnly": 17,
+    "lpFull": 0,
+    "chromeFull": 3
+  },
+  "nav-tracking-mitigations": {
+    "pages": 2,
+    "lpOnly": 0,
+    "chromeOnly": 0,
+    "lpFull": 2,
+    "chromeFull": 2
+  },
+  "navigation-api": {
+    "pages": 513,
+    "lpOnly": 1,
+    "chromeOnly": 291,
+    "lpFull": 240,
+    "chromeFull": 487
+  },
+  "navigation-timing": {
+    "pages": 60,
+    "lpOnly": 2,
+    "chromeOnly": 67,
+    "lpFull": 36,
+    "chromeFull": 57
+  },
+  "netinfo": {
+    "pages": 3,
+    "lpOnly": 0,
+    "chromeOnly": 40,
+    "lpFull": 0,
+    "chromeFull": 0
+  },
+  "network-error-logging": {
+    "pages": 12,
+    "lpOnly": 0,
+    "chromeOnly": 0,
+    "lpFull": 0,
+    "chromeFull": 0
+  },
+  "notifications": {
+    "pages": 28,
+    "lpOnly": 7,
+    "chromeOnly": 174,
+    "lpFull": 7,
+    "chromeFull": 5
+  },
+  "old-tests": {
+    "pages": 15,
+    "lpOnly": 0,
+    "chromeOnly": 5,
+    "lpFull": 9,
+    "chromeFull": 14
+  },
+  "orientation-event": {
+    "pages": 27,
+    "lpOnly": 0,
+    "chromeOnly": 52,
+    "lpFull": 2,
+    "chromeFull": 6
+  },
+  "orientation-sensor": {
+    "pages": 12,
+    "lpOnly": 0,
+    "chromeOnly": 53,
+    "lpFull": 1,
+    "chromeFull": 12
+  },
+  "page-lifecycle": {
+    "pages": 5,
+    "lpOnly": 0,
+    "chromeOnly": 6,
+    "lpFull": 0,
+    "chromeFull": 1
+  },
+  "page-visibility": {
+    "pages": 11,
+    "lpOnly": 0,
+    "chromeOnly": 3,
+    "lpFull": 7,
+    "chromeFull": 9
+  },
+  "paint-timing": {
+    "pages": 59,
+    "lpOnly": 0,
+    "chromeOnly": 60,
+    "lpFull": 6,
+    "chromeFull": 57
+  },
+  "payment-method-basic-card": {
+    "pages": 4,
+    "lpOnly": 0,
+    "chromeOnly": 2,
+    "lpFull": 0,
+    "chromeFull": 1
+  },
+  "payment-method-id": {
+    "pages": 1,
+    "lpOnly": 0,
+    "chromeOnly": 0,
+    "lpFull": 0,
+    "chromeFull": 0
+  },
+  "payment-method-manifest": {
+    "pages": 11,
+    "lpOnly": 0,
+    "chromeOnly": 48,
+    "lpFull": 0,
+    "chromeFull": 9
+  },
+  "payment-request": {
+    "pages": 33,
+    "lpOnly": 1,
+    "chromeOnly": 189,
+    "lpFull": 3,
+    "chromeFull": 20
+  },
+  "performance-timeline": {
+    "pages": 76,
+    "lpOnly": 0,
+    "chromeOnly": 53,
+    "lpFull": 50,
+    "chromeFull": 63
+  },
+  "periodic-background-sync": {
+    "pages": 3,
+    "lpOnly": 0,
+    "chromeOnly": 22,
+    "lpFull": 0,
+    "chromeFull": 1
+  },
+  "permissions": {
+    "pages": 13,
+    "lpOnly": 8,
+    "chromeOnly": 61,
+    "lpFull": 6,
+    "chromeFull": 6
+  },
+  "permissions-policy": {
+    "pages": 123,
+    "lpOnly": 5,
+    "chromeOnly": 91,
+    "lpFull": 4,
+    "chromeFull": 46
+  },
+  "permissions-request": {
+    "pages": 2,
+    "lpOnly": 0,
+    "chromeOnly": 0,
+    "lpFull": 0,
+    "chromeFull": 0
+  },
+  "permissions-revoke": {
+    "pages": 2,
+    "lpOnly": 0,
+    "chromeOnly": 0,
+    "lpFull": 0,
+    "chromeFull": 0
+  },
+  "picture-in-picture": {
+    "pages": 18,
+    "lpOnly": 0,
+    "chromeOnly": 74,
+    "lpFull": 0,
+    "chromeFull": 13
+  },
+  "png": {
+    "pages": 4,
+    "lpOnly": 0,
+    "chromeOnly": 1,
+    "lpFull": 3,
+    "chromeFull": 4
+  },
+  "pointerevents": {
+    "pages": 262,
+    "lpOnly": 117,
+    "chromeOnly": 446,
+    "lpFull": 107,
+    "chromeFull": 167
+  },
+  "pointerlock": {
+    "pages": 20,
+    "lpOnly": 0,
+    "chromeOnly": 29,
+    "lpFull": 0,
+    "chromeFull": 16
+  },
+  "preload": {
+    "pages": 85,
+    "lpOnly": 10,
+    "chromeOnly": 474,
+    "lpFull": 23,
+    "chromeFull": 65
+  },
+  "presentation-api": {
+    "pages": 13,
+    "lpOnly": 0,
+    "chromeOnly": 99,
+    "lpFull": 0,
+    "chromeFull": 13
+  },
+  "private-click-measurement": {
+    "pages": 1,
+    "lpOnly": 0,
+    "chromeOnly": 0,
+    "lpFull": 0,
+    "chromeFull": 0
+  },
+  "proximity": {
+    "pages": 4,
+    "lpOnly": 0,
+    "chromeOnly": 0,
+    "lpFull": 1,
+    "chromeFull": 1
+  },
+  "push-api": {
+    "pages": 18,
+    "lpOnly": 0,
+    "chromeOnly": 187,
+    "lpFull": 1,
+    "chromeFull": 7
+  },
+  "quirks": {
+    "pages": 18,
+    "lpOnly": 1,
+    "chromeOnly": 299,
+    "lpFull": 9,
+    "chromeFull": 17
+  },
+  "referrer-policy": {
+    "pages": 1482,
+    "lpOnly": 14,
+    "chromeOnly": 620,
+    "lpFull": 1107,
+    "chromeFull": 1384
+  },
+  "remote-playback": {
+    "pages": 9,
+    "lpOnly": 0,
+    "chromeOnly": 35,
+    "lpFull": 0,
+    "chromeFull": 9
+  },
+  "reporting": {
+    "pages": 24,
+    "lpOnly": 0,
+    "chromeOnly": 30,
+    "lpFull": 0,
+    "chromeFull": 8
+  },
+  "requestidlecallback": {
+    "pages": 21,
+    "lpOnly": 0,
+    "chromeOnly": 3,
+    "lpFull": 17,
+    "chromeFull": 19
+  },
+  "resize-observer": {
+    "pages": 35,
+    "lpOnly": 0,
+    "chromeOnly": 46,
+    "lpFull": 19,
+    "chromeFull": 32
+  },
+  "resource-timing": {
+    "pages": 171,
+    "lpOnly": 0,
+    "chromeOnly": 254,
+    "lpFull": 74,
+    "chromeFull": 121
+  },
+  "sanitizer-api": {
+    "pages": 28,
+    "lpOnly": 2,
+    "chromeOnly": 966,
+    "lpFull": 1,
+    "chromeFull": 15
+  },
+  "savedata": {
+    "pages": 2,
+    "lpOnly": 0,
+    "chromeOnly": 4,
+    "lpFull": 0,
+    "chromeFull": 2
+  },
+  "scheduler": {
+    "pages": 118,
+    "lpOnly": 0,
+    "chromeOnly": 69,
+    "lpFull": 99,
+    "chromeFull": 118
+  },
+  "screen-capture": {
+    "pages": 15,
+    "lpOnly": 0,
+    "chromeOnly": 27,
+    "lpFull": 2,
+    "chromeFull": 5
+  },
+  "screen-details": {
+    "pages": 3,
+    "lpOnly": 2,
+    "chromeOnly": 3,
+    "lpFull": 1,
+    "chromeFull": 1
+  },
+  "screen-orientation": {
+    "pages": 15,
+    "lpOnly": 5,
+    "chromeOnly": 7,
+    "lpFull": 0,
+    "chromeFull": 2
+  },
+  "screen-wake-lock": {
+    "pages": 18,
+    "lpOnly": 1,
+    "chromeOnly": 52,
+    "lpFull": 3,
+    "chromeFull": 12
+  },
+  "scroll-animations": {
+    "pages": 227,
+    "lpOnly": 16,
+    "chromeOnly": 953,
+    "lpFull": 86,
+    "chromeFull": 200
+  },
+  "scroll-performance-timing": {
+    "pages": 1,
+    "lpOnly": 0,
+    "chromeOnly": 0,
+    "lpFull": 0,
+    "chromeFull": 0
+  },
+  "scroll-to-text-fragment": {
+    "pages": 38,
+    "lpOnly": 0,
+    "chromeOnly": 103,
+    "lpFull": 3,
+    "chromeFull": 34
+  },
+  "secure-contexts": {
+    "pages": 10,
+    "lpOnly": 2,
+    "chromeOnly": 17,
+    "lpFull": 1,
+    "chromeFull": 5
+  },
+  "secure-payment-confirmation": {
+    "pages": 20,
+    "lpOnly": 0,
+    "chromeOnly": 32,
+    "lpFull": 0,
+    "chromeFull": 2
+  },
+  "selection": {
+    "pages": 134,
+    "lpOnly": 27,
+    "chromeOnly": 319,
+    "lpFull": 70,
+    "chromeFull": 115
+  },
+  "serial": {
+    "pages": 11,
+    "lpOnly": 0,
+    "chromeOnly": 98,
+    "lpFull": 0,
+    "chromeFull": 10
+  },
+  "server-timing": {
+    "pages": 10,
+    "lpOnly": 0,
+    "chromeOnly": 12,
+    "lpFull": 8,
+    "chromeFull": 8
+  },
+  "service-workers": {
+    "pages": 331,
+    "lpOnly": 62,
+    "chromeOnly": 1024,
+    "lpFull": 122,
+    "chromeFull": 263
+  },
+  "shape-detection": {
+    "pages": 28,
+    "lpOnly": 0,
+    "chromeOnly": 62,
+    "lpFull": 0,
+    "chromeFull": 0
+  },
+  "signed-exchange": {
+    "pages": 60,
+    "lpOnly": 0,
+    "chromeOnly": 3,
+    "lpFull": 3,
+    "chromeFull": 6
+  },
+  "soft-navigation-heuristics": {
+    "pages": 96,
+    "lpOnly": 0,
+    "chromeOnly": 119,
+    "lpFull": 1,
+    "chromeFull": 90
+  },
+  "speculation-rules": {
+    "pages": 544,
+    "lpOnly": 0,
+    "chromeOnly": 363,
+    "lpFull": 2,
+    "chromeFull": 256
+  },
+  "speech-api": {
+    "pages": 18,
+    "lpOnly": 8,
+    "chromeOnly": 254,
+    "lpFull": 1,
+    "chromeFull": 10
+  },
+  "storage": {
+    "pages": 56,
+    "lpOnly": 0,
+    "chromeOnly": 315,
+    "lpFull": 14,
+    "chromeFull": 52
+  },
+  "storage-access-api": {
+    "pages": 42,
+    "lpOnly": 0,
+    "chromeOnly": 105,
+    "lpFull": 3,
+    "chromeFull": 32
+  },
+  "streams": {
+    "pages": 293,
+    "lpOnly": 210,
+    "chromeOnly": 342,
+    "lpFull": 209,
+    "chromeFull": 241
+  },
+  "subapps": {
+    "pages": 8,
+    "lpOnly": 0,
+    "chromeOnly": 0,
+    "lpFull": 0,
+    "chromeFull": 0
+  },
+  "subresource-integrity": {
+    "pages": 36,
+    "lpOnly": 8,
+    "chromeOnly": 185,
+    "lpFull": 7,
+    "chromeFull": 32
+  },
+  "svg-aam": {
+    "pages": 7,
+    "lpOnly": 0,
+    "chromeOnly": 0,
+    "lpFull": 3,
+    "chromeFull": 3
+  },
+  "timing-entrytypes-registry": {
+    "pages": 3,
+    "lpOnly": 0,
+    "chromeOnly": 1,
+    "lpFull": 3,
+    "chromeFull": 3
+  },
+  "touch-events": {
+    "pages": 14,
+    "lpOnly": 6,
+    "chromeOnly": 13,
+    "lpFull": 1,
+    "chromeFull": 3
+  },
+  "trust-tokens": {
+    "pages": 3,
+    "lpOnly": 0,
+    "chromeOnly": 9,
+    "lpFull": 0,
+    "chromeFull": 3
+  },
+  "trusted-types": {
+    "pages": 129,
+    "lpOnly": 26,
+    "chromeOnly": 468,
+    "lpFull": 48,
+    "chromeFull": 116
+  },
+  "ua-client-hints": {
+    "pages": 4,
+    "lpOnly": 0,
+    "chromeOnly": 42,
+    "lpFull": 1,
+    "chromeFull": 4
+  },
+  "uievents": {
+    "pages": 74,
+    "lpOnly": 11,
+    "chromeOnly": 42,
+    "lpFull": 51,
+    "chromeFull": 61
+  },
+  "upgrade-insecure-requests": {
+    "pages": 197,
+    "lpOnly": 34,
+    "chromeOnly": 475,
+    "lpFull": 72,
+    "chromeFull": 151
+  },
+  "urlpattern": {
+    "pages": 30,
+    "lpOnly": 0,
+    "chromeOnly": 0,
+    "lpFull": 18,
+    "chromeFull": 18
+  },
+  "user-timing": {
+    "pages": 61,
+    "lpOnly": 1,
+    "chromeOnly": 4,
+    "lpFull": 57,
+    "chromeFull": 60
+  },
+  "vibration": {
+    "pages": 4,
+    "lpOnly": 0,
+    "chromeOnly": 4,
+    "lpFull": 1,
+    "chromeFull": 4
+  },
+  "video-rvfc": {
+    "pages": 8,
+    "lpOnly": 0,
+    "chromeOnly": 4,
+    "lpFull": 3,
+    "chromeFull": 6
+  },
+  "viewport": {
+    "pages": 1,
+    "lpOnly": 0,
+    "chromeOnly": 1,
+    "lpFull": 0,
+    "chromeFull": 1
+  },
+  "viewport-segments": {
+    "pages": 3,
+    "lpOnly": 0,
+    "chromeOnly": 0,
+    "lpFull": 0,
+    "chromeFull": 0
+  },
+  "virtual-keyboard": {
+    "pages": 3,
+    "lpOnly": 0,
+    "chromeOnly": 28,
+    "lpFull": 0,
+    "chromeFull": 3
+  },
+  "visual-viewport": {
+    "pages": 19,
+    "lpOnly": 0,
+    "chromeOnly": 10,
+    "lpFull": 10,
+    "chromeFull": 17
+  },
+  "wai-aria": {
+    "pages": 35,
+    "lpOnly": 2,
+    "chromeOnly": 13,
+    "lpFull": 14,
+    "chromeFull": 15
+  },
+  "web-animations": {
+    "pages": 144,
+    "lpOnly": 76,
+    "chromeOnly": 291,
+    "lpFull": 84,
+    "chromeFull": 108
+  },
+  "web-based-payment-handler": {
+    "pages": 13,
+    "lpOnly": 0,
+    "chromeOnly": 59,
+    "lpFull": 5,
+    "chromeFull": 11
+  },
+  "web-bundle": {
+    "pages": 29,
+    "lpOnly": 0,
+    "chromeOnly": 37,
+    "lpFull": 0,
+    "chromeFull": 11
+  },
+  "web-install": {
+    "pages": 5,
+    "lpOnly": 0,
+    "chromeOnly": 0,
+    "lpFull": 1,
+    "chromeFull": 1
+  },
+  "web-locks": {
+    "pages": 86,
+    "lpOnly": 1,
+    "chromeOnly": 317,
+    "lpFull": 22,
+    "chromeFull": 77
+  },
+  "web-nfc": {
+    "pages": 11,
+    "lpOnly": 2,
+    "chromeOnly": 0,
+    "lpFull": 2,
+    "chromeFull": 1
+  },
+  "web-otp": {
+    "pages": 1,
+    "lpOnly": 0,
+    "chromeOnly": 7,
+    "lpFull": 0,
+    "chromeFull": 1
+  },
+  "web-share": {
+    "pages": 15,
+    "lpOnly": 0,
+    "chromeOnly": 48,
+    "lpFull": 2,
+    "chromeFull": 14
+  },
+  "webaudio": {
+    "pages": 348,
+    "lpOnly": 145,
+    "chromeOnly": 2883,
+    "lpFull": 101,
+    "chromeFull": 316
+  },
+  "webauthn": {
+    "pages": 55,
+    "lpOnly": 0,
+    "chromeOnly": 71,
+    "lpFull": 1,
+    "chromeFull": 9
+  },
+  "webcodecs": {
+    "pages": 283,
+    "lpOnly": 0,
+    "chromeOnly": 3666,
+    "lpFull": 1,
+    "chromeFull": 259
+  },
+  "webdriver": {
+    "pages": 1,
+    "lpOnly": 0,
+    "chromeOnly": 0,
+    "lpFull": 1,
+    "chromeFull": 1
+  },
+  "webgl": {
+    "pages": 22,
+    "lpOnly": 0,
+    "chromeOnly": 4248,
+    "lpFull": 0,
+    "chromeFull": 17
+  },
+  "webhid": {
+    "pages": 6,
+    "lpOnly": 0,
+    "chromeOnly": 118,
+    "lpFull": 1,
+    "chromeFull": 4
+  },
+  "webidl": {
+    "pages": 63,
+    "lpOnly": 16,
+    "chromeOnly": 37,
+    "lpFull": 38,
+    "chromeFull": 49
+  },
+  "webmcp": {
+    "pages": 76,
+    "lpOnly": 0,
+    "chromeOnly": 0,
+    "lpFull": 1,
+    "chromeFull": 1
+  },
+  "webmessaging": {
+    "pages": 161,
+    "lpOnly": 3,
+    "chromeOnly": 40,
+    "lpFull": 136,
+    "chromeFull": 155
+  },
+  "webmidi": {
+    "pages": 1,
+    "lpOnly": 0,
+    "chromeOnly": 75,
+    "lpFull": 0,
+    "chromeFull": 0
+  },
+  "webnn": {
+    "pages": 610,
+    "lpOnly": 0,
+    "chromeOnly": 13093,
+    "lpFull": 1,
+    "chromeFull": 549
+  },
+  "webrtc": {
+    "pages": 265,
+    "lpOnly": 1,
+    "chromeOnly": 1972,
+    "lpFull": 1,
+    "chromeFull": 165
+  },
+  "webrtc-encoded-transform": {
+    "pages": 41,
+    "lpOnly": 21,
+    "chromeOnly": 25,
+    "lpFull": 0,
+    "chromeFull": 3
+  },
+  "webrtc-extensions": {
+    "pages": 12,
+    "lpOnly": 0,
+    "chromeOnly": 79,
+    "lpFull": 0,
+    "chromeFull": 7
+  },
+  "webrtc-ice": {
+    "pages": 1,
+    "lpOnly": 0,
+    "chromeOnly": 0,
+    "lpFull": 0,
+    "chromeFull": 0
+  },
+  "webrtc-identity": {
+    "pages": 4,
+    "lpOnly": 20,
+    "chromeOnly": 0,
+    "lpFull": 0,
+    "chromeFull": 0
+  },
+  "webrtc-priority": {
+    "pages": 2,
+    "lpOnly": 0,
+    "chromeOnly": 7,
+    "lpFull": 0,
+    "chromeFull": 1
+  },
+  "webrtc-stats": {
+    "pages": 10,
+    "lpOnly": 0,
+    "chromeOnly": 18,
+    "lpFull": 1,
+    "chromeFull": 4
+  },
+  "webrtc-svc": {
+    "pages": 5,
+    "lpOnly": 0,
+    "chromeOnly": 67,
+    "lpFull": 0,
+    "chromeFull": 5
+  },
+  "websockets": {
+    "pages": 797,
+    "lpOnly": 34,
+    "chromeOnly": 492,
+    "lpFull": 531,
+    "chromeFull": 573
+  },
+  "webstorage": {
+    "pages": 54,
+    "lpOnly": 14,
+    "chromeOnly": 17,
+    "lpFull": 49,
+    "chromeFull": 52
+  },
+  "webtransport": {
+    "pages": 137,
+    "lpOnly": 0,
+    "chromeOnly": 277,
+    "lpFull": 0,
+    "chromeFull": 4
+  },
+  "webusb": {
+    "pages": 49,
+    "lpOnly": 0,
+    "chromeOnly": 416,
+    "lpFull": 2,
+    "chromeFull": 23
+  },
+  "webvtt": {
+    "pages": 75,
+    "lpOnly": 0,
+    "chromeOnly": 182,
+    "lpFull": 1,
+    "chromeFull": 47
+  },
+  "webxr": {
+    "pages": 179,
+    "lpOnly": 0,
+    "chromeOnly": 570,
+    "lpFull": 2,
+    "chromeFull": 12
+  },
+  "window-management": {
+    "pages": 5,
+    "lpOnly": 0,
+    "chromeOnly": 0,
+    "lpFull": 0,
+    "chromeFull": 0
+  },
+  "workers": {
+    "pages": 336,
+    "lpOnly": 12,
+    "chromeOnly": 361,
+    "lpFull": 213,
+    "chromeFull": 301
+  },
+  "worklets": {
+    "pages": 22,
+    "lpOnly": 0,
+    "chromeOnly": 87,
+    "lpFull": 2,
+    "chromeFull": 10
+  },
+  "x-frame-options": {
+    "pages": 6,
+    "lpOnly": 0,
+    "chromeOnly": 53,
+    "lpFull": 2,
+    "chromeFull": 5
+  },
+  "xml": {
+    "pages": 13,
+    "lpOnly": 0,
+    "chromeOnly": 227,
+    "lpFull": 4,
+    "chromeFull": 13
+  }
+}

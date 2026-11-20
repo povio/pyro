@@ -1,0 +1,65 @@
+{
+  "counts": {
+    "pages": 30513,
+    "namedPass": 1672395,
+    "fullyPassing": 14990,
+    "page_complete": 27505,
+    "page_error": 1402,
+    "page_timeout": 1606
+  },
+  "comparisons": {
+    "combined2": {
+      "onlyHead": 9249,
+      "onlyRef": 272,
+      "both": 1663146,
+      "onlyHeadFull": 288,
+      "onlyRefFull": 33,
+      "refFull": 14735
+    },
+    "chromeWpt": {
+      "onlyHead": 10775,
+      "onlyRef": 93397,
+      "both": 1661620,
+      "onlyHeadFull": 578,
+      "onlyRefFull": 10065,
+      "refFull": 24477
+    },
+    "publicStable": {
+      "paired": 30512,
+      "onlyHead": 10447,
+      "onlyRef": 99582,
+      "both": 1661946,
+      "onlyHeadFull": 557,
+      "onlyRefFull": 11530,
+      "refFull": 25962,
+      "missingPage": 1
+    },
+    "publicStableUnchangedSource": {
+      "paired": 30494,
+      "onlyHead": 10446,
+      "onlyRef": 99450,
+      "both": 1661935,
+      "onlyHeadFull": 557,
+      "onlyRefFull": 11527,
+      "refFull": 25958
+    },
+    "publicCanary": {
+      "paired": 30513,
+      "onlyHead": 9282,
+      "onlyRef": 104737,
+      "both": 1663113,
+      "onlyHeadFull": 503,
+      "onlyRefFull": 12613,
+      "refFull": 27100
+    }
+  },
+  "selected": 30513,
+  "notYetReported": 0,
+  "columns": [
+    "902fe811f",
+    "4c13e694a",
+    "Chrome stable 157.0.8103.80",
+    "Public Chrome stable 157.0.8103.38",
+    "Public Chrome canary 159.0.8143.0"
+  ]
+}
