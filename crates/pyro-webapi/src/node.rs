@@ -320,25 +320,34 @@ impl NodeArgs {
 }
 
 /// Keeps `on*` IDL handlers in sync with `setAttribute`/`removeAttribute`
-/// on HTML and SVG elements.
+/// on HTML, SVG and MathML elements.
 pub(crate) fn handler_attribute_changed(s: &Scope<'_>, n: &NodeData, name: &str, value: Option<&str>) -> JsResult<()> {
     let Some(ty) = crate::handlers::is_handler_attribute(name) else { return Ok(()) };
-    let (eligible, reflecting) = {
+    let (eligible, reflecting, scripts_enabled) = {
         let dom = n.page().dom.borrow();
+        let doc = dom.node_document(n.id).js()?;
         match dom.element(n.id) {
             Ok(e) => (
-                e.is_html() || e.namespace() == &markup5ever::ns!(svg),
+                e.is_html() || e.namespace() == &markup5ever::ns!(svg)
+                    || (e.namespace() == &markup5ever::ns!(mathml)
+                        && name.strip_prefix("on") == Some(ty)
+                        && crate::handlers::GLOBAL.contains(&ty)),
                 e.is_html()
                     && matches!(&*e.name.local, "body" | "frameset")
                     && crate::handlers::reflects_to_window(ty)
-                    && dom.node_document(n.id).ok() == Some(n.page().document()),
+                    && doc == n.page().document(),
+                (doc == n.page().document() || dom.is_in_active_document(doc))
+                    && dom.document_scripting(doc).unwrap_or(false),
             ),
-            Err(_) => (false, false),
+            Err(_) => (false, false, false),
         }
     };
     if !eligible {
         return Ok(());
     }
+    // A node may be detached while its owner still has a scripting realm.
+    // Documents created by createHTMLDocument or DOMParser have no such realm.
+    let value = if scripts_enabled { value } else { None };
     match n.page().window_target().filter(|_| reflecting) {
         Some(window) => {
             let target = crate::target::EventTargetData::window(n.page(), window);
@@ -1517,7 +1526,11 @@ impl JsClass for Element {
                 None => dom_string(a.get(2))?,
             };
             n.page().dom.borrow_mut().set_attribute_ns(n.id, ns.as_deref(), &name, &value).js()?;
-            if ns.is_none() {
+            if ns.as_deref().unwrap_or("").is_empty() {
+                // Namespace-aware attribute methods preserve case even on HTML.
+                if !local.bytes().any(|c| c.is_ascii_uppercase()) {
+                    handler_attribute_changed(s, n, &local, Some(&value))?;
+                }
                 crate::input::blur_if_focus_disabled(n.page(), n.id, &name);
             }
             Ok(s.undefined())
@@ -1540,7 +1553,10 @@ impl JsClass for Element {
             a.require(2, "Element.removeAttributeNS")?;
             let ns = opt_dom_string(a.get(0))?;
             let local = dom_string(a.get(1))?;
-            n.page().dom.borrow_mut().remove_attribute_ns(n.id, ns.as_deref(), &local).js()?;
+            let removed = n.page().dom.borrow_mut().remove_attribute_ns(n.id, ns.as_deref(), &local).js()?;
+            if removed && ns.as_deref().unwrap_or("").is_empty() && !local.bytes().any(|c| c.is_ascii_uppercase()) {
+                handler_attribute_changed(s, n, &local, None)?;
+            }
             Ok(s.undefined())
         });
         def.pure_method("hasAttribute", 1, |s, n, a| {

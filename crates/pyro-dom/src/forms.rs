@@ -8,6 +8,23 @@ use crate::dom::{utf16_len, utf16_range, Dom};
 use crate::error::{DomError, DomErrorKind, DomResult};
 use crate::node::{NodeId, NodeKind, NIL};
 
+/// HTML "rules for parsing integers". Saturates: callers range-check against
+/// values far inside `i64`.
+pub fn parse_html_int(input: &str) -> Option<i64> {
+    let bytes = input.trim_start_matches([' ', '\t', '\n', '\x0c', '\r']).as_bytes();
+    let (negative, digits) = match bytes.first()? {
+        b'-' => (true, &bytes[1..]),
+        b'+' => (false, &bytes[1..]),
+        _ => (false, bytes),
+    };
+    let len = digits.iter().take_while(|c| c.is_ascii_digit()).count();
+    if len == 0 {
+        return None;
+    }
+    let value = digits[..len].iter().fold(0i64, |v, d| v.saturating_mul(10).saturating_add((d - b'0') as i64));
+    Some(if negative { -value } else { value })
+}
+
 /// `<input type>` keyword after normalization.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum InputType {
@@ -1286,17 +1303,21 @@ impl Dom {
         if !self.is_connected(id)? || self.is_disabled_idx(i) {
             return Ok(false);
         }
-        if e.attr_local(&local_name!("tabindex")).is_some_and(|t| t.trim().parse::<i32>().is_ok()) {
+        if self.tabindex_attr(i).is_some() {
             return Ok(true);
         }
         if e.attr_local(&local_name!("contenteditable")).is_some_and(|v| !v.eq_ignore_ascii_case("false")) {
             return Ok(true);
         }
+        if e.namespace() == &markup5ever::ns!(mathml) && e.name.local == local_name!("a") {
+            return Ok(e.attr_local(&local_name!("href")).is_some());
+        }
         Ok(e.is_html()
             && match &*e.name.local {
                 "a" | "area" => e.attr_local(&local_name!("href")).is_some(),
                 "input" => self.input_type_idx(i) != InputType::Hidden,
-                "button" | "select" | "textarea" | "iframe" | "summary" => true,
+                "summary" => self.is_details_summary(id),
+                "button" | "select" | "textarea" | "iframe" => true,
                 _ => false,
             })
     }

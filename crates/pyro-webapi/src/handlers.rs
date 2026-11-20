@@ -1,5 +1,5 @@
 //! GlobalEventHandlers / WindowEventHandlers / DocumentAndElementEventHandlers
-//! IDL attributes (`onclick`, `oninput`, ...) on HTML/SVG elements, Document
+//! IDL attributes (`onclick`, `oninput`, ...) on HTML, SVG and MathML elements, Document
 //! and Window, plus `on*` content attributes set through `setAttribute`.
 //!
 //! IDL handlers reuse the ordinary listener slot of
@@ -40,7 +40,7 @@ impl HasTarget for NodeData {
 macro_rules! global_events {
     ($callback:ident!($($args:tt)*)) => {
         $callback!($($args)* [
-            "abort", "auxclick", "beforeinput", "beforetoggle", "blur", "cancel", "canplay", "canplaythrough",
+            "abort", "auxclick", "beforeinput", "beforematch", "beforetoggle", "blur", "cancel", "canplay", "canplaythrough",
             "change", "click", "close", "command", "contextlost", "contextmenu", "contextrestored", "copy", "cuechange", "cut",
             "dblclick", "drag", "dragend", "dragenter", "dragleave", "dragover", "dragstart", "drop",
             "durationchange", "emptied", "ended", "error", "focus", "formdata", "input", "invalid", "keydown",

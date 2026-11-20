@@ -48,8 +48,12 @@ fn flush_autofocus(page: &Rc<PageDom>, doc: NodeId) {
             return;
         }
         let Ok(mut desc) = dom.descendants(doc) else { return };
-        desc.find(|&id| dom.element(id).is_ok_and(|e| e.is_html() && e.attr("autofocus").is_some()))
-            .filter(|&id| dom.is_focusable(id).unwrap_or(false))
+        desc.find(|&id| {
+            dom.element(id).is_ok_and(|e| {
+                e.attr("autofocus").is_some()
+                    && (e.is_html() || e.namespace() == &markup5ever::ns!(svg) || e.namespace() == &markup5ever::ns!(mathml))
+            }) && crate::input::is_focusable_area(&page.layout(), &dom, id)
+        })
     };
     if let Some(el) = candidate {
         crate::input::focus_element(page, el);

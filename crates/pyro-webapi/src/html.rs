@@ -4,7 +4,7 @@ use ::url::quirks;
 use std::rc::Rc;
 
 use pyro_dom::events::TargetKey;
-use pyro_dom::forms::InputType;
+use pyro_dom::forms::{parse_html_int, InputType};
 use pyro_dom::{Dom, NodeId};
 use pyro_js::{Args, ClassDef, IdentityKey, JsClass, JsError, JsResult, NoParent, Object, Scope, Value};
 
@@ -464,23 +464,6 @@ const MAX_REFLECTED_INT: i64 = i32::MAX as i64;
 
 fn skip_html_whitespace(input: &str) -> &str {
     input.trim_start_matches([' ', '\t', '\n', '\x0c', '\r'])
-}
-
-/// HTML "rules for parsing integers". Saturates: callers range-check against
-/// values far inside `i64`.
-fn parse_html_int(input: &str) -> Option<i64> {
-    let bytes = skip_html_whitespace(input).as_bytes();
-    let (negative, digits) = match bytes.first()? {
-        b'-' => (true, &bytes[1..]),
-        b'+' => (false, &bytes[1..]),
-        _ => (false, bytes),
-    };
-    let len = digits.iter().take_while(|c| c.is_ascii_digit()).count();
-    if len == 0 {
-        return None;
-    }
-    let value = digits[..len].iter().fold(0i64, |v, d| v.saturating_mul(10).saturating_add((d - b'0') as i64));
-    Some(if negative { -value } else { value })
 }
 
 /// HTML "rules for parsing floating-point number values"; trailing garbage is
@@ -1707,25 +1690,8 @@ impl JsClass for HtmlElement {
             },
         );
         reflect_bool!(def, "inert", "inert");
-        reflect_bool!(def, "autofocus", "autofocus");
         reflect_str!(def, "popover", "popover");
-        def.accessor(
-            "tabIndex",
-            |s, n| {
-                let dom = n.page().dom.borrow();
-                let explicit = dom
-                    .get_attribute(n.id, "tabindex")
-                    .js()?
-                    .and_then(parse_html_int)
-                    .filter(|v| (i32::MIN as i64..=MAX_REFLECTED_INT).contains(v));
-                let default = if dom.is_focusable(n.id).unwrap_or(false) { 0 } else { -1 };
-                Ok(s.number(explicit.unwrap_or(default) as f64))
-            },
-            |_s, n, v| {
-                let arg0 = to_i32(v)?;
-                n.page().dom.borrow_mut().set_attribute(n.id, "tabindex", &arg0.to_string()).js()
-            },
-        );
+        define_focus_attributes(def);
         def.accessor(
             "draggable",
             |s, n| Ok(s.boolean(n.page().dom.borrow().get_attribute(n.id, "draggable").js()? == Some("true"))),
@@ -3547,6 +3513,30 @@ simple_class!(HtmlTrackElement, "HTMLTrackElement", HtmlElement, |def| {
     reflect_bool!(def, "default", "default");
 });
 
+/// HTMLOrSVGOrMathMLElement reflects both focus attributes in no namespace.
+fn define_focus_attributes<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
+    def.accessor(
+        "autofocus",
+        |s, n| Ok(s.boolean(n.page().dom.borrow().get_attribute_ns(n.id, None, "autofocus").js()?.is_some())),
+        |_s, n, value| {
+            let mut dom = n.page().dom.borrow_mut();
+            if value.to_bool() {
+                dom.set_attribute_local(n.id, &markup5ever::local_name!("autofocus"), "").js()
+            } else {
+                dom.remove_attribute_ns(n.id, None, "autofocus").js().map(|_| ())
+            }
+        },
+    );
+    def.accessor(
+        "tabIndex",
+        |s, n| Ok(s.number(n.page().dom.borrow().tab_index(n.id).js()? as f64)),
+        |_s, n, value| {
+            let index = to_i32(value)?;
+            n.page().dom.borrow_mut().set_attribute_local(n.id, &markup5ever::local_name!("tabindex"), &index.to_string()).js()
+        },
+    );
+}
+
 pub struct SvgElement;
 impl JsClass for SvgElement {
     const NAME: &'static str = "SVGElement";
@@ -3582,17 +3572,7 @@ impl JsClass for SvgElement {
             crate::input::blur_element(n.page(), n.id);
             Ok(s.undefined())
         });
-        def.getter("tabIndex", |s, n| {
-            Ok(s.number(
-                n.page()
-                    .dom
-                    .borrow()
-                    .get_attribute(n.id, "tabindex")
-                    .js()?
-                    .and_then(|v| v.parse::<i32>().ok())
-                    .unwrap_or(-1) as f64,
-            ))
-        });
+        define_focus_attributes(def);
     }
 }
 /// MathML Core `MathMLElement`: an element in the MathML namespace, with
@@ -3612,6 +3592,7 @@ impl JsClass for MathMlElement {
             let el = crate::node::wrap_node(s, n.page(), n.id)?.value();
             crate::typed_om::attribute_style_map(s, n.page(), el)
         });
+        define_focus_attributes(def);
         def.method("focus", 0, focus_element);
         def.method("blur", 0, |s, n, _a| {
             crate::input::blur_element(n.page(), n.id);

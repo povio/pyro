@@ -156,6 +156,29 @@ fn an_event_dispatched_again_elsewhere_reports_its_new_target() {
 }
 
 #[test]
+fn mathml_focus_reflection_and_handlers_respect_namespace_and_document() {
+    let e = env("<body></body>");
+    assert_eq!(
+        eval(&e.main, r#"(() => {
+            const ns = "http://www.w3.org/1998/Math/MathML";
+            const el = document.createElementNS(ns, "mrow");
+            el.setAttributeNS("urn:other", "tabindex", "foreign");
+            el.setAttributeNS("urn:other", "autofocus", "foreign");
+            const before = [el.tabIndex, el.autofocus];
+            el.tabIndex = 4;
+            el.autofocus = true;
+            const after = [el.getAttributeNS(null, "tabindex"), el.getAttributeNS(null, "autofocus")];
+            el.autofocus = false;
+            const preserved = [el.getAttributeNS("urn:other", "tabindex"), el.getAttributeNS("urn:other", "autofocus")];
+            const inert = document.implementation.createHTMLDocument().createElementNS(ns, "mi");
+            inert.setAttribute("onclick", "return false");
+            return JSON.stringify([before, after, preserved, el.hasAttributeNS(null, "autofocus"), inert.onclick]);
+        })()"#),
+        r#"[[-1,false],["4",""],["foreign","foreign"],false,null]"#,
+    );
+}
+
+#[test]
 fn computed_style_longhands_are_prototype_attributes() {
     let e = env("<body><div id=a style='float: left; background-color: rgb(1, 2, 3)'></div></body>");
     assert_eq!(
