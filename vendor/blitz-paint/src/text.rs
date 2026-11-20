@@ -253,8 +253,29 @@ fn snap_turned_band(transform: Affine, top: f64, size: f64) -> (f64, f64) {
 /// (1/64 px) first: glyphs within a run then bin as those starting a box whose edge a layout unit
 /// rounds (text in two table cells against the same text in one line), where half-unit advances
 /// (1/128 px at 16px in a 2048-unit font) would put them on either side of a quarter's edge.
-fn quarter_pixel(x: f64) -> f64 {
-    (layout_unit(x) * 4.0).round() / 4.0
+thread_local! {
+    static DEVICE_GRID: std::cell::Cell<(Affine, bool)> = const { std::cell::Cell::new((Affine::IDENTITY, true)) };
+}
+
+pub fn with_glyph_grid<R>(device: Affine, subpixel: bool, paint: impl FnOnce() -> R) -> R {
+    struct Restore((Affine, bool));
+    impl Drop for Restore {
+        fn drop(&mut self) { DEVICE_GRID.set(self.0); }
+    }
+    let _restore = Restore(DEVICE_GRID.replace((device, subpixel)));
+    paint()
+}
+
+fn glyph_grid(transform: Affine, horizontal: bool) -> impl Fn(f32) -> f32 {
+    let (device, subpixel) = DEVICE_GRID.get();
+    let [xx, xy, yx, yy, origin, _] = (device * transform).as_coeffs();
+    let enabled = horizontal && [xx, xy, yx, yy] == [1.0, 0.0, 0.0, 1.0] && (!subpixel || CORE_TEXT_GLYPHS);
+    move |x| {
+        if !enabled { return x; }
+        let absolute = layout_unit(origin + f64::from(x));
+        let phase = if CORE_TEXT_GLYPHS { (absolute * 4.0).round() / 4.0 } else { absolute };
+        ((if subpixel { phase } else { phase.round() }) - origin) as f32
+    }
 }
 
 /// pyro: Blink's `LayoutUnit::FromFloatRound`: to the nearest 1/64 px.
@@ -1338,6 +1359,7 @@ fn flush_line_decorations<S: PaintScene>(
                     (top + 0.5 * scale, top + size - 0.5 * scale),
                     t.min(13.0) * scale,
                     vertical,
+                    transform,
                 ),
                 _ => SmallVec::new(),
             };
@@ -2252,11 +2274,7 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
             // pyro: on macOS glyph origins snap to quarters of a device pixel along the
             // baseline, as Skia's subpixel positioning does, where the run is drawn untransformed
             // (only translated) into a raster: a recording paint (the PDF's) keeps the exact x.
-            let quarter_x = CORE_TEXT_GLYPHS && runs.is_none() && vertical.is_none() && {
-                let [a, b, c, d, _, _] = transform.as_coeffs();
-                a == 1.0 && b == 0.0 && c == 0.0 && d == 1.0
-            };
-            let tx = transform.as_coeffs()[4];
+            let position = glyph_grid(transform, runs.is_none() && vertical.is_none() && glyph_xform.is_none());
             let (kept, kept_extent) = (paint.kept.clone(), paint.kept_extent);
             // Zero-size text is invisible, but hinting can give its glyphs ink. Fully
             // transparent text is skipped too: backends draw color (emoji) glyphs opaque.
@@ -2268,11 +2286,7 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
                     .take(kept.len())
                     .map(|glyph| anyrender::Glyph {
                         id: glyph.id as _,
-                        x: if quarter_x {
-                            (quarter_pixel(tx + glyph.x as f64) - tx) as f32
-                        } else {
-                            glyph.x
-                        },
+                        x: position(glyph.x),
                         y: glyph.y,
                     })
             };
@@ -2630,11 +2644,7 @@ fn draw_glyph_run<S: PaintScene>(
         kurbo::Vec2::default()
     };
     let normalized_coords: &[i16] = bytemuck::cast_slice(run.normalized_coords());
-    let quarter_x = CORE_TEXT_GLYPHS && snap && {
-        let [a, b, c, d, _, _] = transform.as_coeffs();
-        a == 1.0 && b == 0.0 && c == 0.0 && d == 1.0
-    };
-    let tx = transform.as_coeffs()[4];
+    let position = glyph_grid(transform, snap && glyph_xform.is_none());
     scene.draw_glyphs(
         run.font(),
         font_size,
@@ -2648,11 +2658,7 @@ fn draw_glyph_run<S: PaintScene>(
         glyph_xform,
         glyph_run.positioned_glyphs().map(|glyph| anyrender::Glyph {
             id: glyph.id as _,
-            x: if quarter_x {
-                (quarter_pixel(tx + glyph.x as f64) - tx) as f32
-            } else {
-                glyph.x
-            },
+            x: position(glyph.x),
             y: glyph.y,
         }),
     );
@@ -2773,6 +2779,7 @@ fn ink_gaps(
     band: (f64, f64),
     dilation: f64,
     vertical: Option<VerticalLine>,
+    transform: Affine,
 ) -> SmallVec<[(f64, f64); 8]> {
     let mut gaps: SmallVec<[(f64, f64); 8]> = SmallVec::new();
     // A 1px line's band is its middle: what crosses that line.
@@ -2798,6 +2805,7 @@ fn ink_gaps(
             None => 0.0,
         };
         let run = glyph_run.run();
+        let position = glyph_grid(transform, vertical.is_none() && run.synthesis().skew().is_none());
         let (font, size) = (run.font(), run.font_size());
         let coords: &[i16] = bytemuck::cast_slice(run.normalized_coords());
         let reach = f64::from(size) + dilation;
@@ -2806,7 +2814,7 @@ fn ink_gaps(
             // Whether the atom is CJK, looked up only for a glyph that crosses the band.
             let mut atom_is_cjk = None;
             for glyph in glyphs.by_ref().take(count) {
-                let x = f64::from(glyph.x);
+                let x = f64::from(position(glyph.x));
                 // Glyphs far outside the line cannot reach it (their ink is within an em of them);
                 // past its end none can (glyphs come left to right, in either direction).
                 if x - reach > extent.1 {

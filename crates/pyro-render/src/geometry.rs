@@ -1415,7 +1415,7 @@ impl Geometry {
                         if blank || word.as_ref().is_some_and(|(i, _)| Some(*i) != at) {
                             flush(&mut word);
                         }
-                        if let (false, Some(i)) = (blank, at) {
+                        if let Some(i) = at.filter(|_| !cluster.is_hard_line_break()) {
                             let base = text.text_nodes[i].1.start;
                             let map = &offsets[i];
                             let offset = |b: usize| map[(b - base).min(map.len() - 1)];
@@ -1423,6 +1423,9 @@ impl Geometry {
                                 if cluster.is_rtl() { (range.end, range.start) } else { (range.start, range.end) };
                             let w = word.get_or_insert_with(|| (i, vec![(offset(start), x)]));
                             w.1.push((offset(end), x + advance));
+                            if blank {
+                                flush(&mut word);
+                            }
                         }
                         x += advance;
                     }

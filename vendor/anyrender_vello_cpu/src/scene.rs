@@ -536,12 +536,9 @@ impl PaintScene for VelloCpuScenePainter {
         // 512th of a device pixel right and down: a pixel half covered at a glyph's left or top
         // edge is then left out and one at its right or bottom edge painted, as Skia paints
         // aliased paths (rounding a pixel centre on an edge down and right).
-        let [xx, xy, yx, yy, origin, _] = transform.as_coeffs();
-        let snap = self.text_aliasing_threshold.is_some() && glyph_transform.is_none()
-            && [xx, xy, yx, yy] == [1.0, 0.0, 0.0, 1.0];
         let glyphs = glyphs.map(move |glyph| vello_cpu::Glyph {
             id: glyph.id,
-            x: if snap { ((origin + f64::from(glyph.x)).round() - origin) as f32 } else { glyph.x },
+            x: glyph.x,
             y: glyph.y,
         });
         let transform = match self.text_aliasing_threshold {

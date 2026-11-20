@@ -867,6 +867,7 @@ pub struct Renderer {
     /// WPT reftests are judged with. Other drawing is antialiased either way,
     /// and PDFs are not rasterized. Defaults to [`text_antialiasing`].
     pub text_antialiasing: bool,
+    pub subpixel_text_positioning: bool,
 }
 
 impl Default for Renderer {
@@ -1013,6 +1014,7 @@ impl Renderer {
             first_layout_wait: Duration::from_secs(3),
             hyphen_digit_breaks: hyphen_digit_breaks(),
             text_antialiasing: text_antialiasing(),
+            subpixel_text_positioning: std::env::var_os("PYRO_SUBPIXEL_TEXT_POSITIONING").is_none_or(|mode| mode != "off"),
         }
     }
 
@@ -1466,6 +1468,7 @@ impl Renderer {
     /// Stages 1 and 2.
     pub fn paint(&mut self, snap: &Snapshot, area: Area, fetcher: &Arc<dyn Fetcher>) -> Result<Painted, RenderError> {
         let threshold = (!self.text_antialiasing).then_some(TEXT_ALIASING_THRESHOLD);
+        let subpixel = self.subpixel_text_positioning;
         let mut timings = Timings::default();
         let dpr = snap.device_scale_factor.clamp(0.1, 16.0);
         let (vw, vh) = (snap.width.max(1), snap.height.max(1));
@@ -1579,7 +1582,9 @@ impl Renderer {
         let transform = Affine::scale(scale / dpr) * Affine::translate((-origin.0 * dpr, -origin.1 * dpr));
         // (Painting knows where the page lands in the image's pixels: see `paint_scene_for_device`.)
         anyrender_svg::with_text_threshold(threshold, || {
-            blitz_paint::paint_scene_for_device(&mut page, doc, dpr, extent_w, extent_h, 0, 0, transform);
+            blitz_paint::with_glyph_grid(transform, subpixel, || {
+                blitz_paint::paint_scene_for_device(&mut page, doc, dpr, extent_w, extent_h, 0, 0, transform);
+            });
         });
         doc.set_dom_selection(None);
         doc.set_dom_highlights(Vec::new());

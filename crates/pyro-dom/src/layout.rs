@@ -1342,10 +1342,46 @@ impl Layout {
     pub fn text_rect(&self, dom: &Dom, text: NodeId) -> Option<Rect> {
         let result = self.text_result(dom);
         let &(r, fixed) = result.texts.get(&text)?;
+        Some(self.text_client_rect(dom, text, r, fixed))
+    }
+
+    pub fn text_range_rect(&self, dom: &Dom, text: NodeId, start: u32, end: u32) -> Option<Rect> {
+        let result = self.text_result(dom);
+        let mut bounds = None::<Rect>;
+        for run in result.text_runs.iter().filter(|run| run.node == text && run.start <= end && start <= run.end) {
+            for pair in run.edges().windows(2) {
+                let [(first, left), (last, right)] = [pair[0], pair[1]];
+                let (lo, hi) = (first.min(last), first.max(last));
+                let (left, right) = if start == end && lo <= start && start <= hi {
+                    let caret = if start == first || (lo < start && start < hi && first == lo) { left } else { right };
+                    (caret, caret)
+                } else if lo < end && start < hi {
+                    (left.min(right), left.max(right))
+                } else {
+                    continue;
+                };
+                let rect = Rect { x: left, width: right - left, ..run.rect };
+                if start == end {
+                    return Some(self.text_client_rect(dom, text, rect, run.fixed));
+                }
+                bounds = Some(match bounds {
+                    None => rect,
+                    Some(prev) => {
+                        let x = prev.left().min(rect.left());
+                        let y = prev.top().min(rect.top());
+                        Rect { x, y, width: prev.right().max(rect.right()) - x, height: prev.bottom().max(rect.bottom()) - y }
+                    }
+                });
+            }
+        }
+        bounds.map(|rect| self.text_client_rect(dom, text, rect, result.texts[&text].1))
+    }
+
+    fn text_client_rect(&self, dom: &Dom, text: NodeId, r: Rect, fixed: bool) -> Rect {
         let (dx, dy) = self.ancestor_scroll_offset(dom, text);
         let (kx, ky) = self.sticky_shift_lazy(dom, text);
         let (sx, sy) = if fixed { (0.0, 0.0) } else { (self.window_scroll.0 as f64, self.window_scroll.1 as f64) };
-        Some(Rect { x: r.x - sx - dx + kx, y: r.y - sy - dy + ky, width: r.width, height: r.height })
+        Rect { x: r.x - sx - dx + kx, y: r.y - sy - dy + ky, width: r.width, height: r.height }
     }
 
     /// The caret position (text node, UTF-16 offset) under a viewport

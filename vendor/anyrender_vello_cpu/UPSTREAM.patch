@@ -4670,7 +4670,7 @@ index 0000000..be15ba9
 +    }
 +}
 diff --git a/src/scene.rs b/src/scene.rs
-index 1b09a33..057ce4f 100644
+index 1b09a33..c8ab0c0 100644
 --- a/src/scene.rs
 +++ b/src/scene.rs
 @@ -1,19 +1,322 @@
@@ -5191,7 +5191,7 @@ index 1b09a33..057ce4f 100644
      }
  
      fn draw_glyphs<'a, 's: 'a>(
-@@ -163,6 +532,24 @@ impl PaintScene for VelloCpuScenePainter {
+@@ -163,6 +532,21 @@ impl PaintScene for VelloCpuScenePainter {
          glyph_transform: Option<Affine>,
          glyphs: impl Iterator<Item = anyrender::Glyph> + Clone,
      ) {
@@ -5199,12 +5199,9 @@ index 1b09a33..057ce4f 100644
 +        // 512th of a device pixel right and down: a pixel half covered at a glyph's left or top
 +        // edge is then left out and one at its right or bottom edge painted, as Skia paints
 +        // aliased paths (rounding a pixel centre on an edge down and right).
-+        let [xx, xy, yx, yy, origin, _] = transform.as_coeffs();
-+        let snap = self.text_aliasing_threshold.is_some() && glyph_transform.is_none()
-+            && [xx, xy, yx, yy] == [1.0, 0.0, 0.0, 1.0];
 +        let glyphs = glyphs.map(move |glyph| vello_cpu::Glyph {
 +            id: glyph.id,
-+            x: if snap { ((origin + f64::from(glyph.x)).round() - origin) as f32 } else { glyph.x },
++            x: glyph.x,
 +            y: glyph.y,
 +        });
 +        let transform = match self.text_aliasing_threshold {
@@ -5216,7 +5213,7 @@ index 1b09a33..057ce4f 100644
          self.render_ctx.set_transform(transform);
          let paint = self.convert_paint(paint.into());
          self.render_ctx.set_paint(paint);
-@@ -177,13 +564,15 @@ impl PaintScene for VelloCpuScenePainter {
+@@ -177,13 +561,15 @@ impl PaintScene for VelloCpuScenePainter {
                      .font_size(font_size)
                      .hint(hint)
                      .normalized_coords(normalized_coords)
@@ -5238,7 +5235,7 @@ index 1b09a33..057ce4f 100644
              }
              StyleRef::Stroke(stroke) => {
                  self.render_ctx.set_stroke(stroke.clone());
-@@ -194,13 +583,10 @@ impl PaintScene for VelloCpuScenePainter {
+@@ -194,13 +580,10 @@ impl PaintScene for VelloCpuScenePainter {
                      .hint(hint)
                      .normalized_coords(normalized_coords)
                      .glyph_transform(glyph_transform.unwrap_or_default())
@@ -5254,7 +5251,7 @@ index 1b09a33..057ce4f 100644
      }
      fn draw_box_shadow(
          &mut self,
-@@ -216,6 +602,877 @@ impl PaintScene for VelloCpuScenePainter {
+@@ -216,6 +599,877 @@ impl PaintScene for VelloCpuScenePainter {
          self.render_ctx
              .fill_blurred_rounded_rect(&rect, radius as f32, std_dev as f32, false);
      }
@@ -6132,7 +6129,7 @@ index 1b09a33..057ce4f 100644
  }
  
  #[cfg(test)]
-@@ -277,6 +1534,22 @@ mod clip_rule_tests {
+@@ -277,6 +1531,22 @@ mod clip_rule_tests {
          }
      }
  
@@ -6155,7 +6152,7 @@ index 1b09a33..057ce4f 100644
      #[test]
      fn clip_layers_respect_fill_rule() {
          assert_pixels(false, false);
-@@ -292,4 +1565,314 @@ mod clip_rule_tests {
+@@ -292,4 +1562,314 @@ mod clip_rule_tests {
          assert_pixels(false, true);
          assert_pixels(true, true);
      }

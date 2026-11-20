@@ -20,6 +20,7 @@ pub mod reach;
 mod render;
 mod sizing;
 mod text;
+pub use text::with_glyph_grid;
 
 use std::collections::HashMap;
 

@@ -113,6 +113,7 @@ export const REFTEST_CONTEXT = { viewport: VIEWPORT, deviceScaleFactor: 1 };
  *  environment variables, which a pyro without these options ignores (an older binary in an A/B run). */
 export const reftestEnv = (wpt) => ({
   PYRO_TEXT_ANTIALIASING: 'off',
+  PYRO_SUBPIXEL_TEXT_POSITIONING: 'off',
   // As wptrunner's Chrome (`--autoplay-policy=no-user-gesture-required`): a page whose `<video autoplay>` must play
   // before it is done otherwise depends on the runner's first evaluation (a user gesture) beating the media's load
   // (css/css-overflow/overflow-video-hidden.html timed out on first runs).

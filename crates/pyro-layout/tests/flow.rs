@@ -3807,6 +3807,20 @@ fn scroll_anchoring_reselects_in_the_previous_layout_like_chromium() {
 }
 
 #[test]
+fn text_range_and_hit_test_share_fractional_cluster_edges() {
+    let page = page("<body style='margin:0'><div id=p dir=rtl style='font:16px Arial;letter-spacing:.4px;transform:translateX(10.4px)'>שָׁלוֹם שָׁלוֹם</div>");
+    let element = page.id("p");
+    let text = page.dom.first_child(element).unwrap().unwrap();
+    let range = |start, end| page.layout.text_range_rect(&page.dom, text, start, end).unwrap();
+    let cluster = range(0, 1);
+    assert_eq!(cluster, range(1, 3));
+    assert!(cluster.width > 0.0 && cluster.width < 20.0);
+    let space = range(7, 8);
+    assert!(space.width > 0.0 && space.right() < cluster.left());
+    assert_eq!(page.layout.caret_from_point(&page.dom, element, cluster.left() + 0.1, cluster.top() + 5.0, &|_| true).unwrap().1, 3);
+}
+
+#[test]
 fn caret_from_point_takes_the_nearest_character_boundary_like_chromium() {
     // Native selection needs the caret under a point. Chromium (measured,
     // monospace 20px): a point 20% into the third character is at offset 2,
