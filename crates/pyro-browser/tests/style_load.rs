@@ -394,3 +394,67 @@ fn a_redirected_link_sheet_is_at_its_final_url() {
         "http://site.test/dir/b.css"
     );
 }
+
+/// Every retained CSSOM object is its sheet object's: a `<style>`'s rule list kept from before
+/// its text was replaced sees none of the new rules; a `CSSImportRule` kept from a link before it
+/// was repointed gives no sheet (it resolved against the link's current response); a rule kept
+/// from the old text reads only its own content (security review cycle 4, 2a).
+#[test]
+fn retained_cssom_objects_stay_with_their_generation() {
+    let (mut thread, page, loader) = setup(
+        "<style id=s>p { color: green }</style><link id=l rel=stylesheet href=a.css>",
+    );
+    loader.insert("http://site.test/a.css", "text/css", "@import \"i.css\"; p { }", Duration::ZERO);
+    loader.insert("http://site.test/i.css", "text/css", "q { }", Duration::ZERO);
+    loader.insert("http://site.test/b.css", "text/css", "@import \"secret.css\"; r { }", Duration::ZERO);
+    loader.insert("http://site.test/secret.css", "text/css", "s { --secret: 1 }", Duration::ZERO);
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    eval(
+        &thread,
+        page,
+        "globalThis.list = document.getElementById('s').sheet.cssRules; globalThis.rule = list[0]; \
+         globalThis.imp = document.getElementById('l').sheet.cssRules[0]; \
+         document.getElementById('s').textContent = 'b { --replaced: 1 } i { }'; \
+         document.getElementById('l').href = 'b.css'; ''",
+    );
+    settle(&mut thread);
+    let seen = eval(
+        &thread,
+        page,
+        "[list.length, rule.cssText, rule.style.color, imp.styleSheet === null, \
+          document.getElementById('s').sheet.cssRules.length].join('|')",
+    );
+    assert_eq!(seen, "0|p { color: green; }|green|true|2");
+}
+
+/// A link rejected at the style sheet limit has a new (failed) response: a sheet object script
+/// kept from its earlier response is detached (the rejection fired `error` without advancing
+/// the generation: security review cycle 4, 2b).
+#[test]
+fn a_link_rejected_at_the_limit_detaches_its_old_sheet() {
+    let (mut thread, page, loader) = setup("<link id=l rel=stylesheet href=x.css><p id=p>p</p>");
+    loader.insert("http://site.test/x.css", "text/css", "p { color: green }", Duration::ZERO);
+    for i in 0..130 {
+        loader.insert(&format!("http://site.test/{i}.css"), "text/css", "q { }", Duration::ZERO);
+    }
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    eval(
+        &thread,
+        page,
+        "globalThis.kept = document.getElementById('l').sheet; globalThis.keptRules = kept.cssRules; \
+         document.getElementById('l').rel = 'alternate'; \
+         for (let i = 0; i < 130; i++) { const n = document.createElement('link'); n.rel = 'stylesheet'; n.href = i + '.css'; document.head.append(n); } ''",
+    );
+    settle(&mut thread);
+    eval(&thread, page, "document.getElementById('l').rel = 'stylesheet'; ''");
+    settle(&mut thread);
+    // An edit through the kept object goes nowhere: it is not the rejected link's sheet.
+    eval(&thread, page, "kept.insertRule('p { --leak: 1 }', 0); ''");
+    settle(&mut thread);
+    assert_eq!(
+        eval(&thread, page, "String(keptRules.length) + '|' + getComputedStyle(document.getElementById('p')).getPropertyValue('--leak')"),
+        "0|"
+    );
+}

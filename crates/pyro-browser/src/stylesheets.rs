@@ -409,6 +409,9 @@ impl Browser {
     }
 
     fn stylesheet_error_task(&self, page: FrameKey, loader: LoaderId, bindings: Rc<PageDom>, node: NodeId) {
+        // pyro: a rejected link (at the sheet limit) has a new, failed response too: a sheet object
+        // got before is detached (`PageDom::set_sheet_response`, the one place generations advance).
+        bindings.set_sheet_response(node, false);
         if bindings.dom.borrow_mut().add_ref(node).is_err() {
             return;
         }
