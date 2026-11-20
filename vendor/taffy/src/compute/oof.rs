@@ -518,10 +518,17 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
 ) -> OofBoxLayout {
     let (count, order) = tree.position_try_options(candidate.node);
     let mut best = None;
-    if count != 0 {
+    let selected = (count != 0).then(|| tree.selected_option_this_flush(candidate.node)).flatten();
+    if let Some(selected) = selected {
+        tree.set_position_try_option(candidate.node, selected);
+    } else if count != 0 {
+        const MAX_VALID_FALLBACKS: usize = 5;
+        let mut trials = 0;
         let preferred = anchor_container.and_then(|container| tree.preferred_scroll_option(candidate.node, container)).filter(|&index| index < count && order.is_none());
         for option in preferred.map(Some).into_iter().chain(core::iter::once(None)).chain((0..count).filter(|index| Some(*index) != preferred).map(Some)) {
+            if option.is_some() && trials == MAX_VALID_FALLBACKS { break; }
             if (option.is_some() || preferred.is_some()) && !tree.set_position_try_option(candidate.node, option) { continue; }
+            trials += usize::from(option.is_some());
             let Err((fits, space)) = solve_oof_box(tree, candidate, anchor_container, area_size, area_offset, direction, container_overflow,
                 #[cfg(feature = "grid")] grid_owner, true, |_,_| {}) else { unreachable!() };
             let score = if order == Some(true) { space.width } else { space.height };

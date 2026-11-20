@@ -130,6 +130,37 @@ fn resolved_minimum_size_preserves_unanchored_auto() {
 }
 
 #[test]
+fn only_five_valid_fallbacks_get_geometry_trials() {
+    for (bad, missing, expected) in [(4, 32, 2.0), (5, 0, 200.0), (200, 0, 200.0)] {
+        let list = format!("{}{}--good", "--absent,".repeat(missing), "--bad,".repeat(bad));
+        let html = format!("<!doctype html><style>main{{position:relative;width:100px;height:100px}}b{{position:absolute;width:10px;height:10px;left:200px;position-try-fallbacks:{list}}}@position-try --bad{{left:201px}}@position-try --good{{left:2px}}</style><main><b></b></main>");
+        let mut doc = blitz_html::HtmlDocument::from_html(&html, blitz_dom::DocumentConfig::default());
+        doc.viewport_mut().window_size = (400, 300);
+        doc.resolve(0.0);
+        let target = doc.query_selector("b").unwrap().unwrap();
+        assert_eq!(doc.get_node(target).unwrap().final_layout().location.x, expected);
+        assert_eq!(doc.anchor_try_visits(), missing as u64 + 5);
+    }
+}
+
+#[test]
+fn forced_layouts_at_one_frame_time_get_fresh_fallback_budgets() {
+    let html = "<!doctype html><style>main{position:relative;width:100px;height:100px}i{display:block;position:relative;anchor-name:--a;width:10px;height:10px}b{position:absolute;position-anchor:--a;top:anchor(bottom);height:20px;width:5px;position-try-fallbacks:--up}@position-try --up{top:auto;bottom:anchor(top)}</style><main><i></i><b></b></main>";
+    let mut doc = blitz_html::HtmlDocument::from_html(html, blitz_dom::DocumentConfig::default());
+    doc.viewport_mut().window_size = (400, 300);
+    let anchor = doc.query_selector("i").unwrap().unwrap();
+    let target = doc.query_selector("b").unwrap().unwrap();
+    for step in 0..512 {
+        let use_fallback = step % 2 == 1;
+        let before = doc.anchor_try_visits();
+        doc.set_style_property(anchor, "top", if use_fallback { "85px" } else { "0px" });
+        doc.resolve(0.0);
+        assert_eq!(doc.get_node(target).unwrap().final_layout().location.y, if use_fallback { 65.0 } else { 10.0 });
+        assert_eq!(doc.anchor_try_visits() - before, u64::from(use_fallback));
+    }
+}
+
+#[test]
 fn fallback_trials_stop_at_first_fit() {
     fn measure(options: &str) -> u64 {
         let html = format!(

@@ -670,6 +670,7 @@ pub struct BaseDocument {
     pub(crate) anchor_try_sources: HashMap<NodeId, HashSet<Option<NodeId>>>,
     pub(crate) anchor_scroll_dirty: HashSet<NodeId>,
     pub(crate) anchor_last_option: HashMap<NodeId, (usize, style::servo_arc::Arc<style::properties::ComputedValues>)>,
+    pub(crate) anchor_flush_choices: HashMap<NodeId, Option<usize>>,
     /// pyro: an element styled with a `scroll-marker-group` that names a side, or with
     /// `scroll-target-group: auto` (sticky).
     pub(crate) scroll_marker_groups: bool,
@@ -993,6 +994,7 @@ impl BaseDocument {
             anchor_try_sources: Default::default(),
             anchor_scroll_dirty: Default::default(),
             anchor_last_option: Default::default(),
+            anchor_flush_choices: Default::default(),
             scroll_marker_groups: false,
             scroll_pseudo_owners: Default::default(),
             scroll_target_groups: Vec::new(),

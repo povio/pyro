@@ -232,6 +232,7 @@ pub trait LayoutContainingBlock: LayoutPartialTree {
 
     fn position_try_options(&self, _node: NodeId) -> (usize, Option<bool>) { (0,None) }
     fn preferred_scroll_option(&self, _node: NodeId, _container: NodeId) -> Option<usize> { None }
+    fn selected_option_this_flush(&self, _node: NodeId) -> Option<Option<usize>> { None }
     fn record_fitting_option(&mut self, _node: NodeId, _option: Option<usize>) {}
     fn uses_anchor_queries(&self, _node: NodeId) -> bool { false }
     fn checks_position_overflow(&self, _node: NodeId) -> bool { false }

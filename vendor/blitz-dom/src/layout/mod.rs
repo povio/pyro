@@ -2456,8 +2456,13 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
         style::servo_arc::Arc::ptr_eq(previous, &*current).then_some(*index)
     }
 
+    fn selected_option_this_flush(&self, id: NodeId) -> Option<Option<usize>> {
+        self.anchor_flush_choices.get(&dom_node_id(id)).copied()
+    }
+
     fn record_fitting_option(&mut self, id: NodeId, option: Option<usize>) {
         let id = dom_node_id(id);
+        self.doc.anchor_flush_choices.insert(id, option);
         if let Some(index) = option {
             let style = self.nodes[id].primary_styles().map(|style| (*style).clone());
             if let Some(style) = style { self.doc.anchor_last_option.insert(id,(index,style)); }
