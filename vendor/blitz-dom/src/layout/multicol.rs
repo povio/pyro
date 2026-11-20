@@ -1569,7 +1569,7 @@ impl LayoutPassState<'_> {
                 for (i, (start, end)) in columns.into_iter().enumerate() {
                     let (row, index) = if per_row == usize::MAX { (0, i) } else { (i / per_row, i % per_row) };
                     let x = column_x(index);
-                    let top = snap(row_top + row as f32 * (column_height + row_gap));
+                    let top = row_top + row as f32 * (column_height + row_gap);
                     sink.push(ColumnFragment {
                         start,
                         end,
@@ -1587,7 +1587,6 @@ impl LayoutPassState<'_> {
                 }
             }
             if let Some(&(start, end, indent)) = spanners.get(part) {
-                let (start, end) = (snap(start), snap(end));
                 // pyro: in rows of an explicit `column-height` a spanner has its place in the
                 // rows' grid (`RowSlots::spanner_top`).
                 if let Some(rows) = slotted {
@@ -1603,7 +1602,7 @@ impl LayoutPassState<'_> {
                     height: end - start,
                     // pyro: a spanner below a child of the container is as far in as that box
                     // (its padding, border and margin): its row starts at the container's edge.
-                    offset: Point { x: pb.left - indent, y: snap(row_top - start) },
+                    offset: Point { x: pb.left - indent, y: row_top - start },
                     spanner: true,
                     extended: 0.0,
                     exact_x: f32::NAN,
@@ -1634,7 +1633,7 @@ impl LayoutPassState<'_> {
             && !multicol.wrap
             && fragments.last().is_some_and(|f| !f.spanner)
         {
-            let end = content_top + height;
+            let end = pb.top + height;
             let last_top = fragments.last().map_or(0.0, |f| f.top);
             for fragment in fragments.iter_mut().rev().take_while(|f| !f.spanner && f.top == last_top) {
                 let height = fragment.height.max(end - fragment.top);
@@ -1750,7 +1749,12 @@ impl LayoutPassState<'_> {
                 if candidate.containing_block.is_some() {
                     continue;
                 }
-                let (dx, dy) = columns.shift_at(candidate.static_position.y.area.start);
+                let y = candidate.static_position.y.area.start;
+                let (dx, dy) = columns.shift_at(if columns.fragment_at(y).is_some_and(|f| f.spanner && f.start == y) {
+                    y - EPSILON
+                } else {
+                    y
+                });
                 let position = &mut candidate.static_position;
                 position.x.area.start += dx;
                 position.x.area.end += dx;
