@@ -927,3 +927,39 @@ fn promise_operations_reject_on_a_wrong_receiver_and_other_idl_details() {
         "true|true|true|true|false|1|target|data|true|TypeError|InvalidCharacterError"
     );
 }
+
+#[test]
+fn svg_reflection_preserves_same_spelling_namespaced_attributes() {
+    let env = Env::new("http://svg.test/");
+    assert_eq!(
+        env.eval(
+            r#"(() => {
+              const ns = "http://www.w3.org/2000/svg", other = "urn:example:metadata";
+              const make = name => document.createElementNS(ns, name);
+              const clip = make("clipPath");
+              clip.setAttributeNS(other, "clipPathUnits", "objectBoundingBox");
+              const initial = clip.clipPathUnits.baseVal === SVGUnitTypes.SVG_UNIT_TYPE_USERSPACEONUSE;
+              clip.clipPathUnits.baseVal = SVGUnitTypes.SVG_UNIT_TYPE_USERSPACEONUSE;
+              if (!initial || clip.getAttributeNS(null, "clipPathUnits") !== "userSpaceOnUse" ||
+                  clip.getAttributeNS(other, "clipPathUnits") !== "objectBoundingBox") return false;
+              const angle = make("svg").createSVGAngle();
+              angle.valueAsString = "12deg";
+              return [
+                [m => { m.orientType.baseVal = SVGMarkerElement.SVG_MARKER_ORIENT_AUTO; }, "auto"],
+                [m => { m.orientAngle.baseVal.valueAsString = "13deg"; }, "13deg"],
+                [m => m.setOrientToAuto(), "auto"],
+                [m => m.setOrientToAngle(angle), "12deg"],
+                [m => { m.orient = "14deg"; }, "14deg"],
+              ].every(([write, expected]) => {
+                const m = make("marker");
+                m.setAttributeNS(other, "orient", "19deg");
+                if (m.orientAngle.baseVal.value !== 0) return false;
+                write(m);
+                return m.getAttributeNS(null, "orient") === expected &&
+                       m.getAttributeNS(other, "orient") === "19deg";
+              });
+            })()"#
+        ),
+        "true"
+    );
+}
