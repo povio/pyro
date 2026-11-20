@@ -921,6 +921,36 @@ impl LayoutPassState<'_> {
                 breaks.forced.dedup_by(|a, b| (*a - *b).abs() <= EPSILON);
             }
             pass += 1;
+            if pass <= 5 && self.nested_pass_budget > 0
+                && let Some(&(outer, offset, _, _)) = self.nested_fragmentation.get(&dom_id)
+                && offset > EPSILON && outer > offset + EPSILON
+            {
+                let room = outer - offset;
+                let row_end = content_top + room * count as f32;
+                let children = self.nodes[dom_id].layout_children.borrow().clone().unwrap_or_default();
+                let mut float_end = content_top;
+                let mut changed = false;
+                for id in children {
+                    let child = &self.nodes[id];
+                    let Some(style) = child.primary_styles() else { continue };
+                    let layout = child.unrounded_layout();
+                    if style.clone_float() != Float::None {
+                        float_end = float_end.max((layout.location.y + layout.size.height).min(row_end));
+                    } else if !child.is_out_of_flow() && !fragmentable(child, &style)
+                        && layout.size.height > room + EPSILON && layout.size.height <= outer + EPSILON
+                        && layout.location.y < float_end - EPSILON
+                    {
+                        drop(style);
+                        self.spanner_floors.insert(id, float_end);
+                        changed = true;
+                        break;
+                    }
+                }
+                if changed {
+                    self.nested_pass_budget -= 1;
+                    continue;
+                }
+            }
             if let Some(height) = fragmentainer && pass <= 5 && self.nested_pass_budget > 0 && !breaks.overflow_parents.is_empty() {
                 let run = breaks.fill(height, MAX_COLUMNS);
                 let mut changed = false;
