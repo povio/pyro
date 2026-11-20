@@ -66,6 +66,8 @@ struct InFlight {
     bodies: Arc<SubresourceBodies>,
     failed: Failed,
     key: String,
+    /// The document (by its loader id) whose layout asked for the body.
+    document: Option<String>,
 }
 
 impl Drop for InFlight {
@@ -133,7 +135,7 @@ impl LocalFiles {
             };
         }
         IN_FLIGHT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let fetch = InFlight { bodies, failed: self.failed.clone(), key };
+        let fetch = InFlight { bodies, failed: self.failed.clone(), key, document: loader.timeline_document() };
         let path = url.path().to_ascii_lowercase();
         let kind = if plain_cors {
             SubresourceKind::CorsImage
@@ -163,6 +165,9 @@ impl LocalFiles {
                 _ => {
                     if let Ok(mut failed) = fetch.failed.lock() {
                         failed.insert(fetch.key.clone());
+                    }
+                    if let Some(document) = &fetch.document {
+                        fetch.bodies.fail(document, &fetch.key);
                     }
                     // pyro: no longer in flight (`document.fonts` waits on empty entries).
                     let mut bodies = fetch.bodies.lock();

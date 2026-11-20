@@ -289,6 +289,8 @@ pub struct SubresourceBodies {
     /// ([`Self::late_for`], `font-display: optional`).
     came: std::sync::Mutex<std::collections::HashMap<String, std::time::Instant>>,
     needed: std::sync::Mutex<std::collections::HashMap<(String, String), std::time::Instant>>,
+    /// pyro: the keys whose fetch failed (a screenshot waits for them: they were fetched).
+    failed: std::sync::Mutex<std::collections::HashSet<(String, String)>>,
 }
 
 impl SubresourceBodies {
@@ -296,6 +298,19 @@ impl SubresourceBodies {
     pub fn needed(&self, document: &str, key: &str) {
         let mut needed = self.needed.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         needed.entry((document.to_owned(), key.to_owned())).or_insert_with(std::time::Instant::now);
+    }
+
+    /// pyro: the fetch of the body `key` that the document `document` (by its loader id) asked
+    /// for failed (it has no body).
+    pub fn fail(&self, document: &str, key: &str) {
+        let mut failed = self.failed.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        failed.insert((document.to_owned(), key.to_owned()));
+    }
+
+    /// pyro: whether the fetch of the body `key` that `document` asked for failed ([`Self::fail`]).
+    pub fn has_failed(&self, document: &str, key: &str) -> bool {
+        let failed = self.failed.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        failed.contains(&(document.to_owned(), key.to_owned()))
     }
 
     /// pyro: the body `key` arrived (now, unless it did before).

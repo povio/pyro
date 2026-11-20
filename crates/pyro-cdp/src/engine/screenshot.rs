@@ -219,6 +219,15 @@ fn layout_key(
     (key, image)
 }
 
+impl PageFetcher {
+    /// pyro: whether this document's own layout fetch of the body `key` failed.
+    fn failed_for(&self, key: &str, options: &pyro_render::FetchOptions) -> bool {
+        let client = options.client.as_deref().unwrap_or(&self.client);
+        let Some(document) = client.split_once('#').map(|(_, loader)| loader) else { return false };
+        self.bodies.as_ref().is_some_and(|bodies| bodies.has_failed(document, key))
+    }
+}
+
 impl Fetcher for PageFetcher {
     /// pyro: by the page document's timeline, which its layout keeps (`SubresourceBodies`).
     fn late(&self, url: &str, options: &pyro_render::FetchOptions, period: std::time::Duration) -> Option<bool> {
@@ -232,7 +241,8 @@ impl Fetcher for PageFetcher {
     /// change since): Chrome paints it once it arrives, and a capture does not wait for it. One
     /// its layout fetched (or is fetching), or one in its list of available images, is waited for,
     /// as is one an element of the document requested itself (an `<img>` whose load failed shows
-    /// its alt text) and one no network answers (`about:`, `data:`, `blob:`, `file:`).
+    /// its alt text) and one no network answers (`about:`, `data:`, `blob:`, `file:`). One whose
+    /// layout fetch failed was fetched too: its body is gone, but the layout asked for it.
     fn defers(&self, url: &str, options: &pyro_render::FetchOptions) -> bool {
         let (key, image) = layout_key(url, options, &self.client, &self.documents);
         image
@@ -240,7 +250,7 @@ impl Fetcher for PageFetcher {
             && !self.requested.contains(url)
             && self.loaded
             && !self.available.contains(url)
-            && self.bodies.as_ref().is_some_and(|bodies| !bodies.lock().contains_key(&key))
+            && self.bodies.as_ref().is_some_and(|bodies| !bodies.lock().contains_key(&key) && !self.failed_for(&key, options))
     }
 
     fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
