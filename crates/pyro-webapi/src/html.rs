@@ -1887,9 +1887,10 @@ simple_class!(HtmlStyleElement, "HTMLStyleElement", HtmlElement, |def| {
     // Not a reflected attribute: its sheet's disabled flag (HTML § 4.2.6; a `<link>`'s is).
     def.accessor(
         "disabled",
-        |s, n| Ok(s.boolean(n.page().layout.borrow().style().sheet_disabled(n.id))),
+        // pyro: the same flag as its sheet object's `disabled` (one flag per sheet object).
+        |s, n| Ok(s.boolean(crate::css::current_sheet_disabled(n.page(), n.id))),
         |_s, n, v| {
-            n.page().layout.borrow_mut().style_mut().set_sheet_disabled(n.id, v.to_bool());
+            crate::css::set_current_sheet_disabled(n.page(), n.id, v.to_bool());
             Ok(())
         },
     );

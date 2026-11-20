@@ -347,6 +347,16 @@ impl Dom {
         if meta {
             self.process_referrer_meta(idx);
         }
+        // pyro: a link given the `disabled` attribute loses its sheet object at once (Chrome: no
+        // `sheet`; enabled again, a new one): its sheet generation moves on now, not when the
+        // loader handles the event, so the old object is detached and its flag no longer applies.
+        if local == "disabled"
+            && added
+            && self.n(idx).element().is_some_and(|e| e.is_html() && &*e.name.local == "link")
+        {
+            let generation = self.resources.sheet_generations.entry(self.id_of(idx)).or_default();
+            *generation = generation.wrapping_add(1);
+        }
         if !self.resources.enabled {
             return;
         }

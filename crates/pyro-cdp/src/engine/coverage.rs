@@ -551,7 +551,7 @@ impl EngineHost {
                 let index = match sheets.list.iter().position(|s| s.key == key) {
                     Some(i) => i,
                     None => {
-                        let text = match style.sheet_text(owner) {
+                        let text = match style.sheet_text(&dom, owner) {
                             Some(text) => text.to_owned(),
                             None => dom.text_content(owner).ok().flatten().unwrap_or_default(),
                         };

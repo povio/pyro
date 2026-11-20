@@ -417,9 +417,9 @@ impl BlitzGeometry {
         base: Option<&'a url::Url>,
         sheets: Option<&'a RefCell<HashMap<String, String>>>,
     ) -> (impl Fn(NodeId) -> Option<String> + 'a, impl Fn(NodeId) -> Option<String> + 'a) {
-        let style_text = move |owner: NodeId| style.sheet_text(owner).map(str::to_owned);
+        let style_text = move |owner: NodeId| style.sheet_text(dom, owner).map(str::to_owned);
         let stylesheet_href = move |link: NodeId| {
-            let text = style.sheet_text(link)?;
+            let text = style.sheet_text(dom, link)?;
             // pyro: the sheet's own URL, its response's after redirects (its URLs resolve
             // against it), else its href.
             let url = style.sheet_base_url(dom, link, base?.as_str())?;

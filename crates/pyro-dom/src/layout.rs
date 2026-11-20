@@ -624,7 +624,7 @@ impl Layout {
     pub fn declares_web_fonts(&self, dom: &Dom) -> bool {
         const FONT_FACE: &str = "@font-face";
         // Loaded sheets (`<link>`, `@import`ed texts), then `<style>` elements by their text.
-        if self.style.sheet_owners().into_iter().any(|owner| self.style.sheet_text(owner).is_some_and(|t| t.contains(FONT_FACE))) {
+        if self.style.sheet_owners().into_iter().any(|owner| self.style.sheet_text(dom, owner).is_some_and(|t| t.contains(FONT_FACE))) {
             return true;
         }
         let Ok(mut nodes) = dom.descendants(self.style.document()) else { return false };

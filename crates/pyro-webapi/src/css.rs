@@ -973,7 +973,7 @@ fn rule_wrapper<'s>(s: &Scope<'s>, rule: &Rc<RuleNode>, owner: &SheetOwner) -> J
 
 /// pyro: which sheet object of its node a sheet is: the node's style block generation and the
 /// response generation (`PageDom::sheet_response`) it was made for.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct SheetGeneration {
     style: u32,
     response: u64,
@@ -1441,7 +1441,7 @@ rule_class!(CssImportRule, "CSSImportRule", CssRule, |def| {
         let media = media_text(&pyro_dom::cssom::import_split(&rule_prelude(r)).1);
         let rule = RuleData { owner: r.owner.hold()?, rule_node: r.node()?.clone() };
         let sheet = Constructed::imported(&page, final_url, &text, media, rule, opaque, request);
-        Ok(s.wrap::<CssStyleSheet>(SheetData { owner: SheetOwner::Constructed(sheet), disabled: Cell::new(false) }, Some(key))?.value())
+        Ok(s.wrap::<CssStyleSheet>(SheetData { owner: SheetOwner::Constructed(sheet) }, Some(key))?.value())
     });
     // The condition of `supports(...)`, or null.
     def.getter("supportsText", |s, r| match import_parts(&rule_prelude(r)).1 {
@@ -2207,32 +2207,57 @@ pub fn module_sheet<'s>(s: &Scope<'s>, text: &str) -> JsResult<Object<'s>> {
     let sheet = Constructed::new(&page, String::new(), false);
     sheet.replace(text);
     let key = sheet.identity;
-    s.wrap::<CssStyleSheet>(SheetData { owner: SheetOwner::Constructed(sheet), disabled: Cell::new(false) }, Some(key))
+    s.wrap::<CssStyleSheet>(SheetData { owner: SheetOwner::Constructed(sheet) }, Some(key))
 }
 
 fn constructed_wrapper<'s>(s: &Scope<'s>, c: &Rc<Constructed>) -> JsResult<Object<'s>> {
     if let Some(o) = s.lookup_identity(c.identity) {
         return Ok(o);
     }
-    s.wrap::<CssStyleSheet>(SheetData { owner: SheetOwner::Constructed(c.clone()), disabled: Cell::new(false) }, Some(c.identity))
+    s.wrap::<CssStyleSheet>(SheetData { owner: SheetOwner::Constructed(c.clone()) }, Some(c.identity))
 }
 
 pub struct SheetData {
     owner: SheetOwner,
-    /// pyro: this sheet object's own `disabled` flag, which it keeps once its node has another
-    /// sheet object (Chrome: the old object still reads what it was set to, and toggles nothing).
-    disabled: Cell<bool>,
 }
 
-/// pyro: clears `node`'s `disabled` flag in the style engine when the sheet object that set it is
-/// no longer the node's (a repointed link applied another response, a `<style>` block was
-/// updated): a new sheet object starts with its disabled flag unset.
-pub fn renew_sheet_disabled(page: &PageDom, node: NodeId) {
-    let set_by = page.disabled_by.borrow().get(&node).copied();
-    if set_by.is_some_and(|g| g != SheetGeneration::now(page, node)) {
-        page.disabled_by.borrow_mut().remove(&node);
-        page.layout.borrow_mut().style_mut().set_sheet_disabled(node, false);
+/// pyro: `disabled` of `node`'s sheet object of `generation` (`PageDom::sheet_flags`, the one
+/// flag): the same whichever setter wrote it and whenever it is read (a detached object's is what
+/// it was last set to; Chrome).
+pub(crate) fn sheet_object_disabled(page: &PageDom, node: NodeId, generation: SheetGeneration) -> bool {
+    page.sheet_flags.borrow().get(&(node, generation)).copied().unwrap_or(false)
+}
+
+/// pyro: sets `disabled` of `node`'s sheet object of `generation`; the current object's applies
+/// (the style engine's flag, which is that style block generation's: an updated `<style>` block
+/// is enabled at once). A detached object's toggles nothing.
+pub(crate) fn set_sheet_object_disabled(page: &PageDom, node: NodeId, generation: SheetGeneration, disabled: bool) {
+    if disabled {
+        page.sheet_flags.borrow_mut().insert((node, generation), true);
+    } else {
+        page.sheet_flags.borrow_mut().remove(&(node, generation));
     }
+    if generation == SheetGeneration::now(page, node) {
+        let dom = page.dom.borrow();
+        page.layout.borrow_mut().style_mut().set_sheet_disabled(&dom, node, disabled);
+    }
+}
+
+/// pyro: `disabled` of `node`'s current sheet object (`HTMLStyleElement.disabled`).
+pub(crate) fn current_sheet_disabled(page: &PageDom, node: NodeId) -> bool {
+    sheet_object_disabled(page, node, SheetGeneration::now(page, node))
+}
+
+/// pyro: sets `disabled` of `node`'s current sheet object (`HTMLStyleElement.disabled`).
+pub(crate) fn set_current_sheet_disabled(page: &PageDom, node: NodeId, disabled: bool) {
+    set_sheet_object_disabled(page, node, SheetGeneration::now(page, node), disabled);
+}
+
+/// pyro: a link applied another response (a new sheet object, enabled): the style engine's flag,
+/// which was the previous object's, no longer applies. Called as the association changes.
+pub(crate) fn new_link_sheet(page: &PageDom, node: NodeId) {
+    let dom = page.dom.borrow();
+    page.layout.borrow_mut().style_mut().set_sheet_disabled(&dom, node, false);
 }
 
 fn not_constructed(what: &str) -> JsError {
@@ -2337,17 +2362,8 @@ impl JsClass for StyleSheet {
             |s, sh| {
                 Ok(s.boolean(match &sh.owner {
                     SheetOwner::Constructed(c) => c.disabled.get(),
-                    // pyro: the current sheet object's flag is its node's in the style engine; a
-                    // detached object's is its own, as last set.
-                    SheetOwner::Node(h, generation) => {
-                        if *generation == SheetGeneration::now(&h.page, h.id) {
-                            let disabled = h.page.layout.borrow().style().sheet_disabled(h.id);
-                            sh.disabled.set(disabled);
-                            disabled
-                        } else {
-                            sh.disabled.get()
-                        }
-                    }
+                    // pyro: the sheet object's own flag (`sheet_object_disabled`).
+                    SheetOwner::Node(h, generation) => sheet_object_disabled(&h.page, h.id, *generation),
                 }))
             },
             |_s, sh, v| {
@@ -2358,19 +2374,8 @@ impl JsClass for StyleSheet {
                         }
                     }
                     // A `<style>`'s or `<link>`'s sheet: it applies nothing while disabled.
-                    // pyro: only the current sheet object of its node: a kept old one (a repointed
-                    // link's, a replaced `<style>`'s) never disables its replacement.
-                    SheetOwner::Node(h, generation) => {
-                        sh.disabled.set(v.to_bool());
-                        if *generation == SheetGeneration::now(&h.page, h.id) {
-                            h.page.layout.borrow_mut().style_mut().set_sheet_disabled(h.id, v.to_bool());
-                            if v.to_bool() {
-                                h.page.disabled_by.borrow_mut().insert(h.id, *generation);
-                            } else {
-                                h.page.disabled_by.borrow_mut().remove(&h.id);
-                            }
-                        }
-                    }
+                    // pyro: this sheet object's flag; only the current one's applies.
+                    SheetOwner::Node(h, generation) => set_sheet_object_disabled(&h.page, h.id, *generation, v.to_bool()),
                 }
                 Ok(())
             },
@@ -2389,7 +2394,7 @@ impl JsClass for CssStyleSheet {
             let page = crate::target::page_of(s)?;
             let sheet = Constructed::new(&page, media, disabled);
             let key = sheet.identity;
-            s.wrap_new::<CssStyleSheet>(SheetData { owner: SheetOwner::Constructed(sheet), disabled: Cell::new(false) }, nt, Some(key))
+            s.wrap_new::<CssStyleSheet>(SheetData { owner: SheetOwner::Constructed(sheet) }, nt, Some(key))
         });
         def.getter("ownerRule", |s, sh| match &sh.owner {
             SheetOwner::Constructed(c) => match &c.import {
@@ -2483,12 +2488,21 @@ fn sheet_wrapper<'s>(s: &Scope<'s>, page: &Rc<PageDom>, owner: NodeId) -> JsResu
     if let Some(o) = s.lookup_identity(key) {
         return Ok(o);
     }
-    s.wrap::<CssStyleSheet>(SheetData { owner: SheetOwner::Node(NodeHold::new(page, owner)?, SheetGeneration::now(page, owner)), disabled: Cell::new(false) }, Some(key))
+    s.wrap::<CssStyleSheet>(SheetData { owner: SheetOwner::Node(NodeHold::new(page, owner)?, SheetGeneration::now(page, owner)) }, Some(key))
 }
 
 pub(crate) fn element_sheet<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
     let connected = n.page().dom.borrow().is_connected(n.id).js()?;
     if !connected {
+        return Ok(s.null());
+    }
+    // pyro: a link with the `disabled` attribute has no sheet, at once (Chrome); enabled again, it
+    // gets a new one (the loader loads it again: a new response, a new sheet object).
+    let disabled_link = {
+        let dom = n.page().dom.borrow();
+        dom.element(n.id).is_ok_and(|e| e.is_html() && &*e.name.local == "link" && e.attr("disabled").is_some())
+    };
+    if disabled_link {
         return Ok(s.null());
     }
     sheet_object(s, n.page(), n.id)
@@ -2500,7 +2514,7 @@ fn sheet_object<'s>(s: &Scope<'s>, page: &Rc<PageDom>, owner: NodeId) -> JsResul
     if let Some(o) = s.lookup_identity(key) {
         return Ok(o.value());
     }
-    Ok(s.wrap::<CssStyleSheet>(SheetData { owner: SheetOwner::Node(NodeHold::new(page, owner)?, SheetGeneration::now(page, owner)), disabled: Cell::new(false) }, Some(key))?.value())
+    Ok(s.wrap::<CssStyleSheet>(SheetData { owner: SheetOwner::Node(NodeHold::new(page, owner)?, SheetGeneration::now(page, owner)) }, Some(key))?.value())
 }
 
 /// `document.styleSheets`: the sheets of the document's `<style>` elements
@@ -2524,6 +2538,8 @@ impl StyleSheetList {
                             && e.attr("rel").is_some_and(|rel| {
                                 rel.split_ascii_whitespace().any(|t| t.eq_ignore_ascii_case("stylesheet"))
                             })
+                            // pyro: a disabled link has no sheet (Chrome).
+                            && e.attr("disabled").is_none()
                     }
                     _ => false,
                 })

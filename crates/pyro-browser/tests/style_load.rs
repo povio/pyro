@@ -642,3 +642,44 @@ fn a_new_sheet_object_starts_enabled() {
         "true|false|rgb(9, 9, 9)"
     );
 }
+
+/// `disabled` is one flag per sheet object whichever setter writes it, and a replaced sheet's
+/// successor is enabled at once (Chrome, checked headless; security review cycle 8, 1):
+/// `style.disabled` and `sheet.disabled` are the same flag; replacing a `<style>`'s text gives an
+/// enabled sheet immediately (no task needed), while the old object keeps reading `true` however
+/// it was disabled and whenever its getter first ran; a link's `disabled` (the attribute) leaves
+/// it no sheet and applying nothing at once, and enabling it again loads a new, enabled sheet.
+#[test]
+fn disabled_is_one_flag_per_sheet_object_switched_synchronously() {
+    let (mut thread, page, loader) = setup(
+        "<style id=s>i { color: rgb(1, 1, 1) }</style><style id=t>b { color: rgb(2, 2, 2) }</style>\
+         <link id=l rel=stylesheet href=a.css><p id=p>p</p><i id=i>i</i><b id=b>b</b>",
+    );
+    loader.insert("http://site.test/a.css", "text/css", "p { color: rgb(3, 3, 3) }", Duration::ZERO);
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    let color = |id: &str| format!("getComputedStyle(document.getElementById('{id}')).color");
+    // The element's IDL attribute, with no getter of the old object run before the replacement.
+    assert_eq!(
+        eval(&thread, page, &format!("globalThis.os = s.sheet; s.disabled = true; const r = [os.disabled, {}]; s.textContent = 'i {{ color: rgb(4, 4, 4) }}'; r.push(s.disabled, s.sheet.disabled, os.disabled, s.sheet === os, {}); r.join('|')", color("i"), color("i"))),
+        "true|rgb(0, 0, 0)|false|false|true|false|rgb(4, 4, 4)"
+    );
+    // The sheet's own attribute, read at once after the replacement.
+    assert_eq!(
+        eval(&thread, page, &format!("globalThis.ot = t.sheet; ot.disabled = true; t.textContent = 'b {{ color: rgb(5, 5, 5) }}'; [t.disabled, t.sheet.disabled, ot.disabled, {}].join('|')", color("b"))),
+        "false|false|true|rgb(5, 5, 5)"
+    );
+    settle(&mut thread);
+    assert_eq!(eval(&thread, page, &format!("[s.sheet.disabled, os.disabled, t.sheet.disabled, ot.disabled, {}, {}].join('|')", color("i"), color("b"))), "false|true|false|true|rgb(4, 4, 4)|rgb(5, 5, 5)");
+    // A link's `disabled`: no sheet and nothing applied at once; enabled again, a new sheet.
+    assert_eq!(
+        eval(&thread, page, &format!("globalThis.ol = l.sheet; ol.disabled = true; ol.disabled = false; l.disabled = true; [l.hasAttribute('disabled'), l.sheet, {}].join('|')", color("p"))),
+        "true||rgb(0, 0, 0)"
+    );
+    eval(&thread, page, "l.disabled = false; ''");
+    settle(&mut thread);
+    assert_eq!(
+        eval(&thread, page, &format!("[l.disabled, l.sheet === ol, l.sheet.disabled, {}].join('|')", color("p"))),
+        "false|false|false|rgb(3, 3, 3)"
+    );
+}

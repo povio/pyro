@@ -812,6 +812,10 @@ struct Sheet {
     /// to the renderer). Kept when the sheet is read again (a `<style>`'s
     /// registration can come after a script disabled its sheet) or edited.
     disabled: bool,
+    /// pyro: the owner's style block generation (`Dom::style_sheet_generation`) the flag was set
+    /// at: it is that sheet object's, so an updated `<style>` block (a new sheet object) is enabled
+    /// at once, without waiting for anything to clear it ([`StyleEngine::is_off`]).
+    disabled_at: u32,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -1519,7 +1523,7 @@ impl StyleEngine {
             }
             s.source = source;
         } else {
-            self.sheets.push(Sheet { owner, source, revision, disabled: false });
+            self.sheets.push(Sheet { owner, source, revision, disabled: false, disabled_at: 0 });
         }
         self.sheets_added();
     }
@@ -1573,9 +1577,10 @@ impl StyleEngine {
 
     /// Text the loader or CSSOM gave `owner`'s sheet; `None` for a
     /// `<style>` element read from the DOM, or no sheet.
-    pub fn sheet_text(&self, owner: NodeId) -> Option<&str> {
+    pub fn sheet_text(&self, dom: &Dom, owner: NodeId) -> Option<&str> {
         self.sheets.iter().find(|s| s.owner == owner).and_then(|s| match &s.source {
-            _ if s.disabled => Some(""),
+            // pyro: and a link that applies nothing now (its `disabled` attribute, its `rel`).
+            _ if Self::is_off(s, dom) || link_not_stylesheet(dom, owner) => Some(""),
             SheetSource::Text(t) => Some(t.as_str()),
             SheetSource::StyleElement => None,
         })
@@ -1591,23 +1596,31 @@ impl StyleEngine {
     }
 
     /// `CSSStyleSheet.disabled` of the sheet `owner` (a `<style>` or `<link>`) owns.
-    pub fn sheet_disabled(&self, owner: NodeId) -> bool {
-        self.sheets.iter().any(|s| s.owner == owner && s.disabled)
+    pub fn sheet_disabled(&self, dom: &Dom, owner: NodeId) -> bool {
+        self.sheets.iter().any(|s| s.owner == owner && Self::is_off(s, dom))
+    }
+
+    /// pyro: whether `sheet` applies nothing: disabled, by its current sheet object (the flag of
+    /// another style block generation of the owner is not this one's).
+    fn is_off(sheet: &Sheet, dom: &Dom) -> bool {
+        sheet.disabled && dom.style_sheet_generation(sheet.owner) == sheet.disabled_at
     }
 
     /// Sets `CSSStyleSheet.disabled` of the sheet of `owner`: a disabled sheet applies nothing.
     /// A `<style>` element not registered yet (a shadow tree's) is registered.
-    pub fn set_sheet_disabled(&mut self, owner: NodeId, disabled: bool) {
+    pub fn set_sheet_disabled(&mut self, dom: &Dom, owner: NodeId, disabled: bool) {
         self.revisions += 1;
         let revision = self.revisions;
+        let at = dom.style_sheet_generation(owner);
         match self.sheets.iter_mut().find(|s| s.owner == owner) {
-            Some(s) if s.disabled == disabled => return,
+            Some(s) if Self::is_off(s, dom) == disabled => return,
             Some(s) => {
                 s.disabled = disabled;
+                s.disabled_at = at;
                 s.revision = revision;
             }
             None if !disabled => return,
-            None => self.sheets.push(Sheet { owner, source: SheetSource::StyleElement, revision, disabled }),
+            None => self.sheets.push(Sheet { owner, source: SheetSource::StyleElement, revision, disabled, disabled_at: at }),
         }
         self.sheets_added();
     }
@@ -1625,7 +1638,7 @@ impl StyleEngine {
     /// script-font sheet).
     pub fn for_each_author_sheet_owned(&self, dom: &Dom, f: &mut dyn FnMut(Option<NodeId>, &str)) {
         for sheet in &self.sheets {
-            if sheet.disabled || !dom.is_alive(sheet.owner) || !dom.is_connected(sheet.owner).unwrap_or(false) || link_not_stylesheet(dom, sheet.owner) {
+            if Self::is_off(sheet, dom) || !dom.is_alive(sheet.owner) || !dom.is_connected(sheet.owner).unwrap_or(false) || link_not_stylesheet(dom, sheet.owner) {
                 continue;
             }
             match &sheet.source {
@@ -1650,7 +1663,7 @@ impl StyleEngine {
     /// document or a shadow root).
     pub fn for_each_scoped_author_sheet(&self, dom: &Dom, f: &mut dyn FnMut(NodeId, &str)) {
         for sheet in &self.sheets {
-            if sheet.disabled || !dom.is_alive(sheet.owner) || !dom.is_connected(sheet.owner).unwrap_or(false) || link_not_stylesheet(dom, sheet.owner) {
+            if Self::is_off(sheet, dom) || !dom.is_alive(sheet.owner) || !dom.is_connected(sheet.owner).unwrap_or(false) || link_not_stylesheet(dom, sheet.owner) {
                 continue;
             }
             let Ok(owner) = dom.check(sheet.owner) else { continue };
@@ -1783,7 +1796,7 @@ impl StyleEngine {
     pub fn sheet_revision(&self, dom: &Dom, owner: NodeId) -> Option<u64> {
         let sheet = self.sheets.iter().find(|s| s.owner == owner)?;
         // A disabled sheet's text is empty: its own identity, its revision of the toggle.
-        if sheet.disabled {
+        if Self::is_off(sheet, dom) {
             return Some((sheet.revision << 2) | 2);
         }
         Some(match &sheet.source {
@@ -1816,6 +1829,7 @@ impl StyleEngine {
                     source: SheetSource::StyleElement,
                     revision: self.revisions,
                     disabled: false,
+                    disabled_at: 0,
                 });
             }
         }
@@ -2452,6 +2466,9 @@ fn link_not_stylesheet(dom: &Dom, owner: NodeId) -> bool {
     dom.element(owner).is_ok_and(|e| {
         e.is_html()
             && &*e.name.local == "link"
-            && !e.attr("rel").is_some_and(|rel| rel.split_ascii_whitespace().any(|t| t.eq_ignore_ascii_case("stylesheet")))
+            && (!e.attr("rel").is_some_and(|rel| rel.split_ascii_whitespace().any(|t| t.eq_ignore_ascii_case("stylesheet")))
+                // pyro: a link with the `disabled` attribute has no sheet (Chrome), from the moment
+                // it is set: nothing waits for the loader to drop it.
+                || e.attr("disabled").is_some())
     })
 }

@@ -430,8 +430,6 @@ impl Browser {
         let loader = state.main_frame.loader_id.clone();
         let had_sheet = state.stylesheets.styles.contains(&node);
         drop(state);
-        // pyro: an updated style block is a new sheet object, enabled (CSSOM; Chrome).
-        pyro_webapi::css::renew_sheet_disabled(&bindings, node);
         let processing = {
             let dom = bindings.dom.borrow();
             let attr = |name| dom.get_attribute(node, name).ok().flatten();
