@@ -379,6 +379,21 @@ fn a_hoisted_box_is_painted_in_its_columns() {
     }
 }
 
+/// pyro: a stacking context hoisted out of the columns is painted in each column inside the clips
+/// of the boxes between it and the container (an `overflow: clip` box broken across the columns),
+/// as Chromium paints it and hit testing finds it; it was painted unclipped in the column copies.
+#[test]
+fn a_hoisted_box_in_columns_keeps_the_clips_around_it() {
+    for scale in [1.0, 2.0] {
+        let img = render(
+            "<div style='columns:2;column-gap:0;width:200px'><div style='height:50px'></div>\
+             <div style='overflow:clip;height:100px'><div style='position:relative;z-index:1;height:100px;width:150px;background:green'></div></div></div>",
+            scale,
+        );
+        check(&img, scale, &[(50.0, 60.0, GREEN), (190.0, 30.0, GREEN), (220.0, 30.0, WHITE), (240.0, 60.0, WHITE)], "clipped in its columns");
+    }
+}
+
 /// pyro: an out-of-flow box the columns fragment (its containing block, of no height, in them) is
 /// painted in the overflow columns that show it, past the container's box: its container's
 /// overflow reaches them (a box carrying no spanner counts with what it holds; WPT css-break

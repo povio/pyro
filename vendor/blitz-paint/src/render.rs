@@ -6610,6 +6610,20 @@ impl ElementCx<'_, '_> {
         position: taffy::Point<f32>,
         parent_style_transform: Affine,
     ) -> Vec<(NodeId, Affine, kurbo::BezPath)> {
+        self.hoisted_child_clips_to(hoisted_child, position, parent_style_transform, false)
+    }
+
+    /// pyro: [`Self::hoisted_child_clips`]; `in_columns`: the child is painted in each column of a
+    /// multi-column container below (`multicol_between`), at its strip position: the clips of the
+    /// boxes between it and that container (in its strip, moved with each column by
+    /// `parent_style_transform`), where the walk otherwise gives none.
+    fn hoisted_child_clips_to(
+        &self,
+        hoisted_child: &blitz_dom::HoistedPaintChild,
+        position: taffy::Point<f32>,
+        parent_style_transform: Affine,
+        in_columns: bool,
+    ) -> Vec<(NodeId, Affine, kurbo::BezPath)> {
         let tree = self.node.tree();
         let mut clips: Vec<(NodeId, Affine, kurbo::BezPath)> = Vec::new();
         let mut between = (0.0f32, 0.0f32);
@@ -6622,6 +6636,10 @@ impl ElementCx<'_, '_> {
             let Some(node) = tree.get(id) else { break };
             // (Out of a multi-column container's strip the walk is not a sum of offsets.)
             if node.column_fragments().is_some() {
+                if in_columns {
+                    clips.reverse();
+                    return clips;
+                }
                 break;
             }
             let location = node.final_layout().location;
@@ -6736,7 +6754,21 @@ impl ElementCx<'_, '_> {
                     let moved = parent_style_transform.pre_translate(offset);
                     let pushed =
                         self.context.layer_manager.maybe_push_layer(scene, true, BlendMode::default(), 1.0, moved, &range, None, None);
+                    // pyro: inside the clips of the boxes between it and the container, moved with
+                    // the column as they are (an `overflow: clip` box broken across the columns:
+                    // painted unclipped, it showed where hit testing, as Chromium, finds nothing).
+                    let strip_at = taffy::Point { x: strip.x + sticky.x, y: strip.y + sticky.y };
+                    let column_clips = self.hoisted_child_clips_to(hoisted_child, strip_at, moved, true);
+                    let clip_layers: Vec<_> = column_clips
+                        .iter()
+                        .map(|(_, clip_transform, clip)| {
+                            self.context.layer_manager.maybe_push_layer(scene, true, BlendMode::default(), 1.0, *clip_transform, clip, None, None)
+                        })
+                        .collect();
                     self.render_node(scene, hoisted_child.node_id, moved.pre_translate(pos), clip_rect);
+                    for pushed in clip_layers.into_iter().rev() {
+                        self.context.layer_manager.maybe_pop_layer(scene, pushed);
+                    }
                     self.context.layer_manager.maybe_pop_layer(scene, pushed);
                 }
                 continue;

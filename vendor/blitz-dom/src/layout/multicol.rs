@@ -3346,6 +3346,26 @@ mod tests {
         assert!(mapped <= 20_000, "{mapped} fragments visited for 2000 boxes");
     }
 
+    /// pyro: a hoisted box inside an `overflow: clip` box broken across the columns is hit in
+    /// each column within that box's clip, as Chromium hits it and paint shows it (blitz-paint
+    /// `draw_hoisted_children`, `hoisted_child_clips_to`), and not past the clip.
+    #[test]
+    fn a_hoisted_box_in_a_clipping_box_is_hit_within_the_clip() {
+        let mut doc = laid_out(vec![div(
+            "columns:2;column-gap:0;width:200px",
+            vec![
+                div("height:50px", vec![]),
+                div("overflow:clip;height:100px", vec![div("position:relative;z-index:1;height:100px;width:150px", vec![])]),
+            ],
+        )]);
+        let ids: Vec<crate::NodeId> = doc.nodes.iter().map(|(id, _)| id).collect();
+        let z = *ids.last().unwrap();
+        let hit = |doc: &mut BaseDocument, x: f32, y: f32| doc.hit(x, y).map(|h| h.node_id);
+        assert_eq!(hit(&mut doc, 50.0, 60.0), Some(z), "its piece in the first column");
+        assert_eq!(hit(&mut doc, 190.0, 30.0), Some(z), "its piece in the second column, inside the clip");
+        assert_ne!(hit(&mut doc, 240.0, 30.0), Some(z), "not past the clip");
+    }
+
     /// pyro: no more than `MAX_FRAGMENTS` per container, however its fragments are made.
     #[test]
     fn adjacent_spanners_are_held_to_the_fragment_cap() {
