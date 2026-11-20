@@ -177,6 +177,22 @@ fn fallback_budget_is_shared_with_container_query_relayout() {
 }
 
 #[test]
+fn later_absolute_fragment_does_not_expose_its_inflow_anchor() {
+    for prior in [false,true] {
+        let html = format!("<!doctype html><style>main{{position:relative;width:200px;height:100px}}i,em{{display:block;width:20px;height:10px;anchor-name:--a}}section{{position:absolute;left:80px;top:0}}b{{position:absolute;left:anchor(--a right,7px);top:0;width:10px;height:10px}}</style><main>{}<b></b><section><em></em></section></main>", if prior { "<i></i>" } else { "" });
+        let mut doc = blitz_html::HtmlDocument::from_html(&html, Default::default());
+        doc.viewport_mut().window_size = (400,300);
+        doc.resolve(0.0);
+        let section = doc.query_selector("section").unwrap().unwrap();
+        let target = doc.query_selector("b").unwrap().unwrap();
+        assert_eq!(doc.get_node(target).unwrap().final_layout().location.x, if prior {20.} else {7.});
+        doc.set_style_property(section,"position","relative");
+        doc.resolve(0.0);
+        assert_eq!(doc.get_node(target).unwrap().final_layout().location.x,100.);
+    }
+}
+
+#[test]
 fn indexed_lookup_excludes_fixed_siblings_hoisted_past_the_query_container() {
     let html = "<!doctype html><style>section{position:relative}i,em{display:block;anchor-name:--a}i{width:21px}em{position:fixed;width:51px}b{position:absolute;width:anchor-size(--a width,1px)}</style><section><i></i><em></em><b></b></section>";
     let mut doc = blitz_html::HtmlDocument::from_html(html, blitz_dom::DocumentConfig::default());

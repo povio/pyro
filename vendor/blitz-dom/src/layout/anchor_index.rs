@@ -5,10 +5,13 @@ use style::values::DashedIdent;
 
 type Name = (Option<NodeId>, DashedIdent);
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Exposure { Ordered, InFlow(Option<NodeId>) }
+
 #[derive(Default)]
 pub(crate) struct AnchorIndex {
     order: Option<Order>,
-    groups: HashMap<Name, HashMap<(Option<NodeId>, bool), Bucket>>,
+    groups: HashMap<Name, HashMap<(Option<NodeId>, Exposure), Bucket>>,
     pub(crate) work: std::cell::Cell<u64>,
 }
 
@@ -20,6 +23,7 @@ struct Order {
     boundaries: HashMap<Name, Vec<(usize, Option<NodeId>)>>,
     dom: HashMap<NodeId, usize>,
     boxes: HashMap<NodeId, Range<usize>>,
+    islands: HashMap<NodeId, Option<NodeId>>,
     ids: Vec<NodeId>,
 }
 
@@ -95,12 +99,13 @@ impl Order {
             if let Some(parent) = parent {
                 children.entry(parent).or_default().push(id);
             } else {
-                roots.push((id, false));
+                roots.push((id, false, None));
             }
         }
         let mut boxes: HashMap<NodeId, Range<usize>> = HashMap::new();
         let mut clock = 0;
-        while let Some((id, exit)) = roots.pop() {
+        let mut islands = HashMap::new();
+        while let Some((id, exit, inherited)) = roots.pop() {
             tick(work);
             if exit {
                 boxes.get_mut(&id).unwrap().end = clock;
@@ -111,12 +116,14 @@ impl Order {
             }
             boxes.insert(id, clock..clock + 1);
             clock += 1;
-            roots.push((id, true));
+            let island = if doc.nodes[id].is_out_of_flow() { Some(id) } else { inherited };
+            islands.insert(id, island);
+            roots.push((id, true, island));
             if let Some(kids) = children.remove(&id) {
-                roots.extend(kids.into_iter().map(|id| (id, false)));
+                roots.extend(kids.into_iter().map(|id| (id, false, island)));
             }
         }
-        Self { dom, boxes, ids, boundaries }
+        Self { dom, boxes, ids, boundaries, islands }
     }
 }
 
@@ -237,10 +244,12 @@ impl AnchorIndex {
                     id
                 };
                 if let Some(span) = order.boxes.get(&geometry_root) {
-                    entries
-                        .entry((boundary(id), node.is_out_of_flow()))
-                        .or_default()
-                        .push((span.start, order.dom[&id]));
+                    let boundary = boundary(id);
+                    let entry = (span.start, order.dom[&id]);
+                    entries.entry((boundary, Exposure::Ordered)).or_default().push(entry);
+                    if !node.is_out_of_flow() {
+                        entries.entry((boundary, Exposure::InFlow(order.islands[&geometry_root]))).or_default().push(entry);
+                    }
                 }
             }
             entries.into_iter().map(|(key, values)| (key, Bucket::new(values, work))).collect()
@@ -249,8 +258,8 @@ impl AnchorIndex {
         let exclude = order.boxes.get(&target).filter(|span| full.contains(&span.start));
         let boundary = boundary(origin);
         let mut best = None;
-        for (oof, limit) in [(false, usize::MAX), (true, *order.dom.get(&origin)?)] {
-            if let Some(bucket) = buckets.get(&(boundary, oof)) {
+        for (exposure, limit) in [(Exposure::InFlow(order.islands[&container]), usize::MAX), (Exposure::Ordered, *order.dom.get(&origin)?)] {
+            if let Some(bucket) = buckets.get(&(boundary, exposure)) {
                 if let Some(span) = exclude {
                     best = best.max(bucket.best(full.start..span.start, limit, work)).max(bucket.best(
                         span.end..full.end,

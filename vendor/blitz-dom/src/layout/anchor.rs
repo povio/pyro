@@ -205,13 +205,13 @@ impl BaseDocument {
             visit();
             let boundary = |start| std::iter::successors(Some(start), |&id| self.nodes[id].parent)
                 .take(self.nodes.len()).find(|&id| is_boundary(id));
-            if boundary(id) != boundary(origin) || (self.nodes[id].is_out_of_flow() && !self.compare_document_order(id, origin).is_lt()) { return None; }
+            if boundary(id) != boundary(origin) { return None; }
             id
         };
-        self.anchor_geometry(node, container, id)
+        self.anchor_geometry(node, container, id, (!indexed).then_some(origin))
     }
 
-    pub(super) fn anchor_geometry(&self, node: &Node, container: &Node, id: crate::NodeId) -> Option<(crate::NodeId, taffy::Point<f32>, taffy::Size<f32>)> {
+    fn anchor_geometry(&self, node: &Node, container: &Node, id: crate::NodeId, mut check_order: Option<crate::NodeId>) -> Option<(crate::NodeId, taffy::Point<f32>, taffy::Size<f32>)> {
         let anchor = &self.nodes[id];
         if id == node.id || (!anchor.flags.is_in_document() && !anchor.is_anonymous()) {
             return None;
@@ -243,6 +243,7 @@ impl BaseDocument {
                 break;
             }
             let current = &self.nodes[cursor];
+            if current.is_out_of_flow() && let Some(origin) = check_order.take() && !self.compare_document_order(id, origin).is_lt() { return None; }
             let parent = if current.is_out_of_flow() { current.containing_block() } else { current.layout_parent.get() };
             let Some(parent) = parent else { break };
             self.anchor_geometry_steps.set(self.anchor_geometry_steps.get().saturating_add(1));
