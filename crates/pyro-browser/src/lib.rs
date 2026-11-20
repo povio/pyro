@@ -567,6 +567,8 @@ pub struct DocumentState {
     pub main_frame: Frame,
     pub nav: Rc<PageNav>,
     pub(crate) pending_loader: Option<LoaderId>,
+    /// Container attribute processing queued before its navigation has a loader.
+    pub(crate) pending_frame_attributes: usize,
     pub(crate) pending_cancel: Option<ResourceCancellation>,
     /// The loader and URL of `pending_loader` when the frame's scripts
     /// started it, which `document.open()` stops (HTML "stop loading").
@@ -1593,6 +1595,7 @@ impl Browser {
             document: DocumentState {
                 main_frame: frame,
                 pending_loader: None,
+                pending_frame_attributes: 0,
                 pending_cancel: None,
                 pending_script: None,
                 nav,
