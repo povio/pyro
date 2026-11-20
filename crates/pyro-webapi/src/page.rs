@@ -240,6 +240,7 @@ pub struct PageDom {
     /// unloaded (`lifecycle::unload`).
     hidden: Cell<bool>,
     pub(crate) transition_captures: RefCell<Option<Box<crate::view_transition::Captures>>>,
+    pub(crate) transition_quota: RefCell<Option<Rc<crate::view_transition::Quota>>>,
     /// The document's unload events (`pagehide` ...) have started: set before the first is
     /// dispatched, so a listener whose actions unload it again (removing an ancestor frame) does
     /// not run them twice.
@@ -897,6 +898,7 @@ impl PageDom {
             ready: RefCell::new(FxHashMap::default()),
             hidden: Cell::new(false),
             transition_captures: RefCell::new(None),
+            transition_quota: RefCell::new(None),
             unloading: Cell::new(false),
             timing: Cell::new(DocumentTiming::default()),
             resource_timings: Default::default(),
@@ -1145,6 +1147,7 @@ impl PageDom {
     }
 
     fn release_activity(&self) {
+        self.transition_captures.borrow_mut().take();
         crate::input::clear_document_focus(self);
         self.clear_render_blocking(true);
         self.dom.borrow_mut().unwatch_iframes(self.document());

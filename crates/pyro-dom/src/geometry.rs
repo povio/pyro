@@ -450,7 +450,7 @@ pub struct TransitionBox {
 pub trait GeometrySource {
     /// Whether the painted subtree can participate in a named view transition.
     fn view_transition_names_valid(&self, _root: u64) -> bool { true }
-    fn capture_transition(&self, _root: u64, _old: bool, _pixels: u64) -> Option<Vec<TransitionBox>> { Some(Vec::new()) }
+    fn capture_transition(&self, _root: u64, _old: bool, _pixels: u64, _work: &mut u64) -> Option<Vec<TransitionBox>> { Some(Vec::new()) }
     /// Brings the engine's layout up to the document; the other queries
     /// answer from it.
     fn sync(&self, dom: &Dom, layout: &Layout);

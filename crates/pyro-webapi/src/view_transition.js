@@ -13,6 +13,8 @@
   const states = new WeakMap();
   // The running transition of each scope (a document or an element).
   const active = new WeakMap();
+  const pending = new Map();
+  let pumpQueued = false;
 
   function deferred() {
     let resolve, reject;
@@ -28,13 +30,13 @@
   const abortError = (message) => new DOMException(message, 'AbortError');
   function finish(st) {
     if (st.phase !== 'animating' || !st.animationDone || st.waiting) return;
-    if (st.captured) { captureValid(st.root, false, true, st.scope); st.captured = false; }
+    if (st.admitted) { captureValid(st.root, false, true, st.scope); st.admitted = false; }
     st.phase = 'done';
     if (active.get(st.scope) === st.self) active.delete(st.scope);
     st.finished.resolve();
   }
   function capture(st) {
-    if (captureValid(st.root, st.phase === 'pending-capture', false, st.scope)) { st.captured = true; return true; }
+    if (captureValid(st.root, st.phase === 'pending-capture', false, st.scope)) return true;
     skip(st, new DOMException('Cannot capture view transition state', 'InvalidStateError'));
     return false;
   }
@@ -79,7 +81,8 @@
   function skip(st, reason) {
     if (st.phase === 'done') return;
     const before = st.phase === 'pending-capture';
-    if (st.captured) { captureValid(st.root, false, true, st.scope); st.captured = false; }
+    if (before) pending.delete(st.scope);
+    if (st.admitted) { captureValid(st.root, false, true, st.scope); st.admitted = false; }
     st.phase = 'done';
     if (st.timer !== null) { clearTimeoutFn.call(global, st.timer); st.timer = null; }
     if (active.get(st.scope) === st.self) active.delete(st.scope);
@@ -145,11 +148,25 @@
       skip(st, new DOMException('Document is hidden', 'InvalidStateError'));
       return self;
     }
-    later(() => {
-      if (st.phase !== 'pending-capture' || !capture(st)) return;
-      st.phase = 'update-callback-called';
-      callUpdate(st);
-    });
+    st.admitted = captureValid(root, false, false, scope, true);
+    if (!st.admitted) {
+      skip(st, new DOMException('View transition capture limit reached', 'InvalidStateError'));
+      return self;
+    }
+    pending.set(scope, st);
+    if (!pumpQueued) {
+      pumpQueued = true;
+      later(() => {
+        const batch = Array.from(pending.values());
+        pending.clear();
+        pumpQueued = false;
+        for (const next of batch) {
+          if (next.phase !== 'pending-capture' || !capture(next)) continue;
+          next.phase = 'update-callback-called';
+          callUpdate(next);
+        }
+      });
+    }
     return self;
   }
 

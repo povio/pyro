@@ -159,6 +159,7 @@ pub struct BlitzDomPainter<'dom, 'a> {
     /// The top-layer element being painted as such (not skipped).
     pub(crate) top_layer_root: std::cell::Cell<Option<NodeId>>,
     pub(crate) transition_children: Option<&'a HashSet<NodeId>>,
+    pub(crate) capture_budget: Option<&'a crate::capture::Budget>,
     /// Scrollbar hover/drag state, resolved once per scene like the root element
     #[cfg(feature = "scrollbars")]
     pub(crate) hovered_scrollbar: Option<blitz_dom::node::ScrollbarRef>,
@@ -336,6 +337,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             },
             top_layer_root: std::cell::Cell::new(None),
             transition_children: None,
+            capture_budget: None,
             #[cfg(feature = "scrollbars")]
             hovered_scrollbar: dom.hovered_scrollbar(),
             #[cfg(feature = "scrollbars")]
@@ -1059,6 +1061,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         clip_rect: Rect,
     ) {
         if self.transition_children.is_some_and(|children| children.contains(&node_id)) && self.top_layer_root.get() != Some(node_id) { return; }
+        if self.capture_budget.is_some_and(|budget| !budget.take(1)) { return; }
         // pyro: the element's clip while it paints (`PaintContext::paint_clip`).
         let outer_clip = self.paint_clip.replace(clip_rect);
         self.render_element_clipped(scene, node_id, parent_style_transform, clip_rect);
@@ -1622,7 +1625,11 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
 
                 if has_effect_layer {
                     let mut group = Scene::new();
-                    self.paint_element(&mut cx, &mut group, &element);
+                    if let Some(budget) = self.capture_budget {
+                        if !budget.take(1) { return; }
+                        self.paint_element(&mut cx, &mut crate::capture::Recording(&mut group, budget), &element);
+                        if budget.exhausted.get() { return; }
+                    } else { self.paint_element(&mut cx, &mut group, &element); }
                     self.paint_effect_group(
                         scene,
                         group,
@@ -6849,7 +6856,11 @@ impl ElementCx<'_, '_> {
             let mut needed = vec![true; clips.len()];
             if let Some(device) = device.filter(|_| !clips.is_empty()) {
                 let mut child = Scene::new();
-                self.render_node(&mut child, hoisted_child.node_id, transform, child_clip_rect);
+                if let Some(budget) = self.capture_budget {
+                    if !budget.take(1) { return; }
+                    self.render_node(&mut crate::capture::Recording(&mut child, budget), hoisted_child.node_id, transform, child_clip_rect);
+                    if budget.exhausted.get() { return; }
+                } else { self.render_node(&mut child, hoisted_child.node_id, transform, child_clip_rect); }
                 if !child.commands.iter().any(reads_backdrop) {
                     match crate::bounds::scene_bounds(&child.commands) {
                         // All of them, or none: a box one clip cuts is painted in all of its clips, as
@@ -7644,7 +7655,8 @@ impl ElementCx<'_, '_> {
             // content box.
             let origin = self.frame.content_box.origin();
             let transform = self.transform * Affine::translate((origin.x, origin.y));
-            let painter = BlitzDomPainter::new(
+            if self.capture_budget.is_some_and(|budget| !budget.take(1)) { return; }
+            let mut painter = BlitzDomPainter::new(
                 &sub_doc,
                 scale,
                 width,
@@ -7654,7 +7666,11 @@ impl ElementCx<'_, '_> {
                 self.custom_widget_scenes,
             );
             let mut recording = anyrender::recording::Scene::new();
-            painter.paint_scene(&mut recording);
+            if let Some(budget) = self.capture_budget {
+                painter.capture_budget = Some(budget);
+                painter.paint_scene(&mut crate::capture::Recording(&mut recording, budget));
+                if budget.exhausted.get() { return; }
+            } else { painter.paint_scene(&mut recording); }
             let clip = Rect::new(0.0, 0.0, width as f64, height as f64);
             scene.push_clip_layer(Fill::NonZero, transform, &clip);
             scene.append_scene(recording, transform);

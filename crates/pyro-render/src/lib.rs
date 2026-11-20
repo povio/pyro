@@ -1800,6 +1800,26 @@ impl Renderer {
     }
 
     pub fn capture_transition_boxes(&mut self, page: u64, root: u64, old: bool, remaining_pixels: u64) -> Option<Vec<TransitionBox>> {
+        self.capture_transition_budgeted(page, root, old, remaining_pixels, &mut (1 << 18), &mut 0)
+    }
+
+    pub fn capture_transition_budgeted(&mut self, page: u64, root: u64, old: bool, remaining_pixels: u64, work: &mut u64, recordings: &mut usize) -> Option<Vec<TransitionBox>> {
+        fn charge_tree(doc: &blitz_dom::BaseDocument, depth: u64, nodes_left: &mut usize, work: &mut u64, pixels: &mut u64) -> Option<()> {
+            if depth > 64 { return None; }
+            let nodes = doc.tree().len().max(1);
+            *nodes_left = nodes_left.checked_sub(nodes)?;
+            *work = work.checked_sub(nodes as u64 * depth)?;
+            for (_, node) in doc.tree().iter() {
+                if let Some(text) = node.text_data() { *work = work.checked_sub(text.content.len() as u64)?; }
+            }
+            for id in doc.sub_document_node_ids() {
+                let child = doc.get_node(id)?.subdoc()?.inner();
+                let (width, height) = child.viewport().window_size;
+                *pixels = pixels.checked_sub(u64::from(width) * u64::from(height))?;
+                charge_tree(&child, depth + 1, nodes_left, work, pixels)?;
+            }
+            Some(())
+        }
         let mut ids = Vec::new();
         let mut boxes = Vec::new();
         let mirror = self.mirrors.get(&page)?;
@@ -1807,16 +1827,19 @@ impl Renderer {
         if doc.tree().len() > 16_384 { return None; }
         let scale = doc.viewport().scale_f64();
         let mut remaining = remaining_pixels.min(SVG_CANVAS_MAX_PIXELS as u64);
+        if *work == 0 || (old && remaining == 0) { return None; }
         let document_root = doc.try_root_element().map(|node| node.id);
         let (viewport_width, viewport_height) = doc.viewport().window_size;
         let viewport_size = (f64::from(viewport_width), f64::from(viewport_height));
-        let (valid, _) = self.collect_transition_boxes(page, root, |id, key, name| {
+        let (valid, visited) = self.collect_transition_boxes(page, root, |id, key, name| {
             if name.len() > 1024 { return false; }
             let Some(node) = doc.get_node(id) else { return false; };
             let size = node.final_layout().size;
             let mut transform = Affine::IDENTITY;
             let mut current = Some(id);
             while let Some(ancestor) = current.and_then(|id| doc.get_node(id)) {
+                let Some(left) = work.checked_sub(1) else { return false; };
+                *work = left;
                 let location = ancestor.final_layout().location;
                 let scroll = ancestor.scroll_offset();
                 let offset = if ancestor.id == id { Affine::IDENTITY } else { Affine::translate((-scroll.x * scale, -scroll.y * scale)) };
@@ -1832,11 +1855,24 @@ impl Renderer {
             true
         });
         if !valid { return None; }
-        if old {
+        *work = work.checked_sub(visited as u64)?;
+        if old && !ids.is_empty() {
+            let initial_work = *work;
+            charge_tree(doc, 1, &mut 16_384, work, &mut remaining)?;
+            *work = work.checked_sub((initial_work - *work).checked_mul(ids.len() as u64 - 1)?)?;
+            let minimum_area = |item: &TransitionBox| {
+                let (width, height) = item.size;
+                if !width.is_finite() || !height.is_finite() || width < 0.0 || height < 0.0 { return None; }
+                (width.ceil() as u64).checked_mul(height.ceil() as u64)
+            };
+            let reserved = boxes.iter().try_fold(0u64, |sum, item| sum.checked_add(minimum_area(item)?))?;
+            remaining = remaining.checked_sub(reserved)?;
             let mut records = boxes.iter_mut();
             let doc = &mut self.mirrors.get_mut(&page)?.doc;
-            blitz_paint::record_transition_boxes(doc, &ids, |id, scene, ink| {
+            blitz_paint::record_transition_boxes(doc, &ids, recordings, work, |id, scene, ink| {
                 let record = records.next()?;
+                let minimum = minimum_area(record)?;
+                remaining += minimum;
                 let ink = if Some(id) == document_root {
                     let [_, _, _, _, left, top] = record.transform;
                     kurbo::Rect::new(-left, -top, viewport_size.0 - left, viewport_size.1 - top)

@@ -1030,6 +1030,7 @@ impl ElementCx<'_, '_> {
                 })
         };
         let mut effects: Vec<blitz_dom::NodeId> = Vec::new();
+        if self.capture_budget.is_some_and(|budget| !budget.take(styles.len().saturating_mul(styles.len()))) { return true; }
         for style in styles {
             let id = style.brush.id;
             if id != root && !effects.contains(&id) && has_effect(id) {
@@ -1038,6 +1039,10 @@ impl ElementCx<'_, '_> {
         }
         if effects.is_empty() {
             return false;
+        }
+        if let Some(budget) = self.capture_budget {
+            budget.exhausted.set(true);
+            return true;
         }
         // pyro: a mask over vertical fragments (its strip is laid out horizontally) is not done:
         // such a layout paints plainly, as before.

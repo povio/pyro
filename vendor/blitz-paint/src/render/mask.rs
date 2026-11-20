@@ -79,7 +79,14 @@ impl ElementCx<'_, '_> {
     /// to be drawn into. Returns whether a layer was pushed, which should later be
     /// passed to [`maybe_pop_css_mask_layer`](Self::maybe_pop_css_mask_layer).
     pub(super) fn maybe_push_css_mask_layer(&self, scene: &mut impl PaintScene) -> bool {
+        if self.capture_budget.is_some_and(|budget| !budget.take(self.style.get_svg().mask_image.0.len())) { return false; }
         if !self.has_css_mask() && !self.has_mask_border() {
+            return false;
+        }
+        if let Some(budget) = self.capture_budget && (self.has_mask_border()
+            || self.style.get_svg().mask_image.0.iter().any(|image| !matches!(image, GenericImage::None | GenericImage::Gradient(_)))
+            || self.style.get_svg().mask_mode.0.contains(&StyloMaskMode::Luminance)) {
+            budget.exhausted.set(true);
             return false;
         }
 

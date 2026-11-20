@@ -98,12 +98,45 @@ fn view_transition_collection_bounds_work_before_visiting_children() {
 }
 
 #[test]
+fn view_transition_capture_charges_frame_tree_before_recording() {
+    use blitz_dom::{ns, QualName};
+    let page = Page::new("<!doctype html><html style='view-transition-name:root'><iframe style='width:32px;height:32px;border:0'></iframe></html>");
+    let root = pyro_dom::snapshot::render_key(page.find("html"));
+    let frame = pyro_dom::snapshot::render_key(page.find("iframe"));
+    let mut tree = page.tree();
+    for node in &mut Arc::make_mut(&mut tree).nodes {
+        if node.key != frame { continue; }
+        if let TreeKind::Element { attrs, .. } = &mut node.kind {
+            attrs.push((QualName::new(None, ns!(), "data-pyro-frame".into()), "N:1:0000000000000001".into()));
+        }
+    }
+    let child = FrameContent { html: "<div></div>".repeat(256), url: "http://test/child".into(), client: "F#L".into(), version: 1, ..Default::default() };
+    let mut snapshot = page.snapshot(1, tree);
+    snapshot.frames = Arc::new(FrameTableData { nonce: "N".into(), entries: [("1".into(), child)].into_iter().collect() });
+    let mut renderer = Renderer::new();
+    renderer.sync_layout(&snapshot, &fetcher()).unwrap();
+    let mut recordings = 0;
+    for (pixels, mut work) in [(1 << 24, 200), (640 * 480, 1 << 18)] {
+        assert!(renderer.capture_transition_budgeted(1, root, true, pixels, &mut work, &mut recordings).is_none());
+        assert_eq!(recordings, 0);
+    }
+    let mut work = 1 << 18;
+    assert!(renderer.capture_transition_budgeted(1, root, true, 1 << 24, &mut work, &mut recordings).is_some());
+    assert_eq!(recordings, 1);
+    assert!((1 << 18) - work >= 2 * 256);
+}
+
+#[test]
 fn view_transition_capture_counts_pixels_and_excludes_nested_participants() {
     let page = Page::new("<!doctype html><body style='opacity:0.2'><div id='parent' style='background:red;width:10px;height:10px;view-transition-name:parent'><div style='background:blue;width:4px;height:4px;view-transition-name:child'></div></div>");
     let mut renderer = Renderer::new();
     renderer.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
     let root = pyro_dom::snapshot::render_key(page.find("#parent"));
-    assert!(renderer.capture_transition_boxes(1, root, true, 115).is_none());
+    let mut recordings = 0;
+    for (pixels, mut work) in [(0, 200), (115, 200), (116, 0), (116, 4)] {
+        assert!(renderer.capture_transition_budgeted(1, root, true, pixels, &mut work, &mut recordings).is_none());
+        assert_eq!(recordings, 0);
+    }
     let captured = renderer.capture_transition_boxes(1, root, true, 116).unwrap();
     assert_eq!(captured.iter().map(|item| item.image.as_ref().unwrap().data.len()).sum::<usize>(), 464);
     assert_eq!(&captured[0].image.as_ref().unwrap().data[..4], &[255, 0, 0, 255]);

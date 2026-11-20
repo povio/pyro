@@ -285,6 +285,7 @@ impl ElementCx<'_, '_> {
             (blur / 2.0) as f32,
         )));
         let bounds = path.bounding_box().inflate(blur * 2.0, blur * 2.0);
+        if self.capture_budget.is_some_and(|budget| !budget.take(path.elements().len().saturating_add(8))) { return; }
         let mut group = anyrender::Scene::new();
         group.push_layer(Fill::NonZero, Mix::Normal, 1.0, transform, &bounds, Some(filter), None);
         group.fill(Fill::NonZero, transform, color, None, path);
