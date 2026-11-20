@@ -300,6 +300,21 @@ pub fn parse_pseudo_arg(text: &str) -> PseudoArg {
     if !text.starts_with(':') {
         return PseudoArg::Element;
     }
+    if text.get(..18).is_some_and(|prefix| prefix.eq_ignore_ascii_case("::view-transition-")) {
+        let mut parser = cssparser::Parser::new(&text[2..]);
+        if let Ok(kind) = parser.expect_function().cloned() {
+            let result = parser.parse_nested_block(|input| {
+                input.try_parse(|input| input.expect_ident_cloned())?;
+                Ok::<_, cssparser::ParseError<()>>(())
+            });
+            if result.is_ok() && parser.is_exhausted() {
+                let mut parser = cssparser::Parser::new(&text[2..]);
+                let _ = parser.next();
+                if let Ok(pseudo) = parser.parse_nested_block(|input| style::selector_parser::transition_selector(&kind.to_ascii_lowercase(), input)) { return PseudoArg::Pseudo(pseudo); }
+            }
+        }
+        return PseudoArg::Invalid;
+    }
     // `::highlight(<name>)` (CSS Custom Highlight API).
     if let Some(inner) = text
         .get(..12)
@@ -333,6 +348,7 @@ pub fn parse_pseudo_arg(text: &str) -> PseudoArg {
         "after" => PseudoElement::After,
         "first-letter" => PseudoElement::FirstLetter,
         "selection" if double => PseudoElement::Selection,
+        "view-transition" if double => PseudoElement::ViewTransition,
         "target-text" if double => PseudoElement::TargetText,
         "marker" if double => PseudoElement::Marker,
         "placeholder" if double => PseudoElement::Placeholder,

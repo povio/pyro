@@ -3312,7 +3312,7 @@ diff -ruN a/servo/restyle_damage.rs b/servo/restyle_damage.rs
      // so we can skip the diffing process for later flags if an earlier flag is true
 diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 --- a/servo/selector_parser.rs	2026-11-11 19:55:57
-+++ b/servo/selector_parser.rs	2026-11-20 08:38:28
++++ b/servo/selector_parser.rs	2026-11-20 09:32:53
 @@ -24,7 +24,6 @@
  use selectors::attr::{AttrSelectorOperation, CaseSensitivity, NamespaceConstraint};
  use selectors::parser::SelectorParseErrorKind;
@@ -3321,7 +3321,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
  use std::ops::{Deref, DerefMut};
  use style_traits::{ParseError, StyleParseErrorKind};
  
-@@ -45,11 +44,46 @@
+@@ -45,11 +44,51 @@
      // APPLIES_TO_PLACEHOLDER properties expect!
      FirstLetter,
      FirstLine,
@@ -3354,6 +3354,11 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +    // `matching_fn`). Both are styled lazily, when highlights are painted.
 +    TargetText,
 +    Highlight(u16),
++    ViewTransition,
++    ViewTransitionGroup(u16),
++    ViewTransitionPair(u16),
++    ViewTransitionOld(u16),
++    ViewTransitionNew(u16),
 +    // pyro: CSS Form Control Styling's `::picker(select)` and `::picker-icon`, and Chrome's
 +    // `::-webkit-slider-thumb`: parsed (so `@supports selector()` knows them) but styled by nothing.
 +    PickerSelect,
@@ -3368,7 +3373,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
  
      // Implemented pseudos. These pseudo elements are representing the
      // elements within an UA shadow DOM, and matching the elements with
-@@ -76,8 +110,36 @@
+@@ -76,8 +115,76 @@
  }
  
  /// The count of all pseudo-elements.
@@ -3380,6 +3385,46 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +pub const ANY_HIGHLIGHT: u16 = 0;
 +
 +static HIGHLIGHT_NAMES: std::sync::RwLock<Vec<Atom>> = std::sync::RwLock::new(Vec::new());
++
++type TransitionNames = (FxHashMap<Vec<Atom>, u16>, Vec<Vec<Atom>>);
++static TRANSITION_NAMES: std::sync::LazyLock<std::sync::RwLock<TransitionNames>> =
++    std::sync::LazyLock::new(Default::default);
++
++fn transition_name_id(parts: Vec<Atom>) -> Result<u16, ParseError> {
++    if parts.len() == 1 && parts[0].is_empty() { return Ok(0); }
++    let mut names = TRANSITION_NAMES.write().unwrap();
++    if let Some(id) = names.0.get(&parts) { return Ok(*id); }
++    if names.1.len() >= 4096 { return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError)); }
++    let id = names.1.len() as u16 + 1;
++    names.0.insert(parts.clone(), id);
++    names.1.push(parts);
++    Ok(id)
++}
++
++/// Parses the named transition selector argument, preserving escaped wildcard identifiers.
++pub fn transition_selector(kind: &str, input: &mut CssParser) -> Result<PseudoElement, ParseError> {
++    use crate::values::CustomIdent;
++    let bad = || ParseError::custom(StyleParseErrorKind::UnspecifiedError);
++    let ctor: fn(u16) -> PseudoElement = match kind {
++        "view-transition-group" => PseudoElement::ViewTransitionGroup,
++        "view-transition-image-pair" => PseudoElement::ViewTransitionPair,
++        "view-transition-old" => PseudoElement::ViewTransitionOld,
++        "view-transition-new" => PseudoElement::ViewTransitionNew,
++        _ => return Err(bad()),
++    };
++    input.skip_whitespace();
++    let name = if input.try_parse(|p| p.expect_delim('*')).is_ok() { Some(Atom::from("")) }
++        else { input.try_parse(|p| CustomIdent::parse(p, &[])).ok().map(|id| id.0) };
++    let required_class = name.is_none();
++    let mut parts = vec![name.unwrap_or_else(|| Atom::from(""))];
++    while !input.is_exhausted() {
++        if parts.len() > 32 || !matches!(input.next_including_whitespace()?, cssparser::Token::Delim('.')) { return Err(bad()); }
++        let cssparser::Token::Ident(name) = input.next_including_whitespace()? else { return Err(bad()); };
++        parts.push(CustomIdent::from_ident(name, &[])?.0);
++    }
++    if (required_class && parts.len() == 1) || parts.iter().map(|atom| atom.len()).sum::<usize>() > 1024 { return Err(bad()); }
++    Ok(ctor(transition_name_id(parts)?))
++}
 +
 +/// pyro: the id of a `::highlight()` name (ids live as long as the process; names are few).
 +pub fn highlight_name_id(name: &Atom) -> u16 {
@@ -3406,7 +3451,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
  impl ToCss for PseudoElement {
      fn to_css<W>(&self, dest: &mut W) -> fmt::Result
      where
-@@ -93,6 +155,36 @@
+@@ -93,6 +200,48 @@
              Backdrop => "::backdrop",
              DetailsContent => "::details-content",
              Marker => "::marker",
@@ -3423,6 +3468,18 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +            ScrollButtonLeft => "::scroll-button(left)",
 +            ScrollButtonRight => "::scroll-button(right)",
 +            TargetText => "::target-text",
++            ViewTransition => "::view-transition",
++            ViewTransitionGroup(id) | ViewTransitionPair(id) | ViewTransitionOld(id) | ViewTransitionNew(id) => {
++                dest.write_str(match self { ViewTransitionGroup(_) => "::view-transition-group(", ViewTransitionPair(_) => "::view-transition-image-pair(", ViewTransitionOld(_) => "::view-transition-old(", _ => "::view-transition-new(" })?;
++                if id == 0 { dest.write_char('*')?; } else {
++                    let names = TRANSITION_NAMES.read().unwrap();
++                    for (index, part) in names.1[usize::from(id)-1].iter().enumerate() {
++                        if index > 0 { dest.write_char('.')?; }
++                        if part.is_empty() { dest.write_char('*')?; } else { serialize_identifier(part, dest)?; }
++                    }
++                }
++                return dest.write_char(')');
++            },
 +            Highlight(id) => {
 +                dest.write_str("::highlight(")?;
 +                if let Some(name) = highlight_name(id) {
@@ -3443,11 +3500,15 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              ColorSwatch => "::color-swatch",
              FileSelectorButton => "::file-selector-button",
              Placeholder => "::placeholder",
-@@ -115,29 +207,73 @@
+@@ -113,31 +262,94 @@
+ }
+ 
  impl ::selectors::parser::PseudoElement for PseudoElement {
++    fn is_in_pseudo_element_tree(&self) -> bool { self.transition_argument().is_some() }
++    fn specificity_count(&self) -> u32 { u32::from(self.transition_argument() != Some(0)) }
      fn parses_as_element_backed(&self) -> bool {
          matches!(self, Self::DetailsContent)
-+    }
+     }
 +
 +    // pyro: `::before::marker` and `::after::marker` (CSS Pseudo-Elements 4 § 4.1): the marker
 +    // of a `::before` or `::after` box that is a list item.
@@ -3459,7 +3520,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +    // `::marker` (`::column::scroll-marker`, Multi-column 2 § 4.8).
 +    fn is_before_or_after(&self) -> bool {
 +        matches!(self, Self::Before | Self::After | Self::Column)
-     }
++    }
 +
 +    // pyro: `::scroll-marker:target-current`, `::scroll-button(*):disabled`, and the user action
 +    // states, match the pseudo-element's own state (its box node's, `blitz-dom`). `::column`
@@ -3491,6 +3552,23 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +pub const EAGER_PSEUDO_COUNT: usize = 8;
  
  impl PseudoElement {
++    /// Interned name and classes for a named transition pseudo.
++    pub fn transition_argument(&self) -> Option<u16> {
++        use PseudoElement::*;
++        match *self { ViewTransitionGroup(id) | ViewTransitionPair(id) | ViewTransitionOld(id) | ViewTransitionNew(id) => Some(id), _ => None }
++    }
++
++    /// Matches a transition pseudo box against a rule within its kind's rule map.
++    pub fn matches_transition_selector(&self, selector: &Self) -> bool {
++        if self.discriminant() != selector.discriminant() { return false; }
++        let (Some(id), Some(rule)) = (self.transition_argument(), selector.transition_argument()) else { return self == selector; };
++        if rule == 0 { return true; }
++        if id == 0 { return false; }
++        let names = TRANSITION_NAMES.read().unwrap();
++        let actual = &names.1[usize::from(id)-1];
++        let pattern = &names.1[usize::from(rule)-1];
++        (pattern[0].is_empty() || pattern[0] == actual[0]) && pattern[1..].iter().all(|class| actual[1..].contains(class))
++    }
      /// Gets the canonical index of this eagerly-cascaded pseudo-element.
      #[inline]
      pub fn eager_index(&self) -> usize {
@@ -3521,7 +3599,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
      }
  
      /// Creates a pseudo-element from an eager index.
-@@ -145,8 +281,18 @@
+@@ -145,8 +357,18 @@
      pub fn from_eager_index(i: usize) -> Self {
          const _: () = assert!(EAGER_PSEUDO_COUNT <= (u8::MAX as usize));
          assert!(i < EAGER_PSEUDO_COUNT);
@@ -3541,10 +3619,12 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
          result
      }
  
-@@ -168,6 +314,54 @@
+@@ -166,8 +388,58 @@
+     #[inline]
+     pub fn is_marker(&self) -> bool {
          *self == PseudoElement::Marker
-     }
- 
++    }
++
 +    /// pyro: whether this pseudo-element is `::scroll-marker`.
 +    #[inline]
 +    pub fn is_scroll_marker(&self) -> bool {
@@ -3566,13 +3646,15 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +                | PseudoElement::ScrollButtonLeft
 +                | PseudoElement::ScrollButtonRight
 +        )
-+    }
-+
+     }
+ 
 +    /// pyro: the key a rule for this pseudo-element is filed under in the stylist's maps: every
 +    /// `::scroll-button()` rule under `::scroll-button(*)`, as which a button's box is styled (its
 +    /// node then matches each rule's argument against its direction).
 +    #[inline]
 +    pub fn rule_map_key(&self) -> PseudoElement {
++        use PseudoElement::*;
++        match self { ViewTransitionGroup(_) => return ViewTransitionGroup(0), ViewTransitionPair(_) => return ViewTransitionPair(0), ViewTransitionOld(_) => return ViewTransitionOld(0), ViewTransitionNew(_) => return ViewTransitionNew(0), _ => () }
 +        if self.scrollbar_orientation().is_some() {
 +            PseudoElement::WebkitScrollbar
 +        } else if self.is_scroll_button() {
@@ -3596,7 +3678,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
      /// Whether this pseudo-element is the ::selection pseudo.
      #[inline]
      pub fn is_selection(&self) -> bool {
-@@ -249,6 +443,9 @@
+@@ -249,6 +521,9 @@
              | PseudoElement::Before
              | PseudoElement::FirstLetter
              | PseudoElement::FirstLine
@@ -3606,7 +3688,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              | PseudoElement::Selection => PseudoElementCascadeType::Eager,
              PseudoElement::Backdrop
              | PseudoElement::ColorSwatch
-@@ -261,7 +458,30 @@
+@@ -261,7 +536,31 @@
              | PseudoElement::SliderTrack
              | PseudoElement::MozProgressBar
              | PseudoElement::ServoTextControlInnerContainer
@@ -3625,6 +3707,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +            | PseudoElement::ScrollButtonLeft
 +            | PseudoElement::ScrollButtonRight
 +            | PseudoElement::TargetText
++            | PseudoElement::ViewTransition | PseudoElement::ViewTransitionGroup(_) | PseudoElement::ViewTransitionPair(_) | PseudoElement::ViewTransitionOld(_) | PseudoElement::ViewTransitionNew(_)
 +            | PseudoElement::PickerSelect
 +            | PseudoElement::PickerIcon
 +            | PseudoElement::WebkitSliderThumb
@@ -3638,7 +3721,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              PseudoElement::ServoAnonymousBox
              | PseudoElement::ServoAnonymousTable
              | PseudoElement::ServoAnonymousTableCell
-@@ -292,7 +512,9 @@
+@@ -292,7 +591,9 @@
                  PropertyFlags::APPLIES_TO_MARKER
              },
              PseudoElement::Placeholder => PropertyFlags::APPLIES_TO_PLACEHOLDER,
@@ -3649,7 +3732,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              _ => PropertyFlags::empty(),
          }
      }
-@@ -313,19 +535,22 @@
+@@ -313,19 +614,22 @@
  
      /// Whether this pseudo-element is the ::highlight pseudo.
      pub fn is_highlight(&self) -> bool {
@@ -3664,7 +3747,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
      #[inline]
      pub fn has_argument(&self) -> bool {
 -        false
-+        self.is_scroll_button() || self.is_highlight()
++        self.is_scroll_button() || self.is_highlight() || self.transition_argument().is_some()
      }
  
      /// Whether this pseudo-element is the ::target-text pseudo.
@@ -3675,7 +3758,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
      }
  
      /// Whether this is a highlight pseudo-element that is styled lazily during
-@@ -341,7 +566,10 @@
+@@ -341,7 +645,10 @@
      #[inline]
      pub fn is_element_backed(&self) -> bool {
          use selectors::parser::PseudoElement;
@@ -3686,7 +3769,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              || matches!(
                  self,
                  Self::Placeholder
-@@ -357,6 +585,14 @@
+@@ -357,6 +664,14 @@
      }
  }
  
@@ -3701,7 +3784,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
  /// The type used for storing `:lang` arguments.
  pub type Lang = Box<str>;
  
-@@ -364,6 +600,25 @@
+@@ -364,6 +679,25 @@
  #[derive(Clone, Debug, Eq, Hash, MallocSizeOf, PartialEq, ToCss, ToShmem)]
  pub struct CustomState(pub AtomIdent);
  
@@ -3727,7 +3810,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
  /// A non tree-structural pseudo-class.
  /// See https://drafts.csswg.org/selectors-4/#structural-pseudos
  #[derive(Clone, Debug, Eq, Hash, MallocSizeOf, PartialEq, ToShmem)]
-@@ -376,6 +631,9 @@
+@@ -376,6 +710,9 @@
      /// The :state` pseudo-class.
      CustomState(CustomState),
      Default,
@@ -3737,7 +3820,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
      Defined,
      Disabled,
      Enabled,
-@@ -405,6 +663,17 @@
+@@ -405,6 +742,17 @@
      Required,
      ServoNonZeroBorder,
      Target,
@@ -3755,7 +3838,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
      UserInvalid,
      UserValid,
      Valid,
-@@ -417,11 +686,24 @@
+@@ -417,11 +765,24 @@
          matches!(*self, NonTSPseudoClass::Active | NonTSPseudoClass::Hover)
      }
  
@@ -3781,7 +3864,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
          )
      }
  
-@@ -441,6 +723,20 @@
+@@ -441,6 +802,20 @@
              serialize_identifier(lang, dest)?;
              return dest.write_char(')');
          }
@@ -3802,7 +3885,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
  
          dest.write_str(match *self {
              Self::Active => ":active",
-@@ -481,11 +777,16 @@
+@@ -481,11 +856,16 @@
              Self::Required => ":required",
              Self::ServoNonZeroBorder => ":-servo-nonzero-border",
              Self::Target => ":target",
@@ -3820,7 +3903,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
          })
      }
  }
-@@ -527,11 +828,20 @@
+@@ -527,11 +907,20 @@
              Self::ReadWrite => ElementState::READWRITE,
              Self::Required => ElementState::REQUIRED,
              Self::Target => ElementState::URLTARGET,
@@ -3842,7 +3925,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
                  ElementState::empty()
              },
          }
-@@ -646,6 +956,12 @@
+@@ -646,6 +1035,12 @@
              "read-write" => NonTSPseudoClass::ReadWrite,
              "required" => NonTSPseudoClass::Required,
              "target" => NonTSPseudoClass::Target,
@@ -3855,7 +3938,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              "user-invalid" => NonTSPseudoClass::UserInvalid,
              "user-valid" => NonTSPseudoClass::UserValid,
              "valid" => NonTSPseudoClass::Valid,
-@@ -697,6 +1013,27 @@
+@@ -697,6 +1092,27 @@
                  let result = AtomIdent::from(parser.expect_ident()?.as_ref());
                  NonTSPseudoClass::CustomState(CustomState(result))
              },
@@ -3883,7 +3966,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              _ => return Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent)),
          };
  
-@@ -714,8 +1051,21 @@
+@@ -714,8 +1130,22 @@
              "first-letter" => FirstLetter,
              "first-line" if crate::pref!("layout.css.first-line.enabled") => FirstLine,
              "marker" => Marker,
@@ -3891,6 +3974,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +            "scroll-marker" => ScrollMarker,
 +            "column" => Column,
 +            "target-text" => TargetText,
++            "view-transition" => ViewTransition,
              "details-content" => DetailsContent,
              "color-swatch" => ColorSwatch,
 +            "picker-icon" => PickerIcon,
@@ -3905,7 +3989,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              "placeholder" => Placeholder,
              "-servo-text-control-inner-container" => {
                  if !self.in_user_agent_stylesheet() {
-@@ -776,6 +1126,41 @@
+@@ -776,6 +1206,44 @@
          Ok(pseudo_element)
      }
  
@@ -3919,6 +4003,9 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +        if name.eq_ignore_ascii_case("highlight") {
 +            let ident = arguments.expect_ident()?;
 +            return Ok(Highlight(highlight_name_id(&Atom::from(ident.as_ref()))));
++        }
++        if name.get(..16).is_some_and(|prefix| prefix.eq_ignore_ascii_case("view-transition-")) {
++            return transition_selector(&name.to_ascii_lowercase(), arguments);
 +        }
 +        if name.eq_ignore_ascii_case("picker") {
 +            arguments.expect_ident_matching("select")?;

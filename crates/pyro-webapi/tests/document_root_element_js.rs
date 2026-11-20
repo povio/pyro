@@ -166,6 +166,16 @@ fn xhtml_template_contents_are_reachable_through_content() {
 }
 
 #[test]
+fn view_transition_selector_class_budget() {
+    let environment = env("<!doctype html><body>");
+    assert_eq!(eval(&environment.main, r#"(() => {
+        const accepts = arg => CSS.supports(`selector(::view-transition-group(${arg}))`);
+        return [accepts('*'), accepts('\\*'), accepts('*.tile'), accepts('*. tile'),
+                accepts('*' + '.tile'.repeat(32)), accepts('*' + '.tile'.repeat(33))].join();
+    })()"#), "true,true,true,false,true,false");
+}
+
+#[test]
 fn view_transition_active_scope_and_interface_identity() {
     let environment = env("<!doctype html><html><body></body></html>");
     eval(&environment.main, "globalThis.requestAnimationFrame = () => 1; globalThis.setTimeout = () => 1;");
