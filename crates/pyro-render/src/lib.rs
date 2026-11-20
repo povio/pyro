@@ -1965,6 +1965,13 @@ impl Renderer {
         Some((r.offset, r.start, r.end, src, r.contain, r.subject_size))
     }
 
+    /// pyro: the steps `page`'s `content-visibility: auto` relevance passes took so far
+    /// (`BaseDocument::content_visibility_work`; tests bound it).
+    #[doc(hidden)]
+    pub fn content_visibility_work(&self, page: u64) -> u64 {
+        self.mirrors.get(&page).map_or(0, |m| m.doc.content_visibility_work())
+    }
+
     /// pyro: whether `page`'s viewport scrolls from its right edge (`BaseDocument::viewport_scrolls_leftward`).
     pub fn viewport_scrolls_leftward(&self, page: u64) -> Option<bool> {
         Some(self.mirrors.get(&page)?.doc.viewport_scrolls_leftward())

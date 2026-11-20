@@ -546,6 +546,9 @@ pub struct BaseDocument {
     pub(crate) cv_scroll: Option<(f64, f64)>,
     /// pyro: a resolve again for relevance a fresh transform changed is running.
     pub(crate) cv_resolving: bool,
+    /// pyro: steps the relevance passes took (candidates looked up, chain steps walked): what
+    /// tests bound (`content_visibility_work`).
+    pub(crate) cv_work: std::cell::Cell<u64>,
     /// pyro: the user-agent sheets it was made with, which the frame documents it makes take too
     /// (the embedder's: no native CSS animations or transitions in a frame either, as its
     /// animations are sampled in, `frame_animations`).
@@ -932,6 +935,7 @@ impl BaseDocument {
             cv_forced: HashSet::new(),
             cv_scroll: None,
             cv_resolving: false,
+            cv_work: std::cell::Cell::new(0),
             ua_stylesheets: config.ua_stylesheets.clone(),
             frame_animations: Default::default(),
             iframe_loads: HashMap::new(),

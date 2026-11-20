@@ -165,6 +165,7 @@ mod vertical_text_decorations;
 mod vertical_writing_mode;
 mod vertical_align_orthogonal_sizes;
 mod button_native_corners;
+mod content_visibility_auto;
 mod content_visibility_hidden;
 mod text_combine_upright;
 mod containment_and_svg_background;

@@ -461,6 +461,12 @@ impl BaseDocument {
         }
     }
 
+    /// pyro: the steps the `content-visibility: auto` relevance passes took so far (candidates
+    /// looked up, chain steps walked): linear in the tracked elements per pass.
+    pub fn content_visibility_work(&self) -> u64 {
+        self.cv_work.get()
+    }
+
     /// pyro: whether relevance was determined at another scroll position than the page's now
     /// (a frame determines it again: `content-visibility: auto` follows scrolling).
     pub fn content_visibility_stale(&self) -> bool {
@@ -479,14 +485,15 @@ impl BaseDocument {
     pub(crate) fn update_content_visibility(&mut self) -> bool {
         use crate::node::NodeFlags;
         use std::collections::{HashMap, HashSet};
-        // (Removed elements leave the set.)
-        let candidates: Vec<NodeId> = self
-            .cv_auto
-            .iter()
-            .copied()
-            .filter(|&id| self.nodes.get(id).is_some_and(|n| n.flags.is_in_document()))
-            .collect();
-        self.cv_auto.retain(|id| candidates.contains(id));
+        // (Removed elements leave the set: pruned in place, one lookup each.)
+        let nodes = &self.nodes;
+        let mut work = 0u64;
+        self.cv_auto.retain(|&id| {
+            work += 1;
+            nodes.get(id).is_some_and(|n| n.flags.is_in_document())
+        });
+        let candidates: Vec<NodeId> = self.cv_auto.iter().copied().collect();
+        self.cv_work.set(self.cv_work.get() + work);
         if candidates.is_empty() {
             return false;
         }
@@ -512,6 +519,8 @@ impl BaseDocument {
                 at = self.nodes[n].parent;
             }
         }
+        // (Chain steps walked, for `cv_work`.)
+        let steps = std::cell::Cell::new(0u64);
         // Whether a node is in skipped contents (a skipped ancestor), memoized up the parents.
         let mut skipped_memo: HashMap<NodeId, bool> = HashMap::new();
         let in_skipped = |nodes: &crate::NodeTree, id: NodeId, skipped_memo: &mut HashMap<NodeId, bool>| -> bool {
@@ -528,6 +537,7 @@ impl BaseDocument {
                     break;
                 }
                 chain.push(n);
+                steps.set(steps.get() + 1);
                 at = nodes[n].parent;
             }
             for n in chain {
@@ -549,6 +559,7 @@ impl BaseDocument {
                     break;
                 }
                 chain.push(n);
+                steps.set(steps.get() + 1);
                 at = nodes[n].containing_block();
             }
             let mut parent = at;
@@ -574,6 +585,7 @@ impl BaseDocument {
         };
         let mut changed = false;
         for id in candidates {
+            steps.set(steps.get() + 1);
             if !Self::is_cv_auto(&self.nodes[id]) {
                 // No longer `auto`: shown as its style says.
                 let node = &mut self.nodes[id];
@@ -630,6 +642,7 @@ impl BaseDocument {
                 node.layout_data_mut().remembered_size = Some(content);
             }
         }
+        self.cv_work.set(self.cv_work.get() + steps.get());
         changed
     }
 
