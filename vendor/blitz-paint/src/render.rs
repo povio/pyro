@@ -1337,8 +1337,8 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         }
 
         // pyro: a scroll container painted in its painter's phases (`scroller_in_phases`): its own
-        // box unclipped, its content clipped by its overflow clip and scrolled, its scrollbars
-        // over its inline content.
+        // box unclipped, its content clipped by its overflow clip and scrolled, its overlay
+        // scrollbars over its inline content, its classic ones with its box.
         if phase != FlowPhase::All && should_clip && node.scroller_paints_in_ancestor_phases() {
             let clip = cx.overflow_clip_path(&styles);
             match phase {
@@ -1349,6 +1349,11 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                     }
                     cx.draw_inset_box_shadow(scene);
                     cx.draw_border(scene);
+                    // pyro: and its classic scrollbars, with its box: its content is clipped to
+                    // its scrollport, off them; the boxes painted after its box's phase go over
+                    // them (Chrome: WPT CSS2 normal-flow `overflow-scroll-paint-order`, a later
+                    // sibling's background pulled over the scroller hides its scrollbars).
+                    cx.draw_classic_scrollbars(scene);
                 }
                 FlowPhase::Outline => cx.draw_outline(scene),
                 _ => {}
@@ -1366,10 +1371,6 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             #[cfg(feature = "scrollbars")]
             if phase == FlowPhase::Foreground && !hidden {
                 cx.draw_scrollbars(scene);
-            }
-            // pyro: and its classic scrollbars, over its inline content.
-            if phase == FlowPhase::Foreground && !hidden {
-                cx.draw_classic_scrollbars(scene);
             }
             return;
         }
