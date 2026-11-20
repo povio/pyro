@@ -353,6 +353,9 @@ pub struct PageDom {
     /// over: a later attribute change wins, as it updates the internal slot.
     nonces: RefCell<FxHashMap<NodeId, (Option<String>, String)>>,
     pub(crate) sheet_models: RefCell<FxHashMap<NodeId, Rc<crate::css::SheetModel>>>,
+    /// pyro: the sheet object (generation) whose `disabled` set its node's flag in the style
+    /// engine: a new sheet object of the node starts with it unset (`css::renew_sheet_disabled`).
+    pub(crate) disabled_by: RefCell<FxHashMap<NodeId, crate::css::SheetGeneration>>,
     /// The text of each sheet a `<style>` imported, by its absolute URL (for
     /// `CSSImportRule.styleSheet`); the embedder provides it as it loads.
     /// pyro: by the import's request key (`pyro_dom::cssom::import_key`: its URL and modifiers),
@@ -942,6 +945,7 @@ impl PageDom {
             popover: Default::default(),
             nonces: RefCell::new(FxHashMap::default()),
             sheet_models: RefCell::new(FxHashMap::default()),
+            disabled_by: RefCell::new(FxHashMap::default()),
             imported_sheets: RefCell::new(FxHashMap::default()),
             sheet_responses: RefCell::default(),
             adopted_sheets: RefCell::new(FxHashMap::default()),
@@ -2944,6 +2948,9 @@ impl PageDom {
         let mut responses = self.sheet_responses.borrow_mut();
         let generation = responses.get(&node).map_or(1, |r| r.generation + 1);
         responses.insert(node, SheetResponse { generation, origin_clean });
+        drop(responses);
+        // pyro: the link's new sheet object starts enabled (CSSOM; Chrome).
+        crate::css::renew_sheet_disabled(self, node);
     }
 
     /// pyro: the response `node`'s sheet is of now (a `<style>`'s: generation 0, origin-clean).

@@ -1426,7 +1426,7 @@ rule_class!(CssImportRule, "CSSImportRule", CssRule, |def| {
         let media = media_text(&pyro_dom::cssom::import_split(&rule_prelude(r)).1);
         let rule = RuleData { owner: r.owner.hold()?, rule_node: r.node()?.clone() };
         let sheet = Constructed::imported(&page, final_url, &text, media, rule, opaque, request);
-        Ok(s.wrap::<CssStyleSheet>(SheetData { owner: SheetOwner::Constructed(sheet) }, Some(key))?.value())
+        Ok(s.wrap::<CssStyleSheet>(SheetData { owner: SheetOwner::Constructed(sheet), disabled: Cell::new(false) }, Some(key))?.value())
     });
     // The condition of `supports(...)`, or null.
     def.getter("supportsText", |s, r| match import_parts(&rule_prelude(r)).1 {
@@ -2177,18 +2177,32 @@ pub fn module_sheet<'s>(s: &Scope<'s>, text: &str) -> JsResult<Object<'s>> {
     let sheet = Constructed::new(&page, String::new(), false);
     sheet.replace(text);
     let key = sheet.identity;
-    s.wrap::<CssStyleSheet>(SheetData { owner: SheetOwner::Constructed(sheet) }, Some(key))
+    s.wrap::<CssStyleSheet>(SheetData { owner: SheetOwner::Constructed(sheet), disabled: Cell::new(false) }, Some(key))
 }
 
 fn constructed_wrapper<'s>(s: &Scope<'s>, c: &Rc<Constructed>) -> JsResult<Object<'s>> {
     if let Some(o) = s.lookup_identity(c.identity) {
         return Ok(o);
     }
-    s.wrap::<CssStyleSheet>(SheetData { owner: SheetOwner::Constructed(c.clone()) }, Some(c.identity))
+    s.wrap::<CssStyleSheet>(SheetData { owner: SheetOwner::Constructed(c.clone()), disabled: Cell::new(false) }, Some(c.identity))
 }
 
 pub struct SheetData {
     owner: SheetOwner,
+    /// pyro: this sheet object's own `disabled` flag, which it keeps once its node has another
+    /// sheet object (Chrome: the old object still reads what it was set to, and toggles nothing).
+    disabled: Cell<bool>,
+}
+
+/// pyro: clears `node`'s `disabled` flag in the style engine when the sheet object that set it is
+/// no longer the node's (a repointed link applied another response, a `<style>` block was
+/// updated): a new sheet object starts with its disabled flag unset.
+pub fn renew_sheet_disabled(page: &PageDom, node: NodeId) {
+    let set_by = page.disabled_by.borrow().get(&node).copied();
+    if set_by.is_some_and(|g| g != SheetGeneration::now(page, node)) {
+        page.disabled_by.borrow_mut().remove(&node);
+        page.layout.borrow_mut().style_mut().set_sheet_disabled(node, false);
+    }
 }
 
 fn not_constructed(what: &str) -> JsError {
@@ -2293,9 +2307,16 @@ impl JsClass for StyleSheet {
             |s, sh| {
                 Ok(s.boolean(match &sh.owner {
                     SheetOwner::Constructed(c) => c.disabled.get(),
-                    // pyro: the current sheet object's flag; a detached one's is its own (false).
+                    // pyro: the current sheet object's flag is its node's in the style engine; a
+                    // detached object's is its own, as last set.
                     SheetOwner::Node(h, generation) => {
-                        *generation == SheetGeneration::now(&h.page, h.id) && h.page.layout.borrow().style().sheet_disabled(h.id)
+                        if *generation == SheetGeneration::now(&h.page, h.id) {
+                            let disabled = h.page.layout.borrow().style().sheet_disabled(h.id);
+                            sh.disabled.set(disabled);
+                            disabled
+                        } else {
+                            sh.disabled.get()
+                        }
                     }
                 }))
             },
@@ -2310,8 +2331,14 @@ impl JsClass for StyleSheet {
                     // pyro: only the current sheet object of its node: a kept old one (a repointed
                     // link's, a replaced `<style>`'s) never disables its replacement.
                     SheetOwner::Node(h, generation) => {
+                        sh.disabled.set(v.to_bool());
                         if *generation == SheetGeneration::now(&h.page, h.id) {
-                            h.page.layout.borrow_mut().style_mut().set_sheet_disabled(h.id, v.to_bool())
+                            h.page.layout.borrow_mut().style_mut().set_sheet_disabled(h.id, v.to_bool());
+                            if v.to_bool() {
+                                h.page.disabled_by.borrow_mut().insert(h.id, *generation);
+                            } else {
+                                h.page.disabled_by.borrow_mut().remove(&h.id);
+                            }
                         }
                     }
                 }
@@ -2332,7 +2359,7 @@ impl JsClass for CssStyleSheet {
             let page = crate::target::page_of(s)?;
             let sheet = Constructed::new(&page, media, disabled);
             let key = sheet.identity;
-            s.wrap_new::<CssStyleSheet>(SheetData { owner: SheetOwner::Constructed(sheet) }, nt, Some(key))
+            s.wrap_new::<CssStyleSheet>(SheetData { owner: SheetOwner::Constructed(sheet), disabled: Cell::new(false) }, nt, Some(key))
         });
         def.getter("ownerRule", |s, sh| match &sh.owner {
             SheetOwner::Constructed(c) => match &c.import {
@@ -2426,7 +2453,7 @@ fn sheet_wrapper<'s>(s: &Scope<'s>, page: &Rc<PageDom>, owner: NodeId) -> JsResu
     if let Some(o) = s.lookup_identity(key) {
         return Ok(o);
     }
-    s.wrap::<CssStyleSheet>(SheetData { owner: SheetOwner::Node(NodeHold::new(page, owner)?, SheetGeneration::now(page, owner)) }, Some(key))
+    s.wrap::<CssStyleSheet>(SheetData { owner: SheetOwner::Node(NodeHold::new(page, owner)?, SheetGeneration::now(page, owner)), disabled: Cell::new(false) }, Some(key))
 }
 
 pub(crate) fn element_sheet<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
@@ -2443,7 +2470,7 @@ fn sheet_object<'s>(s: &Scope<'s>, page: &Rc<PageDom>, owner: NodeId) -> JsResul
     if let Some(o) = s.lookup_identity(key) {
         return Ok(o.value());
     }
-    Ok(s.wrap::<CssStyleSheet>(SheetData { owner: SheetOwner::Node(NodeHold::new(page, owner)?, SheetGeneration::now(page, owner)) }, Some(key))?.value())
+    Ok(s.wrap::<CssStyleSheet>(SheetData { owner: SheetOwner::Node(NodeHold::new(page, owner)?, SheetGeneration::now(page, owner)), disabled: Cell::new(false) }, Some(key))?.value())
 }
 
 /// `document.styleSheets`: the sheets of the document's `<style>` elements

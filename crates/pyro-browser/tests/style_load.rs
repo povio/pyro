@@ -617,3 +617,28 @@ fn disabled_is_the_sheet_objects_and_keeps_its_rules() {
         "true|2|2"
     );
 }
+
+/// A new sheet object starts enabled: disable a link's sheet, repoint the link, and the
+/// replacement applies with `disabled` false, while the old object keeps reading what it was set
+/// to and toggles nothing; the same for a `<style>` whose text is replaced (Chrome; security
+/// review cycle 7, 2).
+#[test]
+fn a_new_sheet_object_starts_enabled() {
+    let (mut thread, page, loader) = setup("<link id=l rel=stylesheet href=a.css><style id=s>i { color: rgb(7, 8, 9) }</style><p id=p>p</p><i id=i>i</i>");
+    loader.insert("http://site.test/a.css", "text/css", "p { color: rgb(1, 2, 3) }", Duration::ZERO);
+    loader.insert("http://site.test/b.css", "text/css", "p { color: rgb(4, 5, 6) }", Duration::ZERO);
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    eval(&thread, page, "globalThis.old = document.getElementById('l').sheet; old.disabled = true; document.getElementById('l').href = 'b.css'; ''");
+    settle(&mut thread);
+    assert_eq!(
+        eval(&thread, page, "const l = document.getElementById('l'); const r = [old.disabled, l.sheet === old, l.sheet.disabled, getComputedStyle(p).color]; old.disabled = false; old.disabled = true; r.push(l.sheet.disabled, getComputedStyle(p).color); r.join('|')"),
+        "true|false|false|rgb(4, 5, 6)|false|rgb(4, 5, 6)"
+    );
+    eval(&thread, page, "globalThis.st = document.getElementById('s').sheet; st.disabled = true; document.getElementById('s').textContent = 'i { color: rgb(9, 9, 9) }'; ''");
+    settle(&mut thread);
+    assert_eq!(
+        eval(&thread, page, "[st.disabled, document.getElementById('s').sheet.disabled, getComputedStyle(document.getElementById('i')).color].join('|')"),
+        "true|false|rgb(9, 9, 9)"
+    );
+}
