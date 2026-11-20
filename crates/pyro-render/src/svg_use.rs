@@ -137,10 +137,11 @@ pub(crate) fn is_external_image(href: &str) -> bool {
 }
 
 /// The bytes at `address`, through `fetcher` (waits up to `timeout`).
-fn fetch_bytes(fetcher: &Arc<dyn Fetcher>, address: &str, timeout: Duration) -> Result<Vec<u8>, String> {
+fn fetch_image(fetcher: &Arc<dyn Fetcher>, address: &str, timeout: Duration) -> Result<crate::Fetched, String> {
     let (tx, rx) = mpsc::channel();
-    fetcher.fetch(
+    fetcher.fetch_final(
         address.to_owned(),
+        &crate::FetchOptions::default().for_destination(blitz_traits::net::Destination::Image),
         Box::new(move |result| {
             let _ = tx.send(result);
         }),
@@ -152,13 +153,10 @@ fn fetch_bytes(fetcher: &Arc<dyn Fetcher>, address: &str, timeout: Duration) -> 
 /// the orientation, and decodes JPEGs unlike `<img>`; browsers turn the image unless
 /// `image-orientation: none`: WPT `feImage-orientation.tentative`, `svg-image-orientation-*`).
 fn jpeg_as_png(bytes: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
-    use image::ImageDecoder as _;
     if !bytes.starts_with(&[0xFF, 0xD8]) {
         return None;
     }
-    let mut decoder = image::codecs::jpeg::JpegDecoder::new(std::io::Cursor::new(bytes)).ok()?;
-    let orientation = decoder.orientation().unwrap_or(image::metadata::Orientation::NoTransforms);
-    let stored = image::DynamicImage::from_decoder(decoder).ok()?;
+    let (stored, orientation) = blitz_dom::net::decode_jpeg(bytes).ok()?;
     let png = |pixels: &image::DynamicImage| {
         let mut png = Vec::new();
         pixels.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).ok()?;
@@ -241,20 +239,19 @@ pub(crate) fn resolve_images(
         let data = match sources.get(&key) {
             Some(data) => data.clone(),
             None => {
-                let Ok(bytes) = fetch_bytes(fetcher, &key.1, timeout) else { continue };
-                if bytes.is_empty() || bytes.len() > MAX_BYTES {
-                    continue;
-                }
-                // A JPEG is left out for now: drawn, WPT css-images
-                // `svg-image-orientation-aspect-ratio` differs from its reference (pre-rotated
-                // JPEGs) by more re-encoding noise than the page allows (1,888 px, 1,432 allowed).
-                if bytes.starts_with(&[0xFF, 0xD8]) {
+                let Ok(response) = fetch_image(fetcher, &key.1, timeout) else { continue };
+                if response.body.is_empty() || response.body.len() > MAX_BYTES {
                     continue;
                 }
                 if sources.len() >= 256 {
                     sources.clear();
                 }
-                let data = Arc::new(data_urls(&bytes));
+                let (turned, mut raw) = data_urls(&response.body);
+                if response.opaque || url.origin() != doc.url().origin()
+                    || url::Url::parse(&response.url).is_ok_and(|final_url| final_url.origin() != doc.url().origin()) {
+                    raw.clone_from(&turned);
+                }
+                let data = Arc::new((turned, raw));
                 sources.insert(key, data.clone());
                 data
             }
