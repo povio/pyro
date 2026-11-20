@@ -131,6 +131,24 @@ fn rects(p: &crate::hit_descent::Page, id: &str) -> Vec<[f64; 4]> {
 }
 
 #[test]
+fn button_columns_follow_the_inner_layout_role() {
+    for (display, count, spans) in [("table", 2, false), ("inline-table", 3, false), ("table", 2, true), ("inline", 2, false), ("flex", 2, false), ("grid", 2, false)] {
+        let span = if spans { "all" } else { "none" };
+        let p = page(&format!("<!doctype html><style>*{{margin:0}}button{{display:{display};appearance:none;columns:{count};column-fill:auto;width:100px;height:40px;padding:0;border:0;gap:0}}span{{display:block;height:20px}}#b{{column-span:{span}}}</style><button id=h><span id=a></span><span id=b></span><span id=c></span><span></span></button>"));
+        assert_eq!(rect(&p, "h")[3], 40.0, "{display}");
+        if display == "flex" || display == "grid" {
+            assert_eq!(rect(&p, "c")[0], 0.0, "{display}");
+        } else if spans {
+            assert_eq!(rect(&p, "b"), [0., 10., 100., 20.]);
+            assert_eq!(rects(&p, "c"), [[0., 30., 50., 10.], [50., 30., 50., 10.]]);
+        } else {
+            assert!((rect(&p, "c")[0] - 100. / f64::from(count)).abs() < 0.51);
+            assert_eq!(rect(&p, "c")[1], 0.0);
+        }
+    }
+}
+
+#[test]
 fn nested_layout_shares_the_wrapped_run_slots() {
     for (count, spans, nested, heights, heading) in [
         (3, true, true, &[28., 44.][..], 44.),

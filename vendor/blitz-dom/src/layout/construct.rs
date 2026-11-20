@@ -838,9 +838,7 @@ fn collect_layout_children_with_wrap(
         return;
     }
 
-    if super::multicol::uses_anonymous_content_box(&doc.nodes[container_node_id])
-        && doc.nodes[container_node_id].primary_styles().is_some_and(|style| super::multicol::is_multicol_style(&style))
-    {
+    if super::multicol::has_multicol_content_box(&doc.nodes[container_node_id]) {
         out.create_anonymous_block(container_node_id, doc);
         let wrapper = out.anonymous_block_id.take().unwrap();
         let mut children = ThinVec::new();

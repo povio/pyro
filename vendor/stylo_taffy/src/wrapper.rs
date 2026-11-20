@@ -104,7 +104,7 @@ impl<T: Deref<Target = ComputedValues>> TaffyStyloStyle<T> {
         let display = self.style.clone_display();
         if self.flags.contains(StyleFlags::IS_BUTTON_INPUT) {
             convert::button_input_display(display)
-        } else if self.flags.contains(StyleFlags::IS_FIELDSET) {
+        } else if self.flags.intersects(StyleFlags::IS_FIELDSET | StyleFlags::IS_BUTTON) {
             convert::fieldset_display(display)
         } else {
             display

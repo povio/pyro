@@ -1778,11 +1778,11 @@ impl LayoutPassState<'_> {
                     // pyro: `column-fill: auto` under a `max-height` fills the columns in turn up
                     // to it (Chromium; WPT css-multicol `columnfill-auto-max-height-*`).
                     max.min((breaks.end - breaks.start).max(0.0))
-                } else if fill_auto && part == spanners.len() {
+                } else if matches!(multicol.fill, ColumnFill::Auto) && part == spanners.len() && limit.is_some() {
                     // pyro: `column-fill: auto` fills the columns after the last spanner to the
                     // end of the container's height, unbalanced (only content followed by a
                     // spanner is balanced; WPT css-multicol `no-balancing-after-column-span`).
-                    definite_height.map_or(0.0, |height| (height - (row_top - content_top)).max(0.0))
+                    limit.map_or(0.0, |height| (height - (row_top - content_top)).max(0.0))
                 } else {
                     // pyro: a run between or after spanners balances within what is left of a
                     // definite height (css-multicol-1 § 7.2: the columns after a spanner fit
@@ -2374,7 +2374,13 @@ pub(crate) fn is_multicol_node(node: &Node) -> bool {
 }
 
 pub(crate) fn uses_anonymous_content_box(node: &Node) -> bool {
-    node.data.downcast_element().is_some_and(|element| element.name == crate::qual_name!("button", html))
+    !node.is_anonymous() && node.data.downcast_element().is_some_and(|element| element.name == crate::qual_name!("button", html))
+}
+
+pub(crate) fn has_multicol_content_box(node: &Node) -> bool {
+    uses_anonymous_content_box(node) && node.primary_styles().is_some_and(|style| {
+        style.get_column().is_multicol() && !matches!(style.clone_display().inside(), DisplayInside::Flex | DisplayInside::Grid | DisplayInside::None | DisplayInside::Contents)
+    })
 }
 
 impl Node {

@@ -1369,7 +1369,7 @@ impl Node {
         Some(
             if self.element_data().is_some_and(|el| el.is_button_input()) {
                 stylo_taffy::convert::button_input_display(display)
-            } else if self.is_fieldset() {
+            } else if self.is_fieldset() || crate::layout::multicol::uses_anonymous_content_box(self) {
                 stylo_taffy::convert::fieldset_display(display)
             } else {
                 display
@@ -2460,9 +2460,8 @@ impl Node {
     /// The node's `display` as a [`taffy::Display`]. Returns [`taffy::Display::Block`]
     /// for nodes without computed styles (e.g. text nodes).
     pub fn taffy_display(&self) -> taffy::Display {
-        self.primary_styles()
-            .map(|style| {
-                let display = style.clone_display();
+        self.display_style()
+            .map(|display| {
                 if self.element_data().is_some_and(|el| el.is_button_input())
                     && !matches!(
                         display.inside(),

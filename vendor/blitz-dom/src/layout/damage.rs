@@ -249,7 +249,7 @@ impl BaseDocument {
 
         // Reconstruction replaces the anonymous boxes with freshly styled ones.
         if !own_damage.is_empty() && super::multicol::uses_anonymous_content_box(&self.nodes[node_id])
-            && (self.nodes[node_id].primary_styles().is_some_and(|style| super::multicol::is_multicol_style(&style))
+            && (super::multicol::has_multicol_content_box(&self.nodes[node_id])
                 || self.nodes[node_id].anonymous_blocks.iter().any(|&id| self.nodes.get(id).is_some_and(super::multicol::is_multicol_node)))
         {
             damage.insert(CONSTRUCT_FC);
