@@ -143,6 +143,7 @@ thread_local! {
     static MEASURED_FRAGMENTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// pyro: the fragments rect mapping visited (tests: a rect visits the fragments it reaches).
     static MAPPED_FRAGMENTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static SPANNER_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 /// pyro: how many extra strip layouts the multi-column containers of one layout pass make to
 /// fragment the ones nested in them (`LayoutPassState::nested_pass_budget`): nesting multiplies
@@ -555,7 +556,7 @@ impl Breaks {
             let limit = self.trimmed_limit(start + height);
             // pyro: a forced break before the column's end ends it there.
             let forced = (run.columns.len() + 1 < max_columns)
-                .then(|| self.forced.iter().copied().find(|&f| f > start + EPSILON && f < to - EPSILON))
+                .then(|| self.forced.get(self.forced.partition_point(|&f| f <= start + EPSILON)).copied().filter(|&f| f < to - EPSILON))
                 .flatten();
             if let Some(f) = forced.filter(|&f| f <= limit.max(start + height) + EPSILON) {
                 run.columns.push((start, f));
@@ -2084,16 +2085,16 @@ impl LayoutPassState<'_> {
     /// floor changed.
     fn update_spanner_floors(&mut self, container: crate::NodeId) -> bool {
         let mut changed = false;
-        for (id, parent_offset) in self.doc.column_spanners_of(container) {
-            let before = self.doc.content_bottom_before(container, id);
+        let mut cleared = std::collections::HashSet::new();
+        for (id, parent_y, before, _) in self.doc.spanner_neighbors(container) {
             let layout = *self.nodes[id].unrounded_layout();
             // (A negative top margin pulls it back up over that content: Chromium; WPT
             // css-multicol `multicol-span-all-children-height-010`.)
-            let current_top = parent_offset.y + layout.location.y - layout.margin.top;
+            let current_top = parent_y + layout.location.y - layout.margin.top;
             let existing = self.spanner_floors.get(&id).copied();
             // The least top of its border box in its parent's coordinates.
             let wanted = (before > current_top + 0.5 || existing.is_some())
-                .then(|| before + layout.margin.top - parent_offset.y)
+                .then(|| before + layout.margin.top - parent_y)
                 .filter(|&floor| floor > layout.location.y - 0.5 || existing.is_some());
             let same = match (existing, wanted) {
                 (None, None) => true,
@@ -2110,7 +2111,7 @@ impl LayoutPassState<'_> {
             changed = true;
             use taffy::CacheTree as _;
             let mut at = Some(id);
-            while let Some(node) = at.filter(|&n| n != container) {
+            while let Some(node) = at.filter(|&n| n != container && cleared.insert(n)) {
                 self.cache_clear(crate::taffy_node_id(node));
                 at = self.nodes[node].layout_parent.get();
             }
@@ -2438,47 +2439,38 @@ impl BaseDocument {
         false
     }
 
-    /// pyro: how far down `container`'s strip the content before spanner `spanner` reaches
-    /// (container coordinates): the boxes before it in the flow and what overflows them, not the
-    /// boxes it is in (their own size), nor out-of-flow boxes.
-    fn content_bottom_before(&self, container: crate::NodeId, spanner: crate::NodeId) -> f32 {
-        let mut path = Vec::new();
-        let mut at = self.nodes[spanner].layout_parent.get();
-        while let Some(node) = at.filter(|&n| n != container) {
-            path.push(node);
-            at = self.nodes[node].layout_parent.get();
-        }
-        let mut bottom = f32::NEG_INFINITY;
-        let mut parent = container;
-        let mut top = 0.0f32;
-        // Down the path to the spanner: at each level the children before the next box on it.
-        for next in path.iter().rev().copied().chain(std::iter::once(spanner)) {
-            let children = self.nodes[parent].layout_children.borrow();
-            for &child_id in children.iter().flatten() {
-                if child_id == next {
-                    break;
+    fn spanner_neighbors(&self, container: crate::NodeId) -> Vec<(crate::NodeId, f32, f32, f32)> {
+        fn visit(doc: &BaseDocument, parent: crate::NodeId, top: f32, mut bottom: f32, depth: usize, out: &mut Vec<(crate::NodeId, f32, f32, f32)>) {
+            let mut previous: Option<usize> = None;
+            for &id in doc.nodes[parent].layout_children.borrow().iter().flatten() {
+                #[cfg(test)]
+                SPANNER_VISITS.with(|work| work.set(work.get() + 1));
+                let node = &doc.nodes[id];
+                if node.is_out_of_flow() { continue; }
+                let Some(style) = node.primary_styles() else { continue };
+                if style.get_box().display.is_none() { continue; }
+                let spanner = is_spanner_style(&style);
+                let layout = node.unrounded_layout();
+                if let Some(index) = previous.take() {
+                    if !spanner {
+                        let margin = doc.nodes[out[index].0].unrounded_layout().margin.bottom;
+                        out[index].3 = margin.max(0.0).min(layout.margin.top.max(0.0));
+                    }
                 }
-                let child = &self.nodes[child_id];
-                if child.is_out_of_flow() || child.primary_styles().is_none_or(|s| s.get_box().display.is_none()) {
-                    continue;
-                }
-                let layout = child.unrounded_layout();
                 let child_top = top + layout.location.y;
-                // (Its border box, less a negative bottom margin, and its overflow: positive
-                // margins collapse with the spanner's; WPT css-multicol `spanner-fragmentation-007`.)
-                // (A spanner before it: its own box only, Chromium; `spanner-fragmentation-004`.)
-                let overflow = if self.is_column_spanner_of(container, child_id) {
-                    0.0
-                } else {
-                    layout.scrollable_overflow_rect.bottom().abs()
-                };
+                if spanner {
+                    previous = Some(out.len());
+                    out.push((id, top, bottom, 0.0));
+                } else if depth < 64 && doc.column_span_styles && doc.carries_spanners(id) {
+                    visit(doc, id, child_top, bottom, depth + 1, out);
+                }
+                let overflow = if spanner { 0.0 } else { layout.scrollable_overflow_rect.bottom().abs() };
                 bottom = bottom.max(child_top + (layout.size.height + layout.margin.bottom.min(0.0)).max(overflow));
             }
-            drop(children);
-            top += self.nodes[next].unrounded_layout().location.y;
-            parent = next;
         }
-        bottom
+        let mut out = Vec::new();
+        visit(self, container, 0.0, f32::NEG_INFINITY, 0, &mut out);
+        out
     }
 
     /// pyro: whether box `id` carries spanners of multi-column container `container` (it is below
@@ -2703,28 +2695,7 @@ impl BaseDocument {
     /// spanner show it, as margins do not collapse across a spanner's row (Chromium; WPT
     /// css-multicol `multicol-span-all-margin-bottom-001`).
     fn column_spanner_leads(&self, container: crate::NodeId) -> Vec<f32> {
-        self.column_spanners_of(container)
-            .into_iter()
-            .map(|(id, _)| {
-                let node = &self.nodes[id];
-                let Some(parent) = node.layout_parent.get() else { return 0.0 };
-                let children = self.nodes[parent].layout_children.borrow();
-                let Some(children) = children.as_deref() else { return 0.0 };
-                let Some(at) = children.iter().position(|&c| c == id) else { return 0.0 };
-                let next = children[at + 1..].iter().map(|&c| &self.nodes[c]).find(|c| {
-                    !c.is_out_of_flow() && c.primary_styles().is_some_and(|s| !s.get_box().display.is_none())
-                });
-                match next {
-                    Some(next) if next.primary_styles().is_some_and(|s| !is_spanner_style(&s)) => next
-                        .unrounded_layout()
-                        .margin
-                        .top
-                        .max(0.0)
-                        .min(node.unrounded_layout().margin.bottom.max(0.0)),
-                    _ => 0.0,
-                }
-            })
-            .collect()
+        self.spanner_neighbors(container).into_iter().map(|(_, _, _, lead)| lead).collect()
     }
 
     /// Where the strip of the multi-column container `container` may break, from its laid-out
@@ -3498,6 +3469,24 @@ mod tests {
 
     fn spanners(n: usize) -> Vec<Div> {
         (0..n).map(|_| div("column-span:all;height:1px", vec![])).collect()
+    }
+
+    #[test]
+    fn spanner_neighbor_work_scales_with_siblings() {
+        let work = |count, columns, heading_first| {
+            let children = (0..count * 2).map(|index| if (index % 2 == 0) == heading_first {
+                div("column-span:all;height:1px", vec![])
+            } else { div("height:10px", vec![]) }).collect();
+            SPANNER_VISITS.with(|visits| visits.set(0));
+            let doc = laid_out(vec![div(&format!("width:120px;columns:{columns};gap:0"), children)]);
+            assert!(!fragment_counts(&doc).is_empty());
+            SPANNER_VISITS.with(|visits| visits.get())
+        };
+        for (columns, first) in [(2, false), (3, false), (2, true)] {
+            let small = work(1000, columns, first);
+            let large = work(4000, columns, first);
+            assert!(small >= 2000 && large >= 8000 && large <= small * 4 + 16, "{small} -> {large}");
+        }
     }
 
     /// pyro: a stacking context hoisted out of a multi-column container that is none (a `z-index`
