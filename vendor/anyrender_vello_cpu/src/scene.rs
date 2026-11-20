@@ -444,13 +444,7 @@ impl PaintScene for VelloCpuScenePainter {
     }
 
     fn push_clip_layer(&mut self, fill: Fill, transform: Affine, clip: &impl Shape) {
-        let path = clip.into_path(DEFAULT_TOLERANCE);
-        let (clip, transform) = if let Some(rect) = device_rect(&path, transform) {
-            let snap_y = |value: f64| (value * 4.0).round() * 0.25;
-            (Rect::new(rect.x0, snap_y(rect.y0), rect.x1, snap_y(rect.y1)).to_path(DEFAULT_TOLERANCE), Affine::IDENTITY)
-        } else {
-            device_path(path, transform, self.raster_bounds())
-        };
+        let (clip, transform) = device_path(clip.into_path(DEFAULT_TOLERANCE), transform, self.raster_bounds());
         self.render_ctx.set_transform(transform);
         self.render_ctx.set_fill_rule(fill);
         self.render_ctx.push_clip_layer(&clip);
@@ -1541,7 +1535,7 @@ mod clip_rule_tests {
     }
 
     #[test]
-    fn rectangular_clip_coverage_uses_device_scanlines() {
+    fn rectangular_clip_preserves_fractional_device_coverage() {
         let render = |top: f64| {
             render_to_buffer::<VelloCpuImageRenderer, _>(|scene| {
                 let path = Rect::new(5.0, top, 40.0, 24.0);
@@ -1550,8 +1544,10 @@ mod clip_rule_tests {
                 scene.pop_layer();
             }, 100, 100)
         };
-        assert_eq!(render(5.09), render(5.14));
-        assert_ne!(render(5.09), render(5.22));
+        let edge_alpha = |top| render(top)[(10 * 100 + 12) * 4 + 3];
+        assert!(edge_alpha(5.0) > edge_alpha(5.05));
+        assert!(edge_alpha(5.05) > edge_alpha(5.09));
+        assert!(edge_alpha(5.09) > edge_alpha(5.14));
     }
 
     #[test]

@@ -4670,7 +4670,7 @@ index 0000000..be15ba9
 +    }
 +}
 diff --git a/src/scene.rs b/src/scene.rs
-index 1b09a33..0418f07 100644
+index 1b09a33..057ce4f 100644
 --- a/src/scene.rs
 +++ b/src/scene.rs
 @@ -1,19 +1,322 @@
@@ -5069,7 +5069,7 @@ index 1b09a33..0418f07 100644
      }
  
      fn push_layer(
-@@ -77,40 +425,44 @@ impl PaintScene for VelloCpuScenePainter {
+@@ -77,40 +425,38 @@ impl PaintScene for VelloCpuScenePainter {
          alpha: f32,
          transform: Affine,
          clip: &impl Shape,
@@ -5106,13 +5106,7 @@ index 1b09a33..0418f07 100644
      }
  
      fn push_clip_layer(&mut self, fill: Fill, transform: Affine, clip: &impl Shape) {
-+        let path = clip.into_path(DEFAULT_TOLERANCE);
-+        let (clip, transform) = if let Some(rect) = device_rect(&path, transform) {
-+            let snap_y = |value: f64| (value * 4.0).round() * 0.25;
-+            (Rect::new(rect.x0, snap_y(rect.y0), rect.x1, snap_y(rect.y1)).to_path(DEFAULT_TOLERANCE), Affine::IDENTITY)
-+        } else {
-+            device_path(path, transform, self.raster_bounds())
-+        };
++        let (clip, transform) = device_path(clip.into_path(DEFAULT_TOLERANCE), transform, self.raster_bounds());
          self.render_ctx.set_transform(transform);
          self.render_ctx.set_fill_rule(fill);
 -        self.render_ctx
@@ -5131,7 +5125,7 @@ index 1b09a33..0418f07 100644
      }
  
      fn stroke<'a>(
-@@ -121,14 +473,36 @@ impl PaintScene for VelloCpuScenePainter {
+@@ -121,14 +467,36 @@ impl PaintScene for VelloCpuScenePainter {
          brush_transform: Option<Affine>,
          shape: &impl Shape,
      ) {
@@ -5176,7 +5170,7 @@ index 1b09a33..0418f07 100644
      }
  
      fn fill<'a>(
-@@ -139,14 +513,15 @@ impl PaintScene for VelloCpuScenePainter {
+@@ -139,14 +507,15 @@ impl PaintScene for VelloCpuScenePainter {
          brush_transform: Option<Affine>,
          shape: &impl Shape,
      ) {
@@ -5197,7 +5191,7 @@ index 1b09a33..0418f07 100644
      }
  
      fn draw_glyphs<'a, 's: 'a>(
-@@ -163,6 +538,24 @@ impl PaintScene for VelloCpuScenePainter {
+@@ -163,6 +532,24 @@ impl PaintScene for VelloCpuScenePainter {
          glyph_transform: Option<Affine>,
          glyphs: impl Iterator<Item = anyrender::Glyph> + Clone,
      ) {
@@ -5222,7 +5216,7 @@ index 1b09a33..0418f07 100644
          self.render_ctx.set_transform(transform);
          let paint = self.convert_paint(paint.into());
          self.render_ctx.set_paint(paint);
-@@ -177,13 +570,15 @@ impl PaintScene for VelloCpuScenePainter {
+@@ -177,13 +564,15 @@ impl PaintScene for VelloCpuScenePainter {
                      .font_size(font_size)
                      .hint(hint)
                      .normalized_coords(normalized_coords)
@@ -5244,7 +5238,7 @@ index 1b09a33..0418f07 100644
              }
              StyleRef::Stroke(stroke) => {
                  self.render_ctx.set_stroke(stroke.clone());
-@@ -194,13 +589,10 @@ impl PaintScene for VelloCpuScenePainter {
+@@ -194,13 +583,10 @@ impl PaintScene for VelloCpuScenePainter {
                      .hint(hint)
                      .normalized_coords(normalized_coords)
                      .glyph_transform(glyph_transform.unwrap_or_default())
@@ -5260,7 +5254,7 @@ index 1b09a33..0418f07 100644
      }
      fn draw_box_shadow(
          &mut self,
-@@ -216,6 +608,877 @@ impl PaintScene for VelloCpuScenePainter {
+@@ -216,6 +602,877 @@ impl PaintScene for VelloCpuScenePainter {
          self.render_ctx
              .fill_blurred_rounded_rect(&rect, radius as f32, std_dev as f32, false);
      }
@@ -6138,12 +6132,12 @@ index 1b09a33..0418f07 100644
  }
  
  #[cfg(test)]
-@@ -277,6 +1540,20 @@ mod clip_rule_tests {
+@@ -277,6 +1534,22 @@ mod clip_rule_tests {
          }
      }
  
 +    #[test]
-+    fn rectangular_clip_coverage_uses_device_scanlines() {
++    fn rectangular_clip_preserves_fractional_device_coverage() {
 +        let render = |top: f64| {
 +            render_to_buffer::<VelloCpuImageRenderer, _>(|scene| {
 +                let path = Rect::new(5.0, top, 40.0, 24.0);
@@ -6152,14 +6146,16 @@ index 1b09a33..0418f07 100644
 +                scene.pop_layer();
 +            }, 100, 100)
 +        };
-+        assert_eq!(render(5.09), render(5.14));
-+        assert_ne!(render(5.09), render(5.22));
++        let edge_alpha = |top| render(top)[(10 * 100 + 12) * 4 + 3];
++        assert!(edge_alpha(5.0) > edge_alpha(5.05));
++        assert!(edge_alpha(5.05) > edge_alpha(5.09));
++        assert!(edge_alpha(5.09) > edge_alpha(5.14));
 +    }
 +
      #[test]
      fn clip_layers_respect_fill_rule() {
          assert_pixels(false, false);
-@@ -292,4 +1569,314 @@ mod clip_rule_tests {
+@@ -292,4 +1565,314 @@ mod clip_rule_tests {
          assert_pixels(false, true);
          assert_pixels(true, true);
      }

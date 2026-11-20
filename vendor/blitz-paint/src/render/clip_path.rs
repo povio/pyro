@@ -382,10 +382,13 @@ impl ElementCx<'_, '_> {
                 let right = resolve_lp(&inset_rect.rect.1, w);
                 let bottom = resolve_lp(&inset_rect.rect.2, h);
                 let left = resolve_lp(&inset_rect.rect.3, w);
-                let rect = Rect::new(ox + left, oy + top, ox + w - right, oy + h - bottom);
-                if !(rect.x1 > rect.x0 && rect.y1 > rect.y0) {
+                let unit = |value: f64| (value * 64.0).round() / 64.0;
+                let width = unit(w - left - right);
+                let height = unit(h - top - bottom);
+                if !(width > 0.0 && height > 0.0) {
                     return ElementClip::Nothing;
                 }
+                let rect = Rect::from_origin_size((ox + unit(left), oy + unit(top)), (width, height));
                 // `round`: corner radii as `border-radius` gives them, percentages of the
                 // reference box, shrunk together when they overlap.
                 let radii = resolve_radii(&inset_rect.round, w, h);
