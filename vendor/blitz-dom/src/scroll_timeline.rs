@@ -156,6 +156,12 @@ pub fn timeline_ranges(
         Some(subject) => {
             let n = doc.get_node(subject)?;
             n.primary_styles()?;
+            // pyro: a subject that generates no box (`display: none`) makes the view timeline
+            // inactive (Scroll-driven Animations § 4.2; WPT scroll-animations
+            // `css/view-timeline-dynamic`), not one measured from its stale layout.
+            if !n.has_boxes() {
+                return None;
+            }
             let source = nearest_scroll_container(doc, n);
             let vertical = vertical(n, axis);
             let lp = |v: InsetValue| match v {

@@ -49496,7 +49496,7 @@ diff --git a/packages/blitz-dom/src/scroll_timeline.rs b/packages/blitz-dom/src/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/scroll_timeline.rs
-@@ -0,0 +1,508 @@
+@@ -0,0 +1,514 @@
 +//! pyro: scroll-driven animations (CSS Scroll-driven Animations 1). An animation whose
 +//! `animation-timeline` is `scroll()`, `view()` or a timeline name takes its progress from a scroll
 +//! position, not from time: this module resolves the timeline (its scroll container, axis and, for a
@@ -49655,6 +49655,12 @@ new file mode 100644
 +        Some(subject) => {
 +            let n = doc.get_node(subject)?;
 +            n.primary_styles()?;
++            // pyro: a subject that generates no box (`display: none`) makes the view timeline
++            // inactive (Scroll-driven Animations § 4.2; WPT scroll-animations
++            // `css/view-timeline-dynamic`), not one measured from its stale layout.
++            if !n.has_boxes() {
++                return None;
++            }
 +            let source = nearest_scroll_container(doc, n);
 +            let vertical = vertical(n, axis);
 +            let lp = |v: InsetValue| match v {
