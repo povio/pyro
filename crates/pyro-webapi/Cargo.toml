@@ -18,6 +18,8 @@ test-hooks = []
 aes = "0.8"
 aes-kw = { version = "0.2", features = ["alloc"] }
 base64 = "0.23.1"
+# The same RFC 7932 decoder already linked by pyro-net.
+brotli-decompressor = "6.1.0"
 bytes = "1"
 cssparser = "0.38"
 data-url = "0.3.2"
