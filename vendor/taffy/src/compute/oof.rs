@@ -539,8 +539,9 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
                 if order.is_none() { break; }
             }
         }
-        if order.is_some() || best.is_none() { tree.set_position_try_option(candidate.node, best.and_then(|(option,_)| option)); }
-        tree.record_fitting_option(candidate.node, best.and_then(|(option,_)| option));
+        let chosen = best.map_or(preferred, |(option,_)| option);
+        if order.is_some() || best.is_none() { tree.set_position_try_option(candidate.node, chosen); }
+        tree.record_fitting_option(candidate.node, chosen);
     }
     let result = solve_oof_box(tree, candidate, anchor_container, area_size, area_offset, direction, container_overflow,
         #[cfg(feature = "grid")] grid_owner, false, before_layout).ok().unwrap();

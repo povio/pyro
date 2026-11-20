@@ -2469,6 +2469,7 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
 
     fn uses_anchor_queries(&self,id: NodeId) -> bool { self.node_from_id(id).flags.contains(NodeFlags::ANCHOR_QUERIES) }
     fn preferred_scroll_option(&self, id: NodeId, container: NodeId) -> Option<usize> {
+        if let Some(index) = self.anchor_rendered_options.get(&dom_node_id(id)) { return Some(*index); }
         if !self.anchor_scroll_dirty.contains(&dom_node_id(container)) { return None; }
         let (index, previous) = self.anchor_last_option.get(&dom_node_id(id))?;
         let current = self.node_from_id(id).primary_styles()?;
@@ -2490,6 +2491,7 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
     fn record_fitting_option(&mut self, id: NodeId, option: Option<usize>) {
         let id = dom_node_id(id);
         self.doc.anchor_flush_choices.insert(id, option);
+        if option != self.doc.anchor_rendered_options.get(&id).copied() { self.doc.anchor_pending_options.insert(id); }
         if let Some(index) = option {
             let style = self.nodes[id].primary_styles().map(|style| (*style).clone());
             if let Some(style) = style { self.doc.anchor_last_option.insert(id,(index,style)); }

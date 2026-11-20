@@ -136,7 +136,7 @@ impl BaseDocument {
             }
             let (options,visibility,out_of_flow,queries) = self.nodes[node_id].primary_styles().map_or((false,false,false,false),|style| {
                 let pos = style.get_position();
-                let positioned = style.get_box().position.is_absolutely_positioned();
+                let positioned = style.get_box().position.is_absolutely_positioned() && !style.get_box().display.is_none();
                 (!pos.position_try_fallbacks.value.is_none(),pos.position_visibility.contains(style::values::computed::PositionVisibility::NO_OVERFLOW),positioned,positioned && Self::uses_anchor_queries(&style))
             });
             let node = &mut self.nodes[node_id];

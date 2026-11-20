@@ -358,6 +358,28 @@ fn visibility_chain_is_solved_once_per_geometry_generation() {
 }
 
 #[test]
+fn only_rendered_fallback_is_remembered_on_resize() {
+    for rendered in [false,true] {
+        let html = "<!doctype html><style>main{position:relative;width:100px;height:100px}b{position:absolute;left:120px;top:0;width:10px;height:10px;position-try-fallbacks:--fit}@position-try --fit{left:40px}</style><main><b></b></main>";
+        let mut doc = blitz_html::HtmlDocument::from_html(html, Default::default());
+        doc.viewport_mut().window_size = (400,300);
+        doc.resolve(0.0);
+        let main = doc.query_selector("main").unwrap().unwrap();
+        let target = doc.query_selector("b").unwrap().unwrap();
+        assert_eq!(doc.get_node(target).unwrap().final_layout().location.x,40.);
+        if rendered { doc.commit_anchor_frame(); }
+        for (width,sync_x) in [(30,120.),(90,40.),(170,120.),(30,120.)] {
+            doc.set_style_property(main,"width",&format!("{width}px"));
+            doc.resolve(0.0);
+            assert_eq!(doc.get_node(target).unwrap().final_layout().location.x,if rendered {40.} else {sync_x});
+        }
+        doc.set_style_property(target,"position-try-fallbacks","--fit, --other");
+        doc.resolve(0.0);
+        assert_eq!(doc.get_node(target).unwrap().final_layout().location.x,120.);
+    }
+}
+
+#[test]
 fn forced_layouts_at_one_frame_time_get_fresh_fallback_budgets() {
     let html = "<!doctype html><style>main{position:relative;width:100px;height:100px}i{display:block;position:relative;anchor-name:--a;width:10px;height:10px}b{position:absolute;position-anchor:--a;top:anchor(bottom);height:20px;width:5px;position-try-fallbacks:--up}@position-try --up{top:auto;bottom:anchor(top)}</style><main><i></i><b></b></main>";
     let mut doc = blitz_html::HtmlDocument::from_html(html, blitz_dom::DocumentConfig::default());

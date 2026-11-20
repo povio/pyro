@@ -1498,6 +1498,7 @@ impl Renderer {
             }
         }
         let (doc, clip, mut transitions) = self.prepare(snap, fetcher, &mut fresh, &mut timings, true)?;
+        doc.commit_anchor_frame();
 
         let t = Instant::now();
         // A persistent document keeps the scroll of its last capture; only
@@ -2219,6 +2220,7 @@ impl Renderer {
     /// `content-visibility-vs-scrollIntoView-002`). Whether anything was forced.
     pub fn content_visibility_frame(&mut self, page: u64) -> bool {
         let Some(m) = self.mirrors.get_mut(&page) else { return false };
+        m.doc.commit_anchor_frame();
         // (Also when the page scrolled since relevance was last determined: nothing else lays the
         // document out for a scroll alone. The time is the mirror's, 0: animations are sampled in.)
         if !m.doc.has_content_visibility_forcing() && !m.doc.content_visibility_stale() {

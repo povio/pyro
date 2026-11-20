@@ -679,6 +679,8 @@ pub struct BaseDocument {
     pub(crate) anchor_scroll_dirty: HashSet<NodeId>,
     pub(crate) anchor_last_option: HashMap<NodeId, (usize, style::servo_arc::Arc<style::properties::ComputedValues>)>,
     pub(crate) anchor_flush_choices: HashMap<NodeId, Option<usize>>,
+    pub(crate) anchor_rendered_options: HashMap<NodeId, usize>,
+    pub(crate) anchor_pending_options: HashSet<NodeId>,
     /// pyro: an element styled with a `scroll-marker-group` that names a side, or with
     /// `scroll-target-group: auto` (sticky).
     pub(crate) scroll_marker_groups: bool,
@@ -1013,6 +1015,8 @@ impl BaseDocument {
             anchor_scroll_dirty: Default::default(),
             anchor_last_option: Default::default(),
             anchor_flush_choices: Default::default(),
+            anchor_rendered_options: Default::default(),
+            anchor_pending_options: Default::default(),
             scroll_marker_groups: false,
             scroll_pseudo_owners: Default::default(),
             transition_trees: None,
@@ -1493,6 +1497,8 @@ impl BaseDocument {
         }
         self.anchor_transform_dirty.remove(&node_id);
         self.anchor_last_option.remove(&node_id);
+        self.anchor_rendered_options.remove(&node_id);
+        self.anchor_pending_options.remove(&node_id);
         self.anchor_scroll_dirty.remove(&node_id);
         if let Some(blocks) = self.anchor_try_scrollports.remove(&Some(node_id)) {
             for block in blocks { if let Some(sources) = self.anchor_try_sources.get_mut(&block) { sources.remove(&Some(node_id)); } }
@@ -1546,6 +1552,9 @@ impl BaseDocument {
         if rules.is_none() && self.anchor_user_rules.is_empty() { return; }
         if self.anchor_user_rules.get(&id).map(|list| list.0.as_ptr()) == rules.as_ref().map(|list| list.0.as_ptr()) { return; }
         if let Some(old) = self.anchor_user_rules.remove(&id) {
+            self.anchor_rendered_options.remove(&id);
+            self.anchor_last_option.remove(&id);
+            self.anchor_pending_options.remove(&id);
             let key = old.0.as_ptr() as usize;
             if let Some(users) = self.anchor_list_users.get_mut(&key) {
                 users.remove(&id);
@@ -1581,11 +1590,20 @@ impl BaseDocument {
                     if let Some(node) = self.nodes.get(*id).filter(|node| node.flags.is_in_document()) {
                         blocks.extend(node.containing_block());
                         self.anchor_last_option.remove(id);
+                        self.anchor_rendered_options.remove(id);
+                        self.anchor_pending_options.remove(id);
                     }
                 }
             }
         }
         for id in blocks { self.nodes[id].insert_damage(crate::layout::damage::ONLY_RELAYOUT); }
+    }
+    pub fn commit_anchor_frame(&mut self) {
+        if self.anchor_pending_options.is_empty() { return; }
+        for id in self.anchor_pending_options.drain() {
+            if let Some((index,_)) = self.anchor_last_option.get(&id) { self.anchor_rendered_options.insert(id,*index); }
+            else { self.anchor_rendered_options.remove(&id); }
+        }
     }
     pub fn anchor_index_work(&self) -> u64 { self.anchor_index.borrow().work.get() }
     pub fn anchor_boundary_entries(&self) -> usize { self.anchor_index.borrow().boundary_entries() }
