@@ -161,6 +161,12 @@ pub fn realm_page(scope: &pyro_js::Scope<'_>) -> Option<PageId> {
 /// Frame keys of one page without a heap allocation for up to four frames.
 pub type FrameKeys = smallvec::SmallVec<[FrameKey; 4]>;
 
+enum InitialIframeLoad {
+    Navigate,
+    Suppressed,
+    Blank { url: url::Url, explicit: bool },
+}
+
 pub(crate) struct FrameHost {
     pub children: RefCell<BTreeMap<u64, DocumentState>>,
     pub root: RefCell<Frame>,
@@ -737,6 +743,7 @@ impl FrameHost {
                 main_frame: frame,
                 nav: nav.clone(),
                 pending_loader: None,
+                pending_frame_attributes: 0,
                 pending_cancel: None,
                 pending_script: None,
                 load: None,
@@ -751,6 +758,9 @@ impl FrameHost {
         self.emit(PageEvent::FrameChildFrameCreated { parent: ancestor.id, frame_id: fid.clone() });
         let result = (|| {
             let dom = bindings::create(self, key, "about:blank", &lid)?;
+            // The initial empty Document is already complete, including during
+            // the interval before a non-blank src commits.
+            dom.set_ready_state(dom.document(), "complete");
             nav.commit_document("about:blank", HistoryHandling::Replace, Some((self.dom.clone(), dom.document())));
             nav.set_page_dom(&dom);
             {
@@ -788,7 +798,8 @@ impl FrameHost {
                 quiet.retain(|(_, page)| page.upgrade().is_some_and(|p| p.is_dispatching_load()));
                 quiet.iter().position(|(n, _)| *n == node).map(|i| quiet.remove(i)).is_some()
             };
-            if quiet {
+            let initial = self.initial_iframe_load(node, parent);
+            if quiet || matches!(initial, InitialIframeLoad::Suppressed) {
                 let mut children = self.children.borrow_mut();
                 if let Some(child) = children.get_mut(&id) {
                     if let Some(dom) = &child.main_frame.page_dom {
@@ -797,6 +808,28 @@ impl FrameHost {
                     child.main_frame.dom_content_loaded = true;
                     child.main_frame.loaded = true;
                 }
+            } else if let InitialIframeLoad::Blank { url, explicit } = initial {
+                // HTML "process the iframe attributes", initial insertion: run
+                // the iframe load event steps before returning to the inserter.
+                let (document, frame_id) = {
+                    let mut children = self.children.borrow_mut();
+                    let child = children.get_mut(&id).ok_or(JsError::ContextDestroyed)?;
+                    child.main_frame.dom_content_loaded = true;
+                    child.main_frame.loaded = true;
+                    child.main_frame.url = url.to_string();
+                    (child.main_frame.page_dom.clone().ok_or(JsError::ContextDestroyed)?, child.main_frame.id.clone())
+                };
+                if url.as_str() != "about:blank" { nav.update_initial_blank_url(url.as_str()); }
+                if explicit { document.note_blank_requested(); }
+                document.set_completely_loaded();
+                let timestamp = self.started.elapsed().as_secs_f64();
+                self.emit(PageEvent::FrameDomContentLoaded { frame_id: frame_id.clone(), loader_id: lid.clone(), timestamp });
+                self.emit(PageEvent::FrameLoaded { frame_id, loader_id: lid.clone(), timestamp });
+                nav.notify_timeline("navigation");
+                if let Some(parent_dom) = ancestor.page_dom {
+                    pyro_webapi::lifecycle::resource_loaded(&parent_dom, node, true);
+                }
+                self.sched.post(pyro_runtime::TaskSource::Navigation, move |b| b.watch_network_idle(key, lid));
             } else {
                 self.queue_attributes(key, lid);
             }
@@ -806,6 +839,35 @@ impl FrameHost {
             self.detach(key);
         }
         result
+    }
+
+    /// HTML shared attribute processing, for an iframe's initial insertion.
+    fn initial_iframe_load(&self, node: NodeId, parent: FrameKey) -> InitialIframeLoad {
+        let dom = self.dom.borrow();
+        let Ok(el) = dom.element(node) else { return InitialIframeLoad::Navigate };
+        if !el.is_html() || &*el.name.local != "iframe" || el.attr("srcdoc").is_some() {
+            return InitialIframeLoad::Navigate;
+        }
+        let src = el.attr("src");
+        let url = src.filter(|raw| !raw.is_empty()).and_then(|raw| {
+            let base = crate::loader::node_base_url(&dom, node).and_then(|url| url::Url::parse(&url).ok());
+            url::Url::options().base_url(base.as_ref()).parse(raw).ok()
+        }).unwrap_or_else(|| url::Url::parse("about:blank").expect("static URL"));
+        let mut ancestor = parent;
+        loop {
+            let address = self.nav(ancestor).map(|nav| nav.url());
+            if address.as_ref().is_some_and(|a| a.split('#').next() == url.as_str().split('#').next()) {
+                return InitialIframeLoad::Suppressed;
+            }
+            let next = self.parent_key(ancestor);
+            if next == ancestor { break; }
+            ancestor = next;
+        }
+        if url.scheme() == "about" && url.cannot_be_a_base() && url.path() == "blank" {
+            InitialIframeLoad::Blank { url, explicit: src.is_some() }
+        } else {
+            InitialIframeLoad::Navigate
+        }
     }
 
     /// The documents of frame `key` and its descendants, the frame's first (pre-order).
@@ -821,7 +883,19 @@ impl FrameHost {
         out
     }
     pub fn queue_attributes(&self, key: FrameKey, loader: LoaderId) {
-        self.sched.post(pyro_runtime::TaskSource::Navigation, move |b| b.process_iframe_attributes(key, &loader));
+        let Some(id) = key.child else { return };
+        let parent = self.parent_key(key);
+        let mut children = self.children.borrow_mut();
+        let Some(child) = children.get_mut(&id) else { return };
+        child.pending_frame_attributes += 1;
+        drop(children);
+        self.sched.post(pyro_runtime::TaskSource::Navigation, move |b| {
+            if let Some(mut doc) = b.doc_mut(key) {
+                doc.pending_frame_attributes -= 1;
+            }
+            b.process_iframe_attributes(key, &loader);
+            b.maybe_fire_load(parent);
+        });
     }
     pub fn detach(self: &Rc<Self>, key: FrameKey) {
         self.invalidate_focus(key, true);

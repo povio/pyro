@@ -2387,7 +2387,7 @@ impl Browser {
         if host
             .child_keys(page)
             .iter()
-            .any(|k| self.doc(*k).is_some_and(|d| !d.main_frame.loaded || d.pending_loader.is_some()))
+            .any(|k| self.doc(*k).is_some_and(|d| !d.main_frame.loaded || d.pending_loader.is_some() || d.pending_frame_attributes > 0))
         {
             return;
         }
