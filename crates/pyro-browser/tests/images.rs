@@ -76,6 +76,17 @@ fn parsed_images_report_natural_size_and_delay_window_load() {
 }
 
 #[test]
+fn svg_image_completion_preserves_available_html_image() {
+    let (mut thread, page, loader) = setup("<img src='/asset.png'><svg id='svg'></svg>");
+    loader.insert_bytes("http://site.test/asset.png", "image/png", &png(3, 2), Duration::ZERO);
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    eval(&thread, page, "const svgImage = document.createElementNS('http://www.w3.org/2000/svg', 'image'); svgImage.setAttribute('href','/asset.png'); document.querySelector('svg').appendChild(svgImage); 1");
+    settle(&mut thread);
+    assert_eq!(eval(&thread, page, "const copy = new Image(); copy.src='/asset.png'; [copy.complete, copy.naturalWidth].join()"), "true,3");
+}
+
+#[test]
 fn available_image_checks_inherited_referrer_policy() {
     let (mut thread, page, loader) = setup("<!doctype html><img src='/asset.png'>");
     let url = "http://site.test/asset.png";

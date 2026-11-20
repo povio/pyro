@@ -2487,7 +2487,9 @@ impl PageDom {
     /// entry for it. The bytes are kept within a budget of their own.
     pub fn remember_available_image(&self, url: &str, cors: u8, image: AvailableImage) {
         let mut list = self.available_images.borrow_mut();
-        list.retain(|(key, _)| !(key.0 == url && key.1 == cors));
+        list.retain(|(key, existing)| {
+            key.0 != url || key.1 != cors || existing.request_referrer.is_some() != image.request_referrer.is_some()
+        });
         list.push(((url.to_owned(), cors), image));
         if list.len() > MAX_AVAILABLE_IMAGES {
             list.remove(0);
@@ -2518,7 +2520,10 @@ impl PageDom {
     pub fn available_html_image(&self, url: &str, cors: u8, policy: pyro_net::ReferrerPolicy, source: Option<pyro_net::Url>) -> Option<AvailableImage> {
         let chain = pyro_net::referrer::ReferrerChain::new(source, policy);
         let referer = chain.header(&pyro_net::Url::parse(url).ok()?);
-        self.available_image(url, cors).filter(|image| image.request_referrer.as_ref() == Some(&(policy, chain.referrer, referer)))
+        let identity = (policy, chain.referrer, referer);
+        self.available_images.borrow().iter().rev()
+            .find(|(key, image)| key.0 == url && key.1 == cors && image.request_referrer.as_ref() == Some(&identity))
+            .map(|(_, image)| image.clone())
     }
 
     /// pyro: HTML "update the image data" step 7, done when the image's state is asked for before
