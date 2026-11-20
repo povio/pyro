@@ -2060,7 +2060,7 @@ diff --git a/packages/blitz-dom/src/config.rs b/packages/blitz-dom/src/config.rs
  use std::sync::Arc;
  use style::media_queries::MediaType;
  
-@@ -28,12 +28,65 @@
+@@ -28,12 +28,67 @@
      Sequential,
  }
  
@@ -2079,6 +2079,8 @@ diff --git a/packages/blitz-dom/src/config.rs b/packages/blitz-dom/src/config.rs
 +    pub frames: FrameTable,
 +    /// The entry's version (its content), which its frame element's marker names.
 +    pub version: u64,
++    /// pyro: the texts of its own linked sheets by URL (the renderer serves them to it alone).
++    pub sheets: std::collections::BTreeMap<String, String>,
 +}
 +
 +/// pyro: a document's frame documents by the index its frame elements' markers name, and the
@@ -2126,7 +2128,7 @@ diff --git a/packages/blitz-dom/src/config.rs b/packages/blitz-dom/src/config.rs
      /// User Agent stylesheets, in cascade order. Defaults to `vec![UserAgentStylesheet::default_sheet()]`.
      ///
      /// The list is used as given, so replacing it removes the default sheet unless it is
-@@ -68,6 +121,25 @@
+@@ -68,6 +123,25 @@
      /// How deeply this document is nested within other documents
      /// (0 for a root document). Used to limit `<iframe>` nesting depth.
      pub subdocument_depth: usize,
@@ -2152,7 +2154,7 @@ diff --git a/packages/blitz-dom/src/config.rs b/packages/blitz-dom/src/config.rs
      /// Devtools provider notified of DOM mutations (e.g. by a remote inspector)
      #[cfg(feature = "devtools")]
      pub devtools_provider: Option<Arc<dyn DevtoolsProvider>>,
-@@ -78,6 +150,8 @@
+@@ -78,6 +152,8 @@
          Self {
              viewport: None,
              base_url: None,
@@ -2161,7 +2163,7 @@ diff --git a/packages/blitz-dom/src/config.rs b/packages/blitz-dom/src/config.rs
              ua_stylesheets: vec![UserAgentStylesheet::default_sheet()],
              net_provider: None,
              navigation_provider: None,
-@@ -89,6 +163,11 @@
+@@ -89,6 +165,11 @@
              incremental: None,
              abort_signal: None,
              subdocument_depth: 0,
@@ -38944,17 +38946,15 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
  }
  impl ServoStylesheetLoader for StylesheetLoader {
      fn request_stylesheet(
-@@ -224,10 +342,22 @@
+@@ -224,10 +342,20 @@
          };
  
          let url = import.url.url().unwrap().clone();
 +        // pyro: fetched as the `url()`'s request URL modifiers say (CSS Values 5 § 4.5.4).
 +        let mut request = stamped_request(url.as_ref().clone(), self.abort_signal.as_ref());
-+        // (An import without modifiers stays a plain request, served from the page's own fetch of
-+        // the sheet, which sends the parent sheet as its referrer already.)
-+        let modifiers = import.url.modifiers().map(|m| &**m).filter(|m| {
-+            m.cross_origin.is_some() || m.integrity.is_some() || m.referrer_policy.is_some()
-+        });
++        // pyro: as the page sends it (its parent sheet as referrer, unless the document's own CSS),
++        // so it is the same request, with the same key, as the page's own fetch of it.
++        let modifiers = import.url.modifiers().map(|m| &**m);
 +        request.options = url_fetch_options(modifiers, self.inline.as_ref()).for_destination(blitz_traits::net::Destination::Style);
 +        // pyro: a frame document's import (nested ones too) is its frame's request.
 +        if !request.options.is_default() {
@@ -38968,7 +38968,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
              ResourceHandler::boxed(
                  self.tx.clone(),
                  self.doc_id,
-@@ -262,12 +392,26 @@
+@@ -262,12 +390,26 @@
  
  impl NetHandler for ResourceHandler<NestedStylesheetHandler> {
      fn bytes(self: Box<Self>, resolved_url: String, bytes: Bytes) {
@@ -38996,7 +38996,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
              None,
              None,
              Origin::Author,
-@@ -288,6 +432,7 @@
+@@ -288,6 +430,7 @@
              &self.shell_provider,
              &self.data.lock.read(),
              self.data.loader.abort_signal.as_ref(),
@@ -39004,7 +39004,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
          );
  
          let import_rule = self.data.import_rule.clone();
-@@ -300,6 +445,10 @@
+@@ -300,6 +443,10 @@
      overrides: FontFaceOverrides,
  }
  impl NetHandler for ResourceHandler<FontFaceHandler> {
@@ -39015,7 +39015,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
      fn bytes(mut self: Box<Self>, resolved_url: String, bytes: Bytes) {
          let result = self.data.parse(bytes);
          self.respond(resolved_url, result)
-@@ -387,6 +536,7 @@
+@@ -387,6 +534,7 @@
      shell_provider: &Arc<dyn ShellProvider>,
      read_guard: &SharedRwLockReadGuard,
      abort_signal: Option<&AbortSignal>,
@@ -39023,7 +39023,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
  ) {
      fetch_font_face_rules(
          sheet.contents(read_guard).rules(read_guard).iter(),
-@@ -397,6 +547,7 @@
+@@ -397,6 +545,7 @@
          shell_provider,
          read_guard,
          abort_signal,
@@ -39031,7 +39031,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
      )
  }
  
-@@ -409,10 +560,45 @@
+@@ -409,10 +558,45 @@
      node_id: Option<NodeId>,
      network_provider: &Arc<dyn NetProvider>,
      shell_provider: &Arc<dyn ShellProvider>,
@@ -39079,7 +39079,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
          .filter_map(|rule| match rule {
              CssRule::FontFace(font_face) => {
                  let descriptor = &font_face.read_with(read_guard).descriptors;
-@@ -421,13 +607,71 @@
+@@ -421,13 +605,71 @@
                  // Capture the @font-face descriptors so parley can register
                  // the font under the CSS-declared family name (and weight /
                  // style) rather than whatever metadata the TTF reports.
@@ -39153,7 +39153,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
                  };
                  Some((src, overrides))
              }
-@@ -435,9 +679,11 @@
+@@ -435,9 +677,11 @@
          })
          .for_each(|(source_list, overrides)| {
              if let Some((url, format)) = preferred_font_source(source_list) {
@@ -39166,7 +39166,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
                      ResourceHandler::boxed(
                          tx.clone(),
                          doc_id,
-@@ -450,6 +696,11 @@
+@@ -450,6 +694,11 @@
          })
  }
  
@@ -39178,7 +39178,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
  /// The first source in an `@font-face` `src` list that is in a format we
  /// support, with its resolved url and format.
  fn preferred_font_source(source_list: &SourceList) -> Option<(Url, FontFaceSourceFormatKeyword)> {
-@@ -468,6 +719,11 @@
+@@ -468,6 +717,11 @@
              return None;
          };
  
@@ -39190,7 +39190,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
          let format = match &url_source.format_hint {
              Some(FontFaceSourceFormat::Keyword(keyword)) => *keyword,
              Some(FontFaceSourceFormat::String(string)) => font_format_from_string(string),
-@@ -564,7 +820,10 @@
+@@ -564,7 +818,10 @@
              // Stylo emits `Oblique(0deg, 0deg)` for the literal CSS `normal`
              // keyword. Map that back to `Normal` so parley's font matching
              // doesn't misclassify upright fonts.
@@ -39202,7 +39202,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
                  Fq::Normal
              } else {
                  Fq::Oblique(angle)
-@@ -585,37 +844,144 @@
+@@ -585,37 +842,143 @@
  
  pub struct ImageHandler {
      kind: ImageType,
@@ -39255,11 +39255,10 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
 +        let mut result = self.data.parse(&resolved_url, bytes);
 +        // pyro: an opaque response's pixels stay as its EXIF orientation turned them: as
 +        // orientation 1, which `image-orientation: none` has nothing to undo of.
-+        let opaque = self.data.options.cors.is_none()
-+            && (tainted
-+                || self.data.document.as_ref().is_some_and(|document| {
-+                    Url::parse(&final_url).is_ok_and(|url| url.scheme() != "blob" && cors_checked(&url, document))
-+                }));
++        // pyro: the tainting the provider reports with the response (the stored value's), never
++        // inferred from the final URL.
++        let _ = &final_url;
++        let opaque = self.data.options.cors.is_none() && tainted;
 +        if opaque {
 +            if let Ok(Resource::Image(_, _, _, _, orientation)) = &mut result {
 +                *orientation = 1;
@@ -39362,7 +39361,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
              }
              Err(e) => e.to_string(),
          };
-@@ -624,12 +990,46 @@
+@@ -624,12 +987,46 @@
          let svg_err = {
              use crate::util::parse_svg_image;
              match parse_svg_image(&bytes) {
@@ -39412,7 +39411,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
  
          Err(format!(
              "Could not parse image ({} bytes): image-crate error: {image_err}; svg fallback error: {svg_err}",
-@@ -649,6 +1049,62 @@
+@@ -649,6 +1046,62 @@
          FontStyleRange::Oblique(Angle::from_degrees(min_deg), Angle::from_degrees(max_deg))
      }
  
@@ -39475,7 +39474,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
      /// The source picked from the `src` list of each `@font-face` rule in `css`
      fn preferred_sources(css: &str) -> Vec<Option<(String, FontFaceSourceFormatKeyword)>> {
          let lock = SharedRwLock::new();
-@@ -800,3 +1256,11 @@
+@@ -800,3 +1253,11 @@
          );
      }
  }

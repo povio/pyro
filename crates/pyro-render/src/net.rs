@@ -50,6 +50,12 @@ pub trait Fetcher: Send + Sync + 'static {
     /// pyro: whether a render need not wait for `url` (fetched with `options`): an image the
     /// document never fetched itself (a style change since its load), which Chrome paints only once
     /// it has arrived. Its bytes reach the document at a later render of it (the default: none).
+    /// pyro: whether a request of the document `client` names (`None`: the snapshot's page
+    /// document) may be answered at all, before any sheet or cache lookup: a client that is no
+    /// live document of the snapshot gets nothing (the default: all).
+    fn admits(&self, _client: Option<&str>) -> bool {
+        true
+    }
     fn defers(&self, _url: &str, _options: &blitz_traits::net::FetchOptions) -> bool {
         false
     }
@@ -134,7 +140,12 @@ struct Provider {
     /// The page's loader and sheets of the latest snapshot: a mirrored
     /// document keeps its provider across renders.
     fetcher: Mutex<Arc<dyn Fetcher>>,
+    /// The page document's own linked sheets by URL.
     sheets: Mutex<HashMap<String, String>>,
+    /// pyro: each frame document's own linked sheets by URL, by its client (from the frame
+    /// table): a frame's sheet is served only to it, never from the page's map or another
+    /// frame's.
+    frame_sheets: Mutex<HashMap<String, std::collections::BTreeMap<String, String>>>,
     cache: Cache,
     /// pyro: the URL after redirects of a cached response that was redirected, or whose tainting
     /// is opaque, by cache key, with that tainting.
@@ -161,6 +172,13 @@ impl NetProvider for Provider {
         if options.client.is_none() {
             options.client = self.clients.lock().ok().and_then(|c| c.get(&doc_id).cloned());
         }
+        // pyro: the client is admitted before anything is looked up, sheets and cache included.
+        let admitted = self.fetcher.lock().ok().is_some_and(|f| f.admits(options.client.as_deref()));
+        if !admitted {
+            self.outstanding.fetch_add(1, Ordering::AcqRel);
+            let _ = self.tx.send((handler, url.clone(), url, false, Bytes::new(), true));
+            return;
+        }
         // A CORS fetch's body (or one fetched with other options) is cached apart: one fetched
         // without CORS never stands in for it.
         let key = options.cache_key(&url);
@@ -177,10 +195,12 @@ impl NetProvider for Provider {
         } else {
             // A sheet's text is decoded already: as UTF-8 behind a byte order
             // mark, Blitz cannot decode it again by an `@charset` it starts with.
-            self.sheets
-                .lock()
-                .ok()
-                .and_then(|s| s.get(&url).map(|text| Bytes::from(utf8_sheet(text))))
+            // pyro: a frame document's from its own sheets only, the page's from the page's.
+            let text = match options.client.as_deref() {
+                Some(client) => self.frame_sheets.lock().ok().and_then(|s| s.get(client)?.get(&url).cloned()),
+                None => self.sheets.lock().ok().and_then(|s| s.get(&url).cloned()),
+            };
+            text.map(|text| Bytes::from(utf8_sheet(&text)))
                 .or_else(|| self.cache.lock().ok().and_then(|c| c.get(&key).cloned()))
         };
         // pyro: a `font-display: optional` font that came after its block period is a failed load
@@ -237,6 +257,19 @@ impl NetProvider for Provider {
     }
 }
 
+/// pyro: each frame document's sheets in `table` (nested ones too), by its client.
+fn frame_sheets(table: &blitz_dom::FrameTable) -> HashMap<String, std::collections::BTreeMap<String, String>> {
+    let mut out = HashMap::new();
+    let mut stack = vec![table.clone()];
+    while let Some(table) = stack.pop() {
+        for frame in table.entries.values() {
+            out.insert(frame.client.clone(), frame.sheets.clone());
+            stack.push(frame.frames.clone());
+        }
+    }
+    out
+}
+
 /// `text` as UTF-8 behind a byte order mark, which outranks every other
 /// source of a style sheet's encoding (CSS Syntax).
 fn utf8_sheet(text: &str) -> Vec<u8> {
@@ -259,6 +292,7 @@ impl Bridge {
         let provider = Arc::new(Provider {
             fetcher: Mutex::new(fetcher),
             sheets: Mutex::new(snap.sheets.clone()),
+            frame_sheets: Mutex::new(frame_sheets(&snap.frames)),
             cache,
             finals: Arc::default(),
             clients: Mutex::default(),
@@ -276,6 +310,14 @@ impl Bridge {
         }
         if let Ok(mut s) = self.provider.sheets.lock() {
             s.clone_from(&snap.sheets);
+        }
+        self.set_frames(&snap.frames);
+    }
+
+    /// pyro: the frame table now (its frames' sheets).
+    pub(crate) fn set_frames(&self, frames: &blitz_dom::FrameTable) {
+        if let Ok(mut s) = self.provider.frame_sheets.lock() {
+            *s = frame_sheets(frames);
         }
     }
 

@@ -867,6 +867,8 @@ impl FrameHost {
         let retired = std::mem::take(&mut *self.retired.borrow_mut());
         for state in retired {
             let frame = state.main_frame;
+            // pyro: what its layout loaded or waits for goes with it (`forget_document`).
+            self.layout_bodies.forget_document(&crate::document_client(&frame));
             if let Some(dom) = &frame.page_dom {
                 dom.dispose();
             }

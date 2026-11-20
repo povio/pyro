@@ -197,6 +197,7 @@ pub fn frame_table(table: pyro_dom::FrameTable) -> pyro_render::FrameTable {
                 client: frame.client,
                 frames: frame_table(frame.frames),
                 version,
+                sheets: frame.sheets,
             };
             (index, content)
         })

@@ -38,13 +38,10 @@ static PDF_WAKER: std::sync::Mutex<Option<Waker>> = std::sync::Mutex::new(None);
 /// loading its sub-resources through its own network.
 pub(crate) fn install(statics: pyro_net::StaticFiles) {
     pyro_layout::install_with(Rc::new(move |loader: Option<&Arc<dyn SubresourceLoader>>| {
-        Arc::new(LocalFiles { statics: statics.clone(), loader: loader.cloned(), failed: Arc::default() })
+        Arc::new(LocalFiles { statics: statics.clone(), loader: loader.cloned() })
             as Arc<dyn Fetcher>
     }));
 }
-
-/// The requests whose network load failed for one document.
-type Failed = Arc<std::sync::Mutex<std::collections::HashSet<LayoutBodyKey>>>;
 
 /// Loads one document's sub-resources synchronously: `data:` and `file:`
 /// URLs and `serve --static` roots from disk, the rest through the
@@ -54,8 +51,6 @@ struct LocalFiles {
     /// The document's network (`None`: it has none, and loads nothing from
     /// the network).
     loader: Option<Arc<dyn SubresourceLoader>>,
-    /// What failed for this document, which does not ask for it again.
-    failed: Failed,
 }
 
 /// A layout fetch in flight, counted until the loader drops its callback.
@@ -72,6 +67,20 @@ impl Drop for InFlight {
         if last && PDF_WAITING.load(std::sync::atomic::Ordering::Acquire) {
             wake_pdf();
         }
+    }
+}
+
+/// pyro: what a request is used as, by its destination (an image's CORS mode by its options).
+pub(crate) fn subresource_kind(options: &SubresourceOptions, destination: pyro_render::Destination) -> SubresourceKind {
+    let plain_cors = options.crossorigin.as_deref() == Some("anonymous")
+        && options.integrity.is_none()
+        && options.referrer.is_none()
+        && options.referrer_policy.is_none();
+    match destination {
+        pyro_render::Destination::Font => SubresourceKind::Font,
+        pyro_render::Destination::Style => SubresourceKind::Style,
+        _ if plain_cors => SubresourceKind::CorsImage,
+        _ => SubresourceKind::Image,
     }
 }
 
@@ -106,8 +115,12 @@ impl LocalFiles {
         // pyro: the request's own client (a frame document this geometry renders names its own),
         // else this document's; and the whole request (`LayoutBodyKey`).
         let document = client.map_or_else(|| loader.document(), str::to_owned);
-        let key = LayoutBodyKey::new(&document, url.as_str(), options);
-        if self.failed.lock().is_ok_and(|failed| failed.contains(&key)) {
+        // pyro: what the response is used as comes from where the request was made (its
+        // destination), never from its URL: an image at `image.css` is an image.
+        let kind = subresource_kind(options, destination);
+        let key = LayoutBodyKey::new(&document, url.as_str(), options, kind);
+        // pyro: one failure state, the store's (capture reads the same).
+        if bodies.has_failed(&key) {
             return None;
         }
         // pyro: when this document first needed it (`SubresourceBodies::late`).
@@ -115,18 +128,6 @@ impl LocalFiles {
         if let Some(body) = bodies.get(&key) {
             return Some(body);
         }
-        // pyro: what the response is used as comes from where the request was made (its
-        // destination), never from its URL: an image at `image.css` is an image.
-        let plain_cors = options.crossorigin.as_deref() == Some("anonymous")
-            && options.integrity.is_none()
-            && options.referrer.is_none()
-            && options.referrer_policy.is_none();
-        let kind = match destination {
-            pyro_render::Destination::Font => SubresourceKind::Font,
-            pyro_render::Destination::Style => SubresourceKind::Style,
-            _ if plain_cors => SubresourceKind::CorsImage,
-            _ => SubresourceKind::Image,
-        };
         match kind {
             SubresourceKind::Font => loader.font_asked(&key),
             // pyro: a CSS image this document's layout asked for: its `load` waits for it.
@@ -139,7 +140,6 @@ impl LocalFiles {
         }
         IN_FLIGHT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let fetch = InFlight { bodies, key };
-        let failed = self.failed.clone();
         loader.load(
             &document,
             url.as_str().to_owned(),
@@ -149,12 +149,7 @@ impl LocalFiles {
                 // The body with its final URL, tainting and status, written together.
                 Ok(body) if !body.bytes.is_empty() => fetch.bodies.finish(fetch.key.clone(), body),
                 // An empty body counts as a failure (nothing to lay out with).
-                _ => {
-                    if let Ok(mut failed) = failed.lock() {
-                        failed.insert(fetch.key.clone());
-                    }
-                    fetch.bodies.fail(&fetch.key);
-                }
+                _ => fetch.bodies.fail(&fetch.key),
             }),
         );
         None
@@ -211,7 +206,8 @@ impl Fetcher for LocalFiles {
     fn late(&self, url: &str, options: &pyro_render::FetchOptions, period: std::time::Duration) -> Option<bool> {
         let loader = self.loader.as_ref()?;
         let document = options.client.clone().unwrap_or_else(|| loader.document());
-        let key = LayoutBodyKey::new(&document, url, &layout_options(options));
+        let layout = layout_options(options);
+        let key = LayoutBodyKey::new(&document, url, &layout, subresource_kind(&layout, options.destination));
         loader.bodies().late(&key, period)
     }
 
@@ -359,7 +355,6 @@ mod document_bodies_tests {
         LocalFiles {
             statics: pyro_net::StaticFiles::default(),
             loader: Some(Arc::new(loader) as Arc<dyn SubresourceLoader>),
-            failed: Arc::default(),
         }
     }
 
@@ -410,7 +405,7 @@ mod document_bodies_tests {
         let _ = fetched(&plain);
         assert_eq!(fetched(&hop), Ok(("http://elsewhere.test/hop.png".to_owned(), true)));
         assert_eq!(fetched(&plain), Ok((url.to_owned(), false)));
-        let key = LayoutBodyKey::new("F1#L1", url, &SubresourceOptions::default());
+        let key = LayoutBodyKey::new("F1#L1", url, &SubresourceOptions::default(), SubresourceKind::Image);
         let stored = bodies.get(&key).expect("stored");
         assert_eq!((stored.final_url.as_str(), stored.opaque, stored.status), ("http://elsewhere.test/hop.png", true, 200));
     }
@@ -420,17 +415,23 @@ mod document_bodies_tests {
     #[test]
     fn a_forgotten_document_leaves_nothing() {
         let bodies = Arc::new(SubresourceBodies::default());
-        let key = LayoutBodyKey::new("F1#L1", "http://img.test/a.png", &SubresourceOptions::default());
-        let pending = LayoutBodyKey::new("F1#L1", "http://img.test/b.png", &SubresourceOptions::default());
+        let key = LayoutBodyKey::new("F1#L1", "http://img.test/a.png", &SubresourceOptions::default(), SubresourceKind::Image);
+        let pending = LayoutBodyKey::new("F1#L1", "http://img.test/b.png", &SubresourceOptions::default(), SubresourceKind::Image);
+        assert!(bodies.start(&key));
         bodies.finish(key.clone(), LayoutBody::local("http://img.test/a.png", b"a".to_vec()));
+        assert!(bodies.get(&key).is_some());
         assert!(bodies.start(&pending));
         bodies.forget_document("F1#L1");
         assert!(bodies.get(&key).is_none() && !bodies.pending(&pending));
-        // A load of it that answers late stores nothing, and it starts none (cycle 3, D).
+        // A load of it that answers late writes nothing: `finish` needs a pending slot (cycle 4, 3d).
         bodies.finish(pending.clone(), LayoutBody::local("http://img.test/b.png", b"b".to_vec()));
         assert!(bodies.get(&pending).is_none());
-        assert!(!bodies.start(&key));
+        // Nor does an answer nobody asked for.
+        let unasked = LayoutBodyKey::new("F2#L2", "http://img.test/c.png", &SubresourceOptions::default(), SubresourceKind::Image);
+        bodies.finish(unasked.clone(), LayoutBody::local("http://img.test/c.png", b"c".to_vec()));
+        assert!(bodies.get(&unasked).is_none());
     }
+
 
     /// A request's destination is where it was made, never its URL: a CSS image at `image.css`
     /// goes out as an image (an image's credentials) and its document's load waits for it; a
@@ -451,7 +452,6 @@ mod document_bodies_tests {
         let files = LocalFiles {
             statics: pyro_net::StaticFiles::default(),
             loader: Some(Arc::new(loader) as Arc<dyn SubresourceLoader>),
-            failed: Arc::default(),
         };
         let image = pyro_net::Url::parse("http://img.test/image.css").unwrap();
         let sheet = pyro_net::Url::parse("http://img.test/sheet.png").unwrap();
@@ -476,8 +476,18 @@ mod document_bodies_tests {
             .for_destination(pyro_render::Destination::Image);
         top.fetch_with("http://img.test/child.png".into(), &options, Box::new(|_| {}));
         assert_eq!(*log.lock().unwrap(), [("CHILD#L".to_owned(), "http://img.test/child.png".to_owned())]);
-        let child = LayoutBodyKey::new("CHILD#L", "http://img.test/child.png", &SubresourceOptions::default());
-        let own = LayoutBodyKey::new("TOP#L", "http://img.test/child.png", &SubresourceOptions::default());
+        let child = LayoutBodyKey::new("CHILD#L", "http://img.test/child.png", &SubresourceOptions::default(), SubresourceKind::Image);
+        let own = LayoutBodyKey::new("TOP#L", "http://img.test/child.png", &SubresourceOptions::default(), SubresourceKind::Image);
         assert!(bodies.get(&child).is_some() && bodies.get(&own).is_none());
+    }
+
+    /// One URL used as an image and as a sheet is two requests, two keys (cycle 4, 3b).
+    #[test]
+    fn the_key_includes_the_destination() {
+        let image = LayoutBodyKey::new("F#L", "http://x.test/a", &SubresourceOptions::default(), SubresourceKind::Image);
+        let sheet = LayoutBodyKey::new("F#L", "http://x.test/a", &SubresourceOptions::default(), SubresourceKind::Style);
+        let cors = LayoutBodyKey::new("F#L", "http://x.test/a", &SubresourceOptions::default(), SubresourceKind::CorsImage);
+        assert_ne!(image, sheet);
+        assert_eq!(image, cors, "an image's CORS mode is in its options");
     }
 }

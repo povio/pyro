@@ -197,6 +197,7 @@ fn a_frame_shows_only_its_table_entry_for_its_client() {
         client: "NEST#L".into(),
         frames: Default::default(),
         version: 7,
+        sheets: Default::default(),
     };
     let first = FrameContent {
         html: format!(
@@ -209,6 +210,7 @@ fn a_frame_shows_only_its_table_entry_for_its_client() {
         client: "F00D#L".into(),
         frames: Arc::new(FrameTableData { nonce: "N2".into(), entries: [("2".to_owned(), nested)].into_iter().collect() }),
         version: 1,
+        sheets: Default::default(),
     };
     let snapshot = Snapshot {
         html: format!(
@@ -356,4 +358,61 @@ fn a_redirected_import_resolves_against_its_final_url() {
     let asked = log.0.lock().unwrap().clone();
     assert!(asked.iter().any(|u| u == "http://elsewhere.test/dir/b.css"), "{asked:?}");
     assert!(!asked.iter().any(|u| u == "http://test/b.css"), "{asked:?}");
+}
+
+/// A frame document's sheets are its own: two frames whose sheets share a URL but say different
+/// things each paint with their own (they were merged into one map by URL, first one winning);
+/// a client the fetcher does not admit (no live document of the snapshot) gets nothing, not even
+/// a sheet the snapshot carries (security review cycle 4, 3a).
+#[test]
+fn each_frame_is_served_its_own_sheets_and_only_admitted_clients() {
+    struct Admitting(Arc<Recorder>, &'static str);
+    impl Fetcher for Admitting {
+        fn admits(&self, client: Option<&str>) -> bool {
+            client != Some(self.1)
+        }
+        fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+            Shared(self.0.clone()).fetch(url, done)
+        }
+    }
+    let frame = |client: &str, color: &str| {
+        let mut sheets = std::collections::BTreeMap::new();
+        sheets.insert("http://test/s.css".to_owned(), format!("body {{ margin: 0; background: {color} }}"));
+        FrameContent {
+            html: "<!doctype html><link rel=stylesheet href='http://test/s.css'><body>".into(),
+            url: "http://test/".into(),
+            scroll: (0.0, 0.0),
+            client: client.into(),
+            frames: Default::default(),
+            version: 1,
+            sheets,
+        }
+    };
+    let snapshot = Snapshot {
+        html: "<!doctype html><body style='margin:0;background:#fff'>\
+               <iframe data-pyro-frame='N:1:0000000000000001' style='border:0;width:40px;height:20px;display:block'></iframe>\
+               <iframe data-pyro-frame='N:2:0000000000000001' style='border:0;width:40px;height:20px;display:block'></iframe>\
+               <iframe data-pyro-frame='N:3:0000000000000001' style='border:0;width:40px;height:20px;display:block'></iframe>"
+            .into(),
+        frames: Arc::new(FrameTableData {
+            nonce: "N".into(),
+            entries: [
+                ("1".to_owned(), frame("A#L", "rgb(0, 128, 0)")),
+                ("2".to_owned(), frame("B#L", "rgb(0, 0, 255)")),
+                ("3".to_owned(), frame("GONE#L", "rgb(255, 0, 0)")),
+            ]
+            .into_iter()
+            .collect(),
+        }),
+        base_url: "http://test/".into(),
+        width: 40,
+        height: 60,
+        device_scale_factor: 1.0,
+        ..Default::default()
+    };
+    let fetcher: Arc<dyn Fetcher> = Arc::new(Admitting(Arc::new(Recorder::default()), "GONE#L"));
+    let image = Renderer::new().render(&snapshot, Area::Viewport, Backend::Cpu, &fetcher).unwrap().0;
+    assert_eq!(pixel(&image, 10, 10), [0, 128, 0], "frame A's own sheet");
+    assert_eq!(pixel(&image, 10, 30), [0, 0, 255], "frame B's own sheet, at the same URL");
+    assert_eq!(pixel(&image, 10, 50), [255, 255, 255], "a client not admitted gets nothing");
 }

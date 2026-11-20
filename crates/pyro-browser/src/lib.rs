@@ -87,6 +87,24 @@ pub fn document_client(frame: &Frame) -> String {
     format!("{}#{}", frame.id.0, frame.loader_id.0)
 }
 
+/// pyro: the layout body key of `request` as `frame`'s document sends it (the ONE place a page
+/// writer's key is built: from the request actually sent, destination included): its default
+/// referrer (the document's) and policy count as the defaults layout sends.
+pub(crate) fn layout_key_of(frame: &Frame, request: &FetchRequest) -> pyro_dom::layout::LayoutBodyKey {
+    let options = pyro_dom::layout::SubresourceOptions {
+        crossorigin: request.crossorigin.clone(),
+        integrity: None,
+        referrer: request.referrer.clone().filter(|r| *r != frame.base_url),
+        referrer_policy: request.referrer_policy.map(|p| p.as_str().to_owned()),
+    };
+    let destination = match request.kind {
+        ResourceKind::Stylesheet => pyro_dom::layout::SubresourceKind::Style,
+        ResourceKind::Font => pyro_dom::layout::SubresourceKind::Font,
+        _ => pyro_dom::layout::SubresourceKind::Image,
+    };
+    pyro_dom::layout::LayoutBodyKey::new(&document_client(frame), &request.url, &options, destination)
+}
+
 /// pyro: what a capture knows of one document's images ([`Browser::document_images`]).
 #[derive(Clone, Debug, Default)]
 pub struct DocumentImages {
@@ -667,10 +685,9 @@ impl Page {
 
     /// Gives each iframe of the page the document it shows as the renderer paints it (its render
     /// HTML, URL and scroll position; see [`pyro_dom::FrameDocument`]), innermost frames first so a
-    /// frame's HTML holds its own frames' documents. Returns the texts of the frames' style sheets
-    /// by URL, which the render snapshot serves with its own.
-    pub fn update_frame_documents(&self) -> std::collections::HashMap<String, String> {
-        let mut sheets = std::collections::HashMap::new();
+    /// frame's HTML holds its own frames' documents. pyro: each frame document carries its own
+    /// sheets ([`pyro_dom::FrameDocument::sheets`]), never merged with the page's by URL.
+    pub fn update_frame_documents(&self) {
         if !self.frames.has_children() {
             if let Some(page_dom) = &self.main_frame.page_dom {
                 if let Ok(mut dom) = page_dom.dom.try_borrow_mut() {
@@ -678,7 +695,7 @@ impl Page {
                     dom.frame_animations.clear();
                 }
             }
-            return sheets;
+            return;
         }
         let depth = |mut key: frames::FrameKey| {
             let mut depth = 0;
@@ -704,7 +721,6 @@ impl Page {
             // Each frame's HTML is taken after its own frames' documents are set (deeper first).
             // (Its animated elements keyed, its animations kept for the renderer.)
             let (snapshot, animations) = page_dom.render_snapshot_frame(&base_url);
-            sheets.extend(snapshot.sheets);
             let base = if base_url.is_empty() { url } else { base_url };
             // pyro: with its own frames' table (set before, deeper first), which its markup names.
             let frames = page_dom.dom.try_borrow().map(|dom| dom.frame_table(page_dom.document())).unwrap_or_default();
@@ -714,6 +730,8 @@ impl Page {
                 scroll: (snapshot.scroll_x, snapshot.scroll_y),
                 client,
                 frames,
+                // pyro: its own sheets, with it (never merged into the page's by URL).
+                sheets: snapshot.sheets.into_iter().collect(),
             };
             if let Ok(mut dom) = page_dom.dom.try_borrow_mut() {
                 dom.set_frame_document(owner, Some(document.clone()));
@@ -731,8 +749,8 @@ impl Page {
                     .collect();
             }
         }
-        sheets
-    }
+        }
+
 
     /// Copies the page's own request options (extra headers, cache bypass)
     /// into `defaults`, e.g. those derived from a user agent override.
@@ -1448,11 +1466,13 @@ impl Browser {
     /// defaults: an imported sheet, an `<object>`'s image) that its layout would otherwise fetch
     /// again: that document's alone ([`pyro_dom::layout::LayoutBodyKey`]), written with its URL
     /// after redirects, tainting and status once its checks passed.
-    pub(crate) fn provide_layout_body(&self, frame: FrameKey, url: &str, body: pyro_dom::layout::LayoutBody) {
-        let Some(document) = self.doc(frame).map(|d| document_client(&d.main_frame)) else { return };
-        let Some(p) = self.page(frame.page) else { return };
-        let key = pyro_dom::layout::LayoutBodyKey::new(&document, url, &Default::default());
-        p.frames.layout_bodies.finish(key, body);
+    pub(crate) fn provide_layout_body(&self, frame: FrameKey, key: pyro_dom::layout::LayoutBodyKey, body: pyro_dom::layout::LayoutBody) {
+        // Only for the document that is still the frame's (the key names it).
+        let live = self.doc(frame).is_some_and(|d| document_client(&d.main_frame) == key.document());
+        let Some(p) = self.page(frame.page).filter(|_| live) else { return };
+        if p.frames.layout_bodies.start(&key) {
+            p.frames.layout_bodies.finish(key, body);
+        }
     }
 
     /// pyro: each document of `page` by its client: its list of available images and the URLs its

@@ -4546,6 +4546,9 @@ pub struct FrameDocument {
     /// pyro: the frame table of this document's own frames ([`Dom::frame_table`] of its DOM), by
     /// the index its markup names them with.
     pub frames: FrameTable,
+    /// pyro: the texts of this document's own linked sheets, by URL: served to it alone (never
+    /// merged with another document's sheets at the same URL).
+    pub sheets: std::collections::BTreeMap<String, String>,
 }
 
 /// pyro: a document's frame table: its frame elements' documents by index, and the nonce its
@@ -4564,6 +4567,7 @@ impl FrameDocument {
         self.html.hash(&mut h);
         self.url.hash(&mut h);
         self.client.hash(&mut h);
+        self.sheets.hash(&mut h);
         for (index, frame) in &self.frames.entries {
             index.hash(&mut h);
             frame.version().hash(&mut h);

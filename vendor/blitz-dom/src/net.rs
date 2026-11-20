@@ -344,11 +344,9 @@ impl ServoStylesheetLoader for StylesheetLoader {
         let url = import.url.url().unwrap().clone();
         // pyro: fetched as the `url()`'s request URL modifiers say (CSS Values 5 § 4.5.4).
         let mut request = stamped_request(url.as_ref().clone(), self.abort_signal.as_ref());
-        // (An import without modifiers stays a plain request, served from the page's own fetch of
-        // the sheet, which sends the parent sheet as its referrer already.)
-        let modifiers = import.url.modifiers().map(|m| &**m).filter(|m| {
-            m.cross_origin.is_some() || m.integrity.is_some() || m.referrer_policy.is_some()
-        });
+        // pyro: as the page sends it (its parent sheet as referrer, unless the document's own CSS),
+        // so it is the same request, with the same key, as the page's own fetch of it.
+        let modifiers = import.url.modifiers().map(|m| &**m);
         request.options = url_fetch_options(modifiers, self.inline.as_ref()).for_destination(blitz_traits::net::Destination::Style);
         // pyro: a frame document's import (nested ones too) is its frame's request.
         if !request.options.is_default() {
@@ -890,11 +888,10 @@ impl NetHandler for ResourceHandler<ImageHandler> {
         let mut result = self.data.parse(&resolved_url, bytes);
         // pyro: an opaque response's pixels stay as its EXIF orientation turned them: as
         // orientation 1, which `image-orientation: none` has nothing to undo of.
-        let opaque = self.data.options.cors.is_none()
-            && (tainted
-                || self.data.document.as_ref().is_some_and(|document| {
-                    Url::parse(&final_url).is_ok_and(|url| url.scheme() != "blob" && cors_checked(&url, document))
-                }));
+        // pyro: the tainting the provider reports with the response (the stored value's), never
+        // inferred from the final URL.
+        let _ = &final_url;
+        let opaque = self.data.options.cors.is_none() && tainted;
         if opaque {
             if let Ok(Resource::Image(_, _, _, _, orientation)) = &mut result {
                 *orientation = 1;

@@ -152,7 +152,7 @@ pub struct ExternalQuads {
 
 /// What a sub-resource a geometry source loads is for (the request's
 /// destination: its `Accept`, `Sec-Fetch-Dest` and CDP resource type).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum SubresourceKind {
     Image,
     /// An image fetched in CORS mode with credentials only to the same origin ("anonymous", a
@@ -186,12 +186,19 @@ pub struct LayoutBodyKey {
     document: String,
     url: String,
     options: SubresourceOptions,
+    /// What the response is used as (an image's CORS mode is in `options`).
+    destination: SubresourceKind,
 }
 
 impl LayoutBodyKey {
-    /// `url` fetched with `options` for the document `document` (its client).
-    pub fn new(document: &str, url: &str, options: &SubresourceOptions) -> Self {
-        LayoutBodyKey { document: document.to_owned(), url: url.to_owned(), options: options.clone() }
+    /// The ONE constructor: `url` fetched with `options` as `destination` for the document
+    /// `document` (its client), as the request was (or is) sent.
+    pub fn new(document: &str, url: &str, options: &SubresourceOptions, destination: SubresourceKind) -> Self {
+        let destination = match destination {
+            SubresourceKind::CorsImage => SubresourceKind::Image,
+            other => other,
+        };
+        LayoutBodyKey { document: document.to_owned(), url: url.to_owned(), options: options.clone(), destination }
     }
     pub fn document(&self) -> &str {
         &self.document
@@ -287,9 +294,6 @@ pub struct SubresourceBodies {
     /// document's layout and its screenshots ([`Self::late`], `font-display: optional`).
     came: std::sync::Mutex<std::collections::HashMap<LayoutBodyKey, std::time::Instant>>,
     needed: std::sync::Mutex<std::collections::HashMap<LayoutBodyKey, std::time::Instant>>,
-    /// pyro: documents that are gone ([`Self::forget_document`]): a load of theirs that answers
-    /// late stores nothing.
-    forgotten: std::sync::Mutex<std::collections::VecDeque<String>>,
 }
 
 fn locked<T>(m: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -318,9 +322,6 @@ impl SubresourceBodies {
     /// Marks a load of `key` in flight: `false` when one is, or its body or failure is here,
     /// already.
     pub fn start(&self, key: &LayoutBodyKey) -> bool {
-        if self.is_forgotten(&key.document) {
-            return false;
-        }
         let mut slots = locked(&self.slots);
         if slots.contains_key(key) {
             return false;
@@ -335,14 +336,17 @@ impl SubresourceBodies {
         if body.bytes.is_empty() {
             return self.fail(&key);
         }
-        if self.is_forgotten(&key.document) {
-            return;
+        // pyro: only into the slot of a load in flight (`start`): a document forgotten since, or a
+        // load nobody started, writes nothing.
+        {
+            let mut slots = locked(&self.slots);
+            if !matches!(slots.get(&key), Some(Slot::Pending)) {
+                return;
+            }
+            slots.insert(key.clone(), Slot::Ready(std::sync::Arc::new(body)));
         }
-        locked(&self.came).entry(key.clone()).or_insert_with(std::time::Instant::now);
-        let previous = locked(&self.slots).insert(key, Slot::Ready(std::sync::Arc::new(body.clone())));
-        if !matches!(previous, Some(Slot::Ready(old)) if *old == body) {
-            self.arrived();
-        }
+        locked(&self.came).entry(key).or_insert_with(std::time::Instant::now);
+        self.arrived();
     }
 
     /// `key`'s load failed: recorded as such (not asked again; a capture waits for it); a body
@@ -384,18 +388,7 @@ impl SubresourceBodies {
 
     /// pyro: drops what `document` loaded (it is gone: navigated away from, closed); a load still
     /// in flight for it is no longer waited for, and nothing of it serves another document.
-    fn is_forgotten(&self, document: &str) -> bool {
-        locked(&self.forgotten).iter().any(|d| d == document)
-    }
-
     pub fn forget_document(&self, document: &str) {
-        {
-            let mut forgotten = locked(&self.forgotten);
-            forgotten.push_back(document.to_owned());
-            if forgotten.len() > 256 {
-                forgotten.pop_front();
-            }
-        }
         locked(&self.slots).retain(|k, _| k.document != document);
         locked(&self.came).retain(|k, _| k.document != document);
         locked(&self.needed).retain(|k, _| k.document != document);

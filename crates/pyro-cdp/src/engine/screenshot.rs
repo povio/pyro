@@ -209,10 +209,22 @@ fn layout_key(url: &str, options: &pyro_render::FetchOptions, client: &str) -> p
         referrer: options.referrer.as_ref().map(|url| url.as_str().to_owned()),
         referrer_policy: options.referrer_policy.clone(),
     };
-    pyro_dom::layout::LayoutBodyKey::new(client, url, &layout)
+    // (Its destination as layout's loader keys it: the same request.)
+    let kind = match options.destination {
+        pyro_render::Destination::Font => pyro_dom::layout::SubresourceKind::Font,
+        pyro_render::Destination::Style => pyro_dom::layout::SubresourceKind::Style,
+        _ => pyro_dom::layout::SubresourceKind::Image,
+    };
+    pyro_dom::layout::LayoutBodyKey::new(client, url, &layout, kind)
 }
 
 impl Fetcher for PageFetcher {
+    /// pyro: the snapshot's page document, or a document of the page that was live when the
+    /// snapshot was taken (its client in `documents`); any other gets nothing, cached or not.
+    fn admits(&self, client: Option<&str>) -> bool {
+        client.is_none_or(|client| client == self.client || self.documents.contains_key(client))
+    }
+
     /// pyro: by the requesting document's timeline, which its layout keeps (`SubresourceBodies`).
     fn late(&self, url: &str, options: &pyro_render::FetchOptions, period: std::time::Duration) -> Option<bool> {
         let key = layout_key(url, options, self.client_of(options));
@@ -294,7 +306,7 @@ impl PageFetcher {
         options.client.get_or_insert_with(|| self.client.clone());
         let client = options.client.clone().unwrap_or_default();
         // pyro: the same request's key in the requesting document's layout bodies (its own fetch).
-        let key = layout_key(&url, &pyro_render::FetchOptions { client: None, ..source }, &client);
+        let key = layout_key(&url, &source, &client);
         // A closed loop drops `done`: the render stops waiting at its deadline.
         let _ = self.handle.post(move |b| {
             // pyro: the client is checked before anything, the document's own bodies included: a
@@ -306,6 +318,12 @@ impl PageFetcher {
             // pyro: an image the document's own layout has fetched (its load waited for it) is used
             // as it is, with the final URL and tainting stored with it, as Chrome paints what the
             // document loaded.
+            // pyro: one failure state: an image the document's layout failed to fetch is a failure
+            // here too (not fetched again and painted though the document has none).
+            if kind == ResourceKind::Image && b.layout_bodies(page).is_some_and(|bodies| bodies.has_failed(&key)) {
+                done(Err("the document's own fetch of it failed".into()));
+                return;
+            }
             if kind == ResourceKind::Image {
                 if let Some(body) = b.layout_bodies(page).and_then(|bodies| bodies.get(&key)) {
                     let opaque = !cors && body.opaque;
@@ -452,8 +470,8 @@ impl EngineHost {
         let page = self.thread.browser.page(pid).ok_or_else(|| CdpError::server("page is gone"))?;
         // Responsive iframes take their documents' heights (css-sizing-4).
         page.update_responsive_frames();
-        // Frames show their documents (`srcdoc` of the render tree), their sheets served with ours.
-        let frame_sheets = page.update_frame_documents();
+        // Frames show their documents (the frame table), each with its own sheets.
+        page.update_frame_documents();
         let frame = &page.main_frame;
         let dom = frame.page_dom.clone().ok_or_else(|| CdpError::server("page has no document"))?;
         let stamp = dom.render_stamp();
@@ -467,9 +485,6 @@ impl EngineHost {
             }
             _ => {
                 let mut s = dom.render_snapshot_tree(&base_url, None);
-                for (url, text) in frame_sheets {
-                    s.sheets.entry(url).or_insert(text);
-                }
                 let tree = Arc::new(convert(s.tree.take().unwrap_or_default()));
                 let sheets = s.sheets.clone();
                 self.renders.live.insert(pid, LiveTree { stamp, tree: tree.clone(), sheets });

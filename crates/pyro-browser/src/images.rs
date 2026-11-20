@@ -902,9 +902,13 @@ impl Browser {
             generation
         };
         let weak = Rc::downgrade(&bindings);
+        // pyro: the layout body key of the request as sent (set below, once it is built).
+        let key: Rc<std::cell::RefCell<Option<pyro_dom::layout::LayoutBodyKey>>> = Rc::default();
+        let finish_key = key.clone();
         let finish = move |b: &mut Browser, result: Result<Resource, String>| {
             let Some(bindings) = weak.upgrade() else { return };
-            b.finish_object(page, &loader, &bindings, node, generation, result, image);
+            let key = finish_key.borrow_mut().take();
+            b.finish_object(page, &loader, &bindings, node, generation, result, image, key);
         };
         if url.starts_with("blob:") {
             let ok = bindings.blob_url(&url).is_some();
@@ -937,6 +941,7 @@ impl Browser {
             module: None,
             part: None,
         };
+        *key.borrow_mut() = Some(crate::layout_key_of(&frame, &request));
         let cancel = self.fetch_document_resource(page, &resource_loader, request, Box::new(finish));
         if let Some(mut image) = self.doc_mut(page).and_then(|p| p.filter_map(|p| p.images.entries.get_mut(&node))) {
             image.cancel = cancel;
@@ -952,6 +957,8 @@ impl Browser {
         generation: u64,
         result: Result<Resource, String>,
         image: bool,
+        // pyro: the layout body key of the request as sent (`layout_key_of`).
+        key: Option<pyro_dom::layout::LayoutBodyKey>,
     ) {
         self.drain_dom_resources(page);
         let Some(mut state) = self.doc_mut(page).filter(|p| &p.main_frame.loader_id == loader) else { return };
@@ -997,12 +1004,14 @@ impl Browser {
             .ok()
             .filter(|r| cors == 0 && (200..300).contains(&r.status) && r.body.len() <= MAX_IMAGE_BYTES)
         {
-            self.provide_layout_body(page, &url, pyro_dom::layout::LayoutBody {
-                bytes: std::sync::Arc::new(r.body.clone()),
-                final_url: r.url.clone(),
-                opaque: r.opaque,
-                status: r.status,
-            });
+            if let Some(key) = key {
+                self.provide_layout_body(page, key, pyro_dom::layout::LayoutBody {
+                    bytes: std::sync::Arc::new(r.body.clone()),
+                    final_url: r.url.clone(),
+                    opaque: r.opaque,
+                    status: r.status,
+                });
+            }
         }
         // HTML "the object element": the response's Content-Type decides what the object shows.
         // A document gets a child navigable (which loads it and fires the element's `load`), as

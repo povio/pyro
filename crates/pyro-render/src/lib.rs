@@ -1615,6 +1615,7 @@ impl Renderer {
     /// that follows.
     pub fn set_frame_table(&mut self, page: u64, frames: blitz_dom::FrameTable) {
         if let Some(m) = self.mirrors.get_mut(&page) {
+            m.bridge.set_frames(&frames);
             m.doc.set_frame_table(frames);
         }
     }

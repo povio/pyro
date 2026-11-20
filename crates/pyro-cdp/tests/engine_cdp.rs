@@ -7370,6 +7370,57 @@ mod screenshot {
         }
     }
 
+    /// One failure state: a CSS image the document's layout failed to fetch is a failure for its
+    /// capture too, which neither fetches it again nor paints what the document never got
+    /// (geometry and capture kept apart failure sets: security review cycle 4, 3c).
+    #[test]
+    fn a_capture_takes_the_layouts_failure_as_its_own() {
+        use std::io::{Read, Write};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let hits = std::sync::Arc::new(AtomicUsize::new(0));
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let counter = hits.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let counter = counter.clone();
+                std::thread::spawn(move || {
+                    let mut request = Vec::new();
+                    let mut chunk = [0; 1024];
+                    while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                        match stream.read(&mut chunk) {
+                            Ok(n) if n > 0 => request.extend_from_slice(&chunk[..n]),
+                            _ => return,
+                        }
+                    }
+                    let (status, body) = if request.starts_with(b"GET /missing.png") {
+                        counter.fetch_add(1, Ordering::SeqCst);
+                        ("404 Not Found", "")
+                    } else {
+                        ("200 OK", "<!doctype html><div style='width:20px;height:20px;background-image:url(/missing.png)'></div>")
+                    };
+                    let head = format!(
+                        "HTTP/1.1 {status}\r\nContent-Type: text/html\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    );
+                    let _ = stream.write_all(head.as_bytes());
+                    let _ = stream.write_all(body.as_bytes());
+                });
+            }
+        });
+        let mut h = Harness::new();
+        h.page("Page.enable", json!({}));
+        h.page("Page.navigate", json!({"url": format!("http://{address}/")}));
+        h.until_event(|m| m["method"] == "Page.loadEventFired");
+        h.run_for(100);
+        assert_eq!(hits.load(Ordering::SeqCst), 1, "the layout asked once");
+        let session = h.session.clone();
+        let r = h.call(Some(&session), "Page.captureScreenshot", json!({}));
+        assert!(r["result"]["data"].as_str().is_some_and(|d| !d.is_empty()), "{r}");
+        assert_eq!(hits.load(Ordering::SeqCst), 1, "the capture took the layout's failure");
+    }
+
     /// The load event waits for the CSS images the document still references: once the only
     /// element using a stalled image is removed, load fires without it (it waited out the image or
     /// the 10 s cap: security review cycle 3, D).

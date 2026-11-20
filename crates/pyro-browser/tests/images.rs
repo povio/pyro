@@ -545,10 +545,18 @@ fn the_page_hands_its_layout_bodies_for_its_document_alone() {
     settle(&mut thread);
     let client = pyro_browser::document_client(&thread.browser.page(page).unwrap().main_frame);
     let bodies = thread.browser.layout_bodies(page).unwrap();
-    let key = |document: &str, url: &str| pyro_dom::layout::LayoutBodyKey::new(document, url, &Default::default());
+    let key = |document: &str, url: &str| pyro_dom::layout::LayoutBodyKey::new(document, url, &Default::default(), pyro_dom::layout::SubresourceKind::Image);
     let object = bodies.get(&key(&client, "http://site.test/detour.png")).expect("the object's body, for its document");
     assert_eq!((object.final_url.as_str(), object.opaque, object.status), ("http://site.test/detour.png", true, 200));
     assert!(bodies.get(&key("OTHER#doc", "http://site.test/detour.png")).is_none());
+    // The key is the request's as sent, destination included: not the same URL used as a sheet.
+    let as_sheet = pyro_dom::layout::LayoutBodyKey::new(
+        &client,
+        "http://site.test/detour.png",
+        &Default::default(),
+        pyro_dom::layout::SubresourceKind::Style,
+    );
+    assert!(bodies.get(&as_sheet).is_none(), "cycle 4, 3b");
     assert!(bodies.get(&key(&client, "http://site.test/missing.png")).is_none(), "a failed response is not stored");
     assert!(bodies.get(&key(&client, "http://site.test/cors.png")).is_none(), "a CORS response is not a no-cors body");
     thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/next")).unwrap();
@@ -584,4 +592,26 @@ fn an_svg_images_crossorigin_change_is_a_new_request() {
     let fetches = loader.log.borrow().iter().filter(|u| u.ends_with("/detour.png")).count();
     assert_eq!(fetches, 2, "fetched again for the new mode");
     assert_eq!(eval(&thread, page, "draw()"), "255", "drawn from the CORS response");
+}
+
+
+/// A frame that goes leaves nothing in the layout bodies: what its document's page handed its
+/// layout is evicted when the iframe is removed (only navigation forgot before: security review
+/// cycle 4, 3d).
+#[test]
+fn a_removed_frames_bodies_are_evicted() {
+    let (mut thread, page, loader) = setup("<iframe id=f src=/child></iframe>");
+    loader.insert("http://site.test/child", "text/html", "<object data=/c.png></object>", Duration::ZERO);
+    loader.insert_bytes("http://site.test/c.png", "image/png", &png(2, 2), Duration::ZERO);
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    let frames = thread.browser.frames(page);
+    let child = frames.iter().find(|f| f.parent.is_some()).expect("the child frame");
+    let client = format!("{}#{}", child.id.0, child.loader_id.0);
+    let bodies = thread.browser.layout_bodies(page).unwrap();
+    let key = pyro_dom::layout::LayoutBodyKey::new(&client, "http://site.test/c.png", &Default::default(), pyro_dom::layout::SubresourceKind::Image);
+    assert!(bodies.get(&key).is_some(), "the child's object body, for the child");
+    eval(&thread, page, "document.getElementById('f').remove(); 1");
+    settle(&mut thread);
+    assert!(bodies.get(&key).is_none(), "gone with its frame");
 }

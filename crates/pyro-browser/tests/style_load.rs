@@ -15,8 +15,16 @@ use std::time::{Duration, Instant};
 struct Provided(Option<(Arc<SubresourceBodies>, String)>);
 impl pyro_render::Fetcher for Provided {
     fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+        self.fetch_with(url, &Default::default(), done)
+    }
+    /// The body of the request as it is made (its referrer: an imported sheet's parent).
+    fn fetch_with(&self, url: String, options: &pyro_render::FetchOptions, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+        let layout = pyro_dom::layout::SubresourceOptions {
+            referrer: options.referrer.as_ref().map(|u| u.to_string()),
+            ..Default::default()
+        };
         let body = self.0.as_ref().and_then(|(b, document)| {
-            let key = pyro_dom::layout::LayoutBodyKey::new(document, &url, &Default::default());
+            let key = pyro_dom::layout::LayoutBodyKey::new(document, &url, &layout, pyro_dom::layout::SubresourceKind::Style);
             b.get(&key).map(|body| body.bytes.to_vec())
         });
         done(body.ok_or_else(|| format!("{url}: not provided")));

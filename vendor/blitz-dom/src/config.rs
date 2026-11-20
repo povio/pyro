@@ -43,6 +43,8 @@ pub struct FrameContent {
     pub frames: FrameTable,
     /// The entry's version (its content), which its frame element's marker names.
     pub version: u64,
+    /// pyro: the texts of its own linked sheets by URL (the renderer serves them to it alone).
+    pub sheets: std::collections::BTreeMap<String, String>,
 }
 
 /// pyro: a document's frame documents by the index its frame elements' markers name, and the

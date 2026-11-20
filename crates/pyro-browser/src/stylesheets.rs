@@ -597,7 +597,11 @@ impl Browser {
         let modified = import.is_modified();
         let request_key = pyro_dom::cssom::import_key(&url, &import);
         let document_origin = self.doc(page).map(|p| p.main_frame.origin.clone()).unwrap_or_else(|| "null".into());
+        // pyro: the layout body key of the request as sent (set below, once it is built).
+        let layout_key: Rc<std::cell::RefCell<Option<pyro_dom::layout::LayoutBodyKey>>> = Rc::default();
+        let finish_layout_key = layout_key.clone();
         let finish = move |b: &mut Browser, result: Result<Resource, String>| {
+            let layout_key = finish_layout_key.borrow_mut().take();
             let result = result.and_then(|mut r| {
                 // pyro: its tainting, which the sheet's origin-clean flag follows (CSSOM).
                 r.opaque = crate::loader::is_opaque(&r, cors, &document_origin);
@@ -617,6 +621,7 @@ impl Browser {
                 &environment,
                 result,
                 &request_key,
+                layout_key,
             );
         };
         let Some(resource_loader) = self.loader_for(page) else {
@@ -648,6 +653,7 @@ impl Browser {
             module: None,
             part: None,
         };
+        *layout_key.borrow_mut() = Some(crate::layout_key_of(&frame, &request));
         let cancel = self.fetch_document_resource(page, &resource_loader, request, Box::new(finish));
         if let Some(mut doc) = self.doc_mut(page) {
             if let Some(slot) = doc
@@ -678,6 +684,8 @@ impl Browser {
         environment: &str,
         result: Result<Resource, String>,
         request_key: &str,
+        // pyro: the layout body key of the request as sent (`layout_key_of`).
+        layout_key: Option<pyro_dom::layout::LayoutBodyKey>,
     ) {
         let modified = request_key != url;
         let ok = result.as_ref().is_ok_and(|r| (200..300).contains(&r.status));
@@ -714,8 +722,8 @@ impl Browser {
             // again (they read `file:` and `data:` URLs themselves), decoded
             // (they cannot know its environment encoding).
             // (Not a modified import's: the layouts key its request apart, by its modifiers.)
-            if url.starts_with("http") && !modified {
-                self.provide_layout_body(page, url, pyro_dom::layout::LayoutBody {
+            if let Some(layout_key) = layout_key.filter(|_| url.starts_with("http")) {
+                self.provide_layout_body(page, layout_key, pyro_dom::layout::LayoutBody {
                     bytes: std::sync::Arc::new(pyro_dom::cssom::stylesheet_utf8_bytes(&text)),
                     final_url: r.url.clone(),
                     opaque: r.opaque,
