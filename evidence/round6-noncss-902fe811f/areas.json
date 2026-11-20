@@ -1,0 +1,16 @@
+{
+  "editing": {
+    "pages": 326,
+    "lpOnly": 1992,
+    "chromeOnly": 4881,
+    "lpFull": 79,
+    "chromeFull": 122
+  },
+  "referrer-policy": {
+    "pages": 384,
+    "lpOnly": 0,
+    "chromeOnly": 195,
+    "lpFull": 285,
+    "chromeFull": 353
+  }
+}

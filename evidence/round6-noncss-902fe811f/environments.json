@@ -1,0 +1,55 @@
+{
+  "window": {
+    "awaiting measurement": 25674,
+    "crash or vulnerability fixture (inventory only)": 21,
+    "unsupported testdriver features: bidi": 209,
+    "previously reviewed outside ordinary execution": 301,
+    "reported": 710,
+    "requires manifest proxy auto-configuration": 86,
+    "historical hang": 3,
+    "raw HTTP/1 transport unsupported": 20,
+    "hangs: a custom element the parser reparents into its own shadow or template cycle (lane F3a)": 2,
+    "needs the back/forward cache": 1,
+    "times out in pyro (lane F3b leftover: javascript:/srcdoc/meta refresh/history.go(0), reentrant intercepts, multi-frame traversal, sandboxed back)": 3,
+    "needs CSP connect-src violations (Trusted Types end marker)": 18,
+    "Wasm runtime withheld": 408
+  },
+  "dedicatedworker": {
+    "awaiting measurement": 2770,
+    "crash or vulnerability fixture (inventory only)": 10,
+    "previously reviewed outside ordinary execution": 1,
+    "requires manifest proxy auto-configuration": 2,
+    "Wasm runtime withheld": 101
+  },
+  "serviceworker": {
+    "awaiting measurement": 651,
+    "crash or vulnerability fixture (inventory only)": 6,
+    "previously reviewed outside ordinary execution": 1,
+    "Wasm runtime withheld": 14
+  },
+  "sharedworker": {
+    "awaiting measurement": 676,
+    "crash or vulnerability fixture (inventory only)": 6,
+    "previously reviewed outside ordinary execution": 1,
+    "requires manifest proxy auto-configuration": 1,
+    "Wasm runtime withheld": 15
+  },
+  "serviceworker-module": {
+    "awaiting measurement": 8
+  },
+  "sharedworker-module": {
+    "awaiting measurement": 12
+  },
+  "dedicatedworker-module": {
+    "awaiting measurement": 9
+  },
+  "window-module": {
+    "awaiting measurement": 3
+  },
+  "jsshell": {
+    "requires JS shell": 78
+  },
+  "extension": {
+    "requires browser extension harness": 6
+  }
+}
