@@ -50,6 +50,7 @@ where
         "OscillatorNode",
         "ConstantSourceNode",
         "GainNode",
+        "DelayNode",
         "StereoPannerNode",
         "PannerNode",
         "AudioListener",
