@@ -830,17 +830,23 @@ impl BreakerState {
             use crate::style::SoftHyphen;
             let run = data.shaped_text.runs().get(self.run_idx);
             let font_hyphen = || run.and_then(|run| run.hyphen);
+            let replacement = |ch| {
+                if matches!(ch, ' ' | '\u{a0}') {
+                    let (glyph, width) = data.shaped_text.glyph_of(self.run_idx, ' ')?;
+                    Some((glyph, run.and_then(|run| run.upright_advance).or(data.style_metrics[usize::from(shy_style)].hyphen_space).unwrap_or(width)))
+                } else {
+                    data.shaped_text.glyph_of(self.run_idx, ch)
+                }
+            };
             let mut glyphs = [(0, 0.0); 4];
             let len = match data.styles[shy_style as usize].soft_hyphen {
                 SoftHyphen::Auto => font_hyphen().map(|glyph| { glyphs[0] = glyph; 1 }),
-                SoftHyphen::Char(ch) => data
-                    .shaped_text
-                    .glyph_of(self.run_idx, ch)
+                SoftHyphen::Char(ch) => replacement(ch)
                     .or_else(font_hyphen)
                     .map(|glyph| { glyphs[0] = glyph; 1 }),
                 SoftHyphen::Chars(chars, len) => {
                     let found = chars[..usize::from(len)].iter().enumerate().all(|(index, &ch)| {
-                        data.shaped_text.glyph_of(self.run_idx, ch).map(|glyph| glyphs[index] = glyph).is_some()
+                        replacement(ch).map(|glyph| glyphs[index] = glyph).is_some()
                     });
                     if found { Some(len) } else { font_hyphen().map(|glyph| { glyphs[0] = glyph; 1 }) }
                 }

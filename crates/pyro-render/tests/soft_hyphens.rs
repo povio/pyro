@@ -143,3 +143,12 @@ fn a_hyphenate_character_string_shows_all_its_characters() {
     assert_near(s[0][0], 7.0 * ch);
     assert_near(s[1][1], 80.0);
 }
+
+#[test]
+fn an_unused_soft_hyphen_preserves_cursive_joining() {
+    let widths = sizes(
+        "<div dir=rtl style='width:auto;font:32px sans-serif'><u id=a>قىل&shy;مىغانلىقى</u><br><u id=b>قىلمىغانلىقى</u></div>",
+        &["a", "b"],
+    );
+    assert_near(widths[0][0], widths[1][0]);
+}

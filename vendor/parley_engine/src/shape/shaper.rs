@@ -101,6 +101,16 @@ pub struct FontInstance {
 }
 
 impl FontInstance {
+    /// Horizontal advance of the face's space at the specified CSS size and variations.
+    pub fn space_advance(&self, size: f32, variations: &[FontVariation]) -> Option<f32> {
+        use skrifa::MetadataProvider as _;
+        let face = skrifa::FontRef::from_index(self.font.data.as_ref(), self.font.index).ok()?;
+        let location = face.axes().location(variations_iter(&self.synthesis, variations).map(|setting| (setting.tag, setting.value)));
+        let glyph = face.charmap().map(' ')?;
+        face.glyph_metrics(skrifa::instance::Size::new(size * self.synthesis.size_adjust()), &location)
+            .advance_width(glyph)
+    }
+
     /// Borrow this font instance.
     #[inline]
     pub fn as_ref(&self) -> FontInstanceRef<'_> {
@@ -599,6 +609,10 @@ fn shape_segment(
         buffer.reserve(run_text.len());
         #[expect(clippy::cast_possible_truncation, reason = "Deferred")]
         for (i, ch) in run_text.chars().enumerate() {
+            if ch == '\u{ad}' && i != 0 && segment.bidi_level.is_rtl()
+                && font_ref.table_data(skrifa::Tag::new(b"morx")).is_some() {
+                continue;
+            }
             // Ensure that each cluster's index matches the index into `infos`. This is required
             // for efficient cluster lookup within `data.rs`.
             //

@@ -1009,7 +1009,24 @@
  }
  
  /// The font instance to shape an item with.
-@@ -85,24 +138,34 @@
+@@ -48,6 +101,16 @@
+ }
+ 
+ impl FontInstance {
++    /// Horizontal advance of the face's space at the specified CSS size and variations.
++    pub fn space_advance(&self, size: f32, variations: &[FontVariation]) -> Option<f32> {
++        use skrifa::MetadataProvider as _;
++        let face = skrifa::FontRef::from_index(self.font.data.as_ref(), self.font.index).ok()?;
++        let location = face.axes().location(variations_iter(&self.synthesis, variations).map(|setting| (setting.tag, setting.value)));
++        let glyph = face.charmap().map(' ')?;
++        face.glyph_metrics(skrifa::instance::Size::new(size * self.synthesis.size_adjust()), &location)
++            .advance_width(glyph)
++    }
++
+     /// Borrow this font instance.
+     #[inline]
+     pub fn as_ref(&self) -> FontInstanceRef<'_> {
+@@ -85,24 +148,34 @@
  
  /// Reusable scratch to shape text using [`Self::shape_text`].
  pub struct Shaper {
@@ -1044,7 +1061,7 @@
          }
      }
  }
-@@ -170,6 +233,7 @@
+@@ -170,6 +243,7 @@
                  "items must not span past the text"
              );
  
@@ -1052,7 +1069,7 @@
              loop {
                  let segment = itemizer
                      .next(
-@@ -178,10 +242,15 @@
+@@ -178,10 +252,15 @@
                      )
                      .expect("A segment must be yielded, given items tile the full text exactly");
  
@@ -1068,7 +1085,7 @@
                      &item.options,
                      &mut select_font,
                      analysis.char_info(),
-@@ -228,6 +297,7 @@
+@@ -228,6 +307,7 @@
      scx: &mut Shaper,
      text: &str,
      segment: &Segment,
@@ -1076,7 +1093,7 @@
      options: &ShapeOptions<'_>,
      select_font: &mut impl FontSelector,
      char_info: &[CharInfo],
-@@ -258,10 +328,21 @@
+@@ -258,10 +338,21 @@
          harfrust::Direction::LeftToRight
      };
      let hb_script = script_to_harfrust(segment.script);
@@ -1102,7 +1119,7 @@
      scx.features.clear();
      scx.features.extend(options.features.iter().map(|feature| {
          harfrust::Feature::new(
-@@ -272,15 +353,87 @@
+@@ -272,15 +363,87 @@
      }));
  
      // Shape a run of the segment with a single font, appending it to `shaped_text`.
@@ -1193,7 +1210,7 @@
          );
          let instance = scx.shape_instance_cache.entry(
              cache::ShapeInstanceKey::new(
-@@ -291,12 +444,127 @@
+@@ -291,12 +454,127 @@
              ),
              || {
                  harfrust::ShaperInstance::from_variations(
@@ -1322,7 +1339,7 @@
          let harf_shaper = shaper_data
              .shaper(&font_ref)
              .instance(Some(instance))
-@@ -309,7 +577,7 @@
+@@ -309,7 +587,7 @@
                  direction,
                  hb_script,
                  language.clone(),
@@ -1331,7 +1348,7 @@
                  Some(options.variations),
              ),
              || {
-@@ -318,7 +586,7 @@
+@@ -318,7 +596,7 @@
                      direction,
                      Some(hb_script),
                      language.as_ref(),
@@ -1340,7 +1357,7 @@
                  )
              },
          );
-@@ -328,8 +596,6 @@
+@@ -328,11 +606,13 @@
          buffer.clear();
          buffer.set_cluster_level(harfrust::BufferClusterLevel::MonotoneCharacters);
  
@@ -1349,7 +1366,14 @@
          buffer.reserve(run_text.len());
          #[expect(clippy::cast_possible_truncation, reason = "Deferred")]
          for (i, ch) in run_text.chars().enumerate() {
-@@ -340,11 +606,37 @@
++            if ch == '\u{ad}' && i != 0 && segment.bidi_level.is_rtl()
++                && font_ref.table_data(skrifa::Tag::new(b"morx")).is_some() {
++                continue;
++            }
+             // Ensure that each cluster's index matches the index into `infos`. This is required
+             // for efficient cluster lookup within `data.rs`.
+             //
+@@ -340,11 +620,37 @@
              // with `char_indices`, push each char individually via `.chars` with a cluster index
              // that matches its `infos` counterpart. This allows us to lookup `infos` via cluster
              // index in `data.rs`.
@@ -1389,7 +1413,7 @@
          buffer.set_direction(direction);
          buffer.set_script(hb_script);
  
-@@ -356,11 +648,11 @@
+@@ -356,11 +662,11 @@
              buffer,
              HarfShapeOptions::new()
                  .plan(Some(shaper_plan))
@@ -1404,7 +1428,7 @@
              text,
              range,
              segment,
-@@ -370,15 +662,25 @@
+@@ -370,15 +676,25 @@
              font,
              &glyph_buffer,
              harf_shaper.coords(),
@@ -1432,7 +1456,7 @@
  
      // The segment's characters with their analysis data and style indices.
      let mut chars = segment_text
-@@ -395,12 +697,23 @@
+@@ -395,12 +711,23 @@
      // The end of the previous grapheme.
      let mut byte_end = text_range.start;
      let mut char_end = char_range.start;
@@ -1457,7 +1481,7 @@
              byte_range: byte_start..byte_end,
              char_range: char_start..char_end,
          };
-@@ -409,26 +722,249 @@
+@@ -409,26 +736,249 @@
              .select_font(segment, options, char_cluster)
              .ok_or(())?;
  
@@ -1524,8 +1548,8 @@
      }
  
      Ok(())
- }
- 
++}
++
 +/// pyro: whether Blink shapes text in `font` word by word (`Font::CanShapeWordByWord`): its
 +/// OpenType lookups never take the space glyph. Only fonts without `GSUB` and `GPOS` are
 +/// recognized (their lookups take nothing); `fonts` keeps the answers of the segment.
@@ -1575,8 +1599,8 @@
 +        fonts.len() - 1
 +    });
 +    &fonts[index].3
-+}
-+
+ }
+ 
 +/// pyro: what fullwidth punctuation trimming needs to know about `font` in `language`: whether
 +/// it has `halt`, and what `halt` does to the punctuation whose kind depends on the glyph, each
 +/// shaped alone in Han script (for which CJK fonts' `locl` picks the language's form).
