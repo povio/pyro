@@ -21814,7 +21814,7 @@ diff --git a/packages/blitz-paint/src/render/multicol.rs b/packages/blitz-paint/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-paint/src/render/multicol.rs
-@@ -0,0 +1,422 @@
+@@ -0,0 +1,449 @@
 +//! pyro: multi-column containers (blitz-dom `layout/multicol.rs`).
 +//!
 +//! A multi-column container's content is laid out in one strip a column wide; each column shows
@@ -22123,8 +22123,14 @@ new file mode 100644
 +    /// whole pixels. `clip_rect` (screen space): what can show; dotted and dashed rules make
 +    /// their marks there only.
 +    pub(super) fn draw_column_rules(&self, scene: &mut impl PaintScene, clip_rect: Rect) {
-+        let Some(columns) = self.context.dom.column_fragments(self.node.id) else {
-+            return;
++        // (Of a vertical writing mode: its columns in its logical axes, and whether its block axis
++        // runs right to left.)
++        let (columns, vertical) = match self.context.dom.column_fragments(self.node.id) {
++            Some(columns) => (columns, None),
++            None => match self.node.vertical_column_fragments() {
++                Some((columns, rl)) => (columns, Some(rl)),
++                None => return,
++            },
 +        };
 +        if columns.fragments.len() < 2 {
 +            return;
@@ -22155,6 +22161,27 @@ new file mode 100644
 +                continue;
 +            }
 +            let (left, right) = if a.x <= b.x { (a, b) } else { (b, a) };
++            // pyro: in a vertical writing mode the columns stack down the inline axis (physical
++            // y) and the rule runs across the row's block extent (physical x, from the right
++            // where the block axis runs right to left), in the middle of the gap (WPT
++            // css-multicol `multicol-span-all-rule-002`). (Dotted and dashed ones are not drawn.)
++            if let Some(rl) = vertical {
++                if matches!(style, BorderStyle::Dotted | BorderStyle::Dashed) {
++                    continue;
++                }
++                let width = self.node.final_layout().size.width as f64;
++                let center = ((left.x + left.width) as f64 + right.x as f64) / 2.0 * scale;
++                let y0 = (center - thickness / 2.0).round();
++                let (from, to) = (a.top as f64, (a.top + a.height) as f64);
++                let (from, to) = if rl { (width - to, width - from) } else { (from, to) };
++                let (x0, x1) = ((from * scale).round(), (to * scale).round());
++                if x1 <= x0 {
++                    continue;
++                }
++                let paint = peniko::Color::from(color);
++                PaintScene::fill(scene, Fill::NonZero, self.transform, paint, None, &Rect::new(x0, y0, x1, y0 + thickness));
++                continue;
++            }
 +            // pyro: centred in the gap between the columns' unsnapped edges, and snapped outwards:
 +            // the content beside it is snapped from those edges in Chromium (a column box at
 +            // 47.375..55.5 paints 47..56), here from its own (47..55), which would leave the gap's

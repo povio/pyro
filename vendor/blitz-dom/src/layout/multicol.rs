@@ -242,10 +242,6 @@ impl ColumnFragments {
         }
     }
 
-    /// The strip point shown at `point` (container coordinates), through the column nearest to
-    /// it in the inline axis (a gap split down its middle). Above a column other than the first
-    /// and below one other than the last nothing of the strip is shown: the point is moved past
-    /// the strip's end.
     /// pyro: the columns that show a box hoisted out of this container (a stacking context
     /// painted by an ancestor) whose strip range is `top..bottom`: those its range reaches, not
     /// spanners' rows, in strip order. Paint shows it in each (blitz-paint
@@ -256,6 +252,10 @@ impl ColumnFragments {
         self.fragments[first..last].iter().filter(move |f| !f.spanner && top < f.end && bottom > f.start)
     }
 
+    /// The strip point shown at `point` (container coordinates), through the column nearest to
+    /// it in the inline axis (a gap split down its middle). Above a column other than the first
+    /// and below one other than the last nothing of the strip is shown: the point is moved past
+    /// the strip's end.
     pub fn columns_to_strip(&self, point: Point<f32>) -> Point<f32> {
         let (Some(first), Some(last)) = (self.fragments.first(), self.fragments.last()) else {
             return point;
