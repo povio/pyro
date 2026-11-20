@@ -415,6 +415,15 @@ impl PageHooks for ScopeHooks {
         self.sched.post(TaskSource::DomManipulation, move |_| task());
     }
 
+    fn post_web_task(
+        &self,
+        priority: pyro_runtime::WebPrioritySource,
+        delay: std::time::Duration,
+        task: Box<dyn FnOnce()>,
+    ) -> Option<Box<dyn FnOnce()>> {
+        Some(self.sched.post_web_task(priority, delay, Box::new(move |_| task())))
+    }
+
     fn post_delayed_task(&self, delay: Duration, task: Box<dyn FnOnce()>) {
         let task = RefCell::new(Some(task));
         self.sched.set_timer(delay, false, true, move |_| {
@@ -953,6 +962,7 @@ impl JsClass for WorkerGlobalScope {
         );
         crate::crypto::define_globals(def);
         crate::streams::define_globals(def);
+        crate::scheduler::define_global(def);
         crate::canvas::define_worker_globals(def);
         // CSS Font Loading: `FontFace` and the worker's `FontFaceSet`.
         crate::font_loading::define_globals(def);
@@ -1230,6 +1240,7 @@ pub(crate) fn is_worker(s: &Scope<'_>) -> bool {
 fn register(engine: &Engine, service: bool, shared_worker: bool) -> pyro_js::ClassId {
     engine.register::<EventTarget>();
     crate::trusted_types::register(engine);
+    engine.register::<crate::scheduler::WebScheduler>();
     crate::event::register_for_worker(engine);
     crate::abort::register(engine);
     crate::message_channel::register(engine);

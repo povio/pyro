@@ -46,6 +46,7 @@ pub enum EventInterface {
     TransitionEvent,
     ToggleEvent,
     CommandEvent,
+    TaskPriorityChangeEvent,
     /// Made in JS on first use (`crate::editing_globals`): natively an
     /// Event wrapper with ClipboardEvent.prototype.
     ClipboardEvent,
@@ -84,6 +85,7 @@ pub enum StorageAreaRef {
 /// Interface-specific fields (flat; unused fields keep defaults).
 #[derive(Default)]
 pub struct EventFields {
+    pub(crate) previous_task_priority: Option<pyro_runtime::WebTaskPriority>,
     pub detail: f64,
     pub custom_detail: Option<Persistent>,
     /// `UIEvent.view` given to a constructor or init method (a Window).
@@ -432,6 +434,7 @@ pub fn wrap_event<'s>(s: &Scope<'s>, core: &EventData) -> JsResult<Object<'s>> {
         EventInterface::AnimationEvent => s.wrap::<AnimationEvent>(d, Some(key)),
         EventInterface::TransitionEvent => s.wrap::<TransitionEvent>(d, Some(key)),
         EventInterface::ToggleEvent => s.wrap::<ToggleEvent>(d, Some(key)),
+        EventInterface::TaskPriorityChangeEvent => s.wrap::<crate::task_signal::TaskPriorityChangeEvent>(d, Some(key)),
         EventInterface::CommandEvent => s.wrap::<CommandEvent>(d, Some(key)),
         EventInterface::ClipboardEvent => crate::editing_globals::wrap_clipboard_event(s, d, key),
     }?;
@@ -528,7 +531,7 @@ fn get_str(init: Option<Object<'_>>, name: &'static str) -> JsResult<String> {
 }
 
 /// Shared constructor: `new XEvent(type, init)`.
-fn construct<'s, C: JsClass<Data = EventData>>(
+pub(crate) fn construct<'s, C: JsClass<Data = EventData>>(
     s: &Scope<'s>,
     new_target: Object<'s>,
     a: Args<'s>,

@@ -203,6 +203,15 @@ impl PageHooks for Hooks {
         });
     }
 
+    fn post_web_task(
+        &self,
+        priority: pyro_runtime::WebPrioritySource,
+        delay: std::time::Duration,
+        task: Box<dyn FnOnce()>,
+    ) -> Option<Box<dyn FnOnce()>> {
+        Some(self.sched.post_web_task(priority, delay, Box::new(move |_| task())))
+    }
+
     fn post_delayed_task(&self, delay: std::time::Duration, task: Box<dyn FnOnce()>) {
         let page = self.page;
         let loader = self.loader.clone();

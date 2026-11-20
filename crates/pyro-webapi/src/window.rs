@@ -173,6 +173,7 @@ where
     def.getter("ClipboardItem", |s, w| crate::navigator_extras::member(s, w.page(), "ClipboardItem"));
     def.getter("Notification", |s, w| crate::navigator_extras::member(s, w.page(), "Notification"));
     crate::streams::define_globals(def);
+    crate::scheduler::define_global(def);
     crate::observable::define_globals(def);
     crate::lazy_module::lazy_globals!(def, crate::view_transition::MODULE, "ViewTransition");
     crate::crypto::define_globals(def);

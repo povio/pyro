@@ -15,6 +15,7 @@
 //! 6. Before disposing a document's realms on navigation/page teardown:
 //!    `page.dispose()`. Per-world removal can use `lifecycle::realm_disposed`.
 
+mod task_signal;
 pub mod abort;
 mod animation_events;
 mod animation_frame;
@@ -81,6 +82,7 @@ mod names;
 pub mod navigator_extras;
 pub mod node;
 mod positional_html;
+mod scheduler;
 mod sanitizer_options;
 mod streaming_html;
 pub mod observable;
@@ -159,6 +161,7 @@ pub fn register(engine: &pyro_js::Engine) {
     engine.set_wrapper_property_hook(target::pin_wrapper_with_properties);
     engine.register::<target::EventTarget>();
     trusted_types::register(engine);
+    engine.register::<scheduler::WebScheduler>();
     event::register(engine);
     popup::register(engine);
     node::register(engine);
