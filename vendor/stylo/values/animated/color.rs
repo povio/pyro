@@ -69,7 +69,7 @@ impl Animate for Color {
         let (left_weight, right_weight) = procedure.weights();
 
         Ok(Self::from_color_mix(ColorMix {
-            interpolation: ColorInterpolationMethod::srgb(),
+            interpolation: ColorInterpolationMethod::default(),
             items: OwnedSlice::from_slice(&[
                 GenericColorMixItem {
                     color: self.clone(),
@@ -81,7 +81,7 @@ impl Animate for Color {
                 },
             ]),
             // See https://github.com/w3c/csswg-drafts/issues/7324
-            flags: ColorMixFlags::empty(),
+            flags: ColorMixFlags::ANIMATION_SPACE,
         }))
     }
 }

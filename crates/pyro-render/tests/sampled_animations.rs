@@ -124,6 +124,16 @@ fn a_css_animation_is_sampled_at_its_progress_and_dropped_with_it() {
     assert_near(pixel(&img, 50, 50), [0, 200, 0], "no animation: the base value");
 }
 
+#[test]
+fn color_animation_selects_the_space_from_the_resolved_endpoints() {
+    for (foreground, expected) in [("white", 128), ("color(srgb 1 1 1)", 99)] {
+        let (snapshot, key) = page(&format!("<style>body{{margin:0}}#target{{width:100px;height:100px;color:{foreground}}}</style><div id=target></div>"));
+        let effect = text(&[(0.0, "background-color:black"), (1.0, "background-color:currentcolor")], 0.5, None);
+        let image = render(&mut Renderer::new(), &snapshot, frame(key, vec![], vec![effect]));
+        assert_near(pixel(&image, 50, 50), [expected; 3], foreground);
+    }
+}
+
 /// A missing 0% keyframe takes the element's base value (not the animated
 /// one it had last), and an unknown `@keyframes` name animates nothing.
 #[test]

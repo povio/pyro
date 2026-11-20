@@ -198,7 +198,7 @@ diff -ruN a/color/component.rs b/color/component.rs
                      None => Self::ChannelKeyword(*channel_keyword),
 diff -ruN a/color/mix.rs b/color/mix.rs
 --- a/color/mix.rs	2026-11-11 19:55:57
-+++ b/color/mix.rs	2026-11-18 22:37:34
++++ b/color/mix.rs	2026-11-20 23:03:05
 @@ -20,10 +20,12 @@
      Clone,
      Copy,
@@ -224,12 +224,18 @@ diff -ruN a/color/mix.rs b/color/mix.rs
      ToShmem,
      ToAnimatedValue,
      ToComputedValue,
-@@ -168,11 +172,12 @@
+@@ -168,11 +172,18 @@
      items: impl IntoIterator<Item = ColorMixItem>,
      flags: ColorMixFlags,
  ) -> AbsoluteColor {
 -    let items = items.into_iter().collect::<ColorMixItemList<_>>();
 +    let mut items = items.into_iter().collect::<ColorMixItemList<_>>();
++    let interpolation = match items.as_slice() {
++        [left, right] if flags.contains(ColorMixFlags::ANIMATION_SPACE) => {
++            ColorInterpolationMethod::best_interpolation_between(&left.color, &right.color)
++        },
++        _ => interpolation,
++    };
  
      // Convert a mix result into the syntax required by the flags:
      // - modern syntax when requested (converting legacy spaces like hsl/hwb to srgb), otherwise;
@@ -238,7 +244,7 @@ diff -ruN a/color/mix.rs b/color/mix.rs
      let finalize = |result: AbsoluteColor| -> AbsoluteColor {
          if flags.contains(ColorMixFlags::RESULT_IN_MODERN_SYNTAX) {
              if result.is_legacy_syntax() {
-@@ -184,7 +189,7 @@
+@@ -184,7 +195,7 @@
              } else {
                  result
              }
@@ -247,7 +253,7 @@ diff -ruN a/color/mix.rs b/color/mix.rs
              result.into_srgb_legacy()
          } else {
              result
-@@ -203,9 +208,14 @@
+@@ -203,9 +214,14 @@
          // https://drafts.csswg.org/css-color-5/#color-mix-percent-norm
          let sum: f32 = items.iter().map(|item| item.weight).sum();
          if sum == 0.0 {
@@ -265,7 +271,7 @@ diff -ruN a/color/mix.rs b/color/mix.rs
              weight_scale = 1.0 / sum;
              if sum < 1.0 {
                  alpha_multiplier = sum;
-@@ -298,72 +308,35 @@
+@@ -298,72 +314,35 @@
  }
  
  impl AbsoluteColor {
@@ -278,7 +284,11 @@ diff -ruN a/color/mix.rs b/color/mix.rs
 -
 -        if source.color_space == self.color_space {
 -            return;
--        }
++    pub(super) fn convert_with_missing(&self, target: ColorSpace) -> AbsoluteColor {
++        let mut converted = self.to_color_space(target);
++        if self.color_space == target || !self.flags.intersects(ColorFlags::NONE_FLAGS) {
++            return converted;
+         }
 -
 -        // Reds             r, x
 -        // Greens           g, y
@@ -324,22 +334,6 @@ diff -ruN a/color/mix.rs b/color/mix.rs
 -                }
 -            } else if matches!(self.color_space, S::Lch | S::Oklch) {
 -                self.flags |= source.flags & F::C2_IS_NONE;
--            }
--        }
--
--        // Opponent         a, a
--        // Opponent         b, b
--        if matches!(source.color_space, S::Lab | S::Oklab)
--            && matches!(self.color_space, S::Lab | S::Oklab)
--        {
--            self.flags |= source.flags & F::C1_IS_NONE;
--            self.flags |= source.flags & F::C2_IS_NONE;
--        }
-+    pub(super) fn convert_with_missing(&self, target: ColorSpace) -> AbsoluteColor {
-+        let mut converted = self.to_color_space(target);
-+        if self.color_space == target || !self.flags.intersects(ColorFlags::NONE_FLAGS) {
-+            return converted;
-+        }
 +        #[derive(Clone, Copy, PartialEq)]
 +        enum Channel { Red, Green, Blue, Lightness, Chroma, Hue, OpponentA, OpponentB, White, Black }
 +        use Channel::*;
@@ -361,13 +355,22 @@ diff -ruN a/color/mix.rs b/color/mix.rs
 +                .map_or(remainder_missing, |source| self.flags.contains(flags[source]));
 +            if missing {
 +                converted.flags.insert(flags[index]);
-+            }
-+        }
+             }
+         }
+-
+-        // Opponent         a, a
+-        // Opponent         b, b
+-        if matches!(source.color_space, S::Lab | S::Oklab)
+-            && matches!(self.color_space, S::Lab | S::Oklab)
+-        {
+-            self.flags |= source.flags & F::C1_IS_NONE;
+-            self.flags |= source.flags & F::C2_IS_NONE;
+-        }
 +        converted
      }
  }
  
-@@ -405,9 +378,7 @@
+@@ -405,9 +384,7 @@
  }
  
  fn convert_for_mix(color: &AbsoluteColor, color_space: ColorSpace) -> AbsoluteColor {
@@ -6694,6 +6697,27 @@ diff -ruN a/url/servo.rs b/url/servo.rs
          dest.write_char(')')
      }
  }
+diff -ruN a/values/animated/color.rs b/values/animated/color.rs
+--- a/values/animated/color.rs	2026-11-11 19:55:57
++++ b/values/animated/color.rs	2026-11-20 23:03:05
+@@ -69,7 +69,7 @@
+         let (left_weight, right_weight) = procedure.weights();
+ 
+         Ok(Self::from_color_mix(ColorMix {
+-            interpolation: ColorInterpolationMethod::srgb(),
++            interpolation: ColorInterpolationMethod::default(),
+             items: OwnedSlice::from_slice(&[
+                 GenericColorMixItem {
+                     color: self.clone(),
+@@ -81,7 +81,7 @@
+                 },
+             ]),
+             // See https://github.com/w3c/csswg-drafts/issues/7324
+-            flags: ColorMixFlags::empty(),
++            flags: ColorMixFlags::ANIMATION_SPACE,
+         }))
+     }
+ }
 diff -ruN a/values/animated/effects.rs b/values/animated/effects.rs
 --- a/values/animated/effects.rs	2026-11-11 19:55:57
 +++ b/values/animated/effects.rs	2026-11-14 18:55:29
@@ -7546,8 +7570,17 @@ diff -ruN a/values/generics/calc.rs b/values/generics/calc.rs
          }
 diff -ruN a/values/generics/color.rs b/values/generics/color.rs
 --- a/values/generics/color.rs	2026-11-11 19:55:57
-+++ b/values/generics/color.rs	2026-11-19 20:50:37
-@@ -240,6 +240,9 @@
++++ b/values/generics/color.rs	2026-11-20 23:03:05
+@@ -41,6 +41,8 @@
+         const NORMALIZE_WEIGHTS = 1 << 0;
+         /// The result should always be converted to the modern color syntax.
+         const RESULT_IN_MODERN_SYNTAX = 1 << 1;
++        /// Select the animation color space after resolving dependent colors.
++        const ANIMATION_SPACE = 1 << 2;
+     }
+ }
+ 
+@@ -240,6 +242,9 @@
  
  /// Caret color is effectively a ColorOrAuto, but resolves `auto` to
  /// currentColor.
@@ -7557,7 +7590,7 @@ diff -ruN a/values/generics/color.rs b/values/generics/color.rs
  #[derive(
      Animate,
      Clone,
-@@ -252,22 +255,66 @@
+@@ -252,22 +257,66 @@
      ToAnimatedValue,
      ToAnimatedZero,
      ToComputedValue,
@@ -7575,9 +7608,9 @@ diff -ruN a/values/generics/color.rs b/values/generics/color.rs
      pub fn auto() -> Self {
 -        GenericCaretColor(GenericColorOrAuto::Auto)
 +        GenericCaretColor(GenericColorOrAuto::Auto, GenericColorOrAuto::Auto)
-     }
- }
- 
++    }
++}
++
 +impl<C: ToCss> ToCss for GenericCaretColor<C> {
 +    fn to_css<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result
 +    where
@@ -7589,9 +7622,9 @@ diff -ruN a/values/generics/color.rs b/values/generics/color.rs
 +            text.to_css(dest)?;
 +        }
 +        Ok(())
-+    }
-+}
-+
+     }
+ }
+ 
  pub use self::GenericCaretColor as CaretColor;
  
 +/// pyro: outline-color, `auto | <color>` (CSS UI 4): `auto` is the accent colour (else

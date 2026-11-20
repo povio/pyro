@@ -173,6 +173,12 @@ pub fn mix_many(
     flags: ColorMixFlags,
 ) -> AbsoluteColor {
     let mut items = items.into_iter().collect::<ColorMixItemList<_>>();
+    let interpolation = match items.as_slice() {
+        [left, right] if flags.contains(ColorMixFlags::ANIMATION_SPACE) => {
+            ColorInterpolationMethod::best_interpolation_between(&left.color, &right.color)
+        },
+        _ => interpolation,
+    };
 
     // Convert a mix result into the syntax required by the flags:
     // - modern syntax when requested (converting legacy spaces like hsl/hwb to srgb), otherwise;

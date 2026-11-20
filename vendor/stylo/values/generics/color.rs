@@ -41,6 +41,8 @@ bitflags! {
         const NORMALIZE_WEIGHTS = 1 << 0;
         /// The result should always be converted to the modern color syntax.
         const RESULT_IN_MODERN_SYNTAX = 1 << 1;
+        /// Select the animation color space after resolving dependent colors.
+        const ANIMATION_SPACE = 1 << 2;
     }
 }
 
