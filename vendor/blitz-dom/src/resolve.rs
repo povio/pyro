@@ -788,10 +788,7 @@ impl BaseDocument {
         // descendants it collapses through (Chrome: WPT css-overflow
         // `overflow-negative-margin-dynamic`, a -20px margin through a 10px one: -10px).
         let mut child = child;
-        // (Classic scrollbars only: overlay mode keeps its results.)
-        if self.nodes.classic_scrollbars {
-            child.margin.bottom = self.collapsed_end_margin(child_id, child.margin.bottom, 0);
-        }
+        child.margin.bottom = self.collapsed_end_margin(child_id, child.margin.bottom, 0);
         let pad = |padding: f32, margin: f32| (padding + margin).max(0.0) as f64;
         let (x, y) = (child.location.x as f64, child.location.y as f64);
         let (w, h) = (child.size.width as f64, child.size.height as f64);
