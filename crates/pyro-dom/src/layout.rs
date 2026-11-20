@@ -4196,6 +4196,12 @@ impl Layout {
                 None => {}
             }
         }
+        let name = if matches!(name, "inline-size" | "block-size") {
+            let horizontal = self.style.stylo_style(dom, el).is_none_or(|style| style.writing_mode.is_horizontal());
+            if (name == "inline-size") == horizontal { "width" } else { "height" }
+        } else {
+            name
+        };
         match name {
             "display" if self.style.has_display_none(dom, el) => return "none".into(),
             "display" => return self.style.computed_display(dom, el).unwrap_or_default(),

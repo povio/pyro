@@ -183,6 +183,20 @@ impl PartialEq for AnimationValue {
 }
 
 impl AnimationValue {
+    /// Sample intrinsic sizes using the element's underlying interpolation policy.
+    #[cfg(feature = "servo")]
+    pub fn animate_with_size_policy(&self, other: &Self, procedure: Procedure, allow_keywords: bool) -> Result<Self, ()> {
+        if allow_keywords {
+            match (self, other) {
+                % for name in ['Width', 'Height', 'MinWidth', 'MinHeight']:
+                (Self::${name}(from), Self::${name}(to)) => return Ok(Self::${name}(from.animate_size(to, procedure, true)?)),
+                % endfor
+                _ => {},
+            }
+        }
+        self.animate(other, procedure)
+    }
+
     /// Returns the longhand id this animated value corresponds to.
     #[inline]
     pub fn id(&self) -> PropertyDeclarationId<'_> {

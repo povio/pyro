@@ -4140,6 +4140,15 @@ gecko_ffi_name = "mVisible"
 type = "Visibility"
 initial = "computed::Visibility::Visible"
 
+[interpolate-size]
+struct = "inherited_box"
+engine = "servo"
+spec = "https://drafts.csswg.org/css-values-5/#interpolate-size"
+animation_type = "none"
+affects = "layout"
+type = "InterpolateSize"
+initial = "computed::InterpolateSize::NumericOnly"
+
 [direction]
 struct = "inherited_box"
 spec = "https://drafts.csswg.org/css-writing-modes/#propdef-direction"

@@ -976,7 +976,7 @@ diff -ruN a/properties/counted_unknown_properties.py b/properties/counted_unknow
      "-webkit-app-region",
 diff -ruN a/properties/data.py b/properties/data.py
 --- a/properties/data.py	2026-11-11 19:55:57
-+++ b/properties/data.py	2026-11-20 08:55:43
++++ b/properties/data.py	2026-11-20 20:22:20
 @@ -342,9 +342,19 @@
          allow_quirks=False,
          ignored_when_colors_disabled=False,
@@ -1006,7 +1006,14 @@ diff -ruN a/properties/data.py b/properties/data.py
                  "FlexDirection",
                  "ListStylePosition",
                  "TextWrapStyle",
-@@ -606,10 +617,17 @@
+@@ -600,16 +611,24 @@
+                 "ShapeRendering",
+                 "TextAnchor",
+                 "ImageOrientation",
++                "InterpolateSize",
+                 "TextOrientation",
+                 "BoxCollapse",
+                 "Visibility",
                  "MathShift",
                  "ColumnSpan",
                  "ColumnFill",
@@ -1024,7 +1031,7 @@ diff -ruN a/properties/data.py b/properties/data.py
                  "TopLayer",
                  "FloatEdge",
                  "ImageLayerAttachment",
-@@ -670,6 +688,7 @@
+@@ -670,6 +689,7 @@
                  "OverscrollBehavior",
                  "PageOrientation",
                  "PointerEvents",
@@ -1032,7 +1039,7 @@ diff -ruN a/properties/data.py b/properties/data.py
                  "PositionTryOrder",
                  "PositionVisibility",
                  "PrintColorAdjust",
-@@ -686,6 +705,12 @@
+@@ -686,6 +706,12 @@
                  "TextAlign",
                  "TextAlignLast",
                  "TextAutospace",
@@ -1045,7 +1052,7 @@ diff -ruN a/properties/data.py b/properties/data.py
                  "TextBoxEdge",
                  "TextBoxTrim",
                  "TextDecorationLine",
-@@ -1323,8 +1348,17 @@
+@@ -1323,8 +1349,17 @@
                  "cursor",
                  "direction",
                  "hyphens",
@@ -1065,8 +1072,29 @@ diff -ruN a/properties/data.py b/properties/data.py
                  "text-emphasis-position",
 diff -ruN a/properties/helpers/animated_properties.mako.rs b/properties/helpers/animated_properties.mako.rs
 --- a/properties/helpers/animated_properties.mako.rs	2026-11-11 19:55:57
-+++ b/properties/helpers/animated_properties.mako.rs	2026-11-17 22:01:14
-@@ -510,6 +510,31 @@
++++ b/properties/helpers/animated_properties.mako.rs	2026-11-20 20:21:29
+@@ -183,6 +183,20 @@
+ }
+ 
+ impl AnimationValue {
++    /// Sample intrinsic sizes using the element's underlying interpolation policy.
++    #[cfg(feature = "servo")]
++    pub fn animate_with_size_policy(&self, other: &Self, procedure: Procedure, allow_keywords: bool) -> Result<Self, ()> {
++        if allow_keywords {
++            match (self, other) {
++                % for name in ['Width', 'Height', 'MinWidth', 'MinHeight']:
++                (Self::${name}(from), Self::${name}(to)) => return Ok(Self::${name}(from.animate_size(to, procedure, true)?)),
++                % endfor
++                _ => {},
++            }
++        }
++        self.animate(other, procedure)
++    }
++
+     /// Returns the longhand id this animated value corresponds to.
+     #[inline]
+     pub fn id(&self) -> PropertyDeclarationId<'_> {
+@@ -510,6 +524,31 @@
      }
  }
  
@@ -1235,7 +1263,7 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
                  % for i in range(3):
 diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 --- a/properties/longhands.toml	2026-11-11 19:55:57
-+++ b/properties/longhands.toml	2026-11-20 09:33:11
++++ b/properties/longhands.toml	2026-11-20 20:21:29
 @@ -129,7 +129,6 @@
  type = "ColorOrAuto"
  initial = "generics::color::ColorOrAuto::Auto"
@@ -1289,15 +1317,15 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-break/#propdef-break-before"
  animation_type = "discrete"
  affects = "layout"
-@@ -491,9 +490,26 @@
+@@ -491,11 +490,28 @@
  type = "BreakWithin"
  initial = "computed::BreakWithin::Auto"
  struct = "box"
 -engine = "gecko"
  spec = "https://drafts.csswg.org/css-break/#propdef-break-inside"
  animation_type = "discrete"
-+affects = "layout"
-+
+ affects = "layout"
+ 
 +[orphans]
 +type = "PositiveInteger"
 +initial = "From::from(2)"
@@ -1314,9 +1342,11 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +spec = "https://drafts.csswg.org/css-break/#propdef-widows"
 +animation_type = "normal"
 +servo_restyle_damage = "repaint"
- affects = "layout"
- 
++affects = "layout"
++
  [caption-side]
+ type = "table::CaptionSide"
+ initial = "computed::table::CaptionSide::Top"
 @@ -509,8 +525,20 @@
  type = "color::CaretColor"
  initial = "generics::color::CaretColor::auto()"
@@ -1346,10 +1376,12 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  spec = "https://svgwg.org/svg2-draft/masking.html#ClipRuleProperty"
  affects = "paint"
-@@ -569,6 +596,62 @@
+@@ -567,8 +594,64 @@
+ animation_type = "discrete"
+ ignored_when_colors_disabled = true
  servo_restyle_damage = "repaint"
- affects = "paint"
- 
++affects = "paint"
++
 +[column-rule-inset-cap-start]
 +type = "length::RuleInset"
 +initial = "computed::length::RuleInset::LengthPercentage(computed::LengthPercentage::zero())"
@@ -1376,8 +1408,8 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +initial = "computed::length::RuleInset::LengthPercentage(computed::LengthPercentage::zero())"
 +struct = "column"
 +spec = "https://drafts.csswg.org/css-gaps-1/#inset"
-+affects = "paint"
-+
+ affects = "paint"
+ 
 +[row-rule-inset-cap-start]
 +type = "length::RuleInset"
 +initial = "computed::length::RuleInset::LengthPercentage(computed::LengthPercentage::zero())"
@@ -1425,7 +1457,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  spec = "https://drafts.csswg.org/css-multicol/#propdef-column-rule-style"
  affects = "paint"
-@@ -609,10 +690,81 @@
+@@ -609,11 +690,82 @@
  type = "BorderSideWidth"
  initial = "computed::BorderSideWidth::medium()"
  struct = "column"
@@ -1478,7 +1510,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +animation_type = "discrete"
 +spec = "https://drafts.csswg.org/css-gaps-1/#propdef-rule-overlap"
 +affects = "paint"
-+
+ 
 +[row-rule-color]
 +type = "Color"
 +initial = "computed_value::T::currentcolor()"
@@ -1505,9 +1537,10 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +engine = "servo"
 +spec = "https://drafts.csswg.org/css-gaps-1/#column-row-rule-width"
 +affects = "paint"
- 
++
  [column-width]
  type = "length::NonNegativeLengthOrAuto"
+ initial = "computed::length::NonNegativeLengthOrAuto::auto()"
 @@ -636,39 +788,39 @@
  type = "ContainIntrinsicSize"
  initial = "computed::ContainIntrinsicSize::None"
@@ -1746,8 +1779,8 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 -engine = "gecko"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#scroll-snap-stop"
  animation_type = "discrete"
-+affects = "paint"
-+
+ affects = "paint"
+ 
 +[scroll-marker-group]
 +type = "ScrollMarkerGroup"
 +initial = "computed::ScrollMarkerGroup::NONE"
@@ -1766,8 +1799,8 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +animation_type = "discrete"
 +servo_restyle_damage = "repaint"
 +spec = "https://drafts.csswg.org/css-overflow-5/#scroll-target-group"
- affects = "paint"
- 
++affects = "paint"
++
  [scroll-snap-type]
  type = "ScrollSnapType"
  initial = "computed::ScrollSnapType::none()"
@@ -1990,12 +2023,10 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [text-autospace]
  type = "TextAutospace"
  initial = "computed::text::TextAutospace::NO_AUTOSPACE"
-@@ -2597,6 +2818,28 @@
- gecko_pref = "layout.css.text-autospace.enabled"
- has_effect_on_gecko_scrollbars = false
+@@ -2599,6 +2820,28 @@
  spec = "https://drafts.csswg.org/css-text-4/#text-autospace-property"
-+affects = "layout"
-+
+ affects = "layout"
+ 
 +# pyro: CSS Text 4 `text-spacing-trim` (fullwidth punctuation trimming), for Servo: blitz-dom
 +# passes it to parley's shaping and line breaking.
 +[text-spacing-trim]
@@ -2016,9 +2047,11 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +engine = "servo"
 +animation_type = "discrete"
 +spec = "https://drafts.csswg.org/css-text-5/#text-fit-property"
- affects = "layout"
- 
++affects = "layout"
++
  [text-autospace-size]
+ type = "Number"
+ initial = "0.125"
 @@ -2635,7 +2878,6 @@
  type = "TextDecorationSkipInk"
  initial = "computed::TextDecorationSkipInk::Auto"
@@ -2035,10 +2068,12 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  affects = "overflow"
  
  [text-underline-offset]
-@@ -3173,6 +3416,15 @@
+@@ -3171,6 +3414,15 @@
+ boxed = true
+ logical_group = "border-radius"
  logical = true
- affects = "paint"
- 
++affects = "paint"
++
 +[border-shape]
 +type = "basic_shape::BorderShape"
 +initial = "generics::basic_shape::BorderShape::None"
@@ -2046,11 +2081,9 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +animation_type = "none"
 +boxed = true
 +spec = "https://drafts.csswg.org/css-borders-4/#propdef-border-shape"
-+affects = "paint"
-+
+ affects = "paint"
+ 
  [corner-top-left-shape]
- type = "CornerShape"
- initial = "computed::CornerShape::round()"
 @@ -3383,9 +3635,9 @@
  type = "MarginTrim"
  initial = "computed::MarginTrim::empty()"
@@ -2198,10 +2231,14 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  affects = "layout"
  type = "BoxDecorationBreak"
-@@ -3730,6 +3967,18 @@
- type = "TopLayer"
- initial = "computed::TopLayer::None"
- 
+@@ -3726,6 +3963,18 @@
+ spec = "Internal (not web-exposed)"
+ animation_type = "none"
+ enabled_in = "ua"
++affects = "layout"
++type = "TopLayer"
++initial = "computed::TopLayer::None"
++
 +# pyro: css-position-4 `overlay`, for Servo: whether an element in the top layer is rendered there
 +# (`auto`). The UA sheet sets it on top-layer elements; a discrete transition keeps it, and the element in
 +# the top layer, past their removal (pyro-dom, blitz-paint).
@@ -2210,14 +2247,10 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +engine = "servo"
 +spec = "https://drafts.csswg.org/css-position-4/#overlay"
 +animation_type = "discrete"
-+affects = "layout"
-+type = "TopLayer"
-+initial = "computed::TopLayer::None"
-+
- [scroll-behavior]
- struct = "box"
- servo_pref = "layout.css.scroll-behavior.enabled"
-@@ -3770,12 +4019,30 @@
+ affects = "layout"
+ type = "TopLayer"
+ initial = "computed::TopLayer::None"
+@@ -3770,13 +4019,31 @@
  
  [column-fill]
  struct = "column"
@@ -2227,7 +2260,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  affects = "layout"
  type = "ColumnFill"
  initial = "computed::ColumnFill::Balance"
-+
+ 
 +# pyro: css-multicol-2 `column-height` and `column-wrap` (blitz-dom lays them out: multicol.rs).
 +[column-height]
 +type = "length::NonNegativeLengthOrAuto"
@@ -2246,10 +2279,27 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +servo_pref = "layout.css.columns.enabled"
 +type = "ColumnWrap"
 +initial = "computed::ColumnWrap::Auto"
- 
++
  [column-span]
  struct = "column"
-@@ -3901,9 +4168,9 @@
+ spec = "https://drafts.csswg.org/css-multicol/#propdef-column-span"
+@@ -3873,6 +4140,15 @@
+ type = "Visibility"
+ initial = "computed::Visibility::Visible"
+ 
++[interpolate-size]
++struct = "inherited_box"
++engine = "servo"
++spec = "https://drafts.csswg.org/css-values-5/#interpolate-size"
++animation_type = "none"
++affects = "layout"
++type = "InterpolateSize"
++initial = "computed::InterpolateSize::NumericOnly"
++
+ [direction]
+ struct = "inherited_box"
+ spec = "https://drafts.csswg.org/css-writing-modes/#propdef-direction"
+@@ -3901,9 +4177,9 @@
  type = "TextOrientation"
  initial = "computed::TextOrientation::Mixed"
  
@@ -2260,7 +2310,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-images/#propdef-image-orientation"
  animation_type = "discrete"
  affects = "layout"
-@@ -3912,7 +4179,6 @@
+@@ -3912,7 +4188,6 @@
  
  [text-anchor]
  struct = "inherited_svg"
@@ -2268,7 +2318,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://svgwg.org/svg2-draft/text.html#TextAnchorProperty"
  animation_type = "discrete"
  affects = "layout"
-@@ -3921,7 +4187,6 @@
+@@ -3921,7 +4196,6 @@
  
  [color-interpolation]
  struct = "inherited_svg"
@@ -2276,7 +2326,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://svgwg.org/svg2-draft/painting.html#ColorInterpolationProperty"
  animation_type = "discrete"
  affects = "paint"
-@@ -3930,7 +4195,6 @@
+@@ -3930,7 +4204,6 @@
  
  [color-interpolation-filters]
  struct = "inherited_svg"
@@ -2284,7 +2334,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://svgwg.org/svg2-draft/painting.html#ColorInterpolationFiltersProperty"
  animation_type = "discrete"
  affects = "paint"
-@@ -3939,7 +4203,6 @@
+@@ -3939,7 +4212,6 @@
  
  [shape-rendering]
  struct = "inherited_svg"
@@ -2292,7 +2342,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://svgwg.org/svg2-draft/painting.html#ShapeRenderingProperty"
  animation_type = "discrete"
  affects = "paint"
-@@ -4001,6 +4264,16 @@
+@@ -4001,6 +4273,16 @@
  type = "TextSizeAdjust"
  initial = "computed::TextSizeAdjust::Auto"
  
@@ -2309,7 +2359,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [ruby-align]
  struct = "inherited_text"
  servo_pref = "layout.css.ruby.enabled"
-@@ -4093,6 +4366,17 @@
+@@ -4093,6 +4375,17 @@
  type = "BoxSizing"
  initial = "computed::BoxSizing::ContentBox"
  
@@ -2327,7 +2377,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [object-fit]
  struct = "position"
  spec = "https://drafts.csswg.org/css-images/#propdef-object-fit"
-@@ -4109,6 +4393,61 @@
+@@ -4109,7 +4402,62 @@
  affects = "paint"
  type = "MaskType"
  initial = "computed::MaskType::Luminance"
@@ -2377,7 +2427,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +spec = "https://drafts.fxtf.org/css-masking-1/#propdef-mask-border-repeat"
 +animation_type = "discrete"
 +affects = "paint"
-+
+ 
 +[mask-border-mode]
 +type = "MaskType"
 +initial = "computed::MaskType::Alpha"
@@ -2386,10 +2436,11 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +spec = "https://drafts.fxtf.org/css-masking-1/#propdef-mask-border-mode"
 +animation_type = "discrete"
 +affects = "paint"
- 
++
  [mask-mode]
  struct = "svg"
-@@ -4249,7 +4588,7 @@
+ servo_pref = "layout.css.masking.enabled"
+@@ -4249,7 +4597,7 @@
  
  [field-sizing]
  struct = "ui"
@@ -2398,11 +2449,10 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-ui/#field-sizing"
  animation_type = "discrete"
  affects = "layout"
-@@ -4289,6 +4628,61 @@
- aliases = ["-webkit-box-orient"]
+@@ -4290,6 +4638,61 @@
  type = "BoxOrient"
  initial = "computed::BoxOrient::Horizontal"
-+
+ 
 +# pyro: `-webkit-box-orient` for the servo engine (the gecko one is `-moz-box-orient`'s alias):
 +# with `display: -webkit-box` and `-webkit-line-clamp` it makes the legacy line clamp apply
 +# (`StyleAdjuster::adjust_for_webkit_box`).
@@ -2457,10 +2507,11 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +servo_restyle_damage = "rebuild_box"
 +type = "NonNegativeNumber"
 +initial = "From::from(0.)"
- 
++
  [-moz-box-pack]
  struct = "xul"
-@@ -4344,8 +4738,8 @@
+ engine = "gecko"
+@@ -4344,8 +4747,8 @@
  type = "ScopedName"
  initial = "computed::ScopedName::none()"
  struct = "ui"
@@ -6465,7 +6516,7 @@ diff -ruN a/values/computed/border.rs b/values/computed/border.rs
  impl BorderSpacing {
 diff -ruN a/values/computed/box.rs b/values/computed/box.rs
 --- a/values/computed/box.rs	2026-11-11 19:55:57
-+++ b/values/computed/box.rs	2026-11-20 08:53:30
++++ b/values/computed/box.rs	2026-11-20 20:21:29
 @@ -21,9 +21,9 @@
      AlignmentBaseline, Appearance, BackfaceVisibility, BaselineSource, BoxAlign, BoxCollapse,
      BoxDirection, BoxOrient, BoxPack, BreakBetween, BreakWithin, Clear, Contain, ContainerName,
@@ -6473,7 +6524,7 @@ diff -ruN a/values/computed/box.rs b/values/computed/box.rs
 -    ImageOrientation, Isolation, MarginTrim, Orient, Overflow, OverflowAnchor, OverscrollBehavior,
 -    PositionProperty, ScrollBehavior, ScrollSnapAlign, ScrollSnapAxis, ScrollSnapStop,
 -    ScrollSnapStrictness, ScrollSnapType, ScrollbarGutter, TextOrientation, TopLayer, TouchAction,
-+    ImageOrientation, Isolation, MarginTrim, Orient, Overflow, OverflowAnchor, OverscrollBehavior, ViewTransitionScope,
++    ImageOrientation, InterpolateSize, Isolation, MarginTrim, Orient, Overflow, OverflowAnchor, OverscrollBehavior, ViewTransitionScope,
 +    PositionProperty, ScrollBehavior, ScrollMarkerGroup, ScrollSnapAlign, ScrollSnapAxis, ScrollSnapStop,
 +    ScrollSnapStrictness, ScrollSnapType, ScrollTargetGroup, ScrollbarGutter, TextOrientation, TopLayer, TouchAction,
      Visibility, WillChange, WritingModeProperty,
@@ -6572,7 +6623,7 @@ diff -ruN a/values/computed/image.rs b/values/computed/image.rs
      }
 diff -ruN a/values/computed/length.rs b/values/computed/length.rs
 --- a/values/computed/length.rs	2026-11-11 19:55:57
-+++ b/values/computed/length.rs	2026-11-20 20:06:40
++++ b/values/computed/length.rs	2026-11-20 20:21:29
 @@ -453,6 +453,8 @@
  pub type NonNegativeLengthPercentageOrNormal =
      GenericLengthPercentageOrNormal<NonNegativeLengthPercentage>;
@@ -6582,12 +6633,20 @@ diff -ruN a/values/computed/length.rs b/values/computed/length.rs
  /// A computed `fit-tolerance` value.
  pub type FitTolerance = GenericFitTolerance<NonNegativeLengthPercentage>;
  
-@@ -462,6 +464,59 @@
+@@ -461,7 +463,68 @@
+ 
  /// A computed value for `min-width`, `min-height`, `width` or `height` property.
  pub type Size = GenericSize<NonNegativeLengthPercentage>;
- 
++
 +impl crate::values::animated::Animate for Size {
 +    fn animate(&self, other: &Self, procedure: crate::values::animated::Procedure) -> Result<Self, ()> {
++        self.animate_size(other, procedure, false)
++    }
++}
+ 
++impl Size {
++    pub(crate) fn animate_size(&self, other: &Self, procedure: crate::values::animated::Procedure, allow_keywords: bool) -> Result<Self, ()> {
++        use crate::values::animated::Animate;
 +        let identity = NonNegative(LengthPercentage::new_percent(Percentage(1.0)));
 +        let calculation = |value: &Self, basis: &Self| -> Option<NonNegativeLengthPercentage> {
 +            match (value, basis) {
@@ -6613,7 +6672,8 @@ diff -ruN a/values/computed/length.rs b/values/computed/length.rs
 +            (Self::AnchorContainingCalcFunction(from), Self::AnchorContainingCalcFunction(to)) => Ok(Self::AnchorContainingCalcFunction(from.animate(to, procedure)?)),
 +            (Self::AnchorSizeFunction(from), Self::AnchorSizeFunction(to)) => Ok(Self::AnchorSizeFunction(from.animate(to, procedure)?)),
 +            _ => {
-+                let any = matches!(self, Self::CalcSizeAny(_)) || matches!(other, Self::CalcSizeAny(_));
++                let any = matches!(self, Self::CalcSizeAny(_)) || matches!(other, Self::CalcSizeAny(_)) ||
++                    (allow_keywords && (matches!(self, Self::LengthPercentage(_)) || matches!(other, Self::LengthPercentage(_))));
 +                for basis in [self, other] {
 +                    let wrap: fn(NonNegativeLengthPercentage) -> Self = match basis {
 +                        Self::Auto if any => Self::CalcSizeAuto,
@@ -6642,7 +6702,7 @@ diff -ruN a/values/computed/length.rs b/values/computed/length.rs
  /// A computed value for `max-width` or `max-height` property.
  pub type MaxSize = GenericMaxSize<NonNegativeLengthPercentage>;
  
-@@ -538,6 +593,7 @@
+@@ -538,6 +601,7 @@
          );
          match self {
              Self::FitContentFunction(lp)
@@ -6650,7 +6710,7 @@ diff -ruN a/values/computed/length.rs b/values/computed/length.rs
              | Self::LengthPercentage(lp)
              | Self::AnchorContainingCalcFunction(lp) => {
                  lp.try_tactic_adjustment(old_side, new_side);
-@@ -548,7 +604,12 @@
+@@ -548,7 +612,12 @@
              | Self::MinContent
              | Self::FitContent
              | Self::WebkitFillAvailable
@@ -6711,7 +6771,7 @@ diff -ruN a/values/computed/length_percentage.rs b/values/computed/length_percen
      #[inline]
 diff -ruN a/values/computed/mod.rs b/values/computed/mod.rs
 --- a/values/computed/mod.rs	2026-11-11 19:55:57
-+++ b/values/computed/mod.rs	2026-11-20 08:53:30
++++ b/values/computed/mod.rs	2026-11-20 20:21:29
 @@ -60,23 +60,23 @@
  pub use self::basic_shape::FillRule;
  pub use self::border::{
@@ -6725,7 +6785,7 @@ diff -ruN a/values/computed/mod.rs b/values/computed/mod.rs
      BoxCollapse, BoxDirection, BoxOrient, BoxPack, BreakBetween, BreakWithin, Clear, Contain,
      ContainIntrinsicSize, ContainerName, ContainerType, ContentVisibility, DirectionProperty,
 -    Display, DominantBaseline, Float, ImageOrientation, Isolation, LineClamp, MarginTrim, Orient,
-+    Display, DominantBaseline, Float, ImageOrientation, Isolation, LineClamp, MarginTrim, Orient, ViewTransitionScope,
++    Display, DominantBaseline, Float, ImageOrientation, InterpolateSize, Isolation, LineClamp, MarginTrim, Orient, ViewTransitionScope,
      Overflow, OverflowAnchor, OverflowClipMargin, OverscrollBehavior, Perspective,
 -    PositionProperty, Resize, ScrollBehavior, ScrollSnapAlign, ScrollSnapAxis, ScrollSnapStop,
 +    PositionProperty, Resize, ScrollBehavior, ScrollMarkerGroup, ScrollTargetGroup, ScrollSnapAlign, ScrollSnapAxis, ScrollSnapStop,
@@ -8067,7 +8127,7 @@ diff -ruN a/values/specified/border.rs b/values/specified/border.rs
      #[inline]
 diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 --- a/values/specified/box.rs	2026-11-11 19:55:57
-+++ b/values/specified/box.rs	2026-11-20 13:17:37
++++ b/values/specified/box.rs	2026-11-20 20:21:29
 @@ -15,7 +15,7 @@
      GenericLineClamp, GenericOverflowClipMargin, GenericPerspective, GenericScrollbarInset,
      MaxLines, OverflowClipMarginBox,
@@ -8170,19 +8230,19 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      pub const WebkitInlineBox: Self = Self(
          ((DisplayOutside::Inline as u16) << Self::OUTSIDE_SHIFT) | DisplayInside::WebkitBox as u16,
      );
-@@ -368,6 +375,12 @@
-     #[inline]
-     pub fn is_inline_flow(&self) -> bool {
+@@ -370,6 +377,12 @@
          self.outside() == DisplayOutside::Inline && self.inside() == DisplayInside::Flow
-+    }
-+
+     }
+ 
 +    /// pyro: whether this is `display: run-in` (see [`Self::RUN_IN_MASK`]).
 +    #[inline]
 +    pub const fn is_run_in(&self) -> bool {
 +        (self.0 & Self::RUN_IN_MASK) != 0
-     }
- 
++    }
++
      /// Returns whether this `display` value is some kind of list-item.
+     #[inline]
+     pub const fn is_list_item(&self) -> bool {
 @@ -440,6 +453,10 @@
          if is_root_element && (self.is_contents() || self.is_list_item()) {
              return Display::Block;
@@ -8289,7 +8349,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      ToShmem,
      ToComputedValue,
      ToResolvedValue,
-@@ -801,31 +834,98 @@
+@@ -801,29 +834,96 @@
      /// Use the text-under baseline.
      TextBottom,
      /// Use the alphabetic baseline.
@@ -8337,8 +8397,8 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +    #[cfg(feature = "servo")]
 +    #[css(skip)]
 +    VerticalAlignTextTop,
- }
- 
++}
++
 +#[cfg(feature = "servo")]
 +impl AlignmentBaseline {
 +    /// pyro: the value `vertical-align` sets for a keyword of this longhand (see
@@ -8388,18 +8448,14 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +            Self::VerticalAlignTextBottom | Self::VerticalAlignMiddle | Self::VerticalAlignTextTop => unreachable!(),
 +        })
 +    }
-+}
-+
+ }
+ 
  /// A specified value for the `baseline-source` property.
- /// https://drafts.csswg.org/css-inline-3/#baseline-source
- #[derive(
 @@ -1336,11 +1436,17 @@
      ToShmem,
      ToTyped,
  )]
 -#[css(bitflags(single = "none,auto,manipulation", mixed = "pan-x,pan-y,pinch-zoom"))]
--#[repr(C)]
--pub struct TouchAction(u8);
 +// pyro: `pan-left`, `pan-right`, `pan-up` and `pan-down` too (Pointer Events 3, as Chromium):
 +// `[pan-x | pan-left | pan-right] || [pan-y | pan-up | pan-down] || pinch-zoom`.
 +#[css(bitflags(
@@ -8407,7 +8463,8 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +    mixed = "pan-x,pan-left,pan-right,pan-y,pan-up,pan-down,pinch-zoom",
 +    validate_mixed = "Self::validate_mixed_flags",
 +))]
-+#[repr(C)]
+ #[repr(C)]
+-pub struct TouchAction(u8);
 +pub struct TouchAction(u16);
  bitflags! {
 -    impl TouchAction: u8 {
@@ -8492,12 +8549,10 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
          }
      }
  }
-@@ -2318,6 +2447,15 @@
- pub enum Isolation {
-     Auto,
+@@ -2320,6 +2449,15 @@
      Isolate,
-+}
-+
+ }
+ 
 +/// Which view transition names are scoped to this element.
 +#[allow(missing_docs)]
 +#[derive(Clone, Copy, Debug, Eq, Hash, MallocSizeOf, Parse, PartialEq, SpecifiedValueInfo, ToComputedValue, ToCss, ToResolvedValue, ToShmem, ToTyped)]
@@ -8505,10 +8560,28 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +pub enum ViewTransitionScope {
 +    Auto,
 +    All,
++}
++
+ /// https://drafts.csswg.org/css-transforms/#backface-visibility-property
+ #[allow(missing_docs)]
+ #[derive(
+@@ -2488,6 +2626,15 @@
+     None,
  }
  
- /// https://drafts.csswg.org/css-transforms/#backface-visibility-property
-@@ -2628,4 +2766,91 @@
++/// Controls interpolation between intrinsic sizing keywords and numeric sizes.
++#[allow(missing_docs)]
++#[derive(Clone, Copy, Debug, Deserialize, Eq, FromPrimitive, Hash, MallocSizeOf, Parse, PartialEq, Serialize, SpecifiedValueInfo, ToComputedValue, ToCss, ToResolvedValue, ToShmem, ToTyped)]
++#[repr(u8)]
++pub enum InterpolateSize {
++    NumericOnly,
++    AllowKeywords,
++}
++
+ /// Nonstandard (https://developer.mozilla.org/en-US/docs/Web/CSS/box-align)
+ #[allow(missing_docs)]
+ #[derive(
+@@ -2628,4 +2775,91 @@
  pub enum DirectionProperty {
      Ltr,
      Rtl,
@@ -9413,7 +9486,7 @@ diff -ruN a/values/specified/list.rs b/values/specified/list.rs
              .try_parse(|input| input.expect_ident_matching("none"))
 diff -ruN a/values/specified/mod.rs b/values/specified/mod.rs
 --- a/values/specified/mod.rs	2026-11-11 19:55:57
-+++ b/values/specified/mod.rs	2026-11-20 08:53:30
++++ b/values/specified/mod.rs	2026-11-20 20:21:29
 @@ -39,16 +39,16 @@
  pub use self::basic_shape::FillRule;
  pub use self::border::{
@@ -9427,7 +9500,7 @@ diff -ruN a/values/specified/mod.rs b/values/specified/mod.rs
      BoxCollapse, BoxDirection, BoxOrient, BoxPack, BreakBetween, BreakWithin, Clear, Contain,
      ContainIntrinsicSize, ContainerName, ContainerType, ContentVisibility, DirectionProperty,
 -    Display, DominantBaseline, Float, ImageOrientation, Isolation, LineClamp, MarginTrim, Orient,
-+    Display, DominantBaseline, Float, ImageOrientation, Isolation, LineClamp, MarginTrim, Orient, ViewTransitionScope,
++    Display, DominantBaseline, Float, ImageOrientation, InterpolateSize, Isolation, LineClamp, MarginTrim, Orient, ViewTransitionScope,
      Overflow, OverflowAnchor, OverflowClipMargin, OverscrollBehavior, Perspective,
 -    PositionProperty, Resize, ScrollBehavior, ScrollSnapAlign, ScrollSnapAxis, ScrollSnapStop,
 +    PositionProperty, Resize, ScrollBehavior, ScrollMarkerGroup, ScrollTargetGroup, ScrollSnapAlign, ScrollSnapAxis, ScrollSnapStop,

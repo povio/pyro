@@ -466,6 +466,13 @@ pub type Size = GenericSize<NonNegativeLengthPercentage>;
 
 impl crate::values::animated::Animate for Size {
     fn animate(&self, other: &Self, procedure: crate::values::animated::Procedure) -> Result<Self, ()> {
+        self.animate_size(other, procedure, false)
+    }
+}
+
+impl Size {
+    pub(crate) fn animate_size(&self, other: &Self, procedure: crate::values::animated::Procedure, allow_keywords: bool) -> Result<Self, ()> {
+        use crate::values::animated::Animate;
         let identity = NonNegative(LengthPercentage::new_percent(Percentage(1.0)));
         let calculation = |value: &Self, basis: &Self| -> Option<NonNegativeLengthPercentage> {
             match (value, basis) {
@@ -491,7 +498,8 @@ impl crate::values::animated::Animate for Size {
             (Self::AnchorContainingCalcFunction(from), Self::AnchorContainingCalcFunction(to)) => Ok(Self::AnchorContainingCalcFunction(from.animate(to, procedure)?)),
             (Self::AnchorSizeFunction(from), Self::AnchorSizeFunction(to)) => Ok(Self::AnchorSizeFunction(from.animate(to, procedure)?)),
             _ => {
-                let any = matches!(self, Self::CalcSizeAny(_)) || matches!(other, Self::CalcSizeAny(_));
+                let any = matches!(self, Self::CalcSizeAny(_)) || matches!(other, Self::CalcSizeAny(_)) ||
+                    (allow_keywords && (matches!(self, Self::LengthPercentage(_)) || matches!(other, Self::LengthPercentage(_))));
                 for basis in [self, other] {
                     let wrap: fn(NonNegativeLengthPercentage) -> Self = match basis {
                         Self::Auto if any => Self::CalcSizeAuto,

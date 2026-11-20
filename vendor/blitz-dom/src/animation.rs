@@ -50,7 +50,7 @@ use style::stylesheets::layer_rule::LayerOrder;
 use style::stylesheets::CssRuleType;
 use style::stylist::RuleInclusion;
 use style::traversal_flags::TraversalFlags;
-use style::values::animated::{Animate, Procedure};
+use style::values::animated::Procedure;
 use style::values::computed::TimingFunction;
 use style::values::generics::easing::BeforeFlag;
 use style::Atom;
@@ -334,6 +334,7 @@ struct BaseKey {
 /// An effect's keyframes resolved against the element's base style.
 #[derive(Default)]
 struct Resolved {
+    allow_size_keywords: bool,
     frames: Vec<ResolvedFrame>,
     /// The properties the keyframes set, with their base (underlying) value.
     properties: Vec<(OwnedPropertyDeclarationId, Option<AnimationValue>)>,
@@ -1161,6 +1162,7 @@ fn resolve<'a>(
         })
         .collect();
     Resolved {
+        allow_size_keywords: base.base_style.slow_clone_interpolate_size() == style::values::computed::InterpolateSize::AllowKeywords,
         frames: resolved_frames,
         properties,
         implicit_easing,
@@ -1286,7 +1288,7 @@ fn sample_property(
         };
         match underlying {
             Some(u) => u
-                .animate(value, procedure)
+                .animate_with_size_policy(value, procedure, resolved.allow_size_keywords)
                 .unwrap_or_else(|_| value.clone()),
             None => value.clone(),
         }
@@ -1357,11 +1359,12 @@ fn sample_property(
     Some(
         start
             .value
-            .animate(
+            .animate_with_size_policy(
                 &end.value,
                 Procedure::Interpolate {
                     progress: transformed,
                 },
+                resolved.allow_size_keywords,
             )
             .unwrap_or_else(|_| match (&start.value, &end.value) {
                 // pyro: `display` to or from `none` shows the other value throughout, `none` only

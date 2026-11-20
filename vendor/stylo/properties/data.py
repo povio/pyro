@@ -611,6 +611,7 @@ class Longhand(Property):
                 "ShapeRendering",
                 "TextAnchor",
                 "ImageOrientation",
+                "InterpolateSize",
                 "TextOrientation",
                 "BoxCollapse",
                 "Visibility",

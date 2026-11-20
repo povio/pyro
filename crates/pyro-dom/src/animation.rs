@@ -183,7 +183,7 @@ pub fn transition_value(
 ) -> Option<TransitionValue> {
     use style::properties::animated_properties::AnimationValue;
     use style::properties::PropertyDeclarationId;
-    use style::values::animated::{Animate, Procedure};
+    use style::values::animated::Procedure;
     use style::values::generics::easing::BeforeFlag;
     let id = crate::stylo::property_id(longhand)?;
     let PropertyDeclarationId::Longhand(id) = id.as_shorthand().err()? else { return None };
@@ -222,7 +222,7 @@ pub fn transition_value(
     } else if eased == 1.0 && own_end(after) {
         to.clone()
     } else {
-        match from.animate(&to, Procedure::Interpolate { progress: eased }) {
+        match from.animate_with_size_policy(&to, Procedure::Interpolate { progress: eased }, after.slow_clone_interpolate_size() == style::values::computed::InterpolateSize::AllowKeywords) {
             // A transform interpolation Stylo defers (a matrix it cannot decompose) is discrete,
             // as in Chromium.
             Ok(v) if matches!(id, style::properties::LonghandId::Transform) && defers_matrix(&v) => discrete(),

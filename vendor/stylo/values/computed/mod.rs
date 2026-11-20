@@ -67,7 +67,7 @@ pub use self::box_::{
     AlignmentBaseline, Appearance, BackfaceVisibility, BaselineShift, BaselineSource, BoxAlign,
     BoxCollapse, BoxDirection, BoxOrient, BoxPack, BreakBetween, BreakWithin, Clear, Contain,
     ContainIntrinsicSize, ContainerName, ContainerType, ContentVisibility, DirectionProperty,
-    Display, DominantBaseline, Float, ImageOrientation, Isolation, LineClamp, MarginTrim, Orient, ViewTransitionScope,
+    Display, DominantBaseline, Float, ImageOrientation, InterpolateSize, Isolation, LineClamp, MarginTrim, Orient, ViewTransitionScope,
     Overflow, OverflowAnchor, OverflowClipMargin, OverscrollBehavior, Perspective,
     PositionProperty, Resize, ScrollBehavior, ScrollMarkerGroup, ScrollTargetGroup, ScrollSnapAlign, ScrollSnapAxis, ScrollSnapStop,
     ScrollSnapStrictness, ScrollSnapType, ScrollbarGutter, ScrollbarInset, TextOrientation,

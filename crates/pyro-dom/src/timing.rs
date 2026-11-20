@@ -976,7 +976,7 @@ pub fn changed_longhands_with(
 ) -> Vec<&'static str> {
     use style::properties::animated_properties::AnimationValue;
     use style::properties::{PropertyDeclarationId, ShorthandId};
-    use style::values::animated::{Animate, Procedure};
+    use style::values::animated::Procedure;
     // Different, and values Stylo can animate between (`width: auto` to a
     // length starts none; properties Stylo animates discretely, `float` or
     // `display`, only with `allow_discrete`). Animated values exist for physical longhands
@@ -996,7 +996,7 @@ pub fn changed_longhands_with(
                 (Some(a), Some(b)) => {
                     allow_discrete
                         || (!longhand.is_discrete_animatable()
-                            && a.animate(&b, Procedure::Interpolate { progress: 0.5 })
+                            && a.animate_with_size_policy(&b, Procedure::Interpolate { progress: 0.5 }, after.slow_clone_interpolate_size() == style::values::computed::InterpolateSize::AllowKeywords)
                                 .is_ok_and(|v| !crate::animation::defers_matrix(&v)))
                 }
                 _ => false,
