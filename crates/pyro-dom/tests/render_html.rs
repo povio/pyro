@@ -564,3 +564,38 @@ fn frame_markers_carry_a_per_document_nonce() {
     assert_eq!(render(&dom.borrow(), d), html, "the nonce stays for the document's life");
     assert_ne!(other.borrow().frame_table(d2).nonce, nonce, "each document its own");
 }
+
+/// A page attribute keeps its namespace and name in the snapshot (`xml:lang`, `xlink:href`, an
+/// author namespace), in the keyed tree exactly; only one the renderer could read as an engine
+/// attribute is left out, whatever its namespace or prefix (`e:srcdoc`, a namespaced `srcdoc`).
+/// Namespaced attributes were all dropped on HTML elements (cycle 4 run: `:lang()` via
+/// `xml:lang`, `[ns|attr]` selectors).
+#[test]
+fn namespaced_page_attributes_are_kept() {
+    let (dom, d) = doc("<p id=p>x</p>");
+    let p = find(&dom.borrow(), d, "#p");
+    {
+        let mut dom = dom.borrow_mut();
+        dom.set_attribute_ns(p, Some("http://www.w3.org/XML/1998/namespace"), "xml:lang", "fr").unwrap();
+        dom.set_attribute_ns(p, Some("http://author.test/ns"), "a:lang", "de").unwrap();
+        dom.set_attribute_ns(p, Some("http://author.test/ns"), "e:srcdoc", "<p>EVIL</p>").unwrap();
+        dom.set_attribute_ns(p, Some("http://author.test/other"), "srcdoc", "<p>EVIL</p>").unwrap();
+    }
+    let tree = dom
+        .borrow()
+        .render_tree(d, &RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None, adopted: None })
+        .unwrap();
+    let attrs: Vec<(String, String, String)> = tree
+        .nodes
+        .iter()
+        .filter(|n| n.key == pyro_dom::snapshot::render_key(p))
+        .flat_map(|n| match &n.kind {
+            pyro_dom::snapshot::RenderNodeKind::Element { attrs, .. } => attrs.clone(),
+            _ => Vec::new(),
+        })
+        .map(|(name, value)| (name.ns.to_string(), name.local.to_string(), value))
+        .collect();
+    assert!(attrs.contains(&("http://www.w3.org/XML/1998/namespace".into(), "lang".into(), "fr".into())), "{attrs:?}");
+    assert!(attrs.contains(&("http://author.test/ns".into(), "lang".into(), "de".into())), "{attrs:?}");
+    assert!(!attrs.iter().any(|(_, local, _)| local == "srcdoc"), "{attrs:?}");
+}

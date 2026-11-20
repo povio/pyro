@@ -70,21 +70,25 @@ pub fn raw_text_safe<'a>(text: &'a str, tag: &str) -> std::borrow::Cow<'a, str> 
 pub const FRAME_ATTRIBUTE: &str = "data-pyro-frame";
 
 /// pyro: whether a page attribute may be written next to `engine` (the names, lowercase, of the
-/// attributes the engine gave the element): see [`ENGINE_ATTRIBUTES`]. On an HTML element only
-/// null-namespace attributes are its own (markup could not say another).
-fn page_attribute_allowed(name: &QualName, html_element: bool, engine: &[String]) -> bool {
-    if html_element && name.ns != ns!() {
-        return false;
-    }
+/// attributes the engine gave the element). A page attribute keeps its namespace and name
+/// (`xml:lang`, `xlink:href`, `xmlns:*`, any author namespace); one is left out only if the
+/// renderer could read it as an engine attribute: its local name or its serialised qualified name
+/// (`prefix:local`), ASCII case-insensitively, is in [`ENGINE_ATTRIBUTES`], starts with
+/// [`ENGINE_ATTRIBUTE_PREFIX`], or is one the engine gave this element. (The renderer looks
+/// attributes up by local name, whatever their namespace: a namespaced or prefixed `srcdoc` is
+/// left out too.)
+fn page_attribute_allowed(name: &QualName, engine: &[String]) -> bool {
+    let local = name.local.to_string().to_ascii_lowercase();
     let serialised = match &name.prefix {
-        Some(prefix) if !prefix.is_empty() => format!("{prefix}:{}", name.local),
-        _ => name.local.to_string(),
-    }
-    .to_ascii_lowercase();
-    !(serialised.starts_with(ENGINE_ATTRIBUTE_PREFIX)
-        || name.local.to_ascii_lowercase().starts_with(ENGINE_ATTRIBUTE_PREFIX)
-        || ENGINE_ATTRIBUTES.iter().any(|e| *e == serialised || e.eq_ignore_ascii_case(&name.local))
-        || engine.iter().any(|e| *e == serialised))
+        Some(prefix) if !prefix.is_empty() => format!("{prefix}:{}", name.local).to_ascii_lowercase(),
+        _ => local.clone(),
+    };
+    let reserved = |n: &str| {
+        n.starts_with(ENGINE_ATTRIBUTE_PREFIX)
+            || ENGINE_ATTRIBUTES.iter().any(|e| e.eq_ignore_ascii_case(n))
+            || engine.iter().any(|e| e == n)
+    };
+    !(reserved(&local) || reserved(&serialised))
 }
 
 use std::borrow::Cow;
@@ -721,7 +725,7 @@ impl Dom {
                     if let Some((_, name)) = opts.mark {
                         engine.push(name.to_ascii_lowercase());
                     }
-                    attrs.extend(page.into_iter().filter(|a| page_attribute_allowed(&a.name, html, &engine)));
+                    attrs.extend(page.into_iter().filter(|a| page_attribute_allowed(&a.name, &engine)));
                     let tag = self.serialized_tag(n);
                     let void = html && is_void(local);
                     sink.open(render_key(id), &tag, &e.name, &attrs, mark == Some(n), void);
