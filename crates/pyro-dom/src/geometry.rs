@@ -697,7 +697,7 @@ pub trait GeometrySource {
     }
     /// Resolves a transform using the element's layout box and a possibly
     /// sampled style, without modifying the renderer's stored style.
-    fn resolved_transform_value(&self, _key: u64, _style: &style::properties::ComputedValues) -> Option<String> {
+    fn resolved_transform_value(&self, _key: u64, _property: &str, _style: &style::properties::ComputedValues) -> Option<String> {
         None
     }
     fn sampled_calc_size(&self, _key: u64, _width: bool, _style: &style::properties::ComputedValues) -> Option<f32> {

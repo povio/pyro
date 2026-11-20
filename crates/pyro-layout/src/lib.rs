@@ -950,8 +950,8 @@ impl GeometrySource for BlitzGeometry {
         RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.anchor_scroll_shift(self.page, key, scroll, sticky)).unwrap_or_default()
     }
 
-    fn resolved_transform_value(&self, key: u64, style: &style::properties::ComputedValues) -> Option<String> {
-        RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.resolved_transform_value(self.page, key, style))
+    fn resolved_transform_value(&self, key: u64, property: &str, style: &style::properties::ComputedValues) -> Option<String> {
+        RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.resolved_transform_value(self.page, key, property, style))
     }
 
     fn sampled_calc_size(&self, key: u64, width: bool, style: &style::properties::ComputedValues) -> Option<f32> {

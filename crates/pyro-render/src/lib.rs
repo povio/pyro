@@ -2028,11 +2028,12 @@ impl Renderer {
         &self,
         page: u64,
         key: u64,
+        property: &str,
         style: &style::properties::ComputedValues,
     ) -> Option<String> {
         let m = self.mirrors.get(&page)?;
         let id = m.node(key)?;
-        Some(m.doc.resolved_transform_value(id, style))
+        Some(m.doc.resolved_transform_value(id, property, style))
     }
 
     pub fn sampled_calc_size(&self, page: u64, key: u64, width: bool, style: &style::properties::ComputedValues) -> Option<f32> {

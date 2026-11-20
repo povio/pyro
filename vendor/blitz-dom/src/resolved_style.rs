@@ -347,8 +347,8 @@ impl BaseDocument {
 
     /// Resolve a sampled transform against the existing layout without mutating
     /// the document (used for CSS transition transform readback).
-    pub fn resolved_transform_value(&self, node_id: NodeId, style: &ComputedValues) -> String {
-        self.resolved_style_value_with_style(node_id, "transform", Some(style))
+    pub fn resolved_transform_value(&self, node_id: NodeId, property: &str, style: &ComputedValues) -> String {
+        self.resolved_style_value_with_style(node_id, property, Some(style))
     }
 
     pub fn sampled_calc_size(&self, node_id: NodeId, width: bool, sampled: &ComputedValues) -> Option<f32> {
