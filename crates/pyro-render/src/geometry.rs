@@ -393,14 +393,21 @@ impl Geometry {
         let mut restricted = false;
         let mut cut = |columns: &blitz_dom::ColumnFragments, chain: &[&blitz_dom::Node], strip: Rect, out: &mut Vec<(Rect, Option<f64>)>| {
             let child = chain.iter().find(|node| columns.first_after_spanner.contains_key(&node.id)).unwrap_or(&chain[0]).id;
-            let through_continuation = for_hit && columns.first_after_spanner.contains_key(&child) && chain.iter()
+            let wrapper = chain.iter()
                     .find(|node| columns.run_wrappers.contains(&node.id) || box_position(node) != BoxPosition::Static || node.is_stacking_context_root(false))
-                    .is_some_and(|node| columns.run_wrappers.contains(&node.id));
+                    .and_then(|node| columns.wrapper_initial_consumption.get(&node.id));
             for f in &columns.fragments {
+                if f.spanner && columns.wrapper_initial_consumption.contains_key(&chain[0].id) {
+                    if !for_hit && out.is_empty() && strip.y0 >= f64::from(f.start) && strip.y0 < f64::from(f.end) {
+                        let top = strip.y0 + f64::from(f.offset.y);
+                        out.push((Rect::new(strip.x0, top, strip.x1, top), None));
+                    }
+                    continue;
+                }
                 let Some(start) = columns.child_start(child, f.start) else { continue };
-                let start = if through_continuation && start < f.start {
+                let start = if for_hit && start < f.start {
                     restricted = true;
-                    f.start
+                    wrapper.map_or(start, |consumed| f.start.min(strip.y0 as f32 + consumed))
                 } else { start };
                 let (y0, y1) = (strip.y0.max(start as f64), strip.y1.min(f.end as f64));
                 let shows =

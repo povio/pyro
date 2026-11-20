@@ -131,6 +131,26 @@ fn rects(p: &crate::hit_descent::Page, id: &str) -> Vec<[f64; 4]> {
 }
 
 #[test]
+fn shared_wrapper_resumes_each_overlapping_column_run() {
+    for (count, first_spans) in [(2, true), (3, true), (2, false)] {
+        let first = if first_spans { "all" } else { "none" };
+        let p = page(&format!("<!doctype html><style>*{{margin:0}}main{{columns:{count};width:120px;gap:0}}h2{{height:30px;column-span:all}}h2:first-child{{column-span:{first}}}article{{height:25px;margin-top:-15px}}</style><main><section id=s><h2></h2><article id=a></article><h2 id=h></h2><article id=b></article></section></main>"));
+        let first_pieces = rects(&p, "a");
+        let second_pieces = rects(&p, "b");
+        assert_eq!(first_pieces.len(), if first_spans { count } else { 1 });
+        assert_eq!(second_pieces.len(), count);
+        if !first_spans { assert_eq!(first_pieces, [[60.0, -5.0, 60.0, 25.0]]); }
+        for (id, pieces) in [("a", first_pieces), ("b", second_pieces)] {
+            for (index, [x, y, _, height]) in pieces.into_iter().enumerate() {
+                let target = if id == "b" && index == 0 && !first_spans { "h" } else { id };
+                assert_eq!(p.layout.element_from_point(&p.dom, x + 3.0, y + height / 2.0), Some(p.id(target)), "{count} {first_spans} {id} {index}");
+            }
+        }
+        assert_eq!(rects(&p, "s").len(), if first_spans { 1 + 2 * count } else { 2 * count });
+    }
+}
+
+#[test]
 fn sequential_nested_columns_spend_the_slot_when_they_break() {
     for (count, height, forced, expected) in [(2, 20, false, 40), (2, 20, true, 90), (3, 50, true, 90)] {
         let before = if forced { "column" } else { "auto" };

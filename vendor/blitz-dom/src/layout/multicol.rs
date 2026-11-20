@@ -192,6 +192,7 @@ pub struct ColumnFragments {
     pub strip_end: f32,
     pub first_after_spanner: std::collections::BTreeMap<crate::NodeId, usize>,
     pub run_wrappers: std::collections::BTreeSet<crate::NodeId>,
+    pub wrapper_initial_consumption: std::collections::HashMap<crate::NodeId, f32>,
     continuation_ends: std::collections::HashMap<crate::NodeId, f32>,
     consumed_by_owner: std::collections::HashMap<crate::NodeId, f32>,
 }
@@ -382,6 +383,7 @@ struct Breaks {
     /// pyro: forced breaks (`break-before`/`break-after: column`, `page`, ...), sorted.
     forced: Vec<f32>,
     overflow_breaks: Vec<FlowContinuation>,
+    overlapping_starts: Vec<FlowContinuation>,
     overflow_parents: Vec<FlowContinuation>,
     overflow_continuations: std::collections::HashMap<crate::NodeId, f32>,
     parallel_floats: Vec<(crate::NodeId, f32, f32, f32)>,
@@ -1955,6 +1957,7 @@ impl LayoutPassState<'_> {
         let mut baselines = strip.baselines;
         let mut first_after_spanner = std::collections::BTreeMap::new();
         let mut run_wrappers = std::collections::BTreeSet::new();
+        let mut wrapper_initial_consumption = std::collections::HashMap::new();
         if !spanners.is_empty() && !vertical {
             let mut owners = std::collections::HashMap::new();
             let mut paths = std::collections::HashSet::new();
@@ -1970,6 +1973,13 @@ impl LayoutPassState<'_> {
                 let y = if id == dom_id { 0.0 } else { parent_y + child.unrounded_layout().location.y };
                 if let Some(&index) = owners.get(&id) {
                     next = Some(index);
+                    let mut parent = child.layout_parent.get();
+                    let mut owner_top = parent_y;
+                    while let Some(owner) = parent.filter(|&p| p != dom_id && !wrapper_initial_consumption.contains_key(&p)) {
+                        wrapper_initial_consumption.insert(owner, (fragments[index - 1].start - owner_top).max(0.0));
+                        owner_top -= self.nodes[owner].unrounded_layout().location.y;
+                        parent = self.nodes[owner].layout_parent.get();
+                    }
                 } else if id == dom_id || paths.contains(&id) {
                     if let Some(children) = child.layout_children.borrow().as_ref() {
                         pending.extend(children.iter().rev().map(|&child| (child, y)));
@@ -1981,6 +1991,16 @@ impl LayoutPassState<'_> {
                         while let Some(parent) = at.filter(|&p| p != dom_id && run_wrappers.insert(p)) { at = self.nodes[parent].layout_parent.get(); }
                     }
                 }
+            }
+        }
+        for token in &breaks.overlapping_starts {
+            let consumed = token.origin + token.consumed;
+            let index = fragments.partition_point(|f| f.end < consumed - EPSILON);
+            if let Some(first) = fragments.get(index) && !first.spanner && consumed > first.start + EPSILON
+                && token.origin + self.nodes[token.resume].unrounded_layout().location.y < first.start - EPSILON {
+                first_after_spanner.entry(token.resume).or_insert(index);
+                let mut at = Some(token.owner);
+                while let Some(parent) = at.filter(|&p| p != dom_id && run_wrappers.insert(p)) { at = self.nodes[parent].layout_parent.get(); }
             }
         }
         let mut continuation_ends = breaks.overflow_continuations;
@@ -1998,7 +2018,7 @@ impl LayoutPassState<'_> {
                 *earliest = earliest.min(start);
             }
         }
-        let columns = ColumnFragments { fragments, first_after_spanner, run_wrappers, continuation_ends, consumed_by_owner, nested: nested_ctx.or(nested_rows_ctx).or(nested_span_ctx), pushed, strip_end: breaks.end };
+        let columns = ColumnFragments { fragments, first_after_spanner, run_wrappers, wrapper_initial_consumption, continuation_ends, consumed_by_owner, nested: nested_ctx.or(nested_rows_ctx).or(nested_span_ctx), pushed, strip_end: breaks.end };
         if columns.fragments.len() > 1 && !vertical {
             for candidate in oof_candidates.as_mut_slice() {
                 if candidate.containing_block.is_some() {
@@ -2810,6 +2830,7 @@ impl BaseDocument {
             trims: found.trims,
             forced: found.forced,
             overflow_breaks: found.overflow_breaks,
+            overlapping_starts: found.overlapping_starts,
             overflow_parents: found.overflow_parents,
             overflow_continuations: found.overflow_continuations,
             parallel_floats: found.parallel_floats,
@@ -3128,6 +3149,9 @@ impl BaseDocument {
                 found.flow_end = found.flow_end.max(child_bottom + layout.margin.bottom.max(0.0));
             }
             if style.clone_float() == Float::None {
+                if layout.margin.top < 0.0 && !is_spanner_style(&style) && let Some((bottom, _)) = previous && child_top < bottom - EPSILON {
+                    found.overlapping_starts.push(FlowContinuation { owner: parent, resume: child_id, origin: top, consumed: bottom - top });
+                }
                 if std::mem::take(&mut next_parallel_break) {
                     found.overflow_breaks.push(FlowContinuation { owner: parent, resume: child_id, origin: top, consumed: previous.map_or(child_top, |(end, _)| end) - top });
                 }
@@ -3406,6 +3430,7 @@ struct Found {
     forced: Vec<f32>,
     forced_after: Vec<f32>,
     parallel_break_after: bool,
+    overlapping_starts: Vec<FlowContinuation>,
     overflow_breaks: Vec<FlowContinuation>,
     overflow_parents: Vec<FlowContinuation>,
     overflow_continuations: std::collections::HashMap<crate::NodeId, f32>,
@@ -3864,6 +3889,7 @@ mod tests {
             trims: Vec::new(),
             forced: Vec::new(),
             overflow_breaks: Vec::new(),
+            overlapping_starts: Vec::new(),
             overflow_parents: Vec::new(),
             overflow_continuations: Default::default(),
             parallel_floats: Vec::new(),
@@ -3957,6 +3983,7 @@ mod tests {
             consumed_by_owner: Default::default(),
             continuation_ends: Default::default(),
             run_wrappers: Default::default(),
+            wrapper_initial_consumption: Default::default(),
             first_after_spanner: Default::default(),
             strip_end: f32::INFINITY,
             nested: None,
@@ -3985,6 +4012,7 @@ mod tests {
             consumed_by_owner: Default::default(),
             continuation_ends: Default::default(),
             run_wrappers: Default::default(),
+            wrapper_initial_consumption: Default::default(),
             first_after_spanner: Default::default(),
             strip_end: f32::INFINITY,
             nested: None,
@@ -4023,6 +4051,7 @@ mod tests {
             continuation_ends: Default::default(),
             consumed_by_owner: Default::default(),
             run_wrappers: Default::default(),
+            wrapper_initial_consumption: Default::default(),
             first_after_spanner: Default::default(),
             strip_end: f32::INFINITY,
             nested: None,
