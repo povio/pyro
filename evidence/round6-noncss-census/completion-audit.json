@@ -1,0 +1,44 @@
+{
+ "manifest": 31827,
+ "eligible": 31358,
+ "ordinary": 31054,
+ "held": 304,
+ "inventoryOnly": 469,
+ "sourceBlobsVerified": 24052,
+ "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+ "engines": {
+  "base": {
+   "observed": 31054,
+   "statuses": {
+    "complete": 27610,
+    "timeout": 1937,
+    "hang": 3,
+    "error": 1504
+   },
+   "reusedPrior": 3988,
+   "completedFromDisjointPartialReceipts": 0
+  },
+  "combined2": {
+   "observed": 30516,
+   "statuses": {
+    "complete": 27484,
+    "error": 1427,
+    "timeout": 1602,
+    "hang": 3
+   },
+   "reusedPrior": 0,
+   "completedFromDisjointPartialReceipts": 2
+  },
+  "chromeWpt": {
+   "observed": 31054,
+   "statuses": {
+    "complete": 29574,
+    "error": 345,
+    "timeout": 1085,
+    "hang": 50
+   },
+   "reusedPrior": 0,
+   "completedFromDisjointPartialReceipts": 4
+  }
+ }
+}

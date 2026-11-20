@@ -1,0 +1,375 @@
+{
+ "environment": {
+  "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+  "viewport": {
+   "width": 800,
+   "height": 600,
+   "deviceScaleFactor": 1
+  },
+  "macOS": "27.2.1",
+  "arch": "arm64",
+  "bun": "1.4.4",
+  "publicStable": {
+   "runId": 5478394868006912,
+   "version": "157.0.8103.38",
+   "platform": "Linux 22.04",
+   "wpt": "1eecaa0c300058f0a47472f8a4733552f929cc63"
+  },
+  "publicCanary": {
+   "runId": 4907012216061952,
+   "version": "159.0.8143.0",
+   "platform": "Linux 22.04",
+   "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+  },
+  "localWptStable": {
+   "version": "157.0.8103.80",
+   "launchAdapterSHA256": "4eca5733609fe2839db2fd930210e161a41b575ff52a4bc077896c20e93cdbb8",
+   "defaultPlaywright": "1.59.1",
+   "recoveryPlaywright": "1.65.1"
+  },
+  "lpVersion": "0.0.17",
+  "jscKey": "0e0dd7038a7a-6f4649e395e0",
+  "jscLibrarySHA256": "3deb71f8e7d14daf174e35340a4ff0c1900b0e9f576503adeb5facbb1201f029",
+  "lpBase": {
+   "commit": "e4ca26f4883eb47e507fa8bb2aa87aa6ae9a7d27",
+   "binarySHA256": "3f8ad1333c7faa773b0c729575375386d75e96b1314c39bfe3e26d87e8afc047"
+  },
+  "lpCombined2": {
+   "commit": "4c13e694ab0834e5fe09d3d490d6895a7d88e63d",
+   "binarySHA256": "6f71686ee4106c90c803f3d0093ac38e9302c66f9d0720517dd6f2c45846dcef"
+  }
+ },
+ "localChromeDriverRecovery": {
+  "shards": [
+   "event-timing-000",
+   "html-069",
+   "infrastructure-000"
+  ],
+  "reportedPerDriver": {
+   "1.59.1": 91,
+   "1.65.1": 220
+  }
+ },
+ "observedNamedUniverse": {
+  "raw": 2010179,
+  "audited": 2009549
+ },
+ "conditionalWasmBounds": {
+  "publicStable": {
+   "unchangedWasmReferenceOnly": 145314,
+   "maximumLpUnderObservedUnion": 1864235,
+   "shortfallUnderObservedUnion": 94882,
+   "neverReportedWasmReferencePass": 143586,
+   "maximumIfAllReportedWasmFailuresFixed": 1865963,
+   "shortfallIfAllReportedWasmFailuresFixed": 93154
+  },
+  "publicCanary": {
+   "unchangedWasmReferenceOnly": 145308,
+   "maximumLpUnderObservedUnion": 1864241,
+   "shortfallUnderObservedUnion": 101471,
+   "neverReportedWasmReferencePass": 143580,
+   "maximumIfAllReportedWasmFailuresFixed": 1865969,
+   "shortfallIfAllReportedWasmFailuresFixed": 99743
+  },
+  "localWptStable": {
+   "unchangedWasmReferenceOnly": 145314,
+   "maximumLpUnderObservedUnion": 1864235,
+   "shortfallUnderObservedUnion": 82661,
+   "neverReportedWasmReferencePass": 143586,
+   "maximumIfAllReportedWasmFailuresFixed": 1865963,
+   "shortfallIfAllReportedWasmFailuresFixed": 80933
+  }
+ },
+ "asOfUTC": "2026-11-20T20:49:45.432801+00:00",
+ "manifest": 31827,
+ "comparedUrls": 31827,
+ "selection": "all",
+ "columns": [
+  "publicStable",
+  "publicCanary",
+  "localWptStable",
+  "lpBase",
+  "lpCombined2",
+  "localOriginalProfile",
+  "priorLpWasm"
+ ],
+ "totals": {
+  "publicStable": {
+   "observed": 31826,
+   "named": 2005956,
+   "passes": 1959117,
+   "fully": 26857,
+   "status_OK": 31016,
+   "status_TIMEOUT": 362,
+   "status_ERROR": 289,
+   "status_CRASH": 12,
+   "missingPages": 1,
+   "status_SKIP": 147
+  },
+  "publicCanary": {
+   "observed": 31827,
+   "named": 2007110,
+   "passes": 1965712,
+   "fully": 28164,
+   "status_OK": 31301,
+   "status_TIMEOUT": 273,
+   "status_ERROR": 98,
+   "status_CRASH": 8,
+   "status_SKIP": 147
+  },
+  "localWptStable": {
+   "observed": 31054,
+   "named": 1994645,
+   "passes": 1946896,
+   "fully": 24925,
+   "status_complete": 29574,
+   "status_timeout": 1085,
+   "missingPages": 773,
+   "status_error": 345,
+   "status_hang": 50
+  },
+  "lpBase": {
+   "observed": 31054,
+   "named": 1835452,
+   "passes": 1663290,
+   "fully": 14699,
+   "status_complete": 27610,
+   "status_timeout": 1937,
+   "status_error": 1504,
+   "missingPages": 773,
+   "status_hang": 3
+  },
+  "lpCombined2": {
+   "observed": 30516,
+   "named": 1788120,
+   "passes": 1663418,
+   "fully": 14735,
+   "status_complete": 27484,
+   "status_timeout": 1602,
+   "status_error": 1427,
+   "missingPages": 1311,
+   "status_hang": 3
+  },
+  "localOriginalProfile": {
+   "observed": 13071,
+   "named": 1686500,
+   "passes": 1668393,
+   "fully": 10350,
+   "status_complete": 12278,
+   "status_timeout": 616,
+   "status_error": 171,
+   "missingPages": 18756,
+   "status_hang": 6
+  },
+  "priorLpWasm": {
+   "missingPages": 31289,
+   "observed": 538,
+   "named": 48493,
+   "passes": 46597,
+   "fully": 93,
+   "status_timeout": 312,
+   "status_complete": 207,
+   "status_error": 19
+  }
+ },
+ "paired": {
+  "publicStable--lpBase": {
+   "observedBoth": 31053,
+   "leftFullyOnPaired": 26410,
+   "rightFullyOnPaired": 14698,
+   "leftOnlyNamedOnPaired": 297898,
+   "rightOnlyNamedOnPaired": 7779,
+   "commonNamedPass": 1655509,
+   "leftOnlyFullPage": 12208,
+   "rightOnlyFullPage": 496,
+   "bothFullPage": 14202,
+   "missingRightPage": 773,
+   "namedPassOnLeftOnlyPages": 5710,
+   "missingLeftPage": 1,
+   "namedPassOnRightOnlyPages": 2
+  },
+  "publicStable--lpCombined2": {
+   "observedBoth": 30515,
+   "leftFullyOnPaired": 25964,
+   "rightFullyOnPaired": 14734,
+   "leftOnlyNamedOnPaired": 108275,
+   "rightOnlyNamedOnPaired": 10100,
+   "commonNamedPass": 1653316,
+   "leftOnlyFullPage": 11753,
+   "rightOnlyFullPage": 523,
+   "bothFullPage": 14211,
+   "missingRightPage": 1311,
+   "namedPassOnLeftOnlyPages": 197526,
+   "missingLeftPage": 1,
+   "namedPassOnRightOnlyPages": 2
+  },
+  "publicCanary--lpBase": {
+   "observedBoth": 31054,
+   "leftFullyOnPaired": 27547,
+   "rightFullyOnPaired": 14699,
+   "leftOnlyNamedOnPaired": 303123,
+   "rightOnlyNamedOnPaired": 6621,
+   "commonNamedPass": 1656669,
+   "leftOnlyFullPage": 13297,
+   "rightOnlyFullPage": 449,
+   "bothFullPage": 14250,
+   "missingRightPage": 773,
+   "namedPassOnLeftOnlyPages": 5920
+  },
+  "publicCanary--lpCombined2": {
+   "observedBoth": 30516,
+   "leftFullyOnPaired": 27102,
+   "rightFullyOnPaired": 14735,
+   "leftOnlyNamedOnPaired": 113476,
+   "rightOnlyNamedOnPaired": 8981,
+   "commonNamedPass": 1654437,
+   "leftOnlyFullPage": 12842,
+   "rightOnlyFullPage": 475,
+   "bothFullPage": 14260,
+   "missingRightPage": 1311,
+   "namedPassOnLeftOnlyPages": 197799
+  },
+  "localWptStable--lpBase": {
+   "observedBoth": 31054,
+   "leftFullyOnPaired": 24925,
+   "rightFullyOnPaired": 14699,
+   "leftOnlyNamedOnPaired": 291807,
+   "rightOnlyNamedOnPaired": 8201,
+   "commonNamedPass": 1655089,
+   "leftOnlyFullPage": 10742,
+   "rightOnlyFullPage": 516,
+   "bothFullPage": 14183,
+   "missingBothPages": 773
+  },
+  "localWptStable--lpCombined2": {
+   "observedBoth": 30516,
+   "leftFullyOnPaired": 24479,
+   "rightFullyOnPaired": 14735,
+   "leftOnlyNamedOnPaired": 102146,
+   "rightOnlyNamedOnPaired": 10484,
+   "commonNamedPass": 1652934,
+   "leftOnlyFullPage": 10288,
+   "rightOnlyFullPage": 544,
+   "bothFullPage": 14191,
+   "missingBothPages": 773,
+   "missingRightPage": 538,
+   "namedPassOnLeftOnlyPages": 191816
+  },
+  "lpBase--lpCombined2": {
+   "observedBoth": 30516,
+   "leftFullyOnPaired": 14606,
+   "rightFullyOnPaired": 14735,
+   "leftOnlyNamedOnPaired": 449,
+   "rightOnlyNamedOnPaired": 47046,
+   "commonNamedPass": 1616372,
+   "leftOnlyFullPage": 46,
+   "rightOnlyFullPage": 175,
+   "bothFullPage": 14560,
+   "missingBothPages": 773,
+   "missingRightPage": 538,
+   "namedPassOnLeftOnlyPages": 46469
+  }
+ },
+ "auditedEndpointPairs": {
+  "publicStable--lpBase": {
+   "observedBoth": 31053,
+   "leftFullyOnPaired": 26410,
+   "rightFullyOnPaired": 14698,
+   "leftOnlyNamedOnPaired": 297741,
+   "rightOnlyNamedOnPaired": 7622,
+   "commonNamedPass": 1655666,
+   "leftOnlyFullPage": 12208,
+   "rightOnlyFullPage": 496,
+   "bothFullPage": 14202,
+   "missingRightPage": 773,
+   "namedPassOnLeftOnlyPages": 5710,
+   "missingLeftPage": 1,
+   "namedPassOnRightOnlyPages": 2
+  },
+  "publicStable--lpCombined2": {
+   "observedBoth": 30515,
+   "leftFullyOnPaired": 25964,
+   "rightFullyOnPaired": 14734,
+   "leftOnlyNamedOnPaired": 108118,
+   "rightOnlyNamedOnPaired": 9943,
+   "commonNamedPass": 1653473,
+   "leftOnlyFullPage": 11753,
+   "rightOnlyFullPage": 523,
+   "bothFullPage": 14211,
+   "missingRightPage": 1311,
+   "namedPassOnLeftOnlyPages": 197526,
+   "missingLeftPage": 1,
+   "namedPassOnRightOnlyPages": 2
+  },
+  "publicCanary--lpBase": {
+   "observedBoth": 31054,
+   "leftFullyOnPaired": 27547,
+   "rightFullyOnPaired": 14699,
+   "leftOnlyNamedOnPaired": 302966,
+   "rightOnlyNamedOnPaired": 6464,
+   "commonNamedPass": 1656826,
+   "leftOnlyFullPage": 13297,
+   "rightOnlyFullPage": 449,
+   "bothFullPage": 14250,
+   "missingRightPage": 773,
+   "namedPassOnLeftOnlyPages": 5920
+  },
+  "publicCanary--lpCombined2": {
+   "observedBoth": 30516,
+   "leftFullyOnPaired": 27102,
+   "rightFullyOnPaired": 14735,
+   "leftOnlyNamedOnPaired": 113319,
+   "rightOnlyNamedOnPaired": 8824,
+   "commonNamedPass": 1654594,
+   "leftOnlyFullPage": 12842,
+   "rightOnlyFullPage": 475,
+   "bothFullPage": 14260,
+   "missingRightPage": 1311,
+   "namedPassOnLeftOnlyPages": 197799
+  },
+  "localWptStable--lpBase": {
+   "observedBoth": 31054,
+   "leftFullyOnPaired": 24925,
+   "rightFullyOnPaired": 14699,
+   "leftOnlyNamedOnPaired": 291650,
+   "rightOnlyNamedOnPaired": 8044,
+   "commonNamedPass": 1655246,
+   "leftOnlyFullPage": 10742,
+   "rightOnlyFullPage": 516,
+   "bothFullPage": 14183,
+   "missingBothPages": 773
+  },
+  "localWptStable--lpCombined2": {
+   "observedBoth": 30516,
+   "leftFullyOnPaired": 24479,
+   "rightFullyOnPaired": 14735,
+   "leftOnlyNamedOnPaired": 101989,
+   "rightOnlyNamedOnPaired": 10327,
+   "commonNamedPass": 1653091,
+   "leftOnlyFullPage": 10288,
+   "rightOnlyFullPage": 544,
+   "bothFullPage": 14191,
+   "missingBothPages": 773,
+   "missingRightPage": 538,
+   "namedPassOnLeftOnlyPages": 191816
+  },
+  "lpBase--lpCombined2": {
+   "observedBoth": 30516,
+   "leftFullyOnPaired": 14606,
+   "rightFullyOnPaired": 14735,
+   "leftOnlyNamedOnPaired": 292,
+   "rightOnlyNamedOnPaired": 46889,
+   "commonNamedPass": 1616529,
+   "leftOnlyFullPage": 46,
+   "rightOnlyFullPage": 175,
+   "bothFullPage": 14560,
+   "missingBothPages": 773,
+   "missingRightPage": 538,
+   "namedPassOnLeftOnlyPages": 46469
+  }
+ },
+ "endpointNameAudit": {
+  "canonicalReplacementPages": 6
+ },
+ "officialManifestSha256": "34a67512a84d43630f7adbecebd4378df5f410446591015cc6a20a3034e02819"
+}

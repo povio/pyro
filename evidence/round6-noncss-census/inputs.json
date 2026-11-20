@@ -1,0 +1,9 @@
+{
+ "publicStable": 5478394868006912,
+ "publicCanary": 4907012216061952,
+ "localWptStable": "157.0.8103.80, macOS 27.2.1 arm64, WPT-profile CDP",
+ "lpBase": "e4ca26f4883eb47e507fa8bb2aa87aa6ae9a7d27",
+ "lpCombined2": "4c13e694ab0834e5fe09d3d490d6895a7d88e63d",
+ "localOriginalProfile": "diagnostic incomplete local Chrome; native user popup policy and disabled GPU",
+ "priorLpWasm": "1f113e8d3cd9c264f8c73d7999486933451cc536, Wasm-only earlier measurement"
+}

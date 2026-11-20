@@ -1,0 +1,22 @@
+{
+ "pagesRead": 31827,
+ "exactNamedOccurrencesRead": 2010179,
+ "verifiedPassCounts": {
+  "publicStable": 1959117,
+  "publicCanary": 1965712,
+  "localWptStable": 1946896,
+  "lpBase": 1663290,
+  "lpCombined2": 1663418,
+  "localOriginalProfile": 1668393,
+  "priorLpWasm": 46597
+ },
+ "fullyPassingSetsVerified": [
+  "publicStable",
+  "publicCanary",
+  "localWptStable",
+  "lpBase",
+  "lpCombined2",
+  "localOriginalProfile",
+  "priorLpWasm"
+ ]
+}
