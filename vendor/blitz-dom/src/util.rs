@@ -11,6 +11,14 @@ pub(crate) const ACTION_MOD: Modifiers = Modifiers::CONTROL;
 
 pub type Color = AlphaColor<Srgb>;
 
+#[derive(Debug)]
+pub struct SvgResource {
+    pub bytes: std::sync::Arc<Vec<u8>>,
+    pub opaque: bool,
+}
+pub type SvgResourceMap = std::sync::RwLock<std::collections::HashMap<String, std::sync::Arc<SvgResource>>>;
+pub type SvgResources = std::sync::Arc<SvgResourceMap>;
+
 /// pyro: stack left below which [`ensure_stack`] moves to a new stack segment. It covers
 /// everything one tree level runs between two checkpoints: a level of Taffy's and Blitz's layout
 /// dispatch (about 3 KB), plus a leaf's own work (inline layout and shaping, table and grid
@@ -366,6 +374,11 @@ pub fn walk_tree(indent: usize, node: &Node) {
 /// Parse an SVG image.
 #[cfg(feature = "svg")]
 pub fn parse_svg_image(source: &[u8]) -> Result<crate::node::SvgImageData, usvg::Error> {
+    parse_svg_resources(source, None)
+}
+
+#[cfg(feature = "svg")]
+pub(crate) fn parse_svg_resources(source: &[u8], resources: Option<&SvgResources>) -> Result<crate::node::SvgImageData, usvg::Error> {
     // pyro: parsed images by their source. An inline <svg> is
     // parsed from a snapshot of its subtree each time its box is built, and
     // pages that clone content (a header logo on every printed page) build
@@ -377,11 +390,36 @@ pub fn parse_svg_image(source: &[u8]) -> Result<crate::node::SvgImageData, usvg:
     const MAX_ENTRIES: usize = 256;
     // pyro: parsed with the fonts loaded so far (a web font loaded since changes the text).
     let (fontdb, generation) = svg_font_db();
-    if let Some(svg) = PARSED.with(|p| p.borrow().get(source).filter(|(_, at)| *at == generation).map(|(svg, _)| svg.clone())) {
+    let resources = resources.filter(|map| !map.read().unwrap().is_empty());
+    let cacheable = resources.is_none() && source.len() <= 65536 && !source.windows(5).any(|text| text.eq_ignore_ascii_case(b"data:")) && !source.starts_with(&[0x1f, 0x8b]);
+    if cacheable && let Some(svg) = PARSED.with(|p| p.borrow().get(source).filter(|(_, at)| *at == generation).map(|(svg, _)| svg.clone())) {
         return Ok(svg);
     }
     let options = usvg::Options {
         fontdb,
+        image_href_resolver: usvg::ImageHrefResolver {
+            resolve_string: Box::new(|href, options| {
+                let raw = href.strip_prefix("pyro-unoriented:");
+                let resource = resources?.read().ok()?.get(raw.unwrap_or(href))?.clone();
+                if resource.bytes.starts_with(&[255, 216]) {
+                    let (width, height, orientation) = pyro_raster::jpeg_geometry(&resource.bytes).ok()?;
+                    if orientation != 1 {
+                        let stored = raw.is_some() && !resource.opaque;
+                        let swapped = !stored && (5..=8).contains(&orientation);
+                        let (outer_width, outer_height) = if swapped { (height, width) } else { (width, height) };
+                        let matrix = if stored { pyro_raster::unturn(orientation, width, height) } else { [1., 0., 0., 1., 0., 0.] };
+                        let [a, b, c, d, x, y] = matrix;
+                        let wrapper = format!(r#"<svg xmlns="http://www.w3.org/2000/svg" width="{outer_width}" height="{outer_height}"><image href="resource" width="{width}" height="{height}" transform="matrix({a} {b} {c} {d} {x} {y})"/></svg>"#);
+                        let inner = usvg::Options { image_href_resolver: usvg::ImageHrefResolver {
+                            resolve_string: Box::new(|_, _| Some(usvg::ImageKind::JPEG(resource.bytes.clone()))), ..Default::default()
+                        }, ..Default::default() };
+                        return Some(usvg::ImageKind::SVG(usvg::Tree::from_str(&wrapper, &inner).ok()?));
+                    }
+                }
+                usvg::ImageHrefResolver::default_data_resolver()("text/plain", resource.bytes.clone(), options)
+            }),
+            ..Default::default()
+        },
         ..Default::default()
     };
     // pyro: a reference cycle usvg would follow without end (`crate::svg_refs`).
@@ -396,7 +434,9 @@ pub fn parse_svg_image(source: &[u8]) -> Result<crate::node::SvgImageData, usvg:
     let media = crate::svg_refs::resolve_scheme_media(defaulted, false);
     let defaulted = media.as_deref().unwrap_or(defaulted);
     let schemed = crate::svg_refs::resolve_light_dark(defaulted, false);
-    let svg = crate::node::SvgImageData::from_data(schemed.as_deref().unwrap_or(defaulted), &options)?;
+    let mut svg = crate::node::SvgImageData::from_data(schemed.as_deref().unwrap_or(defaulted), &options)?;
+    svg.resources = resources.map(std::sync::Arc::downgrade);
+    if !cacheable { return Ok(svg); }
     PARSED.with(|p| {
         let mut p = p.borrow_mut();
         if p.len() >= MAX_ENTRIES {

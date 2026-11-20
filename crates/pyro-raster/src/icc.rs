@@ -1,4 +1,4 @@
-//! pyro: tagged images are drawn in their colour space (CSS Color 4, "Color spaces of tagged
+//! Tagged images are drawn in their colour space (CSS Color 4, "Color spaces of tagged
 //! images"): a raster image's embedded ICC profile converts its pixels to sRGB when it is
 //! decoded, as Chromium does for an sRGB display. An untagged image is sRGB already.
 
@@ -11,8 +11,7 @@ type Transform = Arc<dyn TransformExecutor<u8> + Send + Sync>;
 
 /// The transform to sRGB of each profile seen, by its bytes: `None` for a profile that is sRGB
 /// already (or not an RGB one moxcms reads), whose pixels stay as they are.
-static TRANSFORMS: LazyLock<Mutex<HashMap<Vec<u8>, Option<Transform>>>> =
-    LazyLock::new(Default::default);
+static TRANSFORMS: LazyLock<Mutex<HashMap<Vec<u8>, Option<Transform>>>> = LazyLock::new(Default::default);
 
 /// Converts `rgba` (RGBA8, unpremultiplied) from the colour space of the ICC profile `icc` to sRGB.
 pub(crate) fn to_srgb(icc: &[u8], rgba: &mut [u8]) {
@@ -45,9 +44,8 @@ fn transform_to_srgb(icc: &[u8]) -> Option<Transform> {
         return None;
     }
     let srgb = ColorProfile::new_srgb();
-    let transform = profile
-        .create_transform_8bit(Layout::Rgba, &srgb, Layout::Rgba, TransformOptions::default())
-        .ok()?;
+    let transform =
+        profile.create_transform_8bit(Layout::Rgba, &srgb, Layout::Rgba, TransformOptions::default()).ok()?;
     // Ramps of each primary and of gray.
     let probe: Vec<u8> = (0..=255u8)
         .step_by(5)

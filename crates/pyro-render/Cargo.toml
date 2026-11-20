@@ -59,6 +59,8 @@ turbojpeg = { version = "1.5.1", default-features = false, features = ["cmake"] 
 libc = "0.2"
 
 [dev-dependencies]
+base64 = "0.23.1"
+pyro-raster = { path = "../pyro-raster", features = ["test-budgets"] }
 # Trees for the mirror tests come from pyro-dom (pyro-render itself does not depend on it).
 pyro-dom = { workspace = true }
 # Inflates PDF streams in the PDF tests.

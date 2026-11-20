@@ -149,39 +149,19 @@ fn fetch_image(fetcher: &Arc<dyn Fetcher>, address: &str, timeout: Duration) -> 
     rx.recv_timeout(timeout).map_err(|e| e.to_string())?
 }
 
-fn data_url(bytes: &[u8]) -> Option<Arc<str>> {
-    if bytes.starts_with(&[0xff, 0xd8]) {
-        return None;
-    }
-    let mime = if bytes.starts_with(b"\x89PNG") {
-        "image/png"
-    } else if bytes.starts_with(b"GIF8") {
-        "image/gif"
-    } else if bytes.len() > 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
-        "image/webp"
-    } else {
-        "image/svg+xml"
-    };
-    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(bytes.len() * 4 / 3 + 32);
-    out.push_str("data:");
-    out.push_str(mime);
-    out.push_str(";base64,");
-    for chunk in bytes.chunks(3) {
-        let n = (chunk[0] as u32) << 16 | (*chunk.get(1).unwrap_or(&0) as u32) << 8 | *chunk.get(2).unwrap_or(&0) as u32;
-        for i in 0..4 {
-            if i <= chunk.len() {
-                out.push(TABLE[(n >> (18 - 6 * i) & 63) as usize] as char);
-            } else {
-                out.push('=');
-            }
-        }
-    }
-    Some(out.into())
+use blitz_dom::util::SvgResource;
+fn retain_source<Key: Eq + std::hash::Hash>(map: &mut HashMap<Key, Arc<SvgResource>>, key: Key, bytes: Arc<SvgResource>, key_bytes: impl Fn(&Key) -> usize) -> bool {
+    const BUDGET: usize = 32 << 20;
+    let charge = |key: &Key, resource: &SvgResource| key_bytes(key).saturating_add(resource.bytes.capacity()).saturating_add(128);
+    let needed = charge(&key, &bytes);
+    if needed > BUDGET { return false; }
+    if map.len() >= 256 || map.iter().map(|(key, bytes)| charge(key, bytes)).sum::<usize>() > BUDGET - needed { map.clear(); }
+    map.insert(key, bytes);
+    true
 }
 
 /// Resolves the external SVG `<image>`/`<feImage>` hrefs `hrefs` of `doc` into
-/// [`blitz_dom::BaseDocument::svg_images`] (as `data:` URLs), which its `<svg>` elements use
+/// [`blitz_dom::BaseDocument::svg_images`] by reference, which its `<svg>` elements use
 /// when they are rendered. Resources come from `sources` (by resource scope and URL) or are
 /// fetched into it; one that cannot be loaded is left out (usvg draws nothing for it).
 pub(crate) fn resolve_images(
@@ -189,7 +169,7 @@ pub(crate) fn resolve_images(
     hrefs: Vec<String>,
     base: &str,
     scope: &str,
-    sources: &mut HashMap<(String, String), Arc<str>>,
+    sources: &mut HashMap<(String, String), Arc<SvgResource>>,
     fetcher: &Arc<dyn Fetcher>,
     timeout: Duration,
 ) {
@@ -197,7 +177,7 @@ pub(crate) fn resolve_images(
     let Ok(base) = url::Url::parse(base) else { return };
     let mut changed = false;
     for href in hrefs {
-        if doc.svg_images.contains_key(&href) {
+        if doc.svg_images.read().unwrap().contains_key(&href) {
             continue;
         }
         let Ok(url) = base.join(href.trim()) else { continue };
@@ -209,16 +189,12 @@ pub(crate) fn resolve_images(
                 if response.body.is_empty() || response.body.len() > MAX_BYTES {
                     continue;
                 }
-                let Some(data) = data_url(&response.body) else { continue };
-                if sources.len() >= 256 {
-                    sources.clear();
-                }
-                sources.insert(key, data.clone());
+                let data = Arc::new(SvgResource { bytes: Arc::new(response.body), opaque: response.opaque });
+                if !retain_source(sources, key, data.clone(), |(scope, url)| scope.capacity() + url.capacity()) { continue; }
                 data
             }
         };
-        doc.svg_images.insert(href, data);
-        changed = true;
+        changed |= retain_source(&mut doc.svg_images.write().unwrap(), href, data, String::capacity);
     }
     if changed {
         doc.damage_inline_svgs();
@@ -263,19 +239,15 @@ mod image_tests {
         let mut document = BaseDocument::new(blitz_dom::DocumentConfig::default());
         let href = "https://document.test/image.gif";
         resolve_images(&mut document, vec![href.into()], "https://base.test/", "document", &mut sources, &fetcher, Duration::from_secs(1));
-        assert!(Arc::ptr_eq(&document.svg_images[href], sources.values().next().unwrap()));
+        assert!(Arc::ptr_eq(&document.svg_images.read().unwrap()[href], sources.values().next().unwrap()));
     }
     #[test]
-    fn oversized_svg_jpeg_thumbnail_produces_no_encoded_bytes() {
-        use image::codecs::jpeg::JpegEncoder;
-        let mut photo = Vec::new();
-        JpegEncoder::new(&mut photo).encode(&vec![90; 6000 * 4000], 6000, 4000, image::ExtendedColorType::L8).unwrap();
-        assert!(super::data_url(&photo).is_none());
-    }
-
-    #[test]
-    fn data_urls_are_base64_with_a_sniffed_type() {
-        assert_eq!(super::data_url(b"GIF8a").as_deref(), Some("data:image/gif;base64,R0lGOGE="));
-        assert_eq!(super::data_url(b"<svg/>").as_deref(), Some("data:image/svg+xml;base64,PHN2Zy8+"));
+    fn resource_retention_is_byte_bounded() {
+        let mut resources = super::HashMap::new();
+        for index in 0..12 {
+            let data = super::Arc::new(super::SvgResource { bytes: super::Arc::new(vec![index; 7 << 20]), opaque: false });
+            assert!(super::retain_source(&mut resources, index.to_string(), data, String::capacity));
+            assert!(resources.values().map(|data| data.bytes.capacity()).sum::<usize>() <= 32 << 20);
+        }
     }
 }

@@ -18,6 +18,7 @@ default-members = [
     "crates/pyro-media",
     "crates/pyro-net",
     "crates/pyro-psl",
+    "crates/pyro-raster",
     "crates/pyro-render",
     "crates/pyro-runtime",
     "crates/pyro-webapi",

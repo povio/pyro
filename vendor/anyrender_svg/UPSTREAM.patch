@@ -1,8 +1,17 @@
 diff --git a/Cargo.toml b/Cargo.toml
-index 14aded4..862cfe1 100644
+index 14aded4..b7dd397 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
-@@ -65,6 +65,10 @@ path = "src/lib.rs"
+@@ -35,7 +35,7 @@ default = [
+     "image_format_jpeg",
+     "image_format_webp",
+ ]
+-image = ["dep:image"]
++image = ["dep:image", "dep:pyro-raster"]
+ image_format_gif = [
+     "image",
+     "image/gif",
+@@ -65,11 +65,19 @@ path = "src/lib.rs"
  [dependencies.anyrender]
  version = "0.14.0"
  
@@ -13,12 +22,21 @@ index 14aded4..862cfe1 100644
  [dependencies.image]
  version = "0.25"
  optional = true
+ default-features = false
+ 
++[dependencies.pyro-raster]
++path = "../../crates/pyro-raster"
++optional = true
++
+ [dependencies.kurbo]
+ version = "0.13.1"
+ 
 diff --git b/src/filter.rs b/src/filter.rs
 new file mode 100644
-index 0000000..41d1355
+index 0000000..8f826b0
 --- /dev/null
 +++ b/src/filter.rs
-@@ -0,0 +1,1115 @@
+@@ -0,0 +1,1117 @@
 +// Copyright 2024 the Vello Authors
 +// SPDX-License-Identifier: Apache-2.0 OR MIT
 +
@@ -239,6 +257,8 @@ index 0000000..41d1355
 +    /// draws what its `feImage`s show, each in a layer of its own that only the graph reads (see
 +    /// anyrender_vello_cpu's `FILTER_IMAGE_SOURCE`). The content to filter follows, then a pop.
 +    pub fn push_layer<S: PaintScene>(&self, scene: &mut S, transform: Affine) {
++        #[cfg(feature = "image")]
++        let _resources = crate::util::RasterScope::enter();
 +        scene.push_layer(
 +            Fill::NonZero,
 +            BlendMode::default(),
@@ -1135,7 +1155,7 @@ index 0000000..41d1355
 +    }
 +}
 diff --git a/src/lib.rs b/src/lib.rs
-index 3370fa2..28690ce 100644
+index 3370fa2..b1e7aae 100644
 --- a/src/lib.rs
 +++ b/src/lib.rs
 @@ -21,10 +21,14 @@
@@ -1210,7 +1230,7 @@ index 3370fa2..28690ce 100644
  /// Append a [`usvg::Tree`] to an [`anyrender::PaintScene`].
  ///
  /// This will draw a red box over (some) unsupported elements.
-@@ -66,6 +120,33 @@ pub fn render_svg_tree<S: PaintScene>(scene: &mut S, svg: &usvg::Tree, transform
+@@ -66,6 +120,35 @@ pub fn render_svg_tree<S: PaintScene>(scene: &mut S, svg: &usvg::Tree, transform
      render_svg_tree_with(scene, svg, transform, &mut util::default_error_handler);
  }
  
@@ -1230,6 +1250,8 @@ index 3370fa2..28690ce 100644
 +/// bounds the offscreen rasters in place of the tree's viewport. For a `<mask>` in user units a
 +/// CSS box references, whose content may lie above or left of the box's corner (the origin).
 +pub fn render_svg_tree_within<S: PaintScene>(scene: &mut S, svg: &usvg::Tree, transform: Affine, visible: kurbo::Rect) {
++    #[cfg(feature = "image")]
++    let _resources = util::RasterScope::enter();
 +    let ctx = render::Ctx { cull: visible };
 +    render::render_group(
 +        scene,
@@ -1244,11 +1266,13 @@ index 3370fa2..28690ce 100644
  /// Append a [`usvg::Tree`] to an [`anyrender::PaintScene`] (with custom error handling).
  ///
  /// See the [module level documentation](crate#unsupported-features) for a list of some unsupported svg features
-@@ -75,15 +156,43 @@ pub fn render_svg_tree_with<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -75,15 +158,45 @@ pub fn render_svg_tree_with<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
      transform: Affine,
      error_handler: &mut F,
  ) {
 +    // pyro: the tree's viewport in the scene bounds offscreen rasters.
++    #[cfg(feature = "image")]
++    let _resources = util::RasterScope::enter();
 +    let size = svg.size();
 +    let viewport = kurbo::Rect::new(0.0, 0.0, size.width() as f64, size.height() as f64);
 +    let ctx = render::Ctx {
@@ -1288,7 +1312,7 @@ index 3370fa2..28690ce 100644
  #[cfg(test)]
  mod tests {
      use super::*;
-@@ -106,9 +215,13 @@ mod tests {
+@@ -106,9 +219,13 @@ mod tests {
              .iter()
              .find_map(|command| match command {
                  RenderCommand::PushLayer(layer) => Some(layer.fill),
@@ -1303,7 +1327,7 @@ index 3370fa2..28690ce 100644
      }
  
      #[test]
-@@ -134,6 +247,87 @@ mod tests {
+@@ -134,6 +251,87 @@ mod tests {
          );
      }
  
@@ -1392,7 +1416,7 @@ index 3370fa2..28690ce 100644
      fn fill_rule_does_not_control_clipping() {
          assert_eq!(clip_rule("", r#"fill-rule="evenodd""#), Fill::NonZero);
 diff --git a/src/render.rs b/src/render.rs
-index 2e9e1c4..6ff32e1 100644
+index 2e9e1c4..2404dc4 100644
 --- a/src/render.rs
 +++ b/src/render.rs
 @@ -2,92 +2,85 @@
@@ -1626,7 +1650,11 @@ index 2e9e1c4..6ff32e1 100644
                  match img.kind() {
                      usvg::ImageKind::JPEG(_)
                      | usvg::ImageKind::PNG(_)
-@@ -124,7 +164,7 @@ pub(crate) fn render_group<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -120,11 +160,10 @@ pub(crate) fn render_group<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+                         {
+                             let Ok(decoded_image) = util::decode_raw_raster_image(img.kind())
+                             else {
+-                                error_handler(scene, node);
                                  continue;
                              };
                              let image = util::into_image(decoded_image, img.rendering_mode());
@@ -1635,7 +1663,7 @@ index 2e9e1c4..6ff32e1 100644
                              scene.draw_image(image.as_ref(), image_ts);
                          }
  
-@@ -141,24 +181,1114 @@ pub(crate) fn render_group<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -141,24 +180,1114 @@ pub(crate) fn render_group<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
                              transform,
                              global_transform,
                              error_handler,
@@ -2753,7 +2781,7 @@ index 2e9e1c4..6ff32e1 100644
  }
  
  fn fill<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
-@@ -168,9 +1298,13 @@ fn fill<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -168,9 +1297,13 @@ fn fill<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
      transform: Affine,
      local_path: &BezPath,
      node: &Node,
@@ -2768,7 +2796,7 @@ index 2e9e1c4..6ff32e1 100644
              scene.fill(
                  match fill.rule() {
                      usvg::FillRule::NonZero => Fill::NonZero,
-@@ -181,7 +1315,7 @@ fn fill<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -181,7 +1314,7 @@ fn fill<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
                  Some(brush_transform),
                  local_path,
              );
@@ -2777,7 +2805,7 @@ index 2e9e1c4..6ff32e1 100644
              error_handler(scene, node);
          }
      }
-@@ -194,9 +1328,14 @@ fn stroke<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -194,9 +1327,14 @@ fn stroke<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
      transform: Affine,
      local_path: &BezPath,
      node: &Node,
@@ -2793,7 +2821,7 @@ index 2e9e1c4..6ff32e1 100644
              let conv_stroke = util::to_stroke(stroke);
              scene.stroke(
                  &conv_stroke,
-@@ -205,7 +1344,7 @@ fn stroke<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -205,7 +1343,7 @@ fn stroke<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
                  Some(brush_transform),
                  local_path,
              );
@@ -2803,10 +2831,46 @@ index 2e9e1c4..6ff32e1 100644
          }
      }
 diff --git a/src/util.rs b/src/util.rs
-index a350130..9df9ac8 100644
+index a350130..354204f 100644
 --- a/src/util.rs
 +++ b/src/util.rs
-@@ -239,6 +239,10 @@ fn to_extend(spread_method: usvg::SpreadMethod) -> peniko::Extend {
+@@ -7,7 +7,7 @@ use peniko::color::{self, DynamicColor};
+ use peniko::{Color, Fill, Mix};
+ 
+ #[cfg(feature = "image")]
+-use peniko::{Blob, ImageBrush};
++use peniko::ImageBrush;
+ 
+ pub(crate) fn to_affine(ts: &usvg::Transform) -> Affine {
+     let usvg::Transform {
+@@ -116,7 +116,7 @@ pub(crate) fn to_bez_path(path: &usvg::Path) -> BezPath {
+ 
+ #[cfg(feature = "image")]
+ pub(crate) fn into_image(
+-    image: image::ImageBuffer<image::Rgba<u8>, Vec<u8>>,
++    image: pyro_raster::Raster,
+     rendering_mode: usvg::ImageRendering,
+ ) -> ImageBrush {
+     use peniko::ImageData;
+@@ -131,14 +131,12 @@ pub(crate) fn into_image(
+         | usvg::ImageRendering::Pixelated => peniko::ImageQuality::Low,
+     };
+ 
+-    let (width, height) = (image.width(), image.height());
+-    let image_data: Vec<u8> = image.into_vec();
+     ImageBrush::new(ImageData {
+-        data: Blob::new(std::sync::Arc::new(image_data)),
++        data: image.blob,
+         format: peniko::ImageFormat::Rgba8,
+         alpha_type: peniko::ImageAlphaType::Alpha,
+-        width,
+-        height,
++        width: image.width,
++        height: image.height,
+     })
+     .with_quality(quality)
+ }
+@@ -239,6 +237,10 @@ fn to_extend(spread_method: usvg::SpreadMethod) -> peniko::Extend {
  /// Error handler function for [`super::append_tree_with`] which draws a transparent red box
  /// instead of unsupported SVG features
  pub(crate) fn default_error_handler<S: PaintScene>(scene: &mut S, node: &usvg::Node) {
@@ -2817,20 +2881,51 @@ index a350130..9df9ac8 100644
      let bb = node.bounding_box();
      let rect = Rect {
          x0: bb.left() as f64,
-@@ -270,6 +274,16 @@ pub(crate) fn decode_raw_raster_image(
+@@ -258,18 +260,36 @@ pub(crate) fn default_error_handler<S: PaintScene>(scene: &mut S, node: &usvg::N
+ #[cfg(feature = "image")]
+ pub(crate) fn decode_raw_raster_image(
+     img: &usvg::ImageKind,
+-) -> Result<image::RgbaImage, image::ImageError> {
+-    // All `image::ImageFormat` variants exist even if the feature in the image crate is disabled,
+-    // but `image::load_from_memory_with_format` will fail with an Unsupported error if the
+-    // image crate feature flag is disabled. So we don't need any of our own feature handling here.
+-    let (data, format) = match img {
+-        usvg::ImageKind::JPEG(data) => (data, image::ImageFormat::Jpeg),
+-        usvg::ImageKind::PNG(data) => (data, image::ImageFormat::Png),
+-        usvg::ImageKind::GIF(data) => (data, image::ImageFormat::Gif),
+-        usvg::ImageKind::WEBP(data) => (data, image::ImageFormat::WebP),
++) -> Result<pyro_raster::Raster, image::ImageError> {
++    let data = match img {
++        usvg::ImageKind::JPEG(data) | usvg::ImageKind::PNG(data) |
++        usvg::ImageKind::GIF(data) | usvg::ImageKind::WEBP(data) => data,
          usvg::ImageKind::SVG(_) => unreachable!(),
      };
  
-+    // pyro: a JPEG turned by its EXIF orientation, as an image in an SVG document shows it
-+    // (`image-orientation: from-image`; WPT css-images `image-orientation-none-cross-origin-svg`).
-+    if format == image::ImageFormat::Jpeg {
-+        use image::ImageDecoder as _;
-+        let mut decoder = image::codecs::jpeg::JpegDecoder::new(std::io::Cursor::new(data.as_slice()))?;
-+        let orientation = decoder.orientation().unwrap_or(image::metadata::Orientation::NoTransforms);
-+        let mut dyn_image = image::DynamicImage::from_decoder(decoder)?;
-+        dyn_image.apply_orientation(orientation);
-+        return Ok(dyn_image.into_rgba8());
+-    let dyn_image = image::load_from_memory_with_format(data, format)?;
+-    Ok(dyn_image.into_rgba8())
++    RASTERS.with_borrow_mut(|scope| scope.as_mut().expect("SVG render scope").decode(data))
++}
++
++#[cfg(feature = "image")]
++thread_local! { static RASTERS: std::cell::RefCell<Option<pyro_raster::DocumentBudget>> = const { std::cell::RefCell::new(None) }; }
++
++#[cfg(feature = "image")]
++pub(crate) struct RasterScope(bool);
++
++#[cfg(feature = "image")]
++impl RasterScope {
++    pub(crate) fn enter() -> Self {
++        Self(RASTERS.with_borrow_mut(|current| {
++            if current.is_some() { return false; }
++            *current = Some(Default::default());
++            true
++        }))
 +    }
-     let dyn_image = image::load_from_memory_with_format(data, format)?;
-     Ok(dyn_image.into_rgba8())
++}
++
++#[cfg(feature = "image")]
++impl Drop for RasterScope {
++    fn drop(&mut self) {
++        if self.0 { RASTERS.with_borrow_mut(|current| { current.take(); }); }
++    }
  }

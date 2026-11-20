@@ -99,6 +99,7 @@ impl SvgIntrinsicDimensions {
 /// attributes, which are captured at parse time.
 #[derive(Debug, Clone)]
 pub struct SvgImageData {
+    pub(crate) resources: Option<std::sync::Weak<crate::util::SvgResourceMap>>,
     /// The parsed SVG tree.
     pub tree: Arc<usvg::Tree>,
     /// The dimensions declared on the root `<svg>` element.
@@ -215,6 +216,7 @@ impl SvgImageData {
         };
         Ok(Self {
             tree: Arc::new(tree),
+            resources: None,
             intrinsic_dimensions,
             inline_source: None,
             source: None,
@@ -245,7 +247,7 @@ impl SvgImageData {
         } else {
             source_now.to_vec()
         };
-        let mut svg = crate::util::parse_svg_image(&dark_source).ok()?;
+        let mut svg = crate::util::parse_svg_resources(&dark_source, self.resources.as_ref().and_then(|map| map.upgrade()).as_ref()).ok()?;
         svg.source = self.source.clone();
         Some(svg)
     }
@@ -262,7 +264,7 @@ impl SvgImageData {
             return None;
         }
         let source = with_root_size(source, width, height)?;
-        crate::util::parse_svg_image(source.as_bytes()).ok()
+        crate::util::parse_svg_resources(source.as_bytes(), self.resources.as_ref().and_then(|map| map.upgrade()).as_ref()).ok()
     }
 
     /// The intrinsic width in CSS px, present only when the root `<svg>`
@@ -441,14 +443,14 @@ impl crate::BaseDocument {
             next = node.parent;
         }
         let root = root?;
-        let source = self.with_svg_sprites(self.with_svg_images(root.svg_source()));
+        let source = self.with_svg_sprites(root.svg_source());
         // pyro: `content` in a group anyrender_svg knows a box's reference by (its masks of
         // opaque shapes are drawn as the shapes).
         let document = format!(
             "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" \
              width=\"{width}\" height=\"{height}\"><defs>{source}</defs><g id=\"__pyro_box_reference\">{content}</g></svg>"
         );
-        crate::util::parse_svg_image(document.as_bytes()).ok()
+        crate::util::parse_svg_resources(document.as_bytes(), Some(&self.svg_images)).ok()
     }
 }
 

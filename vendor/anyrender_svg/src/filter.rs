@@ -218,6 +218,8 @@ impl FilterGraph {
     /// draws what its `feImage`s show, each in a layer of its own that only the graph reads (see
     /// anyrender_vello_cpu's `FILTER_IMAGE_SOURCE`). The content to filter follows, then a pop.
     pub fn push_layer<S: PaintScene>(&self, scene: &mut S, transform: Affine) {
+        #[cfg(feature = "image")]
+        let _resources = crate::util::RasterScope::enter();
         scene.push_layer(
             Fill::NonZero,
             BlendMode::default(),

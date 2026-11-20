@@ -974,7 +974,7 @@ fn collect_layout_children_with_wrap(
             // (`SvgImageData::viewport_dependent`)
             let (source, viewport_dependent) = doc.get_node(container_node_id).unwrap().svg_source_for_viewport(None);
             doc.viewport_svgs.borrow_mut().remove(&container_node_id);
-            let outer_html = doc.with_svg_sprites(doc.with_svg_images(source));
+            let outer_html = doc.with_svg_sprites(source);
             // pyro: with the resources it references in the page's other `<svg>`s.
             let outer_html = doc.with_cross_svg_references(outer_html);
 
@@ -993,7 +993,7 @@ fn collect_layout_children_with_wrap(
                 doc.svg_foreign_objects.insert(container_node_id, foreign_objects);
             }
 
-            match crate::util::parse_svg_image(outer_html.as_bytes()) {
+            match crate::util::parse_svg_resources(outer_html.as_bytes(), Some(&doc.svg_images)) {
                 Ok(mut svg) => {
                     // pyro: without a `viewBox` its content is laid out in its CSS box
                     // (`SvgImageData::sized`, at paint).

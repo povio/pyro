@@ -1185,6 +1185,10 @@ impl Writer<'_> {
         let mut style_attr = None;
         for attr in data.attrs() {
             let local: &str = attr.name.local.as_ref();
+            if is_svg && matches!(tag, "image" | "feImage") && local == "href" && !attr.value.starts_with('#') && !attr.value.get(..5).is_some_and(|prefix| prefix.eq_ignore_ascii_case("data:")) && styles.as_ref().is_some_and(|style| crate::util::image_unoriented(style)) {
+                self.write_attr(&attr.name, &format!("pyro-unoriented:{}", attr.value), None);
+                continue;
+            }
             if attr.name.ns == ns!() && local == "style" && is_svg {
                 style_attr = Some(attr.value.as_str());
                 continue;

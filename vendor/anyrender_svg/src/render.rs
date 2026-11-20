@@ -160,7 +160,6 @@ pub(crate) fn render_group<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
                         {
                             let Ok(decoded_image) = util::decode_raw_raster_image(img.kind())
                             else {
-                                error_handler(scene, node);
                                 continue;
                             };
                             let image = util::into_image(decoded_image, img.rendering_mode());

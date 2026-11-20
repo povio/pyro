@@ -35,7 +35,7 @@ default = [
     "image_format_jpeg",
     "image_format_webp",
 ]
-image = ["dep:image"]
+image = ["dep:image", "dep:pyro-raster"]
 image_format_gif = [
     "image",
     "image/gif",
@@ -73,6 +73,10 @@ version = "0.18.0"
 version = "0.25"
 optional = true
 default-features = false
+
+[dependencies.pyro-raster]
+path = "../../crates/pyro-raster"
+optional = true
 
 [dependencies.kurbo]
 version = "0.13.1"
