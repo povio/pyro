@@ -4670,7 +4670,7 @@ index 0000000..be15ba9
 +    }
 +}
 diff --git a/src/scene.rs b/src/scene.rs
-index 1b09a33..5691399 100644
+index 1b09a33..460a6db 100644
 --- a/src/scene.rs
 +++ b/src/scene.rs
 @@ -1,19 +1,322 @@
@@ -5197,7 +5197,7 @@ index 1b09a33..5691399 100644
      }
  
      fn draw_glyphs<'a, 's: 'a>(
-@@ -163,6 +538,16 @@ impl PaintScene for VelloCpuScenePainter {
+@@ -163,6 +538,24 @@ impl PaintScene for VelloCpuScenePainter {
          glyph_transform: Option<Affine>,
          glyphs: impl Iterator<Item = anyrender::Glyph> + Clone,
      ) {
@@ -5205,6 +5205,14 @@ index 1b09a33..5691399 100644
 +        // 512th of a device pixel right and down: a pixel half covered at a glyph's left or top
 +        // edge is then left out and one at its right or bottom edge painted, as Skia paints
 +        // aliased paths (rounding a pixel centre on an edge down and right).
++        let [xx, xy, yx, yy, origin, _] = transform.as_coeffs();
++        let snap = self.text_aliasing_threshold.is_some() && glyph_transform.is_none()
++            && [xx, xy, yx, yy] == [1.0, 0.0, 0.0, 1.0];
++        let glyphs = glyphs.map(move |glyph| vello_cpu::Glyph {
++            id: glyph.id,
++            x: if snap { ((origin + f64::from(glyph.x)).round() - origin) as f32 } else { glyph.x },
++            y: glyph.y,
++        });
 +        let transform = match self.text_aliasing_threshold {
 +            Some(_) => Affine::translate((1.0 / 512.0, 1.0 / 512.0)) * transform,
 +            None => transform,
@@ -5214,7 +5222,7 @@ index 1b09a33..5691399 100644
          self.render_ctx.set_transform(transform);
          let paint = self.convert_paint(paint.into());
          self.render_ctx.set_paint(paint);
-@@ -177,7 +562,13 @@ impl PaintScene for VelloCpuScenePainter {
+@@ -177,13 +570,15 @@ impl PaintScene for VelloCpuScenePainter {
                      .font_size(font_size)
                      .hint(hint)
                      .normalized_coords(normalized_coords)
@@ -5227,10 +5235,25 @@ index 1b09a33..5691399 100644
 +                        transform * glyph_transform.unwrap_or_default(),
 +                    ))
                      .glyph_transform(glyph_transform.unwrap_or_default())
-                     .fill_glyphs(glyphs.map(|g| vello_cpu::Glyph {
-                         id: g.id,
-@@ -201,6 +592,7 @@ impl PaintScene for VelloCpuScenePainter {
-                     }));
+-                    .fill_glyphs(glyphs.map(|g| vello_cpu::Glyph {
+-                        id: g.id,
+-                        x: g.x,
+-                        y: g.y,
+-                    }));
++                    .fill_glyphs(glyphs);
+             }
+             StyleRef::Stroke(stroke) => {
+                 self.render_ctx.set_stroke(stroke.clone());
+@@ -194,13 +589,10 @@ impl PaintScene for VelloCpuScenePainter {
+                     .hint(hint)
+                     .normalized_coords(normalized_coords)
+                     .glyph_transform(glyph_transform.unwrap_or_default())
+-                    .stroke_glyphs(glyphs.map(|g| vello_cpu::Glyph {
+-                        id: g.id,
+-                        x: g.x,
+-                        y: g.y,
+-                    }));
++                    .stroke_glyphs(glyphs);
              }
          }
 +        self.render_ctx.set_aliasing_threshold(None);

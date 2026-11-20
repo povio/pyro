@@ -542,6 +542,14 @@ impl PaintScene for VelloCpuScenePainter {
         // 512th of a device pixel right and down: a pixel half covered at a glyph's left or top
         // edge is then left out and one at its right or bottom edge painted, as Skia paints
         // aliased paths (rounding a pixel centre on an edge down and right).
+        let [xx, xy, yx, yy, origin, _] = transform.as_coeffs();
+        let snap = self.text_aliasing_threshold.is_some() && glyph_transform.is_none()
+            && [xx, xy, yx, yy] == [1.0, 0.0, 0.0, 1.0];
+        let glyphs = glyphs.map(move |glyph| vello_cpu::Glyph {
+            id: glyph.id,
+            x: if snap { ((origin + f64::from(glyph.x)).round() - origin) as f32 } else { glyph.x },
+            y: glyph.y,
+        });
         let transform = match self.text_aliasing_threshold {
             Some(_) => Affine::translate((1.0 / 512.0, 1.0 / 512.0)) * transform,
             None => transform,
@@ -570,11 +578,7 @@ impl PaintScene for VelloCpuScenePainter {
                         transform * glyph_transform.unwrap_or_default(),
                     ))
                     .glyph_transform(glyph_transform.unwrap_or_default())
-                    .fill_glyphs(glyphs.map(|g| vello_cpu::Glyph {
-                        id: g.id,
-                        x: g.x,
-                        y: g.y,
-                    }));
+                    .fill_glyphs(glyphs);
             }
             StyleRef::Stroke(stroke) => {
                 self.render_ctx.set_stroke(stroke.clone());
@@ -585,11 +589,7 @@ impl PaintScene for VelloCpuScenePainter {
                     .hint(hint)
                     .normalized_coords(normalized_coords)
                     .glyph_transform(glyph_transform.unwrap_or_default())
-                    .stroke_glyphs(glyphs.map(|g| vello_cpu::Glyph {
-                        id: g.id,
-                        x: g.x,
-                        y: g.y,
-                    }));
+                    .stroke_glyphs(glyphs);
             }
         }
         self.render_ctx.set_aliasing_threshold(None);
