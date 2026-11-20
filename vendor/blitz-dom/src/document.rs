@@ -2209,6 +2209,15 @@ impl BaseDocument {
         }
     }
 
+    fn image_owners(&self) -> impl Iterator<Item = &ElementData> {
+        self.nodes.iter().filter_map(|(_, node)| {
+            node.flags.is_in_document().then(|| node.element_data()).flatten()
+        }).flat_map(|element| {
+            let styles = [element.first_letter, element.first_line, element.marker_style];
+            std::iter::once(element).chain(styles.into_iter().flatten().filter_map(|id| self.nodes.get(id)?.element_data()))
+        })
+    }
+
     /// pyro: the URLs of the images the document's elements reference now (their CSS image slots:
     /// backgrounds, masks, border images, references, list markers, shapes), in the document only.
     /// An image no element references any more is no longer the document's to wait for.
@@ -2216,11 +2225,7 @@ impl BaseDocument {
     /// the same URL made otherwise is another request.
     pub fn referenced_images(&self) -> Vec<(String, blitz_traits::net::FetchOptions)> {
         let mut out = Vec::new();
-        for (_, node) in self.nodes.iter() {
-            if !node.flags.is_in_document() {
-                continue;
-            }
-            let Some(element) = node.element_data() else { continue };
+        for element in self.image_owners() {
             out.extend(element.source_image_request.as_deref().cloned());
             if element.name.ns == markup5ever::ns!(svg) && matches!(&*element.name.local, "image" | "feImage" | "use") {
                 for attr in element.attrs() {
@@ -2253,11 +2258,7 @@ impl BaseDocument {
 
     pub fn referenced_image_urls(&self) -> std::collections::HashSet<String> {
         let mut urls = std::collections::HashSet::new();
-        for (_, node) in self.nodes.iter() {
-            if !node.flags.is_in_document() {
-                continue;
-            }
-            let Some(element) = node.element_data() else { continue };
+        for element in self.image_owners() {
             for slot in element
                 .background_images
                 .iter()

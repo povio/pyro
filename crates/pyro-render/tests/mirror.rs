@@ -85,6 +85,20 @@ fn paint(r: &mut Renderer, s: &Snapshot) -> Painted {
 }
 
 #[test]
+fn first_line_and_letter_image_requests_follow_the_originating_element() {
+    let page = Page::new("<!doctype html><style>div::first-line{background-image:url(line.png)}div::first-letter{background-image:url(letter.png)}</style><body><div>Text</div></body>");
+    let mut renderer = Renderer::new();
+    paint(&mut renderer, &page.snapshot(1, page.tree()));
+    let urls = renderer.referenced_images(1).unwrap().into_iter().map(|(url, _)| url).collect::<Vec<_>>();
+    assert!(urls.iter().any(|url| url == "http://test/line.png"));
+    assert!(urls.iter().any(|url| url == "http://test/letter.png"));
+    let (body, div) = (page.find("body"), page.find("div"));
+    page.dom.borrow_mut().remove_child(body, div).unwrap();
+    paint(&mut renderer, &page.snapshot(1, page.tree()));
+    assert!(renderer.referenced_images(1).unwrap().is_empty());
+}
+
+#[test]
 fn view_transition_collection_bounds_work_before_visiting_children() {
     for (body, valid, visited) in [
         ("<div style='view-transition-name: item'></div>".repeat(2), false, 3),
