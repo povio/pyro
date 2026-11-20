@@ -1,8 +1,9 @@
 // `Page.grantPermissions` / `resetPermissions`: a page's browser context
 // permissions, set on the page's own connection. `Page.send` always adds the
-// page's session id, and the engine takes `Browser.*` permission commands only
-// at the browser level, so `page.send('Browser.grantPermissions', ...)` is
-// "not supported" (SloSki's integration-token clipboard test hit this).
+// page's session id; a `Browser.*` permission command on a page session applies
+// to the page's browser context, as Chrome does (Chrome 158 answers
+// Browser.grantPermissions, resetPermissions and setPermission on a page session,
+// with or without a browserContextId; WPT testdriver's set_permission sends it so).
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { join } from 'node:path';
 import { Pyro, evaluate, type Page } from '../src/index';
@@ -37,11 +38,12 @@ async function write(page: Page): Promise<string> {
   return r.values.write as string;
 }
 
-test('a page session command cannot set permissions: the SDK sets them on the browser level', async () => {
+test("a page session's permission command applies to the page's browser context, as in Chrome", async () => {
   await using page = await browser.page({ as: 'app' });
-  await expect(page.send('Browser.grantPermissions', { browserContextId: page.browserContextId, origin, permissions: [] })).rejects.toThrow(
-    /not supported/,
-  );
+  await page.send('Browser.grantPermissions', { browserContextId: page.browserContextId, origin, permissions: ['clipboardSanitizedWrite'] });
+  expect(await state(page, 'clipboard-write')).toBe('granted');
+  await page.send('Browser.grantPermissions', { origin, permissions: [] });
+  expect(await state(page, 'clipboard-write')).toBe('denied');
 });
 
 test('grantPermissions grants and denies navigator.permissions and clipboard writes', async () => {
