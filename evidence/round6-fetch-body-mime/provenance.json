@@ -1,0 +1,18 @@
+{
+  "base": "aa0268b479a6b463da16910b4b743cf38901d962",
+  "head": "88de7ac1dbcf6c229331e1b6600a0af5f23ee1b3",
+  "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+  "ciJavaScriptCore": "0e0dd7038a7a-6f4649e395e0",
+  "chromeStable": "157.0.8103.80",
+  "platform": "macOS 27.2.1 arm64",
+  "lpBaseBinary": "9623217e05de0c6866256ce4f855edabf2ca810eb0d6a3ae51a93fd5ba50f7a8",
+  "lpCandidateBinary": "347e01ef0bfc6ad2b040be57216e1162a14278e5573004c208ecea100026241c",
+  "sourceReceiptHashes": {
+    "lp-base": "1a9229365ec089c2446a5f8750f812485bc2d10331234e78db8c214b27ae953c",
+    "lp-candidate": "af0afb07b9664b35304b1de28477dc6f61aa64c8dce06e48046587fafe811381",
+    "chrome-stable": "6590b5c1dd3af249010eb0b97120165cc19b5acd4cc5d2d4f36f4058e66a41a9",
+    "probe-base": "c42a05deae73b4f47404d2e11f714ef0a1c6b9d3755fb156828231b9e836ac71",
+    "probe-candidate": "72d7f63c762a6894807498908edb0e6d52cff8fe84749e7f44db55c8e6cc3ecb",
+    "probe-chrome": "7c448ff13eaab0d565d92418b3dae5b055f8f645c1cc96af4c304f15af0d04eb"
+  }
+}

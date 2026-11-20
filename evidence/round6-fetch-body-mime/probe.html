@@ -1,0 +1,61 @@
+<!doctype html>
+<title>Fetch MIME extraction and packaging</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<script>
+for (const [name, make] of [
+  ['Request', (body, headers) => new Request(location.href, {method: 'POST', body, headers})],
+  ['Response', (body, headers) => new Response(body, {headers})],
+  ['stream Response', (body, headers) => new Response(new ReadableStream({
+    start(controller) { controller.enqueue(new TextEncoder().encode(body)); controller.close(); }
+  }), {headers})],
+]) {
+  for (const [title, values, expected] of [
+    ['inherit first charset in a run', ['Text/PLAIN;Charset=GbK', 'text/plain;charset=Other', 'text/plain;A=CAPS'], 'text/plain;a=CAPS;charset=GbK'],
+    ['reset inherited charset when essence changes', ['text/plain;charset=GbK', 'text/html', 'text/plain'], 'text/plain'],
+    ['ignore invalid and wildcard types', ['text/plain;foo=Beta','*/*','bogus'], 'text/plain;foo=Beta'],
+    ['quoted comma and escaped quote', ['text/plain;a="A,\\"B", text/html;b="C,D"'], 'text/html;b="C,D"'],
+    ['invalid control in a quoted value', ['text/plain;foo="a;\x7fb";Valid=X'], 'text/plain;valid=X'],
+    ['ignore trailing junk before next parameter', ['text/plain;foo="ok"\x7f;Valid=X'], 'text/plain;foo=ok;valid=X'],
+    ['first case-insensitive duplicate parameter wins', ['text/plain;Foo=One;FOO=Two'], 'text/plain;foo=One'],
+  ]) {
+    promise_test(async () => {
+      const r=make('bytes',values.map(v=>['Content-Type',v]));
+      const b=await r.blob(); assert_equals(b.type,expected); assert_equals(await b.text(),'bytes');
+    }, name + ' ' + title);
+  }
+  promise_test(async()=>{
+    const boundary='MiXeD;A,B', payload='--'+boundary+'\r\nContent-Disposition: form-data; name="who"\r\n\r\nAlice\r\n--'+boundary+'--\r\n';
+    const r=make(payload,[['Content-Type','application/octet-stream'],['Content-Type','MULTIPART/form-data; boundary="'+boundary+'"']]);
+    assert_equals((await r.formData()).get('who'),'Alice');
+  },name+' multipart quoted mixed-case boundary');
+  promise_test(async()=>{
+    const r=make('a=42&b=hello+you',[['Content-Type','application/x-www-form-urlencoded;foo=X'],['Content-Type','invalid']]);
+    const f=await r.formData();assert_equals(f.get('a'),'42');assert_equals(f.get('b'),'hello you');
+  },name+' urlencoded after invalid final header');
+  promise_test(async()=>{
+    const r=make('x',[['Content-Type','text/plain']]); const c=r.clone();
+    r.headers.set('Content-Type','text/plain;id=Left'); c.headers.set('Content-Type','text/plain;id=Right');
+    const [left,right]=await Promise.all([r.blob(), c.blob()]);
+    assert_equals(left.type,'text/plain;id=Left'); assert_equals(right.type,'text/plain;id=Right');
+  },name+' clone MIME independence');
+}
+for (const [name, make] of [
+  ['Request', body => new Request(location.href, {method:'POST',body,headers:{'Content-Type':'application/first'}})],
+  ['Response', body => new Response(body,{headers:{'Content-Type':'application/first'}})],
+]) {
+  for (const body of [null,'x']) {
+    promise_test(async () => {
+      const r=make(body); const blob=r.blob();
+      r.headers.set('Content-Type','application/last');
+      assert_equals((await blob).type, body === null ? 'application/first' : 'application/last');
+    }, name+' MIME packaging time for '+(body===null?'null':'buffered')+' body');
+  }
+}
+promise_test(async()=>{
+  let controller;
+  const r=new Response(new ReadableStream({start(c){controller=c}}),{headers:{'Content-Type':'text/plain;step=First'}});
+  const blob=r.blob(); r.headers.set('Content-Type','text/plain;step=Last'); controller.close();
+  assert_equals((await blob).type,'text/plain;step=Last');
+},'stream MIME derives from headers at packaging');
+</script>
