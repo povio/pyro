@@ -62,6 +62,10 @@ pub struct RenderSnapshot {
     /// The document's HTTP `Content-Language`
     /// (`pyro_dom::Dom::content_language`), in every form.
     pub content_language: Option<String>,
+    /// pyro: the nonce the markup was serialised with (its engine attributes' names carry it:
+    /// `pyro_dom::snapshot::engine_name`): a renderer of the markup alone (a `capture_only`
+    /// snapshot) needs it to take them, and takes none otherwise.
+    pub nonce: String,
     /// The document's `CSS.registerProperty()` registrations, in order, in every form: name,
     /// syntax, inherits, initial value.
     pub registered_properties: Vec<(String, String, bool, Option<String>)>,
@@ -267,6 +271,7 @@ fn snapshot_of(
             quirks_mode: dom.is_quirks_mode(document),
             limited_quirks_mode: dom.is_limited_quirks_mode(document),
             content_language: dom.content_language(document).map(str::to_owned),
+            nonce: dom.frame_table(document).nonce,
             registered_properties: layout
                 .style()
                 .registered_properties()

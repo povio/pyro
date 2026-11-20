@@ -566,11 +566,16 @@ impl Mirror {
         // them through the provider, which serves the new text.
         if !changed_sheets.is_empty() {
             let href = QualName::new(None, blitz_dom::ns!(), blitz_dom::local_name!("href"));
+            // pyro: the engine's sheet key travels under the document's nonce name.
+            let nonce = m.doc.snapshot_nonce().to_owned();
             for n in new {
                 if let TreeKind::Element { name, attrs } = &n.kind {
                     if name.local == blitz_dom::local_name!("link") {
                         // pyro: by its sheet key (the link's engine attribute), never its URL.
-                        let sheet = attrs.iter().find(|(a, _)| &*a.local == blitz_dom::SHEET_ATTRIBUTE).map(|(_, v)| v);
+                        let sheet = attrs
+                            .iter()
+                            .find(|(a, _)| blitz_dom::engine_field(&nonce, a).as_deref() == Some(blitz_dom::SHEET_ATTRIBUTE))
+                            .map(|(_, v)| v);
                         let url = attrs.iter().find(|(a, _)| a.local == href.local).map(|(_, v)| v);
                         if let (Some(sheet), Some(url)) = (sheet, url) {
                             if changed_sheets.contains(sheet) {

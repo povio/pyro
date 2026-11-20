@@ -93,20 +93,18 @@ mod same_secret_tests {
         assert!(!super::same_secret("", "00ff"));
     }
 
-    /// A document with the reject-all nonce (an SVG image's) takes no engine attribute, whatever
-    /// the element carries; one without a nonce takes them as written (cycle 7, 1).
+    /// Which attributes are the engine's: under this document's nonce name only; without a nonce,
+    /// the known canonical names; with the reject-all nonce (an SVG image's), none (cycles 7, 8).
     #[test]
     fn the_reject_all_nonce_takes_no_engine_attribute() {
-        let element = crate::node::ElementData::new(
-            markup5ever::QualName::new(None, markup5ever::ns!(html), "div".into()),
-            vec![crate::node::Attribute {
-                name: markup5ever::QualName::new(None, markup5ever::ns!(), "data-pyro-n".into()),
-                value: "\0".into(),
-            }],
-        );
-        assert!(!super::engine_marked(super::REJECT_ALL_NONCE, &element));
-        assert!(super::engine_marked("", &element));
-        assert!(!super::engine_marked("00ff", &element));
+        let q = |local: &str| markup5ever::QualName::new(None, markup5ever::ns!(), local.into());
+        assert_eq!(super::engine_field(super::REJECT_ALL_NONCE, &q("data-pyro-sheet")), None);
+        assert_eq!(super::engine_field("", &q("data-pyro-sheet")).as_deref(), Some("data-pyro-sheet"));
+        assert_eq!(super::engine_field("", &q("data-pyro-theme")), None);
+        assert_eq!(super::engine_field("00ff", &q("data-pyro-00ff-sheet")).as_deref(), Some("data-pyro-sheet"));
+        assert_eq!(super::engine_field("00ff", &q("data-pyro-00fe-sheet")), None);
+        assert_eq!(super::engine_field("00ff", &q("data-pyro-sheet")), None);
+        assert_eq!(super::engine_field("00ff", &q("data-pyro-00ff-")), None);
     }
 }
 
@@ -116,12 +114,7 @@ pub type FrameTable = Arc<FrameTableData>;
 /// pyro: the attribute a frame element names its frame table entry in: `"<nonce>:<index>:<version>"`.
 pub const FRAME_ATTRIBUTE: &str = "data-pyro-frame";
 
-/// pyro: the attribute every element the snapshot gives engine attributes (sheet keys and
-/// policies, scroll and sticky offsets, animation keys, the clip mark, a frame's content height,
-/// a `<pre>`'s own name) carries this document's nonce in: an engine attribute of an element
-/// without it is inert, so no difference between the DOM and a reparse of its markup can mint
-/// one ([`engine_marked`]).
-pub const NONCE_ATTRIBUTE: &str = "data-pyro-n";
+
 
 /// pyro: the nonce of a document that takes no engine attribute at all (an SVG image's): NUL,
 /// which no parsed attribute value holds (the HTML parser replaces it, XML forbids it).
@@ -131,12 +124,43 @@ pub const REJECT_ALL_NONCE: &str = "\0";
 /// serialised with `nonce`: it carries that nonce ([`NONCE_ATTRIBUTE`], compared in constant
 /// time). A document without a nonce is no render snapshot's (markup written by hand): its
 /// markup is taken as written.
-pub fn engine_marked(nonce: &str, element: &crate::node::ElementData) -> bool {
-    if nonce == REJECT_ALL_NONCE {
-        return false;
+pub fn engine_marked(nonce: &str, _element: &crate::node::ElementData) -> bool {
+    // (The engine store holds only attributes authenticated as they came in: `engine_field`.)
+    nonce != REJECT_ALL_NONCE
+}
+
+/// pyro: the engine attributes a document without a nonce (markup written by hand, a test's) takes
+/// under their canonical names; a render snapshot's travel under nonce names only.
+pub const ENGINE_FIELDS: &[&str] = &[
+    "data-pyro-frame",
+    "data-pyro-frame-content-height",
+    "data-pyro-sheet",
+    "data-pyro-sheet-referrer-policy",
+    "data-pyro-scroll-left",
+    "data-pyro-scroll-top",
+    "data-pyro-sticky",
+    "data-pyro-key",
+    "data-pyro-tag",
+    "data-pyro-render-clip",
+];
+
+/// pyro: the canonical engine attribute (`data-pyro-<field>`) that attribute `name` is in a
+/// document serialised with `nonce`, if it is the engine's: `data-pyro-<nonce>-<field>`, the nonce
+/// compared in constant time (pyro-dom `snapshot::engine_name`); without a nonce, one of
+/// [`ENGINE_FIELDS`] as written; in a document taking none ([`REJECT_ALL_NONCE`]), never. Any other
+/// attribute, `data-pyro-*` ones included, is the page's own (CSS sees it, the engine ignores it).
+pub fn engine_field(nonce: &str, name: &markup5ever::QualName) -> Option<String> {
+    if name.ns != markup5ever::ns!() || nonce == REJECT_ALL_NONCE {
+        return None;
     }
-    nonce.is_empty()
-        || element.reserved_attr(NONCE_ATTRIBUTE).is_some_and(|value| same_secret(value, nonce))
+    let local = &*name.local;
+    if nonce.is_empty() {
+        return ENGINE_FIELDS.contains(&local).then(|| local.to_owned());
+    }
+    let rest = local.strip_prefix("data-pyro-")?;
+    let (given, field) = (rest.get(..nonce.len())?, rest.get(nonce.len()..)?);
+    let field = field.strip_prefix('-').filter(|f| !f.is_empty())?;
+    same_secret(given, nonce).then(|| format!("data-pyro-{field}"))
 }
 
 /// Options used when constructing a [`BaseDocument`](crate::BaseDocument)

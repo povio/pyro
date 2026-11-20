@@ -398,7 +398,8 @@ fn a_redirected_link_sheet_is_at_its_final_url() {
     assert!(snapshot.html.contains("href=\"http://site.test/dir/a.css\""), "{}", snapshot.html);
     // (Its text is keyed by the link, which carries the key: never by URL.)
     let key = snapshot.sheets.keys().next().expect("the sheet").clone();
-    assert!(snapshot.html.contains(&format!("data-pyro-sheet=\"{key}\"")), "{}", snapshot.html);
+    // (The engine's sheet key, under the document's nonce name.)
+    assert!(snapshot.html.contains(&format!("data-pyro-{}-sheet=\"{key}\"", snapshot.nonce)), "{}", snapshot.html);
     assert_eq!(
         eval(&thread, page, "document.getElementById('l').sheet.cssRules[0].styleSheet?.href ?? 'none'"),
         "http://site.test/dir/b.css"

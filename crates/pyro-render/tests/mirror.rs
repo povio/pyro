@@ -54,6 +54,9 @@ impl Page {
             device_scale_factor: 1.0,
             resource_scope: "doc".into(),
             live: Some(Live { page, tree, clip: None, interaction: None }),
+            // (The document's frame table, with the nonce its engine attributes are named with, as
+            // pyro-cdp and pyro-layout pass it.)
+            frames: Arc::new(FrameTableData { nonce: self.dom.borrow().frame_table(self.doc).nonce, entries: Default::default() }),
             ..Default::default()
         }
     }

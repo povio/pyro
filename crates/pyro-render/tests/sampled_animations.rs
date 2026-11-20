@@ -363,13 +363,13 @@ fn a_frame_scrolled_past_its_reach_lays_out_its_timelines_at_the_reachable_offse
     for node in &mut tree.nodes {
         if let TreeKind::Element { attrs, .. } = &mut node.kind {
             if node.key == key {
-                attrs.push((QualName::new(None, ns!(), "data-pyro-frame".into()), "N:1:0000000000000001".into()));
+                attrs.push((QualName::new(None, ns!(), "data-pyro-n-frame".into()), "n:1:0000000000000001".into()));
             }
         }
     }
     live.live.as_mut().unwrap().tree = Arc::new(tree);
     let snap = Snapshot {
-        frames: Arc::new(FrameTableData { nonce: "N".into(), entries: [("1".to_owned(), frame_doc)].into_iter().collect() }),
+        frames: Arc::new(FrameTableData { nonce: "n".into(), entries: [("1".to_owned(), frame_doc)].into_iter().collect() }),
         frame_animations: vec![("F#L".to_owned(), Arc::new(effects))],
         ..live
     };
@@ -377,7 +377,7 @@ fn a_frame_scrolled_past_its_reach_lays_out_its_timelines_at_the_reachable_offse
     let width_at = |scroll_y: f64| {
         let mut frame_doc = snap.frames.entries["1"].clone();
         frame_doc.scroll = (0.0, scroll_y);
-        let frames = Arc::new(FrameTableData { nonce: "N".into(), entries: [("1".to_owned(), frame_doc)].into_iter().collect() });
+        let frames = Arc::new(FrameTableData { nonce: "n".into(), entries: [("1".to_owned(), frame_doc)].into_iter().collect() });
         let img = Renderer::new().render(&Snapshot { frames, ..snap.clone() }, Area::Viewport, Backend::Cpu, &fetcher).unwrap().0;
         (0..200).filter(|&x| pixel(&img, x, 80) == [0, 200, 0]).count()
     };

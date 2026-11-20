@@ -14,7 +14,7 @@ mod svg;
 pub(crate) mod svg_css;
 mod text;
 
-pub use attributes::{Attribute, Attributes, PresentationalHints, RESERVED_PREFIX, is_reserved};
+pub use attributes::{Attribute, Attributes, PresentationalHints};
 #[cfg(feature = "custom-widget")]
 pub use custom_widget::{
     ComputedStyles, CustomWidgetData, CustomWidgetStatus, ProxyRenderContext, Widget,

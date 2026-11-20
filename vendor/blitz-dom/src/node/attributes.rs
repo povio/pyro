@@ -26,22 +26,14 @@ pub struct PresentationalHints {
     pub cells: Box<[ServoArc<Locked<PropertyDeclarationBlock>>]>,
 }
 
-/// pyro: the attribute family render snapshots carry engine data in (`data-pyro-*`, no
-/// namespace): never one of an element's attributes in the renderer's document; see
-/// [`Attributes::reserved`].
-pub const RESERVED_PREFIX: &str = "data-pyro-";
-
-/// pyro: whether `name` is of the [`RESERVED_PREFIX`] family.
-pub fn is_reserved(name: &QualName) -> bool {
-    name.ns == markup5ever::ns!() && name.local.starts_with(RESERVED_PREFIX)
-}
 
 pub struct Attributes {
     inner: ThinVec<Attribute>,
-    /// pyro: the [`RESERVED_PREFIX`] attributes the markup or tree carried, kept apart: no
-    /// selector, `attr()`, serialisation or iteration of the element's attributes sees them (author
-    /// CSS could otherwise probe the snapshot's nonce through layout); only the engine's readers
-    /// ([`Attributes::reserved`]) do.
+    /// pyro: the engine's attributes (by canonical name, `data-pyro-sheet`, ...): those the markup
+    /// or tree carried under this document's nonce name (`crate::engine_field`), kept apart from
+    /// the element's own: no selector, `attr()`, serialisation or iteration sees them, and the
+    /// page's own `data-pyro-*` attributes are ordinary attributes. Only the engine's readers
+    /// ([`Attributes::reserved`]) see them.
     reserved: ThinVec<Attribute>,
     /// pyro: the hints these attributes map to, built at the
     /// first cascade that asks and dropped by every write (`set`, `remove`,
@@ -69,17 +61,33 @@ impl std::fmt::Debug for Attributes {
 
 impl Attributes {
     pub fn new(inner: Vec<Attribute>) -> Self {
-        let (reserved, inner): (Vec<Attribute>, Vec<Attribute>) = inner.into_iter().partition(|a| is_reserved(&a.name));
         Self {
             inner: inner.into_iter().collect(),
-            reserved: reserved.into_iter().collect(),
+            reserved: ThinVec::new(),
             presentational_hints: OnceLock::new(),
         }
     }
 
-    /// pyro: the engine's reserved attribute `local` ([`RESERVED_PREFIX`]), for engine readers only.
-    pub fn reserved(&self, local: &str) -> Option<&str> {
-        self.reserved.iter().find(|a| &*a.name.local == local).map(|a| a.value.as_str())
+    /// pyro: the engine's attribute `canonical` (`data-pyro-sheet`, ...), for engine readers only.
+    pub fn reserved(&self, canonical: &str) -> Option<&str> {
+        self.reserved.iter().find(|a| &*a.name.local == canonical).map(|a| a.value.as_str())
+    }
+
+    /// pyro: sets the engine's attribute `canonical` (never one of the element's own).
+    pub fn set_reserved(&mut self, canonical: &str, value: &str) {
+        match self.reserved.iter_mut().find(|a| &*a.name.local == canonical) {
+            Some(a) => value.clone_into(&mut a.value),
+            None => self.reserved.push(Attribute {
+                name: QualName::new(None, markup5ever::ns!(), canonical.into()),
+                value: value.to_owned(),
+            }),
+        }
+    }
+
+    /// pyro: removes the engine's attribute `canonical`.
+    pub fn remove_reserved(&mut self, canonical: &str) -> Option<Attribute> {
+        let idx = self.reserved.iter().position(|a| &*a.name.local == canonical)?;
+        Some(self.reserved.remove(idx))
     }
 
     pub fn get(&mut self, name: &QualName) -> Option<&Attribute> {
@@ -87,13 +95,6 @@ impl Attributes {
     }
 
     pub fn set(&mut self, name: QualName, value: &str) {
-        if is_reserved(&name) {
-            match self.reserved.iter_mut().find(|a| a.name == name) {
-                Some(a) => value.clone_into(&mut a.value),
-                None => self.reserved.push(Attribute { name, value: value.to_owned() }),
-            }
-            return;
-        }
         self.presentational_hints.take();
         let existing_attr = self.inner.iter_mut().find(|a| a.name == name);
         if let Some(existing_attr) = existing_attr {
@@ -108,10 +109,6 @@ impl Attributes {
     }
 
     pub fn remove(&mut self, name: &QualName) -> Option<Attribute> {
-        if is_reserved(name) {
-            let idx = self.reserved.iter().position(|attr| attr.name == *name);
-            return idx.map(|idx| self.reserved.remove(idx));
-        }
         self.presentational_hints.take();
         let idx = self.inner.iter().position(|attr| attr.name == *name);
         idx.map(|idx| self.inner.remove(idx))
@@ -145,24 +142,20 @@ mod reserved_tests {
         QualName::new(None, markup5ever::ns!(), local.into())
     }
 
-    /// The reserved family is never among an element's attributes (iteration, lookup), only the
-    /// engine's accessor sees it, through construction, `set` and `remove` alike (security review
-    /// cycle 7, 1).
+    /// The engine's attributes are never among an element's own (iteration, lookup), and the
+    /// element's own `data-pyro-*` attributes are ordinary ones (security review cycles 7 and 8).
     #[test]
     fn reserved_attributes_are_kept_apart() {
         let mut attrs = Attributes::new(vec![
             Attribute { name: name("id"), value: "a".into() },
-            Attribute { name: name("data-pyro-n"), value: "0f".into() },
+            Attribute { name: name("data-pyro-theme"), value: "dark".into() },
         ]);
-        attrs.set(name("data-pyro-sheet"), "k");
-        attrs.set(name("data-x"), "y");
+        attrs.set_reserved("data-pyro-sheet", "k");
+        attrs.set(name("data-pyro-n"), "forged");
         let visible: Vec<&str> = attrs.iter().map(|a| &*a.name.local).collect();
-        assert_eq!(visible, ["id", "data-x"]);
-        assert_eq!((attrs.reserved("data-pyro-n"), attrs.reserved("data-pyro-sheet")), (Some("0f"), Some("k")));
-        // (Another namespace is no reserved attribute.)
-        attrs.set(QualName::new(None, markup5ever::ns!(xlink), "data-pyro-n".into()), "z");
-        assert_eq!(attrs.iter().count(), 3);
-        assert_eq!(attrs.remove(&name("data-pyro-n")).map(|a| a.value), Some("0f".into()));
-        assert_eq!(attrs.reserved("data-pyro-n"), None);
+        assert_eq!(visible, ["id", "data-pyro-theme", "data-pyro-n"]);
+        assert_eq!((attrs.reserved("data-pyro-sheet"), attrs.reserved("data-pyro-n")), (Some("k"), None));
+        assert_eq!(attrs.remove_reserved("data-pyro-sheet").map(|a| a.value), Some("k".into()));
+        assert_eq!(attrs.reserved("data-pyro-sheet"), None);
     }
 }

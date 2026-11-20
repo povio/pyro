@@ -1028,7 +1028,7 @@ fn a_markup_snapshot_paints_a_stuck_sticky_box_where_the_page_holds_it() {
     assert_eq!(eval(&root, "[scrollY, document.getElementById('s').getBoundingClientRect().top].join()"), "100,0");
     let dom = t.browser.page(page).unwrap().main_frame.page_dom.clone().unwrap();
     let s = dom.render_snapshot("about:blank", None);
-    assert!(s.html.contains("data-pyro-sticky"), "{}", s.html);
+    assert!(s.html.contains(&format!("data-pyro-{}-sticky", s.nonce)), "{}", s.html);
     let snapshot = pyro_render::Snapshot {
         html: s.html,
         base_url: "about:blank".into(),
@@ -1038,6 +1038,8 @@ fn a_markup_snapshot_paints_a_stuck_sticky_box_where_the_page_holds_it() {
         device_scale_factor: 1.0,
         scroll_x: s.scroll_x,
         scroll_y: s.scroll_y,
+        // (The nonce its engine attributes are named with, as a `capture_only` snapshot carries it.)
+        frames: std::sync::Arc::new(pyro_render::FrameTableData { nonce: s.nonce, entries: Default::default() }),
         ..Default::default()
     };
     let fetcher: std::sync::Arc<dyn pyro_render::Fetcher> = std::sync::Arc::new(NoFetch);

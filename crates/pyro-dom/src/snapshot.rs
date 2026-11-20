@@ -91,18 +91,35 @@ pub const FRAME_ATTRIBUTE: &str = "data-pyro-frame";
 /// [`ENGINE_ATTRIBUTE_PREFIX`], or is one the engine gave this element. (The renderer looks
 /// attributes up by local name, whatever their namespace: a namespaced or prefixed `srcdoc` is
 /// left out too.)
-fn page_attribute_allowed(name: &QualName, engine: &[String]) -> bool {
+/// pyro (security review cycle 8): the page's own `data-pyro-*` attributes are written like any
+/// other (CSS matches them in the renderer); the engine's travel under names carrying the
+/// document's nonce ([`engine_name`]), which page content cannot know, so none collides.
+fn page_attribute_allowed(name: &QualName, engine: &[String], nonce: &str) -> bool {
     let local = name.local.to_string().to_ascii_lowercase();
     let serialised = match &name.prefix {
         Some(prefix) if !prefix.is_empty() => format!("{prefix}:{}", name.local).to_ascii_lowercase(),
         _ => local.clone(),
     };
+    let own = (!nonce.is_empty()).then(|| format!("{ENGINE_ATTRIBUTE_PREFIX}{nonce}-"));
     let reserved = |n: &str| {
-        n.starts_with(ENGINE_ATTRIBUTE_PREFIX)
-            || ENGINE_ATTRIBUTES.iter().any(|e| e.eq_ignore_ascii_case(n))
+        n.eq_ignore_ascii_case("srcdoc")
+            || own.as_deref().is_some_and(|own| n.starts_with(own))
             || engine.iter().any(|e| e == n)
     };
     !(reserved(&local) || reserved(&serialised))
+}
+
+/// pyro: the name an engine attribute (`canonical`, of the [`ENGINE_ATTRIBUTE_PREFIX`] family:
+/// `data-pyro-sheet`, `data-pyro-frame`, ...) is written under in a document serialised with
+/// `nonce`: `data-pyro-<nonce>-<field>`. Only the renderer, given the nonce, reads it as the
+/// engine's (blitz-dom `engine_field`); page content can neither write nor match it (CSS has no
+/// attribute-name wildcards), and the page's own `data-pyro-*` attributes stay its own. Without a
+/// nonce (markup written by hand), the canonical name.
+pub fn engine_name(nonce: &str, canonical: &str) -> String {
+    match canonical.strip_prefix(ENGINE_ATTRIBUTE_PREFIX) {
+        Some(field) if !nonce.is_empty() => format!("{ENGINE_ATTRIBUTE_PREFIX}{nonce}-{field}"),
+        _ => canonical.to_owned(),
+    }
 }
 
 use std::borrow::Cow;
@@ -286,10 +303,7 @@ struct HtmlSink<'a> {
     nonce: String,
 }
 
-/// pyro: the attribute an element given engine attributes carries the document's nonce in: the
-/// renderer takes an engine attribute only from an element with it (blitz-dom `engine_marked`),
-/// so a difference between the DOM and a reparse of its markup cannot mint one.
-pub const NONCE_ATTRIBUTE: &str = "data-pyro-n";
+
 
 /// pyro: how an open element was written, for its text and its end tag.
 #[derive(Clone, Copy, PartialEq)]
@@ -338,18 +352,14 @@ impl Sink for HtmlSink<'_> {
         if !void {
             self.open.push(written);
         }
-        // pyro: engine attributes (the page's with the prefix are never written) or engine marks.
-        let engine = written == Written::AsPre
-            || (marked && self.mark.is_some())
-            || self.scroll.iter().any(|(id, _)| *id == key)
-            || self.sticky.iter().any(|(id, _)| *id == key)
-            || self.keyed.contains(&key)
-            || attrs.iter().any(|a| a.name.ns == ns!() && a.name.local.starts_with(ENGINE_ATTRIBUTE_PREFIX));
+        // pyro: the engine's attributes under their nonce names ([`engine_name`]).
+        let nonce = self.nonce.clone();
+        let named = |canonical: &str| engine_name(&nonce, canonical);
         let out = &mut self.out;
         out.push('<');
         if written == Written::AsPre {
             out.push_str("pre ");
-            out.push_str(TAG_ATTRIBUTE);
+            out.push_str(&named(TAG_ATTRIBUTE));
             out.push_str("=\"");
             out.push_str(&name.local);
             out.push('"');
@@ -361,9 +371,7 @@ impl Sink for HtmlSink<'_> {
         // them for `content: attr()`.
         let html = name.ns == ns!(html);
         for a in attrs.iter().filter(|a| {
-            &*a.name.ns != STATE_NS
-                && !matches!(&*a.name.local, "data-pyro-scroll-left" | "data-pyro-scroll-top" | "data-pyro-sticky")
-                && !(html && a.name.ns == ns!() && a.name.local.starts_with("on"))
+            &*a.name.ns != STATE_NS && !(html && a.name.ns == ns!() && a.name.local.starts_with("on"))
         }) {
             out.push(' ');
             match &a.name.prefix {
@@ -382,26 +390,19 @@ impl Sink for HtmlSink<'_> {
         }
         if let (true, Some(name)) = (marked, self.mark) {
             out.push(' ');
-            out.push_str(name);
+            out.push_str(&named(name));
         }
         if let Some((_, (x, y))) = self.scroll.iter().find(|(id, _)| *id == key) {
             use std::fmt::Write;
-            let _ = write!(out, " data-pyro-scroll-left=\"{x}\" data-pyro-scroll-top=\"{y}\"");
+            let _ = write!(out, " {}=\"{x}\" {}=\"{y}\"", named("data-pyro-scroll-left"), named("data-pyro-scroll-top"));
         }
         if let Some((_, (x, y))) = self.sticky.iter().find(|(id, _)| *id == key) {
             use std::fmt::Write;
-            let _ = write!(out, " data-pyro-sticky=\"{x} {y}\"");
+            let _ = write!(out, " {}=\"{x} {y}\"", named("data-pyro-sticky"));
         }
         if self.keyed.contains(&key) {
             use std::fmt::Write;
-            let _ = write!(out, " data-pyro-key=\"{key}\"");
-        }
-        if engine && !self.nonce.is_empty() {
-            out.push(' ');
-            out.push_str(NONCE_ATTRIBUTE);
-            out.push_str("=\"");
-            out.push_str(&self.nonce);
-            out.push('"');
+            let _ = write!(out, " {}=\"{key}\"", named("data-pyro-key"));
         }
         out.push('>');
         if written == Written::AsPre {
@@ -449,13 +450,11 @@ impl TreeSink {
 impl Sink for TreeSink {
     fn doctype(&mut self, _name: &str) {}
     fn open(&mut self, key: u64, _tag: &str, name: &QualName, attrs: &[RAttr<'_>], marked: bool, void: bool) {
-        let mut attrs: Vec<(QualName, String)> = attrs
+        // (The engine's attributes come under their nonce names from the walk.)
+        let attrs: Vec<(QualName, String)> = attrs
             .iter()
             .map(|a| (a.name.clone().into_owned(), if a.valueless { String::new() } else { a.value.to_string() }))
             .collect();
-        if !self.nonce.is_empty() && attrs.iter().any(|(n, _)| n.ns == ns!() && n.local.starts_with(ENGINE_ATTRIBUTE_PREFIX)) {
-            attrs.push((QualName::new(None, ns!(), NONCE_ATTRIBUTE.into()), self.nonce.clone()));
-        }
         let parent = self.parent();
         self.tree.nodes.push(RenderNode { key, parent, kind: RenderNodeKind::Element { name: name.clone(), attrs } });
         if marked {
@@ -839,6 +838,14 @@ impl Dom {
                     }
                     // pyro: the engine's attributes first, then the page's that collide with none.
                     let page: Vec<RAttr<'_>> = attrs.drain(..page_end).collect();
+                    // pyro: the engine's reserved ones under their nonce names ([`engine_name`]).
+                    let nonce = self.snapshot_nonce(self.n(n).owner_doc);
+                    for a in attrs.iter_mut() {
+                        if a.name.ns == ns!() && a.name.local.starts_with(ENGINE_ATTRIBUTE_PREFIX) {
+                            let renamed = engine_name(&nonce, &a.name.local);
+                            a.name = Cow::Owned(QualName::new(None, ns!(), renamed.into()));
+                        }
+                    }
                     let mut engine: Vec<String> = attrs
                         .iter()
                         .map(|a| match &a.name.prefix {
@@ -850,7 +857,7 @@ impl Dom {
                     if let Some((_, name)) = opts.mark {
                         engine.push(name.to_ascii_lowercase());
                     }
-                    attrs.extend(page.into_iter().filter(|a| page_attribute_allowed(&a.name, &engine)));
+                    attrs.extend(page.into_iter().filter(|a| page_attribute_allowed(&a.name, &engine, &nonce)));
                     let tag = self.serialized_tag(n);
                     let void = html && is_void(local);
                     sink.open(render_key(id), &tag, &e.name, &attrs, mark == Some(n), void);

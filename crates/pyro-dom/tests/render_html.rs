@@ -93,9 +93,11 @@ fn sheets_come_from_the_caller() {
     );
     assert!(html.contains(r#"<style id="s">p { color: blue }</style>"#), "{html}");
     assert!(html.contains(r#"<style id="e">em { color: red }</style>"#), "{html}");
-    // (The engine's `href` comes first, then its sheet key: the renderer serves the sheet by it.)
-    assert!(html.contains(r#"<link href="http://test/a.css" data-pyro-sheet=""#), "{html}");
-    assert!(html.contains(r#"" id="l" rel="stylesheet" data-pyro-n=""#), "{html}");
+    // (The engine's `href` comes first, then its sheet key, under the document's nonce name: the
+    // renderer serves the sheet by it.)
+    let n = dom.frame_table(d).nonce;
+    assert!(html.contains(&format!(r#"<link href="http://test/a.css" data-pyro-{n}-sheet=""#)), "{html}");
+    assert!(html.contains(r#"" id="l" rel="stylesheet">"#), "{html}");
     assert!(!html.contains("missing.css"), "{html}");
 }
 
@@ -105,8 +107,8 @@ fn clip_target_is_marked() {
     let dom = dom.borrow();
     let b = find(&dom, d, "#b");
     let html = render_with(&dom, d, &|_| None, &|_| None, Some((b, "data-clip")));
-    // (With the document's nonce: the mark is an engine attribute.)
-    assert!(html.contains(r#"<div id="a"></div><div id="b" data-clip data-pyro-n=""#), "{html}");
+    // (A mark outside the engine's family is written as named.)
+    assert!(html.contains(r#"<div id="a"></div><div id="b" data-clip></div>"#), "{html}");
 }
 
 #[test]
@@ -302,11 +304,14 @@ fn scrolled_render_copy_preserves_offsets_without_mutating_document() {
             &[(pyro_dom::snapshot::render_key(outer), (24.0, 80.0)), (pyro_dom::snapshot::render_key(inner), (0.0, 16.0))],
         )
         .unwrap();
-    assert!(html.contains(r#"data-pyro-scroll-left="24" data-pyro-scroll-top="80""#), "{html}");
-    assert!(html.contains(r#"data-pyro-scroll-left="0" data-pyro-scroll-top="16""#), "{html}");
-    assert!(!html.contains("999"));
+    // (The engine's offsets under the document's nonce names; the page's own attribute of that
+    // name is its own, written as it is: security review cycle 8, 2.)
+    let n = dom.frame_table(document).nonce;
+    assert!(html.contains(&format!(r#"data-pyro-{n}-scroll-left="24" data-pyro-{n}-scroll-top="80""#)), "{html}");
+    assert!(html.contains(&format!(r#"data-pyro-{n}-scroll-left="0" data-pyro-{n}-scroll-top="16""#)), "{html}");
+    assert!(html.contains(r#"data-pyro-scroll-top="999""#), "{html}");
     assert_eq!(dom.get_attribute(outer, "data-pyro-scroll-top").unwrap(), Some("999"));
-    assert!(!dom.render_html(document, &opts).unwrap().contains("data-pyro-scroll"));
+    assert!(!dom.render_html(document, &opts).unwrap().contains(&format!("data-pyro-{n}-scroll")));
 }
 
 #[test]
@@ -462,14 +467,18 @@ fn page_attributes_never_stand_in_for_the_engines() {
     }
     let key = |id: NodeId| pyro_dom::snapshot::render_key(id).to_string();
     let html = render(&dom.borrow(), d);
-    for leaked in ["OTHER", "evil.test", "EVIL", "GENUINE", "F#L", "srcdoc", "data-pyro-key", "DATA-PYRO", "9:0"] {
+    // (The page's own `data-pyro-*` attributes are its own, written as they are: they cannot be
+    // the engine's, whose names carry the document's nonce: security review cycle 8, 2.)
+    for leaked in ["EVIL", "GENUINE", "F#L", "srcdoc"] {
         assert!(!html.contains(leaked), "{leaked}: {html}");
     }
+    assert!(html.contains("data-pyro-frame-client=\"OTHER#doc\"") && html.contains("data-pyro-key=\"1\""), "{html}");
     let table = dom.borrow().frame_table(d);
     let version = table.entries[0].1.version();
-    assert_eq!(table.nonce.len(), 32, "128 bits");
-    assert!(html.contains(&format!("data-pyro-frame=\"{}:{}:{version:016x}\"", table.nonce, key(f))), "{html}");
-    assert_eq!(html.matches("data-pyro-frame=").count(), 1, "only the engine's, on the frame with a document: {html}");
+    let n = table.nonce.clone();
+    assert_eq!(n.len(), 32, "128 bits");
+    assert!(html.contains(&format!("data-pyro-{n}-frame=\"{n}:{}:{version:016x}\"", key(f))), "{html}");
+    assert_eq!(html.matches(&format!("data-pyro-{n}-")).count(), 1, "only the engine's, on the frame with a document: {html}");
     // The keyed tree: the same attributes, the engine's first.
     let tree = dom
         .borrow()
@@ -479,8 +488,8 @@ fn page_attributes_never_stand_in_for_the_engines() {
         if let pyro_dom::snapshot::RenderNodeKind::Element { attrs, .. } = &node.kind {
             for (name, value) in attrs {
                 let local = name.local.to_string().to_ascii_lowercase();
-                assert!(local != "srcdoc" && !value.contains("EVIL") && !value.contains("OTHER"), "{name:?}={value}");
-                if local.starts_with("data-pyro-") {
+                assert!(local != "srcdoc" && !value.contains("EVIL"), "{name:?}={value}");
+                if local.starts_with(&format!("data-pyro-{n}-")) {
                     assert!(name.ns == markup5ever::ns!() && node.key == pyro_dom::snapshot::render_key(f), "{name:?}");
                 }
             }
@@ -624,7 +633,8 @@ fn a_frames_namespaced_source_attributes_are_left_out() {
 /// reparse would make the rest of the markup's text) or an `<xmp>` holding its own end tag
 /// cannot hide a later frame or engine element; `<noembed>`/`<noframes>` text comes back as
 /// written; a carriage return (CR, CR LF) in text or an attribute is kept (security review
-/// cycle 5, 7). The renderer gives a `<pre>` its `data-pyro-tag` name back (blitz-html).
+/// cycle 5, 7). The renderer gives a `<pre>` its own name back from the engine's `tag` attribute
+/// (`data-pyro-<nonce>-tag`, blitz-html).
 #[test]
 fn every_element_closes_in_a_reparse_where_the_dom_does() {
     let (dom, d) = doc("<body><p id=p title=t>p</p></body>");
@@ -659,7 +669,7 @@ fn every_element_closes_in_a_reparse_where_the_dom_does() {
             .into_iter()
             .map(|e| {
                 let attrs = dom.attributes(e).unwrap();
-                let tag = attrs.iter().find(|a| &*a.name.local == "data-pyro-tag").map(|a| a.value.to_uppercase());
+                let tag = attrs.iter().find(|a| (a.name.local.starts_with("data-pyro-") && a.name.local.ends_with("-tag"))).map(|a| a.value.to_uppercase());
                 let kept = attrs
                     .iter()
                     .filter(|a| !a.name.local.starts_with("data-pyro-"))
@@ -709,7 +719,7 @@ fn an_end_tag_split_across_text_nodes_stays_text() {
                 .unwrap()
                 .into_iter()
                 .map(|e| {
-                    let own = dom.attributes(e).unwrap().iter().find(|a| &*a.name.local == "data-pyro-tag").map(|a| a.value.to_uppercase());
+                    let own = dom.attributes(e).unwrap().iter().find(|a| (a.name.local.starts_with("data-pyro-") && a.name.local.ends_with("-tag"))).map(|a| a.value.to_uppercase());
                     own.unwrap_or_else(|| dom.tag_name(e).unwrap())
                 })
                 .collect()
@@ -721,23 +731,24 @@ fn an_end_tag_split_across_text_nodes_stays_text() {
     }
 }
 
-/// Every element the snapshot gives engine attributes carries the document's nonce
-/// (`data-pyro-n`), and no other element does: the renderer takes engine attributes only with it
-/// (security review cycle 6, 1).
+/// The engine's attributes carry the document's nonce in their NAMES (`data-pyro-<nonce>-<field>`),
+/// which page content cannot know, so the page's own `data-pyro-*` attributes are written as they
+/// are and never stand in for them; no `data-pyro-n` is written (security review cycles 6 and 8).
 #[test]
-fn engine_marked_elements_carry_the_documents_nonce() {
-    let (dom, d) = doc("<head><link id=l rel=stylesheet href=a.css></head><body><xmp>x</xmp><p id=p>p</p></body>");
+fn engine_attributes_carry_the_documents_nonce_in_their_names() {
+    let (dom, d) = doc(
+        "<head><link id=l rel=stylesheet href=a.css></head><body><xmp>x</xmp><p id=p data-pyro-theme=dark data-pyro-n=forged data-pyro-sheet=forged>p</p></body>",
+    );
     let l = find(&dom.borrow(), d, "#l");
     let p = find(&dom.borrow(), d, "#p");
     let html = render_with(&dom.borrow(), d, &|_| None, &|n| (n == l).then(|| "http://test/a.css".to_owned()), Some((p, "data-pyro-render-clip")));
-    let nonce = dom.borrow().frame_table(d).nonce;
-    assert_eq!(nonce.len(), 32);
-    let marked = format!("data-pyro-n=\"{nonce}\"");
-    assert_eq!(html.matches(&marked).count(), 3, "{html}");
-    for element in ["<link", "<pre", "<p "] {
-        let start = html.find(element).unwrap();
-        let end = start + html[start..].find('>').unwrap();
-        assert!(html[start..end].contains(&marked), "{element}: {html}");
+    let n = dom.borrow().frame_table(d).nonce;
+    assert_eq!(n.len(), 32);
+    for engine in ["sheet", "tag", "render-clip"] {
+        assert_eq!(html.matches(&format!("data-pyro-{n}-{engine}")).count(), 1, "{engine}: {html}");
     }
-    assert!(!html[..html.find("<body").unwrap()].contains("<head data-pyro-n"), "{html}");
+    for page in [r#"data-pyro-theme="dark""#, r#"data-pyro-n="forged""#, r#"data-pyro-sheet="forged""#] {
+        assert!(html.contains(page), "{page}: {html}");
+    }
+    assert_eq!(html.matches("data-pyro-n=").count(), 1, "only the page's own: {html}");
 }

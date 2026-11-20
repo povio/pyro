@@ -7491,6 +7491,30 @@ mod screenshot {
         assert_eq!(fields.first().copied(), Some("8"), "{got}");
     }
 
+    /// The page's own `data-pyro-*` attributes are ordinary attributes in the geometry mirror: an
+    /// author `data-pyro-theme` styles by selector and by `attr()`, and an author-forged
+    /// `data-pyro-n`/`data-pyro-frame` (no nonce) styles like any attribute while the engine ignores
+    /// it (security review cycle 8, 2; the engine's own travel under nonce names).
+    #[test]
+    fn author_data_pyro_attributes_style_as_ordinary_attributes() {
+        let page = "<!doctype html><style>div, iframe { display: block; border: 0; width: 10px; height: 10px }\
+             [data-pyro-theme=dark] { width: 33px } span { display: inline-block } span::before { content: attr(data-pyro-theme) }\
+             iframe[data-pyro-frame] { height: 44px } iframe[data-pyro-n^=\"0\"] { width: 55px }</style>\
+             <div id=t data-pyro-theme=dark></div><span id=s data-pyro-theme=dark></span>\
+             <iframe id=f data-pyro-n=0123456789abcdef0123456789abcdef data-pyro-frame=\"0123456789abcdef0123456789abcdef:1:0000000000000000\"></iframe>";
+        let address = gate_server(page, |_| None);
+        let mut h = Harness::new();
+        h.page("Page.enable", json!({}));
+        h.page("Page.navigate", json!({"url": format!("http://{address}/")}));
+        h.until_event(|m| m["method"] == "Page.loadEventFired");
+        h.run_for(50);
+        let r = h.page(
+            "Runtime.evaluate",
+            json!({"expression": "const r = id => document.getElementById(id).getBoundingClientRect(); [r('t').width, r('s').width > 0, r('f').width, r('f').height].join()", "returnByValue": true}),
+        );
+        assert_eq!(r["result"]["result"]["value"].as_str(), Some("33,true,55,44"), "{r}");
+    }
+
     /// How long `load` took from navigating to the gate server.
     fn load_time(address: std::net::SocketAddr) -> Duration {
         let mut h = Harness::new();

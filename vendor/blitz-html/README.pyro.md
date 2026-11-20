@@ -16,5 +16,5 @@ carries these commits.
   `<plaintext>` as `<pre data-pyro-tag="xmp|plaintext">` (pyro-dom `snapshot::TAG_ATTRIBUTE`), so the reparse ends it
   where the DOM does (a `<plaintext>` would make the rest of the markup its text). The sink creates the element under
   its own name, without the attribute, and answers the tree builder with `pre` for it (its end tag, scope checks).
-  Only with the document's snapshot nonce on the element (`data-pyro-n`, blitz-dom `engine_marked`): a `<pre>` whose
-  attribute came from anywhere else keeps its name.
+  Only the engine's attribute, named with the document's snapshot nonce (`data-pyro-<nonce>-tag`, blitz-dom
+  `engine_field`; `data-pyro-tag` in a document without a nonce): a `<pre>` with any other attribute keeps its name.

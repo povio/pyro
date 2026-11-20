@@ -2063,7 +2063,7 @@ diff --git a/packages/blitz-dom/src/config.rs b/packages/blitz-dom/src/config.rs
  use std::sync::Arc;
  use style::media_queries::MediaType;
  
-@@ -28,12 +28,130 @@
+@@ -28,12 +28,154 @@
      Sequential,
  }
  
@@ -2132,20 +2132,18 @@ diff --git a/packages/blitz-dom/src/config.rs b/packages/blitz-dom/src/config.rs
 +        assert!(!super::same_secret("", "00ff"));
 +    }
 +
-+    /// A document with the reject-all nonce (an SVG image's) takes no engine attribute, whatever
-+    /// the element carries; one without a nonce takes them as written (cycle 7, 1).
++    /// Which attributes are the engine's: under this document's nonce name only; without a nonce,
++    /// the known canonical names; with the reject-all nonce (an SVG image's), none (cycles 7, 8).
 +    #[test]
 +    fn the_reject_all_nonce_takes_no_engine_attribute() {
-+        let element = crate::node::ElementData::new(
-+            markup5ever::QualName::new(None, markup5ever::ns!(html), "div".into()),
-+            vec![crate::node::Attribute {
-+                name: markup5ever::QualName::new(None, markup5ever::ns!(), "data-pyro-n".into()),
-+                value: "\0".into(),
-+            }],
-+        );
-+        assert!(!super::engine_marked(super::REJECT_ALL_NONCE, &element));
-+        assert!(super::engine_marked("", &element));
-+        assert!(!super::engine_marked("00ff", &element));
++        let q = |local: &str| markup5ever::QualName::new(None, markup5ever::ns!(), local.into());
++        assert_eq!(super::engine_field(super::REJECT_ALL_NONCE, &q("data-pyro-sheet")), None);
++        assert_eq!(super::engine_field("", &q("data-pyro-sheet")).as_deref(), Some("data-pyro-sheet"));
++        assert_eq!(super::engine_field("", &q("data-pyro-theme")), None);
++        assert_eq!(super::engine_field("00ff", &q("data-pyro-00ff-sheet")).as_deref(), Some("data-pyro-sheet"));
++        assert_eq!(super::engine_field("00ff", &q("data-pyro-00fe-sheet")), None);
++        assert_eq!(super::engine_field("00ff", &q("data-pyro-sheet")), None);
++        assert_eq!(super::engine_field("00ff", &q("data-pyro-00ff-")), None);
 +    }
 +}
 +
@@ -2155,12 +2153,7 @@ diff --git a/packages/blitz-dom/src/config.rs b/packages/blitz-dom/src/config.rs
 +/// pyro: the attribute a frame element names its frame table entry in: `"<nonce>:<index>:<version>"`.
 +pub const FRAME_ATTRIBUTE: &str = "data-pyro-frame";
 +
-+/// pyro: the attribute every element the snapshot gives engine attributes (sheet keys and
-+/// policies, scroll and sticky offsets, animation keys, the clip mark, a frame's content height,
-+/// a `<pre>`'s own name) carries this document's nonce in: an engine attribute of an element
-+/// without it is inert, so no difference between the DOM and a reparse of its markup can mint
-+/// one ([`engine_marked`]).
-+pub const NONCE_ATTRIBUTE: &str = "data-pyro-n";
++
 +
 +/// pyro: the nonce of a document that takes no engine attribute at all (an SVG image's): NUL,
 +/// which no parsed attribute value holds (the HTML parser replaces it, XML forbids it).
@@ -2170,12 +2163,43 @@ diff --git a/packages/blitz-dom/src/config.rs b/packages/blitz-dom/src/config.rs
 +/// serialised with `nonce`: it carries that nonce ([`NONCE_ATTRIBUTE`], compared in constant
 +/// time). A document without a nonce is no render snapshot's (markup written by hand): its
 +/// markup is taken as written.
-+pub fn engine_marked(nonce: &str, element: &crate::node::ElementData) -> bool {
-+    if nonce == REJECT_ALL_NONCE {
-+        return false;
++pub fn engine_marked(nonce: &str, _element: &crate::node::ElementData) -> bool {
++    // (The engine store holds only attributes authenticated as they came in: `engine_field`.)
++    nonce != REJECT_ALL_NONCE
++}
++
++/// pyro: the engine attributes a document without a nonce (markup written by hand, a test's) takes
++/// under their canonical names; a render snapshot's travel under nonce names only.
++pub const ENGINE_FIELDS: &[&str] = &[
++    "data-pyro-frame",
++    "data-pyro-frame-content-height",
++    "data-pyro-sheet",
++    "data-pyro-sheet-referrer-policy",
++    "data-pyro-scroll-left",
++    "data-pyro-scroll-top",
++    "data-pyro-sticky",
++    "data-pyro-key",
++    "data-pyro-tag",
++    "data-pyro-render-clip",
++];
++
++/// pyro: the canonical engine attribute (`data-pyro-<field>`) that attribute `name` is in a
++/// document serialised with `nonce`, if it is the engine's: `data-pyro-<nonce>-<field>`, the nonce
++/// compared in constant time (pyro-dom `snapshot::engine_name`); without a nonce, one of
++/// [`ENGINE_FIELDS`] as written; in a document taking none ([`REJECT_ALL_NONCE`]), never. Any other
++/// attribute, `data-pyro-*` ones included, is the page's own (CSS sees it, the engine ignores it).
++pub fn engine_field(nonce: &str, name: &markup5ever::QualName) -> Option<String> {
++    if name.ns != markup5ever::ns!() || nonce == REJECT_ALL_NONCE {
++        return None;
 +    }
-+    nonce.is_empty()
-+        || element.reserved_attr(NONCE_ATTRIBUTE).is_some_and(|value| same_secret(value, nonce))
++    let local = &*name.local;
++    if nonce.is_empty() {
++        return ENGINE_FIELDS.contains(&local).then(|| local.to_owned());
++    }
++    let rest = local.strip_prefix("data-pyro-")?;
++    let (given, field) = (rest.get(..nonce.len())?, rest.get(nonce.len()..)?);
++    let field = field.strip_prefix('-').filter(|f| !f.is_empty())?;
++    same_secret(given, nonce).then(|| format!("data-pyro-{field}"))
 +}
 +
  /// Options used when constructing a [`BaseDocument`](crate::BaseDocument)
@@ -2194,7 +2218,7 @@ diff --git a/packages/blitz-dom/src/config.rs b/packages/blitz-dom/src/config.rs
      /// User Agent stylesheets, in cascade order. Defaults to `vec![UserAgentStylesheet::default_sheet()]`.
      ///
      /// The list is used as given, so replacing it removes the default sheet unless it is
-@@ -68,6 +186,25 @@
+@@ -68,6 +210,25 @@
      /// How deeply this document is nested within other documents
      /// (0 for a root document). Used to limit `<iframe>` nesting depth.
      pub subdocument_depth: usize,
@@ -2220,7 +2244,7 @@ diff --git a/packages/blitz-dom/src/config.rs b/packages/blitz-dom/src/config.rs
      /// Devtools provider notified of DOM mutations (e.g. by a remote inspector)
      #[cfg(feature = "devtools")]
      pub devtools_provider: Option<Arc<dyn DevtoolsProvider>>,
-@@ -78,6 +215,8 @@
+@@ -78,6 +239,8 @@
          Self {
              viewport: None,
              base_url: None,
@@ -2229,7 +2253,7 @@ diff --git a/packages/blitz-dom/src/config.rs b/packages/blitz-dom/src/config.rs
              ua_stylesheets: vec![UserAgentStylesheet::default_sheet()],
              net_provider: None,
              navigation_provider: None,
-@@ -89,6 +228,11 @@
+@@ -89,6 +252,11 @@
              incremental: None,
              abort_signal: None,
              subdocument_depth: 0,
@@ -38765,7 +38789,7 @@ diff --git a/packages/blitz-dom/src/lib.rs b/packages/blitz-dom/src/lib.rs
 -pub use document::{
 +pub use document::SHEET_ATTRIBUTE;
 +pub use config::{
-+    DocumentConfig, REJECT_ALL_NONCE, FRAME_ATTRIBUTE, FrameContent, FrameTable, FrameTableData, NONCE_ATTRIBUTE, StyleThreading, engine_marked,
++    DocumentConfig, REJECT_ALL_NONCE, FRAME_ATTRIBUTE, FrameContent, FrameTable, FrameTableData, StyleThreading, ENGINE_FIELDS, engine_field, engine_marked,
 +    same_secret,
 +};
 +pub use document::{SvgImageDocument, 
@@ -38815,16 +38839,27 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              form_nodes: HashSet::new(),
              recompute_is_animating: false,
              mutations_occurred: false,
-@@ -167,8 +171,18 @@
+@@ -167,8 +171,28 @@
      }
  
      pub fn create_element(&mut self, name: QualName, attrs: Vec<Attribute>) -> NodeId {
+-        let mut data = ElementData::new(name, attrs);
 +        // pyro: the top layer is marked in pyro-dom's state attribute.
 +        let pyro_state = attrs
 +            .iter()
 +            .find(|a| is_lp_state(&a.name))
 +            .map(|a| a.value.clone());
-         let mut data = ElementData::new(name, attrs);
++        // pyro: the engine's attributes (under this document's nonce names) go to its store, by
++        // canonical name; every other attribute, the page's `data-pyro-*` too, is the element's.
++        let nonce = self.doc.frames.nonce.clone();
++        let (engine, attrs): (Vec<(String, Attribute)>, Vec<(String, Attribute)>) = attrs
++            .into_iter()
++            .map(|a| (crate::engine_field(&nonce, &a.name).unwrap_or_default(), a))
++            .partition(|(field, _)| !field.is_empty());
++        let mut data = ElementData::new(name, attrs.into_iter().map(|(_, a)| a).collect());
++        for (field, a) in engine {
++            data.attrs.set_reserved(&field, &a.value);
++        }
          data.flush_style_attribute(self.doc.guard(), &self.doc.url.url_extra_data());
 +        // pyro: a link to the document itself is visited.
 +        if data.is_link() {
@@ -38834,7 +38869,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
  
          let id = self.doc.create_node(NodeData::Element(Box::new(data)));
          let node = self.doc.get_node_mut(id).unwrap();
-@@ -179,6 +193,16 @@
+@@ -179,6 +203,16 @@
              ..Default::default()
          };
  
@@ -38851,7 +38886,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          id
      }
  
-@@ -265,7 +289,7 @@
+@@ -265,7 +299,7 @@
              // affect the parent's layout (text may wrap differently, change size, etc.)
              if let Some(parent_id) = parent_id {
                  let parent = &mut self.doc.nodes[parent_id];
@@ -38860,7 +38895,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              }
  
              self.maybe_record_node(parent_id);
-@@ -293,7 +317,7 @@
+@@ -293,7 +327,7 @@
                      );
                  }
                  if let Some(parent_id) = parent_id {
@@ -38869,7 +38904,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  }
                  Ok(())
              }
-@@ -320,12 +344,91 @@
+@@ -320,12 +354,99 @@
          }
      }
  
@@ -38901,6 +38936,14 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
 +    }
 +
      pub fn set_attribute(&mut self, node_id: NodeId, name: QualName, value: &str) {
++        // pyro: an engine attribute goes to the engine's store (`create_element`).
++        if let Some(field) = crate::engine_field(&self.doc.frames.nonce.clone(), &name) {
++            if let Some(element) = self.doc.nodes[node_id].element_data_mut() {
++                element.attrs.set_reserved(&field, value);
++            }
++            self.engine_attribute_changed(node_id, &field, true);
++            return;
++        }
 +        if is_lp_state(&name) && self.doc.nodes[node_id].is_element() {
 +            self.doc.note_lp_state(node_id, Some(value));
 +        }
@@ -38961,7 +39004,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          }
  
          if name.local == local_name!("id") && node_is_in_document {
-@@ -357,6 +460,9 @@
+@@ -357,6 +478,9 @@
          }
  
          element.attrs.set(name.clone(), value);
@@ -38971,7 +39014,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          if node_is_in_document {
              devtools!(
                  self,
-@@ -380,6 +486,9 @@
+@@ -380,6 +504,9 @@
  
          if name.local == local_name!("href") {
              element.flush_link_state();
@@ -38981,7 +39024,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          }
  
          if name.local == local_name!("open") {
-@@ -389,7 +498,9 @@
+@@ -389,7 +516,9 @@
          let tag = &element.name.local;
          let attr = &name.local;
  
@@ -38992,7 +39035,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              element.id = Some(Atom::from(value))
          }
  
-@@ -415,7 +526,8 @@
+@@ -415,7 +544,8 @@
              return;
          }
  
@@ -39002,7 +39045,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              node.disable();
              return;
          }
-@@ -440,7 +552,22 @@
+@@ -440,7 +570,22 @@
  
          if (tag, attr) == tag_and_attr!("input", "checked") {
              set_input_checked_state(element, value.to_string());
@@ -39026,7 +39069,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              self.load_image(node_id);
          } else if (tag, attr) == tag_and_attr!("canvas", "src") {
              self.load_custom_paint_src(node_id);
-@@ -450,17 +577,70 @@
+@@ -450,17 +595,100 @@
              self.load_linked_stylesheet(node_id);
          } else if (tag, attr) == tag_and_attr!("iframe", "src")
              || (tag, attr) == tag_and_attr!("iframe", "srcdoc")
@@ -39038,7 +39081,37 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          }
      }
  
++    /// pyro: the engine's attribute `field` (canonical) of `node_id` was set (`set`) or removed:
++    /// a frame marker loads or drops the frame document; any one lays the element out again.
++    fn engine_attribute_changed(&mut self, node_id: NodeId, field: &str, set: bool) {
++        let node_is_in_document = self.doc.nodes[node_id].flags.is_in_document();
++        let tag = self.doc.nodes[node_id].element_data().map(|e| e.name.local.clone());
++        if node_is_in_document {
++            self.doc.snapshot_node(node_id, &markup5ever::LocalName::from(field));
++            self.restyle_for_attribute_change(node_id, &markup5ever::LocalName::from(field));
++        }
++        if field != crate::FRAME_ATTRIBUTE {
++            return;
++        }
++        match tag.as_deref() {
++            Some("iframe" | "frame") if set || node_is_in_document => self.load_iframe(node_id),
++            Some("object" | "embed") if set => self.load_iframe(node_id),
++            Some("object" | "embed") => {
++                self.remove_sub_document(node_id);
++                self.load_image(node_id);
++            }
++            _ => {}
++        }
++    }
++
      pub fn clear_attribute(&mut self, node_id: NodeId, name: QualName) {
++        if let Some(field) = crate::engine_field(&self.doc.frames.nonce.clone(), &name) {
++            if let Some(element) = self.doc.nodes[node_id].element_data_mut() {
++                element.attrs.remove_reserved(&field);
++            }
++            self.engine_attribute_changed(node_id, &field, false);
++            return;
++        }
 +        if is_lp_state(&name) {
 +            self.doc.note_lp_state(node_id, None);
 +        }
@@ -39097,7 +39170,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          }
  
          if name.local == local_name!("id") && node_is_in_document {
-@@ -483,6 +663,9 @@
+@@ -483,6 +711,9 @@
          if !had_attr {
              return;
          }
@@ -39107,7 +39180,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          self.mutations_occurred |= node_is_in_document;
          if node_is_in_document {
              devtools!(
-@@ -503,7 +686,7 @@
+@@ -503,7 +734,7 @@
                  .attribute_changed(&name.local, old_value, None);
          }
  
@@ -39116,7 +39189,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              element.id = None;
          }
  
-@@ -522,6 +705,9 @@
+@@ -522,6 +753,9 @@
  
          if name.local == local_name!("href") {
              element.flush_link_state();
@@ -39126,7 +39199,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          }
  
          if name.local == local_name!("open") {
-@@ -542,7 +728,7 @@
+@@ -542,7 +776,7 @@
          let tag = &element.name.local;
          let attr = &name.local;
  
@@ -39135,7 +39208,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              node.enable();
              return;
          }
-@@ -554,11 +740,26 @@
+@@ -554,11 +788,26 @@
              element.set_checkbox_input_checked(false);
          } else if (tag, attr) == tag_and_attr!("canvas", "src") {
              self.recompute_is_animating = true;
@@ -39164,7 +39237,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          }
      }
  
-@@ -602,11 +803,14 @@
+@@ -602,11 +851,14 @@
  
      /// Remove the node from it's parent but don't drop it
      pub fn remove_node(&mut self, node_id: NodeId) {
@@ -39179,7 +39252,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
  
          let node = &mut self.doc.nodes[node_id];
  
-@@ -614,11 +818,12 @@
+@@ -614,11 +866,12 @@
          if let Some(parent_id) = node.parent.take() {
              self.mutations_occurred |= node_is_in_document;
              let parent = &mut self.doc.nodes[parent_id];
@@ -39194,7 +39267,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  devtools!(
                      self,
                      MutationRecord::NodeRemoved(NodeRemoved { parent_id, node_id })
-@@ -639,8 +844,12 @@
+@@ -639,8 +892,12 @@
          node_id: NodeId,
          on_drop: &mut dyn FnMut(NodeId),
      ) -> Option<Node> {
@@ -39207,7 +39280,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
  
          let node = self.doc.drop_node_ignoring_parent_with(node_id, on_drop);
          self.mutations_occurred |= node_is_in_document;
-@@ -648,13 +857,14 @@
+@@ -648,13 +905,14 @@
          // Update child_idx values
          if let Some(parent_id) = node.as_ref().and_then(|node| node.parent) {
              let parent = &mut self.doc.nodes[parent_id];
@@ -39224,7 +39297,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  devtools!(
                      self,
                      MutationRecord::NodeRemoved(NodeRemoved { parent_id, node_id })
-@@ -668,13 +878,19 @@
+@@ -668,13 +926,19 @@
      }
  
      pub fn remove_and_drop_all_children(&mut self, node_id: NodeId) {
@@ -39245,7 +39318,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          }
  
          for child_id in children {
-@@ -697,6 +913,64 @@
+@@ -697,6 +961,64 @@
      /// is hinted: its snapshot lets Stylo's invalidator find the siblings and descendants
      /// whose selectors depend on the attribute. `style`, `class` and `id` reach layout only
      /// through the computed style (whose diff yields the damage); other attributes may not.
@@ -39310,7 +39383,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
      fn restyle_for_attribute_change(&mut self, node_id: NodeId, attr: &LocalName) {
          let node = &mut self.doc.nodes[node_id];
          let is_style = *attr == local_name!("style");
-@@ -727,6 +1001,8 @@
+@@ -727,6 +1049,8 @@
          // A table's `cellpadding` is a presentational hint on its cells, not on the table.
          let restyles_cells = *attr == local_name!("cellpadding")
              && node.data.is_element_with_tag_name(&local_name!("table"));
@@ -39319,7 +39392,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          if let Some(mut data) = node.try_stylo_element_data_mut().and_then(|s| s.get_mut()) {
              data.hint |= if is_style {
                  RestyleHint::RESTYLE_STYLE_ATTRIBUTE
-@@ -748,27 +1024,52 @@
+@@ -748,27 +1072,52 @@
      }
  
      /// Restyle an in-document element whose child list changed, `changed` being the position
@@ -39385,7 +39458,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              || flags.intersects(
                  ElementSelectorFlags::HAS_SLOW_SELECTOR
                      | ElementSelectorFlags::HAS_SLOW_SELECTOR_NTH_OF
-@@ -776,18 +1077,43 @@
+@@ -776,18 +1125,43 @@
              )
          {
              hint |= RestyleHint::RESTYLE_DESCENDANTS;
@@ -39432,7 +39505,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  if !children[..changed.start].iter().any(is_element) {
                      edge[0] = children[changed.end..].iter().copied().find(is_element);
                  }
-@@ -799,10 +1125,30 @@
+@@ -799,10 +1173,30 @@
                          .find(is_element);
                  }
              }
@@ -39464,7 +39537,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          }
  
          let parent = &mut self.doc.nodes[parent_id];
-@@ -878,12 +1224,32 @@
+@@ -878,12 +1272,32 @@
          // would remove both the old and the newly-inserted entries from the
          // parent's child list, and anchor indices would be computed against a
          // child list that still contains the moved nodes.
@@ -39497,7 +39570,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              let child = &mut self.doc.nodes[child_id];
              let child_was_in_doc = child.flags.is_in_document();
              self.mutations_occurred |= child_was_in_doc;
-@@ -892,12 +1258,13 @@
+@@ -892,12 +1306,13 @@
              };
  
              let old_parent = &mut self.doc.nodes[old_parent_id];
@@ -39513,7 +39586,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  devtools!(
                      self,
                      MutationRecord::NodeRemoved(NodeRemoved {
-@@ -911,19 +1278,29 @@
+@@ -911,19 +1326,29 @@
          }
  
          let new_parent = &mut self.doc.nodes[parent_id];
@@ -39546,7 +39619,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                  child.set_restyle_hint(RestyleHint::restyle_subtree());
              }
  
-@@ -938,10 +1315,57 @@
+@@ -938,10 +1363,57 @@
                  );
              }
  
@@ -39604,7 +39677,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              }
          }
  
-@@ -975,6 +1399,23 @@
+@@ -975,6 +1447,23 @@
          self.maybe_record_node(parent_id);
      }
  
@@ -39628,7 +39701,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
      /// The nearest preceding sibling of `node_id` in `parent_id`'s children
      /// that devtools show (not a whitespace-only text node or anonymous block)
      #[cfg(feature = "devtools")]
-@@ -1142,6 +1583,9 @@
+@@ -1142,6 +1631,9 @@
          for id in self.style_nodes.drain() {
              self.doc.process_style_element(id);
          }
@@ -39638,7 +39711,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
  
          for id in self.form_nodes.drain() {
              self.doc.reset_form_owner(id);
-@@ -1222,12 +1666,51 @@
+@@ -1222,12 +1714,51 @@
                  }
                  _ if has_custom_widget => {}
                  "link" => self.eager_op_queue.push(SpecialOp::LoadStylesheet(node_id)),
@@ -39691,7 +39764,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                      self.eager_op_queue
                          .push(SpecialOp::ProcessButtonInput(node_id));
                      self.form_nodes.insert(node_id);
-@@ -1359,13 +1842,18 @@
+@@ -1359,13 +1890,18 @@
          let rel_attr = node.attr(local_name!("rel"));
          let href_attr = node.attr(local_name!("href"));
  
@@ -39710,7 +39783,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              return;
          }
  
-@@ -1382,6 +1870,11 @@
+@@ -1382,6 +1918,11 @@
                  guard: self.doc.guard.clone(),
                  net_provider: self.doc.net_provider.clone(),
                  abort_signal: self.doc.abort_signal.clone(),
@@ -39722,7 +39795,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              },
          );
  
-@@ -1391,11 +1884,12 @@
+@@ -1391,11 +1932,12 @@
                  .insert(handler.request_id());
          }
  
@@ -39740,7 +39813,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
      }
  
      fn unload_stylesheet(&mut self, node_id: NodeId) {
-@@ -1413,6 +1907,11 @@
+@@ -1413,6 +1955,11 @@
              }
          };
  
@@ -39752,7 +39825,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          let guard = self.doc.guard.read();
          self.doc.stylist.remove_stylesheet(stylesheet, &guard);
          self.doc
-@@ -1420,21 +1919,113 @@
+@@ -1420,21 +1967,113 @@
              .force_stylesheet_origins_dirty(OriginSet::all());
  
          self.doc.nodes_to_stylesheet.remove(&node_id);
@@ -39871,7 +39944,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                      let node = &mut self.doc.nodes[target_id];
                      node.element_data_mut().unwrap().special_data =
                          SpecialElementData::Image(Box::new(cached_image.clone()));
-@@ -1458,15 +2049,18 @@
+@@ -1458,15 +2097,18 @@
                      .pending_images
                      .insert(src_string.to_string(), vec![(target_id, ImageType::Image)]);
  
@@ -39892,7 +39965,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                      ),
                  );
              }
-@@ -1483,6 +2077,15 @@
+@@ -1483,6 +2125,15 @@
              return;
          }
  
@@ -39908,7 +39981,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          let node = &self.doc.nodes[target_id];
          let Some(element) = node.element_data() else {
              return;
-@@ -1544,12 +2147,27 @@
+@@ -1544,12 +2195,27 @@
              return;
          }
  
@@ -39937,7 +40010,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              let id = self.create_text_node(&value);
              self.append_children(target_id, &[id]);
              return;
-@@ -1579,6 +2197,20 @@
+@@ -1579,6 +2245,20 @@
      }
  }
  
@@ -39958,7 +40031,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
  /// Set 'checked' state on an input based on given attributevalue
  fn set_input_checked_state(element: &mut ElementData, value: String) {
      let Ok(checked) = value.parse() else {
-@@ -2377,6 +3009,50 @@
+@@ -2377,6 +3057,50 @@
          }
      }
  
@@ -40009,7 +40082,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
      fn qual_name(name: &str) -> crate::QualName {
          crate::QualName::new(None, crate::ns!(), crate::LocalName::from(name))
      }
-@@ -3088,3 +3764,254 @@
+@@ -3088,3 +3812,254 @@
          );
      }
  }
@@ -41127,7 +41200,7 @@ diff --git a/packages/blitz-dom/src/node/attributes.rs b/packages/blitz-dom/src/
  use thin_vec::ThinVec;
  
  /// A tag attribute, e.g. `class="test"` in `<div class="test" ...>`.
-@@ -12,23 +16,85 @@
+@@ -12,23 +16,86 @@
      pub value: String,
  }
  
@@ -41142,22 +41215,14 @@ diff --git a/packages/blitz-dom/src/node/attributes.rs b/packages/blitz-dom/src/
 +    pub cells: Box<[ServoArc<Locked<PropertyDeclarationBlock>>]>,
 +}
 +
-+/// pyro: the attribute family render snapshots carry engine data in (`data-pyro-*`, no
-+/// namespace): never one of an element's attributes in the renderer's document; see
-+/// [`Attributes::reserved`].
-+pub const RESERVED_PREFIX: &str = "data-pyro-";
-+
-+/// pyro: whether `name` is of the [`RESERVED_PREFIX`] family.
-+pub fn is_reserved(name: &QualName) -> bool {
-+    name.ns == markup5ever::ns!() && name.local.starts_with(RESERVED_PREFIX)
-+}
 +
  pub struct Attributes {
      inner: ThinVec<Attribute>,
-+    /// pyro: the [`RESERVED_PREFIX`] attributes the markup or tree carried, kept apart: no
-+    /// selector, `attr()`, serialisation or iteration of the element's attributes sees them (author
-+    /// CSS could otherwise probe the snapshot's nonce through layout); only the engine's readers
-+    /// ([`Attributes::reserved`]) do.
++    /// pyro: the engine's attributes (by canonical name, `data-pyro-sheet`, ...): those the markup
++    /// or tree carried under this document's nonce name (`crate::engine_field`), kept apart from
++    /// the element's own: no selector, `attr()`, serialisation or iteration sees them, and the
++    /// page's own `data-pyro-*` attributes are ordinary attributes. Only the engine's readers
++    /// ([`Attributes::reserved`]) see them.
 +    reserved: ThinVec<Attribute>,
 +    /// pyro: the hints these attributes map to, built at the
 +    /// first cascade that asks and dropped by every write (`set`, `remove`,
@@ -41185,17 +41250,33 @@ diff --git a/packages/blitz-dom/src/node/attributes.rs b/packages/blitz-dom/src/
  
  impl Attributes {
      pub fn new(inner: Vec<Attribute>) -> Self {
-+        let (reserved, inner): (Vec<Attribute>, Vec<Attribute>) = inner.into_iter().partition(|a| is_reserved(&a.name));
          Self {
              inner: inner.into_iter().collect(),
-+            reserved: reserved.into_iter().collect(),
++            reserved: ThinVec::new(),
 +            presentational_hints: OnceLock::new(),
++        }
++    }
++
++    /// pyro: the engine's attribute `canonical` (`data-pyro-sheet`, ...), for engine readers only.
++    pub fn reserved(&self, canonical: &str) -> Option<&str> {
++        self.reserved.iter().find(|a| &*a.name.local == canonical).map(|a| a.value.as_str())
++    }
++
++    /// pyro: sets the engine's attribute `canonical` (never one of the element's own).
++    pub fn set_reserved(&mut self, canonical: &str, value: &str) {
++        match self.reserved.iter_mut().find(|a| &*a.name.local == canonical) {
++            Some(a) => value.clone_into(&mut a.value),
++            None => self.reserved.push(Attribute {
++                name: QualName::new(None, markup5ever::ns!(), canonical.into()),
++                value: value.to_owned(),
++            }),
          }
      }
  
-+    /// pyro: the engine's reserved attribute `local` ([`RESERVED_PREFIX`]), for engine readers only.
-+    pub fn reserved(&self, local: &str) -> Option<&str> {
-+        self.reserved.iter().find(|a| &*a.name.local == local).map(|a| a.value.as_str())
++    /// pyro: removes the engine's attribute `canonical`.
++    pub fn remove_reserved(&mut self, canonical: &str) -> Option<Attribute> {
++        let idx = self.reserved.iter().position(|a| &*a.name.local == canonical)?;
++        Some(self.reserved.remove(idx))
 +    }
 +
      pub fn get(&mut self, name: &QualName) -> Option<&Attribute> {
@@ -41203,25 +41284,14 @@ diff --git a/packages/blitz-dom/src/node/attributes.rs b/packages/blitz-dom/src/
      }
  
      pub fn set(&mut self, name: QualName, value: &str) {
-+        if is_reserved(&name) {
-+            match self.reserved.iter_mut().find(|a| a.name == name) {
-+                Some(a) => value.clone_into(&mut a.value),
-+                None => self.reserved.push(Attribute { name, value: value.to_owned() }),
-+            }
-+            return;
-+        }
 +        self.presentational_hints.take();
          let existing_attr = self.inner.iter_mut().find(|a| a.name == name);
          if let Some(existing_attr) = existing_attr {
              existing_attr.value.clear();
-@@ -42,9 +108,20 @@
+@@ -42,9 +109,16 @@
      }
  
      pub fn remove(&mut self, name: &QualName) -> Option<Attribute> {
-+        if is_reserved(name) {
-+            let idx = self.reserved.iter().position(|attr| attr.name == *name);
-+            return idx.map(|idx| self.reserved.remove(idx));
-+        }
 +        self.presentational_hints.take();
          let idx = self.inner.iter().position(|attr| attr.name == *name);
          idx.map(|idx| self.inner.remove(idx))
@@ -41235,7 +41305,7 @@ diff --git a/packages/blitz-dom/src/node/attributes.rs b/packages/blitz-dom/src/
  }
  
  impl Deref for Attributes {
-@@ -55,6 +132,37 @@
+@@ -55,6 +129,33 @@
  }
  impl DerefMut for Attributes {
      fn deref_mut(&mut self) -> &mut Self::Target {
@@ -41252,25 +41322,21 @@ diff --git a/packages/blitz-dom/src/node/attributes.rs b/packages/blitz-dom/src/
 +        QualName::new(None, markup5ever::ns!(), local.into())
 +    }
 +
-+    /// The reserved family is never among an element's attributes (iteration, lookup), only the
-+    /// engine's accessor sees it, through construction, `set` and `remove` alike (security review
-+    /// cycle 7, 1).
++    /// The engine's attributes are never among an element's own (iteration, lookup), and the
++    /// element's own `data-pyro-*` attributes are ordinary ones (security review cycles 7 and 8).
 +    #[test]
 +    fn reserved_attributes_are_kept_apart() {
 +        let mut attrs = Attributes::new(vec![
 +            Attribute { name: name("id"), value: "a".into() },
-+            Attribute { name: name("data-pyro-n"), value: "0f".into() },
++            Attribute { name: name("data-pyro-theme"), value: "dark".into() },
 +        ]);
-+        attrs.set(name("data-pyro-sheet"), "k");
-+        attrs.set(name("data-x"), "y");
++        attrs.set_reserved("data-pyro-sheet", "k");
++        attrs.set(name("data-pyro-n"), "forged");
 +        let visible: Vec<&str> = attrs.iter().map(|a| &*a.name.local).collect();
-+        assert_eq!(visible, ["id", "data-x"]);
-+        assert_eq!((attrs.reserved("data-pyro-n"), attrs.reserved("data-pyro-sheet")), (Some("0f"), Some("k")));
-+        // (Another namespace is no reserved attribute.)
-+        attrs.set(QualName::new(None, markup5ever::ns!(xlink), "data-pyro-n".into()), "z");
-+        assert_eq!(attrs.iter().count(), 3);
-+        assert_eq!(attrs.remove(&name("data-pyro-n")).map(|a| a.value), Some("0f".into()));
-+        assert_eq!(attrs.reserved("data-pyro-n"), None);
++        assert_eq!(visible, ["id", "data-pyro-theme", "data-pyro-n"]);
++        assert_eq!((attrs.reserved("data-pyro-sheet"), attrs.reserved("data-pyro-n")), (Some("k"), None));
++        assert_eq!(attrs.remove_reserved("data-pyro-sheet").map(|a| a.value), Some("k".into()));
++        assert_eq!(attrs.reserved("data-pyro-sheet"), None);
 +    }
 +}
 diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/node/element.rs
@@ -41786,7 +41852,7 @@ diff --git a/packages/blitz-dom/src/node/mod.rs b/packages/blitz-dom/src/node/mo
  mod text;
  
 -pub use attributes::{Attribute, Attributes};
-+pub use attributes::{Attribute, Attributes, PresentationalHints, RESERVED_PREFIX, is_reserved};
++pub use attributes::{Attribute, Attributes, PresentationalHints};
  #[cfg(feature = "custom-widget")]
  pub use custom_widget::{
      ComputedStyles, CustomWidgetData, CustomWidgetStatus, ProxyRenderContext, Widget,
@@ -53687,19 +53753,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      fn has_local_name(&self, local_name: &LocalName) -> bool {
-@@ -480,6 +814,11 @@
-         let Some(attrs) = self.data.attrs() else {
-             return false;
-         };
-+        // pyro: the reserved family (`data-pyro-*`) matches nothing, as if absent (its attributes
-+        // are kept apart anyway: `Attributes::reserved`).
-+        if author_hidden(&local_name.0) {
-+            return false;
-+        }
-         attrs.iter().any(|attr| {
-             attr.name.local == local_name.0
-                 && match ns {
-@@ -493,7 +832,7 @@
+@@ -493,7 +827,7 @@
      fn match_non_ts_pseudo_class(
          &self,
          pseudo_class: &<Self::Impl as selectors::SelectorImpl>::NonTSPseudoClass,
@@ -53708,7 +53762,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      ) -> bool {
          match *pseudo_class {
              NonTSPseudoClass::Active => self.element_state().contains(ElementState::ACTIVE),
-@@ -501,44 +840,116 @@
+@@ -501,44 +835,116 @@
                  .element_state()
                  .intersects(ElementState::VISITED_OR_UNVISITED),
              NonTSPseudoClass::Checked => self.element_state().contains(ElementState::CHECKED),
@@ -53850,7 +53904,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          }
      }
  
-@@ -547,6 +958,23 @@
+@@ -547,6 +953,23 @@
          pe: &PseudoElement,
          _context: &mut MatchingContext<Self::Impl>,
      ) -> bool {
@@ -53874,7 +53928,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          let pseudo = match self.try_stylo_element_data().and_then(|s| s.get()) {
              Some(el) => el
                  .styles
-@@ -581,12 +1009,15 @@
+@@ -581,12 +1004,15 @@
          }
      }
  
@@ -53891,7 +53945,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      fn has_id(
-@@ -612,15 +1043,21 @@
+@@ -612,15 +1038,21 @@
          })
      }
  
@@ -53917,7 +53971,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      fn is_empty(&self) -> bool {
-@@ -641,6 +1078,16 @@
+@@ -641,6 +1073,16 @@
      }
  
      fn add_element_unique_hashes(&self, filter: &mut selectors::bloom::BloomFilter) -> bool {
@@ -53934,7 +53988,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          each_relevant_element_hash(*self, |hash| filter.insert_hash(hash & BLOOM_HASH_MASK));
          true
      }
-@@ -651,19 +1098,51 @@
+@@ -651,19 +1093,51 @@
  
      type TraversalChildrenIterator = Traverser<'a>;
  
@@ -53990,7 +54044,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      fn traversal_children(&self) -> style::dom::LayoutIterator<Self::TraversalChildrenIterator> {
-@@ -674,18 +1153,18 @@
+@@ -674,18 +1148,18 @@
          })
      }
  
@@ -54014,7 +54068,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      fn style_attribute(&self) -> Option<ArcBorrow<'_, Locked<PropertyDeclarationBlock>>> {
-@@ -701,11 +1180,35 @@
+@@ -701,11 +1175,35 @@
      }
  
      fn has_part_attr(&self) -> bool {
@@ -54052,16 +54106,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      fn id(&self) -> Option<&style::Atom> {
-@@ -728,7 +1231,7 @@
-         F: FnMut(&style::LocalName),
-     {
-         if let Some(attrs) = self.data.attrs() {
--            for attr in attrs.iter() {
-+            for attr in attrs.iter().filter(|attr| !author_hidden(&attr.name.local)) {
-                 callback(GenericAtomIdent::cast(&attr.name.local));
-             }
-         }
-@@ -806,6 +1309,8 @@
+@@ -806,6 +1304,8 @@
      fn may_have_animations(&self) -> bool {
          self.element_data()
              .is_some_and(|data| data.may_have_animations.load(Ordering::Relaxed))
@@ -54070,7 +54115,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      fn set_may_have_animations(&self) {
-@@ -818,6 +1323,10 @@
+@@ -818,6 +1318,10 @@
          if !self.may_have_animations() {
              return false;
          }
@@ -54081,7 +54126,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          let key = AnimationSetKey::new_for_non_pseudo(TNode::opaque(&TElement::as_node(self)));
          context
              .animations
-@@ -852,6 +1361,10 @@
+@@ -852,6 +1356,10 @@
          &self,
          context: &SharedStyleContext,
      ) -> Option<Arc<Locked<PropertyDeclarationBlock>>> {
@@ -54092,7 +54137,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          let opaque = TNode::opaque(&TElement::as_node(self));
          context.animations.get_animation_declarations(
              &AnimationSetKey::new_for_non_pseudo(opaque),
-@@ -864,6 +1377,9 @@
+@@ -864,6 +1372,9 @@
          &self,
          context: &SharedStyleContext,
      ) -> Option<Arc<Locked<PropertyDeclarationBlock>>> {
@@ -54102,7 +54147,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          let opaque = TNode::opaque(&TElement::as_node(self));
          context.animations.get_transition_declarations(
              &AnimationSetKey::new_for_non_pseudo(opaque),
-@@ -873,31 +1389,65 @@
+@@ -873,31 +1384,61 @@
      }
  
      fn shadow_root(&self) -> Option<<Self::ConcreteNode as TNode>::ConcreteShadowRoot> {
@@ -54124,10 +54169,6 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +            && attr.0.bytes().any(|b| b.is_ascii_uppercase()))
 +        .then(|| markup5ever::LocalName::from(attr.0.to_ascii_lowercase()));
 +        let name = lowered.as_ref().unwrap_or(&attr.0);
-+        // pyro: `attr()` of the reserved family is nothing.
-+        if author_hidden(name) {
-+            return None;
-+        }
 +        // pyro: for a pseudo-element's box (the marker style of a `::before` or `::after` list
 +        // item is cascaded on it), the attribute of its originating element.
 +        // pyro: and of a scroll pseudo-element's box, of its originating element.
@@ -54176,7 +54217,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      }
  
      fn is_html_document_body_element(&self) -> bool {
-@@ -917,106 +1467,278 @@
+@@ -917,110 +1458,282 @@
          root_element.children.contains(&self.id)
      }
  
@@ -54360,6 +54401,10 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 -                .trim_end_matches(|c: char| c.is_ascii_alphabetic())
 -                .len();
 -            let (number, unit) = value.split_at(number_len);
+-            let val: f32 = number.trim().parse().ok().filter(|v| *v >= 0.0)?;
+-            let length = if unit.is_empty() {
+-                NoCalcLength::from_px(val)
+-            } else {
 +    fn has_selector_flags(&self, flags: ElementSelectorFlags) -> bool {
 +        self.selector_flags().get().contains(flags)
 +    }
@@ -54530,10 +54575,14 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +                .trim_end_matches(|c: char| c.is_ascii_alphabetic())
 +                .len();
 +            let (number, unit) = value.split_at(number_len);
-             let val: f32 = number.trim().parse().ok().filter(|v| *v >= 0.0)?;
-             let length = if unit.is_empty() {
-                 NoCalcLength::from_px(val)
-@@ -1083,6 +1805,37 @@
++            let val: f32 = number.trim().parse().ok().filter(|v| *v >= 0.0)?;
++            let length = if unit.is_empty() {
++                NoCalcLength::from_px(val)
++            } else {
+                 NoCalcLength::parse_dimension_with_flags(ParsingMode::DEFAULT, false, val, unit)
+                     .ok()?
+             };
+@@ -1083,6 +1796,37 @@
                  .find(|declaration| matches!(declaration, PropertyDeclaration::FontFamily(_)))
          }
  
@@ -54571,7 +54620,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          // `<input type=image>` is the only input type that is replaced
          // content, and it is the only one that takes the embedded-content
          // presentational attributes. The type attribute is matched ASCII
-@@ -1100,6 +1853,28 @@
+@@ -1100,6 +1844,28 @@
              let name = &attr.name.local;
              let value = attr.value.as_str();
  
@@ -54600,7 +54649,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              if *name == local_name!("lang") {
                  if attr.name.ns == ns!(xml) {
                      lang = Some(value);
-@@ -1125,6 +1900,24 @@
+@@ -1125,6 +1891,24 @@
                  }
              }
  
@@ -54625,7 +54674,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              if *name == local_name!("align") {
                  use style::values::specified::TextAlign;
                  let keyword = match value {
-@@ -1164,7 +1957,7 @@
+@@ -1164,7 +1948,7 @@
                          BaselineShift::Keyword(BaselineShiftKeyword::Top),
                      ))
                  } else if value.eq_ignore_ascii_case("middle") {
@@ -54634,7 +54683,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
                  } else if value.eq_ignore_ascii_case("bottom") {
                      Some((
                          AlignmentBaseline::Baseline,
-@@ -1270,7 +2063,9 @@
+@@ -1270,7 +2054,9 @@
              // presentation attributes that map to the CSS `width`/`height`
              // properties, so e.g. `width="1em"` must resolve against the
              // element's font-size like any other CSS length.
@@ -54645,7 +54694,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
                  && (*name == local_name!("width") || *name == local_name!("height"))
              {
                  if let Some(size) = parse_svg_size_attr(value) {
-@@ -1358,6 +2153,15 @@
+@@ -1358,6 +2144,15 @@
                  }
              }
  
@@ -54661,7 +54710,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              if *name == local_name!("bgcolor") {
                  use style::values::specified::Color;
                  if let Some((r, g, b, a)) = parse_color_attr(value) {
-@@ -1373,148 +2177,59 @@
+@@ -1373,148 +2168,59 @@
              }
          }
  
@@ -54849,7 +54898,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          None
      }
  }
-@@ -1527,6 +2242,41 @@
+@@ -1527,6 +2233,41 @@
      /// dedicated storage on the node (see `flush_image_layers_from_style`)
      /// because their style changed during this traversal.
      nodes_needing_style_image_flush: Mutex<Vec<NodeId>>,
@@ -54891,7 +54940,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  }
  
  impl<'a> RecalcStyle<'a> {
-@@ -1534,11 +2284,206 @@
+@@ -1534,11 +2275,206 @@
          RecalcStyle {
              context,
              nodes_needing_style_image_flush: Mutex::new(Vec::new()),
@@ -55098,7 +55147,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
      fn process_preorder<F: FnMut(BlitzNode<'dom>)>(
          &self,
-@@ -1546,14 +2491,259 @@
+@@ -1546,14 +2482,259 @@
          node: BlitzNode<'dom>,
          note_child: F,
      ) {
@@ -55358,7 +55407,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              }
  
              if !data.damage.is_empty() {
-@@ -1597,6 +2787,12 @@
+@@ -1597,6 +2778,12 @@
      }
  }
  
@@ -55371,7 +55420,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Flush updated pseudo-element (`::before`/`::after`) styles from the owning
  /// element's freshly-computed stylo data to the pseudo-element's anonymous node.
  ///
-@@ -1669,12 +2865,41 @@
+@@ -1669,12 +2856,41 @@
                      .push(pe_node_id);
              }
          }
@@ -55413,7 +55462,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Whether a node's `background-image`/`mask-image` layers need flushing to
  /// dedicated storage on the node: the URLs referenced by the new style differ
  /// from the image data currently stored on the node.
-@@ -1689,24 +2914,46 @@
+@@ -1689,24 +2905,46 @@
              // (a style list of `none` layers and empty storage are in sync).
              return style_images
                  .iter()
@@ -55468,7 +55517,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      })
  }
  
-@@ -1737,3 +2984,753 @@
+@@ -1737,3 +2975,745 @@
  
      // let val = CSSInlineStyleDeclaration();
  }
@@ -56213,14 +56262,6 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +        d.doc.resolve(0.0);
 +        assert_eq!(boxes(&d.doc, ids[1]), (false, true), "the last child again");
 +    }
-+}
-+
-+/// pyro: the ONE predicate author-controlled style uses to hide the engine's reserved attribute
-+/// family (`data-pyro-*`): attribute selectors (in `:is()`/`:has()` too) and `attr()` behave as if
-+/// those attributes did not exist, so author CSS cannot probe a snapshot's nonce or frame tokens
-+/// through layout.
-+pub(crate) fn author_hidden(local: &markup5ever::LocalName) -> bool {
-+    local.starts_with(crate::node::RESERVED_PREFIX)
 +}
 diff --git a/packages/blitz-dom/src/stylo_device.rs b/packages/blitz-dom/src/stylo_device.rs
 --- a/packages/blitz-dom/src/stylo_device.rs

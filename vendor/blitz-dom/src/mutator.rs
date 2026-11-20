@@ -176,7 +176,17 @@ impl DocumentMutator<'_> {
             .iter()
             .find(|a| is_lp_state(&a.name))
             .map(|a| a.value.clone());
-        let mut data = ElementData::new(name, attrs);
+        // pyro: the engine's attributes (under this document's nonce names) go to its store, by
+        // canonical name; every other attribute, the page's `data-pyro-*` too, is the element's.
+        let nonce = self.doc.frames.nonce.clone();
+        let (engine, attrs): (Vec<(String, Attribute)>, Vec<(String, Attribute)>) = attrs
+            .into_iter()
+            .map(|a| (crate::engine_field(&nonce, &a.name).unwrap_or_default(), a))
+            .partition(|(field, _)| !field.is_empty());
+        let mut data = ElementData::new(name, attrs.into_iter().map(|(_, a)| a).collect());
+        for (field, a) in engine {
+            data.attrs.set_reserved(&field, &a.value);
+        }
         data.flush_style_attribute(self.doc.guard(), &self.doc.url.url_extra_data());
         // pyro: a link to the document itself is visited.
         if data.is_link() {
@@ -372,6 +382,14 @@ impl DocumentMutator<'_> {
     }
 
     pub fn set_attribute(&mut self, node_id: NodeId, name: QualName, value: &str) {
+        // pyro: an engine attribute goes to the engine's store (`create_element`).
+        if let Some(field) = crate::engine_field(&self.doc.frames.nonce.clone(), &name) {
+            if let Some(element) = self.doc.nodes[node_id].element_data_mut() {
+                element.attrs.set_reserved(&field, value);
+            }
+            self.engine_attribute_changed(node_id, &field, true);
+            return;
+        }
         if is_lp_state(&name) && self.doc.nodes[node_id].is_element() {
             self.doc.note_lp_state(node_id, Some(value));
         }
@@ -585,7 +603,37 @@ impl DocumentMutator<'_> {
         }
     }
 
+    /// pyro: the engine's attribute `field` (canonical) of `node_id` was set (`set`) or removed:
+    /// a frame marker loads or drops the frame document; any one lays the element out again.
+    fn engine_attribute_changed(&mut self, node_id: NodeId, field: &str, set: bool) {
+        let node_is_in_document = self.doc.nodes[node_id].flags.is_in_document();
+        let tag = self.doc.nodes[node_id].element_data().map(|e| e.name.local.clone());
+        if node_is_in_document {
+            self.doc.snapshot_node(node_id, &markup5ever::LocalName::from(field));
+            self.restyle_for_attribute_change(node_id, &markup5ever::LocalName::from(field));
+        }
+        if field != crate::FRAME_ATTRIBUTE {
+            return;
+        }
+        match tag.as_deref() {
+            Some("iframe" | "frame") if set || node_is_in_document => self.load_iframe(node_id),
+            Some("object" | "embed") if set => self.load_iframe(node_id),
+            Some("object" | "embed") => {
+                self.remove_sub_document(node_id);
+                self.load_image(node_id);
+            }
+            _ => {}
+        }
+    }
+
     pub fn clear_attribute(&mut self, node_id: NodeId, name: QualName) {
+        if let Some(field) = crate::engine_field(&self.doc.frames.nonce.clone(), &name) {
+            if let Some(element) = self.doc.nodes[node_id].element_data_mut() {
+                element.attrs.remove_reserved(&field);
+            }
+            self.engine_attribute_changed(node_id, &field, false);
+            return;
+        }
         if is_lp_state(&name) {
             self.doc.note_lp_state(node_id, None);
         }

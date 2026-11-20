@@ -814,11 +814,6 @@ impl selectors::Element for BlitzNode<'_> {
         let Some(attrs) = self.data.attrs() else {
             return false;
         };
-        // pyro: the reserved family (`data-pyro-*`) matches nothing, as if absent (its attributes
-        // are kept apart anyway: `Attributes::reserved`).
-        if author_hidden(&local_name.0) {
-            return false;
-        }
         attrs.iter().any(|attr| {
             attr.name.local == local_name.0
                 && match ns {
@@ -1231,7 +1226,7 @@ impl<'a> TElement for BlitzNode<'a> {
         F: FnMut(&style::LocalName),
     {
         if let Some(attrs) = self.data.attrs() {
-            for attr in attrs.iter().filter(|attr| !author_hidden(&attr.name.local)) {
+            for attr in attrs.iter() {
                 callback(GenericAtomIdent::cast(&attr.name.local));
             }
         }
@@ -1404,10 +1399,6 @@ impl<'a> TElement for BlitzNode<'a> {
             && attr.0.bytes().any(|b| b.is_ascii_uppercase()))
         .then(|| markup5ever::LocalName::from(attr.0.to_ascii_lowercase()));
         let name = lowered.as_ref().unwrap_or(&attr.0);
-        // pyro: `attr()` of the reserved family is nothing.
-        if author_hidden(name) {
-            return None;
-        }
         // pyro: for a pseudo-element's box (the marker style of a `::before` or `::after` list
         // item is cascaded on it), the attribute of its originating element.
         // pyro: and of a scroll pseudo-element's box, of its originating element.
@@ -3725,12 +3716,4 @@ mod box_generating_pseudo_tests {
         d.doc.resolve(0.0);
         assert_eq!(boxes(&d.doc, ids[1]), (false, true), "the last child again");
     }
-}
-
-/// pyro: the ONE predicate author-controlled style uses to hide the engine's reserved attribute
-/// family (`data-pyro-*`): attribute selectors (in `:is()`/`:has()` too) and `attr()` behave as if
-/// those attributes did not exist, so author CSS cannot probe a snapshot's nonce or frame tokens
-/// through layout.
-pub(crate) fn author_hidden(local: &markup5ever::LocalName) -> bool {
-    local.starts_with(crate::node::RESERVED_PREFIX)
 }

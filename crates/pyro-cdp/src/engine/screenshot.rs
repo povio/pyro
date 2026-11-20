@@ -1056,7 +1056,8 @@ impl EngineHost {
                     "width": s.width, "height": s.height, "deviceScaleFactor": s.device_scale_factor,
                     "dark": s.dark, "scrollX": s.scroll_x, "scrollY": s.scroll_y,
                     "xmlDocument": s.xml_document, "quirksMode": s.quirks_mode,
-                    "limitedQuirksMode": s.limited_quirks_mode, "contentLanguage": s.content_language }
+                    "limitedQuirksMode": s.limited_quirks_mode, "contentLanguage": s.content_language,
+                    "nonce": s.nonce }
             });
             return Ok(std::rc::Rc::new(std::cell::RefCell::new(Some(Ok(value)))));
         }

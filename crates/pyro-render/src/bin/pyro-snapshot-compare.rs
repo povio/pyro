@@ -37,6 +37,10 @@ struct Capture {
     /// captures written before they were recorded.
     #[serde(default)]
     registered_properties: Vec<(String, String, bool, Option<String>)>,
+    /// pyro: the nonce the markup's engine attributes are named with (absent in older captures:
+    /// then they take none, unless written under canonical names).
+    #[serde(default)]
+    nonce: String,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -98,7 +102,7 @@ fn compare(worker: &RenderWorker, request: Request) -> Result<serde_json::Value,
     let s = request.snapshot;
     let snapshot = Snapshot {
         html: s.html,
-        frames: Default::default(),
+        frames: std::sync::Arc::new(pyro_render::FrameTableData { nonce: s.nonce, entries: Default::default() }),
         base_url: s.base_url,
         sheets: s.sheets,
         width: s.width,

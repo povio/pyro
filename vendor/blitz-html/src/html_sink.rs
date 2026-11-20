@@ -232,22 +232,13 @@ impl<'m, 'doc> TreeSink for DocumentHtmlParser<'m, 'doc> {
     ) -> Self::Handle {
         let mut attrs: Vec<Attribute> = attrs.into_iter().map(html5ever_to_blitz_attr).collect();
         // pyro: a `<pre>` written for an `<xmp>` or `<plaintext>` is that element.
-        // (Only with this document's nonce: blitz_dom::engine_marked.)
-        let marked = || {
-            let mutr = self.mutr();
-            let nonce = mutr.doc.snapshot_nonce();
-            nonce.is_empty()
-                || attrs.iter().any(|a| {
-                    a.name.ns == html5ever::ns!()
-                        && &*a.name.local == blitz_dom::NONCE_ATTRIBUTE
-                        && blitz_dom::same_secret(&a.value, nonce)
-                })
-        };
-        let renamed = (!self.is_xml && name.ns == html5ever::ns!(html) && &*name.local == "pre" && marked())
+        // (Only the engine's attribute, under this document's nonce name: blitz_dom::engine_field.)
+        let nonce = self.mutr().doc.snapshot_nonce().to_owned();
+        let renamed = (!self.is_xml && name.ns == html5ever::ns!(html) && &*name.local == "pre")
             .then(|| {
                 let at = attrs
                     .iter()
-                    .position(|a| a.name.ns == html5ever::ns!() && &*a.name.local == TAG_ATTRIBUTE)?;
+                    .position(|a| blitz_dom::engine_field(&nonce, &a.name).as_deref() == Some(TAG_ATTRIBUTE))?;
                 let local = match attrs[at].value.as_str() {
                     "xmp" => html5ever::local_name!("xmp"),
                     "plaintext" => html5ever::local_name!("plaintext"),

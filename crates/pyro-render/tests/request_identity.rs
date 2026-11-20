@@ -201,29 +201,29 @@ fn a_frame_shows_only_its_table_entry_for_its_client() {
     };
     let first = FrameContent {
         html: format!(
-            "{}<iframe data-pyro-frame='N2:2:0000000000000007' srcdoc='{}'></iframe><iframe data-pyro-frame='WRONG:2:0000000000000007'></iframe>",
+            "{}<iframe data-pyro-n2-frame='n2:2:0000000000000007' srcdoc='{}'></iframe><iframe data-pyro-n2-frame='WRONG:2:0000000000000007'></iframe>",
             mask("a/green.png"),
             attr(&mask("evil/nested.png"))
         ),
         url: "http://test/".into(),
         scroll: (0.0, 0.0),
         client: "F00D#L".into(),
-        frames: Arc::new(FrameTableData { nonce: "N2".into(), entries: [("2".to_owned(), nested)].into_iter().collect() }),
+        frames: Arc::new(FrameTableData { nonce: "n2".into(), entries: [("2".to_owned(), nested)].into_iter().collect() }),
         version: 1,
         sheets: Default::default(),
     };
     let snapshot = Snapshot {
         html: format!(
             "<!doctype html><body style='margin:0'>\
-             <iframe data-pyro-frame='N1:1:0000000000000001' style='border:0;width:50px;height:20px'></iframe>\
-             <iframe data-pyro-frame='N1:9:0000000000000001' data-pyro-frame-client='OTHER#L' srcdoc='{0}' SRCDOC='{0}' style='border:0;width:50px;height:20px'></iframe>\
-             <iframe data-pyro-frame='N1:1:0000000000000002' srcdoc='{0}' style='border:0;width:50px;height:20px'></iframe>\
-             <iframe data-pyro-frame='1:0000000000000001' srcdoc='{0}' style='border:0;width:50px;height:20px'></iframe>\
+             <iframe data-pyro-n1-frame='n1:1:0000000000000001' style='border:0;width:50px;height:20px'></iframe>\
+             <iframe data-pyro-n1-frame='n1:9:0000000000000001' data-pyro-frame-client='OTHER#L' srcdoc='{0}' SRCDOC='{0}' style='border:0;width:50px;height:20px'></iframe>\
+             <iframe data-pyro-n1-frame='n1:1:0000000000000002' srcdoc='{0}' style='border:0;width:50px;height:20px'></iframe>\
+             <iframe data-pyro-n1-frame='1:0000000000000001' srcdoc='{0}' style='border:0;width:50px;height:20px'></iframe>\
              <iframe srcdoc='{1}' style='border:0;width:50px;height:20px'></iframe>",
             attr(&mask("evil/unknown.png")),
             attr(&mask("b/green.png")),
         ),
-        frames: Arc::new(FrameTableData { nonce: "N1".into(), entries: [("1".to_owned(), first)].into_iter().collect() }),
+        frames: Arc::new(FrameTableData { nonce: "n1".into(), entries: [("1".to_owned(), first)].into_iter().collect() }),
         base_url: "http://test/".into(),
         width: 200,
         height: 100,
@@ -391,12 +391,12 @@ fn each_frame_is_served_its_own_sheets_and_only_admitted_clients() {
     };
     let snapshot = Snapshot {
         html: "<!doctype html><body style='margin:0;background:#fff'>\
-               <iframe data-pyro-frame='N:1:0000000000000001' style='border:0;width:40px;height:20px;display:block'></iframe>\
-               <iframe data-pyro-frame='N:2:0000000000000001' style='border:0;width:40px;height:20px;display:block'></iframe>\
-               <iframe data-pyro-frame='N:3:0000000000000001' style='border:0;width:40px;height:20px;display:block'></iframe>"
+               <iframe data-pyro-n-frame='n:1:0000000000000001' style='border:0;width:40px;height:20px;display:block'></iframe>\
+               <iframe data-pyro-n-frame='n:2:0000000000000001' style='border:0;width:40px;height:20px;display:block'></iframe>\
+               <iframe data-pyro-n-frame='n:3:0000000000000001' style='border:0;width:40px;height:20px;display:block'></iframe>"
             .into(),
         frames: Arc::new(FrameTableData {
-            nonce: "N".into(),
+            nonce: "n".into(),
             entries: [
                 ("1".to_owned(), frame("A#L", "rgb(0, 128, 0)")),
                 ("2".to_owned(), frame("B#L", "rgb(0, 0, 255)")),
@@ -467,12 +467,12 @@ fn a_urls_policy_is_its_sheet_objects() {
         sheets: frame_sheets,
     };
     let snapshot = Snapshot {
-        html: "<!doctype html><link rel=stylesheet href='http://test/s.css' data-pyro-sheet=P data-pyro-sheet-referrer-policy='origin' data-pyro-n=N>\
+        html: "<!doctype html><link rel=stylesheet href='http://test/s.css' data-pyro-n-sheet=P data-pyro-n-sheet-referrer-policy='origin'>\
                <div id=a></div><div id=i></div>\
-               <iframe data-pyro-frame='N:1:0000000000000001' style='border:0;width:20px;height:20px'></iframe>"
+               <iframe data-pyro-n-frame='n:1:0000000000000001' style='border:0;width:20px;height:20px'></iframe>"
             .into(),
         sheets,
-        frames: Arc::new(FrameTableData { nonce: "N".into(), entries: [("1".to_owned(), frame)].into_iter().collect() }),
+        frames: Arc::new(FrameTableData { nonce: "n".into(), entries: [("1".to_owned(), frame)].into_iter().collect() }),
         base_url: "http://test/doc.html".into(),
         width: 100,
         height: 50,
@@ -529,7 +529,7 @@ fn an_unmarked_frame_of_a_snapshot_loads_nothing() {
                <iframe srcdoc=\"<div style='width:9px;height:9px;background-image:url(http://evil.test/s.png)'></div>\"></iframe>\
                <object type='text/html' data='http://evil.test/doc.html' width=20 height=20></object>"
             .into(),
-        frames: Arc::new(FrameTableData { nonce: "N".into(), entries: Default::default() }),
+        frames: Arc::new(FrameTableData { nonce: "n".into(), entries: Default::default() }),
         base_url: "http://test/".into(),
         width: 100,
         height: 50,
@@ -647,10 +647,10 @@ fn a_plaintext_written_as_pre_is_itself_and_ends_where_the_dom_does() {
     assert!(!asked.iter().any(|u| u == "http://test/pre.png"), "{asked:?}");
 }
 
-/// In a render snapshot's document an engine attribute counts only on an element carrying the
-/// snapshot's nonce (`data-pyro-n`): without it, a `<pre>`'s `data-pyro-tag` names nothing and a
-/// link's `data-pyro-sheet` serves no snapshot sheet, so markup a reparse produced from page text
-/// cannot act as the engine's (security review cycle 6, 1).
+/// In a render snapshot's document an engine attribute counts only under the snapshot's nonce name
+/// (`data-pyro-<nonce>-<field>`): under its canonical name, another nonce's, or next to a forged
+/// `data-pyro-n`, a `<pre>`'s tag names nothing and a link's sheet key serves no snapshot sheet:
+/// those are the page's own attributes (security review cycles 6 and 8).
 #[test]
 fn engine_attributes_without_the_snapshots_nonce_are_inert() {
     #[derive(Default)]
@@ -662,14 +662,15 @@ fn engine_attributes_without_the_snapshots_nonce_are_inert() {
             done(Err("404".into()));
         }
     }
-    let render = |marker: &str| {
+    const NONCE: &str = "0123456789abcdef0123456789abcdef";
+    let render = |prefix: &str, extra: &str| {
         let seen = Arc::new(Seen::default());
         let fetcher: Arc<dyn Fetcher> = Arc::new(Record(seen.clone()));
         let snapshot = Snapshot {
             html: format!(
                 "<!doctype html><style>div {{ width: 10px; height: 10px }} plaintext + div {{ background-image: url(http://test/renamed.png) }}</style>\
-                 <link rel=stylesheet href=\"http://test/a.css\" data-pyro-sheet=\"k\"{marker}>\
-                 <pre data-pyro-tag=\"plaintext\"{marker}>\nx</pre><div></div><span></span>"
+                 <link rel=stylesheet href=\"http://test/a.css\" {prefix}sheet=\"k\"{extra}>\
+                 <pre {prefix}tag=\"plaintext\"{extra}>\nx</pre><div></div><span></span>"
             ),
             base_url: "http://test/".into(),
             width: 40,
@@ -678,19 +679,23 @@ fn engine_attributes_without_the_snapshots_nonce_are_inert() {
             sheets: [("k".to_owned(), "span { display: block; width: 10px; height: 10px; background-image: url(http://test/sheet.png) }".to_owned())]
                 .into_iter()
                 .collect(),
-            frames: Arc::new(FrameTableData { nonce: "0123456789abcdef0123456789abcdef".into(), entries: Default::default() }),
+            frames: Arc::new(FrameTableData { nonce: NONCE.into(), entries: Default::default() }),
             ..Default::default()
         };
         Renderer::new().render(&snapshot, Area::Viewport, Backend::Cpu, &fetcher).unwrap();
         let asked = seen.0.lock().unwrap().clone();
         asked
     };
-    let marked = render(" data-pyro-n=\"0123456789abcdef0123456789abcdef\"");
+    let marked = render(&format!("data-pyro-{NONCE}-"), "");
     assert!(marked.iter().any(|u| u == "http://test/renamed.png"), "{marked:?}");
     assert!(marked.iter().any(|u| u == "http://test/sheet.png"), "{marked:?}");
-    for forged in ["", " data-pyro-n=\"0123456789abcdef0123456789abcdee\""] {
-        let asked = render(forged);
-        assert!(!asked.iter().any(|u| u == "http://test/renamed.png" || u == "http://test/sheet.png"), "{forged}: {asked:?}");
+    for (prefix, extra) in [
+        ("data-pyro-", ""),
+        ("data-pyro-", &*format!(" data-pyro-n=\"{NONCE}\"")),
+        ("data-pyro-0123456789abcdef0123456789abcdee-", ""),
+    ] {
+        let asked = render(prefix, extra);
+        assert!(!asked.iter().any(|u| u == "http://test/renamed.png" || u == "http://test/sheet.png"), "{prefix}{extra}: {asked:?}");
     }
 }
 
@@ -740,5 +745,51 @@ fn a_warm_render_keeps_the_cached_responses_metadata() {
         let asked = seen.0.lock().unwrap().clone();
         assert!(!asked.iter().any(|u| u == "http://test/old/img.png"), "pass {pass}: {asked:?}");
         assert!(asked.iter().any(|u| u == "http://test/new/img.png"), "pass {pass}: {asked:?}");
+    }
+}
+
+/// A render snapshot's page `data-pyro-*` attributes are the page's: author CSS matches them in
+/// the renderer (`[data-pyro-theme]`, `attr()`), and an author-forged frame marker or sheet key
+/// (canonical name, no nonce) is styled like any attribute and never acted on by the engine
+/// (security review cycle 8, 2).
+#[test]
+fn page_data_pyro_attributes_are_ordinary_in_the_renderer() {
+    #[derive(Default)]
+    struct Seen(Mutex<Vec<String>>);
+    struct Record(Arc<Seen>);
+    impl Fetcher for Record {
+        fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+            self.0 .0.lock().unwrap().push(url);
+            done(Err("404".into()));
+        }
+    }
+    const NONCE: &str = "0123456789abcdef0123456789abcdef";
+    let seen = Arc::new(Seen::default());
+    let fetcher: Arc<dyn Fetcher> = Arc::new(Record(seen.clone()));
+    let frame = FrameContent { html: "<p style='background-image:url(http://test/framed.png)'>x</p>".into(), url: "http://test/f".into(), client: "F#L".into(), ..Default::default() };
+    let snapshot = Snapshot {
+        html: format!(
+            "<!doctype html><style>div {{ width: 10px; height: 10px }} [data-pyro-theme=dark] {{ background-image: url(http://test/theme.png) }}\
+             iframe[data-pyro-frame] {{ background-image: url(http://test/forged-frame.png) }} link[data-pyro-sheet] + div {{ background-image: url(http://test/forged-sheet.png) }}</style>\
+             <div data-pyro-theme=dark></div>\
+             <iframe data-pyro-frame=\"{NONCE}:1:0000000000000000\" style='width:20px;height:20px;border:0'></iframe>\
+             <link rel=stylesheet href='http://test/s.css' data-pyro-sheet=k><div></div>"
+        ),
+        base_url: "http://test/".into(),
+        width: 60,
+        height: 60,
+        device_scale_factor: 1.0,
+        sheets: [("k".to_owned(), "div { outline: 1px solid; background-image: url(http://test/served.png) !important }".to_owned())].into_iter().collect(),
+        frames: Arc::new(FrameTableData { nonce: NONCE.into(), entries: [("1".to_owned(), frame)].into_iter().collect() }),
+        ..Default::default()
+    };
+    Renderer::new().render(&snapshot, Area::Viewport, Backend::Cpu, &fetcher).unwrap();
+    let asked = seen.0.lock().unwrap().clone();
+    for styled in ["http://test/theme.png", "http://test/forged-frame.png", "http://test/forged-sheet.png"] {
+        assert!(asked.iter().any(|u| u == styled), "{styled}: {asked:?}");
+    }
+    // The engine ignores the forged marker and key: no frame document, no snapshot sheet.
+    for ignored in ["http://test/framed.png", "http://test/served.png"] {
+        assert!(!asked.iter().any(|u| u == ignored), "{ignored}: {asked:?}");
     }
 }
