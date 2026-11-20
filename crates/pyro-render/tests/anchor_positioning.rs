@@ -2,6 +2,20 @@ use pyro_dom::cssom::{ParsedRule, parse_one_rule};
 use pyro_dom::stylo::declarations::DeclarationBlock;
 
 #[test]
+fn try_order_uses_containing_block_axes() {
+    for (container, consumer, vertical) in [("horizontal-tb", "vertical-rl", false), ("vertical-rl", "horizontal-tb", true)] {
+        for (order, wide) in [("most-width", true), ("most-height", false), ("most-inline-size", !vertical), ("most-block-size", vertical)] {
+            let html = format!("<!doctype html><style>main{{position:relative;width:100px;height:100px;writing-mode:{container}}}b{{position:absolute;writing-mode:{consumer};left:200px;top:0;width:10px;height:10px;position-try-order:{order};position-try-fallbacks:--wide,--tall}}@position-try --wide{{left:0;top:60px}}@position-try --tall{{left:60px;top:0}}</style><main><b></b></main>");
+            let mut doc = blitz_html::HtmlDocument::from_html(&html, blitz_dom::DocumentConfig::default());
+            doc.viewport_mut().window_size = (400, 300);
+            doc.resolve(0.0);
+            let target = doc.get_node(doc.query_selector("b").unwrap().unwrap()).unwrap().final_layout();
+            assert_eq!((target.location.x,target.location.y), if wide { (0.,60.) } else { (60.,0.) }, "{container} {order}");
+        }
+    }
+}
+
+#[test]
 fn physical_anchor_geometry_is_bounded_across_writing_modes() {
     for mode in ["horizontal-tb", "vertical-lr", "vertical-rl"] {
         for depth in [1, 12] {

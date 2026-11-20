@@ -2461,8 +2461,9 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
             (indices,count)
         });
         (indices,count, match pos.position_try_order {
-            Normal => None, MostWidth => Some(true), MostHeight => Some(false),
-            MostInlineSize => Some(!style.writing_mode.is_vertical()), MostBlockSize => Some(style.writing_mode.is_vertical()),
+            Normal => None,
+            MostWidth => Some(!self.layout_wm.is_vertical()), MostHeight => Some(self.layout_wm.is_vertical()),
+            MostInlineSize => Some(true), MostBlockSize => Some(false),
         })
     }
 
