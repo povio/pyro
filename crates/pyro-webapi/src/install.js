@@ -200,6 +200,14 @@
   const viewOffset = getOwnPropertyDescriptor(typedArrayProto, 'byteOffset').get;
   const viewLength = getOwnPropertyDescriptor(typedArrayProto, 'byteLength').get;
   const viewName = getOwnPropertyDescriptor(typedArrayProto, toStringTag).get;
+  // JSC's public typed-array enum does not cover every ECMAScript view.
+  const viewBytes = value => {
+    if (!isView(value)) return null;
+    if (apply(viewName, value, []) === undefined) return dataView(value);
+    const length = apply(viewLength, value, []);
+    if (length === 0) return new Uint8Array_(0);
+    return new Uint8Array_(apply(viewBuffer, value, []), apply(viewOffset, value, []), length);
+  };
   const resizable = getOwnPropertyDescriptor(ArrayBuffer.prototype, 'resizable')?.get;
   const growable = typeof SharedArrayBuffer === 'function'
     ? getOwnPropertyDescriptor(SharedArrayBuffer.prototype, 'growable')?.get : undefined;
@@ -232,12 +240,8 @@
       if (v !== null && typeof v === 'object') {
         try { apply(blobSize, v, []); append(out, v); continue; } catch (_) {}
         // A buffer source over a detached buffer holds no bytes.
-        if (isView(v)) {
-          let bytes;
-          try { bytes = new Uint8Array_(apply(viewBuffer, v, []), apply(viewOffset, v, []), apply(viewLength, v, [])); }
-          catch (_) { bytes = dataView(v); }
-          append(out, bytes || new Uint8Array_(0)); continue;
-        }
+        const view = viewBytes(v);
+        if (view !== null) { append(out, view); continue; }
         let isBuffer = false;
         try { apply(bufferLength, v, []); isBuffer = true; } catch (_) {}
         if (!isBuffer && sharedLength) try { apply(sharedLength, v, []); isBuffer = true; } catch (_) {}
@@ -254,7 +258,7 @@
 
   return {
     blobParts,
-    encoding: { __proto__: null, dataView, encodeIntoCapacity },
+    encoding: { __proto__: null, viewBytes, encodeIntoCapacity },
     mutationOptions,
     intersection: [intersectionThresholds, freeze],
     formData: [formDataPopulated, formDataIteratorPopulated],

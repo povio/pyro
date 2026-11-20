@@ -74,10 +74,9 @@ pub fn buffer_source_bytes(s: &Scope<'_>, v: Value<'_>) -> JsResult<Option<Vec<u
             }
         }
         sys::kJSTypedArrayTypeNone => {
-            // Captured native getters perform the DataView brand check and
-            // ignore spoofable constructor/name/buffer properties. Never recurse
-            // through an arbitrary user-provided "buffer" object.
-            let view = encoding_helper(s, "dataView")?.call(None, &[v])?;
+            // DataView and typed arrays without a JSC C API type (e.g. Float16Array)
+            // expose their byte range through the realm's intrinsic view getters.
+            let view = encoding_helper(s, "viewBytes")?.call(None, &[v])?;
             if view.is_null() {
                 return Ok(None);
             }
