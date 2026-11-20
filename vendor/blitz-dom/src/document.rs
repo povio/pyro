@@ -534,6 +534,14 @@ pub struct BaseDocument {
     pub(crate) controls_to_form: HashMap<NodeId, NodeId>,
     /// Nodes that contain sub documents
     pub(crate) sub_document_nodes: HashSet<NodeId>,
+    /// pyro: the `content-visibility: auto` elements whose relevance is determined
+    /// (`NodeFlags::CV_DETERMINED`), those a query forced to render (`CV_FORCED`), and the scroll
+    /// position relevance was last determined at (`update_content_visibility`).
+    pub(crate) cv_auto: HashSet<NodeId>,
+    pub(crate) cv_forced: HashSet<NodeId>,
+    pub(crate) cv_scroll: Option<(f64, f64)>,
+    /// pyro: a resolve again for relevance a fresh transform changed is running.
+    pub(crate) cv_resolving: bool,
     /// pyro: the user-agent sheets it was made with, which the frame documents it makes take too
     /// (the embedder's: no native CSS animations or transitions in a frame either, as its
     /// animations are sampled in, `frame_animations`).
@@ -911,6 +919,10 @@ impl BaseDocument {
             subdoc_is_animating: false,
             has_canvas: false,
             sub_document_nodes: HashSet::new(),
+            cv_auto: HashSet::new(),
+            cv_forced: HashSet::new(),
+            cv_scroll: None,
+            cv_resolving: false,
             ua_stylesheets: config.ua_stylesheets.clone(),
             frame_animations: Default::default(),
             iframe_loads: HashMap::new(),

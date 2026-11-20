@@ -1983,7 +1983,9 @@ impl Renderer {
     /// `content-visibility-vs-scrollIntoView-002`). Whether anything was forced.
     pub fn content_visibility_frame(&mut self, page: u64) -> bool {
         let Some(m) = self.mirrors.get_mut(&page) else { return false };
-        if !m.doc.has_content_visibility_forcing() {
+        // (Also when the page scrolled since relevance was last determined: nothing else lays the
+        // document out for a scroll alone. The time is the mirror's, 0: animations are sampled in.)
+        if !m.doc.has_content_visibility_forcing() && !m.doc.content_visibility_stale() {
             return false;
         }
         m.doc.clear_content_visibility_forcing();
