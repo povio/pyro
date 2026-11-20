@@ -2108,11 +2108,9 @@ fn determine_container_main_size(
                         // Issue: https://github.com/w3c/csswg-drafts/issues/1435
                         // Gentest: padding_border_overrides_size_flex_basis_0.html
                         // Gentest: blockflex_min_content_ignores_own_height_as_percentage_basis.html
-                        let clamping_basis = if constants.is_row {
-                            Some(item.flex_basis).maybe_max(style_preferred)
-                        } else {
-                            Some(item.flex_basis)
-                        };
+                        // pyro: a row item's contribution is not clamped by its flex basis: Blink's rule for an
+                        // inflexible item applies to the sum below instead.
+                        let clamping_basis = if constants.is_row { None } else { Some(item.flex_basis) };
                         let flex_basis_min = clamping_basis.filter(|_| item.flex_shrink == 0.0);
                         let flex_basis_max = clamping_basis.filter(|_| item.flex_grow == 0.0);
 
@@ -2298,10 +2296,19 @@ fn determine_container_main_size(
                                 0.0
                             };
                             let mut size = item.flex_basis + flex_contribution;
-                            // pyro: a row item's share is its hypothetical size: clamped by its max main size and
-                            // floored by its resolved minimum, as in Blink (an inflexible `flex-basis: 200px` with
-                            // `max-width: 100px` counts 100px; WPT css-flexbox `intrinsic-size/row-007`)
+                            // pyro: a row item's share is its contribution, unless it cannot flex towards it (it is
+                            // larger than its flex base size and the item does not grow, or smaller and it does not
+                            // shrink) and its flex basis is definite: then its hypothetical main size (Blink's
+                            // `ComputeMinMaxSizeOfRowContainer`, "cant_move"; WPT css-flexbox
+                            // `flex-container-max-content-001`). Either is clamped by its max main size and floored
+                            // by its resolved minimum, as in Blink (an inflexible `flex-basis: 200px` with
+                            // `max-width: 100px` counts 100px; WPT css-flexbox `intrinsic-size/row-007`).
                             if constants.is_row {
+                                let cant_move = (size > item.flex_basis && item.flex_grow == 0.0)
+                                    || (size < item.flex_basis && item.flex_shrink == 0.0);
+                                if cant_move && item.flex_basis_is_definite {
+                                    size = item.flex_basis;
+                                }
                                 let padding_border = (item.padding + item.border).main_axis_sum(constants.dir);
                                 size = size
                                     .maybe_min(item.max_size.main(constants.dir))
