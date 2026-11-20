@@ -15,7 +15,7 @@ use crate::window::WindowHost;
 /// Kept on the realm's `navigator` (a hidden property), itself kept per realm.
 const KEY: &str = "lpObservable";
 
-/// Adds the lazy interface names to pyro-browser's `Window` class.
+/// Adds the lazy interface names to Window and WorkerGlobalScope.
 pub(crate) fn define_globals<W>(def: &mut ClassDef<W>)
 where
     W: JsClass,
@@ -57,7 +57,7 @@ fn unavailable() -> JsError {
 
 /// This realm's module, made on first use.
 pub(crate) fn module<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Object<'s>> {
-    let navigator = crate::window::navigator(s, page)?.as_object().ok_or_else(unavailable)?;
+    let navigator = crate::worker_scope::module_holder(s, page)?;
     if let Some(module) = s.get_hidden(navigator, KEY)?.and_then(|v| v.as_object()) {
         return Ok(module);
     }
