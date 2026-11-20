@@ -11,7 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { documentError } from './lib.mjs';
 import { refKey } from './reftest.mjs';
-import { listeningPorts, startWptserve } from './wptserve.mjs';
+import { listeningPorts, startProxy, startWptserve } from './wptserve.mjs';
 
 const WPT = process.env.WPT_DIR;
 const BIN = process.env.PYRO_BIN;
@@ -107,3 +107,35 @@ test.skipIf(!HAS_WPT || !BIN)('a run whose wptserve dies fails as a whole', asyn
   expect(fs.existsSync(out)).toBe(false);
   fs.rmSync(out + '.partial', { force: true });
 }, 120000);
+
+// The whole-suite testharness run died on these (runs 44821108769, 44827586210): an exception in the proxy ends run.mjs.
+test('the proxy forwards a response whose status text or header Node cannot write, and survives an upstream that dies mid-body', async () => {
+  const raw = (head, body, die) => net.createServer((sock) => {
+    sock.once('data', () => {
+      sock.write(head + body);
+      if (die) setTimeout(() => sock.destroy(), 20); else sock.end();
+    });
+    sock.on('error', () => {});
+  });
+  const listen = (server) => new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server.address().port)));
+  const odd = raw('HTTP/1.1 200 \u00e9t\u00e9 \x01\r\nX-Ok: 1\r\nContent-Length: 2\r\nConnection: close\r\n\r\n', 'ok');
+  const dying = raw('HTTP/1.1 200 OK\r\nContent-Length: 1000\r\nConnection: close\r\n\r\n', 'partial', true);
+  const [oddPort, dyingPort] = [await listen(odd), await listen(dying)];
+  const proxy = await startProxy();
+  const viaProxy = (port) => new Promise((resolve) => {
+    const req = http.request({ host: '127.0.0.1', port: proxy.port, path: `http://web-platform.test:${port}/x`, agent: false }, (res) => {
+      let body = '';
+      res.on('data', (c) => { body += c; });
+      const done = () => resolve({ status: res.statusCode, ok: res.headers['x-ok'], body });
+      res.on('end', done); res.on('close', done); res.on('error', done);
+    });
+    req.on('error', () => resolve({ status: 0 }));
+    req.end();
+  });
+  try {
+    expect(await viaProxy(oddPort)).toEqual({ status: 200, ok: '1', body: 'ok' });
+    expect((await viaProxy(dyingPort)).status).toBe(200);
+    // Still serving after both.
+    expect(await viaProxy(oddPort)).toEqual({ status: 200, ok: '1', body: 'ok' });
+  } finally { proxy.close(); odd.close(); dying.close(); }
+});
