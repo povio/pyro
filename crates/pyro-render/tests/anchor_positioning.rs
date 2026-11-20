@@ -2,6 +2,31 @@ use pyro_dom::cssom::{ParsedRule, parse_one_rule};
 use pyro_dom::stylo::declarations::DeclarationBlock;
 
 #[test]
+fn sticky_anchor_uses_one_raw_sticky_translation() {
+    let html = "<!doctype html><style>main{position:relative;width:200px;height:150px}section{height:100px;overflow:auto}i{display:block;position:sticky;top:0;height:20px;anchor-name:--a}section div{height:300px}b{position:absolute;position-anchor:--a;top:anchor(bottom);left:0;width:10px;height:10px}</style><main><section><i></i><div></div></section><b></b></main>";
+    let mut doc = blitz_html::HtmlDocument::from_html(html, blitz_dom::DocumentConfig::default());
+    doc.viewport_mut().window_size = (400,300);
+    doc.resolve(0.);
+    let target = doc.query_selector("b").unwrap().unwrap();
+    let anchor = doc.query_selector("i").unwrap().unwrap();
+    let scroller = doc.query_selector("section").unwrap().unwrap();
+    for scroll in [0.,40.,0.] {
+        let node = doc.get_node(target).unwrap();
+        let mut reads = 0;
+        let delta = node.live_anchor_scroll_offset(|id| blitz_dom::Point { x:0., y:if id == Some(scroller) { scroll } else { 0. } }, |id| {
+            assert_eq!(id,anchor);
+            reads += 1;
+            blitz_dom::Point { x:0., y:scroll }
+        });
+        assert_eq!(reads,1);
+        assert_eq!(f64::from(node.final_layout().location.y)+delta.y,20.);
+        doc.get_node_mut(scroller).unwrap().scroll_offset_mut().y = scroll;
+        doc.get_node_mut(anchor).unwrap().set_sticky_offset(blitz_dom::Point { x:0.,y:scroll });
+        assert_eq!(doc.get_node(target).unwrap().anchor_scroll_offset(),delta);
+    }
+}
+
+#[test]
 fn try_order_uses_containing_block_axes() {
     for (container, consumer, vertical) in [("horizontal-tb", "vertical-rl", false), ("vertical-rl", "horizontal-tb", true)] {
         for (order, wide) in [("most-width", true), ("most-height", false), ("most-inline-size", !vertical), ("most-block-size", vertical)] {

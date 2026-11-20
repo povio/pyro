@@ -285,6 +285,7 @@ pub struct Layout {
     /// Sticky entries looked up one element at a time since the last sync
     /// ([`Layout::sticky_shift`]), `None` for elements that are not sticky.
     sticky_lazy: RefCell<Option<(u64, FxHashMap<NodeId, Option<ExternalSticky>>)>>,
+    anchor_sticky_deltas: RefCell<((u64,u64), FxHashMap<NodeId,(f64,f64)>)>,
     /// The hit-test index of the current layout and scroll position, and
     /// what decides when one is built (see [`HitIndex`]).
     hit_index: RefCell<HitIndexState>,
@@ -563,6 +564,7 @@ impl Layout {
             text: RefCell::new(None),
             sticky: RefCell::new(None),
             sticky_lazy: RefCell::new(None),
+            anchor_sticky_deltas: Default::default(),
             hit_index: RefCell::default(),
         }
     }
@@ -1796,6 +1798,13 @@ impl Layout {
         self.external.as_ref().map_or((0.0,0.0),|source| source.anchor_scroll_shift(crate::snapshot::render_key(node), &|key| {
             let value = match key { Some(key) => node_of(dom,key).and_then(|el| self.element_scroll.get(&el).copied()).unwrap_or_default(), None => self.window_scroll };
             (f64::from(value.0),f64::from(value.1))
+        }, &|key| {
+            let Some(el) = node_of(dom,key) else { return (0.,0.) };
+            let epoch = (self.syncs.get(), self.scroll_generation);
+            let mut cache = self.anchor_sticky_deltas.borrow_mut();
+            if cache.0 != epoch { cache.1.clear(); cache.0 = epoch; }
+            self.sticky_delta(dom, el, &|n| source.sticky_element(crate::snapshot::render_key(n)),
+                &|n| source.element_box(crate::snapshot::render_key(n)).map(|b| LayoutBox::from_external(&b,0)), &mut cache.1)
         }))
     }
 

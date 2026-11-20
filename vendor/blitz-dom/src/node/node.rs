@@ -688,7 +688,18 @@ impl Node {
         None
     }
 
-    pub(crate) fn anchor_scroll_offset_in(&self, container: Option<NodeId>, mut scroll: impl FnMut(Option<NodeId>) -> crate::Point<f64>) -> crate::Point<f64> {
+    pub(crate) fn anchor_scroll_offset_in(&self, container: Option<NodeId>, scroll: impl FnMut(Option<NodeId>) -> crate::Point<f64>) -> crate::Point<f64> {
+        self.anchor_adjustment(container, scroll, |node| node.layout_data().sticky_offset)
+    }
+
+    pub fn live_anchor_scroll_offset(&self, scroll: impl FnMut(Option<NodeId>) -> crate::Point<f64>, mut sticky: impl FnMut(NodeId) -> crate::Point<f64>) -> crate::Point<f64> {
+        if self.anchor_scroll_axes.get() == (None,None) { return crate::Point::ZERO; }
+        self.anchor_adjustment(self.containing_block(), scroll, |node| {
+            if node.primary_styles().is_some_and(|style| style.clone_position() == Position::Sticky) { sticky(node.id) } else { crate::Point::ZERO }
+        })
+    }
+
+    fn anchor_adjustment(&self, container: Option<NodeId>, mut scroll: impl FnMut(Option<NodeId>) -> crate::Point<f64>, mut sticky_of: impl FnMut(&Self) -> crate::Point<f64>) -> crate::Point<f64> {
         let (anchor_x, anchor_y) = self.anchor_scroll_axes.get();
         if anchor_x.is_none() && anchor_y.is_none() { return crate::Point::ZERO; }
         let tree = self.tree();
@@ -719,7 +730,7 @@ impl Node {
                         offset = crate::Point { x: xx * offset.x + xy * offset.y, y: yx * offset.x + yy * offset.y };
                     }
                 }
-                let sticky = node.layout_data().sticky_offset;
+                let sticky = sticky_of(node);
                 offset.x += sticky.x;
                 offset.y += sticky.y;
                 if node.taffy_position() == taffy::Position::Fixed && node.containing_block().and_then(|cb| tree.get(cb)).is_some_and(|cb| cb.is_root_element() && !cb.root_contains_fixed()) { break; }
