@@ -49,6 +49,10 @@ fn device_path(path: BezPath, transform: Affine, bounds: Rect) -> (BezPath, Affi
 /// the path goes to vello_cpu as it is, which flattens it at its own, coarser tolerance.
 const MAX_FINE_SEGMENTS: usize = 1 << 16;
 
+/// pyro: the most cuts `cull_far_segments` makes in one path's curves (a curve zoomed to millions
+/// of device px is cut where it nears the raster only, about twice its depth of halvings).
+const MAX_SPLITS: usize = 1 << 12;
+
 /// pyro: an upper bound of how many lines flattening the device-space `path` at `tolerance` makes
 /// (Wang's formula for each curve, from its control points' second differences), in time linear in
 /// its elements.
@@ -106,27 +110,35 @@ fn cull_far_segments(path: &BezPath, transform: Affine, bounds: Rect, reach: f64
         true
     };
     // A curve much larger than the raster (an arc of a huge circle in view) is cut in halves until
-    // its pieces lie far outside (left out) or are no larger than the raster: what is kept is near.
-    // Whether all of it was kept.
+    // its pieces lie far outside (left out at once: neither half is cut further) or are no larger
+    // than the raster: what is kept is near. The cuts of one path are at most `MAX_SPLITS` (each
+    // counted as work), past which a piece is kept whole for vello_cpu. Whether all of it was kept.
     fn split_far(
         out: &mut BezPath,
         c: kurbo::CubicBez,
-        depth: u32,
+        far: &dyn Fn(Rect) -> bool,
         keep: &mut impl FnMut(&mut BezPath, kurbo::Point, &[kurbo::Point], &mut bool, PathEl) -> bool,
         at_last: &mut bool,
     ) -> bool {
         use kurbo::ParamCurve as _;
-        let (_, size) = SPLIT.with(|s| s.get());
+        let (splits, size) = SPLIT.with(|s| s.get());
         let bbox = Rect::from_points(c.p0, c.p0).union_pt(c.p1).union_pt(c.p2).union_pt(c.p3);
+        if far(bbox) {
+            *at_last = false;
+            return false;
+        }
         let big = bbox.width().max(bbox.height()) > size;
-        if depth < 40 && big {
+        if big && splits < MAX_SPLITS {
+            SPLIT.with(|s| s.set((splits + 1, size)));
+            count_segments(1);
             let (a, b) = c.subdivide();
-            let first = split_far(out, a, depth + 1, keep, at_last);
-            let second = split_far(out, b, depth + 1, keep, at_last);
+            let first = split_far(out, a, far, keep, at_last);
+            let second = split_far(out, b, far, keep, at_last);
             return first && second;
         }
         keep(out, c.p0, &[c.p1, c.p2, c.p3], at_last, PathEl::CurveTo(c.p1, c.p2, c.p3))
     }
+    let far = |bbox: Rect| !transform.transform_rect_bbox(bbox).overlaps(near);
     // (The largest piece kept whole, in the path's space: the raster's size there.)
     let inverse_scale = {
         let [a, b, c, d, _, _] = transform.as_coeffs();
@@ -146,11 +158,11 @@ fn cull_far_segments(path: &BezPath, transform: Affine, bounds: Rect, reach: f64
             }
             PathEl::QuadTo(a, p) => {
                 let cubic = kurbo::QuadBez::new(last, a, p).raise();
-                broken |= !split_far(&mut out, cubic, 0, &mut keep, &mut at_last);
+                broken |= !split_far(&mut out, cubic, &far, &mut keep, &mut at_last);
                 last = p;
             }
             PathEl::CurveTo(a, b, p) => {
-                broken |= !split_far(&mut out, kurbo::CubicBez::new(last, a, b, p), 0, &mut keep, &mut at_last);
+                broken |= !split_far(&mut out, kurbo::CubicBez::new(last, a, b, p), &far, &mut keep, &mut at_last);
                 last = p;
             }
             PathEl::ClosePath => {
@@ -1664,3 +1676,31 @@ fn pixel_aligned_rect(path: &kurbo::BezPath, transform: Affine) -> bool {
     }
 }
 
+
+#[cfg(test)]
+mod stroke_cull_tests {
+    use anyrender::{PaintScene, recording::Scene, render_to_buffer};
+    use kurbo::{Affine, BezPath, Stroke};
+    use peniko::Color;
+
+    use crate::VelloCpuImageRenderer;
+
+    /// pyro: a stroked cubic millions of device px long, of which a short piece crosses the raster,
+    /// is cut where it nears the raster only: its far halves are left out before they are cut again
+    /// (they were all cut down to the raster's size first). Review cycle 5, finding 1.
+    #[test]
+    fn a_huge_cubic_is_cut_only_near_the_raster() {
+        let mut path = BezPath::new();
+        path.move_to((-1.0e6, 80.0));
+        path.curve_to((-3.0e5, 80.0), (3.0e5, 80.0), (1.0e6, 80.0));
+        let mut scene = Scene::new();
+        scene.stroke(&Stroke::new(4.0), Affine::IDENTITY, Color::from_rgba8(0, 0, 255, 255), None, &path);
+        let before = super::fine_segments();
+        let buffer = render_to_buffer::<VelloCpuImageRenderer, _>(|painter| painter.append_scene(scene, Affine::IDENTITY), 160, 160);
+        let work = super::fine_segments() - before;
+        assert!(work > 0, "the paint ran on this thread");
+        assert!(work < 2_000, "{work} cuts and segments");
+        let i = (80 * 160 + 80) * 4;
+        assert!(buffer[i + 2] > 200 && buffer[i] < 60, "the stroke in view: {:?}", &buffer[i..i + 4]);
+    }
+}
