@@ -7663,7 +7663,7 @@ index 00000000..9f036648
 +        })
 +}
 diff --git a/src/compute/grid/track_sizing.rs b/src/compute/grid/track_sizing.rs
-index 18063621..cbe0442e 100644
+index 18063621..9f37228f 100644
 --- a/src/compute/grid/track_sizing.rs
 +++ b/src/compute/grid/track_sizing.rs
 @@ -1,12 +1,12 @@
@@ -7963,7 +7963,42 @@ index 18063621..cbe0442e 100644
          if !is_flex && batch_span == 1 {
              for item in batch.iter_mut() {
                  let track_index = item.placement_indexes(axis).start + 1;
-@@ -740,7 +747,13 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
+@@ -617,28 +624,12 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
+                     // If the container size is indefinite and has not yet been resolved then percentage sized
+                     // tracks are treated as auto
+                     _ if track.min_track_sizing_function.behaves_as_auto(axis_inner_node_size) => {
+-                        let space = match axis_available_grid_space {
+-                            // QUIRK: The spec says that:
+-                            //
+-                            //   If the grid container is being sized under a min- or max-content constraint, use the items’ limited
+-                            //   min-content contributions in place of their minimum contributions here.
+-                            //
+-                            // However, in practice browsers only seem to apply this rule if the item is not a scroll container
+-                            // (note that overflow:hidden counts as a scroll container), giving the automatic minimum size of scroll
+-                            // containers (zero) precedence over the min-content contributions.
+-                            AvailableSpace::MinContent | AvailableSpace::MaxContent
+-                                if !item.overflow.get(axis).is_scroll_container() =>
+-                            {
+-                                let axis_minimum_size = item_sizer.minimum_contribution(item, axis_tracks);
+-                                let axis_min_content_size = item_sizer.min_content_contribution(item, axis_tracks);
+-                                let limit = track
+-                                    .max_track_sizing_function
+-                                    .definite_limit(axis_inner_node_size, |val, basis| item_sizer.calc(val, basis));
+-                                axis_min_content_size.maybe_min(limit).max(axis_minimum_size)
+-                            }
+-                            _ => item_sizer.minimum_contribution(item, axis_tracks),
+-                        };
+-                        f32_max(track.base_size, space)
++                        // pyro: the spec says that under a min- or max-content constraint the items' limited min-content
++                        // contributions are used in place of their minimum contributions here; Blink never does (its
++                        // intrinsic minimums are the minimum contributions alone, "kForIntrinsicMinimums"), so an item
++                        // with `min-width: 0` (or a scroll container, whose automatic minimum is zero) adds nothing to a
++                        // min-content sized grid (WPT css-sizing `range-percent-intrinsic-size-1`).
++                        f32_max(track.base_size, item_sizer.minimum_contribution(item, axis_tracks))
+                     }
+                     // Do nothing as it's not an intrinsic track sizing function
+                     _ => track.base_size,
+@@ -740,7 +731,13 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
                      // a definite size still spreads over `0fr` tracks in full. This is what lets a `0fr`
                      // track holding a `min-height: 0` item collapse to zero, which the
                      // `grid-template-rows: 0fr` to `1fr` collapse animation pattern relies on.
@@ -7978,7 +8013,17 @@ index 18063621..cbe0442e 100644
                          let spanned_tracks = &axis_tracks[item.track_range_excluding_lines(axis)];
                          let inflexible_sizes: f32 = spanned_tracks
                              .iter()
-@@ -998,6 +1011,56 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
+@@ -751,7 +748,8 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
+                         let excess = f32_max(limited_min_content - inflexible_sizes, 0.0);
+                         f32_max(axis_minimum_size, inflexible_sizes + excess * scale)
+                     } else {
+-                        limited_min_content
++                        // pyro: the minimum contribution alone, as Blink (see the single-span case above)
++                        axis_minimum_size
+                     }
+                 }
+                 _ => item_sizer.minimum_contribution(item, axis_tracks),
+@@ -998,6 +996,56 @@ fn resolve_intrinsic_track_sizes<Tree: LayoutPartialTree>(
          .for_each(|track| track.growth_limit = track.base_size);
  }
  
@@ -8035,7 +8080,7 @@ index 18063621..cbe0442e 100644
  /// The sum of the flex factors of the flexible tracks in an item's spanned track range
  #[inline(always)]
  fn crossed_flex_factor_sum(tracks: &[GridTrack]) -> f32 {
-@@ -1295,7 +1358,7 @@ fn expand_flexible_tracks<Tree: LayoutPartialTree>(
+@@ -1295,7 +1343,7 @@ fn expand_flexible_tracks<Tree: LayoutPartialTree>(
                  // that the item crosses and a space to fill of the item’s max-content contribution.
                  items
                      .iter_mut()
@@ -8044,7 +8089,7 @@ index 18063621..cbe0442e 100644
                      .map(|item| {
                          let max_content_contribution = item_sizer.max_content_contribution(item, axis_tracks);
                          let tracks = &axis_tracks[item.track_range_excluding_lines(axis)];
-@@ -1334,9 +1397,20 @@ fn expand_flexible_tracks<Tree: LayoutPartialTree>(
+@@ -1334,9 +1382,20 @@ fn expand_flexible_tracks<Tree: LayoutPartialTree>(
  
      // For each flexible track, if the product of the used flex fraction and the track’s flex factor is greater
      // than the track’s base size, set its base size to that product.
@@ -8067,7 +8112,7 @@ index 18063621..cbe0442e 100644
  }
  
 diff --git a/src/compute/grid/types/grid_item.rs b/src/compute/grid/types/grid_item.rs
-index 6ad11edc..466744ec 100644
+index 6ad11edc..060268e8 100644
 --- a/src/compute/grid/types/grid_item.rs
 +++ b/src/compute/grid/types/grid_item.rs
 @@ -21,7 +21,7 @@ pub(in super::super) struct KnownDimensionsCacheEntry {
@@ -8460,7 +8505,7 @@ index 6ad11edc..466744ec 100644
              .maybe_add(box_sizing_adjustment)
              .get(axis)
              .map(|size| {
-@@ -743,6 +915,12 @@ impl GridItem {
+@@ -743,12 +915,21 @@ impl GridItem {
                  (size.is_sizing_keyword() && !size.is_stretch())
                      .then(|| self.min_content_contribution_cached(axis, tree, grid_area_size, grid_area_size))
              })
@@ -8473,7 +8518,16 @@ index 6ad11edc..466744ec 100644
              .or_else(|| {
                  self.min_size
                      .maybe_resolve(grid_area_size.map(|size| size.unwrap_or(0.0)), |val, basis| tree.calc(val, basis))
-@@ -805,6 +983,22 @@ impl GridItem {
+                     .maybe_apply_aspect_ratio(self.aspect_ratio)
+                     .maybe_add(box_sizing_adjustment)
+                     .get(axis)
++                    // pyro: a border-box minimum is no smaller than the item's padding and border (as Blink
++                    // resolves it), which a grid sized under a min-content constraint shows (`min-width: 0` buttons)
++                    .map(|size| size.max(padding_border_size.get(axis)))
+             })
+             .or_else(|| self.overflow.get(axis).maybe_into_automatic_min_size())
+             .unwrap_or_else(|| {
+@@ -805,6 +986,22 @@ impl GridItem {
              })
      }
  
@@ -8496,7 +8550,7 @@ index 6ad11edc..466744ec 100644
      /// Retrieve the item's minimum contribution from the cache or compute it using the provided parameters
      #[inline(always)]
      pub fn minimum_contribution_cached(
-@@ -818,7 +1012,37 @@ impl GridItem {
+@@ -818,7 +1015,37 @@ impl GridItem {
          self.minimum_contribution_cache.get(axis).unwrap_or_else(|| {
              let size = self.minimum_contribution(tree, axis, axis_tracks, grid_area_size, inner_node_size);
              self.minimum_contribution_cache.set(axis, Some(size));

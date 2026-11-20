@@ -927,6 +927,9 @@ impl GridItem {
                     .maybe_apply_aspect_ratio(self.aspect_ratio)
                     .maybe_add(box_sizing_adjustment)
                     .get(axis)
+                    // pyro: a border-box minimum is no smaller than the item's padding and border (as Blink
+                    // resolves it), which a grid sized under a min-content constraint shows (`min-width: 0` buttons)
+                    .map(|size| size.max(padding_border_size.get(axis)))
             })
             .or_else(|| self.overflow.get(axis).maybe_into_automatic_min_size())
             .unwrap_or_else(|| {

@@ -1381,21 +1381,49 @@ impl LayoutPassState<'_> {
                             let none = node.primary_styles().is_some_and(|s| {
                                 *s.get_box().get_appearance() == style::computed_values::appearance::T::None
                             });
-                            let (w, h) = match kind {
+                            let (w, h): (f32, f32) = match kind {
                                 Some("range") => (129.0, 16.0),
                                 _ if none => (0.0, 0.0),
                                 _ => (13.0, 13.0),
+                            };
+                            // pyro: a range whose `width` is a percentage has no
+                            // min-content width (Blink, as its text controls; CSS Sizing 3
+                            // § 5.2.1 compressible; WPT css-sizing `range-percent-intrinsic-size-1`):
+                            // measured with no basis for the percentage in a definite space (a
+                            // shrink-to-fit inline formatting context), it fits that space.
+                            let percent_width = kind == Some("range")
+                                && inputs.known_dimensions.width.is_none()
+                                && style.size().width.into_raw().uses_percentage();
+                            let w = match inputs.available_space.width {
+                                AvailableSpace::MinContent if percent_width => 0.0,
+                                AvailableSpace::Definite(space) if percent_width && inputs.parent_size.width.is_none() => {
+                                    w.min(space.max(padding.horizontal_axis_sum() + border.horizontal_axis_sum()))
+                                }
+                                _ => w,
+                            };
+                            // pyro: `min-width: min-content` / `max-content` floor it at that width, whatever its
+                            // `max-width` (the minimum wins; the keyword is no `min_size`): its natural width, none
+                            // for the min-content width of a percentage `width` (WPT css-sizing
+                            // `range-percent-intrinsic-size-1`)
+                            let keyword_min_width = match taffy::BlockItemStyle::min_size_keyword(&style).width.tag() {
+                                CompactLength::MIN_CONTENT_TAG if kind == Some("range") && !style.size().width.into_raw().uses_percentage() => Some(w),
+                                CompactLength::MAX_CONTENT_TAG if kind == Some("range") => Some(w),
+                                _ => None,
                             };
                             let natural = taffy::Size {
                                 width: (w - padding.horizontal_axis_sum() - border.horizontal_axis_sum()).max(0.0),
                                 height: (h - padding.vertical_axis_sum() - border.vertical_axis_sum()).max(0.0),
                             };
-                            return ChildLayout::Done(compute_leaf_layout(
+                            let mut out = compute_leaf_layout(
                                 inputs,
                                 &style,
                                 resolve_calc_value,
                                 |_known_size, _available_space| natural,
-                            ));
+                            );
+                            if let Some(min) = keyword_min_width.filter(|_| inputs.known_dimensions.width.is_none()) {
+                                out.size.width = out.size.width.max(min);
+                            }
+                            return ChildLayout::Done(out);
                         }
                         // pyro: a number field too (it was laid out as an empty box; WPT css-pseudo
                         // `placeholder-input-number`); `size` does not apply to it.

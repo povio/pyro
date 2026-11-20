@@ -827,6 +827,26 @@ impl LayoutPassState<'_> {
         None
     }
 
+    /// pyro: whether an in-flow atomic inline of `inline_layout` has a percentage in its width, its minimum or
+    /// maximum width, or its horizontal margins or padding (which resolve against this block's width)
+    fn inline_boxes_resolve_against_width(&self, inline_layout: &crate::node::TextLayout) -> bool {
+        inline_layout.layout.inline_boxes().filter(|ibox| !ibox.kind.is_span_edge()).any(|ibox| {
+            let style = self.child_layout_style(&self.nodes[NodeId::from_u64(ibox.id)]);
+            if style.position().is_out_of_flow() {
+                return false;
+            }
+            let pct = |raw: taffy::CompactLength| raw.uses_percentage();
+            let (margin, padding) = (style.margin(), style.padding());
+            pct(style.size().width.into_raw())
+                || pct(style.min_size().width.into_raw())
+                || pct(style.max_size().width.into_raw())
+                || pct(margin.left.into_raw())
+                || pct(margin.right.into_raw())
+                || pct(padding.left.into_raw())
+                || pct(padding.right.into_raw())
+        })
+    }
+
     fn compute_inline_layout_inner(
         &mut self,
         node_id: NodeId,
@@ -1049,7 +1069,11 @@ impl LayoutPassState<'_> {
             available_space: child_available_space,
             sizing_mode: SizingMode::InherentSize,
             parent_size: Size {
-                width: available_space.width.into_option(),
+                // pyro: while this block's own width is unknown (its intrinsic sizes are measured), the inline
+                // boxes' percentage widths have no basis: they behave as `auto` (Blink; an outer definite width
+                // given as the available space is no containing block; WPT css-sizing
+                // `range-percent-intrinsic-size-1`)
+                width: available_space.width.into_option().filter(|_| node_size.width.is_some()),
                 // Anonymous blocks do not establish the containing block for percentages.
                 height: if self.nodes[node_id].is_anonymous() {
                     parent_size.height
@@ -1493,6 +1517,19 @@ impl LayoutPassState<'_> {
                     .maybe_clamp(min_width, max_width)
                     - pbw
             });
+
+        // pyro: a shrink-to-fit block whose inline boxes have percentage widths (or margins or padding) measured
+        // them with no basis (`child_inputs`: they behaved as `auto`); now that its width is known they resolve
+        // against it, as a block laid out at that width (Blink: an inline-block's `width: 50%` input; WPT
+        // css-sizing `range-percent-intrinsic-size-1`).
+        if known_dimensions.width.is_none()
+            && !(inputs.run_mode == taffy::RunMode::ComputeSize && inputs.axis == RequestedAxis::Horizontal)
+            && self.inline_boxes_resolve_against_width(&inline_layout)
+        {
+            self.nodes[node_id].data.downcast_element_mut().unwrap().inline_layout_data = Some(inline_layout);
+            let known = Size { width: Some((width + pbw) / scale), height: known_dimensions.height };
+            return self.compute_inline_layout_inner(node_id, LayoutInput { known_dimensions: known, ..inputs }, block_ctx);
+        }
 
         #[cfg(not(feature = "floats"))]
         let _ = block_ctx; // Suppress unused variable warning
