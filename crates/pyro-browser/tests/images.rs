@@ -525,6 +525,23 @@ fn an_svg_image_draws_to_a_canvas() {
     assert_eq!(eval(&thread, page, "read.join('|')"), "p:255|d:SecurityError");
 }
 
+#[test]
+fn completed_image_body_is_ready_for_layout() {
+    let (mut thread, page, loader) = setup("<img src='/detour.png'>");
+    let url = "http://site.test/detour.png";
+    let image = png(3, 2);
+    loader.insert_bytes(url, "image/png", &image, Duration::ZERO);
+    thread.browser.set_loader(Some(Rc::new(Opaquing(loader.clone()))));
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    assert_eq!(eval(&thread, page, "document.images[0].naturalWidth"), "3");
+    let client = pyro_browser::document_client(&thread.browser.page(page).unwrap().main_frame);
+    let key = pyro_dom::layout::LayoutBodyKey::new(&client, url, &Default::default(), pyro_dom::layout::SubresourceKind::Image);
+    let body = thread.browser.layout_bodies(page).unwrap().get(&key).expect("the loaded image is ready to paint");
+    assert_eq!(body.bytes.as_slice(), image.as_slice());
+    assert!(body.opaque);
+}
+
 /// What the page fetched itself and hands its layout (an `<object>`'s image) is stored for the
 /// requesting document alone, with its URL after redirects, tainting and status written together:
 /// no other document's key finds it; a CORS SVG `<image>`'s response and a failed one are never

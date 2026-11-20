@@ -449,9 +449,9 @@ impl Browser {
         bindings.keep_loading_image(node, true);
         { let mut dom = bindings.dom.borrow_mut(); dom.set_natural_size(node, None); dom.set_reported_natural_size(node, None); }
         let weak = Rc::downgrade(&bindings);
-        let finish = move |b: &mut Browser, result| {
+        let finish = move |b: &mut Browser, result, key| {
             let Some(bindings) = weak.upgrade() else { return };
-            b.finish_image(page, &loader, &bindings, node, generation, result);
+            b.finish_image(page, &loader, &bindings, node, generation, result, key);
         };
         if url.starts_with("blob:") {
             let result = bindings
@@ -473,11 +473,11 @@ impl Browser {
                 nosniff: false, opaque: false,
                 })
                 .ok_or_else(|| "revoked or unknown blob URL".to_owned());
-            self.scheduler().post(TaskSource::Networking, move |b| finish(b, result));
+            self.scheduler().post(TaskSource::Networking, move |b| finish(b, result, None));
             return;
         }
         let Some(resource_loader) = self.loader_for(page) else {
-            self.scheduler().post(TaskSource::Networking, move |b| finish(b, Err("no resource loader".into())));
+            self.scheduler().post(TaskSource::Networking, move |b| finish(b, Err("no resource loader".into()), None));
             return;
         };
         let frame = self.doc(page).expect("page").main_frame.clone();
@@ -496,7 +496,8 @@ impl Browser {
             module: None,
             part: None,
         };
-        let cancel = self.fetch_document_resource(page, &resource_loader, request, Box::new(finish));
+        let key = crate::layout_key_of(&frame, &request, None);
+        let cancel = self.fetch_document_resource(page, &resource_loader, request, Box::new(move |browser, result| finish(browser, result, Some(key))));
         if let Some(mut image) = self.doc_mut(page).and_then(|p| p.filter_map(|p| p.images.entries.get_mut(&node))) {
             image.cancel = cancel;
         }
@@ -510,6 +511,7 @@ impl Browser {
         node: NodeId,
         generation: u64,
         result: Result<Resource, String>,
+        key: Option<pyro_dom::layout::LayoutBodyKey>,
     ) {
         // A src change queued in this task supersedes this result.
         self.drain_dom_resources(page);
@@ -574,6 +576,15 @@ impl Browser {
         // pyro: a successful load goes into the list of available images (HTML "update the image
         // data"), its bytes with it for a canvas the script makes later.
         let raster = raster.filter(|r| r.body.len() <= MAX_IMAGE_BYTES);
+        if let (Some(key), Some(resource)) = (key, raster.as_ref()) {
+            self.provide_layout_body(page, key, pyro_dom::layout::LayoutBody {
+                bytes: std::sync::Arc::new(resource.body.clone()),
+                final_url: resource.url.clone(),
+                opaque: resource.opaque,
+                status: resource.status,
+                referrer_policy: resource.referrer_policy.map(|policy| policy.as_str().to_owned()),
+            });
+        }
         // pyro: a no-cors response is clean only if its tainting is "basic": not one whose redirect
         // chain went to another origin, though it ended at the document's.
         let clean = raster.as_ref().is_some_and(|r| cors || (!r.opaque && self.image_origin_clean(page, &r.url)));
