@@ -65,6 +65,22 @@ const GREEN: [u8; 3] = [0, 128, 0];
 const YELLOW: [u8; 3] = [255, 255, 0];
 
 #[test]
+fn fallback_runs_share_their_text_items_alignment_width() {
+    let pairs = "ab".repeat(1024);
+    let snapshot = Snapshot {
+        html: format!("<!doctype html><style>@font-face{{font-family:A;src:url(ahem.ttf);unicode-range:U+61}}@font-face{{font-family:B;src:url(ahem.ttf);unicode-range:U+62}}body{{margin:0}}div{{width:30000px;margin-left:-29600px;white-space:nowrap;text-align:right;font:10px A,B;letter-spacing:.003px}}i{{display:inline-block;width:4px;height:10px;background:red}}</style><div>{pairs}<i></i></div>"),
+        base_url: "http://test/".into(), width: 400, height: 40, device_scale_factor: 1.0, ..Default::default()
+    };
+    let fetcher: Arc<dyn Fetcher> = Arc::new(Fonts);
+    let image = Renderer::new().render(&snapshot, Area::Viewport, Backend::Cpu, &fetcher).unwrap().0;
+    let red: Vec<_> = (0..400).filter(|&x| (0..40).any(|y| {
+        let index = (y * 400 + x) * 4;
+        image.data[index..index + 3] == RED
+    })).collect();
+    assert_eq!(red, [396, 397, 398, 399]);
+}
+
+#[test]
 fn size_adjust_scales_the_glyphs_of_its_face_only() {
     // 20px text: the plain face's box is 20px, the one at 150% 30px, a fallback for a character
     // outside the adjusted face's range keeps the element's size.
