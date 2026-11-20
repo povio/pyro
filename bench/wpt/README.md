@@ -668,6 +668,16 @@ worker page reports its harness status and each named result in sequence. Duplic
 An early harness error can have zero named results, and a timeout retains results already received. HTTP/2 pages
 are excluded because this wptserve configuration disables HTTP/2. The default gate keeps its existing corpus and output.
 
+Use `--generated-globals MANIFEST` in place of `--dedicated-workers MANIFEST` to include shared workers, service
+workers and window modules. The runner selects the upstream wrapper for each declared global, retains its query
+variant, and records the environment and HTTP or HTTPS scheme per URL. Service worker wrappers use HTTPS, including
+module workers with no `.https.` in their filename. This mode starts its own wptserve and opens a fresh browser
+context per page to isolate registrations. For local Chrome comparisons its launch adapter must trust WPT's test
+certificate for service worker script loads. Upstream Chrome uses the test certificate's public-key fingerprint
+in `tools/wptrunner/wptrunner/browsers/chrome_spki_certs.py`. A context configured to ignore HTTPS errors alone
+can still reject service worker registration. A runner deadline records a timeout with null harness status and
+retains the named results received before the deadline.
+
 `run.mjs --server wptserve` (and `gate.mjs run --server wptserve`) serves the pages with WPT's own server instead of
 `serve.mjs` (`wptserve.mjs`): every origin a test names (`web-platform.test`, `www`/`www1`/`www2` and the IDN
 subdomains, `not-web-platform.test`; http, https with WPT's test certificates, ws, wss; no h2), the Python handlers,

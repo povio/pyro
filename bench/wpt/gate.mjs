@@ -419,7 +419,7 @@ function diff(sets) {
 }
 
 try {
-  if (flag('--dedicated-workers')) throw new Error('--dedicated-workers is a run.mjs measurement option');
+  if (flag('--dedicated-workers') || flag('--generated-globals')) throw new Error('generated global measurements use run.mjs');
   if (cmd === 'run') run();
   else if (cmd === 'check') check(positional());
   else if (cmd === 'update') update(positional());

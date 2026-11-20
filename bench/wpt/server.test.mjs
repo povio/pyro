@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { discoverCrashtests } from './crashtest.mjs';
-import { NEEDS_H2, dedicatedWorkerEntries, discover, discoverReftests, serverFor } from './lib.mjs';
+import { NEEDS_H2, dedicatedWorkerEntries, generatedGlobalEntries, discover, discoverReftests, serverFor } from './lib.mjs';
 
 test('reftests and crashtests gate under wptserve with testdriver; testharness pages under serve.mjs', () => {
   expect(serverFor('reftest')).toEqual({ server: 'wptserve', testdriver: true });
@@ -74,6 +74,23 @@ test('dedicated worker discovery uses manifest variants and requires the matchin
     expect(reasons.get('protocol/only.h2.html')).toBe(NEEDS_H2);
     fs.appendFileSync(path.join(wpt, 'encoding/only.worker.js'), 'done();');
     expect(() => urls({ dedicatedWorkers, wptserve: true })).toThrow('does not match source');
+  } finally {
+    fs.rmSync(wpt, { recursive: true, force: true });
+  }
+});
+
+test('the expanded manifest mode selects native shared, service and module wrappers with their variants', () => {
+  const src = '// META: global=sharedworker,serviceworker,sharedworker-module,serviceworker-module,window-module\n';
+  const wpt = checkout({ 'workers/probe.any.js': src });
+  try {
+    const suffixes = ['sharedworker', 'serviceworker', 'sharedworker-module', 'serviceworker-module', 'window-module'];
+    const hash = crypto.createHash('sha1').update('blob ' + Buffer.byteLength(src) + '\0' + src).digest('hex');
+    const pages = suffixes.map((s) => ['workers/probe.any.' + s + '.html?x=1', {}]);
+    const manifest = { url_base: '/', items: { testharness: { workers: { 'probe.any.js': [hash, ...pages] } } } };
+    expect(discover(wpt, ['workers'], { wptserve: true, dedicatedWorkers: dedicatedWorkerEntries(manifest) }).tests).toEqual([]);
+    const opts = { wptserve: true, generatedGlobals: generatedGlobalEntries(manifest) };
+    const results = discover(wpt, ['workers'], opts).tests;
+    expect(results.map((t) => [t.environment, t.url])).toEqual(suffixes.map((s, i) => [s, pages[i][0]]));
   } finally {
     fs.rmSync(wpt, { recursive: true, force: true });
   }

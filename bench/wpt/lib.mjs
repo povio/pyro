@@ -200,6 +200,10 @@ TESTHARNESS_SKIP.push(
 // wptserve supplies the actual worker and module-worker scripts, their imports and the
 // outer testharness page. Use the upstream manifest's global expansion and query variants.
 export function dedicatedWorkerEntries(manifest) {
+  return generatedGlobalEntries(manifest, { dedicatedOnly: true });
+}
+
+export function generatedGlobalEntries(manifest, { dedicatedOnly = false } = {}) {
   if (manifest.url_base !== '/' || !manifest.items?.testharness) throw new Error('expected the root WPT testharness manifest');
   const bySource = new Map();
   function visit(tree, prefix) {
@@ -208,8 +212,17 @@ export function dedicatedWorkerEntries(manifest) {
       if (!Array.isArray(entry)) { visit(entry, source + '/'); continue; }
       if (!/\.(any|worker)\.js$/.test(source)) continue;
       const [blob, ...items] = entry;
-      const urls = items.map(([url]) => url?.replace(/^\//, '')).filter((url) => url && /\.worker(?:-module)?\.html$/.test(url.split(/[?#]/, 1)[0]));
-      if (urls.length) bySource.set(source, { blob, urls });
+      const pages = [];
+      for (const [rawUrl] of items) {
+        if (!rawUrl) continue;
+        const url = rawUrl.replace(/^\//, '');
+        const file = url.split(/[?#]/, 1)[0];
+        const suffix = file.match(/\.(worker(?:-module)?|sharedworker(?:-module)?|serviceworker(?:-module)?|window-module)\.html$/)?.[1];
+        if (!suffix || (dedicatedOnly && !suffix.startsWith('worker'))) continue;
+        const environment = dedicatedOnly ? 'dedicatedworker' : suffix.replace(/^worker/, 'dedicatedworker');
+        pages.push({ url, environment });
+      }
+      if (pages.length) bySource.set(source, { blob, pages });
     }
   }
   visit(manifest.items.testharness, '');
@@ -220,8 +233,9 @@ export function dedicatedWorkerEntries(manifest) {
 // `excluded` counts what was left out and why (identical for every binary).
 // `reasons` (a Map, optional) receives each left-out file's reason, keyed by its path (coverage.mjs).
 // `wptserve`: the server is wptserve (run.mjs --server wptserve), so pages that need it are kept.
-export function discover(wpt, dirs, { sampleEncoding = 1, reasons, wptserve = false, testdriver = false, dedicatedWorkers } = {}) {
-  if (dedicatedWorkers && !wptserve) throw new Error('dedicated worker discovery needs --server wptserve');
+export function discover(wpt, dirs, { sampleEncoding = 1, reasons, wptserve = false, testdriver = false, dedicatedWorkers, generatedGlobals } = {}) {
+  const wrappers = generatedGlobals ?? dedicatedWorkers;
+  if (wrappers && !wptserve) throw new Error('dedicated worker discovery needs --server wptserve');
   const tests = [];
   const excluded = {};
   let rel;
@@ -232,16 +246,16 @@ export function discover(wpt, dirs, { sampleEncoding = 1, reasons, wptserve = fa
       const base = path.basename(f);
       // `code`: the source the wptserve check reads (markup without its comments).
       let src, code, url, variants = [''], long = false;
-      const worker = dedicatedWorkers?.get(rel);
-      if (/\.(any|window)\.js$/.test(base) || worker) {
+      const record = wrappers?.get(rel);
+      if (/\.(any|window)\.js$/.test(base) || record) {
         const bytes = fs.readFileSync(f);
-        if (worker && crypto.createHash('sha1').update('blob ' + bytes.length + '\0').update(bytes).digest('hex') !== worker.blob) {
-          throw new Error('dedicated worker manifest does not match source: ' + rel);
+        if (record && crypto.createHash('sha1').update('blob ' + bytes.length + '\0').update(bytes).digest('hex') !== record.blob) {
+          throw new Error('generated global manifest does not match source: ' + rel);
         }
         src = code = bytes.toString('utf8');
         const g = src.match(/^\/\/\s*META:\s*global=(.*)$/m);
         const hasWindow = !base.endsWith('.worker.js') && (!base.endsWith('.any.js') || !g || g[1].split(',').some((s) => ['window', 'default'].includes(s.trim())));
-        if (!hasWindow && !worker) { exclude('no window global'); continue; }
+        if (!hasWindow && !record) { exclude('no window global'); continue; }
         if (hasWindow) url = rel.replace(/\.js$/, '.html');
         const v = [...src.matchAll(/^\/\/\s*META:\s*variant=(.*)$/gm)].map((m) => m[1].trim());
         if (v.length) variants = v;
@@ -268,21 +282,25 @@ export function discover(wpt, dirs, { sampleEncoding = 1, reasons, wptserve = fa
       // other pages (wpt-full.yml --jobs 16) the larger SIMD ones outran the normal timeout, so they get the long one.
       if (rel.startsWith('wasm/core/')) long = true;
       const viewport = LEGACY_VIEWPORT_DIRS.includes(d) ? {} : { viewport: WPTRUNNER_VIEWPORT };
-      if (dedicatedWorkers && H2_NAME.test(base)) {
+      if (wrappers && H2_NAME.test(base)) {
         if (url) for (const v of variants) exclude(NEEDS_H2, url + v);
-        for (const u of worker?.urls ?? []) exclude(NEEDS_H2, u);
+        for (const page of record?.pages ?? []) exclude(NEEDS_H2, page.url);
         continue;
       }
       if (url) for (const v of variants) tests.push({ dir: d, url: url + v, long, ...viewport });
-      for (const workerUrl of worker?.urls ?? []) {
-        tests.push({ dir: d, url: workerUrl, long, ...viewport, environment: 'dedicatedworker' });
-      }
+      for (const page of record?.pages ?? []) tests.push({ dir: d, ...page, long, ...viewport });
     }
   }
   // sampleEncoding N: keep every Nth encoding/ page (identical selection for every browser)
-  let windowIndex = 0, workerIndex = 0;
-  return { tests: tests.filter((t) => t.dir !== 'encoding'
-    || (t.environment === 'dedicatedworker' ? workerIndex++ : windowIndex++) % sampleEncoding === 0), excluded };
+  const indexByEnvironment = new Map();
+  return { tests: tests.filter((t) => {
+    if (t.dir !== 'encoding' || sampleEncoding === 1) return true;
+    // Classic and module dedicated workers were previously sampled together.
+    const environment = t.environment === 'dedicatedworker-module' ? 'dedicatedworker' : t.environment ?? 'window';
+    const i = indexByEnvironment.get(environment) ?? 0;
+    indexByEnvironment.set(environment, i + 1);
+    return i % sampleEncoding === 0;
+  }), excluded };
 }
 
 // ---------- reftest discovery ----------
