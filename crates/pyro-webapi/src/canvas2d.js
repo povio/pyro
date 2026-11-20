@@ -37,6 +37,8 @@
       for (const name of getOwnPropertyNames(proto)) {
         if (name === 'constructor' || name === 'prototype' || name === 'length' || name === 'name') continue;
         const desc = getOwnPropertyDescriptor(proto, name);
+        if (desc.get) defineProperty(desc.get, 'name', {value: `get ${name}`, configurable: true});
+        if (desc.set) defineProperty(desc.set, 'name', {value: `set ${name}`, configurable: true});
         desc.enumerable = true;
         defineProperty(proto, name, desc);
       }
@@ -150,6 +152,20 @@
     }
     toJSON() { const [p1,p2,p3,p4] = this.#points; return {p1,p2,p3,p4}; }
   }
+  class DOMRectList {
+    #rects;
+    constructor(...args) {
+      if (args[0] !== secret) throw illegal();
+      this.#rects = args[1];
+      this.#rects.forEach((value, index) => defineProperty(this, index, {value, enumerable: true, configurable: true}));
+    }
+    get length() { return this.#rects.length; }
+    item(index) {
+      if (!arguments.length) throw new TypeErrorC('An index is required');
+      return this.#rects[index >>> 0] ?? null;
+    }
+  }
+  defineProperty(DOMRectList.prototype, Symbol.iterator, {value: Array.prototype.values, writable: true, configurable: true});
   function transformPoint(m, x, y, z, w) {
     return new DOMPoint(
       m[0] * x + m[4] * y + m[8] * z + m[12] * w,
@@ -349,11 +365,11 @@
 
   function number(v, fallback) { return v === undefined ? fallback : +v; }
   class DOMMatrixReadOnly {
-    constructor(init) {
+    constructor(init = undefined) {
       const s = initToState(init);
       matrixState.set(this, s);
     }
-    static fromMatrix(other) { const s = fixup(other, false); return make(DOMMatrixReadOnly, s.m, s.is2D); }
+    static fromMatrix(other = {}) { const s = fixup(other, false); return make(DOMMatrixReadOnly, s.m, s.is2D); }
     static fromFloat32Array(array) { return fromArray(DOMMatrixReadOnly, array, Float32ArrayC); }
     static fromFloat64Array(array) { return fromArray(DOMMatrixReadOnly, array, Float64ArrayC); }
     get a() { return st(this).m[0]; }
@@ -364,20 +380,20 @@
     get f() { return st(this).m[13]; }
     get is2D() { return st(this).is2D; }
     get isIdentity() { const m = st(this).m; return m.every((v, i) => v === IDENTITY[i]); }
-    translate(tx, ty, tz) { return copy(this).translateSelf(tx, ty, tz); }
-    scale(sx, sy, sz, ox, oy, oz) { return copy(this).scaleSelf(sx, sy, sz, ox, oy, oz); }
+    translate(tx = 0, ty, tz) { return copy(this).translateSelf(tx, ty, tz); }
+    scale(sx = 1, sy, sz, ox, oy, oz) { return copy(this).scaleSelf(sx, sy, sz, ox, oy, oz); }
     scaleNonUniform(sx = 1, sy = 1) { return copy(this).scaleSelf(sx, sy, 1, 0, 0, 0); }
-    scale3d(scale, ox, oy, oz) { return copy(this).scale3dSelf(scale, ox, oy, oz); }
-    rotate(rx, ry, rz) { return copy(this).rotateSelf(rx, ry, rz); }
-    rotateFromVector(x, y) { return copy(this).rotateFromVectorSelf(x, y); }
-    rotateAxisAngle(x, y, z, angle) { return copy(this).rotateAxisAngleSelf(x, y, z, angle); }
-    skewX(sx) { return copy(this).skewXSelf(sx); }
-    skewY(sy) { return copy(this).skewYSelf(sy); }
-    multiply(other) { return copy(this).multiplySelf(other); }
+    scale3d(scale = 1, ox, oy, oz) { return copy(this).scale3dSelf(scale, ox, oy, oz); }
+    rotate(rx = 0, ry, rz) { return copy(this).rotateSelf(rx, ry, rz); }
+    rotateFromVector(x = 0, y) { return copy(this).rotateFromVectorSelf(x, y); }
+    rotateAxisAngle(x = 0, y, z, angle) { return copy(this).rotateAxisAngleSelf(x, y, z, angle); }
+    skewX(sx = 0) { return copy(this).skewXSelf(sx); }
+    skewY(sy = 0) { return copy(this).skewYSelf(sy); }
+    multiply(other = {}) { return copy(this).multiplySelf(other); }
     flipX() { const s = st(this); return make(DOMMatrix, multiply(s.m, scaling(-1, 1, 1)), s.is2D); }
     flipY() { const s = st(this); return make(DOMMatrix, multiply(s.m, scaling(1, -1, 1)), s.is2D); }
     inverse() { return copy(this).invertSelf(); }
-    transformPoint(point) {
+    transformPoint(point = {}) {
       const o = dict(point);
       return transformPoint(st(this).m, number(o.x, 0), number(o.y, 0), number(o.z, 0), number(o.w, 1));
     }
@@ -412,17 +428,17 @@
   function copy(self) { const s = st(self); return make(DOMMatrix, s.m, s.is2D); }
 
   class DOMMatrix extends DOMMatrixReadOnly {
-    static fromMatrix(other) { const s = fixup(other, false); return make(DOMMatrix, s.m, s.is2D); }
+    static fromMatrix(other = {}) { const s = fixup(other, false); return make(DOMMatrix, s.m, s.is2D); }
     static fromFloat32Array(array) { return fromArray(DOMMatrix, array, Float32ArrayC); }
     static fromFloat64Array(array) { return fromArray(DOMMatrix, array, Float64ArrayC); }
-    multiplySelf(other) {
+    multiplySelf(other = {}) {
       const s = st(this);
       const o = matrixState.has(other) ? matrixState.get(other) : fixup(other, false);
       s.m = multiply(s.m, o.m);
       if (!o.is2D) s.is2D = false;
       return this;
     }
-    preMultiplySelf(other) {
+    preMultiplySelf(other = {}) {
       const s = st(this);
       const o = matrixState.has(other) ? matrixState.get(other) : fixup(other, false);
       s.m = multiply(o.m, s.m);
@@ -519,6 +535,7 @@
       enumerable: true, configurable: true,
     });
   });
+  webidl(DOMRectList, 'DOMRectList');
   webidl(DOMRectReadOnly, 'DOMRectReadOnly');
   webidl(DOMRect, 'DOMRect');
   webidl(DOMQuad, 'DOMQuad');
@@ -896,7 +913,8 @@
   webidl(TextMetrics, 'TextMetrics');
 
   return {
-    DOMRectReadOnly, DOMRect, SVGRect: DOMRect, DOMQuad, DOMPointReadOnly, DOMPoint, DOMMatrixReadOnly, DOMMatrix, WebKitCSSMatrix: DOMMatrix,
+    DOMRectList, DOMRectReadOnly, DOMRect, SVGRect: DOMRect, DOMQuad, DOMPointReadOnly, DOMPoint, DOMMatrixReadOnly, DOMMatrix, WebKitCSSMatrix: DOMMatrix,
+    rectList(rects) { return new DOMRectList(secret, rects); },
     rectValue(x,y,width,height,readonly) { return readonly ? new DOMRectReadOnly(x,y,width,height) : new DOMRect(x,y,width,height); },
     Path2D, ImageData, CanvasGradient, CanvasPattern, TextMetrics,
     ImageBitmap, OffscreenCanvas, OffscreenCanvasRenderingContext2D, createImageBitmap,

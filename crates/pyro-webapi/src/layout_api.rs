@@ -27,7 +27,7 @@ pub(crate) fn client_rects<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s
     for r in rects {
         vals.push(s, crate::canvas::rect_value(s, page, false, r.layout_units())?);
     }
-    Ok(s.array(&vals.iter(s).collect::<Vec<_>>())?.value())
+    crate::canvas::rect_list(s, page, &vals.iter(s).collect::<Vec<_>>())
 }
 
 /// Range geometry for (start container, start offset, end container, end

@@ -79,6 +79,7 @@ where
         "DOMMatrixReadOnly",
         "DOMMatrix",
         "SVGRect",
+        "DOMRectList",
         "WebKitCSSMatrix",
         "Path2D",
         "ImageData",
@@ -122,6 +123,10 @@ where
 
 pub(crate) fn rect_value<'s>(s: &Scope<'s>, page: &Rc<PageDom>, readonly: bool, rect: pyro_dom::layout::Rect) -> JsResult<Value<'s>> {
     MODULE.helper(s, page, "rectValue", &[s.number(rect.x), s.number(rect.y), s.number(rect.width), s.number(rect.height), s.boolean(readonly)])
+}
+
+pub(crate) fn rect_list<'s>(s: &Scope<'s>, page: &Rc<PageDom>, rects: &[Value<'s>]) -> JsResult<Value<'s>> {
+    MODULE.helper(s, page, "rectList", &[s.array(rects)?.value()])
 }
 
 fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
