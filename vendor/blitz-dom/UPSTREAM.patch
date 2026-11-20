@@ -6717,9 +6717,9 @@ diff --git a/packages/blitz-dom/src/layout/anchor.rs b/packages/blitz-dom/src/la
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/anchor.rs
-@@ -0,0 +1,280 @@
+@@ -0,0 +1,297 @@
 +use crate::{BaseDocument, Node};
-+use stylo_taffy::CopyStyleGetters;
++use stylo_taffy::{CopyStyleGetters, WritingModeExt};
 +use euclid::default::{Point3D, Transform3D};
 +
 +fn projected_bounds(matrix: &Transform3D<f64>, origin: taffy::Point<f32>, size: taffy::Size<f32>) -> Option<taffy::Rect<f32>> {
@@ -6798,6 +6798,23 @@ new file mode 100644
 +}
 +
 +impl BaseDocument {
++    pub(super) fn anchor_placer_mode(&self, node: &Node) -> stylo_taffy::WritingMode {
++        node.containing_block().and_then(|id| self.nodes[id].primary_styles()).map_or(stylo_taffy::WritingMode::empty(), |style| style.writing_mode)
++    }
++
++    pub(super) fn anchor_physical_size(&self, node: &Node) -> taffy::Size<f32> {
++        self.anchor_placer_mode(node).logical_size(node.unrounded_layout().size)
++    }
++
++    fn anchor_physical_layout(&self, node: &Node, placer: &Node) -> taffy::Layout {
++        let raw = node.unrounded_layout();
++        let Some(style) = placer.primary_styles() else { return *raw };
++        let wm = style.writing_mode;
++        if !wm.swaps_axes() { return *raw; }
++        let x = if wm.is_vertical_lr() { raw.location.y } else { self.anchor_physical_size(placer).width - raw.location.y - raw.size.height };
++        taffy::Layout { location: taffy::Point { x, y: raw.location.x }, size: raw.size.transpose(), border: wm.physical_rect(raw.border), padding: wm.physical_rect(raw.padding), ..*raw }
++    }
++
 +    pub(super) fn uses_anchor_queries(style: &style::properties::ComputedValues) -> bool {
 +        use style::values::computed::length::{Margin, MaxSize, Size};
 +        use style::values::computed::position::Inset;
@@ -6915,7 +6932,7 @@ new file mode 100644
 +        }
 +        let mut cursor = id;
 +        let mut point = taffy::Point::ZERO;
-+        let mut extent = anchor.unrounded_layout().size;
++        let mut extent = self.anchor_physical_size(anchor);
 +        if let Some(fragments) = anchor.inline_fragment_boxes() {
 +            let Some(rect) = fragments.reduce(|a, b| taffy::Rect {
 +                left: a.left.min(b.left),
@@ -6939,7 +6956,7 @@ new file mode 100644
 +            let parent = if current.is_out_of_flow() { current.containing_block() } else { current.layout_parent.get() };
 +            let Some(parent) = parent else { break };
 +            self.anchor_geometry_steps.set(self.anchor_geometry_steps.get().saturating_add(1));
-+            let layout = current.unrounded_layout();
++            let layout = &self.anchor_physical_layout(current, &self.nodes[parent]);
 +            if self.anchor_transform_sources.borrow_mut().entry(container.id).or_default().insert(cursor)
 +                && let Some(style) = current.primary_styles() {
 +                self.anchor_transform_users.borrow_mut().entry(cursor).or_insert_with(|| (style.clone(), Default::default())).1.insert(container.id);
@@ -22348,7 +22365,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          compute_cached_layout(self, node_id, inputs, |tree, node_id, inputs| {
              tree.compute_child_layout_internal(node_id, inputs, None)
          })
-@@ -693,22 +2430,302 @@
+@@ -693,22 +2430,323 @@
          Self: 'a;
  
      fn get_oof_item_style(&self, node_id: NodeId) -> Self::OofItemStyle<'_> {
@@ -22428,7 +22445,11 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +        let Some((anchor,point,extent)) = self.anchor_rect(node,container,name,pos.position_anchor.scope) else {return none};
 +        let old = node.anchor_scroll_axes.get();
 +        node.anchor_scroll_axes.set((if x {Some(anchor)} else {old.0}, if y {Some(anchor)} else {old.1}));
-+        taffy::Point {x:x.then_some(point.x+extent.width*0.5),y:y.then_some(point.y+extent.height*0.5)}
++        use stylo_taffy::WritingModeExt;
++        let wm = cb.writing_mode;
++        let center_x = point.x + extent.width * 0.5;
++        let center_x = if wm.swaps_axes() && !wm.is_vertical_lr() { self.anchor_physical_size(container).width - center_x } else { center_x };
++        wm.logical_point(taffy::Point { x:x.then_some(center_x), y:y.then_some(point.y+extent.height*0.5) })
 +    }
 +
 +    fn set_position_overflow(&mut self, id: NodeId, overflow: bool) {
@@ -22450,24 +22471,29 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +    }
 +
 +    fn oof_anchor_sizes(&self, node: NodeId, container: NodeId, basis: taffy::Size<f32>) -> Option<([taffy::Size<Option<f32>>;3],taffy::Rect<Option<f32>>)> {
++        use stylo_taffy::WritingModeExt;
 +        use style::values::computed::length::{Size,MaxSize,Margin};
 +        let node = self.node_from_id(node);
 +        let container = self.node_from_id(container);
 +        let item = self.get_oof_item_style(taffy_node_id(node.id));
 +        let pos = item.style.get_position();
 +        let margins = item.style.get_margin();
++        let wm = container.primary_styles()?.writing_mode;
++        let inline_basis = basis.width;
++        let basis = wm.logical_size(basis);
 +        let calc = |lp:&style::values::computed::LengthPercentage,h,b| self.anchor_calc_size(lp,node,container,h,&item.style).map(|v|v.resolve(CSSPixelLength::new(b)).px());
 +        let size = |v:&Size,h| match v { Size::AnchorSizeFunction(f) => self.anchor_dimension(f,node,container,h,&item.style), Size::AnchorContainingCalcFunction(lp) => calc(&lp.0,h,if h {basis.width} else {basis.height}), _ => None };
 +        let max = |v:&MaxSize,h| match v { MaxSize::AnchorSizeFunction(f) => self.anchor_dimension(f,node,container,h,&item.style), MaxSize::AnchorContainingCalcFunction(lp) => calc(&lp.0,h,if h {basis.width} else {basis.height}), _ => None };
-+        let margin = |v:&Margin,h| match v { Margin::AnchorSizeFunction(f) => self.anchor_dimension(f,node,container,h,&item.style), Margin::AnchorContainingCalcFunction(lp) => calc(lp,h,basis.width), _ => None };
++        let margin = |v:&Margin,h| match v { Margin::AnchorSizeFunction(f) => self.anchor_dimension(f,node,container,h,&item.style), Margin::AnchorContainingCalcFunction(lp) => calc(lp,h,inline_basis), _ => None };
 +        Some(([
 +            taffy::Size { width:size(&pos.width,true),height:size(&pos.height,false) },
 +            taffy::Size { width:size(&pos.min_width,true),height:size(&pos.min_height,false) },
 +            taffy::Size { width:max(&pos.max_width,true),height:max(&pos.max_height,false) }
-+        ],taffy::Rect { left:margin(&margins.margin_left,true),right:margin(&margins.margin_right,true),top:margin(&margins.margin_top,false),bottom:margin(&margins.margin_bottom,false) }))
++        ].map(|size| wm.logical_size(size)),wm.logical_rect(taffy::Rect { left:margin(&margins.margin_left,true),right:margin(&margins.margin_right,true),top:margin(&margins.margin_top,false),bottom:margin(&margins.margin_bottom,false) })))
 +    }
 +
 +    fn oof_anchor_insets(&self, node: NodeId, container: NodeId, size: taffy::Size<f32>, offset: taffy::Point<f32>) -> taffy::Rect<Option<f32>> {
++        use stylo_taffy::WritingModeExt;
 +        use style::logical_geometry::{PhysicalSide, WritingMode};
 +        use style::values::computed::position::Inset;
 +        use style::values::generics::position::{GenericAnchorSide, AnchorSideKeyword as Side};
@@ -22478,6 +22504,10 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +        let style = &item.style;
 +        let pos = style.get_position();
 +        let default_anchor = std::cell::OnceCell::new();
++        let wm = container.primary_styles().map_or(WritingMode::empty(), |style| style.writing_mode);
++        let size = wm.logical_size(size);
++        let mut offset = wm.logical_point(offset);
++        if wm.swaps_axes() && !wm.is_vertical_lr() { offset.x = self.anchor_physical_size(container).width - offset.x - size.width; }
 +        let coordinate = |target: &style::values::generics::position::TreeScoped<style::values::DashedIdent>, anchor_side: &style::values::computed::position::AnchorSide, side: PhysicalSide| {
 +            if !anchor_side.valid_for(side) { return None; }
 +            let (name, level) = if target.value.0.is_empty() {
@@ -22537,7 +22567,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +            }
 +            None
 +        };
-+        taffy::Rect { left:resolve(&pos.left,PhysicalSide::Left), right:resolve(&pos.right,PhysicalSide::Right), top:resolve(&pos.top,PhysicalSide::Top), bottom:resolve(&pos.bottom,PhysicalSide::Bottom) }
++        wm.logical_rect(taffy::Rect { left:resolve(&pos.left,PhysicalSide::Left), right:resolve(&pos.right,PhysicalSide::Right), top:resolve(&pos.top,PhysicalSide::Top), bottom:resolve(&pos.bottom,PhysicalSide::Bottom) })
 +    }
 +
 +    fn oof_anchor_area(&self, node: NodeId, container: NodeId, size: taffy::Size<f32>, offset: taffy::Point<f32>, trial: bool) -> Option<(taffy::Size<f32>, taffy::Point<f32>, taffy::Point<taffy::AlignSelf>)> {
@@ -22577,7 +22607,14 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +            point.x -= shift.x;
 +            point.y -= shift.y;
 +        }
-+        let area = pos.position_area.to_physical(container.primary_styles()?.writing_mode, style.writing_mode);
++        use stylo_taffy::WritingModeExt;
++        let wm = container.primary_styles()?.writing_mode;
++        let area = pos.position_area.to_physical(wm, style.writing_mode);
++        let reverse = wm.swaps_axes() && !wm.is_vertical_lr();
++        let size = wm.logical_size(size);
++        let mut offset = wm.logical_point(offset);
++        let mirror = if reverse { self.anchor_physical_size(container).width } else { 0.0 };
++        if reverse { offset.x = mirror - offset.x - size.width; }
 +        fn axis(track: PositionAreaTrack, start: f32, end: f32, low: f32, high: f32) -> (f32, f32, taffy::AlignSelf) {
 +            use taffy::AlignSelf as Align;
 +            match track {
@@ -22591,7 +22628,8 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +        }
 +        let (left,right,horizontal) = axis(area.first.track()?, point.x, point.x + extent.width, offset.x, offset.x + size.width);
 +        let (top,bottom,vertical) = axis(area.second.track()?, point.y, point.y + extent.height, offset.y, offset.y + size.height);
-+        Some((taffy::Size { width: right-left, height: bottom-top }, taffy::Point { x:left, y:top }, taffy::Point { x:horizontal, y:vertical }))
++        let horizontal = if reverse { match horizontal { taffy::AlignSelf::START => taffy::AlignSelf::END, taffy::AlignSelf::END => taffy::AlignSelf::START, other => other } } else { horizontal };
++        Some((wm.logical_size(taffy::Size { width: right-left, height: bottom-top }), wm.logical_point(taffy::Point { x:if reverse {mirror-right} else {left}, y:top }), wm.logical_point(taffy::Point { x:horizontal, y:vertical })))
 +    }
 +
 +    fn clear_anchor_geometry_dependencies(&mut self, node_id: NodeId) {
@@ -22654,7 +22692,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn add_hoisted_children(&mut self, node_id: NodeId, hoisted: &[NodeId]) {
-@@ -718,9 +2735,24 @@
+@@ -718,9 +2756,24 @@
              .borrow_mut()
              .extend(hoisted.iter().copied().map(dom_node_id));
          for &hoisted_id in hoisted {
@@ -22679,7 +22717,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          }
      }
  
-@@ -732,6 +2764,148 @@
+@@ -732,6 +2785,148 @@
      }
  }
  
@@ -22828,7 +22866,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  impl taffy::CacheTree for LayoutPassState<'_> {
      #[inline]
      fn cache_get(
-@@ -739,10 +2913,12 @@
+@@ -739,10 +2934,12 @@
          node_id: NodeId,
          inputs: &taffy::LayoutInput,
      ) -> Option<taffy::LayoutOutput> {
@@ -22845,7 +22883,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -752,9 +2928,11 @@
+@@ -752,9 +2949,11 @@
          inputs: &taffy::LayoutInput,
          layout_output: taffy::LayoutOutput,
      ) {
@@ -22860,7 +22898,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -782,16 +2960,236 @@
+@@ -782,16 +2981,236 @@
          self.child_layout_style(self.node_from_id(child_node_id))
      }
  
@@ -23101,7 +23139,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  }
  
-@@ -844,6 +3242,30 @@
+@@ -844,6 +3263,30 @@
              element.detailed_layout_info = DetailedLayoutInfo::Grid(Box::new(detailed_grid_info));
          }
      }
@@ -23132,7 +23170,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  impl RoundTree for LayoutPassState<'_> {
-@@ -852,7 +3274,19 @@
+@@ -852,7 +3295,19 @@
      }
  
      fn set_final_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -23153,7 +23191,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn is_out_of_flow(&self, node_id: NodeId) -> bool {
-@@ -868,6 +3302,30 @@
+@@ -868,6 +3323,30 @@
      fn get_hoisted_child_id(&self, node_id: NodeId, index: usize) -> NodeId {
          taffy_node_id(self.node_from_id(node_id).hoisted_children.borrow()[index])
      }
@@ -23184,7 +23222,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  pub(crate) struct TaffyDebugTree<'doc>(pub(crate) &'doc BaseDocument);
-@@ -972,3 +3430,213 @@
+@@ -972,3 +3451,213 @@
          })
      }
  }

@@ -1,5 +1,5 @@
 use crate::{BaseDocument, Node};
-use stylo_taffy::CopyStyleGetters;
+use stylo_taffy::{CopyStyleGetters, WritingModeExt};
 use euclid::default::{Point3D, Transform3D};
 
 fn projected_bounds(matrix: &Transform3D<f64>, origin: taffy::Point<f32>, size: taffy::Size<f32>) -> Option<taffy::Rect<f32>> {
@@ -78,6 +78,23 @@ impl Node {
 }
 
 impl BaseDocument {
+    pub(super) fn anchor_placer_mode(&self, node: &Node) -> stylo_taffy::WritingMode {
+        node.containing_block().and_then(|id| self.nodes[id].primary_styles()).map_or(stylo_taffy::WritingMode::empty(), |style| style.writing_mode)
+    }
+
+    pub(super) fn anchor_physical_size(&self, node: &Node) -> taffy::Size<f32> {
+        self.anchor_placer_mode(node).logical_size(node.unrounded_layout().size)
+    }
+
+    fn anchor_physical_layout(&self, node: &Node, placer: &Node) -> taffy::Layout {
+        let raw = node.unrounded_layout();
+        let Some(style) = placer.primary_styles() else { return *raw };
+        let wm = style.writing_mode;
+        if !wm.swaps_axes() { return *raw; }
+        let x = if wm.is_vertical_lr() { raw.location.y } else { self.anchor_physical_size(placer).width - raw.location.y - raw.size.height };
+        taffy::Layout { location: taffy::Point { x, y: raw.location.x }, size: raw.size.transpose(), border: wm.physical_rect(raw.border), padding: wm.physical_rect(raw.padding), ..*raw }
+    }
+
     pub(super) fn uses_anchor_queries(style: &style::properties::ComputedValues) -> bool {
         use style::values::computed::length::{Margin, MaxSize, Size};
         use style::values::computed::position::Inset;
@@ -195,7 +212,7 @@ impl BaseDocument {
         }
         let mut cursor = id;
         let mut point = taffy::Point::ZERO;
-        let mut extent = anchor.unrounded_layout().size;
+        let mut extent = self.anchor_physical_size(anchor);
         if let Some(fragments) = anchor.inline_fragment_boxes() {
             let Some(rect) = fragments.reduce(|a, b| taffy::Rect {
                 left: a.left.min(b.left),
@@ -219,7 +236,7 @@ impl BaseDocument {
             let parent = if current.is_out_of_flow() { current.containing_block() } else { current.layout_parent.get() };
             let Some(parent) = parent else { break };
             self.anchor_geometry_steps.set(self.anchor_geometry_steps.get().saturating_add(1));
-            let layout = current.unrounded_layout();
+            let layout = &self.anchor_physical_layout(current, &self.nodes[parent]);
             if self.anchor_transform_sources.borrow_mut().entry(container.id).or_default().insert(cursor)
                 && let Some(style) = current.primary_styles() {
                 self.anchor_transform_users.borrow_mut().entry(cursor).or_insert_with(|| (style.clone(), Default::default())).1.insert(container.id);

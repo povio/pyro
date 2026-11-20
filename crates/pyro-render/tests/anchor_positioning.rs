@@ -2,6 +2,24 @@ use pyro_dom::cssom::{ParsedRule, parse_one_rule};
 use pyro_dom::stylo::declarations::DeclarationBlock;
 
 #[test]
+fn physical_anchor_geometry_is_bounded_across_writing_modes() {
+    for mode in ["horizontal-tb", "vertical-lr", "vertical-rl"] {
+        for depth in [1, 12] {
+            let html = format!("<!doctype html><style>main{{position:relative;width:100px;height:80px;writing-mode:{mode}}}i{{display:block;width:5px;height:7px;anchor-name:--a}}b{{writing-mode:horizontal-tb;position:absolute;left:anchor(--a right);top:anchor(--a bottom);width:anchor-size(--a width);height:anchor-size(--a height)}}</style><main>{}<i></i>{}<b></b></main>", "<div>".repeat(depth), "</div>".repeat(depth));
+            let mut doc = blitz_html::HtmlDocument::from_html(&html, blitz_dom::DocumentConfig::default());
+            doc.viewport_mut().window_size = (400, 300);
+            doc.resolve(0.0);
+            let layout = |tag| doc.get_node(doc.query_selector(tag).unwrap().unwrap()).unwrap().final_layout();
+            let target = layout("b");
+            assert_eq!((target.size.width, target.size.height), (5., 7.), "{mode}");
+            assert_eq!((target.location.x, target.location.y), (if mode == "vertical-rl" { 100. } else { 5. }, 7.), "{mode}");
+            let steps = doc.anchor_geometry_steps();
+            assert!(steps > 0 && steps <= (depth as u64 + 1) * doc.anchor_candidate_visits());
+        }
+    }
+}
+
+#[test]
 fn transformed_anchor_walk_is_bounded_by_depth() {
     for depth in [4, 40] {
         let html = format!("<!doctype html><style>main{{position:relative;transform:scale(2)}}i{{display:block;width:20px;height:20px;anchor-name:--a;transform:scale(2);transform-origin:0 0}}b{{position:absolute;left:anchor(--a right);width:anchor-size(--a width)}}</style><main>{}<i></i>{}<b></b></main>", "<div style='transform:translateX(1px)'>".repeat(depth), "</div>".repeat(depth));

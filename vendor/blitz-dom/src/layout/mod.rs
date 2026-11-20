@@ -2505,7 +2505,11 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
         let Some((anchor,point,extent)) = self.anchor_rect(node,container,name,pos.position_anchor.scope) else {return none};
         let old = node.anchor_scroll_axes.get();
         node.anchor_scroll_axes.set((if x {Some(anchor)} else {old.0}, if y {Some(anchor)} else {old.1}));
-        taffy::Point {x:x.then_some(point.x+extent.width*0.5),y:y.then_some(point.y+extent.height*0.5)}
+        use stylo_taffy::WritingModeExt;
+        let wm = cb.writing_mode;
+        let center_x = point.x + extent.width * 0.5;
+        let center_x = if wm.swaps_axes() && !wm.is_vertical_lr() { self.anchor_physical_size(container).width - center_x } else { center_x };
+        wm.logical_point(taffy::Point { x:x.then_some(center_x), y:y.then_some(point.y+extent.height*0.5) })
     }
 
     fn set_position_overflow(&mut self, id: NodeId, overflow: bool) {
@@ -2527,24 +2531,29 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
     }
 
     fn oof_anchor_sizes(&self, node: NodeId, container: NodeId, basis: taffy::Size<f32>) -> Option<([taffy::Size<Option<f32>>;3],taffy::Rect<Option<f32>>)> {
+        use stylo_taffy::WritingModeExt;
         use style::values::computed::length::{Size,MaxSize,Margin};
         let node = self.node_from_id(node);
         let container = self.node_from_id(container);
         let item = self.get_oof_item_style(taffy_node_id(node.id));
         let pos = item.style.get_position();
         let margins = item.style.get_margin();
+        let wm = container.primary_styles()?.writing_mode;
+        let inline_basis = basis.width;
+        let basis = wm.logical_size(basis);
         let calc = |lp:&style::values::computed::LengthPercentage,h,b| self.anchor_calc_size(lp,node,container,h,&item.style).map(|v|v.resolve(CSSPixelLength::new(b)).px());
         let size = |v:&Size,h| match v { Size::AnchorSizeFunction(f) => self.anchor_dimension(f,node,container,h,&item.style), Size::AnchorContainingCalcFunction(lp) => calc(&lp.0,h,if h {basis.width} else {basis.height}), _ => None };
         let max = |v:&MaxSize,h| match v { MaxSize::AnchorSizeFunction(f) => self.anchor_dimension(f,node,container,h,&item.style), MaxSize::AnchorContainingCalcFunction(lp) => calc(&lp.0,h,if h {basis.width} else {basis.height}), _ => None };
-        let margin = |v:&Margin,h| match v { Margin::AnchorSizeFunction(f) => self.anchor_dimension(f,node,container,h,&item.style), Margin::AnchorContainingCalcFunction(lp) => calc(lp,h,basis.width), _ => None };
+        let margin = |v:&Margin,h| match v { Margin::AnchorSizeFunction(f) => self.anchor_dimension(f,node,container,h,&item.style), Margin::AnchorContainingCalcFunction(lp) => calc(lp,h,inline_basis), _ => None };
         Some(([
             taffy::Size { width:size(&pos.width,true),height:size(&pos.height,false) },
             taffy::Size { width:size(&pos.min_width,true),height:size(&pos.min_height,false) },
             taffy::Size { width:max(&pos.max_width,true),height:max(&pos.max_height,false) }
-        ],taffy::Rect { left:margin(&margins.margin_left,true),right:margin(&margins.margin_right,true),top:margin(&margins.margin_top,false),bottom:margin(&margins.margin_bottom,false) }))
+        ].map(|size| wm.logical_size(size)),wm.logical_rect(taffy::Rect { left:margin(&margins.margin_left,true),right:margin(&margins.margin_right,true),top:margin(&margins.margin_top,false),bottom:margin(&margins.margin_bottom,false) })))
     }
 
     fn oof_anchor_insets(&self, node: NodeId, container: NodeId, size: taffy::Size<f32>, offset: taffy::Point<f32>) -> taffy::Rect<Option<f32>> {
+        use stylo_taffy::WritingModeExt;
         use style::logical_geometry::{PhysicalSide, WritingMode};
         use style::values::computed::position::Inset;
         use style::values::generics::position::{GenericAnchorSide, AnchorSideKeyword as Side};
@@ -2555,6 +2564,10 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
         let style = &item.style;
         let pos = style.get_position();
         let default_anchor = std::cell::OnceCell::new();
+        let wm = container.primary_styles().map_or(WritingMode::empty(), |style| style.writing_mode);
+        let size = wm.logical_size(size);
+        let mut offset = wm.logical_point(offset);
+        if wm.swaps_axes() && !wm.is_vertical_lr() { offset.x = self.anchor_physical_size(container).width - offset.x - size.width; }
         let coordinate = |target: &style::values::generics::position::TreeScoped<style::values::DashedIdent>, anchor_side: &style::values::computed::position::AnchorSide, side: PhysicalSide| {
             if !anchor_side.valid_for(side) { return None; }
             let (name, level) = if target.value.0.is_empty() {
@@ -2614,7 +2627,7 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
             }
             None
         };
-        taffy::Rect { left:resolve(&pos.left,PhysicalSide::Left), right:resolve(&pos.right,PhysicalSide::Right), top:resolve(&pos.top,PhysicalSide::Top), bottom:resolve(&pos.bottom,PhysicalSide::Bottom) }
+        wm.logical_rect(taffy::Rect { left:resolve(&pos.left,PhysicalSide::Left), right:resolve(&pos.right,PhysicalSide::Right), top:resolve(&pos.top,PhysicalSide::Top), bottom:resolve(&pos.bottom,PhysicalSide::Bottom) })
     }
 
     fn oof_anchor_area(&self, node: NodeId, container: NodeId, size: taffy::Size<f32>, offset: taffy::Point<f32>, trial: bool) -> Option<(taffy::Size<f32>, taffy::Point<f32>, taffy::Point<taffy::AlignSelf>)> {
@@ -2654,7 +2667,14 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
             point.x -= shift.x;
             point.y -= shift.y;
         }
-        let area = pos.position_area.to_physical(container.primary_styles()?.writing_mode, style.writing_mode);
+        use stylo_taffy::WritingModeExt;
+        let wm = container.primary_styles()?.writing_mode;
+        let area = pos.position_area.to_physical(wm, style.writing_mode);
+        let reverse = wm.swaps_axes() && !wm.is_vertical_lr();
+        let size = wm.logical_size(size);
+        let mut offset = wm.logical_point(offset);
+        let mirror = if reverse { self.anchor_physical_size(container).width } else { 0.0 };
+        if reverse { offset.x = mirror - offset.x - size.width; }
         fn axis(track: PositionAreaTrack, start: f32, end: f32, low: f32, high: f32) -> (f32, f32, taffy::AlignSelf) {
             use taffy::AlignSelf as Align;
             match track {
@@ -2668,7 +2688,8 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
         }
         let (left,right,horizontal) = axis(area.first.track()?, point.x, point.x + extent.width, offset.x, offset.x + size.width);
         let (top,bottom,vertical) = axis(area.second.track()?, point.y, point.y + extent.height, offset.y, offset.y + size.height);
-        Some((taffy::Size { width: right-left, height: bottom-top }, taffy::Point { x:left, y:top }, taffy::Point { x:horizontal, y:vertical }))
+        let horizontal = if reverse { match horizontal { taffy::AlignSelf::START => taffy::AlignSelf::END, taffy::AlignSelf::END => taffy::AlignSelf::START, other => other } } else { horizontal };
+        Some((wm.logical_size(taffy::Size { width: right-left, height: bottom-top }), wm.logical_point(taffy::Point { x:if reverse {mirror-right} else {left}, y:top }), wm.logical_point(taffy::Point { x:horizontal, y:vertical })))
     }
 
     fn clear_anchor_geometry_dependencies(&mut self, node_id: NodeId) {
