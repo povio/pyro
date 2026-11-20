@@ -172,7 +172,7 @@ pub(crate) struct LayoutPassState<'doc> {
     pub(crate) multicol_percent_height: Option<(crate::NodeId, f32)>,
     /// pyro: multi-column containers nested in another's columns and the outer column height and
     /// their offset down their outer column (`layout::multicol`).
-    pub(crate) nested_fragmentation: std::collections::HashMap<crate::NodeId, (f32, f32, usize, usize)>,
+    pub(crate) nested_fragmentation: std::collections::HashMap<crate::NodeId, (f32, f32, usize, f32)>,
     /// pyro: column spanners pushed below the content that overflows the boxes before them, and
     /// the least top of each in its parent (`layout::multicol`, `block_child_min_top`).
     pub(crate) spanner_floors: std::collections::HashMap<crate::NodeId, f32>,

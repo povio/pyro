@@ -67,6 +67,13 @@ fn anonymous_content_fills_to_host_content_box() {
         (11.0, 91.0, WHITE), (11.0, 101.0, GREEN), (11.0, 121.0, BLUE), (51.0, 105.0, WHITE)], "sequential fill and short content centering");
 }
 
+#[test]
+fn nested_columns_use_balanced_outer_tail_slots() {
+    let image = render(include_str!("fixtures/nested-final-wrapped-row.html"), 1.0);
+    check(&image, 1.0, &[(65.0, 15.0, BLUE), (65.0, 16.0, GREEN), (155.0, 43.0, GREEN), (155.0, 44.0, WHITE),
+        (65.0, 71.0, BLUE), (65.0, 72.0, GREEN), (155.0, 95.0, GREEN), (155.0, 96.0, WHITE)], "auto and definite nested heights");
+}
+
 fn check(img: &RgbaImage, scale: f64, points: &[(f64, f64, [u8; 3])], what: &str) {
     let wrong: Vec<String> = points
         .iter()

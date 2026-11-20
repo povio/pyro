@@ -19395,7 +19395,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +    pub(crate) multicol_percent_height: Option<(crate::NodeId, f32)>,
 +    /// pyro: multi-column containers nested in another's columns and the outer column height and
 +    /// their offset down their outer column (`layout::multicol`).
-+    pub(crate) nested_fragmentation: std::collections::HashMap<crate::NodeId, (f32, f32, usize, usize)>,
++    pub(crate) nested_fragmentation: std::collections::HashMap<crate::NodeId, (f32, f32, usize, f32)>,
 +    /// pyro: column spanners pushed below the content that overflows the boxes before them, and
 +    /// the least top of each in its parent (`layout::multicol`, `block_child_min_top`).
 +    pub(crate) spanner_floors: std::collections::HashMap<crate::NodeId, f32>,
@@ -22391,7 +22391,7 @@ diff --git a/packages/blitz-dom/src/layout/multicol.rs b/packages/blitz-dom/src/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/multicol.rs
-@@ -0,0 +1,3928 @@
+@@ -0,0 +1,3937 @@
 +//! pyro: CSS Multi-column Layout (<https://drafts.csswg.org/css-multicol/>).
 +//!
 +//! A multi-column container lays its content out once, in a strip one column wide (its flow
@@ -22574,7 +22574,7 @@ new file mode 100644
 +    /// pyro: the outer fragmentation this container was laid out in, as a multi-column container
 +    /// nested in another's columns (`LayoutPassState::nested_fragmentation`): the outer column
 +    /// height and how far down its column the box starts.
-+    pub nested: Option<(f32, f32, usize, usize)>,
++    pub nested: Option<(f32, f32, usize, f32)>,
 +    /// pyro: so nested, its first row (not at the top of its outer column) cannot hold its first
 +    /// column's content without breaking what is kept together or overflowing it: the outer
 +    /// container breaks before it instead.
@@ -23442,13 +23442,28 @@ new file mode 100644
 +            let fragmentainer =
 +                fragmentainer.or_else(|| balancing.then(|| breaks.balance(count, limit)).filter(|&height| height >= 1.0));
 +            let columns = fragmentainer.map(|height| breaks.fill(height, MAX_COLUMNS).columns);
++            let tail = fragmentainer.zip(columns.as_ref()).and_then(|(height, columns)| {
++                if !multicol.wrap || !matches!(multicol.fill, ColumnFill::Balance) || columns.is_empty() { return None; }
++                let index = (columns.len() - 1) / count * count;
++                let start = columns[index].0;
++                let balanced = breaks.balance_range(start, breaks.end, count, Some(height)).min(height).max(1.0);
++                let pieces = breaks.fill_range(start, breaks.end, balanced, count + 1).columns;
++                (pieces.len() <= count).then_some((index, start, balanced, pieces))
++            });
 +            let mut changed = false;
 +            for &(id, y) in &breaks.nested {
 +                let wanted = fragmentainer.zip(columns.as_ref()).map(|(height, columns)| {
 +                    let index = columns.partition_point(|c| c.0 <= y + EPSILON).saturating_sub(1);
 +                    let start = columns.get(index).map_or(breaks.start, |c| c.0);
-+                    let across = if multicol.wrap && matches!(multicol.fill, ColumnFill::Balance) { count } else { 1 };
-+                    (height, (y - start).clamp(0.0, height), across, index % across)
++                    if let Some((tail_index, tail_start, balanced, pieces)) = &tail {
++                        if y >= *tail_start - EPSILON {
++                            let index = pieces.partition_point(|piece| piece.0 <= y + EPSILON).saturating_sub(1);
++                            let start = pieces.get(index).map_or(*tail_start, |piece| piece.0);
++                            return (*balanced, (y - start).clamp(0.0, *balanced), 0, *balanced);
++                        }
++                        return (height, (y - start).clamp(0.0, height), tail_index.saturating_sub(index), *balanced);
++                    }
++                    (height, (y - start).clamp(0.0, height), usize::MAX, height)
 +                });
 +                let laid_out = self.nodes[id].element_data().and_then(|e| e.layout_data.as_deref()).and_then(|l| l.columns.as_deref());
 +                let used = laid_out.and_then(|c| c.nested);
@@ -23574,7 +23589,7 @@ new file mode 100644
 +        // each with its borders and padding repeated (`nested_ctx` below; its height grows by them).
 +        let mut clone_rows = 0usize;
 +        let mut clone_insets = 0.0f32;
-+        if let Some((outer_height, offset, across, mut outer_index)) = nested_ctx {
++        if let Some((outer_height, offset, mut full_slots, tail_height)) = nested_ctx {
 +            let box_end_of_content = definite_height.map(|height| content_top + height);
 +            // pyro: of `box-decoration-break: clone`, each row (each outer fragment of the box)
 +            // ends with the box's block-end border and padding, and each after the first starts
@@ -23603,20 +23618,13 @@ new file mode 100644
 +            let end = breaks.end;
 +            let mut placed: Vec<(f32, f32, f32, f32)> = Vec::new(); // (start, end, row top, row height)
 +            let mut last_row_extended = (f32::NAN, 0.0f32);
-+            let mut tail_height = None;
 +            loop {
 +                let box_end = box_end_of_content.map(|end| if clone { top + (end - content_top - consumed) } else { end });
 +                // (What the row may hold: its outer column's room less the repeated decorations.)
 +                let room = (available - clone_bottom - if !placed.is_empty() { clone_top } else { 0.0 }).max(1.0);
-+                let mut row_height = box_end.map_or(room, |end| room.min(end - top).max(1.0));
-+                if across > 1 && outer_index == 0 && box_end.is_none() && available == outer_height {
-+                    let fits = count.saturating_mul(across).min(MAX_COLUMNS);
-+                    if end - start <= fits as f32 * room && breaks.fill_range(start, end, room, fits + 1).columns.len() <= fits {
-+                        tail_height = Some(breaks.balance_range(start, end, fits, Some(room)).max(1.0));
-+                    }
-+                }
-+                outer_index = (outer_index + 1) % across;
-+                row_height = row_height.min(tail_height.unwrap_or(row_height));
++                let row_height = box_end.map_or(room, |end| room.min(end - top).max(1.0));
++                full_slots = full_slots.saturating_sub(1);
++                let next_height = if full_slots == 0 { tail_height } else { outer_height };
 +                // (Past the fragment cap, what is left goes to one last column.)
 +                if placed.len() + count + 1 >= sink.room() {
 +                    placed.push((start, end, top, row_height));
@@ -23645,7 +23653,7 @@ new file mode 100644
 +                        start = at;
 +                        consumed += row_height;
 +                        top += row_height + clone_bottom + clone_top;
-+                        available = outer_height;
++                        available = next_height;
 +                        row_top = top;
 +                        continue;
 +                    }
@@ -23675,7 +23683,7 @@ new file mode 100644
 +                start = run.columns[count].0;
 +                consumed += row_height;
 +                top += row_height + clone_bottom + clone_top;
-+                available = outer_height;
++                available = next_height;
 +                row_top = top;
 +            }
 +            let mut index = 0;
@@ -24085,7 +24093,8 @@ new file mode 100644
 +                        exact_x: f32::NAN,
 +                    });
 +                }
-+                row_top += (rows - 1) as f32 * (column_height + row_gap) + last_height;
++                let last_slot = if multicol.height.is_some() { column_height } else { last_height };
++                row_top += (rows - 1) as f32 * (column_height + row_gap) + last_slot;
 +                }
 +            }
 +            if let Some(&(start, end, indent)) = spanners.get(part) {
