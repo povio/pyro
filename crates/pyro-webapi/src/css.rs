@@ -14,7 +14,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use pyro_dom::cssom::{normalize_selector, parse_rules, Namespaces, ParsedRule};
+use pyro_dom::cssom::{normalize_selector, parse_rules, Namespaces, ParsedRule, PropertyRule};
 use pyro_dom::stylo::declarations::{self, DeclarationBlock};
 use pyro_dom::NodeId;
 use pyro_js::{ClassDef, IdentityKey, JsClass, JsError, JsResult, NoParent, Object, Scope, Value};
@@ -442,7 +442,7 @@ impl StyleData {
                             write_page(&*owner.rules()?, &page, None);
                         }
                     }
-                    RuleKind::Group { .. } => return Ok(()),
+                    RuleKind::Group { .. } | RuleKind::Property(_) => return Ok(()),
                 }
                 owner.commit(&*owner.rules()?);
                 Ok(())
@@ -723,6 +723,7 @@ impl RuleList {
 }
 
 enum RuleKind {
+    Property(PropertyRule),
     Style { selector: RefCell<String>, block: RefCell<String> },
     Group { name: String, condition: RefCell<String>, list: RuleList },
     Other { rule_type: u16, text: RefCell<String> },
@@ -740,6 +741,7 @@ impl RuleNode {
         let identity = IdentityKey(1 << 56, NEXT_RULE.fetch_add(1, Ordering::Relaxed));
         Rc::new_cyclic(|me| {
             let kind = match parsed {
+                ParsedRule::Property(rule) => RuleKind::Property(rule),
                 ParsedRule::Style { selector, block } => {
                     RuleKind::Style { selector: RefCell::new(selector), block: RefCell::new(block) }
                 }
@@ -757,6 +759,7 @@ impl RuleNode {
     /// The text given to the style engine: blocks stay as written.
     fn source_text(&self) -> String {
         match &self.kind {
+            RuleKind::Property(rule) => rule.text.clone(),
             RuleKind::Style { selector, block } => format!("{} {{{}}}", selector.borrow(), block.borrow()),
             RuleKind::Group { name, condition, list } => {
                 let body = list.rules.borrow().iter().map(|r| r.source_text()).collect::<Vec<_>>().join("\n");
@@ -768,6 +771,7 @@ impl RuleNode {
 
     fn css_text(&self) -> String {
         match &self.kind {
+            RuleKind::Property(rule) => rule.text.clone(),
             RuleKind::Style { selector, block } => {
                 // As the rule's `style.cssText` serializes the block.
                 let decls = Block::parse(&block.borrow()).css_text();
@@ -989,6 +993,7 @@ fn rule_wrapper<'s>(s: &Scope<'s>, rule: &Rc<RuleNode>, owner: &SheetOwner) -> J
     let data = RuleData { owner: owner.hold()?, rule_node: rule.clone() };
     let key = Some(rule.identity);
     match &rule.kind {
+        RuleKind::Property(_) => s.wrap::<CssPropertyRule>(data, key),
         RuleKind::Style { .. } => s.wrap::<CssStyleRule>(data, key),
         RuleKind::Group { name, .. } if name == "media" => s.wrap::<CssMediaRule>(data, key),
         RuleKind::Group { name, .. } if name == "supports" => s.wrap::<CssSupportsRule>(data, key),
@@ -1008,7 +1013,6 @@ fn rule_wrapper<'s>(s: &Scope<'s>, rule: &Rc<RuleNode>, owner: &SheetOwner) -> J
                 "font-feature-values" => s.wrap::<CssFontFeatureValuesRule>(data, key),
                 "layer" if text.trim_end().ends_with(';') => s.wrap::<CssLayerStatementRule>(data, key),
                 "layer" => s.wrap::<CssLayerBlockRule>(data, key),
-                "property" => s.wrap::<CssPropertyRule>(data, key),
                 "font-palette-values" => s.wrap::<CssFontPaletteValuesRule>(data, key),
                 "starting-style" => s.wrap::<CssStartingStyleRule>(data, key),
                 "scope" => s.wrap::<CssScopeRule>(data, key),
@@ -1108,7 +1112,7 @@ fn define_rule<C: JsClass<Data = RuleData>>(def: &mut ClassDef<C>) {
             RuleKind::Style { .. } => 1.0,
             RuleKind::Group { name, .. } if name == "media" => 4.0,
             RuleKind::Group { name, .. } if name == "supports" => 12.0,
-            RuleKind::Group { .. } => 0.0,
+            RuleKind::Group { .. } | RuleKind::Property(_) => 0.0,
             RuleKind::Other { rule_type, .. } => f64::from(*rule_type),
         }))
     });
@@ -1663,8 +1667,18 @@ rule_class!(CssLayerStatementRule, "CSSLayerStatementRule", CssRule, |def| {
         freeze.as_object().expect("Object.freeze").call(None, &[array.value()])
     });
 });
+fn property_rule(data: &RuleData) -> JsResult<&PropertyRule> {
+    match &data.node()?.kind {
+        RuleKind::Property(rule) => Ok(rule),
+        _ => unreachable!(),
+    }
+}
+
 rule_class!(CssPropertyRule, "CSSPropertyRule", CssRule, |def| {
-    def.getter("name", |s, r| Ok(s.string(&rule_prelude(r))));
+    def.getter("name", |s, r| Ok(s.string(&property_rule(r)?.name)));
+    def.getter("syntax", |s, r| Ok(s.string(&property_rule(r)?.syntax)));
+    def.getter("inherits", |s, r| Ok(s.boolean(property_rule(r)?.inherits)));
+    def.getter("initialValue", |s, r| Ok(property_rule(r)?.initial_value.as_deref().map_or(s.null(), |v| s.string(v))));
 });
 rule_class!(CssFontPaletteValuesRule, "CSSFontPaletteValuesRule", CssRule, |def| {
     def.getter("name", |s, r| Ok(s.string(&rule_prelude(r))));
@@ -2216,7 +2230,7 @@ impl MediaList {
                         let media = if text.is_empty() { String::new() } else { format!(" {text}") };
                         *rule.borrow_mut() = format!("@import {head}{media};");
                     }
-                    RuleKind::Style { .. } => return Ok(()),
+                    RuleKind::Style { .. } | RuleKind::Property(_) => return Ok(()),
                 }
                 r.owner.commit(&*r.owner.rules()?);
                 return Ok(());

@@ -9,7 +9,17 @@ use crate::select;
 pub type Namespaces = Vec<(String, String)>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PropertyRule {
+    pub name: String,
+    pub syntax: String,
+    pub inherits: bool,
+    pub initial_value: Option<String>,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParsedRule {
+    Property(PropertyRule),
     /// A style rule: serialized selector and the block's raw text.
     Style { selector: String, block: String },
     /// A grouping rule: at-keyword, serialized prelude and child rules.
@@ -140,6 +150,33 @@ fn parse_style_rule(
     Some(ParsedRule::Style { selector, block: block? })
 }
 
+fn parse_property_rule(prelude: &str, block: &str) -> Option<ParsedRule> {
+    use style::properties_and_values::rule::{parse_property_block, PropertyRuleName};
+    use style::shared_lock::{SharedRwLock, ToCssWithGuard};
+    use style::stylesheets::{CssRuleType, Origin, UrlExtraData};
+
+    let mut name_parser = Parser::new(prelude);
+    let name = name_parser.expect_ident_cloned().ok()?;
+    name_parser.expect_exhausted().ok()?;
+    let rule_name = PropertyRuleName(style::custom_properties::parse_name(&name).ok()?.into());
+    let url = UrlExtraData(style::servo_arc::Arc::new(url::Url::parse("about:blank").ok()?));
+    let context = style::parser::ParserContext::new(
+        Origin::Author, &url, Some(CssRuleType::Property), style_traits::ParsingMode::DEFAULT,
+        style::context::QuirksMode::NoQuirks, Default::default(), None, None, Default::default(),
+    );
+    let mut input = Parser::new(block);
+    let location = input.current_source_location();
+    let rule = parse_property_block(&context, &mut input, rule_name, location).ok()?;
+    let text = rule.to_css_string(&SharedRwLock::new().read());
+    Some(ParsedRule::Property(PropertyRule {
+        name: name.to_string(),
+        syntax: rule.descriptors.syntax.as_ref()?.specified_string()?.to_owned(),
+        inherits: rule.descriptors.inherits(),
+        initial_value: rule.descriptors.initial_value.as_ref().map(|v| v.css_text().to_owned()),
+        text,
+    }))
+}
+
 fn collapse(text: &str) -> String {
     text.split_ascii_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -236,6 +273,9 @@ fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces) ->
         return Some(ParsedRule::Group { name: lower, condition, rules: rules? });
     }
     let (prelude, block) = parse_prelude_and_block(p, start, raw_block);
+    if lower == "property" {
+        return parse_property_rule(&prelude, &block?);
+    }
     if lower == "container" {
         let block = block?;
         let conditions = container_conditions(&prelude)?;
@@ -325,7 +365,7 @@ fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces) ->
         "page" => 6,
         "namespace" => 10,
         "counter-style" => 11,
-        "property" | "font-palette-values" | "starting-style" | "scope"
+        "font-palette-values" | "starting-style" | "scope"
         | "view-transition" => 0,
         _ => return None,
     };
@@ -352,7 +392,7 @@ fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces) ->
         // An empty descriptor block serializes as `{ }`.
         Some(block)
             if block.trim().is_empty()
-                && matches!(lower.as_str(), "page" | "font-face" | "property" | "counter-style" | "font-palette-values" | "position-try" | "view-transition") =>
+                && matches!(lower.as_str(), "page" | "font-face" | "counter-style" | "font-palette-values" | "position-try" | "view-transition") =>
         {
             format!("{head} {{ }}")
         }
@@ -649,6 +689,19 @@ mod tests {
         assert_eq!((text.as_str(), used), ("@charset \"shift-JIS\";.é{}", UTF_8));
         // As bytes for a parser that decodes them itself: UTF-8 behind a mark.
         assert_eq!(stylesheet_utf8_bytes("é"), b"\xEF\xBB\xBF\xC3\xA9");
+    }
+
+    #[test]
+    fn property_rules_require_valid_descriptors_and_keep_specified_values() {
+        let mut namespaces = Namespaces::new();
+        for text in ["@property x { syntax:'*'; inherits:true }", "@property --x { syntax:'*' }", "@property --x { syntax:'<length>'; inherits:true; initial-value:1em }"] {
+            assert!(parse_one_rule(text, &mut namespaces).is_err());
+        }
+        let ParsedRule::Property(rule) = parse_one_rule(r"@property --a\ b {inherits:true; syntax:' * '}", &mut namespaces).unwrap() else { panic!() };
+        assert_eq!(rule.name, "--a b");
+        assert_eq!(rule.syntax, " * ");
+        assert!(rule.inherits);
+        assert_eq!(rule.initial_value, None);
     }
 
     #[test]
