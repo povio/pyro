@@ -15,6 +15,7 @@ use crate::{
     util::{dom_string, WrapperRef},
 };
 use bytes::Bytes;
+use data_url::mime::Mime;
 use pyro_js::{Deferred, JsError, JsResult, Persistent, RealmId, Scope, Value, WeakRealm};
 use pyro_net::http::{header, HeaderName, HeaderValue, Method};
 use pyro_net::{
@@ -161,6 +162,7 @@ struct Reader {
     realm: WeakRealm,
     promise: Deferred,
     kind: ReadKind,
+    headers: Option<headers::HeadersData>,
 }
 #[derive(Clone, Copy)]
 pub(crate) enum ReadKind {
@@ -173,6 +175,39 @@ pub(crate) enum ReadKind {
     /// The body's pieces as they are, in a `cache_storage::StoredBody`: what
     /// `cache.put` keeps, without a copy.
     Chunks,
+}
+/// Package fully read bytes using the consuming Request or Response's own
+/// current headers. Clones can share body bytes but have separate header lists.
+pub(crate) fn package_body<'s>(
+    s: &Scope<'s>,
+    kind: ReadKind,
+    bytes: Vec<u8>,
+    headers: Option<&headers::HeadersData>,
+) -> JsResult<Value<'s>> {
+    let mime = headers.and_then(headers::HeadersData::mime_type);
+    match kind {
+        ReadKind::Blob => {
+            let mime = mime.map(|m| m.to_string()).unwrap_or_default();
+            Ok(s.wrap::<crate::file::Blob>(
+                crate::file::BlobData { bytes: Bytes::from(bytes), mime, file: None },
+                None,
+            )?
+            .value())
+        }
+        ReadKind::FormData => match mime {
+            Some(m) if m.matches("application", "x-www-form-urlencoded") => {
+                crate::form_data::from_urlencoded(s, &bytes)
+            }
+            Some(m) if m.matches("multipart", "form-data") => {
+                let boundary = m
+                    .get_parameter("boundary")
+                    .ok_or_else(|| JsError::Type("Multipart body has no boundary".into()))?;
+                crate::form_data::from_multipart(s, &bytes, boundary)
+            }
+            _ => Err(JsError::Type("Cannot parse this MIME type as FormData".into())),
+        },
+        _ => unreachable!("only Blob and FormData consume MIME metadata"),
+    }
 }
 pub(crate) struct Body {
     wire: Arc<Mutex<Wire>>,
@@ -346,25 +381,98 @@ pub(crate) fn forbidden_request_header(name: &str, value: &str) -> bool {
     if !matches!(name, "x-http-method-override" | "x-http-method" | "x-method-override") {
         return false;
     }
-    // "Get, decode, and split": commas inside a quoted string do not split.
+    split_header_values(value)
+        .any(|method| ["CONNECT", "TRACE", "TRACK"].iter().any(|m| method.eq_ignore_ascii_case(m)))
+}
+
+/// Fetch "get, decode, and split": preserve commas and escaped characters
+/// in HTTP quoted strings, trimming HTTP tab/space around each value.
+fn split_header_values(value: &str) -> impl Iterator<Item = &str> {
     let mut quoted = false;
-    let mut start = 0;
-    let mut parts = Vec::new();
-    for (i, ch) in value.char_indices() {
-        match ch {
-            '"' => quoted = !quoted,
-            ',' if !quoted => {
-                parts.push(&value[start..i]);
-                start = i + 1;
+    let mut escaped = false;
+    value
+        .split(move |ch| {
+            if escaped {
+                escaped = false;
+            } else if quoted && ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                quoted = !quoted;
+            } else if ch == ',' && !quoted {
+                return true;
             }
-            _ => {}
+            false
+        })
+        .map(|part| part.trim_matches([' ', '\t']))
+}
+
+/// MIME Sniffing "parse a MIME type". Use data-url for essence parsing and
+/// serialization. Collect the complete parameter value before validating it:
+/// a quoted string may span semicolons and have ignored text after its quote.
+fn parse_body_mime(value: &str) -> Option<Mime> {
+    let (essence, mut rest) = value.trim_matches([' ', '\t', '\r', '\n']).split_once(';').unwrap_or((value, ""));
+    let mut mime: Mime = essence.parse().ok()?;
+    while !rest.is_empty() {
+        rest = rest.trim_start_matches([' ', '\t', '\r', '\n']);
+        let Some(end) = rest.find(['=', ';']) else { break };
+        let name = &rest[..end];
+        let separator = rest.as_bytes()[end];
+        rest = &rest[end + 1..];
+        if separator == b';' {
+            continue;
+        }
+        let value = if let Some(quoted) = rest.strip_prefix('"') {
+            let mut output = String::new();
+            let mut chars = quoted.chars();
+            while let Some(ch) = chars.next() {
+                match ch {
+                    '"' => break,
+                    '\\' => output.push(chars.next().unwrap_or('\\')),
+                    _ => output.push(ch),
+                }
+            }
+            rest = chars.as_str().split_once(';').map_or("", |(_, tail)| tail);
+            output
+        } else {
+            let (value, tail) = rest.split_once(';').unwrap_or((rest, ""));
+            rest = tail;
+            let value = value.trim_end_matches([' ', '\t', '\r', '\n']);
+            if value.is_empty() {
+                continue;
+            }
+            value.to_owned()
+        };
+        if !value.chars().all(|ch| matches!(ch, '\t' | ' '..='~' | '\u{80}'..='\u{ff}')) {
+            continue;
+        }
+        let Ok(name) = headers::validate_name(name.to_owned()) else { continue };
+        if mime.get_parameter(name.as_str()).is_none() {
+            mime.parameters.push((name, value));
         }
     }
-    parts.push(&value[start..]);
-    parts.iter().any(|part| {
-        let method = part.trim_matches(|c| c == ' ' || c == '\t');
-        ["CONNECT", "TRACE", "TRACK"].iter().any(|m| method.eq_ignore_ascii_case(m))
-    })
+    Some(mime)
+}
+
+pub(crate) fn extract_mime(value: &str) -> Option<Mime> {
+    let mut result: Option<Mime> = None;
+    let mut charset: Option<String> = None;
+    for value in split_header_values(value) {
+        let Some(mut mime) = parse_body_mime(value) else { continue };
+        if mime.matches("*", "*") {
+            continue;
+        }
+        if result.as_ref().is_some_and(|prev| prev.matches(&mime.type_, &mime.subtype)) {
+            if mime.get_parameter("charset").is_none() {
+                if let Some(inherited) = &charset {
+                    mime.parameters.push(("charset".into(), inherited.clone()));
+                }
+            }
+        } else {
+            charset = mime.get_parameter("charset").map(str::to_owned);
+        }
+        result = Some(mime);
+    }
+    result
 }
 /// Gives a `blob:` request the object its URL names, from this document's
 /// blob URL store (the network client cannot see it); a URL the store does
@@ -1011,20 +1119,7 @@ fn fail_integrity(s: &Scope<'_>, page: &PageDom, job: &Job, id: RequestId) {
 }
 
 impl Body {
-    /// A complete in-memory body for script-constructed Responses
-    /// (`new Response(body)`, `Response.json`, `Response.error`). `None` is a
-    /// null body. Not tied to a page, request or network budget.
-    /// Fetch "get the MIME type" of a body: its container's current
-    /// `Content-Type` (headers may have changed since the body was made);
-    /// ASCII-lowercased for a Blob's type (`lower`), kept as written for
-    /// formData() (a multipart boundary is case-sensitive).
-    pub(crate) fn refresh_mime(&self, pairs: &[(String, String)], lower: bool) {
-        let values: Vec<&str> =
-            pairs.iter().filter(|(n, _)| n.eq_ignore_ascii_case("content-type")).map(|(_, v)| v.as_str()).collect();
-        let value = values.join(", ");
-        *self.mime.borrow_mut() = if lower { value.to_ascii_lowercase() } else { value };
-    }
-
+    /// A complete in-memory body for script-constructed Requests and Responses.
     pub(crate) fn constructed(s: &Scope<'_>, bytes: Option<Bytes>, mime: String) -> Rc<Body> {
         Body::constructed_chunks(s, bytes.map(|b| vec![b]), mime)
     }
@@ -1133,7 +1228,13 @@ impl Body {
             error.map(|e| JsError::Type(e.to_string().into()).to_value(s))
         }
     }
-    pub(crate) fn read<'s>(&self, s: &Scope<'s>, kind: ReadKind, already_used: bool) -> JsResult<Value<'s>> {
+    pub(crate) fn read<'s>(
+        self: &Rc<Self>,
+        s: &Scope<'s>,
+        kind: ReadKind,
+        already_used: bool,
+        headers: Option<headers::HeadersData>,
+    ) -> JsResult<Value<'s>> {
         let deferred = s.deferred()?;
         let promise = deferred.promise.get(s);
         let ready = self.is_null() || self.visible_terminal.borrow().is_some();
@@ -1142,17 +1243,31 @@ impl Body {
         } else if let Some(error) = self.error(s) {
             deferred.reject(s, error)?;
             self.release_consumer();
+        } else if ready && !self.is_null() && matches!(kind, ReadKind::Blob | ReadKind::FormData) {
+            // Even an already-buffered stream finishes through a fetch task.
+            // Read the container's MIME metadata when packaging its bytes.
+            let body = self.clone();
+            let realm = s.realm().downgrade();
+            page_of(s)?.post_task(Box::new(move || {
+                if let Some(realm) = realm.upgrade() {
+                    if let Ok(scope) = realm.scope() {
+                        body.settle(&scope, deferred, kind, headers.as_ref());
+                        return;
+                    }
+                }
+                body.release_consumer();
+            }));
         } else if ready {
-            self.settle(s, deferred, kind);
+            self.settle(s, deferred, kind, headers.as_ref());
         } else if self.readers.borrow().len() >= 1024 {
             deferred.reject(s, JsError::Type("Too many pending body readers".into()).to_value(s))?;
             self.release_consumer();
         } else {
-            self.readers.borrow_mut().push(Reader { realm: s.realm().downgrade(), promise: deferred, kind });
+            self.readers.borrow_mut().push(Reader { realm: s.realm().downgrade(), promise: deferred, kind, headers });
         }
         Ok(promise)
     }
-    fn settle(&self, s: &Scope<'_>, deferred: Deferred, kind: ReadKind) {
+    fn settle(&self, s: &Scope<'_>, deferred: Deferred, kind: ReadKind, headers: Option<&headers::HeadersData>) {
         if let Some(error) = self.error(s) {
             let _ = deferred.reject(s, error);
             self.release_consumer();
@@ -1191,34 +1306,7 @@ impl Body {
             }
             ReadKind::ArrayBuffer => crate::encoding::array_buffer(s, &bytes),
             ReadKind::Bytes => crate::encoding::uint8_array(s, &bytes),
-            ReadKind::Blob => s
-                .wrap::<crate::file::Blob>(
-                    crate::file::BlobData { bytes: Bytes::from(bytes), mime: self.mime.borrow().clone(), file: None },
-                    None,
-                )
-                .map(|o| o.value()),
-            ReadKind::FormData => {
-                let mime = self.mime.borrow();
-                let essence = mime.split(';').next().unwrap_or("").trim();
-                if essence.eq_ignore_ascii_case("application/x-www-form-urlencoded") {
-                    crate::form_data::from_urlencoded(s, &bytes)
-                } else if essence.eq_ignore_ascii_case("multipart/form-data") {
-                    let boundary = mime
-                        .split(';')
-                        .skip(1)
-                        .filter_map(|p| p.trim().split_once('='))
-                        .find(|(k, _)| k.trim().eq_ignore_ascii_case("boundary"))
-                        .map(|(_, v)| v.trim().trim_matches('"').to_owned());
-                    match boundary {
-                        Some(b) => crate::form_data::from_multipart(s, &bytes, &b),
-                        None => {
-                            Err(JsError::Type("Cannot parse a 'multipart/form-data' body without a boundary".into()))
-                        }
-                    }
-                } else {
-                    Err(JsError::Type(format!("Cannot parse a '{essence}' body as FormData").into()))
-                }
-            }
+            ReadKind::Blob | ReadKind::FormData => package_body(s, kind, bytes, headers),
         };
         match result {
             Ok(value) => {
@@ -1235,7 +1323,7 @@ impl Body {
         for reader in readers {
             if let Some(realm) = reader.realm.upgrade() {
                 if let Ok(s) = realm.scope() {
-                    self.settle(&s, reader.promise, reader.kind);
+                    self.settle(&s, reader.promise, reader.kind, reader.headers.as_ref());
                     continue;
                 }
             }
