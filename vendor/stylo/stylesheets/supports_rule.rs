@@ -491,6 +491,6 @@ impl NamedFeature {
     /// <https://drafts.csswg.org/css-conditional-5/#typedef-supports-named-feature-fn>
     #[cfg(feature = "servo")]
     pub fn eval(self) -> bool {
-        false
+        matches!(self, Self::AnchorPositionFollowsTransforms)
     }
 }

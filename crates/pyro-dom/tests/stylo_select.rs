@@ -25,6 +25,12 @@ impl Page {
 }
 
 #[test]
+fn named_feature_reports_transformed_anchor_support() {
+    assert!(stylo::supports_condition("named-feature( anchor-position-follows-transforms )"));
+    assert!(!stylo::supports_condition("named-feature(anchor-position-follows-transforms other)"));
+}
+
+#[test]
 fn dom_queries_go_through_stylo() {
     use pyro_dom::select::parse_query;
     let p = Page::new(

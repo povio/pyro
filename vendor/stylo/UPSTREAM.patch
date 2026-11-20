@@ -4837,7 +4837,7 @@ diff -ruN a/stylesheets/stylesheet.rs b/stylesheets/stylesheet.rs
  }
 diff -ruN a/stylesheets/supports_rule.rs b/stylesheets/supports_rule.rs
 --- a/stylesheets/supports_rule.rs	2026-11-11 19:55:57
-+++ b/stylesheets/supports_rule.rs	2026-11-17 11:03:09
++++ b/stylesheets/supports_rule.rs	2026-11-20 21:05:37
 @@ -241,14 +241,22 @@
      unsafe { bindings::Gecko_IsFontTechSupported(*flag) }
  }
@@ -4865,6 +4865,14 @@ diff -ruN a/stylesheets/supports_rule.rs b/stylesheets/supports_rule.rs
  }
  
  /// supports_condition | declaration
+@@ -483,6 +491,6 @@
+     /// <https://drafts.csswg.org/css-conditional-5/#typedef-supports-named-feature-fn>
+     #[cfg(feature = "servo")]
+     pub fn eval(self) -> bool {
+-        false
++        matches!(self, Self::AnchorPositionFollowsTransforms)
+     }
+ }
 diff -ruN a/stylist.rs b/stylist.rs
 --- a/stylist.rs	2026-11-11 19:55:57
 +++ b/stylist.rs	2026-11-20 12:13:59
