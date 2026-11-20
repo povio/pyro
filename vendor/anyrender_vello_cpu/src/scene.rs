@@ -444,7 +444,13 @@ impl PaintScene for VelloCpuScenePainter {
     }
 
     fn push_clip_layer(&mut self, fill: Fill, transform: Affine, clip: &impl Shape) {
-        let (clip, transform) = device_path(clip.into_path(DEFAULT_TOLERANCE), transform, self.raster_bounds());
+        let path = clip.into_path(DEFAULT_TOLERANCE);
+        let (clip, transform) = if let Some(rect) = device_rect(&path, transform) {
+            let snap_y = |value: f64| (value * 4.0).round() * 0.25;
+            (Rect::new(rect.x0, snap_y(rect.y0), rect.x1, snap_y(rect.y1)).to_path(DEFAULT_TOLERANCE), Affine::IDENTITY)
+        } else {
+            device_path(path, transform, self.raster_bounds())
+        };
         self.render_ctx.set_transform(transform);
         self.render_ctx.set_fill_rule(fill);
         self.render_ctx.push_clip_layer(&clip);
@@ -1244,35 +1250,26 @@ pub(crate) fn is_local_raster_marker(filter: &Filter) -> bool {
 /// rectangle path (four axis-aligned sides) under a transform without rotation or skew, its
 /// edges on whole pixels.
 pub(crate) fn pixel_rect(clip: &BezPath, transform: Affine) -> Option<PixelRect> {
+    let rect = device_rect(clip, transform)?;
+    let whole = |v: f64| (v - v.round()).abs() < 1e-6;
+    (whole(rect.x0) && whole(rect.y0) && whole(rect.x1) && whole(rect.y1)).then(|| PixelRect::around(rect))
+}
+
+fn device_rect(clip: &BezPath, transform: Affine) -> Option<Rect> {
     let [_, b, c, _, _, _] = transform.as_coeffs();
     if b != 0.0 || c != 0.0 {
         return None;
     }
-    let mut points = Vec::with_capacity(5);
-    for element in clip.elements() {
-        match *element {
-            PathEl::MoveTo(p) if points.is_empty() => points.push(p),
-            PathEl::LineTo(p) if !points.is_empty() => points.push(p),
-            PathEl::ClosePath if !points.is_empty() => {}
-            _ => return None,
-        }
-    }
-    if points.len() == 5 && points[4] == points[0] {
-        points.pop();
-    }
-    if points.len() != 4 {
+    let elements = clip.elements().strip_suffix(&[PathEl::ClosePath]).unwrap_or(clip.elements());
+    let [PathEl::MoveTo(first), PathEl::LineTo(second), PathEl::LineTo(third), PathEl::LineTo(fourth), rest @ ..] = elements else {
+        return None;
+    };
+    if !(rest.is_empty() || rest == [PathEl::LineTo(*first)]) {
         return None;
     }
-    // Each side horizontal or vertical.
-    for i in 0..4 {
-        let (p, q) = (points[i], points[(i + 1) % 4]);
-        if p.x != q.x && p.y != q.y {
-            return None;
-        }
-    }
-    let rect = transform.transform_rect_bbox(clip.bounding_box());
-    let whole = |v: f64| (v - v.round()).abs() < 1e-6;
-    (whole(rect.x0) && whole(rect.y0) && whole(rect.x1) && whole(rect.y1)).then(|| PixelRect::around(rect))
+    let horizontal = first.y == second.y && second.x == third.x && third.y == fourth.y && fourth.x == first.x;
+    let vertical = first.x == second.x && second.y == third.y && third.x == fourth.x && fourth.y == first.y;
+    (horizontal || vertical).then(|| transform.transform_rect_bbox(Rect::from_points(*first, *third)))
 }
 
 /// The pixels `clip` under `transform` touches.
@@ -1559,6 +1556,20 @@ mod clip_rule_tests {
                 }
             );
         }
+    }
+
+    #[test]
+    fn rectangular_clip_coverage_uses_device_scanlines() {
+        let render = |top: f64| {
+            render_to_buffer::<VelloCpuImageRenderer, _>(|scene| {
+                let path = Rect::new(5.0, top, 40.0, 24.0);
+                scene.push_clip_layer(Fill::NonZero, Affine::scale(2.0), &path);
+                scene.fill(Fill::NonZero, Affine::IDENTITY, RED, None, &Rect::new(0.0, 0.0, 100.0, 100.0));
+                scene.pop_layer();
+            }, 100, 100)
+        };
+        assert_eq!(render(5.09), render(5.14));
+        assert_ne!(render(5.09), render(5.22));
     }
 
     #[test]
