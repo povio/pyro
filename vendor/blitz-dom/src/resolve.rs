@@ -2168,6 +2168,7 @@ impl BaseDocument {
             return;
         }
         self.last_layout_space = Some(available_space);
+        self.last_sibling_anchor.get_mut().clear();
         self.layout_ran = true;
         phase_profile::laid_out();
         self.mark_viewport_body();

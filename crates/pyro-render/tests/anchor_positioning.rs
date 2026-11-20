@@ -76,6 +76,22 @@ fn scroll_fit_invalidation_coalesces_before_layout() {
 }
 
 #[test]
+fn duplicate_sibling_names_and_consumers_scale_linearly() {
+    fn visits(count: usize) -> u64 {
+        let html = format!("<!doctype html><style>main{{position:relative}}i{{display:block;height:1px;anchor-name:--a}}b{{position:absolute;top:anchor(--a bottom)}}</style><main>{}{}</main>", "<i></i>".repeat(count), "<b></b>".repeat(count));
+        let mut doc = blitz_html::HtmlDocument::from_html(&html, blitz_dom::DocumentConfig::default());
+        doc.viewport_mut().window_size = (400, 300);
+        doc.resolve(0.0);
+        let last = doc.query_selector("b:last-child").unwrap().unwrap();
+        assert_eq!(doc.get_node(last).unwrap().final_layout().location.y, count as f32);
+        doc.anchor_candidate_visits()
+    }
+    let small = visits(32);
+    assert!((32..=256).contains(&small));
+    assert!(visits(128) <= small * 4 + 4);
+}
+
+#[test]
 fn duplicate_names_in_unrelated_shadow_trees_cost_no_candidate_visits() {
     fn measure(count: usize) -> u64 {
         let mut html = String::from("<!doctype html><style>body{margin:0}</style>");

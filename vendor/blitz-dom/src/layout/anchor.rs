@@ -142,7 +142,17 @@ impl BaseDocument {
     ) -> Option<(crate::NodeId, taffy::Point<f32>, taffy::Size<f32>)> {
         let origin = node.scroll_pseudo().map_or(node.id, |(_, id)| id);
         let scope = level.get_shadow_root_for_scoped(&self.nodes[origin]).map(|root| root.id);
-        let candidates = self.named_anchor_nodes.get(&(scope, name.clone()))?;
+        let key = (scope, name.clone());
+        let candidates = self.named_anchor_nodes.get(&key)?;
+        let visit = || self.anchor_lookup_visits.set(self.anchor_lookup_visits.get().saturating_add(1));
+        let preferred = if candidates.len() > 1 {
+            let mut cache = self.last_sibling_anchor.borrow_mut();
+            *cache.entry(key).or_insert_with(|| {
+                let parent = self.nodes[*candidates.iter().next()?].parent?;
+                if !candidates.iter().all(|id| { visit(); self.nodes[*id].parent == Some(parent) }) { return None; }
+                self.nodes[parent].children.iter().rev().find(|id| { visit(); candidates.contains(id) }).copied()
+            })
+        } else { None };
         let scope_boundary = |start| {
             let mut cursor = start;
             for _ in 0..self.nodes.len() {
@@ -160,8 +170,8 @@ impl BaseDocument {
         };
         let boundary = scope_boundary(origin);
         let mut selected = None;
-        for &id in candidates {
-            self.anchor_lookup_visits.set(self.anchor_lookup_visits.get().saturating_add(1));
+        for id in preferred.into_iter().chain(candidates.iter().copied().filter(|id| Some(*id) != preferred)) {
+            visit();
             let anchor = &self.nodes[id];
             if id == node.id {
                 continue;
@@ -222,6 +232,7 @@ impl BaseDocument {
             }
             if selected.is_none_or(|(prev, _, _)| self.compare_document_order(prev, id).is_lt()) {
                 selected = Some((id, point, extent));
+                if Some(id) == preferred { break; }
             }
         }
         selected
