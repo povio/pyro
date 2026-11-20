@@ -1,0 +1,25 @@
+{
+ "cssOnlyPaths": 236,
+ "nonCssOnlyPaths": 62,
+ "overlap": [
+  "Cargo.lock",
+  "crates/pyro-dom/src/layout.rs",
+  "crates/pyro-webapi/src/html.rs",
+  "crates/pyro-webapi/src/node.rs",
+  "crates/pyro-webapi/src/range.rs",
+  "vendor/blitz-dom/README.pyro.md",
+  "vendor/blitz-dom/UPSTREAM.patch"
+ ],
+ "cssOnlyChangesLost": [],
+ "nonCssOnlyDifferences": [],
+ "refs": {
+  "common": "e4ca26f4883eb47e507fa8bb2aa87aa6ae9a7d27",
+  "ordinary": "345acc12dc98d6bf820642a6c92f407fc8182ef4",
+  "upstream": "572c16d41b03064bb89d3ed40722d0eb46d2c7fd",
+  "reconciled": "97378f212759636a841aa25c19169bcbf91f1cb9",
+  "batch": "37aba62ab820693fb1cf0cf8c385cae12c935f11",
+  "head": "902fe811fbef4ff0f3e39ca1f896de3a275d20b5"
+ },
+ "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+ "jsc": "0e0dd7038a7a-6f4649e395e0"
+}

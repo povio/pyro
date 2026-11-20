@@ -1,0 +1,311 @@
+{
+ "css-reconciliation": {
+  "urls": 1038,
+  "sides": [
+   {
+    "reported": 35514,
+    "passes": 32351,
+    "fully": 814,
+    "page_complete": 1026,
+    "page_timeout": 8,
+    "page_error": 4
+   },
+   {
+    "reported": 35514,
+    "passes": 32351,
+    "fully": 814,
+    "page_complete": 1026,
+    "page_timeout": 8,
+    "page_error": 4
+   }
+  ],
+  "changes": {
+   "gained": 0,
+   "lost": 0,
+   "added": 0,
+   "missing": 0
+  },
+  "chromeComparison": {},
+  "wptRevisions": [
+   "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+   "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+  ],
+  "jobs": [
+   2,
+   2
+  ],
+  "restarts": [
+   0,
+   0
+  ],
+  "artifacts": [
+   {
+    "file": "upstream.json",
+    "sha256": "d14a6c8822a41e09642aec5b53e90a7a4c14413a49a8be54229596b1810298ed"
+   },
+   {
+    "file": "reconciled.json",
+    "sha256": "e8d50b38b3de861595ba6dd9d7e93b6877ff6c9ef9bc2eb7bd2f227d6644a0b9"
+   }
+  ]
+ },
+ "css-supplement": {
+  "urls": 41,
+  "sides": [
+   {
+    "reported": 874,
+    "passes": 572,
+    "fully": 27,
+    "page_complete": 41
+   },
+   {
+    "reported": 874,
+    "passes": 577,
+    "fully": 27,
+    "page_complete": 41
+   }
+  ],
+  "changes": {
+   "gained": 5,
+   "lost": 0,
+   "added": 0,
+   "missing": 0
+  },
+  "chromeComparison": {},
+  "wptRevisions": [
+   "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+   "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+  ],
+  "jobs": [
+   2,
+   2
+  ],
+  "restarts": [
+   0,
+   0
+  ],
+  "artifacts": [
+   {
+    "file": "extra-upstream.json",
+    "sha256": "dd733a391bf55db3703115f5c961d7609913dfc59067eb10523b01ed4ab2f66a"
+   },
+   {
+    "file": "extra-reconciled.json",
+    "sha256": "241d2e9c7152a73058746ffb7a77389638eecac2078fd4a5d6e9435e947dfe4e"
+   }
+  ]
+ },
+ "non-css-reconciliation": {
+  "urls": 330,
+  "sides": [
+   {
+    "reported": 118957,
+    "passes": 108979,
+    "fully": 132,
+    "page_complete": 321,
+    "page_error": 1,
+    "page_timeout": 8
+   },
+   {
+    "reported": 118957,
+    "passes": 108979,
+    "fully": 132,
+    "page_complete": 321,
+    "page_error": 1,
+    "page_timeout": 8
+   }
+  ],
+  "changes": {
+   "gained": 0,
+   "lost": 0,
+   "added": 0,
+   "missing": 0
+  },
+  "chromeComparison": {},
+  "wptRevisions": [
+   "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+   "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+  ],
+  "jobs": [
+   4,
+   4
+  ],
+  "restarts": [
+   0,
+   0
+  ],
+  "artifacts": [
+   {
+    "file": "before.json",
+    "sha256": "1827ce78b957d3fcdaeb4911a4cc86fd0f74e7ac47bcbba923673045b43b466e"
+   },
+   {
+    "file": "reconciled-current.json",
+    "sha256": "649c2668313af39ddb9439f761a6200d4d9322d67e3364723f7a3eae9fc54765"
+   }
+  ]
+ },
+ "non-css-feature-batches": {
+  "urls": 517,
+  "sides": [
+   {
+    "reported": 150977,
+    "passes": 135426,
+    "fully": 240,
+    "page_complete": 497,
+    "page_timeout": 18,
+    "page_error": 2
+   },
+   {
+    "reported": 151316,
+    "passes": 141296,
+    "fully": 261,
+    "page_complete": 499,
+    "page_timeout": 17,
+    "page_error": 1
+   },
+   {
+    "reported": 150904,
+    "passes": 143082,
+    "fully": 355,
+    "page_complete": 516,
+    "page_error": 1
+   }
+  ],
+  "changes": {
+   "gained": 5871,
+   "lost": 1,
+   "added": 411,
+   "missing": 72
+  },
+  "chromeComparison": {
+   "chromeOnly": 4426,
+   "lpOnly": 2640
+  },
+  "wptRevisions": [
+   "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+   "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+   "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+  ],
+  "jobs": [
+   4,
+   4,
+   4
+  ],
+  "restarts": [
+   0,
+   0,
+   0
+  ],
+  "artifacts": [
+   {
+    "file": "final-control.json",
+    "sha256": "cf52d6c7ca40b8318f2acd5f9f71b014cf8be68f65cc4486238ce13ed4beab3a"
+   },
+   {
+    "file": "final-head.json",
+    "sha256": "439d7790b6f5777a0860b9767dc3e81f13dd5d04e16d0d35393e290c3b495c94"
+   },
+   {
+    "file": "final-chrome.json",
+    "sha256": "57a31deebce42369adf83f8138d0ca906512deca6571758c3321667048d1ff21"
+   }
+  ]
+ },
+ "css-feature-guard": {
+  "urls": 1038,
+  "sides": [
+   {
+    "reported": 35514,
+    "passes": 32351,
+    "fully": 814,
+    "page_complete": 1026,
+    "page_timeout": 8,
+    "page_error": 4
+   },
+   {
+    "reported": 35514,
+    "passes": 32350,
+    "fully": 813,
+    "page_complete": 1026,
+    "page_timeout": 8,
+    "page_error": 4
+   }
+  ],
+  "changes": {
+   "gained": 0,
+   "lost": 1,
+   "added": 0,
+   "missing": 0
+  },
+  "chromeComparison": {},
+  "wptRevisions": [
+   "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+   "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+  ],
+  "jobs": [
+   2,
+   2
+  ],
+  "restarts": [
+   0,
+   0
+  ],
+  "artifacts": [
+   {
+    "file": "reconciled.json",
+    "sha256": "e8d50b38b3de861595ba6dd9d7e93b6877ff6c9ef9bc2eb7bd2f227d6644a0b9"
+   },
+   {
+    "file": "current-features.json",
+    "sha256": "e730a53a3bb5cd7c307db70280e7b6d5f68ed2670338bb0d2bac41bd9394f0ea"
+   }
+  ]
+ },
+ "css-feature-supplement": {
+  "urls": 41,
+  "sides": [
+   {
+    "reported": 874,
+    "passes": 577,
+    "fully": 27,
+    "page_complete": 41
+   },
+   {
+    "reported": 874,
+    "passes": 577,
+    "fully": 27,
+    "page_complete": 41
+   }
+  ],
+  "changes": {
+   "gained": 0,
+   "lost": 0,
+   "added": 0,
+   "missing": 0
+  },
+  "chromeComparison": {},
+  "wptRevisions": [
+   "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+   "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+  ],
+  "jobs": [
+   2,
+   2
+  ],
+  "restarts": [
+   0,
+   0
+  ],
+  "artifacts": [
+   {
+    "file": "extra-reconciled.json",
+    "sha256": "241d2e9c7152a73058746ffb7a77389638eecac2078fd4a5d6e9435e947dfe4e"
+   },
+   {
+    "file": "features-extra.json",
+    "sha256": "7ac150db84a0261bd31072c8ff7d6860ffdb9dc7e6ac91eb527bb50b7ac9cbe0"
+   }
+  ]
+ }
+}

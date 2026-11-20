@@ -1,0 +1,21 @@
+{
+ "upstream": "572c16d41b03064bb89d3ed40722d0eb46d2c7fd",
+ "candidate": "97378f212759636a841aa25c19169bcbf91f1cb9",
+ "sourceTree": "9c10a555d89be4d3c79ecdefdba25294df920355",
+ "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+ "jsc": "0e0dd7038a7a-6f4649e395e0",
+ "jobs": 2,
+ "compile": "git apply --index exact five-commit patch at original verified 8737351a8 source path, verified working tree and index tree against 572c16d41, rebuilt with original clean Cargo target and matching JSC",
+ "sha256": {
+  "upstreamBinary": "cc6d5caec997727afb3a72ee8a96a9a5e970adad53f2e0a5bbe4c6da0c9c88f5",
+  "candidateBinary": "10080d9b6784a60b10eb0eb9efe606f33449bbb1f712ffcd3377f70482a9dfb9",
+  "mainUrls": "216cdd57df0b99d24dc04afffaab60b9e2a86dc092d9f241adc3368fd5521724",
+  "supplementUrls": "d30853414108eb5731754fd20c9ccc50617c1422925bd07bb18b1a0a7227d399",
+  "mainRunner": "47d60052e13febd00cdda26abf696374254937f10bae9d30e17cacef405cc8eb",
+  "supplementRunner": "d14e5699d0807826c28c5f35e819e5d073f30cb8ac413bf1b3dc9f39035b2184"
+ },
+ "namedStatusChanges": {
+  "main": 0,
+  "supplement": 5
+ }
+}

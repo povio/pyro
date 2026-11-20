@@ -1,0 +1,40 @@
+ 1:  3571f1ed3 =  1:  bb0499647 Track scoped namespace bindings during XML serialization
+ 2:  5a055f35b =  2:  212e3d8e6 Honor response MIME and encoding overrides in XMLHttpRequest
+ 3:  db131ddf3 =  3:  bdf9703ef Validate TextEncoder destinations with intrinsic Uint8Array and buffer getters
+ 4:  016f4da18 =  4:  b486712d2 Parse XML insertion fragments and implement positional HTML insertion with the target context
+ 5:  f6e454eeb =  5:  fd9a796a3 Insert images and horizontal rules through editing commands
+ 6:  946345b52 =  6:  8652f3ac5 Preserve the editing host when a deleted range ends in it
+ 7:  9f5fc67ae =  7:  ca7994644 Limit XML fragment parsing to range and adjacent insertion APIs
+ 8:  ccfd558f8 =  8:  949d6b12f Resolve character-data editing boundaries before recording undo
+ 9:  9c1fef7c4 =  9:  fd28c0480 Preserve parser-option policy decisions and brands across realms
+10:  025ae1cdd = 10:  d1c0d8366 Retain unread bytes after streaming decode errors and reject replacement labels
+11:  a78718f6c = 11:  c07a2f30c Advance unread decoder input without repeatedly copying its tail
+12:  da6e4ac70 = 12:  704a1fa27 Keep decoder shift state across fatal streaming errors without replaying failed input
+13:  409ba780e = 13:  bbd0c124c Apply explicit namespace-aware sanitizer removal rules during HTML fragment construction
+14:  85cb1d96e = 14:  a5f626e8a Invalidate manual slot layout and signal detached slot reassignment
+15:  abcad28e3 ! 15:  f74bbe1a4 Hit-test SVG fill and stroke geometry in the element coordinate space
+    @@ vendor/blitz-dom/README.pyro.md: blitz-html and stylo_taffy are vendored from th
+     +
+      ## Updating or dropping the patch
+      
+    - - To move to a newer blitz main: in a blitz checkout, commit this directory's `src/` and `assets/` over
+    + Preserve the macOS `objc2-core-text` manifest dependency when regenerating `Cargo.toml`.
+     
+      ## vendor/blitz-dom/UPSTREAM.patch ##
+     @@ vendor/blitz-dom/UPSTREAM.patch: diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
+16:  1f113e8d3 = 16:  04656b7cb Implement document-scoped editing styles and default paragraph separators
+17:  35554fc65 = 17:  11c8451f9 Implement URLPattern matching and capture results in window and worker realms
+18:  94dbbc216 = 18:  e142ae6f0 Apply configured HTML filters while streaming document fragments
+19:  1f8ac3496 = 19:  70699bed6 Retain each worker's navigator for the lifetime of its realm
+20:  3e8366c40 = 20:  104ee545e Recognize encapsulation usages during WebCrypto IDL conversion
+21:  774a4bba5 = 21:  4b6517917 Align editable paragraphs within their own editing hosts
+22:  4c13e694a = 22:  24aea37df Apply font and color commands within editable host boundaries
+23:  1a90717b5 = 23:  8d70cfe34 Schedule prioritized and abortable tasks in window and worker event loops
+24:  95a31b084 = 24:  52bbd150f Dispatch trusted wheel events according to listeners on the propagation path
+25:  11e2a253d = 25:  4f380efc2 Reflect live SVG scalar, enumeration, angle and string attributes
+26:  e7d2c6727 = 26:  c897725b3 Render biquad and IIR filters with per-channel state and channel merger routing
+27:  4cd5943a5 = 27:  1f1530fb0 Recognize template fragment contexts in HTML form parsing
+28:  aaf6e35a2 = 28:  bcf5460a0 Admit live ranges whose endpoints belong to the selection document
+29:  d0b04a29f = 29:  fa394b59a Preserve editable line whitespace and keep caret descent within its host
+30:  345acc12d = 30:  bea043c33 Use the enclosing document URL for srcdoc client referrers
+ -:  --------- > 31:  97378f212 Keep the associated document alive with its Window across navigation
