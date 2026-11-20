@@ -289,10 +289,14 @@ impl ColumnFragments {
     /// shown in the columns: the bounding box of the pieces.
     pub fn map_rect(&self, rect: kurbo::Rect, scale: f64) -> kurbo::Rect {
         let mut out: Option<kurbo::Rect> = None;
+        // pyro: a rect only touching a fragment's range is not in it (a spanner's row starts where
+        // the column before it ends: mapped through that column too, it widened the container's
+        // scrollable overflow by its offset); an empty rect goes through one fragment.
+        let empty = rect.y1 <= rect.y0;
         for f in &self.fragments {
             let y0 = rect.y0.max(f.start as f64 * scale);
             let y1 = rect.y1.min(f.end as f64 * scale);
-            if y1 < y0 {
+            if y1 < y0 || (!empty && y1 <= y0) || (empty && out.is_some()) {
                 continue;
             }
             let piece = kurbo::Rect::new(rect.x0, y0, rect.x1, y1)
@@ -2279,6 +2283,8 @@ impl BaseDocument {
         let (columns, rl) = node.vertical_column_fragments()?;
         let width = node.final_layout().size.width as f64;
         let mut out: Option<kurbo::Rect> = None;
+        // (A rect only touching a fragment's range is not in it: `ColumnFragments::map_rect`.)
+        let empty = rect.x1 <= rect.x0;
         for f in &columns.fragments {
             let (start, end) = (f.start as f64, f.end as f64);
             let (range, offset) = if rl {
@@ -2288,7 +2294,7 @@ impl BaseDocument {
             };
             let x0 = rect.x0.max(range.0 * scale);
             let x1 = rect.x1.min(range.1 * scale);
-            if x1 < x0 {
+            if x1 < x0 || (!empty && x1 <= x0) || (empty && out.is_some()) {
                 continue;
             }
             let piece = kurbo::Rect::new(x0, rect.y0, x1, rect.y1) + offset * scale;
@@ -2353,7 +2359,7 @@ impl BaseDocument {
     /// `column-span: all`, and those below its children through boxes that carry spanners
     /// (`carries_spanners`). With each, the offset of its parent's box from the container's
     /// (laid-out positions: zero while the strip is not laid out).
-    fn column_spanners_of(&self, container: crate::NodeId) -> Vec<(crate::NodeId, Point<f32>)> {
+    pub(crate) fn column_spanners_of(&self, container: crate::NodeId) -> Vec<(crate::NodeId, Point<f32>)> {
         let mut found = Vec::new();
         self.collect_column_spanners(container, Point::ZERO, 0, &mut found);
         found

@@ -21946,7 +21946,7 @@ diff --git a/packages/blitz-dom/src/layout/multicol.rs b/packages/blitz-dom/src/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/multicol.rs
-@@ -0,0 +1,3461 @@
+@@ -0,0 +1,3467 @@
 +//! pyro: CSS Multi-column Layout (<https://drafts.csswg.org/css-multicol/>).
 +//!
 +//! A multi-column container lays its content out once, in a strip one column wide (its flow
@@ -22238,10 +22238,14 @@ new file mode 100644
 +    /// shown in the columns: the bounding box of the pieces.
 +    pub fn map_rect(&self, rect: kurbo::Rect, scale: f64) -> kurbo::Rect {
 +        let mut out: Option<kurbo::Rect> = None;
++        // pyro: a rect only touching a fragment's range is not in it (a spanner's row starts where
++        // the column before it ends: mapped through that column too, it widened the container's
++        // scrollable overflow by its offset); an empty rect goes through one fragment.
++        let empty = rect.y1 <= rect.y0;
 +        for f in &self.fragments {
 +            let y0 = rect.y0.max(f.start as f64 * scale);
 +            let y1 = rect.y1.min(f.end as f64 * scale);
-+            if y1 < y0 {
++            if y1 < y0 || (!empty && y1 <= y0) || (empty && out.is_some()) {
 +                continue;
 +            }
 +            let piece = kurbo::Rect::new(rect.x0, y0, rect.x1, y1)
@@ -24228,6 +24232,8 @@ new file mode 100644
 +        let (columns, rl) = node.vertical_column_fragments()?;
 +        let width = node.final_layout().size.width as f64;
 +        let mut out: Option<kurbo::Rect> = None;
++        // (A rect only touching a fragment's range is not in it: `ColumnFragments::map_rect`.)
++        let empty = rect.x1 <= rect.x0;
 +        for f in &columns.fragments {
 +            let (start, end) = (f.start as f64, f.end as f64);
 +            let (range, offset) = if rl {
@@ -24237,7 +24243,7 @@ new file mode 100644
 +            };
 +            let x0 = rect.x0.max(range.0 * scale);
 +            let x1 = rect.x1.min(range.1 * scale);
-+            if x1 < x0 {
++            if x1 < x0 || (!empty && x1 <= x0) || (empty && out.is_some()) {
 +                continue;
 +            }
 +            let piece = kurbo::Rect::new(x0, rect.y0, x1, rect.y1) + offset * scale;
@@ -24302,7 +24308,7 @@ new file mode 100644
 +    /// `column-span: all`, and those below its children through boxes that carry spanners
 +    /// (`carries_spanners`). With each, the offset of its parent's box from the container's
 +    /// (laid-out positions: zero while the strip is not laid out).
-+    fn column_spanners_of(&self, container: crate::NodeId) -> Vec<(crate::NodeId, Point<f32>)> {
++    pub(crate) fn column_spanners_of(&self, container: crate::NodeId) -> Vec<(crate::NodeId, Point<f32>)> {
 +        let mut found = Vec::new();
 +        self.collect_column_spanners(container, Point::ZERO, 0, &mut found);
 +        found
@@ -46592,7 +46598,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                  // Set viewport
                  // viewport_mut handles change detection. So we just unconditionally set the values;
                  let mut sub_viewport = sub_doc.viewport_mut();
-@@ -154,57 +361,557 @@
+@@ -154,57 +361,566 @@
                  sub_viewport.color_scheme = self.viewport.color_scheme;
  
                  let viewport_scale = self.viewport.scale();
@@ -47135,6 +47141,15 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +        let vertical_columns_base = (columns_base.is_none()
 +            && self.nodes[node_id].vertical_column_fragments().is_some())
 +            .then(|| std::mem::replace(&mut overflow, Rect::ZERO));
++        // pyro: each box (and line) of a multi-column container is moved into the columns that
++        // show it before they are united, not their union: a spanner as wide as the container
++        // reaches into a column's range only where its row starts, and the union mapped through
++        // that column's offset made a scrollable overflow columns wide that is not there
++        // (Chromium; WPT css-multicol `multicol-list-item-003`, `abspos-after-spanner`, ... with
++        // classic scrollbars).
++        let in_columns = columns_base.is_some();
++        // (So with a vertical writing mode's.)
++        let in_vertical_columns = vertical_columns_base.is_some();
  
          let layout_children = std::mem::take(self.nodes[node_id].layout_children.get_mut());
 -
@@ -47175,7 +47190,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
              for &child_id in children {
                  // Out-of-flow children are laid out relative to their containing
                  // block, not their DOM parent: they are visited (and their overflow
-@@ -212,18 +919,49 @@
+@@ -212,18 +928,71 @@
                  if self.nodes[child_id].is_out_of_flow() {
                      continue;
                  }
@@ -47203,9 +47218,29 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +                    }
 +                    _ => child_rect_in_self,
 +                };
++                // (A box carrying spanners: its own box, the spanners in their rows below; what
++                // they make it reach in the strip is no column's.)
++                let child_rect_in_self = if in_columns && self.carries_spanners_of(node_id, child_id) {
++                    let l = self.nodes[child_id].final_layout();
++                    let own = Rect::new(
++                        l.location.x as f64 * scale,
++                        l.location.y as f64 * scale,
++                        (l.location.x + l.size.width) as f64 * scale,
++                        (l.location.y + l.size.height) as f64 * scale,
++                    );
++                    self.columns_rect(node_id, own, scale)
++                } else if in_columns {
++                    self.columns_rect(node_id, child_rect_in_self, scale)
++                } else if in_vertical_columns {
++                    self.vertical_columns_rect(node_id, child_rect_in_self, scale).unwrap_or(child_rect_in_self)
++                } else {
++                    child_rect_in_self
++                };
 +                overflow = unite_overflow(overflow, child_rect_in_self);
 +                if let Some(padding) = scroll_padding {
-+                    overflow = unite_overflow(overflow, self.padded_inflow_box(child_id, padding, scale));
++                    let padded = self.padded_inflow_box(child_id, padding, scale);
++                    let padded = if in_columns { self.columns_rect(node_id, padded, scale) } else { padded };
++                    overflow = unite_overflow(overflow, padded);
 +                }
              }
          }
@@ -47227,11 +47262,13 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +            if viewport_contains_fixed && self.is_fixed(child_id) {
 +                continue;
 +            }
++            let child_rect_in_self =
++                if in_columns { self.columns_rect(node_id, child_rect_in_self, scale) } else { child_rect_in_self };
 +            overflow = unite_overflow(overflow, child_rect_in_self);
          }
          *self.nodes[node_id].hoisted_children.borrow_mut() = hoisted_children;
          for pseudo in [self.nodes[node_id].before(), self.nodes[node_id].after()] {
-@@ -231,28 +969,525 @@
+@@ -231,28 +1000,539 @@
              if self.nodes[pseudo].is_out_of_flow() {
                  continue;
              }
@@ -47239,9 +47276,13 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 -            overflow = overflow.union(child_rect_in_self);
 +            let child = contents.for_child(&self.nodes, &self.nodes[pseudo]);
 +            let child_rect_in_self = crate::util::ensure_stack(|| self.resolve_transforms(pseudo, resolve_all, child));
++            let child_rect_in_self =
++                if in_columns { self.columns_rect(node_id, child_rect_in_self, scale) } else { child_rect_in_self };
 +            overflow = unite_overflow(overflow, child_rect_in_self);
 +            if let Some(padding) = scroll_padding {
-+                overflow = unite_overflow(overflow, self.padded_inflow_box(pseudo, padding, scale));
++                let padded = self.padded_inflow_box(pseudo, padding, scale);
++                let padded = if in_columns { self.columns_rect(node_id, padded, scale) } else { padded };
++                overflow = unite_overflow(overflow, padded);
 +            }
 +        }
 +
@@ -47249,16 +47290,26 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +        // overflow too (a nowrap name in a 100px `truncate` cell scrolls), and
 +        // a scroll container adds its end padding after them.
 +        if let Some((lines, true)) = self.line_bounds(node_id, &layout, scale) {
-+            overflow = overflow.union(lines);
++            overflow = overflow.union(if in_columns { self.columns_rect(node_id, lines, scale) } else { lines });
 +        }
 +        // pyro: a vertical writing mode's columns (shown by paint only) are its overflow too.
-+        if let Some(base) = vertical_columns_base
-+            && let Some(mapped) = self.vertical_columns_rect(node_id, overflow, scale)
-+        {
-+            overflow = if overflow.width() > 0.0 || overflow.height() > 0.0 { base.union(mapped) } else { base };
++        if let Some(base) = vertical_columns_base {
++            // (Its in-flow boxes already in their columns, above; the rest mapped here.)
++            overflow = if overflow.width() > 0.0 || overflow.height() > 0.0 { base.union(overflow) } else { base };
++        }
++        // (And the spanners, in their rows: `column_spanners_of` gives their parents' places.)
++        if in_columns && let Some(columns) = self.nodes[node_id].column_fragments() {
++            let rows: Vec<_> = columns.fragments.iter().filter(|f| f.spanner).copied().collect();
++            for ((spanner, at), row) in self.column_spanners_of(node_id).into_iter().zip(rows) {
++                let l = self.nodes[spanner].final_layout();
++                let (x, y) = (at.x + l.location.x + row.offset.x, at.y + l.location.y + row.offset.y);
++                let rect = Rect::new(x as f64 * scale, y as f64 * scale, (x + l.size.width) as f64 * scale, (y + l.size.height) as f64 * scale);
++                overflow = unite_overflow(overflow, rect);
++            }
 +        }
 +        if let Some(base) = columns_base {
-+            overflow = base.union(self.columns_rect(node_id, overflow, scale));
++            // (Each already in its columns, above.)
++            overflow = if overflow.width() > 0.0 || overflow.height() > 0.0 { base.union(overflow) } else { base };
 +            // pyro: a scroll container's column boxes are its scrollable overflow whole, the last
 +            // one past its content too (Chromium: the columns are the fragments of its content
 +            // box; WPT css-overflow `scroll-markers/column-scroll-marker-007`).
@@ -47328,7 +47379,9 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +            (y + h + pad(padding.bottom, child.margin.bottom)) * scale,
 +        )
 +    }
-+
+ 
+-        let full = if let Some(t) = transform {
+-            Affine::translate((scaled_x, scaled_y)) * t
 +    /// pyro: `margin` (`node_id`'s bottom margin) collapsed with the bottom margin of its last
 +    /// in-flow child when they adjoin (CSS 2.1 § 8.3.1: no bottom border or padding, an `auto`
 +    /// height, no formatting context of its own, horizontal writing mode), recursively.
@@ -47371,9 +47424,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +        let (pos, neg) = (margin.max(inner).max(0.0), margin.min(inner).min(0.0));
 +        pos + neg
 +    }
- 
--        let full = if let Some(t) = transform {
--            Affine::translate((scaled_x, scaled_y)) * t
++
 +    /// pyro: whether `node_id` is `position: fixed`.
 +    fn is_fixed(&self, node_id: NodeId) -> bool {
 +        self.nodes[node_id]
@@ -47765,7 +47816,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
  
          fn resolve_layout_children_recursive(doc: &mut BaseDocument, node_id: NodeId) {
              // Anonymous blocks and pseudo-elements can be removed from the slab
-@@ -264,6 +1499,43 @@
+@@ -264,6 +1544,43 @@
              let mut damage = doc.nodes[node_id].damage().unwrap_or(ALL_DAMAGE);
              let _flags = doc.nodes[node_id].flags;
  
@@ -47809,7 +47860,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
              if damage.intersects(CONSTRUCT_FC | CONSTRUCT_BOX) {
                  //} || flags.contains(NodeFlags::IS_INLINE_ROOT) {
  
-@@ -277,20 +1549,35 @@
+@@ -277,20 +1594,35 @@
                  }
  
                  let mut collected = LayoutChildren::default();
@@ -47852,7 +47903,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                      }
                  }
  
-@@ -300,16 +1587,33 @@
+@@ -300,16 +1632,33 @@
                  damage.remove(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                  // damage.insert(RestyleDamage::RELAYOUT | RestyleDamage::REPAINT);
              } else {
@@ -47890,7 +47941,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                          doc.nodes[child_id].layout_parent.set(Some(node_id));
                      }
  
-@@ -320,10 +1624,45 @@
+@@ -320,10 +1669,45 @@
                  // damage.insert(RestyleDamage::RELAYOUT | RestyleDamage::REPAINT);
              }
  
@@ -47936,7 +47987,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
      /// Every layout child must point back at its container via
      /// `layout_parent`, which `propagate_damage_flags` relies on to reach
      /// anonymous boxes.
-@@ -358,6 +1697,32 @@
+@@ -358,6 +1742,32 @@
          deferred_construction_nodes.sort_unstable_by_key(|task| task.node_id);
          deferred_construction_nodes.dedup_by_key(|task| task.node_id);
  
@@ -47969,7 +48020,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
          #[cfg(feature = "parallel-construct")]
          let iter = deferred_construction_nodes.into_par_iter();
          #[cfg(not(feature = "parallel-construct"))]
-@@ -367,9 +1732,9 @@
+@@ -367,9 +1777,9 @@
              .map(|task: ConstructionTask| match task.data {
                  ConstructionTaskData::InlineLayout(mut layout) => {
                      #[cfg(feature = "parallel-construct")]
@@ -47982,7 +48033,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                      #[cfg(feature = "parallel-construct")]
                      let layout_ctx_mut = &mut layout_ctx;
  
-@@ -386,7 +1751,14 @@
+@@ -386,7 +1796,14 @@
                      #[cfg(not(feature = "parallel-construct"))]
                      let font_ctx_mut = &mut *self.font_ctx.lock().unwrap();
  
@@ -47998,7 +48049,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                      build_inline_layout_into(
                          &self.nodes,
                          layout_ctx_mut,
-@@ -395,18 +1767,13 @@
+@@ -395,18 +1812,13 @@
                          self.viewport.scale(),
                          task.node_id,
                      );
@@ -48018,7 +48069,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                      ConstructionTaskResult {
                          node_id: task.node_id,
                          data: ConstructionTaskResultData::InlineLayout(layout),
-@@ -419,10 +1786,7 @@
+@@ -419,10 +1831,7 @@
              match result.data {
                  ConstructionTaskResultData::InlineLayout(layout) => {
                      self.nodes[result.node_id].clear_layout_cache();
@@ -48030,7 +48081,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
                  }
              }
          }
-@@ -430,6 +1794,33 @@
+@@ -430,6 +1839,33 @@
          self.deferred_construction_nodes.clear();
      }
  
@@ -48064,7 +48115,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
      /// Walk the nodes now that they're properly styled and transfer their styles to the taffy style system
      ///
      /// TODO: update taffy to use an associated type instead of slab key
-@@ -437,32 +1828,1104 @@
+@@ -437,32 +1873,1104 @@
      pub fn resolve_layout(&mut self) {
          let size = self.stylist.device().au_viewport_size();
  

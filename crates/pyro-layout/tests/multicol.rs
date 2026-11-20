@@ -259,3 +259,21 @@ fn a_text_nodes_words_are_in_their_columns() {
     assert!(r.x + r.width > 100.0, "into the second column: {r:?}");
     assert!(r.height <= 40.0 + 0.5, "no taller than a column: {r:?}");
 }
+
+/// pyro: a multi-column container's scrollable overflow is its boxes where its columns show
+/// them, each moved on its own: a spanner (a child, or inside one) reaches into a column's range
+/// only where its row starts, and is no wider for it (Chromium; the union mapped through that
+/// column made it columns wider: WPT css-multicol `multicol-list-item-003`,
+/// `multicol-span-all-block-sibling-003` under classic scrollbars).
+#[test]
+fn a_spanner_adds_no_scrollable_overflow_beside_the_columns() {
+    let p = page(
+        "<!doctype html><body style='margin:0'>\
+         <div id=a style='columns:3;column-gap:20px;width:490px;overflow:auto'><div style='height:150px'></div>\
+         <div style='column-span:all;height:50px'></div>after</div>\
+         <div id=b style='columns:2;width:400px;overflow:auto'><div><div style='column-span:all;height:20px'></div>\
+         x<br>x<br>x<br>x<br>x<br>x<br>x</div></div>",
+    );
+    assert_eq!(p.layout.scroll_width(&p.dom, p.id("a")), 490.0, "a spanner child");
+    assert_eq!(p.layout.scroll_width(&p.dom, p.id("b")), 400.0, "a spanner inside a child");
+}

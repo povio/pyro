@@ -877,6 +877,15 @@ impl BaseDocument {
         let vertical_columns_base = (columns_base.is_none()
             && self.nodes[node_id].vertical_column_fragments().is_some())
             .then(|| std::mem::replace(&mut overflow, Rect::ZERO));
+        // pyro: each box (and line) of a multi-column container is moved into the columns that
+        // show it before they are united, not their union: a spanner as wide as the container
+        // reaches into a column's range only where its row starts, and the union mapped through
+        // that column's offset made a scrollable overflow columns wide that is not there
+        // (Chromium; WPT css-multicol `multicol-list-item-003`, `abspos-after-spanner`, ... with
+        // classic scrollbars).
+        let in_columns = columns_base.is_some();
+        // (So with a vertical writing mode's.)
+        let in_vertical_columns = vertical_columns_base.is_some();
 
         let layout_children = std::mem::take(self.nodes[node_id].layout_children.get_mut());
         // pyro: a scroll container's padding surrounds its in-flow content (CSS Overflow 3 §2.2;
@@ -941,9 +950,29 @@ impl BaseDocument {
                     }
                     _ => child_rect_in_self,
                 };
+                // (A box carrying spanners: its own box, the spanners in their rows below; what
+                // they make it reach in the strip is no column's.)
+                let child_rect_in_self = if in_columns && self.carries_spanners_of(node_id, child_id) {
+                    let l = self.nodes[child_id].final_layout();
+                    let own = Rect::new(
+                        l.location.x as f64 * scale,
+                        l.location.y as f64 * scale,
+                        (l.location.x + l.size.width) as f64 * scale,
+                        (l.location.y + l.size.height) as f64 * scale,
+                    );
+                    self.columns_rect(node_id, own, scale)
+                } else if in_columns {
+                    self.columns_rect(node_id, child_rect_in_self, scale)
+                } else if in_vertical_columns {
+                    self.vertical_columns_rect(node_id, child_rect_in_self, scale).unwrap_or(child_rect_in_self)
+                } else {
+                    child_rect_in_self
+                };
                 overflow = unite_overflow(overflow, child_rect_in_self);
                 if let Some(padding) = scroll_padding {
-                    overflow = unite_overflow(overflow, self.padded_inflow_box(child_id, padding, scale));
+                    let padded = self.padded_inflow_box(child_id, padding, scale);
+                    let padded = if in_columns { self.columns_rect(node_id, padded, scale) } else { padded };
+                    overflow = unite_overflow(overflow, padded);
                 }
             }
         }
@@ -961,6 +990,8 @@ impl BaseDocument {
             if viewport_contains_fixed && self.is_fixed(child_id) {
                 continue;
             }
+            let child_rect_in_self =
+                if in_columns { self.columns_rect(node_id, child_rect_in_self, scale) } else { child_rect_in_self };
             overflow = unite_overflow(overflow, child_rect_in_self);
         }
         *self.nodes[node_id].hoisted_children.borrow_mut() = hoisted_children;
@@ -971,9 +1002,13 @@ impl BaseDocument {
             }
             let child = contents.for_child(&self.nodes, &self.nodes[pseudo]);
             let child_rect_in_self = crate::util::ensure_stack(|| self.resolve_transforms(pseudo, resolve_all, child));
+            let child_rect_in_self =
+                if in_columns { self.columns_rect(node_id, child_rect_in_self, scale) } else { child_rect_in_self };
             overflow = unite_overflow(overflow, child_rect_in_self);
             if let Some(padding) = scroll_padding {
-                overflow = unite_overflow(overflow, self.padded_inflow_box(pseudo, padding, scale));
+                let padded = self.padded_inflow_box(pseudo, padding, scale);
+                let padded = if in_columns { self.columns_rect(node_id, padded, scale) } else { padded };
+                overflow = unite_overflow(overflow, padded);
             }
         }
 
@@ -981,16 +1016,26 @@ impl BaseDocument {
         // overflow too (a nowrap name in a 100px `truncate` cell scrolls), and
         // a scroll container adds its end padding after them.
         if let Some((lines, true)) = self.line_bounds(node_id, &layout, scale) {
-            overflow = overflow.union(lines);
+            overflow = overflow.union(if in_columns { self.columns_rect(node_id, lines, scale) } else { lines });
         }
         // pyro: a vertical writing mode's columns (shown by paint only) are its overflow too.
-        if let Some(base) = vertical_columns_base
-            && let Some(mapped) = self.vertical_columns_rect(node_id, overflow, scale)
-        {
-            overflow = if overflow.width() > 0.0 || overflow.height() > 0.0 { base.union(mapped) } else { base };
+        if let Some(base) = vertical_columns_base {
+            // (Its in-flow boxes already in their columns, above; the rest mapped here.)
+            overflow = if overflow.width() > 0.0 || overflow.height() > 0.0 { base.union(overflow) } else { base };
+        }
+        // (And the spanners, in their rows: `column_spanners_of` gives their parents' places.)
+        if in_columns && let Some(columns) = self.nodes[node_id].column_fragments() {
+            let rows: Vec<_> = columns.fragments.iter().filter(|f| f.spanner).copied().collect();
+            for ((spanner, at), row) in self.column_spanners_of(node_id).into_iter().zip(rows) {
+                let l = self.nodes[spanner].final_layout();
+                let (x, y) = (at.x + l.location.x + row.offset.x, at.y + l.location.y + row.offset.y);
+                let rect = Rect::new(x as f64 * scale, y as f64 * scale, (x + l.size.width) as f64 * scale, (y + l.size.height) as f64 * scale);
+                overflow = unite_overflow(overflow, rect);
+            }
         }
         if let Some(base) = columns_base {
-            overflow = base.union(self.columns_rect(node_id, overflow, scale));
+            // (Each already in its columns, above.)
+            overflow = if overflow.width() > 0.0 || overflow.height() > 0.0 { base.union(overflow) } else { base };
             // pyro: a scroll container's column boxes are its scrollable overflow whole, the last
             // one past its content too (Chromium: the columns are the fragments of its content
             // box; WPT css-overflow `scroll-markers/column-scroll-marker-007`).
