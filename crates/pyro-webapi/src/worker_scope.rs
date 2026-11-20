@@ -82,6 +82,7 @@ pub(crate) struct WorkerStart {
     indexed_db: crate::indexeddb::Namespace,
     /// Its Cache Storage, likewise.
     caches: crate::cache_storage::Namespace,
+    permissions: crate::navigator_extras::PermissionTable,
     /// `new Worker(url, {type: 'module'})`: the script is a module.
     pub(crate) module: bool,
     pub(crate) early: Vec<Early>,
@@ -120,6 +121,7 @@ impl WorkerStart {
             cache_disabled: page.cache_disabled(),
             indexed_db: page.local_storage.borrow().indexed_db(),
             caches: page.local_storage.borrow().caches(),
+            permissions: page.context_services().permissions.clone(),
             module: false,
             early: Vec::new(),
             service: None,
@@ -159,6 +161,7 @@ impl WorkerStart {
             cache_disabled: page.cache_disabled(),
             indexed_db: page.local_storage.borrow().indexed_db(),
             caches: page.local_storage.borrow().caches(),
+            permissions: page.context_services().permissions.clone(),
             module,
             early: Vec::new(),
             service: Some(service),
@@ -550,6 +553,7 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
     let document = dom.borrow_mut().create_document(pyro_dom::DocumentKind::Html, start.url.as_str());
     dom.borrow_mut().set_document_active(document, true).map_err(|e| JsError::Type(format!("{e:?}").into()))?;
     let page = PageDom::new(dom, document);
+    page.set_context_services(Rc::new(crate::navigator_extras::ContextServices::for_worker(start.permissions.clone())));
     // The worker's time origin: `performance.now()`, `Event.timeStamp` and
     // its Resource Timing entries count from here.
     let started = Instant::now();
@@ -935,6 +939,15 @@ impl JsClass for WorkerGlobalScope {
             Ok(s.wrap::<WorkerLocation>(g.url.clone(), Some(IdentityKey(KEY_LOCATION, 0)))?.value())
         });
         def.getter("navigator", navigator);
+        def.global_value_accessor(
+            "Notification",
+            |s, g| {
+                let value = crate::navigator_extras::member(s, &g.target.page, "Notification")?;
+                crate::lazy_module::replace(s, &g.target.page, "Notification", value)?;
+                Ok(value)
+            },
+            |s, g, v| crate::lazy_module::replace(s, &g.target.page, "Notification", v),
+        );
         def.getter("origin", |s, _g| Ok(s.string(s.realm().origin().as_deref().unwrap_or("null"))));
         // The worker's URL stands for its owner's context: a same-origin
         // script, or a blob:/data: URL whose origin is the creator's.
