@@ -177,3 +177,39 @@ fn boxes_apart_across_the_line_cost_no_search() {
     // (About 6 n here; O((n + k) log² n) at worst.)
     assert!(work < 64 * n && work < 2 * n * log * log, "{work}");
 }
+
+/// Spans first in paint order and atomics after them, all brought over one area by negative
+/// margins: n * n boxes overlap and no span is painted again (each atomic comes after every span).
+/// The search reads only atomics before a span (and spans after an atomic), so it finds no
+/// candidates rather than n * n.
+#[test]
+fn overlaps_in_paint_order_cost_no_search() {
+    // Rendered: spans with backgrounds, then inline-blocks pulled back over them; the
+    // inline-blocks stay on top.
+    let html = format!(
+        "<!doctype html><body style='margin:0;font:8px/10px monospace'><div style='white-space:nowrap'>{}{}</div>",
+        "<b style='background:blue;margin-right:-4px'>x</b>".repeat(500),
+        "<i style='display:inline-block;width:6px;height:8px;background:red;margin-left:-6px'></i>".repeat(500),
+    );
+    let image = render(&html, 800, 60);
+    assert!((0..800).any(|x| (0..60).any(|y| rgb(&image, x, y) == [255, 0, 0])), "the inline-blocks show");
+
+    // Counted: n spans, then n atomics, every one overlapping every other along and across the
+    // line.
+    let n = 50_000usize;
+    let open = |start: usize, rank: usize| blitz_paint::reach::ReachItem {
+        start: start as f64,
+        end: 1e9,
+        cross_start: 0.0,
+        cross_end: 10.0,
+        rank,
+    };
+    let spans: Vec<_> = (0..n).map(|i| open(i, i)).collect();
+    let atomics: Vec<_> = (0..n).map(|i| open(n + i, n + i)).collect();
+    let (met, work) = blitz_paint::reach::overlapping_atomics(&atomics, &spans);
+    assert!(met.iter().all(Vec::is_empty), "no span comes after an atomic");
+    assert!(work > 0);
+    let log = (2 * n).next_power_of_two().trailing_zeros() as usize + 1;
+    // (Enumerating geometric overlaps visited n * n = 2.5e9 pairs.)
+    assert!(work < 64 * n && work < 2 * n * log * log, "{work}");
+}

@@ -5399,17 +5399,21 @@ diff --git a/packages/blitz-paint/src/reach.rs b/packages/blitz-paint/src/reach.
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-paint/src/reach.rs
-@@ -0,0 +1,186 @@
+@@ -0,0 +1,221 @@
 +//! pyro: which atomic inlines of a line each inline box after them overlaps, output-sensitively
 +//! (an inline box after an atomic inline paints over it where they meet:
 +//! `ElementCx::draw_inline_boxes_over_atomics`).
 +//!
 +//! A sweep along the line: the boxes open at each point are kept, per kind, in a segment tree over
-+//! the cross axis (the block axis) with a count of live entries in each subtree. A box that opens
-+//! queries the tree of the other kind for the open boxes it meets across the line: only subtrees
-+//! with live entries in its cross extent are visited, so the work is O((n + k) log² n) for n boxes
-+//! and k overlapping pairs, whatever lies between them along or across the line (a wide box early
-+//! in the line, small boxes shifted up and down by `vertical-align`).
++//! the cross axis (the block axis), each node's boxes ordered by paint rank with the lowest and
++//! highest rank open in its subtree. A box that opens queries the tree of the other kind for the
++//! open boxes it meets across the line that paint on the other side of it (an atomic before a
++//! fragment): only subtrees holding such a box in its cross extent are visited and only such boxes
++//! read, so the work is O((n + k) log² n) for n boxes and k repainted pairs, whatever lies between
++//! them along or across the line (a wide box early in the line, small boxes shifted up and down by
++//! `vertical-align`, boxes overlapping in the wrong paint order).
++
++use std::collections::BTreeSet;
 +
 +/// One box of a line: where it starts and ends along the line, its extent across it, and its
 +/// rank in paint order (tree order).
@@ -5423,22 +5427,37 @@ new file mode 100644
 +}
 +
 +/// The open boxes of one kind, by their cross extents (half-open), over the cross coordinates
-+/// of every box of the line.
++/// of every box of the line. Each node keeps the boxes it is canonical for ordered by rank, and the
++/// lowest and highest rank open in its subtree: a query for boxes of lower (or higher) rank than
++/// its own skips the subtrees that hold none and reads only those of a node's boxes that qualify.
 +struct CrossTree {
 +    /// The distinct cross coordinates: leaf `i` is `[coords[i], coords[i + 1])`.
 +    coords: Vec<f64>,
 +    size: usize,
-+    /// Per node: the boxes whose extent covers the node's range and not its parent's (alive or
-+    /// not, dead ones dropped when met), and the live entries in its subtree.
-+    lists: Vec<Vec<usize>>,
-+    live: Vec<usize>,
++    sets: Vec<BTreeSet<(usize, usize)>>,
++    min_rank: Vec<usize>,
++    max_rank: Vec<usize>,
++}
++
++/// Which ranks a query wants: below its own (a fragment's atomics) or above (an atomic's later
++/// fragments).
++#[derive(Clone, Copy)]
++enum Ranks {
++    Below(usize),
++    Above(usize),
 +}
 +
 +impl CrossTree {
 +    fn new(coords: Vec<f64>) -> Self {
 +        let leaves = coords.len().saturating_sub(1).max(1);
 +        let size = leaves.next_power_of_two();
-+        Self { coords, size, lists: vec![Vec::new(); 2 * size], live: vec![0; 2 * size] }
++        Self {
++            coords,
++            size,
++            sets: vec![BTreeSet::new(); 2 * size],
++            min_rank: vec![usize::MAX; 2 * size],
++            max_rank: vec![0; 2 * size],
++        }
 +    }
 +
 +    /// The leaves `[lo, hi)` a cross extent covers (empty for an empty extent).
@@ -5466,31 +5485,40 @@ new file mode 100644
 +        }
 +    }
 +
-+    fn insert(&mut self, id: usize, nodes: &[usize]) {
-+        for &node in nodes {
-+            self.lists[node].push(id);
-+            let mut n = node;
-+            while n >= 1 {
-+                self.live[n] += 1;
-+                n /= 2;
++    /// Brings the subtree ranks of `node` and its ancestors up to date.
++    fn update(&mut self, mut node: usize) {
++        while node >= 1 {
++            let own = &self.sets[node];
++            let (mut low, mut high) =
++                (own.first().map_or(usize::MAX, |&(rank, _)| rank), own.last().map_or(0, |&(rank, _)| rank));
++            if node < self.size {
++                low = low.min(self.min_rank[2 * node]).min(self.min_rank[2 * node + 1]);
++                high = high.max(self.max_rank[2 * node]).max(self.max_rank[2 * node + 1]);
 +            }
++            self.min_rank[node] = low;
++            self.max_rank[node] = high;
++            node /= 2;
 +        }
 +    }
 +
-+    fn remove(&mut self, nodes: &[usize]) {
++    fn insert(&mut self, id: usize, rank: usize, nodes: &[usize]) {
 +        for &node in nodes {
-+            let mut n = node;
-+            while n >= 1 {
-+                self.live[n] -= 1;
-+                n /= 2;
-+            }
++            self.sets[node].insert((rank, id));
++            self.update(node);
 +        }
 +    }
 +
-+    /// Calls `found` for each open box whose extent meets leaves `[lo, hi)` (a box may be found
-+    /// more than once: once per canonical node of it met); `alive` says which are open. Returns
-+    /// the nodes and entries visited.
-+    fn query(&mut self, lo: usize, hi: usize, alive: &[bool], mut found: impl FnMut(usize)) -> usize {
++    fn remove(&mut self, id: usize, rank: usize, nodes: &[usize]) {
++        for &node in nodes {
++            self.sets[node].remove(&(rank, id));
++            self.update(node);
++        }
++    }
++
++    /// Calls `found` for each open box whose extent meets leaves `[lo, hi)` and whose rank is as
++    /// `ranks` wants (a box may be found once per canonical node of it). Returns the nodes and
++    /// entries visited.
++    fn query(&self, lo: usize, hi: usize, ranks: Ranks, mut found: impl FnMut(usize)) -> usize {
 +        let mut work = 0;
 +        if lo >= hi {
 +            return 0;
@@ -5498,19 +5526,27 @@ new file mode 100644
 +        let mut stack = vec![(1usize, 0usize, self.size)];
 +        while let Some((node, a, b)) = stack.pop() {
 +            work += 1;
-+            if b <= lo || a >= hi || self.live[node] == 0 {
++            let wanted = match ranks {
++                Ranks::Below(rank) => self.min_rank[node] < rank,
++                Ranks::Above(rank) => self.max_rank[node] > rank,
++            };
++            if b <= lo || a >= hi || !wanted {
 +                continue;
 +            }
-+            // Every box listed here covers this whole range, which meets the query's.
-+            let list = &mut self.lists[node];
-+            let mut i = 0;
-+            while i < list.len() {
-+                work += 1;
-+                if alive[list[i]] {
-+                    found(list[i]);
-+                    i += 1;
-+                } else {
-+                    list.swap_remove(i);
++            // Every box listed here covers this whole range, which meets the query's: those of
++            // the wanted ranks are read, no others.
++            match ranks {
++                Ranks::Below(rank) => {
++                    for &(_, id) in self.sets[node].range(..(rank, 0)) {
++                        work += 1;
++                        found(id);
++                    }
++                }
++                Ranks::Above(rank) => {
++                    for &(_, id) in self.sets[node].range((rank + 1, 0)..) {
++                        work += 1;
++                        found(id);
++                    }
 +                }
 +            }
 +            if b - a > 1 {
@@ -5546,7 +5582,6 @@ new file mode 100644
 +        }
 +    }
 +    events.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
-+    let mut alive = vec![false; n];
 +    let mut nodes: Vec<Vec<usize>> = vec![Vec::new(); n];
 +    let mut out: Vec<Vec<usize>> = vec![Vec::new(); boxes.len()];
 +    let mut seen: Vec<usize> = vec![usize::MAX; n];
@@ -5554,16 +5589,17 @@ new file mode 100644
 +    for (stamp, &(_, opens, id)) in events.iter().enumerate() {
 +        let k = kind(id);
 +        if !opens {
-+            alive[id] = false;
 +            let canonical = core::mem::take(&mut nodes[id]);
-+            trees[k].remove(&canonical);
++            trees[k].remove(id, item(id).rank, &canonical);
 +            continue;
 +        }
 +        let it = *item(id);
 +        let (lo, hi) = trees[k].leaves(it.cross_start, it.cross_end);
-+        // The open boxes of the other kind it meets across the line.
++        // The open boxes of the other kind it meets across the line and that paint on the other
++        // side of it: a fragment's atomics before it, an atomic's fragments after it.
++        let ranks = if k == 0 { Ranks::Above(it.rank) } else { Ranks::Below(it.rank) };
 +        let mut met: Vec<usize> = Vec::new();
-+        work += trees[1 - k].query(lo, hi, &alive, |other| {
++        work += trees[1 - k].query(lo, hi, ranks, |other| {
 +            if seen[other] != stamp {
 +                seen[other] = stamp;
 +                met.push(other);
@@ -5577,9 +5613,8 @@ new file mode 100644
 +        }
 +        let mut canonical = Vec::new();
 +        trees[k].canonical(lo, hi, &mut canonical);
-+        trees[k].insert(id, &canonical);
++        trees[k].insert(id, it.rank, &canonical);
 +        nodes[id] = canonical;
-+        alive[id] = true;
 +    }
 +    for list in &mut out {
 +        list.sort_by_key(|&atomic| atomics[atomic].rank);
