@@ -1,0 +1,16 @@
+{
+  "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+  "ciJavaScriptCore": "0e0dd7038a7a-6f4649e395e0",
+  "base": "902fe811fbef4ff0f3e39ca1f896de3a275d20b5",
+  "lpBaseBinary": "9f2bfe099b2d87b0626040695a0583d460c9f7b3c8a401941761c2d9b6595cb4",
+  "lpCandidateBinary": "155fa4ec512ec43b7a17d0a515ebce57635ccdfd5c50c76babac2a5b454bb395",
+  "chromeStable": "157.0.8103.80",
+  "platform": "macOS 27.2.1 arm64",
+  "sourceReceiptHashes": {
+    "lp-base": "3b5b9e5d768562fba97a3ad51a7a14cf61c22413ae6e094d2e7ecd6089b3a505",
+    "lp-candidate": "4fa063e91d9bd177249716d7c8235326d1d09461c5ccbe5251d82ccd1757053c",
+    "chrome-stable": "634d4c8867a92bc0e78e6a5c495f0ac356cb0d2f972afb8b15f3e192e2f7dbe1"
+  },
+  "streamsDraftSha256": "68701548fd1e79fd307c5820eff6b4bd2740fcfb9669f8f433e909754e63cad4",
+  "head": "24463a890decc18b8e6058aebdc09b6ae2619bc9"
+}
