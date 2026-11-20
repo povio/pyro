@@ -2408,7 +2408,7 @@ both edges, as in Blink; WPT css-overflow `input-scrollable-region-001`).
   `min-*` and `max-*`. Measured in definite space, an `auto`/`fit-content` basis gives the space between the
   calculations of its min-content and max-content widths (Blink's fit-content of the result). A size it measured
   and its parent hands back is not calculated again (`calc_size_results`, per pass). Horizontal writing modes only.
-  Final layout retains the measured height basis and used limits for CSSOM to resolve an interpolated calculation
+  Final layout retains each measured basis and its used limits (except shrink-to-fit widths that depend on two measurements) for CSSOM to resolve an interpolated calculation
   with the same intrinsic basis, without substituting the live endpoint or mutating the layout during readback.
 ## List item numbers from the `list-item` counter (WPT round 3, lane IT)
 

@@ -2035,9 +2035,9 @@ impl Renderer {
         Some(m.doc.resolved_transform_value(id, style))
     }
 
-    pub fn sampled_calc_height(&self, page: u64, key: u64, style: &style::properties::ComputedValues) -> Option<f32> {
+    pub fn sampled_calc_size(&self, page: u64, key: u64, width: bool, style: &style::properties::ComputedValues) -> Option<f32> {
         let mirror = self.mirrors.get(&page)?;
-        mirror.doc.sampled_calc_height(mirror.node(key)?, style)
+        mirror.doc.sampled_calc_size(mirror.node(key)?, width, style)
     }
 
     /// The computed style of the element keyed `key` in `page`'s persistent

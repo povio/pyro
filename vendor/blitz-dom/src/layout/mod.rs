@@ -168,7 +168,7 @@ pub(crate) struct LayoutPassState<'doc> {
     pub(crate) column_spanners: Option<(crate::NodeId, f32)>,
     /// pyro: the sizes `calc_size_inputs` measured for boxes this pass (box, axis 0 width or 1
     /// height, size): a parent that hands one back as a known size hands back the result.
-    calc_size_results: Vec<(NodeId, u8, f32, f32)>,
+    calc_size_results: Vec<(NodeId, u8, f32, Option<f32>)>,
     try_styles: std::collections::HashMap<NodeId, style::servo_arc::Arc<style::properties::ComputedValues>>,
     try_options: std::cell::RefCell<std::collections::HashMap<(Option<crate::NodeId>, usize), ([usize; 5], usize)>>,
     /// pyro: the multi-column container whose strip is being laid out and the border-box height
@@ -480,22 +480,26 @@ impl LayoutPassState<'_> {
             let basis = (size - inset).max(0.0);
             function.resolve(CSSPixelLength::new(basis)).px().max(0.0) + inset
         };
-        let given = |state: &Self, axis: u8, known: Option<f32>| {
-            known.is_some_and(|known| state.calc_size_results.iter().any(|&(id, a, size, _)| id == node_id && a == axis && size == known))
+        let previous = |axis, known, has_function: bool| {
+            if !has_function { return None; }
+            self.calc_size_results.iter().rev().find_map(|&(id, recorded_axis, result, basis)| {
+                (id == node_id && recorded_axis == axis && Some(result) == known).then_some(basis)
+            })
         };
         let known_width = inputs.known_dimensions.width;
+        let mut width_basis = None;
         let mut height_basis = None;
-        if functions.width.is_some() && given(self, 0, known_width) {
+        if let Some(basis) = previous(0, known_width, functions.width.is_some()) {
             functions.width = None;
+            width_basis = basis;
         }
-        if functions.height.is_some() && given(self, 1, inputs.known_dimensions.height) {
-            height_basis = self.calc_size_results.iter().rev().find_map(|&(id, axis, result, basis)| {
-                (id == node_id && axis == 1 && Some(result) == inputs.known_dimensions.height).then_some(basis)
-            });
+        if let Some(basis) = previous(1, inputs.known_dimensions.height, functions.height.is_some()) {
             functions.height = None;
+            height_basis = basis;
         }
         if let Some(function) = &functions.width {
             let size = inputs.known_dimensions.width.or(measured.map(|size| size.width)).unwrap_or(0.0);
+            width_basis = Some(size);
             let mut width = apply(function, size, box_inset.width);
             // A size measured in definite space is the box's fit-content size: the space between
             // the calculation of its min-content and max-content sizes (as Blink), not the
@@ -516,11 +520,12 @@ impl LayoutPassState<'_> {
                 let min_content = content(AvailableSpace::MinContent);
                 let max_content = content(AvailableSpace::MaxContent).max(min_content);
                 width = space.clamp(min_content, max_content);
+                width_basis = None;
             }
             let width = width.maybe_min(max.width).maybe_max(min.width);
             inputs.known_dimensions.width = Some(width.max(padding_border.width));
             if known_width.is_none() {
-                self.calc_size_results.push((node_id, 0, width.max(padding_border.width), size));
+                self.calc_size_results.push((node_id, 0, width.max(padding_border.width), width_basis));
             }
         }
         if let Some(function) = &functions.height {
@@ -528,7 +533,7 @@ impl LayoutPassState<'_> {
             height_basis = Some(size);
             let height = apply(function, size, box_inset.height).maybe_min(max.height).maybe_max(min.height);
             if inputs.known_dimensions.height.is_none() {
-                self.calc_size_results.push((node_id, 1, height.max(padding_border.height), size));
+                self.calc_size_results.push((node_id, 1, height.max(padding_border.height), height_basis));
                 if column_flex {
                     inputs.known_dimensions_are_definite.height = false;
                 }
@@ -536,10 +541,13 @@ impl LayoutPassState<'_> {
             inputs.known_dimensions.height = Some(height.max(padding_border.height));
         }
         if inputs.run_mode == RunMode::PerformLayout {
-            self.nodes[dom_node_id(node_id)].layout_data_mut().calc_height_inputs = height_basis.map(|size| {
-                let inset = box_inset.height;
-                ((size - inset).max(0.0), (min.height.unwrap_or(0.0).max(padding_border.height) - inset).max(0.0), max.height.map(|v| v - inset))
-            });
+            let limits = |basis: Option<f32>, inset: f32, padding: f32, minimum: Option<f32>, maximum: Option<f32>| {
+                basis.map(|size| ((size - inset).max(0.0), (minimum.unwrap_or(0.0).max(padding) - inset).max(0.0), maximum.map(|value| value - inset)))
+            };
+            self.nodes[dom_node_id(node_id)].layout_data_mut().calc_size_inputs = [
+                limits(width_basis, box_inset.width, padding_border.width, min.width, max.width),
+                limits(height_basis, box_inset.height, padding_border.height, min.height, max.height),
+            ];
         }
         inputs
     }

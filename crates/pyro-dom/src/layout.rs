@@ -4275,12 +4275,12 @@ impl Layout {
                 // as Chromium reports it (`7px`, `50%`, `auto`).
                 return declared.unwrap_or_else(|| "auto".into());
             }
-            if name == "height" && self.style.style_overridden() && declared.as_deref().is_some_and(|v| v.starts_with("calc-size(")) {
-                if let Some(height) = self.synced_geometry_source(dom).and_then(|source| {
+            if self.style.style_overridden() && declared.as_deref().is_some_and(|v| v.starts_with("calc-size(")) {
+                if let Some(size) = self.synced_geometry_source(dom).and_then(|source| {
                     let sampled = self.style.stylo_style(dom, el)?;
-                    source.sampled_calc_height(crate::snapshot::render_key(el), &sampled)
+                    source.sampled_calc_size(crate::snapshot::render_key(el), name == "width", &sampled)
                 }) {
-                    return format!("{}px", crate::computed::fmt_num(f64::from(height)));
+                    return format!("{}px", crate::computed::fmt_num(f64::from(size)));
                 }
             }
             // A declared absolute length is the used size the renderless layout cannot derive.
