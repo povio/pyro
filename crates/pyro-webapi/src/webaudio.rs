@@ -51,6 +51,8 @@ where
         "ConstantSourceNode",
         "GainNode",
         "StereoPannerNode",
+        "PannerNode",
+        "AudioListener",
         "BiquadFilterNode",
         "IIRFilterNode",
         "ChannelMergerNode",

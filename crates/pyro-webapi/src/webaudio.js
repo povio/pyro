@@ -33,7 +33,7 @@
   const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
   const queueMicrotaskC = queueMicrotask;
   const reportErrorC = typeof reportError === 'function' ? reportError : () => {};
-  const { sin, cos, exp, pow, floor, ceil, min, max, PI, abs } = Math;
+  const { sin, cos, asin, acos, exp, pow, floor, ceil, min, max, PI, abs } = Math;
   // Captured now: page fake timers installed later do not stall audio.
   const setTimer = setTimeout;
   const perf = performance;
@@ -192,12 +192,7 @@
     set value(v) {
       const p = paramOf(this);
       const value = finite(v, 'set the \'value\' property on', 'AudioParam');
-      p.value = Math.fround(value);
-      // Setting `value` is setValueAtTime(value, currentTime).
-      const t = ctxOf(p.ctx).time();
-      const at = p.events.findIndex((e) => e.type === SET && e.time === t);
-      if (at >= 0) p.events[at].value = value;
-      else if (p.events.length) insertEvent(p, { type: SET, time: t, value });
+      setParamValue(p, value, ctxOf(p.ctx).time());
     }
     get defaultValue() { return paramOf(this).defaultValue; }
     get minValue() { return paramOf(this).minValue; }
@@ -283,6 +278,19 @@
   }
   webidl(AudioParam, 'AudioParam');
 
+  function checkValueAtTime(p, t) {
+    if (p.events.some(e => e.type === CURVE && e.time <= t && t < e.time + e.duration)) {
+      throw new DE('The current time overlaps an automation curve.', 'NotSupportedError');
+    }
+  }
+  function setParamValue(p, value, t) {
+    // Setting value is equivalent to inserting a setValueAtTime at currentTime.
+    checkValueAtTime(p, t);
+    const at = p.events.findIndex(e => e.type === SET && e.time === t);
+    if (at >= 0) p.events[at].value = value;
+    else if (p.events.length) insertEvent(p, {type: SET, time: t, value});
+    p.value = Math.fround(value);
+  }
   function time(v, method) {
     const t = finite(v, 'execute', `${method}' on 'AudioParam`, 'double');
     if (t < 0) throw new RangeErrorC(`Failed to execute '${method}' on 'AudioParam': Time must be a finite non-negative number: ${t}`);
@@ -673,6 +681,27 @@
   }
   webidl(GainNode, 'GainNode');
 
+  function writeEqualPower(bus, left, right, i, pan, gain) {
+    if (bus.length === 1) {
+      const angle = (pan + 1) * PI / 4;
+      left[i] = gain * (bus[0][i] * cos(angle));
+      right[i] = gain * (bus[0][i] * sin(angle));
+    } else if (pan <= 0) {
+      const angle = (pan + 1) * PI / 2;
+      left[i] = gain * (bus[0][i] + bus[1][i] * cos(angle));
+      right[i] = gain * (bus[1][i] * sin(angle));
+    } else {
+      const angle = pan * PI / 2;
+      left[i] = gain * (bus[0][i] * cos(angle));
+      right[i] = gain * (bus[1][i] + bus[0][i] * sin(angle));
+    }
+  }
+
+  function pannerChannels(count) {
+    if (count < 1 || count > 2) throw new DE('A panner accepts one or two input channels.', 'NotSupportedError');
+    this.channelCount = count;
+  }
+
   class StereoPannerNode extends AudioNode {
     constructor(context, options = {}) {
       contextArg(context, 'StereoPannerNode');
@@ -682,10 +711,7 @@
       super(secret, context, {
         mode: 'clamped-max',
         disallowMaxMode: true,
-        checkCount(count) {
-          if (count < 1 || count > 2) throw new DE('A stereo panner accepts one or two input channels.', 'NotSupportedError');
-          this.channelCount = count;
-        },
+        checkCount: pannerChannels,
       });
       applyNodeOptions(this, settings);
       const n = nodeOf(this);
@@ -697,22 +723,7 @@
         const left = new F32(QUANTUM), right = new F32(QUANTUM);
         if (bus) {
           const values = paramValues(params.get(pan), f0, ctxOf(context).rate, q);
-          for (let i = 0; i < QUANTUM; i++) {
-            const position = values[i];
-            if (bus.length === 1) {
-              const angle = (position + 1) * PI / 4;
-              left[i] = bus[0][i] * cos(angle);
-              right[i] = bus[0][i] * sin(angle);
-            } else if (position <= 0) {
-              const angle = (position + 1) * PI / 2;
-              left[i] = bus[0][i] + bus[1][i] * cos(angle);
-              right[i] = bus[1][i] * sin(angle);
-            } else {
-              const angle = position * PI / 2;
-              left[i] = bus[0][i] * cos(angle);
-              right[i] = bus[1][i] + bus[0][i] * sin(angle);
-            }
-          }
+          for (let i = 0; i < QUANTUM; i++) writeEqualPower(bus, left, right, i, values[i], 1);
         }
         return [left, right];
       };
@@ -724,6 +735,176 @@
     }
   }
   webidl(StereoPannerNode, 'StereoPannerNode');
+
+  // Spatial AudioParams are shared by the legacy coordinate setters and the
+  // renderer. A listener belongs to its context, independently of its panners.
+  const listenerStates = new WeakMap();
+  const positionNames = ['positionX', 'positionY', 'positionZ'];
+  const orientationNames = ['orientationX', 'orientationY', 'orientationZ'];
+  const listenerOrientation = ['forwardX', 'forwardY', 'forwardZ', 'upX', 'upY', 'upZ'];
+  const listenerNames = [...positionNames, ...listenerOrientation];
+  const pannerNames = [...positionNames, ...orientationNames];
+
+  function spatialParams(ctx, names, defaults) {
+    const result = Object.create(null);
+    for (let j = 0; j < names.length; j++) result[names[j]] = new AudioParam(secret, ctx, defaults[j]);
+    return result;
+  }
+  function spatialAttributes(C, stateOf, names) {
+    for (const name of names) {
+      defineProperty(C.prototype, name, {
+        configurable: true, get() { return stateOf(this).spatial[name]; },
+      });
+    }
+  }
+  function setCoordinates(state, names, args) {
+    const values = names.map((name, i) => finite(Math.fround(args[i]), 'set', name));
+    const t = ctxOf(params.get(state.spatial[names[0]]).ctx).time();
+    for (const name of names) checkValueAtTime(params.get(state.spatial[name]), t);
+    for (let i = 0; i < names.length; i++) setParamValue(params.get(state.spatial[names[i]]), values[i], t);
+  }
+  function listenerOf(receiver) {
+    const state = listenerStates.get(receiver);
+    if (!state) throw invocation();
+    return state;
+  }
+  class AudioListener {
+    constructor(token = undefined, context) {
+      if (token !== secret) throw illegal();
+      listenerStates.set(this, {spatial: spatialParams(context, listenerNames, [0, 0, 0, 0, 0, -1, 0, 1, 0])});
+    }
+    setPosition(x, y, z) { setCoordinates(listenerOf(this), positionNames, arguments); }
+    setOrientation(x, y, z, xUp, yUp, zUp) { setCoordinates(listenerOf(this), listenerOrientation, arguments); }
+  }
+  spatialAttributes(AudioListener, listenerOf, listenerNames);
+  webidl(AudioListener, 'AudioListener');
+  function contextListener(ctx) {
+    const c = ctxOf(ctx);
+    return c.listener || (c.listener = new AudioListener(secret, ctx));
+  }
+  function pannerOf(receiver) {
+    const state = nodeOf(receiver);
+    if (!state.spatial) throw invocation();
+    return state;
+  }
+  const distanceModels = ['linear', 'inverse', 'exponential'];
+  function distanceAttenuation(n, d) {
+    const ref = n.refDistance, rolloff = n.rolloffFactor;
+    if (n.distanceModel === 'linear') {
+      const low = min(ref, n.maxDistance), high = max(ref, n.maxDistance);
+      const fraction = low === high ? 1 : (min(max(d, low), high) - low) / (high - low);
+      return 1 - min(rolloff, 1) * fraction;
+    }
+    if (ref === 0) return 0;
+    d = max(d, ref);
+    return n.distanceModel === 'inverse' ? ref / (ref + rolloff * (d - ref)) : pow(d / ref, -rolloff);
+  }
+  function coneAttenuation(n, dx, dy, dz, d, ox, oy, oz) {
+    if (n.coneInnerAngle === 360 && n.coneOuterAngle === 360) return 1;
+    const length = hypot(ox, oy, oz);
+    if (!length) return 1;
+    const cosine = d === 0 ? 0 : -(dx * ox + dy * oy + dz * oz) / (d * length);
+    const angle = acos(max(-1, min(1, cosine))) * 180 / PI;
+    const inner = abs(n.coneInnerAngle) / 2, outer = abs(n.coneOuterAngle) / 2;
+    if (angle <= inner) return 1;
+    if (angle >= outer) return n.coneOuterGain;
+    return 1 + (n.coneOuterGain - 1) * (angle - inner) / (outer - inner);
+  }
+  function renderSpatial(n, f0, q) {
+    const left = new F32(QUANTUM), right = new F32(QUANTUM);
+    const bus = input(n, q, f0);
+    if (!bus) return [left, right];
+    const rate = ctxOf(n.ctx).rate;
+    const source = n.spatial, listener = listenerOf(contextListener(n.ctx)).spatial;
+    let stride = QUANTUM;
+    function values(param) {
+      const state = params.get(param);
+      if (state.rate === 'a-rate' && (state.events.length || state.inputs.length)) stride = 1;
+      return paramValues(state, f0, rate, q);
+    }
+    const [sx, sy, sz, ox, oy, oz] = pannerNames.map(k => values(source[k]));
+    const [lx, ly, lz, fx, fy, fz, ux, uy, uz] = listenerNames.map(k => values(listener[k]));
+    // Static and k-rate coordinates have one listener-relative position per quantum.
+    for (let i = 0; i < QUANTUM; i += stride) {
+      const dx = sx[i] - lx[i], dy = sy[i] - ly[i], dz = sz[i] - lz[i];
+      const d = hypot(dx, dy, dz);
+      // Project the source onto the listener's orthonormal right/forward axes.
+      // asin of its horizontal right component folds rear azimuths into [-90, 90].
+      const rx = fy[i] * uz[i] - fz[i] * uy[i];
+      const ry = fz[i] * ux[i] - fx[i] * uz[i];
+      const rz = fx[i] * uy[i] - fy[i] * ux[i];
+      const rightLength = hypot(rx, ry, rz), forwardLength = hypot(fx[i], fy[i], fz[i]);
+      let pan = 0;
+      if (d && rightLength && forwardLength) {
+        const side = (dx * rx + dy * ry + dz * rz) / rightLength;
+        const front = (dx * fx[i] + dy * fy[i] + dz * fz[i]) / forwardLength;
+        const horizontal = hypot(side, front);
+        if (horizontal) pan = asin(max(-1, min(1, side / horizontal))) * 2 / PI;
+      }
+      const gain = distanceAttenuation(n, d) * coneAttenuation(n, dx, dy, dz, d, ox[i], oy[i], oz[i]);
+      for (let j = i; j < i + stride; j++) writeEqualPower(bus, left, right, j, pan, gain);
+    }
+    return [left, right];
+  }
+  const pannerDefaults = {coneInnerAngle: 360, coneOuterAngle: 360, coneOuterGain: 0,
+    maxDistance: 10000, refDistance: 1, rolloffFactor: 1};
+  function setPannerScalar(n, name, value) {
+    if (name === 'coneOuterGain' && (value < 0 || value > 1)) throw new DE('Cone gain is outside [0, 1].', 'InvalidStateError');
+    if ((name === 'maxDistance' && value <= 0) ||
+        ((name === 'refDistance' || name === 'rolloffFactor') && value < 0)) throw new RangeErrorC('Invalid panner distance or rolloff.');
+    n[name] = value;
+  }
+  function setPanningModel(model) {
+    if (model === 'HRTF') throw new DE('HRTF rendering is unavailable.', 'NotSupportedError');
+  }
+  class PannerNode extends AudioNode {
+    constructor(context, options = {}) {
+      contextArg(context, 'PannerNode');
+      const inherited = readNodeOptions(options, 'PannerNode');
+      const settings = Object.create(null);
+      for (const name of pannerOptionNames) {
+        const value = options?.[name];
+        if (value === undefined) continue;
+        if (name === 'panningModel' || name === 'distanceModel') {
+          const allowed = name === 'panningModel' ? ['equalpower', 'HRTF'] : distanceModels;
+          const model = `${value}`;
+          if (!allowed.includes(model)) throw new TypeErrorC('Invalid ' + name);
+          settings[name] = model;
+        } else {
+          settings[name] = finite(pannerNames.includes(name) ? Math.fround(value) : value, 'construct', 'PannerNode');
+        }
+      }
+      super(secret, context, {mode: 'clamped-max', disallowMaxMode: true, checkCount: pannerChannels,
+        ...pannerDefaults, distanceModel: 'inverse', spatial: spatialParams(context, pannerNames, [0, 0, 0, 1, 0, 0])});
+      applyNodeOptions(this, inherited);
+      const n = nodeOf(this);
+      for (const name of Object.keys(settings)) {
+        if (pannerNames.includes(name)) params.get(n.spatial[name]).value = settings[name];
+        else if (name === 'panningModel') setPanningModel(settings[name]);
+        else if (name === 'distanceModel') n.distanceModel = settings[name];
+        else setPannerScalar(n, name, settings[name]);
+      }
+      n.process = (f0, q) => renderSpatial(n, f0, q);
+    }
+    get distanceModel() { return pannerOf(this).distanceModel; }
+    set distanceModel(v) {
+      const n = pannerOf(this), model = `${v}`;
+      if (distanceModels.includes(model)) n.distanceModel = model;
+    }
+    get panningModel() { pannerOf(this); return 'equalpower'; }
+    set panningModel(v) { pannerOf(this); setPanningModel(`${v}`); }
+    setPosition(x, y, z) { setCoordinates(pannerOf(this), positionNames, arguments); }
+    setOrientation(x, y, z) { setCoordinates(pannerOf(this), orientationNames, arguments); }
+  }
+  const pannerOptionNames = [...Object.keys(pannerDefaults), ...pannerNames, 'distanceModel', 'panningModel'].sort();
+  spatialAttributes(PannerNode, pannerOf, pannerNames);
+  for (const name of Object.keys(pannerDefaults)) {
+    defineProperty(PannerNode.prototype, name, {
+      configurable: true, get() { return pannerOf(this)[name]; },
+      set(v) { setPannerScalar(pannerOf(this), name, finite(v, 'set', name, 'double')); },
+    });
+  }
+  webidl(PannerNode, 'PannerNode');
 
   // ---- Recursive filters -----------------------------------------------------
   const F64 = Float64Array;
@@ -1274,6 +1455,7 @@
     get sampleRate() { return ctxOf(this).rate; }
     get currentTime() { return ctxOf(this).time(); }
     get destination() { return ctxOf(this).destination; }
+    get listener() { return contextListener(this); }
     get state() { return ctxOf(this).state; }
     createBuffer(numberOfChannels, length, sampleRate) {
       ctxOf(this);
@@ -1287,6 +1469,7 @@
     }
     createBufferSource() { return new AudioBufferSourceNode(this); }
     createGain() { return new GainNode(this); }
+    createPanner() { return new PannerNode(this); }
     createStereoPanner() { return new StereoPannerNode(this); }
     createBiquadFilter() { return new BiquadFilterNode(this); }
     createIIRFilter(feedforward, feedback) {
@@ -1578,6 +1761,6 @@
   return {
     BaseAudioContext, AudioContext, OfflineAudioContext, AudioBuffer, AudioParam, AudioNode,
     AudioDestinationNode, AudioScheduledSourceNode, AudioBufferSourceNode, OscillatorNode,
-    ConstantSourceNode, GainNode, StereoPannerNode, BiquadFilterNode, IIRFilterNode, ChannelMergerNode, ChannelSplitterNode, OfflineAudioCompletionEvent,
+    ConstantSourceNode, GainNode, AudioListener, PannerNode, StereoPannerNode, BiquadFilterNode, IIRFilterNode, ChannelMergerNode, ChannelSplitterNode, OfflineAudioCompletionEvent,
   };
 })
