@@ -3228,6 +3228,41 @@ mod tests {
         assert_eq!(hit(&mut doc, 50.0, 30.0), Some(item), "the item above the sibling");
     }
 
+    /// pyro: (hit order) a miss through nested positioned wrappers, each beside a flex container
+    /// whose items are hit in a pre-pass, tests each wrapper once: the pre-pass and the ordinary pass
+    /// visited the positioned children both, 2^depth tests in all. Review cycle 4, finding 1.
+    #[test]
+    fn a_miss_through_nested_positioned_wrappers_beside_flex_items_is_linear() {
+        fn nest(depth: usize) -> Div {
+            let flex = div("display:flex;height:10px", vec![div("width:10px;height:10px", vec![])]);
+            let inner = if depth == 0 { vec![flex] } else { vec![nest(depth - 1), flex] };
+            div("position:relative;pointer-events:none;width:400px", inner)
+        }
+        let mut doc = laid_out(vec![div("overflow:hidden;pointer-events:none", vec![nest(18)])]);
+        let boxes = doc.nodes.len();
+        crate::util::HIT_CALLS.with(|calls| calls.set(0));
+        let _ = doc.hit(200.0, 5.0);
+        let calls = crate::util::HIT_CALLS.with(|calls| calls.get());
+        assert!(calls <= 2 * boxes, "{calls} box tests for {boxes} boxes");
+    }
+
+    /// pyro: (hit order) a miss through flex containers nested in each other's items tests each
+    /// box a bounded number of times (the item pre-pass and the ordinary pass must not each walk the
+    /// whole nest). Review cycle 4, finding 1.
+    #[test]
+    fn a_miss_through_nested_flex_items_is_linear() {
+        fn nest(depth: usize) -> Div {
+            let inner = if depth == 0 { vec![] } else { vec![nest(depth - 1)] };
+            div("display:flex;pointer-events:none;width:400px;min-height:10px", vec![div("width:400px;min-height:10px", inner)])
+        }
+        let mut doc = laid_out(vec![div("pointer-events:none", vec![nest(18)])]);
+        let boxes = doc.nodes.len();
+        crate::util::HIT_CALLS.with(|calls| calls.set(0));
+        let _ = doc.hit(200.0, 5.0);
+        let calls = crate::util::HIT_CALLS.with(|calls| calls.get());
+        assert!(calls <= 3 * boxes, "{calls} box tests for {boxes} boxes");
+    }
+
     /// pyro: a hoisted box is hit only where paint shows it: in the columns its strip range
     /// reaches, not in a spanner's row (paint leaves those out), even where it reaches into one.
     #[test]

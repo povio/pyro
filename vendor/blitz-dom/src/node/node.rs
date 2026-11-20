@@ -469,6 +469,9 @@ macro_rules! universal_accessors {
         std::thread_local! {
     /// pyro: set while a flex or grid container is hit for its items alone (`Node::hit_inner`).
     static ITEMS_ONLY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// pyro: set while a flex or grid container is hit for its own box and content, its items (hit
+    /// for its parent already, `ITEMS_ONLY`) left out (`Node::hit_inner`).
+    static NO_ITEMS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 impl Node {
@@ -2658,6 +2661,12 @@ impl Node {
     ) -> Option<HitResult> {
         use style::computed_values::pointer_events::T as PointerEvents;
         use style::computed_values::visibility::T as Visibility;
+        #[cfg(test)]
+        crate::util::HIT_CALLS.with(|calls| calls.set(calls.get() + 1));
+        // pyro: the item modes this visit is for (`ITEMS_ONLY`, `NO_ITEMS`), taken at once so that no
+        // other box visited from here sees them.
+        let items_only = ITEMS_ONLY.replace(false);
+        let no_items = NO_ITEMS.replace(false);
 
         // pyro: a positioned inline box listed in the paint tree for its paint order alone: its
         // inline root hit-tests its text (`NodeFlags::INLINE_PASS_ENTRY`).
@@ -2860,7 +2869,12 @@ impl Node {
                 self.tree().get(id).is_some_and(|c| !c.taffy_position().is_out_of_flow() && c.items_in_phases())
             })
         };
-        if !ITEMS_ONLY.get() && has_items() {
+        // (The positioned-level children tested here, which the ordinary pass below skips: each
+        // child is tested once per visit of this box, or nested ones would be tested 2^depth times.)
+        let mut tested: std::collections::HashSet<NodeId> = std::collections::HashSet::new();
+        // (The children whose items were tested here: the ordinary pass tests their own boxes alone.)
+        let mut items_done: std::collections::HashSet<NodeId> = std::collections::HashSet::new();
+        if !items_only && !no_items && has_items() {
             for child_id in self.paint_children.borrow().iter().flatten().rev() {
                 let Some(child) = self.tree().get(*child_id) else { continue };
                 let positioned_level = child.element_data().is_some()
@@ -2870,6 +2884,7 @@ impl Node {
                     if let Some(hit) = hit_child(child, scrollbar) {
                         return Some(hit);
                     }
+                    tested.insert(*child_id);
                     continue;
                 }
                 if child.taffy_position().is_out_of_flow() || !child.items_in_phases() {
@@ -2886,10 +2901,10 @@ impl Node {
                 if let Some(hit) = hit {
                     return Some(hit);
                 }
+                items_done.insert(*child_id);
             }
         }
         // pyro: hit for its items alone (see above): its own box and content come in their turn.
-        let items_only = ITEMS_ONLY.replace(false);
         if items_only {
             for child_id in self.paint_children.borrow().iter().flatten().rev() {
                 let Some(child) = self.tree().get(*child_id) else { continue };
@@ -2905,7 +2920,17 @@ impl Node {
             let Some(child) = self.tree().get(*child_id) else {
                 continue;
             };
-            if let Some(hit) = hit_child(child, scrollbar) {
+            if tested.contains(child_id) {
+                continue;
+            }
+            // pyro: its items, tested for the parent already, are not tested again.
+            if no_items && self.layout_children.borrow().as_ref().is_some_and(|items| items.contains(child_id)) {
+                continue;
+            }
+            NO_ITEMS.set(items_done.contains(child_id));
+            let hit = hit_child(child, scrollbar);
+            NO_ITEMS.set(false);
+            if let Some(hit) = hit {
                 return Some(hit);
             }
         }

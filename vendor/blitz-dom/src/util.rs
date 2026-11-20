@@ -588,3 +588,9 @@ pub(crate) fn share_sheet(css: &str, url: &str, sheet: &style::stylesheets::Docu
         s.entry(sheet_key(css)).or_default().push((css.into(), url.to_owned(), sheet.clone()));
     });
 }
+
+#[cfg(test)]
+std::thread_local! {
+    /// pyro: (tests) how many boxes `Node::hit_inner` was asked about on this thread.
+    pub(crate) static HIT_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
