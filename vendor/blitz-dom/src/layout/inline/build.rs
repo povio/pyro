@@ -696,7 +696,7 @@ fn build_inline_layout_with(
             // the image there, `draw_inside_marker_image`).
             Marker::Image { width, height } => {
                 let mut marker_style = parley_style.clone();
-                marker_style.font_size = 0.01;
+                marker_style.font_size = 0.0;
                 marker_style.line_height = parley::LineHeight::Absolute(*height);
                 marker_style.letter_spacing = *width + *image_gap;
                 marker_style.vertical_align = parley::VerticalAlign {

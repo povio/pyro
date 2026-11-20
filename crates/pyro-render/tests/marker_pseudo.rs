@@ -42,6 +42,14 @@ fn columns(img: &RgbaImage, color: [u8; 3]) -> Vec<u32> {
 }
 
 #[test]
+fn outside_marker_tracks_the_fractional_inline_origin() {
+    let list = "<ul style='margin-left:7.375px'><li>item</li></ul>";
+    let marker = render(&format!("<style>li::marker{{content:'abc'}}</style>{list}"));
+    let before = render(&format!("<style>li{{list-style:none}}li::before{{content:'abc';display:inline-block;width:0;direction:rtl}}</style>{list}"));
+    assert!(marker.data == before.data);
+}
+
+#[test]
 fn a_marker_has_the_colour_of_its_pseudo_element() {
     for list in ["<ul><li>x</li></ul>", "<ol><li>x</li></ol>", "<ul style='list-style-position:inside'><li>x</li></ul>"]
     {

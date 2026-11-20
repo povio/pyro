@@ -5365,7 +5365,7 @@ impl ElementCx<'_, '_> {
             };
 
             let pos = Point {
-                x: pos.x + (content_box_subpixel_offset.x + x_offset + line_x) as f64,
+                x: pos.x + (content_box_subpixel_offset.x + x_offset + line_x) as f64 + self.fractional_text_x_of_node() / self.scale,
                 y: pos.y + (content_box_subpixel_offset.y + y_offset) as f64,
             };
 
