@@ -3326,6 +3326,27 @@ mod tests {
         assert!(hit.is_some_and(|hit| hit == text || hit == para), "the text (or its block), not the box behind it ({behind:?}): {hit:?}");
     }
 
+    /// pyro: (inline effects) deeply nested faded inline boxes under a box that paints find which of them
+    /// paint at their own entry in one walk up from the content: each faded box walked up to the root
+    /// again (depth^2). Review cycle 5, finding 5.
+    #[test]
+    fn nested_faded_inlines_find_their_entries_in_one_walk() {
+        fn nest(depth: usize) -> Div {
+            let inner = if depth == 0 { vec![div("display:inline-block;width:10px;height:10px", vec![])] } else { vec![nest(depth - 1)] };
+            div("display:inline;opacity:.9", inner)
+        }
+        // (One box that paints, at the top: each faded box below found it by walking all the way up.)
+        let doc = laid_out(vec![div("width:400px", vec![div("display:inline;background:yellow", vec![nest(199)])])]);
+        let leaf = doc.nodes.iter().map(|(id, _)| id).last().unwrap();
+        let parent = doc.nodes[leaf].parent.unwrap();
+        let root = doc.nodes.iter().map(|(id, _)| id).find(|&id| doc.nodes[id].flags.is_inline_root()).unwrap();
+        crate::util::CHAIN_STEPS.with(|steps| steps.set(0));
+        let chain = doc.inline_span_positioned_chain(parent, root);
+        let steps = crate::util::CHAIN_STEPS.with(|steps| steps.get());
+        assert_eq!(chain.len(), 200, "the faded boxes under a painted one");
+        assert!(steps <= 2 * 205, "{steps} ancestor steps for 201 nested boxes");
+    }
+
     /// pyro: a hoisted box is hit only where paint shows it: in the columns its strip range
     /// reaches, not in a spanner's row (paint leaves those out), even where it reaches into one.
     #[test]

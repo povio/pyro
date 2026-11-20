@@ -447,3 +447,19 @@ fn a_blended_child_in_a_rounded_clip_blends_at_the_backgrounds_edge_coverage() {
     let [r, g, b] = pixel(&img, 51, 140);
     assert!(r <= 70 && g >= 200 && b <= 20, "the edge pixel: {:?}", [r, g, b]);
 }
+
+/// A box whose containing block lies outside an `overflow: hidden` box escapes its clip through
+/// more than 64 nested opacity groups: the search for groups to hand the clip to has no depth cutoff
+/// (it stopped at 64, and the box was clipped away). Review cycle 5, finding 5.
+#[test]
+fn a_box_escapes_a_clip_through_many_nested_opacity_groups() {
+    let open: String = (0..70).map(|_| "<div style='opacity:.999'>").collect();
+    let close: String = (0..70).map(|_| "</div>").collect();
+    let img = render(&format!(
+        "<style>body{{margin:0}}</style><div style='position:relative;width:300px;height:200px'>\
+         <div style='overflow:hidden;width:100px;height:200px'>{open}\
+         <div style='position:absolute;left:150px;top:0;width:50px;height:50px;background:blue'></div>{close}</div></div>"
+    ));
+    let [r, g, b] = pixel(&img, 175, 25);
+    assert!(r < 20 && g < 20 && b > 230, "the box past the clip: {:?}", [r, g, b]);
+}

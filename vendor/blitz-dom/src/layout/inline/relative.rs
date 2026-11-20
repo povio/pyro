@@ -136,13 +136,29 @@ impl BaseDocument {
     pub fn inline_span_positioned_chain(&self, node_id: NodeId, root_id: NodeId) -> Vec<NodeId> {
         let root = &self.nodes[root_id];
         let root_parent = root.is_anonymous().then_some(root.parent).flatten();
-        let mut chain = Vec::new();
+        // (One walk up to the root: the nodes there, then whether a box that paints lies above
+        // each, found from the top down: no walk per faded inline box.)
+        let mut up: Vec<NodeId> = Vec::new();
         let mut current = Some(node_id);
         while let Some(id) = current {
             if id == root_id || Some(id) == root_parent {
                 break;
             }
             let Some(node) = self.nodes.get(id) else { break };
+            #[cfg(test)]
+            crate::util::CHAIN_STEPS.with(|steps| steps.set(steps.get() + 1));
+            up.push(id);
+            current = node.parent;
+        }
+        let mut painted_above = vec![false; up.len()];
+        let mut painted = false;
+        for (index, &id) in up.iter().enumerate().rev() {
+            painted_above[index] = painted;
+            painted |= self.nodes[id].primary_styles().is_some_and(|style| paints_box(&style));
+        }
+        let mut chain = Vec::new();
+        for (index, &id) in up.iter().enumerate() {
+            let node = &self.nodes[id];
             if let Some(style) = node.primary_styles() {
                 let display = style.clone_display();
                 if !display.is_inline_flow() && !display.is_contents() {
@@ -150,12 +166,11 @@ impl BaseDocument {
                 }
                 if display.is_inline_flow()
                     && (matches!(style.clone_position(), Position::Relative | Position::Sticky)
-                        || (effect_entry(&style) && painted_ancestor(&self.nodes, id, root_id)))
+                        || (effect_entry(&style) && painted_above[index]))
                 {
                     chain.push(id);
                 }
             }
-            current = node.parent;
         }
         chain
     }
@@ -179,27 +194,31 @@ pub(crate) fn painted_ancestor(nodes: &crate::NodeTree, id: NodeId, root_id: Nod
     let container = root.is_anonymous().then_some(root.parent).flatten();
     let mut ancestor = nodes.get(id).and_then(|node| node.parent);
     while let Some(node) = ancestor.filter(|&a| a != root_id && Some(a) != container).and_then(|a| nodes.get(a)) {
-        if let Some(style) = node.primary_styles() {
-            let background = style.get_background();
-            let border = style.get_border();
-            let paints = background.background_color.resolve_to_absolute(&style.clone_color()).alpha > 0.0
-                || background.background_image.0.iter().any(|image| !matches!(image, style::values::generics::image::GenericImage::None))
-                || [
-                    (border.border_top_style, &border.border_top_width),
-                    (border.border_right_style, &border.border_right_width),
-                    (border.border_bottom_style, &border.border_bottom_width),
-                    (border.border_left_style, &border.border_left_width),
-                ]
-                .iter()
-                .any(|(line, width)| !line.none_or_hidden() && width.0.to_f32_px() > 0.0)
-                || !style.get_effects().box_shadow.0.is_empty();
-            if paints {
-                return true;
-            }
+        #[cfg(test)]
+        crate::util::CHAIN_STEPS.with(|steps| steps.set(steps.get() + 1));
+        if node.primary_styles().is_some_and(|style| paints_box(&style)) {
+            return true;
         }
         ancestor = node.parent;
     }
     false
+}
+
+/// pyro: whether a box of style `style` paints (a background, a border or a shadow).
+fn paints_box(style: &style::properties::ComputedValues) -> bool {
+    let background = style.get_background();
+    let border = style.get_border();
+    background.background_color.resolve_to_absolute(&style.clone_color()).alpha > 0.0
+        || background.background_image.0.iter().any(|image| !matches!(image, style::values::generics::image::GenericImage::None))
+        || [
+            (border.border_top_style, &border.border_top_width),
+            (border.border_right_style, &border.border_right_width),
+            (border.border_bottom_style, &border.border_bottom_width),
+            (border.border_left_style, &border.border_left_width),
+        ]
+        .iter()
+        .any(|(line, width)| !line.none_or_hidden() && width.0.to_f32_px() > 0.0)
+        || !style.get_effects().box_shadow.0.is_empty()
 }
 
 /// pyro: whether an inline box (not atomic) of style `style` is a stacking context by its opacity or

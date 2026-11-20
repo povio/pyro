@@ -5864,19 +5864,30 @@ impl ElementCx<'_, '_> {
         let owner = self.clip_owner();
         // Whether `child`, a stacking context that does not clip, holds a box escaping `owner`'s
         // clip, itself or in a stacking context of its own that does not clip either (nested effect
-        // groups: each hands the clip on).
-        fn holds(cx: &ElementCx<'_, '_>, tree: &blitz_dom::NodeTree, owner: NodeId, child: &Node, depth: usize) -> bool {
-            let Some(sc) = &child.stacking_context else { return false };
-            if depth > 64 || child.primary_styles().is_none_or(|style| cx.context.should_clip_node(child, &style)) {
-                return false;
+        // groups: each hands the clip on), however deep: walked with a stack, each box once.
+        fn holds(cx: &ElementCx<'_, '_>, tree: &blitz_dom::NodeTree, owner: NodeId, child: &Node) -> bool {
+            let mut stack = vec![child.id];
+            let mut seen = std::collections::HashSet::new();
+            while let Some(id) = stack.pop() {
+                if !seen.insert(id) {
+                    continue;
+                }
+                let Some(node) = tree.get(id) else { continue };
+                let Some(sc) = &node.stacking_context else { continue };
+                if node.primary_styles().is_none_or(|style| cx.context.should_clip_node(node, &style)) {
+                    continue;
+                }
+                let hoisted = sc.pos_z_hoisted_children().chain(sc.neg_z_hoisted_children()).map(|c| c.node_id);
+                let own: Vec<NodeId> = node.paint_children.borrow().iter().flatten().copied().chain(hoisted).collect();
+                if own.iter().any(|&id| escapes_clip_of(tree, owner, id)) {
+                    return true;
+                }
+                stack.extend(own);
             }
-            let hoisted = sc.pos_z_hoisted_children().chain(sc.neg_z_hoisted_children()).map(|c| c.node_id);
-            let own: Vec<NodeId> = child.paint_children.borrow().iter().flatten().copied().chain(hoisted).collect();
-            own.iter().any(|&id| escapes_clip_of(tree, owner, id))
-                || own.iter().any(|&id| tree.get(id).is_some_and(|nested| holds(cx, tree, owner, nested, depth + 1)))
+            false
         }
         let children = self.node.paint_children.borrow().clone().unwrap_or_default();
-        std::rc::Rc::new(children.into_iter().filter(|&id| holds(self, tree, owner, &tree[id], 0)).collect())
+        std::rc::Rc::new(children.into_iter().filter(|&id| holds(self, tree, owner, &tree[id])).collect())
     }
 
     /// pyro: whether `child_id`, one of this element's `paint_children`, paints at the positioned

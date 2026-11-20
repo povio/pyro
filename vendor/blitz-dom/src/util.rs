@@ -596,6 +596,8 @@ std::thread_local! {
     /// pyro: (tests) the child-list steps `Node::hit_inner` takes (lookups, and the entries of the
     /// item sets it makes).
     pub(crate) static HIT_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// pyro: (tests) the ancestors `inline_span_positioned_chain` (and `painted_ancestor`) visit.
+    pub(crate) static CHAIN_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// pyro: (tests) the sibling-list entries comparisons of tree order searched
     /// (`precedes_in_tree_order`), and the nodes numbered for tree order (`tree_order_indices`).
     pub(crate) static TREE_ORDER_COMPARISONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };

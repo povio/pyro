@@ -17332,7 +17332,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/relative.rs b/packages/blitz-d
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/inline/relative.rs
-@@ -0,0 +1,220 @@
+@@ -0,0 +1,239 @@
 +//! pyro: relative positioning of inline boxes that are not atomic (CSS 2.1 § 9.4.3): such a box
 +//! has no layout box of its own, so the offset moves what its fragments hold where they are
 +//! painted (glyph runs, the boxes of its fragments) and the atomic inline boxes in it.
@@ -17471,13 +17471,29 @@ new file mode 100644
 +    pub fn inline_span_positioned_chain(&self, node_id: NodeId, root_id: NodeId) -> Vec<NodeId> {
 +        let root = &self.nodes[root_id];
 +        let root_parent = root.is_anonymous().then_some(root.parent).flatten();
-+        let mut chain = Vec::new();
++        // (One walk up to the root: the nodes there, then whether a box that paints lies above
++        // each, found from the top down: no walk per faded inline box.)
++        let mut up: Vec<NodeId> = Vec::new();
 +        let mut current = Some(node_id);
 +        while let Some(id) = current {
 +            if id == root_id || Some(id) == root_parent {
 +                break;
 +            }
 +            let Some(node) = self.nodes.get(id) else { break };
++            #[cfg(test)]
++            crate::util::CHAIN_STEPS.with(|steps| steps.set(steps.get() + 1));
++            up.push(id);
++            current = node.parent;
++        }
++        let mut painted_above = vec![false; up.len()];
++        let mut painted = false;
++        for (index, &id) in up.iter().enumerate().rev() {
++            painted_above[index] = painted;
++            painted |= self.nodes[id].primary_styles().is_some_and(|style| paints_box(&style));
++        }
++        let mut chain = Vec::new();
++        for (index, &id) in up.iter().enumerate() {
++            let node = &self.nodes[id];
 +            if let Some(style) = node.primary_styles() {
 +                let display = style.clone_display();
 +                if !display.is_inline_flow() && !display.is_contents() {
@@ -17485,12 +17501,11 @@ new file mode 100644
 +                }
 +                if display.is_inline_flow()
 +                    && (matches!(style.clone_position(), Position::Relative | Position::Sticky)
-+                        || (effect_entry(&style) && painted_ancestor(&self.nodes, id, root_id)))
++                        || (effect_entry(&style) && painted_above[index]))
 +                {
 +                    chain.push(id);
 +                }
 +            }
-+            current = node.parent;
 +        }
 +        chain
 +    }
@@ -17514,27 +17529,31 @@ new file mode 100644
 +    let container = root.is_anonymous().then_some(root.parent).flatten();
 +    let mut ancestor = nodes.get(id).and_then(|node| node.parent);
 +    while let Some(node) = ancestor.filter(|&a| a != root_id && Some(a) != container).and_then(|a| nodes.get(a)) {
-+        if let Some(style) = node.primary_styles() {
-+            let background = style.get_background();
-+            let border = style.get_border();
-+            let paints = background.background_color.resolve_to_absolute(&style.clone_color()).alpha > 0.0
-+                || background.background_image.0.iter().any(|image| !matches!(image, style::values::generics::image::GenericImage::None))
-+                || [
-+                    (border.border_top_style, &border.border_top_width),
-+                    (border.border_right_style, &border.border_right_width),
-+                    (border.border_bottom_style, &border.border_bottom_width),
-+                    (border.border_left_style, &border.border_left_width),
-+                ]
-+                .iter()
-+                .any(|(line, width)| !line.none_or_hidden() && width.0.to_f32_px() > 0.0)
-+                || !style.get_effects().box_shadow.0.is_empty();
-+            if paints {
-+                return true;
-+            }
++        #[cfg(test)]
++        crate::util::CHAIN_STEPS.with(|steps| steps.set(steps.get() + 1));
++        if node.primary_styles().is_some_and(|style| paints_box(&style)) {
++            return true;
 +        }
 +        ancestor = node.parent;
 +    }
 +    false
++}
++
++/// pyro: whether a box of style `style` paints (a background, a border or a shadow).
++fn paints_box(style: &style::properties::ComputedValues) -> bool {
++    let background = style.get_background();
++    let border = style.get_border();
++    background.background_color.resolve_to_absolute(&style.clone_color()).alpha > 0.0
++        || background.background_image.0.iter().any(|image| !matches!(image, style::values::generics::image::GenericImage::None))
++        || [
++            (border.border_top_style, &border.border_top_width),
++            (border.border_right_style, &border.border_right_width),
++            (border.border_bottom_style, &border.border_bottom_width),
++            (border.border_left_style, &border.border_left_width),
++        ]
++        .iter()
++        .any(|(line, width)| !line.none_or_hidden() && width.0.to_f32_px() > 0.0)
++        || !style.get_effects().box_shadow.0.is_empty()
 +}
 +
 +/// pyro: whether an inline box (not atomic) of style `style` is a stacking context by its opacity or
@@ -22213,7 +22232,7 @@ diff --git a/packages/blitz-dom/src/layout/multicol.rs b/packages/blitz-dom/src/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/multicol.rs
-@@ -0,0 +1,3639 @@
+@@ -0,0 +1,3660 @@
 +//! pyro: CSS Multi-column Layout (<https://drafts.csswg.org/css-multicol/>).
 +//!
 +//! A multi-column container lays its content out once, in a strip one column wide (its flow
@@ -25540,6 +25559,27 @@ new file mode 100644
 +        doc.resolve(0.0);
 +        let hit = doc.hit(10.0, 10.0).map(|h| h.node_id);
 +        assert!(hit.is_some_and(|hit| hit == text || hit == para), "the text (or its block), not the box behind it ({behind:?}): {hit:?}");
++    }
++
++    /// pyro: (inline effects) deeply nested faded inline boxes under a box that paints find which of them
++    /// paint at their own entry in one walk up from the content: each faded box walked up to the root
++    /// again (depth^2). Review cycle 5, finding 5.
++    #[test]
++    fn nested_faded_inlines_find_their_entries_in_one_walk() {
++        fn nest(depth: usize) -> Div {
++            let inner = if depth == 0 { vec![div("display:inline-block;width:10px;height:10px", vec![])] } else { vec![nest(depth - 1)] };
++            div("display:inline;opacity:.9", inner)
++        }
++        // (One box that paints, at the top: each faded box below found it by walking all the way up.)
++        let doc = laid_out(vec![div("width:400px", vec![div("display:inline;background:yellow", vec![nest(199)])])]);
++        let leaf = doc.nodes.iter().map(|(id, _)| id).last().unwrap();
++        let parent = doc.nodes[leaf].parent.unwrap();
++        let root = doc.nodes.iter().map(|(id, _)| id).find(|&id| doc.nodes[id].flags.is_inline_root()).unwrap();
++        crate::util::CHAIN_STEPS.with(|steps| steps.set(0));
++        let chain = doc.inline_span_positioned_chain(parent, root);
++        let steps = crate::util::CHAIN_STEPS.with(|steps| steps.get());
++        assert_eq!(chain.len(), 200, "the faded boxes under a painted one");
++        assert!(steps <= 2 * 205, "{steps} ancestor steps for 201 nested boxes");
 +    }
 +
 +    /// pyro: a hoisted box is hit only where paint shows it: in the columns its strip range
@@ -57194,7 +57234,7 @@ diff --git a/packages/blitz-dom/src/util.rs b/packages/blitz-dom/src/util.rs
  }
  
  pub trait ToColorColor {
-@@ -254,3 +498,106 @@
+@@ -254,3 +498,108 @@
          }
      };
  }
@@ -57296,6 +57336,8 @@ diff --git a/packages/blitz-dom/src/util.rs b/packages/blitz-dom/src/util.rs
 +    /// pyro: (tests) the child-list steps `Node::hit_inner` takes (lookups, and the entries of the
 +    /// item sets it makes).
 +    pub(crate) static HIT_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
++    /// pyro: (tests) the ancestors `inline_span_positioned_chain` (and `painted_ancestor`) visit.
++    pub(crate) static CHAIN_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 +    /// pyro: (tests) the sibling-list entries comparisons of tree order searched
 +    /// (`precedes_in_tree_order`), and the nodes numbered for tree order (`tree_order_indices`).
 +    pub(crate) static TREE_ORDER_COMPARISONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
