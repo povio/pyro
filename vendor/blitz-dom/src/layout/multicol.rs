@@ -1315,10 +1315,20 @@ impl LayoutPassState<'_> {
                         top = if room == rows.height { fresh_row(next.min(boundary(top)), rows) } else { next };
                         available = room.min(boundary(top) - top);
                     }
+                    if slotted.is_none() && available + EPSILON < outer_height
+                        && containing(&breaks.loose, start + available).is_some_and(|(a, b)| a <= start + EPSILON && b - start <= outer_height)
+                    {
+                        top = boundary(top);
+                        available = outer_height;
+                    }
                     let available = available.max(1.0);
                     let run = breaks.fill_range(start, run_end, available, count + 1);
                     let (columns, height, next) = if run.columns.len() <= count {
-                        let height = breaks.balance_range(start, run_end, count, Some(available)).min(available);
+                        let height = if part == spanners.len() && matches!(multicol.fill, ColumnFill::Auto) && top > content_top + EPSILON {
+                            run.columns.iter().map(|(a, b)| b - a).fold(0.0, f32::max).min(available)
+                        } else {
+                            breaks.balance_range(start, run_end, count, Some(available)).min(available)
+                        };
                         (breaks.fill_range(start, run_end, height, count).columns, height, None)
                     } else {
                         (run.columns[..count].to_vec(), available, Some(run.columns[count].0))
