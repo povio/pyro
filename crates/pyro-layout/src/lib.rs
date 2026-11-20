@@ -900,6 +900,15 @@ impl GeometrySource for BlitzGeometry {
         RENDERER.with(|r| r.try_borrow().ok().and_then(|r| Some(r.as_ref()?.content_visibility_state(self.page)))).unwrap_or_default()
     }
 
+    fn content_visibility_frame(&self) {
+        let changed = RENDERER.with(|r| {
+            r.try_borrow_mut().ok().and_then(|mut r| Some(r.as_mut()?.content_visibility_frame(self.page))).unwrap_or(false)
+        });
+        if changed {
+            self.scroll_stale.set(true);
+        }
+    }
+
     fn force_content_visibility(&self, key: u64) -> bool {
         RENDERER.with(|r| {
             r.try_borrow_mut().ok().and_then(|mut r| Some(r.as_mut()?.force_content_visibility(self.page, key))).unwrap_or(false)

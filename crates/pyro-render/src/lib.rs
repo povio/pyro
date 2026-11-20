@@ -1977,6 +1977,22 @@ impl Renderer {
 
     /// pyro: renders the contents `content-visibility: auto` skips around the element keyed `key`
     /// in `page`'s persistent document, laying it out again (`BaseDocument::force_content_visibility`).
+    /// pyro: a rendering frame of `page` starts: what queries forced to render since the last one
+    /// is rendered as relevance gives it now, determined on the current layout before the
+    /// frame's callbacks change anything (Chrome determines it at every frame: WPT css-contain
+    /// `content-visibility-vs-scrollIntoView-002`). Whether anything was forced.
+    pub fn content_visibility_frame(&mut self, page: u64) -> bool {
+        let Some(m) = self.mirrors.get_mut(&page) else { return false };
+        if !m.doc.has_content_visibility_forcing() {
+            return false;
+        }
+        m.doc.clear_content_visibility_forcing();
+        m.doc.resolve(0.0);
+        self.geometry.remove(&page);
+        self.geometry.entry(page).or_default();
+        true
+    }
+
     pub fn force_content_visibility(&mut self, page: u64, key: u64) -> bool {
         let Some(m) = self.mirrors.get_mut(&page) else { return false };
         let Some(node) = m.node(key) else { return false };

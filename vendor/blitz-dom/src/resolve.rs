@@ -600,6 +600,13 @@ impl BaseDocument {
         }
     }
 
+    /// pyro: whether a query forced some `content-visibility: auto` element to render
+    /// (`force_content_visibility`) since the last frame.
+    pub fn has_content_visibility_forcing(&self) -> bool {
+        use crate::node::NodeFlags;
+        self.nodes.iter().any(|(_, n)| n.flags.contains(NodeFlags::CV_FORCED))
+    }
+
     /// pyro: the elements queries forced to render are rendered only as relevance gives them now:
     /// called at each frame (`update_content_visibility` determines them at its next layout).
     pub fn clear_content_visibility_forcing(&mut self) {

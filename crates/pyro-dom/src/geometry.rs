@@ -623,6 +623,9 @@ pub trait GeometrySource {
     fn force_content_visibility(&self, _key: u64) -> bool {
         false
     }
+    /// pyro: a rendering frame starts: `content-visibility: auto` relevance is determined anew
+    /// (what queries forced to render since the last frame no longer is).
+    fn content_visibility_frame(&self) {}
     /// pyro: the `content-visibility: auto` elements as of the last sync, by key: whether they
     /// skip their contents, and their last remembered size (for the renderer that paints).
     fn content_visibility_state(&self) -> Vec<(u64, bool, Option<(f32, f32)>)> {

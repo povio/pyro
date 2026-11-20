@@ -569,6 +569,13 @@ impl Layout {
 
     /// Takes the geometry from `source` (see [`GeometrySource`]); `None`:
     /// nothing is laid out.
+    /// pyro: a rendering frame starts (`content-visibility: auto` relevance is determined anew).
+    pub fn content_visibility_frame(&self) {
+        if let Some(source) = self.external.as_ref().filter(|s| s.active()) {
+            source.content_visibility_frame();
+        }
+    }
+
     pub fn set_geometry_source(&mut self, source: Option<Rc<dyn GeometrySource>>) {
         self.style.set_style_engine(source.clone());
         self.external = source;

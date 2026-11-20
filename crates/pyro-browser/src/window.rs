@@ -747,6 +747,8 @@ fn run_animation_frame(scope: &Scope<'_>) {
         return;
     }
     pyro_webapi::layout_api::flush_pending_scrolls(&w.target.page);
+    // pyro: the frame determines `content-visibility: auto` relevance anew (CSS Contain 2 § 4.1).
+    pyro_webapi::layout_api::content_visibility_frame(&w.target.page);
     // The style update of the frame before this one, when the document changed since and none
     // ran yet (the first frame after a load, whose update is a task of its own that this
     // frame's timer can beat): the styles a callback of this frame changes then have their

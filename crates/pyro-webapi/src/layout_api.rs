@@ -246,6 +246,14 @@ pub(crate) fn run_scroll_steps(page: &Rc<PageDom>) {
 }
 
 /// Runs queued scroll steps before animation-frame callbacks in a rendering update.
+/// pyro: a rendering frame of `page` starts: `content-visibility: auto` relevance is determined
+/// anew (what queries forced to render since the last frame no longer is).
+pub fn content_visibility_frame(page: &Rc<PageDom>) {
+    if let Some(layout) = page.try_layout() {
+        layout.content_visibility_frame();
+    }
+}
+
 pub fn flush_pending_scrolls(page: &Rc<PageDom>) {
     let pending = std::mem::take(&mut *page.pending_scrolls.borrow_mut());
     for ((doc, target), end, _) in pending {
