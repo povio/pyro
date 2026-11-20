@@ -238,6 +238,7 @@ kept for serialization (`1.23 drop`) and `sink` stays 0 then. pyro turns the pro
 - `values/specified/font.rs`: `FontPalette` is an enum: a name (`normal`, `light`, `dark`, `<dashed-ident>`) or
   `palette-mix()` of one or more weighted palettes, including nested mixes. The interpolation space defaults to
   Oklab. Omitted percentages share the remainder; specified math expressions serialize as math until computed.
+  Animation mixes unequal endpoints in Oklab, clamping progress to the endpoints. Equal endpoints retain their value.
   `color/mix.rs`: `ColorInterpolationMethod`
   and `HueInterpolationMethod` derive serde, as servo's font style struct needs.
 - `values/specified/number.rs` (`Integer::resolve_with_font_size`), `stylesheets/font_palette_values_rule.rs`:

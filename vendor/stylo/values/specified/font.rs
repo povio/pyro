@@ -1661,6 +1661,31 @@ pub struct PaletteMixItem {
 
 impl SpecifiedValueInfo for FontPaletteMix {}
 
+impl crate::values::animated::Animate for FontPalette {
+    fn animate(&self, other: &Self, procedure: crate::values::animated::Procedure) -> Result<Self, ()> {
+        let crate::values::animated::Procedure::Interpolate { progress } = procedure else { return Err(()) };
+        if progress <= 0.0 || self == other { return Ok(self.clone()); }
+        if progress >= 1.0 { return Ok(other.clone()); }
+        Ok(Self::Mix(Box::new(FontPaletteMix {
+            interpolation: Default::default(),
+            items: vec![
+                PaletteMixItem { palette: self.clone(), weight: None, expression: None },
+                PaletteMixItem { palette: other.clone(), weight: Some(progress as f32), expression: None },
+            ],
+        })))
+    }
+}
+
+impl crate::values::distance::ComputeSquaredDistance for FontPalette {
+    fn compute_squared_distance(&self, other: &Self) -> Result<crate::values::distance::SquaredDistance, ()> {
+        if self == other { Ok(crate::values::distance::SquaredDistance::from_sqrt(0.0)) } else { Err(()) }
+    }
+}
+
+impl crate::values::animated::ToAnimatedZero for FontPalette {
+    fn to_animated_zero(&self) -> Result<Self, ()> { Err(()) }
+}
+
 // Computation drops the specified math spelling recursively from nested mixes.
 impl ToComputedValue for FontPalette {
     type ComputedValue = Self;
