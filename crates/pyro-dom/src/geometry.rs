@@ -438,6 +438,8 @@ impl SubresourceBodies {
 
 /// The engine laying the document out (Blitz in `render` builds).
 pub trait GeometrySource {
+    /// Whether the painted subtree can participate in a named view transition.
+    fn view_transition_names_valid(&self, _root: u64) -> bool { true }
     /// Brings the engine's layout up to the document; the other queries
     /// answer from it.
     fn sync(&self, dom: &Dom, layout: &Layout);

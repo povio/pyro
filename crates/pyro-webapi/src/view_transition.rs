@@ -4,27 +4,37 @@
 
 use std::rc::Rc;
 
-use pyro_js::{JsError, JsResult, Object, Scope, Value};
+use pyro_js::{JsError, JsResult, Scope, Value};
 
 use crate::page::PageDom;
 
-/// Kept on the realm's `navigator` (a hidden property), itself kept per realm.
-const KEY: &str = "lpViewTransition";
+pub(crate) static MODULE: crate::lazy_module::LazyModule = crate::lazy_module::LazyModule {
+    key: "lpViewTransition",
+    source: include_str!("view_transition.js"),
+    url: "pyro://internal/view_transition.js",
+    natives: Some(natives),
+};
+
+fn natives<'s>(s: &Scope<'s>) -> JsResult<pyro_js::Object<'s>> {
+    s.function("captureValid", |s, _, args| {
+        let Some(root) = s.unwrap::<crate::node::Node>(args.get(0)) else { return Ok(s.boolean(false)) };
+        let page = root.page();
+        let layout = page.layout();
+        let dom = page.dom.borrow();
+        let valid = !page.is_hidden() && dom.is_connected(root.id).unwrap_or(false) && layout.synced_geometry_source(&dom)
+            .is_none_or(|source| source.view_transition_names_valid(pyro_dom::snapshot::render_key(root.id)));
+        Ok(s.boolean(valid))
+    })
+}
 
 fn unavailable() -> JsError {
     JsError::Type("ViewTransition is unavailable".into())
 }
 
-/// This realm's module (`{start, ViewTransition}`), made on first use.
-fn module<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Object<'s>> {
-    let navigator = crate::window::navigator(s, page)?.as_object().ok_or_else(unavailable)?;
-    if let Some(module) = s.get_hidden(navigator, KEY)?.and_then(|v| v.as_object()) {
-        return Ok(module);
-    }
-    let make = s.eval(include_str!("view_transition.js"), Some("pyro://internal/view_transition.js"), 1)?;
-    let module = make.as_object().ok_or_else(unavailable)?.call(None, &[s.global().value()])?;
-    s.set_hidden(navigator, KEY, module)?;
-    module.as_object().ok_or_else(unavailable)
+pub(crate) fn active<'s>(s: &Scope<'s>, node: &crate::node::NodeData) -> JsResult<Value<'s>> {
+    let Some(module) = MODULE.existing(s, node.page())? else { return Ok(s.null()) };
+    let scope = crate::node::wrap_node(s, node.page(), node.id)?.value();
+    module.get("active")?.as_object().ok_or_else(unavailable)?.call(None, &[scope])
 }
 
 /// `startViewTransition(callbackOptions)` on `scope` (a document, or an element for a scoped
@@ -36,6 +46,5 @@ pub(crate) fn start<'s>(
     root: Value<'s>,
     arg: Value<'s>,
 ) -> JsResult<Value<'s>> {
-    let start = module(s, page)?.get("start")?;
-    start.as_object().ok_or_else(unavailable)?.call(None, &[scope, root, arg])
+    MODULE.helper(s, page, "start", &[scope, root, arg, s.boolean(page.is_hidden())])
 }

@@ -164,3 +164,13 @@ fn xhtml_template_contents_are_reachable_through_content() {
         );
     }
 }
+
+#[test]
+fn view_transition_active_scope_and_interface_identity() {
+    let environment = env("<!doctype html><html><body></body></html>");
+    eval(&environment.main, "globalThis.requestAnimationFrame = () => 1; globalThis.setTimeout = () => 1;");
+    assert_eq!(eval(&environment.main, "document.activeViewTransition === null && document.body.activeViewTransition === null"), "true");
+    assert_eq!(eval(&environment.main, "const transition = document.startViewTransition(); [transition instanceof ViewTransition, document.activeViewTransition === transition, document.body.activeViewTransition === null].join()"), "true,true,true");
+    assert_eq!(eval(&environment.main, "const pending = new Promise(() => {}); let accepted = 0; try { for (; accepted < 1025; ++accepted) transition.waitUntil(pending); } catch (error) { if (error.name !== 'QuotaExceededError') throw error; } accepted"), "1024");
+    assert_eq!(eval(&environment.main, "transition.skipTransition(); document.activeViewTransition === null"), "true");
+}

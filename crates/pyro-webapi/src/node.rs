@@ -2204,6 +2204,7 @@ impl JsClass for Document {
                 Ok(())
             },
         );
+        def.getter("activeViewTransition", crate::view_transition::active);
         def.method("startViewTransition", 0, |s, n, a| {
             let doc = wrap_node(s, n.page(), n.id)?.value();
             let root = n.page().dom.borrow().document_element(n.id).js()?;

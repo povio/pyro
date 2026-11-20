@@ -1078,6 +1078,10 @@ impl GeometrySource for BlitzGeometry {
         RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.element_starting_style(self.page, key))
     }
 
+    fn view_transition_names_valid(&self, root: u64) -> bool {
+        RENDERER.with(|renderer| renderer.try_borrow().ok().and_then(|renderer| renderer.as_ref().map(|renderer| renderer.view_transition_names(self.page, root).0)).unwrap_or(false))
+    }
+
     fn element_displayed(&self, key: u64) -> Option<bool> {
         RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.element_displayed(self.page, key))
     }

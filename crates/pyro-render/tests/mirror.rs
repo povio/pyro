@@ -81,6 +81,22 @@ fn paint(r: &mut Renderer, s: &Snapshot) -> Painted {
     r.paint(s, Area::Viewport, &fetcher()).unwrap()
 }
 
+#[test]
+fn view_transition_collection_bounds_work_before_visiting_children() {
+    for (body, valid, visited) in [
+        ("<div style='view-transition-name: item'></div>".repeat(2), false, 3),
+        ("<div style='view-transition-name:item'></div><div style='view-transition-scope:all'><i style='view-transition-name:item'></i></div>".into(), true, 3),
+        ("<div style='view-transition-name: match-element'></div>".repeat(256), true, 257),
+        ("<div style='view-transition-name: match-element'></div>".repeat(512), false, 258),
+        ("<i></i>".repeat(16_384), false, 1),
+    ] {
+        let page = Page::new(&format!("<!doctype html><body>{body}"));
+        let mut renderer = Renderer::new();
+        renderer.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+        assert_eq!(renderer.view_transition_names(1, pyro_dom::snapshot::render_key(page.find("body"))), (valid, visited));
+    }
+}
+
 /// Renders the page with the persistent renderer and with a fresh one;
 /// returns the persistent render's stats.
 #[track_caller]

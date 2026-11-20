@@ -621,6 +621,7 @@ class Longhand(Property):
                 "Orient",
                 "BackfaceVisibility",
                 "Isolation",
+                "ViewTransitionScope",
                 "ScrollBehavior",
                 "ScrollMarkerGroup",
                 "ScrollTargetGroup",

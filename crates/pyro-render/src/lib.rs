@@ -1744,6 +1744,40 @@ impl Renderer {
         changed
     }
 
+    /// Validate names in a transition scope. The second result counts nodes examined.
+    pub fn view_transition_names(&self, page: u64, root: u64) -> (bool, usize) {
+        use style::properties::generated::longhands::visibility::computed_value::T as Visibility;
+        use style::values::specified::box_::ContentVisibility;
+        const MAX_NODES: usize = 16_384;
+        const MAX_NAMES: usize = 256;
+        let Some(mirror) = self.mirrors.get(&page) else { return (false, 0) };
+        let Some(root) = mirror.node(root) else { return (false, 0) };
+        let mut pending = vec![root];
+        let mut names = std::collections::HashSet::new();
+        let mut count = 0;
+        let mut visited = 0;
+        while let Some(id) = pending.pop() {
+            visited += 1;
+            let Some(node) = mirror.doc.get_node(id) else { continue };
+            let Some(style) = node.primary_styles() else { continue };
+            let display = style.clone_display();
+            if display.is_none() { continue }
+            if id != root && *style.get_view_transition_scope() == style::values::computed::ViewTransitionScope::All { continue }
+            let name = style.get_view_transition_name().value.as_atom();
+            if !display.is_contents() && style.get_inherited_box().visibility == Visibility::Visible && &**name != "none" {
+                count += 1;
+                if count > MAX_NAMES || (&**name != "match-element" && !names.insert(name.clone())) {
+                    return (false, visited);
+                }
+            }
+            if style.get_box().slow_clone_content_visibility() != ContentVisibility::Hidden {
+                if node.children.len() > MAX_NODES - visited - pending.len() { return (false, visited) }
+                pending.extend(node.children.iter().rev().copied());
+            }
+        }
+        (true, visited)
+    }
+
     /// The resolved value of `property` of the element keyed `key` in `page`'s persistent document as of
     /// the last sync (Blink's `getComputedStyle` value: used track sizes, a subgrid's line names; blitz-dom's
     /// `resolved_style_value`). `None`: not mirrored.

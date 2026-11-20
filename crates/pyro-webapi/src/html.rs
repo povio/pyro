@@ -1372,6 +1372,7 @@ pub(crate) fn define_element_extras(def: &mut ClassDef<Element>) {
         let el = crate::node::wrap_node(s, n.page(), n.id)?.value();
         crate::animations::element_animations(s, n.page(), el, &a)
     });
+    def.getter("activeViewTransition", crate::view_transition::active);
     def.method("startViewTransition", 0, |s, n, a| {
         let el = crate::node::wrap_node(s, n.page(), n.id)?.value();
         crate::view_transition::start(s, n.page(), el, el, a.get(0))
