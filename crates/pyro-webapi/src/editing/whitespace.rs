@@ -153,9 +153,103 @@ fn canonical(mut n: usize, start: bool, end: bool) -> String {
     out
 }
 
-/// Deleting across formatting or between characters leaves the author's
-/// existing spaces alone. Protect a previously visible space when deleting
-/// the non-space character that separated it from a line edge.
+/// Deleting one space from a previously visible run can turn its neighbors
+/// into collapsing spaces. Re-canonicalize the remaining run without making
+/// spaces visible that were originally collapsed, or rewriting spaces in
+/// another formatting element.
+fn deletes_visible_space(
+    page: &PageDom,
+    dom: &Dom,
+    host: NodeId,
+    node: NodeId,
+    before: &str,
+    after: &str,
+    ch: char,
+) -> bool {
+    if !before.chars().next_back().is_some_and(space) && !after.chars().next().is_some_and(space) {
+        return false;
+    }
+    if editing::editing_host(dom, node) != Some(host) || !collapses(page, dom, node) {
+        return false;
+    }
+    let layout = page.layout();
+    let mut parent = dom.parent_element(node).ok().flatten();
+    if parent.is_none_or(|el| layout.computed_style_value(dom, el, "visibility") != "visible") {
+        return false;
+    }
+    while let Some(el) = parent {
+        if layout.computed_style_value(dom, el, "display") == "none" {
+            return false;
+        }
+        parent = dom.parent_element(el).ok().flatten();
+    }
+    let left = before.trim_end_matches(space);
+    let right = after.trim_start_matches(space);
+    let prefix = &before[left.len()..];
+    let suffix = &after[..after.len() - right.len()];
+    // An existing pair of ASCII spaces already occupies at most one cell.
+    if prefix.contains("  ")
+        || suffix.contains("  ")
+        || (ch == ' ' && (prefix.ends_with(' ') || suffix.starts_with(' ')))
+    {
+        return false;
+    }
+    let first = prefix.chars().next().unwrap_or(ch);
+    let last = suffix.chars().next_back().unwrap_or(ch);
+    let hard_edge = |inside: Option<char>, forward: bool| -> Option<bool> {
+        let neighboring = match inside {
+            Some(c) => c,
+            None => match adjacent(page, dom, host, node, forward) {
+                Next::Boundary | Next::Break => return Some(true),
+                // Replaced or noneditable content might have no rendered width.
+                Next::Content => return None,
+                Next::Text(n) => {
+                    let value = dom.char_data(n).ok()?;
+                    if forward {
+                        value.chars().next()?
+                    } else {
+                        value.chars().next_back()?
+                    }
+                }
+            },
+        };
+        (!space(neighboring) && !matches!(neighboring, '\n' | '\r' | '\t' | '\x0c')).then_some(false)
+    };
+    let Some(begin_line) = hard_edge(left.chars().next_back(), false) else {
+        return false;
+    };
+    let Some(end_line) = hard_edge(right.chars().next(), true) else {
+        return false;
+    };
+    if (begin_line && first == ' ') || (end_line && last == ' ') {
+        return false;
+    }
+    let loses_width = (prefix.ends_with(' ') && suffix.starts_with(' '))
+        || (begin_line && prefix.is_empty() && suffix.starts_with(' '))
+        || (end_line && suffix.is_empty() && prefix.ends_with(' '));
+    // Otherwise leave the author's representation alone unless the deleted
+    // ASCII space was the only wrapping opportunity between two pieces of
+    // content. No additional soft break is needed at a hard line edge.
+    if loses_width {
+        return true;
+    }
+    if begin_line || end_line || ch != ' ' || prefix.contains(' ') || suffix.contains(' ') {
+        return false;
+    }
+    let Some(el) = dom.parent_element(node).ok().flatten() else {
+        return false;
+    };
+    match layout.computed_style_value(dom, el, "text-wrap-mode").as_str() {
+        "wrap" => true,
+        "" => !layout
+            .computed_style_value(dom, el, "white-space")
+            .split_ascii_whitespace()
+            .any(|keyword| keyword == "nowrap"),
+        _ => false,
+    }
+}
+
+/// Whether the deletion needs whitespace repair at the resulting caret.
 pub(super) fn exposes_space(page: &PageDom, dom: &Dom, host: NodeId, point: Point, backward: bool) -> bool {
     let (node, off) = point;
     if !editing::is_text(dom, node) {
@@ -170,12 +264,21 @@ pub(super) fn exposes_space(page: &PageDom, dom: &Dom, host: NodeId, point: Poin
     let Some(ch) = (if backward { text[..at].chars().next_back() } else { text[at..].chars().next() }) else {
         return false;
     };
-    if space(ch) || ch == '\n' {
+    if ch == '\n' {
         return false;
     }
     let cut = if backward { at - ch.len_utf8() } else { at };
     let before = &text[..cut];
     let after = &text[cut + ch.len_utf8()..];
+    if space(ch) {
+        // utf16_range maps a position inside a surrogate pair to that
+        // scalar's start. Such a delete isn't targeting the preceding space.
+        if text[at..].chars().next().is_some_and(|c| c.len_utf16() == 2) && pyro_dom::dom::utf16_len(&text[..at]) != off
+        {
+            return false;
+        }
+        return deletes_visible_space(page, dom, host, node, before, after, ch);
+    }
     (after.is_empty()
         && before.chars().next_back().is_some_and(space)
         && (!before.trim_end_matches(space).is_empty()
