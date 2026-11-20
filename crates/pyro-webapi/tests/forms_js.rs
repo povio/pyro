@@ -225,6 +225,13 @@ fn form_reset() {
 }
 
 #[test]
+fn form_reset_moves_selection_only_for_changed_text() {
+    let e = env("<form id=f><input value='ab😀'><textarea>ab😀</textarea></form>");
+    assert_eq!(e.eval("const f=document.querySelector('form'); Array.from(f.elements, el=>{ el.value='longer'; f.reset(); const end=el.selectionEnd; el.setSelectionRange(1,2,'backward'); f.reset(); return [end,el.selectionStart,el.selectionEnd,el.selectionDirection].join(':') }).join('|')"), "4:1:2:backward|4:1:2:backward");
+    e.page.dispose();
+}
+
+#[test]
 fn select_add_and_set_range_text() {
     let e = env(r#"<body><select id=s><option>A</option><option>B</option></select><input id=t value=foobar></body>"#);
     assert_eq!(
