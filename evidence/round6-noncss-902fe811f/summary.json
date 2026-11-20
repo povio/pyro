@@ -1,0 +1,35 @@
+{
+  "counts": {
+    "pages": 6638,
+    "namedPass": 600566,
+    "fullyPassing": 3719,
+    "page_complete": 6280,
+    "page_error": 48,
+    "page_timeout": 310
+  },
+  "comparisons": {
+    "combined2": {
+      "onlyHead": 6955,
+      "onlyRef": 226,
+      "both": 593611,
+      "onlyHeadFull": 89,
+      "onlyRefFull": 27,
+      "refFull": 3657
+    },
+    "chromeWpt": {
+      "onlyHead": 4032,
+      "onlyRef": 23652,
+      "both": 596534,
+      "onlyHeadFull": 132,
+      "onlyRefFull": 1947,
+      "refFull": 5534
+    }
+  },
+  "selected": 30513,
+  "notYetReported": 23875,
+  "columns": [
+    "902fe811f",
+    "4c13e694a",
+    "Chrome stable 157.0.8103.80"
+  ]
+}

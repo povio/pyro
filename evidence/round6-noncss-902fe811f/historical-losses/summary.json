@@ -1,0 +1,74 @@
+{
+ "affectedPages": 159,
+ "chrome": "157.0.8103.80 macOS arm64 local WPT profile",
+ "classification": {
+  "absent_on_candidate / missing name": {
+   "Pass": 3,
+   "missing-name": 6
+  },
+  "absent_on_candidate / opaque signature values; ambiguous diagnostic shape, no equivalence asserted": {
+   "missing-name": 6
+  },
+  "editing_inline_nowrap / paragraph insertion DOM changed": {
+   "Pass": 12
+  },
+  "editing_plaintext / divs instead of br": {
+   "Fail": 1
+  },
+  "editing_run / document-preference": {
+   "Fail": 72
+  },
+  "editing_run / formatting indeterminate / variant selection": {
+   "Fail": 3
+  },
+  "editing_text_control / enabled-state mismatch": {
+   "Fail": 12
+  },
+  "http_response_status / 204/304 reported as 200": {
+   "Fail": 2,
+   "Pass": 1
+  },
+  "not_completed / Not Run": {
+   "Pass": 2
+  },
+  "other_observed_assertion / unattributed": {
+   "Fail": 2,
+   "Pass": 7
+  },
+  "referrer_result_failure / Invalid URL": {
+   "Fail": 11,
+   "Pass": 27
+  },
+  "referrer_result_failure / missing result headers": {
+   "Fail": 41,
+   "Pass": 78
+  },
+  "sanitizer_rule_limitation / elements rule unsupported": {
+   "Fail": 3
+  },
+  "service_worker_router / selector matched different response": {
+   "Fail": 1
+  },
+  "table_alignment_value / center versus -webkit-center": {
+   "Fail": 1
+  },
+  "template_form_pointer / inner form missing": {
+   "Pass": 1
+  }
+ },
+ "counts": {
+  "Fail": 149,
+  "Pass": 131,
+  "missing-name": 12
+ },
+ "finishedPages": 6254,
+ "finishedShards": 54,
+ "historicalCommits": [
+  "e4ca26f48",
+  "4c13e694a"
+ ],
+ "historicalLossesSha256": "68bdbe91b1eda496adf6e1df9f5b0fde5837a12789b468677e785779a5aaaa01",
+ "losses": 292,
+ "lp": "902fe811fbef4ff0f3e39ca1f896de3a275d20b5",
+ "observedAffectedPages": 159
+}

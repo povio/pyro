@@ -1,0 +1,121 @@
+{
+  "domparsing": {
+    "pages": 90,
+    "lpOnly": 45,
+    "chromeOnly": 1238,
+    "lpFull": 43,
+    "chromeFull": 77
+  },
+  "editing": {
+    "pages": 710,
+    "lpOnly": 2201,
+    "chromeOnly": 13452,
+    "lpFull": 139,
+    "chromeFull": 426
+  },
+  "svg": {
+    "pages": 640,
+    "lpOnly": 68,
+    "chromeOnly": 1964,
+    "lpFull": 200,
+    "chromeFull": 540
+  },
+  "shadow-dom": {
+    "pages": 256,
+    "lpOnly": 929,
+    "chromeOnly": 345,
+    "lpFull": 126,
+    "chromeFull": 182
+  },
+  "xhr": {
+    "pages": 384,
+    "lpOnly": 68,
+    "chromeOnly": 167,
+    "lpFull": 317,
+    "chromeFull": 335
+  },
+  "dom": {
+    "pages": 289,
+    "lpOnly": 28,
+    "chromeOnly": 144,
+    "lpFull": 256,
+    "chromeFull": 275
+  },
+  "encoding": {
+    "pages": 512,
+    "lpOnly": 188,
+    "chromeOnly": 165,
+    "lpFull": 498,
+    "chromeFull": 502
+  },
+  "html": {
+    "pages": 1920,
+    "lpOnly": 282,
+    "chromeOnly": 2802,
+    "lpFull": 1138,
+    "chromeFull": 1641
+  },
+  "cookies": {
+    "pages": 89,
+    "lpOnly": 80,
+    "chromeOnly": 176,
+    "lpFull": 49,
+    "chromeFull": 68
+  },
+  "fetch": {
+    "pages": 383,
+    "lpOnly": 105,
+    "chromeOnly": 1012,
+    "lpFull": 167,
+    "chromeFull": 278
+  },
+  "mixed-content": {
+    "pages": 256,
+    "lpOnly": 8,
+    "chromeOnly": 460,
+    "lpFull": 45,
+    "chromeFull": 224
+  },
+  "referrer-policy": {
+    "pages": 896,
+    "lpOnly": 3,
+    "chromeOnly": 438,
+    "lpFull": 660,
+    "chromeFull": 819
+  },
+  "sanitizer-api": {
+    "pages": 25,
+    "lpOnly": 0,
+    "chromeOnly": 817,
+    "lpFull": 0,
+    "chromeFull": 13
+  },
+  "service-workers": {
+    "pages": 75,
+    "lpOnly": 8,
+    "chromeOnly": 244,
+    "lpFull": 20,
+    "chromeFull": 58
+  },
+  "subresource-integrity": {
+    "pages": 36,
+    "lpOnly": 8,
+    "chromeOnly": 185,
+    "lpFull": 7,
+    "chromeFull": 32
+  },
+  "timing-entrytypes-registry": {
+    "pages": 3,
+    "lpOnly": 0,
+    "chromeOnly": 1,
+    "lpFull": 3,
+    "chromeFull": 3
+  },
+  "uievents": {
+    "pages": 74,
+    "lpOnly": 11,
+    "chromeOnly": 42,
+    "lpFull": 51,
+    "chromeFull": 61
+  }
+}
