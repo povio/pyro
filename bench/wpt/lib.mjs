@@ -72,6 +72,12 @@ function walk(dir, out = []) {
 }
 
 const stripComments = (src) => src.replace(/<!--[\s\S]*?-->/g, '');
+function readMarkup(file) {
+  const bytes = fs.readFileSync(file);
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) return new TextDecoder('utf-16le').decode(bytes);
+  if (bytes[0] === 0xfe && bytes[1] === 0xff) return new TextDecoder('utf-16be').decode(bytes);
+  return bytes.toString('utf8');
+}
 // Pages whose own source names no Python handler outside a comment, but which need wptserve all the same: kept out
 // by path (and, for the generated security pages, by the helper they load). None is in a directory we run today;
 // the patterns keep them out when their directories are added.
@@ -222,7 +228,7 @@ export function discover(wpt, dirs, { sampleEncoding = 1, reasons, wptserve = fa
         long = /META:\s*timeout=long/.test(src);
       } else if (MARKUP.test(base)) {
         if (/-ref\.|-manual\.|^ref-/.test(base) || /\.(any|window|worker)\.html$/.test(base)) continue;
-        src = fs.readFileSync(f, 'utf8');
+        src = readMarkup(f);
         // A testharness page loads the harness with a script element (XML and SVG pages: src or xlink:href, with
         // or without a prefix); a page that only names it in a comment or a string is not one.
         code = stripComments(src);
