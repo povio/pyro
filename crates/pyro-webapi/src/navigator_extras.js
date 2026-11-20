@@ -374,22 +374,45 @@
   const notificationData = new WeakMap();
   const notificationError = (rest) => new TypeErrorC(`Failed to construct 'Notification': ${rest}`);
   const DIRECTIONS = ['auto', 'ltr', 'rtl'];
-  // Captured when present: a realm without timers (or structuredClone)
-  // still gets the rest of this module.
+  // A realm without timers still gets the rest of this module.
   const setTimeoutC = globalThis.setTimeout;
-  const structuredCloneC = globalThis.structuredClone;
   // A task of a window whose document is gone (a closed popup's Notification) is never run; queueing it
   // is not an error (the realm's setTimeout throws there).
   const queueTask = (f) => {
     try { setTimeoutC(f, 0); } catch (e) { /* the document is no longer fully active */ }
   };
-  const stringMember = (options, key) => (options[key] === undefined ? '' : String(options[key]));
-  const urlMember = (options, key) => {
-    if (options[key] === undefined) return '';
+  const stringMember = (value) => value === undefined ? '' : `${value}`;
+  const urlMember = (value) => {
+    if (value === undefined) return '';
     try {
-      return new URL(String(options[key]), document.baseURI).href;
+      return new URL(value, native.worker ? globalThis.location.href : document.baseURI).href;
     } catch (e) {
       return '';
+    }
+  };
+  const optionalString = value => value === undefined ? undefined : `${value}`;
+  const notificationObject = v => v !== null && (typeof v === 'object' || typeof v === 'function');
+  const apply = Reflect.apply, iteratorKey = Symbol.iterator;
+  // WebIDL sequence conversion propagates a member conversion error directly.
+  // A non-persistent notification needs only the resulting list's emptiness.
+  const hasActions = value => {
+    if (value === undefined) return false;
+    if (!notificationObject(value)) throw notificationError('NotificationOptions.actions must be a sequence.');
+    const iterator = apply(value[iteratorKey], value, []);
+    if (!notificationObject(iterator)) throw notificationError('Invalid notification action iterator.');
+    const next = iterator.next;
+    let any = false;
+    for (;;) {
+      const step = apply(next, iterator, []);
+      if (!notificationObject(step)) throw notificationError('Invalid notification action iterator result.');
+      if (step.done) return any;
+      const item = step.value;
+      if (!notificationObject(item)) throw notificationError('Invalid notification action.');
+      if (optionalString(item.action) === undefined) throw notificationError('NotificationAction.action is required.');
+      optionalString(item.icon);
+      optionalString(item.navigate);
+      if (optionalString(item.title) === undefined) throw notificationError('NotificationAction.title is required.');
+      any = true;
     }
   };
   class Notification extends EventTargetC {
@@ -398,21 +421,32 @@
         throw new TypeErrorC("Failed to construct 'Notification': Please use the 'new' operator, this DOM object constructor cannot be called as a function.");
       }
       if (arguments.length === 0) throw notificationError('1 argument required, but only 0 present.');
-      title = String(title);
+      title = `${title}`;
       if (options === undefined || options === null) options = {};
       else if (typeof options !== 'object' && typeof options !== 'function') {
         throw notificationError("The provided value is not of type 'NotificationOptions'.");
       }
-      const dir = options.dir === undefined ? 'auto' : String(options.dir);
+      // WebIDL converts dictionary members in lexicographic order before
+      // the constructor steps, including the service-worker restriction.
+      const actionsPresent = hasActions(options.actions);
+      const badge = optionalString(options.badge), body = stringMember(options.body), data = options.data;
+      const rawDir = options.dir, dir = rawDir === undefined ? 'auto' : `${rawDir}`;
       if (!DIRECTIONS.includes(dir)) {
         throw notificationError(`Failed to read the 'dir' property from 'NotificationOptions': The provided value '${dir}' is not a valid enum value of type NotificationDirection.`);
       }
-      const actions = options.actions === undefined ? [] : Array.from(options.actions);
-      const vibrate = options.vibrate === undefined ? [] : (options.vibrate !== null && typeof options.vibrate === 'object' ? Array.from(options.vibrate, Number) : [Number(options.vibrate)]);
-      const silent = options.silent === undefined || options.silent === null ? null : !!options.silent;
-      const renotify = !!options.renotify;
-      const tagName = stringMember(options, 'tag');
-      if (actions.length > 0) {
+      const icon = optionalString(options.icon), image = optionalString(options.image), lang = stringMember(options.lang);
+      optionalString(options.navigate);
+      const renotify = !!options.renotify, requireInteraction = !!options.requireInteraction;
+      const rawSilent = options.silent, silent = rawSilent == null ? null : !!rawSilent;
+      const tagName = stringMember(options.tag), rawTimestamp = options.timestamp;
+      const timestamp = rawTimestamp === undefined ? undefined : +rawTimestamp;
+      const rawVibrate = options.vibrate;
+      const vibrate = rawVibrate === undefined ? [] :
+        (rawVibrate !== null && typeof rawVibrate === 'object' ? Array.from(rawVibrate, Number) : [Number(rawVibrate)]);
+      if (native.serviceWorker) {
+        throw notificationError("Use ServiceWorkerRegistration.showNotification() in a service worker.");
+      }
+      if (actionsPresent) {
         throw notificationError('Actions are only supported for persistent notifications shown using ServiceWorkerRegistration.showNotification().');
       }
       if (silent === true && vibrate.length > 0) {
@@ -424,11 +458,11 @@
       super();
       ownTag(this, 'Notification');
       const d = {
-        title, dir, lang: stringMember(options, 'lang'), body: stringMember(options, 'body'), tag: tagName,
-        image: urlMember(options, 'image'), icon: urlMember(options, 'icon'), badge: urlMember(options, 'badge'),
-        vibrate: freeze(vibrate), timestamp: options.timestamp === undefined ? DateC.now() : Number(options.timestamp),
-        renotify, silent, requireInteraction: !!options.requireInteraction,
-        data: options.data === undefined ? null : structuredCloneC(options.data),
+        title, dir, lang, body, tag: tagName,
+        image: urlMember(image), icon: urlMember(icon), badge: urlMember(badge),
+        vibrate: freeze(vibrate), timestamp: timestamp === undefined ? DateC.now() : timestamp,
+        renotify, silent, requireInteraction, actions: freeze([]),
+        data: data === undefined ? null : native.cloneNotificationData(data),
         handlers: { click: null, show: null, error: null, close: null },
         shown: false, closed: false,
       };
@@ -458,7 +492,9 @@
       if (d.shown) queueTask(() => this.dispatchEvent(new EventC('close')));
     }
     get actions() {
-      return freeze([]);
+      const d = notificationData.get(this);
+      if (!d) throw new TypeErrorC('Illegal invocation');
+      return d.actions;
     }
   }
   for (const key of ['title', 'dir', 'lang', 'body', 'tag', 'image', 'icon', 'badge', 'vibrate', 'timestamp', 'renotify', 'silent', 'requireInteraction', 'data']) {
@@ -494,6 +530,7 @@
       configurable: true,
     });
   }
+  if (native.worker) delete Notification.requestPermission;
   tag(Notification, 'Notification');
 
   return {
