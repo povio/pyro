@@ -496,12 +496,33 @@ fn delete_range_with_merging(
             }
         }
         if merge_blocks && start_block != end_block && dom.is_connected(end_block).unwrap_or(false) {
-            let kids: Vec<NodeId> = dom.children(end_block).map(|c| c.collect()).unwrap_or_default();
-            for k in kids {
-                let _ = dom.append_child(start_block, k);
-            }
-            if let Ok(Some(p)) = dom.parent(end_block) {
-                let _ = dom.remove_child(p, end_block);
+            if dom.contains(end_block, start_block).unwrap_or(false) {
+                // The end lies in an anonymous line of an ancestor block
+                // (possibly the editing host). Join that line to the start
+                // block, leaving the ancestor and subsequent lines intact.
+                let mut branch = start_block;
+                while let Ok(Some(parent)) = dom.parent(branch) {
+                    if parent == end_block { break; }
+                    branch = parent;
+                }
+                let mut next = dom.next_sibling(branch).ok().flatten();
+                while let Some(child) = next {
+                    if is_block(dom, child) || !is_editable(dom, child) { break; }
+                    if local(dom, child) == "br" {
+                        let _ = dom.remove_child(end_block, child);
+                        break;
+                    }
+                    next = dom.next_sibling(child).ok().flatten();
+                    if dom.append_child(start_block, child).is_err() { break; }
+                }
+            } else {
+                let kids: Vec<NodeId> = dom.children(end_block).map(|c| c.collect()).unwrap_or_default();
+                for k in kids {
+                    let _ = dom.append_child(start_block, k);
+                }
+                if let Ok(Some(p)) = dom.parent(end_block) {
+                    let _ = dom.remove_child(p, end_block);
+                }
             }
         }
     }
