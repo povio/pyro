@@ -1111,7 +1111,8 @@ pub trait MatchMethods: TElement {
         }
 
         let old_container_type = *old_primary_style.get_container_type();
-        if old_container_type != new_container_type && !new_container_type.is_size_container_type()
+        if old_container_type != new_container_type
+            && (cfg!(feature = "servo") || !new_container_type.is_size_container_type())
         {
             // Stopped being a size container. Re-evaluate container queries and units on all our descendants.
             // Changes into and between different size containment is handled in `UpdateContainerQueryStyles`.
