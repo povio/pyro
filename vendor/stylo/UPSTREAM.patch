@@ -974,17 +974,22 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
                          % endif
                          % if property.is_zoom_dependent():
                              if !context.builder.effective_zoom_for_inheritance.is_one() {
-@@ -613,6 +623,9 @@
+@@ -613,7 +623,13 @@
          % if shorthand.kind == "four_sides":
          ${self.four_sides_shorthand(shorthand)}
          % endif
+-        % if shorthand.kind == "single_border":
 +        % if shorthand.kind in ("inset_single", "inset_pair", "inset_quad"):
 +        ${self.gap_inset_shorthand(shorthand)}
 +        % endif
-         % if shorthand.kind == "single_border":
++        % if shorthand.kind == "mirrored":
++        ${self.mirrored_shorthand(shorthand)}
++        % endif
++        % if shorthand.kind in ("single_border", "mirrored_border"):
          ${self.single_border_shorthand(shorthand)}
          % endif
-@@ -655,6 +668,48 @@
+         % if "IS_LEGACY_SHORTHAND" in shorthand.flags:
+@@ -655,6 +671,48 @@
      }
  </%def>
  
@@ -1033,6 +1038,56 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
  <%def name="four_sides_shorthand(shorthand)">
      use crate::values::generics::rect::Rect;
  
+@@ -692,6 +750,25 @@
+     }
+ </%def>
+ 
++<%def name="mirrored_shorthand(shorthand)">
++    fn parse_value(context: &ParserContext, input: &mut Parser) -> Result<Longhands, ParseError> {
++        let value = longhands::${shorthand.sub_properties[0].ident}::parse(context, input)?;
++        Ok(crate::properties::shorthands::expanded! {
++            ${shorthand.sub_properties[0].ident}: value.clone(),
++            ${shorthand.sub_properties[1].ident}: value,
++        })
++    }
++
++    impl ToCss for LonghandsToSerialize<'_> {
++        fn to_css<W: fmt::Write>(&self, dest: &mut CssWriter<W>) -> fmt::Result {
++            if self.${shorthand.sub_properties[0].ident} == self.${shorthand.sub_properties[1].ident} {
++                self.${shorthand.sub_properties[0].ident}.to_css(dest)?;
++            }
++            Ok(())
++        }
++    }
++</%def>
++
+ <%def name="single_border_shorthand(shorthand)">
+     fn parse_value(
+         context: &ParserContext,
+@@ -699,6 +776,11 @@
+     ) -> Result<Longhands, ParseError> {
+         let (width, style, color) = crate::properties::shorthands::parse_border(context, input)?;
+         Ok(crate::properties::shorthands::expanded! {
++            % if shorthand.kind == 'mirrored_border':
++            ${shorthand.sub_properties[3].ident}: width.clone(),
++            ${shorthand.sub_properties[4].ident}: style.clone(),
++            ${shorthand.sub_properties[5].ident}: color.clone(),
++            % endif
+             ${shorthand.sub_properties[0].ident}: width,
+             ${shorthand.sub_properties[1].ident}: style,
+             ${shorthand.sub_properties[2].ident}: color,
+@@ -707,6 +789,11 @@
+ 
+     impl<'a> ToCss for LonghandsToSerialize<'a>  {
+         fn to_css<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result where W: fmt::Write {
++            % if shorthand.kind == 'mirrored_border':
++            % for i in range(3):
++            if self.${shorthand.sub_properties[i].ident} != self.${shorthand.sub_properties[i+3].ident} { return Ok(()); }
++            % endfor
++            % endif
+             crate::properties::shorthands::serialize_directional_border(
+                 dest,
+                 % for i in range(3):
 diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 --- a/properties/longhands.toml	2026-11-11 19:55:57
 +++ b/properties/longhands.toml	2026-11-20 09:33:11
@@ -3089,7 +3144,7 @@ diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
  
  [list-style]
  sub_properties = ["list-style-position", "list-style-image", "list-style-type"]
-@@ -471,15 +539,21 @@
+@@ -471,15 +539,45 @@
  spec = "https://drafts.csswg.org/css-ui/#propdef-outline"
  
  [columns]
@@ -3110,10 +3165,34 @@ diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
 +engine = "servo"
 +spec = "https://drafts.csswg.org/css-gaps-1/#propdef-row-rule"
 +kind = "single_border"
++
++[rule-color]
++sub_properties = ["column-rule-color", "row-rule-color"]
++engine = "servo"
++spec = "https://drafts.csswg.org/css-gaps-1/#propdef-rule-color"
++kind = "mirrored"
++
++[rule-style]
++sub_properties = ["column-rule-style", "row-rule-style"]
++engine = "servo"
++spec = "https://drafts.csswg.org/css-gaps-1/#propdef-rule-style"
++kind = "mirrored"
++
++[rule-width]
++sub_properties = ["column-rule-width", "row-rule-width"]
++engine = "servo"
++spec = "https://drafts.csswg.org/css-gaps-1/#propdef-rule-width"
++kind = "mirrored"
++
++[rule]
++sub_properties = ["column-rule-width", "column-rule-style", "column-rule-color", "row-rule-width", "row-rule-style", "row-rule-color"]
++engine = "servo"
++spec = "https://drafts.csswg.org/css-gaps-1/#propdef-rule"
++kind = "mirrored_border"
  
  [text-decoration]
  sub_properties = ["text-decoration-color", "text-decoration-line", "text-decoration-style", "text-decoration-thickness"]
-@@ -550,13 +624,11 @@
+@@ -550,13 +648,11 @@
  derive_value_info = false
  
  [-webkit-text-stroke]

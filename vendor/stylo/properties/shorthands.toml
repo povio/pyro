@@ -555,6 +555,30 @@ engine = "servo"
 spec = "https://drafts.csswg.org/css-gaps-1/#propdef-row-rule"
 kind = "single_border"
 
+[rule-color]
+sub_properties = ["column-rule-color", "row-rule-color"]
+engine = "servo"
+spec = "https://drafts.csswg.org/css-gaps-1/#propdef-rule-color"
+kind = "mirrored"
+
+[rule-style]
+sub_properties = ["column-rule-style", "row-rule-style"]
+engine = "servo"
+spec = "https://drafts.csswg.org/css-gaps-1/#propdef-rule-style"
+kind = "mirrored"
+
+[rule-width]
+sub_properties = ["column-rule-width", "row-rule-width"]
+engine = "servo"
+spec = "https://drafts.csswg.org/css-gaps-1/#propdef-rule-width"
+kind = "mirrored"
+
+[rule]
+sub_properties = ["column-rule-width", "column-rule-style", "column-rule-color", "row-rule-width", "row-rule-style", "row-rule-color"]
+engine = "servo"
+spec = "https://drafts.csswg.org/css-gaps-1/#propdef-rule"
+kind = "mirrored_border"
+
 [text-decoration]
 sub_properties = ["text-decoration-color", "text-decoration-line", "text-decoration-style", "text-decoration-thickness"]
 spec = "https://drafts.csswg.org/css-text-decor/#propdef-text-decoration"
