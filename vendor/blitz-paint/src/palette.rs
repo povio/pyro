@@ -91,20 +91,18 @@ impl PaletteFont<'_> {
     fn entries(&self, palette: &FontPalette) -> Option<Entries> {
         match palette {
             FontPalette::Mix(mix) => {
-                let (left, right) = (self.entries(&mix.left.0)?, self.entries(&mix.right.0)?);
-                // Weights that add up to zero: the mix is invalid at computed-value time, `normal`.
-                let Some((p1, p2)) = mix.weights() else {
-                    return self.palette(0);
-                };
+                let missing = mix.omitted_weight();
+                let palettes = mix.items.iter().map(|item| {
+                    Some((self.entries(&item.palette)?, item.weight.unwrap_or(missing)))
+                }).collect::<Option<Vec<_>>>()?;
+                let count = palettes.iter().map(|(entries, _)| entries.len()).min()?;
                 let color = |[r, g, b, a]: [u8; 4]| AbsoluteColor::srgb_legacy(r, g, b, f32::from(a) / 255.0);
                 Some(
-                    left.into_iter()
-                        .zip(right)
-                        .map(|(l, r)| {
+                    (0..count).map(|index| {
                             let mixed = mix_many(
                                 mix.interpolation,
-                                [ColorMixItem::new(color(l), p1), ColorMixItem::new(color(r), p2)],
-                                ColorMixFlags::empty(),
+                                palettes.iter().map(|(entries, weight)| ColorMixItem::new(color(entries[index]), *weight)),
+                                ColorMixFlags::NORMALIZE_WEIGHTS,
                             );
                             mixed.as_srgb_color().to_rgba8().to_u8_array()
                         })

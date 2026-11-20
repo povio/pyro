@@ -236,9 +236,9 @@ kept for serialization (`1.23 drop`) and `sink` stays 0 then. pyro turns the pro
 - `properties/longhands.toml`: `font-palette` is parsed and computed for servo too, behind
   `layout.css.font-palette.enabled` (upstream: gecko only). blitz-paint draws COLR glyphs in the palette it selects.
 - `values/specified/font.rs`: `FontPalette` is an enum: a name (`normal`, `light`, `dark`, `<dashed-ident>`) or
-  `palette-mix(<color-interpolation-method>, <palette> <percentage>?, <palette> <percentage>?)` (CSS Fonts 5,
-  nested mixes too; `FontPaletteMix::weights` normalizes the percentages). Its computed and resolved values are
-  the specified one, written out (deriving them recurses without end). `color/mix.rs`: `ColorInterpolationMethod`
+  `palette-mix()` of one or more weighted palettes, including nested mixes. The interpolation space defaults to
+  Oklab. Omitted percentages share the remainder; specified math expressions serialize as math until computed.
+  `color/mix.rs`: `ColorInterpolationMethod`
   and `HueInterpolationMethod` derive serde, as servo's font style struct needs.
 - `values/specified/number.rs` (`Integer::resolve_with_font_size`), `stylesheets/font_palette_values_rule.rs`:
   an `<integer>` of `base-palette` or `override-colors` whose calc() has font-relative lengths
