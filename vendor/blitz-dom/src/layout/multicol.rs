@@ -354,6 +354,7 @@ struct Breaks {
     /// pyro: forced breaks (`break-before`/`break-after: column`, `page`, ...), sorted.
     forced: Vec<f32>,
     overflow_breaks: Vec<(crate::NodeId, f32, f32)>,
+    overflow_parents: Vec<(crate::NodeId, f32, f32, f32)>,
     /// pyro: the multi-column containers in the strip's flow (no other break context between
     /// them and the container) and their tops.
     nested: Vec<(crate::NodeId, f32)>,
@@ -920,6 +921,35 @@ impl LayoutPassState<'_> {
                 breaks.forced.dedup_by(|a, b| (*a - *b).abs() <= EPSILON);
             }
             pass += 1;
+            if let Some(height) = fragmentainer && pass <= 5 && self.nested_pass_budget > 0 && !breaks.overflow_parents.is_empty() {
+                let run = breaks.fill(height, MAX_COLUMNS);
+                let mut changed = false;
+                for &(id, top, bottom, parallel_start) in &breaks.overflow_parents {
+                    let prior = self.column_space_used.get(&id).copied().unwrap_or(0.0);
+                    let mut used = 0.0;
+                    let short = &run.columns[..run.columns.len().saturating_sub(1)];
+                    let first = short.partition_point(|&(_, end)| end <= top.max(parallel_start));
+                    for &(start, end) in &short[first..] {
+                        let left = bottom + prior - used - end;
+                        if left <= EPSILON { break; }
+                        used += (height - (end - start)).clamp(0.0, left);
+                    }
+                    if (prior - used).abs() > EPSILON {
+                        self.column_space_used.insert(id, used);
+                        use taffy::CacheTree as _;
+                        let mut at = Some(id);
+                        while let Some(node) = at.filter(|&n| n != dom_id) {
+                            self.cache_clear(crate::taffy_node_id(node));
+                            at = self.nodes[node].layout_parent.get();
+                        }
+                        changed = true;
+                    }
+                }
+                if changed {
+                    self.nested_pass_budget -= 1;
+                    continue;
+                }
+            }
             if pass <= 5 && self.nested_pass_budget > 0 && !breaks.overflow_breaks.is_empty() {
                 let height = self.nested_fragmentation.get(&dom_id).map(|ctx| ctx.0).or(fragmentainer)
                     .unwrap_or_else(|| breaks.balance(count, limit));
@@ -2607,6 +2637,7 @@ impl BaseDocument {
             trims: found.trims,
             forced: found.forced,
             overflow_breaks: found.overflow_breaks,
+            overflow_parents: found.overflow_parents,
             nested: found.nested,
             baselines: found.baselines,
             clones: found.clones,
@@ -2883,6 +2914,13 @@ impl BaseDocument {
             };
             let child_top = top + layout.location.y - relative;
             let child_bottom = child_top + layout.size.height;
+            if found.container != Some(parent) && children.last() == Some(&child_id)
+                && layout.scrollable_overflow_rect.bottom() > layout.size.height + EPSILON
+                && !style.get_position().height.is_auto()
+                && node.primary_styles().is_some_and(|style| !style.get_position().height.is_auto())
+            {
+                found.overflow_parents.push((parent, top, top + node.unrounded_layout().size.height, child_bottom));
+            }
             found.bottom = found.bottom.max(child_bottom);
             if container_content_top.is_some() {
                 // The content's end: margin edges (the strip is a formatting context root).
@@ -3136,6 +3174,7 @@ struct Found {
     forced: Vec<f32>,
     forced_after: Vec<f32>,
     overflow_breaks: Vec<(crate::NodeId, f32, f32)>,
+    overflow_parents: Vec<(crate::NodeId, f32, f32, f32)>,
     /// The floats' block ranges.
     floats: Vec<(f32, f32)>,
     /// pyro: see [`Breaks::baselines`].
@@ -3573,6 +3612,7 @@ mod tests {
             trims: Vec::new(),
             forced: Vec::new(),
             overflow_breaks: Vec::new(),
+            overflow_parents: Vec::new(),
             nested: Vec::new(),
             baselines: Vec::new(),
             clones: Vec::new(),

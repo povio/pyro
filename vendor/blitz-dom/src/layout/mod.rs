@@ -177,6 +177,7 @@ pub(crate) struct LayoutPassState<'doc> {
     /// the least top of each in its parent (`layout::multicol`, `block_child_min_top`).
     pub(crate) spanner_floors: std::collections::HashMap<crate::NodeId, f32>,
     spanner_border_heights: std::collections::HashMap<NodeId, (f32, f32)>,
+    column_space_used: std::collections::HashMap<crate::NodeId, f32>,
     /// pyro: how many multi-column strips are being laid out (`block_container_is_fragmented`).
     pub(crate) multicol_strip_depth: u32,
     /// pyro: see `multicol::COLUMN_FRAGMENT_BUDGET`.
@@ -257,6 +258,7 @@ impl<'doc> LayoutPassState<'doc> {
             nested_fragmentation: std::collections::HashMap::new(),
             spanner_floors: std::collections::HashMap::new(),
             spanner_border_heights: std::collections::HashMap::new(),
+            column_space_used: std::collections::HashMap::new(),
             multicol_strip_depth: 0,
             column_fragment_budget: multicol::COLUMN_FRAGMENT_BUDGET,
             column_measure_budget: multicol::MEASURE_FRAGMENT_BUDGET,
@@ -388,6 +390,9 @@ impl LayoutPassState<'_> {
                     self.spanner_border_heights.remove(&node_id);
                 }
             }
+        }
+        if self.multicol_strip_depth > 0 && let Some(used) = self.column_space_used.get(&dom_node_id(node_id)) {
+            output.size.height = (output.size.height - used).max(0.0);
         }
         match line_clamp {
             Some(max_lines) => self.clamp_lines(dom_node_id(node_id), max_lines, inputs, &mut output),
