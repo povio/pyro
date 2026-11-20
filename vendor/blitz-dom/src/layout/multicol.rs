@@ -1352,7 +1352,7 @@ impl LayoutPassState<'_> {
                     };
                     let columns = breaks.fill_range(start, end, height, sink.room().saturating_sub(placed.len()).max(1)).columns;
                     let content = columns.iter().map(|&(a, b)| b - a).fold(0.0f32, f32::max).min(row_height);
-                    let height = if sequential { content } else { height };
+                    let height = if sequential && columns.len() == 1 { content } else { height };
                     let shown = if box_end.is_some() { row_height } else { height };
                     placed.extend(columns.into_iter().map(|(a, b)| (a, b, top, shown)));
                     // (The row reaches past its balanced columns to the end of the box.)

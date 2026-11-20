@@ -131,6 +131,15 @@ fn rects(p: &crate::hit_descent::Page, id: &str) -> Vec<[f64; 4]> {
 }
 
 #[test]
+fn sequential_nested_columns_spend_the_slot_when_they_break() {
+    for (count, height, forced, expected) in [(2, 20, false, 40), (2, 20, true, 90), (3, 50, true, 90)] {
+        let before = if forced { "column" } else { "auto" };
+        let p = page(&format!("<!doctype html><style>*{{margin:0}}main,section{{columns:2;gap:0;column-fill:auto}}main{{columns:{count};width:{}px;height:140px}}header{{height:50px}}section{{break-before:avoid}}article{{height:{height}px}}article+article{{break-before:{before}}}footer{{height:100px}}</style><main><header></header><section id=inner><article></article><article></article></section><footer></footer></main>", count * 50));
+        assert_eq!(rect(&p, "inner"), [0.0, 50.0, 50.0, f64::from(expected)]);
+    }
+}
+
+#[test]
 fn contained_floats_fragment_without_excluding_siblings() {
     for (count, side) in [(2, "left"), (3, "left"), (2, "right")] {
         let p = page(&format!("<!doctype html><style>*{{margin:0}}main{{gap:0;columns:{count};width:160px;height:100px;column-fill:auto}}header{{height:40px}}section{{columns:2;gap:0}}aside{{contain:layout;height:0}}b{{float:{side};width:12px;height:100px}}article{{contain:size;width:20px;height:80px}}</style><main><header></header><section id=s><aside id=a><b id=f></b></aside><article id=m></article></section></main>"));
