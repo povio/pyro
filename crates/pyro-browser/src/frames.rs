@@ -739,6 +739,7 @@ impl FrameHost {
                 pending_loader: None,
                 pending_cancel: None,
                 pending_script: None,
+                pending_planned: None,
                 load: None,
                 stylesheets: Default::default(),
                 images: Default::default(),

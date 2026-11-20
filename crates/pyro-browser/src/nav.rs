@@ -497,9 +497,13 @@ impl PageNav {
     }
 
     fn navigate(&self, url: String, history: HistoryHandling) {
-        if let Some(page) = self.page_dom.borrow().upgrade() {
+        // The frame's latest navigation from now on: it supersedes those
+        // started before it (a planned form submission too), and a later
+        // one supersedes it (`PageDom::navigation_started`).
+        let started = self.page_dom.borrow().upgrade().map(|page| {
             page.note_navigation_request();
-        }
+            page.navigation_started()
+        });
         let sequence = self.script_navigation.get().wrapping_add(1);
         self.script_navigation.set(sequence);
         let page = self.page;
@@ -513,7 +517,10 @@ impl PageNav {
             // Another document, or this one was opened since (stop loading).
             if !b.doc(page).is_some_and(|p| {
                 let st = p.nav.state.borrow();
-                st.doc_seq == document && st.stops == stops && p.nav.script_navigation.get() == sequence
+                st.doc_seq == document
+                    && st.stops == stops
+                    && p.nav.script_navigation.get() == sequence
+                    && started.is_none_or(|n| p.main_frame.page_dom.as_ref().is_none_or(|d| d.navigation_started() == n))
             }) {
                 return;
             }
@@ -557,6 +564,13 @@ impl PageNav {
         self.sched.post(TaskSource::Navigation, move |b| {
             let Some(page) = b.page(page).and_then(|p| p.frames.key(&frame_id)) else { return };
             let Some(nav) = b.doc(page).map(|p| p.nav.clone()) else { return };
+            // A traversal to another document does not take the place of
+            // the frame's planned form navigation that has begun.
+            if entry.doc != current_doc
+                && b.doc(page).is_some_and(|p| p.pending_planned.is_some() && p.pending_planned.as_ref() == p.pending_loader())
+            {
+                return;
+            }
             if nav.state.borrow().doc_seq == current_doc && nav.state.borrow().entries.get(index) == Some(&entry) {
                 // Only a same-document traversal can be canceled or intercepted.
                 let same = entry.doc == current_doc;

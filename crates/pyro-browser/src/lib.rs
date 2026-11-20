@@ -571,6 +571,11 @@ pub struct DocumentState {
     /// The loader and URL of `pending_loader` when the frame's scripts
     /// started it, which `document.open()` stops (HTML "stop loading").
     pub(crate) pending_script: Option<(LoaderId, String)>,
+    /// The loader of `pending_loader` when it is a planned form navigation
+    /// of this frame: a history traversal to another document queued before
+    /// it committed does not take its place (Chrome: `f.submit();
+    /// history.back()` submits, as `history.back(); f.submit()` does).
+    pub(crate) pending_planned: Option<LoaderId>,
     pub(crate) load: Option<loader::DocumentLoad>,
     pub(crate) stylesheets: stylesheets::Stylesheets,
     pub(crate) images: images::Images,
@@ -1594,6 +1599,7 @@ impl Browser {
                 pending_loader: None,
                 pending_cancel: None,
                 pending_script: None,
+                pending_planned: None,
                 nav,
                 load: None,
                 stylesheets: Default::default(),

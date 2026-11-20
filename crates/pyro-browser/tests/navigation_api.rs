@@ -213,16 +213,17 @@ fn a_form_submission_fires_navigate_with_its_form_data_and_source_element() {
 }
 
 /// HTML "plan to navigate": a form submitted again before its task ran
-/// navigates once, with the later submission.
+/// navigates once, with the later submission; so does the frame when
+/// another form is submitted after it (the frame's latest navigation).
 #[test]
 fn a_later_submission_replaces_the_forms_planned_navigation() {
     let (mut t, page, _loader) = load(FORMS);
-    eval(&t, page, "post.submit(); post.a.value = 'second'; post.submit(); get.submit()");
+    eval(&t, page, "post.submit(); post.a.value = 'second'; post.submit()");
     settle(&mut t);
-    assert_eq!(
-        eval(&t, page, "log.join('|')"),
-        "push:/other:a=second:true:post:true|push:/other?q=x:null:false:get:true"
-    );
+    assert_eq!(eval(&t, page, "log.join('|')"), "push:/other:a=second:true:post:true");
+    eval(&t, page, "log = []; post.submit(); get.submit()");
+    settle(&mut t);
+    assert_eq!(eval(&t, page, "log.join('|')"), "push:/other?q=x:null:false:get:true");
 }
 
 /// HTML "Location-object navigate" and form submission: a document that
@@ -256,4 +257,151 @@ fn a_document_navigating_while_it_loads_replaces_its_entry() {
     eval(&t, page, "location.href = '/other'");
     settle(&mut t);
     assert_eq!(eval(&t, page, "[location.pathname, history.length].join()"), "/other,2");
+}
+
+/// Of the navigations of a frame started before any of them began to load,
+/// the last one wins (HTML "navigate" sets the navigable's ongoing
+/// navigation; a planned form navigation is one of them from `submit()` on,
+/// and `document.open()` stops it). Chrome's results for each case.
+#[test]
+fn the_last_navigation_started_in_a_task_wins_over_a_planned_form_navigation() {
+    const PAGE: &str = "<body><form id=f action='/submit' method=post><input name=a value=1>\
+        <button id=go onclick=\"location.href='/landed.html'\">go</button></form>\
+        <form id=g action='/submit' method=post onsubmit=\"location.href='/landed.html'\"><button id=send>send</button></form>\
+        <a id=link href='/landed.html' onclick='f.submit()'>link</a>\
+        <script>window.marker = 'first load';</script></body>";
+    // (script, where it ends, whether /submit is requested)
+    let cases = [
+        // A submit button whose click handler navigates: the submission is later.
+        ("go.click()", "/submit", true),
+        // A submit handler that navigates: the submission is planned after it.
+        ("send.click()", "/submit", true),
+        ("location.href = '/landed.html'; f.submit()", "/submit", true),
+        ("f.submit(); location.href = '/landed.html'", "/landed.html", false),
+        // A link whose click handler submits: the link is followed after it.
+        ("link.click()", "/landed.html", false),
+        ("f.submit(); location.reload()", "/app reloaded", false),
+        ("f.submit(); Promise.resolve().then(() => location.href = '/landed.html')", "/landed.html", false),
+        ("f.submit(); document.open(); document.write('<p id=written>written</p>'); document.close()", "/app written", false),
+    ];
+    for (script, ends_on, submits) in cases {
+        let (mut t, page, loader) = load(PAGE);
+        loader.insert("http://site.test/submit", "text/html", "<p>submitted</p>", Duration::ZERO);
+        loader.insert("http://site.test/landed.html", "text/html", "<p>landed</p>", Duration::ZERO);
+        eval(&t, page, "window.marker = 'scripted'; 0");
+        eval(&t, page, &format!("{script}; 0"));
+        settle(&mut t);
+        let ended = eval(
+            &t,
+            page,
+            "location.pathname + (document.getElementById('written') ? ' written' : \
+               location.pathname == '/app' && window.marker == 'first load' ? ' reloaded' : '')",
+        );
+        assert_eq!(ended, ends_on, "{script}");
+        let requested = loader.log.borrow().iter().any(|r| format!("{r:?}").contains("/submit"));
+        assert_eq!(requested, submits, "{script}: {:?}", loader.log.borrow());
+    }
+    // A `javascript:` URL is no navigation to another document: its task
+    // runs the script whatever else was started (WPT
+    // url/javascript-urls.window.js follows two links in one task), and it
+    // does not stop a form submission planned before or after it.
+    const LINKS: &str = "const link = (code) => { const a = document.body.appendChild(document.createElement('a')); \
+        a.href = 'javascript:' + code + ';undefined'; return a; }; \
+        const ran = (n) => link(`sessionStorage.setItem('ran', (sessionStorage.getItem('ran') || '') + ${n})`);";
+    let cases = [
+        ("ran(1).click(); ran(2).click(); ran(3).click()", "/app", "123", false),
+        ("ran(1).click(); f.submit()", "/submit", "1", true),
+        ("f.submit(); ran(1).click(); ran(2).click()", "/submit", "12", true),
+        ("location.href = '/landed.html'; ran(1).click()", "/landed.html", "1", false),
+    ];
+    for (script, ends_on, ran, submits) in cases {
+        let (mut t, page, loader) = load(PAGE);
+        loader.insert("http://site.test/submit", "text/html", "<p>submitted</p>", Duration::ZERO);
+        loader.insert("http://site.test/landed.html", "text/html", "<p>landed</p>", Duration::ZERO);
+        eval(&t, page, &format!("sessionStorage.removeItem('ran'); {LINKS} {script}; 0"));
+        settle(&mut t);
+        assert_eq!(eval(&t, page, "location.pathname + ' ' + sessionStorage.getItem('ran')"), format!("{ends_on} {ran}"), "{script}");
+        let requested = loader.log.borrow().iter().any(|r| r.contains("/submit"));
+        assert_eq!(requested, submits, "{script}: {:?}", loader.log.borrow());
+    }
+}
+
+#[derive(Default)]
+struct Popups(std::cell::RefCell<Vec<String>>);
+impl pyro_browser::PageObserver for Popups {
+    fn on_page_event(&self, _page: PageId, event: &pyro_browser::PageEvent) {
+        if let pyro_browser::PageEvent::PopupRequested { url, .. } = event {
+            self.0.borrow_mut().push(url.clone());
+        }
+    }
+}
+
+/// What does not ask the frame for another document leaves its planned form
+/// navigation (and any navigation started) alone: a fragment navigation, a
+/// `javascript:` URL, a submission to another frame or a new window (that
+/// navigable's own ordering). A traversal is a task of its own: a
+/// submission after `history.back()` in the same task wins. Chrome's results.
+#[test]
+fn fragment_links_other_frames_and_traversals_leave_a_planned_form_navigation() {
+    const PAGE: &str = "<body><form id=f action='/submit'><input name=a value=1></form>\
+        <form id=blank action='/submit' target=_blank><input name=to value=blank></form>\
+        <form id=framed action='/submit' target=kid><input name=to value=kid></form>\
+        <iframe name=kid src='/kid'></iframe>\
+        <a id=hash href='#' onclick='f.submit()'>#</a><a id=named href='#x' onclick='f.submit()'>#x</a>\
+        <a id=totop href='#top' onclick='f.submit()'>#top</a><a id=js href='javascript:void(0)' onclick='f.submit()'>js</a>\
+        <a id=frag href='#y'>y</a><a id=stay href='#z' onclick='f.submit(); return false'>z</a>\
+        <a id=jssubmit href='javascript:f.submit()'>s</a></body>";
+    // (script, where the page ends, /submit requests in order of their query)
+    let cases: &[(&str, &str, &[&str])] = &[
+        // A. Same-document and javascript: links.
+        ("hash.click()", "/submit?a=1", &["a=1"]),
+        ("named.click()", "/submit?a=1", &["a=1"]),
+        ("totop.click()", "/submit?a=1", &["a=1"]),
+        ("js.click()", "/submit?a=1", &["a=1"]),
+        ("f.submit(); frag.click()", "/submit?a=1", &["a=1"]),
+        ("f.submit(); location.hash = '#x'", "/submit?a=1", &["a=1"]),
+        ("stay.click()", "/submit?a=1", &["a=1"]),
+        ("jssubmit.click()", "/submit?a=1", &["a=1"]),
+        // B. A submission to another navigable and a navigation of this one.
+        ("framed.submit(); location.href = '/landed.html'", "/landed.html", &["to=kid"]),
+        ("location.href = '/landed.html'; framed.submit()", "/landed.html", &["to=kid"]),
+        ("blank.submit(); location.href = '/landed.html'", "/landed.html", &["popup to=blank"]),
+        ("location.href = '/landed.html'; blank.submit()", "/landed.html", &["popup to=blank"]),
+        // C. History.
+        ("history.back(); f.submit()", "/submit?a=1", &["a=1"]),
+        ("f.submit(); history.pushState(null, '', '/pushed')", "/submit?a=1", &["a=1"]),
+        ("f.submit(); history.replaceState(null, '', '/replaced')", "/submit?a=1", &["a=1"]),
+        ("f.submit(); history.back()", "/submit?a=1", &["a=1"]),
+        ("f.submit(); history.go(0)", "/app2", &[]),
+    ];
+    let mut wrong = Vec::new();
+    for (script, ends_on, submits) in cases {
+        let (mut t, page, loader) = load("<body>first</body>");
+        let popups = Rc::new(Popups::default());
+        t.browser.set_observer(Some(popups.clone()));
+        loader.insert("http://site.test/app2", "text/html", PAGE, Duration::ZERO);
+        loader.insert("http://site.test/kid", "text/html", "<p>kid</p>", Duration::ZERO);
+        for query in ["a=1", "to=kid", "to=blank"] {
+            loader.insert(&format!("http://site.test/submit?{query}"), "text/html", "<p>submitted</p>", Duration::ZERO);
+        }
+        loader.insert("http://site.test/landed.html", "text/html", "<p>landed</p>", Duration::ZERO);
+        // /app, then /app2: there is an entry to go back to.
+        t.browser.navigate(page, NavigateOpts::address_bar("http://site.test/app2")).unwrap();
+        settle(&mut t);
+        loader.log.borrow_mut().clear();
+        eval(&t, page, &format!("{script}; 0"));
+        settle(&mut t);
+        let ended = eval(&t, page, "location.pathname + location.search");
+        let mut seen: Vec<String> = loader
+            .log
+            .borrow()
+            .iter()
+            .filter_map(|url| url.split_once("/submit?").map(|(_, query)| query.to_string()))
+            .collect();
+        seen.extend(popups.0.borrow().iter().filter_map(|url| Some(format!("popup {}", url.split_once("/submit?")?.1))));
+        if ended != *ends_on || seen != *submits {
+            wrong.push(format!("{script}: ended on {ended}, requests {seen:?}"));
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
 }
