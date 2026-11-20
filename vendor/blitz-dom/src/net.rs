@@ -692,29 +692,26 @@ pub(crate) fn fetch_font_face_rules<'a>(
                 // style) rather than whatever metadata the TTF reports.
                 // Rules are read in order within a sheet; sheets in the order they load.
                 static RULE_ORDER: AtomicU64 = AtomicU64::new(1);
+                let weight = descriptor.font_weight.as_ref().and_then(|range| range.explicit());
+                let width = descriptor.font_width.as_ref().and_then(|range| range.explicit());
+                let style = descriptor.font_style.as_ref().and_then(|range| range.explicit());
                 let overrides = FontFaceOverrides {
                     family_name: Some(family.name.to_string()),
                     // pyro: a reversed range (`900 100`) is the same range.
-                    weight: descriptor.font_weight.as_ref().and_then(|range| {
+                    weight: weight.and_then(|range| {
                         let (a, b) = (range.0.compute()?.value(), range.1.compute()?.value());
                         Some(a.min(b))
                     }),
-                    weight_range: descriptor
-                        .font_weight
-                        .as_ref()
+                    weight_range: weight
                         .and_then(|range| Some((range.0.compute()?.value(), range.1.compute()?.value()))),
-                    width_range: descriptor
-                        .font_width
-                        .as_ref()
+                    width_range: width
                         .and_then(|range| range.compute())
                         .map(|range| (range.0.0.to_float(), range.1.0.to_float())),
-                    width: descriptor
-                        .font_width
-                        .as_ref()
+                    width: width
                         .and_then(|range| range.compute())
                         .map(|range| range.0.0.to_float().min(range.1.0.to_float())),
-                    style: descriptor.font_style.as_ref().map(stylo_to_fontique_style),
-                    slant_range: descriptor.font_style.as_ref().and_then(|style| match style {
+                    style: style.map(stylo_to_fontique_style),
+                    slant_range: style.and_then(|style| match style {
                         FontStyleRange::Italic => None,
                         FontStyleRange::Oblique(min, max) => {
                             Some((min.degrees().unwrap_or(0.0), max.degrees().unwrap_or(0.0)))

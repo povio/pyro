@@ -41645,37 +41645,37 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
          .filter_map(|rule| match rule {
              CssRule::FontFace(font_face) => {
                  let descriptor = &font_face.read_with(read_guard).descriptors;
-@@ -421,13 +690,71 @@
+@@ -421,13 +690,68 @@
                  // Capture the @font-face descriptors so parley can register
                  // the font under the CSS-declared family name (and weight /
                  // style) rather than whatever metadata the TTF reports.
 +                // Rules are read in order within a sheet; sheets in the order they load.
 +                static RULE_ORDER: AtomicU64 = AtomicU64::new(1);
++                let weight = descriptor.font_weight.as_ref().and_then(|range| range.explicit());
++                let width = descriptor.font_width.as_ref().and_then(|range| range.explicit());
++                let style = descriptor.font_style.as_ref().and_then(|range| range.explicit());
                  let overrides = FontFaceOverrides {
                      family_name: Some(family.name.to_string()),
 -                    weight: descriptor
+-                        .font_weight
+-                        .as_ref()
+-                        .and_then(|range| range.0.compute().map(|w| w.value())),
+-                    style: descriptor.font_style.as_ref().map(stylo_to_fontique_style),
 +                    // pyro: a reversed range (`900 100`) is the same range.
-+                    weight: descriptor.font_weight.as_ref().and_then(|range| {
++                    weight: weight.and_then(|range| {
 +                        let (a, b) = (range.0.compute()?.value(), range.1.compute()?.value());
 +                        Some(a.min(b))
 +                    }),
-+                    weight_range: descriptor
-                         .font_weight
-                         .as_ref()
--                        .and_then(|range| range.0.compute().map(|w| w.value())),
++                    weight_range: weight
 +                        .and_then(|range| Some((range.0.compute()?.value(), range.1.compute()?.value()))),
-+                    width_range: descriptor
-+                        .font_width
-+                        .as_ref()
++                    width_range: width
 +                        .and_then(|range| range.compute())
 +                        .map(|range| (range.0.0.to_float(), range.1.0.to_float())),
-+                    width: descriptor
-+                        .font_width
-+                        .as_ref()
++                    width: width
 +                        .and_then(|range| range.compute())
 +                        .map(|range| range.0.0.to_float().min(range.1.0.to_float())),
-                     style: descriptor.font_style.as_ref().map(stylo_to_fontique_style),
-+                    slant_range: descriptor.font_style.as_ref().and_then(|style| match style {
++                    style: style.map(stylo_to_fontique_style),
++                    slant_range: style.and_then(|style| match style {
 +                        FontStyleRange::Italic => None,
 +                        FontStyleRange::Oblique(min, max) => {
 +                            Some((min.degrees().unwrap_or(0.0), max.degrees().unwrap_or(0.0)))
@@ -41719,7 +41719,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
                  };
                  Some((src, overrides))
              }
-@@ -435,9 +762,11 @@
+@@ -435,9 +759,11 @@
          })
          .for_each(|(source_list, overrides)| {
              if let Some((url, format)) = preferred_font_source(source_list) {
@@ -41732,7 +41732,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
                      ResourceHandler::boxed(
                          tx.clone(),
                          doc_id,
-@@ -450,6 +779,11 @@
+@@ -450,6 +776,11 @@
          })
  }
  
@@ -41744,7 +41744,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
  /// The first source in an `@font-face` `src` list that is in a format we
  /// support, with its resolved url and format.
  fn preferred_font_source(source_list: &SourceList) -> Option<(Url, FontFaceSourceFormatKeyword)> {
-@@ -468,6 +802,11 @@
+@@ -468,6 +799,11 @@
              return None;
          };
  
@@ -41756,7 +41756,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
          let format = match &url_source.format_hint {
              Some(FontFaceSourceFormat::Keyword(keyword)) => *keyword,
              Some(FontFaceSourceFormat::String(string)) => font_format_from_string(string),
-@@ -564,7 +903,10 @@
+@@ -564,7 +900,10 @@
              // Stylo emits `Oblique(0deg, 0deg)` for the literal CSS `normal`
              // keyword. Map that back to `Normal` so parley's font matching
              // doesn't misclassify upright fonts.
@@ -41768,7 +41768,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
                  Fq::Normal
              } else {
                  Fq::Oblique(angle)
-@@ -585,51 +927,121 @@
+@@ -585,51 +924,121 @@
  
  pub struct ImageHandler {
      kind: ImageType,
@@ -41917,7 +41917,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
  
          Err(format!(
              "Could not parse image ({} bytes): image-crate error: {image_err}; svg fallback error: {svg_err}",
-@@ -649,6 +1061,62 @@
+@@ -649,6 +1058,62 @@
          FontStyleRange::Oblique(Angle::from_degrees(min_deg), Angle::from_degrees(max_deg))
      }
  
@@ -41980,7 +41980,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
      /// The source picked from the `src` list of each `@font-face` rule in `css`
      fn preferred_sources(css: &str) -> Vec<Option<(String, FontFaceSourceFormatKeyword)>> {
          let lock = SharedRwLock::new();
-@@ -800,3 +1268,11 @@
+@@ -800,3 +1265,11 @@
          );
      }
  }

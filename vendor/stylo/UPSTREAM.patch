@@ -662,7 +662,7 @@ diff -ruN a/dom.rs b/dom.rs
  
 diff -ruN a/font_face.rs b/font_face.rs
 --- a/font_face.rs	2026-11-11 19:55:57
-+++ b/font_face.rs	2026-11-17 11:03:29
++++ b/font_face.rs	2026-11-20 21:19:07
 @@ -118,6 +118,14 @@
  }
  
@@ -678,6 +678,39 @@ diff -ruN a/font_face.rs b/font_face.rs
      /// Parse a single font-technology keyword and return its flag.
      pub fn parse_one(input: &mut Parser) -> Result<Self, ParseError> {
          Ok(try_match_ident_ignore_ascii_case! { input,
+@@ -297,6 +305,32 @@
+     Swap,
+     Fallback,
+     Optional,
++}
++
++#[derive(Clone, Debug, MallocSizeOf, PartialEq, ToCss, ToShmem)]
++#[allow(missing_docs)]
++pub enum FaceRange<T> {
++    Auto,
++    Explicit(T),
++}
++
++impl<T: Parse> Parse for FaceRange<T> {
++    fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
++        if input.try_parse(|input| input.expect_ident_matching("auto")).is_ok() {
++            return Ok(Self::Auto);
++        }
++        T::parse(context, input).map(Self::Explicit)
++    }
++}
++
++impl<T> FaceRange<T> {
++    #[allow(missing_docs)]
++    pub fn explicit(&self) -> Option<&T> {
++        match self {
++            Self::Auto => None,
++            Self::Explicit(range) => Some(range),
++        }
++    }
+ }
+ 
+ macro_rules! impl_range {
 diff -ruN a/invalidation/element/invalidation_map.rs b/invalidation/element/invalidation_map.rs
 --- a/invalidation/element/invalidation_map.rs	2026-11-11 19:55:57
 +++ b/invalidation/element/invalidation_map.rs	2026-11-11 19:55:57
@@ -1143,6 +1176,26 @@ diff -ruN a/properties/declaration_block.rs b/properties/declaration_block.rs
  
          // Step 3
          'declaration_loop: for (declaration, importance) in self.declaration_importance_iter() {
+diff -ruN a/properties/font_face_descriptors.toml b/properties/font_face_descriptors.toml
+--- a/properties/font_face_descriptors.toml	2026-11-11 19:55:57
++++ b/properties/font_face_descriptors.toml	2026-11-20 21:19:07
+@@ -11,13 +11,13 @@
+ type = "SourceList"
+ 
+ [font-style]
+-type = "FontStyleRange"
++type = "FaceRange<FontStyleRange>"
+ 
+ [font-weight]
+-type = "FontWeightRange"
++type = "FaceRange<FontWeightRange>"
+ 
+ [font-width]
+-type = "FontWidthRange"
++type = "FaceRange<FontWidthRange>"
+ aliases = ["font-stretch"]
+ 
+ [font-display]
 diff -ruN a/properties/helpers/animated_properties.mako.rs b/properties/helpers/animated_properties.mako.rs
 --- a/properties/helpers/animated_properties.mako.rs	2026-11-11 19:55:57
 +++ b/properties/helpers/animated_properties.mako.rs	2026-11-20 20:21:29
@@ -5359,6 +5412,77 @@ diff -ruN a/stylesheets/container_rule.rs b/stylesheets/container_rule.rs
      size: Size2D<Option<Au>>,
      wm: WritingMode,
      inherited_style: Option<Arc<ComputedValues>>,
+diff -ruN a/stylesheets/font_feature_values_rule.rs b/stylesheets/font_feature_values_rule.rs
+--- a/stylesheets/font_feature_values_rule.rs	2026-11-11 19:55:57
++++ b/stylesheets/font_feature_values_rule.rs	2026-11-20 21:24:08
+@@ -234,6 +234,8 @@
+             /// Family names cannot contain generic families. FamilyName
+             /// also accepts only non-generic names.
+             pub family_names: Vec<FamilyName>,
++            #[allow(missing_docs)]
++            pub font_display: Option<crate::font_face::FontDisplay>,
+             $(
+                 #[$doc]
+                 pub $ident: Vec<FFVDeclaration<$ty>>,
+@@ -247,6 +249,7 @@
+             fn new(family_names: Vec<FamilyName>, location: SourceLocation) -> Self {
+                 FontFeatureValuesRule {
+                     family_names,
++                    font_display: None,
+                     $(
+                         $ident: vec![],
+                     )*
+@@ -283,13 +286,13 @@
+             {
+                 $(
+                     if self.$ident.len() > 0 {
+-                        dest.write_str(concat!("@", $name, " {\n"))?;
++                        dest.write_str(concat!("@", $name, " { "))?;
+                         let iter = self.$ident.iter();
+                         for val in iter {
+                             val.to_css(dest)?;
+-                            dest.write_str("\n")?
++                            dest.write_char(' ')?
+                         }
+-                        dest.write_str("}\n")?
++                        dest.write_str("} ")?
+                     }
+                 )*
+                 Ok(())
+@@ -334,7 +337,12 @@
+             fn to_css(&self, _guard: &SharedRwLockReadGuard, dest: &mut CssStringWriter) -> fmt::Result {
+                 dest.write_str("@font-feature-values ")?;
+                 self.family_names.to_css(&mut CssWriter::new(dest))?;
+-                dest.write_str(" {\n")?;
++                dest.write_str(" { ")?;
++                if let Some(display) = &self.font_display {
++                    dest.write_str("font-display: ")?;
++                    display.to_css(&mut CssWriter::new(dest))?;
++                    dest.write_str("; ")?;
++                }
+                 self.value_to_css(&mut CssWriter::new(dest))?;
+                 dest.write_char('}')
+             }
+@@ -436,10 +444,18 @@
+         impl<'a, 'b, 'i> DeclarationParser<'i> for FontFeatureValuesRuleParser<'a, 'b> {
+             type Declaration = ();
+             type Error = StyleParseErrorKind;
++
++            fn parse_value(&mut self, name: CowRcStr<'i>, input: &mut Parser<'i>, _: &ParserState) -> Result<(), ParseError> {
++                if !name.eq_ignore_ascii_case("font-display") {
++                    return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
++                }
++                self.rule.font_display = Some(input.parse_entirely(crate::font_face::FontDisplay::parse)?);
++                Ok(())
++            }
+         }
+ 
+         impl<'a, 'b, 'i> RuleBodyItemParser<'i, (), StyleParseErrorKind> for FontFeatureValuesRuleParser<'a, 'b> {
+-            fn parse_declarations(&self) -> bool { false }
++            fn parse_declarations(&self) -> bool { true }
+             fn parse_qualified(&self) -> bool { true }
+         }
+     }
 diff -ruN a/stylesheets/font_palette_values_rule.rs b/stylesheets/font_palette_values_rule.rs
 --- a/stylesheets/font_palette_values_rule.rs	2026-11-11 19:55:57
 +++ b/stylesheets/font_palette_values_rule.rs	2026-11-16 15:05:29

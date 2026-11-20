@@ -234,6 +234,8 @@ macro_rules! font_feature_values_blocks {
             /// Family names cannot contain generic families. FamilyName
             /// also accepts only non-generic names.
             pub family_names: Vec<FamilyName>,
+            #[allow(missing_docs)]
+            pub font_display: Option<crate::font_face::FontDisplay>,
             $(
                 #[$doc]
                 pub $ident: Vec<FFVDeclaration<$ty>>,
@@ -247,6 +249,7 @@ macro_rules! font_feature_values_blocks {
             fn new(family_names: Vec<FamilyName>, location: SourceLocation) -> Self {
                 FontFeatureValuesRule {
                     family_names,
+                    font_display: None,
                     $(
                         $ident: vec![],
                     )*
@@ -283,13 +286,13 @@ macro_rules! font_feature_values_blocks {
             {
                 $(
                     if self.$ident.len() > 0 {
-                        dest.write_str(concat!("@", $name, " {\n"))?;
+                        dest.write_str(concat!("@", $name, " { "))?;
                         let iter = self.$ident.iter();
                         for val in iter {
                             val.to_css(dest)?;
-                            dest.write_str("\n")?
+                            dest.write_char(' ')?
                         }
-                        dest.write_str("}\n")?
+                        dest.write_str("} ")?
                     }
                 )*
                 Ok(())
@@ -334,7 +337,12 @@ macro_rules! font_feature_values_blocks {
             fn to_css(&self, _guard: &SharedRwLockReadGuard, dest: &mut CssStringWriter) -> fmt::Result {
                 dest.write_str("@font-feature-values ")?;
                 self.family_names.to_css(&mut CssWriter::new(dest))?;
-                dest.write_str(" {\n")?;
+                dest.write_str(" { ")?;
+                if let Some(display) = &self.font_display {
+                    dest.write_str("font-display: ")?;
+                    display.to_css(&mut CssWriter::new(dest))?;
+                    dest.write_str("; ")?;
+                }
                 self.value_to_css(&mut CssWriter::new(dest))?;
                 dest.write_char('}')
             }
@@ -436,10 +444,18 @@ macro_rules! font_feature_values_blocks {
         impl<'a, 'b, 'i> DeclarationParser<'i> for FontFeatureValuesRuleParser<'a, 'b> {
             type Declaration = ();
             type Error = StyleParseErrorKind;
+
+            fn parse_value(&mut self, name: CowRcStr<'i>, input: &mut Parser<'i>, _: &ParserState) -> Result<(), ParseError> {
+                if !name.eq_ignore_ascii_case("font-display") {
+                    return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
+                }
+                self.rule.font_display = Some(input.parse_entirely(crate::font_face::FontDisplay::parse)?);
+                Ok(())
+            }
         }
 
         impl<'a, 'b, 'i> RuleBodyItemParser<'i, (), StyleParseErrorKind> for FontFeatureValuesRuleParser<'a, 'b> {
-            fn parse_declarations(&self) -> bool { false }
+            fn parse_declarations(&self) -> bool { true }
             fn parse_qualified(&self) -> bool { true }
         }
     }

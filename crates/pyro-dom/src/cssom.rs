@@ -236,6 +236,24 @@ fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces) ->
         return Some(ParsedRule::Group { name: lower, condition, rules: rules? });
     }
     let (prelude, block) = parse_prelude_and_block(p, start, raw_block);
+    if lower == "font-feature-values" {
+        use style::shared_lock::{SharedRwLock, ToCssWithGuard};
+        use style::stylesheets::{font_feature_values_rule::parse_family_name_list, CssRuleType, FontFeatureValuesRule, Origin, UrlExtraData};
+
+        let url = UrlExtraData(style::servo_arc::Arc::new(url::Url::parse("about:blank").ok()?));
+        let context = style::parser::ParserContext::new(
+            Origin::Author, &url, Some(CssRuleType::FontFeatureValues), style_traits::ParsingMode::DEFAULT,
+            style::context::QuirksMode::NoQuirks, Default::default(), None, None, Default::default(),
+        );
+        let families = Parser::new(&prelude).parse_entirely(|input| parse_family_name_list(&context, input)).ok()?;
+        let block = block?;
+        let mut input = Parser::new(&block);
+        let location = input.current_source_location();
+        let rule = FontFeatureValuesRule::parse(&context, &mut input, families, location);
+        let mut text = String::new();
+        rule.to_css(&SharedRwLock::new().read(), &mut text).ok()?;
+        return Some(ParsedRule::Other { rule_type: 14, text });
+    }
     if lower == "layer" {
         use style::parser::Parse;
         use style::stylesheets::{layer_rule::LayerName, CssRuleType, Origin, UrlExtraData};
@@ -298,7 +316,6 @@ fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces) ->
         "page" => 6,
         "namespace" => 10,
         "counter-style" => 11,
-        "font-feature-values" => 14,
         "container" | "property" | "font-palette-values" | "starting-style" | "scope"
         | "view-transition" => 0,
         _ => return None,
@@ -573,6 +590,15 @@ mod tests {
 
     fn style(selector: &str, block: &str) -> ParsedRule {
         ParsedRule::Style { selector: selector.into(), block: block.into() }
+    }
+
+    #[test]
+    fn feature_value_rules_drop_invalid_entries_and_merge_named_values() {
+        let parse = |source| parse_one_rule(source, &mut Namespaces::new());
+        assert!(parse("@font-feature-values serif { }").is_err());
+        assert!(parse("@font-feature-values Demo;").is_err());
+        assert_eq!(parse("@font-feature-values Demo { @styleset { first: 1; bad: -1; second: 2; } font-display: swap; @styleset { first: 3; } }"),
+            Ok(ParsedRule::Other { rule_type: 14, text: "@font-feature-values Demo { font-display: swap; @styleset { first: 3; second: 2; } }".into() }));
     }
 
     /// CSS Syntax's order (WPT css/CSS2/syntax/at-charset-*): byte order mark, protocol
