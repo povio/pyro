@@ -874,7 +874,6 @@ impl Browser {
         let pages: Vec<_> = self.pages.iter().filter(|p| !Self::page_idle(p)).map(|p| p.id).collect();
         for id in pages {
             let Some(host) = self.page(id).map(|p| p.frames.clone()) else { continue };
-            self.apply_same_document_url(id);
             self.sync_root(id);
             // Resource events are queued per page; one drain covers every frame.
             self.drain_dom_resources(id.into());
@@ -883,14 +882,7 @@ impl Browser {
                     bindings.after_task();
                 }
                 if key.child.is_some() {
-                    if let Some(mut d) = self.doc_mut(key) {
-                        if let Some(url) = d.nav.take_pending_frame_url() {
-                            if !matches!(d.main_frame.url.as_str(), "about:blank" | "about:srcdoc") {
-                                d.main_frame.base_url = url.clone();
-                            }
-                            d.main_frame.url = url;
-                        }
-                    }
+                    self.apply_same_document_url(key);
                 }
             }
             host.drain_retired();
