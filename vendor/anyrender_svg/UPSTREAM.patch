@@ -1145,10 +1145,10 @@ index 0000000..8f826b0
 +    }
 +}
 diff --git a/src/lib.rs b/src/lib.rs
-index 3370fa2..b1e7aae 100644
+index 3370fa2..51abd3f 100644
 --- a/src/lib.rs
 +++ b/src/lib.rs
-@@ -21,10 +21,14 @@
+@@ -21,10 +21,16 @@
  #![cfg_attr(test, allow(unused_crate_dependencies))] // Some dev dependencies are only used in tests
  
  mod error;
@@ -1157,13 +1157,15 @@ index 3370fa2..b1e7aae 100644
  mod util;
  
  pub use error::Error;
++#[cfg(feature = "image")]
++pub use util::PageRasterScope;
 +pub use render::with_text_threshold;
 +/// pyro: SVG filters as anyrender filter graphs (see `filter`).
 +pub use filter::{FilterGraph, FilterNotes, PrimitiveNotes};
  pub use usvg;
  
  use anyrender::PaintScene;
-@@ -59,6 +63,56 @@ pub fn render_svg_str_with<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -59,6 +65,56 @@ pub fn render_svg_str_with<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
      Ok(())
  }
  
@@ -1220,7 +1222,7 @@ index 3370fa2..b1e7aae 100644
  /// Append a [`usvg::Tree`] to an [`anyrender::PaintScene`].
  ///
  /// This will draw a red box over (some) unsupported elements.
-@@ -66,6 +120,35 @@ pub fn render_svg_tree<S: PaintScene>(scene: &mut S, svg: &usvg::Tree, transform
+@@ -66,6 +122,35 @@ pub fn render_svg_tree<S: PaintScene>(scene: &mut S, svg: &usvg::Tree, transform
      render_svg_tree_with(scene, svg, transform, &mut util::default_error_handler);
  }
  
@@ -1256,7 +1258,7 @@ index 3370fa2..b1e7aae 100644
  /// Append a [`usvg::Tree`] to an [`anyrender::PaintScene`] (with custom error handling).
  ///
  /// See the [module level documentation](crate#unsupported-features) for a list of some unsupported svg features
-@@ -75,15 +158,45 @@ pub fn render_svg_tree_with<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -75,15 +160,45 @@ pub fn render_svg_tree_with<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
      transform: Affine,
      error_handler: &mut F,
  ) {
@@ -1302,7 +1304,7 @@ index 3370fa2..b1e7aae 100644
  #[cfg(test)]
  mod tests {
      use super::*;
-@@ -106,9 +219,13 @@ mod tests {
+@@ -106,9 +221,13 @@ mod tests {
              .iter()
              .find_map(|command| match command {
                  RenderCommand::PushLayer(layer) => Some(layer.fill),
@@ -1317,7 +1319,7 @@ index 3370fa2..b1e7aae 100644
      }
  
      #[test]
-@@ -134,6 +251,87 @@ mod tests {
+@@ -134,6 +253,87 @@ mod tests {
          );
      }
  
@@ -2837,7 +2839,7 @@ index 2e9e1c4..41bcc0d 100644
          }
      }
 diff --git a/src/util.rs b/src/util.rs
-index a350130..354204f 100644
+index a350130..b6fb4b5 100644
 --- a/src/util.rs
 +++ b/src/util.rs
 @@ -7,7 +7,7 @@ use peniko::color::{self, DynamicColor};
@@ -2887,7 +2889,7 @@ index a350130..354204f 100644
      let bb = node.bounding_box();
      let rect = Rect {
          x0: bb.left() as f64,
-@@ -258,18 +260,36 @@ pub(crate) fn default_error_handler<S: PaintScene>(scene: &mut S, node: &usvg::N
+@@ -258,18 +260,51 @@ pub(crate) fn default_error_handler<S: PaintScene>(scene: &mut S, node: &usvg::N
  #[cfg(feature = "image")]
  pub(crate) fn decode_raw_raster_image(
      img: &usvg::ImageKind,
@@ -2913,10 +2915,25 @@ index a350130..354204f 100644
 +}
 +
 +#[cfg(feature = "image")]
-+thread_local! { static RASTERS: std::cell::RefCell<Option<pyro_raster::DocumentBudget>> = const { std::cell::RefCell::new(None) }; }
++thread_local! { static RASTERS: std::cell::RefCell<Option<pyro_raster::PageRasters>> = const { std::cell::RefCell::new(None) }; }
 +
 +#[cfg(feature = "image")]
 +pub(crate) struct RasterScope(bool);
++
++#[cfg(feature = "image")]
++pub struct PageRasterScope(Option<pyro_raster::PageRasters>, std::marker::PhantomData<std::rc::Rc<()>>);
++
++#[cfg(feature = "image")]
++impl PageRasterScope {
++    pub fn enter(page: &pyro_raster::PageRasters) -> Self {
++        Self(RASTERS.with_borrow_mut(|current| current.replace(page.clone())), Default::default())
++    }
++}
++
++#[cfg(feature = "image")]
++impl Drop for PageRasterScope {
++    fn drop(&mut self) { RASTERS.with_borrow_mut(|current| *current = self.0.take()); }
++}
 +
 +#[cfg(feature = "image")]
 +impl RasterScope {

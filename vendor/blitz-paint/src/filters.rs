@@ -214,6 +214,7 @@ fn reference_graph(
             &content,
             width.max(1e-3),
             height.max(1e-3),
+            &dom.raster_budget,
         )?,
         (None, None) => return None,
     };

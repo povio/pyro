@@ -1145,7 +1145,7 @@ impl BaseDocument {
                         doc_id,
                         None,
                         self.shell_provider.clone(),
-                        ImageHandler::new(kind).options(options.clone()).document(&self.url),
+                        ImageHandler::new(kind, &self.raster_budget).options(options.clone()).document(&self.url),
                     ),
                 );
                 new.push(Some(ImageResourceData::new(url.clone()).with_options(options)));
@@ -1291,7 +1291,7 @@ impl BaseDocument {
                                 doc_id,
                                 None, // Don't pass node_id, we'll handle via pending_images
                                 self.shell_provider.clone(),
-                                ImageHandler::new(kind.image_type(idx)).options(options.clone()).document(&document_url),
+                                ImageHandler::new(kind.image_type(idx), &self.raster_budget).options(options.clone()).document(&document_url),
                             ),
                         );
 
@@ -1380,7 +1380,7 @@ mod shape_image_tests {
             ..Default::default()
         });
         if let Some(url) = cached {
-            let svg = crate::node::SvgImageData::from_data(SVG.as_bytes(), &usvg::Options::default()).expect("svg");
+            let svg = crate::util::parse_svg_image(SVG.as_bytes()).expect("svg");
             doc.image_cache.insert(url.into(), ImageData::Svg(svg.into()));
         }
         let root = doc.root_node().id;

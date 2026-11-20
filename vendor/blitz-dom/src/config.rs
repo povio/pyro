@@ -230,6 +230,7 @@ pub struct DocumentConfig {
     /// How deeply this document is nested within other documents
     /// (0 for a root document). Used to limit `<iframe>` nesting depth.
     pub subdocument_depth: usize,
+    pub raster_budget: pyro_raster::PageRasters,
     /// Soft wrap opportunities to add or remove from the default (UAX #14, as ICU tailors it),
     /// e.g. [`parley::HYPHEN_DIGIT_LINE_BREAK_OVERRIDE`] for Chrome's breaks between a hyphen
     /// and a digit. Applies to every text layout of the document (line breaking and min/max
@@ -272,6 +273,7 @@ impl Default for DocumentConfig {
             incremental: None,
             abort_signal: None,
             subdocument_depth: 0,
+            raster_budget: Default::default(),
             line_break_override: None,
             xml_document: false,
             quirks_mode: false,

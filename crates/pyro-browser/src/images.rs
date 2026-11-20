@@ -76,7 +76,7 @@ impl Images {
 
     /// Tracks `node`'s request (`image.url`), replacing its previous one.
     fn track(&mut self, node: NodeId, image: Image) {
-        self.offers.retain(|(_, owner, _)| *owner != node);
+        self.offers.retain(|(_, owner, ..)| *owner != node);
         if self.requested.len() < 4096 {
             self.requested.insert(image.url.clone());
         }
@@ -96,7 +96,7 @@ fn image_cors(dom: &pyro_dom::Dom, node: NodeId) -> u8 {
 #[derive(Default)]
 pub(crate) struct Images {
     flights: Rc<RefCell<HashMap<Shape, Rc<RefCell<ImageFlight>>>>>,
-    offers: VecDeque<(Shape, NodeId, Resource)>,
+    offers: VecDeque<(Shape, NodeId, Resource, std::sync::Arc<pyro_raster::SourceLease>)>,
     offers_tree_version: Option<u64>,
     entries: HashMap<NodeId, Image>,
     /// pyro: every URL the document's elements requested as images (`<img>`, SVG `<image>`,
@@ -134,15 +134,15 @@ struct ImageFlight {
 }
 
 impl Images {
-    fn offer(&mut self, shape: Shape, node: NodeId, resource: &Resource) {
-        self.offers.retain(|(old, owner, _)| old != &shape && *owner != node);
+    fn offer(&mut self, shape: Shape, node: NodeId, resource: &Resource, bindings: &pyro_webapi::PageDom) {
+        self.offers.retain(|(old, owner, ..)| old != &shape && *owner != node);
         const BUDGET: usize = 16 * 1024 * 1024;
         if !resource.immutable_local || resource.body.capacity() > BUDGET { return; }
-        let mut bytes = resource.body.capacity() + self.offers.iter().map(|(_, _, entry)| entry.body.capacity()).sum::<usize>();
+        let mut bytes = resource.body.capacity() + self.offers.iter().map(|(_, _, entry, _)| entry.body.capacity()).sum::<usize>();
         while bytes > BUDGET || self.offers.len() >= 64 {
             bytes -= self.offers.pop_front().unwrap().2.body.capacity();
         }
-        self.offers.push_back((shape, node, resource.clone()));
+        if let Some(lease) = bindings.retain_image_source(resource.body.clone()) { self.offers.push_back((shape, node, resource.clone(), lease)); }
     }
 }
 
@@ -152,11 +152,11 @@ impl Browser {
         let flights = {
             let mut doc = self.doc_mut(frame)?;
             if layout && !doc.images.flights.borrow().contains_key(&shape) {
-                if let Some(index) = doc.images.offers.iter().position(|(key, _, _)| key == &shape) {
-                    let (_, owner, resource) = doc.images.offers.remove(index).unwrap();
+                if let Some(index) = doc.images.offers.iter().position(|(key, ..)| key == &shape) {
+                    let (_, owner, resource, lease) = doc.images.offers.remove(index).unwrap();
                     if doc.main_frame.page_dom.as_ref().is_some_and(|page| page.dom.borrow().is_connected(owner) == Ok(true)) {
                         drop(doc);
-                        self.scheduler().post(TaskSource::Networking, move |browser| done(browser, Ok(resource)));
+                        self.scheduler().post(TaskSource::Networking, move |browser| { let _lease = lease; done(browser, Ok(resource)); });
                         return None;
                     }
                 }
@@ -184,7 +184,7 @@ impl Browser {
                 for (_, waiter) in elements { waiter(browser, result.clone()); }
                 if !layout.is_empty() {
                     if let Some(mut state) = browser.doc_mut(frame) {
-                        state.images.offers.retain(|(shape, _, _)| shape != &key);
+                        state.images.offers.retain(|(shape, ..)| shape != &key);
                     }
                 }
                 for (_, waiter) in layout { waiter(browser, result.clone()); }
@@ -468,7 +468,7 @@ impl Browser {
                 bindings.image_loaded(node, raw_src.as_deref().unwrap_or(""), true);
                 if let Some((bytes, clean)) = image.bytes {
                     if request_state.0 != 0 || bindings.wants_image_bytes() {
-                        bindings.set_image_bytes(node, bytes, clean);
+                        bindings.set_image_bytes(node, bytes.bytes().clone(), clean);
                     }
                 }
                 let weak = Rc::downgrade(&bindings);
@@ -485,7 +485,7 @@ impl Browser {
                 let invalid = matches!(source, Source::Invalid);
                 let mut state = self.doc_mut(page).expect("page");
                 state.images.entries.remove(&node);
-                state.images.offers.retain(|(_, owner, _)| *owner != node);
+                state.images.offers.retain(|(_, owner, ..)| *owner != node);
                 drop(state);
                 bindings.set_image_state(node, None, false);
                 bindings.keep_loading_image(node, false);
@@ -682,6 +682,7 @@ impl Browser {
                         continue;
                     }
                     let body = raster.as_ref().filter(|resource| resource.immutable_local).map(|resource| pyro_dom::layout::LayoutBody {
+                        image_lease: None,
                         bytes: resource.body.clone(), final_url: resource.url.clone(), status: resource.status,
                         opaque: crate::loader::is_opaque(resource, cors, &state.main_frame.origin),
                         referrer_policy: resource.referrer_policy.map(|policy| policy.as_str().to_owned()),
@@ -691,7 +692,7 @@ impl Browser {
             }
             if !used && bindings.dom.borrow().is_connected(node) == Ok(true) {
                 if let (Some(mut state), Some(resource)) = (self.doc_mut(page), raster.as_ref()) {
-                    state.images.offer(key, node, resource);
+                    state.images.offer(key, node, resource, &bindings);
                 }
             }
         }
@@ -706,7 +707,7 @@ impl Browser {
                     request_referrer,
                     natural,
                     reported,
-                    bytes: raster.as_ref().map(|r| (r.body.clone(), clean)),
+                    bytes: raster.as_ref().and_then(|r| bindings.retain_image_source(r.body.clone())).map(|bytes| (bytes, clean)),
                 },
             );
         }
@@ -787,7 +788,7 @@ impl Browser {
         if let Some(bindings) = state.main_frame.page_dom.as_ref().filter(|_| !state.images.offers.is_empty()).cloned() {
             let dom = bindings.dom.borrow();
             if state.images.offers_tree_version != Some(dom.tree_version()) {
-                state.images.offers.retain(|(_, owner, _)| dom.is_connected(*owner) == Ok(true));
+                state.images.offers.retain(|(_, owner, ..)| dom.is_connected(*owner) == Ok(true));
                 state.images.offers_tree_version = Some(dom.tree_version());
             }
         }
@@ -1118,7 +1119,7 @@ impl Browser {
                             request_referrer: None,
                             natural: Some((w as f64, h as f64)),
                             reported: None,
-                            bytes: Some((r.body.clone(), clean)),
+                            bytes: bindings.retain_image_source(r.body.clone()).map(|bytes| (bytes, clean)),
                         },
                     );
                 }
@@ -1137,6 +1138,7 @@ impl Browser {
         {
             if let Some(key) = key {
                 self.provide_layout_body(page, key, pyro_dom::layout::LayoutBody {
+                    image_lease: None,
                     bytes: r.body.clone(),
                     final_url: r.url.clone(),
                     opaque: r.opaque,

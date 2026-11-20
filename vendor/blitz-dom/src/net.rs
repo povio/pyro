@@ -202,7 +202,7 @@ pub struct FontFaceOverrides {
 #[derive(Clone, Debug)]
 pub enum Resource {
     /// pyro: the last field is the EXIF orientation (1 to 8) the pixels were turned by.
-    Image(ImageType, u32, u32, Arc<Vec<u8>>, u8),
+    Image(ImageType, u32, u32, linebender_resource_handle::Blob<u8>, u8),
     #[cfg(feature = "svg")]
     Svg(ImageType, crate::node::SvgImageData),
     /// The sheet, and its text when it has `@page` rules (see `BaseDocument::linked_page_css`).
@@ -927,6 +927,7 @@ impl NetHandler for ResourceHandler<DocumentSrcHandler> {
 
 pub struct ImageHandler {
     kind: ImageType,
+    budget: pyro_raster::PageRasters,
     /// pyro: what the request was made with ([`mark_cors`], [`url_fetch_options`]): an image
     /// fetched with other than the defaults answers under its [`FetchOptions::cache_key`].
     ///
@@ -938,8 +939,8 @@ pub struct ImageHandler {
     document: Option<Url>,
 }
 impl ImageHandler {
-    pub fn new(kind: ImageType) -> Self {
-        Self { kind, options: Default::default(), document: None }
+    pub fn new(kind: ImageType, budget: &pyro_raster::PageRasters) -> Self {
+        Self { kind, budget: budget.clone(), options: Default::default(), document: None }
     }
 
     /// pyro: the image is for the document at `url` ([`Self::document`]).
@@ -992,15 +993,15 @@ pub use pyro_raster::decode_jpeg;
 
 impl ImageHandler {
     fn parse(&self, url: &str, bytes: Bytes) -> Result<Resource, String> {
-        let image_err = match pyro_raster::decode(&bytes, usize::MAX) {
-            Ok(image) => return Ok(Resource::Image(self.kind, image.width, image.height, image.pixels, image.orientation)),
+        let image_err = match self.budget.decode(&bytes) {
+            Ok(image) => return Ok(Resource::Image(self.kind, image.width, image.height, image.blob, image.orientation)),
             Err(error) => error.to_string(),
         };
 
         #[cfg(feature = "svg")]
         let svg_err = {
-            use crate::util::parse_svg_image;
-            match parse_svg_image(&bytes) {
+            let parse = |data: &[u8]| crate::util::parse_svg_resources(data, None, &self.budget);
+            match parse(&bytes) {
                 // pyro: its `<view>` fragment, and its source when it has no size. The source is
                 // also kept for inline SVG that masks with it (`svg_css`), up to a size: an image of
                 // any kind can be a mask image (the cache is by URL), and most never are; a larger
@@ -1009,7 +1010,7 @@ impl ImageHandler {
                     let mut svg = svg.for_url(&bytes, url);
                     const MAX_KEPT_SOURCE: usize = 256 << 10;
                     if bytes.len() <= MAX_KEPT_SOURCE {
-                        svg.source = Some(std::sync::Arc::from(&bytes[..]));
+                        svg.source = crate::util::SvgSource::copy(&bytes, &self.budget);
                     }
                     // pyro: one with a `<foreignObject>` is drawn as a document of its own
                     // (`BaseDocument::svg_image_documents`).
@@ -1017,7 +1018,7 @@ impl ImageHandler {
                         && memchr_foreign_object(&bytes)
                         && let Ok(text) = std::str::from_utf8(&bytes)
                     {
-                        svg.foreign_source = Some(std::sync::Arc::from(text));
+                        svg.foreign_source = crate::util::SvgSource::copy(text, &self.budget);
                     }
                     return Ok(Resource::Svg(self.kind, svg));
                 }
@@ -1027,8 +1028,8 @@ impl ImageHandler {
                 Err(e) => {
                     if let (ImageType::Reference(_), true) = (self.kind, bytes.len() <= 256 << 10) {
                         let sized = crate::node::embeddable_svg(&bytes);
-                        if let Some(mut svg) = sized.and_then(|sized| parse_svg_image(sized.as_bytes()).ok()) {
-                            svg.source = Some(std::sync::Arc::from(&bytes[..]));
+                        if let Some(mut svg) = sized.and_then(|sized| parse(sized.as_bytes()).ok()) {
+                            svg.source = crate::util::SvgSource::copy(&bytes, &self.budget);
                             return Ok(Resource::Svg(self.kind, svg));
                         }
                     }

@@ -558,7 +558,7 @@ fn image_area(
                     Some(alpha) => {
                         let limit = (threshold * 255.0) as f64;
                         mask_rects(rw as usize, rh as usize, w, h, columns, |x, y| {
-                            f64::from(alpha[y * rw as usize + x]) > limit
+                            f64::from(alpha.0[y * rw as usize + x]) > limit
                         })
                     }
                     None => {
@@ -649,7 +649,7 @@ fn sampled_rects(w: f64, h: f64, columns: bool, threshold: f32, alpha: impl Fn(f
 /// pyro: renders an SVG image's tree scaled to `width` by `height` px and gives each pixel's alpha
 /// (row by row): set by the embedder that has a rasterizer ([`set_svg_rasterizer`]).
 #[cfg(feature = "svg")]
-pub type SvgRasterizer = fn(&usvg::Tree, u32, u32) -> Option<Vec<u8>>;
+pub type SvgRasterizer = fn(&usvg::Tree, u32, u32, &pyro_raster::PageRasters) -> Option<Vec<u8>>;
 
 #[cfg(feature = "svg")]
 static SVG_RASTERIZER: std::sync::OnceLock<SvgRasterizer> = std::sync::OnceLock::new();
@@ -663,21 +663,18 @@ pub fn set_svg_rasterizer(rasterizer: SvgRasterizer) {
 /// An SVG image's alpha at `width` by `height` from the rasterizer, the last few kept (a float is
 /// laid out again and again with the same image).
 #[cfg(feature = "svg")]
-fn rasterized_svg_alpha(tree: &std::sync::Arc<usvg::Tree>, width: u32, height: u32) -> Option<std::sync::Arc<Vec<u8>>> {
-    type Entry = (std::sync::Arc<usvg::Tree>, u32, u32, std::sync::Arc<Vec<u8>>);
-    static CACHE: std::sync::Mutex<Vec<Entry>> = std::sync::Mutex::new(Vec::new());
+fn rasterized_svg_alpha(tree: &crate::node::SvgTree, width: u32, height: u32) -> Option<std::sync::Arc<(Vec<u8>, pyro_raster::Reservation)>> {
     let rasterize = SVG_RASTERIZER.get()?;
-    if let Some(hit) = CACHE.lock().ok()?.iter().find(|e| std::sync::Arc::ptr_eq(&e.0, tree) && e.1 == width && e.2 == height) {
-        return Some(hit.3.clone());
+    let mut cache = tree.shape_alpha.lock().ok()?;
+    if let Some((_, _, alpha)) = cache.as_ref().filter(|(w, h, _)| (*w, *h) == (width, height)) {
+        return Some(alpha.clone());
     }
-    let alpha = rasterize(tree, width, height).filter(|a| a.len() >= width as usize * height as usize)?;
-    let alpha = std::sync::Arc::new(alpha);
-    if let Ok(mut cache) = CACHE.lock() {
-        if cache.len() >= 8 {
-            cache.remove(0);
-        }
-        cache.push((tree.clone(), width, height, alpha.clone()));
-    }
+    cache.take();
+    let pixels = (width as usize).checked_mul(height as usize)?;
+    let charge = tree.page.reserve(pixels).ok()?;
+    let alpha = rasterize(tree, width, height, &tree.page).filter(|alpha| alpha.len() == pixels && alpha.capacity() == pixels)?;
+    let alpha = std::sync::Arc::new((alpha, charge));
+    *cache = Some((width, height, alpha.clone()));
     Some(alpha)
 }
 

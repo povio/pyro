@@ -40,6 +40,7 @@ pub(crate) struct ContainerQuerySize {
 /// referring to the dropped node no longer resolve ([`NodeTree::get`] returns
 /// `None`, and indexing panics) instead of aliasing the new occupant.
 pub struct NodeTree {
+    pub(crate) raster_budget: pyro_raster::PageRasters,
     map: SlotMap<NodeKey, Node>,
     // Sparse: only containers actually queried by Stylo occupy an entry. Style
     // workers can ask about the same container concurrently.
@@ -79,8 +80,9 @@ pub struct NodeTree {
 }
 
 impl NodeTree {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(raster_budget: pyro_raster::PageRasters) -> Self {
         Self {
+            raster_budget,
             map: SlotMap::with_key(),
             container_query_sizes: Mutex::new(HashMap::new()),
             anchor_query_choices: Default::default(),
@@ -124,6 +126,10 @@ impl NodeTree {
     /// The number of live nodes in the map.
     pub fn len(&self) -> usize {
         self.map.len()
+    }
+
+    pub(crate) fn slot_bytes(&self) -> usize {
+        (self.map.capacity() + 1).saturating_mul(std::mem::size_of::<(Node, u32)>())
     }
 
     pub fn is_empty(&self) -> bool {

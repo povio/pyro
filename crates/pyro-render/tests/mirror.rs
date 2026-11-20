@@ -357,14 +357,15 @@ fn view_transition_denies_raster_scratch_before_pixel_decode() {
     let side = 257;
     let bytes = encode_png(&RgbaImage { width: side, height: side, data: [5, 13, 49, 255].repeat((side * side) as usize) });
     let mut work = ((bytes.len().div_ceil(64) * 64) + 4) as u64;
+    let page = pyro_raster::PageRasters::default();
     let (result, decodes) = pyro_raster::with_test_budget(1 << 24, || {
-        pyro_raster::capture::scope(&mut work, |_| pyro_raster::decode(&bytes, 1 << 24))
+        pyro_raster::capture::scope(&mut work, |_| page.decode(&bytes))
     });
     assert!(result.is_none());
     assert_eq!((work, decodes), (0, 0));
     let mut work = 1 << 18;
     let (result, decodes) = pyro_raster::with_test_budget(1 << 24, || {
-        pyro_raster::capture::scope(&mut work, |_| pyro_raster::decode(&bytes, 1 << 24))
+        pyro_raster::capture::scope(&mut work, |_| page.decode(&bytes))
     });
     assert!(result.unwrap().is_ok());
     assert_eq!(decodes, 1);

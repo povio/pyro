@@ -40,12 +40,12 @@ pub struct AvailableImage {
     /// The size an SVG reports when it has no natural size of its own.
     pub reported: Option<(f64, f64)>,
     /// A raster image's encoded bytes and whether its pixels may be read back.
-    pub bytes: Option<(std::sync::Arc<Vec<u8>>, bool)>,
+    pub bytes: Option<(std::sync::Arc<pyro_raster::SourceLease>, bool)>,
 }
 
 /// A loaded `<img>`'s encoded bytes ([`PageDom::set_image_bytes`]).
 struct ImageBytes {
-    bytes: std::sync::Arc<Vec<u8>>,
+    bytes: std::sync::Arc<pyro_raster::SourceLease>,
     clean: bool,
     /// The decoded pixels once a canvas used them (`Some(None)`: they do
     /// not decode).
@@ -57,7 +57,7 @@ struct ImageBytes {
 impl ImageBytes {
     /// The bytes this entry counts: (encoded, decoded and cached).
     fn counted(&self) -> (usize, usize) {
-        (self.bytes.len(), self.decoded.as_ref().and_then(Option::as_ref).map_or(0, |b| b.byte_len()))
+        (self.bytes.bytes().len(), self.decoded.as_ref().and_then(Option::as_ref).map_or(0, |b| b.byte_len()))
     }
 }
 
@@ -2498,7 +2498,7 @@ impl PageDom {
         let mut total = 0;
         for (_, entry) in list.iter_mut().rev() {
             if let Some((bytes, _)) = &entry.bytes {
-                total += bytes.len();
+                total += bytes.bytes().len();
                 if total > MAX_AVAILABLE_IMAGE_BYTES {
                     entry.bytes = None;
                 }
@@ -2566,7 +2566,7 @@ impl PageDom {
             dom.set_reported_natural_size(el, image.reported);
         }
         if let Some((bytes, clean)) = image.bytes {
-            self.set_image_bytes(el, bytes, clean);
+            self.set_image_bytes(el, bytes.bytes().clone(), clean);
         }
         true
     }
@@ -2609,8 +2609,9 @@ impl PageDom {
                 return;
             }
         }
+        let Some(bytes) = self.retain_image_source(bytes) else { return };
         let (encoded, decoded) = self.image_bytes_kept.get();
-        self.image_bytes_kept.set((encoded + bytes.len(), decoded));
+        self.image_bytes_kept.set((encoded + bytes.bytes().len(), decoded));
         if let Some(old) = map.insert(el, ImageBytes { bytes, clean, decoded: None, decoded_oriented: false }) {
             self.uncount_image_bytes(&old);
         }
@@ -2624,6 +2625,14 @@ impl PageDom {
                 }
             }
         }
+    }
+
+    pub fn retain_image_source(&self, bytes: std::sync::Arc<Vec<u8>>) -> Option<std::sync::Arc<pyro_raster::SourceLease>> {
+        self.raster_budget()?.retain_source(bytes).ok()
+    }
+
+    pub(crate) fn raster_budget(&self) -> Option<pyro_raster::PageRasters> {
+        Some(self.dom.try_borrow().ok()?.document_data(self.document()).ok()?.raster_budget.clone())
     }
 
     fn uncount_image_bytes(&self, entry: &ImageBytes) {
@@ -2649,7 +2658,7 @@ impl PageDom {
     /// pyro: whether the loaded `<img>` `el` shows an SVG image (its canvas bitmap may be smaller
     /// than its natural size: `pyro_canvas::codec::is_svg`).
     pub(crate) fn image_is_svg(&self, el: NodeId) -> bool {
-        self.image_bytes.borrow().get(&el).is_some_and(|entry| pyro_canvas::codec::is_svg(&entry.bytes))
+        self.image_bytes.borrow().get(&el).is_some_and(|entry| pyro_canvas::codec::is_svg(entry.bytes.bytes()))
     }
 
     pub(crate) fn image_pixmap(&self, el: NodeId, from_image: bool) -> Option<(pyro_canvas::Bitmap, bool)> {
@@ -2667,12 +2676,8 @@ impl PageDom {
             entry.decoded = None;
         }
         entry.decoded_oriented = oriented;
-        let Some(pixmap) = pyro_canvas::codec::decode_oriented(&entry.bytes, oriented) else {
-            entry.decoded = Some(None);
-            return None;
-        };
-        // Over the process's bitmap budget: nothing drawn now, not cached.
-        let bitmap = pyro_canvas::Bitmap::new(pixmap)?;
+        let budget = self.raster_budget()?;
+        let bitmap = pyro_canvas::codec::decode_bitmap(entry.bytes.bytes(), oriented, &budget)?;
         let (encoded, decoded) = self.image_bytes_kept.get();
         if decoded + bitmap.byte_len() <= MAX_IMAGE_DECODED_KEPT {
             self.image_bytes_kept.set((encoded, decoded + bitmap.byte_len()));

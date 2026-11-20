@@ -381,7 +381,7 @@ pub struct BaseDocument {
     /// External `<use href>` targets, by href as written: the local id that
     /// replaces it and the definition (SVG source with that id). Added to
     /// each `<svg>` that refers to them when it is rendered.
-    pub svg_sprites: HashMap<String, (String, String)>,
+    pub svg_sprites: HashMap<String, crate::util::SvgSprite>,
     /// Fetched SVG image resources accessible to this document's href resolver.
     pub svg_images: crate::util::SvgResources,
     /// Changes to the stylist [`Device`] that have been requested since the
@@ -422,6 +422,7 @@ pub struct BaseDocument {
     /// How deeply this document is nested within other documents
     /// (0 for a root document). Used to limit `<iframe>` nesting depth.
     pub(crate) subdocument_depth: usize,
+    pub raster_budget: pyro_raster::PageRasters,
     /// pyro: the id of the frame this is the document of (`DocumentConfig::frame_client`).
     pub(crate) frame_client: Option<String>,
     /// pyro: `DocumentConfig::frames`: the documents its frame elements show.
@@ -864,7 +865,7 @@ impl BaseDocument {
         let device = make_device(&viewport, None, media_type.clone(), font_ctx.clone());
         let stylist = Stylist::new(device, QuirksMode::NoQuirks);
         let snapshots = SnapshotMap::new();
-        let mut nodes = Box::new(NodeTree::new());
+        let mut nodes = Box::new(NodeTree::new(config.raster_budget.clone()));
         nodes.xml_document = config.xml_document;
         nodes.quirks_mode = config.quirks_mode;
         nodes.line_height_quirk = config.line_height_quirk;
@@ -925,6 +926,7 @@ impl BaseDocument {
             style_threading: config.style_threading,
             incremental_layout: config.incremental.unwrap_or(true),
             subdocument_depth: config.subdocument_depth,
+            raster_budget: config.raster_budget,
             frame_client: config.frame_client.clone(),
             frames: config.frames.clone(),
             sheet_policies: Default::default(),
@@ -2748,8 +2750,7 @@ impl BaseDocument {
             }
             Resource::Image(_kind, width, height, image_data, orientation) => {
                 // Create the ImageData and cache it
-                let mut raster = RasterImageData::new(width, height, image_data);
-                raster.orientation = orientation;
+                let raster = RasterImageData { width, height, data: image_data, orientation };
                 let image = ImageData::Raster(raster);
 
                 let Some(url) = res.resolved_url.as_ref() else {
@@ -3815,9 +3816,9 @@ impl BaseDocument {
         let node = self.get_node(node_id)?;
         let (source, _) = node.svg_source_for_viewport(Some((width as f64, height as f64)));
         let source = self.with_cross_svg_references(self.with_svg_sprites(source));
-        let svg = crate::util::parse_svg_resources(source.as_bytes(), Some(&self.svg_images)).ok().map(|mut svg| {
+        let svg = crate::util::parse_svg_resources(source.as_bytes(), Some(&self.svg_images), &self.raster_budget).ok().map(|mut svg| {
             if svg.intrinsic_dimensions.view_box.is_none() {
-                svg.inline_source = Some(source.as_str().into());
+                svg.inline_source = crate::util::SvgSource::copy(&source, &self.raster_budget);
             }
             Arc::new(svg)
         });
@@ -3830,12 +3831,21 @@ impl BaseDocument {
             return svg;
         }
         let mut defs = String::new();
-        for (href, (local, definition)) in &self.svg_sprites {
+        const MAX_EXPANDED: usize = 8 << 20;
+        for (href, sprite) in &self.svg_sprites {
             let attr = format!("href=\"{}\"", href.replace('&', "&amp;").replace('"', "&quot;"));
-            if svg.contains(&attr) {
-                svg = svg.replace(&attr, &format!("href=\"#{local}\""));
-                defs.push_str(definition);
-            }
+            let count = svg.matches(&attr).count();
+            if count == 0 { continue; }
+            let replacement = format!("href=\"#{}\"", sprite.local);
+            let needed = svg.len().saturating_add(replacement.len().saturating_sub(attr.len()).saturating_mul(count))
+                .saturating_add(defs.len()).saturating_add(sprite.prefix.len()).saturating_add(sprite.suffix.len())
+                .saturating_add(sprite.local.len()).saturating_add(13);
+            if needed > MAX_EXPANDED { continue; }
+            let Ok(text) = std::str::from_utf8(&sprite.source.bytes) else { continue };
+            svg = svg.replace(&attr, &replacement);
+            defs.push_str(&text[sprite.prefix.clone()]);
+            defs.push_str(&sprite.local);
+            defs.push_str(&text[sprite.suffix.clone()]);
         }
         if let (false, Some(end)) = (defs.is_empty(), svg.find('>')) {
             svg.insert_str(end + 1, &format!("<defs>{defs}</defs>"));
@@ -3899,6 +3909,7 @@ impl BaseDocument {
                 continue;
             }
             let source = node.svg_source();
+            if svg.len().saturating_add(defs.len()).saturating_add(source.len()).saturating_add(13) > 8 << 20 { continue; }
             referenced(&source, &mut ids);
             defs.push_str(&source);
         }
@@ -5825,8 +5836,9 @@ mod change_tracking_tests {
 
 /// pyro: an SVG image drawn as a document (see [`BaseDocument::svg_image_documents`]).
 pub struct SvgImageDocument {
+    storage: pyro_raster::Reservation,
     /// The image's source (to tell a new image from the one the document was made of).
-    pub source: std::sync::Arc<str>,
+    pub source: std::sync::Arc<crate::util::SvgSource<str>>,
     /// The size it is laid out at, in CSS px.
     pub size: (u32, u32),
     pub document: Box<dyn Document>,
@@ -5841,7 +5853,7 @@ impl BaseDocument {
         if !self.has_svg_image_documents {
             return;
         }
-        let mut wanted: Vec<(NodeId, std::sync::Arc<str>, (u32, u32))> = Vec::new();
+        let mut wanted = Vec::new();
         for (id, node) in self.nodes.iter() {
             if !node.flags.is_in_document() {
                 continue;
@@ -5871,15 +5883,27 @@ impl BaseDocument {
                 self.viewport.color_scheme,
             );
             if !current {
+                self.svg_image_documents.remove(&id);
                 if self.subdocument_depth >= crate::iframe::MAX_SUBDOCUMENT_DEPTH {
                     continue;
                 }
+                let mut minimum = std::mem::size_of::<BaseDocument>() + std::mem::size_of::<NodeTree>() + source.len();
+                let Ok(xml) = usvg::roxmltree::Document::parse(&source) else { continue };
+                for node in xml.descendants() {
+                    minimum = minimum.saturating_add(std::mem::size_of::<(Node, u32)>());
+                    if node.is_element() {
+                        minimum = minimum.saturating_add(std::mem::size_of::<ElementData>()).saturating_add(node.attributes().len() * std::mem::size_of::<crate::node::Attribute>());
+                    }
+                }
+                drop(xml);
+                let Ok(storage) = self.raster_budget.reserve(minimum) else { continue };
                 let config = crate::DocumentConfig {
                     viewport: Some(viewport.clone()),
                     base_url: None,
                     font_ctx: Some(self.font_ctx.lock().unwrap().clone()),
                     media_type: Some(self.media_type.clone()),
                     subdocument_depth: self.subdocument_depth + 1,
+                    raster_budget: self.raster_budget.clone(),
                     xml_document: true,
                     // pyro: an SVG image's document is no render snapshot: nothing legitimate gives
                     // it engine attributes, so every one is rejected (a nonce no parsed attribute
@@ -5893,7 +5917,7 @@ impl BaseDocument {
                 let Some(document) = self.html_parser_provider.clone().parse_svg_document(&source, config) else {
                     continue;
                 };
-                self.svg_image_documents.insert(id, SvgImageDocument { source, size, document });
+                self.svg_image_documents.insert(id, SvgImageDocument { source, size, document, storage });
             }
             let entry = self.svg_image_documents.get_mut(&id).unwrap();
             let mut doc = entry.document.inner_mut();
@@ -5902,6 +5926,16 @@ impl BaseDocument {
             }
             doc.resolve(0.0);
             doc.ensure_paint_tree();
+            let mut bytes = std::mem::size_of::<Self>() + std::mem::size_of::<NodeTree>() + doc.nodes.slot_bytes();
+            for (_, node) in doc.nodes.iter() {
+                bytes = bytes.saturating_add(node.children.capacity() * std::mem::size_of::<NodeId>());
+                if let Some(element) = node.element_data() {
+                    bytes = bytes.saturating_add(std::mem::size_of::<ElementData>() + element.attrs.capacity() * std::mem::size_of::<crate::node::Attribute>());
+                    for attr in element.attrs() { bytes = bytes.saturating_add(attr.value.capacity()); }
+                } else if let Some(text) = node.text_data() { bytes = bytes.saturating_add(text.content.capacity()); }
+            }
+            drop(doc);
+            if entry.storage.grow_to(&self.raster_budget, bytes).is_err() { self.svg_image_documents.remove(&id); }
         }
     }
 }

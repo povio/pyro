@@ -28,7 +28,7 @@ pub(super) enum ElementClip {
     /// an isolated layer, and the region is drawn into it with `DestIn`.
     #[cfg(feature = "svg")]
     Svg {
-        tree: std::sync::Arc<anyrender_svg::usvg::Tree>,
+        tree: std::sync::Arc<blitz_dom::node::SvgTree>,
         transform: Affine,
     },
 }
@@ -665,7 +665,7 @@ pub(super) mod svg_reference {
     pub(crate) fn external_reference(
         images: &[Option<blitz_dom::node::ImageResourceData>],
         url: &ComputedUrl,
-    ) -> Option<(std::sync::Arc<[u8]>, String)> {
+    ) -> Option<(std::sync::Arc<blitz_dom::util::SvgSource<[u8]>>, String)> {
         use blitz_dom::node::{ImageData, Status};
         let url = url.url()?;
         let fragment = url.fragment()?;
@@ -885,7 +885,7 @@ impl ElementCx<'_, '_> {
         let dom = self.context.dom;
         // pyro: a `<clipPath>` of this document, or of another one the element has loaded
         // (`url(shapes.svg#clip)`).
-        let mut external: Option<std::sync::Arc<[u8]>> = None;
+        let mut external: Option<std::sync::Arc<blitz_dom::util::SvgSource<[u8]>>> = None;
         let (target, id, object_bounding_box) = match local_reference(dom, url) {
             Some(target) => {
                 let node = dom.get_node(target)?;
@@ -932,7 +932,7 @@ impl ElementCx<'_, '_> {
         let (width, height) = ((painter.width as f64 * to_user) as f32, (painter.height as f64 * to_user) as f32);
         let svg = match target {
             Some(target) => dom.svg_reference_document(target, &content, width, height)?,
-            None => blitz_dom::node::SvgImageData::reference_document_from_source(external.as_deref().unwrap_or_default(), &content, width, height)?,
+            None => blitz_dom::node::SvgImageData::reference_document_from_source(external.as_deref()?, &content, width, height, &dom.raster_budget)?,
         };
         let user = Affine::scale(zoom);
         // usvg leaves out a shape whose clip path is empty or invalid: it clips everything.

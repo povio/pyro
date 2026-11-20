@@ -431,7 +431,7 @@ fn canvas_filter(page: &PageDom, value: &str) -> Option<pyro_canvas::CanvasFilte
         }
         rest = &after[end + 1..];
     }
-    Some(pyro_canvas::CanvasFilter { value: trimmed.to_string(), defs })
+    Some(pyro_canvas::CanvasFilter { page: dom.document_data(doc).ok()?.raster_budget.clone(), value: trimmed.to_string(), defs })
 }
 
 /// A canvas element's bitmap size: its `width`/`height` attributes.
@@ -739,7 +739,8 @@ fn image_source(
                 let Some(image) = source_page.available_image(&url, cors) else { return Ok(None) };
                 let Some((bytes, clean)) = image.bytes else { return Ok(None) };
                 let oriented = from_image || !clean;
-                let Some(pixmap) = pyro_canvas::codec::decode_oriented(&bytes, oriented).and_then(Bitmap::new) else {
+                let Some(budget) = source_page.raster_budget() else { return Ok(None) };
+                let Some(pixmap) = pyro_canvas::codec::decode_bitmap(bytes.bytes(), oriented, &budget) else {
                     return Ok(None);
                 };
                 let (w, h) = (u32::from(pixmap.width()), u32::from(pixmap.height()));
@@ -780,8 +781,8 @@ fn image_source(
         }
         3 => {
             let blob = s.unwrap::<crate::file::Blob>(desc.get_index(1)?).ok_or_else(not_source)?;
-            let pixmap = pyro_canvas::codec::decode(&blob.bytes)
-                .and_then(Bitmap::new)
+            let budget = page.raster_budget().ok_or_else(|| JsError::dom("InvalidStateError", "No active document."))?;
+            let pixmap = pyro_canvas::codec::decode_bitmap(&blob.bytes, false, &budget)
                 .ok_or_else(|| JsError::dom("InvalidStateError", "The source image could not be decoded."))?;
             let (w, h) = (u32::from(pixmap.width()), u32::from(pixmap.height()));
             Ok(Some(ImageHandle { pixmap: Some(pixmap), width: w, height: h, clean: true }))
@@ -793,7 +794,8 @@ fn image_source(
             let Some(url) = css_url_of(&text) else { return Ok(None) };
             let Some(image) = page.available_image(&url, 0) else { return Ok(None) };
             let Some((bytes, clean)) = image.bytes else { return Ok(None) };
-            let Some(pixmap) = pyro_canvas::codec::decode_oriented(&bytes, true).and_then(Bitmap::new) else {
+            let Some(budget) = page.raster_budget() else { return Ok(None) };
+            let Some(pixmap) = pyro_canvas::codec::decode_bitmap(bytes.bytes(), true, &budget) else {
                 return Ok(None);
             };
             let (w, h) = (u32::from(pixmap.width()), u32::from(pixmap.height()));

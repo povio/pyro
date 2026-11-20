@@ -101,6 +101,7 @@ fn compare(worker: &RenderWorker, request: Request) -> Result<serde_json::Value,
     };
     let s = request.snapshot;
     let snapshot = Snapshot {
+        raster_budget: Default::default(),
         html: s.html,
         frames: std::sync::Arc::new(pyro_render::FrameTableData { nonce: s.nonce, entries: Default::default() }),
         base_url: s.base_url,

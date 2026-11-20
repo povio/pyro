@@ -57,9 +57,11 @@ static ALLOCATOR: Counting = Counting;
 /// What decoding `bytes` with `available` bytes of budget does: its result (Ok with the raster's
 /// size, Err with the error, or "panic") and the peak bytes allocated above what was live before.
 fn probe(bytes: &[u8], available: usize) -> (String, usize) {
+    let page = pyro_raster::PageRasters::default();
+    let _occupied = page.reserve(pyro_raster::BYTE_BUDGET - available).unwrap();
     let base = LIVE.get();
     PEAK.set(base);
-    let result = std::panic::catch_unwind(|| pyro_raster::decode(bytes, available));
+    let result = std::panic::catch_unwind(|| page.decode(bytes));
     let peak = PEAK.get().saturating_sub(base);
     let outcome = match result {
         Ok(Ok(raster)) => format!("ok {}x{}", raster.width, raster.height),

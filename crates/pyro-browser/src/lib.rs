@@ -1450,7 +1450,7 @@ impl Browser {
                             let (final_url, opaque, status) = (r.url.clone(), loader::is_opaque(&r, cors, &origin), r.status);
                             let referrer_policy = r.referrer_policy.map(|p| p.as_str().to_owned());
                             let bytes = if kind == ResourceKind::Image { r.body } else { std::sync::Arc::new(r.render_body(environment.as_slice())) };
-                            Ok(pyro_dom::layout::LayoutBody { bytes, final_url, opaque, status, referrer_policy })
+                            Ok(pyro_dom::layout::LayoutBody { image_lease: None, bytes, final_url, opaque, status, referrer_policy })
                         }
                         status => Err(format!("HTTP {status}")),
                     }

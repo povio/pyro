@@ -16,7 +16,7 @@ pub fn decode(bytes: &[u8]) -> Option<Pixmap> {
 }
 
 /// Rasterizes an SVG image at its natural size: premultiplied RGBA rows, and the width and height.
-pub type SvgDecoder = fn(&[u8]) -> Option<(Vec<u8>, u32, u32)>;
+pub type SvgDecoder = fn(&[u8], &pyro_raster::PageRasters) -> Option<(Vec<u8>, u32, u32, pyro_raster::Reservation)>;
 
 static SVG_DECODER: std::sync::OnceLock<SvgDecoder> = std::sync::OnceLock::new();
 
@@ -48,7 +48,7 @@ fn looks_like_svg(bytes: &[u8]) -> bool {
 pub fn decode_oriented(bytes: &[u8], oriented: bool) -> Option<Pixmap> {
     // pyro: an SVG image, rasterized at its natural size by the registered decoder.
     if let Some(decoder) = SVG_DECODER.get().filter(|_| looks_like_svg(bytes)) {
-        let (rgba, w, h) = decoder(bytes)?;
+        let (rgba, w, h, _charge) = decoder(bytes, &Default::default())?;
         return crate::pixmap_from_premultiplied(rgba, w, h);
     }
     let mut reader = image::ImageReader::new(Cursor::new(bytes)).with_guessed_format().ok()?;
@@ -78,6 +78,47 @@ pub fn decode_oriented(bytes: &[u8], oriented: bool) -> Option<Pixmap> {
     let rgba = image.into_rgba8();
     let (w, h) = rgba.dimensions();
     crate::pixmap_from_straight(rgba.into_raw(), w, h)
+}
+
+pub fn decode_bitmap(bytes: &[u8], oriented: bool, page: &pyro_raster::PageRasters) -> Option<crate::Bitmap> {
+    let (pixmap, charge) = if looks_like_svg(bytes) {
+        let (rgba, width, height, charge) = SVG_DECODER.get()?(bytes, page)?;
+        (crate::pixmap_from_premultiplied(rgba, width, height)?, charge)
+    } else {
+        let reader = image::ImageReader::new(Cursor::new(bytes)).with_guessed_format().ok()?;
+        let (stored_width, stored_height) = reader.into_dimensions().ok()?;
+        if !valid_size(stored_width, stored_height) { return None; }
+        let raster = page.decode(bytes).ok()?;
+        let input = raster.blob.data();
+        let charge = page.reserve(input.len()).ok()?;
+        let (pixels, width, height) = if oriented || raster.orientation == 1 {
+            (input.to_vec(), raster.width, raster.height)
+        } else {
+            let width = stored_width as usize;
+            let height = stored_height as usize;
+            let mut pixels = vec![0; input.len()];
+            for (index, pixel) in pixels.chunks_exact_mut(4).enumerate() {
+                let (col, row) = (index % width, index / width);
+                let (x, y) = match raster.orientation {
+                    2 => (width - 1 - col, row),
+                    3 => (width - 1 - col, height - 1 - row),
+                    4 => (col, height - 1 - row),
+                    5 => (row, col),
+                    6 => (height - 1 - row, col),
+                    7 => (height - 1 - row, width - 1 - col),
+                    8 => (row, width - 1 - col),
+                    _ => return None,
+                };
+                let offset = (y * raster.width as usize + x) * 4;
+                pixel.copy_from_slice(input.get(offset..offset + 4)?);
+            }
+            (pixels, stored_width, stored_height)
+        };
+        (crate::pixmap_from_straight(pixels, width, height)?, charge)
+    };
+    let mut bitmap = crate::Bitmap::new(pixmap)?;
+    bitmap.page_charge = Some(std::sync::Arc::new(charge));
+    Some(bitmap)
 }
 
 /// Straight RGBA rows (`width` by `height`) in `encoding`.

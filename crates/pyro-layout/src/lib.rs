@@ -467,6 +467,7 @@ impl BlitzGeometry {
         };
         let v = style.viewport();
         let snap = Snapshot {
+            raster_budget: dom.document_data(style.document()).ok()?.raster_budget.clone(),
             frames: frame_table(dom.frame_table(style.document())),
             html: String::new(),
             base_url: base.text.clone(),

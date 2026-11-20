@@ -99,9 +99,16 @@ fn external_svg_jpeg_thumbnail_is_drawn() {
         html: format!("<!doctype html><body style='margin:0;background:red'><svg width='100' height='67'>{thumbnails}</svg>"),
         width: 100, height: 67, device_scale_factor: 1.0, base_url: "http://test/".into(), ..Default::default()
     };
+    let source_bytes = jpeg.len();
     let fetcher: Arc<dyn Fetcher> = Arc::new(Image(jpeg));
-    let (image, decodes) = pyro_raster::with_test_budget(6000 * 4000 * 4 + 1024, || Renderer::new().render(&snapshot, Area::Viewport, Backend::Cpu, &fetcher).unwrap().0);
+    let draw = || Renderer::new().render(&snapshot, Area::Viewport, Backend::Cpu, &fetcher).unwrap().0;
+    let pixels = 6000 * 4000 * 4;
+    let (declined, decodes) = pyro_raster::with_test_budget(pixels + 1024, draw);
+    assert_eq!(decodes, 0);
+    assert_eq!(&declined.data[..4], &[255, 0, 0, 255]);
+    let (image, decodes) = pyro_raster::with_test_budget(2 * pixels + source_bytes + snapshot.html.len() + (128 << 10), draw);
     assert_eq!(decodes, 1);
+    assert!((pixels..=pixels + 1024).contains(&snapshot.raster_budget.used()));
     assert_eq!(&image.data[(33 * 100 + 50) * 4..][..4], &[0, 0, 0, 255]);
 }
 impl Fetcher for OpaqueImage {
@@ -111,6 +118,118 @@ impl Fetcher for OpaqueImage {
     fn fetch_final(&self, url: String, _: &FetchOptions, done: Box<dyn FnOnce(Result<Fetched, String>) + Send>) {
         done(Ok(Fetched { body: self.0.clone().into(), url, opaque: true, referrer_policy: None }))
     }
+}
+
+#[test]
+fn sibling_svg_image_and_background_share_inline_svg_budget() {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    let tile = |color: [u8; 4]| {
+        let png = encode_png(&RgbaImage { width: 256, height: 256, data: color.repeat(256 * 256) });
+        format!(r#"<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><image href="data:image/png;base64,{}" width="8" height="8"/></svg>"#, STANDARD.encode(png))
+    };
+    let direct = tile([255, 0, 0, 255]);
+    struct Tiles(String, String);
+    impl Fetcher for Tiles {
+        fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+            done(match url.as_str() {
+                "http://test/green.svg" => Ok(self.0.as_bytes().to_vec()),
+                "http://test/blue.svg" => Ok(self.1.as_bytes().to_vec()),
+                _ => Err(url),
+            });
+        }
+    }
+    let fetcher: Arc<dyn Fetcher> = Arc::new(Tiles(tile([0, 255, 0, 255]), tile([0, 0, 255, 255])));
+    let html = format!("<!doctype html><style>body{{margin:0;background:white}}svg,img,div{{display:block;width:8px;height:8px}}</style>{direct}<img src='green.svg'><div style='background-image:url(blue.svg)'></div>");
+    let draw = |limit| {
+        let snapshot = Snapshot { html: html.clone(), width: 32, height: 32, device_scale_factor: 1., base_url: "http://test/".into(), ..Default::default() };
+        pyro_raster::with_test_budget(limit, || Renderer::new().render(&snapshot, Area::Viewport, Backend::Cpu, &fetcher).unwrap().0)
+    };
+    let sample = |image: &RgbaImage| [4, 12, 20].map(|row| image.data[(row*32+4)*4..][..3].to_vec());
+    let colors = [vec![255,0,0], vec![0,255,0], vec![0,0,255]];
+    let (all, count) = draw(pyro_raster::BYTE_BUDGET);
+    assert_eq!(sample(&all), colors);
+    assert_eq!(count, 3);
+    let (limited, count) = draw((6 * 256 * 256 * 4) + (96 << 10));
+    assert_eq!(count, 2);
+    assert_eq!(sample(&limited).iter().zip(&colors).filter(|(actual, expected)| actual == expected).count(), 2);
+}
+
+#[test]
+fn repeated_external_sprite_roots_share_one_raster() {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    struct Sprite(Vec<u8>, AtomicUsize);
+    impl Fetcher for Sprite {
+        fn fetch(&self, _: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+            self.1.fetch_add(1, Ordering::Relaxed);
+            done(Ok(self.0.clone()));
+        }
+    }
+    let mut png = encode_png(&RgbaImage { width: 1, height: 1, data: vec![0, 255, 0, 255] });
+    png.resize(32 << 10, 0);
+    let encoded = STANDARD.encode(&png);
+    let source = format!(r#"<svg xmlns="http://www.w3.org/2000/svg"><symbol id="tile" viewBox="0 0 1 1"><image width="1" height="1" href="data:image/png;base64,{encoded}"/></symbol></svg>"#);
+    let sprite = Arc::new(Sprite(source.into_bytes(), AtomicUsize::new(0)));
+    let fetcher: Arc<dyn Fetcher> = sprite.clone();
+    let roots = "<svg width='1' height='1'><use href='/sprite.svg#tile' width='1' height='1'/></svg>".repeat(1000);
+    let snap = Snapshot { html: format!("<!doctype html><body style='margin:0;display:flex'>{roots}"), width: 1000, height: 8, device_scale_factor: 1., base_url: "http://test/".into(), ..Default::default() };
+    let (image, decodes) = pyro_raster::with_test_budget(4 << 20, || Renderer::new().render(&snap, Area::Viewport, Backend::Cpu, &fetcher).unwrap().0);
+    assert_eq!(image.data.chunks_exact(4).filter(|px| *px == [0, 255, 0, 255]).count(), 1000, "{decodes} decodes, {} fetches, first pixel {:?}", sprite.1.load(Ordering::Relaxed), &image.data[..4]);
+    assert_eq!(sprite.1.load(Ordering::Relaxed), 1);
+    assert_eq!(decodes, 1);
+}
+
+#[test]
+fn repeated_local_use_retains_one_embedded_payload() {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    let mut png = mirrored_png();
+    png.resize(32 << 10, 0);
+    let encoded = STANDARD.encode(&png);
+    let instances = "<use href='#tile'/>".repeat(1000);
+    let source = format!(r#"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="1"><defs><image id="tile" width="2" height="1" href="data:image/png;base64,{encoded}"/></defs>{instances}</svg>"#);
+    let page = pyro_raster::PageRasters::default();
+    let svg = blitz_dom::util::parse_svg_image_for_page(source.as_bytes(), &page).unwrap();
+    assert_eq!(svg.tree.root().children().len(), 1000);
+    let small_source = source.replace(&encoded, &STANDARD.encode(mirrored_png()));
+    let small_page = pyro_raster::PageRasters::default();
+    let small_tree = blitz_dom::util::parse_svg_image_for_page(small_source.as_bytes(), &small_page).unwrap();
+    assert_eq!(small_tree.tree.root().children().len(), 1000);
+    assert_eq!(page.used() - small_page.used(), png.len() - mirrored_png().len());
+    drop(svg);
+    assert_eq!(page.used(), 0);
+}
+
+#[test]
+fn nested_local_use_shares_its_raster_source() {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    let mut png = mirrored_png();
+    png.resize(32768, 0);
+    let inner = format!(r#"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="1"><defs><image id="tile" width="2" height="1" href="data:image/png;base64,{}"/></defs>{}</svg>"#, STANDARD.encode(&png), "<use href='#tile'/>".repeat(8));
+    let outer = format!(r#"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="1"><image width="2" height="1" href="data:image/svg+xml;base64,{}"/></svg>"#, STANDARD.encode(inner));
+    let page = pyro_raster::PageRasters::default();
+    let svg = blitz_dom::util::parse_svg_image_for_page(outer.as_bytes(), &page).unwrap();
+    assert!((png.len()..2 * png.len()).contains(&page.used()), "{} retained bytes", page.used());
+    drop(svg);
+    assert_eq!(page.used(), 0);
+}
+
+#[test]
+fn nested_svg_source_charge_follows_last_tree_owner() {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    let png = mirrored_png();
+    let wrap = |mime: &str, bytes: &[u8]| format!(r#"<svg xmlns="http://www.w3.org/2000/svg" width="2" height="1"><image width="2" height="1" href="data:{mime};base64,{}"/></svg>"#, STANDARD.encode(bytes));
+    let nested = wrap("image/svg+xml", wrap("image/png", &png).as_bytes());
+    let page = pyro_raster::PageRasters::default();
+    let first = blitz_dom::util::parse_svg_image_for_page(nested.as_bytes(), &page).unwrap();
+    let retained = page.used();
+    assert!(retained >= png.len());
+    let second = blitz_dom::util::parse_svg_image_for_page(nested.as_bytes(), &page).unwrap();
+    assert_eq!(page.used(), retained * 2);
+    let owner = first.tree.clone();
+    drop((first, second));
+    assert_eq!(page.used(), retained);
+    drop(owner);
+    assert_eq!(page.used(), 0);
 }
 
 #[test]

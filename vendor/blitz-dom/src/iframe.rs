@@ -77,6 +77,7 @@ impl BaseDocument {
             incremental: Some(self.incremental_layout),
             abort_signal: Some(abort_signal),
             subdocument_depth: self.subdocument_depth + 1,
+            raster_budget: self.raster_budget.clone(),
             line_break_override: self.layout_ctx.line_break_override(),
             // pyro: a frame's document is parsed as HTML.
             xml_document: false,

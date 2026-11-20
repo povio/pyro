@@ -362,7 +362,7 @@ mod document_bodies_tests {
             self.kinds.lock().unwrap().push(kind);
             self.log.lock().unwrap().push((document.to_owned(), url.clone()));
             let final_url = self.final_url.map_or(url, str::to_owned);
-            done(Ok(LayoutBody { bytes: Arc::new(b"ok".to_vec()), final_url, opaque: self.opaque, status: 200, referrer_policy: None }));
+            done(Ok(LayoutBody { image_lease: None, bytes: Arc::new(b"ok".to_vec()), final_url, opaque: self.opaque, status: 200, referrer_policy: None }));
         }
         fn bodies(&self) -> &Arc<SubresourceBodies> {
             &self.bodies

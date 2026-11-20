@@ -215,6 +215,7 @@ impl LayoutBodyKey {
 /// status, written together once its checks (status, CORS, integrity) passed.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LayoutBody {
+    pub image_lease: Option<std::sync::Arc<pyro_raster::SourceLease>>,
     pub bytes: std::sync::Arc<Vec<u8>>,
     pub final_url: String,
     /// The response's tainting is "opaque" (a no-cors response of another origin, or one whose
@@ -228,7 +229,7 @@ pub struct LayoutBody {
 impl LayoutBody {
     /// A body of a response that is not the network's (a `data:` URL, a local file) at `url`.
     pub fn local(url: &str, bytes: Vec<u8>) -> Self {
-        LayoutBody { bytes: std::sync::Arc::new(bytes), final_url: url.to_owned(), opaque: false, status: 200, referrer_policy: None }
+        LayoutBody { image_lease: None, bytes: std::sync::Arc::new(bytes), final_url: url.to_owned(), opaque: false, status: 200, referrer_policy: None }
     }
 }
 
@@ -299,6 +300,7 @@ enum Slot {
 
 #[derive(Default)]
 struct BodySlots {
+    budgets: std::collections::HashMap<String, pyro_raster::PageRasters>,
     images: indexmap::IndexMap<LayoutBodyKey, ImageSlot>,
     bytes: usize,
     other: std::collections::HashMap<LayoutBodyKey, Slot>,
@@ -341,8 +343,14 @@ impl BodySlots {
         Some(slot.state)
     }
 
-    fn insert(&mut self, key: LayoutBodyKey, slot: Slot) {
+    fn insert(&mut self, key: LayoutBodyKey, mut slot: Slot) {
         if key.destination != SubresourceKind::Image { self.other.insert(key, slot); return; }
+        if let (Slot::Ready(body), Some(page)) = (&mut slot, self.budgets.get(&key.document)) {
+            match page.retain_source(body.bytes.clone()) {
+                Ok(lease) => std::sync::Arc::make_mut(body).image_lease = Some(lease),
+                Err(_) => slot = Slot::Failed,
+            }
+        }
         let dispatched = self.images.shift_remove_entry(&key).and_then(|(old, slot)| {
             self.bytes -= slot.cost(&old);
             slot.dispatched
@@ -384,6 +392,9 @@ fn locked<T>(m: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 }
 
 impl SubresourceBodies {
+    pub(crate) fn bind_raster_budget(&self, client: &str, page: pyro_raster::PageRasters) {
+        locked(&self.slots).budgets.insert(client.to_owned(), page);
+    }
     pub(crate) fn set_image_defaults(&self, document: &str, source: &str, policy: &'static str) {
         let mut defaults = locked(&self.defaults);
         if defaults.get(document).is_some_and(|(old, token)| old == source && *token == policy) { return; }
@@ -571,6 +582,7 @@ impl SubresourceBodies {
     pub fn forget_document(&self, document: &str) {
         locked(&self.defaults).remove(document);
         let mut slots = locked(&self.slots);
+        slots.budgets.remove(document);
         slots.other.retain(|k, _| k.document != document);
         slots.images.retain(|k, _| k.document != document);
         slots.bytes = slots.images.iter().map(|(key, slot)| slot.cost(key)).sum();
@@ -1097,6 +1109,23 @@ impl LayoutResult {
 #[cfg(test)]
 mod font_load_tests {
     use super::*;
+
+    #[test]
+    fn image_body_stays_charged_after_document_eviction() {
+        let bodies = SubresourceBodies::default();
+        let page = pyro_raster::PageRasters::default();
+        bodies.bind_raster_budget("doc", page.clone());
+        let key = LayoutBodyKey::new("doc", "http://site.test/image", &Default::default(), SubresourceKind::Image);
+        assert!(bodies.start(&key));
+        bodies.finish(key.clone(), LayoutBody::local(key.url(), vec![0; 4096]));
+        let retained = bodies.get(&key).unwrap();
+        let charge = page.used();
+        assert!(charge >= 4096);
+        bodies.forget_document("doc");
+        assert_eq!(page.used(), charge);
+        drop(retained);
+        assert_eq!(page.used(), 0);
+    }
 
     #[test]
     fn layout_image_churn_bounds_encoded_bodies_and_metadata() {

@@ -391,6 +391,8 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
     /// This assumes styles are resolved and layout is complete.
     /// Make sure you do those before trying to render
     pub fn paint_scene(&self, scene: &mut impl PaintScene) {
+        #[cfg(feature = "svg")]
+        let _raster_scope = anyrender_svg::PageRasterScope::enter(&self.dom.raster_budget);
         if self.dom.has_pending_critical_resources() {
             return;
         }

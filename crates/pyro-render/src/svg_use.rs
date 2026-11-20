@@ -13,47 +13,15 @@ pub(crate) fn resolve(
     timeout: Duration,
 ) -> Result<(), String> {
     doc.set_html_parser_provider(Arc::new(blitz_html::HtmlProvider));
-    let mut resources = HashMap::<String, String>::new();
-    let roots = doc.query_selector_all("svg").map_err(|e| format!("{e:?}"))?;
-    for root in roots.into_iter().rev() {
-        let uses = doc.query_selector_all_in(root, "use").map_err(|e| format!("{e:?}"))?;
-        let mut definitions = String::new();
-        let mut replacements = Vec::new();
-        for id in uses {
-            let node = doc.get_node(id).ok_or("missing SVG use")?;
-            let Some(el) = node.element_data() else { continue };
-            let Some(href) = el.attrs().iter().find(|a| &*a.name.local == "href").map(|a| a.value.to_string()) else {
-                continue;
-            };
-            if href.starts_with('#') || replacements.iter().any(|(from, _)| from == &href) {
-                continue;
-            }
-            let mut url = url::Url::parse(base).and_then(|base| base.join(&href)).map_err(|e| e.to_string())?;
-            let fragment = url.fragment().ok_or("external SVG use has no fragment")?.to_string();
-            url.set_fragment(None);
-            let address = url.to_string();
-            if !resources.contains_key(&address) {
-                resources.insert(address.clone(), fetch_text(fetcher, &address, timeout)?);
-            }
-            let local_id = format!("pyro-external-{root}-{}", replacements.len());
-            definitions.push_str(&definition(&resources[&address], &fragment, &local_id)?);
-            replacements.push((href, format!("#{local_id}")));
+    let mut sources = HashMap::new();
+    let base = url::Url::parse(base).ok();
+    for id in doc.query_selector_all("use").map_err(|error| format!("{error:?}"))? {
+        let Some(el) = doc.get_node(id).and_then(|node| node.element_data()) else { continue };
+        if el.name.ns != blitz_dom::ns!(svg) { continue; }
+        let Some(href) = el.attrs().iter().find(|attr| &*attr.name.local == "href").map(|attr| attr.value.clone()) else { continue };
+        if !href.starts_with('#') && !href.is_empty() {
+            resolve_sprite(doc, href, base.as_ref().ok_or("invalid SVG base URL")?, "", &mut sources, fetcher, timeout)?;
         }
-        if replacements.is_empty() {
-            continue;
-        }
-        let node = doc.get_node(root).ok_or("missing SVG root")?;
-        let mut content = String::new();
-        for child in &node.children {
-            doc.get_node(*child).ok_or("missing SVG child")?.write_outer_html(&mut content);
-        }
-        for (from, to) in replacements {
-            content = content.replace(
-                &format!("href=\"{}\"", from.replace('&', "&amp;").replace('"', "&quot;")),
-                &format!("href=\"{to}\""),
-            );
-        }
-        doc.mutate().set_inner_html(root, &format!("<defs>{definitions}</defs>{content}"));
     }
     Ok(())
 }
@@ -73,17 +41,12 @@ pub(crate) fn fetch_text(fetcher: &Arc<dyn Fetcher>, address: &str, timeout: Dur
 
 /// The element of `source` (an SVG document) with id `fragment`, as source,
 /// its id replaced by `local_id`.
-pub(crate) fn definition(source: &str, fragment: &str, local_id: &str) -> Result<String, String> {
-    let parsed = roxmltree::Document::parse(source).map_err(|e| e.to_string())?;
-    let symbol = parsed
-        .descendants()
-        .find(|n| n.attribute("id") == Some(fragment))
+fn definition(source: &str, fragment: &str) -> Result<(std::ops::Range<usize>, std::ops::Range<usize>), String> {
+    let parsed = roxmltree::Document::parse(source).map_err(|error| error.to_string())?;
+    let symbol = parsed.descendants().find(|node| node.attribute("id") == Some(fragment))
         .ok_or_else(|| format!("missing SVG fragment {fragment}"))?;
-    let range = symbol.range();
-    let id_range = symbol.attribute_node("id").ok_or("missing SVG id")?.range_value();
-    let mut definition = source[range.clone()].to_string();
-    definition.replace_range(id_range.start - range.start..id_range.end - range.start, local_id);
-    Ok(definition)
+    let id = symbol.attribute_node("id").ok_or("missing SVG id")?.range_value();
+    Ok((symbol.range().start..id.start, id.end..symbol.range().end))
 }
 
 /// Resolves the external `<use href>` values `hrefs` of `doc` (a persistent
@@ -97,36 +60,46 @@ pub(crate) fn resolve_sprites(
     hrefs: Vec<String>,
     base: &str,
     scope: &str,
-    sources: &mut HashMap<(String, String), Arc<String>>,
+    sources: &mut HashMap<(String, String), Arc<SvgResource>>,
     fetcher: &Arc<dyn Fetcher>,
     timeout: Duration,
 ) {
     let Ok(base) = url::Url::parse(base) else { return };
     for href in hrefs {
-        if doc.svg_sprites.contains_key(&href) {
-            continue;
+        let _ = resolve_sprite(doc, href, &base, scope, sources, fetcher, timeout);
+    }
+}
+
+fn resolve_sprite(doc: &mut BaseDocument, href: String, base: &url::Url, scope: &str,
+    sources: &mut HashMap<(String, String), Arc<SvgResource>>, fetcher: &Arc<dyn Fetcher>, timeout: Duration) -> Result<(), String> {
+    if doc.svg_sprites.contains_key(&href) { return Ok(()); }
+    let mut url = base.join(&href).map_err(|error| error.to_string())?;
+    let fragment = url.fragment().ok_or("external SVG use has no fragment")?.to_owned();
+    url.set_fragment(None);
+    let key = (scope.to_owned(), url.to_string());
+    let source = match sources.get(&key).filter(|resource| resource.belongs_to(&doc.raster_budget)) {
+        Some(source) => source.clone(),
+        None => {
+            let text = fetch_text(fetcher, &key.1, timeout)?;
+            if text.len() > 8 << 20 { return Ok(()); }
+            let Some(source) = SvgResource::new(text.into_bytes(), false, &doc.raster_budget) else { return Ok(()) };
+            let Some(source) = blitz_dom::util::prepare_sprite(source, &doc.raster_budget) else { return Ok(()) };
+            let source = Arc::new(source);
+            if !retain_source(sources, key, source.clone(), |(scope, url)| scope.capacity() + url.capacity()) { return Ok(()); }
+            source
         }
-        let Ok(mut url) = base.join(&href) else { continue };
-        let Some(fragment) = url.fragment().map(str::to_owned) else { continue };
-        url.set_fragment(None);
-        let key = (scope.to_owned(), url.to_string());
-        let source = match sources.get(&key) {
-            Some(source) => source.clone(),
-            None => {
-                let Ok(text) = fetch_text(fetcher, &key.1, timeout) else { continue };
-                if sources.len() >= 256 {
-                    sources.clear();
-                }
-                let text = Arc::new(text);
-                sources.insert(key, text.clone());
-                text
-            }
-        };
-        let local_id = format!("pyro-sprite-{}", doc.svg_sprites.len());
-        if let Ok(definition) = definition(&source, &fragment, &local_id) {
-            doc.svg_sprites.insert(href, (local_id, definition));
+    };
+    let (prefix, suffix) = definition(std::str::from_utf8(&source.bytes).map_err(|error| error.to_string())?, &fragment)?;
+    if !source.bindings.is_empty() {
+        let mut images = doc.svg_images.write().unwrap();
+        for (name, image) in &source.bindings {
+            if !images.contains_key(name) && !retain_source(&mut images, name.clone(), image.clone(), String::capacity) { return Ok(()); }
         }
     }
+    let local = format!("pyro-sprite-{}", doc.svg_sprites.len());
+    let Ok(charge) = doc.raster_budget.reserve(href.capacity() + local.capacity() + std::mem::size_of::<(String, blitz_dom::util::SvgSprite)>()) else { return Ok(()) };
+    doc.svg_sprites.insert(href, blitz_dom::util::SvgSprite { local, source, prefix, suffix, charge });
+    Ok(())
 }
 
 /// Whether an SVG `<image>`/`<feImage>` href names a resource usvg cannot load itself (not an
@@ -152,7 +125,7 @@ fn fetch_image(fetcher: &Arc<dyn Fetcher>, address: &str, timeout: Duration) -> 
 use blitz_dom::util::SvgResource;
 fn retain_source<Key: Eq + std::hash::Hash>(map: &mut HashMap<Key, Arc<SvgResource>>, key: Key, bytes: Arc<SvgResource>, key_bytes: impl Fn(&Key) -> usize) -> bool {
     const BUDGET: usize = 32 << 20;
-    let charge = |key: &Key, resource: &SvgResource| key_bytes(key).saturating_add(resource.bytes.capacity()).saturating_add(128);
+    let charge = |key: &Key, resource: &SvgResource| key_bytes(key).saturating_add(resource.retained_bytes()).saturating_add(128);
     let needed = charge(&key, &bytes);
     if needed > BUDGET { return false; }
     if map.len() >= 256 || map.iter().map(|(key, bytes)| charge(key, bytes)).sum::<usize>() > BUDGET - needed { map.clear(); }
@@ -182,14 +155,15 @@ pub(crate) fn resolve_images(
         }
         let Ok(url) = base.join(href.trim()) else { continue };
         let key = (scope.to_owned(), url.to_string());
-        let data = match sources.get(&key) {
+        let data = match sources.get(&key).filter(|source| source.belongs_to(&doc.raster_budget)) {
             Some(data) => data.clone(),
             None => {
                 let Ok(response) = fetch_image(fetcher, &key.1, timeout) else { continue };
                 if response.body.is_empty() || response.body.len() > MAX_BYTES {
                     continue;
                 }
-                let data = Arc::new(SvgResource { bytes: response.body, opaque: response.opaque });
+                let Some(data) = SvgResource::new(response.body, response.opaque, &doc.raster_budget) else { continue };
+                let data = Arc::new(data);
                 if !retain_source(sources, key, data.clone(), |(scope, url)| scope.capacity() + url.capacity()) { continue; }
                 data
             }
@@ -244,10 +218,12 @@ mod image_tests {
     #[test]
     fn resource_retention_is_byte_bounded() {
         let mut resources = super::HashMap::new();
+        let page = pyro_raster::PageRasters::default();
         for index in 0..12 {
-            let data = super::Arc::new(super::SvgResource { bytes: super::Arc::new(vec![index; 7 << 20]), opaque: false });
+            let data = super::Arc::new(super::SvgResource::new(vec![index; 7 << 20], false, &page).unwrap());
             assert!(super::retain_source(&mut resources, index.to_string(), data, String::capacity));
             assert!(resources.values().map(|data| data.bytes.capacity()).sum::<usize>() <= 32 << 20);
+            assert_eq!(resources.values().map(|data| data.bytes.capacity() + std::mem::size_of::<pyro_raster::SourceLease>()).sum::<usize>(), page.used());
         }
     }
 }

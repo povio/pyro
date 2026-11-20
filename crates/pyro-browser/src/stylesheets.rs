@@ -691,6 +691,7 @@ impl Browser {
             // (Not a modified import's: the layouts key its request apart, by its modifiers.)
             if let Some(layout_key) = layout_key.filter(|_| url.starts_with("http")) {
                 self.provide_layout_body(page, layout_key, pyro_dom::layout::LayoutBody {
+                    image_lease: None,
                     bytes: std::sync::Arc::new(pyro_dom::cssom::stylesheet_utf8_bytes(&text)),
                     final_url: r.url.clone(),
                     opaque: r.opaque,

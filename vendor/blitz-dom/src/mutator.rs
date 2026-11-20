@@ -2161,7 +2161,7 @@ impl<'doc> DocumentMutator<'doc> {
 
                 let mut request = self.doc.build_request(src);
                 request.options = options.clone().for_destination(blitz_traits::net::Destination::Image);
-                let handler = ImageHandler::new(ImageType::Image).options(options).document(&self.doc.url);
+                let handler = ImageHandler::new(ImageType::Image, &self.doc.raster_budget).options(options).document(&self.doc.url);
                 self.doc.net_provider.fetch(
                     self.doc.id(),
                     request,

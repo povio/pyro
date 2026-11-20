@@ -17,7 +17,7 @@ rust-version = "1.91.0"
 default = ["svg", "woff", "accessibility", "system-fonts", "file-input", "custom-widget", "text-transform-icu"]
 "custom-widget" = ["dep:anyrender", "accessibility"]
 tracing = ["dep:tracing"]
-svg = ["dep:usvg", "dep:svgtypes"]
+svg = ["dep:usvg", "dep:svgtypes", "dep:data-url", "dep:getrandom", "dep:flate2", "dep:sha2"]
 woff = ["dep:wuff"]
 accessibility = ["accesskit"]
 "system-fonts" = ["parley/system"]
@@ -70,6 +70,10 @@ rayon = { version = "1" }
 image = { version = "0.25.6", default-features = false }
 pyro-raster = { path = "../../crates/pyro-raster" }
 usvg = { version = "0.48.1", optional = true }
+data-url = { version = "0.3", optional = true }
+getrandom = { version = "0.3", optional = true }
+sha2 = { version = "0.10", optional = true }
+flate2 = { version = "1", optional = true }
 svgtypes = { version = "0.16.1", optional = true }
 wuff = { version = "0.2", optional = true }
 html-escape = { version = "0.2.13" }

@@ -97,6 +97,8 @@ pub fn record_transition_boxes(
     if participants.len() > 256 || doc.tree().len() > 16_384 { return None; }
     if participants.is_empty() { return Some(()); }
     *work = work.checked_sub(doc.tree().len() as u64 + 1)?;
+    #[cfg(feature = "svg")]
+    let _raster_scope = anyrender_svg::PageRasterScope::enter(&doc.raster_budget);
     doc.ensure_paint_tree();
     let scale = doc.viewport().scale_f64();
     let (width, height) = doc.viewport().window_size;

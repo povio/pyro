@@ -15,9 +15,52 @@ pub type Color = AlphaColor<Srgb>;
 pub struct SvgResource {
     pub bytes: std::sync::Arc<Vec<u8>>,
     pub opaque: bool,
+    charge: std::sync::Arc<pyro_raster::SourceLease>,
+    pub bindings: Vec<(String, std::sync::Arc<SvgResource>)>,
+}
+impl SvgResource {
+    pub fn new(bytes: impl Into<std::sync::Arc<Vec<u8>>>, opaque: bool, page: &pyro_raster::PageRasters) -> Option<Self> {
+        let bytes = bytes.into();
+        let charge = page.retain_source(bytes.clone()).ok()?;
+        Some(Self { bytes, opaque, charge, bindings: Vec::new() })
+    }
+
+    pub fn belongs_to(&self, page: &pyro_raster::PageRasters) -> bool { self.charge.belongs_to(page) }
+
+    pub fn retained_bytes(&self) -> usize {
+        self.bindings.iter().fold(self.bytes.capacity(), |total, (name, image)| {
+            total.saturating_add(name.capacity()).saturating_add(image.bytes.capacity()).saturating_add(std::mem::size_of::<(String, std::sync::Arc<Self>)>())
+        })
+    }
 }
 pub type SvgResourceMap = std::sync::RwLock<std::collections::HashMap<String, std::sync::Arc<SvgResource>>>;
 pub type SvgResources = std::sync::Arc<SvgResourceMap>;
+
+#[derive(Debug)]
+pub struct SvgSource<T: ?Sized> {
+    value: Box<T>,
+    _charge: pyro_raster::Reservation,
+}
+
+impl<T: ?Sized> std::ops::Deref for SvgSource<T> {
+    type Target = T;
+    fn deref(&self) -> &T { &self.value }
+}
+
+impl<T: ?Sized> SvgSource<T> where for<'a> Box<T>: From<&'a T> {
+    pub(crate) fn copy(value: &T, page: &pyro_raster::PageRasters) -> Option<std::sync::Arc<Self>> {
+        let charge = page.reserve(std::mem::size_of_val(value) + std::mem::size_of::<Self>()).ok()?;
+        Some(std::sync::Arc::new(Self { value: value.into(), _charge: charge }))
+    }
+}
+
+pub struct SvgSprite {
+    pub local: String,
+    pub source: std::sync::Arc<SvgResource>,
+    pub prefix: std::ops::Range<usize>,
+    pub suffix: std::ops::Range<usize>,
+    pub charge: pyro_raster::Reservation,
+}
 
 /// pyro: stack left below which [`ensure_stack`] moves to a new stack segment. It covers
 /// everything one tree level runs between two checkpoints: a level of Taffy's and Blitz's layout
@@ -372,19 +415,149 @@ pub fn walk_tree(indent: usize, node: &Node) {
 }
 
 /// Parse an SVG image.
-#[cfg(feature = "svg")]
+#[cfg(all(test, feature = "svg"))]
 pub fn parse_svg_image(source: &[u8]) -> Result<crate::node::SvgImageData, usvg::Error> {
-    parse_svg_resources(source, None)
+    parse_svg_resources(source, None, &Default::default())
 }
 
 #[cfg(feature = "svg")]
-pub(crate) fn parse_svg_resources(source: &[u8], resources: Option<&SvgResources>) -> Result<crate::node::SvgImageData, usvg::Error> {
+pub fn parse_svg_image_for_page(source: &[u8], page: &pyro_raster::PageRasters) -> Result<crate::node::SvgImageData, usvg::Error> {
+    parse_svg_resources(source, None, page)
+}
+
+#[cfg(feature = "svg")]
+type RasterConstructor = fn(Arc<Vec<u8>>) -> usvg::ImageKind;
+
+#[cfg(feature = "svg")]
+pub(crate) fn bounded_svgz(data: &[u8], page: &pyro_raster::PageRasters) -> Result<(Vec<u8>, pyro_raster::Reservation), usvg::Error> {
+    use std::io::Read;
+    let footer = data.last_chunk::<4>().ok_or(usvg::Error::MalformedGZip)?;
+    let length = u32::from_le_bytes(*footer) as usize;
+    if length > 8 << 20 { return Err(usvg::Error::ElementsLimitReached); }
+    let charge = page.reserve(length).map_err(|_| usvg::Error::ElementsLimitReached)?;
+    let mut decoder = flate2::read::GzDecoder::new(data);
+    let mut bytes = Vec::new();
+    bytes.try_reserve_exact(length).map_err(|_| usvg::Error::ElementsLimitReached)?;
+    let mut chunk = [0; 8192];
+    loop {
+        let count = decoder.read(&mut chunk).map_err(|_| usvg::Error::MalformedGZip)?;
+        if count == 0 { break; }
+        if count > length - bytes.len() { return Err(usvg::Error::MalformedGZip); }
+        bytes.extend_from_slice(&chunk[..count]);
+    }
+    if bytes.len() != length || bytes.starts_with(&[0x1f, 0x8b]) { return Err(usvg::Error::MalformedGZip); }
+    Ok((bytes, charge))
+}
+
+#[cfg(feature = "svg")]
+fn svg_data_kind(mime: &str, bytes: Arc<Vec<u8>>, options: &usvg::Options, page: &pyro_raster::PageRasters, owners: &std::sync::Mutex<Vec<Arc<SvgResource>>>, depth: usize) -> Option<usvg::ImageKind> {
+    let nested = mime == "image/svg+xml" || (mime == "text/plain" && !matches!(image::guess_format(&bytes), Ok(image::ImageFormat::Png | image::ImageFormat::WebP | image::ImageFormat::Jpeg | image::ImageFormat::Gif)));
+    if !nested { return usvg::ImageHrefResolver::default_data_resolver()(mime, bytes, options); }
+    if depth >= 16 { return None; }
+    let expanded;
+    let source = if bytes.starts_with(&[0x1f, 0x8b]) {
+        expanded = bounded_svgz(&bytes, page).ok()?;
+        expanded.0.as_slice()
+    } else { bytes.as_slice() };
+    let _scratch = page.reserve(source.len().checked_mul(3)?).ok()?;
+    let inline = bind_inline_rasters(source, page).ok()?;
+    let nested_options = usvg::Options {
+        fontdb: options.fontdb.clone(), dpi: options.dpi, font_family: options.font_family.clone(), font_size: options.font_size,
+        languages: options.languages.clone(), shape_rendering: options.shape_rendering, text_rendering: options.text_rendering,
+        image_rendering: options.image_rendering, default_size: options.default_size,
+        image_href_resolver: usvg::ImageHrefResolver {
+            resolve_data: Box::new(|mime, bytes, opt| {
+                let resource = Arc::new(SvgResource::new(bytes, false, page)?);
+                let kind = svg_data_kind(mime, resource.bytes.clone(), opt, page, owners, depth + 1)?;
+                if !matches!(kind, usvg::ImageKind::SVG(_)) { owners.lock().ok()?.push(resource); }
+                Some(kind)
+            }),
+            resolve_string: Box::new(|href, _| {
+                let (_, prefix, handles, _) = inline.as_ref()?;
+                let index = href.strip_prefix(prefix)?.parse::<usize>().ok()?;
+                let (resource, kind) = handles.get(index)?;
+                Some(kind(resource.bytes.clone()))
+            }),
+        }, ..Default::default()
+    };
+    let text = inline.as_ref().map_or(source, |entry| entry.0.as_bytes());
+    let checked = crate::svg_refs::break_reference_cycles(text);
+    let tree = usvg::Tree::from_str(std::str::from_utf8(&checked).ok()?, &nested_options).ok()?;
+    drop(nested_options);
+    if let Some((_, _, handles, _)) = inline { owners.lock().ok()?.extend(handles.into_iter().map(|entry| entry.0)); }
+    Some(usvg::ImageKind::SVG(tree))
+}
+
+#[cfg(feature = "svg")]
+fn bind_inline_rasters(source: &[u8], page: &pyro_raster::PageRasters) -> Result<Option<(String, String, Vec<(Arc<SvgResource>, RasterConstructor)>, pyro_raster::Reservation)>, usvg::Error> {
+    if !source.windows(5).any(|v| v.eq_ignore_ascii_case(b"data:")) { return Ok(None); }
+    let text = std::str::from_utf8(source).map_err(|_| usvg::Error::NotAnUtf8Str)?;
+    let doc = usvg::roxmltree::Document::parse_with_options(text, usvg::roxmltree::ParsingOptions { allow_dtd: true, ..Default::default() })?;
+    let mut prefix = [0; 16];
+    getrandom::fill(&mut prefix).map_err(|_| usvg::Error::ElementsLimitReached)?;
+    let prefix = format!("pyro-inline-{:032x}:", u128::from_ne_bytes(prefix));
+    let mut output = String::new();
+    let mut pos = 0;
+    let mut handles = Vec::new();
+    let mut output_charge = None;
+    for node in doc.descendants().filter(|node| node.is_element() && node.tag_name().namespace() == Some("http://www.w3.org/2000/svg") && matches!(node.tag_name().name(), "image" | "feImage")) {
+        for href in node.attributes().filter(|attr| attr.name() == "href" && matches!(attr.namespace(), None | Some("http://www.w3.org/1999/xlink"))) {
+            let range = href.range_value();
+            if range.start < pos || range.len() < prefix.len() + 20 { continue; }
+            let Ok(url) = data_url::DataUrl::process(href.value()) else { continue };
+            let mime = url.mime_type();
+            if mime.type_ != "image" || !matches!(mime.subtype.as_str(), "png" | "jpeg" | "jpg" | "webp" | "gif") { continue; }
+            if output_charge.is_none() {
+                output_charge = Some(page.reserve(text.len()).map_err(|_| usvg::Error::ElementsLimitReached)?);
+                output.try_reserve_exact(text.len()).map_err(|_| usvg::Error::ElementsLimitReached)?;
+            }
+            output.push_str(&text[pos..range.start]);
+            pos = range.end;
+            let mut length = 0usize;
+            if url.decode(|chunk| { length = length.checked_add(chunk.len()).ok_or(())?; Ok::<_, ()>(()) }).is_err() { continue; }
+            let Ok(charge) = page.reserve(length) else { continue };
+            let mut bytes = Vec::new();
+            if bytes.try_reserve_exact(length).is_err() { continue; }
+            if url.decode(|chunk| { bytes.extend_from_slice(chunk); Ok::<_, ()>(()) }).is_err() { continue; }
+            let kind: RasterConstructor = match mime.subtype.as_str() {
+                "png" => usvg::ImageKind::PNG, "webp" => usvg::ImageKind::WEBP, "gif" => usvg::ImageKind::GIF, _ => usvg::ImageKind::JPEG,
+            };
+            use std::fmt::Write;
+            drop(charge);
+            let Some(resource) = SvgResource::new(bytes, false, page) else { continue };
+            write!(output, "{prefix}{}", handles.len()).unwrap();
+            handles.push((Arc::new(resource), kind));
+        }
+    }
+    let Some(charge) = output_charge else { return Ok(None) };
+    output.push_str(&text[pos..]);
+    Ok(Some((output, prefix, handles, charge)))
+}
+
+#[cfg(feature = "svg")]
+pub fn prepare_sprite(source: SvgResource, page: &pyro_raster::PageRasters) -> Option<SvgResource> {
+    let Some((text, prefix, handles, temporary)) = bind_inline_rasters(&source.bytes, page).ok()? else { return Some(source) };
+    drop(source);
+    let bytes: Box<str> = text.into_boxed_str();
+    drop(temporary);
+    let mut prepared = SvgResource::new(String::from(bytes).into_bytes(), false, page)?;
+    prepared.bindings = handles.into_iter().enumerate().map(|(index, (image, _))| (format!("{prefix}{index}"), image)).collect();
+    Some(prepared)
+}
+
+#[cfg(feature = "svg")]
+pub fn parse_svg_resources(source: &[u8], resources: Option<&SvgResources>, page: &pyro_raster::PageRasters) -> Result<crate::node::SvgImageData, usvg::Error> {
+    let expanded;
+    let source = if source.starts_with(&[0x1f, 0x8b]) {
+        expanded = bounded_svgz(source, page)?;
+        expanded.0.as_slice()
+    } else { source };
     // pyro: parsed images by their source. An inline <svg> is
     // parsed from a snapshot of its subtree each time its box is built, and
     // pages that clone content (a header logo on every printed page) build
     // the same one again and again; the parse depends on the source alone.
     std::thread_local! {
-        static PARSED: std::cell::RefCell<std::collections::HashMap<Vec<u8>, (crate::node::SvgImageData, u64)>> =
+        static PARSED: std::cell::RefCell<std::collections::HashMap<[u8; 32], (std::sync::Weak<crate::node::SvgTree>, crate::node::SvgIntrinsicDimensions, u64)>> =
             Default::default();
     }
     const MAX_ENTRIES: usize = 256;
@@ -392,15 +565,41 @@ pub(crate) fn parse_svg_resources(source: &[u8], resources: Option<&SvgResources
     let (fontdb, generation) = svg_font_db();
     let resources = resources.filter(|map| !map.read().unwrap().is_empty());
     let cacheable = resources.is_none() && source.len() <= 65536 && !source.windows(5).any(|text| text.eq_ignore_ascii_case(b"data:")) && !source.starts_with(&[0x1f, 0x8b]);
-    if cacheable && let Some(svg) = PARSED.with(|p| p.borrow().get(source).filter(|(_, at)| *at == generation).map(|(svg, _)| svg.clone())) {
-        return Ok(svg);
+    use sha2::Digest;
+    let cache_key = cacheable.then(|| <[u8; 32]>::from(sha2::Sha256::digest(source)));
+    if let Some(key) = &cache_key && let Some((tree, intrinsic_dimensions)) = PARSED.with(|parsed| {
+        let parsed = parsed.borrow();
+        let (tree, dimensions, at) = parsed.get(key)?;
+        let tree = tree.upgrade()?;
+        (*at == generation && tree.page.same_page(page)).then_some((tree, *dimensions))
+    }) {
+        return Ok(crate::node::SvgImageData { tree, intrinsic_dimensions, resources: None, inline_source: None, source: None, foreign_source: None, viewport_dependent: false });
     }
+    let external_images = std::sync::Mutex::new(Vec::new());
+    let embedded = std::sync::Mutex::new(Vec::new());
+    let _scratch = page.reserve(source.len().checked_mul(3).ok_or(usvg::Error::ElementsLimitReached)?).map_err(|_| usvg::Error::ElementsLimitReached)?;
+    let inline = bind_inline_rasters(source, page)?;
     let options = usvg::Options {
         fontdb,
         image_href_resolver: usvg::ImageHrefResolver {
+            resolve_data: Box::new(|mime, bytes, options| {
+                let charge = page.reserve(bytes.capacity()).ok()?;
+                let kind = svg_data_kind(mime, bytes, options, page, &external_images, 0)?;
+                if !matches!(kind, usvg::ImageKind::SVG(_)) {
+                    embedded.lock().ok()?.push(charge);
+                }
+                Some(kind)
+            }),
             resolve_string: Box::new(|href, options| {
+                if let Some((_, prefix, handles, _)) = &inline && let Some(key) = href.strip_prefix(prefix.as_str()) {
+                    let (resource, kind) = handles.get(key.parse::<usize>().ok()?)?;
+                    return Some(kind(resource.bytes.clone()));
+                }
                 let raw = href.strip_prefix("pyro-unoriented:");
                 let resource = resources?.read().ok()?.get(raw.unwrap_or(href))?.clone();
+                let mut used = external_images.lock().ok()?;
+                if !used.iter().any(|image| Arc::ptr_eq(image, &resource)) { used.push(resource.clone()); }
+                drop(used);
                 if resource.bytes.starts_with(&[255, 216]) {
                     let (width, height, orientation) = pyro_raster::jpeg_geometry(&resource.bytes).ok()?;
                     if orientation != 1 {
@@ -416,14 +615,13 @@ pub(crate) fn parse_svg_resources(source: &[u8], resources: Option<&SvgResources
                         return Some(usvg::ImageKind::SVG(usvg::Tree::from_str(&wrapper, &inner).ok()?));
                     }
                 }
-                usvg::ImageHrefResolver::default_data_resolver()("text/plain", resource.bytes.clone(), options)
+                svg_data_kind("text/plain", resource.bytes.clone(), options, page, &external_images, 0)
             }),
-            ..Default::default()
         },
         ..Default::default()
     };
     // pyro: a reference cycle usvg would follow without end (`crate::svg_refs`).
-    let checked = crate::svg_refs::break_reference_cycles(source);
+    let checked = crate::svg_refs::break_reference_cycles(inline.as_ref().map_or(source, |entry| entry.0.as_bytes()));
     // pyro: `feConvolveMatrix divisor="0"` is its default, as in Chromium (`crate::svg_refs`).
     let defaulted = crate::svg_refs::default_zero_divisors(&checked);
     let defaulted = defaulted.as_deref().unwrap_or(&checked);
@@ -434,15 +632,21 @@ pub(crate) fn parse_svg_resources(source: &[u8], resources: Option<&SvgResources
     let media = crate::svg_refs::resolve_scheme_media(defaulted, false);
     let defaulted = media.as_deref().unwrap_or(defaulted);
     let schemed = crate::svg_refs::resolve_light_dark(defaulted, false);
-    let mut svg = crate::node::SvgImageData::from_data(schemed.as_deref().unwrap_or(defaulted), &options)?;
+    let mut svg = crate::node::SvgImageData::from_xml_bytes(schemed.as_deref().unwrap_or(defaulted), &options, page)?;
+    drop(options);
+    let tree = Arc::get_mut(&mut svg.tree).unwrap();
+    tree.external_images = external_images.into_inner().unwrap();
+    if let Some((_, _, handles, _)) = inline { tree.external_images.extend(handles.into_iter().map(|(resource, _)| resource)); }
+    tree.embedded = embedded.into_inner().unwrap();
+    tree.page = page.clone();
     svg.resources = resources.map(std::sync::Arc::downgrade);
-    if !cacheable { return Ok(svg); }
+    let Some(key) = cache_key.filter(|_| svg.tree.embedded.is_empty()) else { return Ok(svg) };
     PARSED.with(|p| {
         let mut p = p.borrow_mut();
         if p.len() >= MAX_ENTRIES {
             p.clear();
         }
-        p.insert(source.to_vec(), (svg.clone(), generation));
+        p.insert(key, (Arc::downgrade(&svg.tree), svg.intrinsic_dimensions, generation));
     });
     Ok(svg)
 }

@@ -206,6 +206,7 @@ pub struct DrawState<'a> {
 /// `<filter>`s), which the registered [`FilterRenderer`] applies to each draw's output.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CanvasFilter {
+    pub page: pyro_raster::PageRasters,
     pub value: String,
     pub defs: String,
 }
@@ -294,6 +295,7 @@ impl Drop for Charge {
 /// surface, snapshot or image made it.
 #[derive(Clone)]
 pub struct Bitmap {
+    page_charge: Option<Arc<pyro_raster::Reservation>>,
     pixmap: Arc<Pixmap>,
     _charge: Arc<Charge>,
 }
@@ -302,7 +304,7 @@ impl Bitmap {
     /// `pixmap`, counted; `None` when the process's budget has no room.
     pub fn new(pixmap: Pixmap) -> Option<Bitmap> {
         let charge = Charge::new(pixmap.data_as_u8_slice().len())?;
-        Some(Bitmap { pixmap: Arc::new(pixmap), _charge: Arc::new(charge) })
+        Some(Bitmap { pixmap: Arc::new(pixmap), _charge: Arc::new(charge), page_charge: None })
     }
 
     /// The pixels as the rasterizer takes them.

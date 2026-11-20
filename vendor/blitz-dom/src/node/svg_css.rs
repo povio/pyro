@@ -291,7 +291,7 @@ pub(crate) fn svg_source(root: &Node) -> String {
     }
     // The boxes come from usvg's own parse of the first document.
     let first = writer.finish();
-    if let Ok(svg) = crate::util::parse_svg_image(first.as_bytes()) {
+    if let Ok(svg) = crate::util::parse_svg_image_for_page(first.as_bytes(), &root.tree().raster_budget) {
         writer.boxes = collect_boxes(&svg.tree, &writer.box_ids);
     }
     writer.out.clear();
@@ -2393,7 +2393,7 @@ enum LayerSource {
     Mask(String),
     /// An SVG image: its document, natural size and ratio.
     Svg {
-        source: std::sync::Arc<[u8]>,
+        source: std::sync::Arc<crate::util::SvgSource<[u8]>>,
         width: Option<f64>,
         height: Option<f64>,
         ratio: Option<f64>,

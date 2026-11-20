@@ -11,6 +11,7 @@ autotests = false
 pyro-js.workspace = true
 pyro-runtime.workspace = true
 pyro-dom.workspace = true
+pyro-raster = { path = "../pyro-raster" }
 pyro-net.workspace = true
 pyro-webapi.workspace = true
 url = "2"

@@ -271,10 +271,25 @@ pub(crate) fn decode_raw_raster_image(
 }
 
 #[cfg(feature = "image")]
-thread_local! { static RASTERS: std::cell::RefCell<Option<pyro_raster::DocumentBudget>> = const { std::cell::RefCell::new(None) }; }
+thread_local! { static RASTERS: std::cell::RefCell<Option<pyro_raster::PageRasters>> = const { std::cell::RefCell::new(None) }; }
 
 #[cfg(feature = "image")]
 pub(crate) struct RasterScope(bool);
+
+#[cfg(feature = "image")]
+pub struct PageRasterScope(Option<pyro_raster::PageRasters>, std::marker::PhantomData<std::rc::Rc<()>>);
+
+#[cfg(feature = "image")]
+impl PageRasterScope {
+    pub fn enter(page: &pyro_raster::PageRasters) -> Self {
+        Self(RASTERS.with_borrow_mut(|current| current.replace(page.clone())), Default::default())
+    }
+}
+
+#[cfg(feature = "image")]
+impl Drop for PageRasterScope {
+    fn drop(&mut self) { RASTERS.with_borrow_mut(|current| *current = self.0.take()); }
+}
 
 #[cfg(feature = "image")]
 impl RasterScope {

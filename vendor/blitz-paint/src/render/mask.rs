@@ -283,7 +283,7 @@ impl ElementCx<'_, '_> {
         let dom = self.context.dom;
         // pyro: a `<mask>` of this document, or of the document loaded as the layer's image
         // (`mask-image: url(masks.svg#mask)`: the image is the mask, not the document's drawing).
-        let mut external: Option<std::sync::Arc<[u8]>> = None;
+        let mut external: Option<std::sync::Arc<blitz_dom::util::SvgSource<[u8]>>> = None;
         let (target, id, user_space) = match local_reference(dom, url) {
             Some(target) => {
                 // (One in contents `content-visibility: hidden` skips is no mask: not rendered, CSS
@@ -347,7 +347,7 @@ impl ElementCx<'_, '_> {
         let (width, height) = ((painter.width as f64 * to_user) as f32, (painter.height as f64 * to_user) as f32);
         let svg = match target {
             Some(target) => dom.svg_reference_document(target, &content, width, height),
-            None => blitz_dom::node::SvgImageData::reference_document_from_source(external.as_deref().unwrap_or_default(), &content, width, height),
+            None => external.as_deref().and_then(|source| blitz_dom::node::SvgImageData::reference_document_from_source(source, &content, width, height, &dom.raster_budget)),
         };
         let Some(svg) = svg else {
             return true;

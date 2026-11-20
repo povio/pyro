@@ -572,7 +572,7 @@ fn completed_image_body_is_ready_for_layout() {
         let bytes = bytes.clone();
         thread.browser.fetch_subresource(page, url.into(), pyro_browser::ResourceKind::Image, Box::new(move |_, result| {
             let image = result.unwrap();
-            assert_eq!(std::sync::Arc::ptr_eq(&bytes, &image.body), count == 1);
+            assert_eq!(std::sync::Arc::ptr_eq(bytes.bytes(), &image.body), count == 1);
             assert!(image.opaque);
         }));
         settle(&mut thread);

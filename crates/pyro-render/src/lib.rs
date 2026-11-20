@@ -186,6 +186,7 @@ pub const MAX_WIDTH: u32 = 16_384;
 /// What the browser thread hands to the renderer: plain data, `Send`.
 #[derive(Clone, Debug, Default)]
 pub struct Snapshot {
+    pub raster_budget: pyro_raster::PageRasters,
     pub transition_frames: Vec<pyro_dom::geometry::TransitionFrame>,
     /// The document as HTML: current DOM, form state written into
     /// attributes, `<style>` text from the style engine (CSSOM edits
@@ -849,7 +850,7 @@ pub struct Renderer {
     geometry: HashMap<u64, geometry::Geometry>,
     /// External SVG sprite files of persistent documents, by resource
     /// scope and URL.
-    sprites: HashMap<(String, String), Arc<String>>,
+    sprites: HashMap<(String, String), Arc<blitz_dom::util::SvgResource>>,
     /// External SVG `<image>`/`<feImage>` resources as `data:` URLs (`svg_use::resolve_images`),
     /// by resource scope and URL.
     svg_images: HashMap<(String, String), Arc<blitz_dom::util::SvgResource>>,
@@ -885,7 +886,7 @@ impl Default for Renderer {
 /// The alpha of an SVG image's tree drawn at `width` by `height` (each pixel's, row by row), for
 /// blitz-dom's `shape-outside` image shapes: as the image paints, strokes, clips, masks and
 /// opacity included.
-fn svg_shape_alpha(tree: &anyrender_svg::usvg::Tree, width: u32, height: u32) -> Option<Vec<u8>> {
+fn svg_shape_alpha(tree: &anyrender_svg::usvg::Tree, width: u32, height: u32, page: &pyro_raster::PageRasters) -> Option<Vec<u8>> {
     let size = tree.size();
     // pyro: and no more pixels than an SVG canvas image (a float laid out huge keeps its box).
     if width == 0
@@ -897,6 +898,8 @@ fn svg_shape_alpha(tree: &anyrender_svg::usvg::Tree, width: u32, height: u32) ->
     {
         return None;
     }
+    let _scope = anyrender_svg::PageRasterScope::enter(page);
+    let _rgba_charge = page.reserve(width as usize * height as usize * 4).ok()?;
     let scale = kurbo::Affine::scale_non_uniform(width as f64 / size.width() as f64, height as f64 / size.height() as f64);
     let mut renderer = <VelloCpuImageRenderer as anyrender::ImageRenderer>::new(width, height);
     let mut rgba = Vec::new();
@@ -906,8 +909,9 @@ fn svg_shape_alpha(tree: &anyrender_svg::usvg::Tree, width: u32, height: u32) ->
 
 /// pyro-canvas's SVG images (`drawImage` of an `<img>` showing an SVG): the image at its natural
 /// size (a dimension it lacks from its `viewBox` ratio, else 300 by 150), as an `<img>` paints it.
-fn svg_canvas_image(bytes: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
-    let svg = blitz_dom::util::parse_svg_image(bytes).ok()?;
+fn svg_canvas_image(bytes: &[u8], page: &pyro_raster::PageRasters) -> Option<(Vec<u8>, u32, u32, pyro_raster::Reservation)> {
+    let _scope = anyrender_svg::PageRasterScope::enter(page);
+    let svg = blitz_dom::util::parse_svg_image_for_page(bytes, page).ok()?;
     let ratio = svg.viewbox_aspect_ratio().filter(|r| r.is_finite() && *r > 0.0);
     let (width, height) = match (svg.intrinsic_width(), svg.intrinsic_height(), ratio) {
         (Some(w), Some(h), _) => (w, h),
@@ -935,6 +939,8 @@ fn svg_canvas_image(bytes: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
     if !pyro_canvas::valid_size(w, h) || f64::from(w) * f64::from(h) > SVG_CANVAS_MAX_PIXELS * 1.01 {
         return None;
     }
+    let charge = page.reserve(w as usize * h as usize * 4).ok()?;
+    let _scratch = page.reserve(w as usize * h as usize * 4).ok()?;
     let sized = svg.sized(width, height);
     let svg = sized.as_ref().unwrap_or(&svg);
     let viewport = svg.viewport_transform(width, height);
@@ -951,7 +957,7 @@ fn svg_canvas_image(bytes: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
     let mut rgba = Vec::new();
     let fit = kurbo::Affine::scale_non_uniform(f64::from(w) / f64::from(width), f64::from(h) / f64::from(height));
     anyrender::ImageRenderer::render_to_vec(&mut renderer, |p| p.append_scene(scene, fit), &mut rgba);
-    Some((rgba, w, h))
+    Some((rgba, w, h, charge))
 }
 
 /// pyro: the most pixels an SVG image is rasterized at for a canvas (16 Mi: 64 MiB of RGBA).
@@ -970,11 +976,14 @@ pub fn register_hooks() {
 }
 
 fn canvas_filter(source: &pyro_canvas::Pixmap, filter: &pyro_canvas::CanvasFilter) -> Option<pyro_canvas::Pixmap> {
-    use anyrender_svg::usvg;
+    let _scope = anyrender_svg::PageRasterScope::enter(&filter.page);
     let (w, h) = (u32::from(source.width()), u32::from(source.height()));
+    let _scratch = filter.page.reserve(w as usize * h as usize * 12).ok()?;
     let mut straight = source.data_as_u8_slice().to_vec();
     pyro_canvas::unpremultiply(&mut straight);
-    let png = Arc::new(pyro_canvas::codec::encode(&straight, w, h, pyro_canvas::Encoding::Png)?);
+    let png = blitz_dom::util::SvgResource::new(pyro_canvas::codec::encode(&straight, w, h, pyro_canvas::Encoding::Png)?, false, &filter.page)?;
+    let resources = blitz_dom::util::SvgResources::default();
+    resources.write().ok()?.insert("pyro-canvas-source".into(), Arc::new(png));
     let attr = |s: &str| s.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;");
     let source = format!(
         "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{w}\" height=\"{h}\"><defs>{}</defs>\
@@ -982,14 +991,7 @@ fn canvas_filter(source: &pyro_canvas::Pixmap, filter: &pyro_canvas::CanvasFilte
         filter.defs,
         attr(&filter.value),
     );
-    let options = usvg::Options {
-        image_href_resolver: usvg::ImageHrefResolver {
-            resolve_data: usvg::ImageHrefResolver::default_data_resolver(),
-            resolve_string: Box::new(move |href, _| (href == "pyro-canvas-source").then(|| usvg::ImageKind::PNG(png.clone()))),
-        },
-        ..usvg::Options::default()
-    };
-    let svg = blitz_dom::node::SvgImageData::from_data(source.as_bytes(), &options).ok()?;
+    let svg = blitz_dom::util::parse_svg_resources(source.as_bytes(), Some(&resources), &filter.page).ok()?;
     let mut scene = Scene::new();
     anyrender_svg::render_svg_tree(&mut scene, &svg.tree, kurbo::Affine::IDENTITY);
     let mut renderer = <VelloCpuImageRenderer as anyrender::ImageRenderer>::new(w, h);
@@ -1182,6 +1184,7 @@ impl Renderer {
 
     fn config(&self, snap: &Snapshot, provider: Arc<dyn blitz_traits::net::NetProvider>) -> DocumentConfig {
         let mut config = DocumentConfig {
+            raster_budget: snap.raster_budget.clone(),
             base_url: Some(snap.base_url.clone()),
             net_provider: Some(provider),
             viewport: Some(viewport_of(snap)),
@@ -4545,7 +4548,7 @@ mod svg_shape_alpha_tests {
 
     fn alpha(svg: &str, w: u32, h: u32) -> Vec<u8> {
         let tree = usvg::Tree::from_str(svg, &usvg::Options::default()).expect("svg");
-        svg_shape_alpha(&tree, w, h).expect("alpha")
+        svg_shape_alpha(&tree, w, h, &Default::default()).expect("alpha")
     }
 
     /// A stroke-only SVG is opaque along its stroke (the filled paths alone gave nothing), and

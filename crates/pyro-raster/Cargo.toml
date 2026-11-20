@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+sha2 = "0.10"
 image = { version = "0.25", default-features = false }
 libjpeg-turbo-rs = "0.9.0"
 moxcms = "0.8"

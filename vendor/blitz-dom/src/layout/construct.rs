@@ -991,12 +991,12 @@ fn collect_layout_children_with_wrap(
                 doc.svg_foreign_objects.insert(container_node_id, foreign_objects);
             }
 
-            match crate::util::parse_svg_resources(outer_html.as_bytes(), Some(&doc.svg_images)) {
+            match crate::util::parse_svg_resources(outer_html.as_bytes(), Some(&doc.svg_images), &doc.raster_budget) {
                 Ok(mut svg) => {
                     // pyro: without a `viewBox` its content is laid out in its CSS box
                     // (`SvgImageData::sized`, at paint).
                     if svg.intrinsic_dimensions.view_box.is_none() {
-                        svg.inline_source = Some(outer_html.as_str().into());
+                        svg.inline_source = crate::util::SvgSource::copy(&outer_html, &doc.raster_budget);
                     }
                     svg.viewport_dependent = viewport_dependent;
                     doc.get_node_mut(container_node_id)

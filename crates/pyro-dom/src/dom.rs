@@ -912,6 +912,7 @@ impl Dom {
             DocumentKind::Xml => "application/xml",
         };
         let data = DocumentData {
+            raster_budget: Default::default(),
             kind,
             quirks: QuirksMode::NoQuirks,
             content_type: content_type.into(),
@@ -962,6 +963,16 @@ impl Dom {
         let i = self.check(doc)?;
         match &mut self.n_mut(i).kind {
             NodeKind::Document(d) => d.design_mode = on,
+            _ => return Err(DomError::Type("not a document")),
+        }
+        Ok(())
+    }
+
+    pub fn inherit_raster_budget(&mut self, doc: NodeId, parent: NodeId) -> DomResult<()> {
+        let budget = self.document_data(parent)?.raster_budget.clone();
+        let index = self.check(doc)?;
+        match &mut self.n_mut(index).kind {
+            NodeKind::Document(data) => data.raster_budget = budget,
             _ => return Err(DomError::Type("not a document")),
         }
         Ok(())
@@ -1122,6 +1133,7 @@ impl Dom {
 
     pub fn set_layout_client(&mut self, doc: NodeId, client: String, bodies: &std::sync::Arc<crate::geometry::SubresourceBodies>) {
         if let Ok(index) = self.check(doc) {
+            bodies.bind_raster_budget(&client, self.doc_data_mut(index).raster_budget.clone());
             self.doc_data_mut(index).layout_client = Some((client, std::sync::Arc::downgrade(bodies)));
             self.publish_image_defaults(doc);
         }

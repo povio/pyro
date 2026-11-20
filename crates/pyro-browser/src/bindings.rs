@@ -983,6 +983,10 @@ pub(crate) fn create(
     } else {
         dom.borrow_mut().create_document(pyro_dom::DocumentKind::Html, url)
     };
+    if page.child.is_some() {
+        let parent = host.page_dom(host.parent_key(page)).ok_or(JsError::ContextDestroyed)?;
+        dom.borrow_mut().inherit_raster_budget(doc, parent.document()).map_err(|e| JsError::type_error(format!("{e:?}")))?;
+    }
     dom.borrow_mut().set_document_active(doc, true).map_err(|e| JsError::type_error(format!("{e:?}")))?;
     dom.borrow_mut().set_allow_declarative_shadow_roots(doc, true).map_err(|e| JsError::type_error(format!("{e:?}")))?;
     dom.borrow_mut().set_resource_tracking(true);

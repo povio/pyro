@@ -30,7 +30,7 @@ pub use scrollbar::{ClassicScrollbars, ScrollbarColor, ScrollbarRef, ScrollbarWi
 pub use stylo_data::ComputedStyleRef;
 pub(crate) use stylo_data::LayoutStyles;
 #[cfg(feature = "svg")]
-pub use svg::{SvgImageData, SvgIntrinsicDimensions, svg_source_element};
+pub use svg::{SvgImageData, SvgIntrinsicDimensions, SvgTree, svg_source_element};
 #[cfg(feature = "svg")]
 pub(crate) use svg::{ReferenceCandidate, embeddable_svg, reference_candidates, references_out_of_sync};
 pub use text::{

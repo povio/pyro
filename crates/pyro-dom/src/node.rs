@@ -54,6 +54,7 @@ pub enum DocumentKind {
 
 #[derive(Debug)]
 pub struct DocumentData {
+    pub raster_budget: pyro_raster::PageRasters,
     pub kind: DocumentKind,
     pub quirks: QuirksMode,
     pub content_type: Box<str>,

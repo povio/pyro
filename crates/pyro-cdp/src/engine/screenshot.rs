@@ -582,7 +582,10 @@ impl EngineHost {
         let frames = pyro_layout::frame_table(table);
         dom.transition_frames(&frames.nonce, &mut transition_frames);
         dom.reserve_transition_job(&frames.nonce, &mut transition_frames);
+        let raster_budget = dom.dom.borrow().document_data(dom.document())
+            .map_err(|_| CdpError::server("page has no document"))?.raster_budget.clone();
         Ok(Snapshot {
+            raster_budget,
             transition_frames,
             html: String::new(),
             frames,
