@@ -1094,10 +1094,7 @@ fn lift_horizontal_rule(dom: &mut Dom, host: NodeId, rule: NodeId) {
 
 /// Insert an image or horizontal rule directly into the selected range
 /// without reparsing the supplied URL as markup.
-pub(crate) fn insert_replaced_element(page: &Rc<PageDom>, host: NodeId, image_src: Option<&str>) {
-    let input_type = if image_src.is_some() { "" } else { "insertHorizontalRule" };
-    // Script-driven editing fires input after the operation, without beforeinput.
-    crate::edit_commands::record_host_edit(page, host, input_type);
+pub(crate) fn insert_replaced_element(page: &Rc<PageDom>, host: NodeId, image_src: Option<&str>) -> bool {
     let (start, end) = host_range(page, host);
     let mut dom = page.dom.borrow_mut();
     let (node, offset) = if start == end {
@@ -1106,27 +1103,32 @@ pub(crate) fn insert_replaced_element(page: &Rc<PageDom>, host: NodeId, image_sr
         delete_range_with_merging(&mut dom, host, start, end, false, image_src.is_some())
     };
     let (parent, before) = if is_text(&dom, node) {
-        let Ok(Some(p)) = dom.parent(node) else { return };
+        let Ok(Some(p)) = dom.parent(node) else { return false };
         let before = if offset == 0 {
             Some(node)
         } else if offset == len(&dom, node) {
             dom.next_sibling(node).ok().flatten()
         } else {
-            let Ok(right) = dom.split_text(node, offset) else { return };
+            let Ok(right) = dom.split_text(node, offset) else { return false };
             Some(right)
         };
         (p, before)
+    } else if matches!(dom.node_type(node), Ok(NodeType::Comment | NodeType::ProcessingInstruction)) {
+        // These boundaries have no visible caret positions. Editing resolves
+        // them to the next position in their parent.
+        let Ok(Some(parent)) = dom.parent(node) else { return false };
+        (parent, dom.next_sibling(node).ok().flatten())
     } else {
         (node, dom.child_at(node, offset).ok().flatten())
     };
-    let Ok(doc) = dom.node_document(host) else { return };
+    let Ok(doc) = dom.node_document(host) else { return false };
     let tag = if image_src.is_some() { "img" } else { "hr" };
-    let Ok(el) = dom.create_element(doc, tag) else { return };
+    let Ok(el) = dom.create_element(doc, tag) else { return false };
     if let Some(src) = image_src {
         let _ = dom.set_attribute(el, "src", src);
     }
     if dom.insert_before(parent, el, before).is_err() {
-        return;
+        return false;
     }
     if let Some(br) = before {
         if dom.child_count(parent).ok() == Some(2) && is_block(&dom, parent) && local(&dom, br) == "br" {
@@ -1136,13 +1138,11 @@ pub(crate) fn insert_replaced_element(page: &Rc<PageDom>, host: NodeId, image_sr
     if image_src.is_none() {
         lift_horizontal_rule(&mut dom, host, el);
     }
-    let Ok(Some(p)) = dom.parent(el) else { return };
+    let Ok(Some(p)) = dom.parent(el) else { return false };
     let caret = (p, 1 + dom.index_in_parent(el).unwrap_or(0));
     drop(dom);
     set_selection(page, caret, caret);
-    crate::edit_commands::note_host_edited(page, host);
-    input_event(page, host, "input", input_type, None, false);
-
+    true
 }
 
 /// `insertHTML` (and rich paste): `html` parsed in the host's context

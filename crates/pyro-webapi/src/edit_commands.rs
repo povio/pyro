@@ -1136,7 +1136,21 @@ pub(crate) fn exec_command(page: &Rc<PageDom>, command: &str, value: &str) -> bo
             if !rich_selection(page, host) || (cmd == "insertimage" && value.is_empty()) {
                 return false;
             }
-            editing::insert_replaced_element(page, host, (cmd == "insertimage").then_some(value));
+            // Record the original selection and content only if insertion
+            // succeeds. An input listener may invoke undo synchronously.
+            let saved = save(page, host);
+            if !editing::insert_replaced_element(page, host, (cmd == "insertimage").then_some(value)) {
+                return false;
+            }
+            if let Some(saved) = saved {
+                let mut history = page.undo.borrow_mut();
+                if !history.replaying {
+                    history.typing = None;
+                    history.push(Step { target: host, saved });
+                }
+            }
+            let input_type = if cmd == "insertimage" { "" } else { "insertHorizontalRule" };
+            editing::input_event(page, host, "input", input_type, None, false);
         }
         "createlink" => {
             if value.is_empty() {
