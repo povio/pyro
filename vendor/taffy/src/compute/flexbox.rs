@@ -2108,9 +2108,18 @@ fn determine_container_main_size(
                         // Issue: https://github.com/w3c/csswg-drafts/issues/1435
                         // Gentest: padding_border_overrides_size_flex_basis_0.html
                         // Gentest: blockflex_min_content_ignores_own_height_as_percentage_basis.html
-                        // pyro: a row item's contribution is not clamped by its flex basis: Blink's rule for an
-                        // inflexible item applies to the sum below instead.
-                        let clamping_basis = if constants.is_row { None } else { Some(item.flex_basis) };
+                        // pyro: a row item with a definite flex basis has a contribution its flex basis does not
+                        // clamp: Blink's rule for an inflexible item applies to the sum below instead. One with an
+                        // indefinite basis (its content size) keeps the clamp, which holds its contribution to that
+                        // content size (a vertical flex container's image: WPT css-flexbox
+                        // `flexbox-vert-lr-with-img`).
+                        let clamping_basis = if constants.is_row && item.flex_basis_is_definite {
+                            None
+                        } else if constants.is_row {
+                            Some(item.flex_basis).maybe_max(style_preferred)
+                        } else {
+                            Some(item.flex_basis)
+                        };
                         let flex_basis_min = clamping_basis.filter(|_| item.flex_shrink == 0.0);
                         let flex_basis_max = clamping_basis.filter(|_| item.flex_grow == 0.0);
 
