@@ -7420,9 +7420,9 @@ mod screenshot {
 
     /// A face first made applicable by a style change before load (its fetch starts with the
     /// gate's own layout pass) delays load: fonts are checked again after that pass (security
-    /// review cycle 4, S3a).
+    /// review cycle 4, S3a). The face's request is the document's (by key), recorded as loading
+    /// from the moment its layout asks, never confused with a failed one (cycle 5, 6).
     #[test]
-    #[ignore = "open (urls.notes.md, settle/gate): under a busy test process layout may ask for the face only after the gate's pass, which the gate cannot tell from a failed face yet"]
     fn a_face_the_gates_layout_starts_delays_load() {
         let address = gate_server(
             // (A family no other test registers in the thread's font context.)

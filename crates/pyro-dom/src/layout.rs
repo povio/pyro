@@ -644,9 +644,10 @@ impl Layout {
         }
     }
 
-    /// pyro: the geometry engine's state of the font at `url` ([`GeometrySource::font_url_state`]).
-    pub fn font_url_state(&self, url: &str) -> Option<bool> {
-        self.external.as_ref().and_then(|s| s.font_url_state(url))
+    /// pyro: the geometry engine's state of this document's font request for `url`
+    /// ([`GeometrySource::font_load`]).
+    pub fn font_load(&self, url: &str) -> Option<crate::geometry::FontLoad> {
+        self.external.as_ref().and_then(|s| s.font_load(url))
     }
 
     /// pyro: whether web fonts the geometry engine uses are still loading (it starts them

@@ -398,9 +398,8 @@ pub struct PageDom {
     /// The last rejected-promise notification task queued (`event::schedule_rejection_notify`):
     /// its realm, [`PageDom::posted_tasks`] once it was queued, and the list entries it reports.
     pub(crate) rejection_batch: RefCell<Option<(pyro_js::RealmId, u64, Rc<RefCell<Vec<u64>>>)>>,
-    /// `FontFace` loads in flight (font_loading.js), and when the load event first waited on fonts.
+    /// `FontFace` loads in flight (font_loading.js).
     pub(crate) font_loads: Cell<u32>,
-    font_delay_since: Cell<Option<std::time::Instant>>,
     /// pyro: when the load gate laid the document out (`css_images_delay_load`), once per load.
     load_layout_since: Cell<Option<std::time::Instant>>,
     /// pyro: the DOM version and style generation the load gate last laid the document out at.
@@ -961,7 +960,6 @@ impl PageDom {
             planned_navigation_seq: Cell::new(0),
             rejection_batch: RefCell::new(None),
             font_loads: Cell::new(0),
-            font_delay_since: Cell::new(None),
             load_layout_since: Cell::new(None),
             load_layout_version: Cell::new((0, 0)),
             created: std::time::Instant::now(),
@@ -1449,9 +1447,14 @@ impl PageDom {
         }
     }
 
-    /// pyro: the layout engine's state of the font at `url` (`FontFace.status`).
+    /// pyro: the layout engine's state of the document's request for the font at `url`
+    /// (`FontFace.status`): `Some(true)` loaded, `Some(false)` loading (asked for, answer not in).
     pub fn font_url_state(&self, url: &str) -> Option<bool> {
-        self.try_layout()?.font_url_state(url)
+        match self.try_layout()?.font_load(url)? {
+            pyro_dom::geometry::FontLoad::Loaded => Some(true),
+            pyro_dom::geometry::FontLoad::Loading => Some(false),
+            pyro_dom::geometry::FontLoad::NotAsked | pyro_dom::geometry::FontLoad::Failed => None,
+        }
     }
 
     /// The `@font-face` rules of the document's sheets: its CSS-connected `FontFace`s, in order
@@ -1490,7 +1493,10 @@ impl PageDom {
 
     /// Whether web fonts delay the document's load event, as font loads do in Chromium: a
     /// `FontFace` load in flight or a face the layout engine is fetching for the document's
-    /// styles. At most 10 s, so a font that never answers cannot hold `load` back for good.
+    /// styles (by the document's request for it, asked for and not answered: a request its
+    /// layout made is recorded as loading before any check reads it). At most 10 s from the
+    /// document's navigation (its creation), as for CSS images, so a font that never answers
+    /// cannot hold `load` back for good.
     pub fn fonts_delay_load(&self) -> bool {
         // A face of the document's sheets delays the load event only once text uses its family:
         // Chromium starts a face's load when layout first needs it, while the layout engine here
@@ -1501,9 +1507,7 @@ impl PageDom {
         if !pending {
             return false;
         }
-        let since = *self.font_delay_since.get().get_or_insert_with(std::time::Instant::now);
-        self.font_delay_since.set(Some(since));
-        since.elapsed() < std::time::Duration::from_secs(10)
+        self.created.elapsed() < std::time::Duration::from_secs(10)
     }
 
     /// pyro: whether the document's CSS images (backgrounds, masks, border and list images,

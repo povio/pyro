@@ -276,6 +276,18 @@ pub trait SubresourceLoader: Send + Sync {
     }
 }
 
+/// pyro: what a document's layout did with a font request (one request key: the document, the
+/// font's URL, its options): [`SubresourceBodies::font_load`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FontLoad {
+    /// Its layout never asked for it.
+    NotAsked,
+    /// Asked for and not answered yet (sent or about to be).
+    Loading,
+    Loaded,
+    Failed,
+}
+
 /// pyro: a slot of the store: a load in flight, its body, or its failure (the document's layout
 /// did fetch it: a capture waits for it as for one with a body, and it is not asked again).
 #[derive(Clone)]
@@ -368,6 +380,19 @@ impl SubresourceBodies {
         }
     }
 
+    /// pyro: the state of the font request `key` of a document whose layout asked for the fonts
+    /// `asked` ([`SubresourceLoader::asked_fonts`]): its slot's; with none, asked but not sent yet
+    /// (still loading, never confused with a failure), else not asked at all.
+    pub fn font_load(&self, key: &LayoutBodyKey, asked: Option<&[LayoutBodyKey]>) -> FontLoad {
+        match locked(&self.slots).get(key) {
+            Some(Slot::Pending) => FontLoad::Loading,
+            Some(Slot::Ready(_)) => FontLoad::Loaded,
+            Some(Slot::Failed) => FontLoad::Failed,
+            None if asked.is_some_and(|asked| asked.contains(key)) => FontLoad::Loading,
+            None => FontLoad::NotAsked,
+        }
+    }
+
     /// pyro: whether `key`'s load failed ([`Self::fail`]).
     pub fn has_failed(&self, key: &LayoutBodyKey) -> bool {
         matches!(locked(&self.slots).get(key), Some(Slot::Failed))
@@ -376,16 +401,6 @@ impl SubresourceBodies {
     /// pyro: whether any load in flight for `document` is one `matches` picks.
     pub fn any_pending(&self, document: &str, matches: impl Fn(&LayoutBodyKey) -> bool) -> bool {
         locked(&self.slots).iter().any(|(k, slot)| matches!(slot, Slot::Pending) && k.document == document && matches(k))
-    }
-
-    /// pyro: the state of `document`'s requests for `url` (any options): `Some(true)` when one has
-    /// its body, `Some(false)` when one is only in flight.
-    pub fn url_state(&self, document: &str, url: &str) -> Option<bool> {
-        locked(&self.slots)
-            .iter()
-            .filter(|(k, slot)| k.document == document && k.url == url && !matches!(slot, Slot::Failed))
-            .map(|(_, slot)| matches!(slot, Slot::Ready(_)))
-            .reduce(|a, b| a || b)
     }
 
     /// pyro: drops what `document` loaded (it is gone: navigated away from, closed); a load still
@@ -548,9 +563,9 @@ pub trait GeometrySource {
     fn images_pending(&self) -> bool {
         false
     }
-    /// pyro: whether the engine has the font at `url` (`Some(true)`), is loading it
-    /// (`Some(false)`), or neither (`None`) (`FontFace.status` of a face the engine loads).
-    fn font_url_state(&self, _url: &str) -> Option<bool> {
+    /// pyro: what the engine's layout did with this document's request for the font at `url`
+    /// (by its request key, never by URL alone), `None` when the engine loads no fonts.
+    fn font_load(&self, _url: &str) -> Option<FontLoad> {
         None
     }
     /// One element's computed style as of the last sync (`None`: the engine
@@ -860,5 +875,36 @@ impl LayoutResult {
             cur = dom.parent_element(p).ok().flatten();
         }
         self.boxes.insert(el, b);
+    }
+}
+
+#[cfg(test)]
+mod font_load_tests {
+    use super::*;
+
+    /// A font request its layout asked for is loading until answered, whether or not it went out
+    /// yet; a failed one is failed, never "not asked"; the state is the request's (document,
+    /// URL, options), never another request's of the same URL (security review cycle 5, 6).
+    #[test]
+    fn a_font_request_is_loading_from_the_ask_and_known_by_its_key() {
+        let bodies = SubresourceBodies::default();
+        let key = |doc: &str, url: &str| LayoutBodyKey::new(doc, url, &SubresourceOptions::default(), SubresourceKind::Font);
+        let face = key("d1", "http://t/f.woff2");
+        assert_eq!(bodies.font_load(&face, Some(&[])), FontLoad::NotAsked);
+        // Asked, request not out yet.
+        assert_eq!(bodies.font_load(&face, Some(&[face.clone()])), FontLoad::Loading);
+        assert!(bodies.start(&face));
+        assert_eq!(bodies.font_load(&face, Some(&[face.clone()])), FontLoad::Loading);
+        // Another document's, or a CORS request of the same URL, is not this one.
+        let cors = LayoutBodyKey::new(
+            "d1",
+            "http://t/f.woff2",
+            &SubresourceOptions { crossorigin: Some("anonymous".into()), ..Default::default() },
+            SubresourceKind::Font,
+        );
+        assert_eq!(bodies.font_load(&cors, Some(&[])), FontLoad::NotAsked);
+        assert_eq!(bodies.font_load(&key("d2", "http://t/f.woff2"), Some(&[])), FontLoad::NotAsked);
+        bodies.fail(&face);
+        assert_eq!(bodies.font_load(&face, Some(&[face.clone()])), FontLoad::Failed);
     }
 }

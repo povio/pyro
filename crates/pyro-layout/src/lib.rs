@@ -864,10 +864,18 @@ impl GeometrySource for BlitzGeometry {
         asked.iter().any(|key| loader.bodies().pending(key) && requested(key))
     }
 
-    fn font_url_state(&self, url: &str) -> Option<bool> {
+    /// pyro: by the request key of this document's font request (a font's request carries no
+    /// options of its own), and whether its layout asked for it.
+    fn font_load(&self, url: &str) -> Option<pyro_dom::geometry::FontLoad> {
         let loader = self.loader.borrow();
         let loader = loader.as_ref()?;
-        loader.bodies().url_state(&loader.document(), url)
+        let key = pyro_dom::layout::LayoutBodyKey::new(
+            &loader.document(),
+            url,
+            &Default::default(),
+            pyro_dom::layout::SubresourceKind::Font,
+        );
+        Some(loader.bodies().font_load(&key, loader.asked_fonts().as_deref()))
     }
 
     fn sync(&self, dom: &Dom, layout: &Layout) {
