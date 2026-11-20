@@ -1,0 +1,2864 @@
+{
+  "urls": 346,
+  "reference": "chrome158",
+  "counts": [
+    {
+      "namedPass": 4146,
+      "full": 130,
+      "reported": 5284,
+      "complete": 312,
+      "timeout": 19,
+      "error": 15
+    },
+    {
+      "namedPass": 4305,
+      "full": 147,
+      "reported": 5370,
+      "complete": 312,
+      "timeout": 19,
+      "error": 15
+    },
+    {
+      "namedPass": 5757,
+      "full": 321,
+      "reported": 5840,
+      "complete": 339,
+      "timeout": 2,
+      "error": 5
+    }
+  ],
+  "delta": {
+    "gained": 163,
+    "lost": 4,
+    "added": 103,
+    "missing": 17,
+    "chromeOnly": 1728,
+    "lpOnly": 276
+  },
+  "areas": {
+    "webaudio": {
+      "gained": 163,
+      "lost": 4,
+      "added": 103,
+      "missing": 17,
+      "chromeOnly": 1728,
+      "lpOnly": 276
+    }
+  },
+  "losses": [
+    [
+      "webaudio/the-audio-api/the-delaynode-interface/ctor-delay.html",
+      "  new DelayNode() threw TypeError: \"undefined is not a constructor (evaluating 'new window[name]()')\".",
+      1,
+      [
+        "Pass",
+        "  new DelayNode() threw TypeError: \"undefined is not a constructor (evaluating 'new window[name]()')\"."
+      ],
+      null,
+      null
+    ],
+    [
+      "webaudio/the-audio-api/the-delaynode-interface/ctor-delay.html",
+      "  new DelayNode(1) threw TypeError: \"undefined is not a constructor (evaluating 'new window[name](1)')\".",
+      1,
+      [
+        "Pass",
+        "  new DelayNode(1) threw TypeError: \"undefined is not a constructor (evaluating 'new window[name](1)')\"."
+      ],
+      null,
+      null
+    ],
+    [
+      "webaudio/the-audio-api/the-delaynode-interface/ctor-delay.html",
+      "  new DelayNode(context, 42) threw TypeError: \"undefined is not a constructor (evaluating 'new window[name](context, 42)')\".",
+      1,
+      [
+        "Pass",
+        "  new DelayNode(context, 42) threw TypeError: \"undefined is not a constructor (evaluating 'new window[name](context, 42)')\"."
+      ],
+      null,
+      null
+    ],
+    [
+      "webaudio/the-audio-api/the-delaynode-interface/delaynode-maxdelaylimit.html",
+      "  Setting Delay length to NaN threw TypeError: \"context.createDelay is not a function. (In 'context.createDelay(NaN)', 'context.createDelay' is undefined)\".",
+      1,
+      [
+        "Pass",
+        "  Setting Delay length to NaN threw TypeError: \"context.createDelay is not a function. (In 'context.createDelay(NaN)', 'context.createDelay' is undefined)\"."
+      ],
+      null,
+      null
+    ]
+  ],
+  "perURL": {
+    "webaudio/historical.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/idlharness.https.window.html": {
+      "gained": 38,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 476,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/interrupt-when-created-hidden.tentative.sub.html?origin=cross-origin&frame=direct&visibility=display": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/interrupt-when-created-hidden.tentative.sub.html?origin=cross-origin&frame=direct&visibility=visibility": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/interrupt-when-created-hidden.tentative.sub.html?origin=cross-origin&frame=direct&visibility=zero-size": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/interrupt-when-created-hidden.tentative.sub.html?origin=cross-origin&frame=nested&visibility=display": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/interrupt-when-created-hidden.tentative.sub.html?origin=cross-origin&frame=nested&visibility=visibility": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/interrupt-when-created-hidden.tentative.sub.html?origin=cross-origin&frame=nested&visibility=zero-size": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/interrupt-when-created-hidden.tentative.sub.html?origin=same-origin&frame=direct&visibility=display": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/interrupt-when-created-hidden.tentative.sub.html?origin=same-origin&frame=direct&visibility=visibility": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/interrupt-when-created-hidden.tentative.sub.html?origin=same-origin&frame=direct&visibility=zero-size": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/interrupt-when-created-hidden.tentative.sub.html?origin=same-origin&frame=nested&visibility=display": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/interrupt-when-created-hidden.tentative.sub.html?origin=same-origin&frame=nested&visibility=visibility": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/interrupt-when-created-hidden.tentative.sub.html?origin=same-origin&frame=nested&visibility=zero-size": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/interrupt-when-hidden.tentative.sub.html?origin=cross-origin&frame=direct&visibility=display": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/interrupt-when-hidden.tentative.sub.html?origin=cross-origin&frame=direct&visibility=visibility": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/interrupt-when-hidden.tentative.sub.html?origin=cross-origin&frame=direct&visibility=zero-size": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/interrupt-when-hidden.tentative.sub.html?origin=cross-origin&frame=nested&visibility=display": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/interrupt-when-hidden.tentative.sub.html?origin=cross-origin&frame=nested&visibility=visibility": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/interrupt-when-hidden.tentative.sub.html?origin=cross-origin&frame=nested&visibility=zero-size": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/interrupt-when-hidden.tentative.sub.html?origin=same-origin&frame=direct&visibility=display": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/interrupt-when-hidden.tentative.sub.html?origin=same-origin&frame=direct&visibility=visibility": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/interrupt-when-hidden.tentative.sub.html?origin=same-origin&frame=direct&visibility=zero-size": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/interrupt-when-hidden.tentative.sub.html?origin=same-origin&frame=nested&visibility=display": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/interrupt-when-hidden.tentative.sub.html?origin=same-origin&frame=nested&visibility=visibility": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/interrupt-when-hidden.tentative.sub.html?origin=same-origin&frame=nested&visibility=zero-size": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/resume-while-hidden.tentative.sub.html?origin=cross-origin&frame=direct&visibility=display": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/resume-while-hidden.tentative.sub.html?origin=cross-origin&frame=direct&visibility=visibility": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/resume-while-hidden.tentative.sub.html?origin=cross-origin&frame=direct&visibility=zero-size": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/resume-while-hidden.tentative.sub.html?origin=cross-origin&frame=nested&visibility=display": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/resume-while-hidden.tentative.sub.html?origin=cross-origin&frame=nested&visibility=visibility": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/resume-while-hidden.tentative.sub.html?origin=cross-origin&frame=nested&visibility=zero-size": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/resume-while-hidden.tentative.sub.html?origin=same-origin&frame=direct&visibility=display": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/resume-while-hidden.tentative.sub.html?origin=same-origin&frame=direct&visibility=visibility": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/resume-while-hidden.tentative.sub.html?origin=same-origin&frame=direct&visibility=zero-size": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/resume-while-hidden.tentative.sub.html?origin=same-origin&frame=nested&visibility=display": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/resume-while-hidden.tentative.sub.html?origin=same-origin&frame=nested&visibility=visibility": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/resume-while-hidden.tentative.sub.html?origin=same-origin&frame=nested&visibility=zero-size": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/suspended-hide-show.tentative.sub.html?origin=cross-origin&frame=direct&visibility=display": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/suspended-hide-show.tentative.sub.html?origin=cross-origin&frame=direct&visibility=visibility": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/suspended-hide-show.tentative.sub.html?origin=cross-origin&frame=direct&visibility=zero-size": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/suspended-hide-show.tentative.sub.html?origin=cross-origin&frame=nested&visibility=display": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/suspended-hide-show.tentative.sub.html?origin=cross-origin&frame=nested&visibility=visibility": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/suspended-hide-show.tentative.sub.html?origin=cross-origin&frame=nested&visibility=zero-size": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/suspended-hide-show.tentative.sub.html?origin=same-origin&frame=direct&visibility=display": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/suspended-hide-show.tentative.sub.html?origin=same-origin&frame=direct&visibility=visibility": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/suspended-hide-show.tentative.sub.html?origin=same-origin&frame=direct&visibility=zero-size": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/suspended-hide-show.tentative.sub.html?origin=same-origin&frame=nested&visibility=display": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/suspended-hide-show.tentative.sub.html?origin=same-origin&frame=nested&visibility=visibility": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/suspended-hide-show.tentative.sub.html?origin=same-origin&frame=nested&visibility=zero-size": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/viewport.tentative.sub.html?origin=cross-origin": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/media-playback-while-not-visible-permission-policy/viewport.tentative.sub.html?origin=same-origin": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/processing-model/cycle-without-delay.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/processing-model/delay-time-clamping.html": {
+      "gained": true,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": true
+    },
+    "webaudio/the-audio-api/processing-model/feedback-delay-time.html": {
+      "gained": true,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": true
+    },
+    "webaudio/the-audio-api/rendersizehint-smoke-tests.https.html": {
+      "gained": 4,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 16,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-analysernode-interface/analysernode-rendersizehint.https.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 10,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-analysernode-interface/ctor-analyser.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 63,
+      "lpOnly": 3
+    },
+    "webaudio/the-audio-api/the-analysernode-interface/realtimeanalyser-basic.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-analysernode-interface/realtimeanalyser-fft-scaling.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-analysernode-interface/realtimeanalyser-fft-sizing.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 39,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-analysernode-interface/test-analyser-gain.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-analysernode-interface/test-analyser-minimum.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-analysernode-interface/test-analyser-output.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 2,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-analysernode-interface/test-analyser-resume-after-suspended.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-analysernode-interface/test-analyser-scale.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-analysernode-interface/test-analysernode.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 2,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audiobuffer-interface/acquire-the-content.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 1,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audiobuffer-interface/audiobuffer-copy-channel.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 9,
+      "lpOnly": 2
+    },
+    "webaudio/the-audio-api/the-audiobuffer-interface/audiobuffer-getChannelData.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audiobuffer-interface/audiobuffer-reuse.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-audiobuffer-interface/audiobuffer.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-audiobuffer-interface/ctor-audiobuffer.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 1,
+      "lpOnly": 1
+    },
+    "webaudio/the-audio-api/the-audiobuffersourcenode-interface/active-processing.https.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 1,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audiobuffersourcenode-interface/audiobuffersource-basic.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audiobuffersourcenode-interface/audiobuffersource-channels.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-audiobuffersourcenode-interface/audiobuffersource-duration-loop-playbackrate.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audiobuffersourcenode-interface/audiobuffersource-duration-loop.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-audiobuffersourcenode-interface/audiobuffersource-ended.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audiobuffersourcenode-interface/audiobuffersource-grain.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audiobuffersourcenode-interface/audiobuffersource-loop-continuous.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audiobuffersourcenode-interface/audiobuffersource-loop-short-duration.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-audiobuffersourcenode-interface/audiobuffersource-multi-channels.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-audiobuffersourcenode-interface/audiobuffersource-null.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-audiobuffersourcenode-interface/audiobuffersource-one-sample-loop.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audiobuffersourcenode-interface/audiobuffersource-output-channel-count.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 3
+    },
+    "webaudio/the-audio-api/the-audiobuffersourcenode-interface/audiobuffersource-playbackrate-dynamic-direction.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audiobuffersourcenode-interface/audiobuffersource-playbackrate-negative.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 4,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audiobuffersourcenode-interface/audiobuffersource-playbackrate-zero.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audiobuffersourcenode-interface/audiobuffersource-reverse-long-buffer.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audiobuffersourcenode-interface/audiobuffersource-start-null-buffer.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-audiobuffersourcenode-interface/audiobuffersource-start.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-audiobuffersourcenode-interface/audiosource-onended.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audiobuffersourcenode-interface/audiosource-time-limits.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audiobuffersourcenode-interface/buffer-resampling.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-audiobuffersourcenode-interface/ctor-audiobuffersource.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 2,
+      "lpOnly": 2
+    },
+    "webaudio/the-audio-api/the-audiobuffersourcenode-interface/looped-constant-buffer.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-audiobuffersourcenode-interface/note-grain-on-play.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-audiobuffersourcenode-interface/note-grain-on-timing.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audiobuffersourcenode-interface/sample-accurate-scheduling.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audiobuffersourcenode-interface/sub-sample-buffer-stitching.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 2,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audiobuffersourcenode-interface/sub-sample-scheduling.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 6,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audiocontext-interface/audiocontext-detached-execution-context.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 5,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audiocontext-interface/audiocontext-getoutputtimestamp-cross-realm.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 3,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audiocontext-interface/audiocontext-getoutputtimestamp.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audiocontext-interface/audiocontext-not-fully-active.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 10,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audiocontext-interface/audiocontext-playbackstats.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 4,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audiocontext-interface/audiocontext-rendersizehint.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 18,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audiocontext-interface/audiocontext-sinkid-constructor.https.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audiocontext-interface/audiocontext-sinkid-setsinkid.https.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audiocontext-interface/audiocontext-sinkid-state-change.https.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audiocontext-interface/audiocontext-suspend-resume.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 1
+    },
+    "webaudio/the-audio-api/the-audiocontext-interface/audiocontextoptions.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 7,
+      "lpOnly": 7
+    },
+    "webaudio/the-audio-api/the-audiocontext-interface/callback-detached-buffer.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-audiocontext-interface/constructor-allowed-to-start.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": true
+    },
+    "webaudio/the-audio-api/the-audiocontext-interface/context-time-monotonic-on-setsinkid.https.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-audiocontext-interface/processing-after-resume.https.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-audiocontext-interface/promise-methods-after-discard.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 3,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audiocontext-interface/suspend-after-construct.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 1,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audiocontext-interface/suspend-with-navigation.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-audionode-interface/audionode-channel-rules.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audionode-interface/audionode-connect-method-chaining.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 2,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audionode-interface/audionode-connect-order.html": {
+      "gained": true,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-audionode-interface/audionode-connect-return-value.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-audionode-interface/audionode-disconnect-audioparam.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 8,
+      "lpOnly": 2
+    },
+    "webaudio/the-audio-api/the-audionode-interface/audionode-disconnect.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 2,
+      "lpOnly": 2
+    },
+    "webaudio/the-audio-api/the-audionode-interface/audionode-iframe.window.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-audionode-interface/audionode.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-audionode-interface/channel-mode-interp-basic.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audionode-interface/different-contexts.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audioparam-interface/adding-events.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audioparam-interface/audioparam-cancel-and-hold.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 15,
+      "lpOnly": 3
+    },
+    "webaudio/the-audio-api/the-audioparam-interface/audioparam-close.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audioparam-interface/audioparam-connect-audioratesignal.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-audioparam-interface/audioparam-default-value.window.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audioparam-interface/audioparam-exceptional-values.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 9,
+      "lpOnly": 9
+    },
+    "webaudio/the-audio-api/the-audioparam-interface/audioparam-exponentialRampToValueAtTime.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audioparam-interface/audioparam-large-endtime.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audioparam-interface/audioparam-linearRampToValueAtTime.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audioparam-interface/audioparam-method-chaining.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audioparam-interface/audioparam-nominal-range.html": {
+      "gained": 9,
+      "lost": 0,
+      "added": 13,
+      "missing": 2,
+      "chromeOnly": 99,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audioparam-interface/audioparam-setTargetAtTime.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audioparam-interface/audioparam-setValueAtTime.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audioparam-interface/audioparam-setValueCurve-exceptions.html": {
+      "gained": 5,
+      "lost": 0,
+      "added": 4,
+      "missing": 0,
+      "chromeOnly": 16,
+      "lpOnly": 16
+    },
+    "webaudio/the-audio-api/the-audioparam-interface/audioparam-setValueCurveAtTime.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-audioparam-interface/audioparam-summingjunction.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-audioparam-interface/audioparam-zero-duration-ramp.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audioparam-interface/automation-rate.html": {
+      "gained": 1,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 1,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audioparam-interface/cancel-scheduled-values.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 1,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audioparam-interface/event-insertion.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audioparam-interface/exponentialRamp-special-cases.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audioparam-interface/k-rate-audiobuffersource-connections.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 1,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audioparam-interface/k-rate-audioworklet-connections.https.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-audioparam-interface/k-rate-audioworklet.https.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-audioparam-interface/k-rate-biquad-connection.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 9,
+      "lpOnly": 9
+    },
+    "webaudio/the-audio-api/the-audioparam-interface/k-rate-biquad.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audioparam-interface/k-rate-connections.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audioparam-interface/k-rate-constant-source.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audioparam-interface/k-rate-delay-connections.html": {
+      "gained": true,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-audioparam-interface/k-rate-delay.html": {
+      "gained": 10,
+      "lost": 0,
+      "added": 9,
+      "missing": 0,
+      "chromeOnly": 3,
+      "lpOnly": 3
+    },
+    "webaudio/the-audio-api/the-audioparam-interface/k-rate-dynamics-compressor-connections.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 5,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audioparam-interface/k-rate-gain.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 2,
+      "lpOnly": 2
+    },
+    "webaudio/the-audio-api/the-audioparam-interface/k-rate-oscillator-connections.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 5,
+      "lpOnly": 5
+    },
+    "webaudio/the-audio-api/the-audioparam-interface/k-rate-oscillator.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audioparam-interface/k-rate-panner-connections.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 44,
+      "lpOnly": 44
+    },
+    "webaudio/the-audio-api/the-audioparam-interface/k-rate-panner.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audioparam-interface/k-rate-stereo-panner.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 3,
+      "lpOnly": 3
+    },
+    "webaudio/the-audio-api/the-audioparam-interface/moderate-exponentialRamp.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-audioparam-interface/nan-param.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-audioparam-interface/retrospective-exponentialRampToValueAtTime.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 3,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audioparam-interface/retrospective-linearRampToValueAtTime.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 3,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audioparam-interface/retrospective-setTargetAtTime.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-audioparam-interface/retrospective-setValueAtTime.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-audioparam-interface/retrospective-setValueCurveAtTime.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 3,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audioparam-interface/set-target-conv.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-audioparam-interface/setTargetAtTime-after-event-within-block.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 1
+    },
+    "webaudio/the-audio-api/the-audioparam-interface/setValueAtTime-within-block.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-audioworklet-interface/audioworklet-addmodule-resolution.https.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-audioworklet-interface/audioworklet-audioparam-iterable.https.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 54,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audioworklet-interface/audioworklet-audioparam-range.https.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 2,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audioworklet-interface/audioworklet-audioparam-size.https.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 9,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audioworklet-interface/audioworklet-audioparam.https.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-audioworklet-interface/audioworklet-denormals.https.window.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-audioworklet-interface/audioworklet-messageport-wasm.https.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 1,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audioworklet-interface/audioworklet-messageport.https.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 2,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audioworklet-interface/audioworklet-postmessage-sharedarraybuffer.https.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 8,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audioworklet-interface/audioworklet-registerprocessor-called-on-globalthis.https.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 3,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audioworklet-interface/audioworklet-registerprocessor-constructor.https.window.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-audioworklet-interface/audioworklet-registerprocessor-dynamic.https.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-audioworklet-interface/audioworklet-rendersizehint.https.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 2,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audioworklet-interface/audioworklet-suspend.https.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 4,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audioworklet-interface/audioworklet-throw-onmessage.https.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-audioworklet-interface/audioworkletglobalscope-creation-time.https.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-audioworklet-interface/audioworkletglobalscope-sample-rate.https.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 7,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audioworklet-interface/audioworkletglobalscope-timing-info.https.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-audioworklet-interface/audioworkletnode-automatic-pull.https.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 4,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audioworklet-interface/audioworkletnode-channel-count.https.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-audioworklet-interface/audioworkletnode-construction.https.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 7,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audioworklet-interface/audioworkletnode-constructor-no-coop-coep.https.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-audioworklet-interface/audioworkletnode-constructor-options.https.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 5,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audioworklet-interface/audioworkletnode-disconnected-input.https.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-audioworklet-interface/audioworkletnode-lifetime.https.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-audioworklet-interface/audioworkletnode-onerror.https.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 2,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audioworklet-interface/audioworkletnode-output-channel-count.https.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-audioworklet-interface/audioworkletprocessor-malformed-process.https.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 5,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audioworklet-interface/audioworkletprocessor-options.https.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 2,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audioworklet-interface/audioworkletprocessor-param-getter-overridden.https.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-audioworklet-interface/audioworkletprocessor-process-frozen-array.https.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 8,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audioworklet-interface/audioworkletprocessor-process-zero-outputs.https.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 3,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audioworklet-interface/audioworkletprocessor-promises.https.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-audioworklet-interface/audioworkletprocessor-unconnected-outputs.https.window.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 2,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audioworklet-interface/baseaudiocontext-audioworklet.https.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 3,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audioworklet-interface/extended-audioworkletnode-with-parameters.https.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-audioworklet-interface/process-getter.https.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 2,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audioworklet-interface/process-parameters.https.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 2,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audioworklet-interface/processor-construction-port.https.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 4,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-audioworklet-interface/simple-input-output.https.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-audioworklet-interface/suspended-context-messageport.https.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 3,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-biquadfilternode-interface/biquad-allpass.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-biquadfilternode-interface/biquad-automation.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-biquadfilternode-interface/biquad-bandpass.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-biquadfilternode-interface/biquad-basic.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-biquadfilternode-interface/biquad-getFrequencyResponse.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 15,
+      "lpOnly": 15
+    },
+    "webaudio/the-audio-api/the-biquadfilternode-interface/biquad-highpass.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-biquadfilternode-interface/biquad-highshelf.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-biquadfilternode-interface/biquad-lowpass.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-biquadfilternode-interface/biquad-lowshelf.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-biquadfilternode-interface/biquad-notch.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-biquadfilternode-interface/biquad-peaking.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-biquadfilternode-interface/biquad-tail.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-biquadfilternode-interface/biquadfilter-rendersizehint.https.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-biquadfilternode-interface/biquadfilternode-basic.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-biquadfilternode-interface/ctor-biquadfilter.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-biquadfilternode-interface/no-dezippering.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 6,
+      "lpOnly": 6
+    },
+    "webaudio/the-audio-api/the-channelmergernode-interface/active-processing.https.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 2,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-channelmergernode-interface/audiochannelmerger-basic.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 4,
+      "lpOnly": 4
+    },
+    "webaudio/the-audio-api/the-channelmergernode-interface/audiochannelmerger-disconnect.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-channelmergernode-interface/audiochannelmerger-input-non-default.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-channelmergernode-interface/audiochannelmerger-input.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-channelmergernode-interface/ctor-channelmerger.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-channelsplitternode-interface/audiochannelsplitter.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-channelsplitternode-interface/ctor-channelsplitter.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-constantsourcenode-interface/constant-source-basic.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-constantsourcenode-interface/constant-source-onended-not-connected.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-constantsourcenode-interface/constant-source-onended.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-constantsourcenode-interface/constant-source-output.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 1,
+      "lpOnly": 1
+    },
+    "webaudio/the-audio-api/the-constantsourcenode-interface/ctor-constantsource.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 2,
+      "lpOnly": 2
+    },
+    "webaudio/the-audio-api/the-constantsourcenode-interface/test-constantsourcenode.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-convolvernode-interface/active-processing.https.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 2,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-convolvernode-interface/convolution-mono-mono.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 6,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-convolvernode-interface/convolver-cascade.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 3,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-convolvernode-interface/convolver-channels.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 34,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-convolvernode-interface/convolver-rendersizehint.https.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 5,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-convolvernode-interface/convolver-response-1-chan.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 43,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-convolvernode-interface/convolver-response-2-chan.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 36,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-convolvernode-interface/convolver-response-4-chan.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 35,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-convolvernode-interface/convolver-setBuffer-already-has-value.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 8,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-convolvernode-interface/convolver-setBuffer-null.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 4,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-convolvernode-interface/convolver-upmixing-1-channel-response.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 3,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-convolvernode-interface/ctor-convolver.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 6,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-convolvernode-interface/realtime-conv.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-convolvernode-interface/transferred-buffer-output.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 4,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-delaynode-interface/ctor-delay.html": {
+      "gained": 41,
+      "lost": 3,
+      "added": 38,
+      "missing": 7,
+      "chromeOnly": 6,
+      "lpOnly": 6
+    },
+    "webaudio/the-audio-api/the-delaynode-interface/delay-test.html": {
+      "gained": 7,
+      "lost": 0,
+      "added": 6,
+      "missing": 3,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-delaynode-interface/delaynode-channel-count-1.html": {
+      "gained": true,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": true
+    },
+    "webaudio/the-audio-api/the-delaynode-interface/delaynode-max-default-delay.html": {
+      "gained": 3,
+      "lost": 0,
+      "added": 2,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-delaynode-interface/delaynode-max-nondefault-delay.html": {
+      "gained": 3,
+      "lost": 0,
+      "added": 2,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-delaynode-interface/delaynode-maxdelay.html": {
+      "gained": 3,
+      "lost": 0,
+      "added": 2,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-delaynode-interface/delaynode-maxdelaylimit.html": {
+      "gained": 9,
+      "lost": 1,
+      "added": 8,
+      "missing": 5,
+      "chromeOnly": 4,
+      "lpOnly": 4
+    },
+    "webaudio/the-audio-api/the-delaynode-interface/delaynode-scheduling.html": {
+      "gained": 3,
+      "lost": 0,
+      "added": 2,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-delaynode-interface/delaynode.html": {
+      "gained": 8,
+      "lost": 0,
+      "added": 7,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-delaynode-interface/maxdelay-rounding.html": {
+      "gained": true,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-delaynode-interface/no-dezippering.html": {
+      "gained": 13,
+      "lost": 0,
+      "added": 10,
+      "missing": 0,
+      "chromeOnly": 2,
+      "lpOnly": 2
+    },
+    "webaudio/the-audio-api/the-destinationnode-interface/destination.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-dynamicscompressornode-interface/ctor-dynamicscompressor.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 4,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-dynamicscompressornode-interface/dynamicscompressor-basic.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 9,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-gainnode-interface/ctor-gain.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-gainnode-interface/gain-basic.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-gainnode-interface/gain.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-gainnode-interface/no-dezippering.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-iirfilternode-interface/ctor-iirfilter.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-iirfilternode-interface/iirfilter-basic.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 18,
+      "lpOnly": 18
+    },
+    "webaudio/the-audio-api/the-iirfilternode-interface/iirfilter-getFrequencyResponse.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-iirfilternode-interface/iirfilter-normalization-precision.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-iirfilternode-interface/iirfilter.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 3,
+      "lpOnly": 3
+    },
+    "webaudio/the-audio-api/the-iirfilternode-interface/test-iirfilternode.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-mediaelementaudiosourcenode-interface/cors-check.https.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 13,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-mediaelementaudiosourcenode-interface/mediaElementAudioSourceToScriptProcessorTest.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 3,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-mediaelementaudiosourcenode-interface/mediaElementAudioSource_volumeChange.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 1,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-mediaelementaudiosourcenode-interface/no-cors.https.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 13,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-mediaelementaudiosourcenode-interface/setSinkId-with-MediaElementAudioSourceNode.https.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-mediastreamaudiodestinationnode-interface/closed-audiocontext-construction.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-mediastreamaudiodestinationnode-interface/ctor-mediastreamaudiodestination.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 3,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-mediastreamaudiosourcenode-interface/mediastreamaudiosourcenode-ctor.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 4,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-mediastreamaudiosourcenode-interface/mediastreamaudiosourcenode-from-context-with-different-rate.https.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 8,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-mediastreamaudiosourcenode-interface/mediastreamaudiosourcenode-routing.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-offlineaudiocontext-interface/ctor-offlineaudiocontext.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 17,
+      "lpOnly": 6
+    },
+    "webaudio/the-audio-api/the-offlineaudiocontext-interface/current-time-block-size.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-offlineaudiocontext-interface/decodeAudioData-oversized-resample.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-offlineaudiocontext-interface/offlineaudiocontext-close.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 5,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-offlineaudiocontext-interface/offlineaudiocontext-detached-execution-context.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 5,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-offlineaudiocontext-interface/offlineaudiocontext-incremental-rendering-data-integrity.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-offlineaudiocontext-interface/offlineaudiocontext-incremental-rendering.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 7,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-offlineaudiocontext-interface/offlineaudiocontext-rendersizehint.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 17,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-offlineaudiocontext-interface/offlineaudiocontext-suspend-rendersizehint.https.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-offlineaudiocontext-interface/startrendering-after-discard.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-oscillatornode-interface/ctor-oscillator.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 12,
+      "lpOnly": 6
+    },
+    "webaudio/the-audio-api/the-oscillatornode-interface/detune-limiting.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 2,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-oscillatornode-interface/detune-overflow.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-oscillatornode-interface/osc-basic-waveform.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 8,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-oscillatornode-interface/sub-sample-start.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 4
+    },
+    "webaudio/the-audio-api/the-pannernode-interface/automation-changes.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-pannernode-interface/ctor-panner.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 42,
+      "lpOnly": 20
+    },
+    "webaudio/the-audio-api/the-pannernode-interface/distance-exponential.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-pannernode-interface/distance-inverse.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-pannernode-interface/distance-linear.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-pannernode-interface/offline-hrtf-active-immediately.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-pannernode-interface/panner-automation-basic.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 9,
+      "lpOnly": 9
+    },
+    "webaudio/the-audio-api/the-pannernode-interface/panner-automation-equalpower-stereo.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-pannernode-interface/panner-automation-position.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 11,
+      "lpOnly": 11
+    },
+    "webaudio/the-audio-api/the-pannernode-interface/panner-azimuth.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-pannernode-interface/panner-distance-clamping.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 18,
+      "lpOnly": 18
+    },
+    "webaudio/the-audio-api/the-pannernode-interface/panner-equalpower-stereo.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-pannernode-interface/panner-equalpower.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-pannernode-interface/panner-hrtf-negative-elevation.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 4,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-pannernode-interface/panner-non-finite-distance-params.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-pannernode-interface/panner-orientation-cone-gain-changes.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-pannernode-interface/panner-rolloff-clamping.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-pannernode-interface/pannernode-basic.window.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-pannernode-interface/pannernode-setposition-throws.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-pannernode-interface/test-pannernode-automation.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-periodicwave-interface/createPeriodicWaveInfiniteValuesThrows.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-periodicwave-interface/periodicWave.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 16,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-scriptprocessornode-interface/scriptprocessor-rendersizehint.https.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 5,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-scriptprocessornode-interface/simple-input-output.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-stereopanner-interface/ctor-stereopanner.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 8,
+      "lpOnly": 8
+    },
+    "webaudio/the-audio-api/the-stereopanner-interface/no-dezippering.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 6,
+      "lpOnly": 6
+    },
+    "webaudio/the-audio-api/the-stereopanner-interface/stereopannernode-basic.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 2,
+      "lpOnly": 2
+    },
+    "webaudio/the-audio-api/the-stereopanner-interface/stereopannernode-panning.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-waveshapernode-interface/ctor-waveshaper.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 42,
+      "lpOnly": 3
+    },
+    "webaudio/the-audio-api/the-waveshapernode-interface/curve-tests.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 7,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-waveshapernode-interface/silent-inputs.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 3,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-waveshapernode-interface/waveshaper-copy-curve.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-waveshapernode-interface/waveshaper-limits.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "webaudio/the-audio-api/the-waveshapernode-interface/waveshaper-simple.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 14,
+      "lpOnly": 0
+    },
+    "webaudio/the-audio-api/the-waveshapernode-interface/waveshaper.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    }
+  }
+}
