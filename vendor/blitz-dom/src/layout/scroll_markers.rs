@@ -1246,12 +1246,8 @@ impl BaseDocument {
                 .iter()
                 .map(|&i| chains[i].get(level).map(|&id| (id, None)).unwrap_or(live[i].1))
                 .collect();
-            let mut unique: Vec<Target> = Vec::new();
-            for &r in &representatives {
-                if !unique.contains(&r) {
-                    unique.push(r);
-                }
-            }
+            let mut seen = std::collections::HashSet::new();
+            let unique: Vec<Target> = representatives.iter().copied().filter(|target| seen.insert(*target)).collect();
             let active = match self.select_by_scroll_target(scroller, &unique) {
                 Some(active) => active,
                 None => self.select_in_scroller(scroller, &unique)?,
@@ -1282,10 +1278,13 @@ impl BaseDocument {
         };
         let border = self.nodes[id].final_layout().border;
         let fragment = self.nodes[id]
-            .column_fragments()
-            .and_then(|columns| columns.fragments.iter().filter(|fragment| !fragment.spanner).nth(index as usize).copied());
+            .columns_with_axes()
+            .and_then(|(columns, axes)| columns.marker_slot(index as usize).map(|slot| (slot, axes)));
         match fragment {
-            Some(f) => (f.x - border.left, f.top - border.top, f.width, f.height),
+            Some((slot, axes)) => {
+                let rect = axes.transform_rect_bbox(kurbo::Rect::new(slot.x.into(), slot.top.into(), (slot.x + slot.width).into(), (slot.top + slot.height).into()));
+                (rect.x0 as f32 - border.left, rect.y0 as f32 - border.top, rect.width() as f32, rect.height() as f32)
+            }
             None => (0.0, 0.0, 0.0, 0.0),
         }
     }
@@ -1527,8 +1526,7 @@ impl BaseDocument {
         });
         let count = match wanted {
             true => self.nodes[container]
-                .column_fragments()
-                .map_or(0, |columns| columns.fragments.iter().filter(|fragment| !fragment.spanner).count()),
+                .columns_with_axes().map_or(0, |(columns, _)| columns.marker_count()),
             false => 0,
         };
         if let Some(pseudos) = self.nodes[container].element_data_mut().and_then(|data| data.scroll.as_mut()) {
@@ -1561,8 +1559,7 @@ impl BaseDocument {
             return false;
         };
         let count = self.nodes[container]
-            .column_fragments()
-            .map_or(0, |columns| columns.fragments.iter().filter(|fragment| !fragment.spanner).count());
+            .columns_with_axes().map_or(0, |(columns, _)| columns.marker_count());
         count as u32 != wanted
     }
 }
@@ -1609,14 +1606,7 @@ impl BaseDocument {
         for &candidate in candidates {
             let at_or_before = match candidate {
                 (container, Some(index)) => target_columns.entry(container).or_insert_with(|| {
-                    let (_, y, _, _) = self.layout_rect_in_scroller(container, target, true);
-                    let strip_y = y + self.nodes[container].unrounded_layout().border.top;
-                    let mut ordinal = 0;
-                    for fragment in &self.nodes[container].column_fragments()?.fragments {
-                        if strip_y < fragment.strip_end { return (!fragment.spanner).then_some(ordinal); }
-                        ordinal += usize::from(!fragment.spanner);
-                    }
-                    None
+                    self.nodes[container].columns_with_axes()?.0.marker_for(target)
                 }).is_some_and(|column| index as usize <= column),
                 (id, None) => self.tree_path(id) <= path,
             };

@@ -5948,7 +5948,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +    /// pyro: while a multi-column container paints a column without a block-axis clip: the
 +    /// container, the column's strip range (CSS px), its transform and its clip rectangle (the
 +    /// container's space, device px) for the boxes a break goes through (`draw_paint_child`).
-+    pub(crate) column_range: std::cell::Cell<Option<(NodeId, f32, f32, Affine, Rect)>>,
++    pub(crate) column_range: std::cell::Cell<Option<(NodeId, usize, Affine, Rect)>>,
 +    /// pyro: while a multi-column container paints a spanner's row: the container, whose boxes
 +    /// that carry the spanner do not paint their own box there (the row is no part of them).
 +    pub(crate) spanner_row_container: std::cell::Cell<Option<NodeId>>,
@@ -7508,10 +7508,10 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            scene.push_clip_layer(Fill::NonZero, Affine::IDENTITY, device_clip);
 +        }
 +
-+        let wrapper_clip = self.column_range.get().filter(|(container, _, _, _, _)| {
++        let wrapper_clip = self.column_range.get().filter(|(container, _, _, _)| {
 +            self.dom.get_node(*container).and_then(|node| node.columns_with_axes()).is_some_and(|(columns, _)| columns.run_wrappers.contains(&node.id))
 +        });
-+        if let Some((_, _, _, transform, rect)) = wrapper_clip {
++        if let Some((_, _, transform, rect)) = wrapper_clip {
 +            scene.push_clip_layer(Fill::NonZero, transform, &rect);
 +        }
 +        if paints_own_box {
@@ -9154,7 +9154,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      /// thumb-drag hit testing in blitz-dom.
      #[cfg(feature = "scrollbars")]
      fn draw_scrollbars(&self, scene: &mut impl PaintScene) {
-@@ -967,271 +3364,3850 @@
+@@ -967,271 +3364,3793 @@
          }
      }
  
@@ -12049,15 +12049,6 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        }
 +    }
 +
-+    /// pyro: the multi-column container (horizontal, no transform between) below this element
-+    /// that `child_id`, which this element paints, is in: the container, its border box's offset
-+    /// from this element's (CSS px), and the child's border box range in its strip (its overflow
-+    /// below included).
-+    fn multicol_between(&self, child_id: NodeId) -> Option<(NodeId, Vec2, f32, f32)> {
-+        let (container, origin, top, bottom) = self.node.multicol_between(child_id)?;
-+        Some((container, Vec2::new(origin.x as f64, origin.y as f64), top, bottom))
-+    }
-+
 +    /// pyro: the background and borders of `child_id`'s fragment in a column with strip range
 +    /// `start..end` of multi-column container `container` (`transform`: the column's), where the
 +    /// child is of `box-decoration-break: clone` and a break goes through it there: its border box
@@ -12123,46 +12114,6 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            cx.draw_background(scene);
 +        }
 +        cx.draw_border(scene);
-+    }
-+
-+    /// pyro: how a column with strip range `start..end` of multi-column container `container`
-+    /// shares the border box of its paint child `child_id` (see `PaintContext::column_range`).
-+    fn column_share(&self, container: NodeId, child_id: NodeId, start: f32, end: f32) -> ColumnShare {
-+        let tree = self.context.dom.as_ref().tree();
-+        let child = &tree[child_id];
-+        let vertical = tree[container].vertical_column_fragments().is_some();
-+        let layout = |id: NodeId| if vertical { tree[id].unrounded_layout() } else { tree[id].final_layout() };
-+        let size = layout(child_id).size;
-+        let mut top = layout(child_id).location.y;
-+        let mut at = child.layout_parent.get();
-+        let mut steps = 0;
-+        while let Some(parent) = at.filter(|&p| p != container) {
-+            steps += 1;
-+            if steps > 64 {
-+                return ColumnShare::Cut;
-+            }
-+            top += layout(parent).location.y;
-+            at = tree[parent].layout_parent.get();
-+        }
-+        if at.is_none() {
-+            return ColumnShare::Cut;
-+        }
-+        // (What overflows it below counts: it goes on in the columns after.)
-+        let overflow = layout(child_id).scrollable_overflow_rect.bottom().abs();
-+        // (A nested multi-column container may show content in any later column: its spanners'
-+        // overflow is not in its overflow rectangle.)
-+        let bottom = if child.column_fragments().is_some() { f32::INFINITY } else { top + size.height.max(overflow) };
-+        const EPS: f32 = 0.01;
-+        if top >= start - EPS && top < end - EPS {
-+            // (Starts in the column.)
-+            ColumnShare::Inside
-+        } else if top < start - EPS && bottom > start + EPS {
-+            ColumnShare::Cut
-+        } else if top < start - EPS && size.height <= EPS && start.is_infinite() {
-+            ColumnShare::Inside
-+        } else {
-+            ColumnShare::Outside
-+        }
 +    }
 +
 +    /// pyro: whether `child_id` is left out of this pass of a multi-column container's children
@@ -12299,21 +12250,14 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        // it is in, moved and clipped as the column's own content (Chromium; WPT css-multicol
 +        // `ancestor-toggle-spanner-002`).
 +        if !self.context.hoisted_in_column.get()
-+            && let Some((container, origin, child_top, child_bottom)) = self.multicol_between(child_id)
-+            && let Some(columns) = self.context.dom.as_ref().column_fragments(container)
-+            && columns.fragments.len() > 1
++            && let Some(pieces) = self.node.hoisted_projections(child_id)
 +        {
 +            let scale = self.scale;
 +            self.context.hoisted_in_column.set(true);
 +            // (The columns its range reaches, not spanners' rows: `ColumnFragments::hoisted_columns`.)
-+            for fragment in columns.hoisted_columns(child_top, child_bottom) {
-+                let range = Rect::new(
-+                    -1e7,
-+                    ((origin.y + fragment.start as f64) * scale).max(-1e7),
-+                    1e7,
-+                    ((origin.y + fragment.end as f64) * scale).min(1e7),
-+                );
-+                let offset = Vec2::new(fragment.offset.x as f64 * scale, fragment.offset.y as f64 * scale);
++            for (clip, offset, _) in pieces {
++                let range = Affine::scale(scale).transform_rect_bbox(clip);
++                let offset = offset * scale;
 +                let moved = parent_style_transform.pre_translate(offset);
 +                let pushed = self.context.layer_manager.maybe_push_layer(
 +                    scene,
@@ -12336,11 +12280,13 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +        // overflows it above shows, as in Chromium; what runs past its end goes on in the next
 +        // column), one that runs in from an earlier column is cut at both edges, and one wholly
 +        // in another column is left to it.
-+        if let Some((container, start, end, transform, outer_range)) = self.context.column_range.get()
++        if let Some((container, slot, transform, outer_range)) = self.context.column_range.get()
 +            && let Some((columns, axes)) = self.context.dom.get_node(container).and_then(|host| host.columns_with_axes())
 +            && (container == self.node.id || columns.run_wrappers.contains(&self.node.id))
 +            && !columns.run_wrappers.contains(&child_id)
 +        {
++            let fragment = &columns.fragments[slot];
++            let (start, end) = (fragment.start, fragment.end);
 +            // (A positioned inline box listed in the paint tree paints its lines from the entries
 +            // its root recorded, each clipped to its column (`inline_pass_entries`): once, not
 +            // sorted by its box: WPT css-position `position-absolute-in-inline-007a`.)
@@ -12362,12 +12308,15 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            if ranged && !unranged {
 +                self.context.column_range.set(None);
 +                self.draw_paint_child(scene, child_id, parent_style_transform, clip_rect);
-+                self.context.column_range.set(Some((container, start, end, transform, outer_range)));
++                self.context.column_range.set(Some((container, slot, transform, outer_range)));
 +                return;
 +            }
 +            let range = outer_range;
-+            let Some(effective_start) = columns.child_start(child_id, start) else { return };
-+            let share = if unranged { ColumnShare::Cut } else { self.column_share(container, child_id, effective_start, end) };
++            let share = if unranged { ColumnShare::Cut } else { match columns.continuation_index(child_id, slot) {
++                Some(0) => ColumnShare::Inside,
++                Some(_) => ColumnShare::Cut,
++                None => ColumnShare::Outside,
++            } };
 +            match share {
 +                ColumnShare::Outside => return,
 +                ColumnShare::Inside | ColumnShare::Cut => {
@@ -12396,7 +12345,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                    // (Its own descendants are not sorted again.)
 +                    self.context.column_range.set(None);
 +                    self.draw_paint_child(scene, child_id, parent_style_transform, clip_rect);
-+                    self.context.column_range.set(Some((container, start, end, transform, outer_range)));
++                    self.context.column_range.set(Some((container, slot, transform, outer_range)));
 +                    self.context.layer_manager.maybe_pop_layer(scene, pushed);
 +                    // (Repeated borders inside the slice go over its own painting.)
 +                    self.draw_clone_fragment(scene, container, child_id, start, end, transform, true);
@@ -12874,9 +12823,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +            // element is painted in each column it is in, moved and clipped as the column's own
 +            // content (Chromium; WPT css-multicol `ancestor-toggle-spanner-002`).
 +            if clips.is_empty()
-+                && let Some((container, origin, child_top, child_bottom)) = self.multicol_between(hoisted_child.node_id)
-+                && let Some(columns) = self.context.dom.as_ref().column_fragments(container)
-+                && columns.fragments.len() > 1
++                && let Some(pieces) = self.node.hoisted_projections(hoisted_child.node_id)
 +            {
 +                for &(_, _, pushed) in open.iter().rev() {
 +                    self.context.layer_manager.maybe_pop_layer(scene, pushed);
@@ -12884,27 +12831,23 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
 +                open.clear();
 +                let scale = self.scale;
 +                // (At its place in the strip, which each column moves: not in the column it starts in.)
-+                let strip = blitz_dom::hoisted_child_strip_position(self.node.tree(), self.node.id, hoisted_child.node_id, container);
++                let strip = blitz_dom::hoisted_child_strip_position(self.node.tree(), self.node.id, hoisted_child.node_id);
 +                let child_node = &self.node.tree()[hoisted_child.node_id];
 +                let pos = kurbo::Vec2 { x: (strip.x + sticky.x) as f64 * self.scale, y: (strip.y + sticky.y) as f64 * self.scale };
 +                // (The columns its range reaches, not spanners' rows: as hit testing finds it.)
-+                for fragment in columns.hoisted_columns(child_top, child_bottom) {
-+                    let range = Rect::new(
-+                        -1e7,
-+                        ((origin.y + fragment.start as f64) * scale).max(-1e7),
-+                        1e7,
-+                        ((origin.y + fragment.end as f64) * scale).min(1e7),
-+                    );
++                for (clip, offset, exact) in pieces {
++                    let range = Affine::scale(scale).transform_rect_bbox(clip);
 +                    // (Its border box where Chromium snaps it: the column's exact edge plus its own
 +                    // unrounded place, rounded; not the rounded column edge plus its rounded place,
 +                    // which takes a box flush with the last column's end past the container's:
 +                    // WPT css-multicol `multicol-gap-fraction-002`.)
-+                    let exact = if fragment.exact_x.is_finite() { fragment.exact_x - fragment.x } else { 0.0 };
 +                    let unrounded = child_node.unrounded_layout().location.x as f64;
 +                    let rounded = child_node.final_layout().location.x as f64;
 +                    let along = strip.x as f64 + sticky.x as f64;
-+                    let x = (((fragment.offset.x + exact) as f64 + along + unrounded) * scale).round() - (along + rounded) * scale;
-+                    let offset = Vec2::new(x, fragment.offset.y as f64 * scale);
++                    let offset = exact.map_or(offset * scale, |correction| {
++                        let x = ((offset.x + correction + along + unrounded) * scale).round() - (along + rounded) * scale;
++                        Vec2::new(x, offset.y * scale)
++                    });
 +                    let moved = parent_style_transform.pre_translate(offset);
 +                    let pushed =
 +                        self.context.layer_manager.maybe_push_layer(scene, true, BlendMode::default(), 1.0, moved, &range, None, None);
@@ -13253,7 +13196,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          let svg_size = svg.tree.size();
  
          let x = self.frame.content_box.origin().x;
-@@ -1253,9 +7229,20 @@
+@@ -1253,9 +7172,20 @@
  
          // Apply object-fit algorithm
          let container_size = taffy::Size { width, height };
@@ -13277,7 +13220,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          };
          let paint_size = compute_object_fit(container_size, Some(object_size), object_fit);
  
-@@ -1266,26 +7253,209 @@
+@@ -1266,26 +7196,209 @@
          let y_offset = object_position.vertical.resolve(
              CSSPixelLength::new(container_size.height - paint_size.height) / self.scale as f32,
          ) * self.scale as f32;
@@ -13489,7 +13432,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      fn with_replaced_content_clip<S: PaintScene>(
          &self,
          scene: &mut S,
-@@ -1293,15 +7463,38 @@
+@@ -1293,15 +7406,38 @@
          paint_size: taffy::Size<f32>,
          x_offset: f32,
          y_offset: f32,
@@ -13529,7 +13472,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              BlendMode::default(),
              1.0,
              self.transform,
-@@ -1312,7 +7505,108 @@
+@@ -1312,7 +7448,108 @@
          );
      }
  
@@ -13638,7 +13581,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          if let Some(image) = self.element.raster_image_data() {
              let width = self.frame.content_box.width() as u32;
              let height = self.frame.content_box.height() as u32;
-@@ -1329,9 +7623,22 @@
+@@ -1329,9 +7566,22 @@
                  width: width as f32,
                  height: height as f32,
              };
@@ -13664,7 +13607,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
              };
              let paint_size = compute_object_fit(container_size, Some(object_size), object_fit);
  
-@@ -1347,10 +7654,28 @@
+@@ -1347,10 +7597,28 @@
  
              let x_scale = paint_size.width as f64 / object_size.width as f64;
              let y_scale = paint_size.height as f64 / object_size.height as f64;
@@ -13693,7 +13636,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  
              self.with_replaced_content_clip(
                  scene,
-@@ -1358,8 +7683,23 @@
+@@ -1358,8 +7626,23 @@
                  paint_size,
                  x_offset.px(),
                  y_offset.px(),
@@ -13718,7 +13661,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
                  },
              );
          }
-@@ -1383,22 +7723,32 @@
+@@ -1383,22 +7666,32 @@
              let width = self.frame.content_box.width() as u32;
              let height = self.frame.content_box.height() as u32;
  
@@ -13761,7 +13704,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
          }
      }
  
-@@ -1427,6 +7777,32 @@
+@@ -1427,6 +7720,32 @@
      }
  }
  
@@ -13794,7 +13737,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
  fn insets_from_taffy_rect(input: taffy::Rect<f64>) -> Insets {
      Insets {
          x0: input.left,
-@@ -1438,6 +7814,13 @@
+@@ -1438,6 +7757,13 @@
  
  /// Convert Stylo and Taffy types into Kurbo types
  fn create_css_rect(style: &ComputedValues, layout: &Layout, scale: f64) -> CssBox {
@@ -13808,7 +13751,7 @@ diff --git a/packages/blitz-paint/src/render.rs b/packages/blitz-paint/src/rende
      // Resolve and rescale
      // We have to scale since document pixels are not same same as rendered pixels
      let width: f64 = layout.size.width as f64;
-@@ -1457,12 +7840,364 @@
+@@ -1457,12 +7783,364 @@
          }
      };
      let s_border = style.get_border();
@@ -23181,7 +23124,7 @@ new file mode 100644
 +        let outer_pass = self.context.multicol_pass.replace(Some((self.node.id, false)));
 +        let row_spanners = self.context.dom.as_ref().column_spanners_in_order(self.node.id);
 +        let mut spanner_row = 0usize;
-+        for fragment in &columns.fragments {
++        for (slot, fragment) in columns.fragments.iter().enumerate() {
 +            let (start, end) = (fragment.start as f64, fragment.end as f64);
 +            let offset = (axes * Point::new(fragment.offset.x as f64, fragment.offset.y as f64) - axes * Point::ORIGIN) * scale;
 +            let block_range = |low: f64, high: f64| (Affine::scale(scale) * axes).transform_rect_bbox(Rect::new(-UNBOUNDED / scale, low.max(-UNBOUNDED / scale), UNBOUNDED / scale, high.min(UNBOUNDED / scale)));
@@ -23281,7 +23224,7 @@ new file mode 100644
 +            let outer_range = self
 +                .context
 +                .column_range
-+                .replace(unclipped.then_some((self.node.id, fragment.start, fragment.end, transform, range)));
++                .replace(unclipped.then_some((self.node.id, slot, transform, range)));
 +            self.draw_children(scene, transform, if single || unclipped { clip_rect } else { column_clip });
 +            self.context.column_range.set(outer_range);
 +            if let Some((spanner, rest_range)) = last_row_rest {
@@ -23291,7 +23234,7 @@ new file mode 100644
 +                let outer_range = self
 +                    .context
 +                    .column_range
-+                    .replace(Some((self.node.id, fragment.start, fragment.end, transform, rest_range)));
++                    .replace(Some((self.node.id, slot, transform, rest_range)));
 +                self.draw_children(scene, transform, clip_rect);
 +                self.context.column_range.set(outer_range);
 +                self.context.spanner_row_except.set(outer_except);

@@ -41,6 +41,18 @@ const BLUE: [u8; 3] = [0, 0, 255];
 const BLACK: [u8; 3] = [0, 0, 0];
 
 #[test]
+fn hoisted_layer_uses_its_column_continuations() {
+    let nested = render("<style>*{margin:0}main{width:240px;height:40px;columns:2;column-fill:auto;gap:0}section{columns:2;gap:0}header{height:110px}article{height:30px;position:relative;z-index:1;background:red}footer{height:20px}</style><main><section><header></header><article></article><footer></footer></section></main>", 1.0);
+    check(&nested, 1.0, &[(124., 35., [255, 0, 0]), (184., 10., [255, 0, 0]), (124., 29., WHITE), (184., 20., WHITE)], "composed column continuations");
+    for (direction, top) in [("ltr", 60.), ("rtl", 0.)] {
+        let image = render(&format!("<style>*{{margin:0}}main{{writing-mode:vertical-lr;direction:{direction};inline-size:120px;block-size:50px;columns:2;column-fill:auto;gap:0}}header{{block-size:50px}}article{{position:relative;z-index:1;block-size:20px;background:red}}</style><main><header></header><article></article></main>"), 1.0);
+        check(&image, 1.0, &[(10., top + 30., [255, 0, 0]), (60., 30., WHITE)], direction);
+    }
+    let image = render("<style>*{margin:0}section{width:100px;columns:2;gap:0}header{height:60px}aside{column-span:all;height:40px}article{width:120px;height:100px;margin-top:-70px;position:relative;z-index:1;background:red}</style><section><div><header></header><aside></aside><article></article></div></section>", 1.0);
+    assert_eq!(pixel(&image, 1., 10., 40.), [255, 0, 0]);
+}
+
+#[test]
 fn post_spanner_overflow_paints_in_its_own_column_run() {
     let image = render(include_str!("fixtures/owned-column-overflow.html"), 1.0);
     check(&image, 1.0, &[(5.0, 10.0, GREEN), (95.0, 40.0, GREEN), (95.0, 84.0, GREEN),

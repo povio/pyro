@@ -41,7 +41,7 @@ impl ElementCx<'_, '_> {
         let outer_pass = self.context.multicol_pass.replace(Some((self.node.id, false)));
         let row_spanners = self.context.dom.as_ref().column_spanners_in_order(self.node.id);
         let mut spanner_row = 0usize;
-        for fragment in &columns.fragments {
+        for (slot, fragment) in columns.fragments.iter().enumerate() {
             let (start, end) = (fragment.start as f64, fragment.end as f64);
             let offset = (axes * Point::new(fragment.offset.x as f64, fragment.offset.y as f64) - axes * Point::ORIGIN) * scale;
             let block_range = |low: f64, high: f64| (Affine::scale(scale) * axes).transform_rect_bbox(Rect::new(-UNBOUNDED / scale, low.max(-UNBOUNDED / scale), UNBOUNDED / scale, high.min(UNBOUNDED / scale)));
@@ -141,7 +141,7 @@ impl ElementCx<'_, '_> {
             let outer_range = self
                 .context
                 .column_range
-                .replace(unclipped.then_some((self.node.id, fragment.start, fragment.end, transform, range)));
+                .replace(unclipped.then_some((self.node.id, slot, transform, range)));
             self.draw_children(scene, transform, if single || unclipped { clip_rect } else { column_clip });
             self.context.column_range.set(outer_range);
             if let Some((spanner, rest_range)) = last_row_rest {
@@ -151,7 +151,7 @@ impl ElementCx<'_, '_> {
                 let outer_range = self
                     .context
                     .column_range
-                    .replace(Some((self.node.id, fragment.start, fragment.end, transform, rest_range)));
+                    .replace(Some((self.node.id, slot, transform, rest_range)));
                 self.draw_children(scene, transform, clip_rect);
                 self.context.column_range.set(outer_range);
                 self.context.spanner_row_except.set(outer_except);

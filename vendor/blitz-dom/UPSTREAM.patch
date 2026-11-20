@@ -20227,7 +20227,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  pub(crate) fn resolve_calc_value(calc_ptr: *const (), parent_size: f32) -> f32 {
      let calc = unsafe { &*(calc_ptr as *const CalcLengthPercentage) };
      let result = calc.resolve(CSSPixelLength::new(parent_size));
-@@ -101,9 +157,68 @@
+@@ -101,9 +157,69 @@
      /// size, against which its percentage padding resolves (see `layout::writing_mode`).
      #[cfg(feature = "writing-mode")]
      pub(crate) orthogonal_percent_basis: Option<(crate::NodeId, f32)>,
@@ -20240,6 +20240,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +    /// pyro: the multi-column container whose strip is being laid out and its content box width,
 +    /// while it has column spanners (`layout::multicol`).
 +    pub(crate) column_spanners: Option<(crate::NodeId, f32)>,
++    spanners_by_owner: std::collections::HashMap<crate::NodeId, Vec<crate::NodeId>>,
 +    /// pyro: the sizes `calc_size_inputs` measured for boxes this pass (box, axis 0 width or 1
 +    /// height, size): a parent that hands one back as a known size hands back the result.
 +    calc_size_results: Vec<(NodeId, u8, f32)>,
@@ -20296,7 +20297,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      /// The containing block's inline size when `dom_id` is the box currently laid out in an orthogonal
      /// flow: its percentage padding resolves against it (see `layout::writing_mode`).
      #[inline]
-@@ -138,6 +253,25 @@
+@@ -138,6 +254,26 @@
              current_align_axis_is_inline: false,
              #[cfg(feature = "writing-mode")]
              orthogonal_percent_basis: None,
@@ -20304,6 +20305,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +            #[cfg(feature = "writing-mode")]
 +            round_counts: (0, 0),
 +            column_spanners: None,
++            spanners_by_owner: Default::default(),
 +            calc_size_results: Vec::new(),
 +            try_styles: Default::default(),
 +            try_options: Default::default(),
@@ -20322,7 +20324,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          }
      }
  }
-@@ -174,14 +308,25 @@
+@@ -174,14 +310,25 @@
          inputs: taffy::tree::LayoutInput,
          block_ctx: Option<&mut BlockContext<'_>>,
      ) -> taffy::tree::LayoutOutput {
@@ -20356,7 +20358,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      /// Lay out `node_id` in the writing mode of the currently running algorithm (its parent's)
-@@ -191,13 +336,558 @@
+@@ -191,13 +338,558 @@
          inputs: taffy::tree::LayoutInput,
          block_ctx: Option<&mut BlockContext<'_>>,
      ) -> taffy::tree::LayoutOutput {
@@ -20917,7 +20919,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      /// The style of a node being laid out *by* the node whose algorithm is currently running,
      /// expressed in that node's writing mode (see `layout::writing_mode`).
      #[inline]
-@@ -217,13 +907,190 @@
+@@ -217,13 +909,190 @@
          }
      }
  
@@ -21108,7 +21110,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          let node = &mut self.nodes[dom_node_id(node_id)];
  
          let font_styles = node.primary_styles().map(|style| {
-@@ -239,8 +1106,43 @@
+@@ -239,8 +1108,43 @@
              (font_size, line_height)
          });
          let font_size = font_styles.map(|s| s.0);
@@ -21153,7 +21155,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          match &mut node.data {
              NodeData::Text(data) => {
                  // With the new "inline context" architecture all text nodes should be wrapped in an "inline layout context"
-@@ -255,7 +1157,7 @@
+@@ -255,7 +1159,7 @@
                  #[cfg(not(feature = "tracing"))]
                  let _ = data;
  
@@ -21162,7 +21164,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                  // unreachable!();
  
                  // compute_leaf_layout(inputs, &node.style, |known_dimensions, available_space| {
-@@ -283,19 +1185,71 @@
+@@ -283,19 +1187,71 @@
                          .and_then(|val| val.parse::<f32>().ok())
                          .unwrap_or(2.0);
  
@@ -21242,7 +21244,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                          },
                      );
                      if inputs.run_mode == RunMode::PerformLayout {
-@@ -308,87 +1262,278 @@
+@@ -308,87 +1264,278 @@
                                      .border()
                                      .resolve_or_zero(inputs.parent_size.width, resolve_calc_value)
                          };
@@ -21564,7 +21566,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                      };
  
                      // Get the element's intrinsic dimensions and default object size
-@@ -407,39 +1552,65 @@
+@@ -407,39 +1554,65 @@
                              }
                              #[cfg(feature = "svg")]
                              ImageData::Svg(svg) => {
@@ -21651,7 +21653,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                              // A canvas's content attributes determine its intrinsic size,
                              // overriding the widget-reported one; the widget-reported size
                              // in turn overrides the tag's fallback.
-@@ -472,6 +1643,91 @@
+@@ -472,6 +1645,91 @@
                          _ => unreachable!(),
                      };
  
@@ -21743,7 +21745,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                      #[cfg(feature = "writing-mode")]
                      let (intrinsic_sizes, default_object_size) =
                          if node.writing_mode().is_vertical() {
-@@ -488,131 +1744,584 @@
+@@ -488,131 +1746,584 @@
                              (intrinsic_sizes, default_object_size)
                          };
  
@@ -22420,7 +22422,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  
      fn child_ids(&self, node_id: NodeId) -> Self::ChildIter<'_> {
          let layout_children = self.node_from_id(node_id).layout_children.borrow(); //.unwrap().as_ref();
-@@ -667,7 +2376,16 @@
+@@ -667,7 +2378,16 @@
      }
  
      fn set_unrounded_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -22438,7 +22440,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn resolve_calc_value(&self, calc_ptr: *const (), parent_size: f32) -> f32 {
-@@ -675,11 +2393,32 @@
+@@ -675,11 +2395,32 @@
      }
  
      #[inline(always)]
@@ -22471,7 +22473,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          compute_cached_layout(self, node_id, inputs, |tree, node_id, inputs| {
              tree.compute_child_layout_internal(node_id, inputs, None)
          })
-@@ -693,22 +2432,362 @@
+@@ -693,22 +2434,362 @@
          Self: 'a;
  
      fn get_oof_item_style(&self, node_id: NodeId) -> Self::OofItemStyle<'_> {
@@ -22837,7 +22839,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn add_hoisted_children(&mut self, node_id: NodeId, hoisted: &[NodeId]) {
-@@ -718,9 +2797,24 @@
+@@ -718,9 +2799,24 @@
              .borrow_mut()
              .extend(hoisted.iter().copied().map(dom_node_id));
          for &hoisted_id in hoisted {
@@ -22862,7 +22864,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          }
      }
  
-@@ -732,6 +2826,148 @@
+@@ -732,6 +2828,148 @@
      }
  }
  
@@ -23011,7 +23013,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  impl taffy::CacheTree for LayoutPassState<'_> {
      #[inline]
      fn cache_get(
-@@ -739,10 +2975,12 @@
+@@ -739,10 +2977,12 @@
          node_id: NodeId,
          inputs: &taffy::LayoutInput,
      ) -> Option<taffy::LayoutOutput> {
@@ -23028,7 +23030,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -752,9 +2990,11 @@
+@@ -752,9 +2992,11 @@
          inputs: &taffy::LayoutInput,
          layout_output: taffy::LayoutOutput,
      ) {
@@ -23043,7 +23045,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -782,16 +3022,236 @@
+@@ -782,16 +3024,236 @@
          self.child_layout_style(self.node_from_id(child_node_id))
      }
  
@@ -23284,7 +23286,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  }
  
-@@ -844,6 +3304,30 @@
+@@ -844,6 +3306,30 @@
              element.detailed_layout_info = DetailedLayoutInfo::Grid(Box::new(detailed_grid_info));
          }
      }
@@ -23315,7 +23317,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  impl RoundTree for LayoutPassState<'_> {
-@@ -852,7 +3336,19 @@
+@@ -852,7 +3338,19 @@
      }
  
      fn set_final_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -23336,7 +23338,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn is_out_of_flow(&self, node_id: NodeId) -> bool {
-@@ -868,6 +3364,30 @@
+@@ -868,6 +3366,30 @@
      fn get_hoisted_child_id(&self, node_id: NodeId, index: usize) -> NodeId {
          taffy_node_id(self.node_from_id(node_id).hoisted_children.borrow()[index])
      }
@@ -23367,7 +23369,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  pub(crate) struct TaffyDebugTree<'doc>(pub(crate) &'doc BaseDocument);
-@@ -972,3 +3492,212 @@
+@@ -972,3 +3494,212 @@
          })
      }
  }
@@ -23584,7 +23586,7 @@ diff --git a/packages/blitz-dom/src/layout/multicol.rs b/packages/blitz-dom/src/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/multicol.rs
-@@ -0,0 +1,4118 @@
+@@ -0,0 +1,4367 @@
 +//! pyro: CSS Multi-column Layout (<https://drafts.csswg.org/css-multicol/>).
 +//!
 +//! A multi-column container lays its content out once, in a strip one column wide (its flow
@@ -23681,6 +23683,8 @@ new file mode 100644
 +    /// Adds `fragment`, or, where it takes the last room, one fragment holding the rest of the
 +    /// strip from its start; once closed, nothing.
 +    fn push(&mut self, fragment: ColumnFragment) {
++        #[cfg(test)]
++        PLAN_VISITS.with(|visits| visits.set(visits.get() + 1));
 +        if self.closed || self.room == 0 || self.budget == 0 {
 +            self.closed = true;
 +            return;
@@ -23733,6 +23737,7 @@ new file mode 100644
 +    /// pyro: the fragments rect mapping visited (tests: a rect visits the fragments it reaches).
 +    static MAPPED_FRAGMENTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 +    static SPANNER_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
++    static PLAN_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 +}
 +/// pyro: how many extra strip layouts the multi-column containers of one layout pass make to
 +/// fragment the ones nested in them (`LayoutPassState::nested_pass_budget`): nesting multiplies
@@ -23764,6 +23769,8 @@ new file mode 100644
 +/// device pixels): the strip's block ranges and where each is shown.
 +#[derive(Debug, Clone, Default)]
 +pub struct ColumnFragments {
++    box_slots: std::collections::HashMap<crate::NodeId, std::ops::Range<usize>>,
++    marker_slots: Vec<usize>,
 +    /// In order: the first shows the strip from its start, the last to its end. Columns of one
 +    /// row share their `top`; a column spanner is a row of its own.
 +    pub fragments: Vec<ColumnFragment>,
@@ -23812,15 +23819,118 @@ new file mode 100644
 +    pub block_rounding_error: f32,
 +}
 +
-+impl ColumnFragment {
-+    /// Whether the column shows strip position `y`.
-+    #[inline]
-+    fn shows(&self, y: f32) -> bool {
-+        y >= self.start && y < self.end
-+    }
-+}
-+
 +impl ColumnFragments {
++    fn index_box_slots(&mut self, doc: &BaseDocument, container: crate::NodeId) {
++        if self.fragments.is_empty() { return; }
++        self.marker_slots = self.fragments.iter().enumerate().filter_map(|(index, slot)| (!slot.spanner).then_some(index)).collect();
++        let spans: std::collections::HashMap<_, _> = doc.column_spanners_of(container).into_iter()
++            .zip(self.fragments.iter().enumerate().filter(|(_, slot)| slot.spanner))
++            .map(|((id, _), (index, _))| (id, index)).collect();
++        let mut run_start = 0usize;
++        let mut run_ends: Vec<_> = spans.values().copied().collect();
++        run_ends.sort_unstable();
++        run_ends.push(self.fragments.len());
++        let mut run = 0;
++        let mut stack = vec![(container, 0.0, None)];
++        while let Some((id, parent_top, entering_run)) = stack.pop() {
++            #[cfg(test)]
++            PLAN_VISITS.with(|visits| visits.set(visits.get() + 1));
++            let node = &doc.nodes[id];
++            if node.element_data().is_none() { continue; }
++            let layout = node.unrounded_layout();
++            let top = if id == container { 0.0 } else { parent_top + layout.location.y };
++            if let Some(first_run) = entering_run {
++                if id != container {
++                    let first_run = self.first_after_spanner.get(&id).copied().unwrap_or(first_run).max(first_run);
++                    let start = self.fragments.partition_point(|slot| slot.end.is_finite() && slot.strip_end <= top).max(first_run);
++                    let end = (top + layout.size.height.max(layout.scrollable_overflow_rect.bottom())).max(self.continuation_end(id).unwrap_or(f32::NEG_INFINITY));
++                    let last = self.fragments.partition_point(|slot| slot.start < end);
++                    let start = if first_run > 0 && top <= self.fragments.get(first_run).map_or(top, |slot| slot.start) { first_run } else { start };
++                    let limit = run_ends[run];
++                    self.box_slots.insert(id, start.min(limit)..last.max(start.saturating_add(1)).min(limit));
++                }
++                continue;
++            }
++            if let Some(&slot) = spans.get(&id) {
++                self.box_slots.insert(id, slot..slot + 1);
++                run_start = if slot + 1 == self.fragments.len() && self.fragments[slot].end.is_infinite() { slot } else { slot + 1 };
++                run += 1;
++                continue;
++            }
++            stack.push((id, parent_top, Some(run_start)));
++            if let Some(text) = node.element_data().and_then(|element| element.inline_layout_data.as_deref()) {
++                let origin = top + layout.border.top + layout.padding.top + text.block_offset;
++                let scale = text.layout.scale();
++                for line in text.layout.lines() {
++                    #[cfg(test)]
++                    PLAN_VISITS.with(|visits| visits.set(visits.get() + 1));
++                    let metrics = line.metrics();
++                    let low = origin + metrics.block_min_coord / scale;
++                    let high = origin + metrics.block_max_coord / scale;
++                    let first = self.fragments.partition_point(|slot| slot.end <= low).clamp(run_start, run_ends[run]);
++                    let end = self.fragments.partition_point(|slot| slot.start < high).clamp(first, run_ends[run]);
++                    for item in line.items() {
++                        let parley::PositionedLayoutItem::GlyphRun(glyphs) = item else { continue };
++                        let mut owner = Some(glyphs.style().brush.id);
++                        for _ in 0..64 {
++                            let Some(ancestor) = owner.filter(|&ancestor| ancestor != id) else { break };
++                            #[cfg(test)]
++                            PLAN_VISITS.with(|visits| visits.set(visits.get() + 1));
++                            let range = self.box_slots.entry(ancestor).or_insert(first..end);
++                            range.start = range.start.min(first);
++                            range.end = range.end.max(end);
++                            owner = doc.nodes[ancestor].parent;
++                        }
++                    }
++                }
++            }
++            if (id == container || node.layout_data().columns.is_none()) && let Some(children) = node.layout_children.borrow().as_ref() {
++                stack.extend(children.iter().rev().map(|&child| (child, top, None)));
++            }
++        }
++    }
++
++    pub fn continuation_index(&self, owner: crate::NodeId, slot: usize) -> Option<usize> {
++        let range = self.box_slots.get(&owner)?;
++        range.contains(&slot).then(|| slot - range.start)
++    }
++
++    pub(crate) fn marker_for(&self, owner: crate::NodeId) -> Option<usize> {
++        let first = self.box_slots.get(&owner)?.clone().next()?;
++        self.marker_slots.binary_search(&first).ok()
++    }
++
++    pub(crate) fn marker_count(&self) -> usize { self.marker_slots.len() }
++
++    pub(crate) fn marker_slot(&self, index: usize) -> Option<&ColumnFragment> {
++        self.marker_slots.get(index).map(|&slot| &self.fragments[slot])
++    }
++
++    pub fn owned_slots(&self, owner: crate::NodeId) -> impl DoubleEndedIterator<Item = (&ColumnFragment, f32)> + '_ {
++        let slots = self.box_slots.get(&owner).cloned().unwrap_or(0..0);
++        self.fragments[slots.clone()].iter().enumerate().map(move |(ordinal, slot)| {
++            (slot, self.owned_start(owner, slots.start, slots.start + ordinal))
++        })
++    }
++
++    fn owned_start(&self, owner: crate::NodeId, first: usize, index: usize) -> f32 {
++        if index == first && (self.first_after_spanner.get(&owner) == Some(&first) || (first > 0 && self.fragments[first - 1].spanner)) {
++            f32::NEG_INFINITY
++        } else {
++            self.fragments[index].start
++        }
++    }
++
++    pub fn owned_projections(&self, owner: crate::NodeId, axes: kurbo::Affine, origin: kurbo::Vec2) -> impl DoubleEndedIterator<Item = (kurbo::Rect, kurbo::Vec2, f64)> + '_ {
++        self.owned_slots(owner).map(move |(slot, start)| {
++            let low = f64::from(start).max(-1e7);
++            let high = f64::from(slot.end).min(1e7);
++            let clip = axes.transform_rect_bbox(kurbo::Rect::new(-1e7, low, 1e7, high)) + origin;
++            let offset = axes * kurbo::Point::new(f64::from(slot.offset.x), f64::from(slot.offset.y)) - axes * kurbo::Point::ORIGIN;
++            let correction = if axes == kurbo::Affine::IDENTITY && slot.exact_x.is_finite() { f64::from(slot.exact_x - slot.x) } else { 0.0 };
++            (clip, offset, correction)
++        })
++    }
 +    pub fn owner_spends_slot(&self, owner: crate::NodeId, end: f32) -> bool {
 +        self.consumed_by_owner.get(&owner).is_some_and(|start| end > *start)
 +    }
@@ -23837,7 +23947,8 @@ new file mode 100644
 +    /// A position in a margin truncated at a break (after one column's end, before the next
 +    /// one's start) is in the column after the break, where what follows it is shown.
 +    pub fn fragment_at(&self, y: f32) -> Option<&ColumnFragment> {
-+        self.fragments.iter().find(|f| f.shows(y) || f.start > y).or_else(|| self.fragments.last())
++        let index = self.fragments.partition_point(|fragment| fragment.end <= y);
++        self.fragments.get(index).or_else(|| self.fragments.last())
 +    }
 +
 +    /// The move (CSS px) of the column that shows strip position `y` (none past the columns).
@@ -23919,14 +24030,19 @@ new file mode 100644
 +        let empty = rect.y1 <= rect.y0;
 +        // (Only the fragments the rect can reach: they are in strip order.)
 +        let (mut first, mut last) = self.reaching(rect.y0 / scale, rect.y1 / scale);
-+        if let Some(index) = child.and_then(|id| self.first_after_spanner.get(&id)).copied() {
-+            first = first.max(index);
-+            last = last.max(index + 1);
++        let owned = child.and_then(|id| self.box_slots.get(&id).map(|slots| (id, slots)));
++        if let Some((id, slots)) = owned {
++            first = first.clamp(slots.start, slots.end);
++            last = last.clamp(first, slots.end);
++            if !slots.is_empty() && self.owned_start(id, slots.start, slots.start) == f32::NEG_INFINITY && first == slots.start {
++                last = last.max(first + 1);
++            }
 +        }
-+        for f in &self.fragments[first..last] {
++        for index in first..last {
++            let f = &self.fragments[index];
 +            #[cfg(test)]
 +            MAPPED_FRAGMENTS.with(|m| m.set(m.get() + 1));
-+            let Some(start) = child.map_or(Some(f.start), |id| self.child_start(id, f.start)) else { continue };
++            let start = owned.map_or(f.start, |(id, slots)| self.owned_start(id, slots.start, index));
 +            let y0 = rect.y0.max(start as f64 * scale);
 +            let y1 = rect.y1.min(f.end as f64 * scale);
 +            if y1 < y0 || (!empty && y1 <= y0) || (empty && out.is_some()) {
@@ -24102,8 +24218,15 @@ new file mode 100644
 +    violations: usize,
 +}
 +
++struct RunSlots {
++    top: f32,
++    height: f32,
++    fill: FillRun,
++}
++
 +#[derive(Debug, Clone, Copy)]
 +struct FlowContinuation {
++    run: usize,
 +    owner: crate::NodeId,
 +    resume: crate::NodeId,
 +    origin: f32,
@@ -24282,7 +24405,9 @@ new file mode 100644
 +        // overflow columns after the last), so they are as tall as the tallest (Chromium; WPT
 +        // css-multicol `multicol-fill-balance-002`, `-040`).
 +        let mut cuts: Vec<f32> = vec![from];
-+        cuts.extend(self.forced.iter().copied().filter(|&f| f > from + EPSILON && f < to - EPSILON));
++        let first = self.forced.partition_point(|&cut| cut <= from + EPSILON);
++        let last = self.forced.partition_point(|&cut| cut < to - EPSILON).max(first);
++        cuts.extend_from_slice(&self.forced[first..last]);
 +        cuts.push(to);
 +        let segments = cuts.len() - 1;
 +        let tallest_segment = cuts.windows(2).map(|w| w[1] - w[0]).fold(0.0, f32::max);
@@ -24539,7 +24664,20 @@ new file mode 100644
 +            vertical_margins_are_collapsible: Line::FALSE,
 +        };
 +        // Column spanners (`column-span: all` children) are laid out as wide as the container.
-+        let spanning = (!inline_root).then(|| (dom_id, content_width)).filter(|_| self.doc.has_column_spanners(dom_id));
++        let spans = if inline_root { Vec::new() } else { self.doc.column_spanners_of(dom_id) };
++        let spanning = (!spans.is_empty()).then_some((dom_id, content_width));
++        let mut by_owner = std::collections::HashMap::<_, Vec<_>>::new();
++        for (spanner, _) in spans {
++            let mut ancestor = self.nodes[spanner].layout_parent.get();
++            for _ in 0..64 {
++                let Some(owner) = ancestor.filter(|&owner| owner != dom_id) else { break };
++                #[cfg(test)]
++                PLAN_VISITS.with(|visits| visits.set(visits.get() + 1));
++                by_owner.entry(owner).or_default().push(spanner);
++                ancestor = self.nodes[owner].layout_parent.get();
++            }
++        }
++        let outer_owners = std::mem::replace(&mut self.spanners_by_owner, by_owner);
 +        let outer_spanners = std::mem::replace(&mut self.column_spanners, spanning);
 +        let outer_percent_height = std::mem::replace(&mut self.multicol_percent_height, percent_height.map(|height| (dom_id, height)));
 +        let mut content_top = pb.top;
@@ -24566,11 +24704,12 @@ new file mode 100644
 +        // again on each pass.
 +        let balancing = spanning.is_none() && !vertical && multicol.height.is_none() && !fill_auto;
 +        let wrapped_rows = multicol.height.filter(|&height| !vertical && multicol.wrap && height >= 1.0);
-+        let fragments_nested = fragmentainer.is_some() || balancing || wrapped_rows.is_some();
++        let ordinary_runs = multicol.height.is_none() && !multicol.wrap && !self.nested_fragmentation.contains_key(&dom_id);
++        let fragments_nested = fragmentainer.is_some() || balancing || wrapped_rows.is_some() || (ordinary_runs && fill_auto);
 +        let mut pass = 0;
 +        // pyro: the tops of nested containers to break before (`ColumnFragments::pushed`).
 +        let mut pushed_nested: std::collections::HashMap<crate::NodeId, f32> = std::collections::HashMap::new();
-+        let (strip, mut breaks) = loop {
++        let (strip, mut breaks, run_slots) = loop {
 +            self.multicol_strip_depth += 1;
 +            let strip = if inline_root {
 +                self.compute_inline_layout(dom_id, strip_inputs, None)
@@ -24590,11 +24729,40 @@ new file mode 100644
 +                content_top += (outer - (pb.top - padding_top_of(&self.nodes[dom_id], inputs.parent_size.width))).max(0.0);
 +            }
 +            let strip_end = (inline_root || !clamps_block_size).then(|| (strip.size.height - pb.bottom).max(content_top));
-+            let mut breaks = self.doc.multicol_breaks(dom_id, content_top, strip_end, fragments_nested, fragmentainer.is_some());
++            let mut breaks = self.doc.multicol_breaks(dom_id, content_top, strip_end, fragments_nested, fragmentainer.is_some() || (ordinary_runs && fill_auto));
 +            if !pushed_nested.is_empty() {
 +                breaks.forced.extend(pushed_nested.values().copied().filter(|&y| y > breaks.start + EPSILON));
 +                breaks.forced.sort_by(f32::total_cmp);
 +                breaks.forced.dedup_by(|a, b| (*a - *b).abs() <= EPSILON);
++            }
++            let mut run_slots = Vec::new();
++            if ordinary_runs {
++                breaks.one_column_when_empty = size.height.is_none() && definite_height.is_some_and(|height| height <= EPSILON);
++                let spans = if spanning.is_some() { self.doc.column_spanner_ranges(dom_id) } else { Vec::new() };
++                let ids = if spanning.is_some() { self.doc.column_spanners_of(dom_id) } else { Vec::new() };
++                let leads = if spanning.is_some() { self.doc.column_spanner_leads(dom_id) } else { Vec::new() };
++                let mut start = content_top;
++                let mut top = content_top;
++                let mut room = MAX_FRAGMENTS;
++                for index in 0..=spans.len() {
++                    if room == 0 { break; }
++                    let lift = ids.get(index).map_or(0.0, |(id, _)| (-self.nodes[*id].unrounded_layout().margin.top).max(0.0));
++                    let end = spans.get(index).map_or(breaks.end, |span| span.0 + lift);
++                    let part = Part { breaks: &breaks, start, end };
++                    let remaining = limit.map(|height| (height - (top - content_top)).max(0.0));
++                    let height = if index == spans.len() && matches!(multicol.fill, ColumnFill::Auto) && let Some(height) = remaining {
++                        if spans.is_empty() && !fill_auto { height.min((end - start).max(0.0)) } else { height }
++                    } else { part.balance(count, if spans.is_empty() { limit } else { remaining.filter(|_| definite_height.is_some()) }) };
++                    let fill = if end > start + EPSILON || spans.is_empty() { part.fill(height, room) } else { FillRun { columns: Vec::new(), shortage: None, violations: 0 } };
++                    room -= fill.columns.len();
++                    let next = if fill.columns.is_empty() { top } else { top + height };
++                    run_slots.push(RunSlots { top, height, fill });
++                    if let Some(&(before, after, _)) = spans.get(index) {
++                        room = room.saturating_sub(1);
++                        top = next - lift + after - before;
++                        start = after - leads[index];
++                    }
++                }
 +            }
 +            pass += 1;
 +            if pass <= 5 && self.nested_pass_budget > 0
@@ -24659,10 +24827,11 @@ new file mode 100644
 +                    continue;
 +                }
 +            }
-+            if let Some(height) = fragmentainer && pass <= 5 && self.nested_pass_budget > 0 && !breaks.overflow_parents.is_empty() {
-+                let run = breaks.fill(height, MAX_COLUMNS);
++            if (fragmentainer.is_some() || (ordinary_runs && fill_auto)) && pass <= 5 && self.nested_pass_budget > 0 && !breaks.overflow_parents.is_empty() {
++                let fallback = fragmentainer.filter(|_| run_slots.is_empty()).map(|height| (height, breaks.fill(height, MAX_COLUMNS)));
 +                let mut changed = false;
 +                for &(id, parent_top, top, bottom) in &breaks.parallel_floats {
++                    let Some((height, run)) = run_slots.iter().rev().find(|run| run.fill.columns.first().is_some_and(|slot| slot.0 <= top)).map(|run| (run.height, &run.fill)).or_else(|| fallback.as_ref().map(|(height, run)| (*height, run))) else { continue };
 +                    let index = run.columns.partition_point(|&(_, end)| end <= top + EPSILON);
 +                    if let Some(&(start, end)) = run.columns.get(index) && top > start + EPSILON && bottom > end + EPSILON && bottom - top <= height + EPSILON && let Some(&(next, _)) = run.columns.get(index + 1) {
 +                        let floor = next - parent_top;
@@ -24679,19 +24848,23 @@ new file mode 100644
 +                let mut parents = std::collections::BTreeMap::new();
 +                for token in &breaks.overflow_parents {
 +                    let start = token.origin + token.consumed;
-+                    let entry = parents.entry(token.owner).or_insert((token.origin, start));
-+                    entry.1 = entry.1.min(start);
++                    let Some((height, run)) = run_slots.get(token.run).map(|run| (run.height, &run.fill)).or_else(|| fallback.as_ref().map(|(height, run)| (*height, run))) else { continue };
++                    let end = token.origin + self.nodes[token.owner].unrounded_layout().size.height + self.column_space_used.get(&token.owner).copied().unwrap_or_default();
++                    let short = &run.columns[..run.columns.len().saturating_sub(1)];
++                    let first = short.partition_point(|&(_, slot_end)| slot_end <= start);
++                    let charges = parents.entry(token.owner).or_insert_with(std::collections::BTreeMap::new);
++                    for (index, &(low, high)) in short.iter().enumerate().skip(first) {
++                        if high >= end { break; }
++                        charges.insert((token.run, index), (height - (high - low), end - high));
++                    }
 +                }
-+                for (id, (origin, parallel_start)) in parents {
-+                    let bottom = origin + self.nodes[id].unrounded_layout().size.height;
++                for (id, charges) in parents {
 +                    let prior = self.column_space_used.get(&id).copied().unwrap_or(0.0);
 +                    let mut used = 0.0;
-+                    let short = &run.columns[..run.columns.len().saturating_sub(1)];
-+                    let first = short.partition_point(|&(_, end)| end <= parallel_start);
-+                    for &(start, end) in &short[first..] {
-+                        let left = bottom + prior - used - end;
++                    for (shortage, left) in charges.into_values() {
++                        let left = left - used;
 +                        if left <= EPSILON { break; }
-+                        used += (height - (end - start)).clamp(0.0, left);
++                        used += shortage.clamp(0.0, left);
 +                    }
 +                    if (prior - used).abs() > EPSILON {
 +                        self.column_space_used.insert(id, used);
@@ -24711,12 +24884,13 @@ new file mode 100644
 +            }
 +            if pass <= 5 && self.nested_pass_budget > 0 && !breaks.overflow_breaks.is_empty() {
 +                let slot_height = self.nested_fragmentation.get(&dom_id).map(|ctx| ctx.0).or(fragmentainer);
-+                let height = slot_height.unwrap_or_else(|| breaks.balance(count, limit));
-+                let run = breaks.fill(height, MAX_COLUMNS);
++                let fallback = run_slots.is_empty().then(|| breaks.fill(slot_height.unwrap_or_else(|| breaks.balance(count, limit)), MAX_COLUMNS));
 +                let mut changed = false;
 +                for token in &breaks.overflow_breaks {
 +                    let id = token.resume;
-+                    if let Some(boundary) = token.next_start(&run, slot_height) {
++                    let planned = run_slots.get(token.run);
++                    let Some(run) = planned.map(|plan| &plan.fill).or(fallback.as_ref()) else { continue };
++                    if let Some(boundary) = token.next_start(run, planned.filter(|_| fill_auto).map(|plan| plan.height).or(slot_height)) {
 +                        let floor = boundary - token.origin;
 +                        if floor > self.nodes[id].unrounded_layout().location.y + EPSILON {
 +                            self.spanner_floors.insert(id, floor);
@@ -24748,7 +24922,7 @@ new file mode 100644
 +                continue;
 +            }
 +            if breaks.nested.is_empty() || pass > 5 || self.nested_pass_budget == 0 {
-+                break (strip, breaks);
++                break (strip, breaks, run_slots);
 +            }
 +            // pyro: a multi-column container nested in these columns is fragmented by them: it is
 +            // told the column height and where in its column it starts, and the strip is laid out
@@ -24765,6 +24939,11 @@ new file mode 100644
 +                (pieces.len() <= count).then_some((index, start, balanced, pieces))
 +            });
 +            let mut planned = Vec::new();
++            if spanning.is_some() && ordinary_runs && fill_auto {
++                for run in &run_slots {
++                    planned.extend(run.fill.columns.iter().map(|&(start, end)| (start, end, run.height, usize::MAX, run.height)));
++                }
++            }
 +            if let Some(height) = wrapped_rows.filter(|_| spanning.is_some()) {
 +                let rows = RowSlots { origin: content_top, height, stride: height + multicol.row_gap(definite_height) };
 +                let spans = self.doc.column_spanner_ranges(dom_id);
@@ -24845,11 +25024,12 @@ new file mode 100644
 +                }
 +            }
 +            if !changed {
-+                break (strip, breaks);
++                break (strip, breaks, run_slots);
 +            }
 +            self.nested_pass_budget -= 1;
 +        };
 +        self.multicol_percent_height = outer_percent_height;
++        self.spanners_by_owner = outer_owners;
 +        self.column_spanners = outer_spanners;
 +        if inputs.run_mode == RunMode::ComputeSize {
 +            // The strip wrote its boxes' layouts at this width: a cached final layout of the
@@ -25357,7 +25537,11 @@ new file mode 100644
 +                        row_top += height + if r + 1 < rows { row_gap } else { 0.0 };
 +                    }
 +                } else {
-+                let column_height = if let Some(height) = fixed_height {
++                let planned = run_slots.get(part);
++                let column_height = if let Some(run) = planned {
++                    debug_assert!((row_top - run.top).abs() <= EPSILON);
++                    run.height
++                } else if let Some(height) = fixed_height {
 +                    height.max(0.0)
 +                } else if spanners.is_empty() && fill_auto {
 +                    definite_height.unwrap_or(0.0)
@@ -25380,7 +25564,9 @@ new file mode 100644
 +                // pyro: `column-wrap: wrap`: each `count` columns make a row (css-multicol-2).
 +                let per_row = if fixed_height.is_some() && multicol.wrap { count.max(1) } else { usize::MAX };
 +                let row_gap = multicol.row_gap(definite_height);
-+                let mut columns = run.fill(column_height, left).columns;
++                let mut columns = if let Some(plan) = planned.filter(|plan| plan.fill.columns.len() <= left) {
++                    plan.fill.columns.clone()
++                } else { run.fill(column_height, left).columns };
 +                let rows = columns.len().div_ceil(per_row).max(1);
 +                // pyro: wrapping at the container's height (`column-height: auto`), `column-fill:
 +                // balance` balances the last row (of at most `count` columns), that height its
@@ -25485,14 +25671,27 @@ new file mode 100644
 +        // pyro: a column that starts inside a box of `box-decoration-break: clone` shows the box's
 +        // block-start border and padding again first (`Breaks::clones`).
 +        if !breaks.clones.is_empty() {
++            let mut starts = Vec::new();
++            let mut ends = Vec::new();
++            for &(top, bottom, inset) in &breaks.clones {
++                if top + EPSILON < bottom - EPSILON {
++                    starts.push((top + EPSILON, f64::from(inset)));
++                    ends.push((bottom - EPSILON, f64::from(inset)));
++                }
++            }
++            for events in [&mut starts, &mut ends] {
++                events.sort_unstable_by(|left, right| left.0.total_cmp(&right.0));
++                let mut sum = 0.0;
++                for (_, inset) in events {
++                    sum += *inset;
++                    *inset = sum;
++                }
++            }
 +            for fragment in fragments.iter_mut().filter(|f| !f.spanner) {
-+                let repeated: f32 = breaks
-+                    .clones
-+                    .iter()
-+                    .filter(|&&(top, bottom, _)| fragment.start > top + EPSILON && fragment.start < bottom - EPSILON)
-+                    .map(|&(_, _, inset)| inset)
-+                    .sum();
-+                fragment.offset.y += repeated;
++                let opened = starts.partition_point(|&(at, _)| at < fragment.start);
++                let closed = ends.partition_point(|&(at, _)| at <= fragment.start);
++                let before = |events: &[(f32, f64)], count: usize| events[..count].last().map_or(0.0, |event| event.1);
++                fragment.offset.y += (before(&starts, opened) - before(&ends, closed)) as f32;
 +            }
 +        }
 +        // pyro: the columns' unsnapped left edges (`ColumnFragment::exact_x`).
@@ -25648,14 +25847,14 @@ new file mode 100644
 +            *entry = entry.max(end);
 +        }
 +        let mut consumed_by_owner = std::collections::HashMap::<_, f32>::new();
-+        if fragmentainer.is_some() {
++        if fragmentainer.is_some() || (ordinary_runs && fill_auto) {
 +            for token in &breaks.overflow_parents {
 +                let start = token.origin + token.consumed;
 +                let earliest = consumed_by_owner.entry(token.owner).or_insert(start);
 +                *earliest = earliest.min(start);
 +            }
 +        }
-+        let columns = ColumnFragments { fragments, first_after_spanner, run_wrappers, wrapper_initial_consumption, continuation_ends, consumed_by_owner, nested: nested_ctx.or(nested_rows_ctx).or(nested_span_ctx), pushed, strip_end: breaks.end };
++        let mut columns = ColumnFragments { marker_slots: Vec::new(), box_slots: Default::default(), fragments, first_after_spanner, run_wrappers, wrapper_initial_consumption, continuation_ends, consumed_by_owner, nested: nested_ctx.or(nested_rows_ctx).or(nested_span_ctx), pushed, strip_end: breaks.end };
 +        if columns.fragments.len() > 1 && !vertical {
 +            for candidate in oof_candidates.as_mut_slice() {
 +                if candidate.containing_block.is_some() {
@@ -25695,6 +25894,7 @@ new file mode 100644
 +        }
 +        if inputs.run_mode == RunMode::PerformLayout {
 +            // (Debited as they were made: `FragmentSink::push`.)
++            columns.index_box_slots(self.doc, dom_id);
 +            self.column_fragment_budget = budget_left;
 +            self.doc.has_multicol = true;
 +            // (None made, the pass's budget spent: its strip is shown as it is.)
@@ -25860,7 +26060,9 @@ new file mode 100644
 +        }
 +        // The spanners inside it: their margin boxes in its coordinates.
 +        let mut spans: Vec<(f32, f32)> = Vec::new();
-+        for (id, _) in self.doc.column_spanners_of(container) {
++        for &id in self.spanners_by_owner.get(&node_id)? {
++            #[cfg(test)]
++            PLAN_VISITS.with(|visits| visits.set(visits.get() + 1));
 +            let layout = self.nodes[id].unrounded_layout();
 +            let mut y = layout.location.y;
 +            let mut at = self.nodes[id].layout_parent.get();
@@ -25977,12 +26179,9 @@ new file mode 100644
 +    /// child's border box range in its strip (its overflow below included). Paint shows such a
 +    /// child in each column it is in (blitz-paint `draw_hoisted_children`), at its strip position
 +    /// (`hoisted_child_strip_position`), and hit testing finds it there (`Node::hit_inner`).
-+    pub fn multicol_between(&self, child_id: crate::NodeId) -> Option<(crate::NodeId, Point<f32>, f32, f32)> {
++    pub fn multicol_between(&self, child_id: crate::NodeId) -> Option<(crate::NodeId, Point<f32>)> {
 +        let tree = self.tree();
 +        let child = tree.get(child_id)?;
-+        let layout = child.final_layout();
-+        let mut top = layout.location.y;
-+        let bottom_extent = layout.size.height.max(layout.scrollable_overflow_rect.bottom().abs());
 +        let transformed = |n: &Node| n.primary_styles().is_some_and(|s| !s.get_box().transform.0.is_empty());
 +        let mut at = child.layout_parent.get();
 +        let mut container = None;
@@ -25996,11 +26195,10 @@ new file mode 100644
 +            if transformed(n) {
 +                return None;
 +            }
-+            if n.column_fragments().is_some() {
++            if n.columns_with_axes().is_some() {
 +                container = Some(node);
 +                break;
 +            }
-+            top += n.final_layout().location.y;
 +            at = n.layout_parent.get();
 +        }
 +        let container = container?;
@@ -26038,7 +26236,42 @@ new file mode 100644
 +            at = n.layout_parent.get();
 +        }
 +        at?;
-+        Some((container, origin, top, top + bottom_extent))
++        Some((container, origin))
++    }
++
++    pub fn hoisted_projections(&self, child_id: crate::NodeId) -> Option<Vec<(kurbo::Rect, kurbo::Vec2, Option<f64>)>> {
++        let mut owner = child_id;
++        let mut pieces: Option<Vec<(kurbo::Rect, kurbo::Vec2, Option<f64>)>> = None;
++        for _ in 0..64 {
++            let Some((container, origin)) = self.multicol_between(owner) else { break };
++            let (columns, axes) = self.tree().get(container)?.columns_with_axes()?;
++            let origin = kurbo::Vec2::new(origin.x.into(), origin.y.into());
++            let outer: Vec<_> = columns.owned_projections(owner, axes, origin).map(|(clip, shift, correction)| {
++                (clip, shift, (axes == kurbo::Affine::IDENTITY).then_some(correction))
++            }).collect();
++            pieces = Some(if let Some(inner) = pieces.take() {
++                let inverse = axes.inverse();
++                let intervals: Vec<_> = outer.iter().map(|(clip, _, _)| inverse.transform_rect_bbox(*clip - origin)).collect();
++                let mut next = Vec::new();
++                'pieces: for (prior_clip, prior_shift, prior_exact) in inner {
++                    let painted = inverse.transform_rect_bbox(prior_clip + prior_shift - origin);
++                    let first = intervals.partition_point(|interval| interval.y1 <= painted.y0);
++                    let last = intervals.partition_point(|interval| interval.y0 < painted.y1);
++                    for index in first..last {
++                        let (clip, shift, exact) = outer[index];
++                        let common = prior_clip.intersect(clip - prior_shift);
++                        if common.area() > 0.0 {
++                            next.push((index, (common, shift + prior_shift, exact.zip(prior_exact).map(|(outer, inner)| outer + inner))));
++                            if next.len() == MAX_FRAGMENTS { break 'pieces; }
++                        }
++                    }
++                }
++                next.sort_by_key(|piece| piece.0);
++                next.into_iter().map(|(_, piece)| piece).collect()
++            } else { outer });
++            owner = container;
++        }
++        pieces
 +    }
 +
 +    /// pyro: the points (in the space `hoisted_child`, a stacking context hoisted to this box, is
@@ -26048,22 +26281,14 @@ new file mode 100644
 +    /// at its place in the strip, where the point is in that column's range; nowhere else.
 +    pub(crate) fn hoisted_hit_points(&self, hoisted_child: &crate::HoistedPaintChild, x: f32, y: f32) -> Vec<(f32, f32)> {
 +        let tree = self.tree();
-+        let in_columns = self.multicol_between(hoisted_child.node_id).and_then(|(container, origin, top, bottom)| {
-+            let columns = tree.get(container)?.column_fragments()?;
-+            (columns.fragments.len() > 1).then_some((container, origin, top, bottom, columns))
-+        });
-+        match in_columns {
-+            Some((container, origin, top, bottom, columns)) => {
-+                let pos = super::paint_tree::hoisted_child_strip_position(tree, self.id, hoisted_child.node_id, container);
-+                columns
-+                    .hoisted_columns(top, bottom)
++        match self.hoisted_projections(hoisted_child.node_id) {
++            Some(pieces) => {
++                let pos = super::paint_tree::hoisted_child_strip_position(tree, self.id, hoisted_child.node_id);
++                pieces.into_iter()
 +                    .rev()
-+                    .filter_map(|fragment| {
-+                        // The point in the container's strip, as this column shows it.
-+                        let strip_x = x - origin.x - fragment.offset.x;
-+                        let strip_y = y - origin.y - fragment.offset.y;
-+                        (strip_y >= fragment.start && strip_y < fragment.end)
-+                            .then(|| (strip_x + origin.x - pos.x, strip_y + origin.y - pos.y))
++                    .filter_map(|(clip, offset, _)| {
++                        let point = kurbo::Point::new(x.into(), y.into()) - offset;
++                        clip.contains(point).then(|| (point.x as f32 - pos.x, point.y as f32 - pos.y))
 +                    })
 +                    .collect()
 +            }
@@ -26337,6 +26562,8 @@ new file mode 100644
 +    ) {
 +        let children = self.nodes[parent].layout_children.borrow();
 +        for id in children.iter().flatten().copied() {
++            #[cfg(test)]
++            PLAN_VISITS.with(|visits| visits.set(visits.get() + 1));
 +            let node = &self.nodes[id];
 +            if node.is_out_of_flow() {
 +                continue;
@@ -26726,6 +26953,7 @@ new file mode 100644
 +            parallel_ends.reverse();
 +        }
 +        for (child_index, &child_id) in children.iter().enumerate() {
++            if found.container.is_some_and(|container| self.is_column_spanner_of(container, child_id)) { found.run += 1; }
 +            let child = &self.nodes[child_id];
 +            let Some(style) = child.primary_styles() else {
 +                continue;
@@ -26767,7 +26995,7 @@ new file mode 100644
 +                && layout.scrollable_overflow_rect.bottom() > layout.size.height + EPSILON
 +                && parent_bottom > child_bottom + EPSILON;
 +            if parallel_tail {
-+                found.overflow_parents.push(FlowContinuation { owner: parent, resume: child_id, origin: top, consumed: child_bottom - top });
++                found.overflow_parents.push(FlowContinuation { run: found.run, owner: parent, resume: child_id, origin: top, consumed: child_bottom - top });
 +            }
 +            found.bottom = found.bottom.max(child_bottom);
 +            if container_content_top.is_some() {
@@ -26776,10 +27004,10 @@ new file mode 100644
 +            }
 +            if style.clone_float() == Float::None {
 +                if layout.margin.top < 0.0 && !is_spanner_style(&style) && let Some((bottom, _)) = previous && child_top < bottom - EPSILON {
-+                    found.overlapping_starts.push(FlowContinuation { owner: parent, resume: child_id, origin: top, consumed: bottom - top });
++                    found.overlapping_starts.push(FlowContinuation { run: found.run, owner: parent, resume: child_id, origin: top, consumed: bottom - top });
 +                }
 +                if std::mem::take(&mut next_parallel_break) {
-+                    found.overflow_breaks.push(FlowContinuation { owner: parent, resume: child_id, origin: top, consumed: previous.map_or(child_top, |(end, _)| end) - top });
++                    found.overflow_breaks.push(FlowContinuation { run: found.run, owner: parent, resume: child_id, origin: top, consumed: previous.map_or(child_top, |(end, _)| end) - top });
 +                }
 +                // pyro: forced breaks between in-flow siblings (margins after them kept).
 +                let forces = |b: style::values::computed::BreakBetween| {
@@ -26817,7 +27045,7 @@ new file mode 100644
 +                        && boundary >= parent_bottom - EPSILON
 +                        && (found.fixed_columns || boundary < found.parallel_end)
 +                    {
-+                        found.overflow_breaks.push(FlowContinuation { owner: parent, resume: child_id, origin: top, consumed: previous.unwrap().0 - top });
++                        found.overflow_breaks.push(FlowContinuation { run: found.run, owner: parent, resume: child_id, origin: top, consumed: previous.unwrap().0 - top });
 +                    } else {
 +                        found.forced.push(boundary);
 +                    }
@@ -27035,6 +27263,7 @@ new file mode 100644
 +/// What [`BaseDocument::collect_breaks`] finds in a strip (see [`Breaks`]).
 +#[derive(Default)]
 +struct Found {
++    run: usize,
 +    parallel_end: f32,
 +    fixed_columns: bool,
 +    parallel: bool,
@@ -27190,6 +27419,22 @@ new file mode 100644
 +
 +    fn spanners(n: usize) -> Vec<Div> {
 +        (0..n).map(|_| div("column-span:all;height:1px", vec![])).collect()
++    }
++
++    #[test]
++    fn wrapped_spanner_plan_and_emission_scale_with_owners() {
++        let work = |count| {
++            let children = (0..count).map(|_| div("height:5px", spanners(1))).collect();
++            PLAN_VISITS.with(|visits| visits.set(0));
++            let document = laid_out(vec![div("columns:2;width:200px;gap:0", children)]);
++            let emitted = document.nodes.iter().filter_map(|(_, node)| node.column_fragments())
++                .flat_map(|columns| &columns.fragments).filter(|fragment| fragment.spanner).count();
++            assert_eq!(emitted, count);
++            PLAN_VISITS.with(|visits| visits.get())
++        };
++        let small = work(20);
++        let large = work(80);
++        assert!(small > 20 && large <= small * 5, "{small} -> {large}");
 +    }
 +
 +    #[test]
@@ -27607,6 +27852,8 @@ new file mode 100644
 +    #[test]
 +    fn fragments_map_both_ways() {
 +        let columns = ColumnFragments {
++            marker_slots: Vec::new(),
++            box_slots: Default::default(),
 +            consumed_by_owner: Default::default(),
 +            continuation_ends: Default::default(),
 +            run_wrappers: Default::default(),
@@ -27636,6 +27883,8 @@ new file mode 100644
 +        // The first column ends at 100 where a margin starts, the second starts past it at 120;
 +        // a third follows.
 +        let columns = ColumnFragments {
++            marker_slots: Vec::new(),
++            box_slots: Default::default(),
 +            consumed_by_owner: Default::default(),
 +            continuation_ends: Default::default(),
 +            run_wrappers: Default::default(),
@@ -27677,6 +27926,8 @@ new file mode 100644
 +        };
 +        let columns = ColumnFragments {
 +            continuation_ends: Default::default(),
++            marker_slots: Vec::new(),
++            box_slots: Default::default(),
 +            consumed_by_owner: Default::default(),
 +            run_wrappers: Default::default(),
 +            wrapper_initial_consumption: Default::default(),
@@ -27735,17 +27986,17 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
  /// hoisted by Taffy, otherwise `layout_parent`, which is set for every layout
  /// child by `resolve_layout_children`, anonymous blocks included).
  pub fn hoisted_child_position(tree: &NodeTree, sc_root_id: NodeId, child_id: NodeId) -> Point<f32> {
-+    hoisted_child_offset(tree, sc_root_id, child_id, None)
++    hoisted_child_offset(tree, sc_root_id, child_id, false)
 +}
 +
 +/// pyro: [`hoisted_child_position`] in the strip of the multi-column container `container` the
 +/// child is in (`Node::multicol_between`), not moved into the column its place is in: paint shows
 +/// it in each column it is in, moved as the column's content, and hit testing finds it there.
-+pub fn hoisted_child_strip_position(tree: &NodeTree, sc_root_id: NodeId, child_id: NodeId, container: NodeId) -> Point<f32> {
-+    hoisted_child_offset(tree, sc_root_id, child_id, Some(container))
++pub fn hoisted_child_strip_position(tree: &NodeTree, sc_root_id: NodeId, child_id: NodeId) -> Point<f32> {
++    hoisted_child_offset(tree, sc_root_id, child_id, true)
 +}
 +
-+fn hoisted_child_offset(tree: &NodeTree, sc_root_id: NodeId, child_id: NodeId, in_strip_of: Option<NodeId>) -> Point<f32> {
++fn hoisted_child_offset(tree: &NodeTree, sc_root_id: NodeId, child_id: NodeId, in_strip: bool) -> Point<f32> {
      let child = &tree[child_id];
      let mut position = Point::ZERO;
      let mut current = child.containing_block();
@@ -27759,11 +28010,12 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
      {
          let scroll_offset = *cb.scroll_offset();
          let viewport_scroll = tree.viewport_scroll();
-@@ -50,19 +65,60 @@
+@@ -50,19 +65,54 @@
          position.y += scroll_offset.y as f32 + viewport_scroll.y as f32;
      }
  
 +    let mut reached_context = false;
++    let mut owner = child_id;
      while let Some(id) = current {
          if id == sc_root_id {
 +            reached_context = true;
@@ -27773,19 +28025,12 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
              break;
          };
 +        // pyro: out of a multi-column container's strip into its columns (`layout::multicol`).
-+        if let Some(columns) = node.column_fragments().filter(|_| in_strip_of != Some(id)) {
-+            // A relatively positioned box is in the column of its place in the flow, moved from
-+            // there (Blink): a box moved up over a column break stays in the column after it.
-+            let own = child.final_layout().location;
-+            let relative = match child.primary_styles() {
-+                Some(style) if style.get_box().position == style::computed_values::position::T::Relative => {
-+                    let size = node.final_layout().size;
-+                    super::inline::relative::relative_offset(&style, size, false).y
-+                }
-+                _ => 0.0,
-+            };
-+            let (dx, dy) = columns.shift_at(position.y + own.y - relative);
-+            position = Point { x: position.x + dx, y: position.y + dy };
++        if !in_strip && let Some((columns, axes)) = node.columns_with_axes() {
++            if let Some((_, offset, _)) = columns.owned_projections(owner, axes, kurbo::Vec2::ZERO).next() {
++                position.x += offset.x as f32;
++                position.y += offset.y as f32;
++            }
++            owner = id;
 +        }
          let location = node.final_layout().location;
          let scroll_offset = *node.scroll_offset();
@@ -27820,7 +28065,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
      position
  }
  
-@@ -71,6 +127,8 @@
+@@ -71,6 +121,8 @@
  pub struct HoistedPaintChild {
      pub node_id: NodeId,
      pub z_index: i32,
@@ -27829,7 +28074,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
      /// `(geometry generation, offset from the stacking-context root)`, see
      /// [`Self::position`]. Generation `0` is never current.
      position: Cell<(u64, Point<f32>)>,
-@@ -81,10 +139,16 @@
+@@ -81,10 +133,16 @@
          Self {
              node_id,
              z_index,
@@ -27846,7 +28091,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
      /// The child's offset from the border box of its stacking-context root
      /// (`sc_root_id`), excluding the child's own `final_layout().location`.
      /// Computed at most once per geometry generation.
-@@ -113,6 +177,10 @@
+@@ -113,6 +171,10 @@
      /// `(geometry generation, bounding box of the hoisted children)`, see
      /// [`Self::hoisted_content_bbox`].
      hoisted_content_bbox: Cell<(u64, Rect<f32>)>,
@@ -27857,7 +28102,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
  }
  
  impl StackingContext {
-@@ -122,6 +190,7 @@
+@@ -122,6 +184,7 @@
              children,
              negative_z_count: 0,
              hoisted_content_bbox: Cell::new((0, Rect::ZERO)),
@@ -27865,7 +28110,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
          };
          sc.sort();
          sc
-@@ -154,17 +223,29 @@
+@@ -154,17 +217,29 @@
              }
              let left = position.x + location.x;
              let top = position.y + location.y;
@@ -27879,7 +28124,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
 +            };
 +            // pyro: one shown in each column of a multi-column container below (`multicol_between`)
 +            // lies anywhere in its columns.
-+            if let Some((container, origin, _, _)) = tree.get(sc_root_id).and_then(|root| root.multicol_between(child.node_id))
++            if let Some((container, origin)) = tree.get(sc_root_id).and_then(|root| root.multicol_between(child.node_id))
 +                && let Some(columns) = tree.get(container)
 +            {
 +                let o = *columns.scrollable_overflow();
@@ -27898,7 +28143,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
          let mut area = rects.next().unwrap_or(Rect::ZERO);
          for pos in rects {
              area.left = area.left.min(pos.left);
-@@ -200,9 +281,88 @@
+@@ -200,9 +275,88 @@
      ) -> impl ExactSizeIterator<Item = &HoistedPaintChild> + DoubleEndedIterator {
          self.children[self.pos_z_range()].iter()
      }
@@ -27987,7 +28232,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
      /// Rebuild `paint_children` and `stacking_context` for the tree rooted at
      /// `root_id` from the laid-out box tree.
      ///
-@@ -210,15 +370,329 @@
+@@ -210,15 +364,329 @@
      /// (sorted by paint order) or, when they have a non-zero `z-index` and are
      /// positioned or flex/grid items, in the nearest ancestor stacking context.
      ///
@@ -28319,7 +28564,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
      fn build_paint_tree_impl(
          &mut self,
          node_id: NodeId,
-@@ -238,7 +712,23 @@
+@@ -238,7 +706,23 @@
              // node itself, so the role the caller resolved must match the one
              // this node was last built with.
              let role_unchanged = node.stacking_context.is_some() == stacking_context.is_none();
@@ -28343,7 +28588,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
                  && !node
                      .damage()
                      .unwrap_or(ALL_DAMAGE)
-@@ -252,6 +742,17 @@
+@@ -252,6 +736,17 @@
              }
          }
  
@@ -28361,7 +28606,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
          let Some(display) = self.nodes[node_id].display_style() else {
              return;
          };
-@@ -318,33 +819,78 @@
+@@ -318,33 +813,78 @@
  
              let is_layer_root =
                  stacking_context.is_none() || self.nodes[node_id].is_paint_layer_root();
@@ -28446,7 +28691,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
                      } else {
                          self.scratch.keyed_children.push((paint_order, child_id));
                      }
-@@ -352,10 +898,16 @@
+@@ -352,10 +892,16 @@
                      // Positioned descendants lifted out of the static boxes of
                      // this child's subtree join this node's positioned paint
                      // level, in tree order after the child.
@@ -28465,7 +28710,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
                                  self.scratch
                                      .keyed_children
                                      .push(((2, paint_order.1), entry.node_id));
-@@ -369,15 +921,51 @@
+@@ -369,15 +915,51 @@
                  while let Some(&(anchor, hoisted_id)) = hoisted_past_parent.get(next_hoisted)
                      && anchor == index
                  {
@@ -28519,7 +28764,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
  
              let mut paint_children = self.nodes[node_id]
                  .paint_children
-@@ -392,9 +980,14 @@
+@@ -392,9 +974,14 @@
                      .map(|(_, id)| id),
              );
  
@@ -28534,7 +28779,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
          }
  
          let node = &mut self.nodes[node_id];
-@@ -408,6 +1001,229 @@
+@@ -408,6 +995,229 @@
          }
      }
  
@@ -28764,7 +29009,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
      /// The layout child of `node_id` whose subtree contains `id`, following
      /// `layout_parent`.
      fn layout_child_containing(&self, node_id: NodeId, id: NodeId) -> Option<NodeId> {
-@@ -426,15 +1242,20 @@
+@@ -426,15 +1236,20 @@
      /// the enclosing stacking context like any other z-indexed positioned
      /// child, the rest join `paint_children` at the same paint level as other
      /// positioned boxes (the caller's stable sort keeps tree order).
@@ -28786,7 +29031,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
                  true => None,
                  false => Some(entries),
              },
-@@ -443,11 +1264,115 @@
+@@ -443,11 +1258,115 @@
          let z_index = self.nodes[child_id].z_index();
          if z_index != 0 {
              entries.push(HoistedPaintChild::new(child_id, z_index));
@@ -28902,7 +29147,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
  }
  
  impl Node {
-@@ -471,22 +1396,283 @@
+@@ -471,22 +1390,283 @@
                      || e.sub_doc_data().is_some()
                      || e.text_input_data().is_some()
              })
@@ -28972,15 +29217,8 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
 +                matches!(parent_style.clone_display().inside(), DisplayInside::Flex | DisplayInside::Grid)
 +            })
 +        })
-     }
- 
--    /// Whether this is a `position: relative` or `sticky` box.
--    fn is_in_flow_positioned(&self) -> bool {
--        self.primary_styles().is_some_and(|style| {
--            matches!(
--                style.clone_position(),
--                Position::Relative | Position::Sticky
--            )
++    }
++
 +    /// pyro: whether this box is a scroll container that, but for its overflow clip, would paint in
 +    /// the phases of an ancestor (`paints_in_ancestor_phases`): it is no stacking context, so CSS 2.1
 +    /// Appendix E paints its background with the other block backgrounds and its content's inline
@@ -29033,9 +29271,9 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
 +            parent.primary_styles().is_some_and(|parent_style| {
 +                matches!(parent_style.clone_display().inside(), DisplayInside::Flex | DisplayInside::Grid)
 +            })
-         })
-     }
- 
++        })
++    }
++
 +    /// pyro: whether this box is a block-level flex or grid container that paints in the phases of
 +    /// an ancestor: its own box with the block backgrounds (CSS 2.1 Appendix E step 4) and its items,
 +    /// which paint as inline blocks do (css-flexbox-1 § 4.4, css-grid-1 § 9.4), whole with the inline
@@ -29093,8 +29331,15 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
 +                matches!(parent_style.clone_display().inside(), DisplayInside::Flex | DisplayInside::Grid)
 +            })
 +        })
-+    }
-+
+     }
+ 
+-    /// Whether this is a `position: relative` or `sticky` box.
+-    fn is_in_flow_positioned(&self) -> bool {
+-        self.primary_styles().is_some_and(|style| {
+-            matches!(
+-                style.clone_position(),
+-                Position::Relative | Position::Sticky
+-            )
 +    /// pyro: whether this internal table box (row group, row, cell) paints in the phases of its
 +    /// table's painter (Blink: a table's collapsed borders go after the backgrounds of the blocks
 +    /// in its cells and before their inline content, floats and positioned boxes). Only a part
@@ -29135,9 +29380,9 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
 +                    })
 +                })
 +            })
-+        })
-+    }
-+
+         })
+     }
+ 
 +    /// pyro: whether this box is laid out at the inline level (an atomic inline: an inline
 +    /// block, an image): in its parent's paint phases it paints with the inline content.
 +    pub fn is_inline_level(&self) -> bool {
@@ -29193,7 +29438,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
      pub fn lifted_paint_offset(&self, painter_id: NodeId) -> Option<Point<f32>> {
          match self.containing_block() {
              Some(id) if id == painter_id => None,
-@@ -496,6 +1682,21 @@
+@@ -496,6 +1676,21 @@
      }
  }
  
@@ -29215,7 +29460,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
  #[inline(always)]
  fn position_to_order(pos: Position) -> i32 {
      match pos {
-@@ -539,3 +1740,144 @@
+@@ -539,3 +1734,144 @@
          )
      }
  }
@@ -29867,7 +30112,7 @@ diff --git a/packages/blitz-dom/src/layout/scroll_markers.rs b/packages/blitz-do
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/scroll_markers.rs
-@@ -0,0 +1,1641 @@
+@@ -0,0 +1,1631 @@
 +//! pyro: CSS Overflow 5's scroll markers and scroll buttons: the boxes of `::scroll-marker-group`,
 +//! `::scroll-marker` and `::scroll-button()`, and `:target-current`.
 +//!
@@ -31116,12 +31361,8 @@ new file mode 100644
 +                .iter()
 +                .map(|&i| chains[i].get(level).map(|&id| (id, None)).unwrap_or(live[i].1))
 +                .collect();
-+            let mut unique: Vec<Target> = Vec::new();
-+            for &r in &representatives {
-+                if !unique.contains(&r) {
-+                    unique.push(r);
-+                }
-+            }
++            let mut seen = std::collections::HashSet::new();
++            let unique: Vec<Target> = representatives.iter().copied().filter(|target| seen.insert(*target)).collect();
 +            let active = match self.select_by_scroll_target(scroller, &unique) {
 +                Some(active) => active,
 +                None => self.select_in_scroller(scroller, &unique)?,
@@ -31152,10 +31393,13 @@ new file mode 100644
 +        };
 +        let border = self.nodes[id].final_layout().border;
 +        let fragment = self.nodes[id]
-+            .column_fragments()
-+            .and_then(|columns| columns.fragments.iter().filter(|fragment| !fragment.spanner).nth(index as usize).copied());
++            .columns_with_axes()
++            .and_then(|(columns, axes)| columns.marker_slot(index as usize).map(|slot| (slot, axes)));
 +        match fragment {
-+            Some(f) => (f.x - border.left, f.top - border.top, f.width, f.height),
++            Some((slot, axes)) => {
++                let rect = axes.transform_rect_bbox(kurbo::Rect::new(slot.x.into(), slot.top.into(), (slot.x + slot.width).into(), (slot.top + slot.height).into()));
++                (rect.x0 as f32 - border.left, rect.y0 as f32 - border.top, rect.width() as f32, rect.height() as f32)
++            }
 +            None => (0.0, 0.0, 0.0, 0.0),
 +        }
 +    }
@@ -31397,8 +31641,7 @@ new file mode 100644
 +        });
 +        let count = match wanted {
 +            true => self.nodes[container]
-+                .column_fragments()
-+                .map_or(0, |columns| columns.fragments.iter().filter(|fragment| !fragment.spanner).count()),
++                .columns_with_axes().map_or(0, |(columns, _)| columns.marker_count()),
 +            false => 0,
 +        };
 +        if let Some(pseudos) = self.nodes[container].element_data_mut().and_then(|data| data.scroll.as_mut()) {
@@ -31431,8 +31674,7 @@ new file mode 100644
 +            return false;
 +        };
 +        let count = self.nodes[container]
-+            .column_fragments()
-+            .map_or(0, |columns| columns.fragments.iter().filter(|fragment| !fragment.spanner).count());
++            .columns_with_axes().map_or(0, |(columns, _)| columns.marker_count());
 +        count as u32 != wanted
 +    }
 +}
@@ -31479,14 +31721,7 @@ new file mode 100644
 +        for &candidate in candidates {
 +            let at_or_before = match candidate {
 +                (container, Some(index)) => target_columns.entry(container).or_insert_with(|| {
-+                    let (_, y, _, _) = self.layout_rect_in_scroller(container, target, true);
-+                    let strip_y = y + self.nodes[container].unrounded_layout().border.top;
-+                    let mut ordinal = 0;
-+                    for fragment in &self.nodes[container].column_fragments()?.fragments {
-+                        if strip_y < fragment.strip_end { return (!fragment.spanner).then_some(ordinal); }
-+                        ordinal += usize::from(!fragment.spanner);
-+                    }
-+                    None
++                    self.nodes[container].columns_with_axes()?.0.marker_for(target)
 +                }).is_some_and(|column| index as usize <= column),
 +                (id, None) => self.tree_path(id) <= path,
 +            };

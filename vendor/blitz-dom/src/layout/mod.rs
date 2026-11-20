@@ -166,6 +166,7 @@ pub(crate) struct LayoutPassState<'doc> {
     /// pyro: the multi-column container whose strip is being laid out and its content box width,
     /// while it has column spanners (`layout::multicol`).
     pub(crate) column_spanners: Option<(crate::NodeId, f32)>,
+    spanners_by_owner: std::collections::HashMap<crate::NodeId, Vec<crate::NodeId>>,
     /// pyro: the sizes `calc_size_inputs` measured for boxes this pass (box, axis 0 width or 1
     /// height, size): a parent that hands one back as a known size hands back the result.
     calc_size_results: Vec<(NodeId, u8, f32)>,
@@ -257,6 +258,7 @@ impl<'doc> LayoutPassState<'doc> {
             #[cfg(feature = "writing-mode")]
             round_counts: (0, 0),
             column_spanners: None,
+            spanners_by_owner: Default::default(),
             calc_size_results: Vec::new(),
             try_styles: Default::default(),
             try_options: Default::default(),

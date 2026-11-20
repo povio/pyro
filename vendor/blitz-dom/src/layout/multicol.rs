@@ -94,6 +94,8 @@ impl FragmentSink {
     /// Adds `fragment`, or, where it takes the last room, one fragment holding the rest of the
     /// strip from its start; once closed, nothing.
     fn push(&mut self, fragment: ColumnFragment) {
+        #[cfg(test)]
+        PLAN_VISITS.with(|visits| visits.set(visits.get() + 1));
         if self.closed || self.room == 0 || self.budget == 0 {
             self.closed = true;
             return;
@@ -146,6 +148,7 @@ thread_local! {
     /// pyro: the fragments rect mapping visited (tests: a rect visits the fragments it reaches).
     static MAPPED_FRAGMENTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static SPANNER_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static PLAN_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 /// pyro: how many extra strip layouts the multi-column containers of one layout pass make to
 /// fragment the ones nested in them (`LayoutPassState::nested_pass_budget`): nesting multiplies
@@ -177,6 +180,8 @@ pub(crate) fn is_multicol_style(style: &ComputedValues) -> bool {
 /// device pixels): the strip's block ranges and where each is shown.
 #[derive(Debug, Clone, Default)]
 pub struct ColumnFragments {
+    box_slots: std::collections::HashMap<crate::NodeId, std::ops::Range<usize>>,
+    marker_slots: Vec<usize>,
     /// In order: the first shows the strip from its start, the last to its end. Columns of one
     /// row share their `top`; a column spanner is a row of its own.
     pub fragments: Vec<ColumnFragment>,
@@ -225,15 +230,118 @@ pub struct ColumnFragment {
     pub block_rounding_error: f32,
 }
 
-impl ColumnFragment {
-    /// Whether the column shows strip position `y`.
-    #[inline]
-    fn shows(&self, y: f32) -> bool {
-        y >= self.start && y < self.end
-    }
-}
-
 impl ColumnFragments {
+    fn index_box_slots(&mut self, doc: &BaseDocument, container: crate::NodeId) {
+        if self.fragments.is_empty() { return; }
+        self.marker_slots = self.fragments.iter().enumerate().filter_map(|(index, slot)| (!slot.spanner).then_some(index)).collect();
+        let spans: std::collections::HashMap<_, _> = doc.column_spanners_of(container).into_iter()
+            .zip(self.fragments.iter().enumerate().filter(|(_, slot)| slot.spanner))
+            .map(|((id, _), (index, _))| (id, index)).collect();
+        let mut run_start = 0usize;
+        let mut run_ends: Vec<_> = spans.values().copied().collect();
+        run_ends.sort_unstable();
+        run_ends.push(self.fragments.len());
+        let mut run = 0;
+        let mut stack = vec![(container, 0.0, None)];
+        while let Some((id, parent_top, entering_run)) = stack.pop() {
+            #[cfg(test)]
+            PLAN_VISITS.with(|visits| visits.set(visits.get() + 1));
+            let node = &doc.nodes[id];
+            if node.element_data().is_none() { continue; }
+            let layout = node.unrounded_layout();
+            let top = if id == container { 0.0 } else { parent_top + layout.location.y };
+            if let Some(first_run) = entering_run {
+                if id != container {
+                    let first_run = self.first_after_spanner.get(&id).copied().unwrap_or(first_run).max(first_run);
+                    let start = self.fragments.partition_point(|slot| slot.end.is_finite() && slot.strip_end <= top).max(first_run);
+                    let end = (top + layout.size.height.max(layout.scrollable_overflow_rect.bottom())).max(self.continuation_end(id).unwrap_or(f32::NEG_INFINITY));
+                    let last = self.fragments.partition_point(|slot| slot.start < end);
+                    let start = if first_run > 0 && top <= self.fragments.get(first_run).map_or(top, |slot| slot.start) { first_run } else { start };
+                    let limit = run_ends[run];
+                    self.box_slots.insert(id, start.min(limit)..last.max(start.saturating_add(1)).min(limit));
+                }
+                continue;
+            }
+            if let Some(&slot) = spans.get(&id) {
+                self.box_slots.insert(id, slot..slot + 1);
+                run_start = if slot + 1 == self.fragments.len() && self.fragments[slot].end.is_infinite() { slot } else { slot + 1 };
+                run += 1;
+                continue;
+            }
+            stack.push((id, parent_top, Some(run_start)));
+            if let Some(text) = node.element_data().and_then(|element| element.inline_layout_data.as_deref()) {
+                let origin = top + layout.border.top + layout.padding.top + text.block_offset;
+                let scale = text.layout.scale();
+                for line in text.layout.lines() {
+                    #[cfg(test)]
+                    PLAN_VISITS.with(|visits| visits.set(visits.get() + 1));
+                    let metrics = line.metrics();
+                    let low = origin + metrics.block_min_coord / scale;
+                    let high = origin + metrics.block_max_coord / scale;
+                    let first = self.fragments.partition_point(|slot| slot.end <= low).clamp(run_start, run_ends[run]);
+                    let end = self.fragments.partition_point(|slot| slot.start < high).clamp(first, run_ends[run]);
+                    for item in line.items() {
+                        let parley::PositionedLayoutItem::GlyphRun(glyphs) = item else { continue };
+                        let mut owner = Some(glyphs.style().brush.id);
+                        for _ in 0..64 {
+                            let Some(ancestor) = owner.filter(|&ancestor| ancestor != id) else { break };
+                            #[cfg(test)]
+                            PLAN_VISITS.with(|visits| visits.set(visits.get() + 1));
+                            let range = self.box_slots.entry(ancestor).or_insert(first..end);
+                            range.start = range.start.min(first);
+                            range.end = range.end.max(end);
+                            owner = doc.nodes[ancestor].parent;
+                        }
+                    }
+                }
+            }
+            if (id == container || node.layout_data().columns.is_none()) && let Some(children) = node.layout_children.borrow().as_ref() {
+                stack.extend(children.iter().rev().map(|&child| (child, top, None)));
+            }
+        }
+    }
+
+    pub fn continuation_index(&self, owner: crate::NodeId, slot: usize) -> Option<usize> {
+        let range = self.box_slots.get(&owner)?;
+        range.contains(&slot).then(|| slot - range.start)
+    }
+
+    pub(crate) fn marker_for(&self, owner: crate::NodeId) -> Option<usize> {
+        let first = self.box_slots.get(&owner)?.clone().next()?;
+        self.marker_slots.binary_search(&first).ok()
+    }
+
+    pub(crate) fn marker_count(&self) -> usize { self.marker_slots.len() }
+
+    pub(crate) fn marker_slot(&self, index: usize) -> Option<&ColumnFragment> {
+        self.marker_slots.get(index).map(|&slot| &self.fragments[slot])
+    }
+
+    pub fn owned_slots(&self, owner: crate::NodeId) -> impl DoubleEndedIterator<Item = (&ColumnFragment, f32)> + '_ {
+        let slots = self.box_slots.get(&owner).cloned().unwrap_or(0..0);
+        self.fragments[slots.clone()].iter().enumerate().map(move |(ordinal, slot)| {
+            (slot, self.owned_start(owner, slots.start, slots.start + ordinal))
+        })
+    }
+
+    fn owned_start(&self, owner: crate::NodeId, first: usize, index: usize) -> f32 {
+        if index == first && (self.first_after_spanner.get(&owner) == Some(&first) || (first > 0 && self.fragments[first - 1].spanner)) {
+            f32::NEG_INFINITY
+        } else {
+            self.fragments[index].start
+        }
+    }
+
+    pub fn owned_projections(&self, owner: crate::NodeId, axes: kurbo::Affine, origin: kurbo::Vec2) -> impl DoubleEndedIterator<Item = (kurbo::Rect, kurbo::Vec2, f64)> + '_ {
+        self.owned_slots(owner).map(move |(slot, start)| {
+            let low = f64::from(start).max(-1e7);
+            let high = f64::from(slot.end).min(1e7);
+            let clip = axes.transform_rect_bbox(kurbo::Rect::new(-1e7, low, 1e7, high)) + origin;
+            let offset = axes * kurbo::Point::new(f64::from(slot.offset.x), f64::from(slot.offset.y)) - axes * kurbo::Point::ORIGIN;
+            let correction = if axes == kurbo::Affine::IDENTITY && slot.exact_x.is_finite() { f64::from(slot.exact_x - slot.x) } else { 0.0 };
+            (clip, offset, correction)
+        })
+    }
     pub fn owner_spends_slot(&self, owner: crate::NodeId, end: f32) -> bool {
         self.consumed_by_owner.get(&owner).is_some_and(|start| end > *start)
     }
@@ -250,7 +358,8 @@ impl ColumnFragments {
     /// A position in a margin truncated at a break (after one column's end, before the next
     /// one's start) is in the column after the break, where what follows it is shown.
     pub fn fragment_at(&self, y: f32) -> Option<&ColumnFragment> {
-        self.fragments.iter().find(|f| f.shows(y) || f.start > y).or_else(|| self.fragments.last())
+        let index = self.fragments.partition_point(|fragment| fragment.end <= y);
+        self.fragments.get(index).or_else(|| self.fragments.last())
     }
 
     /// The move (CSS px) of the column that shows strip position `y` (none past the columns).
@@ -332,14 +441,19 @@ impl ColumnFragments {
         let empty = rect.y1 <= rect.y0;
         // (Only the fragments the rect can reach: they are in strip order.)
         let (mut first, mut last) = self.reaching(rect.y0 / scale, rect.y1 / scale);
-        if let Some(index) = child.and_then(|id| self.first_after_spanner.get(&id)).copied() {
-            first = first.max(index);
-            last = last.max(index + 1);
+        let owned = child.and_then(|id| self.box_slots.get(&id).map(|slots| (id, slots)));
+        if let Some((id, slots)) = owned {
+            first = first.clamp(slots.start, slots.end);
+            last = last.clamp(first, slots.end);
+            if !slots.is_empty() && self.owned_start(id, slots.start, slots.start) == f32::NEG_INFINITY && first == slots.start {
+                last = last.max(first + 1);
+            }
         }
-        for f in &self.fragments[first..last] {
+        for index in first..last {
+            let f = &self.fragments[index];
             #[cfg(test)]
             MAPPED_FRAGMENTS.with(|m| m.set(m.get() + 1));
-            let Some(start) = child.map_or(Some(f.start), |id| self.child_start(id, f.start)) else { continue };
+            let start = owned.map_or(f.start, |(id, slots)| self.owned_start(id, slots.start, index));
             let y0 = rect.y0.max(start as f64 * scale);
             let y1 = rect.y1.min(f.end as f64 * scale);
             if y1 < y0 || (!empty && y1 <= y0) || (empty && out.is_some()) {
@@ -515,8 +629,15 @@ struct FillRun {
     violations: usize,
 }
 
+struct RunSlots {
+    top: f32,
+    height: f32,
+    fill: FillRun,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct FlowContinuation {
+    run: usize,
     owner: crate::NodeId,
     resume: crate::NodeId,
     origin: f32,
@@ -695,7 +816,9 @@ impl Breaks {
         // overflow columns after the last), so they are as tall as the tallest (Chromium; WPT
         // css-multicol `multicol-fill-balance-002`, `-040`).
         let mut cuts: Vec<f32> = vec![from];
-        cuts.extend(self.forced.iter().copied().filter(|&f| f > from + EPSILON && f < to - EPSILON));
+        let first = self.forced.partition_point(|&cut| cut <= from + EPSILON);
+        let last = self.forced.partition_point(|&cut| cut < to - EPSILON).max(first);
+        cuts.extend_from_slice(&self.forced[first..last]);
         cuts.push(to);
         let segments = cuts.len() - 1;
         let tallest_segment = cuts.windows(2).map(|w| w[1] - w[0]).fold(0.0, f32::max);
@@ -952,7 +1075,20 @@ impl LayoutPassState<'_> {
             vertical_margins_are_collapsible: Line::FALSE,
         };
         // Column spanners (`column-span: all` children) are laid out as wide as the container.
-        let spanning = (!inline_root).then(|| (dom_id, content_width)).filter(|_| self.doc.has_column_spanners(dom_id));
+        let spans = if inline_root { Vec::new() } else { self.doc.column_spanners_of(dom_id) };
+        let spanning = (!spans.is_empty()).then_some((dom_id, content_width));
+        let mut by_owner = std::collections::HashMap::<_, Vec<_>>::new();
+        for (spanner, _) in spans {
+            let mut ancestor = self.nodes[spanner].layout_parent.get();
+            for _ in 0..64 {
+                let Some(owner) = ancestor.filter(|&owner| owner != dom_id) else { break };
+                #[cfg(test)]
+                PLAN_VISITS.with(|visits| visits.set(visits.get() + 1));
+                by_owner.entry(owner).or_default().push(spanner);
+                ancestor = self.nodes[owner].layout_parent.get();
+            }
+        }
+        let outer_owners = std::mem::replace(&mut self.spanners_by_owner, by_owner);
         let outer_spanners = std::mem::replace(&mut self.column_spanners, spanning);
         let outer_percent_height = std::mem::replace(&mut self.multicol_percent_height, percent_height.map(|height| (dom_id, height)));
         let mut content_top = pb.top;
@@ -979,11 +1115,12 @@ impl LayoutPassState<'_> {
         // again on each pass.
         let balancing = spanning.is_none() && !vertical && multicol.height.is_none() && !fill_auto;
         let wrapped_rows = multicol.height.filter(|&height| !vertical && multicol.wrap && height >= 1.0);
-        let fragments_nested = fragmentainer.is_some() || balancing || wrapped_rows.is_some();
+        let ordinary_runs = multicol.height.is_none() && !multicol.wrap && !self.nested_fragmentation.contains_key(&dom_id);
+        let fragments_nested = fragmentainer.is_some() || balancing || wrapped_rows.is_some() || (ordinary_runs && fill_auto);
         let mut pass = 0;
         // pyro: the tops of nested containers to break before (`ColumnFragments::pushed`).
         let mut pushed_nested: std::collections::HashMap<crate::NodeId, f32> = std::collections::HashMap::new();
-        let (strip, mut breaks) = loop {
+        let (strip, mut breaks, run_slots) = loop {
             self.multicol_strip_depth += 1;
             let strip = if inline_root {
                 self.compute_inline_layout(dom_id, strip_inputs, None)
@@ -1003,11 +1140,40 @@ impl LayoutPassState<'_> {
                 content_top += (outer - (pb.top - padding_top_of(&self.nodes[dom_id], inputs.parent_size.width))).max(0.0);
             }
             let strip_end = (inline_root || !clamps_block_size).then(|| (strip.size.height - pb.bottom).max(content_top));
-            let mut breaks = self.doc.multicol_breaks(dom_id, content_top, strip_end, fragments_nested, fragmentainer.is_some());
+            let mut breaks = self.doc.multicol_breaks(dom_id, content_top, strip_end, fragments_nested, fragmentainer.is_some() || (ordinary_runs && fill_auto));
             if !pushed_nested.is_empty() {
                 breaks.forced.extend(pushed_nested.values().copied().filter(|&y| y > breaks.start + EPSILON));
                 breaks.forced.sort_by(f32::total_cmp);
                 breaks.forced.dedup_by(|a, b| (*a - *b).abs() <= EPSILON);
+            }
+            let mut run_slots = Vec::new();
+            if ordinary_runs {
+                breaks.one_column_when_empty = size.height.is_none() && definite_height.is_some_and(|height| height <= EPSILON);
+                let spans = if spanning.is_some() { self.doc.column_spanner_ranges(dom_id) } else { Vec::new() };
+                let ids = if spanning.is_some() { self.doc.column_spanners_of(dom_id) } else { Vec::new() };
+                let leads = if spanning.is_some() { self.doc.column_spanner_leads(dom_id) } else { Vec::new() };
+                let mut start = content_top;
+                let mut top = content_top;
+                let mut room = MAX_FRAGMENTS;
+                for index in 0..=spans.len() {
+                    if room == 0 { break; }
+                    let lift = ids.get(index).map_or(0.0, |(id, _)| (-self.nodes[*id].unrounded_layout().margin.top).max(0.0));
+                    let end = spans.get(index).map_or(breaks.end, |span| span.0 + lift);
+                    let part = Part { breaks: &breaks, start, end };
+                    let remaining = limit.map(|height| (height - (top - content_top)).max(0.0));
+                    let height = if index == spans.len() && matches!(multicol.fill, ColumnFill::Auto) && let Some(height) = remaining {
+                        if spans.is_empty() && !fill_auto { height.min((end - start).max(0.0)) } else { height }
+                    } else { part.balance(count, if spans.is_empty() { limit } else { remaining.filter(|_| definite_height.is_some()) }) };
+                    let fill = if end > start + EPSILON || spans.is_empty() { part.fill(height, room) } else { FillRun { columns: Vec::new(), shortage: None, violations: 0 } };
+                    room -= fill.columns.len();
+                    let next = if fill.columns.is_empty() { top } else { top + height };
+                    run_slots.push(RunSlots { top, height, fill });
+                    if let Some(&(before, after, _)) = spans.get(index) {
+                        room = room.saturating_sub(1);
+                        top = next - lift + after - before;
+                        start = after - leads[index];
+                    }
+                }
             }
             pass += 1;
             if pass <= 5 && self.nested_pass_budget > 0
@@ -1072,10 +1238,11 @@ impl LayoutPassState<'_> {
                     continue;
                 }
             }
-            if let Some(height) = fragmentainer && pass <= 5 && self.nested_pass_budget > 0 && !breaks.overflow_parents.is_empty() {
-                let run = breaks.fill(height, MAX_COLUMNS);
+            if (fragmentainer.is_some() || (ordinary_runs && fill_auto)) && pass <= 5 && self.nested_pass_budget > 0 && !breaks.overflow_parents.is_empty() {
+                let fallback = fragmentainer.filter(|_| run_slots.is_empty()).map(|height| (height, breaks.fill(height, MAX_COLUMNS)));
                 let mut changed = false;
                 for &(id, parent_top, top, bottom) in &breaks.parallel_floats {
+                    let Some((height, run)) = run_slots.iter().rev().find(|run| run.fill.columns.first().is_some_and(|slot| slot.0 <= top)).map(|run| (run.height, &run.fill)).or_else(|| fallback.as_ref().map(|(height, run)| (*height, run))) else { continue };
                     let index = run.columns.partition_point(|&(_, end)| end <= top + EPSILON);
                     if let Some(&(start, end)) = run.columns.get(index) && top > start + EPSILON && bottom > end + EPSILON && bottom - top <= height + EPSILON && let Some(&(next, _)) = run.columns.get(index + 1) {
                         let floor = next - parent_top;
@@ -1092,19 +1259,23 @@ impl LayoutPassState<'_> {
                 let mut parents = std::collections::BTreeMap::new();
                 for token in &breaks.overflow_parents {
                     let start = token.origin + token.consumed;
-                    let entry = parents.entry(token.owner).or_insert((token.origin, start));
-                    entry.1 = entry.1.min(start);
+                    let Some((height, run)) = run_slots.get(token.run).map(|run| (run.height, &run.fill)).or_else(|| fallback.as_ref().map(|(height, run)| (*height, run))) else { continue };
+                    let end = token.origin + self.nodes[token.owner].unrounded_layout().size.height + self.column_space_used.get(&token.owner).copied().unwrap_or_default();
+                    let short = &run.columns[..run.columns.len().saturating_sub(1)];
+                    let first = short.partition_point(|&(_, slot_end)| slot_end <= start);
+                    let charges = parents.entry(token.owner).or_insert_with(std::collections::BTreeMap::new);
+                    for (index, &(low, high)) in short.iter().enumerate().skip(first) {
+                        if high >= end { break; }
+                        charges.insert((token.run, index), (height - (high - low), end - high));
+                    }
                 }
-                for (id, (origin, parallel_start)) in parents {
-                    let bottom = origin + self.nodes[id].unrounded_layout().size.height;
+                for (id, charges) in parents {
                     let prior = self.column_space_used.get(&id).copied().unwrap_or(0.0);
                     let mut used = 0.0;
-                    let short = &run.columns[..run.columns.len().saturating_sub(1)];
-                    let first = short.partition_point(|&(_, end)| end <= parallel_start);
-                    for &(start, end) in &short[first..] {
-                        let left = bottom + prior - used - end;
+                    for (shortage, left) in charges.into_values() {
+                        let left = left - used;
                         if left <= EPSILON { break; }
-                        used += (height - (end - start)).clamp(0.0, left);
+                        used += shortage.clamp(0.0, left);
                     }
                     if (prior - used).abs() > EPSILON {
                         self.column_space_used.insert(id, used);
@@ -1124,12 +1295,13 @@ impl LayoutPassState<'_> {
             }
             if pass <= 5 && self.nested_pass_budget > 0 && !breaks.overflow_breaks.is_empty() {
                 let slot_height = self.nested_fragmentation.get(&dom_id).map(|ctx| ctx.0).or(fragmentainer);
-                let height = slot_height.unwrap_or_else(|| breaks.balance(count, limit));
-                let run = breaks.fill(height, MAX_COLUMNS);
+                let fallback = run_slots.is_empty().then(|| breaks.fill(slot_height.unwrap_or_else(|| breaks.balance(count, limit)), MAX_COLUMNS));
                 let mut changed = false;
                 for token in &breaks.overflow_breaks {
                     let id = token.resume;
-                    if let Some(boundary) = token.next_start(&run, slot_height) {
+                    let planned = run_slots.get(token.run);
+                    let Some(run) = planned.map(|plan| &plan.fill).or(fallback.as_ref()) else { continue };
+                    if let Some(boundary) = token.next_start(run, planned.filter(|_| fill_auto).map(|plan| plan.height).or(slot_height)) {
                         let floor = boundary - token.origin;
                         if floor > self.nodes[id].unrounded_layout().location.y + EPSILON {
                             self.spanner_floors.insert(id, floor);
@@ -1161,7 +1333,7 @@ impl LayoutPassState<'_> {
                 continue;
             }
             if breaks.nested.is_empty() || pass > 5 || self.nested_pass_budget == 0 {
-                break (strip, breaks);
+                break (strip, breaks, run_slots);
             }
             // pyro: a multi-column container nested in these columns is fragmented by them: it is
             // told the column height and where in its column it starts, and the strip is laid out
@@ -1178,6 +1350,11 @@ impl LayoutPassState<'_> {
                 (pieces.len() <= count).then_some((index, start, balanced, pieces))
             });
             let mut planned = Vec::new();
+            if spanning.is_some() && ordinary_runs && fill_auto {
+                for run in &run_slots {
+                    planned.extend(run.fill.columns.iter().map(|&(start, end)| (start, end, run.height, usize::MAX, run.height)));
+                }
+            }
             if let Some(height) = wrapped_rows.filter(|_| spanning.is_some()) {
                 let rows = RowSlots { origin: content_top, height, stride: height + multicol.row_gap(definite_height) };
                 let spans = self.doc.column_spanner_ranges(dom_id);
@@ -1258,11 +1435,12 @@ impl LayoutPassState<'_> {
                 }
             }
             if !changed {
-                break (strip, breaks);
+                break (strip, breaks, run_slots);
             }
             self.nested_pass_budget -= 1;
         };
         self.multicol_percent_height = outer_percent_height;
+        self.spanners_by_owner = outer_owners;
         self.column_spanners = outer_spanners;
         if inputs.run_mode == RunMode::ComputeSize {
             // The strip wrote its boxes' layouts at this width: a cached final layout of the
@@ -1770,7 +1948,11 @@ impl LayoutPassState<'_> {
                         row_top += height + if r + 1 < rows { row_gap } else { 0.0 };
                     }
                 } else {
-                let column_height = if let Some(height) = fixed_height {
+                let planned = run_slots.get(part);
+                let column_height = if let Some(run) = planned {
+                    debug_assert!((row_top - run.top).abs() <= EPSILON);
+                    run.height
+                } else if let Some(height) = fixed_height {
                     height.max(0.0)
                 } else if spanners.is_empty() && fill_auto {
                     definite_height.unwrap_or(0.0)
@@ -1793,7 +1975,9 @@ impl LayoutPassState<'_> {
                 // pyro: `column-wrap: wrap`: each `count` columns make a row (css-multicol-2).
                 let per_row = if fixed_height.is_some() && multicol.wrap { count.max(1) } else { usize::MAX };
                 let row_gap = multicol.row_gap(definite_height);
-                let mut columns = run.fill(column_height, left).columns;
+                let mut columns = if let Some(plan) = planned.filter(|plan| plan.fill.columns.len() <= left) {
+                    plan.fill.columns.clone()
+                } else { run.fill(column_height, left).columns };
                 let rows = columns.len().div_ceil(per_row).max(1);
                 // pyro: wrapping at the container's height (`column-height: auto`), `column-fill:
                 // balance` balances the last row (of at most `count` columns), that height its
@@ -1898,14 +2082,27 @@ impl LayoutPassState<'_> {
         // pyro: a column that starts inside a box of `box-decoration-break: clone` shows the box's
         // block-start border and padding again first (`Breaks::clones`).
         if !breaks.clones.is_empty() {
+            let mut starts = Vec::new();
+            let mut ends = Vec::new();
+            for &(top, bottom, inset) in &breaks.clones {
+                if top + EPSILON < bottom - EPSILON {
+                    starts.push((top + EPSILON, f64::from(inset)));
+                    ends.push((bottom - EPSILON, f64::from(inset)));
+                }
+            }
+            for events in [&mut starts, &mut ends] {
+                events.sort_unstable_by(|left, right| left.0.total_cmp(&right.0));
+                let mut sum = 0.0;
+                for (_, inset) in events {
+                    sum += *inset;
+                    *inset = sum;
+                }
+            }
             for fragment in fragments.iter_mut().filter(|f| !f.spanner) {
-                let repeated: f32 = breaks
-                    .clones
-                    .iter()
-                    .filter(|&&(top, bottom, _)| fragment.start > top + EPSILON && fragment.start < bottom - EPSILON)
-                    .map(|&(_, _, inset)| inset)
-                    .sum();
-                fragment.offset.y += repeated;
+                let opened = starts.partition_point(|&(at, _)| at < fragment.start);
+                let closed = ends.partition_point(|&(at, _)| at <= fragment.start);
+                let before = |events: &[(f32, f64)], count: usize| events[..count].last().map_or(0.0, |event| event.1);
+                fragment.offset.y += (before(&starts, opened) - before(&ends, closed)) as f32;
             }
         }
         // pyro: the columns' unsnapped left edges (`ColumnFragment::exact_x`).
@@ -2061,14 +2258,14 @@ impl LayoutPassState<'_> {
             *entry = entry.max(end);
         }
         let mut consumed_by_owner = std::collections::HashMap::<_, f32>::new();
-        if fragmentainer.is_some() {
+        if fragmentainer.is_some() || (ordinary_runs && fill_auto) {
             for token in &breaks.overflow_parents {
                 let start = token.origin + token.consumed;
                 let earliest = consumed_by_owner.entry(token.owner).or_insert(start);
                 *earliest = earliest.min(start);
             }
         }
-        let columns = ColumnFragments { fragments, first_after_spanner, run_wrappers, wrapper_initial_consumption, continuation_ends, consumed_by_owner, nested: nested_ctx.or(nested_rows_ctx).or(nested_span_ctx), pushed, strip_end: breaks.end };
+        let mut columns = ColumnFragments { marker_slots: Vec::new(), box_slots: Default::default(), fragments, first_after_spanner, run_wrappers, wrapper_initial_consumption, continuation_ends, consumed_by_owner, nested: nested_ctx.or(nested_rows_ctx).or(nested_span_ctx), pushed, strip_end: breaks.end };
         if columns.fragments.len() > 1 && !vertical {
             for candidate in oof_candidates.as_mut_slice() {
                 if candidate.containing_block.is_some() {
@@ -2108,6 +2305,7 @@ impl LayoutPassState<'_> {
         }
         if inputs.run_mode == RunMode::PerformLayout {
             // (Debited as they were made: `FragmentSink::push`.)
+            columns.index_box_slots(self.doc, dom_id);
             self.column_fragment_budget = budget_left;
             self.doc.has_multicol = true;
             // (None made, the pass's budget spent: its strip is shown as it is.)
@@ -2273,7 +2471,9 @@ impl LayoutPassState<'_> {
         }
         // The spanners inside it: their margin boxes in its coordinates.
         let mut spans: Vec<(f32, f32)> = Vec::new();
-        for (id, _) in self.doc.column_spanners_of(container) {
+        for &id in self.spanners_by_owner.get(&node_id)? {
+            #[cfg(test)]
+            PLAN_VISITS.with(|visits| visits.set(visits.get() + 1));
             let layout = self.nodes[id].unrounded_layout();
             let mut y = layout.location.y;
             let mut at = self.nodes[id].layout_parent.get();
@@ -2390,12 +2590,9 @@ impl Node {
     /// child's border box range in its strip (its overflow below included). Paint shows such a
     /// child in each column it is in (blitz-paint `draw_hoisted_children`), at its strip position
     /// (`hoisted_child_strip_position`), and hit testing finds it there (`Node::hit_inner`).
-    pub fn multicol_between(&self, child_id: crate::NodeId) -> Option<(crate::NodeId, Point<f32>, f32, f32)> {
+    pub fn multicol_between(&self, child_id: crate::NodeId) -> Option<(crate::NodeId, Point<f32>)> {
         let tree = self.tree();
         let child = tree.get(child_id)?;
-        let layout = child.final_layout();
-        let mut top = layout.location.y;
-        let bottom_extent = layout.size.height.max(layout.scrollable_overflow_rect.bottom().abs());
         let transformed = |n: &Node| n.primary_styles().is_some_and(|s| !s.get_box().transform.0.is_empty());
         let mut at = child.layout_parent.get();
         let mut container = None;
@@ -2409,11 +2606,10 @@ impl Node {
             if transformed(n) {
                 return None;
             }
-            if n.column_fragments().is_some() {
+            if n.columns_with_axes().is_some() {
                 container = Some(node);
                 break;
             }
-            top += n.final_layout().location.y;
             at = n.layout_parent.get();
         }
         let container = container?;
@@ -2451,7 +2647,42 @@ impl Node {
             at = n.layout_parent.get();
         }
         at?;
-        Some((container, origin, top, top + bottom_extent))
+        Some((container, origin))
+    }
+
+    pub fn hoisted_projections(&self, child_id: crate::NodeId) -> Option<Vec<(kurbo::Rect, kurbo::Vec2, Option<f64>)>> {
+        let mut owner = child_id;
+        let mut pieces: Option<Vec<(kurbo::Rect, kurbo::Vec2, Option<f64>)>> = None;
+        for _ in 0..64 {
+            let Some((container, origin)) = self.multicol_between(owner) else { break };
+            let (columns, axes) = self.tree().get(container)?.columns_with_axes()?;
+            let origin = kurbo::Vec2::new(origin.x.into(), origin.y.into());
+            let outer: Vec<_> = columns.owned_projections(owner, axes, origin).map(|(clip, shift, correction)| {
+                (clip, shift, (axes == kurbo::Affine::IDENTITY).then_some(correction))
+            }).collect();
+            pieces = Some(if let Some(inner) = pieces.take() {
+                let inverse = axes.inverse();
+                let intervals: Vec<_> = outer.iter().map(|(clip, _, _)| inverse.transform_rect_bbox(*clip - origin)).collect();
+                let mut next = Vec::new();
+                'pieces: for (prior_clip, prior_shift, prior_exact) in inner {
+                    let painted = inverse.transform_rect_bbox(prior_clip + prior_shift - origin);
+                    let first = intervals.partition_point(|interval| interval.y1 <= painted.y0);
+                    let last = intervals.partition_point(|interval| interval.y0 < painted.y1);
+                    for index in first..last {
+                        let (clip, shift, exact) = outer[index];
+                        let common = prior_clip.intersect(clip - prior_shift);
+                        if common.area() > 0.0 {
+                            next.push((index, (common, shift + prior_shift, exact.zip(prior_exact).map(|(outer, inner)| outer + inner))));
+                            if next.len() == MAX_FRAGMENTS { break 'pieces; }
+                        }
+                    }
+                }
+                next.sort_by_key(|piece| piece.0);
+                next.into_iter().map(|(_, piece)| piece).collect()
+            } else { outer });
+            owner = container;
+        }
+        pieces
     }
 
     /// pyro: the points (in the space `hoisted_child`, a stacking context hoisted to this box, is
@@ -2461,22 +2692,14 @@ impl Node {
     /// at its place in the strip, where the point is in that column's range; nowhere else.
     pub(crate) fn hoisted_hit_points(&self, hoisted_child: &crate::HoistedPaintChild, x: f32, y: f32) -> Vec<(f32, f32)> {
         let tree = self.tree();
-        let in_columns = self.multicol_between(hoisted_child.node_id).and_then(|(container, origin, top, bottom)| {
-            let columns = tree.get(container)?.column_fragments()?;
-            (columns.fragments.len() > 1).then_some((container, origin, top, bottom, columns))
-        });
-        match in_columns {
-            Some((container, origin, top, bottom, columns)) => {
-                let pos = super::paint_tree::hoisted_child_strip_position(tree, self.id, hoisted_child.node_id, container);
-                columns
-                    .hoisted_columns(top, bottom)
+        match self.hoisted_projections(hoisted_child.node_id) {
+            Some(pieces) => {
+                let pos = super::paint_tree::hoisted_child_strip_position(tree, self.id, hoisted_child.node_id);
+                pieces.into_iter()
                     .rev()
-                    .filter_map(|fragment| {
-                        // The point in the container's strip, as this column shows it.
-                        let strip_x = x - origin.x - fragment.offset.x;
-                        let strip_y = y - origin.y - fragment.offset.y;
-                        (strip_y >= fragment.start && strip_y < fragment.end)
-                            .then(|| (strip_x + origin.x - pos.x, strip_y + origin.y - pos.y))
+                    .filter_map(|(clip, offset, _)| {
+                        let point = kurbo::Point::new(x.into(), y.into()) - offset;
+                        clip.contains(point).then(|| (point.x as f32 - pos.x, point.y as f32 - pos.y))
                     })
                     .collect()
             }
@@ -2750,6 +2973,8 @@ impl BaseDocument {
     ) {
         let children = self.nodes[parent].layout_children.borrow();
         for id in children.iter().flatten().copied() {
+            #[cfg(test)]
+            PLAN_VISITS.with(|visits| visits.set(visits.get() + 1));
             let node = &self.nodes[id];
             if node.is_out_of_flow() {
                 continue;
@@ -3139,6 +3364,7 @@ impl BaseDocument {
             parallel_ends.reverse();
         }
         for (child_index, &child_id) in children.iter().enumerate() {
+            if found.container.is_some_and(|container| self.is_column_spanner_of(container, child_id)) { found.run += 1; }
             let child = &self.nodes[child_id];
             let Some(style) = child.primary_styles() else {
                 continue;
@@ -3180,7 +3406,7 @@ impl BaseDocument {
                 && layout.scrollable_overflow_rect.bottom() > layout.size.height + EPSILON
                 && parent_bottom > child_bottom + EPSILON;
             if parallel_tail {
-                found.overflow_parents.push(FlowContinuation { owner: parent, resume: child_id, origin: top, consumed: child_bottom - top });
+                found.overflow_parents.push(FlowContinuation { run: found.run, owner: parent, resume: child_id, origin: top, consumed: child_bottom - top });
             }
             found.bottom = found.bottom.max(child_bottom);
             if container_content_top.is_some() {
@@ -3189,10 +3415,10 @@ impl BaseDocument {
             }
             if style.clone_float() == Float::None {
                 if layout.margin.top < 0.0 && !is_spanner_style(&style) && let Some((bottom, _)) = previous && child_top < bottom - EPSILON {
-                    found.overlapping_starts.push(FlowContinuation { owner: parent, resume: child_id, origin: top, consumed: bottom - top });
+                    found.overlapping_starts.push(FlowContinuation { run: found.run, owner: parent, resume: child_id, origin: top, consumed: bottom - top });
                 }
                 if std::mem::take(&mut next_parallel_break) {
-                    found.overflow_breaks.push(FlowContinuation { owner: parent, resume: child_id, origin: top, consumed: previous.map_or(child_top, |(end, _)| end) - top });
+                    found.overflow_breaks.push(FlowContinuation { run: found.run, owner: parent, resume: child_id, origin: top, consumed: previous.map_or(child_top, |(end, _)| end) - top });
                 }
                 // pyro: forced breaks between in-flow siblings (margins after them kept).
                 let forces = |b: style::values::computed::BreakBetween| {
@@ -3230,7 +3456,7 @@ impl BaseDocument {
                         && boundary >= parent_bottom - EPSILON
                         && (found.fixed_columns || boundary < found.parallel_end)
                     {
-                        found.overflow_breaks.push(FlowContinuation { owner: parent, resume: child_id, origin: top, consumed: previous.unwrap().0 - top });
+                        found.overflow_breaks.push(FlowContinuation { run: found.run, owner: parent, resume: child_id, origin: top, consumed: previous.unwrap().0 - top });
                     } else {
                         found.forced.push(boundary);
                     }
@@ -3448,6 +3674,7 @@ impl BaseDocument {
 /// What [`BaseDocument::collect_breaks`] finds in a strip (see [`Breaks`]).
 #[derive(Default)]
 struct Found {
+    run: usize,
     parallel_end: f32,
     fixed_columns: bool,
     parallel: bool,
@@ -3603,6 +3830,22 @@ mod tests {
 
     fn spanners(n: usize) -> Vec<Div> {
         (0..n).map(|_| div("column-span:all;height:1px", vec![])).collect()
+    }
+
+    #[test]
+    fn wrapped_spanner_plan_and_emission_scale_with_owners() {
+        let work = |count| {
+            let children = (0..count).map(|_| div("height:5px", spanners(1))).collect();
+            PLAN_VISITS.with(|visits| visits.set(0));
+            let document = laid_out(vec![div("columns:2;width:200px;gap:0", children)]);
+            let emitted = document.nodes.iter().filter_map(|(_, node)| node.column_fragments())
+                .flat_map(|columns| &columns.fragments).filter(|fragment| fragment.spanner).count();
+            assert_eq!(emitted, count);
+            PLAN_VISITS.with(|visits| visits.get())
+        };
+        let small = work(20);
+        let large = work(80);
+        assert!(small > 20 && large <= small * 5, "{small} -> {large}");
     }
 
     #[test]
@@ -4020,6 +4263,8 @@ mod tests {
     #[test]
     fn fragments_map_both_ways() {
         let columns = ColumnFragments {
+            marker_slots: Vec::new(),
+            box_slots: Default::default(),
             consumed_by_owner: Default::default(),
             continuation_ends: Default::default(),
             run_wrappers: Default::default(),
@@ -4049,6 +4294,8 @@ mod tests {
         // The first column ends at 100 where a margin starts, the second starts past it at 120;
         // a third follows.
         let columns = ColumnFragments {
+            marker_slots: Vec::new(),
+            box_slots: Default::default(),
             consumed_by_owner: Default::default(),
             continuation_ends: Default::default(),
             run_wrappers: Default::default(),
@@ -4090,6 +4337,8 @@ mod tests {
         };
         let columns = ColumnFragments {
             continuation_ends: Default::default(),
+            marker_slots: Vec::new(),
+            box_slots: Default::default(),
             consumed_by_owner: Default::default(),
             run_wrappers: Default::default(),
             wrapper_initial_consumption: Default::default(),

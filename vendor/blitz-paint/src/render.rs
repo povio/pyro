@@ -210,7 +210,7 @@ pub struct BlitzDomPainter<'dom, 'a> {
     /// pyro: while a multi-column container paints a column without a block-axis clip: the
     /// container, the column's strip range (CSS px), its transform and its clip rectangle (the
     /// container's space, device px) for the boxes a break goes through (`draw_paint_child`).
-    pub(crate) column_range: std::cell::Cell<Option<(NodeId, f32, f32, Affine, Rect)>>,
+    pub(crate) column_range: std::cell::Cell<Option<(NodeId, usize, Affine, Rect)>>,
     /// pyro: while a multi-column container paints a spanner's row: the container, whose boxes
     /// that carry the spanner do not paint their own box there (the row is no part of them).
     pub(crate) spanner_row_container: std::cell::Cell<Option<NodeId>>,
@@ -1707,10 +1707,10 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             scene.push_clip_layer(Fill::NonZero, Affine::IDENTITY, device_clip);
         }
 
-        let wrapper_clip = self.column_range.get().filter(|(container, _, _, _, _)| {
+        let wrapper_clip = self.column_range.get().filter(|(container, _, _, _)| {
             self.dom.get_node(*container).and_then(|node| node.columns_with_axes()).is_some_and(|(columns, _)| columns.run_wrappers.contains(&node.id))
         });
-        if let Some((_, _, _, transform, rect)) = wrapper_clip {
+        if let Some((_, _, transform, rect)) = wrapper_clip {
             scene.push_clip_layer(Fill::NonZero, transform, &rect);
         }
         if paints_own_box {
@@ -6048,15 +6048,6 @@ impl ElementCx<'_, '_> {
         }
     }
 
-    /// pyro: the multi-column container (horizontal, no transform between) below this element
-    /// that `child_id`, which this element paints, is in: the container, its border box's offset
-    /// from this element's (CSS px), and the child's border box range in its strip (its overflow
-    /// below included).
-    fn multicol_between(&self, child_id: NodeId) -> Option<(NodeId, Vec2, f32, f32)> {
-        let (container, origin, top, bottom) = self.node.multicol_between(child_id)?;
-        Some((container, Vec2::new(origin.x as f64, origin.y as f64), top, bottom))
-    }
-
     /// pyro: the background and borders of `child_id`'s fragment in a column with strip range
     /// `start..end` of multi-column container `container` (`transform`: the column's), where the
     /// child is of `box-decoration-break: clone` and a break goes through it there: its border box
@@ -6122,46 +6113,6 @@ impl ElementCx<'_, '_> {
             cx.draw_background(scene);
         }
         cx.draw_border(scene);
-    }
-
-    /// pyro: how a column with strip range `start..end` of multi-column container `container`
-    /// shares the border box of its paint child `child_id` (see `PaintContext::column_range`).
-    fn column_share(&self, container: NodeId, child_id: NodeId, start: f32, end: f32) -> ColumnShare {
-        let tree = self.context.dom.as_ref().tree();
-        let child = &tree[child_id];
-        let vertical = tree[container].vertical_column_fragments().is_some();
-        let layout = |id: NodeId| if vertical { tree[id].unrounded_layout() } else { tree[id].final_layout() };
-        let size = layout(child_id).size;
-        let mut top = layout(child_id).location.y;
-        let mut at = child.layout_parent.get();
-        let mut steps = 0;
-        while let Some(parent) = at.filter(|&p| p != container) {
-            steps += 1;
-            if steps > 64 {
-                return ColumnShare::Cut;
-            }
-            top += layout(parent).location.y;
-            at = tree[parent].layout_parent.get();
-        }
-        if at.is_none() {
-            return ColumnShare::Cut;
-        }
-        // (What overflows it below counts: it goes on in the columns after.)
-        let overflow = layout(child_id).scrollable_overflow_rect.bottom().abs();
-        // (A nested multi-column container may show content in any later column: its spanners'
-        // overflow is not in its overflow rectangle.)
-        let bottom = if child.column_fragments().is_some() { f32::INFINITY } else { top + size.height.max(overflow) };
-        const EPS: f32 = 0.01;
-        if top >= start - EPS && top < end - EPS {
-            // (Starts in the column.)
-            ColumnShare::Inside
-        } else if top < start - EPS && bottom > start + EPS {
-            ColumnShare::Cut
-        } else if top < start - EPS && size.height <= EPS && start.is_infinite() {
-            ColumnShare::Inside
-        } else {
-            ColumnShare::Outside
-        }
     }
 
     /// pyro: whether `child_id` is left out of this pass of a multi-column container's children
@@ -6298,21 +6249,14 @@ impl ElementCx<'_, '_> {
         // it is in, moved and clipped as the column's own content (Chromium; WPT css-multicol
         // `ancestor-toggle-spanner-002`).
         if !self.context.hoisted_in_column.get()
-            && let Some((container, origin, child_top, child_bottom)) = self.multicol_between(child_id)
-            && let Some(columns) = self.context.dom.as_ref().column_fragments(container)
-            && columns.fragments.len() > 1
+            && let Some(pieces) = self.node.hoisted_projections(child_id)
         {
             let scale = self.scale;
             self.context.hoisted_in_column.set(true);
             // (The columns its range reaches, not spanners' rows: `ColumnFragments::hoisted_columns`.)
-            for fragment in columns.hoisted_columns(child_top, child_bottom) {
-                let range = Rect::new(
-                    -1e7,
-                    ((origin.y + fragment.start as f64) * scale).max(-1e7),
-                    1e7,
-                    ((origin.y + fragment.end as f64) * scale).min(1e7),
-                );
-                let offset = Vec2::new(fragment.offset.x as f64 * scale, fragment.offset.y as f64 * scale);
+            for (clip, offset, _) in pieces {
+                let range = Affine::scale(scale).transform_rect_bbox(clip);
+                let offset = offset * scale;
                 let moved = parent_style_transform.pre_translate(offset);
                 let pushed = self.context.layer_manager.maybe_push_layer(
                     scene,
@@ -6335,11 +6279,13 @@ impl ElementCx<'_, '_> {
         // overflows it above shows, as in Chromium; what runs past its end goes on in the next
         // column), one that runs in from an earlier column is cut at both edges, and one wholly
         // in another column is left to it.
-        if let Some((container, start, end, transform, outer_range)) = self.context.column_range.get()
+        if let Some((container, slot, transform, outer_range)) = self.context.column_range.get()
             && let Some((columns, axes)) = self.context.dom.get_node(container).and_then(|host| host.columns_with_axes())
             && (container == self.node.id || columns.run_wrappers.contains(&self.node.id))
             && !columns.run_wrappers.contains(&child_id)
         {
+            let fragment = &columns.fragments[slot];
+            let (start, end) = (fragment.start, fragment.end);
             // (A positioned inline box listed in the paint tree paints its lines from the entries
             // its root recorded, each clipped to its column (`inline_pass_entries`): once, not
             // sorted by its box: WPT css-position `position-absolute-in-inline-007a`.)
@@ -6361,12 +6307,15 @@ impl ElementCx<'_, '_> {
             if ranged && !unranged {
                 self.context.column_range.set(None);
                 self.draw_paint_child(scene, child_id, parent_style_transform, clip_rect);
-                self.context.column_range.set(Some((container, start, end, transform, outer_range)));
+                self.context.column_range.set(Some((container, slot, transform, outer_range)));
                 return;
             }
             let range = outer_range;
-            let Some(effective_start) = columns.child_start(child_id, start) else { return };
-            let share = if unranged { ColumnShare::Cut } else { self.column_share(container, child_id, effective_start, end) };
+            let share = if unranged { ColumnShare::Cut } else { match columns.continuation_index(child_id, slot) {
+                Some(0) => ColumnShare::Inside,
+                Some(_) => ColumnShare::Cut,
+                None => ColumnShare::Outside,
+            } };
             match share {
                 ColumnShare::Outside => return,
                 ColumnShare::Inside | ColumnShare::Cut => {
@@ -6395,7 +6344,7 @@ impl ElementCx<'_, '_> {
                     // (Its own descendants are not sorted again.)
                     self.context.column_range.set(None);
                     self.draw_paint_child(scene, child_id, parent_style_transform, clip_rect);
-                    self.context.column_range.set(Some((container, start, end, transform, outer_range)));
+                    self.context.column_range.set(Some((container, slot, transform, outer_range)));
                     self.context.layer_manager.maybe_pop_layer(scene, pushed);
                     // (Repeated borders inside the slice go over its own painting.)
                     self.draw_clone_fragment(scene, container, child_id, start, end, transform, true);
@@ -6873,9 +6822,7 @@ impl ElementCx<'_, '_> {
             // element is painted in each column it is in, moved and clipped as the column's own
             // content (Chromium; WPT css-multicol `ancestor-toggle-spanner-002`).
             if clips.is_empty()
-                && let Some((container, origin, child_top, child_bottom)) = self.multicol_between(hoisted_child.node_id)
-                && let Some(columns) = self.context.dom.as_ref().column_fragments(container)
-                && columns.fragments.len() > 1
+                && let Some(pieces) = self.node.hoisted_projections(hoisted_child.node_id)
             {
                 for &(_, _, pushed) in open.iter().rev() {
                     self.context.layer_manager.maybe_pop_layer(scene, pushed);
@@ -6883,27 +6830,23 @@ impl ElementCx<'_, '_> {
                 open.clear();
                 let scale = self.scale;
                 // (At its place in the strip, which each column moves: not in the column it starts in.)
-                let strip = blitz_dom::hoisted_child_strip_position(self.node.tree(), self.node.id, hoisted_child.node_id, container);
+                let strip = blitz_dom::hoisted_child_strip_position(self.node.tree(), self.node.id, hoisted_child.node_id);
                 let child_node = &self.node.tree()[hoisted_child.node_id];
                 let pos = kurbo::Vec2 { x: (strip.x + sticky.x) as f64 * self.scale, y: (strip.y + sticky.y) as f64 * self.scale };
                 // (The columns its range reaches, not spanners' rows: as hit testing finds it.)
-                for fragment in columns.hoisted_columns(child_top, child_bottom) {
-                    let range = Rect::new(
-                        -1e7,
-                        ((origin.y + fragment.start as f64) * scale).max(-1e7),
-                        1e7,
-                        ((origin.y + fragment.end as f64) * scale).min(1e7),
-                    );
+                for (clip, offset, exact) in pieces {
+                    let range = Affine::scale(scale).transform_rect_bbox(clip);
                     // (Its border box where Chromium snaps it: the column's exact edge plus its own
                     // unrounded place, rounded; not the rounded column edge plus its rounded place,
                     // which takes a box flush with the last column's end past the container's:
                     // WPT css-multicol `multicol-gap-fraction-002`.)
-                    let exact = if fragment.exact_x.is_finite() { fragment.exact_x - fragment.x } else { 0.0 };
                     let unrounded = child_node.unrounded_layout().location.x as f64;
                     let rounded = child_node.final_layout().location.x as f64;
                     let along = strip.x as f64 + sticky.x as f64;
-                    let x = (((fragment.offset.x + exact) as f64 + along + unrounded) * scale).round() - (along + rounded) * scale;
-                    let offset = Vec2::new(x, fragment.offset.y as f64 * scale);
+                    let offset = exact.map_or(offset * scale, |correction| {
+                        let x = ((offset.x + correction + along + unrounded) * scale).round() - (along + rounded) * scale;
+                        Vec2::new(x, offset.y * scale)
+                    });
                     let moved = parent_style_transform.pre_translate(offset);
                     let pushed =
                         self.context.layer_manager.maybe_push_layer(scene, true, BlendMode::default(), 1.0, moved, &range, None, None);

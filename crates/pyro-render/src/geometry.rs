@@ -394,11 +394,10 @@ impl Geometry {
         let mut cut = |(columns, axes): (&blitz_dom::ColumnFragments, Affine), chain: &[&blitz_dom::Node], strip: Rect, out: &mut Vec<(Rect, Option<f64>)>| {
             let begin = out.len();
             let strip = axes.inverse().transform_rect_bbox(strip);
-            let child = chain.iter().find(|node| columns.first_after_spanner.contains_key(&node.id)).unwrap_or(&chain[0]).id;
             let wrapper = chain.iter()
                     .find(|node| columns.run_wrappers.contains(&node.id) || box_position(node) != BoxPosition::Static || node.is_stacking_context_root(false))
                     .and_then(|node| columns.wrapper_initial_consumption.get(&node.id));
-            for f in &columns.fragments {
+            for (f, start) in columns.owned_slots(chain[0].id) {
                 if f.spanner && columns.wrapper_initial_consumption.contains_key(&chain[0].id) {
                     if !for_hit && out.is_empty() && strip.y0 >= f64::from(f.start) && strip.y0 < f64::from(f.end) {
                         let top = strip.y0 + f64::from(f.offset.y);
@@ -406,7 +405,6 @@ impl Geometry {
                     }
                     continue;
                 }
-                let Some(start) = columns.child_start(child, f.start) else { continue };
                 let start = if for_hit && start < f.start {
                     restricted = true;
                     wrapper.map_or(start, |consumed| f.start.min(strip.y0 as f32 + consumed))

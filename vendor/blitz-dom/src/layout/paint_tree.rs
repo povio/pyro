@@ -35,17 +35,17 @@ use taffy::{Point, Rect};
 /// hoisted by Taffy, otherwise `layout_parent`, which is set for every layout
 /// child by `resolve_layout_children`, anonymous blocks included).
 pub fn hoisted_child_position(tree: &NodeTree, sc_root_id: NodeId, child_id: NodeId) -> Point<f32> {
-    hoisted_child_offset(tree, sc_root_id, child_id, None)
+    hoisted_child_offset(tree, sc_root_id, child_id, false)
 }
 
 /// pyro: [`hoisted_child_position`] in the strip of the multi-column container `container` the
 /// child is in (`Node::multicol_between`), not moved into the column its place is in: paint shows
 /// it in each column it is in, moved as the column's content, and hit testing finds it there.
-pub fn hoisted_child_strip_position(tree: &NodeTree, sc_root_id: NodeId, child_id: NodeId, container: NodeId) -> Point<f32> {
-    hoisted_child_offset(tree, sc_root_id, child_id, Some(container))
+pub fn hoisted_child_strip_position(tree: &NodeTree, sc_root_id: NodeId, child_id: NodeId) -> Point<f32> {
+    hoisted_child_offset(tree, sc_root_id, child_id, true)
 }
 
-fn hoisted_child_offset(tree: &NodeTree, sc_root_id: NodeId, child_id: NodeId, in_strip_of: Option<NodeId>) -> Point<f32> {
+fn hoisted_child_offset(tree: &NodeTree, sc_root_id: NodeId, child_id: NodeId, in_strip: bool) -> Point<f32> {
     let child = &tree[child_id];
     let mut position = Point::ZERO;
     let mut current = child.containing_block();
@@ -66,6 +66,7 @@ fn hoisted_child_offset(tree: &NodeTree, sc_root_id: NodeId, child_id: NodeId, i
     }
 
     let mut reached_context = false;
+    let mut owner = child_id;
     while let Some(id) = current {
         if id == sc_root_id {
             reached_context = true;
@@ -75,19 +76,12 @@ fn hoisted_child_offset(tree: &NodeTree, sc_root_id: NodeId, child_id: NodeId, i
             break;
         };
         // pyro: out of a multi-column container's strip into its columns (`layout::multicol`).
-        if let Some(columns) = node.column_fragments().filter(|_| in_strip_of != Some(id)) {
-            // A relatively positioned box is in the column of its place in the flow, moved from
-            // there (Blink): a box moved up over a column break stays in the column after it.
-            let own = child.final_layout().location;
-            let relative = match child.primary_styles() {
-                Some(style) if style.get_box().position == style::computed_values::position::T::Relative => {
-                    let size = node.final_layout().size;
-                    super::inline::relative::relative_offset(&style, size, false).y
-                }
-                _ => 0.0,
-            };
-            let (dx, dy) = columns.shift_at(position.y + own.y - relative);
-            position = Point { x: position.x + dx, y: position.y + dy };
+        if !in_strip && let Some((columns, axes)) = node.columns_with_axes() {
+            if let Some((_, offset, _)) = columns.owned_projections(owner, axes, kurbo::Vec2::ZERO).next() {
+                position.x += offset.x as f32;
+                position.y += offset.y as f32;
+            }
+            owner = id;
         }
         let location = node.final_layout().location;
         let scroll_offset = *node.scroll_offset();
@@ -231,7 +225,7 @@ impl StackingContext {
             };
             // pyro: one shown in each column of a multi-column container below (`multicol_between`)
             // lies anywhere in its columns.
-            if let Some((container, origin, _, _)) = tree.get(sc_root_id).and_then(|root| root.multicol_between(child.node_id))
+            if let Some((container, origin)) = tree.get(sc_root_id).and_then(|root| root.multicol_between(child.node_id))
                 && let Some(columns) = tree.get(container)
             {
                 let o = *columns.scrollable_overflow();

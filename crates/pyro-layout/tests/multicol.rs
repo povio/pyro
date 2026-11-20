@@ -5,6 +5,38 @@
 //! (`getBoundingClientRect`), one rect per piece (`getClientRects`), and is hit in its pieces only.
 use crate::hit_descent::page;
 
+#[test]
+fn exact_end_breaks_resume_the_owning_post_span_flow() {
+    for (forced, footer) in [("article{break-before:column}", [0., 20., 50., 5.]), ("header{break-after:column}", [50., 10., 50., 5.])] {
+        let document = page(&format!("<!doctype html><style>*{{margin:0}}main{{width:150px;height:100px;columns:3;gap:0;column-fill:auto}}h2{{column-span:all;height:10px}}section,header,article{{height:10px}}{forced}footer{{height:5px}}</style><main><h2></h2><section id=s><header></header><article id=t></article></section><footer id=f></footer></main>"));
+        assert_eq!(rects(&document, "t"), [[50., 10., 50., 10.]]);
+        assert_eq!(rects(&document, "s"), [[0., 10., 50., 10.], [50., 10., 50., 0.]]);
+        assert_eq!(rect(&document, "f"), footer);
+    }
+}
+
+#[test]
+fn post_span_continuations_charge_their_own_shortage() {
+    let document = page("<!doctype html><style>*{margin:0}main{width:200px;height:60px;columns:4;gap:0;column-fill:auto}h2{column-span:all;height:10px}section{min-height:190px;border-inline:4px solid}header{height:10px}aside{height:0}article{height:29px;break-inside:avoid}i{display:block;height:1px}footer{height:4px}</style><main><h2></h2><section id=s><header></header><aside><article></article><article></article><article></article></aside><i></i></section><footer id=f></footer></main>");
+    assert_eq!(rects(&document, "s").iter().map(|rect| rect[3]).collect::<Vec<_>>(), [50., 50., 50., 40.]);
+    assert_eq!(rect(&document, "f"), [150., 50., 50., 4.]);
+}
+
+#[test]
+fn post_span_outer_slots_reach_nested_columns() {
+    let document = page("<!doctype html><style>*{margin:0}main{width:400px;height:110px;columns:2;gap:0;column-fill:auto}h2{column-span:all;height:10px}section{columns:2;gap:0}header{height:250px}article{height:20px}footer{height:50px}</style><main><h2></h2><section><header></header><article id=t></article><footer></footer></section></main>");
+    assert_eq!(rects(&document, "t"), [[200., 60., 100., 10.], [300., 10., 100., 10.]]);
+}
+
+#[test]
+fn relative_insets_do_not_change_a_float_exclusion() {
+    for inset in [0, -28] {
+        let document = page(&format!("<!doctype html><style>*{{margin:0}}main{{width:160px;height:100px;columns:2;column-fill:auto;gap:0}}header{{height:40px}}section{{columns:2;gap:0;break-before:avoid}}b{{float:right;width:12px;height:100px;position:relative;left:{inset}px}}article{{contain:size;width:20px;height:80px}}</style><main><header></header><section id=s><b></b><article id=t></article></section></main>"));
+        assert_eq!(rects(&document, "t"), [[80., 0., 20., 80.]]);
+        assert_eq!(rects(&document, "s"), [[80., 0., 80., 80.]]);
+    }
+}
+
 fn rect(p: &crate::hit_descent::Page, id: &str) -> [f64; 4] {
     let r = p.layout.bounding_client_rect(&p.dom, p.id(id));
     [r.x, r.y, r.width, r.height]

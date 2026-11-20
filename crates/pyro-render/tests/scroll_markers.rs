@@ -47,32 +47,54 @@ const MARKERS: &str = "<style>
   .s>div:first-child::scroll-marker{background:rgb(0,0,255)}
 </style>";
 
-#[test]
-fn targeted_marker_follows_the_fractional_column_break() {
+fn render_targeted_markers(html: &str, scroll: (f64, f64)) -> RgbaImage {
     use pyro_dom::parse::parse_document;
     use pyro_dom::snapshot::{RenderHtml, RenderNodeKind, render_key};
     use std::{cell::RefCell, rc::Rc};
     let fetcher: Arc<dyn Fetcher> = Arc::new(NoFetch);
+    let dom = Rc::new(RefCell::new(pyro_dom::Dom::new()));
+    let doc = parse_document(&dom, "http://test/", html);
+    let dom = dom.borrow();
+    let key = |id| render_key(dom.get_element_by_id(doc, id).unwrap().unwrap());
+    let tree = dom.render_tree(doc, &RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None, adopted: None }).unwrap();
+    let nodes = tree.nodes.into_iter().map(|node| TreeNode { key: node.key, parent: node.parent, kind: match node.kind {
+        RenderNodeKind::Element { name, attrs } => TreeKind::Element { name, attrs },
+        RenderNodeKind::Text(text) => TreeKind::Text(text),
+    }}).collect();
+    let mut snapshot = Snapshot { base_url: "http://test/".into(), width: 300, height: 200, device_scale_factor: 1., live: Some(Live { page: 1, tree: Arc::new(Tree { nodes }), clip: None, interaction: None }), ..Default::default() };
+    let mut renderer = Renderer::new();
+    renderer.sync_layout(&snapshot, &fetcher).unwrap();
+    snapshot.element_scroll = Some(vec![(key("sc"), scroll)]);
+    snapshot.scroll_targets = Some(vec![(key("sc"), key("t"))]);
+    renderer.render(&snapshot, Area::Viewport, Backend::Cpu, &fetcher).unwrap().0
+}
+
+#[test]
+fn targeted_marker_follows_the_fractional_column_break() {
     for (count, leading, active, scroll) in [(1, "", 1, 100.), (2, "", 1, 50.), (1, "<aside></aside>", 2, 200.)] {
         let html = format!("<!doctype html><style>*{{margin:0}}main{{width:100px;height:40px;columns:{count};column-fill:auto;gap:0;overflow:auto;scroll-snap-type:x mandatory;scroll-marker-group:after}}main::column::scroll-marker{{content:\"\";width:12px;height:12px;background:red}}main::column::scroll-marker:target-current{{background:lime}}main::scroll-marker-group{{display:flex}}header,aside{{height:10.75px}}header{{break-before:column}}section,footer{{break-before:column;height:20px;scroll-snap-align:start}}</style><main id=sc>{leading}<header></header><section id=t></section><footer></footer><footer></footer></main>");
-        let dom = Rc::new(RefCell::new(pyro_dom::Dom::new()));
-        let doc = parse_document(&dom, "http://test/", &html);
-        let dom = dom.borrow();
-        let key = |id| render_key(dom.get_element_by_id(doc, id).unwrap().unwrap());
-        let tree = dom.render_tree(doc, &RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None, adopted: None }).unwrap();
-        let nodes = tree.nodes.into_iter().map(|node| TreeNode { key: node.key, parent: node.parent, kind: match node.kind {
-            RenderNodeKind::Element { name, attrs } => TreeKind::Element { name, attrs },
-            RenderNodeKind::Text(text) => TreeKind::Text(text),
-        }}).collect();
-        let mut snapshot = Snapshot { base_url: "http://test/".into(), width: 300, height: 100, device_scale_factor: 1., live: Some(Live { page: 1, tree: Arc::new(Tree { nodes }), clip: None, interaction: None }), ..Default::default() };
-        let mut renderer = Renderer::new();
-        renderer.sync_layout(&snapshot, &fetcher).unwrap();
-        snapshot.element_scroll = Some(vec![(key("sc"), (scroll, 0.))]);
-        snapshot.scroll_targets = Some(vec![(key("sc"), key("t"))]);
-        let img = renderer.render(&snapshot, Area::Viewport, Backend::Cpu, &fetcher).unwrap().0;
+        let img = render_targeted_markers(&html, (scroll, 0.));
         for index in 0..3 {
             assert_eq!(pixel(&img, 12 * index + 5, 45), if index == active { [0, 255, 0] } else { RED });
         }
+    }
+}
+
+#[test]
+fn vertical_target_activates_second_column_marker() {
+    let html = r#"<!doctype html><style>*{margin:0}main{inline-size:100px;block-size:40px;columns:1;gap:0;column-fill:auto;overflow:auto;scroll-snap-type:y mandatory;scroll-marker-group:after;writing-mode:vertical-lr}main::scroll-marker-group{position:fixed;top:140px;left:0;display:flex;width:100px;height:15px;writing-mode:horizontal-tb}main::column::scroll-marker{content:"";width:12px;height:12px;background:red}main::column::scroll-marker:target-current{background:lime}header{block-size:10px}article,footer{block-size:20px;break-before:column;scroll-snap-align:start}</style><main id=sc><header></header><article id=t></article><footer></footer><footer></footer></main>"#;
+    let image = render_targeted_markers(html, (0., 100.));
+    for (index, expected) in [RED, [0, 255, 0], RED, RED, WHITE].into_iter().enumerate() {
+        assert_eq!(pixel(&image, index as u32 * 12 + 5, 145), expected);
+    }
+}
+
+#[test]
+fn targeted_marker_uses_post_spanner_run_despite_negative_margin() {
+    let html = r#"<!doctype html><style>*{margin:0}main{inline-size:100px;block-size:40px;columns:1;gap:0;column-fill:auto;overflow:auto;scroll-snap-type:x mandatory;scroll-marker-group:after}main::scroll-marker-group{display:flex}main::column::scroll-marker{content:"";width:12px;height:12px;flex:none;background:red}main::column::scroll-marker:target-current{background:lime}header{height:40px}h2{column-span:all;height:20px}article,footer{height:20px;scroll-snap-align:start}footer{break-before:column}article{margin-top:-5px;height:30px}</style><main id=sc><header></header><h2></h2><article id=t></article><footer></footer><footer></footer></main>"#;
+    let image = render_targeted_markers(html, (0., 21.));
+    for (index, expected) in [RED, [0, 255, 0], RED].into_iter().enumerate() {
+        assert_eq!(pixel(&image, index as u32 * 12 + 5, 45), expected);
     }
 }
 
