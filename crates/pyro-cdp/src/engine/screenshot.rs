@@ -230,7 +230,7 @@ impl Fetcher for PageFetcher {
 
     /// pyro: by the requesting document's timeline, which its layout keeps (`SubresourceBodies`).
     fn late(&self, url: &str, options: &pyro_render::FetchOptions, period: std::time::Duration) -> Option<bool> {
-        let key = layout_key(url, options, self.client_of(options));
+        let key = self.key(url, options);
         self.bodies.as_ref()?.late(&key, period)
     }
 
@@ -246,7 +246,7 @@ impl Fetcher for PageFetcher {
         // pyro: an image the document is still fetching paints as loading now, as Chrome paints
         // what has arrived; its bytes reach the document at a later render (the capture waits for
         // that fetch, `serve_capture`, never sending it again).
-        if image && self.bodies.as_ref().is_some_and(|bodies| bodies.pending(&layout_key(url, options, client))) {
+        if image && self.bodies.as_ref().is_some_and(|bodies| bodies.pending(&self.key(url, options))) {
             return true;
         }
         let Some(document) = self.documents.get(client) else { return false };
@@ -255,7 +255,7 @@ impl Fetcher for PageFetcher {
             && !document.requested.contains(url)
             && document.loaded
             && !document.available.contains(url)
-            && self.bodies.as_ref().is_some_and(|bodies| !bodies.known(&layout_key(url, options, client)))
+            && self.bodies.as_ref().is_some_and(|bodies| !bodies.known(&self.key(url, options)))
     }
 
     fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
@@ -299,6 +299,11 @@ fn body_only(
 }
 
 impl PageFetcher {
+    fn key(&self, url: &str, options: &pyro_render::FetchOptions) -> pyro_dom::layout::LayoutBodyKey {
+        let key = layout_key(url, options, self.client_of(options));
+        match &self.bodies { Some(bodies) => bodies.effective_key(key), None => key }
+    }
+
     /// `url` fetched as `options` say, for the document they name (else the snapshot's page
     /// document); `done` gets the body of a 2xx response and its URL after redirects.
     fn request(
@@ -313,9 +318,10 @@ impl PageFetcher {
         let cors = options.cors.is_some();
         let mut options = subresource_options(options);
         options.client.get_or_insert_with(|| self.client.clone());
-        let client = options.client.clone().unwrap_or_default();
         // pyro: the same request's key in the requesting document's layout bodies (its own fetch).
-        let key = layout_key(&url, &source, &client);
+        let key = self.key(&url, &source);
+        options.referrer.clone_from(&key.options().referrer);
+        options.referrer_policy = key.options().referrer_policy.as_deref().and_then(pyro_net::ReferrerPolicy::parse);
         // A closed loop drops `done`: the render stops waiting at its deadline.
         let request = CaptureRequest {
             page,
@@ -323,7 +329,7 @@ impl PageFetcher {
             kind,
             cors,
             options,
-            client,
+            client: key.document().to_owned(),
             key,
             until: Instant::now() + std::time::Duration::from_secs(10),
             waited: false,
@@ -596,7 +602,7 @@ impl EngineHost {
             },
             scroll_x: s.scroll_x,
             scroll_y: s.scroll_y,
-            resource_scope: frame.loader_id.0.clone(),
+            resource_scope: format!("{}:{}", frame.loader_id.0, self.thread.browser.layout_bodies(pid).map_or(0, |bodies| bodies.policy_revision())),
             live: Some(Live {
                 page: pid.0 as u64,
                 tree: live,

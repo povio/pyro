@@ -598,9 +598,9 @@ impl DocumentMutator<'_> {
 
         if (tag, attr) == tag_and_attr!("input", "checked") {
             set_input_checked_state(element, value.to_string());
-        } else if (tag, attr) == tag_and_attr!("img", "src")
-            // pyro: an `<embed>`'s image.
-            || (tag, attr) == tag_and_attr!("embed", "src")
+        } else if &**tag == "img" && matches!(&**attr, "src" | "crossorigin" | "referrerpolicy") {
+            self.eager_op_queue.push(SpecialOp::LoadImage(node_id));
+        } else if (tag, attr) == tag_and_attr!("embed", "src")
             // pyro: an image button fetches its `src` like `<img>`;
             // `type` becoming "image" starts the load (HTML "image button
             // state": the type changing to Image Button updates the image data).
@@ -846,7 +846,9 @@ impl DocumentMutator<'_> {
             // pyro: the object's frame document is gone: its image or fallback again.
             self.remove_sub_document(node_id);
             self.load_image(node_id);
-        } else if matches!((&**tag, &**attr), ("object", "data" | "type") | ("img" | "embed", "src") | ("video", "poster")) {
+        } else if &**tag == "img" && matches!(&**attr, "src" | "crossorigin" | "referrerpolicy") && node_is_in_document {
+            self.eager_op_queue.push(SpecialOp::LoadImage(node_id));
+        } else if matches!((&**tag, &**attr), ("object", "data" | "type") | ("embed", "src") | ("video", "poster")) {
             // pyro: an `<object>` without its image shows its fallback again (`load_image`).
             self.load_image(node_id);
         }
@@ -1706,9 +1708,14 @@ impl<'doc> DocumentMutator<'doc> {
 
     fn flush_eager_ops(&mut self) {
         let mut ops = mem::take(&mut self.eager_op_queue);
+        let mut images = HashSet::new();
         for op in ops.drain(0..) {
             match op {
-                SpecialOp::LoadImage(node_id) => self.load_image(node_id),
+                SpecialOp::LoadImage(node_id) => {
+                    if images.insert(node_id) && self.doc.get_node(node_id).is_some_and(|node| node.flags.is_in_document()) {
+                        self.load_image(node_id);
+                    }
+                }
                 SpecialOp::LoadIframe(node_id) => self.load_iframe(node_id),
                 SpecialOp::LoadStylesheet(node_id) => self.load_linked_stylesheet(node_id),
                 SpecialOp::UnloadStylesheet(node_id) => self.unload_stylesheet(node_id),
@@ -2013,8 +2020,11 @@ impl<'doc> DocumentMutator<'doc> {
     }
 
     fn load_image(&mut self, target_id: NodeId) {
-        if let Some(element) = self.doc.nodes[target_id].element_data_mut() {
-            element.source_image_request = None;
+        if let Some(previous) = self.doc.nodes[target_id].element_data_mut().and_then(|element| element.source_image_request.take()) {
+            let (url, options) = *previous;
+            if let Some(waiters) = self.doc.pending_images.get_mut(&options.cache_key(&url)) {
+                waiters.retain(|(id, kind)| *id != target_id || !matches!(kind, ImageType::Image));
+            }
         }
         let node = &self.doc.nodes[target_id];
         // pyro: a `<video>`'s image is its poster; without one it
@@ -2098,6 +2108,10 @@ impl<'doc> DocumentMutator<'doc> {
                 // response kept apart from the same URL fetched otherwise.
                 let mut options = blitz_traits::net::FetchOptions::default();
                 if is_img {
+                    options.referrer_policy = node.attrs().and_then(|attrs| attrs.iter().find(|attr| attr.name.ns == markup5ever::ns!() && &*attr.name.local == "referrerpolicy")).and_then(|attr| {
+                        ["no-referrer", "no-referrer-when-downgrade", "origin", "origin-when-cross-origin", "same-origin", "strict-origin", "strict-origin-when-cross-origin", "unsafe-url"]
+                            .into_iter().find(|token| attr.value.eq_ignore_ascii_case(token)).map(str::to_owned)
+                    });
                     if let Some(value) = node.attr(local_name!("crossorigin")) {
                         options.cors = Some(if value.eq_ignore_ascii_case("use-credentials") {
                             blitz_traits::net::CorsCredentials::Include

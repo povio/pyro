@@ -368,6 +368,8 @@ impl BodySlots {
 /// [`Self::start`], [`Self::finish`], [`Self::fail`], [`Self::pending`].
 #[derive(Default)]
 pub struct SubresourceBodies {
+    defaults: std::sync::Mutex<std::collections::HashMap<String, (String, &'static str)>>,
+    policy_revision: std::sync::atomic::AtomicU64,
     next_request: std::sync::atomic::AtomicU64,
     slots: std::sync::Mutex<BodySlots>,
     arrivals: std::sync::atomic::AtomicU64,
@@ -382,6 +384,27 @@ fn locked<T>(m: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 }
 
 impl SubresourceBodies {
+    pub(crate) fn set_image_defaults(&self, document: &str, source: &str, policy: &'static str) {
+        let mut defaults = locked(&self.defaults);
+        if defaults.get(document).is_some_and(|(old, token)| old == source && *token == policy) { return; }
+        if defaults.insert(document.to_owned(), (source.to_owned(), policy)).is_some() {
+            self.retain_images(document, |_| false);
+            self.policy_revision.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.arrived();
+        }
+    }
+
+    pub fn policy_revision(&self) -> u64 { self.policy_revision.load(std::sync::atomic::Ordering::Relaxed) }
+
+    pub fn effective_key(&self, mut key: LayoutBodyKey) -> LayoutBodyKey {
+        if key.destination == SubresourceKind::Image {
+            if let Some((source, policy)) = locked(&self.defaults).get(&key.document) {
+                key.options.referrer.get_or_insert_with(|| source.clone());
+                key.options.referrer_policy.get_or_insert_with(|| (*policy).to_owned());
+            }
+        }
+        key
+    }
     pub fn image_dispatched(&self, key: &LayoutBodyKey, source: Option<String>, policy: String) {
         let mut slots = locked(&self.slots);
         if let Some((key, mut slot)) = slots.images.shift_remove_entry(key) {
@@ -546,6 +569,7 @@ impl SubresourceBodies {
     /// pyro: drops what `document` loaded (it is gone: navigated away from, closed); a load still
     /// in flight for it is no longer waited for, and nothing of it serves another document.
     pub fn forget_document(&self, document: &str) {
+        locked(&self.defaults).remove(document);
         let mut slots = locked(&self.slots);
         slots.other.retain(|k, _| k.document != document);
         slots.images.retain(|k, _| k.document != document);

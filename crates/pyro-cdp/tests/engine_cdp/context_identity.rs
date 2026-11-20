@@ -31,6 +31,10 @@ type Hits = Arc<Mutex<Vec<(String, String)>>>;
 /// origin for origin-form requests and, for absolute-form ones, as a proxy
 /// that never forwards (what it answers never reaches the origin).
 fn server() -> (String, Hits) {
+    recording_server("user-agent")
+}
+
+fn recording_server(header: &'static str) -> (String, Hits) {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let address = format!("http://{}", listener.local_addr().unwrap());
     let hits = Hits::default();
@@ -57,12 +61,19 @@ fn server() -> (String, Hits) {
                 };
                 let agent = head
                     .lines()
-                    .find_map(|l| l.split_once(':').filter(|(k, _)| k.eq_ignore_ascii_case("user-agent")))
+                    .find_map(|l| l.split_once(':').filter(|(k, _)| k.eq_ignore_ascii_case(header)))
                     .map(|(_, v)| v.trim().to_owned())
                     .unwrap_or_default();
+                let no_referrer = agent.is_empty();
                 record.lock().unwrap().push((path.clone(), agent));
                 let dir = path.rsplit_once('/').map_or("", |(dir, _)| dir).to_owned();
-                let (kind, body): (&str, Vec<u8>) = if path.ends_with("/page") {
+                let (kind, body): (&str, Vec<u8>) = if path == "/image-policy" {
+                    ("text/html", b"<!doctype html><meta name=referrer content=unsafe-url><img src='/explicit.png' referrerpolicy=no-referrer>".to_vec())
+                } else if path == "/changing-policy" {
+                    ("text/html", b"<!doctype html><meta name=referrer content=unsafe-url><style>body{margin:0}img{display:block;width:8px;height:8px}</style><img src='/varies.png'>".to_vec())
+                } else if path == "/varies.png" && no_referrer {
+                    ("image/png", pyro_render::encode_png(&pyro_render::RgbaImage { width: 1, height: 1, data: vec![0,0,255,255] }))
+                } else if path.ends_with("/page") {
                     ("text/html", page(&dir, "").into_bytes())
                 } else if path.ends_with("/pdf-page") {
                     ("text/html", page(&dir, "pdf-").into_bytes())
@@ -138,6 +149,36 @@ fn navigate(h: &mut Harness, session: &str, url: &str) {
     let r = h.call(Some(session), "Page.navigate", json!({"url": url}));
     assert!(r.get("error").is_none(), "{r}");
     h.until_event(|m| m["method"] == "Page.loadEventFired" && m["sessionId"] == session);
+}
+
+#[test]
+fn image_policy_is_preserved_by_layout_and_capture() {
+    let (origin, hits) = recording_server("referer");
+    let mut harness = Harness::new();
+    let session = open(&mut harness, None, &format!("{origin}/image-policy"));
+    let result = harness.call(Some(&session), "Runtime.evaluate", json!({"expression": "document.images[0].getBoundingClientRect().width", "returnByValue": true}));
+    assert_eq!(result["result"]["result"]["value"], 2);
+    let screenshot = harness.call(Some(&session), "Page.captureScreenshot", json!({}));
+    assert!(screenshot["result"]["data"].is_string());
+    let seen = paths(&hits, "/explicit.png");
+    assert!(!seen.is_empty());
+    assert_eq!(seen.iter().filter(|(_, header)| !header.is_empty()).count(), 0, "{seen:?}");
+}
+
+#[test]
+fn changing_document_image_policy_replaces_renderer_bytes() {
+    let (origin, hits) = recording_server("referer");
+    let mut harness = Harness::new();
+    let session = open(&mut harness, None, &format!("{origin}/changing-policy"));
+    let pixel = |harness: &mut Harness| {
+        let capture = harness.call(Some(&session), "Page.captureScreenshot", json!({}));
+        let bytes = pyro_cdp::fetch_protocol::base64_decode(capture["result"]["data"].as_str().unwrap()).unwrap();
+        pyro_render::decode_png(&bytes).unwrap().data[..4].to_vec()
+    };
+    assert_eq!(pixel(&mut harness), [255,0,0,255]);
+    harness.call(Some(&session), "Runtime.evaluate", json!({"expression":"document.querySelector('meta').content='no-referrer'; document.images[0].getBoundingClientRect().width"}));
+    harness.run_for(60);
+    assert_eq!(pixel(&mut harness), [0,0,255,255], "{:?}", paths(&hits, "/varies.png"));
 }
 
 /// A layout query (which starts what the layout misses loading).

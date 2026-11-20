@@ -2935,6 +2935,7 @@ impl PageDom {
     /// (`pyro_dom::layout::SubresourceLoader`): set by the embedder before
     /// anything lays the document out.
     pub fn set_subresource_loader(&self, loader: std::sync::Arc<dyn pyro_dom::layout::SubresourceLoader>) {
+        self.dom.borrow_mut().set_layout_client(self.document(), loader.document(), loader.bodies());
         self.layout.borrow().set_subresource_loader(loader);
     }
 

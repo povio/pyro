@@ -564,8 +564,9 @@ fn completed_image_body_is_ready_for_layout() {
     settle(&mut thread);
     assert_eq!(eval(&thread, page, "document.images[0].naturalWidth"), "3");
     let client = pyro_browser::document_client(&thread.browser.page(page).unwrap().main_frame);
-    let key = pyro_dom::layout::LayoutBodyKey::new(&client, url, &Default::default(), pyro_dom::layout::SubresourceKind::Image);
-    assert!(!thread.browser.layout_bodies(page).unwrap().known(&key));
+    let bodies = thread.browser.layout_bodies(page).unwrap();
+    let key = bodies.effective_key(pyro_dom::layout::LayoutBodyKey::new(&client, url, &Default::default(), pyro_dom::layout::SubresourceKind::Image));
+    assert!(!bodies.known(&key));
     let bytes = thread.browser.page(page).unwrap().main_frame.page_dom.as_ref().unwrap().available_image(url, 0).unwrap().bytes.unwrap().0;
     for count in [1, 2] {
         let bytes = bytes.clone();
@@ -576,6 +577,30 @@ fn completed_image_body_is_ready_for_layout() {
         }));
         settle(&mut thread);
         assert_eq!(loader.log.borrow().iter().filter(|entry| *entry == url).count(), count);
+    }
+}
+
+#[test]
+fn obsolete_image_slot_is_removed_even_when_replacement_fails_or_is_too_large() {
+    let (mut thread, page, loader) = setup("<img id=a src=/small.png>");
+    let small = "http://site.test/small.png";
+    let mut large = png(3, 2);
+    loader.insert_bytes(small, "image/png", &large, Duration::ZERO);
+    large.resize(16 * 1024 * 1024 + 1, 0);
+    loader.insert_bytes("http://site.test/large.png", "image/png", &large, Duration::ZERO);
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    let client = pyro_browser::document_client(&thread.browser.page(page).unwrap().main_frame);
+    let bodies = thread.browser.layout_bodies(page).unwrap();
+    let key = bodies.effective_key(pyro_dom::layout::LayoutBodyKey::new(&client, small, &Default::default(), pyro_dom::layout::SubresourceKind::Image));
+    for replacement in ["missing.png", "large.png"] {
+        assert!(bodies.start(&key));
+        bodies.finish(key.clone(), pyro_dom::layout::LayoutBody::local(small, png(3, 2)));
+        eval(&thread, page, &format!("document.images[0].src='/{replacement}'"));
+        settle(&mut thread);
+        assert!(!bodies.known(&key), "{replacement}");
+        eval(&thread, page, "document.images[0].src='/small.png'");
+        settle(&mut thread);
     }
 }
 
@@ -621,7 +646,7 @@ fn the_page_hands_its_layout_bodies_for_its_document_alone() {
     settle(&mut thread);
     let client = pyro_browser::document_client(&thread.browser.page(page).unwrap().main_frame);
     let bodies = thread.browser.layout_bodies(page).unwrap();
-    let key = |document: &str, url: &str| pyro_dom::layout::LayoutBodyKey::new(document, url, &Default::default(), pyro_dom::layout::SubresourceKind::Image);
+    let key = |document: &str, url: &str| bodies.effective_key(pyro_dom::layout::LayoutBodyKey::new(document, url, &Default::default(), pyro_dom::layout::SubresourceKind::Image));
     let object = bodies.get(&key(&client, "http://site.test/detour.png")).expect("the object's body, for its document");
     assert_eq!((object.final_url.as_str(), object.opaque, object.status), ("http://site.test/detour.png", true, 200));
     assert!(bodies.get(&key("OTHER#doc", "http://site.test/detour.png")).is_none());
@@ -685,7 +710,7 @@ fn a_removed_frames_bodies_are_evicted() {
     let child = frames.iter().find(|f| f.parent.is_some()).expect("the child frame");
     let client = format!("{}#{}", child.id.0, child.loader_id.0);
     let bodies = thread.browser.layout_bodies(page).unwrap();
-    let key = pyro_dom::layout::LayoutBodyKey::new(&client, "http://site.test/c.png", &Default::default(), pyro_dom::layout::SubresourceKind::Image);
+    let key = bodies.effective_key(pyro_dom::layout::LayoutBodyKey::new(&client, "http://site.test/c.png", &Default::default(), pyro_dom::layout::SubresourceKind::Image));
     assert!(bodies.get(&key).is_some(), "the child's object body, for the child");
     eval(&thread, page, "document.getElementById('f').remove(); 1");
     settle(&mut thread);

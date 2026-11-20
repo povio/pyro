@@ -135,7 +135,7 @@ impl LocalFiles {
         // pyro: what the response is used as comes from where the request was made (its
         // destination), never from its URL: an image at `image.css` is an image.
         let kind = subresource_kind(options, destination);
-        let key = LayoutBodyKey::new(&document, url.as_str(), options, kind);
+        let key = bodies.effective_key(LayoutBodyKey::new(&document, url.as_str(), options, kind));
         // pyro: one failure state, the store's (capture reads the same).
         if bodies.has_failed(&key) {
             return None;
@@ -160,12 +160,13 @@ impl LocalFiles {
             let mut counts = IN_FLIGHT.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             *counts.get_or_insert_with(Default::default).entry(owner.clone()).or_insert(0) += 1;
         }
+        let options = key.options().clone();
         let fetch = InFlight { bodies, key, owner, generation };
         loader.load(
             &document,
             url.as_str().to_owned(),
             kind,
-            options,
+            &options,
             Box::new(move |result| match result {
                 // The body with its final URL, tainting and status, written together.
                 Ok(body) if !body.bytes.is_empty() => fetch.bodies.finish_request(fetch.key.clone(), body, Some(fetch.generation)),

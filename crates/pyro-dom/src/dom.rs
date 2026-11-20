@@ -939,6 +939,8 @@ impl Dom {
             body: NIL,
             viewport_meta: None,
             meta_referrer_policy: None,
+            header_referrer_policy: None,
+            layout_client: None,
             responsive_embedded: false,
             content_language: None,
         };
@@ -1020,6 +1022,7 @@ impl Dom {
         };
         self.html_base_changed(i);
         // `:target` matches another element: styles start over.
+        self.publish_image_defaults(doc);
         if retargeted {
             self.bump();
         }
@@ -1103,6 +1106,33 @@ impl Dom {
         let Some(policy) = e.attr_local(&local_name!("content")).and_then(meta_referrer_policy) else { return };
         let doc = n.owner_doc;
         self.doc_data_mut(doc).meta_referrer_policy = Some(policy);
+        self.publish_image_defaults(self.id_of(doc));
+    }
+
+    pub fn effective_referrer_policy(&self, doc: NodeId) -> &'static str {
+        self.document_data(doc).ok().and_then(|d| d.meta_referrer_policy.or(d.header_referrer_policy)).unwrap_or("strict-origin-when-cross-origin")
+    }
+
+    pub fn set_header_referrer_policy(&mut self, doc: NodeId, policy: Option<&'static str>) {
+        if let Ok(index) = self.check(doc) {
+            self.doc_data_mut(index).header_referrer_policy = policy;
+            self.publish_image_defaults(doc);
+        }
+    }
+
+    pub fn set_layout_client(&mut self, doc: NodeId, client: String, bodies: &std::sync::Arc<crate::geometry::SubresourceBodies>) {
+        if let Ok(index) = self.check(doc) {
+            self.doc_data_mut(index).layout_client = Some((client, std::sync::Arc::downgrade(bodies)));
+            self.publish_image_defaults(doc);
+        }
+    }
+
+    fn publish_image_defaults(&self, doc: NodeId) {
+        let Ok(data) = self.document_data(doc) else { return };
+        let Some((client, weak)) = &data.layout_client else { return };
+        if let Some(bodies) = weak.upgrade() {
+            bodies.set_image_defaults(client, data.base_url.as_deref().unwrap_or(&data.url), self.effective_referrer_policy(doc));
+        }
     }
 
     /// The referrer policy `doc`'s `<meta name=referrer>` elements gave it
@@ -1320,6 +1350,7 @@ impl Dom {
             _ => return Err(DomError::Type("not a document")),
         }
         self.html_base_changed(i);
+        self.publish_image_defaults(doc);
         Ok(())
     }
     /// The document base URL: its first `<base href>`, else the fallback.

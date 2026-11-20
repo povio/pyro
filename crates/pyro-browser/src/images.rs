@@ -395,6 +395,20 @@ impl Browser {
         };
         let current =
             state.images.entries.get(&node).map(|i| (i.url.clone(), i.pending, i.request_state == request_state, i.outcome));
+        if let Some(old) = state.images.entries.get(&node).filter(|old| {
+            old.request_state != request_state || !matches!(&source, Source::Url(url) if *url == old.url)
+        }) {
+            if let Some(bodies) = self.layout_bodies(page.page) {
+                let (cors, policy, source) = &old.request_state;
+                let options = pyro_dom::layout::SubresourceOptions {
+                    crossorigin: match cors { 0 => None, 2 => Some("use-credentials".into()), _ => Some("anonymous".into()) },
+                    referrer: source.as_ref().map(ToString::to_string),
+                    referrer_policy: policy.map(|policy| policy.as_str().to_owned()),
+                    ..Default::default()
+                };
+                bodies.invalidate_image(&pyro_dom::layout::LayoutBodyKey::new(&crate::document_client(&state.main_frame), &old.url, &options, pyro_dom::layout::SubresourceKind::Image));
+            }
+        }
         drop(state);
         let url = match source {
             Source::Url(url) if current.as_ref().is_some_and(|(u, pending, same, _)| *u == url && *same && (!restart || *pending)) => {
@@ -650,7 +664,7 @@ impl Browser {
         // data"), its bytes with it for a canvas the script makes later.
         let raster = raster.filter(|r| r.body.len() <= MAX_IMAGE_BYTES);
         let request_referrer = key.as_ref().map(|key| (key.policy, key.referrer_source.clone(), key.referer.clone()));
-        if let (Some(key), Some(resource)) = (key, raster.as_ref()) {
+        if let Some(key) = key {
             let mut used = false;
             if let (Some(state), Some(bodies)) = (self.doc(page), self.layout_bodies(page.page)) {
                 for (slot, source, policy) in bodies.dispatched_images(&crate::document_client(&state.main_frame), &request_url) {
@@ -667,7 +681,7 @@ impl Browser {
                         if current.as_ref() == Some(&key) { bodies.invalidate_image(&slot); }
                         continue;
                     }
-                    let body = resource.immutable_local.then(|| pyro_dom::layout::LayoutBody {
+                    let body = raster.as_ref().filter(|resource| resource.immutable_local).map(|resource| pyro_dom::layout::LayoutBody {
                         bytes: resource.body.clone(), final_url: resource.url.clone(), status: resource.status,
                         opaque: crate::loader::is_opaque(resource, cors, &state.main_frame.origin),
                         referrer_policy: resource.referrer_policy.map(|policy| policy.as_str().to_owned()),
@@ -676,7 +690,7 @@ impl Browser {
                 }
             }
             if !used && bindings.dom.borrow().is_connected(node) == Ok(true) {
-                if let Some(mut state) = self.doc_mut(page) {
+                if let (Some(mut state), Some(resource)) = (self.doc_mut(page), raster.as_ref()) {
                     state.images.offer(key, node, resource);
                 }
             }

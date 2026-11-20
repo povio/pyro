@@ -445,7 +445,7 @@ impl BlitzGeometry {
     /// pyro: the document the geometry renderer's responses are kept for (its loader's
     /// timeline document, else the page's).
     fn resource_document(&self) -> String {
-        self.loader.borrow().as_ref().map(|l| l.document()).unwrap_or_default()
+        self.loader.borrow().as_ref().map(|loader| format!("{}:{}", loader.document(), loader.bodies().policy_revision())).unwrap_or_default()
     }
 
     /// The document as a keyed node list for this page's Blitz document.
@@ -543,9 +543,9 @@ impl BlitzGeometry {
         let Some(loader) = loader.as_ref().filter(|loader| loader.bodies().has_images()) else { return };
         let Some(images) = RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.referenced_images(self.page)) else { return };
         let document = loader.document();
-        let keys = images.into_iter().map(|(url, options)| pyro_dom::layout::LayoutBodyKey::new(
+        let keys = images.into_iter().map(|(url, options)| loader.bodies().effective_key(pyro_dom::layout::LayoutBodyKey::new(
             &document, &url, &request_options(&options), pyro_dom::layout::SubresourceKind::Image,
-        )).collect::<std::collections::HashSet<_>>();
+        ))).collect::<std::collections::HashSet<_>>();
         loader.bodies().retain_images(&document, |key| keys.contains(key));
     }
 
@@ -874,7 +874,7 @@ impl GeometrySource for BlitzGeometry {
         });
         let requested = |key: &pyro_dom::layout::LayoutBodyKey| {
             referenced.as_ref().is_none_or(|images| {
-                images.iter().any(|(url, options)| url == key.url() && request_options(options) == *key.options())
+                images.iter().any(|(url, options)| url == key.url() && loader.bodies().effective_key(pyro_dom::layout::LayoutBodyKey::new(key.document(), url, &request_options(options), pyro_dom::layout::SubresourceKind::Image)) == *key)
             })
         };
         asked.iter().any(|key| loader.bodies().pending(key) && requested(key))

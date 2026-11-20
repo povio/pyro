@@ -92,7 +92,7 @@ pub fn document_client(frame: &Frame) -> String {
 /// referrer (the document's) and policy count as the defaults layout sends.
 pub(crate) fn layout_key_of(frame: &Frame, request: &FetchRequest, integrity: Option<&str>) -> pyro_dom::layout::LayoutBodyKey {
     // (`integrity`: the integrity metadata the request was checked against, part of it.)
-    let options = pyro_dom::layout::SubresourceOptions {
+    let mut options = pyro_dom::layout::SubresourceOptions {
         crossorigin: request.crossorigin.clone(),
         integrity: integrity.map(str::to_owned),
         referrer: request.referrer.clone().filter(|r| *r != frame.base_url),
@@ -101,7 +101,11 @@ pub(crate) fn layout_key_of(frame: &Frame, request: &FetchRequest, integrity: Op
     let destination = match request.kind {
         ResourceKind::Stylesheet => pyro_dom::layout::SubresourceKind::Style,
         ResourceKind::Font => pyro_dom::layout::SubresourceKind::Font,
-        _ => pyro_dom::layout::SubresourceKind::Image,
+        _ => {
+            options.referrer.clone_from(&request.referrer);
+            options.referrer_policy = Some(request.referrer_policy.or_else(|| frame.page_dom.as_ref().map(|dom| dom.referrer_policy())).unwrap_or_default().as_str().to_owned());
+            pyro_dom::layout::SubresourceKind::Image
+        }
     };
     pyro_dom::layout::LayoutBodyKey::new(&document_client(frame), &request.url, &options, destination)
 }
