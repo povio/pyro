@@ -1,0 +1,14 @@
+ 1:  475eb95c5 =  1:  86afe7509 Preserve inherited white-space across adjacent paragraph deletions
+ 2:  cafe7a262 =  2:  863659b42 Render automated mono and stereo signals through StereoPannerNode
+ 3:  7880c3c1b =  3:  5a24386cf Route ChannelSplitterNode outputs independently to nodes and parameters
+ 4:  70e723839 =  4:  4bbd6d7ad Retain inline formatting when joining the first line of an editable paragraph
+ 5:  b26c9619e =  5:  d4615f89a Expose Observable and Subscriber in worker realms with Web IDL member descriptors
+ 6:  139534d92 =  6:  506d4221d Read all ArrayBufferView byte ranges using intrinsic getters
+ 7:  47ba6631c =  7:  07a58b2de Fill BYOB reads across queued bytes on whole-element boundaries
+ 8:  303921692 =  8:  bc71010eb Complete initial blank iframe loads during insertion and track queued navigation
+ 9:  df2cbc5cd =  9:  793fc1725 Normalize form entry line breaks at the serialization boundary
+10:  e6a46abc4 = 10:  c84eaf46d Measure SVG equivalent paths in local user coordinates
+11:  704552da6 = 11:  52d9c52da Decode RFC 7932 Brotli streams incrementally and reject trailing bytes after delivering payload
+12:  5b03e3027 = 12:  73848d189 Preserve hit testing when an ellipse has an automatic radius
+13:  35dfb7474 = 13:  3903ac51c Resolve embedded SVG percentages against the laid-out content box
+14:  797312da6 = 14:  52a207a13 Preserve inline formatting when joining an anonymous right-hand editing line

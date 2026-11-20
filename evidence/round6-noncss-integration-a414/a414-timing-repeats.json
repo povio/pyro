@@ -1,0 +1,76 @@
+{
+  "upstream-a414": [
+    [
+      {
+        "name": "Transitions start at the same time regardless of on-screen status",
+        "status": "Fail",
+        "msg": "assert_equals: Both transitions should've started at the same time expected 25.8 but got 25.7"
+      }
+    ],
+    [
+      {
+        "name": "Transitions start at the same time regardless of on-screen status",
+        "status": "Pass",
+        "msg": ""
+      }
+    ],
+    [
+      {
+        "name": "Transitions start at the same time regardless of on-screen status",
+        "status": "Fail",
+        "msg": "assert_equals: Both transitions should've started at the same time expected 19.8 but got 19.7"
+      }
+    ],
+    [
+      {
+        "name": "Transitions start at the same time regardless of on-screen status",
+        "status": "Fail",
+        "msg": "assert_equals: Both transitions should've started at the same time expected 18.4 but got 18.3"
+      }
+    ],
+    [
+      {
+        "name": "Transitions start at the same time regardless of on-screen status",
+        "status": "Fail",
+        "msg": "assert_equals: Both transitions should've started at the same time expected 18.2 but got 18.1"
+      }
+    ]
+  ],
+  "integration-a414": [
+    [
+      {
+        "name": "Transitions start at the same time regardless of on-screen status",
+        "status": "Fail",
+        "msg": "assert_equals: Both transitions should've started at the same time expected 18.9 but got 18.8"
+      }
+    ],
+    [
+      {
+        "name": "Transitions start at the same time regardless of on-screen status",
+        "status": "Fail",
+        "msg": "assert_equals: Both transitions should've started at the same time expected 17.8 but got 17.7"
+      }
+    ],
+    [
+      {
+        "name": "Transitions start at the same time regardless of on-screen status",
+        "status": "Fail",
+        "msg": "assert_equals: Both transitions should've started at the same time expected 18.1 but got 18"
+      }
+    ],
+    [
+      {
+        "name": "Transitions start at the same time regardless of on-screen status",
+        "status": "Fail",
+        "msg": "assert_equals: Both transitions should've started at the same time expected 18.2 but got 18.1"
+      }
+    ],
+    [
+      {
+        "name": "Transitions start at the same time regardless of on-screen status",
+        "status": "Pass",
+        "msg": ""
+      }
+    ]
+  ]
+}

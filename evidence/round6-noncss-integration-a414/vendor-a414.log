@@ -1,0 +1,14 @@
+base: 902fe811 (902fe811f)
+anyrender_svg: patch verified: git apply on the upstream reconstructed at 902fe811 (the base) reproduces vendor/anyrender_svg, and git apply -R gives it back
+anyrender_vello_cpu: patch verified: git apply on the upstream reconstructed at 902fe811 (the base) reproduces vendor/anyrender_vello_cpu, and git apply -R gives it back
+blitz-dom: patch verified: git apply on the upstream reconstructed at 902fe811 (the base) reproduces vendor/blitz-dom/src, vendor/blitz-dom/assets, and git apply -R gives it back
+blitz-paint: patch verified: git apply on the upstream reconstructed at 902fe811 (the base) reproduces vendor/blitz-paint/src, and git apply -R gives it back
+fontique: patch verified: git apply on the upstream reconstructed at 902fe811 (the base) reproduces vendor/fontique, and git apply -R gives it back
+parley: patch verified: git apply on the upstream reconstructed at 902fe811 (the base) reproduces vendor/parley, and git apply -R gives it back
+parley_engine: patch verified: git apply on the upstream reconstructed at 902fe811 (the base) reproduces vendor/parley_engine, and git apply -R gives it back
+selectors: patch verified: git apply on the upstream reconstructed at 902fe811 (the base) reproduces vendor/selectors, and git apply -R gives it back
+stylo: patch verified: git apply on the upstream reconstructed at 902fe811 (the base) reproduces vendor/stylo, and git apply -R gives it back
+stylo_malloc_size_of: patch verified: git apply on the upstream reconstructed at 902fe811 (the base) reproduces vendor/stylo_malloc_size_of, and git apply -R gives it back
+stylo_taffy: patch verified: git apply on the upstream reconstructed at 902fe811 (the base) reproduces vendor/stylo_taffy/src, and git apply -R gives it back
+taffy: patch verified: git apply on the upstream reconstructed at 902fe811 (the base) reproduces vendor/taffy/src, vendor/taffy/examples, vendor/taffy/README.md, and git apply -R gives it back
+vello_cpu: patch verified: git apply on the upstream reconstructed at 902fe811 (the base) reproduces vendor/vello_cpu, and git apply -R gives it back

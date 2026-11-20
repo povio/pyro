@@ -1,0 +1,90 @@
+{
+  "urls": 2445,
+  "counts": [
+    {
+      "complete": 2322,
+      "namedPass": 170940,
+      "full": 908,
+      "timeout": 88,
+      "error": 35
+    },
+    {
+      "complete": 2325,
+      "namedPass": 177308,
+      "full": 1017,
+      "timeout": 88,
+      "error": 32
+    },
+    {
+      "complete": 2426,
+      "namedPass": 188343,
+      "full": 1896,
+      "timeout": 13,
+      "error": 4,
+      "hang": 2
+    }
+  ],
+  "delta": {
+    "missing": 9,
+    "added": 131,
+    "gained": 6371,
+    "lost": 3
+  },
+  "localChrome": {
+    "onlyChrome": 14702,
+    "onlyLP": 3667
+  },
+  "byArea": {
+    "FileAPI": {
+      "gained": 70
+    },
+    "compression": {
+      "gained": 184
+    },
+    "dom": {
+      "gained": 237
+    },
+    "editing": {
+      "gained": 5222
+    },
+    "html": {
+      "gained": 191
+    },
+    "streams": {
+      "gained": 36
+    },
+    "svg": {
+      "gained": 201
+    },
+    "webaudio": {
+      "gained": 230,
+      "lost": 3
+    }
+  },
+  "losses": [
+    [
+      "webaudio/the-audio-api/the-stereopanner-interface/ctor-stereopanner.html",
+      "  new StereoPannerNode() threw TypeError: \"undefined is not a constructor (evaluating 'new window[name]()')\".",
+      1,
+      "Pass",
+      null,
+      null
+    ],
+    [
+      "webaudio/the-audio-api/the-stereopanner-interface/ctor-stereopanner.html",
+      "  new StereoPannerNode(1) threw TypeError: \"undefined is not a constructor (evaluating 'new window[name](1)')\".",
+      1,
+      "Pass",
+      null,
+      null
+    ],
+    [
+      "webaudio/the-audio-api/the-stereopanner-interface/ctor-stereopanner.html",
+      "  new StereoPannerNode(context, 42) threw TypeError: \"undefined is not a constructor (evaluating 'new window[name](context, 42)')\".",
+      1,
+      "Pass",
+      null,
+      null
+    ]
+  ]
+}

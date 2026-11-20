@@ -1,0 +1,93 @@
+{
+  "reconstructedTree": "01d4bb0da6e2267e38f8a995fe3bbe62feb3fce1",
+  "headTree": "01d4bb0da6e2267e38f8a995fe3bbe62feb3fce1",
+  "rangeInputs": [
+    [
+      "902fe811fbef4ff0f3e39ca1f896de3a275d20b5",
+      "b26c9619e2b8f9dde519a7a714d91829d051174a"
+    ],
+    [
+      "b26c9619e2b8f9dde519a7a714d91829d051174a",
+      "139534d9259b1dfcb1cd9bff0e4796f32c1dd304"
+    ],
+    [
+      "902fe811fbef4ff0f3e39ca1f896de3a275d20b5",
+      "24463a890decc18b8e6058aebdc09b6ae2619bc9"
+    ],
+    [
+      "b26c9619e2b8f9dde519a7a714d91829d051174a",
+      "cdc2323a2db447c5d392b7c87449d43b1995c7e4"
+    ],
+    [
+      "b26c9619e2b8f9dde519a7a714d91829d051174a",
+      "dce5b8236df5ff7562e5e8e62b9bf12ebcdf2db5"
+    ],
+    [
+      "cdc2323a2db447c5d392b7c87449d43b1995c7e4",
+      "38ae18a952f1dc8dcea93266928725d57290d5fb"
+    ],
+    [
+      "b26c9619e2b8f9dde519a7a714d91829d051174a",
+      "f803b29722e45cb1264a93ada2014db106f56746"
+    ]
+  ],
+  "base": "902fe811fbef4ff0f3e39ca1f896de3a275d20b5",
+  "head": "797312da612f4127d90b78bc1c8d56431528c11d",
+  "changedPaths": [
+    "Cargo.lock",
+    "crates/pyro-browser/src/frames.rs",
+    "crates/pyro-browser/src/lib.rs",
+    "crates/pyro-browser/src/loader.rs",
+    "crates/pyro-browser/src/nav.rs",
+    "crates/pyro-dom/Cargo.toml",
+    "crates/pyro-dom/src/geometry.rs",
+    "crates/pyro-dom/src/svg_geometry.rs",
+    "crates/pyro-layout/src/lib.rs",
+    "crates/pyro-render/src/lib.rs",
+    "crates/pyro-webapi/Cargo.toml",
+    "crates/pyro-webapi/src/collections.rs",
+    "crates/pyro-webapi/src/compression.rs",
+    "crates/pyro-webapi/src/editing.rs",
+    "crates/pyro-webapi/src/editing/paragraph_join.rs",
+    "crates/pyro-webapi/src/encoding.rs",
+    "crates/pyro-webapi/src/formdata.rs",
+    "crates/pyro-webapi/src/html.rs",
+    "crates/pyro-webapi/src/install.js",
+    "crates/pyro-webapi/src/observable.js",
+    "crates/pyro-webapi/src/observable.rs",
+    "crates/pyro-webapi/src/range.rs",
+    "crates/pyro-webapi/src/streams.js",
+    "crates/pyro-webapi/src/webaudio.js",
+    "crates/pyro-webapi/src/webaudio.rs",
+    "crates/pyro-webapi/src/worker_scope.rs"
+  ],
+  "overlaps": {
+    "crates/pyro-webapi/src/editing/paragraph_join.rs": [
+      "b26c9619e",
+      "f803b2972"
+    ],
+    "crates/pyro-webapi/src/streams.js": [
+      "24463a890",
+      "38ae18a95"
+    ],
+    "Cargo.lock": [
+      "dce5b8236",
+      "38ae18a95"
+    ]
+  },
+  "identicalResolvedPackages": 538,
+  "lockEdgeChanges": {
+    "pyro-dom": {
+      "added": [
+        "svgtypes"
+      ],
+      "removed": []
+    },
+    "pyro-webapi": {
+      "added": [
+        "brotli-decompressor 6.1.0"
+      ],
+      "removed": []
+    }
+  }
+}

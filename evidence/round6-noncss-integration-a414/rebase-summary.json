@@ -1,0 +1,37 @@
+{
+  "urls": 2445,
+  "counts": [
+    {
+      "complete": 2325,
+      "namedPass": 177308,
+      "full": 1017,
+      "timeout": 88,
+      "error": 32
+    },
+    {
+      "complete": 2325,
+      "namedPass": 177308,
+      "full": 1017,
+      "timeout": 88,
+      "error": 32
+    },
+    {
+      "complete": 2426,
+      "namedPass": 188343,
+      "full": 1896,
+      "timeout": 13,
+      "error": 4,
+      "hang": 2
+    }
+  ],
+  "delta": {
+    "missing": 0,
+    "added": 0
+  },
+  "localChrome": {
+    "onlyChrome": 14702,
+    "onlyLP": 3667
+  },
+  "byArea": {},
+  "losses": []
+}
