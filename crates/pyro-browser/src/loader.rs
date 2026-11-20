@@ -891,7 +891,7 @@ struct PageModuleFetcher {
     /// mode, with which every module is fetched, outside the document's module map (`preloads`).
     worklet_credentials: Option<pyro_net::Credentials>,
     /// That worklet's module map, where each module this fetcher loads is recorded.
-    worklet_modules: Option<pyro_js::WorkletModuleMap>,
+    worklet_modules: Option<(pyro_js::WorkletModuleMap, u64)>,
 }
 
 /// A worklet module's entry in its worklet's module map while it is fetched. It is marked fetched
@@ -902,20 +902,21 @@ struct PageModuleFetcher {
 struct WorkletEntry {
     modules: pyro_js::WorkletModuleMap,
     url: String,
+    graph: u64,
     loaded: std::cell::Cell<bool>,
 }
 
 impl WorkletEntry {
-    fn new(modules: pyro_js::WorkletModuleMap, url: &str) -> WorkletEntry {
-        modules.borrow_mut().insert(url.to_owned(), false);
-        WorkletEntry { modules, url: url.to_owned(), loaded: std::cell::Cell::new(false) }
+    fn new(modules: pyro_js::WorkletModuleMap, url: &str, graph: u64) -> WorkletEntry {
+        modules.borrow_mut().insert(url.to_owned(), pyro_js::WorkletModule { fetched: false, graph });
+        WorkletEntry { modules, url: url.to_owned(), graph, loaded: std::cell::Cell::new(false) }
     }
 
     fn set_loaded(&self, loaded: bool) {
         self.loaded.set(loaded);
         let mut modules = self.modules.borrow_mut();
         if loaded {
-            modules.insert(self.url.clone(), true);
+            modules.insert(self.url.clone(), pyro_js::WorkletModule { fetched: true, graph: self.graph });
         } else {
             modules.remove(&self.url);
         }
@@ -925,7 +926,7 @@ impl WorkletEntry {
 impl Drop for WorkletEntry {
     fn drop(&mut self) {
         let mut modules = self.modules.borrow_mut();
-        if !self.loaded.get() && modules.get(&self.url) == Some(&false) {
+        if !self.loaded.get() && modules.get(&self.url).is_some_and(|m| !m.fetched) {
             modules.remove(&self.url);
         }
     }
@@ -982,7 +983,7 @@ impl ModuleFetcher for PageModuleFetcher {
         self.fetches.in_flight.get() > 0
     }
 
-    fn for_worklet_graph(&self, credentials: &str, modules: pyro_js::WorkletModuleMap) -> Option<Rc<dyn ModuleFetcher>> {
+    fn for_worklet_graph(&self, credentials: &str, modules: pyro_js::WorkletModuleMap, graph: u64) -> Option<Rc<dyn ModuleFetcher>> {
         let credentials = match credentials {
             "omit" => pyro_net::Credentials::Omit,
             "include" => pyro_net::Credentials::Include,
@@ -993,7 +994,7 @@ impl ModuleFetcher for PageModuleFetcher {
             sched: self.sched.clone(),
             fetches: Rc::default(),
             worklet_credentials: Some(credentials),
-            worklet_modules: Some(modules),
+            worklet_modules: Some((modules, graph)),
         }))
     }
 
@@ -1013,7 +1014,7 @@ impl ModuleFetcher for PageModuleFetcher {
         let page = self.page;
         let worklet_credentials = self.worklet_credentials;
         // Recorded in the worklet's module map as being fetched from now on.
-        let worklet_entry = self.worklet_modules.clone().map(|modules| WorkletEntry::new(modules, &url));
+        let worklet_entry = self.worklet_modules.clone().map(|(modules, graph)| WorkletEntry::new(modules, &url, graph));
         module_trace!("requested {url}");
         let request = RefCell::new(Some(request));
         let in_flight = InFlight::new(&self.fetches);

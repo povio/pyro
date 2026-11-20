@@ -95,10 +95,19 @@ pub struct RealmOptions {
     pub origin: Option<String>,
 }
 
-/// A worklet's module map, by module URL: `false` while the module is being fetched, `true` once its
-/// source was handed to the worklet's realm (its own imports may still be loading; a failed one
-/// leaves the map). Shared by every graph of the worklet.
-pub type WorkletModuleMap = Rc<RefCell<std::collections::HashMap<String, bool>>>;
+/// A worklet's module map, by module URL (a failed module leaves it). Shared by every graph of the
+/// worklet.
+pub type WorkletModuleMap = Rc<RefCell<std::collections::HashMap<String, WorkletModule>>>;
+
+/// A module of a [`WorkletModuleMap`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WorkletModule {
+    /// Its source was handed to the worklet's realm (its own imports may still be loading); false
+    /// while it is being fetched.
+    pub fetched: bool,
+    /// The graph that fetched it (`ModuleFetcher::for_worklet_graph`'s `graph`).
+    pub graph: u64,
+}
 
 /// Receives ES module fetch requests from a realm (`import`, `import()`).
 pub trait ModuleFetcher {
@@ -125,9 +134,9 @@ pub trait ModuleFetcher {
 
     /// A fetcher for a worklet's module graph ("fetch a worklet script graph"): every module of the
     /// graph is fetched with `credentials` ("omit", "same-origin" or "include"), outside the
-    /// document's module map, and recorded in the worklet's module map `modules`. `None`: this
-    /// fetcher cannot make one.
-    fn for_worklet_graph(&self, _credentials: &str, _modules: WorkletModuleMap) -> Option<Rc<dyn ModuleFetcher>> {
+    /// document's module map, and recorded in the worklet's module map `modules` as fetched by graph
+    /// `graph`. `None`: this fetcher cannot make one.
+    fn for_worklet_graph(&self, _credentials: &str, _modules: WorkletModuleMap, _graph: u64) -> Option<Rc<dyn ModuleFetcher>> {
         None
     }
 }

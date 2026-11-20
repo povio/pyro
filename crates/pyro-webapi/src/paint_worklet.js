@@ -5,9 +5,11 @@
 //   active() -> whether the document is fully active
 //   moduleState(url) -> 'fetched' | 'fetching' | 'none': the URL in the worklet global's module map,
 //     which records every module its graphs fetched (imports included); 'fetched' is its source only
+//   moduleGraph(url) -> id of the graph that fetched it (evaluate's `graph`), -1 for none
 //   awaitGraph(url) -> promise of such a module's graph (it and its imports fetched and evaluated, or
 //     failed), or null when the engine cannot wait for one
-//   evaluate(source, url, credentials) -> promise of the module's evaluation in the worklet global,
+//   evaluate(source, url, credentials, graph) -> promise of the module's evaluation in the worklet
+//     global as graph `graph` (its imports recorded as that graph's),
 //     its imports fetched with `credentials`; one graph at a time (see `graphs`)
 (function (native) {
   'use strict';
@@ -28,6 +30,10 @@
   // The module graphs being fetched and evaluated run one after another: each installs a fetcher
   // carrying its own credentials mode, which must not serve another graph's imports.
   let graphs = PromiseC.resolve();
+  // Each graph's evaluation, by id (moduleGraph's): what a module it fetched waits for when the engine
+  // cannot wait for the module's own graph.
+  const runs = new Map();
+  let nextGraph = 1;
   class Worklet {
     constructor(t) {
       if (t !== token) throw new TypeErrorC("Failed to construct 'Worklet': Illegal constructor");
@@ -58,8 +64,9 @@
         // source arrived. A module whose fetch failed left the map and is fetched as an entry.
         if (native.moduleState(url) !== 'none') {
           const graph = native.awaitGraph(url);
-          // An engine that cannot wait for a graph: the end of the running graphs, which contain it.
-          const later = graph === null ? graphs.then(() => undefined) : graph;
+          // An engine that cannot wait for a module's own graph: the graph that fetched it, which
+          // contains its graph, rejection included.
+          const later = graph === null ? (runs.get(native.moduleGraph(url)) ?? graphs).then(() => undefined) : graph;
           map.set(url, later);
           later.then(undefined, () => { if (map.get(url) === later) map.delete(url); });
           return later;
@@ -77,7 +84,10 @@
             },
             () => { throw aborted(); },
           ).then(([source, finalUrl]) => {
-            const run = graphs.then(() => native.evaluate(source, finalUrl, credentials));
+            const id = nextGraph++;
+            const run = graphs.then(() => native.evaluate(source, finalUrl, credentials, id));
+            runs.set(id, run);
+            run.then(undefined, () => {});
             graphs = run.then(() => {}, () => {});
             return run;
           });

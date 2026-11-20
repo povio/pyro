@@ -76,7 +76,8 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         let source = a.get(0).to_string()?;
         let url = a.get(1).to_string()?;
         let credentials = a.get(2).to_string()?;
-        evaluate(s, &page, &source, &url, &credentials)
+        let graph = a.get(3).to_number()? as u64;
+        evaluate(s, &page, &source, &url, &credentials, graph)
     })?;
     native.set_atom("evaluate", evaluate.value())?;
     // moduleState(url) -> 'fetched' | 'fetching' | 'none': the URL in the worklet's module map.
@@ -84,13 +85,21 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         let page = crate::target::page_of(s)?;
         let url = a.get(0).to_string()?;
         let state = match page.paint_worklet_modules.borrow().get(&url) {
-            Some(true) => "fetched",
-            Some(false) => "fetching",
+            Some(m) if m.fetched => "fetched",
+            Some(_) => "fetching",
             None => "none",
         };
         Ok(s.string(state))
     })?;
     native.set_atom("moduleState", state.value())?;
+    // moduleGraph(url) -> the id of the graph that fetched the URL (evaluate's `graph`), or -1.
+    let module_graph = s.function("moduleGraph", |s, _, a| {
+        let page = crate::target::page_of(s)?;
+        let url = a.get(0).to_string()?;
+        let graph = page.paint_worklet_modules.borrow().get(&url).map_or(-1.0, |m| m.graph as f64);
+        Ok(s.number(graph))
+    })?;
+    native.set_atom("moduleGraph", module_graph.value())?;
     // awaitGraph(url) -> promise of the graph of a module in the worklet's module map, or null when
     // this engine cannot wait for one.
     let await_graph_fn = s.function("awaitGraph", |s, _, a| {
@@ -103,10 +112,17 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
 }
 
 /// Evaluates `source` (from `url`) as a module in the page's paint worklet global, made on first
-/// use, its imports fetched with the graph's `credentials` mode. Returns a promise of the calling
+/// use, its imports fetched with the graph's `credentials` mode and recorded as graph `graph`'s. Returns a promise of the calling
 /// realm that settles as the module's evaluation does. paint_worklet.js runs one graph at a time, so
 /// the fetcher installed here serves only this graph's modules.
-fn evaluate<'s>(s: &Scope<'s>, page: &Rc<PageDom>, source: &str, url: &str, credentials: &str) -> JsResult<Value<'s>> {
+fn evaluate<'s>(
+    s: &Scope<'s>,
+    page: &Rc<PageDom>,
+    source: &str,
+    url: &str,
+    credentials: &str,
+    graph: u64,
+) -> JsResult<Value<'s>> {
     let deferred = s.deferred()?;
     let promise = deferred.promise.get(s);
     let realm = {
@@ -128,7 +144,7 @@ fn evaluate<'s>(s: &Scope<'s>, page: &Rc<PageDom>, source: &str, url: &str, cred
     // "Fetch a worklet script graph" with the document's fetch client: every module of the graph is
     // fetched with the graph's credentials mode, in the worklet's own module map (not the document's).
     realm.set_module_fetcher(
-        s.realm().module_fetcher().and_then(|f| f.for_worklet_graph(credentials, page.paint_worklet_modules.clone())),
+        s.realm().module_fetcher().and_then(|f| f.for_worklet_graph(credentials, page.paint_worklet_modules.clone(), graph)),
     );
     let ws = realm.scope()?;
     let settle = Settle::new(s, deferred);
@@ -146,6 +162,9 @@ fn evaluate<'s>(s: &Scope<'s>, page: &Rc<PageDom>, source: &str, url: &str, cred
 /// as "fetch a worklet script graph" ends; not when the module's own source arrived. `null` without
 /// a worklet realm or an engine that loads graphs in phases (`Scope::load_registered_module_graph`).
 fn await_graph<'s>(s: &Scope<'s>, page: &Rc<PageDom>, url: &str) -> JsResult<Value<'s>> {
+    if FORCE_GRAPH_FALLBACK.get() {
+        return Ok(s.null());
+    }
     let Some(realm) = page.paint_worklet.borrow().clone() else { return Ok(s.null()) };
     let ws = realm.scope()?;
     let Some(loading) = ws.load_registered_module_graph(url)? else { return Ok(s.null()) };
@@ -245,6 +264,19 @@ impl Settle {
         then.call(Some(p), &[on_ok.value(), on_err.value()])?;
         Ok(())
     }
+}
+
+thread_local! {
+    /// Tests: take paint_worklet.js's path for an engine without module graph phases.
+    static FORCE_GRAPH_FALLBACK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Tests only: on this thread, `addModule()` of another graph's import waits as it does with a
+/// JavaScriptCore that cannot load a registered module's graph (without patch 0037), so that path
+/// is tested on a patched build too.
+#[doc(hidden)]
+pub fn force_graph_fallback_for_tests(on: bool) {
+    FORCE_GRAPH_FALLBACK.set(on);
 }
 
 /// `CSS.paintWorklet`: the realm's paint `Worklet` in a secure context, else none.

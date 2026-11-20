@@ -11605,6 +11605,20 @@ fn serve_gated_worklet_graph() -> (std::net::SocketAddr, std::sync::mpsc::Sender
 /// loading it waits for C; when C fails (during A's load or before) it rejects.
 #[test]
 fn paint_worklet_add_module_of_an_import_settles_with_its_graph() {
+    add_module_of_an_import_settles_with_its_graph();
+}
+
+/// The same with an engine that cannot load a registered module's graph (JavaScriptCore without
+/// patch 0037; forced here): addModule(B) settles as the graph that imports B does, its rejection
+/// included.
+#[test]
+fn paint_worklet_add_module_of_an_import_settles_with_its_graph_without_graph_phases() {
+    pyro_webapi::paint_worklet::force_graph_fallback_for_tests(true);
+    add_module_of_an_import_settles_with_its_graph();
+    pyro_webapi::paint_worklet::force_graph_fallback_for_tests(false);
+}
+
+fn add_module_of_an_import_settles_with_its_graph() {
     let value = |h: &mut Harness, expression: &str| {
         let r = h.page("Runtime.evaluate", json!({ "expression": expression, "returnByValue": true }));
         r["result"]["result"]["value"].clone()

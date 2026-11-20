@@ -49,7 +49,7 @@ pub mod formdata;
 pub mod fullscreen;
 mod web_locks;
 mod media_devices;
-mod paint_worklet;
+pub mod paint_worklet;
 mod secure_context;
 pub mod handlers;
 pub mod headers;
