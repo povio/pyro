@@ -1,0 +1,67 @@
+{
+  "urls": 787,
+  "columns": [
+    "svg-metrics-base",
+    "svg-metrics-embedded",
+    "Chrome WPT 157.0.8103.80"
+  ],
+  "counts": [
+    {
+      "namedPass": 12721,
+      "full": 288,
+      "complete": 720,
+      "timeout": 58,
+      "error": 9
+    },
+    {
+      "namedPass": 12922,
+      "full": 311,
+      "complete": 720,
+      "timeout": 58,
+      "error": 9
+    },
+    {
+      "namedPass": 14791,
+      "full": 669,
+      "complete": 786,
+      "timeout": 1
+    }
+  ],
+  "delta": {
+    "missing": 0,
+    "added": 0,
+    "gained": 201
+  },
+  "losses": [],
+  "netByUrl": {
+    "svg/historical.html": 2,
+    "svg/idlharness.window.html": 22,
+    "svg/path/error-handling/path-data-error-geometry.html": 5,
+    "svg/path/parsing/arc-commands.html": 12,
+    "svg/path/parsing/curveto-commands.html": 11,
+    "svg/path/parsing/error-handling.html": 12,
+    "svg/path/parsing/lineto-commands.html": 13,
+    "svg/path/parsing/moveto-absolute.html": 9,
+    "svg/path/parsing/moveto-relative.html": 7,
+    "svg/path/parsing/number-edge-case-consecutive.html": 4,
+    "svg/path/parsing/number-edge-case-decimal.html": 6,
+    "svg/path/parsing/number-error-trailing-decimal.html": 5,
+    "svg/path/parsing/number-exponent.html": 9,
+    "svg/path/parsing/quadratic-bezier-commands.html": 14,
+    "svg/path/parsing/whitespace-basic.html": 14,
+    "svg/path/property/test_style_flush_on_dom_api_with_d_property.html": 2,
+    "svg/shapes/line-getPointAtLength.svg": 2,
+    "svg/shapes/scripted/ellipse-auto-radii.svg": 5,
+    "svg/struct/SVGSVGElement-currentTranslate-SameObject.html": 1,
+    "svg/types/elements/SVGGeometryElement-rect.svg": 3,
+    "svg/types/scripted/SVGGeometryElement.getPointAtLength-01.svg": 4,
+    "svg/types/scripted/SVGGeometryElement.getPointAtLength-02.svg": 1,
+    "svg/types/scripted/SVGGeometryElement.getPointAtLength-03.svg": 3,
+    "svg/types/scripted/SVGGeometryElement.getPointAtLength-04.svg": 13,
+    "svg/types/scripted/SVGGeometryElement.getPointAtLength-05.svg": 12,
+    "svg/types/scripted/SVGGeometryElement.getTotalLength-01.svg": 5,
+    "svg/types/scripted/SVGGeometryElement.getTotalLength-02.html": 1,
+    "svg/types/scripted/SVGPathElement.getTotalLength-01.html": 3,
+    "svg/types/scripted/SVGPoint.html": 1
+  }
+}

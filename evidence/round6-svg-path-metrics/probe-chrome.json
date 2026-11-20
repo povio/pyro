@@ -1,0 +1,254 @@
+{
+  "rounded": {
+    "len": 172.0597686767578,
+    "pts": [
+      [
+        12,
+        7,
+        null,
+        null,
+        false
+      ],
+      [
+        54,
+        10,
+        null,
+        null,
+        false
+      ],
+      [
+        12,
+        7,
+        null,
+        null,
+        false
+      ]
+    ]
+  },
+  "tall": {
+    "len": 64.77655029296875,
+    "pts": [
+      [
+        7,
+        2,
+        null,
+        null,
+        false
+      ],
+      [
+        1,
+        16,
+        null,
+        null,
+        false
+      ],
+      [
+        7,
+        2,
+        null,
+        null,
+        false
+      ]
+    ]
+  },
+  "wide": {
+    "len": 64.77655029296875,
+    "pts": [
+      [
+        15,
+        2,
+        null,
+        null,
+        false
+      ],
+      [
+        1,
+        8,
+        null,
+        null,
+        false
+      ],
+      [
+        15,
+        2,
+        null,
+        null,
+        false
+      ]
+    ]
+  },
+  "styled": {
+    "len": 60,
+    "pts": [
+      [
+        0,
+        0,
+        null,
+        null,
+        false
+      ],
+      [
+        0,
+        15,
+        null,
+        null,
+        false
+      ],
+      [
+        0,
+        0,
+        null,
+        null,
+        false
+      ]
+    ]
+  },
+  "pct": {
+    "len": 80,
+    "pts": [
+      [
+        20,
+        0,
+        null,
+        null,
+        false
+      ],
+      [
+        40,
+        0,
+        null,
+        null,
+        false
+      ],
+      [
+        100,
+        0,
+        null,
+        null,
+        false
+      ]
+    ]
+  },
+  "fromCss": {
+    "len": 10,
+    "pts": [
+      [
+        2,
+        1,
+        null,
+        null,
+        false
+      ],
+      [
+        4.5,
+        1,
+        null,
+        null,
+        false
+      ],
+      [
+        12,
+        1,
+        null,
+        null,
+        false
+      ]
+    ]
+  },
+  "curve": {
+    "len": 29.5788631439209,
+    "pts": [
+      [
+        0,
+        0,
+        null,
+        null,
+        false
+      ],
+      [
+        3.8926289081573486,
+        6.269967079162598,
+        null,
+        null,
+        false
+      ],
+      [
+        20,
+        0,
+        null,
+        null,
+        false
+      ]
+    ]
+  },
+  "multi": {
+    "len": 12,
+    "pts": [
+      [
+        0,
+        0,
+        null,
+        null,
+        false
+      ],
+      [
+        11,
+        3,
+        null,
+        null,
+        false
+      ],
+      [
+        20,
+        3,
+        null,
+        null,
+        false
+      ]
+    ]
+  },
+  "pointType": {
+    "ctor": "SVGPoint",
+    "svg": true,
+    "mutation": 99,
+    "transform": "function",
+    "create": "function"
+  },
+  "cssViewport": 160,
+  "rect{\"width\":0,\"height\":0}": {
+    "len": 0,
+    "pt": "InvalidStateError"
+  },
+  "rect{\"width\":0,\"height\":10}": {
+    "len": 20,
+    "pt": [
+      0,
+      0
+    ]
+  },
+  "rect{\"width\":10,\"height\":0}": {
+    "len": 20,
+    "pt": [
+      0,
+      0
+    ]
+  },
+  "ellipse{\"rx\":0,\"ry\":10}": {
+    "len": 40,
+    "pt": [
+      0,
+      0
+    ]
+  },
+  "ellipse{\"rx\":10}": {
+    "len": 62.426971435546875,
+    "pt": [
+      10,
+      0
+    ]
+  },
+  "rootPercent": {
+    "box": 100,
+    "len": 50
+  }
+}
