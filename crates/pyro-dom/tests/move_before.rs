@@ -324,3 +324,32 @@ fn selection_direction_belongs_to_the_selection_it_was_set_for() {
     dom.set_selection_direction(i, Some(false)).unwrap();
     assert_eq!(dom.selection_direction(i).unwrap(), Some(false));
 }
+
+#[test]
+fn manual_assignment_updates_layout_and_signals_slots_removed_with_ancestors() {
+    let (dom, document) = doc("<div id=host><span id=child></span></div>");
+    let mut dom = dom.borrow_mut();
+    let host = by_id(&dom, document, "host");
+    let child = by_id(&dom, document, "child");
+    let shadow = dom.attach_shadow_with(host, ShadowRootMode::Open, pyro_dom::shadow_flags::MANUAL_SLOTS).unwrap();
+    let wrapper = dom.create_element(document, "div").unwrap();
+    let slot = dom.create_element(document, "slot").unwrap();
+    dom.append_child(wrapper, slot).unwrap();
+    dom.append_child(shadow, wrapper).unwrap();
+    let version = dom.version();
+    dom.slot_assign(slot, &[child]).unwrap();
+    assert_ne!(dom.version(), version);
+    assert_eq!(dom.take_signaled_slots(), [slot]);
+
+    let version = dom.version();
+    dom.slot_assign(slot, &[child, child]).unwrap();
+    assert_eq!(dom.version(), version);
+    assert!(dom.take_signaled_slots().is_empty());
+
+    dom.remove_child(shadow, wrapper).unwrap();
+    assert!(dom.assigned_nodes(slot, false).unwrap().is_empty());
+    assert_eq!(dom.take_signaled_slots(), [slot]);
+    dom.append_child(shadow, wrapper).unwrap();
+    assert_eq!(dom.assigned_nodes(slot, false).unwrap(), [child]);
+    assert_eq!(dom.take_signaled_slots(), [slot]);
+}
