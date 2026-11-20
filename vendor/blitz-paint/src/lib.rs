@@ -369,3 +369,9 @@ fn process_custom_widget_node(
 
     Some(widget_scene)
 }
+
+/// pyro: how many lines of inline layouts the painter has built inline box fragments for on this
+/// thread: a measure of its work, which tests bound (a wall clock flakes under load).
+pub fn inline_lines_visited() -> usize {
+    render::INLINE_LINES_VISITED.with(|visited| visited.get())
+}

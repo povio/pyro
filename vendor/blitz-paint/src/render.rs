@@ -2482,6 +2482,18 @@ fn escapes_clip_of(tree: &blitz_dom::NodeTree, node_id: NodeId, child_id: NodeId
     true
 }
 
+thread_local! {
+    /// pyro: how far the inline boxes of an inline root reach out of their lines (by root and its
+    /// layout's style count), for the effect passes of one `draw_inline_effects` (which resets it):
+    /// `ElementCx::inline_box_fragments`.
+    pub(crate) static BAND_REACH: std::cell::Cell<(usize, usize, f64)> = const { std::cell::Cell::new((usize::MAX, 0, 0.0)) };
+    /// pyro: how many lines `ElementCx::inline_box_fragments` built fragments for on this thread
+    /// ([`crate::inline_lines_visited`]).
+    pub(crate) static INLINE_LINES_VISITED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// pyro: and how many items each of its lines has (`Line::items`), for the lines a pass skips.
+    pub(crate) static BAND_ITEMS: std::cell::RefCell<Vec<usize>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
 /// pyro: whether `node` (a clipping box) paints any z-ordered box (negative `z-index`,
 /// positioned level or above) whose containing block lies outside it ([`escapes_clip_of`]).
 fn has_clip_escapes(tree: &blitz_dom::NodeTree, node: &Node) -> bool {
@@ -3351,9 +3363,58 @@ impl ElementCx<'_, '_> {
         let first_line = text_layout.first_line.filter(|&id| dom.get_node(id).is_some());
         let mut first_line_styles = text_layout.first_line_styles.clone();
         let mut item_index = 0usize;
+        // pyro: a pass that draws this root's layout in some areas only (an inline element's effect
+        // pass, `RunFilter`) needs the fragments of the lines that reach them: the band of the areas,
+        // widened by how far an inline box's block-axis padding, borders and shadows reach out of its
+        // line. Each element's pass costs its own lines, not the whole layout (a paragraph of many
+        // faded spans was quadratic). Lines turned (vertical) are all kept.
+        let band = turned.is_none().then(|| self.context.draw_text_context.borrow().run_filter.as_ref().and_then(|filter| {
+            (filter.root == self.node.id && !filter.areas.is_empty()).then(|| {
+                let y0 = filter.areas.iter().map(|area| area.y0).fold(f64::INFINITY, f64::min);
+                let y1 = filter.areas.iter().map(|area| area.y1).fold(f64::NEG_INFINITY, f64::max);
+                (y0, y1)
+            })
+        })).flatten();
+        let band = band.map(|(y0, y1)| {
+            // (Once per layout, not per pass: a paragraph of many faded spans makes many passes.)
+            let key = (self.node.id.as_u64() as usize, layout.styles().len());
+            let cached = BAND_REACH.with(|cell| cell.get()).0 == key.0 && BAND_REACH.with(|cell| cell.get()).1 == key.1;
+            let reach = if cached { BAND_REACH.with(|cell| cell.get()).2 } else {
+            let reach = layout.styles().iter().filter_map(|style| dom.get_node(style.brush.id)).filter_map(|node| node.primary_styles()).fold(0.0f64, |reach, style| {
+                let basis = style::values::computed::CSSPixelLength::new(0.0);
+                let padding = style.get_padding();
+                let border = style.get_border();
+                let shadow = style.get_effects().box_shadow.0.iter().fold(0.0f64, |r, s| {
+                    r.max((s.base.vertical.px().abs() + s.spread.px().abs() + s.base.blur.px()) as f64)
+                });
+                let sides = (padding.padding_top.0.resolve(basis).px().max(padding.padding_bottom.0.resolve(basis).px())
+                    + border.border_top_width.0.to_f32_px().max(border.border_bottom_width.0.to_f32_px())) as f64;
+                reach.max(sides + shadow)
+            });
+            // (Percentages of padding resolve against the containing block's width: all of it.)
+            let percent = layout.styles().iter().filter_map(|style| dom.get_node(style.brush.id)).filter_map(|node| node.primary_styles()).any(|style| {
+                let padding = style.get_padding();
+                padding.padding_top.0.has_percentage() || padding.padding_bottom.0.has_percentage()
+            });
+            let reach = if percent { f64::INFINITY } else { (reach + 2.0) * self.scale };
+            BAND_REACH.with(|cell| cell.set((key.0, key.1, reach)));
+            BAND_ITEMS.with(|items| *items.borrow_mut() = layout.lines().map(|line| line.items().count()).collect());
+            reach
+            };
+            (y0 - reach, y1 + reach)
+        });
         for (line_index, line) in layout.lines().enumerate() {
             let first = fragments.len();
             let metrics = line.metrics();
+            if let Some((y0, y1)) = band
+                && let shift = f64::from(tops.map_or(0.0, |tops| tops.shift(metrics)))
+                && (f64::from(metrics.block_max_coord.max(metrics.content_block_max_coord)) + shift < y0
+                    || f64::from(metrics.block_min_coord.min(metrics.content_block_min_coord)) + shift > y1)
+            {
+                item_index += BAND_ITEMS.with(|items| items.borrow().get(line_index).copied()).unwrap_or_else(|| line.items().count());
+                continue;
+            }
+            INLINE_LINES_VISITED.with(|visited| visited.set(visited.get() + 1));
             // pyro: the empty inline boxes of an invisible line box have no height: nothing to
             // paint (WPT css-inline `empty-span-size-*`).
             if metrics.invisible {

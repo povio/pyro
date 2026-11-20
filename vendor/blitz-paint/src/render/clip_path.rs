@@ -1262,6 +1262,7 @@ impl ElementCx<'_, '_> {
         };
 
         INLINE_EFFECTS.set(true);
+        super::BAND_REACH.with(|cell| cell.set((usize::MAX, 0, 0.0)));
         // The layout without the elements' areas.
         // pyro: cut into pieces that do not overlap, inside the visible area: where two areas
         // overlapped (lines closer than their content is tall) the even-odd rule counted them

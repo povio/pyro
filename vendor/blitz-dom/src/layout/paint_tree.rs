@@ -592,6 +592,16 @@ impl BaseDocument {
                 sc.hoisted_content_bbox.set((0, Rect::ZERO));
             }
         }
+        // Tree order, numbered once (each comparison of the moved boxes is a lookup, not a search of
+        // sibling lists), and the boxes without a `z-index` grouped by their target, each group
+        // merged into its target's positioned level at once (not one insertion scan per box).
+        let order = self.tree_order_indices();
+        let precedes = |doc: &Self, a: NodeId, b: NodeId| match (order.get(&a), order.get(&b)) {
+            (Some(a), Some(b)) => a < b,
+            _ => doc.precedes_in_tree_order(a, b),
+        };
+        let mut by_target: Vec<(NodeId, Vec<NodeId>)> = Vec::new();
+        let mut target_slot: std::collections::HashMap<NodeId, usize> = std::collections::HashMap::new();
         for (id, target) in moves {
             let z = self.nodes[id].z_index();
             // pyro: one without a `z-index` joins the context's positioned level in its
@@ -599,26 +609,11 @@ impl BaseDocument {
             // box there must see the earlier ones under it (WPT `mix-blend-mode-root-element-group`).
             // (A `clip` owner, `clip_owner_of`, is no stacking context: one joins its children.)
             if z == 0 {
-                let mut paint_children = self.nodes[target].paint_children.borrow_mut().take().unwrap_or_default();
-                let flex_or_grid = self.nodes[target]
-                    .display_style()
-                    .is_some_and(|display| matches!(display.inside(), DisplayInside::Flex | DisplayInside::Grid));
-                let mut at = paint_children.len();
-                while at > 0 {
-                    let other = &self.nodes[paint_children[at - 1]];
-                    let positioned_level = other.primary_styles().is_some_and(|s| s.clone_position() != Position::Static)
-                        || self.is_paint_stacking_context_root(other.id, flex_or_grid);
-                    if !positioned_level || self.precedes_in_tree_order(other.id, id) {
-                        break;
-                    }
-                    at -= 1;
-                }
-                paint_children.insert(at, id);
-                *self.nodes[target].paint_children.borrow_mut() = Some(paint_children);
-                if let Some(sc) = self.nodes[target].stacking_context.as_mut() {
-                    sc.positioned_level.push(HoistedPaintChild::new(id, 0));
-                    sc.hoisted_content_bbox.set((0, Rect::ZERO));
-                }
+                let slot = *target_slot.entry(target).or_insert_with(|| {
+                    by_target.push((target, Vec::new()));
+                    by_target.len() - 1
+                });
+                by_target[slot].1.push(id);
                 continue;
             }
             if let Some(sc) = self.nodes[target].stacking_context.as_mut() {
@@ -627,6 +622,64 @@ impl BaseDocument {
                 sc.hoisted_content_bbox.set((0, Rect::ZERO));
             }
         }
+        for (target, mut ids) in by_target {
+            ids.sort_by(|&a, &b| if precedes(self, a, b) { std::cmp::Ordering::Less } else if precedes(self, b, a) { std::cmp::Ordering::Greater } else { std::cmp::Ordering::Equal });
+            let mut paint_children = self.nodes[target].paint_children.borrow_mut().take().unwrap_or_default();
+            let flex_or_grid = self.nodes[target]
+                .display_style()
+                .is_some_and(|display| matches!(display.inside(), DisplayInside::Flex | DisplayInside::Grid));
+            // The trailing run of positioned-level children (in tree order), which the moved boxes
+            // join in tree order.
+            let mut start = paint_children.len();
+            while start > 0 {
+                let other = &self.nodes[paint_children[start - 1]];
+                let positioned_level = other.primary_styles().is_some_and(|s| s.clone_position() != Position::Static)
+                    || self.is_paint_stacking_context_root(other.id, flex_or_grid);
+                if !positioned_level {
+                    break;
+                }
+                start -= 1;
+            }
+            let run = paint_children.split_off(start);
+            let (mut run, mut moved) = (run.into_iter().peekable(), ids.iter().copied().peekable());
+            while let (Some(&a), Some(&b)) = (run.peek(), moved.peek()) {
+                if precedes(self, a, b) {
+                    paint_children.push(a);
+                    run.next();
+                } else {
+                    paint_children.push(b);
+                    moved.next();
+                }
+            }
+            paint_children.extend(run);
+            paint_children.extend(moved);
+            *self.nodes[target].paint_children.borrow_mut() = Some(paint_children);
+            if let Some(sc) = self.nodes[target].stacking_context.as_mut() {
+                sc.positioned_level.extend(ids.iter().map(|&id| HoistedPaintChild::new(id, 0)));
+                sc.hoisted_content_bbox.set((0, Rect::ZERO));
+            }
+        }
+    }
+
+    /// pyro: each node's place in tree order (`::before` first in its element, `::after` last, as
+    /// `precedes_in_tree_order` has them), numbered in one walk of the document.
+    fn tree_order_indices(&self) -> std::collections::HashMap<NodeId, usize> {
+        let mut order = std::collections::HashMap::new();
+        let mut stack = vec![self.root_node().id];
+        while let Some(id) = stack.pop() {
+            order.insert(id, order.len());
+            let node = &self.nodes[id];
+            if let Some(after) = node.after() {
+                stack.push(after);
+            }
+            stack.extend(node.children.iter().rev().copied());
+            if let Some(before) = node.before() {
+                stack.push(before);
+            }
+        }
+        #[cfg(test)]
+        crate::util::TREE_ORDER_WALKS.with(|walks| walks.set(walks.get() + order.len()));
+        order
     }
 
     /// `stacking_context` is the entry list of the nearest ancestor stacking
@@ -1289,6 +1342,9 @@ impl BaseDocument {
             match (parent(a), parent(b)) {
                 (Some(pa), Some(pb)) if pa == pb => {
                     let node = &self.nodes[pa];
+                    // (Its sibling list is searched: as long as it is.)
+                    #[cfg(test)]
+                    crate::util::TREE_ORDER_COMPARISONS.with(|work| work.set(work.get() + node.children.len()));
                     let index = |id: NodeId| {
                         if node.before() == Some(id) {
                             0

@@ -3263,6 +3263,23 @@ mod tests {
         assert!(calls <= 3 * boxes, "{calls} box tests for {boxes} boxes");
     }
 
+    /// pyro: (paint tree) many sibling inline opacity groups each keeping an absolutely positioned
+    /// box are restored to their owners and their context in work linear in the boxes: tree order is
+    /// numbered once, not searched in sibling lists per comparison. Review cycle 4, finding 2.
+    #[test]
+    fn many_inline_owners_restore_in_linear_tree_order_work() {
+        let groups: Vec<Div> =
+            (0..2000).map(|_| div("display:inline;opacity:.9", vec![div("position:absolute;width:1px;height:1px", vec![])])).collect();
+        crate::util::TREE_ORDER_COMPARISONS.with(|calls| calls.set(0));
+        crate::util::TREE_ORDER_WALKS.with(|walks| walks.set(0));
+        let doc = laid_out(vec![div("width:390px", groups)]);
+        let boxes = doc.nodes.len();
+        let comparisons = crate::util::TREE_ORDER_COMPARISONS.with(|calls| calls.get());
+        let walks = crate::util::TREE_ORDER_WALKS.with(|walks| walks.get());
+        assert!(comparisons <= 8 * boxes, "{comparisons} sibling-list entries searched for {boxes} boxes");
+        assert!(walks <= 8 * boxes, "{walks} nodes numbered for {boxes} boxes");
+    }
+
     /// pyro: a hoisted box is hit only where paint shows it: in the columns its strip range
     /// reaches, not in a spanner's row (paint leaves those out), even where it reaches into one.
     #[test]

@@ -282,15 +282,18 @@ fn a_huge_curve_with_an_arc_in_view_paints_in_bounded_time() {
     assert_eq!(pixel(&img, 200, 100), [255, 255, 255], "above it");
 }
 
-/// Thousands of inline stacking contexts each keeping an absolutely positioned child build their
-/// paint tree in bounded time: the owner of each box is looked up by key (it was searched from the
-/// start of a list for each box). Review cycle 3, finding 2.
+/// Thousands of faded inline elements each keeping an absolutely positioned child, in a paragraph
+/// of many lines, paint in work bounded by their own lines: each element's effect pass builds the
+/// fragments of the lines its area reaches, not of the whole layout (it was quadratic: 9.7 s). The
+/// work is counted (lines whose fragments were built), not timed. Review cycle 3, finding 2; cycle 4.
 #[test]
-fn many_inline_owners_build_their_paint_tree_in_bounded_time() {
-    let spans: String = (0..3000).map(|_| "<span style='opacity:.9'>x<b style='position:absolute'></b></span>").collect();
-    let start = std::time::Instant::now();
+fn many_inline_owners_paint_in_work_bounded_by_their_lines() {
+    let spans: String = (0..3000).map(|_| "<span style='opacity:.9'>x<b style='position:absolute'></b></span> ").collect();
+    let before = blitz_paint::inline_lines_visited();
     let _ = render(&format!("<div style='font:10px/10px monospace;width:390px'>{spans}</div>"));
-    assert!(start.elapsed() < std::time::Duration::from_secs(20), "took {:?}", start.elapsed());
+    let visited = blitz_paint::inline_lines_visited() - before;
+    assert!(visited > 0, "the paint ran on this thread");
+    assert!(visited < 30_000, "{visited} lines built for 3000 faded elements");
 }
 
 /// An absolutely positioned box escaping the clip of an `overflow: hidden` box (no stacking
