@@ -221,7 +221,8 @@ function waitForReport(ms) {
     const finish = (complete) => {
       if (settled) return;
       settled = true;
-      resolve({ complete, log: typeof report === 'object' && report ? report.log : null });
+      const current = typeof report === 'object' && report ? report : null;
+      resolve({ complete, log: current?.log ?? null, harnessStatus: current?.harnessStatus });
     };
     setTimeout(() => finish(false), ms);
     const hook = () => {
@@ -279,7 +280,7 @@ async function runOne(slot, t, gen) {
     const left = t.limit - (Date.now() - t0);
     // A navigation inside the test destroys the context the wait runs in: wait again in the new one.
     const r = left > 0 ? await page.evaluate(waitForReport, left).catch(() => null) : null;
-    if (r?.complete) return { status: 'complete', log: r.log, ms: Date.now() - t0 };
+    if (r?.complete) return { status: 'complete', log: r.log, harnessStatus: r.harnessStatus, ms: Date.now() - t0 };
     if (!r) replaced();
     if (Date.now() - t0 >= t.limit) {
       const partial = r?.log ?? (await page.evaluate(() => (typeof report === 'object' && report ? report.log : null)).catch(() => null));
@@ -489,7 +490,7 @@ async function worker(q) {
     trace(`end ${w} ${t.url} ${r.status} ${r.ms ?? ''}`);
     // A reftest's stage timings, and the worker's own time around the page (`gap`: from the previous page's end to
     // this page's start, i.e. queueing, solo waits and context resets).
-    results.push({ ...meta, status: r.status, ms: r.ms, error: r.error, subtests: r.subtests ?? parse(r.log), ...(r.stages ? { stages: { ...r.stages, gap: startedAt - (slot.lastEnd ?? startedAt) } } : {}) });
+    results.push({ ...meta, status: r.status, harnessStatus: r.harnessStatus, ms: r.ms, error: r.error, subtests: r.subtests ?? parse(r.log), ...(r.stages ? { stages: { ...r.stages, gap: startedAt - (slot.lastEnd ?? startedAt) } } : {}) });
     slot.lastEnd = Date.now();
     lastFinish = Date.now();
     if (++done % 100 === 0 || Date.now() - lastProgress > 30000) {

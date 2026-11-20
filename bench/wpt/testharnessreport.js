@@ -53,5 +53,6 @@ add_result_callback(function (test) {
 });
 
 add_completion_callback(function (tests, status) {
+  report.harnessStatus = status.status;
   report.complete = true;
 });
