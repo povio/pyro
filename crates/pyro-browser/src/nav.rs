@@ -419,6 +419,16 @@ impl PageNav {
         pyro_webapi::lifecycle::popstate(&page, None);
     }
 
+    /// Initial iframe attribute processing updates the existing blank entry
+    /// for about:blank URLs with a query or fragment, without a new Document.
+    pub(crate) fn update_initial_blank_url(&self, url: &str) {
+        let mut state = self.state.borrow_mut();
+        let index = state.index;
+        if let Some(entry) = state.entries.get_mut(index) { entry.url = url.to_owned(); }
+        drop(state);
+        self.set_url_sync(url);
+    }
+
     fn set_url_sync(&self, url: &str) {
         self.state.borrow_mut().url = url.to_string();
         if let Some((dom, doc)) = self.document.borrow().as_ref() {
