@@ -1148,6 +1148,7 @@ impl PageDom {
     }
 
     fn release_activity(&self) {
+        crate::wasm_experiment::dispose(self.id());
         self.transition_captures.borrow_mut().take();
         crate::input::clear_document_focus(self);
         self.clear_render_blocking(true);

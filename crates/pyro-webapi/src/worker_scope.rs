@@ -1272,6 +1272,7 @@ fn install(s: &Scope<'_>, page: &Rc<PageDom>, global: &str) -> JsResult<()> {
     // HTML "report the error": the global's `error` event fires in the task
     // that threw, its listeners before their microtasks.
     realm.set_exception_reporter(Some(crate::lifecycle::report_exception));
+    crate::wasm_experiment::install(s)?;
     let helpers = crate::install_helpers(s)?;
     crate::file::install(s, helpers.get_atom("blobParts")?)?;
     crate::encoding::install(s, helpers.get_atom("dataView")?)?;
