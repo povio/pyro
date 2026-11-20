@@ -34,6 +34,37 @@ test.skipIf(!HAS_WPT || !/Features:.*\bHTTP2\b/i.test(spawnSync('curl', ['--vers
   }, 120000,
 );
 
+test('a cancelled HTTP response releases the upstream and the proxy accepts the next request', async () => {
+  let resolveClosed;
+  const closed = new Promise(resolve => { resolveClosed = resolve; });
+  const origin = http.createServer((req, res) => {
+    if (req.url === '/next') { res.end('ok'); return; }
+    res.writeHead(200);
+    res.write('first chunk');
+    res.on('close', resolveClosed);
+  });
+  await new Promise(resolve => origin.listen(0, '127.0.0.1', resolve));
+  const proxy = await startProxy();
+  const request = path => new Promise((resolve, reject) => {
+    http.get({ host: '127.0.0.1', port: proxy.port, path: `http://web-platform.test:${origin.address().port}${path}` },
+      resolve).on('error', reject);
+  });
+  try {
+    const first = await request('/partial');
+    await new Promise(resolve => first.once('data', resolve));
+    first.destroy();
+    await closed;
+    const second = await request('/next');
+    const chunks = [];
+    for await (const chunk of second) chunks.push(chunk);
+    expect(Buffer.concat(chunks).toString()).toBe('ok');
+  } finally {
+    proxy.close();
+    origin.closeAllConnections();
+    origin.close();
+  }
+});
+
 test('a main document that is not a 2xx response is an error, never a page to judge', () => {
   expect(documentError(res(200), 'a.html')).toBeNull();
   expect(documentError(res(204), 'a.html')).toBeNull();

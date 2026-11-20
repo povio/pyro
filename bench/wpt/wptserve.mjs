@@ -195,10 +195,29 @@ export function startProxy() {
     let u;
     try { u = new URL(req.url); } catch { res.writeHead(400); res.end(); return; }
     const headers = Object.fromEntries(Object.entries(req.headers).filter(([k]) => !HOP.has(k)));
+    let incoming;
     const up = http.request({ host: '127.0.0.1', port: u.port || 80, method: req.method, path: u.pathname + u.search, headers, agent },
-      (r) => { res.writeHead(r.statusCode, r.statusMessage, endToEnd(r.rawHeaders)); r.pipe(res); });
-    up.on('error', () => { if (!res.headersSent) res.writeHead(502); res.end(); });
-    res.on('close', () => up.destroy());
+      (r) => {
+        incoming = r;
+        if (res.destroyed || res.writableEnded) { r.destroy(); return; }
+        r.on('error', () => res.destroy());
+        res.writeHead(r.statusCode, r.statusMessage, endToEnd(r.rawHeaders));
+        r.pipe(res);
+      });
+    function disconnect() {
+      req.unpipe(up);
+      if (incoming) { incoming.unpipe(res); incoming.destroy(); }
+      up.destroy();
+    }
+    up.on('error', () => {
+      if (res.destroyed || res.writableEnded) return;
+      if (res.headersSent) { res.destroy(); return; }
+      res.writeHead(502);
+      res.end();
+    });
+    res.on('error', disconnect);
+    res.on('close', disconnect);
+    req.on('aborted', disconnect);
     req.pipe(up);
   });
   server.on('connect', (req, sock, head) => {
