@@ -1028,7 +1028,7 @@ impl LayoutPassState<'_> {
             .then(|| self.nested_fragmentation.get(&dom_id).copied())
             .flatten();
         // pyro: so nested, with column spanners.
-        let nested_span_ctx = (!spanners.is_empty() && multicol.height.is_none() && !vertical)
+        let nested_span_ctx = (!spanners.is_empty() && (multicol.height.is_none() || multicol.wrap) && !vertical)
             .then(|| self.nested_fragmentation.get(&dom_id).copied())
             .flatten();
         // pyro: so nested with an explicit `column-height` and wrapping rows (css-multicol-2).
@@ -1284,6 +1284,11 @@ impl LayoutPassState<'_> {
                 .collect();
             let mut top = content_top;
             let mut run_start = breaks.start;
+            let slots_at = |y: f32| slotted.map(|rows| RowSlots { origin: content_top.max(boundary(y) - outer_height), ..rows });
+            let fresh_row = |y: f32, rows: RowSlots| {
+                let end = boundary(y);
+                if y + rows.height > end + EPSILON && y > end - outer_height + EPSILON { end } else { y }
+            };
             'parts: for part in 0..=spanners.len() {
                 if sink.closed() {
                     break;
@@ -1294,7 +1299,13 @@ impl LayoutPassState<'_> {
                     if sink.closed() {
                         break 'parts;
                     }
-                    let available = (boundary(top) - top).max(1.0);
+                    let mut available = boundary(top) - top;
+                    if let Some(rows) = slots_at(top) {
+                        let (next, room) = rows.content_start(top);
+                        top = if room == rows.height { fresh_row(next.min(boundary(top)), rows) } else { next };
+                        available = room.min(boundary(top) - top);
+                    }
+                    let available = available.max(1.0);
                     let run = breaks.fill_range(start, run_end, available, count + 1);
                     let (columns, height, next) = if run.columns.len() <= count {
                         let height = breaks.balance_range(start, run_end, count, Some(available)).min(available);
@@ -1329,6 +1340,12 @@ impl LayoutPassState<'_> {
                     let (before, after) = forced.get(part).copied().unwrap_or((false, false));
                     if before && top > content_top + EPSILON {
                         top = next_column(top);
+                    }
+                    if let Some(rows) = slots_at(top) {
+                        let next = rows.spanner_top(top, end - start);
+                        if next > top + EPSILON {
+                            top = fresh_row(next.min(boundary(top)), rows);
+                        }
                     }
                     let spanner_top = top - lift(part);
                     sink.push(ColumnFragment {
