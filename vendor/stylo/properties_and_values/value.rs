@@ -647,6 +647,14 @@ impl Animate for CustomAnimatedValue {
             return Err(());
         }
         let value = self.value.animate(&other.value, procedure)?;
+        if let Procedure::Interpolate { progress } = procedure {
+            if progress == 0.0 {
+                return Ok(self.clone());
+            }
+            if progress == 1.0 {
+                return Ok(other.clone());
+            }
+        }
         Ok(Self {
             name: self.name.clone(),
             value,

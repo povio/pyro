@@ -1025,8 +1025,23 @@ impl Animate for LengthPercentage {
                 }
 
                 let (l, r) = procedure.weights();
-                let one = product_with(self.to_calc_node(), l as f32);
-                let other = product_with(other.to_calc_node(), r as f32);
+                let one = self.to_calc_node();
+                let other = other.to_calc_node();
+                if let (CalcNode::Sum(left), CalcNode::Sum(right)) = (&one, &other) {
+                    if left.len() == right.len() {
+                        let terms = left.iter().zip(right.iter()).map(|(left, right)| {
+                            let merged = left.as_leaf().ok_or(())?.try_op(right.as_leaf().ok_or(())?, |from, to| {
+                                (f64::from(from) * l + f64::from(to) * r) as f32
+                            })?;
+                            Ok::<_, ()>(CalcNode::Leaf(merged))
+                        }).collect::<Result<Vec<_>, _>>();
+                        if let Ok(terms) = terms {
+                            return Ok(Self::new_calc(CalcNode::Sum(terms.into()), AllowedNumericType::All));
+                        }
+                    }
+                }
+                let one = product_with(one, l as f32);
+                let other = product_with(other, r as f32);
 
                 Self::new_calc(
                     CalcNode::Sum(vec![one, other].into()),
