@@ -4060,6 +4060,7 @@ impl Layout {
             }
         };
         let mut cur = flat_parent(el);
+        let mut target_owns_snap_area = script;
         while let Some(node) = cur {
             if self.is_root_container(dom, node) {
                 break;
@@ -4090,7 +4091,8 @@ impl Layout {
                 // pyro: a snap area of a snapping container is scrolled to its snap position (its
                 // `scroll-snap-align` in place of the alignment asked for), as Chromium does (CSS
                 // Scroll Snap 1 § 4; WPT css-overflow `targeted-column-scroll-marker-selection-001`).
-                let (offset_x, offset_y) = if script { self.snap_aligned_offsets(dom, node, el, offset_x, offset_y) } else { (offset_x, offset_y) };
+                let (offset_x, offset_y) = if target_owns_snap_area { self.snap_aligned_offsets(dom, node, el, offset_x, offset_y) } else { (offset_x, offset_y) };
+                target_owns_snap_area = false;
                 let left = (axes.x || explicit)
                     .then(|| offset_x(x, width, self.client_width(dom, node), self.scroll_left(node) as i64))
                     .flatten();

@@ -2744,6 +2744,16 @@ fn inline_custom_properties_resolve_through_var() {
 }
 
 #[test]
+fn nested_scroll_into_view_only_snaps_target_in_nearest_container() {
+    use pyro_dom::layout::ScrollAlign;
+    let mut page = page("<!doctype html><style>.scroll{height:100px;width:200px;overflow:scroll;scroll-snap-type:y mandatory}#inner{margin-top:300px}#target{margin-top:200px;height:20px;scroll-snap-align:end}.space{height:500px}</style><div class=scroll id=outer><div class=scroll id=inner><div id=target></div><div class=space></div></div><div class=space></div></div>");
+    let (target, outer, inner) = (page.id("target"), page.id("outer"), page.id("inner"));
+    page.layout.scroll_into_view_aligned_script_targets(&page.dom, target, ScrollAlign::Start, ScrollAlign::Start);
+    assert_eq!(page.layout.scroll_top(inner), 120);
+    assert_eq!(page.layout.scroll_top(outer), 380);
+}
+
+#[test]
 fn scroll_into_view_if_needed_centers_only_when_needed_like_chromium() {
     // CDP DOM.scrollIntoViewIfNeeded, measured in Chromium (800x600, body
     // margin 0): a fully visible box, or one covering the scrollport, does not
