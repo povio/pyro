@@ -1,4 +1,6 @@
+mod gif;
 mod icc;
+mod webp;
 
 use image::{metadata::Orientation, ImageDecoder, ImageError, ImageResult, Limits};
 use std::{
@@ -11,6 +13,15 @@ pub const BYTE_BUDGET: usize = 256 << 20;
 
 fn limit() -> ImageError {
     ImageError::Limits(image::error::LimitError::from_kind(image::error::LimitErrorKind::InsufficientMemory))
+}
+
+/// Runs a decoder's pixel decode; a panic in it (a decoder bug on a malformed file) becomes a
+/// decoding error rather than unwinding through the caller. The checks before decoding are what
+/// keep malformed files away from decoders; this is the last line only.
+fn contained<T>(format: image::ImageFormat, decode: impl FnOnce() -> ImageResult<T>) -> ImageResult<T> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(decode)).unwrap_or_else(|_| {
+        Err(ImageError::Decoding(image::error::DecodingError::new(format.into(), "the decoder failed on this file")))
+    })
 }
 
 fn rgba_bytes(width: u64, height: u64) -> ImageResult<usize> {
@@ -77,7 +88,11 @@ fn decode_jpeg_with_budget(bytes: &[u8], available: usize) -> ImageResult<(image
     let decoder = Decoder::new_with_limits(bytes, limits).map_err(error)?.with_output_format(PixelFormat::Rgba);
     #[cfg(any(test, feature = "test-budgets"))]
     PIXEL_DECODES.update(|count| count + 1);
-    let decoded = decoder.decode_image().map_err(error)?;
+    let decoded = contained(image::ImageFormat::Jpeg, || decoder.decode_image().map_err(error))?;
+    // The pixels are the size the header said (what the budget admitted).
+    if (decoded.width as u64, decoded.height as u64) != (u64::from(width), u64::from(height)) {
+        return Err(error(libjpeg_turbo_rs::JpegError::CorruptData("decoded size differs from the header".into())));
+    }
     let orientation = decoded.exif_orientation().and_then(Orientation::from_exif).unwrap_or(Orientation::NoTransforms);
     let mut pixels =
         image::RgbaImage::from_raw(decoded.width as u32, decoded.height as u32, decoded.data).ok_or_else(limit)?;
@@ -144,7 +159,7 @@ fn retain(cache: &mut VecDeque<Entry>, bytes: &[u8], raster: &Raster, budget: us
 }
 
 pub fn decode(bytes: &[u8], available: usize) -> ImageResult<Raster> {
-    image::guess_format(bytes)?;
+    let format = image::guess_format(bytes)?;
     let mut cache = CACHE.lock().unwrap_or_else(|error| error.into_inner());
     if let Some(index) = cache.iter().position(|(key, _)| key.as_ref() == bytes) {
         let entry = cache.remove(index).unwrap();
@@ -157,13 +172,26 @@ pub fn decode(bytes: &[u8], available: usize) -> ImageResult<Raster> {
             return Err(limit());
         }
     }
+    // What decoding the first frame takes besides the final RGBA pixels, from the file's headers;
+    // a WebP whose frame bitstreams disagree with its container is rejected here, before decoding.
+    let scratch = match format {
+        image::ImageFormat::WebP => Some(webp::check(bytes)?),
+        image::ImageFormat::Gif => Some(gif::scratch(bytes)),
+        _ => None,
+    };
     let (mut image, profile, orientation) = if bytes.starts_with(&[0xff, 0xd8]) {
         let (image, orientation) = decode_jpeg_with_budget(bytes, available)?;
         (image, None, orientation)
     } else {
         let mut decoder = image::ImageReader::new(Cursor::new(bytes)).with_guessed_format()?.into_decoder()?;
         let (width, height) = decoder.dimensions();
-        if rgba_bytes(width.into(), height.into())? > available {
+        // The decoder's own output, when it is not the final RGBA buffer (converted after).
+        let output = match decoder.color_type() {
+            image::ColorType::Rgba8 => 0,
+            _ => usize::try_from(decoder.total_bytes()).map_err(|_| limit())?,
+        };
+        let needed = rgba_bytes(width.into(), height.into())?.checked_add(scratch.unwrap_or(output)).ok_or_else(limit)?;
+        if needed > available {
             return Err(limit());
         }
         Limits::default().reserve(decoder.total_bytes())?;
@@ -171,7 +199,7 @@ pub fn decode(bytes: &[u8], available: usize) -> ImageResult<Raster> {
         let orientation = decoder.orientation().unwrap_or(Orientation::NoTransforms);
         #[cfg(any(test, feature = "test-budgets"))]
         PIXEL_DECODES.update(|count| count + 1);
-        (image::DynamicImage::from_decoder(decoder)?, profile, orientation)
+        (contained(format, || image::DynamicImage::from_decoder(decoder))?, profile, orientation)
     };
     image.apply_orientation(orientation);
     let (width, height) = (image.width(), image.height());
@@ -194,6 +222,12 @@ pub fn decode(bytes: &[u8], available: usize) -> ImageResult<Raster> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_decoder_panic_is_a_decoding_error() {
+        let result: ImageResult<()> = contained(image::ImageFormat::WebP, || panic!("decoder bug"));
+        assert!(matches!(result, Err(ImageError::Decoding(_))));
+    }
 
     #[test]
     fn eviction_charges_decoded_and_compressed_storage() {
