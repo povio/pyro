@@ -23,3 +23,5 @@ bun bench/wpt/run.mjs --wpt "$WPT" --kind testharness --dirs non-css --jobs 4 \
 ```
 
 Use history-guard.json or adjacent-guard.json for SELECTION. Named rows are URL, original name, occurrence, control, candidate and Chrome. Page rows are URL and each engine's page status, harness status and fully-passing flag in the same order. Missing observations are null. Summary count suffixes 0, 1 and 2 correspond to control, candidate and Chrome.
+
+The additional inherited-base fixture makes two same-document fragment updates in each of an initial blank iframe and an srcdoc iframe. The candidate and Chrome kept the enclosing HTTP base on both updates and both relative XHRs reached the server with status 200. Source and raw records are in inherited-bases.tar.gz.
