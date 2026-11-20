@@ -231,9 +231,11 @@ pub trait LayoutContainingBlock: LayoutPartialTree {
     fn get_oof_item_style(&self, node_id: NodeId) -> Self::OofItemStyle<'_>;
 
     fn position_try_options(&self, _node: NodeId) -> (usize, Option<bool>) { (0,None) }
+    fn preferred_scroll_option(&self, _node: NodeId, _container: NodeId) -> Option<usize> { None }
+    fn record_fitting_option(&mut self, _node: NodeId, _option: Option<usize>) {}
     fn uses_anchor_queries(&self, _node: NodeId) -> bool { false }
     fn checks_position_overflow(&self, _node: NodeId) -> bool { false }
-    fn position_try_scroll_offset(&self, _container: NodeId) -> crate::Point<f32> { crate::Point::ZERO }
+    fn position_try_scroll_offset(&self, _node: NodeId, _container: NodeId) -> crate::Point<f32> { crate::Point::ZERO }
 
     fn oof_anchor_center(&self, _node: NodeId, _container: NodeId) -> crate::Point<Option<f32>> { crate::Point { x:None,y:None } }
 

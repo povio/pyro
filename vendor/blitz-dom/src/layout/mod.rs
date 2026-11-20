@@ -2449,15 +2449,35 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
     }
 
     fn uses_anchor_queries(&self,id: NodeId) -> bool { self.node_from_id(id).flags.contains(NodeFlags::ANCHOR_QUERIES) }
+    fn preferred_scroll_option(&self, id: NodeId, container: NodeId) -> Option<usize> {
+        if !self.anchor_scroll_dirty.contains(&dom_node_id(container)) { return None; }
+        let (index, previous) = self.anchor_last_option.get(&dom_node_id(id))?;
+        let current = self.node_from_id(id).primary_styles()?;
+        style::servo_arc::Arc::ptr_eq(previous, &*current).then_some(*index)
+    }
+
+    fn record_fitting_option(&mut self, id: NodeId, option: Option<usize>) {
+        let id = dom_node_id(id);
+        if let Some(index) = option {
+            let style = self.nodes[id].primary_styles().map(|style| (*style).clone());
+            if let Some(style) = style { self.doc.anchor_last_option.insert(id,(index,style)); }
+        } else { self.doc.anchor_last_option.remove(&id); }
+    }
     fn checks_position_overflow(&self,id: NodeId) -> bool { self.node_from_id(id).flags.contains(NodeFlags::POSITION_VISIBILITY_CHECK) }
 
-    fn position_try_scroll_offset(&self, container: NodeId) -> taffy::Point<f32> {
+    fn position_try_scroll_offset(&self, candidate: NodeId, container: NodeId) -> taffy::Point<f32> {
         let node = self.node_from_id(container);
         let offset = self.timeline_scroll.as_ref().map_or_else(|| {
             let point = node.scroll_offset();
             (point.x, point.y)
         }, |(map, _)| map.get(&node.id).copied().unwrap_or_default());
-        taffy::Point { x: offset.0 as f32, y: offset.1 as f32 }
+        let shift = self.node_from_id(candidate).anchor_scroll_offset_in(Some(node.id), |id| {
+            if let Some((map, viewport)) = self.timeline_scroll.as_ref() {
+                let (x,y) = id.map_or(*viewport, |id| map.get(&id).copied().unwrap_or_default());
+                crate::Point { x,y }
+            } else { id.map_or_else(||node.tree().viewport_scroll(), |id|*self.nodes[id].scroll_offset()) }
+        });
+        taffy::Point { x: (offset.0-shift.x) as f32, y: (offset.1-shift.y) as f32 }
     }
 
     fn oof_anchor_center(&self, id: NodeId, container: NodeId) -> taffy::Point<Option<f32>> {
@@ -2635,7 +2655,7 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
 
     fn clear_hoisted_children(&mut self, node_id: NodeId) {
         let containing_block = dom_node_id(node_id);
-        if !self.doc.anchor_try_scrollports.is_empty() { self.doc.anchor_try_scrollports.remove(&containing_block); }
+        self.doc.clear_anchor_try_sources(containing_block);
         let hoisted = std::mem::take(&mut *self.node_from_id(node_id).hoisted_children.borrow_mut());
         for &hoisted_id in hoisted.iter() {
             // A box which has since been claimed by another containing block
@@ -2694,7 +2714,18 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
             .extend(hoisted.iter().copied().map(dom_node_id));
         for &hoisted_id in hoisted {
             if self.node_from_id(hoisted_id).flags.contains(NodeFlags::POSITION_TRY_OPTIONS) {
-                self.doc.anchor_try_scrollports.insert(containing_block);
+                let mut sources = vec![Some(containing_block)];
+                self.node_from_id(hoisted_id).anchor_scroll_offset_in(Some(containing_block), |source| {
+                    if source.is_none_or(|id| {
+                        let overflow = taffy::CoreStyle::overflow(&self.nodes[id].layout_style());
+                        overflow.x.is_scroll_container() || overflow.y.is_scroll_container()
+                    }) { sources.push(source); }
+                    crate::Point::ZERO
+                });
+                for source in sources {
+                    self.doc.anchor_try_scrollports.entry(source).or_default().insert(containing_block);
+                    self.doc.anchor_try_sources.entry(containing_block).or_default().insert(source);
+                }
             }
             self.node_from_id(hoisted_id)
                 .oof_containing_block

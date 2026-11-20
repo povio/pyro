@@ -2276,6 +2276,7 @@ impl BaseDocument {
 
         // println!("\n\n");
         // taffy::print_tree(self, root_node_id)
+        self.anchor_scroll_dirty.clear();
     }
 
     /// pyro: the viewport's overflow (CSS Overflow 3 § 3.3): the root's, or the `<body>`'s when the

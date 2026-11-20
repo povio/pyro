@@ -659,11 +659,15 @@ impl Node {
     }
 
     pub fn anchor_scroll_offset_with(&self, scroll: impl Fn(Option<NodeId>) -> crate::Point<f64>) -> crate::Point<f64> {
+        if self.anchor_scroll_axes.get() == (None, None) { return crate::Point::ZERO; }
+        self.anchor_scroll_offset_in(self.containing_block(), scroll)
+    }
+
+    pub(crate) fn anchor_scroll_offset_in(&self, container: Option<NodeId>, mut scroll: impl FnMut(Option<NodeId>) -> crate::Point<f64>) -> crate::Point<f64> {
         let (anchor_x, anchor_y) = self.anchor_scroll_axes.get();
         if anchor_x.is_none() && anchor_y.is_none() { return crate::Point::ZERO; }
         let tree = self.tree();
-        let container = self.containing_block();
-        let sum = |id: NodeId| {
+        let mut sum = |id: NodeId| {
             let mut offset = crate::Point::ZERO;
             let mut cursor = Some(id);
             for _ in 0..tree.len() {

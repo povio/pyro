@@ -519,8 +519,9 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
     let (count, order) = tree.position_try_options(candidate.node);
     let mut best = None;
     if count != 0 {
-        for option in core::iter::once(None).chain((0..count).map(Some)) {
-            if option.is_some() && !tree.set_position_try_option(candidate.node, option) { continue; }
+        let preferred = anchor_container.and_then(|container| tree.preferred_scroll_option(candidate.node, container)).filter(|&index| index < count && order.is_none());
+        for option in preferred.map(Some).into_iter().chain(core::iter::once(None)).chain((0..count).filter(|index| Some(*index) != preferred).map(Some)) {
+            if (option.is_some() || preferred.is_some()) && !tree.set_position_try_option(candidate.node, option) { continue; }
             let Err((fits, space)) = solve_oof_box(tree, candidate, anchor_container, area_size, area_offset, direction, container_overflow,
                 #[cfg(feature = "grid")] grid_owner, true, |_,_| {}) else { unreachable!() };
             let score = if order == Some(true) { space.width } else { space.height };
@@ -530,6 +531,7 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
             }
         }
         if order.is_some() || best.is_none() { tree.set_position_try_option(candidate.node, best.and_then(|(option,_)| option)); }
+        tree.record_fitting_option(candidate.node, best.and_then(|(option,_)| option));
     }
     let result = solve_oof_box(tree, candidate, anchor_container, area_size, area_offset, direction, container_overflow,
         #[cfg(feature = "grid")] grid_owner, false, before_layout).ok().unwrap();
@@ -920,7 +922,7 @@ fn solve_oof_box<Tree: LayoutContainingBlock>(
     .maybe_clamp(min_size, max_size);
 
     if trial || tree.checks_position_overflow(candidate.node) {
-        let shift = anchor_container.map_or(Point::ZERO, |container| tree.position_try_scroll_offset(container));
+        let shift = anchor_container.map_or(Point::ZERO, |container| tree.position_try_scroll_offset(candidate.node, container));
         let visual_axis = |mut axis: OofAxis, delta: f32, anchored_start: bool, anchored_end: bool| {
             if anchored_start { axis.inset.start = axis.inset.start.map(|start| start - delta); }
             if anchored_end { axis.inset.end = axis.inset.end.map(|end| end + delta); }

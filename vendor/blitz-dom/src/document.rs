@@ -667,7 +667,10 @@ pub struct BaseDocument {
     anchor_node_names: HashMap<NodeId, (Option<NodeId>, style::values::specified::position::AnchorNameIdent)>,
     pub(crate) anchor_lookup_visits: std::cell::Cell<u64>,
     pub(crate) anchor_try_visits: std::cell::Cell<u64>,
-    pub(crate) anchor_try_scrollports: HashSet<NodeId>,
+    pub(crate) anchor_try_scrollports: HashMap<Option<NodeId>, HashSet<NodeId>>,
+    pub(crate) anchor_try_sources: HashMap<NodeId, HashSet<Option<NodeId>>>,
+    pub(crate) anchor_scroll_dirty: HashSet<NodeId>,
+    pub(crate) anchor_last_option: HashMap<NodeId, (usize, style::servo_arc::Arc<style::properties::ComputedValues>)>,
     /// pyro: an element styled with a `scroll-marker-group` that names a side, or with
     /// `scroll-target-group: auto` (sticky).
     pub(crate) scroll_marker_groups: bool,
@@ -987,6 +990,9 @@ impl BaseDocument {
             anchor_lookup_visits: Default::default(),
             anchor_try_visits: Default::default(),
             anchor_try_scrollports: Default::default(),
+            anchor_try_sources: Default::default(),
+            anchor_scroll_dirty: Default::default(),
+            anchor_last_option: Default::default(),
             scroll_marker_groups: false,
             scroll_pseudo_owners: Default::default(),
             scroll_target_groups: Vec::new(),
@@ -1456,7 +1462,12 @@ impl BaseDocument {
             }
         }
         self.update_anchor_names(node_id, None);
-        if !self.anchor_try_scrollports.is_empty() { self.anchor_try_scrollports.remove(&node_id); }
+        self.clear_anchor_try_sources(node_id);
+        self.anchor_last_option.remove(&node_id);
+        self.anchor_scroll_dirty.remove(&node_id);
+        if let Some(blocks) = self.anchor_try_scrollports.remove(&Some(node_id)) {
+            for block in blocks { if let Some(sources) = self.anchor_try_sources.get_mut(&block) { sources.remove(&Some(node_id)); } }
+        }
         self.nodes.remove(node_id)
     }
 
@@ -1481,6 +1492,18 @@ impl BaseDocument {
     pub fn anchor_candidate_visits(&self) -> u64 { self.anchor_lookup_visits.get() }
     pub fn has_named_anchors(&self) -> bool { !self.named_anchor_nodes.is_empty() }
     pub fn anchor_try_visits(&self) -> u64 { self.anchor_try_visits.get() }
+
+    pub(crate) fn clear_anchor_try_sources(&mut self, block: NodeId) {
+        if self.anchor_try_sources.is_empty() { return; }
+        if let Some(sources) = self.anchor_try_sources.remove(&block) {
+            for source in sources {
+                if let Some(blocks) = self.anchor_try_scrollports.get_mut(&source) {
+                    blocks.remove(&block);
+                    if blocks.is_empty() { self.anchor_try_scrollports.remove(&source); }
+                }
+            }
+        }
+    }
 
     /// pyro: takes `id` out of the hoisted list of `containing_block` and lays that box out
     /// again: it lists the boxes it laid out, and `id` is no longer one of them.
@@ -2339,11 +2362,15 @@ impl BaseDocument {
         let mut invalidated = false;
         if !self.anchor_try_scrollports.is_empty() {
             let old = self.timeline_scroll.as_ref().map(|(elements, _)| elements);
-            for id in elements.keys().chain(old.into_iter().flat_map(|map| map.keys()).filter(|id| !elements.contains_key(id))) {
-                if self.anchor_try_scrollports.contains(id)
-                    && elements.get(id).copied().unwrap_or_default() != old.and_then(|map| map.get(id)).copied().unwrap_or_default()
-                {
-                    self.nodes[*id].insert_damage(crate::layout::damage::ONLY_RELAYOUT);
+            let changed = elements.keys().chain(old.into_iter().flat_map(|map| map.keys()).filter(|id| !elements.contains_key(id)))
+                .filter(|id| elements.get(id).copied().unwrap_or_default() != old.and_then(|map| map.get(id)).copied().unwrap_or_default()).copied().map(Some);
+            let viewport_changed = self.timeline_scroll.as_ref().map(|(_, offset)| *offset).unwrap_or_default() != viewport;
+            for source in changed.chain(viewport_changed.then_some(None)) {
+                if let Some(blocks) = self.anchor_try_scrollports.get(&source) {
+                    for block in blocks {
+                        self.nodes[*block].insert_damage(crate::layout::damage::ONLY_RELAYOUT);
+                        if source != Some(*block) { self.anchor_scroll_dirty.insert(*block); }
+                    }
                     invalidated = true;
                 }
             }

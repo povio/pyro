@@ -37,6 +37,23 @@ fn cyclic_anchor_references_do_not_schedule_another_pass() {
 }
 
 #[test]
+fn intervening_scroll_keeps_a_fitting_option_without_retesting_the_list() {
+    let html = "<!doctype html><style>main{position:relative;width:400px;height:399px}section{width:400px;height:400px;overflow:scroll}i{display:block;width:100px;height:100px;margin:300px 275px 300px 150px;anchor-name:--a}b{position:absolute;width:100px;height:100px;position-anchor:--a;left:anchor(left);bottom:anchor(top);position-try-fallbacks:--left,--right}@position-try --left{left:auto;bottom:auto;right:anchor(left);top:anchor(top)}@position-try --right{left:anchor(right);bottom:auto;top:anchor(top)}</style><main><section><i></i></section><b></b></main>";
+    let mut doc = blitz_html::HtmlDocument::from_html(html, blitz_dom::DocumentConfig::default());
+    doc.viewport_mut().window_size = (800, 600);
+    doc.resolve(0.0);
+    let target = doc.query_selector("b").unwrap().unwrap();
+    let scroller = doc.query_selector("section").unwrap().unwrap();
+    for (offset, expected_x, max_trials) in [(201., 50., 2), (1., 50., 1), (0., 150., 1)] {
+        let before = doc.anchor_try_visits();
+        assert!(doc.set_timeline_scroll([(scroller,(0.,offset))].into(), (0.,0.)));
+        doc.resolve(0.0);
+        assert_eq!(doc.get_node(target).unwrap().final_layout().location.x, expected_x);
+        assert!(doc.anchor_try_visits() - before <= max_trials);
+    }
+}
+
+#[test]
 fn scroll_fit_invalidation_coalesces_before_layout() {
     let html = "<!doctype html><style>section{width:100px;height:100px;overflow:auto;position:relative}i{display:block;height:25px;margin-top:75px;anchor-name:--a}b{position:absolute;width:20px;height:25px;position-anchor:--a;top:anchor(bottom);position-try-fallbacks:--up}@position-try --up{top:auto;bottom:anchor(top)}p{height:300px}</style><section><i></i><b></b><p></p></section><aside></aside>";
     let mut doc = blitz_html::HtmlDocument::from_html(html, blitz_dom::DocumentConfig::default());

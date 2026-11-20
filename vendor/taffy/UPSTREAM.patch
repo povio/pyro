@@ -9060,7 +9060,7 @@ index bb954acf..11c7d9d2 100644
  }
  
 diff --git a/src/compute/oof.rs b/src/compute/oof.rs
-index 2c6179a4..7d9f21ec 100644
+index 2c6179a4..b3d9b124 100644
 --- a/src/compute/oof.rs
 +++ b/src/compute/oof.rs
 @@ -23,7 +23,9 @@ use crate::{AxisStaticEdge, BoxSizing, Direction};
@@ -9103,15 +9103,16 @@ index 2c6179a4..7d9f21ec 100644
      area_size: Size<f32>,
      area_offset: Point<f32>,
      direction: Direction,
-@@ -508,6 +516,34 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
+@@ -508,6 +516,36 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
      #[cfg(feature = "grid")] grid_owner: Option<NodeId>,
      before_layout: impl FnOnce(&mut Tree, &LayoutInput),
  ) -> OofBoxLayout {
 +    let (count, order) = tree.position_try_options(candidate.node);
 +    let mut best = None;
 +    if count != 0 {
-+        for option in core::iter::once(None).chain((0..count).map(Some)) {
-+            if option.is_some() && !tree.set_position_try_option(candidate.node, option) { continue; }
++        let preferred = anchor_container.and_then(|container| tree.preferred_scroll_option(candidate.node, container)).filter(|&index| index < count && order.is_none());
++        for option in preferred.map(Some).into_iter().chain(core::iter::once(None)).chain((0..count).filter(|index| Some(*index) != preferred).map(Some)) {
++            if (option.is_some() || preferred.is_some()) && !tree.set_position_try_option(candidate.node, option) { continue; }
 +            let Err((fits, space)) = solve_oof_box(tree, candidate, anchor_container, area_size, area_offset, direction, container_overflow,
 +                #[cfg(feature = "grid")] grid_owner, true, |_,_| {}) else { unreachable!() };
 +            let score = if order == Some(true) { space.width } else { space.height };
@@ -9121,6 +9122,7 @@ index 2c6179a4..7d9f21ec 100644
 +            }
 +        }
 +        if order.is_some() || best.is_none() { tree.set_position_try_option(candidate.node, best.and_then(|(option,_)| option)); }
++        tree.record_fitting_option(candidate.node, best.and_then(|(option,_)| option));
 +    }
 +    let result = solve_oof_box(tree, candidate, anchor_container, area_size, area_offset, direction, container_overflow,
 +        #[cfg(feature = "grid")] grid_owner, false, before_layout).ok().unwrap();
@@ -9138,7 +9140,7 @@ index 2c6179a4..7d9f21ec 100644
      let child_style = tree.get_oof_item_style(candidate.node);
  
      // If the current node is a grid container then the box is positioned relative to the
-@@ -535,12 +571,22 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
+@@ -535,12 +573,22 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
          }
          _ => (area_size, area_offset),
      };
@@ -9162,7 +9164,7 @@ index 2c6179a4..7d9f21ec 100644
      let padding = child_style.padding().resolve_or_zero(Some(area_width), |val, basis| tree.calc(val, basis));
      let border = child_style.border().resolve_or_zero(Some(area_width), |val, basis| tree.calc(val, basis));
      let padding_border_sum = (padding + border).sum_axes();
-@@ -552,26 +598,43 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
+@@ -552,26 +600,43 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
      let right = child_style.inset().right.maybe_resolve(area_width, |val, basis| tree.calc(val, basis));
      let top = child_style.inset().top.maybe_resolve(area_height, |val, basis| tree.calc(val, basis));
      let bottom = child_style.inset().bottom.maybe_resolve(area_height, |val, basis| tree.calc(val, basis));
@@ -9211,7 +9213,7 @@ index 2c6179a4..7d9f21ec 100644
  
      let is_replaced = child_style.is_replaced();
      let is_table = child_style.is_table();
-@@ -583,8 +646,10 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
+@@ -583,8 +648,10 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
          child_style.justify_self().unwrap_or(AlignSelf::NORMAL).resolve_self_relative(item_direction, direction, true);
      let align_self =
          child_style.align_self().unwrap_or(AlignSelf::NORMAL).resolve_self_relative(item_direction, direction, false);
@@ -9223,7 +9225,7 @@ index 2c6179a4..7d9f21ec 100644
      #[cfg(feature = "content_size")]
      let contain = child_style.contain();
  
-@@ -592,15 +657,23 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
+@@ -592,15 +659,23 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
  
      // Static positions are relative to the containing block's border box: make them relative to
      // the inset-resolution area
@@ -9256,7 +9258,7 @@ index 2c6179a4..7d9f21ec 100644
      };
  
      let horizontal = OofAxis {
-@@ -649,8 +722,7 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
+@@ -649,8 +724,7 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
              &mut known_dimensions,
              size_style,
              area_size,
@@ -9266,7 +9268,7 @@ index 2c6179a4..7d9f21ec 100644
              SizingMode::ContentSize,
          );
          known_dimensions = known_dimensions.maybe_apply_aspect_ratio(aspect_ratio).maybe_clamp(min_size, max_size);
-@@ -691,8 +763,148 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
+@@ -691,8 +765,148 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
          }
      }
  
@@ -9415,12 +9417,12 @@ index 2c6179a4..7d9f21ec 100644
          _ => {
              let measured_size = tree.measure_child_size_both(
                  candidate.node,
-@@ -707,9 +919,27 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
+@@ -707,9 +921,27 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
      }
      .maybe_clamp(min_size, max_size);
  
 +    if trial || tree.checks_position_overflow(candidate.node) {
-+        let shift = anchor_container.map_or(Point::ZERO, |container| tree.position_try_scroll_offset(container));
++        let shift = anchor_container.map_or(Point::ZERO, |container| tree.position_try_scroll_offset(candidate.node, container));
 +        let visual_axis = |mut axis: OofAxis, delta: f32, anchored_start: bool, anchored_end: bool| {
 +            if anchored_start { axis.inset.start = axis.inset.start.map(|start| start - delta); }
 +            if anchored_end { axis.inset.end = axis.inset.end.map(|end| end + delta); }
@@ -9444,7 +9446,7 @@ index 2c6179a4..7d9f21ec 100644
          parent_size: area_size.map(Some),
          available_space,
          sizing_mode: SizingMode::ContentSize,
-@@ -731,17 +961,27 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
+@@ -731,17 +963,27 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
      };
  
      // Align the margin box within the IMCB <https://www.w3.org/TR/css-position-3/#abspos-alignment>
@@ -9477,7 +9479,7 @@ index 2c6179a4..7d9f21ec 100644
  
      let layout = Layout {
          order: candidate.order,
-@@ -756,14 +996,14 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
+@@ -756,14 +998,14 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
      };
      tree.set_unrounded_layout(candidate.node, &layout);
  
@@ -9494,7 +9496,7 @@ index 2c6179a4..7d9f21ec 100644
  }
  
  /// Perform final layout on the out-of-flow candidates for which the current node is the
-@@ -801,7 +1041,24 @@ pub(crate) fn perform_oof_layout(
+@@ -801,7 +1043,24 @@ pub(crate) fn perform_oof_layout(
      #[cfg_attr(not(feature = "content_size"), allow(unused_variables))] reversed: Point<bool>,
      hoisted: &mut Vec<NodeId>,
      unclaimed: &mut OofCandidates,
@@ -9519,7 +9521,7 @@ index 2c6179a4..7d9f21ec 100644
      #[cfg_attr(not(feature = "content_size"), allow(unused_mut))]
      let mut absolute_overflow_rect = Rect::ZERO;
      #[cfg(feature = "content_size")]
-@@ -828,7 +1085,8 @@ pub(crate) fn perform_oof_layout(
+@@ -828,7 +1087,8 @@ pub(crate) fn perform_oof_layout(
      // to the work list (Blink-style re-sweep).
      let mut worklist: Vec<OofCandidate> = Vec::new();
      for candidate in candidates {
@@ -9529,7 +9531,7 @@ index 2c6179a4..7d9f21ec 100644
              worklist.push(*candidate);
          } else {
              unclaimed.push(*candidate);
-@@ -851,17 +1109,22 @@ pub(crate) fn perform_oof_layout(
+@@ -851,17 +1111,22 @@ pub(crate) fn perform_oof_layout(
              overflow,
              #[cfg(feature = "content_size")]
              contain,
@@ -9563,7 +9565,7 @@ index 2c6179a4..7d9f21ec 100644
          let location = layout.location;
          let final_size = layout.size;
  
-@@ -871,7 +1134,7 @@ pub(crate) fn perform_oof_layout(
+@@ -871,7 +1136,7 @@ pub(crate) fn perform_oof_layout(
          if !surfaced.is_empty() {
              surfaced.translate(location);
              for surfaced_candidate in surfaced.iter() {
@@ -10303,7 +10305,7 @@ index e250d742..f9ddda97 100644
              bottom_margin: CollapsibleMarginSet::ZERO,
              margins_can_collapse_through: false,
 diff --git a/src/tree/traits.rs b/src/tree/traits.rs
-index 7d4adf22..5ef7acab 100644
+index 7d4adf22..c342365c 100644
 --- a/src/tree/traits.rs
 +++ b/src/tree/traits.rs
 @@ -201,6 +201,15 @@ pub trait LayoutPartialTree: TraversePartialTree {
@@ -10322,14 +10324,16 @@ index 7d4adf22..5ef7acab 100644
  }
  
  /// Extends [`LayoutPartialTree`] with the operations needed by the out-of-flow positioning pass
-@@ -221,6 +230,30 @@ pub trait LayoutContainingBlock: LayoutPartialTree {
+@@ -221,6 +230,32 @@ pub trait LayoutContainingBlock: LayoutPartialTree {
      /// Interpreted in the containing block's axes (see [`LayoutPartialTree::get_core_container_style`]).
      fn get_oof_item_style(&self, node_id: NodeId) -> Self::OofItemStyle<'_>;
  
 +    fn position_try_options(&self, _node: NodeId) -> (usize, Option<bool>) { (0,None) }
++    fn preferred_scroll_option(&self, _node: NodeId, _container: NodeId) -> Option<usize> { None }
++    fn record_fitting_option(&mut self, _node: NodeId, _option: Option<usize>) {}
 +    fn uses_anchor_queries(&self, _node: NodeId) -> bool { false }
 +    fn checks_position_overflow(&self, _node: NodeId) -> bool { false }
-+    fn position_try_scroll_offset(&self, _container: NodeId) -> crate::Point<f32> { crate::Point::ZERO }
++    fn position_try_scroll_offset(&self, _node: NodeId, _container: NodeId) -> crate::Point<f32> { crate::Point::ZERO }
 +
 +    fn oof_anchor_center(&self, _node: NodeId, _container: NodeId) -> crate::Point<Option<f32>> { crate::Point { x:None,y:None } }
 +
@@ -10353,7 +10357,7 @@ index 7d4adf22..5ef7acab 100644
      /// Clear the list of out-of-flow (absolute/fixed) boxes whose containing block is `node_id`.
      ///
      /// This is called (exactly once) for each node laid out with `RunMode::PerformLayout`, before
-@@ -239,6 +272,25 @@ pub trait LayoutContainingBlock: LayoutPartialTree {
+@@ -239,6 +274,25 @@ pub trait LayoutContainingBlock: LayoutPartialTree {
      /// implementing paint/hit-testing traversals.
      fn add_hoisted_children(&mut self, node_id: NodeId, hoisted: &[NodeId]);
  
@@ -10379,7 +10383,7 @@ index 7d4adf22..5ef7acab 100644
      /// Read back the detailed layout information most recently recorded for `node_id`
      /// (as stored by [`LayoutGridContainer::set_detailed_grid_info`]).
      ///
-@@ -290,6 +342,16 @@ pub trait RoundTree: TraverseTree {
+@@ -290,6 +344,16 @@ pub trait RoundTree: TraverseTree {
      /// Get the nth out-of-flow box whose containing block is `node_id`
      /// (as recorded by [`LayoutContainingBlock::add_hoisted_children`])
      fn get_hoisted_child_id(&self, node_id: NodeId, index: usize) -> NodeId;
@@ -10396,7 +10400,7 @@ index 7d4adf22..5ef7acab 100644
  }
  
  /// Trait used by the `print_tree` method which prints a debug representation
-@@ -344,6 +406,76 @@ pub trait LayoutGridContainer: LayoutPartialTree {
+@@ -344,6 +408,76 @@ pub trait LayoutGridContainer: LayoutPartialTree {
      /// Interpreted in the container's axes (see [`LayoutPartialTree::get_core_container_style`]).
      fn get_grid_child_style(&self, child_node_id: NodeId) -> Self::GridItemStyle<'_>;
  
@@ -10473,7 +10477,7 @@ index 7d4adf22..5ef7acab 100644
      /// Set the node's detailed grid information
      ///
      /// Implementing this method is optional. Doing so allows you to access details about the the grid such as
-@@ -351,6 +483,22 @@ pub trait LayoutGridContainer: LayoutPartialTree {
+@@ -351,6 +485,22 @@ pub trait LayoutGridContainer: LayoutPartialTree {
      fn set_detailed_grid_info(&mut self, _node_id: NodeId, _detailed_grid_info: DetailedGridInfo<Self::CustomIdent>) {
          debug_log!("LayoutGridContainer::set_detailed_grid_info called");
      }
@@ -10496,7 +10500,7 @@ index 7d4adf22..5ef7acab 100644
  }
  
  #[cfg(feature = "block_layout")]
-@@ -373,6 +521,152 @@ pub trait LayoutBlockContainer: LayoutPartialTree {
+@@ -373,6 +523,152 @@ pub trait LayoutBlockContainer: LayoutPartialTree {
      /// Interpreted in the container's axes (see [`LayoutPartialTree::get_core_container_style`]).
      fn get_block_child_style(&self, child_node_id: NodeId) -> Self::BlockItemStyle<'_>;
  
