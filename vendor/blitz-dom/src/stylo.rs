@@ -460,7 +460,7 @@ impl crate::document::BaseDocument {
                 ua_or_user: &guard.read(),
             };
             // pyro: `::highlight(<name>)` rules share one map; the name must match.
-            let wanted = *pseudo;
+            let wanted = pseudo.clone();
             let matches = move |pe: &PseudoElement| wanted.matches_transition_selector(pe);
             let lazy = self.stylist.lazily_compute_pseudo_element_style(
                 &guards,

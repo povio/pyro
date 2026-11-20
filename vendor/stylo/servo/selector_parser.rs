@@ -31,7 +31,7 @@ use style_traits::{ParseError, StyleParseErrorKind};
 ///
 /// NB: If you add to this list, be sure to update `each_simple_pseudo_element` too.
 #[derive(
-    Clone, Copy, Debug, Deserialize, Eq, Hash, MallocSizeOf, PartialEq, Serialize, ToShmem,
+    Clone, Debug, Deserialize, Eq, Hash, MallocSizeOf, PartialEq, Serialize, ToShmem,
 )]
 #[allow(missing_docs)]
 #[repr(u8)]
@@ -74,10 +74,10 @@ pub enum PseudoElement {
     TargetText,
     Highlight(u16),
     ViewTransition,
-    ViewTransitionGroup(u16),
-    ViewTransitionPair(u16),
-    ViewTransitionOld(u16),
-    ViewTransitionNew(u16),
+    ViewTransitionGroup(#[ignore_malloc_size_of = "Arc"] crate::ArcSlice<Atom>),
+    ViewTransitionPair(#[ignore_malloc_size_of = "Arc"] crate::ArcSlice<Atom>),
+    ViewTransitionOld(#[ignore_malloc_size_of = "Arc"] crate::ArcSlice<Atom>),
+    ViewTransitionNew(#[ignore_malloc_size_of = "Arc"] crate::ArcSlice<Atom>),
     // pyro: CSS Form Control Styling's `::picker(select)` and `::picker-icon`, and Chrome's
     // `::-webkit-slider-thumb`: parsed (so `@supports selector()` knows them) but styled by nothing.
     PickerSelect,
@@ -123,26 +123,11 @@ pub const ANY_HIGHLIGHT: u16 = 0;
 
 static HIGHLIGHT_NAMES: std::sync::RwLock<Vec<Atom>> = std::sync::RwLock::new(Vec::new());
 
-type TransitionNames = (FxHashMap<Vec<Atom>, u16>, Vec<Vec<Atom>>);
-static TRANSITION_NAMES: std::sync::LazyLock<std::sync::RwLock<TransitionNames>> =
-    std::sync::LazyLock::new(Default::default);
-
-fn transition_name_id(parts: Vec<Atom>) -> Result<u16, ParseError> {
-    if parts.len() == 1 && parts[0].is_empty() { return Ok(0); }
-    let mut names = TRANSITION_NAMES.write().unwrap();
-    if let Some(id) = names.0.get(&parts) { return Ok(*id); }
-    if names.1.len() >= 4096 { return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError)); }
-    let id = names.1.len() as u16 + 1;
-    names.0.insert(parts.clone(), id);
-    names.1.push(parts);
-    Ok(id)
-}
-
 /// Parses the named transition selector argument, preserving escaped wildcard identifiers.
 pub fn transition_selector(kind: &str, input: &mut CssParser) -> Result<PseudoElement, ParseError> {
     use crate::values::CustomIdent;
     let bad = || ParseError::custom(StyleParseErrorKind::UnspecifiedError);
-    let ctor: fn(u16) -> PseudoElement = match kind {
+    let ctor: fn(crate::ArcSlice<Atom>) -> PseudoElement = match kind {
         "view-transition-group" => PseudoElement::ViewTransitionGroup,
         "view-transition-image-pair" => PseudoElement::ViewTransitionPair,
         "view-transition-old" => PseudoElement::ViewTransitionOld,
@@ -160,7 +145,8 @@ pub fn transition_selector(kind: &str, input: &mut CssParser) -> Result<PseudoEl
         parts.push(CustomIdent::from_ident(name, &[])?.0);
     }
     if (required_class && parts.len() == 1) || parts.iter().map(|atom| atom.len()).sum::<usize>() > 1024 { return Err(bad()); }
-    Ok(ctor(transition_name_id(parts)?))
+    if parts.len() == 1 && parts[0].is_empty() { parts.clear(); }
+    Ok(ctor(crate::ArcSlice::from_iter(parts.into_iter())))
 }
 
 /// pyro: the id of a `::highlight()` name (ids live as long as the process; names are few).
@@ -214,11 +200,10 @@ impl ToCss for PseudoElement {
             ScrollButtonRight => "::scroll-button(right)",
             TargetText => "::target-text",
             ViewTransition => "::view-transition",
-            ViewTransitionGroup(id) | ViewTransitionPair(id) | ViewTransitionOld(id) | ViewTransitionNew(id) => {
+            ViewTransitionGroup(ref parts) | ViewTransitionPair(ref parts) | ViewTransitionOld(ref parts) | ViewTransitionNew(ref parts) => {
                 dest.write_str(match self { ViewTransitionGroup(_) => "::view-transition-group(", ViewTransitionPair(_) => "::view-transition-image-pair(", ViewTransitionOld(_) => "::view-transition-old(", _ => "::view-transition-new(" })?;
-                if id == 0 { dest.write_char('*')?; } else {
-                    let names = TRANSITION_NAMES.read().unwrap();
-                    for (index, part) in names.1[usize::from(id)-1].iter().enumerate() {
+                if parts.is_empty() { dest.write_char('*')?; } else {
+                    for (index, part) in parts.iter().enumerate() {
                         if index > 0 { dest.write_char('.')?; }
                         if part.is_empty() { dest.write_char('*')?; } else { serialize_identifier(part, dest)?; }
                     }
@@ -263,7 +248,7 @@ impl ToCss for PseudoElement {
 
 impl ::selectors::parser::PseudoElement for PseudoElement {
     fn is_in_pseudo_element_tree(&self) -> bool { self.transition_argument().is_some() }
-    fn specificity_count(&self) -> u32 { u32::from(self.transition_argument() != Some(0)) }
+    fn specificity_count(&self) -> u32 { u32::from(!self.transition_argument().is_some_and(|parts| parts.is_empty())) }
     fn parses_as_element_backed(&self) -> bool {
         matches!(self, Self::DetailsContent)
     }
@@ -309,28 +294,25 @@ impl ::selectors::parser::PseudoElement for PseudoElement {
 pub const EAGER_PSEUDO_COUNT: usize = 8;
 
 impl PseudoElement {
-    /// Interns the identity used when matching a generated view-transition box.
-    pub fn transition_box_argument(name: &str, classes: &[Atom]) -> Option<u16> {
+    /// Builds the name and classes owned by a generated view-transition box.
+    pub fn transition_box_argument(name: &str, classes: &[Atom]) -> Option<crate::ArcSlice<Atom>> {
         if classes.len() > 32 || name.len() + classes.iter().map(|class| class.len()).sum::<usize>() > 1024 { return None; }
         let mut parts = vec![Atom::from(name)];
         parts.extend_from_slice(classes);
-        transition_name_id(parts).ok()
+        Some(crate::ArcSlice::from_iter(parts.into_iter()))
     }
-    /// Interned name and classes for a named transition pseudo.
-    pub fn transition_argument(&self) -> Option<u16> {
+    /// Name and classes for a named transition pseudo; empty for the universal selector.
+    pub fn transition_argument(&self) -> Option<&crate::ArcSlice<Atom>> {
         use PseudoElement::*;
-        match *self { ViewTransitionGroup(id) | ViewTransitionPair(id) | ViewTransitionOld(id) | ViewTransitionNew(id) => Some(id), _ => None }
+        match self { ViewTransitionGroup(parts) | ViewTransitionPair(parts) | ViewTransitionOld(parts) | ViewTransitionNew(parts) => Some(parts), _ => None }
     }
 
     /// Matches a transition pseudo box against a rule within its kind's rule map.
     pub fn matches_transition_selector(&self, selector: &Self) -> bool {
         if self.discriminant() != selector.discriminant() { return false; }
-        let (Some(id), Some(rule)) = (self.transition_argument(), selector.transition_argument()) else { return self == selector; };
-        if rule == 0 { return true; }
-        if id == 0 { return false; }
-        let names = TRANSITION_NAMES.read().unwrap();
-        let actual = &names.1[usize::from(id)-1];
-        let pattern = &names.1[usize::from(rule)-1];
+        let (Some(actual), Some(pattern)) = (self.transition_argument(), selector.transition_argument()) else { return self == selector; };
+        if pattern.is_empty() { return true; }
+        if actual.is_empty() { return false; }
         (pattern[0].is_empty() || pattern[0] == actual[0]) && pattern[1..].iter().all(|class| actual[1..].contains(class))
     }
     /// Gets the canonical index of this eagerly-cascaded pseudo-element.
@@ -426,7 +408,7 @@ impl PseudoElement {
     #[inline]
     pub fn rule_map_key(&self) -> PseudoElement {
         use PseudoElement::*;
-        match self { ViewTransitionGroup(_) => return ViewTransitionGroup(0), ViewTransitionPair(_) => return ViewTransitionPair(0), ViewTransitionOld(_) => return ViewTransitionOld(0), ViewTransitionNew(_) => return ViewTransitionNew(0), _ => () }
+        match self { ViewTransitionGroup(_) => return ViewTransitionGroup(Default::default()), ViewTransitionPair(_) => return ViewTransitionPair(Default::default()), ViewTransitionOld(_) => return ViewTransitionOld(Default::default()), ViewTransitionNew(_) => return ViewTransitionNew(Default::default()), _ => () }
         if self.scrollbar_orientation().is_some() {
             PseudoElement::WebkitScrollbar
         } else if self.is_scroll_button() {
@@ -434,7 +416,7 @@ impl PseudoElement {
         } else if self.is_highlight() {
             PseudoElement::Highlight(ANY_HIGHLIGHT)
         } else {
-            *self
+            self.clone()
         }
     }
 

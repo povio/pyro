@@ -86,7 +86,7 @@ impl Node {
     /// pyro: the scroll pseudo-element this node is the box of, and its originating element.
     pub(crate) fn scroll_pseudo(&self) -> Option<(PseudoElement, NodeId)> {
         match self.data {
-            NodeData::AnonymousBlock(ref data) => data.scroll.as_deref()?.pseudo,
+            NodeData::AnonymousBlock(ref data) => data.scroll.as_deref()?.pseudo.clone(),
             _ => None,
         }
     }
@@ -341,7 +341,7 @@ impl BaseDocument {
     fn scroll_pseudo_rules(&self, pseudo: PseudoElement) -> bool {
         [Origin::Author, Origin::User]
             .into_iter()
-            .any(|origin| self.stylist.cascade_data().borrow_for_origin(origin).normal_rules(&[pseudo]).is_some())
+            .any(|origin| self.stylist.cascade_data().borrow_for_origin(origin).normal_rules(&[pseudo.clone()]).is_some())
     }
 
     /// pyro: brings the scroll pseudo-element boxes up to date (see the module). Runs after a

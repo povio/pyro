@@ -190,16 +190,16 @@ impl BaseDocument {
             let group = descriptors.len();
             let mut ident = String::new();
             cssparser::serialize_identifier(&part.name, &mut ident).ok()?;
-            descriptors.push((ViewTransitionGroup(arg), 0, css, format!("::view-transition-group({ident})")));
+            descriptors.push((ViewTransitionGroup(arg.clone()), 0, css, format!("::view-transition-group({ident})")));
             descriptors.push((
-                ViewTransitionPair(arg),
+                ViewTransitionPair(arg.clone()),
                 group,
                 if both { "isolation:isolate".into() } else { String::new() },
                 format!("::view-transition-image-pair({ident})"),
             ));
             for (exists, pseudo, fade) in [
-                (part.old.is_some(), ViewTransitionOld(arg), "out"),
-                (part.new.is_some(), ViewTransitionNew(arg), "in"),
+                (part.old.is_some(), ViewTransitionOld(arg.clone()), "out"),
+                (part.new.is_some(), ViewTransitionNew(arg.clone()), "in"),
             ] {
                 if exists {
                     let intrinsic = if fade == "out" { part.old? } else { part.new? };
@@ -228,7 +228,7 @@ impl BaseDocument {
                     style::stylesheets::CssRuleType::Style,
                 )))
             });
-            let Some(style) = self.transition_cascade(origin, parent, pseudo, declarations.as_ref()) else {
+            let Some(style) = self.transition_cascade(origin, parent, pseudo.clone(), declarations.as_ref()) else {
                 for node in nodes.into_iter().rev() {
                     self.remove_node_from_tree(node.id);
                 }
@@ -338,9 +338,9 @@ impl BaseDocument {
             for item in &tree.nodes {
                 if let Some(parent) = self.nodes.get(item.id).and_then(|node| node.parent)
                     && let Some(style) =
-                        self.transition_cascade(*origin, parent, item.pseudo, item.declarations.as_ref())
+                        self.transition_cascade(*origin, parent, item.pseudo.clone(), item.declarations.as_ref())
                 {
-                    let Some(style) = self.sample_transition_style(*origin,parent,item.pseudo,style,&item.samples,tree.group_frames.get(&item.id),&mut budget) else { complete = false; break; };
+                    let Some(style) = self.sample_transition_style(*origin,parent,item.pseudo.clone(),style,&item.samples,tree.group_frames.get(&item.id),&mut budget) else { complete = false; break; };
                     self.nodes[item.id].stylo_element_data_mut().ensure_init_mut().styles.primary = Some(style);
                     self.nodes[item.id].update_layout_styles();
                     self.nodes[item.id].clear_layout_cache();

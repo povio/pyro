@@ -364,7 +364,7 @@ impl BaseDocument {
         };
         let mut thread = ThreadLocalStyleContext::new();
         let mut context = StyleContext { shared: &shared, thread_local: &mut thread };
-        let base = BaseKey { rules: style.rules().clone(), parent: 0, base_style: style.clone(), pseudo: Some((pseudo, primary.clone())) };
+        let base = BaseKey { rules: style.rules().clone(), parent: 0, base_style: style.clone(), pseudo: Some((pseudo.clone(), primary.clone())) };
         let ui = style.get_ui();
         let mut state = ElementState::default();
         let mut easings = FxHashMap::default();

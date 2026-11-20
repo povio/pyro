@@ -219,6 +219,22 @@ fn view_transition_animations_end_when_origin_is_hidden() {
 }
 
 #[test]
+fn view_transition_selector_probes_release_names_before_fresh_capture() {
+    use pyro_dom::stylo::{parse_pseudo_arg, PseudoArg};
+    for index in 0..100_000 {
+        let PseudoArg::Pseudo(pseudo) = parse_pseudo_arg(&format!("::view-transition-group(fill{index})")) else { panic!("rejected name {index}") };
+        assert!(pseudo.transition_argument().unwrap().is_unique());
+    }
+    let page = Page::new("<!doctype html><div style='view-transition-name:fresh'>x</div>");
+    let root = pyro_dom::snapshot::render_key(page.find("html"));
+    let mut renderer = Renderer::new();
+    renderer.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+    let boxes = renderer.capture_transition_boxes(1, root, true, 1 << 24).unwrap();
+    assert!(boxes.iter().any(|item| item.name == "fresh"));
+    assert!(renderer.set_transition_boxes(1, root, &boxes, &boxes).is_some());
+}
+
+#[test]
 fn view_transition_boxes_cascade_and_charge_created_nodes() {
     use style::properties::{LonghandId, PropertyDeclarationId};
     use style::selector_parser::PseudoElement::*;
@@ -231,20 +247,20 @@ fn view_transition_boxes_cascade_and_charge_created_nodes() {
     assert_eq!(renderer.set_transition_boxes(1,root,&boxes,&boxes),Some(5));
     let arg = style::selector_parser::PseudoElement::transition_box_argument("target", &[]).unwrap();
     let value = |pseudo, prop| renderer.element_pseudo_style(1,root,&pseudo,true).unwrap().computed_value_to_string(PropertyDeclarationId::Longhand(prop));
-    assert_eq!(value(ViewTransitionGroup(arg),LonghandId::Width),"30px");
-    assert_eq!(value(ViewTransitionPair(arg),LonghandId::Isolation),"isolate");
-    assert_eq!(value(ViewTransitionNew(arg),LonghandId::AnimationDuration),"8s");
-    assert_eq!(value(ViewTransitionOld(arg),LonghandId::AnimationName),"none");
-    assert_eq!(value(ViewTransitionOld(arg),LonghandId::Opacity),"0.25");
+    assert_eq!(value(ViewTransitionGroup(arg.clone()),LonghandId::Width),"30px");
+    assert_eq!(value(ViewTransitionPair(arg.clone()),LonghandId::Isolation),"isolate");
+    assert_eq!(value(ViewTransitionNew(arg.clone()),LonghandId::AnimationDuration),"8s");
+    assert_eq!(value(ViewTransitionOld(arg.clone()),LonghandId::AnimationName),"none");
+    assert_eq!(value(ViewTransitionOld(arg.clone()),LonghandId::Opacity),"0.25");
     let runs = renderer.transition_animation_styles(1,root).unwrap();
     let index = runs.iter().find(|(_,pseudo,_)| pseudo == "::view-transition-new(target)").unwrap().0;
     assert!(!renderer.set_transition_samples(1,root,&vec![(index,0,0.5);1025]));
     assert!(renderer.set_transition_samples(1,root,&[(index,0,0.0),(index,1,0.0)]));
-    let style = renderer.element_pseudo_style(1,root,&ViewTransitionNew(arg),true).unwrap();
+    let style = renderer.element_pseudo_style(1,root,&ViewTransitionNew(arg.clone()),true).unwrap();
     assert_eq!(style.computed_value_to_string(PropertyDeclarationId::Longhand(LonghandId::Opacity)),"0");
     assert_eq!(style.computed_value_to_string(PropertyDeclarationId::Longhand(LonghandId::MixBlendMode)),"plus-lighter");
     renderer.clear_transition_boxes(1,root);
-    assert!(renderer.element_pseudo_style(1,root,&ViewTransitionGroup(arg),true).is_none());
+    assert!(renderer.element_pseudo_style(1,root,&ViewTransitionGroup(arg.clone()),true).is_none());
     assert_eq!(renderer.set_transition_boxes(1,root,&[],&boxes),Some(4));
     renderer.clear_transition_boxes(1,root);
     assert_eq!(renderer.set_transition_boxes(1,root,&vec![boxes[0].clone();257],&[]),None);
