@@ -700,6 +700,11 @@ pub trait GeometrySource {
     fn resolved_transform_value(&self, _key: u64, _property: &str, _style: &style::properties::ComputedValues) -> Option<String> {
         None
     }
+    /// Computed CSS geometry declarations on an SVG shape, excluding the
+    /// default values that must leave XML presentation attributes in effect.
+    fn svg_geometry_properties(&self, _key: u64) -> Vec<(&'static str, String)> {
+        Vec::new()
+    }
     fn sampled_calc_size(&self, _key: u64, _width: bool, _style: &style::properties::ComputedValues) -> Option<f32> {
         None
     }

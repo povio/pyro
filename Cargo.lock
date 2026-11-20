@@ -2879,6 +2879,7 @@ dependencies = [
  "stylo_dom",
  "stylo_static_prefs",
  "stylo_traits",
+ "svgtypes",
  "unicode-bidi",
  "url",
 ]
