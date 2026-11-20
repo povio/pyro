@@ -2681,7 +2681,7 @@ impl BaseDocument {
     /// pyro: `nested_breakable`: the multi-column containers nested in the strip's flow are
     /// fragmented by its columns (`Breaks::nested`), not monolithic.
     fn multicol_breaks(&self, container: crate::NodeId, start: f32, end: Option<f32>, nested_breakable: bool, fixed_columns: bool) -> Breaks {
-        let mut found = Found { nested_breakable, fixed_columns, container: Some(container), ..Found::default() };
+        let mut found = Found { nested_breakable, fixed_columns, container: Some(container), parallel_end: f32::NEG_INFINITY, ..Found::default() };
         let trims = self.nodes[container]
             .primary_styles()
             .map_or((false, false), |style| super::text_box::fragment_trims(&style));
@@ -2959,7 +2959,27 @@ impl BaseDocument {
         // breakable anywhere through its space, is kept whole then), else its bottom.
         let mut avoid_after = false;
         let mut previous_unit_top: f32 = 0.0;
-        for &child_id in children {
+        let mut parallel_ends = Vec::new();
+        if children.iter().any(|&id| {
+            let layout = self.nodes[id].unrounded_layout();
+            layout.scrollable_overflow_rect.bottom() > layout.size.height + EPSILON
+        }) {
+            let mut end = f32::NEG_INFINITY;
+            for &id in children.iter().rev() {
+                parallel_ends.push(end);
+                let sibling = &self.nodes[id];
+                if !sibling.is_out_of_flow() && let Some(style) = sibling.primary_styles() && !style.get_box().display.is_none() {
+                    let layout = sibling.unrounded_layout();
+                    if is_spanner_style(&style) || (self.column_span_styles && self.carries_spanners(id) && self.has_column_spanners(id)) {
+                        end = f32::NEG_INFINITY;
+                    } else {
+                        end = end.max(top + layout.location.y + layout.size.height);
+                    }
+                }
+            }
+            parallel_ends.reverse();
+        }
+        for (child_index, &child_id) in children.iter().enumerate() {
             let child = &self.nodes[child_id];
             let Some(style) = child.primary_styles() else {
                 continue;
@@ -3041,7 +3061,10 @@ impl BaseDocument {
                         && self.first_descendant_forces_break(child_id))
                 {
                     let boundary = child_top - layout.margin.top.max(0.0);
-                    if found.container != Some(parent) && previous.is_some() && boundary > top + node.unrounded_layout().size.height + EPSILON {
+                    if found.container != Some(parent) && previous.is_some()
+                        && boundary > top + node.unrounded_layout().size.height + EPSILON
+                        && boundary < found.parallel_end
+                    {
                         found.overflow_breaks.push((child_id, top, boundary));
                     } else {
                         found.forced.push(boundary);
@@ -3199,9 +3222,12 @@ impl BaseDocument {
                 // `spanner-fragmentation-005`).
                 if !found.container.is_some_and(|container| self.is_column_spanner_of(container, child_id)) {
                     let previous_parallel = found.parallel;
+                    let previous_end = found.parallel_end;
+                    found.parallel_end = found.parallel_end.max(parallel_ends.get(child_index).copied().unwrap_or(f32::NEG_INFINITY));
                     found.parallel |= parallel_tail && found.fixed_columns && layout.size.height <= EPSILON;
                     crate::util::ensure_stack(|| self.collect_breaks(child_id, child_top, found, None, trims));
                     found.parallel = previous_parallel;
+                    found.parallel_end = previous_end;
                 }
             } else if let Some(bands) = (!held_whole(child, &style))
                 .then(|| self.grid_row_bands(child_id, child_top))
@@ -3242,6 +3268,7 @@ impl BaseDocument {
 /// What [`BaseDocument::collect_breaks`] finds in a strip (see [`Breaks`]).
 #[derive(Default)]
 struct Found {
+    parallel_end: f32,
     fixed_columns: bool,
     parallel: bool,
     parallel_floats: Vec<(crate::NodeId, f32, f32, f32)>,
