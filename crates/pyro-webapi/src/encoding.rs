@@ -188,13 +188,7 @@ pub struct DecoderData {
     fatal: bool,
     ignore_bom: bool,
     /// Held between `decode(..., {stream: true})` calls; None starts afresh.
-    decoder: std::cell::RefCell<Option<DecoderState>>,
-}
-
-struct DecoderState {
-    decoder: encoding_rs::Decoder,
-    // A fatal streaming error leaves the unread suffix in the input queue.
-    pending: std::collections::VecDeque<u8>,
+    decoder: std::cell::RefCell<Option<encoding_rs::Decoder>>,
 }
 
 pub struct TextDecoder;
@@ -233,37 +227,25 @@ impl JsClass for TextDecoder {
                 None => true,
             };
             let mut slot = d.decoder.borrow_mut();
-            let state = slot.get_or_insert_with(|| DecoderState {
-                pending: Default::default(),
-                decoder: if d.ignore_bom {
+            let decoder = slot.get_or_insert_with(|| {
+                if d.ignore_bom {
                     d.encoding.new_decoder_without_bom_handling()
                 } else {
                     // Only the encoding's own BOM is dropped; it never switches encoding.
                     d.encoding.new_decoder_with_bom_removal()
-                },
+                }
             });
-            let mut input = if state.pending.is_empty() {
-                bytes.into()
-            } else {
-                state.pending.extend(bytes);
-                std::mem::take(&mut state.pending)
-            };
-            let bytes = input.make_contiguous();
-            let decoder = &mut state.decoder;
             let capacity = decoder.max_utf8_buffer_length(bytes.len()).unwrap_or(bytes.len());
             let mut text = String::with_capacity(capacity);
             let malformed = if d.fatal {
-                let (result, read) = decoder.decode_to_string_without_replacement(bytes, &mut text, last);
-                let malformed = matches!(result, encoding_rs::DecoderResult::Malformed(..));
-                if malformed && !last {
-                    input.drain(..read);
-                    state.pending = input;
-                }
-                malformed
+                let (result, _) = decoder.decode_to_string_without_replacement(&bytes, &mut text, last);
+                matches!(result, encoding_rs::DecoderResult::Malformed(..))
             } else {
-                let _ = decoder.decode_to_string(bytes, &mut text, last);
+                let _ = decoder.decode_to_string(&bytes, &mut text, last);
                 false
             };
+            // A streaming error can leave the decoder in a valid shifted state
+            // (such as ISO-2022-JP Roman). A final call starts the next stream afresh.
             if last {
                 *slot = None;
             }
