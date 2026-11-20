@@ -4670,7 +4670,7 @@ index 0000000..be15ba9
 +    }
 +}
 diff --git a/src/scene.rs b/src/scene.rs
-index 1b09a33..3f238ae 100644
+index 1b09a33..8381f76 100644
 --- a/src/scene.rs
 +++ b/src/scene.rs
 @@ -1,19 +1,322 @@
@@ -5231,7 +5231,7 @@ index 1b09a33..3f238ae 100644
      }
      fn draw_box_shadow(
          &mut self,
-@@ -216,6 +602,886 @@ impl PaintScene for VelloCpuScenePainter {
+@@ -216,6 +602,904 @@ impl PaintScene for VelloCpuScenePainter {
          self.render_ctx
              .fill_blurred_rounded_rect(&rect, radius as f32, std_dev as f32, false);
      }
@@ -5277,6 +5277,24 @@ index 1b09a33..3f238ae 100644
 +        let mut unwrapped: Vec<usize> = Vec::new();
 +        let mut i = 0;
 +        while i < commands.len() {
++            if let [RenderCommand::Fill(background), RenderCommand::PushClipLayer(clip), RenderCommand::Fill(cover), RenderCommand::PopLayer, ..] = &commands[i..]
++                && clip.transform == background.transform && clip.fill == background.fill
++                && matches!(&cover.brush, Paint::Solid(color) if color.components[3] == 1.0)
++                && background.shape == clip.clip
++                && cover.shape.elements().len() <= 5
++                && {
++                    let edges = cover.shape.elements().strip_suffix(&[PathEl::ClosePath]).unwrap_or(cover.shape.elements());
++                    edges.len() == 4 && cover.shape.bounding_box().path_elements(DEFAULT_TOLERANCE).take(4).eq(edges.iter().copied())
++                }
++                && pixel_aligned_rect(&cover.shape, transform * cover.transform)
++            {
++                let covered = (transform * cover.transform).transform_rect_bbox(cover.shape.bounding_box());
++                let bounds = (transform * clip.transform).transform_rect_bbox(clip.clip.bounding_box());
++                if covered.intersect(bounds) == bounds {
++                    i += 1;
++                    continue;
++                }
++            }
 +            if let RenderCommand::PushLayer(layer) = &commands[i]
 +                && layer.filter.as_ref().is_some_and(|filter| Arc::ptr_eq(filter, &crate::TEXT_OUTLINE_GROUP))
 +            {
@@ -6118,7 +6136,7 @@ index 1b09a33..3f238ae 100644
  }
  
  #[cfg(test)]
-@@ -292,4 +1558,314 @@ mod clip_rule_tests {
+@@ -292,4 +1576,314 @@ mod clip_rule_tests {
          assert_pixels(false, true);
          assert_pixels(true, true);
      }

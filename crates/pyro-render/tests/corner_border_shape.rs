@@ -54,6 +54,13 @@ fn assert_near(got: [u8; 3], want: [u8; 3], what: &str) {
 const BOX: &str = "position:absolute;left:0;top:0;width:100px;height:100px;box-sizing:border-box;background:green;";
 
 #[test]
+fn covering_child_hides_underpaint_up_to_the_overflow_clip() {
+    let clipped = |color, width| render(&format!("<div style='{BOX}background:{color};corner-shape:bevel;border-radius:40px;overflow:clip'><div style='width:{width}px;height:140px;background:green'></div></div>"), 1.0);
+    assert!(clipped("red", 140).data == clipped("white", 140).data);
+    assert_eq!(pixel(&clipped("red", 20), 1.0, 55.0, 55.0), RED);
+}
+
+#[test]
 fn rotating_a_solid_circle_preserves_its_coverage() {
     let circle = |angle| render(&format!("<div style='{BOX}border-radius:50%;transform:rotate({angle}deg)'></div>"), 1.0);
     let plain = circle(0);

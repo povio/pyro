@@ -644,6 +644,24 @@ impl VelloCpuScenePainter {
         let mut unwrapped: Vec<usize> = Vec::new();
         let mut i = 0;
         while i < commands.len() {
+            if let [RenderCommand::Fill(background), RenderCommand::PushClipLayer(clip), RenderCommand::Fill(cover), RenderCommand::PopLayer, ..] = &commands[i..]
+                && clip.transform == background.transform && clip.fill == background.fill
+                && matches!(&cover.brush, Paint::Solid(color) if color.components[3] == 1.0)
+                && background.shape == clip.clip
+                && cover.shape.elements().len() <= 5
+                && {
+                    let edges = cover.shape.elements().strip_suffix(&[PathEl::ClosePath]).unwrap_or(cover.shape.elements());
+                    edges.len() == 4 && cover.shape.bounding_box().path_elements(DEFAULT_TOLERANCE).take(4).eq(edges.iter().copied())
+                }
+                && pixel_aligned_rect(&cover.shape, transform * cover.transform)
+            {
+                let covered = (transform * cover.transform).transform_rect_bbox(cover.shape.bounding_box());
+                let bounds = (transform * clip.transform).transform_rect_bbox(clip.clip.bounding_box());
+                if covered.intersect(bounds) == bounds {
+                    i += 1;
+                    continue;
+                }
+            }
             if let RenderCommand::PushLayer(layer) = &commands[i]
                 && layer.filter.as_ref().is_some_and(|filter| Arc::ptr_eq(filter, &crate::TEXT_OUTLINE_GROUP))
             {
