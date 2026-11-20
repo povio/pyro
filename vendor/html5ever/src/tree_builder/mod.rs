@@ -1128,6 +1128,13 @@ where
         *elem_name.ns() == ns!(html) && *elem_name.local_name() == name
     }
 
+    // HTML "parsing template contents": the template insertion mode stack
+    // has an entry for each open template and, in a fragment parser, for
+    // a template context element even though it is not on the open stack.
+    fn parsing_template_contents(&self) -> bool {
+        !self.template_modes.borrow().is_empty()
+    }
+
     fn in_html_elem_named(&self, name: LocalName) -> bool {
         self.open_elems
             .borrow()
@@ -1401,7 +1408,8 @@ where
         let qname = QualName::new(None, ns, name);
         let form_is_associatable = form_associatable(qname.expanded())
             && self.form_elem.borrow().is_some()
-            && !self.in_html_elem_named(local_name!("template"))
+            && !self.is_fragment()
+            && !self.parsing_template_contents()
             && !(listed(qname.expanded())
                 && attrs
                     .iter()
