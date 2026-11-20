@@ -1,0 +1,43 @@
+#!/usr/bin/env python3
+"""CDP-compatible stable Chrome WPT reference (ordinary popup and WebNN subset)."""
+import json,os,pathlib,sys,subprocess,tempfile
+d=pathlib.Path(__file__).resolve().parent
+w=pathlib.Path(os.environ.get('WPT_CHECKOUT',str(pathlib.Path.home()/'Library/Caches/lightningpanda/wptci/wpt-full')))
+state=pathlib.Path(os.environ.get('WPT_CHROME_STATE_DIR',str(d))).resolve()
+(state/'launch-records').mkdir(mode=0o700,parents=True,exist_ok=True)
+mode=os.environ.get('WPT_CHROME_REFERENCE_MODE','wpt-stable')
+if mode not in ('original','popups-only','webnn-only','gpu-enabled-only','webnn-with-gpu','wpt-stable'):raise SystemExit('unknown mode')
+port=sys.argv[sys.argv.index('--port')+1]
+if 'WPT_CHROME_PROFILE' in os.environ:
+ profile=pathlib.Path(os.environ['WPT_CHROME_PROFILE']).resolve(strict=True)
+ if not profile.is_dir() or any(profile.iterdir()) or profile.stat().st_uid!=os.getuid() or profile.stat().st_mode & 0o077:
+  raise SystemExit('WPT_CHROME_PROFILE must be an existing, empty, private directory owned by this user')
+else:
+ (state/'profiles').mkdir(mode=0o700,parents=True,exist_ok=True)
+ profile=pathlib.Path(tempfile.mkdtemp(prefix=mode+'-',dir=state/'profiles'))
+flags=['--headless','--no-first-run','--disable-background-networking',f'--remote-debugging-port={port}',f'--user-data-dir={profile}']
+if mode not in ('wpt-stable','gpu-enabled-only','webnn-with-gpu'):flags.append('--disable-gpu')
+if mode in ('popups-only','wpt-stable'):
+ (profile/'Default').mkdir()
+ (profile/'Default/Preferences').write_text(json.dumps({'profile':{'default_content_setting_values':{'popups':1}}}))
+ flags.append('--disable-popup-blocking')
+if mode in ('webnn-only','webnn-with-gpu','wpt-stable'):flags.append('--enable-features=WebMachineLearningNeuralNetwork')
+if mode=='wpt-stable':
+ # The report uses the WPT leaf SPKI for ordinary HTTPS pages and worker scripts.
+ pem=w/'tools/certs/web-platform.test.pem'
+ pub=subprocess.check_output(['openssl','x509','-in',str(pem),'-noout','-pubkey'])
+ der=subprocess.check_output(['openssl','pkey','-pubin','-outform','der'],input=pub)
+ import base64,hashlib
+ spki=base64.b64encode(hashlib.sha256(der).digest()).decode()
+ flags+=['--ignore-certificate-errors-spki-list='+spki,
+         '--autoplay-policy=no-user-gesture-required','--disable-infobars',
+         '--disable-background-timer-throttling','--disable-backgrounding-occluded-windows',
+         '--disable-component-extensions-with-background-pages',
+         '--enable-blink-features=ViewTransitionLongCallbackTimeoutForTesting,NoFontAntialiasing',
+         '--disable-features=ScrollbarAnimations',
+         '--host-resolver-rules=MAP nonexistent.*.test ^NOTFOUND, MAP *.test 127.0.0.1, MAP *.test. 127.0.0.1, MAP apple.com ^NOTFOUND, MAP *.apple.com ^NOTFOUND']
+exe='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
+with tempfile.NamedTemporaryFile(mode='w',prefix=f'{mode}-{os.getpid()}-',suffix='.json',dir=state/'launch-records',delete=False) as log:
+ json.dump({'mode':mode,'exe':exe,'pid':os.getpid(),'flags':flags,'profile':str(profile),'parent_owns_profile':'WPT_CHROME_PROFILE' in os.environ},log,indent=2)
+ log.write('\n')
+os.execv(exe,[exe,*flags,'about:blank'])
