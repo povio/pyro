@@ -2471,8 +2471,7 @@ impl LayoutPassState<'_> {
         // pyro: the body's top margin as it collapsed with its first child's (Chrome: a `<p>`'s
         // 16px margin through the body's 8px leaves 576px of a 600px viewport, not 584: WPT
         // css-overflow `line-clamp/block-ellipsis-quirk-001` under classic scrollbars).
-        // (Classic scrollbars only: overlay mode keeps its results.)
-        if is_body && self.tree().classic_scrollbars {
+        if is_body {
             let pb = style.padding().resolve_or_zero(width, resolve_calc_value).top
                 + style.border().resolve_or_zero(width, resolve_calc_value).top;
             drop(style);
