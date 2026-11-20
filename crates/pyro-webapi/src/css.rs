@@ -570,6 +570,7 @@ impl JsClass for CssStyleDeclaration {
     type Data = StyleData;
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
+        def.indexed_iterator();
         def.accessor(
             "cssText",
             |s, st| Ok(s.string(&st.block().css_text())),
