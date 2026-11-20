@@ -1146,7 +1146,7 @@ impl BaseDocument {
                     );
                     self.columns_rect(node_id, own, scale)
                 } else if in_columns {
-                    self.columns_rect(node_id, child_rect_in_self, scale)
+                    self.nodes[node_id].column_fragments().unwrap().map_child_rect(Some(child_id), child_rect_in_self, scale)
                 } else if in_vertical_columns {
                     self.vertical_columns_rect(node_id, child_rect_in_self, scale).unwrap_or(child_rect_in_self)
                 } else {
@@ -1155,7 +1155,7 @@ impl BaseDocument {
                 overflow = unite_overflow(overflow, child_rect_in_self);
                 if let Some(padding) = scroll_padding {
                     let padded = self.padded_inflow_box(child_id, padding, scale);
-                    let padded = if in_columns { self.columns_rect(node_id, padded, scale) } else { padded };
+                    let padded = if in_columns { self.nodes[node_id].column_fragments().unwrap().map_child_rect(Some(child_id), padded, scale) } else { padded };
                     overflow = unite_overflow(overflow, padded);
                 }
             }
@@ -1209,6 +1209,19 @@ impl BaseDocument {
         }
         // (And the spanners, in their rows: `column_spanners_of` gives their parents' places.)
         if in_columns && let Some(columns) = self.nodes[node_id].column_fragments() {
+            for &child_id in columns.first_after_spanner.keys() {
+                let child = &self.nodes[child_id];
+                if child.layout_parent.get() == Some(node_id) { continue }
+                let mut rect = self.overflow_contribution(child_id, *child.scrollable_overflow(), child.final_layout().size, scale);
+                let mut current = child;
+                loop {
+                    let location = current.final_layout().location;
+                    rect = place_overflow(current, (location.x as f64 * scale, location.y as f64 * scale), scale, rect);
+                    let Some(parent) = current.layout_parent.get().filter(|&parent| parent != node_id) else { break };
+                    current = &self.nodes[parent];
+                }
+                overflow = unite_overflow(overflow, columns.map_child_rect(Some(child_id), rect, scale));
+            }
             let rows: Vec<_> = columns.fragments.iter().filter(|f| f.spanner).copied().collect();
             for ((spanner, at), row) in self.column_spanners_of(node_id).into_iter().zip(rows) {
                 let l = self.nodes[spanner].final_layout();

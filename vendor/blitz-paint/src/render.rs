@@ -1692,6 +1692,12 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             scene.push_clip_layer(Fill::NonZero, Affine::IDENTITY, device_clip);
         }
 
+        let wrapper_clip = self.column_range.get().filter(|(container, _, _, _, _)| {
+            self.dom.as_ref().column_fragments(*container).is_some_and(|columns| columns.run_wrappers.contains(&node.id))
+        });
+        if let Some((_, _, _, transform, rect)) = wrapper_clip {
+            scene.push_clip_layer(Fill::NonZero, transform, &rect);
+        }
         if paints_own_box {
             // pyro: the root element paints the canvas background, under its own shadow, in
             // place of its background; the body whose background that is paints none.
@@ -1746,6 +1752,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         if !hidden {
             cx.stroke_devtools(scene);
         }
+        if wrapper_clip.is_some() { scene.pop_layer(); }
         if handed.is_some() {
             scene.pop_layer();
         }
@@ -6297,7 +6304,9 @@ impl ElementCx<'_, '_> {
         // column), one that runs in from an earlier column is cut at both edges, and one wholly
         // in another column is left to it.
         if let Some((container, start, end, transform, outer_range)) = self.context.column_range.get()
-            && container == self.node.id
+            && let Some(columns) = self.context.dom.as_ref().column_fragments(container)
+            && (container == self.node.id || columns.run_wrappers.contains(&self.node.id))
+            && !columns.run_wrappers.contains(&child_id)
         {
             // (A positioned inline box listed in the paint tree paints its lines from the entries
             // its root recorded, each clipped to its column (`inline_pass_entries`): once, not
@@ -6324,8 +6333,8 @@ impl ElementCx<'_, '_> {
                 return;
             }
             let range = outer_range;
-            let Some(start) = self.node.column_fragments().map_or(Some(start), |columns| columns.child_start(child_id, start)) else { return };
-            let share = if unranged { ColumnShare::Cut } else { self.column_share(container, child_id, start, end) };
+            let Some(effective_start) = columns.child_start(child_id, start) else { return };
+            let share = if unranged { ColumnShare::Cut } else { self.column_share(container, child_id, effective_start, end) };
             match share {
                 ColumnShare::Outside => return,
                 ColumnShare::Inside | ColumnShare::Cut => {

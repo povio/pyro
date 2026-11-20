@@ -189,6 +189,7 @@ pub struct ColumnFragments {
     /// strip's end): see `BaseDocument::collect_breaks` on nested containers.
     pub strip_end: f32,
     pub first_after_spanner: std::collections::BTreeMap<crate::NodeId, usize>,
+    pub run_wrappers: std::collections::BTreeSet<crate::NodeId>,
 }
 
 /// One column of a multi-column container, or a column spanner (`column-span: all`) between
@@ -305,17 +306,26 @@ impl ColumnFragments {
     }
 
     pub fn map_rect(&self, rect: kurbo::Rect, scale: f64) -> kurbo::Rect {
+        self.map_child_rect(None, rect, scale)
+    }
+
+    pub fn map_child_rect(&self, child: Option<crate::NodeId>, rect: kurbo::Rect, scale: f64) -> kurbo::Rect {
         let mut out: Option<kurbo::Rect> = None;
         // pyro: a rect only touching a fragment's range is not in it (a spanner's row starts where
         // the column before it ends: mapped through that column too, it widened the container's
         // scrollable overflow by its offset); an empty rect goes through one fragment.
         let empty = rect.y1 <= rect.y0;
         // (Only the fragments the rect can reach: they are in strip order.)
-        let (first, last) = self.reaching(rect.y0 / scale, rect.y1 / scale);
+        let (mut first, mut last) = self.reaching(rect.y0 / scale, rect.y1 / scale);
+        if let Some(index) = child.and_then(|id| self.first_after_spanner.get(&id)).copied() {
+            first = first.max(index);
+            last = last.max(index + 1);
+        }
         for f in &self.fragments[first..last] {
             #[cfg(test)]
             MAPPED_FRAGMENTS.with(|m| m.set(m.get() + 1));
-            let y0 = rect.y0.max(f.start as f64 * scale);
+            let Some(start) = child.map_or(Some(f.start), |id| self.child_start(id, f.start)) else { continue };
+            let y0 = rect.y0.max(start as f64 * scale);
             let y1 = rect.y1.min(f.end as f64 * scale);
             if y1 < y0 || (!empty && y1 <= y0) || (empty && out.is_some()) {
                 continue;
@@ -1885,25 +1895,36 @@ impl LayoutPassState<'_> {
         // the first baseline from the first column with a line; WPT css-multicol `baseline-001`).
         let mut baselines = strip.baselines;
         let mut first_after_spanner = std::collections::BTreeMap::new();
+        let mut run_wrappers = std::collections::BTreeSet::new();
         if !spanners.is_empty() && !vertical {
             let mut owners = std::collections::HashMap::new();
-            for ((mut id, _), (index, _)) in self.doc.column_spanners_of(dom_id).into_iter().zip(fragments.iter().enumerate().filter(|(_, f)| f.spanner)) {
-                while let Some(parent) = self.nodes[id].layout_parent.get().filter(|&p| p != dom_id) { id = parent; }
+            let mut paths = std::collections::HashSet::new();
+            for ((id, _), (index, _)) in self.doc.column_spanners_of(dom_id).into_iter().zip(fragments.iter().enumerate().filter(|(_, f)| f.spanner)) {
                 owners.insert(id, index + 1);
+                let mut at = self.nodes[id].layout_parent.get();
+                while let Some(parent) = at.filter(|&p| p != dom_id && paths.insert(p)) { at = self.nodes[parent].layout_parent.get(); }
             }
             let mut next = None;
-            for &id in self.nodes[dom_id].layout_children.borrow().iter().flatten() {
+            let mut pending = vec![(dom_id, 0.0)];
+            while let Some((id, parent_y)) = pending.pop() {
+                let child = &self.nodes[id];
+                let y = if id == dom_id { 0.0 } else { parent_y + child.unrounded_layout().location.y };
                 if let Some(&index) = owners.get(&id) {
                     next = Some(index);
+                } else if id == dom_id || paths.contains(&id) {
+                    if let Some(children) = child.layout_children.borrow().as_ref() {
+                        pending.extend(children.iter().rev().map(|&child| (child, y)));
+                    }
                 } else if let Some(index) = next && let Some(first) = fragments.get(index) && !first.spanner {
-                    let child = &self.nodes[id];
-                    if !child.is_out_of_flow() && child.unrounded_layout().location.y < first.start - EPSILON {
+                    if !child.is_out_of_flow() && y < first.start - EPSILON {
                         first_after_spanner.insert(id, index);
+                        let mut at = child.layout_parent.get();
+                        while let Some(parent) = at.filter(|&p| p != dom_id && run_wrappers.insert(p)) { at = self.nodes[parent].layout_parent.get(); }
                     }
                 }
             }
         }
-        let columns = ColumnFragments { fragments, first_after_spanner, nested: nested_ctx.or(nested_rows_ctx).or(nested_span_ctx), pushed, strip_end: breaks.end };
+        let columns = ColumnFragments { fragments, first_after_spanner, run_wrappers, nested: nested_ctx.or(nested_rows_ctx).or(nested_span_ctx), pushed, strip_end: breaks.end };
         if columns.fragments.len() > 1 && !vertical {
             for candidate in oof_candidates.as_mut_slice() {
                 if candidate.containing_block.is_some() {
@@ -3872,6 +3893,7 @@ mod tests {
     #[test]
     fn fragments_map_both_ways() {
         let columns = ColumnFragments {
+            run_wrappers: Default::default(),
             first_after_spanner: Default::default(),
             strip_end: f32::INFINITY,
             nested: None,
@@ -3897,6 +3919,7 @@ mod tests {
         // The first column ends at 100 where a margin starts, the second starts past it at 120;
         // a third follows.
         let columns = ColumnFragments {
+            run_wrappers: Default::default(),
             first_after_spanner: Default::default(),
             strip_end: f32::INFINITY,
             nested: None,
@@ -3931,6 +3954,7 @@ mod tests {
             exact_x: f32::NAN,
         };
         let columns = ColumnFragments {
+            run_wrappers: Default::default(),
             first_after_spanner: Default::default(),
             strip_end: f32::INFINITY,
             nested: None,

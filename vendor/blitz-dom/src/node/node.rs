@@ -2686,6 +2686,13 @@ impl Node {
         scale: f64,
         scrollbar: &mut Option<crate::node::ScrollbarRef>,
     ) -> Option<HitResult> {
+        self.hit_inner_in_run(x, y, scale, scrollbar, None)
+    }
+
+    fn hit_inner_in_run(
+        &self, x: f32, y: f32, scale: f64, scrollbar: &mut Option<crate::node::ScrollbarRef>,
+        inherited_run: Option<(&crate::ColumnFragments, f32)>,
+    ) -> Option<HitResult> {
         use style::computed_values::pointer_events::T as PointerEvents;
         use style::computed_values::visibility::T as Visibility;
         #[cfg(test)]
@@ -2861,6 +2868,11 @@ impl Node {
             let child_position = child.taffy_position();
             let mut child_x = x;
             let mut child_y = y;
+            let mut run = inherited_run;
+            if let Some(columns) = self.column_fragments() && columns.run_wrappers.contains(&child.id) {
+                run = columns.fragment_at(child_y).map(|fragment| (columns, fragment.start));
+            }
+            if let Some((columns, start)) = inherited_run { columns.child_start(child.id, start)?; }
             if let Some(columns) = self.column_fragments() && let Some(&index) = columns.first_after_spanner.get(&child.id) {
                 let first = &columns.fragments[index];
                 if column_point.y < first.top {
@@ -2892,7 +2904,8 @@ impl Node {
                 child_x -= offset.x;
                 child_y -= offset.y;
             }
-            crate::util::ensure_stack(|| child.hit_inner(child_x, child_y, scale, scrollbar))
+            let run = run.filter(|(columns, _)| columns.run_wrappers.contains(&child.id));
+            crate::util::ensure_stack(|| child.hit_inner_in_run(child_x, child_y, scale, scrollbar, run))
         };
 
         // pyro: the items of a flex or grid child painted with the inline content of this box's

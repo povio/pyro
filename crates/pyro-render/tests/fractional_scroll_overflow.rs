@@ -60,6 +60,12 @@ fn visible_overflow_reaches_the_far_edge_of_an_extra_column() {
 }
 
 #[test]
+fn post_spanner_overflow_uses_its_own_column_run() {
+    let result = boxes(include_str!("fixtures/owned-column-overflow.html"), &["wrapped", "direct"]);
+    assert_eq!([result[0].scroll_width, result[1].scroll_width], [170.0, 120.0]);
+}
+
+#[test]
 fn fitting_fractional_inline_boxes_have_equal_client_and_scroll_extents() {
     let html = r#"<!doctype html><style>
       body{margin:0}.group{position:relative;left:100.140625px;display:flex;gap:4px}

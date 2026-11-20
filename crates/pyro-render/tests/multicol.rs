@@ -41,6 +41,13 @@ const BLUE: [u8; 3] = [0, 0, 255];
 const BLACK: [u8; 3] = [0, 0, 0];
 
 #[test]
+fn post_spanner_overflow_paints_in_its_own_column_run() {
+    let image = render(include_str!("fixtures/owned-column-overflow.html"), 1.0);
+    check(&image, 1.0, &[(5.0, 10.0, GREEN), (95.0, 40.0, GREEN), (95.0, 84.0, GREEN),
+        (5.0, 85.0, WHITE), (60.0, 120.0, GREEN), (60.0, 187.0, GREEN)], "post-spanner fragments");
+}
+
+#[test]
 fn fractional_column_translation_uses_device_pixels() {
     let image = render(include_str!("fixtures/fractional-column-offset.html"), 3.0);
     assert_eq!(pixel(&image, 3.0, 30.0, 7.0 / 3.0), GREEN);
