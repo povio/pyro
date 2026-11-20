@@ -14,7 +14,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use pyro_dom::cssom::{normalize_selector, parse_rules, Namespaces, ParsedRule, PropertyRule};
+use pyro_dom::cssom::{normalize_selector, parse_rules, Namespaces, PaletteRule, ParsedRule, PropertyRule};
 use pyro_dom::stylo::declarations::{self, DeclarationBlock};
 use pyro_dom::NodeId;
 use pyro_js::{ClassDef, IdentityKey, JsClass, JsError, JsResult, NoParent, Object, Scope, Value};
@@ -442,7 +442,7 @@ impl StyleData {
                             write_page(&*owner.rules()?, &page, None);
                         }
                     }
-                    RuleKind::Group { .. } | RuleKind::Property(_) => return Ok(()),
+                    RuleKind::Group { .. } | RuleKind::Property(_) | RuleKind::Palette(_) => return Ok(()),
                 }
                 owner.commit(&*owner.rules()?);
                 Ok(())
@@ -725,6 +725,7 @@ impl RuleList {
 enum RuleKind {
     Declarations(RefCell<String>),
     Property(PropertyRule),
+    Palette(PaletteRule),
     Style { selector: RefCell<String>, block: RefCell<String> },
     Group { name: String, condition: RefCell<String>, list: RuleList, bounds: Option<(Option<String>, Option<String>)> },
     Other { rule_type: u16, text: RefCell<String> },
@@ -752,6 +753,7 @@ impl RuleNode {
                     RuleKind::Group { name: "scope".into(), condition: RefCell::new(parts.join(" ")), list, bounds: Some((start, end)) }
                 }
                 ParsedRule::Property(rule) => RuleKind::Property(rule),
+                ParsedRule::Palette(rule) => RuleKind::Palette(rule),
                 ParsedRule::Style { selector, block } => {
                     RuleKind::Style { selector: RefCell::new(selector), block: RefCell::new(block) }
                 }
@@ -770,6 +772,7 @@ impl RuleNode {
     fn source_text(&self) -> String {
         match &self.kind {
             RuleKind::Declarations(text) => text.borrow().clone(),
+            RuleKind::Palette(rule) => rule.text.clone(),
             RuleKind::Property(rule) => rule.text.clone(),
             RuleKind::Style { selector, block } => format!("{} {{{}}}", selector.borrow(), block.borrow()),
             RuleKind::Group { name, condition, list, .. } => {
@@ -783,6 +786,7 @@ impl RuleNode {
     fn css_text(&self) -> String {
         match &self.kind {
             RuleKind::Declarations(text) => DeclarationBlock::parse(&text.borrow()).css_text(),
+            RuleKind::Palette(rule) => rule.text.clone(),
             RuleKind::Property(rule) => rule.text.clone(),
             RuleKind::Style { selector, block } => {
                 // As the rule's `style.cssText` serializes the block.
@@ -1008,6 +1012,7 @@ fn rule_wrapper<'s>(s: &Scope<'s>, rule: &Rc<RuleNode>, owner: &SheetOwner) -> J
     match &rule.kind {
         RuleKind::Declarations(_) => s.wrap::<CssNestedDeclarations>(data, key),
         RuleKind::Property(_) => s.wrap::<CssPropertyRule>(data, key),
+        RuleKind::Palette(_) => s.wrap::<CssFontPaletteValuesRule>(data, key),
         RuleKind::Style { .. } => s.wrap::<CssStyleRule>(data, key),
         RuleKind::Group { name, .. } if name == "media" => s.wrap::<CssMediaRule>(data, key),
         RuleKind::Group { name, .. } if name == "supports" => s.wrap::<CssSupportsRule>(data, key),
@@ -1028,7 +1033,6 @@ fn rule_wrapper<'s>(s: &Scope<'s>, rule: &Rc<RuleNode>, owner: &SheetOwner) -> J
                 "font-feature-values" => s.wrap::<CssFontFeatureValuesRule>(data, key),
                 "layer" if text.trim_end().ends_with(';') => s.wrap::<CssLayerStatementRule>(data, key),
                 "layer" => s.wrap::<CssLayerBlockRule>(data, key),
-                "font-palette-values" => s.wrap::<CssFontPaletteValuesRule>(data, key),
                 "starting-style" => s.wrap::<CssStartingStyleRule>(data, key),
                 "position-try" => s.wrap::<CssPositionTryRule>(data, key),
                 "view-transition" => s.wrap::<CssViewTransitionRule>(data, key),
@@ -1126,7 +1130,7 @@ fn define_rule<C: JsClass<Data = RuleData>>(def: &mut ClassDef<C>) {
             RuleKind::Style { .. } => 1.0,
             RuleKind::Group { name, .. } if name == "media" => 4.0,
             RuleKind::Group { name, .. } if name == "supports" => 12.0,
-            RuleKind::Group { .. } | RuleKind::Property(_) | RuleKind::Declarations(_) => 0.0,
+            RuleKind::Group { .. } | RuleKind::Property(_) | RuleKind::Palette(_) | RuleKind::Declarations(_) => 0.0,
             RuleKind::Other { rule_type, .. } => f64::from(*rule_type),
         }))
     });
@@ -1702,7 +1706,13 @@ rule_class!(CssPropertyRule, "CSSPropertyRule", CssRule, |def| {
     def.getter("initialValue", |s, r| Ok(property_rule(r)?.initial_value.as_deref().map_or(s.null(), |v| s.string(v))));
 });
 rule_class!(CssFontPaletteValuesRule, "CSSFontPaletteValuesRule", CssRule, |def| {
-    def.getter("name", |s, r| Ok(s.string(&rule_prelude(r))));
+    fn descriptors(data: &RuleData) -> JsResult<&PaletteRule> {
+        match &data.node()?.kind { RuleKind::Palette(rule) => Ok(rule), _ => unreachable!() }
+    }
+    def.getter("name", |s, r| Ok(s.string(&descriptors(r)?.name)));
+    def.getter("fontFamily", |s, r| Ok(s.string(&descriptors(r)?.font_family)));
+    def.getter("basePalette", |s, r| Ok(s.string(&descriptors(r)?.base_palette)));
+    def.getter("overrideColors", |s, r| Ok(s.string(&descriptors(r)?.override_colors)));
 });
 rule_class!(CssStartingStyleRule, "CSSStartingStyleRule", CssGroupRule);
 rule_class!(CssScopeRule, "CSSScopeRule", CssGroupRule, |def| {
@@ -2260,7 +2270,7 @@ impl MediaList {
                         let media = if text.is_empty() { String::new() } else { format!(" {text}") };
                         *rule.borrow_mut() = format!("@import {head}{media};");
                     }
-                    RuleKind::Style { .. } | RuleKind::Property(_) | RuleKind::Declarations(_) => return Ok(()),
+                    RuleKind::Style { .. } | RuleKind::Property(_) | RuleKind::Palette(_) | RuleKind::Declarations(_) => return Ok(()),
                 }
                 r.owner.commit(&*r.owner.rules()?);
                 return Ok(());

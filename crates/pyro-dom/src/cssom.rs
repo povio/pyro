@@ -18,7 +18,17 @@ pub struct PropertyRule {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PaletteRule {
+    pub name: String,
+    pub font_family: String,
+    pub base_palette: String,
+    pub override_colors: String,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParsedRule {
+    Palette(PaletteRule),
     Declarations(String),
     Scope { start: Option<String>, end: Option<String>, rules: Vec<ParsedRule> },
     Property(PropertyRule),
@@ -323,6 +333,32 @@ fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces, sc
         return Some(ParsedRule::Group { name: lower, condition, rules: rules? });
     }
     let (prelude, block) = parse_prelude_and_block(p, start, raw_block);
+    if lower == "font-palette-values" {
+        use style::shared_lock::{SharedRwLock, ToCssWithGuard};
+        use style::stylesheets::{CssRuleType, FontPaletteValuesRule, Origin};
+        use style_traits::ToCss as StyleToCss;
+
+        let mut input = Parser::new(&prelude);
+        let ident = input.expect_ident_cloned().ok()?;
+        input.expect_exhausted().ok()?;
+        let name = style::values::DashedIdent::from_ident(&ident).ok()?;
+        let url = crate::stylo::url_data();
+        let context = style::parser::ParserContext::new(
+            Origin::Author, &url, Some(CssRuleType::FontPaletteValues), style_traits::ParsingMode::DEFAULT,
+            style::context::QuirksMode::NoQuirks, Default::default(), None, None, Default::default(),
+        );
+        let block = block?;
+        let mut input = Parser::new(&block);
+        let location = input.current_source_location();
+        let rule = FontPaletteValuesRule::parse(&context, &mut input, name, location);
+        return Some(ParsedRule::Palette(PaletteRule {
+            name: ident.to_string(),
+            font_family: if rule.family_names.is_empty() { String::new() } else { rule.family_names.to_css_string() },
+            base_palette: rule.base_palette.as_ref().map(StyleToCss::to_css_string).unwrap_or_default(),
+            override_colors: if rule.override_colors.is_empty() { String::new() } else { rule.override_colors.to_css_string() },
+            text: rule.to_css_string(&SharedRwLock::new().read()),
+        }));
+    }
     if lower == "property" {
         return parse_property_rule(&prelude, &block?);
     }
@@ -428,7 +464,7 @@ fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces, sc
         "page" => 6,
         "namespace" => 10,
         "counter-style" => 11,
-        "font-palette-values" | "starting-style"
+        "starting-style"
         | "view-transition" => 0,
         _ => return None,
     };
@@ -770,6 +806,18 @@ mod tests {
         assert_eq!(rules, [style("> .child", " color:red ")]);
         assert!(parse_one_rule("@scope (unknown|g) {}", &mut namespaces).is_err());
         assert!(parse_one_rule("@scope (a::before) {}", &mut namespaces).is_err());
+    }
+
+    #[test]
+    fn palette_rule_exposes_only_accepted_descriptors() {
+        let mut namespaces = Namespaces::new();
+        assert!(parse_one_rule("@font-palette-values plain {}", &mut namespaces).is_err());
+        let ParsedRule::Palette(empty) = parse_one_rule("@font-palette-values --empty {}", &mut namespaces).unwrap() else { panic!() };
+        assert_eq!(empty.text, "@font-palette-values --empty { }");
+        let ParsedRule::Palette(rule) = parse_one_rule(r"@font-palette-values --a\ b { base-palette: 2; base-palette: bogus; override-colors: invalid }", &mut namespaces).unwrap() else { panic!() };
+        assert_eq!(rule.name, "--a b");
+        assert_eq!(rule.base_palette, "2");
+        assert!(rule.font_family.is_empty() && rule.override_colors.is_empty());
     }
 
     #[test]
