@@ -51,11 +51,12 @@ fn form_state_is_written_into_markup() {
         dom.set_option_selected(o2, true).unwrap();
     }
     let html = render(&dom.borrow(), d);
-    assert!(html.contains(r#"<input id="t" value="typed &quot;in&quot;">"#), "{html}");
+    // (The engine's attributes, the form state among them, come first: snapshot::ENGINE_ATTRIBUTES.)
+    assert!(html.contains(r#"<input value="typed &quot;in&quot;" id="t">"#), "{html}");
     assert!(html.contains(r#"<input id="c" type="checkbox">"#), "{html}");
-    assert!(html.contains(r#"<input id="r" type="radio" checked>"#), "{html}");
+    assert!(html.contains(r#"<input checked id="r" type="radio">"#), "{html}");
     assert!(html.contains("<textarea id=\"a\">\nline 1\n&lt;b&gt;</textarea>"), "{html}");
-    assert!(html.contains(r#"<option id="o1">a</option><option id="o2" selected>b</option>"#), "{html}");
+    assert!(html.contains(r#"<option id="o1">a</option><option selected id="o2">b</option>"#), "{html}");
     assert!(html.contains(r#"<input id="f" type="file">"#), "{html}");
 }
 
@@ -92,7 +93,8 @@ fn sheets_come_from_the_caller() {
     );
     assert!(html.contains(r#"<style id="s">p { color: blue }</style>"#), "{html}");
     assert!(html.contains(r#"<style id="e">em { color: red }</style>"#), "{html}");
-    assert!(html.contains(r#"<link id="l" rel="stylesheet" href="http://test/a.css">"#), "{html}");
+    // (The engine's `href` comes first.)
+    assert!(html.contains(r#"<link href="http://test/a.css" id="l" rel="stylesheet">"#), "{html}");
     assert!(!html.contains("missing.css"), "{html}");
 }
 
@@ -317,7 +319,7 @@ fn password_render_copies_mask_current_values_without_mutating_inputs() {
     assert!(!html.contains("attribute-secret"));
     assert!(!html.contains("typed-secret"));
     assert!(html.contains(&format!("value=\"{}\"", "•".repeat(12))));
-    assert!(html.contains(r#"<input id="plain" value="visible">"#));
+    assert!(html.contains(r#"<input value="visible" id="plain">"#), "{html}");
     assert!(html.contains(r#"<input id="empty" type="password">"#));
     let opts = RenderHtml { style_text: &|_| None, stylesheet_href: &|_| None, mark: None, adopted: None };
     let tree = dom.borrow().render_tree(document, &opts).unwrap();
