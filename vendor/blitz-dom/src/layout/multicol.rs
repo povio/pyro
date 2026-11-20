@@ -3280,6 +3280,20 @@ mod tests {
         assert!(walks <= 8 * boxes, "{walks} nodes numbered for {boxes} boxes");
     }
 
+    /// pyro: (hit order) a miss in a wide flex container whose items are hit in a pre-pass (all
+    /// `pointer-events: none`) takes child-list steps linear in its items: its second visit, for its
+    /// own box, skipped its items by searching the item list for each. Review cycle 5, finding 2.
+    #[test]
+    fn a_miss_in_a_wide_flex_container_takes_linear_steps() {
+        let items: Vec<Div> = (0..3000).map(|_| div("width:1px;height:10px;pointer-events:none", vec![])).collect();
+        let mut doc = laid_out(vec![div("pointer-events:none", vec![div("display:flex;flex-wrap:wrap;width:400px;pointer-events:none", items)])]);
+        let boxes = doc.nodes.len();
+        crate::util::HIT_STEPS.with(|steps| steps.set(0));
+        let _ = doc.hit(200.0, 5.0);
+        let steps = crate::util::HIT_STEPS.with(|steps| steps.get());
+        assert!(steps > 0 && steps <= 8 * boxes, "{steps} child-list steps for {boxes} boxes");
+    }
+
     /// pyro: a hoisted box is hit only where paint shows it: in the columns its strip range
     /// reaches, not in a spanner's row (paint leaves those out), even where it reaches into one.
     #[test]

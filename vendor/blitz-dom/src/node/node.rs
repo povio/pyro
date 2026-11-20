@@ -2915,6 +2915,12 @@ impl Node {
             return None;
         }
 
+        let item_set: Option<std::collections::HashSet<NodeId>> = no_items.then(|| {
+            let items = self.layout_children.borrow();
+            #[cfg(test)]
+            crate::util::HIT_STEPS.with(|steps| steps.set(steps.get() + items.as_ref().map_or(0, |items| items.len())));
+            items.iter().flatten().copied().collect()
+        });
         // Call `.hit()` on each child in turn. If any return `Some` then return that value. Else return `Some(self.id).
         for child_id in self.paint_children.borrow().iter().flatten().rev() {
             let Some(child) = self.tree().get(*child_id) else {
@@ -2923,8 +2929,11 @@ impl Node {
             if tested.contains(child_id) {
                 continue;
             }
-            // pyro: its items, tested for the parent already, are not tested again.
-            if no_items && self.layout_children.borrow().as_ref().is_some_and(|items| items.contains(child_id)) {
+            // pyro: its items, tested for the parent already, are not tested again (a set of them,
+            // made once per visit: not a search of the item list per child).
+            #[cfg(test)]
+            crate::util::HIT_STEPS.with(|steps| steps.set(steps.get() + 1));
+            if no_items && item_set.as_ref().is_some_and(|items| items.contains(child_id)) {
                 continue;
             }
             NO_ITEMS.set(items_done.contains(child_id));

@@ -593,6 +593,9 @@ pub(crate) fn share_sheet(css: &str, url: &str, sheet: &style::stylesheets::Docu
 std::thread_local! {
     /// pyro: (tests) how many boxes `Node::hit_inner` was asked about on this thread.
     pub(crate) static HIT_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// pyro: (tests) the child-list steps `Node::hit_inner` takes (lookups, and the entries of the
+    /// item sets it makes).
+    pub(crate) static HIT_STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     /// pyro: (tests) the sibling-list entries comparisons of tree order searched
     /// (`precedes_in_tree_order`), and the nodes numbered for tree order (`tree_order_indices`).
     pub(crate) static TREE_ORDER_COMPARISONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
