@@ -867,8 +867,7 @@ impl BaseDocument {
         // pyro: the clamp line of a clamp that discarded lines ends at its block ellipsis, which
         // goes inside the line box: what it hides past it is no overflow (Chrome: WPT css-overflow
         // `line-clamp/block-ellipsis-013`, a `white-space: pre` line wider than the viewport).
-        // (Classic scrollbars only: overlay mode keeps its results.)
-        let clamp_line = (self.nodes.classic_scrollbars && kept != usize::MAX && text_layout.len() > kept)
+        let clamp_line = (kept != usize::MAX && text_layout.len() > kept)
             .then(|| kept.saturating_sub(1));
         let content_width = (l.size.width - l.border.left - l.border.right - l.padding.left - l.padding.right).max(0.0) as f64 * scale;
         let width = text_layout
