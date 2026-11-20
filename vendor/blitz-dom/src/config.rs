@@ -63,10 +63,34 @@ impl FrameTableData {
     pub fn lookup(&self, marker: &str) -> Option<&FrameContent> {
         let mut parts = marker.split(':');
         let (nonce, index, version) = (parts.next()?, parts.next()?, parts.next()?);
-        if parts.next().is_some() || self.nonce.is_empty() || nonce != self.nonce {
+        if parts.next().is_some() || self.nonce.is_empty() || !same_secret(nonce, &self.nonce) {
             return None;
         }
         self.entries.get(index).filter(|entry| format!("{:016x}", entry.version) == version)
+    }
+}
+
+/// pyro: whether `given` is `secret`, in time that depends on their lengths only (never on where
+/// they first differ): a marker's nonce is compared without telling a prober how much of it was
+/// right.
+fn same_secret(given: &str, secret: &str) -> bool {
+    let (given, secret) = (given.as_bytes(), secret.as_bytes());
+    if given.len() != secret.len() {
+        return false;
+    }
+    let diff = given.iter().zip(secret).fold(0u8, |acc, (a, b)| acc | (a ^ b));
+    std::hint::black_box(diff) == 0
+}
+
+#[cfg(test)]
+mod same_secret_tests {
+    #[test]
+    fn same_secret_is_equality() {
+        assert!(super::same_secret("00ff", "00ff"));
+        assert!(!super::same_secret("00fe", "00ff"));
+        assert!(!super::same_secret("10ff", "00ff"));
+        assert!(!super::same_secret("00f", "00ff"));
+        assert!(!super::same_secret("", "00ff"));
     }
 }
 

@@ -279,6 +279,39 @@ struct HtmlSink<'a> {
     /// pyro: elements written with their render key (`data-pyro-key`): a frame's animated
     /// elements, whose sampled animations the renderer applies to its document by key.
     keyed: &'a [u64],
+    /// pyro: the elements open in the markup, as written ([`Written`]).
+    open: Vec<Written>,
+}
+
+/// pyro: how an open element was written, for its text and its end tag.
+#[derive(Clone, Copy, PartialEq)]
+enum Written {
+    Plain,
+    /// An HTML `<xmp>` or `<plaintext>`, written as `<pre>` with its name in [`TAG_ATTRIBUTE`]:
+    /// a reparse would read its content as text up to `</xmp>` (`<plaintext>`: to the end of the
+    /// markup, hiding every later element, frames and engine elements included), not as the DOM
+    /// has it. `<pre>` parses as they do otherwise (it closes an open `<p>`); the renderer gives
+    /// the element its name back (blitz-html `create_element`).
+    AsPre,
+    /// An HTML `<noembed>` or `<noframes>`: raw text in a reparse, so its text is written raw
+    /// (an end tag of it neutralised, [`raw_text_safe`]), not as entities a reparse keeps as such.
+    RawText(&'static str),
+}
+
+/// pyro: the attribute an element written as `<pre>` carries its own name in (see [`Written`]).
+/// Page attributes with the [`ENGINE_ATTRIBUTE_PREFIX`] are never written, so only the engine
+/// writes it.
+pub const TAG_ATTRIBUTE: &str = "data-pyro-tag";
+
+/// pyro: [`escape`], and a carriage return as a character reference: a reparse turns a raw CR
+/// (and CR LF) into LF, a reference it keeps.
+fn escape_render(out: &mut String, s: &str, attr: bool) {
+    if !s.contains('\r') {
+        return escape(out, s, attr);
+    }
+    let mut escaped = String::with_capacity(s.len() + 8);
+    escape(&mut escaped, s, attr);
+    out.push_str(&escaped.replace('\r', "&#13;"));
 }
 
 impl Sink for HtmlSink<'_> {
@@ -287,10 +320,27 @@ impl Sink for HtmlSink<'_> {
         self.out.push_str(name);
         self.out.push('>');
     }
-    fn open(&mut self, key: u64, tag: &str, name: &QualName, attrs: &[RAttr<'_>], marked: bool, _void: bool) {
+    fn open(&mut self, key: u64, tag: &str, name: &QualName, attrs: &[RAttr<'_>], marked: bool, void: bool) {
+        let written = match (name.ns == ns!(html), &*name.local) {
+            (true, "xmp" | "plaintext") => Written::AsPre,
+            (true, "noembed") => Written::RawText("noembed"),
+            (true, "noframes") => Written::RawText("noframes"),
+            _ => Written::Plain,
+        };
+        if !void {
+            self.open.push(written);
+        }
         let out = &mut self.out;
         out.push('<');
-        out.push_str(tag);
+        if written == Written::AsPre {
+            out.push_str("pre ");
+            out.push_str(TAG_ATTRIBUTE);
+            out.push_str("=\"");
+            out.push_str(&name.local);
+            out.push('"');
+        } else {
+            out.push_str(tag);
+        }
         // The state attribute is for keyed trees: markup would lose its namespace. Markup, which
         // another engine may load, carries no event handler (`on*`) attributes; keyed trees keep
         // them for `content: attr()`.
@@ -311,7 +361,7 @@ impl Sink for HtmlSink<'_> {
             }
             if !a.valueless {
                 out.push_str("=\"");
-                escape(out, &a.value, true);
+                escape_render(out, &a.value, true);
                 out.push('"');
             }
         }
@@ -332,20 +382,28 @@ impl Sink for HtmlSink<'_> {
             let _ = write!(out, " data-pyro-key=\"{key}\"");
         }
         out.push('>');
+        if written == Written::AsPre {
+            // A leading newline right after <pre> is dropped by parsers.
+            out.push('\n');
+        }
     }
     fn close(&mut self, tag: &str) {
+        let tag = if self.open.pop() == Some(Written::AsPre) { "pre" } else { tag };
         self.out.push_str("</");
         self.out.push_str(tag);
         self.out.push('>');
     }
     fn text(&mut self, _key: u64, text: &str, kind: TextKind) {
         match kind {
-            TextKind::Node => escape(&mut self.out, text, false),
+            TextKind::Node => match self.open.last() {
+                Some(Written::RawText(tag)) => self.out.push_str(&raw_text_safe(text, tag)),
+                _ => escape_render(&mut self.out, text, false),
+            },
             TextKind::Style => self.out.push_str(&raw_text_safe(text, "style")),
             TextKind::Textarea => {
                 // A leading newline right after <textarea> is dropped by parsers.
                 self.out.push('\n');
-                escape(&mut self.out, text, false);
+                escape_render(&mut self.out, text, false);
             }
         }
     }
@@ -428,7 +486,7 @@ impl Dom {
         keyed: &[u64],
     ) -> DomResult<String> {
         let mut sink =
-            HtmlSink { out: String::with_capacity(64 * 1024), mark: opts.mark.map(|m| m.1), scroll, sticky, keyed };
+            HtmlSink { out: String::with_capacity(64 * 1024), mark: opts.mark.map(|m| m.1), scroll, sticky, keyed, open: Vec::new() };
         self.render_walk(doc, opts, &mut sink)?;
         Ok(sink.out)
     }

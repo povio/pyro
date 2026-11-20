@@ -2060,7 +2060,7 @@ diff --git a/packages/blitz-dom/src/config.rs b/packages/blitz-dom/src/config.rs
  use std::sync::Arc;
  use style::media_queries::MediaType;
  
-@@ -28,12 +28,67 @@
+@@ -28,12 +28,91 @@
      Sequential,
  }
  
@@ -2099,10 +2099,34 @@ diff --git a/packages/blitz-dom/src/config.rs b/packages/blitz-dom/src/config.rs
 +    pub fn lookup(&self, marker: &str) -> Option<&FrameContent> {
 +        let mut parts = marker.split(':');
 +        let (nonce, index, version) = (parts.next()?, parts.next()?, parts.next()?);
-+        if parts.next().is_some() || self.nonce.is_empty() || nonce != self.nonce {
++        if parts.next().is_some() || self.nonce.is_empty() || !same_secret(nonce, &self.nonce) {
 +            return None;
 +        }
 +        self.entries.get(index).filter(|entry| format!("{:016x}", entry.version) == version)
++    }
++}
++
++/// pyro: whether `given` is `secret`, in time that depends on their lengths only (never on where
++/// they first differ): a marker's nonce is compared without telling a prober how much of it was
++/// right.
++fn same_secret(given: &str, secret: &str) -> bool {
++    let (given, secret) = (given.as_bytes(), secret.as_bytes());
++    if given.len() != secret.len() {
++        return false;
++    }
++    let diff = given.iter().zip(secret).fold(0u8, |acc, (a, b)| acc | (a ^ b));
++    std::hint::black_box(diff) == 0
++}
++
++#[cfg(test)]
++mod same_secret_tests {
++    #[test]
++    fn same_secret_is_equality() {
++        assert!(super::same_secret("00ff", "00ff"));
++        assert!(!super::same_secret("00fe", "00ff"));
++        assert!(!super::same_secret("10ff", "00ff"));
++        assert!(!super::same_secret("00f", "00ff"));
++        assert!(!super::same_secret("", "00ff"));
 +    }
 +}
 +
@@ -2128,7 +2152,7 @@ diff --git a/packages/blitz-dom/src/config.rs b/packages/blitz-dom/src/config.rs
      /// User Agent stylesheets, in cascade order. Defaults to `vec![UserAgentStylesheet::default_sheet()]`.
      ///
      /// The list is used as given, so replacing it removes the default sheet unless it is
-@@ -68,6 +123,25 @@
+@@ -68,6 +147,25 @@
      /// How deeply this document is nested within other documents
      /// (0 for a root document). Used to limit `<iframe>` nesting depth.
      pub subdocument_depth: usize,
@@ -2154,7 +2178,7 @@ diff --git a/packages/blitz-dom/src/config.rs b/packages/blitz-dom/src/config.rs
      /// Devtools provider notified of DOM mutations (e.g. by a remote inspector)
      #[cfg(feature = "devtools")]
      pub devtools_provider: Option<Arc<dyn DevtoolsProvider>>,
-@@ -78,6 +152,8 @@
+@@ -78,6 +176,8 @@
          Self {
              viewport: None,
              base_url: None,
@@ -2163,7 +2187,7 @@ diff --git a/packages/blitz-dom/src/config.rs b/packages/blitz-dom/src/config.rs
              ua_stylesheets: vec![UserAgentStylesheet::default_sheet()],
              net_provider: None,
              navigation_provider: None,
-@@ -89,6 +165,11 @@
+@@ -89,6 +189,11 @@
              incremental: None,
              abort_signal: None,
              subdocument_depth: 0,

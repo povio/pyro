@@ -93,8 +93,9 @@ fn sheets_come_from_the_caller() {
     );
     assert!(html.contains(r#"<style id="s">p { color: blue }</style>"#), "{html}");
     assert!(html.contains(r#"<style id="e">em { color: red }</style>"#), "{html}");
-    // (The engine's `href` comes first.)
-    assert!(html.contains(r#"<link href="http://test/a.css" id="l" rel="stylesheet">"#), "{html}");
+    // (The engine's `href` comes first, then its sheet key: the renderer serves the sheet by it.)
+    assert!(html.contains(r#"<link href="http://test/a.css" data-pyro-sheet=""#), "{html}");
+    assert!(html.contains(r#"" id="l" rel="stylesheet">"#), "{html}");
     assert!(!html.contains("missing.css"), "{html}");
 }
 
@@ -616,4 +617,66 @@ fn a_frames_namespaced_source_attributes_are_left_out() {
     }
     let html = render(&dom.borrow(), d);
     assert!(!html.contains("evil.test"), "{html}");
+}
+
+/// Every element's content survives a reparse as the DOM has it: a `<plaintext>` (which a
+/// reparse would make the rest of the markup's text) or an `<xmp>` holding its own end tag
+/// cannot hide a later frame or engine element; `<noembed>`/`<noframes>` text comes back as
+/// written; a carriage return (CR, CR LF) in text or an attribute is kept (security review
+/// cycle 5, 7). The renderer gives a `<pre>` its `data-pyro-tag` name back (blitz-html).
+#[test]
+fn every_element_closes_in_a_reparse_where_the_dom_does() {
+    let (dom, d) = doc("<body><p id=p title=t>p</p></body>");
+    {
+        let mut dom = dom.borrow_mut();
+        let body = find(&dom, d, "body");
+        let el = |dom: &mut Dom, tag: &str, text: &str| {
+            let e = dom.create_element(d, tag).unwrap();
+            let t = dom.create_text(d, text).unwrap();
+            dom.append_child(e, t).unwrap();
+            dom.append_child(body, e).unwrap();
+            e
+        };
+        el(&mut dom, "plaintext", "a<b>&c\r\nd</plaintext><iframe data-pyro-frame=\"x:1:0\">");
+        el(&mut dom, "xmp", "</xmp><iframe data-pyro-frame=\"x:1:0\"></iframe>\n<i>");
+        el(&mut dom, "noembed", "</noembed><b>n</b> &amp; <i>");
+        el(&mut dom, "noframes", "f<b>f</b>");
+        let p = find(&dom, d, "#p");
+        dom.set_attribute(p, "title", "a\rb\r\nc").unwrap();
+        let t = dom.create_text(d, "x\ry").unwrap();
+        dom.append_child(p, t).unwrap();
+        let f = dom.create_element(d, "iframe").unwrap();
+        dom.append_child(body, f).unwrap();
+        let after = dom.create_element(d, "div").unwrap();
+        dom.set_attribute(after, "id", "after").unwrap();
+        dom.append_child(body, after).unwrap();
+    }
+    // (Tag, attributes but the engine's, text) of every element, a `<pre>` by the name it carries.
+    let shape = |dom: &Dom, doc: NodeId| -> Vec<(String, Vec<(String, String)>, String)> {
+        dom.query_selector_all(doc, &parse_selectors("*").unwrap())
+            .unwrap()
+            .into_iter()
+            .map(|e| {
+                let attrs = dom.attributes(e).unwrap();
+                let tag = attrs.iter().find(|a| &*a.name.local == "data-pyro-tag").map(|a| a.value.to_uppercase());
+                let kept = attrs
+                    .iter()
+                    .filter(|a| !a.name.local.starts_with("data-pyro-"))
+                    .map(|a| (a.name.local.to_string(), a.value.to_string()))
+                    .collect();
+                (tag.unwrap_or_else(|| dom.tag_name(e).unwrap()), kept, dom.child_text_content(e).into_owned())
+            })
+            .collect()
+    };
+    let mut before = shape(&dom.borrow(), d);
+    // (A `<noembed>`'s text holding its own end tag is the one change: it is written `<\/noembed`,
+    // the element never displayed.)
+    for (tag, _, text) in &mut before {
+        if tag == "NOEMBED" {
+            *text = text.replace("</noembed", "<\\/noembed");
+        }
+    }
+    let html = render(&dom.borrow(), d);
+    let (again, d2) = doc(&html);
+    assert_eq!(shape(&again.borrow(), d2), before, "{html}");
 }

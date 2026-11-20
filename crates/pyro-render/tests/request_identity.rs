@@ -613,3 +613,36 @@ fn a_redirected_linked_sheet_resolves_against_its_final_url_on_the_network() {
     assert!(asked.iter().any(|u| u == "http://test/new/img.png"), "{asked:?}");
     assert!(!asked.iter().any(|u| u == "http://test/old/img.png"), "{asked:?}");
 }
+
+/// A `<pre>` the snapshot wrote for a `<plaintext>` or `<xmp>` (pyro-dom `TAG_ATTRIBUTE`) is that
+/// element in the render document (its own selectors match it), and the elements after it are
+/// elements: a later image still loads (security review cycle 5, 7).
+#[test]
+fn a_plaintext_written_as_pre_is_itself_and_ends_where_the_dom_does() {
+    #[derive(Default)]
+    struct Seen(Mutex<Vec<String>>);
+    struct Record(Arc<Seen>);
+    impl Fetcher for Record {
+        fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+            self.0 .0.lock().unwrap().push(url);
+            done(Err("404".into()));
+        }
+    }
+    let seen = Arc::new(Seen::default());
+    let fetcher: Arc<dyn Fetcher> = Arc::new(Record(seen.clone()));
+    let snapshot = Snapshot {
+        html: "<!doctype html><style>plaintext + xmp + div { width: 10px; height: 10px; background-image: url(http://test/sib.png) }\
+               pre ~ div { background-image: url(http://test/pre.png) !important }</style>\
+               <pre data-pyro-tag=\"plaintext\">\na&lt;b</pre><pre data-pyro-tag=\"xmp\">\nx</pre><div></div>"
+            .into(),
+        base_url: "http://test/".into(),
+        width: 40,
+        height: 40,
+        device_scale_factor: 1.0,
+        ..Default::default()
+    };
+    Renderer::new().render(&snapshot, Area::Viewport, Backend::Cpu, &fetcher).unwrap();
+    let asked = seen.0.lock().unwrap().clone();
+    assert!(asked.iter().any(|u| u == "http://test/sib.png"), "{asked:?}");
+    assert!(!asked.iter().any(|u| u == "http://test/pre.png"), "{asked:?}");
+}
