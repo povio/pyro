@@ -1548,8 +1548,13 @@ rule_class!(CssPageRule, "CSSPageRule", CssGroupRule, |def| {
 });
 rule_class!(CssKeyframesRule, "CSSKeyframesRule", CssRule, |def| {
     def.getter("name", |s, r| {
-        let prelude = rule_prelude(r);
-        Ok(s.string(prelude.trim_matches(|c| c == '"' || c == '\'')))
+        let text = rule_text(r);
+        let mut parser = cssparser::Parser::new(&text);
+        let name = match parser.next() {
+            Ok(cssparser::Token::AtKeyword(_)) => parser.expect_ident_or_string().ok().map(|name| name.as_ref()),
+            _ => None,
+        };
+        Ok(s.string(name.unwrap_or_default()))
     });
 });
 rule_class!(CssNamespaceRule, "CSSNamespaceRule", CssRule, |def| {

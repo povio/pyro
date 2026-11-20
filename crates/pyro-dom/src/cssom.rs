@@ -236,6 +236,21 @@ fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces) ->
         return Some(ParsedRule::Group { name: lower, condition, rules: rules? });
     }
     let (prelude, block) = parse_prelude_and_block(p, start, raw_block);
+    if matches!(lower.as_str(), "keyframes" | "-webkit-keyframes") {
+        use style::parser::Parse;
+        use style::stylesheets::{CssRuleType, Origin, UrlExtraData};
+        use style::values::KeyframesName;
+        use style_traits::ToCss;
+
+        let block = block?;
+        let url = UrlExtraData(style::servo_arc::Arc::new(url::Url::parse("about:blank").ok()?));
+        let context = style::parser::ParserContext::new(
+            Origin::Author, &url, Some(CssRuleType::Keyframes), style_traits::ParsingMode::DEFAULT,
+            style::context::QuirksMode::NoQuirks, Default::default(), None, None, Default::default(),
+        );
+        let name = Parser::new(&prelude).parse_entirely(|input| KeyframesName::parse(&context, input)).ok()?;
+        return Some(ParsedRule::Other { rule_type: 7, text: format!("@{lower} {} {{{block}}}", name.to_css_string()) });
+    }
     if lower == "position-try" {
         let mut parser = Parser::new(&prelude);
         let ident = parser.expect_ident().ok()?.clone();
@@ -257,7 +272,6 @@ fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces) ->
         "import" => 3,
         "font-face" => 5,
         "page" => 6,
-        "keyframes" | "-webkit-keyframes" => 7,
         "namespace" => 10,
         "counter-style" => 11,
         "font-feature-values" => 14,

@@ -6488,6 +6488,13 @@ fn body_window_event_handlers_forward_to_the_window() {
     e.page.dispose();
 }
 
+#[test]
+fn css_keyframes_names_are_css_tokens() {
+    let e = env(r#"<style id=s>@keyframes none {} @keyframes foo; @-webkit-keyframes 'a;{b' {} @keyframes \66 oo {} @keyframes 'inherit' {}</style>"#);
+    assert_eq!(eval(&e.main, "[...document.getElementById('s').sheet.cssRules].map(rule => rule.name).join('|')"), "a;{b|foo|inherit");
+    e.page.dispose();
+}
+
 /// Rules wrap as their CSSOM interfaces (all CSSRule subclasses), `cssRules`
 /// is a live CSSRuleList, and `media` of `@media`/`@import` is a MediaList
 /// serialized by the style engine (css/cssom CSSRule-type, MediaList-parsing).
