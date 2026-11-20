@@ -6675,17 +6675,19 @@ fn css_rules_parse_lazily_from_the_sheet_and_stay_live() {
         "hidden|visible|1"
     );
 
-    // New text replaces the sheet, edits included.
+    // New text replaces the sheet, edits included: a new sheet object (HTML "update a style
+    // block"), whose rules are the new text's; the old object and its lists are detached and see
+    // none of them (security review cycle 4, 2a).
     assert_eq!(
         eval(
             &e.main,
-            "st.textContent=':nth-child(1n+0){}';[sh.cssRules.length,rs.length,rs[0].selectorText].join('|')"
+            "st.textContent=':nth-child(1n+0){}';[st.sheet===sh,st.sheet.cssRules.length,st.sheet.cssRules[0].selectorText,rs.length,sh.cssRules.length].join('|')"
         ),
-        "1|1|:nth-child(n)"
+        "false|1|:nth-child(n)|0|0"
     );
-    assert_eq!(eval(&e.main, "st.textContent='[x y]{}';sh.cssRules.length"), "0");
+    assert_eq!(eval(&e.main, "st.textContent='[x y]{}';st.sheet.cssRules.length"), "0");
     assert_eq!(
-        eval(&e.main, "st.textContent=\"@namespace x 'a'; [x|foo=''  i]{}\";[...sh.cssRules].map(r=>r.type).join()"),
+        eval(&e.main, "st.textContent=\"@namespace x 'a'; [x|foo=''  i]{}\";[...st.sheet.cssRules].map(r=>r.type).join()"),
         "10,1"
     );
 
