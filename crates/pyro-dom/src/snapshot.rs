@@ -902,7 +902,7 @@ impl Dom {
             // again (its first `<summary>` may be another one): the whole tree. A change deeper in
             // it, or of its attributes (`open`), is a change of the nodes alone, which keep their
             // keys in the slots.
-            if self.renders_details_slots(p) && rendered(p) == Ok(true) {
+            if rendered(p) == Ok(true) && self.renders_details_slots(p) {
                 return None;
             }
             match rendered(p) {
