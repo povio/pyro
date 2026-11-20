@@ -6635,6 +6635,21 @@ fn page_rules_have_descriptors_and_margin_rules() {
 /// required (a bare `deleteRule()` must not delete rule 0), and an `@import`
 /// serializes its URL as `url("...")` with its layer and supports() parts.
 #[test]
+fn font_face_descriptors_share_a_live_block() {
+    let e = env("<style id=s>@font-face { font-family: Demo; src: local(Demo); }</style>");
+    assert_eq!(eval(&e.main, "const rule = document.getElementById('s').sheet.cssRules[0];
+        const descriptors = rule.style; const kept = descriptors.src;
+        descriptors.fontWeight = '200 700'; descriptors.fontWeight = 'bolder';
+        const result = [rule.style === descriptors, descriptors.parentRule === rule,
+            descriptors instanceof CSSFontFaceDescriptors, descriptors.src === kept,
+            descriptors.removeProperty('font-weight'), descriptors.fontWeight];
+        rule.style = 'unicode-range: U+61-7A; color: red';
+        result.push(descriptors.length, descriptors.item(0), descriptors.unicodeRange.toUpperCase());
+        result.join('|')"), "true|true|true|true|200 700||1|unicode-range|U+61-7A");
+    e.page.dispose();
+}
+
+#[test]
 fn cssom_interface_shapes_and_import_parts() {
     let e = env(concat!(
         "<style id=s>@import \"a.css\" layer(x.y) supports(display: grid) SCREEN; @page {} b { color: red }",

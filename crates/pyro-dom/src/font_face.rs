@@ -64,6 +64,48 @@ pub fn descriptor(name: &str, value: &str) -> Option<String> {
     Some(css)
 }
 
+pub struct DescriptorBlock {
+    descriptors: Descriptors,
+    base: UrlExtraData,
+}
+
+impl DescriptorBlock {
+    pub fn supports(name: &str) -> bool {
+        DescriptorId::from_ident(name).is_ok()
+    }
+
+    pub fn parse(text: &str, base: &str) -> Self {
+        crate::stylo::enable_features();
+        let base = url_data(base);
+        let mut input = cssparser::Parser::new(text);
+        let location = input.current_source_location();
+        let rule = style::font_face::parse_font_face_block(&context(&base), &mut input, location);
+        Self { descriptors: rule.descriptors, base }
+    }
+
+    pub fn names(&self) -> Vec<String> {
+        (0..self.descriptors.len()).filter_map(|index| self.descriptors.at(index)).map(|id| id.name().to_owned()).collect()
+    }
+
+    pub fn get(&self, name: &str) -> String {
+        let mut value = String::new();
+        if let Ok(id) = DescriptorId::from_ident(name) {
+            let _ = self.descriptors.get(id, &mut value);
+        }
+        value
+    }
+
+    pub fn update(&mut self, name: &str, value: &str) -> bool {
+        let Ok(id) = DescriptorId::from_ident(name) else { return false };
+        if value.is_empty() { return self.descriptors.remove(id); }
+        self.descriptors.set(id, &context(&self.base), &mut cssparser::Parser::new(value)).unwrap_or(false)
+    }
+
+    pub fn css_text(&self) -> String {
+        self.descriptors.to_css_string().trim_end().to_owned()
+    }
+}
+
 /// One source of a face, in the order to try.
 #[derive(Clone, Debug, PartialEq)]
 pub enum FontSource {

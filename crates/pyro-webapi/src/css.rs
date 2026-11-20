@@ -355,11 +355,41 @@ enum StyleSource {
 }
 
 impl StyleData {
+    fn is_font_face(&self) -> bool {
+        matches!(&self.source, StyleSource::Rule { node, .. } if matches!(node.kind, RuleKind::Other { rule_type: 5, .. }))
+    }
+
+    fn font_block(&self, text: &str) -> Option<pyro_dom::font_face::DescriptorBlock> {
+        let StyleSource::Rule { owner, node } = &self.source else { return None };
+        if !matches!(node.kind, RuleKind::Other { rule_type: 5, .. }) { return None; }
+        let base = match owner {
+            SheetOwner::Node(hold, _) => {
+                let dom = hold.page.dom.borrow();
+                let base = dom.document_base_url(hold.page.document()).unwrap_or("about:blank");
+                hold.page.layout().style().sheet_base_url(&dom, hold.id, base).unwrap_or_else(|| base.to_owned())
+            }
+            SheetOwner::Constructed(sheet) => sheet.import.as_ref().map(|import| import.href.clone()).or_else(|| {
+                Some(sheet.page.upgrade()?.dom.borrow().document_data(sheet.document).ok()?.url.to_string())
+            }).unwrap_or_else(|| "about:blank".into()),
+        };
+        Some(pyro_dom::font_face::DescriptorBlock::parse(text, &base))
+    }
+
+    fn names(&self) -> Vec<String> {
+        let text = self.text();
+        self.font_block(&text).map_or_else(|| Block::parse(&text).names(), |block| block.names())
+    }
+
+    fn css_text(&self) -> String {
+        let text = self.text();
+        self.font_block(&text).map_or_else(|| Block::parse(&text).css_text(), |block| block.css_text())
+    }
     fn is_position_try(&self) -> bool {
         matches!(&self.source, StyleSource::Rule { node, .. } if matches!(&node.kind, RuleKind::Other { rule_type: 0, text } if text.borrow().starts_with("@position-try ")))
     }
 
     fn allows(&self, name: &str) -> bool {
+        if self.is_font_face() { return pyro_dom::font_face::DescriptorBlock::supports(name); }
         !self.is_position_try() || DeclarationBlock::position_try_allows(name)
     }
     /// The block's text: the `style` attribute, or the rule's block.
@@ -381,9 +411,6 @@ impl StyleData {
                 _ => String::new(),
             },
         }
-    }
-    fn block(&self) -> Block {
-        Block::parse(&self.text())
     }
     /// Serializes `block` back into the attribute or the rule.
     fn write(&self, block: &Block) -> JsResult<()> {
@@ -433,6 +460,7 @@ impl StyleData {
     /// answer are parsed.
     fn get(&self, name: &str) -> String {
         let text = self.text();
+        if let Some(block) = self.font_block(&text) { return block.get(name); }
         if text.is_empty() {
             return String::new();
         }
@@ -444,6 +472,7 @@ impl StyleData {
     /// `getPropertyPriority(name) == "important"`.
     fn important(&self, name: &str) -> bool {
         let text = self.text();
+        if self.is_font_face() { return false; }
         if unparsed(name) {
             return parse_declarations(&text).iter().any(|d| d.name == name && d.important);
         }
@@ -465,6 +494,13 @@ impl StyleData {
             return Ok(());
         }
         let value = value.trim();
+        if self.is_font_face() {
+            let text = self.text();
+            if let Some(mut block) = self.font_block(&text) {
+                if (!important || value.is_empty()) && block.update(name, value) { self.write_raw(block.css_text())?; }
+            }
+            return Ok(());
+        }
         if value.is_empty() {
             self.remove(name)?;
             return Ok(());
@@ -513,6 +549,11 @@ impl StyleData {
     /// `removeProperty(name)`: the value it had.
     fn remove(&self, name: &str) -> JsResult<String> {
         let text = self.text();
+        if let Some(mut block) = self.font_block(&text) {
+            let old = block.get(name);
+            if block.update(name, "") { self.write_raw(block.css_text())?; }
+            return Ok(old);
+        }
         if !text.contains(':') {
             return Ok(String::new());
         }
@@ -541,6 +582,7 @@ impl StyleData {
     }
     /// `cssText = text`: the block parsed from `text`, serialized.
     fn set_css_text(&self, text: &str) -> JsResult<()> {
+        if let Some(block) = self.font_block(text) { return self.write_raw(block.css_text()); }
         if self.is_position_try() {
             return self.write_raw(DeclarationBlock::position_try(text).css_text());
         }
@@ -573,10 +615,10 @@ impl JsClass for CssStyleDeclaration {
         def.indexed_iterator();
         def.accessor(
             "cssText",
-            |s, st| Ok(s.string(&st.block().css_text())),
+            |s, st| Ok(s.string(&st.css_text())),
             |_s, st, v| st.set_css_text(&dom_string(v)?),
         );
-        def.getter("length", |s, st| Ok(s.number(st.block().names().len() as f64)));
+        def.getter("length", |s, st| Ok(s.number(st.names().len() as f64)));
         def.getter("parentRule", |s, st| match &st.source {
             StyleSource::Inline(_) => Ok(s.null()),
             StyleSource::Rule { owner, node } => Ok(rule_wrapper(s, node, owner)?.value()),
@@ -584,9 +626,9 @@ impl JsClass for CssStyleDeclaration {
         def.pure_method("item", 1, |s, st, a| {
             a.require(1, "CSSStyleDeclaration.item")?;
             let i = to_u32(a.get(0))? as usize;
-            Ok(s.string(st.block().names().get(i).map(String::as_str).unwrap_or("")))
+            Ok(s.string(st.names().get(i).map(String::as_str).unwrap_or("")))
         });
-        def.indexed(|s, st, i| Ok(st.block().names().get(i as usize).map(|name| s.string(name))));
+        def.indexed(|s, st, i| Ok(st.names().get(i as usize).map(|name| s.string(name))));
         def.pure_method("getPropertyValue", 1, |s, st, a| {
             let name = property_arg(arg_string(&a, 0, "CSSStyleDeclaration.getPropertyValue")?);
             Ok(s.string(&st.get(&name)))
@@ -622,7 +664,7 @@ impl JsClass for CssStyleDeclaration {
             st.set(&property, &value, false)?;
             Ok(true)
         });
-        def.property_names(|_s, st| Ok(st.block().names()));
+        def.property_names(|_s, st| Ok(st.names()));
     }
 }
 
@@ -1456,7 +1498,34 @@ rule_class!(CssImportRule, "CSSImportRule", CssRule, |def| {
         None => Ok(s.null()),
     });
 });
-rule_class!(CssFontFaceRule, "CSSFontFaceRule", CssRule);
+rule_class!(CssFontFaceRule, "CSSFontFaceRule", CssRule, |def| {
+    def.accessor("style", rule_style::<CssFontFaceDescriptors>, |_s, rule, value| {
+        let source = StyleSource::Rule { owner: rule.owner.hold()?, node: rule.node()?.clone() };
+        StyleData { source }.set_css_text(&dom_string(value)?)
+    });
+});
+
+pub struct CssFontFaceDescriptors;
+impl JsClass for CssFontFaceDescriptors {
+    const NAME: &'static str = "CSSFontFaceDescriptors";
+    type Data = StyleData;
+    type Parent = CssStyleDeclaration;
+    fn define(def: &mut ClassDef<Self>) {
+        macro_rules! attributes {
+            ($(($idl:literal, $css:literal)),*) => {$(
+                def.accessor($idl, |s, st| Ok(s.string(&st.get($css))), |_s, st, value| st.set($css, &null_to_empty(value)?, false));
+                if $idl != $css {
+                    def.accessor($css, |s, st| Ok(s.string(&st.get($css))), |_s, st, value| st.set($css, &null_to_empty(value)?, false));
+                }
+            )*};
+        }
+        attributes!(("src", "src"), ("fontFamily", "font-family"), ("fontStyle", "font-style"), ("fontWeight", "font-weight"),
+            ("fontStretch", "font-stretch"), ("fontWidth", "font-width"), ("sizeAdjust", "size-adjust"), ("unicodeRange", "unicode-range"),
+            ("fontFeatureSettings", "font-feature-settings"), ("fontVariationSettings", "font-variation-settings"), ("fontDisplay", "font-display"),
+            ("fontLanguageOverride", "font-language-override"), ("ascentOverride", "ascent-override"), ("descentOverride", "descent-override"),
+            ("lineGapOverride", "line-gap-override"));
+    }
+}
 /// `style` of a rule whose block holds declarations: one object per rule
 /// and realm, of class `C`.
 fn rule_style<'s, C: JsClass<Data = StyleData>>(s: &Scope<'s>, r: &RuleData) -> JsResult<Value<'s>> {
@@ -2804,6 +2873,7 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<CssContainerRule>();
     engine.register::<CssImportRule>();
     engine.register::<CssFontFaceRule>();
+    engine.register::<CssFontFaceDescriptors>();
     engine.register::<CssPageRule>();
     engine.register::<CssPageDescriptors>();
     engine.register::<CssMarginRule>();
