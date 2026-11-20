@@ -327,3 +327,61 @@ fn keyframes_come_from_the_scope_of_the_winning_animation_name() {
     let img = render(&mut r, &snap, frame(key, vec![], vec![css("pulse", Some("linear"), 0.5)]));
     assert_near(pixel(&img, 50, 50), [0, 200, 0], "the document's @keyframes pulse");
 }
+
+/// pyro: a frame scrolled past what it can reach places its scroll timelines at the offset it
+/// reaches, and a layout property they animate lays out there: scrolled to 1000px in a frame that
+/// reaches 200px, the view timeline of a box at 260..300px is part way through, not past its end:
+/// the box is as wide as when scrolled to 200px, not 200px (it was styled at the reachable offset
+/// but laid out at the other).
+#[test]
+fn a_frame_scrolled_past_its_reach_lays_out_its_timelines_at_the_reachable_offset() {
+    use blitz_dom::{ns, QualName};
+    use pyro_render::animation::TimelineDriven;
+    let frame_doc = FrameContent {
+        html: "<!doctype html><style>body{margin:0;background:#fff}\
+               @keyframes grow{from{width:0}to{width:200px}}\
+               #s{height:40px;width:200px;background:rgb(0,200,0);animation:grow linear both;animation-timeline:view()}</style>\
+               <div style='height:260px'></div><div id=s data-pyro-key=7></div>"
+            .into(),
+        url: "http://test/".into(),
+        scroll: (0.0, 0.0),
+        client: "F#L".into(),
+        frames: Default::default(),
+        version: 1,
+        sheets: Default::default(),
+    };
+    let mut grow = css("grow", None, 0.0);
+    grow.timeline =
+        Some(TimelineDriven { index: 0, iterations: 1.0, direction: 0, fill: 3, delay_ms: 0.0, duration_ms: None, pseudo: 0 });
+    let effects: AnimationFrame = frame(7, vec![], vec![grow]);
+    let (mut live, key) = page(
+        "<!doctype html><style>body{margin:0;background:#fff}</style>\
+         <iframe id=target style='border:0;width:200px;height:100px'></iframe>",
+    );
+    // (The frame's marker, as pyro-dom writes it for a frame document, `Dom::set_frame_document`.)
+    let mut tree = (*live.live.as_ref().unwrap().tree).clone();
+    for node in &mut tree.nodes {
+        if let TreeKind::Element { attrs, .. } = &mut node.kind {
+            if node.key == key {
+                attrs.push((QualName::new(None, ns!(), "data-pyro-frame".into()), "N:1:0000000000000001".into()));
+            }
+        }
+    }
+    live.live.as_mut().unwrap().tree = Arc::new(tree);
+    let snap = Snapshot {
+        frames: Arc::new(FrameTableData { nonce: "N".into(), entries: [("1".to_owned(), frame_doc)].into_iter().collect() }),
+        frame_animations: vec![("F#L".to_owned(), Arc::new(effects))],
+        ..live
+    };
+    let fetcher: Arc<dyn Fetcher> = Arc::new(NoFetch);
+    let width_at = |scroll_y: f64| {
+        let mut frame_doc = snap.frames.entries["1"].clone();
+        frame_doc.scroll = (0.0, scroll_y);
+        let frames = Arc::new(FrameTableData { nonce: "N".into(), entries: [("1".to_owned(), frame_doc)].into_iter().collect() });
+        let img = Renderer::new().render(&Snapshot { frames, ..snap.clone() }, Area::Viewport, Backend::Cpu, &fetcher).unwrap().0;
+        (0..200).filter(|&x| pixel(&img, x, 80) == [0, 200, 0]).count()
+    };
+    let reachable = width_at(200.0);
+    assert!(reachable > 0 && reachable < 200, "part way through the view timeline: {reachable}px");
+    assert_eq!(width_at(1000.0), reachable, "scrolled past the reach: laid out as at the reachable offset");
+}

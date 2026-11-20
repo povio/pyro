@@ -100,6 +100,13 @@ impl BaseDocument {
         }
     }
 
+    /// pyro: whether an element's restyle damage reaches layout (a box changed, not only what
+    /// paints): the styles were resolved since the last layout ([`Self::resolve_style`]).
+    pub(crate) fn has_layout_damage(&self) -> bool {
+        self.root_element().has_damaged_descendants()
+            && self.nodes.iter().any(|(_, node)| node.damage().is_some_and(crate::layout::damage::reaches_layout))
+    }
+
     pub fn resolve(&mut self, current_time_for_animations: f64) {
         if TDocument::as_node(&self.root_node()).first_element_child().is_none() {
             #[cfg(feature = "tracing")]
@@ -387,8 +394,9 @@ impl BaseDocument {
                 sub_doc.resolve(current_time_for_animations);
                 if let Some((x, y)) = frame_scroll {
                     // pyro: the offset the frame can reach as laid out now (it may have shrunk in
-                    // this resolve): its scroll timelines are placed at that one, styled again
-                    // without another resolve (nor its frames').
+                    // this resolve): its scroll timelines are placed at that one and styled again;
+                    // when that changes a box (an animated width), it is laid out once more (its
+                    // timelines stay at that offset: no further clamp).
                     let scale = sub_doc.viewport().scale_f64();
                     let (vw, vh) = (
                         sub_doc.viewport().window_size.0 as f64 / scale,
@@ -398,13 +406,18 @@ impl BaseDocument {
                     let (mx, my) = ((dw - vw).max(0.0), (dh - vh).max(0.0));
                     let rx = if sub_doc.viewport_scrolls_leftward() { (-mx, 0.0) } else { (0.0, mx) };
                     let reachable = (x.clamp(rx.0, rx.1), y.clamp(0.0, my));
+                    let mut relayout = false;
                     if reachable != (x, y) {
                         sub_doc.set_timeline_scroll(std::collections::HashMap::new(), reachable);
                         if sub_doc.resample_scroll_driven() {
                             sub_doc.resolve_style(current_time_for_animations);
+                            relayout = sub_doc.has_layout_damage();
                         }
                     }
                     sub_doc.set_viewport_scroll(crate::Point { x: reachable.0, y: reachable.1 });
+                    if relayout {
+                        sub_doc.resolve(current_time_for_animations);
+                    }
                 }
 
                 subdoc_is_animating |= sub_doc.is_animating();
