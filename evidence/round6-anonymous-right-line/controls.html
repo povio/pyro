@@ -1,0 +1,40 @@
+<!doctype html><script src="/resources/testharness.js"></script><script src="/resources/testharnessreport.js"></script><body><script>
+function editor(t,html){const h=document.body.appendChild(document.createElement('div'));h.contentEditable='true';h.innerHTML=html;h.focus();t.add_cleanup(()=>h.remove());return h;}
+for(const mode of ['backspace','forward','select'])test(t=>{
+ const h=editor(t,'<p style="white-space:pre">left</p><b>right<br>tail</b><div>following</div>');
+ const left=h.firstChild,tail=h.lastChild,right=h.children[1],s=getSelection();
+ if(mode==='backspace')s.collapse(right.firstChild,0);
+ if(mode==='forward')s.collapse(left.firstChild,4);
+ if(mode==='select')s.setBaseAndExtent(left.firstChild,4,right.firstChild,0);
+ assert_true(document.execCommand(mode==='forward'?'forwardDelete':'delete'));
+ assert_equals(left.textContent,'leftright');assert_equals(h.lastChild,tail);assert_equals(tail.textContent,'following');assert_equals(h.textContent,'leftrighttailfollowing');
+ assert_equals(getComputedStyle(left.querySelector('b')).whiteSpace,'normal');
+ assert_true(s.isCollapsed);assert_equals(s.anchorOffset,4);
+ const modified=h.innerHTML;assert_true(document.execCommand('undo'));assert_equals(h.firstChild.textContent,'left');assert_true(document.execCommand('redo'));assert_equals(h.innerHTML,modified);
+},mode+' moves one anonymous line, preserves the remainder and can be undone');
+test(t=>{const h=editor(t,'<p>left</p><i style="white-space:pre-wrap"><b>ab\ncd</b></i><span>end</span>');
+const l=h.firstChild,last=h.lastChild;getSelection().collapse(l.firstChild,4);document.execCommand('forwardDelete');assert_equals(l.textContent,'leftab');assert_equals(h.textContent,'leftabcdend');assert_equals(h.lastChild,last);assert_equals(getComputedStyle(l.querySelector('b')).whiteSpace,'pre-wrap');},'A nested preserved newline separates the moved and untouched text');
+test(t=>{const h=editor(t,'<div style="white-space:pre">left</div>right<span contenteditable="false" id="locked"><i>LOCK</i></span>tail');const l=h.firstChild,locked=h.querySelector('#locked'),inner=locked.firstChild,n=inner.firstChild;
+getSelection().collapse(l.firstChild,4);document.execCommand('forwardDelete');assert_equals(locked.firstChild,inner);assert_equals(inner.firstChild,n);assert_equals(locked.outerHTML,'<span contenteditable="false" id="locked"><i>LOCK</i></span>');assert_equals(h.textContent,'leftrightLOCKtail');},'Joining editable text beside a protected subtree retains its contents and identity');
+test(t=>{
+ const st=document.head.appendChild(document.createElement('style'));t.add_cleanup(()=>st.remove());
+ st.textContent='.original > span > b {white-space:pre} .original > p span > b {white-space:nowrap !important}';
+ const h=editor(t,'<p style="white-space:nowrap">a</p><span><b style="--custom: keep; future-editor-property: keep">b  c</b></span>');h.className='original';
+ const l=h.firstChild,b=h.querySelector('b');assert_equals(getComputedStyle(b).whiteSpace,'pre');getSelection().collapse(l.firstChild,1);document.execCommand('forwardDelete');
+ assert_equals(l.textContent,'ab  c');assert_true(l.contains(b));assert_equals(getComputedStyle(b).whiteSpace,'pre');assert_true(b.getAttribute('style').includes('future-editor-property: keep'));assert_equals(b.style.getPropertyValue('--custom').trim(),'keep');
+},'Nested contextual white-space survives moving a complete formatting node, including unrelated declarations');
+test(t=>{const h=editor(t,'<p style="white-space:pre;color:red;font-weight:bold">a</p>b');const n=h.lastChild,src=getComputedStyle(h);const color=src.color,weight=src.fontWeight;
+ getSelection().collapse(h.firstChild.firstChild,1);document.execCommand('forwardDelete');assert_true(h.firstChild.contains(n));assert_equals(getComputedStyle(n.parentElement).color,color);assert_equals(getComputedStyle(n.parentElement).fontWeight,weight);
+},'Moved text retains its original foreground and weight at a styled destination');
+test(t=>{const h=editor(t,'<p style="white-space:pre">a<span hidden>invisible</span></p>b');const hidden=h.querySelector('[hidden]');getSelection().collapse(h.lastChild,0);document.execCommand('delete');
+ const s=getSelection();assert_false(hidden.contains(s.focusNode));assert_equals(hidden.textContent,'invisible');
+},'Backspace at an anonymous right line does not place the caret in hidden text');
+test(t=>{
+ const h=editor(t,'<p style="visibility:visible;white-space:pre">visible</p>hidden');h.style.visibility='hidden';const left=h.firstChild,n=h.lastChild;
+ getSelection().collapse(left.firstChild,7);document.execCommand('forwardDelete');
+ assert_equals(left.textContent,'visible');assert_equals(n.data,'hidden');assert_equals(getComputedStyle(n.parentElement).visibility,'hidden');
+},'Deleting at visible text cannot reveal raw text inheriting a hidden host');
+test(t=>{const h=editor(t,'<p style="white-space:pre">left</p>alpha<i>beta</i><br><b>late</b>');const l=h.firstChild,ital=h.querySelector('i'),late=h.lastChild;
+ getSelection().collapse(l.firstChild,4);document.execCommand('forwardDelete');assert_equals(l.textContent,'leftalphabeta');assert_true(l.contains(ital));assert_equals(h.lastChild,late);assert_equals(late.textContent,'late');
+},'Several inline siblings join as one line and fully contained formatting keeps its identity');
+</script>
