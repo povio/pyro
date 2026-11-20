@@ -223,13 +223,7 @@ fn snapshot_of(
             let text = style.sheet_text(link)?;
             // pyro: the sheet's own URL, its response's after redirects (its URLs resolve
             // against it), else its href.
-            let url = match style.sheet_url(link) {
-                Some(url) => url.to_owned(),
-                None => {
-                    let href = dom.get_attribute(link, "href").ok().flatten()?;
-                    base.as_ref()?.join(href.trim()).ok()?.to_string()
-                }
-            };
+            let url = style.sheet_base_url(&dom, link, base.as_ref()?.as_str())?;
             sheets.borrow_mut().insert(url.clone(), text.to_owned());
             Some(url)
         };

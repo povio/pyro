@@ -1971,9 +1971,13 @@ fn import_url(r: &RuleData) -> Option<(Rc<PageDom>, String)> {
         // pyro: a detached sheet object's import is of a response no longer there: no sheet.
         SheetOwner::Node(..) if !r.owner.is_current() => None,
         SheetOwner::Node(h, _) => {
-            // pyro: a linked sheet's own URL (after redirects) is its imports' base.
-            let own = h.page.layout().style().sheet_url(h.id).and_then(|u| url::Url::parse(u).ok());
-            let url = match own.and_then(|base| base.join(&href).ok()) {
+            // pyro: the sheet's own base (`StyleEngine::sheet_base_url`) is its imports' base.
+            let own = {
+                let dom = h.page.dom.borrow();
+                let document_base = dom.document_base_url(h.page.document()).ok().map(str::to_owned).unwrap_or_default();
+                h.page.layout().style().sheet_base_url(&dom, h.id, &document_base)
+            };
+            let url = match own.and_then(|base| url::Url::parse(&base).ok()?.join(&href).ok()) {
                 Some(url) => url.to_string(),
                 None => crate::html::resolve_url(&h.page.dom.borrow(), h.id, &href),
             };

@@ -1544,6 +1544,21 @@ impl StyleEngine {
         self.sheet_urls.get(&owner).map(String::as_str)
     }
 
+    /// pyro: THE base URL of `owner`'s sheet, which its URLs resolve against everywhere (layout,
+    /// the renderer, fonts, CSSOM): a linked sheet's response URL after redirects, else its href
+    /// resolved against `document_base`; a `<style>`'s, the document's base.
+    pub fn sheet_base_url(&self, dom: &Dom, owner: NodeId, document_base: &str) -> Option<String> {
+        if let Some(url) = self.sheet_url(owner) {
+            return Some(url.to_owned());
+        }
+        let link = dom.element(owner).is_ok_and(|e| &*e.name.local == "link");
+        if !link {
+            return Some(document_base.to_owned());
+        }
+        let href = dom.get_attribute(owner, "href").ok().flatten()?;
+        url::Url::parse(document_base).ok()?.join(href.trim()).ok().map(|u| u.to_string())
+    }
+
     pub fn remove_sheet(&mut self, owner: NodeId) -> bool {
         let before = self.sheets.len();
         self.sheets.retain(|s| s.owner != owner);

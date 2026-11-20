@@ -466,3 +466,33 @@ fn a_link_rejected_at_the_limit_detaches_its_old_sheet() {
         "0|"
     );
 }
+
+/// A redirected sheet's fonts resolve against its URL after redirects, as its layout does:
+/// `document.fonts.load()` asks for `dir/face.woff2`, never the original directory's (the font
+/// base was rebuilt from the link's href: security review cycle 4, S2).
+#[test]
+fn a_redirected_sheets_fonts_resolve_against_its_final_url() {
+    let (mut thread, page, loader) = setup("<link id=l rel=stylesheet href=a.css><p style='font-family: F'>x</p>");
+    loader.insert(
+        "http://site.test/a.css",
+        "text/css",
+        "@font-face { font-family: F; src: url(face.woff2) }",
+        Duration::ZERO,
+    );
+    loader.insert_bytes("http://site.test/dir/face.woff2", "font/woff2", b"not a font", Duration::ZERO);
+    thread.browser.set_loader(Some(Rc::new(Redirected(loader.clone()))));
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    // The faces `document.fonts` loads and checks (`PageDom::css_font_faces`).
+    let page_dom = thread.browser.page(page).unwrap().main_frame.page_dom.clone().unwrap();
+    let sources: Vec<String> = page_dom
+        .css_font_faces()
+        .iter()
+        .flat_map(|face| face.sources.iter())
+        .filter_map(|source| match source {
+            pyro_dom::font_face::FontSource::Url(url, _) => Some(url.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(sources, ["http://site.test/dir/face.woff2"]);
+}

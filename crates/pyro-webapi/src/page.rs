@@ -1470,12 +1470,8 @@ impl PageDom {
             if dom.root_node(owner, false).is_ok_and(|root| root != doc) {
                 return;
             }
-            let link = dom.element(owner).is_ok_and(|e| &*e.name.local == "link");
-            let sheet_base = link
-                .then(|| dom.get_attribute(owner, "href").ok().flatten())
-                .flatten()
-                .and_then(|href| url::Url::parse(&base).ok()?.join(href.trim()).ok())
-                .map_or_else(|| base.clone(), |u| u.to_string());
+            // pyro: the sheet's own base (a redirected link's final URL): `StyleEngine::sheet_base_url`.
+            let sheet_base = style.sheet_base_url(&dom, owner, &base).unwrap_or_else(|| base.clone());
             pyro_dom::font_face::css_faces(text, &sheet_base, &mut faces);
         });
         let faces = Rc::new(faces);
