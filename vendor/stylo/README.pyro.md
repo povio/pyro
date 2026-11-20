@@ -354,7 +354,8 @@ nor keeps a scroll offset. Other mixes still turn `visible` into `auto` and `cli
   against that size (stylo_taffy, blitz-dom). Animation combines calculations with a common intrinsic basis,
   including its bare keyword (the identity calculation) and absolute lengths (basis-independent calculations).
   A `<length-percentage>` or `calc-size()` basis, `any`, `max-*` and ordinary percentages in the calculation
-  are not supported; the value serializes as `calc-size(<calculation>)` with `size` as `100%`.
+  are not supported. The serializer retains the basis and writes the internal percentage as a multiple of
+  `size`, so a CSSOM declaration can be parsed again without changing its meaning.
 
 ## Legacy `-webkit-box` alignment and flexing for servo (WPT round 3, lane FO)
 

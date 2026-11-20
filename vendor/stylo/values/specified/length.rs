@@ -1680,6 +1680,15 @@ impl NonNegativeLengthPercentageOrAuto {
 /// A wrapper of LengthPercentage, whose value must be >= 0.
 pub type NonNegativeLengthPercentage = NonNegative<LengthPercentage>;
 
+impl crate::values::generics::length::SizeCalculationCss for NonNegativeLengthPercentage {
+    fn calculation_css<W: Write>(&self, dest: &mut CssWriter<W>) -> fmt::Result {
+        match &self.0 {
+            LengthPercentage::Calc(calc) => calc.0.node.write_size_calculation(dest),
+            other => other.to_css(dest),
+        }
+    }
+}
+
 /// Either a NonNegativeLengthPercentage or the `normal` keyword.
 pub type NonNegativeLengthPercentageOrNormal =
     GenericLengthPercentageOrNormal<NonNegativeLengthPercentage>;

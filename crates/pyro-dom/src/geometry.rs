@@ -700,6 +700,9 @@ pub trait GeometrySource {
     fn resolved_transform_value(&self, _key: u64, _style: &style::properties::ComputedValues) -> Option<String> {
         None
     }
+    fn sampled_calc_height(&self, _key: u64, _style: &style::properties::ComputedValues) -> Option<f32> {
+        None
+    }
     /// One element's boxes as quads as of the last sync (`None`: not
     /// rendered, or the engine does not report them).
     fn element_quads(&self, _key: u64) -> Option<ExternalQuads> {

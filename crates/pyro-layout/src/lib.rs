@@ -954,6 +954,10 @@ impl GeometrySource for BlitzGeometry {
         RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.resolved_transform_value(self.page, key, style))
     }
 
+    fn sampled_calc_height(&self, key: u64, style: &style::properties::ComputedValues) -> Option<f32> {
+        RENDERER.with(|renderer| renderer.try_borrow().ok()?.as_ref()?.sampled_calc_height(self.page, key, style))
+    }
+
     fn viewport_scrolls_leftward(&self) -> Option<bool> {
         RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.viewport_scrolls_leftward(self.page))
     }

@@ -2554,10 +2554,29 @@ impl<L: CalcNodeLeaf> CalcNode<L> {
         res
     }
 
-    fn to_css_impl<W>(&self, dest: &mut CssWriter<W>, level: ArgumentLevel) -> fmt::Result
+    pub(crate) fn write_size_calculation<W: Write>(&self, dest: &mut CssWriter<W>) -> fmt::Result {
+        self.write_calculation::<true, _>(dest, ArgumentLevel::ArgumentRoot)
+    }
+
+    fn to_css_impl<W: Write>(&self, dest: &mut CssWriter<W>, level: ArgumentLevel) -> fmt::Result {
+        self.write_calculation::<false, _>(dest, level)
+    }
+
+    fn write_calculation<const SIZE: bool, W>(&self, dest: &mut CssWriter<W>, level: ArgumentLevel) -> fmt::Result
     where
         W: Write,
     {
+        let write_leaf = |leaf: &L, dest: &mut CssWriter<W>, nested: bool| {
+            if SIZE && let Some((factor, _)) = leaf.as_percentage() {
+                if factor == 1.0 { return dest.write_str("size"); }
+                if nested { dest.write_char('(')?; }
+                crate::values::serialize_number(factor, dest)?;
+                dest.write_str(" * size")?;
+                if nested { dest.write_char(')')?; }
+                return Ok(());
+            }
+            leaf.to_css(dest)
+        };
         let write_closing_paren = match self {
             Self::MinMax(_, op) => {
                 dest.write_str(match op {
@@ -2703,11 +2722,11 @@ impl<L: CalcNodeLeaf> CalcNode<L> {
                         dest.write_str(", ")?;
                     }
                     first = false;
-                    child.to_css_impl(dest, ArgumentLevel::ArgumentRoot)?;
+                    child.write_calculation::<SIZE, _>(dest, ArgumentLevel::ArgumentRoot)?;
                 }
             },
             Self::Negate(ref value) | Self::Invert(ref value) => {
-                value.to_css_impl(dest, ArgumentLevel::Nested)?
+                value.write_calculation::<SIZE, _>(dest, ArgumentLevel::Nested)?
             },
             Self::Sum(ref children) => {
                 let mut first = true;
@@ -2721,24 +2740,24 @@ impl<L: CalcNodeLeaf> CalcNode<L> {
                                     // We can unwrap here, because we already
                                     // checked if the value inside is negative.
                                     negated.map(std::ops::Neg::neg).unwrap();
-                                    negated.to_css(dest)?;
+                                    write_leaf(&negated, dest, true)?;
                                 } else {
                                     dest.write_str(" + ")?;
-                                    l.to_css(dest)?;
+                                    write_leaf(l, dest, true)?;
                                 }
                             },
                             Self::Negate(n) => {
                                 dest.write_str(" - ")?;
-                                n.to_css_impl(dest, ArgumentLevel::Nested)?;
+                                n.write_calculation::<SIZE, _>(dest, ArgumentLevel::Nested)?;
                             },
                             _ => {
                                 dest.write_str(" + ")?;
-                                child.to_css_impl(dest, ArgumentLevel::Nested)?;
+                                child.write_calculation::<SIZE, _>(dest, ArgumentLevel::Nested)?;
                             },
                         }
                     } else {
                         first = false;
-                        child.to_css_impl(dest, ArgumentLevel::Nested)?;
+                        child.write_calculation::<SIZE, _>(dest, ArgumentLevel::Nested)?;
                     }
                 }
             },
@@ -2749,16 +2768,16 @@ impl<L: CalcNodeLeaf> CalcNode<L> {
                         match child {
                             Self::Invert(n) => {
                                 dest.write_str(" / ")?;
-                                n.to_css_impl(dest, ArgumentLevel::Nested)?;
+                                n.write_calculation::<SIZE, _>(dest, ArgumentLevel::Nested)?;
                             },
                             _ => {
                                 dest.write_str(" * ")?;
-                                child.to_css_impl(dest, ArgumentLevel::Nested)?;
+                                child.write_calculation::<SIZE, _>(dest, ArgumentLevel::Nested)?;
                             },
                         }
                     } else {
                         first = false;
-                        child.to_css_impl(dest, ArgumentLevel::Nested)?;
+                        child.write_calculation::<SIZE, _>(dest, ArgumentLevel::Nested)?;
                     }
                 }
             },
@@ -2767,58 +2786,58 @@ impl<L: CalcNodeLeaf> CalcNode<L> {
                 ref center,
                 ref max,
             } => {
-                min.to_css_impl(dest, ArgumentLevel::ArgumentRoot)?;
+                min.write_calculation::<SIZE, _>(dest, ArgumentLevel::ArgumentRoot)?;
                 dest.write_str(", ")?;
-                center.to_css_impl(dest, ArgumentLevel::ArgumentRoot)?;
+                center.write_calculation::<SIZE, _>(dest, ArgumentLevel::ArgumentRoot)?;
                 dest.write_str(", ")?;
-                max.to_css_impl(dest, ArgumentLevel::ArgumentRoot)?;
+                max.write_calculation::<SIZE, _>(dest, ArgumentLevel::ArgumentRoot)?;
             },
             Self::Round {
                 ref value,
                 ref step,
                 ..
             } => {
-                value.to_css_impl(dest, ArgumentLevel::ArgumentRoot)?;
+                value.write_calculation::<SIZE, _>(dest, ArgumentLevel::ArgumentRoot)?;
                 dest.write_str(", ")?;
-                step.to_css_impl(dest, ArgumentLevel::ArgumentRoot)?;
+                step.write_calculation::<SIZE, _>(dest, ArgumentLevel::ArgumentRoot)?;
             },
             Self::ModRem {
                 ref dividend,
                 ref divisor,
                 ..
             } => {
-                dividend.to_css_impl(dest, ArgumentLevel::ArgumentRoot)?;
+                dividend.write_calculation::<SIZE, _>(dest, ArgumentLevel::ArgumentRoot)?;
                 dest.write_str(", ")?;
-                divisor.to_css_impl(dest, ArgumentLevel::ArgumentRoot)?;
+                divisor.write_calculation::<SIZE, _>(dest, ArgumentLevel::ArgumentRoot)?;
             },
             Self::Sin(ref v)
             | Self::Cos(ref v)
             | Self::Tan(ref v)
             | Self::Asin(ref v)
             | Self::Acos(ref v)
-            | Self::Atan(ref v) => v.to_css_impl(dest, ArgumentLevel::ArgumentRoot)?,
+            | Self::Atan(ref v) => v.write_calculation::<SIZE, _>(dest, ArgumentLevel::ArgumentRoot)?,
             Self::Atan2(ref a, ref b) => {
-                a.to_css_impl(dest, ArgumentLevel::ArgumentRoot)?;
+                a.write_calculation::<SIZE, _>(dest, ArgumentLevel::ArgumentRoot)?;
                 dest.write_str(", ")?;
-                b.to_css_impl(dest, ArgumentLevel::ArgumentRoot)?;
+                b.write_calculation::<SIZE, _>(dest, ArgumentLevel::ArgumentRoot)?;
             },
             Self::Pow(ref a, ref b) => {
-                a.to_css_impl(dest, ArgumentLevel::ArgumentRoot)?;
+                a.write_calculation::<SIZE, _>(dest, ArgumentLevel::ArgumentRoot)?;
                 dest.write_str(", ")?;
-                b.to_css_impl(dest, ArgumentLevel::ArgumentRoot)?;
+                b.write_calculation::<SIZE, _>(dest, ArgumentLevel::ArgumentRoot)?;
             },
             Self::Sqrt(ref v) | Self::Exp(ref v) => {
-                v.to_css_impl(dest, ArgumentLevel::ArgumentRoot)?
+                v.write_calculation::<SIZE, _>(dest, ArgumentLevel::ArgumentRoot)?
             },
             Self::Log(ref a, ref b) => {
-                a.to_css_impl(dest, ArgumentLevel::ArgumentRoot)?;
+                a.write_calculation::<SIZE, _>(dest, ArgumentLevel::ArgumentRoot)?;
                 if let Optional::Some(b) = b {
                     dest.write_str(", ")?;
-                    b.to_css_impl(dest, ArgumentLevel::ArgumentRoot)?;
+                    b.write_calculation::<SIZE, _>(dest, ArgumentLevel::ArgumentRoot)?;
                 }
             },
             Self::Abs(ref v) | Self::Sign(ref v) => {
-                v.to_css_impl(dest, ArgumentLevel::ArgumentRoot)?
+                v.write_calculation::<SIZE, _>(dest, ArgumentLevel::ArgumentRoot)?
             },
             Self::Progress {
                 clamping_mode,
@@ -2830,28 +2849,28 @@ impl<L: CalcNodeLeaf> CalcNode<L> {
                     clamping_mode.to_css(dest)?;
                     dest.write_char(' ')?;
                 }
-                value.to_css_impl(dest, ArgumentLevel::ArgumentRoot)?;
+                value.write_calculation::<SIZE, _>(dest, ArgumentLevel::ArgumentRoot)?;
                 dest.write_str(", ")?;
-                start.to_css_impl(dest, ArgumentLevel::ArgumentRoot)?;
+                start.write_calculation::<SIZE, _>(dest, ArgumentLevel::ArgumentRoot)?;
                 dest.write_str(", ")?;
-                end.to_css_impl(dest, ArgumentLevel::ArgumentRoot)?;
+                end.write_calculation::<SIZE, _>(dest, ArgumentLevel::ArgumentRoot)?;
             },
             Self::Random(ref r) => {
                 // If the random key was computed to a number, serialized into the "fixed" form.
                 if r.key.as_leaf().and_then(|l| l.as_number()).is_some() {
                     dest.write_str("fixed ")?;
                 }
-                r.key.to_css_impl(dest, ArgumentLevel::ArgumentRoot)?;
+                r.key.write_calculation::<SIZE, _>(dest, ArgumentLevel::ArgumentRoot)?;
                 dest.write_str(", ")?;
-                r.min.to_css_impl(dest, ArgumentLevel::ArgumentRoot)?;
+                r.min.write_calculation::<SIZE, _>(dest, ArgumentLevel::ArgumentRoot)?;
                 dest.write_str(", ")?;
-                r.max.to_css_impl(dest, ArgumentLevel::ArgumentRoot)?;
+                r.max.write_calculation::<SIZE, _>(dest, ArgumentLevel::ArgumentRoot)?;
                 if let Some(step) = r.step.as_ref() {
                     dest.write_str(", ")?;
-                    step.to_css_impl(dest, ArgumentLevel::ArgumentRoot)?;
+                    step.write_calculation::<SIZE, _>(dest, ArgumentLevel::ArgumentRoot)?;
                 }
             },
-            Self::Leaf(ref l) => l.to_css(dest)?,
+            Self::Leaf(ref l) => write_leaf(l, dest, matches!(level, ArgumentLevel::Nested))?,
             Self::Anchor(ref f) => f.to_css(dest)?,
             Self::AnchorSize(ref f) => f.to_css(dest)?,
         }

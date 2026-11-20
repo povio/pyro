@@ -6645,7 +6645,7 @@ diff -ruN a/values/computed/length.rs b/values/computed/length.rs
          }
 diff -ruN a/values/computed/length_percentage.rs b/values/computed/length_percentage.rs
 --- a/values/computed/length_percentage.rs	2026-11-11 19:55:57
-+++ b/values/computed/length_percentage.rs	2026-11-20 09:33:11
++++ b/values/computed/length_percentage.rs	2026-11-20 19:39:33
 @@ -640,6 +640,28 @@
  }
  
@@ -6675,6 +6675,19 @@ diff -ruN a/values/computed/length_percentage.rs b/values/computed/length_percen
      /// Resolves the percentage.
      #[inline]
      pub fn resolve(&self, basis: Length) -> Length {
+@@ -1003,6 +1025,12 @@
+ /// A wrapper of LengthPercentage, whose value must be >= 0.
+ pub type NonNegativeLengthPercentage = NonNegative<LengthPercentage>;
+ 
++impl crate::values::generics::length::SizeCalculationCss for NonNegativeLengthPercentage {
++    fn calculation_css<W: Write>(&self, dest: &mut CssWriter<W>) -> fmt::Result {
++        self.0.to_calc_node().write_size_calculation(dest)
++    }
++}
++
+ impl NonNegativeLengthPercentage {
+     /// Returns the used value.
+     #[inline]
 diff -ruN a/values/computed/mod.rs b/values/computed/mod.rs
 --- a/values/computed/mod.rs	2026-11-11 19:55:57
 +++ b/values/computed/mod.rs	2026-11-20 08:53:30
@@ -6893,6 +6906,216 @@ diff -ruN a/values/generics/basic_shape.rs b/values/generics/basic_shape.rs
  /// A value for the `shape-outside` property.
  #[allow(missing_docs)]
  #[derive(
+diff -ruN a/values/generics/calc.rs b/values/generics/calc.rs
+--- a/values/generics/calc.rs	2026-11-11 19:55:57
++++ b/values/generics/calc.rs	2026-11-20 19:39:33
+@@ -2554,10 +2554,29 @@
+         res
+     }
+ 
+-    fn to_css_impl<W>(&self, dest: &mut CssWriter<W>, level: ArgumentLevel) -> fmt::Result
++    pub(crate) fn write_size_calculation<W: Write>(&self, dest: &mut CssWriter<W>) -> fmt::Result {
++        self.write_calculation::<true, _>(dest, ArgumentLevel::ArgumentRoot)
++    }
++
++    fn to_css_impl<W: Write>(&self, dest: &mut CssWriter<W>, level: ArgumentLevel) -> fmt::Result {
++        self.write_calculation::<false, _>(dest, level)
++    }
++
++    fn write_calculation<const SIZE: bool, W>(&self, dest: &mut CssWriter<W>, level: ArgumentLevel) -> fmt::Result
+     where
+         W: Write,
+     {
++        let write_leaf = |leaf: &L, dest: &mut CssWriter<W>, nested: bool| {
++            if SIZE && let Some((factor, _)) = leaf.as_percentage() {
++                if factor == 1.0 { return dest.write_str("size"); }
++                if nested { dest.write_char('(')?; }
++                crate::values::serialize_number(factor, dest)?;
++                dest.write_str(" * size")?;
++                if nested { dest.write_char(')')?; }
++                return Ok(());
++            }
++            leaf.to_css(dest)
++        };
+         let write_closing_paren = match self {
+             Self::MinMax(_, op) => {
+                 dest.write_str(match op {
+@@ -2703,11 +2722,11 @@
+                         dest.write_str(", ")?;
+                     }
+                     first = false;
+-                    child.to_css_impl(dest, ArgumentLevel::ArgumentRoot)?;
++                    child.write_calculation::<SIZE, _>(dest, ArgumentLevel::ArgumentRoot)?;
+                 }
+             },
+             Self::Negate(ref value) | Self::Invert(ref value) => {
+-                value.to_css_impl(dest, ArgumentLevel::Nested)?
++                value.write_calculation::<SIZE, _>(dest, ArgumentLevel::Nested)?
+             },
+             Self::Sum(ref children) => {
+                 let mut first = true;
+@@ -2721,24 +2740,24 @@
+                                     // We can unwrap here, because we already
+                                     // checked if the value inside is negative.
+                                     negated.map(std::ops::Neg::neg).unwrap();
+-                                    negated.to_css(dest)?;
++                                    write_leaf(&negated, dest, true)?;
+                                 } else {
+                                     dest.write_str(" + ")?;
+-                                    l.to_css(dest)?;
++                                    write_leaf(l, dest, true)?;
+                                 }
+                             },
+                             Self::Negate(n) => {
+                                 dest.write_str(" - ")?;
+-                                n.to_css_impl(dest, ArgumentLevel::Nested)?;
++                                n.write_calculation::<SIZE, _>(dest, ArgumentLevel::Nested)?;
+                             },
+                             _ => {
+                                 dest.write_str(" + ")?;
+-                                child.to_css_impl(dest, ArgumentLevel::Nested)?;
++                                child.write_calculation::<SIZE, _>(dest, ArgumentLevel::Nested)?;
+                             },
+                         }
+                     } else {
+                         first = false;
+-                        child.to_css_impl(dest, ArgumentLevel::Nested)?;
++                        child.write_calculation::<SIZE, _>(dest, ArgumentLevel::Nested)?;
+                     }
+                 }
+             },
+@@ -2749,16 +2768,16 @@
+                         match child {
+                             Self::Invert(n) => {
+                                 dest.write_str(" / ")?;
+-                                n.to_css_impl(dest, ArgumentLevel::Nested)?;
++                                n.write_calculation::<SIZE, _>(dest, ArgumentLevel::Nested)?;
+                             },
+                             _ => {
+                                 dest.write_str(" * ")?;
+-                                child.to_css_impl(dest, ArgumentLevel::Nested)?;
++                                child.write_calculation::<SIZE, _>(dest, ArgumentLevel::Nested)?;
+                             },
+                         }
+                     } else {
+                         first = false;
+-                        child.to_css_impl(dest, ArgumentLevel::Nested)?;
++                        child.write_calculation::<SIZE, _>(dest, ArgumentLevel::Nested)?;
+                     }
+                 }
+             },
+@@ -2767,58 +2786,58 @@
+                 ref center,
+                 ref max,
+             } => {
+-                min.to_css_impl(dest, ArgumentLevel::ArgumentRoot)?;
++                min.write_calculation::<SIZE, _>(dest, ArgumentLevel::ArgumentRoot)?;
+                 dest.write_str(", ")?;
+-                center.to_css_impl(dest, ArgumentLevel::ArgumentRoot)?;
++                center.write_calculation::<SIZE, _>(dest, ArgumentLevel::ArgumentRoot)?;
+                 dest.write_str(", ")?;
+-                max.to_css_impl(dest, ArgumentLevel::ArgumentRoot)?;
++                max.write_calculation::<SIZE, _>(dest, ArgumentLevel::ArgumentRoot)?;
+             },
+             Self::Round {
+                 ref value,
+                 ref step,
+                 ..
+             } => {
+-                value.to_css_impl(dest, ArgumentLevel::ArgumentRoot)?;
++                value.write_calculation::<SIZE, _>(dest, ArgumentLevel::ArgumentRoot)?;
+                 dest.write_str(", ")?;
+-                step.to_css_impl(dest, ArgumentLevel::ArgumentRoot)?;
++                step.write_calculation::<SIZE, _>(dest, ArgumentLevel::ArgumentRoot)?;
+             },
+             Self::ModRem {
+                 ref dividend,
+                 ref divisor,
+                 ..
+             } => {
+-                dividend.to_css_impl(dest, ArgumentLevel::ArgumentRoot)?;
++                dividend.write_calculation::<SIZE, _>(dest, ArgumentLevel::ArgumentRoot)?;
+                 dest.write_str(", ")?;
+-                divisor.to_css_impl(dest, ArgumentLevel::ArgumentRoot)?;
++                divisor.write_calculation::<SIZE, _>(dest, ArgumentLevel::ArgumentRoot)?;
+             },
+             Self::Sin(ref v)
+             | Self::Cos(ref v)
+             | Self::Tan(ref v)
+             | Self::Asin(ref v)
+             | Self::Acos(ref v)
+-            | Self::Atan(ref v) => v.to_css_impl(dest, ArgumentLevel::ArgumentRoot)?,
++            | Self::Atan(ref v) => v.write_calculation::<SIZE, _>(dest, ArgumentLevel::ArgumentRoot)?,
+             Self::Atan2(ref a, ref b) => {
+-                a.to_css_impl(dest, ArgumentLevel::ArgumentRoot)?;
++                a.write_calculation::<SIZE, _>(dest, ArgumentLevel::ArgumentRoot)?;
+                 dest.write_str(", ")?;
+-                b.to_css_impl(dest, ArgumentLevel::ArgumentRoot)?;
++                b.write_calculation::<SIZE, _>(dest, ArgumentLevel::ArgumentRoot)?;
+             },
+             Self::Pow(ref a, ref b) => {
+-                a.to_css_impl(dest, ArgumentLevel::ArgumentRoot)?;
++                a.write_calculation::<SIZE, _>(dest, ArgumentLevel::ArgumentRoot)?;
+                 dest.write_str(", ")?;
+-                b.to_css_impl(dest, ArgumentLevel::ArgumentRoot)?;
++                b.write_calculation::<SIZE, _>(dest, ArgumentLevel::ArgumentRoot)?;
+             },
+             Self::Sqrt(ref v) | Self::Exp(ref v) => {
+-                v.to_css_impl(dest, ArgumentLevel::ArgumentRoot)?
++                v.write_calculation::<SIZE, _>(dest, ArgumentLevel::ArgumentRoot)?
+             },
+             Self::Log(ref a, ref b) => {
+-                a.to_css_impl(dest, ArgumentLevel::ArgumentRoot)?;
++                a.write_calculation::<SIZE, _>(dest, ArgumentLevel::ArgumentRoot)?;
+                 if let Optional::Some(b) = b {
+                     dest.write_str(", ")?;
+-                    b.to_css_impl(dest, ArgumentLevel::ArgumentRoot)?;
++                    b.write_calculation::<SIZE, _>(dest, ArgumentLevel::ArgumentRoot)?;
+                 }
+             },
+             Self::Abs(ref v) | Self::Sign(ref v) => {
+-                v.to_css_impl(dest, ArgumentLevel::ArgumentRoot)?
++                v.write_calculation::<SIZE, _>(dest, ArgumentLevel::ArgumentRoot)?
+             },
+             Self::Progress {
+                 clamping_mode,
+@@ -2830,28 +2849,28 @@
+                     clamping_mode.to_css(dest)?;
+                     dest.write_char(' ')?;
+                 }
+-                value.to_css_impl(dest, ArgumentLevel::ArgumentRoot)?;
++                value.write_calculation::<SIZE, _>(dest, ArgumentLevel::ArgumentRoot)?;
+                 dest.write_str(", ")?;
+-                start.to_css_impl(dest, ArgumentLevel::ArgumentRoot)?;
++                start.write_calculation::<SIZE, _>(dest, ArgumentLevel::ArgumentRoot)?;
+                 dest.write_str(", ")?;
+-                end.to_css_impl(dest, ArgumentLevel::ArgumentRoot)?;
++                end.write_calculation::<SIZE, _>(dest, ArgumentLevel::ArgumentRoot)?;
+             },
+             Self::Random(ref r) => {
+                 // If the random key was computed to a number, serialized into the "fixed" form.
+                 if r.key.as_leaf().and_then(|l| l.as_number()).is_some() {
+                     dest.write_str("fixed ")?;
+                 }
+-                r.key.to_css_impl(dest, ArgumentLevel::ArgumentRoot)?;
++                r.key.write_calculation::<SIZE, _>(dest, ArgumentLevel::ArgumentRoot)?;
+                 dest.write_str(", ")?;
+-                r.min.to_css_impl(dest, ArgumentLevel::ArgumentRoot)?;
++                r.min.write_calculation::<SIZE, _>(dest, ArgumentLevel::ArgumentRoot)?;
+                 dest.write_str(", ")?;
+-                r.max.to_css_impl(dest, ArgumentLevel::ArgumentRoot)?;
++                r.max.write_calculation::<SIZE, _>(dest, ArgumentLevel::ArgumentRoot)?;
+                 if let Some(step) = r.step.as_ref() {
+                     dest.write_str(", ")?;
+-                    step.to_css_impl(dest, ArgumentLevel::ArgumentRoot)?;
++                    step.write_calculation::<SIZE, _>(dest, ArgumentLevel::ArgumentRoot)?;
+                 }
+             },
+-            Self::Leaf(ref l) => l.to_css(dest)?,
++            Self::Leaf(ref l) => write_leaf(l, dest, matches!(level, ArgumentLevel::Nested))?,
+             Self::Anchor(ref f) => f.to_css(dest)?,
+             Self::AnchorSize(ref f) => f.to_css(dest)?,
+         }
 diff -ruN a/values/generics/color.rs b/values/generics/color.rs
 --- a/values/generics/color.rs	2026-11-11 19:55:57
 +++ b/values/generics/color.rs	2026-11-19 20:50:37
@@ -7069,8 +7292,8 @@ diff -ruN a/values/generics/image.rs b/values/generics/image.rs
      }
  }
 diff -ruN a/values/generics/length.rs b/values/generics/length.rs
---- a/values/generics/length.rs
-+++ b/values/generics/length.rs
+--- a/values/generics/length.rs	2026-11-11 19:55:57
++++ b/values/generics/length.rs	2026-11-20 19:40:17
 @@ -138,7 +138,6 @@
  /// Note that it only accepts non-negative values.
  #[allow(missing_docs)]
@@ -7079,7 +7302,15 @@ diff -ruN a/values/generics/length.rs b/values/generics/length.rs
      ComputeSquaredDistance,
      Clone,
      Debug,
-@@ -174,6 +173,23 @@
+@@ -147,7 +146,6 @@
+     ToAnimatedValue,
+     ToAnimatedZero,
+     ToComputedValue,
+-    ToCss,
+     ToResolvedValue,
+     ToShmem,
+     ToTyped,
+@@ -174,6 +172,56 @@
      FitContentFunction(LengthPercent),
      AnchorSizeFunction(Box<GenericAnchorSizeFunction<Self>>),
      AnchorContainingCalcFunction(LengthPercent),
@@ -7100,10 +7331,43 @@ diff -ruN a/values/generics/length.rs b/values/generics/length.rs
 +    #[animation(error)]
 +    #[css(function = "calc-size")]
 +    CalcSizeMaxContent(LengthPercent),
++}
++
++pub(crate) trait SizeCalculationCss: ToCss {
++    fn calculation_css<W: Write>(&self, dest: &mut CssWriter<W>) -> std::fmt::Result;
++}
++
++impl<LengthPercent: SizeCalculationCss> ToCss for GenericSize<LengthPercent> {
++    fn to_css<W: Write>(&self, dest: &mut CssWriter<W>) -> std::fmt::Result {
++        let (basis, calculation) = match self {
++            Self::CalcSizeAuto(value) => ("auto", value),
++            Self::CalcSizeFitContent(value) => ("fit-content", value),
++            Self::CalcSizeMinContent(value) => ("min-content", value),
++            Self::CalcSizeMaxContent(value) => ("max-content", value),
++            Self::Auto => return dest.write_str("auto"),
++            Self::MaxContent => return dest.write_str("max-content"),
++            Self::MinContent => return dest.write_str("min-content"),
++            Self::FitContent => return dest.write_str("fit-content"),
++            Self::Stretch => return dest.write_str("stretch"),
++            Self::WebkitFillAvailable => return dest.write_str("-webkit-fill-available"),
++            #[cfg(feature = "gecko")]
++            Self::MozAvailable => return dest.write_str("-moz-available"),
++            Self::LengthPercentage(value) | Self::AnchorContainingCalcFunction(value) => return value.to_css(dest),
++            Self::AnchorSizeFunction(value) => return value.to_css(dest),
++            Self::FitContentFunction(value) => {
++                dest.write_str("fit-content(")?;
++                value.to_css(dest)?;
++                return dest.write_char(')');
++            },
++        };
++        write!(dest, "calc-size({basis}, ")?;
++        calculation.calculation_css(dest)?;
++        dest.write_char(')')
++    }
  }
  
  impl<LengthPercent> SpecifiedValueInfo for GenericSize<LengthPercent>
-@@ -367,6 +383,32 @@
+@@ -367,6 +415,32 @@
  }
  
  pub use self::GenericLengthPercentageOrNormal as LengthPercentageOrNormal;
@@ -8999,7 +9263,7 @@ diff -ruN a/values/specified/image.rs b/values/specified/image.rs
      /// <cf-image> = <percentage>? && [ <image> | <color> ]
 diff -ruN a/values/specified/length.rs b/values/specified/length.rs
 --- a/values/specified/length.rs	2026-11-11 19:55:57
-+++ b/values/specified/length.rs	2026-11-16 23:22:52
++++ b/values/specified/length.rs	2026-11-20 19:39:33
 @@ -187,13 +187,14 @@
              "lvi" if !in_page_rule => Self::Lvi,
              "dvi" if !in_page_rule => Self::Dvi,
@@ -9022,7 +9286,21 @@ diff -ruN a/values/specified/length.rs b/values/specified/length.rs
              _ => return Err(()),
          })
      }
-@@ -1683,6 +1684,8 @@
+@@ -1678,11 +1679,22 @@
+ 
+ /// A wrapper of LengthPercentage, whose value must be >= 0.
+ pub type NonNegativeLengthPercentage = NonNegative<LengthPercentage>;
++
++impl crate::values::generics::length::SizeCalculationCss for NonNegativeLengthPercentage {
++    fn calculation_css<W: Write>(&self, dest: &mut CssWriter<W>) -> fmt::Result {
++        match &self.0 {
++            LengthPercentage::Calc(calc) => calc.0.node.write_size_calculation(dest),
++            other => other.to_css(dest),
++        }
++    }
++}
+ 
+ /// Either a NonNegativeLengthPercentage or the `normal` keyword.
  pub type NonNegativeLengthPercentageOrNormal =
      GenericLengthPercentageOrNormal<NonNegativeLengthPercentage>;
  
@@ -9031,7 +9309,7 @@ diff -ruN a/values/specified/length.rs b/values/specified/length.rs
  /// A specified `fit-tolerance` value.
  pub type FitTolerance = GenericFitTolerance<NonNegativeLengthPercentage>;
  
-@@ -1875,6 +1878,10 @@
+@@ -1875,6 +1887,10 @@
          parse_size_non_length!(Size, input, allow_webkit_fill_available,
                                 "auto" => Auto);
          parse_fit_content_function!(Size, input, context, allow_quirks);
@@ -9042,7 +9320,7 @@ diff -ruN a/values/specified/length.rs b/values/specified/length.rs
  
          let allow_anchor = allow_anchor_functions == ParseAnchorFunctions::Yes
              && crate::pref!("layout.css.anchor-positioning.enabled", gecko = true);
-@@ -1943,6 +1950,27 @@
+@@ -1943,6 +1959,27 @@
      pub fn zero_percent() -> Self {
          GenericSize::LengthPercentage(NonNegativeLengthPercentage::zero_percent())
      }

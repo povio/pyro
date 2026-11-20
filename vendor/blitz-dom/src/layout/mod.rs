@@ -168,7 +168,7 @@ pub(crate) struct LayoutPassState<'doc> {
     pub(crate) column_spanners: Option<(crate::NodeId, f32)>,
     /// pyro: the sizes `calc_size_inputs` measured for boxes this pass (box, axis 0 width or 1
     /// height, size): a parent that hands one back as a known size hands back the result.
-    calc_size_results: Vec<(NodeId, u8, f32)>,
+    calc_size_results: Vec<(NodeId, u8, f32, f32)>,
     try_styles: std::collections::HashMap<NodeId, style::servo_arc::Arc<style::properties::ComputedValues>>,
     try_options: std::cell::RefCell<std::collections::HashMap<(Option<crate::NodeId>, usize), ([usize; 5], usize)>>,
     /// pyro: the multi-column container whose strip is being laid out and the border-box height
@@ -481,13 +481,17 @@ impl LayoutPassState<'_> {
             function.resolve(CSSPixelLength::new(basis)).px().max(0.0) + inset
         };
         let given = |state: &Self, axis: u8, known: Option<f32>| {
-            known.is_some_and(|known| state.calc_size_results.iter().any(|&(id, a, size)| id == node_id && a == axis && size == known))
+            known.is_some_and(|known| state.calc_size_results.iter().any(|&(id, a, size, _)| id == node_id && a == axis && size == known))
         };
         let known_width = inputs.known_dimensions.width;
+        let mut height_basis = None;
         if functions.width.is_some() && given(self, 0, known_width) {
             functions.width = None;
         }
         if functions.height.is_some() && given(self, 1, inputs.known_dimensions.height) {
+            height_basis = self.calc_size_results.iter().rev().find_map(|&(id, axis, result, basis)| {
+                (id == node_id && axis == 1 && Some(result) == inputs.known_dimensions.height).then_some(basis)
+            });
             functions.height = None;
         }
         if let Some(function) = &functions.width {
@@ -516,19 +520,26 @@ impl LayoutPassState<'_> {
             let width = width.maybe_min(max.width).maybe_max(min.width);
             inputs.known_dimensions.width = Some(width.max(padding_border.width));
             if known_width.is_none() {
-                self.calc_size_results.push((node_id, 0, width.max(padding_border.width)));
+                self.calc_size_results.push((node_id, 0, width.max(padding_border.width), size));
             }
         }
         if let Some(function) = &functions.height {
             let size = inputs.known_dimensions.height.or(measured.map(|size| size.height)).unwrap_or(0.0);
+            height_basis = Some(size);
             let height = apply(function, size, box_inset.height).maybe_min(max.height).maybe_max(min.height);
             if inputs.known_dimensions.height.is_none() {
-                self.calc_size_results.push((node_id, 1, height.max(padding_border.height)));
+                self.calc_size_results.push((node_id, 1, height.max(padding_border.height), size));
                 if column_flex {
                     inputs.known_dimensions_are_definite.height = false;
                 }
             }
             inputs.known_dimensions.height = Some(height.max(padding_border.height));
+        }
+        if inputs.run_mode == RunMode::PerformLayout {
+            self.nodes[dom_node_id(node_id)].layout_data_mut().calc_height_inputs = height_basis.map(|size| {
+                let inset = box_inset.height;
+                ((size - inset).max(0.0), (min.height.unwrap_or(0.0).max(padding_border.height) - inset).max(0.0), max.height.map(|v| v - inset))
+            });
         }
         inputs
     }

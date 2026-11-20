@@ -210,6 +210,7 @@ pub struct ElementData {
 #[derive(Debug, Clone)]
 pub struct LayoutData {
     pub cache: Cache,
+    pub(crate) calc_height_inputs: Option<(f32, f32, Option<f32>)>,
     pub unrounded_layout: Layout,
     pub final_layout: Layout,
     pub(crate) scrollbar_size_limit: Option<taffy::Size<f32>>,
@@ -262,6 +263,7 @@ impl LayoutData {
     pub const fn new() -> Self {
         Self {
             cache: Cache::new(),
+            calc_height_inputs: None,
             unrounded_layout: Layout::new(),
             scrollbar_size_limit: None,
             final_layout: Layout::new(),

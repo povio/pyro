@@ -1025,6 +1025,12 @@ impl Animate for LengthPercentage {
 /// A wrapper of LengthPercentage, whose value must be >= 0.
 pub type NonNegativeLengthPercentage = NonNegative<LengthPercentage>;
 
+impl crate::values::generics::length::SizeCalculationCss for NonNegativeLengthPercentage {
+    fn calculation_css<W: Write>(&self, dest: &mut CssWriter<W>) -> fmt::Result {
+        self.0.to_calc_node().write_size_calculation(dest)
+    }
+}
+
 impl NonNegativeLengthPercentage {
     /// Returns the used value.
     #[inline]

@@ -351,6 +351,22 @@ impl BaseDocument {
         self.resolved_style_value_with_style(node_id, "transform", Some(style))
     }
 
+    pub fn sampled_calc_height(&self, node_id: NodeId, sampled: &ComputedValues) -> Option<f32> {
+        use style::values::computed::Size;
+        let node = self.get_node(node_id)?;
+        let live = node.primary_styles()?;
+        let (basis, min, max) = node.layout_data().calc_height_inputs?;
+        if !live.writing_mode.is_horizontal() { return None; }
+        let calculation = match (&live.get_position().height, &sampled.get_position().height) {
+            (Size::CalcSizeAuto(_), Size::CalcSizeAuto(value)) |
+            (Size::CalcSizeFitContent(_), Size::CalcSizeFitContent(value)) |
+            (Size::CalcSizeMinContent(_), Size::CalcSizeMinContent(value)) |
+            (Size::CalcSizeMaxContent(_), Size::CalcSizeMaxContent(value)) => value,
+            _ => return None,
+        };
+        Some(calculation.0.resolve(CSSPixelLength::new(basis)).px().min(max.unwrap_or(f32::INFINITY)).max(min))
+    }
+
     fn resolved_style_value_with_style(
         &self,
         node_id: NodeId,

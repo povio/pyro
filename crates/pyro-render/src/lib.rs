@@ -2035,6 +2035,11 @@ impl Renderer {
         Some(m.doc.resolved_transform_value(id, style))
     }
 
+    pub fn sampled_calc_height(&self, page: u64, key: u64, style: &style::properties::ComputedValues) -> Option<f32> {
+        let mirror = self.mirrors.get(&page)?;
+        mirror.doc.sampled_calc_height(mirror.node(key)?, style)
+    }
+
     /// The computed style of the element keyed `key` in `page`'s persistent
     /// document as of the last sync; one under `display: none` (which the
     /// traversal does not style) is resolved now. `None`: not mirrored.

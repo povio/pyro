@@ -146,7 +146,6 @@ impl<LengthPercentage: Parse> Parse for LengthPercentageOrAuto<LengthPercentage>
     ToAnimatedValue,
     ToAnimatedZero,
     ToComputedValue,
-    ToCss,
     ToResolvedValue,
     ToShmem,
     ToTyped,
@@ -190,6 +189,39 @@ pub enum GenericSize<LengthPercent> {
     #[animation(error)]
     #[css(function = "calc-size")]
     CalcSizeMaxContent(LengthPercent),
+}
+
+pub(crate) trait SizeCalculationCss: ToCss {
+    fn calculation_css<W: Write>(&self, dest: &mut CssWriter<W>) -> std::fmt::Result;
+}
+
+impl<LengthPercent: SizeCalculationCss> ToCss for GenericSize<LengthPercent> {
+    fn to_css<W: Write>(&self, dest: &mut CssWriter<W>) -> std::fmt::Result {
+        let (basis, calculation) = match self {
+            Self::CalcSizeAuto(value) => ("auto", value),
+            Self::CalcSizeFitContent(value) => ("fit-content", value),
+            Self::CalcSizeMinContent(value) => ("min-content", value),
+            Self::CalcSizeMaxContent(value) => ("max-content", value),
+            Self::Auto => return dest.write_str("auto"),
+            Self::MaxContent => return dest.write_str("max-content"),
+            Self::MinContent => return dest.write_str("min-content"),
+            Self::FitContent => return dest.write_str("fit-content"),
+            Self::Stretch => return dest.write_str("stretch"),
+            Self::WebkitFillAvailable => return dest.write_str("-webkit-fill-available"),
+            #[cfg(feature = "gecko")]
+            Self::MozAvailable => return dest.write_str("-moz-available"),
+            Self::LengthPercentage(value) | Self::AnchorContainingCalcFunction(value) => return value.to_css(dest),
+            Self::AnchorSizeFunction(value) => return value.to_css(dest),
+            Self::FitContentFunction(value) => {
+                dest.write_str("fit-content(")?;
+                value.to_css(dest)?;
+                return dest.write_char(')');
+            },
+        };
+        write!(dest, "calc-size({basis}, ")?;
+        calculation.calculation_css(dest)?;
+        dest.write_char(')')
+    }
 }
 
 impl<LengthPercent> SpecifiedValueInfo for GenericSize<LengthPercent>
