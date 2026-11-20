@@ -2819,13 +2819,59 @@ impl Node {
             }
         }
 
+        // A paint child hit in its turn, placed as painted.
+        let hit_child = |child: &Node, scrollbar: &mut Option<_>| -> Option<HitResult> {
+            let child_position = child.taffy_position();
+            let mut child_x = x;
+            let mut child_y = y;
+            // pyro: an out-of-flow box painted here but laid out by a containing block elsewhere
+            // (a fixed box at its stacking context's positioned level) is placed as painted.
+            let lifted = child_position.is_out_of_flow().then(|| child.lifted_paint_offset(self.id)).flatten();
+            if let Some(offset) = lifted {
+                child_x -= offset.x;
+                child_y -= offset.y;
+            } else if child_position.is_out_of_flow() {
+                // Fixed-position children of the root element are positioned
+                // against the viewport and do not scroll with it. (A fixed box
+                // whose containing block is a transformed ancestor scrolls with
+                // that ancestor like any other out-of-flow box.)
+                if child_position == taffy::Position::Fixed && self.is_root_element() && !self.root_contains_fixed() {
+                    child_x -= self.scroll_offset().x as f32;
+                    child_y -= self.scroll_offset().y as f32;
+                    let viewport_scroll = self.tree().viewport_scroll();
+                    child_x -= viewport_scroll.x as f32;
+                    child_y -= viewport_scroll.y as f32;
+                }
+            } else if let Some(offset) = child.lifted_paint_offset(self.id) {
+                child_x -= offset.x;
+                child_y -= offset.y;
+            }
+            crate::util::ensure_stack(|| child.hit_inner(child_x, child_y, scale, scrollbar))
+        };
+
         // pyro: the items of a flex or grid child painted with the inline content of this box's
         // painter (`Node::items_in_phases`) lie over every child's own box painted with the block
         // backgrounds: they are hit first, as they paint (a later empty block's background does not
         // take the hit from an item overflowing onto it).
-        if !ITEMS_ONLY.get() {
+        // (The positioned-level children painted after that content, a positioned sibling over
+        // an item, go before the items: hit in reverse paint order with them.)
+        let has_items = || {
+            self.paint_children.borrow().iter().flatten().any(|&id| {
+                self.tree().get(id).is_some_and(|c| !c.taffy_position().is_out_of_flow() && c.items_in_phases())
+            })
+        };
+        if !ITEMS_ONLY.get() && has_items() {
             for child_id in self.paint_children.borrow().iter().flatten().rev() {
                 let Some(child) = self.tree().get(*child_id) else { continue };
+                let positioned_level = child.element_data().is_some()
+                    && (child.stacking_context.is_some()
+                        || child.primary_styles().is_some_and(|s| s.clone_position() != Position::Static));
+                if positioned_level {
+                    if let Some(hit) = hit_child(child, scrollbar) {
+                        return Some(hit);
+                    }
+                    continue;
+                }
                 if child.taffy_position().is_out_of_flow() || !child.items_in_phases() {
                     continue;
                 }
@@ -2859,32 +2905,7 @@ impl Node {
             let Some(child) = self.tree().get(*child_id) else {
                 continue;
             };
-            let child_position = child.taffy_position();
-            let mut child_x = x;
-            let mut child_y = y;
-            // pyro: an out-of-flow box painted here but laid out by a containing block elsewhere
-            // (a fixed box at its stacking context's positioned level) is placed as painted.
-            let lifted = child_position.is_out_of_flow().then(|| child.lifted_paint_offset(self.id)).flatten();
-            if let Some(offset) = lifted {
-                child_x -= offset.x;
-                child_y -= offset.y;
-            } else if child_position.is_out_of_flow() {
-                // Fixed-position children of the root element are positioned
-                // against the viewport and do not scroll with it. (A fixed box
-                // whose containing block is a transformed ancestor scrolls with
-                // that ancestor like any other out-of-flow box.)
-                if child_position == taffy::Position::Fixed && self.is_root_element() && !self.root_contains_fixed() {
-                    child_x -= self.scroll_offset().x as f32;
-                    child_y -= self.scroll_offset().y as f32;
-                    let viewport_scroll = self.tree().viewport_scroll();
-                    child_x -= viewport_scroll.x as f32;
-                    child_y -= viewport_scroll.y as f32;
-                }
-            } else if let Some(offset) = child.lifted_paint_offset(self.id) {
-                child_x -= offset.x;
-                child_y -= offset.y;
-            }
-            if let Some(hit) = crate::util::ensure_stack(|| child.hit_inner(child_x, child_y, scale, scrollbar)) {
+            if let Some(hit) = hit_child(child, scrollbar) {
                 return Some(hit);
             }
         }

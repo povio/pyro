@@ -3187,6 +3187,26 @@ mod tests {
         assert_ne!(hit(&mut doc, 50.0, 120.0), Some(z), "not below the container, where the strip has it");
     }
 
+    /// pyro: (hit order, with this module's document helpers) a positioned sibling after a flex
+    /// container in one paint layer paints over the container's overflowing item, at the positioned
+    /// level after the inline content the item paints with: it takes the hit there, the item's
+    /// pre-pass (`Node::items_in_phases`) goes after it. Review cycle 3, finding 4.
+    #[test]
+    fn a_positioned_sibling_over_an_overflowing_flex_item_is_hit() {
+        let mut doc = laid_out(vec![div(
+            "overflow:hidden",
+            vec![
+                div("display:flex;height:50px", vec![div("width:100px;height:120px;align-self:flex-start", vec![])]),
+                div("position:relative;height:100px", vec![]),
+            ],
+        )]);
+        let ids: Vec<crate::NodeId> = doc.nodes.iter().map(|(id, _)| id).collect();
+        let (item, next) = (ids[ids.len() - 2], ids[ids.len() - 1]);
+        let hit = |doc: &mut BaseDocument, x: f32, y: f32| doc.hit(x, y).map(|h| h.node_id);
+        assert_eq!(hit(&mut doc, 50.0, 90.0), Some(next), "the positioned sibling over the item");
+        assert_eq!(hit(&mut doc, 50.0, 30.0), Some(item), "the item above the sibling");
+    }
+
     /// pyro: a hoisted box is hit only where paint shows it: in the columns its strip range
     /// reaches, not in a spanner's row (paint leaves those out), even where it reaches into one.
     #[test]

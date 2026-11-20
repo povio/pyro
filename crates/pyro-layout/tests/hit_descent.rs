@@ -388,3 +388,19 @@ fn an_overflowing_flex_item_is_hit_over_the_next_blocks_background() {
     assert_eq!(p.layout.element_from_point(&p.dom, 150.0, 90.0), Some(next), "beside the item");
     assert!(p.compare("overflowing flex item") > 2);
 }
+
+/// A positioned sibling after a flex container paints over the container's overflowing item (the
+/// positioned level comes after the inline content the item paints with): it takes the hit there.
+/// The item pre-pass returned before it. Review cycle 3, finding 4.
+#[test]
+fn a_positioned_sibling_over_an_overflowing_flex_item_is_hit() {
+    let p = page(
+        "<!doctype html><body style='margin:0'><div style='overflow:hidden'>\
+         <div style='display:flex;height:50px;border:1px solid blue'><div id=item style='width:100px;height:120px;background:green;align-self:flex-start'></div></div>\
+         <div id=next style='position:relative;height:100px;background:yellow;border:1px solid red'></div></div>",
+    );
+    let (item, next) = (p.id("item"), p.id("next"));
+    assert_eq!(p.layout.element_from_point(&p.dom, 50.0, 90.0), Some(next), "the positioned sibling over the item");
+    assert_eq!(p.layout.element_from_point(&p.dom, 50.0, 30.0), Some(item), "the item above the sibling");
+    assert!(p.compare("positioned sibling over a flex item") > 1);
+}

@@ -21946,7 +21946,7 @@ diff --git a/packages/blitz-dom/src/layout/multicol.rs b/packages/blitz-dom/src/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/multicol.rs
-@@ -0,0 +1,3467 @@
+@@ -0,0 +1,3487 @@
 +//! pyro: CSS Multi-column Layout (<https://drafts.csswg.org/css-multicol/>).
 +//!
 +//! A multi-column container lays its content out once, in a strip one column wide (its flow
@@ -25134,6 +25134,26 @@ new file mode 100644
 +        assert_eq!(hit(&mut doc, 50.0, 60.0), Some(z), "its piece in the first column");
 +        assert_eq!(hit(&mut doc, 150.0, 30.0), Some(z), "its piece in the second column");
 +        assert_ne!(hit(&mut doc, 50.0, 120.0), Some(z), "not below the container, where the strip has it");
++    }
++
++    /// pyro: (hit order, with this module's document helpers) a positioned sibling after a flex
++    /// container in one paint layer paints over the container's overflowing item, at the positioned
++    /// level after the inline content the item paints with: it takes the hit there, the item's
++    /// pre-pass (`Node::items_in_phases`) goes after it. Review cycle 3, finding 4.
++    #[test]
++    fn a_positioned_sibling_over_an_overflowing_flex_item_is_hit() {
++        let mut doc = laid_out(vec![div(
++            "overflow:hidden",
++            vec![
++                div("display:flex;height:50px", vec![div("width:100px;height:120px;align-self:flex-start", vec![])]),
++                div("position:relative;height:100px", vec![]),
++            ],
++        )]);
++        let ids: Vec<crate::NodeId> = doc.nodes.iter().map(|(id, _)| id).collect();
++        let (item, next) = (ids[ids.len() - 2], ids[ids.len() - 1]);
++        let hit = |doc: &mut BaseDocument, x: f32, y: f32| doc.hit(x, y).map(|h| h.node_id);
++        assert_eq!(hit(&mut doc, 50.0, 90.0), Some(next), "the positioned sibling over the item");
++        assert_eq!(hit(&mut doc, 50.0, 30.0), Some(item), "the item above the sibling");
 +    }
 +
 +    /// pyro: a hoisted box is hit only where paint shows it: in the columns its strip range
@@ -41203,17 +41223,17 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +            let mut style = stylo_taffy::TaffyStyloStyle::new(styles, flags);
 +            style.natural_ratio = natural_ratio;
 +            style
-         }
-     }
- 
++        }
++    }
++
 +    /// The half collapsed borders of a cell in a table without uniform ones.
 +    pub(crate) fn collapsed_border(&self) -> Option<[f32; 4]> {
 +        match &self.data {
 +            NodeData::Element(data) | NodeData::AnonymousBlock(data) => data.layout_data().collapsed_border,
 +            _ => None,
-+        }
-+    }
-+
+         }
+     }
+ 
 +    /// pyro: rewrite the layout styles derived from the node's primary style
 +    /// ([`LayoutStyles`]). Called wherever the primary style is replaced outside the style
 +    /// traversal, and when a cell's collapsed borders change.
@@ -41552,7 +41572,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          } else {
              taffy::Point { x: 0.0, y: 0.0 }
          };
-@@ -1556,16 +2810,50 @@
+@@ -1556,30 +2810,32 @@
                      let Some(child) = self.tree().get(hoisted_child.node_id) else {
                          continue;
                      };
@@ -41570,13 +41590,64 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              }
          }
  
+-        // Call `.hit()` on each child in turn. If any return `Some` then return that value. Else return `Some(self.id).
+-        for child_id in self.paint_children.borrow().iter().flatten().rev() {
+-            let Some(child) = self.tree().get(*child_id) else {
+-                continue;
+-            };
++        // A paint child hit in its turn, placed as painted.
++        let hit_child = |child: &Node, scrollbar: &mut Option<_>| -> Option<HitResult> {
+             let child_position = child.taffy_position();
+             let mut child_x = x;
+             let mut child_y = y;
+-            if child_position.is_out_of_flow() {
++            // pyro: an out-of-flow box painted here but laid out by a containing block elsewhere
++            // (a fixed box at its stacking context's positioned level) is placed as painted.
++            let lifted = child_position.is_out_of_flow().then(|| child.lifted_paint_offset(self.id)).flatten();
++            if let Some(offset) = lifted {
++                child_x -= offset.x;
++                child_y -= offset.y;
++            } else if child_position.is_out_of_flow() {
+                 // Fixed-position children of the root element are positioned
+                 // against the viewport and do not scroll with it. (A fixed box
+                 // whose containing block is a transformed ancestor scrolls with
+                 // that ancestor like any other out-of-flow box.)
+-                if child_position == taffy::Position::Fixed && self.containing_block().is_none() {
++                if child_position == taffy::Position::Fixed && self.is_root_element() && !self.root_contains_fixed() {
+                     child_x -= self.scroll_offset().x as f32;
+                     child_y -= self.scroll_offset().y as f32;
+                     let viewport_scroll = self.tree().viewport_scroll();
+@@ -1590,7 +2846,66 @@
+                 child_x -= offset.x;
+                 child_y -= offset.y;
+             }
+-            if let Some(hit) = child.hit_inner(child_x, child_y, scale, scrollbar) {
++            crate::util::ensure_stack(|| child.hit_inner(child_x, child_y, scale, scrollbar))
++        };
++
 +        // pyro: the items of a flex or grid child painted with the inline content of this box's
 +        // painter (`Node::items_in_phases`) lie over every child's own box painted with the block
 +        // backgrounds: they are hit first, as they paint (a later empty block's background does not
 +        // take the hit from an item overflowing onto it).
-+        if !ITEMS_ONLY.get() {
++        // (The positioned-level children painted after that content, a positioned sibling over
++        // an item, go before the items: hit in reverse paint order with them.)
++        let has_items = || {
++            self.paint_children.borrow().iter().flatten().any(|&id| {
++                self.tree().get(id).is_some_and(|c| !c.taffy_position().is_out_of_flow() && c.items_in_phases())
++            })
++        };
++        if !ITEMS_ONLY.get() && has_items() {
 +            for child_id in self.paint_children.borrow().iter().flatten().rev() {
 +                let Some(child) = self.tree().get(*child_id) else { continue };
++                let positioned_level = child.element_data().is_some()
++                    && (child.stacking_context.is_some()
++                        || child.primary_styles().is_some_and(|s| s.clone_position() != Position::Static));
++                if positioned_level {
++                    if let Some(hit) = hit_child(child, scrollbar) {
++                        return Some(hit);
++                    }
++                    continue;
++                }
 +                if child.taffy_position().is_out_of_flow() || !child.items_in_phases() {
 +                    continue;
 +                }
@@ -41605,40 +41676,16 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +            return None;
 +        }
 +
-         // Call `.hit()` on each child in turn. If any return `Some` then return that value. Else return `Some(self.id).
-         for child_id in self.paint_children.borrow().iter().flatten().rev() {
-             let Some(child) = self.tree().get(*child_id) else {
-@@ -1574,12 +2862,18 @@
-             let child_position = child.taffy_position();
-             let mut child_x = x;
-             let mut child_y = y;
--            if child_position.is_out_of_flow() {
-+            // pyro: an out-of-flow box painted here but laid out by a containing block elsewhere
-+            // (a fixed box at its stacking context's positioned level) is placed as painted.
-+            let lifted = child_position.is_out_of_flow().then(|| child.lifted_paint_offset(self.id)).flatten();
-+            if let Some(offset) = lifted {
-+                child_x -= offset.x;
-+                child_y -= offset.y;
-+            } else if child_position.is_out_of_flow() {
-                 // Fixed-position children of the root element are positioned
-                 // against the viewport and do not scroll with it. (A fixed box
-                 // whose containing block is a transformed ancestor scrolls with
-                 // that ancestor like any other out-of-flow box.)
--                if child_position == taffy::Position::Fixed && self.containing_block().is_none() {
-+                if child_position == taffy::Position::Fixed && self.is_root_element() && !self.root_contains_fixed() {
-                     child_x -= self.scroll_offset().x as f32;
-                     child_y -= self.scroll_offset().y as f32;
-                     let viewport_scroll = self.tree().viewport_scroll();
-@@ -1590,7 +2884,7 @@
-                 child_x -= offset.x;
-                 child_y -= offset.y;
-             }
--            if let Some(hit) = child.hit_inner(child_x, child_y, scale, scrollbar) {
-+            if let Some(hit) = crate::util::ensure_stack(|| child.hit_inner(child_x, child_y, scale, scrollbar)) {
++        // Call `.hit()` on each child in turn. If any return `Some` then return that value. Else return `Some(self.id).
++        for child_id in self.paint_children.borrow().iter().flatten().rev() {
++            let Some(child) = self.tree().get(*child_id) else {
++                continue;
++            };
++            if let Some(hit) = hit_child(child, scrollbar) {
                  return Some(hit);
              }
          }
-@@ -1602,11 +2896,10 @@
+@@ -1602,11 +2917,10 @@
                      let Some(child) = self.tree().get(hoisted_child.node_id) else {
                          continue;
                      };
@@ -41654,7 +41701,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                      }
                  }
              }
-@@ -1716,7 +3009,7 @@
+@@ -1716,7 +3030,7 @@
              return false;
          };
          if self.flags.is_inline_root()
@@ -41663,7 +41710,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          {
              return false;
          }
-@@ -1741,8 +3034,13 @@
+@@ -1741,8 +3055,13 @@
          let y = y + self.final_layout().location.y - self.scroll_offset().y as f32;
  
          // Recurse up the positioning hierarchy
@@ -41678,7 +41725,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              .unwrap_or(crate::util::Point { x, y })
      }
  
-@@ -1818,8 +3116,28 @@
+@@ -1818,8 +3137,28 @@
  
          let root_layout = inline_root.unrounded_layout();
          let content_box_inset = root_layout.padding + root_layout.border;
@@ -41709,7 +41756,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          fn union(acc: &mut Option<taffy::Rect<f32>>, left: f32, top: f32, right: f32, bottom: f32) {
              *acc = Some(match *acc {
-@@ -1877,11 +3195,36 @@
+@@ -1877,11 +3216,36 @@
                  }
              }
  
