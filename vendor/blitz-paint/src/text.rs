@@ -1835,6 +1835,23 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
                 _ => None,
             })
             .collect();
+        let baseline = line.metrics().baseline - line.metrics().block_min_coord;
+        let atomic_baseline_shift = line_tops.filter(|_| baseline.fract() != 0.0 && line.items().any(|item| {
+            matches!(item, PositionedLayoutItem::InlineBox(atom) if !atom.kind.is_span_edge()
+                && !atom.vertical_align.is_line_relative()
+                && !matches!(atom.vertical_align.alignment, parley::AlignmentBaseline::TextTop | parley::AlignmentBaseline::TextBottom)
+                && atom.baseline.is_some_and(|offset| (atom.y + offset - line.metrics().baseline).abs() < 1.0 / 64.0))
+        })).map_or(0.0, |tops| {
+            let top = line.metrics().unquantized_block_min_coord;
+            (crate::snapped_line_top(tops.origin, top + baseline, tops.scale) - crate::snapped_line_top(tops.origin, top, tops.scale)) * tops.scale - f64::from(baseline)
+        });
+        if atomic_baseline_shift != 0.0 {
+            for run in &mut glyph_runs {
+                if !run.edge_aligned() && (run.baseline() - line.metrics().baseline).abs() < 1.0 / 64.0 {
+                    run.translate_baseline(atomic_baseline_shift as f32);
+                }
+            }
+        }
         // pyro: white space hanging at the end of a left-to-right line is not decorated (Chromium
         // removes it), nor counted in a box's decoration line: the line's content ends that much
         // before its last run does (its runs are where alignment and justification put them).
@@ -2058,8 +2075,8 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
             let geometry = DecorationRunGeometry {
                 // pyro: in a vertical line, where the run's fragment is drawn (`VerticalLine`).
                 baseline: glyph_run.baseline() + vertical.map_or(0.0, |vertical| vertical.fragment_shift_y(glyph_run)),
-                content_ascent: glyph_run.baseline() - content_top,
-                content_descent: content_bottom - glyph_run.baseline(),
+                content_ascent: line.style_baseline(glyph_run.style_index()) - content_top,
+                content_descent: content_bottom - line.style_baseline(glyph_run.style_index()),
                 underline_offset: metrics.underline_offset,
                 underline_size: metrics.underline_size,
                 strikethrough_size: metrics.strikethrough_size,
@@ -2178,7 +2195,7 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
         let (strut_top, strut_bottom) = line.span_content_area(line.root_style());
         let line_baseline = line.metrics().baseline;
         let strut = StrutGeometry {
-            baseline: line_baseline,
+            baseline: line_baseline + atomic_baseline_shift as f32,
             ascent: line_baseline - strut_top,
             descent: strut_bottom - line_baseline,
             css_font_size: root_font_size,
@@ -2203,22 +2220,7 @@ pub(crate) fn stroke_text<'a, S: PaintScene>(
 
         // pyro: what a glyph run draws: its glyphs in a colour (its own, or a shadow's) moved by
         // a transform.
-        let baseline = line.metrics().baseline - line.metrics().block_min_coord;
-        let atomic_baseline_shift = line_tops.filter(|_| baseline.fract() != 0.0 && line.items().any(|item| {
-            matches!(item, PositionedLayoutItem::InlineBox(atom) if !atom.kind.is_span_edge()
-                && atom.vertical_align == parley::VerticalAlign::BASELINE
-                && atom.baseline.is_some_and(|offset| (atom.y + offset - line.metrics().baseline).abs() < 1.0 / 64.0))
-        })).map_or(0.0, |tops| {
-            let top = line.metrics().unquantized_block_min_coord;
-            (crate::snapped_line_top(tops.origin, top + baseline, tops.scale) - crate::snapped_line_top(tops.origin, top, tops.scale)) * tops.scale - f64::from(baseline)
-        });
         let draw_run = |scene: &mut S, glyph_run: &parley::GlyphRun<'_, TextBrush>, paint: &RunPaint, shadow: Option<&TextShadow>, runs: &mut Option<Vec<crate::TextRun>>| {
-            let transform = if atomic_baseline_shift != 0.0 && !glyph_run.edge_aligned()
-                && glyph_run.vertical_align() == parley::VerticalAlign::BASELINE
-                && (glyph_run.baseline() - line.metrics().baseline).abs() < 1.0 / 64.0
-            {
-                transform * Affine::translate((0.0, atomic_baseline_shift))
-            } else { transform };
             let run = glyph_run.run();
             // pyro: a colour font is drawn in the palette of the run's element (`font-palette`).
             let palette_font = crate::palette::palette_font(doc, glyph_run.style().brush.id, run.font());

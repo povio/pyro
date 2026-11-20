@@ -26274,7 +26274,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +            let font_size = styles.get_font().font_size.computed_size().px();
 +            let auto = LengthPercentage::new_length(Length::new((font_size / 12.5).max(1.0)));
 +            Some((auto.clone(), auto))
-         }
++        }
 +        GenericTextDecorationInset::LengthPercentage { start, end } => {
 +            let zero = |v: &LengthPercentage| v.to_length().is_some_and(|l| l.px() == 0.0);
 +            (!zero(start) || !zero(end)).then(|| (start.clone(), end.clone()))
@@ -26324,7 +26324,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +    let text = styles.get_text();
 +    if text.text_decoration_line.is_empty() {
 +        return 0.0;
-     }
++    }
 +    let font_size = styles.get_font().font_size.used_size.0.px();
 +    let em = Length::new(font_size);
 +    let thickness = match &text.text_decoration_thickness {
@@ -26337,10 +26337,8 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +        .non_auto()
 +        .map_or(0.0, |lp| lp.resolve(em).px().abs());
 +    f64::from(font_size + thickness + offset)
- }
- 
--pub(crate) fn stroke_text<'a>(
--    scene: &mut impl PaintScene,
++}
++
 +/// pyro: whether the decorations of a box's ancestors stop at it (CSS Text Decoration 3, 2.1):
 +/// they are not propagated to out-of-flow boxes (floats, absolutely positioned boxes) nor
 +/// into the contents of atomic inlines (inline blocks, inline tables, inline flex and grid
@@ -26374,7 +26372,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +    let remember = |cache: &mut Vec<Option<(NodeId, Propagated)>>, id: NodeId, value: &Propagated| {
 +        if cache.len() <= slot(id) {
 +            cache.resize(slot(id) + 1, None);
-+        }
+         }
 +        cache[slot(id)] = Some((id, value.clone()));
 +    };
 +    scratch.clear();
@@ -26416,10 +26414,12 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +        }
 +        remember(cache, child, &result);
 +        parent = child;
-+    }
+     }
 +    result
-+}
-+
+ }
+ 
+-pub(crate) fn stroke_text<'a>(
+-    scene: &mut impl PaintScene,
 +/// `transform` with its content moved `shift` along the x axis of the text.
 +fn shifted(transform: Affine, shift: f64) -> Affine {
 +    if shift == 0.0 {
@@ -26520,7 +26520,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
      stack.clear();
      path_scratch.clear();
      deco_boxes.clear();
-@@ -608,152 +1809,867 @@
+@@ -608,152 +1809,869 @@
      // for each run, only resolve styles for the nodes newly descended into (popping
      // as we ascend). `path_scratch` is a reusable buffer for the run's node path.
      for line in lines {
@@ -26580,6 +26580,23 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +                _ => None,
 +            })
 +            .collect();
++        let baseline = line.metrics().baseline - line.metrics().block_min_coord;
++        let atomic_baseline_shift = line_tops.filter(|_| baseline.fract() != 0.0 && line.items().any(|item| {
++            matches!(item, PositionedLayoutItem::InlineBox(atom) if !atom.kind.is_span_edge()
++                && !atom.vertical_align.is_line_relative()
++                && !matches!(atom.vertical_align.alignment, parley::AlignmentBaseline::TextTop | parley::AlignmentBaseline::TextBottom)
++                && atom.baseline.is_some_and(|offset| (atom.y + offset - line.metrics().baseline).abs() < 1.0 / 64.0))
++        })).map_or(0.0, |tops| {
++            let top = line.metrics().unquantized_block_min_coord;
++            (crate::snapped_line_top(tops.origin, top + baseline, tops.scale) - crate::snapped_line_top(tops.origin, top, tops.scale)) * tops.scale - f64::from(baseline)
++        });
++        if atomic_baseline_shift != 0.0 {
++            for run in &mut glyph_runs {
++                if !run.edge_aligned() && (run.baseline() - line.metrics().baseline).abs() < 1.0 / 64.0 {
++                    run.translate_baseline(atomic_baseline_shift as f32);
++                }
++            }
++        }
 +        // pyro: white space hanging at the end of a left-to-right line is not decorated (Chromium
 +        // removes it), nor counted in a box's decoration line: the line's content ends that much
 +        // before its last run does (its runs are where alignment and justification put them).
@@ -26811,8 +26828,8 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +            let geometry = DecorationRunGeometry {
 +                // pyro: in a vertical line, where the run's fragment is drawn (`VerticalLine`).
 +                baseline: glyph_run.baseline() + vertical.map_or(0.0, |vertical| vertical.fragment_shift_y(glyph_run)),
-+                content_ascent: glyph_run.baseline() - content_top,
-+                content_descent: content_bottom - glyph_run.baseline(),
++                content_ascent: line.style_baseline(glyph_run.style_index()) - content_top,
++                content_descent: content_bottom - line.style_baseline(glyph_run.style_index()),
 +                underline_offset: metrics.underline_offset,
 +                underline_size: metrics.underline_size,
 +                strikethrough_size: metrics.strikethrough_size,
@@ -26974,7 +26991,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 +        let (strut_top, strut_bottom) = line.span_content_area(line.root_style());
 +        let line_baseline = line.metrics().baseline;
 +        let strut = StrutGeometry {
-+            baseline: line_baseline,
++            baseline: line_baseline + atomic_baseline_shift as f32,
 +            ascent: line_baseline - strut_top,
 +            descent: strut_bottom - line_baseline,
 +            css_font_size: root_font_size,
@@ -27015,22 +27032,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
 -                            deco_boxes.len() - 1
 +        // pyro: what a glyph run draws: its glyphs in a colour (its own, or a shadow's) moved by
 +        // a transform.
-+        let baseline = line.metrics().baseline - line.metrics().block_min_coord;
-+        let atomic_baseline_shift = line_tops.filter(|_| baseline.fract() != 0.0 && line.items().any(|item| {
-+            matches!(item, PositionedLayoutItem::InlineBox(atom) if !atom.kind.is_span_edge()
-+                && atom.vertical_align == parley::VerticalAlign::BASELINE
-+                && atom.baseline.is_some_and(|offset| (atom.y + offset - line.metrics().baseline).abs() < 1.0 / 64.0))
-+        })).map_or(0.0, |tops| {
-+            let top = line.metrics().unquantized_block_min_coord;
-+            (crate::snapped_line_top(tops.origin, top + baseline, tops.scale) - crate::snapped_line_top(tops.origin, top, tops.scale)) * tops.scale - f64::from(baseline)
-+        });
 +        let draw_run = |scene: &mut S, glyph_run: &parley::GlyphRun<'_, TextBrush>, paint: &RunPaint, shadow: Option<&TextShadow>, runs: &mut Option<Vec<crate::TextRun>>| {
-+            let transform = if atomic_baseline_shift != 0.0 && !glyph_run.edge_aligned()
-+                && glyph_run.vertical_align() == parley::VerticalAlign::BASELINE
-+                && (glyph_run.baseline() - line.metrics().baseline).abs() < 1.0 / 64.0
-+            {
-+                transform * Affine::translate((0.0, atomic_baseline_shift))
-+            } else { transform };
 +            let run = glyph_run.run();
 +            // pyro: a colour font is drawn in the palette of the run's element (`font-palette`).
 +            let palette_font = crate::palette::palette_font(doc, glyph_run.style().brush.id, run.font());
@@ -27504,7 +27506,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
      selection_start: usize,
      selection_end: usize,
  ) {
-@@ -761,12 +2677,54 @@
+@@ -761,12 +2679,54 @@
      let focus = Cursor::from_byte_index(layout, selection_end, Affinity::Downstream);
      let selection = Selection::new(anchor, focus);
  
@@ -27561,7 +27563,7 @@ diff --git a/packages/blitz-paint/src/text.rs b/packages/blitz-paint/src/text.rs
  /// Approximates macOS font smoothing (stem dilation). CoreGraphics dilates each side by an amount
  /// in device pixels that grows with the device ppem up to 0.3px (fitted to Safari's ink at 9-72px
  /// and 1x-3x scale), and keeps dilating at large sizes, so there is no ppem cutoff. glifo applies
-@@ -803,4 +2761,242 @@
+@@ -803,4 +2763,242 @@
          prev = *point;
      }
      prev.1

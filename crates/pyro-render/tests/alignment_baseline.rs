@@ -74,3 +74,12 @@ fn a_negative_half_pixel_shift_rounds_up() {
     assert!(top(&plain).is_some());
     assert_eq!(top(&shifted), top(&plain));
 }
+
+#[test]
+fn zero_used_shifts_share_the_decorated_atomic_baseline() {
+    let line = |text_align: &str, atom_align: &str| render(&format!("<div style='font:16px/19px serif;text-decoration:underline'><i style='display:inline-block;height:18.5px'></i>A<span style='vertical-align:{text_align}'>Ag</span><b style='display:inline-block;color:blue;vertical-align:{atom_align}'>x</b></div>"));
+    let expected = line("baseline", "baseline");
+    for (text, atom) in [("0%", "baseline"), ("0px", "0%"), ("0%", "0px")] {
+        assert!(line(text, atom) == expected, "text {text}, atomic {atom}");
+    }
+}
