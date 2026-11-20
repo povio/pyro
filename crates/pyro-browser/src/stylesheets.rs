@@ -358,7 +358,8 @@ impl Browser {
             };
             let environment = document_encoding(bindings).unwrap_or_default();
             for import in imports {
-                self.fetch_style_import(page, loader, node, generation, import, 1, &sheet_url, sheet_policy, &environment);
+                let parent = pyro_dom::cssom::sheet_owner_identity(node);
+                self.fetch_style_import(page, loader, node, generation, import, 1, &sheet_url, sheet_policy, &parent, &environment);
             }
             self.style_imports_settled(page, loader, node);
             self.stylesheets_changed(page);
@@ -515,7 +516,8 @@ impl Browser {
         let environment = document_encoding(&bindings).unwrap_or_default();
         for import in urls {
             // (A `<style>`'s imports: the document's policy.)
-            self.fetch_style_import(page, &loader, node, generation, import, 1, &referrer, None, &environment);
+            let parent = pyro_dom::cssom::sheet_owner_identity(node);
+            self.fetch_style_import(page, &loader, node, generation, import, 1, &referrer, None, &parent, &environment);
         }
         self.style_imports_settled(page, &loader, node);
         true
@@ -535,6 +537,8 @@ impl Browser {
         referrer: &str,
         // pyro: the importing sheet's own response policy (from that sheet, never by URL).
         parent_policy: Option<pyro_net::ReferrerPolicy>,
+        // pyro: the importing sheet object's identity (`cssom::imported_sheet_key`).
+        parent: &str,
         environment: &str,
     ) {
         let url = import.url.clone();
@@ -559,7 +563,8 @@ impl Browser {
         // integrity check (a response failing it is a failed import) and its referrer policy.
         let cors = import.cross_origin.is_some();
         let integrity = import.integrity.clone();
-        let request_key = pyro_dom::cssom::import_key(&url, &import);
+        // pyro: under the sheet that imports it (its own request key is unique per parent).
+        let request_key = pyro_dom::cssom::imported_sheet_key(parent, &pyro_dom::cssom::import_key(&url, &import));
         let document_origin = self.doc(page).map(|p| p.main_frame.origin.clone()).unwrap_or_else(|| "null".into());
         // pyro: the layout body key of the request as sent (set below, once it is built).
         let layout_key: Rc<std::cell::RefCell<Option<pyro_dom::layout::LayoutBodyKey>>> = Rc::default();
@@ -694,7 +699,7 @@ impl Browser {
                 let base = url::Url::parse(&r.url).ok();
                 let nested = resolve_imports(pyro_dom::cssom::leading_import_requests(&text), base.as_ref());
                 for nested in nested {
-                    self.fetch_style_import(page, loader, node, generation, nested, depth + 1, &r.url, r.referrer_policy, encoding);
+                    self.fetch_style_import(page, loader, node, generation, nested, depth + 1, &r.url, r.referrer_policy, request_key, encoding);
                 }
             }
         }

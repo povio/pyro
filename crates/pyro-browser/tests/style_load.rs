@@ -519,3 +519,44 @@ fn an_integrity_checked_import_is_kept_under_its_integrity() {
     assert!(bodies.get(&key(None)).is_none(), "never under no integrity");
     assert!(bodies.get(&key(Some(&integrity))).is_some(), "under its integrity");
 }
+
+/// A sheet's media list is its sheet object's: one kept across a repoint writes nowhere (it wrote
+/// the element's `media`, which the replacement sheet uses); two sheets importing one request with
+/// different referrers (their responses differ) each list their own response's rules (imports
+/// were found by request text alone: security review cycle 5, 3).
+#[test]
+fn media_lists_and_imports_are_their_sheet_objects() {
+    struct Referring(Rc<StaticLoader>);
+    impl pyro_browser::ResourceLoader for Referring {
+        fn fetch(&self, browser: &mut pyro_browser::Browser, request: pyro_browser::FetchRequest, done: pyro_browser::FetchDone) {
+            let from_a = request.url.ends_with("/x.css") && request.referrer.as_deref().is_some_and(|r| r.ends_with("/a.css"));
+            self.0.fetch(browser, request, Box::new(move |b, result| done(b, result.map(|mut r| {
+                if from_a {
+                    r.body = b"from-a { }".to_vec();
+                }
+                r
+            }))));
+        }
+    }
+    let (mut thread, page, loader) = setup(
+        "<link id=l rel=stylesheet href=a.css media=screen><link id=k rel=stylesheet href=b.css>",
+    );
+    loader.insert("http://site.test/a.css", "text/css", "@import \"x.css\";", Duration::ZERO);
+    loader.insert("http://site.test/b.css", "text/css", "@import \"x.css\";", Duration::ZERO);
+    loader.insert("http://site.test/x.css", "text/css", "from-b { }", Duration::ZERO);
+    loader.insert("http://site.test/c.css", "text/css", "q { }", Duration::ZERO);
+    thread.browser.set_loader(Some(Rc::new(Referring(loader.clone()))));
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    let imports = eval(
+        &thread,
+        page,
+        "['l', 'k'].map(id => document.getElementById(id).sheet.cssRules[0].styleSheet?.cssRules[0]?.selectorText).join('|')",
+    );
+    assert_eq!(imports, "from-a|from-b", "each import is its own parent's");
+    eval(&thread, page, "globalThis.m = document.getElementById('l').sheet.media; document.getElementById('l').href = 'c.css'; ''");
+    settle(&mut thread);
+    eval(&thread, page, "m.mediaText = 'print'; ''");
+    let after = eval(&thread, page, "[document.getElementById('l').media, document.getElementById('l').sheet.media.mediaText].join('|')");
+    assert_eq!(after, "screen|screen", "the kept list wrote nowhere");
+}

@@ -973,9 +973,15 @@ fn sheet_key(page: &PageDom, owner: NodeId) -> IdentityKey {
 /// has a new one (HTML "update a style block"), pyro: and a `<link>` that applied another
 /// response.
 fn sheet_key_of(page: &PageDom, owner: NodeId, generation: SheetGeneration) -> IdentityKey {
+    sheet_object_key(page, owner, generation, 23)
+}
+
+/// pyro: the identity of an object of `owner`'s sheet object of `generation` (`kind`: the sheet
+/// itself, 23; its media list, 25).
+fn sheet_object_key(page: &PageDom, owner: NodeId, generation: SheetGeneration, kind: u64) -> IdentityKey {
     let base = page.node_identity(owner);
     let mixed = u64::from(generation.style).wrapping_add(generation.response.wrapping_mul(0x9E37_79B9));
-    IdentityKey(base.0 | (1 << 61) | (23 << 48), base.1.wrapping_add(mixed << 24))
+    IdentityKey(base.0 | (1 << 61) | (kind << 48), base.1.wrapping_add(mixed << 24))
 }
 
 pub struct RuleData {
@@ -1376,13 +1382,21 @@ rule_class!(CssImportRule, "CSSImportRule", CssRule, |def| {
         let Some((page, url)) = import_url(r) else { return Ok(s.null()) };
         // pyro: the sheet of this rule's request (URL and modifiers), at its URL after redirects.
         let import = pyro_dom::cssom::import_request(&rule_prelude(r)).unwrap_or_default();
-        let request = pyro_dom::cssom::import_key(&url, &import);
+        // pyro: under the sheet object that imports it (by identity, never the request text alone).
+        let parent = match &r.owner {
+            SheetOwner::Node(h, _) => pyro_dom::cssom::sheet_owner_identity(h.id),
+            SheetOwner::Constructed(c) => match &c.import {
+                Some(i) => i.key.clone(),
+                None => return Ok(s.null()),
+            },
+        };
+        let request = pyro_dom::cssom::imported_sheet_key(&parent, &pyro_dom::cssom::import_key(&url, &import));
         let Some((final_url, text, opaque)) = page.imported_sheets.borrow().get(&request).cloned() else {
             return Ok(s.null());
         };
         let media = media_text(&pyro_dom::cssom::import_split(&rule_prelude(r)).1);
         let rule = RuleData { owner: r.owner.hold()?, rule_node: r.node()?.clone() };
-        let sheet = Constructed::imported(&page, final_url, &text, media, rule, opaque);
+        let sheet = Constructed::imported(&page, final_url, &text, media, rule, opaque, request);
         Ok(s.wrap::<CssStyleSheet>(SheetData { owner: SheetOwner::Constructed(sheet) }, Some(key))?.value())
     });
     // The condition of `supports(...)`, or null.
@@ -1700,6 +1714,9 @@ pub struct ImportInfo {
     rule: RuleData,
     /// pyro: the sheet's response was CORS-cross-origin: not origin-clean (CSSOM).
     opaque: bool,
+    /// pyro: its key under the sheet that imports it (`cssom::imported_sheet_key`): its own
+    /// imports' parent identity.
+    key: String,
 }
 
 impl Constructed {
@@ -1734,6 +1751,7 @@ impl Constructed {
         media: String,
         rule: RuleData,
         opaque: bool,
+        key: String,
     ) -> Rc<Constructed> {
         static NEXT_SHEET: AtomicU64 = AtomicU64::new(1 << 40);
         let id = NEXT_SHEET.fetch_add(1, Ordering::Relaxed);
@@ -1754,7 +1772,7 @@ impl Constructed {
             }),
             media: RefCell::new(media),
             disabled: Cell::new(false),
-            import: Some(ImportInfo { href, rule, opaque }),
+            import: Some(ImportInfo { href, rule, opaque, key }),
         });
         sheet.model.list.replace(rules);
         sheet
@@ -2038,6 +2056,8 @@ impl MediaList {
             }
         };
         match sh {
+            // pyro: a detached sheet object's list is no longer its node's.
+            SheetOwner::Node(..) if !sh.is_current() => String::new(),
             SheetOwner::Node(h, _) => {
                 media_text(h.page.dom.borrow().get_attribute(h.id, "media").ok().flatten().unwrap_or(""))
             }
@@ -2063,6 +2083,8 @@ impl MediaList {
             }
         };
         match sh {
+            // pyro: a detached sheet object's list writes nowhere (never the replacement's media).
+            SheetOwner::Node(..) if !sh.is_current() => Ok(()),
             SheetOwner::Node(h, _) => h.page.dom.borrow_mut().set_attribute(h.id, "media", &text).js(),
             SheetOwner::Constructed(c) => {
                 if c.media.replace(text.clone()) != text {
@@ -2204,10 +2226,9 @@ impl JsClass for StyleSheet {
             "media",
             |s, sh| {
                 let key = match &sh.owner {
-                    SheetOwner::Node(h, _) => {
-                        let base = h.page.node_identity(h.id);
-                        IdentityKey(base.0 | (1 << 61) | (25 << 48), base.1)
-                    }
+                    // pyro: one media list per sheet object (its generation in the key, as the
+                    // sheet's own): a replaced sheet's list is not the new sheet's.
+                    SheetOwner::Node(h, generation) => sheet_object_key(&h.page, h.id, *generation, 25),
                     SheetOwner::Constructed(c) => IdentityKey((1 << 56) | (1 << 53), c.id),
                 };
                 if let Some(o) = s.lookup_identity(key) {

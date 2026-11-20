@@ -367,6 +367,19 @@ impl ImportRequest {
 
 /// pyro: the key of an import's request (its absolute URL and its modifiers): the sheet a request
 /// with other modifiers loaded (or failed to) is not this one's.
+/// pyro: the key of an imported sheet: its request (`import_key`) under the sheet object that
+/// imports it (`parent`: its owner node's identity for a top-level sheet, the parent import's own
+/// key for an imported one): two sheets importing the same request (whose responses may differ,
+/// their referrers do) have their own.
+pub fn imported_sheet_key(parent: &str, request: &str) -> String {
+    format!("{parent}\u{1}{request}")
+}
+
+/// pyro: the parent identity of a top-level sheet owned by `node` ([`imported_sheet_key`]).
+pub fn sheet_owner_identity(node: crate::NodeId) -> String {
+    format!("{node:?}")
+}
+
 pub fn import_key(url: &str, import: &ImportRequest) -> String {
     if !import.is_modified() {
         return url.to_owned();
