@@ -245,7 +245,7 @@ pub struct BlitzDomPainter<'dom, 'a> {
     /// (the box, the children, the clip in device space). The clip is the box's; boxes it does not contain
     /// escape it inside the child's effect group (Chromium clips by the containing-block chain).
     /// (Also the box's own culling rect, uncut by its clip, which the child's effect group takes.)
-    pub(crate) handed_clips: RefCell<Option<(NodeId, std::rc::Rc<[NodeId]>, kurbo::BezPath, Rect)>>,
+    pub(crate) handed_clips: RefCell<Option<(NodeId, std::rc::Rc<std::collections::HashSet<NodeId>>, kurbo::BezPath, Rect)>>,
     /// pyro: the clip handed to the element about to paint: (its owner, the clip in device space).
     pub(crate) handed_clip: RefCell<Option<(NodeId, kurbo::BezPath)>>,
     /// pyro: the element painting under a handed clip and the clip's owner, against whose
@@ -1726,7 +1726,17 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         // pyro: a clipping box that is no stacking context whose child holds boxes it does not
         // contain clips its children each (a clip layer split is the same clip) and hands the
         // children its clip (`ElementCx::clip_transfer_children`): each one that holds such boxes.
-        let transfer = (should_clip && handed.is_none() && !is_text_input && !node.flags.is_inline_root())
+        // pyro: and a stacking context handed a clip hands it on to its own such children (nested
+        // effect groups), when every z-ordered box it lifts escapes the clip (those are painted
+        // outside the per-child clips).
+        let hoisted_escape = || {
+            let tree = self.dom.as_ref().tree();
+            let owner = cx.clip_owner();
+            node.stacking_context.as_ref().is_none_or(|sc| {
+                sc.pos_z_hoisted_children().chain(sc.neg_z_hoisted_children()).all(|c| escapes_clip_of(tree, owner, c.node_id))
+            })
+        };
+        let transfer = (should_clip && (handed.is_none() || hoisted_escape()) && !is_text_input && !node.flags.is_inline_root())
             .then(|| cx.clip_transfer_children())
             .filter(|children| !children.is_empty());
         let outer_handed_clips = transfer.clone().map(|children| {
@@ -5829,24 +5839,24 @@ impl ElementCx<'_, '_> {
     /// boxes this box does not contain (their containing block lies outside it): they must escape
     /// this box's clip inside the child's effect group, which a clip layer around the child would
     /// hold them in (WPT css-color `clip-opacity-out-of-flow`).
-    fn clip_transfer_children(&self) -> std::rc::Rc<[NodeId]> {
+    fn clip_transfer_children(&self) -> std::rc::Rc<std::collections::HashSet<NodeId>> {
         let tree = self.context.dom.as_ref().tree();
-        let children = self.node.paint_children.borrow().clone().unwrap_or_default();
-        children.into_iter().filter(|&id| {
-            let child = &tree[id];
+        let owner = self.clip_owner();
+        // Whether `child`, a stacking context that does not clip, holds a box escaping `owner`'s
+        // clip, itself or in a stacking context of its own that does not clip either (nested effect
+        // groups: each hands the clip on).
+        fn holds(cx: &ElementCx<'_, '_>, tree: &blitz_dom::NodeTree, owner: NodeId, child: &Node, depth: usize) -> bool {
             let Some(sc) = &child.stacking_context else { return false };
-            if child.primary_styles().is_none_or(|style| self.context.should_clip_node(child, &style)) {
+            if depth > 64 || child.primary_styles().is_none_or(|style| cx.context.should_clip_node(child, &style)) {
                 return false;
             }
-            sc.pos_z_hoisted_children()
-                .chain(sc.neg_z_hoisted_children())
-                .any(|c| escapes_clip_of(tree, self.node.id, c.node_id))
-                || child
-                    .paint_children
-                    .borrow()
-                    .as_ref()
-                    .is_some_and(|c| c.iter().any(|&id| escapes_clip_of(tree, self.node.id, id)))
-        }).collect()
+            let hoisted = sc.pos_z_hoisted_children().chain(sc.neg_z_hoisted_children()).map(|c| c.node_id);
+            let own: Vec<NodeId> = child.paint_children.borrow().iter().flatten().copied().chain(hoisted).collect();
+            own.iter().any(|&id| escapes_clip_of(tree, owner, id))
+                || own.iter().any(|&id| tree.get(id).is_some_and(|nested| holds(cx, tree, owner, nested, depth + 1)))
+        }
+        let children = self.node.paint_children.borrow().clone().unwrap_or_default();
+        std::rc::Rc::new(children.into_iter().filter(|&id| holds(self, tree, owner, &tree[id], 0)).collect())
     }
 
     /// pyro: whether `child_id`, one of this element's `paint_children`, paints at the positioned
@@ -6091,6 +6101,11 @@ impl ElementCx<'_, '_> {
             .clone()
             .filter(|(parent, _, _, _)| *parent == self.node.id);
         if let Some((_, transfer, device_clip, outer_rect)) = per_child {
+            // (A box escaping the clip, which a stacking context handed it holds, is drawn outside it.)
+            if escapes_clip_of(self.context.dom.as_ref().tree(), self.clip_owner(), child_id) {
+                self.draw_paint_child_unclipped(scene, child_id, parent_style_transform, outer_rect);
+                return;
+            }
             if transfer.contains(&child_id) {
                 *self.context.handed_clip.borrow_mut() = Some((self.node.id, device_clip));
                 self.draw_paint_child_unclipped(scene, child_id, parent_style_transform, outer_rect);

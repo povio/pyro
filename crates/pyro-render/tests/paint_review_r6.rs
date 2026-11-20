@@ -357,3 +357,24 @@ fn a_details_with_many_children_renders_in_bounded_time() {
     let _ = render(&format!("<details open><summary>s</summary>{kids}</details>"));
     assert!(start.elapsed() < std::time::Duration::from_secs(20), "took {:?}", start.elapsed());
 }
+
+/// A box whose containing block lies outside an `overflow: hidden` box (no stacking context)
+/// escapes its clip through two nested opacity groups: the inner group holds it, the outer group
+/// holds the inner one. Only a group holding such a box itself took the clip over; the outer group
+/// was clipped whole. Review cycle 4, finding 3.
+#[test]
+fn a_box_escapes_a_clip_through_nested_opacity_groups() {
+    let img = render(
+        "<style>body{margin:0}</style>\
+         <div style='position:relative;width:300px;height:200px'>\
+         <div style='overflow:hidden;width:100px;height:200px'>\
+         <div style='opacity:.5;height:100px'><div style='opacity:.999;height:100px;background:yellow'>\
+         <div style='position:absolute;left:150px;top:0;width:50px;height:50px;background:blue'></div>\
+         </div></div></div></div>",
+    );
+    let [r, g, b] = pixel(&img, 175, 25);
+    assert!(r.abs_diff(127) <= 3 && g.abs_diff(127) <= 3 && b > 250, "the box past the clip: {:?}", [r, g, b]);
+    // The groups' own content stays clipped.
+    let [r, g, b] = pixel(&img, 125, 50);
+    assert!(r > 250 && g > 250 && b > 250, "no yellow past the clip: {:?}", [r, g, b]);
+}
