@@ -24,6 +24,7 @@ use taffy::{
 };
 
 mod anchor;
+pub(crate) mod anchor_index;
 pub(crate) mod combined_text;
 pub(crate) mod construct;
 pub(crate) mod counters;

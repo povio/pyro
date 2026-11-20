@@ -2169,7 +2169,7 @@ impl BaseDocument {
             return;
         }
         self.last_layout_space = Some(available_space);
-        self.last_sibling_anchor.get_mut().clear();
+        self.anchor_index.get_mut().clear();
         self.anchor_flush_choices.clear();
         self.layout_ran = true;
         phase_profile::laid_out();

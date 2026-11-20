@@ -664,7 +664,7 @@ pub struct BaseDocument {
     pub(crate) named_anchor_nodes: HashMap<(Option<NodeId>, style::values::DashedIdent), HashSet<NodeId>>,
     anchor_node_names: HashMap<NodeId, (Option<NodeId>, style::values::specified::position::AnchorNameIdent)>,
     pub(crate) anchor_lookup_visits: std::cell::Cell<u64>,
-    pub(crate) last_sibling_anchor: RefCell<HashMap<(Option<NodeId>, style::values::DashedIdent), Option<NodeId>>>,
+    pub(crate) anchor_index: RefCell<crate::layout::anchor_index::AnchorIndex>,
     pub(crate) anchor_try_visits: std::cell::Cell<u64>,
     pub(crate) anchor_try_scrollports: HashMap<Option<NodeId>, HashSet<NodeId>>,
     pub(crate) anchor_try_sources: HashMap<NodeId, HashSet<Option<NodeId>>>,
@@ -989,7 +989,7 @@ impl BaseDocument {
             named_anchor_nodes: HashMap::new(),
             anchor_node_names: HashMap::new(),
             anchor_lookup_visits: Default::default(),
-            last_sibling_anchor: Default::default(),
+            anchor_index: Default::default(),
             anchor_try_visits: Default::default(),
             anchor_try_scrollports: Default::default(),
             anchor_try_sources: Default::default(),
@@ -1479,7 +1479,7 @@ impl BaseDocument {
     pub(crate) fn update_anchor_names(&mut self, node_id: NodeId, names: Option<(Option<NodeId>, style::values::specified::position::AnchorNameIdent)>) {
         if names.is_none() && self.anchor_node_names.is_empty() { return; }
         if self.anchor_node_names.get(&node_id) == names.as_ref() { return; }
-        self.last_sibling_anchor.get_mut().clear();
+        self.anchor_index.get_mut().clear();
         if let Some((scope, old)) = self.anchor_node_names.remove(&node_id) {
             for name in old.0.iter() {
                 let key = (scope, name.clone());
@@ -1496,6 +1496,7 @@ impl BaseDocument {
     }
 
     pub fn anchor_candidate_visits(&self) -> u64 { self.anchor_lookup_visits.get() }
+    pub fn anchor_index_work(&self) -> u64 { self.anchor_index.borrow().work.get() }
     pub fn has_named_anchors(&self) -> bool { !self.named_anchor_nodes.is_empty() }
     pub fn anchor_try_visits(&self) -> u64 { self.anchor_try_visits.get() }
 

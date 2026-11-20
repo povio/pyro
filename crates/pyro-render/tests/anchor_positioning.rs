@@ -76,6 +76,45 @@ fn scroll_fit_invalidation_coalesces_before_layout() {
 }
 
 #[test]
+fn indexed_lookup_excludes_fixed_siblings_hoisted_past_the_query_container() {
+    let html = "<!doctype html><style>section{position:relative}i,em{display:block;anchor-name:--a}i{width:21px}em{position:fixed;width:51px}b{position:absolute;width:anchor-size(--a width,1px)}</style><section><i></i><em></em><b></b></section>";
+    let mut doc = blitz_html::HtmlDocument::from_html(html, blitz_dom::DocumentConfig::default());
+    doc.viewport_mut().window_size = (400, 300);
+    doc.resolve(0.0);
+    let target = doc.query_selector("b").unwrap().unwrap();
+    assert_eq!(doc.get_node(target).unwrap().final_layout().size.width, 21.0);
+    let later = doc.query_selector("em").unwrap().unwrap();
+    doc.set_style_property(later, "position", "relative");
+    doc.resolve(0.0);
+    assert_eq!(doc.get_node(target).unwrap().final_layout().size.width, 51.0);
+    doc.mutate().remove_node(later);
+    doc.resolve(0.0);
+    assert_eq!(doc.get_node(target).unwrap().final_layout().size.width, 21.0);
+}
+
+#[test]
+fn duplicate_mixed_parent_groups_use_bounded_predecessor_queries() {
+    fn measure(count: usize) -> (u64, u64) {
+        let mut html = String::from("<!doctype html><style>section{position:relative}i,em,b{position:absolute;height:1px}i,em{anchor-name:--a}em{width:211px}b{width:anchor-size(--a width,1px)}</style>");
+        for index in 0..count {
+            html.push_str(&format!("<section><i style='width:{}px'></i><b id=b{index}></b><em></em></section>", index + 2));
+        }
+        let mut doc = blitz_html::HtmlDocument::from_html(&html, blitz_dom::DocumentConfig::default());
+        doc.viewport_mut().window_size = (400, 300);
+        doc.resolve(0.0);
+        for index in 0..count {
+            let node = doc.query_selector(&format!("#b{index}")).unwrap().unwrap();
+            assert_eq!(doc.get_node(node).unwrap().final_layout().size.width, (index + 2) as f32);
+        }
+        (doc.anchor_candidate_visits(), doc.anchor_index_work())
+    }
+    assert_eq!(measure(0), (0, 0));
+    let small = measure(32);
+    let large = measure(128);
+    assert!(small.1 > 0 && large.0 <= small.0 * 4 && large.1 <= small.1 * 8, "{small:?} {large:?}");
+}
+
+#[test]
 fn duplicate_sibling_names_and_consumers_scale_linearly() {
     fn visits(count: usize) -> u64 {
         let html = format!("<!doctype html><style>main{{position:relative}}i{{display:block;height:1px;anchor-name:--a}}b{{position:absolute;top:anchor(--a bottom)}}</style><main>{}{}</main>", "<i></i>".repeat(count), "<b></b>".repeat(count));

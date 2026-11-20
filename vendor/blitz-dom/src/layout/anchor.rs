@@ -145,96 +145,87 @@ impl BaseDocument {
         let key = (scope, name.clone());
         let candidates = self.named_anchor_nodes.get(&key)?;
         let visit = || self.anchor_lookup_visits.set(self.anchor_lookup_visits.get().saturating_add(1));
-        let preferred = if candidates.len() > 1 {
-            let mut cache = self.last_sibling_anchor.borrow_mut();
-            *cache.entry(key).or_insert_with(|| {
-                let parent = self.nodes[*candidates.iter().next()?].parent?;
-                if !candidates.iter().all(|id| { visit(); self.nodes[*id].parent == Some(parent) }) { return None; }
-                self.nodes[parent].children.iter().rev().find(|id| { visit(); candidates.contains(id) }).copied()
-            })
-        } else { None };
-        let scope_boundary = |start| {
-            let mut cursor = start;
-            for _ in 0..self.nodes.len() {
-                let current = &self.nodes[cursor];
-                if current.primary_styles().is_some_and(|s| {
+        let is_boundary = |id: crate::NodeId| {
+                let current = &self.nodes[id];
+                current.primary_styles().is_some_and(|s| {
                     let boundary = &s.get_box().anchor_scope;
                     boundary.value.includes(name)
                         && boundary.scope.get_shadow_root_for_scoped(current).map(|root| root.id) == scope
-                }) {
-                    return Some(cursor);
-                }
-                cursor = current.parent?;
-            }
-            None
+                })
         };
-        let boundary = scope_boundary(origin);
-        let mut selected = None;
-        for id in preferred.into_iter().chain(candidates.iter().copied().filter(|id| Some(*id) != preferred)) {
+        let indexed = candidates.len() > 1;
+        let id = if indexed {
+            let id = self.anchor_index.borrow_mut().lookup(self, key, origin, node.id, container.id, is_boundary)?;
             visit();
-            let anchor = &self.nodes[id];
-            if id == node.id {
-                continue;
+            id
+        } else {
+            let id = *candidates.iter().next()?;
+            visit();
+            let boundary = |start| std::iter::successors(Some(start), |&id| self.nodes[id].parent)
+                .take(self.nodes.len()).find(|&id| is_boundary(id));
+            if boundary(id) != boundary(origin) || (self.nodes[id].is_out_of_flow() && !self.compare_document_order(id, origin).is_lt()) { return None; }
+            id
+        };
+        self.anchor_geometry(node, container, id)
+    }
+
+    pub(super) fn anchor_geometry(&self, node: &Node, container: &Node, id: crate::NodeId) -> Option<(crate::NodeId, taffy::Point<f32>, taffy::Size<f32>)> {
+        let anchor = &self.nodes[id];
+        if id == node.id || (!anchor.flags.is_in_document() && !anchor.is_anonymous()) {
+            return None;
+        }
+        let anchor_style = anchor.primary_styles()?;
+        if anchor_style.get_box().display.is_none() {
+            return None;
+        }
+        let mut cursor = id;
+        let mut point = taffy::Point::ZERO;
+        let mut extent = anchor.unrounded_layout().size;
+        if let Some(fragments) = anchor.inline_fragment_boxes() {
+            let Some(rect) = fragments.reduce(|a, b| taffy::Rect {
+                left: a.left.min(b.left),
+                right: a.right.max(b.right),
+                top: a.top.min(b.top),
+                bottom: a.bottom.max(b.bottom),
+            }) else {
+                return None;
+            };
+            point = taffy::Point { x: rect.left, y: rect.top };
+            extent = taffy::Size { width: rect.right - rect.left, height: rect.bottom - rect.top };
+            cursor = anchor.inline_root_ancestor()?.id;
+        }
+        for _ in 0..self.nodes.len() {
+            if cursor == container.id || cursor == node.id {
+                break;
             }
-            let Some(anchor_style) = anchor.primary_styles() else { continue };
-            if anchor_style.get_box().display.is_none() {
-                continue;
-            }
-            if scope_boundary(id) != boundary {
-                continue;
-            }
-            let mut cursor = id;
-            let mut point = taffy::Point::ZERO;
-            let mut extent = anchor.unrounded_layout().size;
-            if let Some(fragments) = anchor.inline_fragment_boxes() {
-                let Some(rect) = fragments.reduce(|a, b| taffy::Rect {
+            let current = &self.nodes[cursor];
+            let parent = if current.is_out_of_flow() { current.containing_block() } else { current.layout_parent.get() };
+            let Some(parent) = parent else { break };
+            point.x += current.unrounded_layout().location.x;
+            point.y += current.unrounded_layout().location.y;
+            if let Some(columns) = self.nodes[parent].column_fragments() {
+                let bottom = point.y + extent.height;
+                let pieces = columns.hoisted_columns(point.y, bottom).map(|fragment| taffy::Rect {
+                    left: point.x + fragment.offset.x,
+                    right: point.x + extent.width + fragment.offset.x,
+                    top: point.y.max(fragment.start) + fragment.offset.y,
+                    bottom: bottom.min(fragment.end) + fragment.offset.y,
+                });
+                if let Some(rect) = pieces.reduce(|a, b| taffy::Rect {
                     left: a.left.min(b.left),
                     right: a.right.max(b.right),
                     top: a.top.min(b.top),
                     bottom: a.bottom.max(b.bottom),
-                }) else {
-                    continue;
-                };
-                point = taffy::Point { x: rect.left, y: rect.top };
-                extent = taffy::Size { width: rect.right - rect.left, height: rect.bottom - rect.top };
-                cursor = anchor.inline_root_ancestor()?.id;
-            }
-            for _ in 0..self.nodes.len() {
-                if cursor == container.id || cursor == node.id {
-                    break;
+                }) {
+                    point = taffy::Point { x: rect.left, y: rect.top };
+                    extent = taffy::Size { width: rect.right - rect.left, height: rect.bottom - rect.top };
                 }
-                let current = &self.nodes[cursor];
-                let Some(parent) = current.containing_block() else { break };
-                point.x += current.unrounded_layout().location.x;
-                point.y += current.unrounded_layout().location.y;
-                if let Some(columns) = self.nodes[parent].column_fragments() {
-                    let bottom = point.y + extent.height;
-                    let pieces = columns.hoisted_columns(point.y, bottom).map(|fragment| taffy::Rect {
-                        left: point.x + fragment.offset.x,
-                        right: point.x + extent.width + fragment.offset.x,
-                        top: point.y.max(fragment.start) + fragment.offset.y,
-                        bottom: bottom.min(fragment.end) + fragment.offset.y,
-                    });
-                    if let Some(rect) = pieces.reduce(|a, b| taffy::Rect {
-                        left: a.left.min(b.left),
-                        right: a.right.max(b.right),
-                        top: a.top.min(b.top),
-                        bottom: a.bottom.max(b.bottom),
-                    }) {
-                        point = taffy::Point { x: rect.left, y: rect.top };
-                        extent = taffy::Size { width: rect.right - rect.left, height: rect.bottom - rect.top };
-                    }
-                }
-                cursor = parent;
             }
-            if cursor != container.id || (anchor.is_out_of_flow() && !self.compare_document_order(id, origin).is_lt()) {
-                continue;
-            }
-            if selected.is_none_or(|(prev, _, _)| self.compare_document_order(prev, id).is_lt()) {
-                selected = Some((id, point, extent));
-                if Some(id) == preferred { break; }
-            }
+            cursor = parent;
         }
-        selected
+        if cursor != container.id {
+            return None;
+        }
+        Some((id, point, extent))
     }
 }
