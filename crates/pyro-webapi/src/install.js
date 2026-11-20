@@ -199,6 +199,22 @@
   const viewBuffer = getOwnPropertyDescriptor(typedArrayProto, 'buffer').get;
   const viewOffset = getOwnPropertyDescriptor(typedArrayProto, 'byteOffset').get;
   const viewLength = getOwnPropertyDescriptor(typedArrayProto, 'byteLength').get;
+  const viewName = getOwnPropertyDescriptor(typedArrayProto, toStringTag).get;
+  const resizable = getOwnPropertyDescriptor(ArrayBuffer.prototype, 'resizable')?.get;
+  const growable = typeof SharedArrayBuffer === 'function'
+    ? getOwnPropertyDescriptor(SharedArrayBuffer.prototype, 'growable')?.get : undefined;
+  // Web IDL [AllowShared] Uint8Array, without [AllowResizable].
+  const encodeIntoCapacity = view => {
+    if (apply(viewName, view, []) !== 'Uint8Array') throw new TypeError_('Expected a Uint8Array');
+    const buffer = apply(viewBuffer, view, []);
+    let variable = false;
+    if (resizable) {
+      try { variable = apply(resizable, buffer, []); }
+      catch (_) { if (growable) variable = apply(growable, buffer, []); }
+    }
+    if (variable) throw new TypeError_('Expected a fixed-length backing buffer');
+    return apply(viewLength, view, []);
+  };
   const toWellFormed = String.prototype.toWellFormed;
   const blobParts = (parts) => {
     const out = [];
@@ -238,7 +254,7 @@
 
   return {
     blobParts,
-    dataView,
+    encoding: { __proto__: null, dataView, encodeIntoCapacity },
     mutationOptions,
     intersection: [intersectionThresholds, freeze],
     formData: [formDataPopulated, formDataIteratorPopulated],
