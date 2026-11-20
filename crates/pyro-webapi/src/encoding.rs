@@ -188,7 +188,13 @@ pub struct DecoderData {
     fatal: bool,
     ignore_bom: bool,
     /// Held between `decode(..., {stream: true})` calls; None starts afresh.
-    decoder: std::cell::RefCell<Option<encoding_rs::Decoder>>,
+    decoder: std::cell::RefCell<Option<DecoderState>>,
+}
+
+struct DecoderState {
+    decoder: encoding_rs::Decoder,
+    // A fatal streaming error leaves the unread suffix in the input queue.
+    pending: Vec<u8>,
 }
 
 pub struct TextDecoder;
@@ -199,7 +205,7 @@ impl JsClass for TextDecoder {
     fn define(def: &mut ClassDef<Self>) {
         def.constructor(0, |s, nt, a| {
             let label = if a.get(0).is_undefined() { "utf-8".to_owned() } else { dom_string(a.get(0))? };
-            let encoding = encoding_rs::Encoding::for_label(label.as_bytes())
+            let encoding = encoding_rs::Encoding::for_label_no_replacement(label.as_bytes())
                 .ok_or_else(|| JsError::Range(format!("The encoding label provided ('{label}') is invalid.").into()))?;
             let (fatal, ignore_bom) = match a.get(1).as_object() {
                 Some(o) => (o.get_atom("fatal")?.to_bool(), o.get_atom("ignoreBOM")?.to_bool()),
@@ -227,24 +233,36 @@ impl JsClass for TextDecoder {
                 None => true,
             };
             let mut slot = d.decoder.borrow_mut();
-            let decoder = slot.get_or_insert_with(|| {
-                if d.ignore_bom {
+            let state = slot.get_or_insert_with(|| DecoderState {
+                pending: Vec::new(),
+                decoder: if d.ignore_bom {
                     d.encoding.new_decoder_without_bom_handling()
                 } else {
                     // Only the encoding's own BOM is dropped; it never switches encoding.
                     d.encoding.new_decoder_with_bom_removal()
-                }
+                },
             });
+            let bytes = if state.pending.is_empty() {
+                bytes
+            } else {
+                state.pending.extend(bytes);
+                std::mem::take(&mut state.pending)
+            };
+            let decoder = &mut state.decoder;
             let capacity = decoder.max_utf8_buffer_length(bytes.len()).unwrap_or(bytes.len());
             let mut text = String::with_capacity(capacity);
             let malformed = if d.fatal {
-                let (result, _) = decoder.decode_to_string_without_replacement(&bytes, &mut text, last);
-                matches!(result, encoding_rs::DecoderResult::Malformed(..))
+                let (result, read) = decoder.decode_to_string_without_replacement(&bytes, &mut text, last);
+                let malformed = matches!(result, encoding_rs::DecoderResult::Malformed(..));
+                if malformed && !last {
+                    state.pending.extend_from_slice(&bytes[read..]);
+                }
+                malformed
             } else {
                 let _ = decoder.decode_to_string(&bytes, &mut text, last);
                 false
             };
-            if last || malformed {
+            if last {
                 *slot = None;
             }
             if malformed {
