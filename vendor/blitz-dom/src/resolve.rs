@@ -575,7 +575,15 @@ impl BaseDocument {
             }
             let (t, fixed) = placement(&self.nodes, id, &mut placed);
             let l = *self.nodes[id].final_layout();
-            let mut rect = t.transform_rect_bbox(kurbo::Rect::new(0.0, 0.0, l.size.width as f64, l.size.height as f64));
+            // (What it may paint: its paint containment clips at its `overflow-clip-margin`, so
+            // overflow that reaches the viewport through it is near enough; WPT css-overflow
+            // `overflow-clip-margin-007`, `-012`.)
+            let margin = self.nodes[id]
+                .primary_styles()
+                .map_or(0.0, |s| s.get_margin().overflow_clip_margin.offset.px().max(0.0) as f64);
+            let mut rect = t.transform_rect_bbox(
+                kurbo::Rect::new(0.0, 0.0, l.size.width as f64, l.size.height as f64).inflate(margin, margin),
+            );
             if fixed {
                 rect = rect + kurbo::Vec2::new(scroll.0, scroll.1);
             }
