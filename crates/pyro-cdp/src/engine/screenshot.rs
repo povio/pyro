@@ -373,7 +373,8 @@ fn serve_capture(b: &mut Browser, request: CaptureRequest, done: Box<dyn FnOnce(
         return;
     }
     if let Some(body) = bodies.as_ref().and_then(|bodies| bodies.get(&key)) {
-        let opaque = !cors && body.opaque;
+        // pyro: the stored tainting, as it is.
+        let opaque = body.opaque;
         done(Ok(pyro_render::Fetched {
             body: body.bytes.to_vec(),
             url: body.final_url.clone(),

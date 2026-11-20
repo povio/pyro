@@ -1823,6 +1823,9 @@ impl PageDom {
     /// attribute), where the renderer takes it for the sheet's own requests.
     pub fn set_stylesheet_response(&self, link: NodeId, url: &str, text: &str, policy: Option<&str>) {
         self.dom.borrow_mut().set_sheet_policy(link, policy);
+        // (Its tainting goes with its text to the renderer, `Dom::sheet_key`.)
+        let opaque = !self.sheet_response(link).origin_clean;
+        self.dom.borrow_mut().set_sheet_tainting(link, opaque);
         let mut layout = self.layout.borrow_mut();
         layout.style_mut().set_sheet_url(link, Some(url));
         layout.style_mut().set_sheet_text(link, text);

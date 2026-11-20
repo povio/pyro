@@ -941,7 +941,7 @@ impl Browser {
             module: None,
             part: None,
         };
-        *key.borrow_mut() = Some(crate::layout_key_of(&frame, &request));
+        *key.borrow_mut() = Some(crate::layout_key_of(&frame, &request, None));
         let cancel = self.fetch_document_resource(page, &resource_loader, request, Box::new(finish));
         if let Some(mut image) = self.doc_mut(page).and_then(|p| p.filter_map(|p| p.images.entries.get_mut(&node))) {
             image.cancel = cancel;

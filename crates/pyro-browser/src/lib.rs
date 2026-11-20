@@ -90,10 +90,11 @@ pub fn document_client(frame: &Frame) -> String {
 /// pyro: the layout body key of `request` as `frame`'s document sends it (the ONE place a page
 /// writer's key is built: from the request actually sent, destination included): its default
 /// referrer (the document's) and policy count as the defaults layout sends.
-pub(crate) fn layout_key_of(frame: &Frame, request: &FetchRequest) -> pyro_dom::layout::LayoutBodyKey {
+pub(crate) fn layout_key_of(frame: &Frame, request: &FetchRequest, integrity: Option<&str>) -> pyro_dom::layout::LayoutBodyKey {
+    // (`integrity`: the integrity metadata the request was checked against, part of it.)
     let options = pyro_dom::layout::SubresourceOptions {
         crossorigin: request.crossorigin.clone(),
-        integrity: None,
+        integrity: integrity.map(str::to_owned),
         referrer: request.referrer.clone().filter(|r| *r != frame.base_url),
         referrer_policy: request.referrer_policy.map(|p| p.as_str().to_owned()),
     };

@@ -85,9 +85,9 @@ fn sheets_and_images_come_through_the_bridge() {
         }
     }
     let mut s = snap(
-        r#"<!doctype html><head><link rel="stylesheet" href="http://test/a.css"></head><body><img src="red.png" width="50" height="50"></body>"#,
+        r#"<!doctype html><head><link rel="stylesheet" href="http://test/a.css" data-pyro-sheet="a"></head><body><img src="red.png" width="50" height="50"></body>"#,
     );
-    s.sheets.insert("http://test/a.css".into(), "body { margin: 0; background: #00ff00 }".into());
+    s.sheets.insert("a".into(), "body { margin: 0; background: #00ff00 }".into());
     let fetcher: Arc<dyn Fetcher> = Arc::new(One(red));
     let mut r = Renderer::new();
     let (img, _, t) = r.render(&s, Area::Viewport, Backend::Cpu, &fetcher).unwrap();

@@ -787,6 +787,10 @@ bitflags! {
     }
 }
 
+/// pyro: the attribute the render snapshot writes on a sheet link: the key of its text in the
+/// snapshot's sheets (by the link, never its URL).
+pub const SHEET_ATTRIBUTE: &str = "data-pyro-sheet";
+
 /// pyro: the attribute the render snapshot writes on a sheet link: its response's `Referrer-Policy`.
 pub const SHEET_POLICY_ATTRIBUTE: &str = "data-pyro-sheet-referrer-policy";
 
@@ -1870,6 +1874,7 @@ impl BaseDocument {
                     {
                         let mut request = self.build_request(resolved_href.clone());
                         request.options.destination = blitz_traits::net::Destination::Style;
+                        request.options.sheet = element.attr(markup5ever::LocalName::from(SHEET_ATTRIBUTE)).map(str::to_owned);
                         self.net_provider.fetch(
                             self.id(),
                             request,

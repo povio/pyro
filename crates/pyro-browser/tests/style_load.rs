@@ -396,7 +396,9 @@ fn a_redirected_link_sheet_is_at_its_final_url() {
     let page_dom = thread.browser.page(page).unwrap().main_frame.page_dom.clone().unwrap();
     let snapshot = page_dom.render_snapshot("http://site.test/", None);
     assert!(snapshot.html.contains("href=\"http://site.test/dir/a.css\""), "{}", snapshot.html);
-    assert!(snapshot.sheets.contains_key("http://site.test/dir/a.css"), "{:?}", snapshot.sheets.keys());
+    // (Its text is keyed by the link, which carries the key: never by URL.)
+    let key = snapshot.sheets.keys().next().expect("the sheet").clone();
+    assert!(snapshot.html.contains(&format!("data-pyro-sheet=\"{key}\"")), "{}", snapshot.html);
     assert_eq!(
         eval(&thread, page, "document.getElementById('l').sheet.cssRules[0].styleSheet?.href ?? 'none'"),
         "http://site.test/dir/b.css"
@@ -495,4 +497,25 @@ fn a_redirected_sheets_fonts_resolve_against_its_final_url() {
         })
         .collect();
     assert_eq!(sources, ["http://site.test/dir/face.woff2"]);
+}
+
+/// What the page hands its layout for an import checked against integrity metadata is kept
+/// under a key with that metadata (it went under `integrity: None`, which a request without it
+/// would have found: security review cycle 5, 2).
+#[test]
+fn an_integrity_checked_import_is_kept_under_its_integrity() {
+    let css = "p { color: green }";
+    let integrity = pyro_webapi::sri::sha256_expression(css.as_bytes());
+    let (mut thread, page, loader) = setup(&format!("<style>@import url(\"a.css\" integrity(\"{integrity}\"));</style>"));
+    loader.insert("http://site.test/a.css", "text/css", css, Duration::ZERO);
+    thread.browser.navigate(page, NavigateOpts::address_bar("http://site.test/")).unwrap();
+    settle(&mut thread);
+    let client = pyro_browser::document_client(&thread.browser.page(page).unwrap().main_frame);
+    let bodies = thread.browser.layout_bodies(page).unwrap();
+    let key = |integrity: Option<&str>| {
+        let options = pyro_dom::layout::SubresourceOptions { integrity: integrity.map(str::to_owned), ..Default::default() };
+        pyro_dom::layout::LayoutBodyKey::new(&client, "http://site.test/a.css", &options, pyro_dom::layout::SubresourceKind::Style)
+    };
+    assert!(bodies.get(&key(None)).is_none(), "never under no integrity");
+    assert!(bodies.get(&key(Some(&integrity))).is_some(), "under its integrity");
 }

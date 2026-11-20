@@ -251,14 +251,14 @@ fn the_style_sheet_is_the_referrer_of_its_url_requests() {
     let fetcher: Arc<dyn Fetcher> = Arc::new(Shared(recorder.clone()));
     let mut sheets = std::collections::HashMap::new();
     sheets.insert(
-        "http://sheets.test/dir/s.css".to_owned(),
+        "S".to_owned(),
         "#a { width: 10px; height: 10px; background-image: url(\"http://test/a.png\" referrer-policy(unsafe-url)) }\
          #b { width: 10px; height: 10px; background-image: url(\"http://test/b.png\" cross-origin(anonymous)) }\
          #c { width: 10px; height: 10px; background-image: url(\"http://test/c.png\") }"
             .to_owned(),
     );
     let snapshot = Snapshot {
-        html: "<!doctype html><link rel=stylesheet href='http://sheets.test/dir/s.css'>\
+        html: "<!doctype html><link rel=stylesheet href='http://sheets.test/dir/s.css' data-pyro-sheet=S>\
                <style>#d { width: 10px; height: 10px; background-image: url(\"d.png\" referrer-policy(unsafe-url)) }</style>\
                <div id=a></div><div id=b></div><div id=c></div><div id=d></div>"
             .into(),
@@ -288,11 +288,11 @@ fn an_external_sheet_at_the_documents_url_is_still_the_referrer() {
     let fetcher: Arc<dyn Fetcher> = Arc::new(Shared(recorder.clone()));
     let mut sheets = std::collections::HashMap::new();
     sheets.insert(
-        "http://test/doc.html".to_owned(),
+        "D".to_owned(),
         "#e { width: 10px; height: 10px; background-image: url(\"e.png\") }".to_owned(),
     );
     let snapshot = Snapshot {
-        html: "<!doctype html><link rel=stylesheet href='http://test/doc.html'>\
+        html: "<!doctype html><link rel=stylesheet href='http://test/doc.html' data-pyro-sheet=D>\
                <style>#d { width: 10px; height: 10px; background-image: url(\"d.png\" referrer-policy(unsafe-url)) }</style>\
                <div id=e></div><div id=d></div><div id=s style='width:10px;height:10px;background-image:url(s.png)'></div>"
             .into(),
@@ -378,9 +378,9 @@ fn each_frame_is_served_its_own_sheets_and_only_admitted_clients() {
     }
     let frame = |client: &str, color: &str| {
         let mut sheets = std::collections::BTreeMap::new();
-        sheets.insert("http://test/s.css".to_owned(), format!("body {{ margin: 0; background: {color} }}"));
+        sheets.insert("F".to_owned(), format!("body {{ margin: 0; background: {color} }}"));
         FrameContent {
-            html: "<!doctype html><link rel=stylesheet href='http://test/s.css'><body>".into(),
+            html: "<!doctype html><link rel=stylesheet href='http://test/s.css' data-pyro-sheet=F><body>".into(),
             url: "http://test/".into(),
             scroll: (0.0, 0.0),
             client: client.into(),
@@ -449,16 +449,16 @@ fn a_urls_policy_is_its_sheet_objects() {
     }
     let mut sheets = std::collections::HashMap::new();
     sheets.insert(
-        "http://test/s.css".to_owned(),
+        "P".to_owned(),
         "@import url(http://test/imp.css); #a { width: 10px; height: 10px; background-image: url(http://test/a.png) }".to_owned(),
     );
     let mut frame_sheets = std::collections::BTreeMap::new();
     frame_sheets.insert(
-        "http://test/s.css".to_owned(),
+        "Q".to_owned(),
         "#b { width: 10px; height: 10px; background-image: url(http://test/b.png) }".to_owned(),
     );
     let frame = FrameContent {
-        html: "<!doctype html><link rel=stylesheet href='http://test/s.css'><div id=b></div>".into(),
+        html: "<!doctype html><link rel=stylesheet href='http://test/s.css' data-pyro-sheet=Q><div id=b></div>".into(),
         url: "http://test/".into(),
         scroll: (0.0, 0.0),
         client: "F#L".into(),
@@ -467,7 +467,7 @@ fn a_urls_policy_is_its_sheet_objects() {
         sheets: frame_sheets,
     };
     let snapshot = Snapshot {
-        html: "<!doctype html><link rel=stylesheet href='http://test/s.css' data-pyro-sheet-referrer-policy='origin'>\
+        html: "<!doctype html><link rel=stylesheet href='http://test/s.css' data-pyro-sheet=P data-pyro-sheet-referrer-policy='origin'>\
                <div id=a></div><div id=i></div>\
                <iframe data-pyro-frame='N:1:0000000000000001' style='border:0;width:20px;height:20px'></iframe>"
             .into(),
@@ -539,4 +539,34 @@ fn an_unmarked_frame_of_a_snapshot_loads_nothing() {
     Renderer::new().render(&snapshot, Area::Viewport, Backend::Cpu, &fetcher).unwrap();
     let asked: Vec<String> = recorder.0.lock().unwrap().iter().map(|(url, _)| url.clone()).collect();
     assert!(!asked.iter().any(|u| u.contains("page.html") || u.contains("s.png")), "{asked:?}");
+}
+
+/// The renderer serves a linked sheet by its link (the snapshot's sheet key), never by URL: two
+/// links whose responses ended at one URL each apply their own text; a request that is no such
+/// style request at that URL (an image) never gets the sheet's bytes (security review cycle 5, 2).
+#[test]
+fn sheets_are_served_by_their_link_never_by_url() {
+    let recorder = Arc::new(Recorder::default());
+    let fetcher: Arc<dyn Fetcher> = Arc::new(Shared(recorder.clone()));
+    let mut sheets = std::collections::HashMap::new();
+    sheets.insert("A".to_owned(), "#a { width: 10px; height: 10px; background: rgb(0, 128, 0) }".to_owned());
+    sheets.insert("B".to_owned(), "#b { width: 10px; height: 10px; background: rgb(0, 0, 255) }".to_owned());
+    let snapshot = Snapshot {
+        html: "<!doctype html><body style='margin:0;background:#fff'>\
+               <link rel=stylesheet href='http://test/s.css' data-pyro-sheet=A>\
+               <link rel=stylesheet href='http://test/s.css' data-pyro-sheet=B>\
+               <div id=a></div><div id=b></div><img src='http://test/s.css' width=1 height=1>"
+            .into(),
+        sheets,
+        base_url: "http://test/".into(),
+        width: 40,
+        height: 40,
+        device_scale_factor: 1.0,
+        ..Default::default()
+    };
+    let image = Renderer::new().render(&snapshot, Area::Viewport, Backend::Cpu, &fetcher).unwrap().0;
+    assert_eq!(pixel(&image, 5, 5), [0, 128, 0], "the first link's own text");
+    assert_eq!(pixel(&image, 5, 15), [0, 0, 255], "the second link's own text, at the same URL");
+    let asked: Vec<String> = recorder.0.lock().unwrap().iter().map(|(u, _)| u.clone()).collect();
+    assert!(asked.iter().any(|u| u == "http://test/s.css"), "the image went to the network: {asked:?}");
 }

@@ -611,9 +611,9 @@ fn page_boxes_go_on_the_paper_as_in_chrome() {
 fn page_boxes_read_linked_sheets() {
     let print = |link: &str, sheet: &str, box_css: &str, attrs: &str| {
         let mut s = snap(&format!(
-            r#"<!doctype html><link rel=stylesheet href=p.css {link}><style>html,body{{margin:0}}</style><section {attrs}><div class=pz-page style="{box_css};background:#f00"></div></section>"#
+            r#"<!doctype html><link rel=stylesheet href=p.css data-pyro-sheet=p {link}><style>html,body{{margin:0}}</style><section {attrs}><div class=pz-page style="{box_css};background:#f00"></div></section>"#
         ));
-        s.sheets.insert("http://test/dir/p.css".to_owned(), sheet.to_owned());
+        s.sheets.insert("p".to_owned(), sheet.to_owned());
         let (paper, margins) = pyro_render::chrome_page_geometry((8.27, 11.7), [0.0; 4]).unwrap();
         let mut opts = PdfOptions::new(".pz-page", paper);
         opts.margins = margins;

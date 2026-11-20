@@ -208,12 +208,12 @@ impl LocalFiles {
                 .filter(|body| options.integrity.as_deref().is_none_or(|i| pyro_webapi::sri::matches(i, body)))
                 .map(|body| Arc::new(LayoutBody::local(&url, body)))
         })();
-        let cors = options.crossorigin.is_some();
         done(
             body.map(|body| pyro_render::Fetched {
                 body: body.bytes.to_vec(),
                 url: body.final_url.clone(),
-                opaque: !cors && body.opaque,
+                // pyro: the stored tainting, as it is (a CORS response's is not opaque anyway).
+                opaque: body.opaque,
                 referrer_policy: body.referrer_policy.clone(),
             })
             .ok_or_else(|| format!("{url}: not a local resource")),

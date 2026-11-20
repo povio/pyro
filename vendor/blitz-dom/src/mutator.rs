@@ -1890,6 +1890,10 @@ impl<'doc> DocumentMutator<'doc> {
         // pyro: a style sheet's request (its destination says so, never its URL).
         let mut request = self.doc.build_request(url);
         request.options.destination = blitz_traits::net::Destination::Style;
+        // pyro: the snapshot's sheet of this link (its engine attribute), served by identity.
+        request.options.sheet = self.doc.nodes[target_id]
+            .attr(markup5ever::LocalName::from(crate::document::SHEET_ATTRIBUTE))
+            .map(str::to_owned);
         self.doc.net_provider.fetch(self.doc.id(), request, Box::new(handler));
     }
 

@@ -249,6 +249,8 @@ pub struct Dom {
     pub(crate) frame_documents: rustc_hash::FxHashMap<u32, FrameDocument>,
     /// pyro: each sheet link's response `Referrer-Policy` (`Dom::set_sheet_policy`), by its slot.
     pub(crate) sheet_policies: rustc_hash::FxHashMap<u32, String>,
+    /// pyro: the sheet links whose response's tainting is opaque (`Dom::set_sheet_policy`).
+    pub(crate) sheet_tainted: rustc_hash::FxHashSet<u32>,
     /// pyro: each document's snapshot nonce (`Dom::snapshot_nonce`), by its slot.
     snapshot_nonces: std::cell::RefCell<rustc_hash::FxHashMap<u32, String>>,
     /// pyro: each frame document's animations now, by its client (`FrameDocument::client`): the
@@ -349,6 +351,7 @@ impl Dom {
             frame_documents: Default::default(),
             snapshot_nonces: Default::default(),
             sheet_policies: Default::default(),
+            sheet_tainted: Default::default(),
             frame_animations: Default::default(),
             journal_floor: 0,
             style_snapshots: Default::default(),
@@ -1225,6 +1228,25 @@ impl Dom {
             self.bump();
             self.note(Change::State(i));
         }
+    }
+
+    /// pyro: the response tainting of the sheet of `link` (opaque or not), which the renderer
+    /// takes with its text (`Dom::sheet_key`).
+    pub fn set_sheet_tainting(&mut self, link: NodeId, opaque: bool) {
+        let Ok(i) = self.check(link) else { return };
+        let changed = if opaque { self.sheet_tainted.insert(i) } else { self.sheet_tainted.remove(&i) };
+        if changed {
+            self.bump();
+            self.note(Change::State(i));
+        }
+    }
+
+    /// pyro: the key of the sheet of `link` in a render snapshot's sheets (its render key, `:o`
+    /// when its response's tainting is opaque): the link's engine attribute names it, and the
+    /// renderer serves the sheet by it, never by URL.
+    pub fn sheet_key(&self, link: NodeId) -> String {
+        let opaque = self.check(link).is_ok_and(|i| self.sheet_tainted.contains(&i));
+        format!("{}{}", crate::snapshot::render_key(link), if opaque { ":o" } else { "" })
     }
 
     /// pyro: the nonce the frame markers of document slot `doc`'s render snapshots carry

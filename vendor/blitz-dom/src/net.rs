@@ -125,6 +125,7 @@ pub fn url_fetch_options(
             .map(|url| (**url).clone()),
         client: None,
         destination: Default::default(),
+        sheet: None,
     }
 }
 

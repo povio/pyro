@@ -224,7 +224,7 @@ fn snapshot_of(
             // pyro: the sheet's own URL, its response's after redirects (its URLs resolve
             // against it), else its href.
             let url = style.sheet_base_url(&dom, link, base.as_ref()?.as_str())?;
-            sheets.borrow_mut().insert(url.clone(), text.to_owned());
+            sheets.borrow_mut().insert(dom.sheet_key(link), text.to_owned());
             Some(url)
         };
         let adopted = |scope: NodeId| style.adopted_sheets(scope);

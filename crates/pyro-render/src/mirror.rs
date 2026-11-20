@@ -569,8 +569,11 @@ impl Mirror {
             for n in new {
                 if let TreeKind::Element { name, attrs } = &n.kind {
                     if name.local == blitz_dom::local_name!("link") {
-                        if let Some((_, url)) = attrs.iter().find(|(a, _)| a.local == href.local) {
-                            if changed_sheets.contains(url) {
+                        // pyro: by its sheet key (the link's engine attribute), never its URL.
+                        let sheet = attrs.iter().find(|(a, _)| &*a.local == blitz_dom::SHEET_ATTRIBUTE).map(|(_, v)| v);
+                        let url = attrs.iter().find(|(a, _)| a.local == href.local).map(|(_, v)| v);
+                        if let (Some(sheet), Some(url)) = (sheet, url) {
+                            if changed_sheets.contains(sheet) {
                                 m.set_attribute(nodes[&n.key].id, href.clone(), url);
                                 mutations += 1;
                             }

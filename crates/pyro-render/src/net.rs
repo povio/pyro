@@ -212,11 +212,23 @@ impl NetProvider for Provider {
         } else {
             // A sheet's text is decoded already: as UTF-8 behind a byte order
             // mark, Blitz cannot decode it again by an `@charset` it starts with.
-            // pyro: a frame document's from its own sheets only, the page's from the page's.
-            let text = match options.client.as_deref() {
-                Some(client) => self.frame_sheets.lock().ok().and_then(|s| s.get(client)?.get(&url).cloned()),
-                None => self.sheets.lock().ok().and_then(|s| s.get(&url).cloned()),
+            // pyro: only to a style request that names its sheet (its link's), never by URL; a
+            // frame document's from its own sheets, the page's from the page's.
+            let text = match (&options.sheet, options.destination) {
+                (Some(sheet), blitz_traits::net::Destination::Style) => match options.client.as_deref() {
+                    Some(client) => self.frame_sheets.lock().ok().and_then(|s| s.get(client)?.get(sheet).cloned()),
+                    None => self.sheets.lock().ok().and_then(|s| s.get(sheet).cloned()),
+                },
+                _ => None,
             };
+            if let (Some(_), Some(sheet)) = (&text, &options.sheet) {
+                // (Its URL is the link's href, the response's after redirects; its tainting the
+                // response's, which the key carries.)
+                let meta = Meta { final_url: url.clone(), opaque: sheet.ends_with(":o"), referrer_policy: None };
+                if let Ok(mut f) = self.finals.lock() {
+                    f.insert(key.clone(), meta);
+                }
+            }
             text.map(|text| Bytes::from(utf8_sheet(&text)))
                 .or_else(|| self.cache.lock().ok().and_then(|c| c.get(&key).cloned()))
         };

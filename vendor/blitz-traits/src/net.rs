@@ -139,6 +139,10 @@ pub struct FetchOptions {
     /// never from its URL: its `Accept`, `Sec-Fetch-Dest` and credentials follow it. Not part
     /// of [`Self::is_default`] (it says what the request is for, not how it is made).
     pub destination: Destination,
+    /// pyro: the render snapshot's sheet a link's request is for (its link's
+    /// `data-pyro-sheet`): the renderer serves that sheet's text, by identity, never by URL.
+    /// Not part of [`Self::is_default`].
+    pub sheet: Option<String>,
 }
 
 /// pyro: a request's destination (Fetch § 2.2.5), as the code that makes it knows.
@@ -160,7 +164,7 @@ pub enum Destination {
 impl FetchOptions {
     /// Whether these are a sub-resource's defaults (the destination aside).
     pub fn is_default(&self) -> bool {
-        Self { destination: Destination::Unknown, ..self.clone() } == Self::default()
+        Self { destination: Destination::Unknown, sheet: None, ..self.clone() } == Self::default()
     }
 
     /// pyro: these, for a request whose response is used as `destination`.
@@ -176,9 +180,13 @@ impl FetchOptions {
     pub fn cache_key(&self, url: &str) -> String {
         // pyro: a response used as one destination (fetched with its `Accept`, credentials)
         // never stands in for another's.
-        match self.destination {
+        let key = match self.destination {
             Destination::Unknown => self.request_key(url),
             destination => format!("dest={destination:?} {}", self.request_key(url)),
+        };
+        match &self.sheet {
+            Some(sheet) => format!("sheet={sheet} {key}"),
+            None => key,
         }
     }
 

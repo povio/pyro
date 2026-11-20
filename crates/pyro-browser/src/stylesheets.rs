@@ -559,7 +559,6 @@ impl Browser {
         // integrity check (a response failing it is a failed import) and its referrer policy.
         let cors = import.cross_origin.is_some();
         let integrity = import.integrity.clone();
-        let modified = import.is_modified();
         let request_key = pyro_dom::cssom::import_key(&url, &import);
         let document_origin = self.doc(page).map(|p| p.main_frame.origin.clone()).unwrap_or_else(|| "null".into());
         // pyro: the layout body key of the request as sent (set below, once it is built).
@@ -618,7 +617,7 @@ impl Browser {
             module: None,
             part: None,
         };
-        *layout_key.borrow_mut() = Some(crate::layout_key_of(&frame, &request));
+        *layout_key.borrow_mut() = Some(crate::layout_key_of(&frame, &request, import.integrity.as_deref()));
         let cancel = self.fetch_document_resource(page, &resource_loader, request, Box::new(finish));
         if let Some(mut doc) = self.doc_mut(page) {
             if let Some(slot) = doc
@@ -652,7 +651,6 @@ impl Browser {
         // pyro: the layout body key of the request as sent (`layout_key_of`).
         layout_key: Option<pyro_dom::layout::LayoutBodyKey>,
     ) {
-        let modified = request_key != url;
         let ok = result.as_ref().is_ok_and(|r| (200..300).contains(&r.status));
         {
             let Some(mut doc) = self.doc_mut(page).filter(|p| &p.main_frame.loader_id == loader) else { return };

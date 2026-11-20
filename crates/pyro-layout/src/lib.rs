@@ -424,7 +424,7 @@ impl BlitzGeometry {
             // against it), else its href.
             let url = style.sheet_base_url(dom, link, base?.as_str())?;
             if let Some(sheets) = sheets {
-                sheets.borrow_mut().insert(url.clone(), text.to_owned());
+                sheets.borrow_mut().insert(dom.sheet_key(link), text.to_owned());
             }
             Some(url)
         };

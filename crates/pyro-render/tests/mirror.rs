@@ -635,9 +635,12 @@ fn linked_sheet_edits_reach_the_persistent_document() {
                 .unwrap(),
         ))
     };
+    // (The sheet's key, as the snapshot wrote it on its link.)
+    let link = page.dom.borrow().query_selector(page.doc, &pyro_dom::select::parse_selectors("link").unwrap()).unwrap().unwrap();
+    let sheet = page.dom.borrow().sheet_key(link);
     let snap = |css: &str| {
         let mut s = page.snapshot(1, tree.clone());
-        s.sheets.insert(url.clone(), css.into());
+        s.sheets.insert(sheet.clone(), css.into());
         s
     };
     let mut r = Renderer::new();
