@@ -15,6 +15,7 @@ use crate::{
     util::{dom_string, to_u32},
 };
 use bytes::Bytes;
+use data_url::mime::Mime;
 use delivery::Delivery;
 use pyro_dom::events::TargetKey;
 use pyro_js::{
@@ -113,7 +114,7 @@ struct Xhr {
     timeout: Cell<u32>,
     timer: Cell<Option<f64>>,
     started: Cell<Option<Instant>>,
-    override_mime: RefCell<Option<String>>,
+    override_mime: RefCell<Option<Mime>>,
     text: RefCell<Option<body::Text>>,
     reported: Cell<usize>,
     visible_chunks: Cell<usize>,
@@ -355,7 +356,7 @@ fn define_members<C: JsClass<Data = XhrData, Parent = EventTarget>>(def: &mut Cl
         if d.state.ready.get() >= 3 {
             return Err(invalid("MIME type cannot change after loading"));
         }
-        *d.state.override_mime.borrow_mut() = Some(mime);
+        *d.state.override_mime.borrow_mut() = Some(mime.parse().unwrap_or_else(|_| Mime::new("application", "octet-stream")));
         Ok(s.undefined())
     });
     def.method("getResponseHeader", 1, |s, d, args| {

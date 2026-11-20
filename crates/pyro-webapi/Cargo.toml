@@ -20,6 +20,7 @@ aes-kw = { version = "0.2", features = ["alloc"] }
 base64 = "0.23.1"
 bytes = "1"
 cssparser = "0.38"
+data-url = "0.3.2"
 # RSA (crypto_subtle/rsa.rs): constant-time big integers, prime generation and the
 # PKCS #1 key structures; the `rsa` crate itself carries RUSTSEC-2023-0071.
 crypto-bigint = { version = "0.7.10", features = ["alloc", "rand_core", "zeroize"] }
