@@ -147,6 +147,18 @@ fn finish_cancel_pause_and_reverse() {
 }
 
 #[test]
+fn keyframe_easing_survives_a_round_trip_without_changing_the_curve() {
+    let (_thread, root) = page();
+    assert_eq!(eval(&root, "const timing = {duration: 1000, easing: 'cubic-bezier(0, 0.0000004, 1, 0.0000004)'};
+        const animation = document.body.animate([], timing);
+        animation.pause(); animation.currentTime = 500;
+        const effect = animation.effect;
+        const progress = effect.getComputedTiming().progress;
+        effect.updateTiming({easing: effect.getTiming().easing});
+        String(progress === effect.getComputedTiming().progress)"), "true");
+}
+
+#[test]
 fn effect_timing_and_keyframes() {
     let (_t, root) = page();
     assert_eq!(

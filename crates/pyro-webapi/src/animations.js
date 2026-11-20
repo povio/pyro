@@ -172,7 +172,7 @@
     if (m) {
       const [x1, y1, x2, y2] = m.slice(1).map(Number);
       if (x1 >= 0 && x1 <= 1 && x2 >= 0 && x2 <= 1) {
-        return { text: `cubic-bezier(${fmt(x1)}, ${fmt(y1)}, ${fmt(x2)}, ${fmt(y2)})`, fn: bezier(x1, y1, x2, y2) };
+        return { text: `cubic-bezier(${x1}, ${y1}, ${x2}, ${y2})`, fn: bezier(x1, y1, x2, y2) };
       }
     }
     m = STEPS.exec(text);
