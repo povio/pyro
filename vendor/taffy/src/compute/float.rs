@@ -678,15 +678,12 @@ impl FloatContext {
             let start_y = last_y_end.max(start_y);
 
             // pyro: the float occupies its own side only: its containing block's inset on the other
-            // side is no float there (a float of a narrower block made the other side look
-            // occupied to a later, wider block's floats; WPT css-ui `outline-028`). A negative one
-            // (a block wider than the formatting context) is kept: it occupies nothing, and the
-            // content beside the float reaches out with it (WPT css-shapes
-            // `shape-outside-padding-box-003`).
+            // side describes that block's content edge, not a float there (a narrower block's
+            // made the other side look occupied to a later, wider block's floats, WPT css-ui
+            // `outline-028`; a wider block's negative one rejected a float that fits in its own
+            // block). Content beside it takes its own block's inset there (`find_content_slot`).
             let mut insets = FloatInsets::ZERO;
             insets[direction] = containing_block_insets[direction] + floated_box.width;
-            let trail = direction.opposite();
-            insets[trail] = containing_block_insets[trail].min(0.0);
             let mut has_float = [false; 2];
             has_float[slot] = true;
             let mut has_wide_float = [false; 2];
@@ -742,11 +739,8 @@ impl FloatContext {
                 let last_y_end = self.segments[self.segments.len() - 1].y.end;
                 let end_y = start_y + floated_box.height;
                 if end_y > last_y_end {
-                    // (Its own side set below, with the other segments it spans; the other only
-                    // where its containing block reaches out of the formatting context.)
-                    let mut insets = FloatInsets::ZERO;
-                    let trail = direction.opposite();
-                    insets[trail] = containing_block_insets[trail].min(0.0);
+                    // (Its own side set below, with the other segments it spans.)
+                    let insets = FloatInsets::ZERO;
                     self.segments.push(Segment {
                         y: last_y_end..end_y,
                         insets,
@@ -871,7 +865,19 @@ impl FloatContext {
                 // Combine the insets of every segment beside the content's height, then extend
                 // the slot down over any further segments that don't narrow it
                 // pyro: line boxes wrap around a float's shape (`Segment::shape`)
-                let line_insets = |segment: &Segment| segment.shape.unwrap_or(segment.insets);
+                // pyro: a side no float occupies does not narrow the content: its own containing
+                // block's inset stands there (negative, too, where the block reaches out of the
+                // formatting context; WPT css-shapes `shape-outside-padding-box-003`).
+                let line_insets = |segment: &Segment| {
+                    let mut insets = segment.shape.unwrap_or(segment.insets);
+                    if !segment.has_float[0] {
+                        insets.left = f32::NEG_INFINITY;
+                    }
+                    if !segment.has_float[1] {
+                        insets.right = f32::NEG_INFINITY;
+                    }
+                    insets
+                };
                 let mut insets = containing_block_insets.max(line_insets(segment));
                 let mut slot_height = f32::INFINITY;
                 for segment in &self.segments[start_idx + 1..] {

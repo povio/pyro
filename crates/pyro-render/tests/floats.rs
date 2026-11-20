@@ -313,3 +313,23 @@ fn negative_margin_away_from_a_float_does_not_widen_its_space() {
     let [bx, by, bw, _] = laid.rect(1);
     assert!(close(bx, 0.0) && close(by, 13.0) && close(bw, 47.0), "below the float: {:?}", laid.rect(1));
 }
+
+/// A block's inset in the formatting context is where its own content edge is, not a float on that
+/// side: beside a 10px float of a 120px block (in a 100px context), a 115px float of a 150px sibling
+/// fits at 10px, and an inline-block 135px wide fits beside it on a line of that sibling (Chrome).
+#[test]
+fn a_wider_blocks_edge_is_no_float_beside_a_narrower_blocks_float() {
+    let laid = lay_out(
+        "<div style='display:flow-root;width:100px'>\
+           <div style='width:120px'><div style='float:left;width:10px;height:10px'></div></div>\
+           <div style='width:150px'><div id=b style='float:left;width:115px;height:10px'></div></div></div>\
+         <div style='display:flow-root;width:100px;margin-top:50px'>\
+           <div style='width:120px'><div style='float:left;width:10px;height:30px'></div></div>\
+           <div style='width:150px'><span id=c style='display:inline-block;width:135px;height:5px'></span></div></div>",
+        &["b", "c"],
+    );
+    let [bx, by, _, _] = laid.rect(0);
+    assert!(close(bx, 10.0) && close(by, 0.0), "beside the float: {:?}", laid.rect(0));
+    let [cx, cy, _, _] = laid.rect(1);
+    assert!(close(cx, 10.0) && cy < 80.0, "beside the float: {:?}", laid.rect(1));
+}
