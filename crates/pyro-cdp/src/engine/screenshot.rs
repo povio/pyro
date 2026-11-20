@@ -870,7 +870,7 @@ impl EngineHost {
                 stream,
             };
             let wait = PdfWait { capture, pid, opts, deadline: started + PDF_FETCH_WAIT };
-            if super::blitz_geometry::fetching(&self.pdf_document(pid)) {
+            if self.pdf_fetching(pid) {
                 self.park_pdf(wait);
                 return Ok(None);
             }
@@ -915,7 +915,7 @@ impl EngineHost {
         let waits = std::mem::take(&mut self.renders.pdf_waits);
         let mut parked = Vec::new();
         for wait in waits {
-            if super::blitz_geometry::fetching(&self.pdf_document(wait.pid)) && now < wait.deadline {
+            if self.pdf_fetching(wait.pid) && now < wait.deadline {
                 parked.push(wait);
                 continue;
             }
@@ -927,6 +927,18 @@ impl EngineHost {
         for wait in parked {
             self.park_pdf(wait);
         }
+    }
+
+    /// pyro: whether a PDF of page `pid` still waits: its geometry's fetches in flight, or any
+    /// fetch of the page's documents (a frame's too) pending in their layout bodies, whichever
+    /// geometry made it (a frame's own one may have, and the page's then only waits on it).
+    fn pdf_fetching(&self, pid: PageId) -> bool {
+        if super::blitz_geometry::fetching(&self.pdf_document(pid)) {
+            return true;
+        }
+        let browser = &self.thread.browser;
+        let Some(bodies) = browser.layout_bodies(pid) else { return false };
+        browser.document_images(pid).keys().any(|client| bodies.any_pending(client, |_| true))
     }
 
     /// pyro: the document a PDF of page `pid` waits for the layout fetches of (its client).

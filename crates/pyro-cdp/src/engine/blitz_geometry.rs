@@ -79,9 +79,10 @@ impl Drop for InFlight {
                 }
             }
         };
-        if last {
-            wake_pdfs(&self.owner);
-        }
+        // pyro: every waiting PDF checks again (one may wait on a frame's fetch that another
+        // geometry made: `EngineHost::pdf_fetching`); one still waiting parks again.
+        let _ = last;
+        wake_all_pdfs();
     }
 }
 
@@ -269,6 +270,17 @@ fn body_only(
     done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>,
 ) -> Box<dyn FnOnce(Result<pyro_render::Fetched, String>) + Send> {
     Box::new(move |result| done(result.map(|fetched| fetched.body)))
+}
+
+/// Calls every waiting PDF's waker.
+fn wake_all_pdfs() {
+    let woken: Vec<Waker> = std::mem::take(&mut *PDF_WAKERS.lock().unwrap_or_else(std::sync::PoisonError::into_inner))
+        .into_iter()
+        .map(|(_, wake)| wake)
+        .collect();
+    for wake in woken {
+        wake();
+    }
 }
 
 /// Calls the wakers waiting for `document`'s fetches.

@@ -7463,6 +7463,58 @@ mod screenshot {
         assert!(waited < Duration::from_millis(2500), "load waited for a variant nothing uses: {waited:?}");
     }
 
+    /// A PDF waits for a frame's fetch that the frame's own geometry has in flight (the page's
+    /// geometry, meeting it pending, did not count it, and the PDF painted before it arrived:
+    /// security review cycle 5, 4).
+    #[test]
+    fn a_pdf_waits_for_a_frames_fetch_another_geometry_made() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                std::thread::spawn(move || {
+                    let mut request = Vec::new();
+                    let mut chunk = [0; 1024];
+                    while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                        match stream.read(&mut chunk) {
+                            Ok(n) if n > 0 => request.extend_from_slice(&chunk[..n]),
+                            _ => return,
+                        }
+                    }
+                    let head = String::from_utf8_lossy(&request).to_string();
+                    let (status, body) = if head.starts_with("GET /slow.png") {
+                        std::thread::sleep(Duration::from_millis(1200));
+                        ("404 Not Found", "")
+                    } else if head.starts_with("GET /child") {
+                        // After load, the child's own layout (a geometry read) asks for the image.
+                        ("200 OK", "<!doctype html><div id=d style='width:20px;height:20px'></div><script>\
+                         addEventListener('load', () => setTimeout(() => { const d = document.getElementById('d');\
+                         d.style.backgroundImage = 'url(/slow.png)'; d.getBoundingClientRect(); }, 0))</script>")
+                    } else {
+                        ("200 OK", "<!doctype html><iframe src=/child style='width:50px;height:50px;border:0'></iframe>")
+                    };
+                    let out = format!(
+                        "HTTP/1.1 {status}\r\nContent-Type: text/html\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = stream.write_all(out.as_bytes());
+                });
+            }
+        });
+        let mut h = Harness::new();
+        h.page("Page.enable", json!({}));
+        h.page("Page.navigate", json!({"url": format!("http://{address}/")}));
+        h.until_event(|m| m["method"] == "Page.loadEventFired");
+        h.run_for(150);
+        let session = h.session.clone();
+        let started = Instant::now();
+        let r = h.call(Some(&session), "Page.printToPDF", json!({}));
+        assert!(r["result"]["data"].as_str().is_some_and(|d| !d.is_empty()), "{r}");
+        assert!(started.elapsed() >= Duration::from_millis(600), "the PDF did not wait: {:?}", started.elapsed());
+    }
+
     /// One failure state: a CSS image the document's layout failed to fetch is a failure for its
     /// capture too, which neither fetches it again nor paints what the document never got
     /// (geometry and capture kept apart failure sets: security review cycle 4, 3c).
