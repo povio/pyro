@@ -3627,6 +3627,10 @@ pub mod mask {
     pub use crate::properties::generated::shorthands::mask::*;
 
     use super::*;
+    use crate::properties::longhands::{
+        mask_border_mode, mask_border_outset, mask_border_repeat, mask_border_slice,
+        mask_border_source, mask_border_width,
+    };
     use crate::parser::Parse;
     use crate::properties::longhands::{
         mask_clip, mask_composite, mask_mode, mask_origin, mask_position_x, mask_position_y,
@@ -3753,6 +3757,12 @@ pub mod mask {
            mask_origin: mask_origin::SpecifiedValue(mask_origin.into()),
            mask_clip: mask_clip::SpecifiedValue(mask_clip.into()),
            mask_composite: mask_composite::SpecifiedValue(mask_composite.into()),
+           mask_border_mode: mask_border_mode::get_initial_specified_value(),
+           mask_border_outset: mask_border_outset::get_initial_specified_value(),
+           mask_border_repeat: mask_border_repeat::get_initial_specified_value(),
+           mask_border_slice: mask_border_slice::get_initial_specified_value(),
+           mask_border_source: mask_border_source::get_initial_specified_value(),
+           mask_border_width: mask_border_width::get_initial_specified_value(),
         })
     }
 
@@ -3766,6 +3776,15 @@ pub mod mask {
             use style_traits::values::SequenceWriter;
 
             let len = self.mask_image.0.len();
+            if *self.mask_border_mode != mask_border_mode::get_initial_specified_value()
+                || *self.mask_border_outset != mask_border_outset::get_initial_specified_value()
+                || *self.mask_border_repeat != mask_border_repeat::get_initial_specified_value()
+                || *self.mask_border_slice != mask_border_slice::get_initial_specified_value()
+                || *self.mask_border_source != mask_border_source::get_initial_specified_value()
+                || *self.mask_border_width != mask_border_width::get_initial_specified_value()
+            {
+                return Ok(());
+            }
             if len == 0 {
                 return Ok(());
             }

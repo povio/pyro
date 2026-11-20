@@ -252,6 +252,13 @@ fn css_supports_parses_with_stylo() {
 }
 
 #[test]
+fn indexed_computed_longhands_have_named_accessors() {
+    let environment = env("<div id=target></div>");
+    assert_eq!(eval(&environment.main, "const declaration=getComputedStyle(target); declaration.length>0 && Array.from(declaration).every(name=>declaration[name]===declaration.getPropertyValue(name))"), "true");
+    environment.page.dispose();
+}
+
+#[test]
 fn get_computed_style_reads_pseudo_elements() {
     let e = env("<style>#t{width:100px;color:rgb(255,0,0)}#t::before{content:'icon';color:rgb(0,128,0);display:block}\
          #t::after{content:attr(data-x)}#n{display:none}#n::before{content:'Foo'}\

@@ -3,9 +3,8 @@
 //! `layout_api::ComputedStyle`): Chrome 157's list, read from
 //! `Object.getOwnPropertyNames(getComputedStyle(document.body))` and
 //! turned into property names. Stylo parses most of them; the others read
-//! as an inline style or `""`, as `getPropertyValue` does. Firefox's
-//! `-moz-` names and the properties only Stylo knows are left out:
-//! feature detection (`'MozTransform' in style`) must not find them.
+//! as an inline style or `""`, as `getPropertyValue` does. `ComputedStyle`
+//! supplements this list with the engine's enabled, indexed longhands.
 
 /// Sorted, by property name.
 pub(crate) const COMPUTED_PROPERTIES: &[&str] = &[
