@@ -1,26 +1,9 @@
-use std::{cell::Cell, sync::Arc};
+use std::sync::Arc;
+pub(crate) use pyro_raster::capture::Budget;
 
 use anyrender::{Filter, Glyph, NormalizedCoord, Paint, PaintRef, PaintScene, RenderContext, Scene};
 use kurbo::{Affine, Rect, Shape, Stroke, Vec2};
 use peniko::{BlendMode, Color, Fill, FontData, StyleRef};
-
-pub(crate) struct Budget {
-    pub left: Cell<u64>,
-    pub exhausted: Cell<bool>,
-}
-
-impl Budget {
-    pub fn take(&self, count: usize) -> bool {
-        if let Some(left) = self.left.get().checked_sub(count as u64) {
-            if !self.exhausted.get() {
-                self.left.set(left);
-                return true;
-            }
-        }
-        self.exhausted.set(true);
-        false
-    }
-}
 
 pub(crate) struct Recording<'a>(pub &'a mut Scene, pub &'a Budget);
 
@@ -56,7 +39,12 @@ impl PaintScene for Recording<'_> {
         filter: Option<Arc<Filter>>,
         backdrop: Option<Arc<Filter>>,
     ) {
-        if self.shape(clip) {
+        if !self.shape(clip) { return; }
+        let layers = filter.iter().chain(&backdrop).map(|graph| graph.nodes().len()).sum::<usize>();
+        if layers == 0 || {
+            let bounds = transform.transform_rect_bbox(clip.bounding_box());
+            pyro_raster::capture::surface(bounds.width().ceil() as u64, bounds.height().ceil() as u64, layers)
+        } {
             self.0.push_layer(fill, blend, alpha, transform, clip, filter, backdrop);
         }
     }

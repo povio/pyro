@@ -221,10 +221,44 @@ fn view_transition_capture_bytes_and_recording_work_shared_across_frame_realms()
         frame.page.layout.borrow_mut().set_geometry_source(Some(probe.clone()));
         assert_eq!(eval(&frame.main, "let frame; globalThis.requestAnimationFrame = fn => {frame = fn}; globalThis.setTimeout = () => 1; globalThis.clearTimeout = () => {}; const start = () => {document.startViewTransition(() => new Promise(() => {})); frame()}; start(); 'ok'"), "ok");
     }
-    assert_eq!(*probe.0.borrow(), vec![(3 << 22, 3 << 16), ((1 << 24) - 3, (1 << 18) - 137)]);
+    let parent_prep = u64::from(parent.page.dom.borrow().slot_count()) + 1;
+    let child_prep = u64::from(child.page.dom.borrow().slot_count()) + 1;
+    assert_eq!(*probe.0.borrow(), vec![(3 << 22, (3 << 16) - child_prep), ((1 << 24) - 3, (1 << 18) - 137 - child_prep - parent_prep)]);
     child.page.detach();
     assert_eq!(eval(&parent.main, "start(); 'ok'"), "ok");
-    assert_eq!(probe.0.borrow()[2..], [(1 << 24, 1 << 18)]);
+    assert_eq!(probe.0.borrow()[2..], [(1 << 24, (1 << 18) - parent_prep)]);
+}
+
+#[test]
+fn view_transition_failed_capture_debit_precedes_viewport_sync() {
+    use pyro_dom::layout::{GeometrySource, ExternalBox, ExternalGeometry, Layout};
+    struct Failure(std::cell::Cell<u32>);
+    impl GeometrySource for Failure {
+        fn sync(&self, _: &Dom, _: &Layout) {}
+        fn element_box(&self, _: u64) -> Option<ExternalBox> { None }
+        fn geometry(&self) -> Option<ExternalGeometry> { None }
+        fn document_size(&self) -> Option<(f64, f64)> { None }
+        fn has_sticky(&self) -> bool { false }
+        fn as_any(&self) -> &dyn std::any::Any { self }
+        fn capture_transition(&self, _: u64, _: bool, _: u64, work: &mut u64) -> Option<Vec<pyro_dom::geometry::TransitionBox>> {
+            self.0.update(|count| count + 1);
+            *work = 0;
+            None
+        }
+    }
+    let environment = env("<!doctype html><body></body>");
+    let probe = Rc::new(Failure(0.into()));
+    environment.page.layout.borrow_mut().set_geometry_source(Some(probe.clone()));
+    let layouts = Rc::new(std::cell::Cell::new(0));
+    environment.page.set_frame_viewport_source(Some(Rc::new({
+        let layouts = layouts.clone();
+        move || { layouts.update(|count| count + 1); None }
+    })));
+    assert_eq!(eval(&environment.main, "let pump; globalThis.requestAnimationFrame = fn => pump = fn; globalThis.setTimeout = () => 1; function start(){document.startViewTransition().ready.catch(()=>{}); pump()} start(); 'ok'"), "ok");
+    let baseline = layouts.get();
+    assert!(baseline > 0);
+    assert_eq!(eval(&environment.main, "for(let i=0;i<32;i++)start(); 'ok'"), "ok");
+    assert_eq!((probe.0.get(), layouts.get()), (1, baseline));
 }
 
 #[test]

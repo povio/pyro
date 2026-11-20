@@ -581,6 +581,7 @@ impl EngineHost {
         let table = dom.dom.borrow().frame_table(dom.document());
         let frames = pyro_layout::frame_table(table);
         dom.transition_frames(&frames.nonce, &mut transition_frames);
+        dom.reserve_transition_job(&frames.nonce, &mut transition_frames);
         Ok(Snapshot {
             transition_frames,
             html: String::new(),

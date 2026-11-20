@@ -1,17 +1,8 @@
 diff --git a/Cargo.toml b/Cargo.toml
-index 14aded4..b7dd397 100644
+index 14aded4..a32eae1 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
-@@ -35,7 +35,7 @@ default = [
-     "image_format_jpeg",
-     "image_format_webp",
- ]
--image = ["dep:image"]
-+image = ["dep:image", "dep:pyro-raster"]
- image_format_gif = [
-     "image",
-     "image/gif",
-@@ -65,11 +65,19 @@ path = "src/lib.rs"
+@@ -65,11 +65,18 @@ path = "src/lib.rs"
  [dependencies.anyrender]
  version = "0.14.0"
  
@@ -26,7 +17,6 @@ index 14aded4..b7dd397 100644
  
 +[dependencies.pyro-raster]
 +path = "../../crates/pyro-raster"
-+optional = true
 +
  [dependencies.kurbo]
  version = "0.13.1"
@@ -1416,10 +1406,10 @@ index 3370fa2..b1e7aae 100644
      fn fill_rule_does_not_control_clipping() {
          assert_eq!(clip_rule("", r#"fill-rule="evenodd""#), Fill::NonZero);
 diff --git a/src/render.rs b/src/render.rs
-index 2e9e1c4..00ac33e 100644
+index 2e9e1c4..41bcc0d 100644
 --- a/src/render.rs
 +++ b/src/render.rs
-@@ -2,92 +2,85 @@
+@@ -2,108 +2,135 @@
  // SPDX-License-Identifier: Apache-2.0 OR MIT
  
  use crate::util;
@@ -1492,6 +1482,7 @@ index 2e9e1c4..00ac33e 100644
 +    ctx: &Ctx,
  ) {
 +    let base = transform;
++    if !pyro_raster::capture::charge(group.children().len()) { return; }
      for node in group.children() {
 -        let transform = transform * util::to_affine(&node.abs_transform());
 +        let transform = base * util::to_affine(&node.abs_transform());
@@ -1579,7 +1570,11 @@ index 2e9e1c4..00ac33e 100644
              }
              usvg::Node::Path(path) => {
                  if !path.is_visible() {
-@@ -98,12 +91,44 @@ pub(crate) fn render_group<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+                     continue;
+                 }
++                if !pyro_raster::capture::charge(path.data().len()) { return; }
+                 let local_path = util::to_bez_path(path);
+ 
                  let transform = global_transform * transform;
                  match path.paint_order() {
                      usvg::PaintOrder::FillAndStroke => {
@@ -1628,7 +1623,7 @@ index 2e9e1c4..00ac33e 100644
                      }
                  }
              }
-@@ -111,6 +136,21 @@ pub(crate) fn render_group<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -111,6 +138,21 @@ pub(crate) fn render_group<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
                  if !img.is_visible() {
                      continue;
                  }
@@ -1650,7 +1645,7 @@ index 2e9e1c4..00ac33e 100644
                  match img.kind() {
                      usvg::ImageKind::JPEG(_)
                      | usvg::ImageKind::PNG(_)
-@@ -120,11 +160,10 @@ pub(crate) fn render_group<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -120,11 +162,10 @@ pub(crate) fn render_group<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
                          {
                              let Ok(decoded_image) = util::decode_raw_raster_image(img.kind())
                              else {
@@ -1663,7 +1658,7 @@ index 2e9e1c4..00ac33e 100644
                              scene.draw_image(image.as_ref(), image_ts);
                          }
  
-@@ -141,24 +180,1114 @@ pub(crate) fn render_group<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -141,26 +182,1125 @@ pub(crate) fn render_group<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
                              transform,
                              global_transform,
                              error_handler,
@@ -1690,11 +1685,11 @@ index 2e9e1c4..00ac33e 100644
 +                    ctx,
                  );
 +                scene.pop_layer();
-+            }
-+        }
-+    }
-+}
-+
+             }
+         }
+     }
+ }
+ 
 +/// pyro: the Porter-Duff operator a group made for a CSS mask layer (blitz-dom `svg_css`) is
 +/// composited with onto the layers below it, which its id names (`__pyro_compose_srcout_1`).
 +pub(crate) fn compose_marker(id: &str) -> Option<Compose> {
@@ -1761,6 +1756,13 @@ index 2e9e1c4..00ac33e 100644
 +    let mix = util::to_mix(g.blend_mode());
 +    // The group's user space (its own `transform` included) in the scene.
 +    let ts = global_transform * transform;
++    if !g.filters().is_empty() {
++        if !pyro_raster::capture::charge(g.filters().len()) { return; }
++        for filter in g.filters() {
++            let bounds = ts.transform_rect_bbox(to_rect(filter.rect()));
++            if !pyro_raster::capture::surface(bounds.width().ceil() as u64, bounds.height().ceil() as u64, filter.primitives().len().max(1)) { return; }
++        }
++    }
 +    let filters = filter_layers(g, ts);
 +
 +    let clip_shapes = g.clip_path().and_then(|clip| clip_shapes(clip, ts));
@@ -1803,9 +1805,9 @@ index 2e9e1c4..00ac33e 100644
 +            if !(layer_rect.width() > 0.0 && layer_rect.height() > 0.0) {
 +                // Clipped or masked out entirely.
 +                return;
-             }
-         }
-     }
++            }
++        }
++    }
 +
 +    // One filled rectangle clipped by one shape (a reftest's usual subject, a
 +    // background cut to a shape): the shape is filled with the rectangle's
@@ -2625,6 +2627,7 @@ index 2e9e1c4..00ac33e 100644
 +        mask_rect.bottom() as f64,
 +    );
 +    let (rw, rh) = (width * ss, height * ss);
++    if !pyro_raster::capture::surface(rw.into(), rh.into(), 3) { return None; }
 +    let raster_ctx = Ctx {
 +        cull: Rect::new(0.0, 0.0, rw as f64, rh as f64),
 +    };
@@ -2740,6 +2743,7 @@ index 2e9e1c4..00ac33e 100644
 +    )?;
 +    // The tile's content space to its pixels: whole pixels across the tile.
 +    let content_ts = Affine::scale_non_uniform(width as f64 / tile_w, height as f64 / tile_h);
++    if !pyro_raster::capture::surface(width.into(), height.into(), 2) { return None; }
 +    let raster_ctx = Ctx {
 +        cull: Rect::new(0.0, 0.0, width as f64, height as f64),
 +    };
@@ -2778,10 +2782,12 @@ index 2e9e1c4..00ac33e 100644
 +            .map(|(image, ts)| (Paint::Image(image), ts)),
 +        paint => util::to_brush(paint, opacity),
 +    }
- }
- 
++}
++
  fn fill<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
-@@ -168,9 +1297,13 @@ fn fill<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+     scene: &mut S,
+     error_handler: &mut F,
+@@ -168,9 +1308,13 @@ fn fill<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
      transform: Affine,
      local_path: &BezPath,
      node: &Node,
@@ -2796,7 +2802,7 @@ index 2e9e1c4..00ac33e 100644
              scene.fill(
                  match fill.rule() {
                      usvg::FillRule::NonZero => Fill::NonZero,
-@@ -181,7 +1314,7 @@ fn fill<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -181,7 +1325,7 @@ fn fill<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
                  Some(brush_transform),
                  local_path,
              );
@@ -2805,7 +2811,7 @@ index 2e9e1c4..00ac33e 100644
              error_handler(scene, node);
          }
      }
-@@ -194,9 +1327,14 @@ fn stroke<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -194,9 +1338,14 @@ fn stroke<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
      transform: Affine,
      local_path: &BezPath,
      node: &Node,
@@ -2821,7 +2827,7 @@ index 2e9e1c4..00ac33e 100644
              let conv_stroke = util::to_stroke(stroke);
              scene.stroke(
                  &conv_stroke,
-@@ -205,7 +1343,7 @@ fn stroke<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -205,7 +1354,7 @@ fn stroke<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
                  Some(brush_transform),
                  local_path,
              );

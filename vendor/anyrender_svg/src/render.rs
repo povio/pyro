@@ -68,6 +68,7 @@ pub(crate) fn render_group<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
     ctx: &Ctx,
 ) {
     let base = transform;
+    if !pyro_raster::capture::charge(group.children().len()) { return; }
     for node in group.children() {
         let transform = base * util::to_affine(&node.abs_transform());
         match node {
@@ -86,6 +87,7 @@ pub(crate) fn render_group<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
                 if !path.is_visible() {
                     continue;
                 }
+                if !pyro_raster::capture::charge(path.data().len()) { return; }
                 let local_path = util::to_bez_path(path);
 
                 let transform = global_transform * transform;
@@ -271,6 +273,13 @@ fn render_group_node_inner<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
     let mix = util::to_mix(g.blend_mode());
     // The group's user space (its own `transform` included) in the scene.
     let ts = global_transform * transform;
+    if !g.filters().is_empty() {
+        if !pyro_raster::capture::charge(g.filters().len()) { return; }
+        for filter in g.filters() {
+            let bounds = ts.transform_rect_bbox(to_rect(filter.rect()));
+            if !pyro_raster::capture::surface(bounds.width().ceil() as u64, bounds.height().ceil() as u64, filter.primitives().len().max(1)) { return; }
+        }
+    }
     let filters = filter_layers(g, ts);
 
     let clip_shapes = g.clip_path().and_then(|clip| clip_shapes(clip, ts));
@@ -1135,6 +1144,7 @@ fn mask_image(mask: &usvg::Mask, ts: Affine, rect: Rect) -> Option<(ImageBrush, 
         mask_rect.bottom() as f64,
     );
     let (rw, rh) = (width * ss, height * ss);
+    if !pyro_raster::capture::surface(rw.into(), rh.into(), 3) { return None; }
     let raster_ctx = Ctx {
         cull: Rect::new(0.0, 0.0, rw as f64, rh as f64),
     };
@@ -1250,6 +1260,7 @@ fn pattern_brush(
     )?;
     // The tile's content space to its pixels: whole pixels across the tile.
     let content_ts = Affine::scale_non_uniform(width as f64 / tile_w, height as f64 / tile_h);
+    if !pyro_raster::capture::surface(width.into(), height.into(), 2) { return None; }
     let raster_ctx = Ctx {
         cull: Rect::new(0.0, 0.0, width as f64, height as f64),
     };

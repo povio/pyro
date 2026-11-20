@@ -595,6 +595,7 @@ pub enum Backend {
 pub struct Timings {
     pub transition_old_images: usize,
     pub transition_live_targets: usize,
+    pub transition_live_recordings: usize,
     /// Sub-resources Blitz waited for.
     pub fetch: Duration,
     /// Parse, style and layout (fetch excluded).
@@ -1599,9 +1600,10 @@ impl Renderer {
         let extent_h = ((origin.1 * dpr) as u32).saturating_add((h as f64 * dpr / scale).ceil() as u32);
         let transform = Affine::scale(scale / dpr) * Affine::translate((-origin.0 * dpr, -origin.1 * dpr));
         // (Painting knows where the page lands in the image's pixels: see `paint_scene_for_device`.)
-        for transition in &mut transitions { transition.install(doc); }
         anyrender_svg::with_text_threshold(threshold, || {
             blitz_paint::with_glyph_grid(transform, subpixel, || {
+                for transition in &mut transitions { transition.capture(doc, &mut timings.transition_live_recordings, threshold); }
+                for transition in &mut transitions { transition.install(doc); }
                 blitz_paint::paint_scene_for_device(&mut page, doc, dpr, extent_w, extent_h, 0, 0, transform);
             });
         });
@@ -1880,40 +1882,48 @@ impl Renderer {
     }
 
     pub fn capture_transition_budgeted(&mut self, page: u64, root: u64, old: bool, remaining_pixels: u64, work: &mut u64, recordings: &mut usize) -> Option<Vec<TransitionBox>> {
-        fn charge_tree(doc: &blitz_dom::BaseDocument, depth: u64, nodes_left: &mut usize, work: &mut u64, pixels: &mut u64) -> Option<()> {
-            if depth > 64 { return None; }
-            let nodes = doc.tree().len().max(1);
-            *nodes_left = nodes_left.checked_sub(nodes)?;
-            *work = work.checked_sub(nodes as u64 * depth)?;
-            for (_, node) in doc.tree().iter() {
-                if let Some(text) = node.text_data() { *work = work.checked_sub(text.content.len() as u64)?; }
+        if *work == 0 || (old && remaining_pixels == 0) { return None; }
+        let mirror = self.mirrors.get_mut(&page)?;
+        if mirror.doc.tree().len() > 16_384 { return None; }
+        let mut saved = Vec::new();
+        if let Some(scroll) = self.timeline_scroll.get(&page) {
+            *work = work.checked_sub(2 * scroll.elements.len() as u64)?;
+            for &(key,(x,y)) in &scroll.elements {
+                if let Some(node) = mirror.node(key).and_then(|id|mirror.doc.get_node_mut(id)) {
+                    saved.push((node.id, *node.scroll_offset()));
+                    *node.scroll_offset_mut() = blitz_dom::Point { x,y };
+                }
             }
-            for id in doc.sub_document_node_ids() {
-                let child = doc.get_node(id)?.subdoc()?.inner();
-                let (width, height) = child.viewport().window_size;
-                *pixels = pixels.checked_sub(u64::from(width) * u64::from(height))?;
-                charge_tree(&child, depth + 1, nodes_left, work, pixels)?;
-            }
-            Some(())
         }
+        let result = self.capture_scrolled_transition(page, root, old, remaining_pixels, work, recordings);
+        let mirror = self.mirrors.get_mut(&page)?;
+        for (id, offset) in saved.into_iter().rev() {
+            if let Some(node) = mirror.doc.get_node_mut(id) { *node.scroll_offset_mut() = offset; }
+        }
+        result
+    }
+
+    fn capture_scrolled_transition(&mut self, page: u64, root: u64, old: bool, remaining_pixels: u64, work: &mut u64, recordings: &mut usize) -> Option<Vec<TransitionBox>> {
         let mut ids = Vec::new();
         let mut boxes = Vec::new();
         let mirror = self.mirrors.get(&page)?;
         let doc = &mirror.doc;
-        if doc.tree().len() > 16_384 { return None; }
         let scale = doc.viewport().scale_f64();
         let mut remaining = remaining_pixels.min(SVG_CANVAS_MAX_PIXELS as u64);
         if *work == 0 || (old && remaining == 0) { return None; }
         let document_root = doc.try_root_element().map(|node| node.id);
         let (viewport_width, viewport_height) = doc.viewport().window_size;
         let viewport_size = (f64::from(viewport_width), f64::from(viewport_height));
-        let (valid, visited) = self.collect_transition_boxes(page, root, |id, key, name| {
+        let scope = mirror.node(root).filter(|id| Some(*id) != document_root);
+        *work = work.checked_sub(doc.tree().len() as u64)?;
+        let (valid, _) = self.collect_transition_boxes(page, root, |id, key, name| {
             if name.len() > 1024 { return false; }
             let Some(node) = doc.get_node(id) else { return false; };
             let size = node.final_layout().size;
             let mut transform = Affine::IDENTITY;
             let mut current = Some(id);
             while let Some(ancestor) = current.and_then(|id| doc.get_node(id)) {
+                if Some(ancestor.id) == scope { break; }
                 let Some(left) = work.checked_sub(1) else { return false; };
                 *work = left;
                 let location = ancestor.final_layout().location;
@@ -1923,7 +1933,10 @@ impl Renderer {
                 current = ancestor.containing_block();
             }
             let scroll = doc.viewport_scroll();
-            transform = Affine::translate((-scroll.x * scale, -scroll.y * scale)) * transform;
+            if scope.is_none() {
+                let (x,y) = self.timeline_scroll.get(&page).map_or((scroll.x,scroll.y), |state|state.viewport);
+                transform = Affine::translate((-x * scale, -y * scale)) * transform;
+            }
             if !transform.is_finite() { return false; }
             let size = if Some(id) == document_root { viewport_size } else { (size.width as f64 * scale, size.height as f64 * scale) };
             boxes.push(TransitionBox { key, name: name.to_owned(), size, transform: transform.as_coeffs(), ink: [0.0, 0.0, size.0, size.1], image: None });
@@ -1931,11 +1944,13 @@ impl Renderer {
             true
         });
         if !valid { return None; }
-        *work = work.checked_sub(visited as u64)?;
         if old && !ids.is_empty() {
             let initial_work = *work;
-            charge_tree(doc, 1, &mut 16_384, work, &mut remaining)?;
-            *work = work.checked_sub((initial_work - *work).checked_mul(ids.len() as u64 - 1)?)?;
+            let initial_pixels = remaining;
+            charge_transition_tree(doc, 1, &mut 16_384, work, &mut remaining)?;
+            let repeats = ids.len() as u64 - 1;
+            *work = work.checked_sub((initial_work - *work).checked_mul(repeats)?)?;
+            remaining = remaining.checked_sub((initial_pixels - remaining).checked_mul(repeats)?)?;
             let minimum_area = |item: &TransitionBox| {
                 let (width, height) = item.size;
                 if !width.is_finite() || !height.is_finite() || width < 0.0 || height < 0.0 { return None; }
@@ -1943,28 +1958,32 @@ impl Renderer {
             };
             let reserved = boxes.iter().try_fold(0u64, |sum, item| sum.checked_add(minimum_area(item)?))?;
             remaining = remaining.checked_sub(reserved)?;
-            let mut records = boxes.iter_mut();
+            let phases: Vec<_> = boxes.iter().map(|item| transition_phase(item.transform)).collect();
+            let mut records = boxes.iter_mut().zip(&phases);
             let doc = &mut self.mirrors.get_mut(&page)?.doc;
-            blitz_paint::record_transition_boxes(doc, &ids, recordings, work, |id, scene, ink| {
-                let record = records.next()?;
+            let threshold = (!self.text_antialiasing).then_some(TEXT_ALIASING_THRESHOLD);
+            anyrender_svg::with_text_threshold(threshold, || blitz_paint::with_glyph_grid(Affine::IDENTITY,self.subpixel_text_positioning, || blitz_paint::record_transition_boxes(doc, &ids, &phases, recordings, work, |id, scene, ink| {
+                let (record, phase) = records.next()?;
                 let minimum = minimum_area(record)?;
                 remaining += minimum;
                 let ink = if Some(id) == document_root {
                     let [_, _, _, _, left, top] = record.transform;
                     kurbo::Rect::new(-left, -top, viewport_size.0 - left, viewport_size.1 - top)
                 } else { ink };
-                record.ink = [ink.x0, ink.y0, ink.x1, ink.y1];
+                record.ink = [ink.x0-phase.0, ink.y0-phase.1, ink.x1-phase.0, ink.y1-phase.1];
                 if !ink.is_finite() { return None; }
                 let (width, height) = (ink.width() as u32, ink.height() as u32);
                 if width == 0 || height == 0 { return Some(()); }
                 if !pyro_canvas::valid_size(width, height) { return None; }
                 remaining = remaining.checked_sub(u64::from(width) * u64::from(height))?;
+                if !pyro_raster::capture::surface(width.into(), height.into(), 2) { return None; }
                 let mut renderer = VelloCpuImageRenderer::new(width, height);
+                renderer.set_text_aliasing_threshold(threshold);
                 let mut data = Vec::new();
                 renderer.render_to_vec(|out| out.append_scene(scene, Affine::translate((-ink.x0, -ink.y0))), &mut data);
                 record.image = Some(RgbaImage { width, height, data });
                 Some(())
-            })?;
+            })))?;
         }
         Some(boxes)
     }
@@ -2645,6 +2664,28 @@ impl Renderer {
 }
 
 /// Premultiplied RGBA8 (the rasterizers' output) to straight alpha.
+fn transition_phase(matrix:[f64;6]) -> (f64,f64) {
+    let [a,b,c,d,x,y] = matrix;
+    if [a,b,c,d] == [1.,0.,0.,1.] {(x-x.floor(),y-y.floor())} else {(0.,0.)}
+}
+
+fn charge_transition_tree(doc: &blitz_dom::BaseDocument, depth: u64, nodes_left: &mut usize, work: &mut u64, pixels: &mut u64) -> Option<()> {
+    if depth > 64 { return None; }
+    let nodes = doc.tree().len().max(1);
+    *nodes_left = nodes_left.checked_sub(nodes)?;
+    *work = work.checked_sub(nodes as u64 * depth)?;
+    for (_, node) in doc.tree().iter() {
+        if let Some(text) = node.text_data() { *work = work.checked_sub(text.content.len() as u64)?; }
+    }
+    for id in doc.sub_document_node_ids() {
+        let child = doc.get_node(id)?.subdoc()?.inner();
+        let (width, height) = child.viewport().window_size;
+        *pixels = pixels.checked_sub(u64::from(width) * u64::from(height))?;
+        charge_transition_tree(&child, depth + 1, nodes_left, work, pixels)?;
+    }
+    Some(())
+}
+
 fn unpremultiply(data: &mut [u8]) {
     for p in data.chunks_exact_mut(4) {
         let a = p[3] as u32;

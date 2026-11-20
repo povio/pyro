@@ -106,7 +106,7 @@ fn view_transition_old_paints_in_styled_group_and_suppresses_original() {
     let page = Page::new("<!doctype html><style>*{margin:0}main{position:relative;width:80px;height:80px}b{display:block;background:red;width:20px;height:20px;view-transition-name:tile}main::view-transition-new(tile){display:none}main::view-transition-group(tile){transform:translateX(40px)}main::view-transition-old(tile){animation:none}</style><main><b></b></main>");
     let mut snap = page.snapshot(1, page.tree());
     let image = TransitionBox { key: render_key(page.find("b")), name: "tile".into(), size: (20.,20.), transform: [1.,0.,0.,1.,0.,0.], ink: [0.,0.,20.,20.], rgba: Some(Arc::new([0,128,0,255].repeat(400))) };
-    snap.transition_frames.push(TransitionFrame { document: snap.frames.nonce.clone(), root: render_key(page.find("main")), old: vec![image.clone()].into(), new: vec![image].into(), samples: Default::default(), reservation: Arc::new(()) });
+    snap.transition_frames.push(TransitionFrame { document: snap.frames.nonce.clone(), root: render_key(page.find("main")), old: vec![image.clone()].into(), new: vec![image].into(), samples: Default::default(),  job: None, reservation: Arc::new(()) });
     let mut renderer = Renderer::new();
     for (original, shifted) in [([255,255,255,255],[0,128,0,255]), ([255,0,0,255],[255,255,255,255])] {
         let scene = paint(&mut renderer, &snap);
@@ -116,6 +116,27 @@ fn view_transition_old_paints_in_styled_group_and_suppresses_original() {
             assert_eq!(&bitmap.data[offset..offset+4], &expected, "x={x}");
         }
         snap.transition_frames.clear();
+    }
+}
+
+#[test]
+fn view_transition_live_samples_current_pixels_after_admission() {
+    use pyro_dom::geometry::{TransitionAllowance, TransitionBox, TransitionFrame, TransitionJob};
+    use pyro_dom::snapshot::render_key;
+    let page = Page::new("<!doctype html><style>*{margin:0}main{position:relative;width:80px;height:80px}b{display:block;width:20px;height:20px;view-transition-name:tile}main::view-transition-group(tile){transform:translateX(40px)}main::view-transition-new(tile){animation:none}</style><main><b></b></main>");
+    let target = page.find("b");
+    let mut renderer = Renderer::new();
+    for (pixels, css, expected, count) in [(399,"red",[255,255,255,255],0), (400,"green",[0,128,0,255],1), (400,"blue",[0,0,255,255],1)] {
+        page.dom.borrow_mut().set_attribute(target,"style",&format!("background:{css}")).unwrap();
+        let mut snap = page.snapshot(1,page.tree());
+        let image = TransitionBox { key: render_key(target), name:"tile".into(), size:(20.,20.), transform:[1.,0.,0.,1.,0.,0.], ink:[0.,0.,20.,20.], rgba:None };
+        let job = Arc::new(TransitionJob {remaining: std::sync::Mutex::new(TransitionAllowance{pixels,work:8192}),lease:Arc::new(())});
+        snap.transition_frames.push(TransitionFrame {document:snap.frames.nonce.clone(),root:render_key(page.find("main")),old:Default::default(),new:vec![image].into(),samples:Default::default(),job:Some(job),reservation:Arc::new(())});
+        let scene = paint(&mut renderer,&snap);
+        assert_eq!(scene.timings.transition_live_recordings,count);
+        let (bitmap,_) = renderer.raster(scene,Backend::Cpu);
+        let offset = (5 * bitmap.width as usize + 45) * 4;
+        assert_eq!(&bitmap.data[offset..offset+4],&expected);
     }
 }
 
@@ -139,7 +160,7 @@ fn view_transition_worker_resolves_only_the_snapshot_document_and_generation() {
     let original = page.find("b");
     let mut queued = page.snapshot(1, page.tree());
     let image = TransitionBox { key: render_key(original), name: "item".into(), size: (1.,1.), transform: [1.,0.,0.,1.,0.,0.], ink: [0.,0.,1.,1.], rgba: Some(Arc::new(vec![0;4])) };
-    queued.transition_frames.push(TransitionFrame { document: queued.frames.nonce.clone(), root: render_key(body), old: vec![image.clone()].into(), new: vec![image].into(), samples: Default::default(), reservation: Arc::new(()) });
+    queued.transition_frames.push(TransitionFrame { document: queued.frames.nonce.clone(), root: render_key(body), old: vec![image.clone()].into(), new: vec![image].into(), samples: Default::default(),  job: None, reservation: Arc::new(()) });
     {
         let mut dom = page.dom.borrow_mut();
         dom.add_ref(page.doc).unwrap();
@@ -179,7 +200,7 @@ fn view_transition_worker_resolves_child_keys_only_in_their_frame() {
     let mut snap = page.snapshot(1,tree);
     snap.frames = Arc::new(FrameTableData { nonce: "n".into(), entries: [("1".into(), child)].into_iter().collect() });
     let image = |key| TransitionBox { key, name: "item".into(), size: (1.,1.), transform: [1.,0.,0.,1.,0.,0.], ink: [0.,0.,1.,1.], rgba: None };
-    snap.transition_frames.push(TransitionFrame { document: "child".into(), root: key, new: vec![image(77),image(88)].into(), old: Default::default(), samples: Default::default(), reservation: Arc::new(()) });
+    snap.transition_frames.push(TransitionFrame { document: "child".into(), root: key, new: vec![image(77),image(88)].into(), old: Default::default(), samples: Default::default(),  job: None, reservation: Arc::new(()) });
     let mut worker = Renderer::new();
     assert_eq!(paint(&mut worker,&snap).timings.transition_live_targets,1);
     snap.transition_frames[0].document = "n".into();
@@ -283,7 +304,7 @@ fn view_transition_rejects_excess_keyframe_work_before_sampling() {
 #[test]
 fn view_transition_capture_charges_frame_tree_before_recording() {
     use blitz_dom::{ns, QualName};
-    let page = Page::new("<!doctype html><html style='view-transition-name:root'><iframe style='width:32px;height:32px;border:0'></iframe></html>");
+    let page = Page::new("<!doctype html><html style='view-transition-name:root'><i style='display:block;width:1px;height:1px;view-transition-name:item'></i><iframe style='width:32px;height:32px;border:0'></iframe></html>");
     let root = pyro_dom::snapshot::render_key(page.find("html"));
     let frame = pyro_dom::snapshot::render_key(page.find("iframe"));
     let mut tree = page.tree();
@@ -299,14 +320,54 @@ fn view_transition_capture_charges_frame_tree_before_recording() {
     let mut renderer = Renderer::new();
     renderer.sync_layout(&snapshot, &fetcher()).unwrap();
     let mut recordings = 0;
-    for (pixels, mut work) in [(1 << 24, 200), (640 * 480, 1 << 18)] {
+    for (pixels, mut work) in [(1 << 24, 200), (640 * 480, 1 << 18), (640 * 480 + 32 * 32 + 1, 1 << 18)] {
         assert!(renderer.capture_transition_budgeted(1, root, true, pixels, &mut work, &mut recordings).is_none());
         assert_eq!(recordings, 0);
     }
     let mut work = 1 << 18;
     assert!(renderer.capture_transition_budgeted(1, root, true, 1 << 24, &mut work, &mut recordings).is_some());
-    assert_eq!(recordings, 1);
+    assert_eq!(recordings, 2);
     assert!((1 << 18) - work >= 2 * 256);
+    use pyro_dom::geometry::{TransitionAllowance, TransitionBox, TransitionFrame, TransitionJob};
+    let image = TransitionBox { key:root, name:"root".into(),size:(640.,480.),transform:[1.,0.,0.,1.,0.,0.],ink:[0.,0.,640.,480.],rgba:None };
+    for (pixels,work,expected) in [(0,8192,0),(1<<24,200,0),(640*480,1<<18,0),(1<<24,1<<18,1)] {
+        let job = Arc::new(TransitionJob {remaining:std::sync::Mutex::new(TransitionAllowance{pixels,work}),lease:Arc::new(())});
+        snapshot.transition_frames = vec![TransitionFrame {document:"n".into(),root,old:Default::default(),new:vec![image.clone()].into(),samples:Default::default(),reservation:Arc::new(()),job:Some(job)}];
+        assert_eq!(paint(&mut renderer,&snapshot).timings.transition_live_recordings,expected);
+    }
+}
+
+#[test]
+fn view_transition_capture_restores_layout_scroll() {
+    let page = Page::new("<!doctype html><div id='scroll' style='height:40px;overflow:auto'><div id='item' style='height:180px;view-transition-name:item'></div></div>");
+    let key = |selector| pyro_dom::snapshot::render_key(page.find(selector));
+    let mut renderer = Renderer::new();
+    renderer.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+    renderer.set_timeline_scroll(1, vec![(key("#scroll"), (0., 25.))], (0., 0.));
+    let before = renderer.element_box(1, key("#item")).unwrap();
+    for (pixels, expected) in [(1 << 24, true), (1, false)] {
+        let captured = renderer.capture_transition_budgeted(1, key("html"), true, pixels, &mut (1 << 18), &mut 0);
+        assert_eq!(captured.is_some(), expected);
+        assert_eq!(renderer.element_box(1, key("#item")).unwrap(), before);
+    }
+}
+
+#[test]
+fn view_transition_denies_raster_scratch_before_pixel_decode() {
+    let side = 257;
+    let bytes = encode_png(&RgbaImage { width: side, height: side, data: [5, 13, 49, 255].repeat((side * side) as usize) });
+    let mut work = ((bytes.len().div_ceil(64) * 64) + 4) as u64;
+    let (result, decodes) = pyro_raster::with_test_budget(1 << 24, || {
+        pyro_raster::capture::scope(&mut work, |_| pyro_raster::decode(&bytes, 1 << 24))
+    });
+    assert!(result.is_none());
+    assert_eq!((work, decodes), (0, 0));
+    let mut work = 1 << 18;
+    let (result, decodes) = pyro_raster::with_test_budget(1 << 24, || {
+        pyro_raster::capture::scope(&mut work, |_| pyro_raster::decode(&bytes, 1 << 24))
+    });
+    assert!(result.unwrap().is_ok());
+    assert_eq!(decodes, 1);
 }
 
 #[test]

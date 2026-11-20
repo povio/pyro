@@ -616,6 +616,26 @@ pub struct TransitionBox {
 }
 
 #[derive(Clone, Debug)]
+pub struct TransitionAllowance {
+    pub pixels: u64,
+    pub work: u64,
+}
+
+pub trait TransitionLease: std::fmt::Debug + Send + Sync {
+    fn debit_failure(&self, spent: u64);
+}
+
+impl TransitionLease for () {
+    fn debit_failure(&self, _: u64) {}
+}
+
+#[derive(Debug)]
+pub struct TransitionJob {
+    pub remaining: std::sync::Mutex<TransitionAllowance>,
+    pub lease: std::sync::Arc<dyn TransitionLease>,
+}
+
+#[derive(Clone, Debug)]
 pub struct TransitionFrame {
     pub document: String,
     pub root: u64,
@@ -623,6 +643,7 @@ pub struct TransitionFrame {
     pub new: std::sync::Arc<[TransitionBox]>,
     pub samples: std::sync::Arc<[(usize, usize, f64)]>,
     pub reservation: std::sync::Arc<dyn std::fmt::Debug + Send + Sync>,
+    pub job: Option<std::sync::Arc<TransitionJob>>,
 }
 
 /// The engine laying the document out (Blitz in `render` builds).

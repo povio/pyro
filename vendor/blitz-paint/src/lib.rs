@@ -89,12 +89,14 @@ pub fn paint_scene_for_device(
 pub fn record_transition_boxes(
     doc: &mut BaseDocument,
     participants: &[NodeId],
+    phases: &[(f64,f64)],
     recordings: &mut usize,
     work: &mut u64,
     mut consume: impl FnMut(NodeId, Scene, kurbo::Rect) -> Option<()>,
 ) -> Option<()> {
     if participants.len() > 256 || doc.tree().len() > 16_384 { return None; }
     if participants.is_empty() { return Some(()); }
+    *work = work.checked_sub(doc.tree().len() as u64 + 1)?;
     doc.ensure_paint_tree();
     let scale = doc.viewport().scale_f64();
     let (width, height) = doc.viewport().window_size;
@@ -102,25 +104,23 @@ pub fn record_transition_boxes(
     let named = participants.iter().copied().collect();
     let mut painter = BlitzDomPainter::new(doc, scale, width, height, 0.0, 0.0, &widgets);
     painter.transition_children = Some(&named);
-    let budget = capture::Budget { left: (*work).into(), exhausted: false.into() };
-    painter.capture_budget = Some(&budget);
-    for &id in participants {
+    if phases.len() != participants.len() { return None; }
+    pyro_raster::capture::scope(work, |budget| { let mut painter = painter; painter.capture_budget = Some(budget); for (&id,&phase) in participants.iter().zip(phases) {
         if !budget.take(1) { return None; }
         let node = doc.get_node(id)?;
         let size = node.final_layout().size;
-        let local = kurbo::Rect::new(0.0, 0.0, size.width as f64 * scale, size.height as f64 * scale);
-        let parent = painter.node_transform(node, kurbo::Affine::IDENTITY).inverse();
+        let local = kurbo::Rect::new(phase.0, phase.1, size.width as f64 * scale+phase.0, size.height as f64 * scale+phase.1);
+        let parent = kurbo::Affine::translate(phase) * painter.node_transform(node, kurbo::Affine::IDENTITY).inverse();
         if !parent.is_finite() { return None; }
         painter.top_layer_root.set(Some(id));
         *recordings += 1;
         let mut scene = Scene::new();
-        painter.render_element(&mut capture::Recording(&mut scene, &budget), id, parent, kurbo::Rect::new(-1e7, -1e7, 1e7, 1e7));
+        painter.render_element(&mut capture::Recording(&mut scene, budget), id, parent, kurbo::Rect::new(-1e7, -1e7, 1e7, 1e7));
         if budget.exhausted.get() { return None; }
         let ink = bounds::scene_bounds(&scene.commands).map_or(local, |bounds| local.union(bounds));
         consume(id, scene, ink.expand())?;
     }
-    *work = budget.left.get();
-    Some(())
+    Some(()) })?
 }
 
 /// pyro: the top Chromium paints a line of text at, in CSS px of the document: the line's unrounded

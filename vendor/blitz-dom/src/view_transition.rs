@@ -41,8 +41,8 @@ impl Geometry {
             "width:{}px;height:{}px;transform:matrix({a},{b},{c},{d},{},{});",
             self.size.0 / scale,
             self.size.1 / scale,
-            x / scale,
-            y / scale
+            (x + ((a-1.)*self.size.0 + c*self.size.1)*0.5) / scale,
+            (y + (b*self.size.0 + (d-1.)*self.size.1)*0.5) / scale
         )
     }
 }
@@ -177,6 +177,10 @@ impl BaseDocument {
             let arg = PseudoElement::transition_box_argument(&part.name, &classes)?;
             let geometry = part.new.or(part.old)?;
             let mut css = geometry.declarations(scale);
+            if let Some(target) = part.target {
+                let filter = self.resolved_style_value(target, "backdrop-filter");
+                if !filter.is_empty() && filter != "none" { css.push_str("backdrop-filter:"); css.push_str(&filter); css.push(';'); }
+            }
             let both = part.old.is_some() && part.new.is_some();
             if both {
                 css.push_str("animation-name:-ua-view-transition-group-anim-");

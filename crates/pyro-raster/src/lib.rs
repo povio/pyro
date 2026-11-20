@@ -1,3 +1,4 @@
+pub mod capture;
 mod gif;
 mod icc;
 mod webp;
@@ -82,6 +83,7 @@ fn decode_jpeg_with_budget(bytes: &[u8], available: usize) -> ImageResult<(image
     let limits = DecodeLimits { max_memory: Limits::default().max_alloc, ..Default::default() };
     let error = |err| ImageError::Decoding(image::error::DecodingError::new(image::ImageFormat::Jpeg.into(), err));
     let (width, height, _) = jpeg_geometry(bytes)?;
+    if !capture::surface(width.into(), height.into(), 5) { return Err(limit()); }
     if rgba_bytes(width.into(), height.into())? > available {
         return Err(limit());
     }
@@ -159,6 +161,7 @@ fn retain(cache: &mut VecDeque<Entry>, bytes: &[u8], raster: &Raster, budget: us
 }
 
 pub fn decode(bytes: &[u8], available: usize) -> ImageResult<Raster> {
+    if !capture::charge(bytes.len().div_ceil(64).saturating_mul(64)) { return Err(limit()); }
     let format = image::guess_format(bytes)?;
     let mut cache = CACHE.lock().unwrap_or_else(|error| error.into_inner());
     if let Some(index) = cache.iter().position(|(key, _)| key.as_ref() == bytes) {
@@ -191,6 +194,7 @@ pub fn decode(bytes: &[u8], available: usize) -> ImageResult<Raster> {
             _ => usize::try_from(decoder.total_bytes()).map_err(|_| limit())?,
         };
         let needed = rgba_bytes(width.into(), height.into())?.checked_add(scratch.unwrap_or(output)).ok_or_else(limit)?;
+        if !capture::charge(needed.div_ceil(256)) { return Err(limit()); }
         if needed > available {
             return Err(limit());
         }

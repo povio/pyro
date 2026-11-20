@@ -1064,7 +1064,13 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         clip_rect: Rect,
     ) {
         if self.transition_children.is_some_and(|children| children.contains(&node_id)) && self.top_layer_root.get() != Some(node_id) { return; }
-        if self.dom.transition_paint.as_deref().is_some_and(|state| state.suppressed.contains(&node_id)) { return; }
+        if let Some(state) = self.dom.transition_paint.as_deref() && state.suppressed.contains(&node_id) {
+            let node = &self.dom.tree()[node_id];
+            if !node.is_root_element() && let Some(root) = state.roots.get(&node_id) {
+                self.render_element(scene, *root, self.node_transform(node,parent_style_transform), clip_rect);
+            }
+            return;
+        }
         if self.capture_budget.is_some_and(|budget| !budget.take(1)) { return; }
         // pyro: the element's clip while it paints (`PaintContext::paint_clip`).
         let outer_clip = self.paint_clip.replace(clip_rect);

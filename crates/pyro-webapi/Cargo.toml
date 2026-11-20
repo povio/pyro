@@ -37,6 +37,7 @@ kurbo = "0.13.1"
 pyro-canvas = { workspace = true }
 pyro-dom = { workspace = true }
 pyro-js = { workspace = true }
+pyro-raster = { path = "../pyro-raster" }
 # Audio (decodeAudioData) and video frame decoding; codecs are cargo
 # features of pyro-media (on in the pyro binary).
 pyro-media = { workspace = true }

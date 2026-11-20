@@ -14,6 +14,7 @@ autotests = false
 gpu = ["dep:anyrender_vello"]
 
 [dependencies]
+pyro-raster = { path = "../pyro-raster" }
 data-url = "0.3"
 roxmltree = "0.20"
 app_units = "0.7"
