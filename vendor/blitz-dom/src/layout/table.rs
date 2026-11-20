@@ -3876,7 +3876,16 @@ impl taffy::LayoutPartialTree for TableTreeWrapper<'_, '_> {
         let index = usize::from(node_id);
         self.ctx.placed.borrow_mut().placed(index, self.ctx.cells.len());
         let node_id = crate::taffy_node_id(self.ctx.cells[index].node_id);
-        self.doc.set_unrounded_layout(node_id, layout)
+        // pyro: the cell's scrollbars are those of its own style (its classic scrollbar gutters,
+        // which its content was laid out in), not of the grid item style the table made of it.
+        // Chrome: an `overflow: scroll` 100px cell has clientWidth 85 (WPT css-backgrounds
+        // `table-cell-background-local-003`).
+        let mut layout = *layout;
+        layout.scrollbar_size = {
+            use taffy::CoreStyle as _;
+            self.doc.nodes[self.ctx.cells[index].node_id].layout_style().scrollbar_gutter_size()
+        };
+        self.doc.set_unrounded_layout(node_id, &layout)
     }
 
     fn compute_child_layout(
