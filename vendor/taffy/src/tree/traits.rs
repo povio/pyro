@@ -253,7 +253,7 @@ pub trait LayoutContainingBlock: LayoutPartialTree {
     }
 
     /// Resolve the position-area rectangle and its normal alignment in the containing block.
-    fn oof_anchor_area(&self, _node: NodeId, _container: NodeId, _size: Size<f32>, _offset: crate::Point<f32>) -> Option<(Size<f32>, crate::Point<f32>, crate::Point<crate::AlignSelf>)> {
+    fn oof_anchor_area(&self, _node: NodeId, _container: NodeId, _size: Size<f32>, _offset: crate::Point<f32>, _trial: bool) -> Option<(Size<f32>, crate::Point<f32>, crate::Point<crate::AlignSelf>)> {
         None
     }
 

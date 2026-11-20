@@ -76,6 +76,24 @@ fn scroll_fit_invalidation_coalesces_before_layout() {
 }
 
 #[test]
+fn scroll_fit_splits_area_at_visual_anchor_edges() {
+    let html = "<!doctype html><style>main{position:relative;width:200px;height:200px}section{width:200px;height:200px;overflow:scroll}i{display:block;anchor-name:--a;height:50px;margin:150px 0}b{position:absolute;position-anchor:--a;position-area:bottom;position-try-fallbacks:flip-block;width:50px;height:50px}</style><main><section><i></i></section><b></b></main>";
+    let mut doc = blitz_html::HtmlDocument::from_html(html, blitz_dom::DocumentConfig::default());
+    doc.viewport_mut().window_size = (400, 300);
+    doc.resolve(0.0);
+    let scroller = doc.query_selector("section").unwrap().unwrap();
+    let target = doc.query_selector("b").unwrap().unwrap();
+    assert_eq!(doc.get_node(target).unwrap().final_layout().location.y, 100.0);
+    for (scroll, expected) in [(101., 200.), (40., 100.)] {
+        let before = doc.anchor_try_visits();
+        assert!(doc.set_timeline_scroll([(scroller, (0., scroll))].into(), (0., 0.)));
+        doc.resolve(0.0);
+        assert_eq!(doc.get_node(target).unwrap().final_layout().location.y, expected);
+        assert!(doc.anchor_try_visits() - before <= 1);
+    }
+}
+
+#[test]
 fn changed_rule_media_updates_only_subscribed_blocks() {
     use blitz_dom::{local_name, ns, QualName};
     let html = "<!doctype html><style>section{position:relative;width:100px;height:100px}b{position:absolute;left:999px;width:10px;height:10px;position-try-fallbacks:--changed}aside b{position-try-fallbacks:--stable}@position-try --stable{left:4px}</style><style id=sheet media=print>@position-try --changed{left:8px}</style><section><b id=target></b></section><aside><section><b></b></section></aside>";

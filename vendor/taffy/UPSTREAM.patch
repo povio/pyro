@@ -9060,7 +9060,7 @@ index bb954acf..11c7d9d2 100644
  }
  
 diff --git a/src/compute/oof.rs b/src/compute/oof.rs
-index 2c6179a4..81986b8a 100644
+index 2c6179a4..b8db0b5c 100644
 --- a/src/compute/oof.rs
 +++ b/src/compute/oof.rs
 @@ -23,7 +23,9 @@ use crate::{AxisStaticEdge, BoxSizing, Direction};
@@ -9151,7 +9151,7 @@ index 2c6179a4..81986b8a 100644
          }
          _ => (area_size, area_offset),
      };
-+    let anchor_area = anchor_container.and_then(|container| tree.oof_anchor_area(candidate.node, container, area_size, area_offset));
++    let anchor_area = anchor_container.and_then(|container| tree.oof_anchor_area(candidate.node, container, area_size, area_offset, trial));
 +    let anchor_center = anchor_container.map(|container| tree.oof_anchor_center(candidate.node, container));
 +    let (area_size, area_offset) = anchor_area.map_or((area_size, area_offset), |(size, offset, _)| (size, offset));
      let area_width = area_size.width;
@@ -10312,7 +10312,7 @@ index e250d742..f9ddda97 100644
              bottom_margin: CollapsibleMarginSet::ZERO,
              margins_can_collapse_through: false,
 diff --git a/src/tree/traits.rs b/src/tree/traits.rs
-index 7d4adf22..7479f82d 100644
+index 7d4adf22..514f5d18 100644
 --- a/src/tree/traits.rs
 +++ b/src/tree/traits.rs
 @@ -201,6 +201,15 @@ pub trait LayoutPartialTree: TraversePartialTree {
@@ -10358,7 +10358,7 @@ index 7d4adf22..7479f82d 100644
 +    }
 +
 +    /// Resolve the position-area rectangle and its normal alignment in the containing block.
-+    fn oof_anchor_area(&self, _node: NodeId, _container: NodeId, _size: Size<f32>, _offset: crate::Point<f32>) -> Option<(Size<f32>, crate::Point<f32>, crate::Point<crate::AlignSelf>)> {
++    fn oof_anchor_area(&self, _node: NodeId, _container: NodeId, _size: Size<f32>, _offset: crate::Point<f32>, _trial: bool) -> Option<(Size<f32>, crate::Point<f32>, crate::Point<crate::AlignSelf>)> {
 +        None
 +    }
 +

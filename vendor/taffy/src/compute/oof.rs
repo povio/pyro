@@ -580,7 +580,7 @@ fn solve_oof_box<Tree: LayoutContainingBlock>(
         }
         _ => (area_size, area_offset),
     };
-    let anchor_area = anchor_container.and_then(|container| tree.oof_anchor_area(candidate.node, container, area_size, area_offset));
+    let anchor_area = anchor_container.and_then(|container| tree.oof_anchor_area(candidate.node, container, area_size, area_offset, trial));
     let anchor_center = anchor_container.map(|container| tree.oof_anchor_center(candidate.node, container));
     let (area_size, area_offset) = anchor_area.map_or((area_size, area_offset), |(size, offset, _)| (size, offset));
     let area_width = area_size.width;

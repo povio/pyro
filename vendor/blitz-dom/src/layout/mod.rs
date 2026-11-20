@@ -2617,7 +2617,7 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
         taffy::Rect { left:resolve(&pos.left,PhysicalSide::Left), right:resolve(&pos.right,PhysicalSide::Right), top:resolve(&pos.top,PhysicalSide::Top), bottom:resolve(&pos.bottom,PhysicalSide::Bottom) }
     }
 
-    fn oof_anchor_area(&self, node: NodeId, container: NodeId, size: taffy::Size<f32>, offset: taffy::Point<f32>) -> Option<(taffy::Size<f32>, taffy::Point<f32>, taffy::Point<taffy::AlignSelf>)> {
+    fn oof_anchor_area(&self, node: NodeId, container: NodeId, size: taffy::Size<f32>, offset: taffy::Point<f32>, trial: bool) -> Option<(taffy::Size<f32>, taffy::Point<f32>, taffy::Point<taffy::AlignSelf>)> {
         use style::values::specified::position::{PositionAnchorKeyword, PositionAreaTrack};
         let node = self.node_from_id(node);
         if node.anchor_scroll_axes.get() != (None,None) { node.anchor_scroll_axes.set((None,None)); }
@@ -2647,8 +2647,13 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
             node.anchor_invalid.set(referenced);
         }
         if pos.position_area.is_none() { return None; }
-        let (anchor,point, extent) = default?;
+        let (anchor,mut point, extent) = default?;
         node.anchor_scroll_axes.set((Some(anchor),Some(anchor)));
+        if trial {
+            let shift = self.position_try_scroll_offset(taffy_node_id(node.id), taffy_node_id(container.id));
+            point.x -= shift.x;
+            point.y -= shift.y;
+        }
         let area = pos.position_area.to_physical(container.primary_styles()?.writing_mode, style.writing_mode);
         fn axis(track: PositionAreaTrack, start: f32, end: f32, low: f32, high: f32) -> (f32, f32, taffy::AlignSelf) {
             use taffy::AlignSelf as Align;
