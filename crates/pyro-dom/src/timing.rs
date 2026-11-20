@@ -1049,7 +1049,9 @@ pub fn transition_keyframes(
 
 /// Whether `text` can declare one of the properties.
 fn mentions(text: &str) -> bool {
-    text.contains("animation") || text.contains("transition")
+    // (`timeline-trigger` too: a rule may declare only that, for another element's
+    // `animation-trigger`.)
+    text.contains("animation") || text.contains("transition") || text.contains("timeline-trigger")
 }
 
 fn next_tok<'i>(p: &mut Parser<'i>) -> Option<Token<'i>> {
