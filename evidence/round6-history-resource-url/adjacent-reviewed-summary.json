@@ -1,0 +1,14 @@
+{
+  "urls": 30,
+  "counts": {
+    "full-0": 20,
+    "full-1": 20,
+    "full-2": 28,
+    "named-0": 62,
+    "named-1": 62,
+    "named-2": 53,
+    "registered": 0,
+    "missing": 0
+  },
+  "gains": {}
+}

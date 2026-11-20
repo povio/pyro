@@ -1,0 +1,2985 @@
+[
+ {
+  "url": "referrer-policy/gen/iframe.http-rp/no-referrer/fetch.http.html",
+  "name": "Referrer Policy: Expects omitted for fetch to same-https origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   200
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   197
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/iframe.http-rp/no-referrer/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects omitted for iframe-tag to same-http origin and keep-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   10287
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   20051
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/iframe.http-rp/no-referrer/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects omitted for iframe-tag to same-http origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   10287
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   20051
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/iframe.http-rp/no-referrer/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects omitted for iframe-tag to same-http origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   10287
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   20051
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/iframe.http-rp/no-referrer/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects omitted for iframe-tag to same-https origin and keep-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   10287
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   20051
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/iframe.http-rp/no-referrer/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects omitted for iframe-tag to same-https origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   10287
+  ],
+  "atAa": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   20051
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/iframe.http-rp/no-referrer/svg-a-tag.http.html",
+  "name": "Referrer Policy: Expects omitted for svg-a-tag to same-https origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   10065
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   83
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/iframe.http-rp/origin-when-cross-origin/script-tag.http.html",
+  "name": "Referrer Policy: Expects origin for script-tag to cross-http origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   334
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   142
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/iframe.http-rp/origin-when-cross-origin/script-tag.http.html",
+  "name": "Referrer Policy: Expects origin for script-tag to cross-http origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   334
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   142
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/iframe.http-rp/same-origin/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects omitted for iframe-tag to same-https origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   257
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   162
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/iframe.http-rp/strict-origin-when-cross-origin/script-tag.http.html",
+  "name": "Referrer Policy: Expects origin for script-tag to same-https origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   152
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   148
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/iframe.http-rp/strict-origin-when-cross-origin/script-tag.http.html",
+  "name": "Referrer Policy: Expects stripped-referrer for script-tag to same-http origin and keep-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   152
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   148
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/iframe.http-rp/unsafe-url/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-https origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: Invalid URL\"",
+   "complete",
+   20092
+  ],
+  "atAa": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: Invalid URL\"",
+   "complete",
+   10167
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/iframe.http-rp/unsafe-url/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-https origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: Invalid URL\"",
+   "complete",
+   20092
+  ],
+  "atAa": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: Invalid URL\"",
+   "complete",
+   10167
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/iframe.http-rp/unsafe-url/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects stripped-referrer for iframe-tag to same-http origin and keep-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   20092
+  ],
+  "atAa": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: Invalid URL\"",
+   "complete",
+   10167
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/iframe.http-rp/unsafe-url/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects stripped-referrer for iframe-tag to same-http origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   20092
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   10167
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/iframe.http-rp/unset/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to cross-https origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: Invalid URL\"",
+   "complete",
+   10158
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   10025
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/iframe.http-rp/unset/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to cross-https origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: Invalid URL\"",
+   "complete",
+   10158
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   10025
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/iframe.meta/always/script-tag.http.html",
+  "name": "Referrer Policy: Expects stripped-referrer for script-tag to cross-http origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   204
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   163
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/iframe.meta/always/svg-a-tag.http.html",
+  "name": "Referrer Policy: Expects stripped-referrer for svg-a-tag to same-https origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   94
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   79
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/iframe.meta/always/worker-classic.http.html",
+  "name": "Referrer Policy: Expects stripped-referrer for worker-classic to same-http origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   48
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   40
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/iframe.meta/default/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to cross-https origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   239
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   10039
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/iframe.meta/default/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to cross-https origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   239
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   10039
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/iframe.meta/default/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to same-http origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   239
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   10039
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/iframe.meta/default/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to same-https origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   239
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   10039
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/iframe.meta/default/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects stripped-referrer for iframe-tag to same-http origin and keep-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   239
+  ],
+  "atAa": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: Invalid URL\"",
+   "complete",
+   10039
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/iframe.meta/never/img-tag.http.html",
+  "name": "Referrer Policy: Expects omitted for img-tag to same-http origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   213
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   207
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/iframe.meta/never/img-tag.http.html",
+  "name": "Referrer Policy: Expects omitted for img-tag to same-https origin and keep-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   213
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   207
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/iframe.meta/no-referrer/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects omitted for iframe-tag to same-https origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   10332
+  ],
+  "atAa": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   10048
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/iframe.meta/no-referrer/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects omitted for iframe-tag to same-https origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   10332
+  ],
+  "atAa": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   10048
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/iframe.meta/origin-when-cross-origin/a-tag.http.html",
+  "name": "Referrer Policy: Expects stripped-referrer for a-tag to same-http origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: Invalid URL\"",
+   "complete",
+   10061
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   69
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/iframe.meta/origin-when-crossorigin/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to cross-https origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   10076
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   10061
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/iframe.meta/origin-when-crossorigin/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to same-http origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   10076
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   10061
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/iframe.meta/origin-when-crossorigin/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to same-https origin and keep-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   10076
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   10061
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/iframe.meta/origin-when-crossorigin/xhr.http.html",
+  "name": "Referrer Policy: Expects origin for xhr to same-https origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: Invalid URL\"",
+   "complete",
+   10095
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   166
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/iframe.meta/origin-when-crossorigin/xhr.http.html",
+  "name": "Referrer Policy: Expects stripped-referrer for xhr to same-http origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   10095
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   166
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/iframe.meta/origin/a-tag.http.html",
+  "name": "Referrer Policy: Expects origin for a-tag to cross-http origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: Invalid URL\"",
+   "complete",
+   30081
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   84
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/iframe.meta/origin/a-tag.http.html",
+  "name": "Referrer Policy: Expects origin for a-tag to same-https origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: Invalid URL\"",
+   "complete",
+   30081
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   84
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/iframe.meta/origin/img-tag.http.html",
+  "name": "Referrer Policy: Expects origin for img-tag to same-http origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   404
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   236
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/iframe.meta/origin/img-tag.http.html",
+  "name": "Referrer Policy: Expects origin for img-tag to same-https origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   404
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   236
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/iframe.meta/strict-origin-when-cross-origin/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to cross-https origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   441
+  ],
+  "atAa": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: Invalid URL\"",
+   "complete",
+   10153
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/iframe.meta/strict-origin-when-cross-origin/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to cross-https origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   441
+  ],
+  "atAa": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: Invalid URL\"",
+   "complete",
+   10153
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/iframe.meta/strict-origin-when-cross-origin/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to same-http origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   441
+  ],
+  "atAa": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: Invalid URL\"",
+   "complete",
+   10153
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/iframe.meta/strict-origin-when-cross-origin/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to same-https origin and keep-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   441
+  ],
+  "atAa": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: Invalid URL\"",
+   "complete",
+   10153
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/iframe.meta/unsafe-url/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects stripped-referrer for iframe-tag to same-https origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   10343
+  ],
+  "atAa": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: Invalid URL\"",
+   "complete",
+   10045
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/iframe.meta/unsafe-url/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects stripped-referrer for iframe-tag to same-https origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   10343
+  ],
+  "atAa": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: Invalid URL\"",
+   "complete",
+   10045
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/iframe.meta/unsafe-url/svg-a-tag.http.html",
+  "name": "Referrer Policy: Expects stripped-referrer for svg-a-tag to same-https origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   420
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   20065
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/iframe.meta/unset/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to cross-https origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: Invalid URL\"",
+   "complete",
+   10457
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   10043
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/iframe.meta/unset/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to cross-https origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: Invalid URL\"",
+   "complete",
+   10457
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   10043
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/iframe.meta/unset/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to same-https origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: Invalid URL\"",
+   "complete",
+   10457
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   10043
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.http-rp/no-referrer-when-downgrade/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-http origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   20102
+  ],
+  "atAa": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   10262
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.http-rp/no-referrer-when-downgrade/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-http origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   20102
+  ],
+  "atAa": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   10262
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.http-rp/no-referrer-when-downgrade/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects stripped-referrer for iframe-tag to same-https origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   20102
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   10262
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.http-rp/no-referrer/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects omitted for iframe-tag to same-https origin and keep-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   40225
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   10030
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.http-rp/no-referrer/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects omitted for iframe-tag to same-https origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   40225
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   10030
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.http-rp/no-referrer/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects omitted for iframe-tag to same-https origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   40225
+  ],
+  "atAa": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   10030
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.http-rp/no-referrer/script-tag.http.html",
+  "name": "Referrer Policy: Expects omitted for script-tag to cross-http origin and keep-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   166
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   243
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.http-rp/no-referrer/script-tag.http.html",
+  "name": "Referrer Policy: Expects omitted for script-tag to cross-http origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   166
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   243
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.http-rp/no-referrer/svg-a-tag.http.html",
+  "name": "Referrer Policy: Expects omitted for svg-a-tag to same-https origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   71
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   116
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.http-rp/origin-when-cross-origin/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to cross-https origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   10070
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   10154
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.http-rp/origin-when-cross-origin/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to cross-https origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   10070
+  ],
+  "atAa": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   10154
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.http-rp/origin-when-cross-origin/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to same-http origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   10070
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   10154
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.http-rp/origin-when-cross-origin/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to same-https origin and keep-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   10070
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   10154
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.http-rp/origin-when-cross-origin/script-tag.http.html",
+  "name": "Referrer Policy: Expects origin for script-tag to cross-https origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   243
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   190
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.http-rp/origin-when-cross-origin/script-tag.http.html",
+  "name": "Referrer Policy: Expects origin for script-tag to same-http origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   243
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   190
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.http-rp/origin-when-cross-origin/script-tag.http.html",
+  "name": "Referrer Policy: Expects origin for script-tag to same-https origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   243
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   190
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.http-rp/origin-when-cross-origin/script-tag.http.html",
+  "name": "Referrer Policy: Expects stripped-referrer for script-tag to same-http origin and keep-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   243
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   190
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.http-rp/origin/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to same-https origin and keep-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   20121
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   10147
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.http-rp/same-origin/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects omitted for iframe-tag to cross-https origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   10160
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   10162
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.http-rp/same-origin/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects omitted for iframe-tag to cross-https origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   10160
+  ],
+  "atAa": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   10162
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.http-rp/same-origin/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects omitted for iframe-tag to same-https origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   10160
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   10162
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.http-rp/same-origin/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects stripped-referrer for iframe-tag to same-http origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   10160
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   10162
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.http-rp/strict-origin-when-cross-origin/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to cross-https origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   20120
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   20109
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.http-rp/strict-origin-when-cross-origin/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to same-http origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   20120
+  ],
+  "atAa": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   20109
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.http-rp/strict-origin-when-cross-origin/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to same-https origin and keep-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   20120
+  ],
+  "atAa": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   20109
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.http-rp/strict-origin-when-cross-origin/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects stripped-referrer for iframe-tag to same-http origin and keep-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   20120
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   20109
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.http-rp/strict-origin-when-cross-origin/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects stripped-referrer for iframe-tag to same-http origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   20120
+  ],
+  "atAa": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   20109
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.http-rp/strict-origin/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to cross-https origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   10886
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   192
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.http-rp/strict-origin/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to cross-https origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   10886
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   192
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.http-rp/unsafe-url/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects stripped-referrer for iframe-tag to same-https origin and keep-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   10141
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   20330
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.http-rp/unsafe-url/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects stripped-referrer for iframe-tag to same-https origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   10141
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   20330
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.http-rp/unsafe-url/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects stripped-referrer for iframe-tag to same-https origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   10141
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   20330
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.http-rp/unset/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to same-https origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   10133
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   10060
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.http-rp/unset/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects stripped-referrer for iframe-tag to same-http origin and keep-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   10133
+  ],
+  "atAa": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   10060
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.meta/default/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to cross-https origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   20077
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   10063
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.meta/default/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to cross-https origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   20077
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   10063
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.meta/default/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to same-http origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   20077
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   10063
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.meta/default/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to same-https origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   20077
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   10063
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.meta/never/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects omitted for iframe-tag to cross-https origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   20055
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   10281
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.meta/never/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects omitted for iframe-tag to same-http origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   20055
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   10281
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.meta/never/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects omitted for iframe-tag to same-https origin and keep-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   20055
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   10281
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.meta/never/script-tag.http.html",
+  "name": "Referrer Policy: Expects omitted for script-tag to cross-http origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   152
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   185
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.meta/no-referrer-when-downgrade/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-https origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   20075
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   10050
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.meta/no-referrer-when-downgrade/script-tag.http.html",
+  "name": "Referrer Policy: Expects stripped-referrer for script-tag to cross-http origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   146
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   302
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.meta/no-referrer-when-downgrade/script-tag.http.html",
+  "name": "Referrer Policy: Expects stripped-referrer for script-tag to cross-http origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   146
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   302
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.meta/no-referrer-when-downgrade/xhr.http.html",
+  "name": "Referrer Policy: Expects stripped-referrer for xhr to same-http origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   156
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   183
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.meta/no-referrer-when-downgrade/xhr.http.html",
+  "name": "Referrer Policy: Expects stripped-referrer for xhr to same-http origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   156
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   183
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.meta/no-referrer-when-downgrade/xhr.http.html",
+  "name": "Referrer Policy: Expects stripped-referrer for xhr to same-https origin and keep-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   156
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   183
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.meta/no-referrer-when-downgrade/xhr.http.html",
+  "name": "Referrer Policy: Expects stripped-referrer for xhr to same-https origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   156
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   183
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.meta/no-referrer/a-tag.http.html",
+  "name": "Referrer Policy: Expects omitted for a-tag to cross-https origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   69
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   76
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.meta/no-referrer/a-tag.http.html",
+  "name": "Referrer Policy: Expects omitted for a-tag to same-http origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   69
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   76
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.meta/origin-when-cross-origin/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to cross-https origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   10139
+  ],
+  "atAa": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   10239
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.meta/origin-when-cross-origin/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to same-http origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   10139
+  ],
+  "atAa": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   10239
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.meta/origin-when-crossorigin/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to cross-https origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   20060
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   10071
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.meta/origin-when-crossorigin/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to cross-https origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   20060
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   10071
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.meta/origin-when-crossorigin/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to same-http origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   20060
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   10071
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.meta/origin-when-crossorigin/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to same-https origin and keep-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   20060
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   10071
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.meta/origin/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to same-http origin and keep-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   10133
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   249
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.meta/origin/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to same-http origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   10133
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   249
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.meta/origin/svg-a-tag.http.html",
+  "name": "Referrer Policy: Expects origin for svg-a-tag to same-https origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   75
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   88
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.meta/same-origin/a-tag.http.html",
+  "name": "Referrer Policy: Expects omitted for a-tag to cross-http origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   49
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   64
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.meta/same-origin/a-tag.http.html",
+  "name": "Referrer Policy: Expects omitted for a-tag to cross-https origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   49
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   64
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.meta/strict-origin-when-cross-origin/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to cross-https origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   10266
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   203
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.meta/strict-origin-when-cross-origin/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to same-https origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   10266
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   203
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.meta/strict-origin-when-cross-origin/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to same-https origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   10266
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   203
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.meta/unsafe-url/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-https origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   20104
+  ],
+  "atAa": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   10151
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.meta/unsafe-url/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-https origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   20104
+  ],
+  "atAa": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   10151
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.meta/unsafe-url/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects stripped-referrer for iframe-tag to same-http origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   20104
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   10151
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.meta/unset/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to same-https origin and keep-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   10142
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   205
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc-inherit.meta/unset/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to same-https origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   10142
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   205
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc.meta/always/fetch.http.html",
+  "name": "Referrer Policy: Expects stripped-referrer for fetch to same-https origin and keep-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   140
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   157
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc.meta/always/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-http origin and keep-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   10179
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   20068
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc.meta/always/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-http origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   10179
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   20068
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc.meta/always/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-https origin and keep-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   10179
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   20068
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc.meta/always/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-https origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   10179
+  ],
+  "atAa": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   20068
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc.meta/default/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to cross-https origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   10177
+  ],
+  "atAa": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   20709
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc.meta/default/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to cross-https origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   10177
+  ],
+  "atAa": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   20709
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc.meta/default/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to same-http origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   10177
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   20709
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc.meta/never/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects omitted for iframe-tag to cross-https origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   20040
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   30296
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc.meta/never/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects omitted for iframe-tag to same-http origin and keep-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   20040
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   30296
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc.meta/no-referrer-when-downgrade/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects stripped-referrer for iframe-tag to same-http origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   20062
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   10056
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc.meta/no-referrer-when-downgrade/xhr.http.html",
+  "name": "Referrer Policy: Expects stripped-referrer for xhr to same-https origin and keep-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   153
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   401
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc.meta/no-referrer-when-downgrade/xhr.http.html",
+  "name": "Referrer Policy: Expects stripped-referrer for xhr to same-https origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   153
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   401
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc.meta/no-referrer-when-downgrade/xhr.http.html",
+  "name": "Referrer Policy: Expects stripped-referrer for xhr to same-https origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   153
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   401
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc.meta/no-referrer/a-tag.http.html",
+  "name": "Referrer Policy: Expects omitted for a-tag to cross-http origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   70
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   118
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc.meta/no-referrer/a-tag.http.html",
+  "name": "Referrer Policy: Expects omitted for a-tag to cross-https origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   70
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   118
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc.meta/no-referrer/a-tag.http.html",
+  "name": "Referrer Policy: Expects omitted for a-tag to same-https origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   70
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   118
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc.meta/no-referrer/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects omitted for iframe-tag to same-https origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   20058
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   20166
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc.meta/no-referrer/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects omitted for iframe-tag to same-https origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   20058
+  ],
+  "atAa": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   20166
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc.meta/no-referrer/svg-a-tag.http.html",
+  "name": "Referrer Policy: Expects omitted for svg-a-tag to same-https origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   74
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   130
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc.meta/origin-when-cross-origin/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to same-http origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   20060
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   589
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc.meta/origin-when-cross-origin/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to same-https origin and keep-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   20060
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   589
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc.meta/origin-when-crossorigin/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to cross-https origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   20078
+  ],
+  "atAa": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   10327
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc.meta/origin-when-crossorigin/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to cross-https origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   20078
+  ],
+  "atAa": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   10327
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc.meta/origin-when-crossorigin/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to same-http origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   20078
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   10327
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc.meta/origin-when-crossorigin/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to same-https origin and keep-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   20078
+  ],
+  "atAa": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   10327
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc.meta/origin/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to same-http origin and keep-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   20081
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   10877
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc.meta/origin/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to same-http origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   20081
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   10877
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc.meta/strict-origin/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to cross-https origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   20309
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   10107
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc.meta/strict-origin/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to same-http origin and keep-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   20309
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   10107
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc.meta/strict-origin/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to same-https origin and keep-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   20309
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   10107
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc.meta/strict-origin/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to same-https origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   20309
+  ],
+  "atAa": [
+   "Fail",
+   "promise_test: Unhandled rejection with value: object \"TypeError: undefined is not an object (evaluating 'result.headers.referer')\"",
+   "complete",
+   10107
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc.meta/strict-origin/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects origin for iframe-tag to same-https origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   20309
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   10107
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc.meta/unsafe-url/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-https origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   1305
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   10141
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc.meta/unsafe-url/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects stripped-referrer for iframe-tag to cross-https origin and swap-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   1305
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   10141
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc.meta/unsafe-url/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects stripped-referrer for iframe-tag to same-http origin and keep-origin redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   1305
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   10141
+  ],
+  "inHistoryGuard": false
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc.meta/unsafe-url/iframe-tag.http.html",
+  "name": "Referrer Policy: Expects stripped-referrer for iframe-tag to same-http origin and no-redirect redirection from http context.",
+  "occurrence": 1,
+  "historical": "Fail",
+  "at902": [
+   "Pass",
+   "",
+   "complete",
+   1305
+  ],
+  "atAa": [
+   "Pass",
+   "",
+   "complete",
+   10141
+  ],
+  "inHistoryGuard": false
+ }
+]
