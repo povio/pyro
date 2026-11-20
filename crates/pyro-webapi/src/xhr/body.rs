@@ -6,27 +6,29 @@ pub(super) struct Text {
     done: bool,
     value: String,
 }
-fn mime_charset(mime: &str) -> Option<&str> {
-    mime.split(';')
-        .skip(1)
-        .filter_map(|part| part.trim().split_once('='))
-        .find(|(k, _)| k.eq_ignore_ascii_case("charset"))
-        .map(|(_, v)| v.trim().trim_matches('"'))
-}
 impl Xhr {
-    pub(super) fn mime(&self) -> String {
-        self.override_mime
+    /// XHR's final MIME type and final encoding are resolved separately. An
+    /// override without a charset preserves the transport charset. An unknown
+    /// override charset still supersedes the transport label.
+    fn response_mime(&self) -> (Mime, Option<&'static encoding_rs::Encoding>) {
+        let response = self
+            .head
             .borrow()
-            .clone()
-            .or_else(|| {
-                self.head
-                    .borrow()
-                    .as_ref()
-                    .and_then(|h| h.headers.get(header::CONTENT_TYPE))
-                    .and_then(|v| v.to_str().ok())
-                    .map(str::to_owned)
+            .as_ref()
+            .and_then(|head| {
+                let header = head.headers.get(header::CONTENT_TYPE)?;
+                // Fetch decodes header bytes as isomorphic Latin-1.
+                let value: String = header.as_bytes().iter().copied().map(char::from).collect();
+                value.parse::<Mime>().ok()
             })
-            .unwrap_or_default()
+            .unwrap_or_else(|| Mime::new("text", "xml"));
+        let override_mime = self.override_mime.borrow();
+        let label = override_mime
+            .as_ref()
+            .and_then(|m| m.get_parameter("charset"))
+            .or_else(|| response.get_parameter("charset"));
+        let encoding = label.and_then(|v| encoding_rs::Encoding::for_label(v.as_bytes()));
+        (override_mime.clone().unwrap_or(response), encoding)
     }
     fn text<'s>(&self, s: &Scope<'s>) -> JsResult<Value<'s>> {
         if self.ready.get() < 3 || self.head.borrow().is_none() {
@@ -35,11 +37,9 @@ impl Xhr {
         let Some(wire) = self.wire.borrow().clone() else { return Ok(s.string("")) };
         let mut cache = self.text.borrow_mut();
         let text = cache.get_or_insert_with(|| {
-            let mime = self.mime();
-            let encoding = mime_charset(&mime)
-                .and_then(|v| encoding_rs::Encoding::for_label(v.as_bytes()))
-                .unwrap_or(encoding_rs::UTF_8);
-            Text { decoder: encoding.new_decoder_with_bom_removal(), chunks: 0, done: false, value: String::new() }
+            let (_, encoding) = self.response_mime();
+            let encoding = encoding.unwrap_or(encoding_rs::UTF_8);
+            Text { decoder: encoding.new_decoder(), chunks: 0, done: false, value: String::new() }
         });
         let wire = wire.lock().unwrap();
         // Only decode the owner task's snapshot. I/O may append more bytes
@@ -93,17 +93,15 @@ impl Xhr {
             return Ok(value);
         }
         let Some(bytes) = self.body_bytes() else { return Ok(s.null()) };
-        let mime = self.mime();
-        let essence = mime.split(';').next().unwrap_or_default().trim().to_ascii_lowercase();
-        // A missing or invalid Content-Type is text/xml.
-        let essence = if essence.contains('/') { essence } else { "text/xml".to_owned() };
-        let charset = mime_charset(&mime);
+        let (mime, encoding) = self.response_mime();
+        let essence = format!("{}/{}", mime.type_, mime.subtype);
+        let charset = encoding.map(|enc| enc.name());
         let url = self.head.borrow().as_ref().map_or(String::new(), |h| h.url.to_string());
         let page = self.page()?;
         let document = if essence == "text/html" {
             (self.response_type.borrow().as_str() == "document")
                 .then(|| pyro_dom::parse::parse_document_bytes(&page.dom, &url, &bytes, charset))
-        } else if essence.ends_with("/xml") || essence.ends_with("+xml") {
+        } else if pyro_dom::parse::is_xml_mime(&essence) {
             pyro_dom::xml::parse_bytes(&mut page.dom.borrow_mut(), &url, &bytes, charset, &essence)
         } else {
             None
@@ -135,7 +133,11 @@ impl Xhr {
             "arraybuffer" => crate::encoding::array_buffer(s, &bytes)?,
             "blob" => s
                 .wrap::<crate::file::Blob>(
-                    crate::file::BlobData { bytes: Bytes::from(bytes), mime: self.mime(), file: None },
+                    crate::file::BlobData {
+                        bytes: Bytes::from(bytes),
+                        mime: self.response_mime().0.to_string(),
+                        file: None,
+                    },
                     None,
                 )?
                 .value(),

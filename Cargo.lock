@@ -3022,6 +3022,7 @@ dependencies = [
  "crypto-bigint 0.7.10",
  "crypto-primes",
  "cssparser",
+ "data-url",
  "ed25519-dalek",
  "encoding_rs",
  "flate2",
