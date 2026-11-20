@@ -6262,7 +6262,7 @@ diff --git a/packages/blitz-dom/src/iframe.rs b/packages/blitz-dom/src/iframe.rs
          let sub_doc = self
              .html_parser_provider
              .clone()
-@@ -115,6 +126,34 @@
+@@ -115,6 +126,40 @@
          self.shell_provider.request_redraw();
      }
  
@@ -6276,6 +6276,12 @@ diff --git a/packages/blitz-dom/src/iframe.rs b/packages/blitz-dom/src/iframe.rs
 +    pub(crate) fn frame_entry(&self, node_id: NodeId) -> Option<crate::FrameContent> {
 +        let value = self.get_node(node_id)?.attr(markup5ever::LocalName::from(crate::FRAME_ATTRIBUTE))?;
 +        self.frames.lookup(value).cloned()
++    }
++
++    /// pyro: whether this is a render snapshot's document (its frame table carries the nonce its
++    /// markup was serialised with): its frame elements load only valid table entries.
++    pub(crate) fn is_snapshot_document(&self) -> bool {
++        !self.frames.nonce.is_empty()
 +    }
 +
 +    /// pyro: whether the frame element `node_id` names a frame table entry (it then shows that
@@ -6297,7 +6303,7 @@ diff --git a/packages/blitz-dom/src/iframe.rs b/packages/blitz-dom/src/iframe.rs
      /// Attach a sub-document parsed from the iframe's `srcdoc` attribute.
      /// Relative URLs within a `srcdoc` document resolve against the parent
      /// document's base URL.
-@@ -137,7 +176,11 @@
+@@ -137,7 +182,11 @@
          let signal = self.new_iframe_generation(node_id, Some(handler.request_id()));
          self.net_provider.fetch(
              self.id(),
@@ -38579,13 +38585,14 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                      ),
                  );
              }
-@@ -1483,6 +2078,14 @@
+@@ -1483,6 +2078,15 @@
              return;
          }
  
-+        // pyro: a frame element of the render snapshot shows its frame table entry's document, or
-+        // none when the table has no such entry; its own attributes never give it one.
-+        if self.doc.names_frame(target_id) {
++        // pyro: in a render snapshot's document (it has a frame table), a frame element shows its
++        // valid table entry's document or nothing, whatever attributes it has (`src`, `srcdoc`, an
++        // unmarked element): never a load of its own.
++        if self.doc.is_snapshot_document() {
 +            if let Some(frame) = self.doc.frame_entry(target_id) {
 +                self.doc.load_frame_document(target_id, &frame);
 +            }
@@ -38594,7 +38601,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          let node = &self.doc.nodes[target_id];
          let Some(element) = node.element_data() else {
              return;
-@@ -1544,12 +2147,27 @@
+@@ -1544,12 +2148,27 @@
              return;
          }
  
@@ -38623,7 +38630,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              let id = self.create_text_node(&value);
              self.append_children(target_id, &[id]);
              return;
-@@ -1579,6 +2197,20 @@
+@@ -1579,6 +2198,20 @@
      }
  }
  
@@ -38644,7 +38651,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
  /// Set 'checked' state on an input based on given attributevalue
  fn set_input_checked_state(element: &mut ElementData, value: String) {
      let Ok(checked) = value.parse() else {
-@@ -2377,6 +3009,50 @@
+@@ -2377,6 +3010,50 @@
          }
      }
  
@@ -38695,7 +38702,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
      fn qual_name(name: &str) -> crate::QualName {
          crate::QualName::new(None, crate::ns!(), crate::LocalName::from(name))
      }
-@@ -3088,3 +3764,254 @@
+@@ -3088,3 +3765,254 @@
          );
      }
  }

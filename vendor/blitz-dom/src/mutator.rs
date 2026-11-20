@@ -2078,9 +2078,10 @@ impl<'doc> DocumentMutator<'doc> {
             return;
         }
 
-        // pyro: a frame element of the render snapshot shows its frame table entry's document, or
-        // none when the table has no such entry; its own attributes never give it one.
-        if self.doc.names_frame(target_id) {
+        // pyro: in a render snapshot's document (it has a frame table), a frame element shows its
+        // valid table entry's document or nothing, whatever attributes it has (`src`, `srcdoc`, an
+        // unmarked element): never a load of its own.
+        if self.doc.is_snapshot_document() {
             if let Some(frame) = self.doc.frame_entry(target_id) {
                 self.doc.load_frame_document(target_id, &frame);
             }

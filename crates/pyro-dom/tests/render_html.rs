@@ -601,3 +601,19 @@ fn namespaced_page_attributes_are_kept() {
     assert!(attrs.contains(&("http://author.test/ns".into(), "lang".into(), "de".into())), "{attrs:?}");
     assert!(!attrs.iter().any(|(_, local, _)| local == "srcdoc"), "{attrs:?}");
 }
+
+/// A frame element's source attributes from another namespace are never written: markup would
+/// make a namespaced `src` an ordinary one (security review cycle 5, 1).
+#[test]
+fn a_frames_namespaced_source_attributes_are_left_out() {
+    let (dom, d) = doc("<iframe id=f></iframe><object id=o></object>");
+    let (f, o) = (find(&dom.borrow(), d, "#f"), find(&dom.borrow(), d, "#o"));
+    {
+        let mut dom = dom.borrow_mut();
+        dom.set_attribute_ns(f, Some("http://evil.test/ns"), "src", "http://evil.test/a.html").unwrap();
+        dom.set_attribute_ns(f, Some("http://evil.test/ns"), "e:SRC", "http://evil.test/b.html").unwrap();
+        dom.set_attribute_ns(o, Some("http://evil.test/ns"), "data", "http://evil.test/c.html").unwrap();
+    }
+    let html = render(&dom.borrow(), d);
+    assert!(!html.contains("evil.test"), "{html}");
+}

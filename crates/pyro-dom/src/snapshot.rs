@@ -40,6 +40,10 @@ pub const ENGINE_ATTRIBUTES: &[&str] = &["srcdoc", FRAME_ATTRIBUTE, SHEET_POLICY
 /// ([`Dom::set_sheet_policy`]): the renderer records it for that sheet object.
 pub const SHEET_POLICY_ATTRIBUTE: &str = "data-pyro-sheet-referrer-policy";
 
+/// pyro: the attributes a frame element (`iframe`, `frame`, `object`, `embed`) loads a document
+/// from: never written from another namespace, where markup would make them its own.
+pub const FRAME_SOURCE_ATTRIBUTES: &[&str] = &["src", "srcdoc", "data", "type"];
+
 /// pyro: the prefix of the snapshot's own attribute family (`data-pyro-key`, scroll offsets,
 /// frame URL and content height, the clip mark): page attributes with it are never written.
 pub const ENGINE_ATTRIBUTE_PREFIX: &str = "data-pyro-";
@@ -579,6 +583,16 @@ impl Dom {
                         // `setAttributeNS` in it would fake pseudo-classes or
                         // the top layer for the renderer.
                         if &*a.name.ns == STATE_NS {
+                            continue;
+                        }
+                        // pyro: a frame element's source attributes in any other namespace would
+                        // reparse as its own `src`/`srcdoc`/`data`: never written (the renderer
+                        // loads only frame table entries anyway).
+                        if html
+                            && a.name.ns != ns!()
+                            && matches!(local, "iframe" | "frame" | "object" | "embed")
+                            && FRAME_SOURCE_ATTRIBUTES.iter().any(|n| n.eq_ignore_ascii_case(&a.name.local))
+                        {
                             continue;
                         }
                         if a.name.ns == ns!() {

@@ -236,8 +236,8 @@ fn a_frame_shows_only_its_table_entry_for_its_client() {
     assert!(clients.iter().any(|(url, c)| url.ends_with("c/green.png") && c.as_deref() == Some("NEST#L")), "{clients:?}");
     assert!(!clients.iter().any(|(url, _)| url.contains("evil")), "no page content in a table frame: {clients:?}");
     assert!(!clients.iter().any(|(_, c)| c.as_deref().is_some_and(|c| c.contains("OTHER"))), "no spoofed client: {clients:?}");
-    // A frame of plain HTML (not from the snapshot) names no frame: never one of the table's.
-    assert!(clients.iter().any(|(url, c)| url.ends_with("b/green.png") && c.as_deref() == Some("")), "{clients:?}");
+    // An unmarked frame of a snapshot document loads nothing at all (cycle 5, 1).
+    assert!(!clients.iter().any(|(url, _)| url.ends_with("b/green.png")), "{clients:?}");
 }
 
 /// A `url()`'s request has the style sheet it was written in as its referrer, whatever its mode
@@ -513,4 +513,30 @@ fn a_shared_inline_sheet_is_each_documents_own_css() {
     let referrers: Vec<Option<String>> =
         recorder.2.lock().unwrap().iter().filter(|(url, _)| url.ends_with("shared.png")).map(|(_, r)| r.clone()).collect();
     assert_eq!(referrers, [None, None], "both documents' own CSS");
+}
+
+/// In a render snapshot's document (it has a frame table), a frame element without a valid marker
+/// loads nothing, whatever attributes it has: a `src` (a page's namespaced `src` that markup made
+/// plain), a `srcdoc`, an `<object data>` document; the renderer fetched an unmarked iframe's
+/// `src` itself (security review cycle 5, 1).
+#[test]
+fn an_unmarked_frame_of_a_snapshot_loads_nothing() {
+    let recorder = Arc::new(Recorder::default());
+    let fetcher: Arc<dyn Fetcher> = Arc::new(Shared(recorder.clone()));
+    let snapshot = Snapshot {
+        html: "<!doctype html><body>\
+               <iframe src='http://evil.test/page.html'></iframe>\
+               <iframe srcdoc=\"<div style='width:9px;height:9px;background-image:url(http://evil.test/s.png)'></div>\"></iframe>\
+               <object type='text/html' data='http://evil.test/doc.html' width=20 height=20></object>"
+            .into(),
+        frames: Arc::new(FrameTableData { nonce: "N".into(), entries: Default::default() }),
+        base_url: "http://test/".into(),
+        width: 100,
+        height: 50,
+        device_scale_factor: 1.0,
+        ..Default::default()
+    };
+    Renderer::new().render(&snapshot, Area::Viewport, Backend::Cpu, &fetcher).unwrap();
+    let asked: Vec<String> = recorder.0.lock().unwrap().iter().map(|(url, _)| url.clone()).collect();
+    assert!(!asked.iter().any(|u| u.contains("page.html") || u.contains("s.png")), "{asked:?}");
 }

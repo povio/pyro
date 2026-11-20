@@ -138,6 +138,12 @@ impl BaseDocument {
         self.frames.lookup(value).cloned()
     }
 
+    /// pyro: whether this is a render snapshot's document (its frame table carries the nonce its
+    /// markup was serialised with): its frame elements load only valid table entries.
+    pub(crate) fn is_snapshot_document(&self) -> bool {
+        !self.frames.nonce.is_empty()
+    }
+
     /// pyro: whether the frame element `node_id` names a frame table entry (it then shows that
     /// entry's document or none, never its own attributes').
     pub(crate) fn names_frame(&self, node_id: NodeId) -> bool {
