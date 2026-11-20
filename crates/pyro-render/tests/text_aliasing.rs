@@ -104,3 +104,22 @@ fn text_turned_by_a_whole_turn_draws_as_untransformed_text() {
         }
     }
 }
+
+#[test]
+fn offscreen_pattern_and_mask_inherit_text_coverage() {
+    let snapshot = Snapshot {
+        html: "<!doctype html><body style='margin:0;background:white'><svg width='80' height='40'><defs><pattern id='tile' width='8' height='8' patternUnits='userSpaceOnUse'><text y='7' font-size='8'>X</text></pattern><mask id='mask' maskUnits='userSpaceOnUse' x='40' y='0' width='40' height='40'><text x='43' y='29' fill='white' font-size='28'>X</text></mask></defs><rect width='40' height='40' fill='url(#tile)'/><rect x='40' width='40' height='40' mask='url(#mask)'/></svg>".into(),
+        base_url: "http://test/".into(), width: 80, height: 40, device_scale_factor: 1., ..Default::default()
+    };
+    let fetcher: Arc<dyn Fetcher> = Arc::new(NoFetch);
+    for enabled in [false, true] {
+        let mut renderer = Renderer::new();
+        renderer.text_antialiasing = enabled;
+        let image = renderer.render(&snapshot, Area::Viewport, Backend::Cpu, &fetcher).unwrap().0;
+        for range in [0..40, 40..80] {
+            let (black, blended) = census(&image, range.clone(), 0..40);
+            assert!(black + blended > 0, "empty stage {range:?}, AA {enabled}");
+            assert_eq!(blended > 0, enabled, "stage {range:?}, AA {enabled}");
+        }
+    }
+}

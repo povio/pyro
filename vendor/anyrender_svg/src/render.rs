@@ -1138,7 +1138,7 @@ fn mask_image(mask: &usvg::Mask, ts: Affine, rect: Rect) -> Option<(ImageBrush, 
     let raster_ctx = Ctx {
         cull: Rect::new(0.0, 0.0, rw as f64, rh as f64),
     };
-    let pixels = rasterize(rw, rh, |painter| {
+    let pixels = rasterize(rw, rh, TEXT_THRESHOLD.get(), |painter| {
         painter.push_clip_layer(Fill::NonZero, to_raster * ts, &mask_rect);
         let mut no_errors: fn(&mut Scene, &Node) = |_, _| {};
         render_group(
@@ -1199,13 +1199,13 @@ fn raster_size(width: f64, height: f64) -> Option<(u32, u32, f64)> {
 /// RGBA8 raster, with the same rasterizer as the page. The commands are
 /// recorded and replayed (`append_scene`), as the page's are: the replay is
 /// what applies filter layers.
-fn rasterize(width: u32, height: u32, draw: impl FnOnce(&mut Scene)) -> Vec<u8> {
+fn rasterize(width: u32, height: u32, text_threshold: Option<u8>, draw: impl FnOnce(&mut Scene)) -> Vec<u8> {
     use anyrender::ImageRenderer;
     let mut scene = Scene::new();
     // pyro: an offscreen raster is drawn as SVG content draws it, in a box's reference too.
     with_box_reference(false, || draw(&mut scene));
     let mut renderer = VelloCpuImageRenderer::with_threads(width, height, 0);
-    renderer.set_text_aliasing_threshold(TEXT_THRESHOLD.get());
+    renderer.set_text_aliasing_threshold(text_threshold);
     let mut pixels = Vec::new();
     renderer.render_to_vec(|painter| painter.append_scene(scene, Affine::IDENTITY), &mut pixels);
     pixels
@@ -1253,7 +1253,7 @@ fn pattern_brush(
     let raster_ctx = Ctx {
         cull: Rect::new(0.0, 0.0, width as f64, height as f64),
     };
-    let pixels = rasterize(width, height, |painter| {
+    let pixels = rasterize(width, height, TEXT_THRESHOLD.get(), |painter| {
         let mut no_errors: fn(&mut Scene, &Node) = |_, _| {};
         render_group(
             painter,
