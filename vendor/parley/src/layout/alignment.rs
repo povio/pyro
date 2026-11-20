@@ -124,21 +124,35 @@ pub(crate) fn align<B: Brush>(
         // pyro: the line's content is as wide as Blink's text items, each a whole number of layout
         // units (1/64 CSS px, `ShapeResult::SnappedWidth` rounds up): a right- or centre-aligned
         // line then starts where a shrink-to-fit box of the same text would.
-        let snapped_free_space = {
+        let snapped_free_space = || {
             let unit = 64.0 / layout.scale;
             let advance = line.metrics.advance - line.metrics.hanging_advance;
-            let snapped = ((advance * unit - 0.01).ceil() / unit).max(advance);
-            free_space - (snapped - advance)
+            let excess = |width: f32| ((width * unit - 0.01).ceil() / unit - width).max(0.0);
+            if line.item_range.len() <= 1 || line.metrics.hanging_advance != 0.0 || line.text_fit.is_some() {
+                return free_space - excess(advance);
+            }
+            let mut remaining = advance;
+            let mut rounding = 0.0;
+            for item in &layout.line_items[line.item_range.clone()] {
+                if item.kind == super::data::LayoutItemKind::TextRun {
+                    let slice = layout.shaped_text.run_slice(item.index as u32).narrow(item.shaped_cluster_range.clone());
+                    let spacing = super::spacing::EffectiveSpacing::new(layout.runs[item.index].spacing, super::spacing::Justification::NONE);
+                    let width = spacing.slice_advance(slice);
+                    rounding += excess(width);
+                    remaining -= width;
+                }
+            }
+            free_space - rounding - excess(remaining)
         };
         match (line_alignment, is_rtl) {
             (Alignment::Left, _) | (Alignment::Start, false) | (Alignment::End, true) => {
                 // Do nothing
             }
             (Alignment::Right, _) | (Alignment::Start, true) | (Alignment::End, false) => {
-                line.metrics.offset += snapped_free_space;
+                line.metrics.offset += snapped_free_space();
             }
             (Alignment::Center, _) => {
-                line.metrics.offset += snapped_free_space * 0.5;
+                line.metrics.offset += snapped_free_space() * 0.5;
             }
             (Alignment::Justify, _) => {
                 // Justified alignment doesn't have any effect if free_space is negative or zero
