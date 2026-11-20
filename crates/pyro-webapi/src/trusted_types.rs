@@ -308,27 +308,9 @@ impl HtmlInput {
         options: Value<'_>,
         sink: &str,
     ) -> JsResult<(String, ParserOptions)> {
-        let vetted = |input: Self, scripts| match input {
-            Self::Trusted(html) | Self::String(html) => Ok((html, scripts)),
-        };
-        if let Some(wrapper) = s.unwrap::<TrustedValue>(options) {
-            if let Some(snapshot) = wrapper.as_ref() {
-                return vetted(self, snapshot.clone());
-            }
-        }
-        let options = ParserOptions::convert(s, options)?;
-        if requires_for_script(page) {
-            let module = MODULE.module(s, page)?;
-            let callback = module.get("defaultParserOptions")?.as_object()
-                .ok_or_else(|| JsError::Type("Trusted Types are unavailable".into()))?;
-            let result = callback.call(None, &[s.boolean(options.run_scripts), s.string(sink), s.boolean(options.filter.is_some())])?;
-            // undefined: no policy callback. null: the callback rejected.
-            if !result.is_null() && !result.is_undefined() {
-                return vetted(self, ParserOptions::convert(s, result)?);
-            }
-            if (options.needs_vetting || result.is_null()) && sink_violation(s, page, sink, "")? {
-                return Err(JsError::Type("This document requires trusted HTML parser options".into()));
-            }
+        let (options, vetted) = parser_options(s, page, options, sink, false)?;
+        if vetted {
+            return Ok((match self { Self::Trusted(html) | Self::String(html) => html }, options));
         }
         Ok((self.compliant(s, page, sink)?, options))
     }
@@ -342,6 +324,32 @@ impl HtmlInput {
             Self::String(html) => Ok(html),
         }
     }
+}
+
+/// Convert and vet the complete options snapshot before parsing. A streaming
+/// sink has no separate HTML argument on which to enforce a missing policy.
+pub(crate) fn parser_options(
+    s: &Scope<'_>, page: &Rc<PageDom>, value: Value<'_>, sink: &str, streaming: bool,
+) -> JsResult<(ParserOptions, bool)> {
+    if let Some(wrapper) = s.unwrap::<TrustedValue>(value) {
+        if let Some(snapshot) = wrapper.as_ref() {
+            return Ok((snapshot.clone(), true));
+        }
+    }
+    let options = ParserOptions::convert(s, value)?;
+    if requires_for_script(page) {
+        let module = MODULE.module(s, page)?;
+        let callback = module.get("defaultParserOptions")?.as_object()
+            .ok_or_else(|| JsError::Type("Trusted Types are unavailable".into()))?;
+        let result = callback.call(None, &[s.boolean(options.run_scripts), s.string(sink), s.boolean(options.filter.is_some())])?;
+        if !result.is_null() && !result.is_undefined() {
+            return Ok((ParserOptions::convert(s, result)?, true));
+        }
+        if (streaming || options.needs_vetting || result.is_null()) && sink_violation(s, page, sink, "")? {
+            return Err(JsError::Type("This document requires trusted HTML parser options".into()));
+        }
+    }
+    Ok((options, false))
 }
 
 /// The Trusted Types a sink takes.

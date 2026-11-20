@@ -553,7 +553,7 @@ fn try_upgrade(page: &Rc<PageDom>, el: NodeId) {
 
 /// The bindings of the window that displays `doc`: `page`'s own, or those of
 /// another document of its frame tree.
-fn document_page(page: &Rc<PageDom>, doc: NodeId) -> Option<Rc<PageDom>> {
+pub(crate) fn document_page(page: &Rc<PageDom>, doc: NodeId) -> Option<Rc<PageDom>> {
     if page.document() == doc {
         return Some(page.clone());
     }
