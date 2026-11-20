@@ -386,7 +386,25 @@ impl BaseDocument {
                 }
                 sub_doc.resolve(current_time_for_animations);
                 if let Some((x, y)) = frame_scroll {
-                    sub_doc.set_viewport_scroll(crate::Point { x, y });
+                    // pyro: the offset the frame can reach as laid out now (it may have shrunk in
+                    // this resolve): its scroll timelines are placed at that one, styled again
+                    // without another resolve (nor its frames').
+                    let scale = sub_doc.viewport().scale_f64();
+                    let (vw, vh) = (
+                        sub_doc.viewport().window_size.0 as f64 / scale,
+                        sub_doc.viewport().window_size.1 as f64 / scale,
+                    );
+                    let (dw, dh) = sub_doc.document_scroll_size((vw, vh));
+                    let (mx, my) = ((dw - vw).max(0.0), (dh - vh).max(0.0));
+                    let rx = if sub_doc.viewport_scrolls_leftward() { (-mx, 0.0) } else { (0.0, mx) };
+                    let reachable = (x.clamp(rx.0, rx.1), y.clamp(0.0, my));
+                    if reachable != (x, y) {
+                        sub_doc.set_timeline_scroll(std::collections::HashMap::new(), reachable);
+                        if sub_doc.resample_scroll_driven() {
+                            sub_doc.resolve_style(current_time_for_animations);
+                        }
+                    }
+                    sub_doc.set_viewport_scroll(crate::Point { x: reachable.0, y: reachable.1 });
                 }
 
                 subdoc_is_animating |= sub_doc.is_animating();
