@@ -43,7 +43,7 @@ fn insert<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>, position: Position) -> J
     // WebIDL converts the HTML union before it reads the options dictionary.
     // Applying the default policy is a separate step, after options vetting.
     let input = trusted_types::HtmlInput::convert(s, a.get(0))?;
-    let (html, run_scripts) = input.for_positional(s, page, a.get(1), sink)?;
+    let (html, options) = input.for_html_insertion(s, page, a.get(1), sink)?;
     let (target, fragment, before) = {
         let mut dom = page.dom.borrow_mut();
         let target = match position {
@@ -75,7 +75,7 @@ fn insert<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>, position: Position) -> J
             Position::Before | Position::Replace => Some(n.id),
             Position::Append => None,
         };
-        let fragment = pyro_dom::parse::parse_modern_html_fragment(&mut dom, context, &html, run_scripts).js()?;
+        let fragment = pyro_dom::parse::parse_modern_html_fragment_with(&mut dom, context, &html, options.run_scripts, options.filter).js()?;
         (target, fragment, before)
     };
     if position == Position::Replace {

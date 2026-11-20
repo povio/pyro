@@ -88,6 +88,10 @@ pub struct TreeBuilder<Handle, Sink> {
     /// Consumer of tree modifications.
     pub sink: Sink,
 
+    /// Whether a reconstructed formatting element or furthest block is
+    /// removed by the parser sanitizer. Ordinary parsers leave this unset.
+    pub removed_formatting_element: Option<fn(&Sink, &Handle) -> bool>,
+
     /// Insertion mode.
     mode: Cell<InsertionMode>,
 
@@ -152,6 +156,7 @@ where
     pub fn new(sink: Sink, opts: TreeBuilderOpts) -> TreeBuilder<Handle, Sink> {
         let doc_handle = sink.get_document();
         TreeBuilder {
+            removed_formatting_element: None,
             opts,
             sink,
             mode: Cell::new(InsertionMode::Initial),
@@ -192,6 +197,7 @@ where
         };
 
         let tb = TreeBuilder {
+            removed_formatting_element: None,
             opts,
             sink,
             mode: Cell::new(InsertionMode::Initial),
@@ -792,7 +798,9 @@ where
             // 13.
             let mut node;
             let mut node_index = furthest_block_index;
-            let mut last_node = furthest_block.clone();
+            let removed = |node: &Handle| self.removed_formatting_element.is_some_and(|f| f(&self.sink, node));
+            let mut last_node = (!removed(&furthest_block)).then(|| furthest_block.clone());
+            let mut bookmark_moved = false;
 
             // 13.1.
             let mut inner_counter = 0;
@@ -845,23 +853,31 @@ where
                 node = new_element;
 
                 // 13.8.
-                if self.sink.same_node(&last_node, &furthest_block) {
+                if !bookmark_moved {
+                    bookmark_moved = true;
                     bookmark = Bookmark::InsertAfter(node.clone());
                 }
 
                 // 13.9.
-                self.sink.remove_from_parent(&last_node);
-                self.sink.append(&node, AppendNode(last_node.clone()));
+                let keep = !removed(&node);
+                if let Some(last) = last_node {
+                    self.sink.remove_from_parent(&last);
+                    if keep {
+                        self.sink.append(&node, AppendNode(last));
+                    }
+                }
 
                 // 13.10.
-                last_node = node.clone();
+                last_node = keep.then(|| node.clone());
 
                 // 13.11.
             }
 
             // 14.
-            self.sink.remove_from_parent(&last_node);
-            self.insert_appropriately(AppendNode(last_node.clone()), Some(common_ancestor));
+            if let Some(last_node) = last_node {
+                self.sink.remove_from_parent(&last_node);
+                self.insert_appropriately(AppendNode(last_node), Some(common_ancestor));
+            }
 
             // 15.
             // FIXME: Is there a way to avoid cloning the attributes twice here (once on their own,

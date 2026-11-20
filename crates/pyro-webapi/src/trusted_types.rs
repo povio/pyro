@@ -14,6 +14,7 @@ use pyro_js::{JsError, JsResult, Object, Scope, Value};
 use crate::page::PageDom;
 
 use crate::lazy_module::LazyModule;
+use crate::sanitizer_options::ParserOptions;
 
 pub(crate) static MODULE: LazyModule = LazyModule {
     key: "lpTrustedTypes",
@@ -28,7 +29,7 @@ pub(crate) static MODULE: LazyModule = LazyModule {
 struct TrustedValue;
 impl pyro_js::JsClass for TrustedValue {
     const NAME: &'static str = "TrustedValue";
-    type Data = ();
+    type Data = Option<ParserOptions>;
     type Parent = pyro_js::NoParent;
     fn define(def: &mut pyro_js::ClassDef<Self>) {
         def.not_exposed();
@@ -40,15 +41,20 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
 }
 
 const HTML_DATA: &str = "lpTrustedHTMLData";
-const PARSER_OPTIONS: &str = "lpTrustedParserOptions";
 const POLICY_CALLBACK: &str = "lpTrustedParserPolicy";
 const OPTIONS_PROTOTYPE: &str = "lpTrustedParserPrototype";
 
 fn wrap_value<'s>(s: &Scope<'s>, prototype: Value<'_>, slot: &'static str, value: Value<'_>) -> JsResult<Object<'s>> {
-    let object = s.wrap::<TrustedValue>((), None)?;
+    let object = s.wrap::<TrustedValue>(None, None)?;
     object.set_prototype(prototype);
     s.set_hidden(object, slot, value)?;
     Ok(object)
+}
+
+fn wrap_parser_options<'s>(s: &Scope<'s>, proto: Value<'_>, options: ParserOptions) -> JsResult<Value<'s>> {
+    let object = s.wrap::<TrustedValue>(Some(options), None)?;
+    object.set_prototype(proto);
+    Ok(object.value())
 }
 
 /// The Trusted Types interfaces and `trustedTypes` on a window or worker global.
@@ -99,14 +105,15 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         let invalid_receiver = || JsError::Type("Expected a TrustedTypePolicy receiver".into());
         let policy = a.get(0).as_object().ok_or_else(invalid_receiver)?;
         let callback = s.get_hidden(policy, POLICY_CALLBACK)?.and_then(|v| v.as_object()).ok_or_else(invalid_receiver)?;
-        let scripts = callback.call(None, &[a.get(1), a.get(2)])?;
+        let result = callback.call(None, &[a.get(1), a.get(2)])?;
+        let options = ParserOptions::convert(s, result)?;
         let proto = s.get_hidden(policy, OPTIONS_PROTOTYPE)?.ok_or_else(invalid_receiver)?;
         if let Some(realm) = s.object_realm(policy).filter(|r| r.id() != s.realm_id() && !r.is_disposed()) {
-            return Ok(s.rehome(wrap_value(&realm.scope()?, proto, PARSER_OPTIONS, scripts)?.value()));
+            return Ok(s.rehome(wrap_parser_options(&realm.scope()?, proto, options)?));
         }
         // A removed frame can retain its policy in another window. The
         // callback and public prototype still belong to its original realm.
-        Ok(wrap_value(s, proto, PARSER_OPTIONS, scripts)?.value())
+        wrap_parser_options(s, proto, options)
     })?;
     natives.set_atom("createParserOptions", create_options.value())?;
     // The policies of the realm's document that have Trusted Types directives: [text, report-only].
@@ -294,45 +301,36 @@ impl HtmlInput {
 
     /// Resolve parser options before applying the HTML policy. A branded
     /// options object or a successful options policy approves this parse.
-    pub(crate) fn for_positional(
+    pub(crate) fn for_html_insertion(
         self,
         s: &Scope<'_>,
         page: &Rc<PageDom>,
         options: Value<'_>,
         sink: &str,
-    ) -> JsResult<(String, bool)> {
+    ) -> JsResult<(String, ParserOptions)> {
         let vetted = |input: Self, scripts| match input {
             Self::Trusted(html) | Self::String(html) => Ok((html, scripts)),
         };
-        if let Some(object) = options.as_object() {
-            if let Some(scripts) = s.get_hidden(object, PARSER_OPTIONS)? {
-                return vetted(self, scripts.to_bool());
+        if let Some(wrapper) = s.unwrap::<TrustedValue>(options) {
+            if let Some(snapshot) = wrapper.as_ref() {
+                return vetted(self, snapshot.clone());
             }
         }
-        let scripts = if options.is_undefined() || options.is_null() {
-            false
-        } else {
-            let obj = options.as_object().ok_or_else(|| JsError::Type("Expected HTML parser options".into()))?;
-            let scripts = obj.get_atom("runScripts")?.to_bool();
-            if !obj.get_atom("sanitizer")?.is_undefined() {
-                return Err(JsError::Type("HTML sanitizer options are unsupported".into()));
-            }
-            scripts
-        };
+        let options = ParserOptions::convert(s, options)?;
         if requires_for_script(page) {
             let module = MODULE.module(s, page)?;
             let callback = module.get("defaultParserOptions")?.as_object()
                 .ok_or_else(|| JsError::Type("Trusted Types are unavailable".into()))?;
-            let result = callback.call(None, &[s.boolean(scripts), s.string(sink)])?;
+            let result = callback.call(None, &[s.boolean(options.run_scripts), s.string(sink), s.boolean(options.filter.is_some())])?;
             // undefined: no policy callback. null: the callback rejected.
             if !result.is_null() && !result.is_undefined() {
-                return vetted(self, result.to_bool());
+                return vetted(self, ParserOptions::convert(s, result)?);
             }
-            if (scripts || result.is_null()) && sink_violation(s, page, sink, "")? {
+            if (options.needs_vetting || result.is_null()) && sink_violation(s, page, sink, "")? {
                 return Err(JsError::Type("This document requires trusted HTML parser options".into()));
             }
         }
-        Ok((self.compliant(s, page, sink)?, scripts))
+        Ok((self.compliant(s, page, sink)?, options))
     }
 
     pub(crate) fn compliant(self, s: &Scope<'_>, page: &Rc<PageDom>, sink: &str) -> JsResult<String> {

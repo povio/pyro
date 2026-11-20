@@ -9,6 +9,7 @@ pub mod computed;
 pub mod direction;
 pub mod dom;
 pub mod error;
+pub mod fragment_filter;
 pub mod events;
 mod flow_font;
 pub mod font_face;

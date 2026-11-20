@@ -16,6 +16,7 @@ use html5ever::{Attribute, QualName};
 use markup5ever::{local_name, ns, TokenizerResult};
 
 use crate::dom::Dom;
+use crate::fragment_filter::FragmentFilter;
 use crate::error::{DomError, DomResult};
 use crate::node::{
     element_flags, shadow_flags, ElementData, FragmentData, NodeId, NodeKind, QuirksMode, ShadowRootMode, NIL,
@@ -49,6 +50,7 @@ struct Sink<A: DomAccess> {
     /// reactions its insertions queue run at once (HTML "create an element
     /// for a token", "insert an element at the adjusted insertion location").
     sync_custom: bool,
+    filter: Option<Rc<FragmentFilter>>,
     /// Elements of a defined name created for a token, with the token's
     /// attributes: constructed (or, in inert template contents, given their
     /// attributes) when the parser inserts them, which is when their
@@ -77,6 +79,7 @@ impl<A: DomAccess> Sink<A> {
             doc,
             elem_flags,
             sync_custom,
+            filter: None,
             pending_custom: RefCell::new(Vec::new()),
             has_pending_custom: Cell::new(false),
             quirks: Cell::new(None),
@@ -201,7 +204,10 @@ impl<A: DomAccess> TreeSink for Sink<A> {
             ElemNameRef { ns: name.ns.clone(), local: name.local.clone() }
         })
     }
-    fn create_element(&self, name: QualName, attrs: Vec<Attribute>, flags: ElementFlags) -> u32 {
+    fn create_element(&self, name: QualName, mut attrs: Vec<Attribute>, flags: ElementFlags) -> u32 {
+        if let Some(filter) = &self.filter {
+            attrs.retain(|attr| filter.allows_attribute(&attr.name));
+        }
         // An element of a defined name keeps its token's attributes for its
         // construction (`Sink::settle_custom`). Decided under the creation's
         // borrow: until a window defines a name, one set test per element.
@@ -254,6 +260,10 @@ impl<A: DomAccess> TreeSink for Sink<A> {
         })
     }
     fn append(&self, parent: &u32, child: NodeOrText<u32>) {
+        // The parser's synthetic html root belongs to the temporary document.
+        if *parent != self.doc && self.filter_child(&child) {
+            return;
+        }
         self.settle_custom(*parent, &child);
         let queued = self.dom.with(|d| {
             if !cannot_insert(d, *parent, &child) {
@@ -324,6 +334,9 @@ impl<A: DomAccess> TreeSink for Sink<A> {
         });
     }
     fn append_before_sibling(&self, sibling: &u32, new_node: NodeOrText<u32>) {
+        if self.filter_child(&new_node) {
+            return;
+        }
         let parent = self.dom.with(|d| d.n(*sibling).parent);
         if parent == NIL {
             return;
@@ -344,6 +357,9 @@ impl<A: DomAccess> TreeSink for Sink<A> {
     fn add_attrs_if_missing(&self, target: &u32, attrs: Vec<Attribute>) {
         self.dom.with(|d| {
             for a in attrs {
+                if self.filter.as_ref().is_some_and(|filter| !filter.allows_attribute(&a.name)) {
+                    continue;
+                }
                 let Some(el) = d.n_mut(*target).element_mut() else { return };
                 if !el.attrs.iter().any(|x| x.name == a.name) {
                     d.note_style_attr(*target, &a.name, None);
@@ -379,9 +395,18 @@ impl<A: DomAccess> TreeSink for Sink<A> {
         self.dom.with(|d| d.allows_declarative_shadow_roots(self.doc))
     }
     fn attach_declarative_shadow(&self, host: &u32, template: &u32, attrs: &[Attribute]) -> bool {
+        if let Some(filter) = &self.filter {
+            let disallowed = self.dom.with(|d| filter.removes_element(&d.n(*template).element().unwrap().name));
+            if disallowed || !attrs.iter().any(|a| a.name.local == markup5ever::LocalName::from("shadowrootmode") && filter.allows_attribute(&a.name)) {
+                return false;
+            }
+        }
         let mut mode = ShadowRootMode::Open;
         let mut flags = 0;
         for a in attrs {
+            if self.filter.as_ref().is_some_and(|f| !f.allows_attribute(&a.name)) {
+                continue;
+            }
             match &*a.name.local {
                 "shadowrootmode" if a.value.eq_ignore_ascii_case("closed") => mode = ShadowRootMode::Closed,
                 "shadowrootclonable" => flags |= shadow_flags::CLONABLE,
@@ -411,6 +436,22 @@ impl<A: DomAccess> TreeSink for Sink<A> {
 }
 
 impl<A: DomAccess> Sink<A> {
+    fn filter_child(&self, child: &NodeOrText<u32>) -> bool {
+        let (Some(filter), NodeOrText::AppendNode(id)) = (&self.filter, child) else { return false };
+        self.dom.with(|d| match &d.n(*id).kind {
+            NodeKind::Element(el) => filter.removes_element(&el.name),
+            NodeKind::Comment(_) if !filter.comments => {
+                d.release_candidate(*id);
+                true
+            }
+            NodeKind::ProcessingInstruction(pi) if !filter.allows_pi(&pi.target) => {
+                d.release_candidate(*id);
+                true
+            }
+            _ => false,
+        })
+    }
+
     fn doc_owner(&self, d: &Dom) -> u32 {
         d.n(self.doc).owner_doc
     }
@@ -1172,13 +1213,13 @@ pub fn parse_document_bytes(dom: &DomRef, url: &str, bytes: &[u8], charset: Opti
 /// createContextualFragment). Returns a new DocumentFragment owned by the
 /// context element's node document.
 pub fn parse_fragment(dom: &mut Dom, context: NodeId, html: &str) -> DomResult<NodeId> {
-    parse_fragment_with(dom, context, html, FragmentMode::Element)
+    parse_fragment_with(dom, context, html, FragmentMode::Element, None)
 }
 
 /// Fragment insertion APIs use an HTML body context when there is no context
 /// element or when the context is an HTML html element in an HTML document.
 pub fn parse_insertion_fragment(dom: &mut Dom, context: NodeId, html: &str) -> DomResult<NodeId> {
-    parse_fragment_with(dom, context, html, FragmentMode::Insertion)
+    parse_fragment_with(dom, context, html, FragmentMode::Insertion, None)
 }
 
 /// `Range.createContextualFragment` (DOM Parsing): [`parse_fragment`], then
@@ -1214,6 +1255,7 @@ fn parse_fragment_with(
     context: NodeId,
     html: &str,
     mode: FragmentMode,
+    filter: Option<Rc<FragmentFilter>>,
 ) -> DomResult<NodeId> {
     let ctx = dom.check(context)?;
     let owner = dom.n(ctx).owner_doc;
@@ -1259,12 +1301,19 @@ fn parse_fragment_with(
         ancestor = node.parent;
     }
     {
-        let sink = Sink::new(Borrowed(RefCell::new(&mut *dom)), tmp, flags, false);
+        let has_element_rules = filter.as_ref().is_some_and(|f| !f.remove_elements.is_empty());
+        let mut sink = Sink::new(Borrowed(RefCell::new(&mut *dom)), tmp, flags, false);
+        sink.filter = filter;
         let opts = html5ever::driver::ParseOpts {
             tree_builder: TreeBuilderOpts { scripting_enabled, quirks_mode, ..Default::default() },
             ..Default::default()
         };
-        let parser = html5ever::driver::parse_fragment_for_element(sink, opts, context, scripting_enabled, form);
+        let mut parser = html5ever::driver::parse_fragment_for_element(sink, opts, context, scripting_enabled, form);
+        if has_element_rules {
+            parser.tokenizer.sink.removed_formatting_element = Some(|sink, id| {
+                sink.dom.with(|d| sink.filter.as_ref().unwrap().removes_element(&d.n(*id).element().unwrap().name))
+            });
+        }
         use html5ever::tendril::TendrilSink;
         if matches!(mode, FragmentMode::Modern { run_scripts: true }) {
             // A script end tag yields its node. Keep the EOF parser flag on
@@ -1381,13 +1430,21 @@ fn parses_as_text(ctx: &ElementData, html: &str) -> bool {
 
 /// Parse modern HTML insertion methods in the target or host element's context.
 pub fn parse_modern_html_fragment(dom: &mut Dom, context: NodeId, html: &str, run_scripts: bool) -> DomResult<NodeId> {
-    parse_fragment_with(dom, context, html, FragmentMode::Modern { run_scripts })
+    parse_modern_html_fragment_with(dom, context, html, run_scripts, None)
+}
+
+pub fn parse_modern_html_fragment_with(dom: &mut Dom, context: NodeId, html: &str, run_scripts: bool, filter: Option<Rc<FragmentFilter>>) -> DomResult<NodeId> {
+    parse_fragment_with(dom, context, html, FragmentMode::Modern { run_scripts }, filter)
 }
 
 /// `Element.setHTMLUnsafe` / `ShadowRoot.setHTMLUnsafe`: as `innerHTML`, with
 /// declarative shadow roots. `target` is the context element, or a shadow
 /// root (parsed in its host's context).
 pub fn set_html_unsafe(dom: &mut Dom, target: NodeId, html: &str) -> DomResult<()> {
+    set_html_unsafe_with(dom, target, html, false, None)
+}
+
+pub fn set_html_unsafe_with(dom: &mut Dom, target: NodeId, html: &str, run_scripts: bool, filter: Option<Rc<FragmentFilter>>) -> DomResult<()> {
     let i = dom.check(target)?;
     let (ctx, into) = match &dom.n(i).kind {
         NodeKind::Fragment(f) if f.shadow.is_some() => (dom.id_of(f.host), target),
@@ -1395,6 +1452,6 @@ pub fn set_html_unsafe(dom: &mut Dom, target: NodeId, html: &str) -> DomResult<(
         NodeKind::Element(_) => (target, target),
         _ => return Err(DomError::Type("setHTMLUnsafe context must be an element")),
     };
-    let frag = parse_modern_html_fragment(dom, ctx, html, false)?;
+    let frag = parse_modern_html_fragment_with(dom, ctx, html, run_scripts, filter)?;
     dom.replace_all(into, Some(frag))
 }

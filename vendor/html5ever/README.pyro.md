@@ -22,3 +22,7 @@ Chromium; upstream reads it as a bogus comment, the HTML Standard's older rule).
   node when `pi::parse` gives one.
 
 Tests: `src/pi.rs` (unit), `crates/pyro-dom/tests/html_processing_instructions.rs`.
+
+Fragment sanitization supplies an optional element-removal predicate to the
+adoption agency algorithm. Removed formatting elements and furthest blocks
+participate in parser bookkeeping without being reinserted into the output.
