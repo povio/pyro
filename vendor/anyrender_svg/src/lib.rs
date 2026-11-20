@@ -26,6 +26,7 @@ mod render;
 mod util;
 
 pub use error::Error;
+pub use render::with_text_threshold;
 /// pyro: SVG filters as anyrender filter graphs (see `filter`).
 pub use filter::{FilterGraph, FilterNotes, PrimitiveNotes};
 pub use usvg;

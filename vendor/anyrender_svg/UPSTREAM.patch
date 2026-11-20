@@ -1135,10 +1135,10 @@ index 0000000..41d1355
 +    }
 +}
 diff --git a/src/lib.rs b/src/lib.rs
-index 3370fa2..6b6ec48 100644
+index 3370fa2..28690ce 100644
 --- a/src/lib.rs
 +++ b/src/lib.rs
-@@ -21,10 +21,13 @@
+@@ -21,10 +21,14 @@
  #![cfg_attr(test, allow(unused_crate_dependencies))] // Some dev dependencies are only used in tests
  
  mod error;
@@ -1147,12 +1147,13 @@ index 3370fa2..6b6ec48 100644
  mod util;
  
  pub use error::Error;
++pub use render::with_text_threshold;
 +/// pyro: SVG filters as anyrender filter graphs (see `filter`).
 +pub use filter::{FilterGraph, FilterNotes, PrimitiveNotes};
  pub use usvg;
  
  use anyrender::PaintScene;
-@@ -59,6 +62,56 @@ pub fn render_svg_str_with<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -59,6 +63,56 @@ pub fn render_svg_str_with<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
      Ok(())
  }
  
@@ -1209,7 +1210,7 @@ index 3370fa2..6b6ec48 100644
  /// Append a [`usvg::Tree`] to an [`anyrender::PaintScene`].
  ///
  /// This will draw a red box over (some) unsupported elements.
-@@ -66,6 +119,33 @@ pub fn render_svg_tree<S: PaintScene>(scene: &mut S, svg: &usvg::Tree, transform
+@@ -66,6 +120,33 @@ pub fn render_svg_tree<S: PaintScene>(scene: &mut S, svg: &usvg::Tree, transform
      render_svg_tree_with(scene, svg, transform, &mut util::default_error_handler);
  }
  
@@ -1243,7 +1244,7 @@ index 3370fa2..6b6ec48 100644
  /// Append a [`usvg::Tree`] to an [`anyrender::PaintScene`] (with custom error handling).
  ///
  /// See the [module level documentation](crate#unsupported-features) for a list of some unsupported svg features
-@@ -75,15 +155,43 @@ pub fn render_svg_tree_with<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -75,15 +156,43 @@ pub fn render_svg_tree_with<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
      transform: Affine,
      error_handler: &mut F,
  ) {
@@ -1287,7 +1288,7 @@ index 3370fa2..6b6ec48 100644
  #[cfg(test)]
  mod tests {
      use super::*;
-@@ -106,9 +214,13 @@ mod tests {
+@@ -106,9 +215,13 @@ mod tests {
              .iter()
              .find_map(|command| match command {
                  RenderCommand::PushLayer(layer) => Some(layer.fill),
@@ -1302,7 +1303,7 @@ index 3370fa2..6b6ec48 100644
      }
  
      #[test]
-@@ -134,6 +246,87 @@ mod tests {
+@@ -134,6 +247,87 @@ mod tests {
          );
      }
  
@@ -1391,10 +1392,10 @@ index 3370fa2..6b6ec48 100644
      fn fill_rule_does_not_control_clipping() {
          assert_eq!(clip_rule("", r#"fill-rule="evenodd""#), Fill::NonZero);
 diff --git a/src/render.rs b/src/render.rs
-index 2e9e1c4..c706375 100644
+index 2e9e1c4..6ff32e1 100644
 --- a/src/render.rs
 +++ b/src/render.rs
-@@ -2,92 +2,73 @@
+@@ -2,92 +2,85 @@
  // SPDX-License-Identifier: Apache-2.0 OR MIT
  
  use crate::util;
@@ -1420,10 +1421,22 @@ index 2e9e1c4..c706375 100644
 +pub(crate) const BOX_REFERENCE: &str = "__pyro_box_reference";
 +
 +std::thread_local! {
++    static TEXT_THRESHOLD: std::cell::Cell<Option<u8>> = const { std::cell::Cell::new(None) };
 +    /// pyro: whether the render is inside a CSS box's reference content ([`BOX_REFERENCE`]),
 +    /// outside the offscreen rasters drawn for it ([`rasterize`]). Not a field of [`Ctx`], so
 +    /// that code building a `Ctx` from its `cull` alone stays as it is.
 +    static IN_BOX_REFERENCE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
++}
++
++pub fn with_text_threshold<R>(threshold: Option<u8>, draw: impl FnOnce() -> R) -> R {
++    struct Restore(Option<u8>);
++    impl Drop for Restore {
++        fn drop(&mut self) {
++            TEXT_THRESHOLD.set(self.0);
++        }
++    }
++    let _restore = Restore(TEXT_THRESHOLD.replace(threshold));
++    draw()
 +}
 +
 +/// pyro: runs `f` with [`IN_BOX_REFERENCE`] set to `value`, restoring it after (on unwind too).
@@ -1542,7 +1555,7 @@ index 2e9e1c4..c706375 100644
              }
              usvg::Node::Path(path) => {
                  if !path.is_visible() {
-@@ -98,12 +79,44 @@ pub(crate) fn render_group<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -98,12 +91,44 @@ pub(crate) fn render_group<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
                  let transform = global_transform * transform;
                  match path.paint_order() {
                      usvg::PaintOrder::FillAndStroke => {
@@ -1591,7 +1604,7 @@ index 2e9e1c4..c706375 100644
                      }
                  }
              }
-@@ -111,6 +124,21 @@ pub(crate) fn render_group<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -111,6 +136,21 @@ pub(crate) fn render_group<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
                  if !img.is_visible() {
                      continue;
                  }
@@ -1613,7 +1626,7 @@ index 2e9e1c4..c706375 100644
                  match img.kind() {
                      usvg::ImageKind::JPEG(_)
                      | usvg::ImageKind::PNG(_)
-@@ -124,7 +152,7 @@ pub(crate) fn render_group<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -124,7 +164,7 @@ pub(crate) fn render_group<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
                                  continue;
                              };
                              let image = util::into_image(decoded_image, img.rendering_mode());
@@ -1622,7 +1635,7 @@ index 2e9e1c4..c706375 100644
                              scene.draw_image(image.as_ref(), image_ts);
                          }
  
-@@ -141,23 +169,1112 @@ pub(crate) fn render_group<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -141,24 +181,1114 @@ pub(crate) fn render_group<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
                              transform,
                              global_transform,
                              error_handler,
@@ -1762,9 +1775,9 @@ index 2e9e1c4..c706375 100644
 +            if !(layer_rect.width() > 0.0 && layer_rect.height() > 0.0) {
 +                // Clipped or masked out entirely.
 +                return;
-+            }
-+        }
-+    }
+             }
+         }
+     }
 +
 +    // One filled rectangle clipped by one shape (a reftest's usual subject, a
 +    // background cut to a shape): the shape is filled with the rectangle's
@@ -1884,7 +1897,7 @@ index 2e9e1c4..c706375 100644
 +            Some(kind) => {
 +                reach = reach.map(|r| function_reach(kind, r));
 +                (reach.unwrap_or(Rect::ZERO), false)
-             }
++            }
 +            None => {
 +                let region = to_rect(filter.rect());
 +                reach = Some(region);
@@ -1958,7 +1971,7 @@ index 2e9e1c4..c706375 100644
 +            let shadow_rect = (input + kurbo::Vec2::new(shadow.dx() as f64, shadow.dy() as f64))
 +                .inflate(3.0 * sx + 1.0, 3.0 * sy + 1.0);
 +            input.union(shadow_rect)
-         }
++        }
 +        Kind::GaussianBlur(blur) => input.inflate(
 +            3.0 * blur.std_dev_x().get() as f64 + 1.0,
 +            3.0 * blur.std_dev_y().get() as f64 + 1.0,
@@ -2654,6 +2667,7 @@ index 2e9e1c4..c706375 100644
 +    // pyro: an offscreen raster is drawn as SVG content draws it, in a box's reference too.
 +    with_box_reference(false, || draw(&mut scene));
 +    let mut renderer = VelloCpuImageRenderer::with_threads(width, height, 0);
++    renderer.set_text_aliasing_threshold(TEXT_THRESHOLD.get());
 +    let mut pixels = Vec::new();
 +    renderer.render_to_vec(|painter| painter.append_scene(scene, Affine::IDENTITY), &mut pixels);
 +    pixels
@@ -2735,10 +2749,11 @@ index 2e9e1c4..c706375 100644
 +        usvg::Paint::Pattern(pattern) => pattern_brush(pattern, opacity, transform, bounds, ctx)
 +            .map(|(image, ts)| (Paint::Image(image), ts)),
 +        paint => util::to_brush(paint, opacity),
-     }
++    }
  }
  
-@@ -168,9 +1285,13 @@ fn fill<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+ fn fill<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -168,9 +1298,13 @@ fn fill<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
      transform: Affine,
      local_path: &BezPath,
      node: &Node,
@@ -2753,7 +2768,7 @@ index 2e9e1c4..c706375 100644
              scene.fill(
                  match fill.rule() {
                      usvg::FillRule::NonZero => Fill::NonZero,
-@@ -181,7 +1302,7 @@ fn fill<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -181,7 +1315,7 @@ fn fill<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
                  Some(brush_transform),
                  local_path,
              );
@@ -2762,7 +2777,7 @@ index 2e9e1c4..c706375 100644
              error_handler(scene, node);
          }
      }
-@@ -194,9 +1315,14 @@ fn stroke<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -194,9 +1328,14 @@ fn stroke<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
      transform: Affine,
      local_path: &BezPath,
      node: &Node,
@@ -2778,7 +2793,7 @@ index 2e9e1c4..c706375 100644
              let conv_stroke = util::to_stroke(stroke);
              scene.stroke(
                  &conv_stroke,
-@@ -205,7 +1331,7 @@ fn stroke<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
+@@ -205,7 +1344,7 @@ fn stroke<S: PaintScene, F: FnMut(&mut S, &usvg::Node)>(
                  Some(brush_transform),
                  local_path,
              );

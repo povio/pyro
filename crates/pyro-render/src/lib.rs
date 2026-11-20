@@ -1465,6 +1465,7 @@ impl Renderer {
 
     /// Stages 1 and 2.
     pub fn paint(&mut self, snap: &Snapshot, area: Area, fetcher: &Arc<dyn Fetcher>) -> Result<Painted, RenderError> {
+        let threshold = (!self.text_antialiasing).then_some(TEXT_ALIASING_THRESHOLD);
         let mut timings = Timings::default();
         let dpr = snap.device_scale_factor.clamp(0.1, 16.0);
         let (vw, vh) = (snap.width.max(1), snap.height.max(1));
@@ -1577,7 +1578,9 @@ impl Renderer {
         let extent_h = ((origin.1 * dpr) as u32).saturating_add((h as f64 * dpr / scale).ceil() as u32);
         let transform = Affine::scale(scale / dpr) * Affine::translate((-origin.0 * dpr, -origin.1 * dpr));
         // (Painting knows where the page lands in the image's pixels: see `paint_scene_for_device`.)
-        blitz_paint::paint_scene_for_device(&mut page, doc, dpr, extent_w, extent_h, 0, 0, transform);
+        anyrender_svg::with_text_threshold(threshold, || {
+            blitz_paint::paint_scene_for_device(&mut page, doc, dpr, extent_w, extent_h, 0, 0, transform);
+        });
         doc.set_dom_selection(None);
         doc.set_dom_highlights(Vec::new());
         // pyro: a backdrop filter's output takes the place of its backdrop where the page painted

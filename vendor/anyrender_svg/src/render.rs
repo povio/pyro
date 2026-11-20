@@ -21,10 +21,22 @@ pub(crate) struct Ctx {
 pub(crate) const BOX_REFERENCE: &str = "__pyro_box_reference";
 
 std::thread_local! {
+    static TEXT_THRESHOLD: std::cell::Cell<Option<u8>> = const { std::cell::Cell::new(None) };
     /// pyro: whether the render is inside a CSS box's reference content ([`BOX_REFERENCE`]),
     /// outside the offscreen rasters drawn for it ([`rasterize`]). Not a field of [`Ctx`], so
     /// that code building a `Ctx` from its `cull` alone stays as it is.
     static IN_BOX_REFERENCE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+pub fn with_text_threshold<R>(threshold: Option<u8>, draw: impl FnOnce() -> R) -> R {
+    struct Restore(Option<u8>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            TEXT_THRESHOLD.set(self.0);
+        }
+    }
+    let _restore = Restore(TEXT_THRESHOLD.replace(threshold));
+    draw()
 }
 
 /// pyro: runs `f` with [`IN_BOX_REFERENCE`] set to `value`, restoring it after (on unwind too).
@@ -1194,6 +1206,7 @@ fn rasterize(width: u32, height: u32, draw: impl FnOnce(&mut Scene)) -> Vec<u8> 
     // pyro: an offscreen raster is drawn as SVG content draws it, in a box's reference too.
     with_box_reference(false, || draw(&mut scene));
     let mut renderer = VelloCpuImageRenderer::with_threads(width, height, 0);
+    renderer.set_text_aliasing_threshold(TEXT_THRESHOLD.get());
     let mut pixels = Vec::new();
     renderer.render_to_vec(|painter| painter.append_scene(scene, Affine::IDENTITY), &mut pixels);
     pixels
