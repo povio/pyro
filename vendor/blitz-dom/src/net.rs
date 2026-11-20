@@ -301,20 +301,27 @@ impl NetHandler for ResourceHandler<StylesheetHandler> {
     }
 
     fn bytes(self: Box<Self>, resolved_url: String, bytes: Bytes) {
-        self.parse_sheet(resolved_url, None, bytes)
+        self.parse_sheet(resolved_url, None, None, bytes)
     }
 
-    fn bytes_meta(self: Box<Self>, resolved_url: String, _final_url: String, _opaque: bool, policy: Option<String>, bytes: Bytes) {
-        self.parse_sheet(resolved_url, policy, bytes)
+    fn bytes_at(self: Box<Self>, resolved_url: String, final_url: String, bytes: Bytes) {
+        self.parse_sheet(resolved_url, Some(final_url), None, bytes)
+    }
+
+    fn bytes_meta(self: Box<Self>, resolved_url: String, final_url: String, _opaque: bool, policy: Option<String>, bytes: Bytes) {
+        self.parse_sheet(resolved_url, Some(final_url), policy, bytes)
     }
 }
 
 impl ResourceHandler<StylesheetHandler> {
-    fn parse_sheet(self: Box<Self>, resolved_url: String, policy: Option<String>, bytes: Bytes) {
+    /// pyro: `final_url`: the response's URL after redirects, which the sheet's URLs resolve
+    /// against (the URL the link asked for otherwise).
+    fn parse_sheet(self: Box<Self>, resolved_url: String, final_url: Option<String>, policy: Option<String>, bytes: Bytes) {
         // NOTE(Nico): I don't *think* external stylesheets should have HTML entities escaped
         // let escaped_css = html_escape::decode_html_entities(css);
         // pyro: the sheet's policy, by its URL data object (before parsing: its imports use it).
-        let url_data = ServoArc::new(self.data.source_url.clone());
+        let base = final_url.and_then(|u| Url::parse(&u).ok()).unwrap_or_else(|| self.data.source_url.clone());
+        let url_data = ServoArc::new(base);
         record_sheet_policy(&self.data.policies, &url_data, self.data.policy.clone().or(policy));
 
         let sheet = Stylesheet::from_bytes(

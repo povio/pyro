@@ -39299,24 +39299,31 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
  }
  
  impl NetHandler for ResourceHandler<StylesheetHandler> {
-@@ -148,12 +301,25 @@
+@@ -148,12 +301,32 @@
      }
  
      fn bytes(self: Box<Self>, resolved_url: String, bytes: Bytes) {
-+        self.parse_sheet(resolved_url, None, bytes)
++        self.parse_sheet(resolved_url, None, None, bytes)
 +    }
 +
-+    fn bytes_meta(self: Box<Self>, resolved_url: String, _final_url: String, _opaque: bool, policy: Option<String>, bytes: Bytes) {
-+        self.parse_sheet(resolved_url, policy, bytes)
++    fn bytes_at(self: Box<Self>, resolved_url: String, final_url: String, bytes: Bytes) {
++        self.parse_sheet(resolved_url, Some(final_url), None, bytes)
++    }
++
++    fn bytes_meta(self: Box<Self>, resolved_url: String, final_url: String, _opaque: bool, policy: Option<String>, bytes: Bytes) {
++        self.parse_sheet(resolved_url, Some(final_url), policy, bytes)
 +    }
 +}
 +
 +impl ResourceHandler<StylesheetHandler> {
-+    fn parse_sheet(self: Box<Self>, resolved_url: String, policy: Option<String>, bytes: Bytes) {
++    /// pyro: `final_url`: the response's URL after redirects, which the sheet's URLs resolve
++    /// against (the URL the link asked for otherwise).
++    fn parse_sheet(self: Box<Self>, resolved_url: String, final_url: Option<String>, policy: Option<String>, bytes: Bytes) {
          // NOTE(Nico): I don't *think* external stylesheets should have HTML entities escaped
          // let escaped_css = html_escape::decode_html_entities(css);
 +        // pyro: the sheet's policy, by its URL data object (before parsing: its imports use it).
-+        let url_data = ServoArc::new(self.data.source_url.clone());
++        let base = final_url.and_then(|u| Url::parse(&u).ok()).unwrap_or_else(|| self.data.source_url.clone());
++        let url_data = ServoArc::new(base);
 +        record_sheet_policy(&self.data.policies, &url_data, self.data.policy.clone().or(policy));
  
          let sheet = Stylesheet::from_bytes(
@@ -39326,7 +39333,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
              None,
              None,
              Origin::Author,
-@@ -166,6 +332,9 @@
+@@ -166,6 +339,9 @@
                  shell_provider: self.shell_provider.clone(),
                  abort_signal: self.data.abort_signal.clone(),
                  import_depth: 0,
@@ -39336,7 +39343,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
              }),
              None, // error_reporter
              QuirksMode::NoQuirks,
-@@ -173,11 +342,22 @@
+@@ -173,11 +349,22 @@
  
          self.respond(
              resolved_url,
@@ -39360,7 +39367,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
  /// Maximum depth of nested `@import` rules. Imports nested deeper than this
  /// are refused, preventing unbounded recursion (e.g. a stylesheet whose
  /// resolved `@import` URL yields another stylesheet importing in turn, with
-@@ -194,6 +374,14 @@
+@@ -194,6 +381,14 @@
      /// Depth of `@import` nesting for the stylesheet this loader is parsing
      /// (0 for a top-level stylesheet)
      pub(crate) import_depth: usize,
@@ -39375,7 +39382,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
  }
  impl ServoStylesheetLoader for StylesheetLoader {
      fn request_stylesheet(
-@@ -224,10 +412,21 @@
+@@ -224,10 +419,21 @@
          };
  
          let url = import.url.url().unwrap().clone();
@@ -39398,7 +39405,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
              ResourceHandler::boxed(
                  self.tx.clone(),
                  self.doc_id,
-@@ -262,12 +461,34 @@
+@@ -262,12 +468,34 @@
  
  impl NetHandler for ResourceHandler<NestedStylesheetHandler> {
      fn bytes(self: Box<Self>, resolved_url: String, bytes: Bytes) {
@@ -39434,7 +39441,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
              None,
              None,
              Origin::Author,
-@@ -288,6 +509,7 @@
+@@ -288,6 +516,7 @@
              &self.shell_provider,
              &self.data.lock.read(),
              self.data.loader.abort_signal.as_ref(),
@@ -39442,7 +39449,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
          );
  
          let import_rule = self.data.import_rule.clone();
-@@ -300,6 +522,10 @@
+@@ -300,6 +529,10 @@
      overrides: FontFaceOverrides,
  }
  impl NetHandler for ResourceHandler<FontFaceHandler> {
@@ -39453,7 +39460,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
      fn bytes(mut self: Box<Self>, resolved_url: String, bytes: Bytes) {
          let result = self.data.parse(bytes);
          self.respond(resolved_url, result)
-@@ -387,6 +613,7 @@
+@@ -387,6 +620,7 @@
      shell_provider: &Arc<dyn ShellProvider>,
      read_guard: &SharedRwLockReadGuard,
      abort_signal: Option<&AbortSignal>,
@@ -39461,7 +39468,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
  ) {
      fetch_font_face_rules(
          sheet.contents(read_guard).rules(read_guard).iter(),
-@@ -397,6 +624,7 @@
+@@ -397,6 +631,7 @@
          shell_provider,
          read_guard,
          abort_signal,
@@ -39469,7 +39476,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
      )
  }
  
-@@ -409,10 +637,45 @@
+@@ -409,10 +644,45 @@
      node_id: Option<NodeId>,
      network_provider: &Arc<dyn NetProvider>,
      shell_provider: &Arc<dyn ShellProvider>,
@@ -39517,7 +39524,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
          .filter_map(|rule| match rule {
              CssRule::FontFace(font_face) => {
                  let descriptor = &font_face.read_with(read_guard).descriptors;
-@@ -421,13 +684,71 @@
+@@ -421,13 +691,71 @@
                  // Capture the @font-face descriptors so parley can register
                  // the font under the CSS-declared family name (and weight /
                  // style) rather than whatever metadata the TTF reports.
@@ -39591,7 +39598,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
                  };
                  Some((src, overrides))
              }
-@@ -435,9 +756,11 @@
+@@ -435,9 +763,11 @@
          })
          .for_each(|(source_list, overrides)| {
              if let Some((url, format)) = preferred_font_source(source_list) {
@@ -39604,7 +39611,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
                      ResourceHandler::boxed(
                          tx.clone(),
                          doc_id,
-@@ -450,6 +773,11 @@
+@@ -450,6 +780,11 @@
          })
  }
  
@@ -39616,7 +39623,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
  /// The first source in an `@font-face` `src` list that is in a format we
  /// support, with its resolved url and format.
  fn preferred_font_source(source_list: &SourceList) -> Option<(Url, FontFaceSourceFormatKeyword)> {
-@@ -468,6 +796,11 @@
+@@ -468,6 +803,11 @@
              return None;
          };
  
@@ -39628,7 +39635,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
          let format = match &url_source.format_hint {
              Some(FontFaceSourceFormat::Keyword(keyword)) => *keyword,
              Some(FontFaceSourceFormat::String(string)) => font_format_from_string(string),
-@@ -564,7 +897,10 @@
+@@ -564,7 +904,10 @@
              // Stylo emits `Oblique(0deg, 0deg)` for the literal CSS `normal`
              // keyword. Map that back to `Normal` so parley's font matching
              // doesn't misclassify upright fonts.
@@ -39640,7 +39647,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
                  Fq::Normal
              } else {
                  Fq::Oblique(angle)
-@@ -585,37 +921,143 @@
+@@ -585,37 +928,143 @@
  
  pub struct ImageHandler {
      kind: ImageType,
@@ -39684,7 +39691,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
 -        let result = self.data.parse(bytes);
 -        self.respond(resolved_url, result)
 +        self.bytes_from(resolved_url.clone(), resolved_url, false, bytes)
-+    }
+     }
 +
 +    /// pyro: the response's tainting, as the network saw it, decides an opaque image (a no-cors
 +    /// redirect chain through another origin is opaque though it ends at the document's); the
@@ -39705,9 +39712,9 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
 +        // pyro: an image fetched with CORS (or other options) answers under its key.
 +        let key = self.data.options.cache_key(&resolved_url);
 +        self.respond(key, result)
-     }
- }
- 
++    }
++}
++
 +/// pyro: decoded raster images by encoded bytes, for every document
 +/// of the process (a template's logo decoded once, not once per document):
 +/// (encoded bytes, width, height, RGBA8 pixels). Bounded at 64 images and
@@ -39721,8 +39728,8 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
 +    let mut h = std::hash::DefaultHasher::new();
 +    bytes.hash(&mut h);
 +    h.finish()
-+}
-+
+ }
+ 
  impl ImageHandler {
 -    fn parse(&self, bytes: Bytes) -> Result<Resource, String> {
 -        let image_err = match image::ImageReader::new(Cursor::new(&bytes))
@@ -39799,7 +39806,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
              }
              Err(e) => e.to_string(),
          };
-@@ -624,12 +1066,46 @@
+@@ -624,12 +1073,46 @@
          let svg_err = {
              use crate::util::parse_svg_image;
              match parse_svg_image(&bytes) {
@@ -39849,7 +39856,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
  
          Err(format!(
              "Could not parse image ({} bytes): image-crate error: {image_err}; svg fallback error: {svg_err}",
-@@ -649,6 +1125,62 @@
+@@ -649,6 +1132,62 @@
          FontStyleRange::Oblique(Angle::from_degrees(min_deg), Angle::from_degrees(max_deg))
      }
  
@@ -39912,7 +39919,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
      /// The source picked from the `src` list of each `@font-face` rule in `css`
      fn preferred_sources(css: &str) -> Vec<Option<(String, FontFaceSourceFormatKeyword)>> {
          let lock = SharedRwLock::new();
-@@ -800,3 +1332,11 @@
+@@ -800,3 +1339,11 @@
          );
      }
  }

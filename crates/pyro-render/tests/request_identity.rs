@@ -570,3 +570,46 @@ fn sheets_are_served_by_their_link_never_by_url() {
     let asked: Vec<String> = recorder.0.lock().unwrap().iter().map(|(u, _)| u.clone()).collect();
     assert!(asked.iter().any(|u| u == "http://test/s.css"), "the image went to the network: {asked:?}");
 }
+
+/// A linked sheet the renderer fetched itself (no snapshot text for it) and that was redirected
+/// resolves its URLs against its URL after redirects, not the URL the link asked for (security
+/// review cycle 5, 5).
+#[test]
+fn a_redirected_linked_sheet_resolves_against_its_final_url_on_the_network() {
+    #[derive(Default)]
+    struct Seen(Mutex<Vec<String>>);
+    struct Redirect(Arc<Seen>);
+    impl Fetcher for Redirect {
+        fn fetch(&self, url: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
+            self.0 .0.lock().unwrap().push(url);
+            done(Err("404".into()));
+        }
+        fn fetch_final(&self, url: String, _options: &FetchOptions, done: Box<dyn FnOnce(Result<Fetched, String>) + Send>) {
+            self.0 .0.lock().unwrap().push(url.clone());
+            if url.ends_with("/old/a.css") {
+                done(Ok(Fetched {
+                    body: b"#x { width: 10px; height: 10px; background-image: url(img.png) }".to_vec(),
+                    url: "http://test/new/a.css".into(),
+                    opaque: false,
+                    referrer_policy: None,
+                }));
+            } else {
+                done(Err("404".into()));
+            }
+        }
+    }
+    let seen = Arc::new(Seen::default());
+    let fetcher: Arc<dyn Fetcher> = Arc::new(Redirect(seen.clone()));
+    let snapshot = Snapshot {
+        html: "<!doctype html><link rel=stylesheet href='http://test/old/a.css'><div id=x></div>".into(),
+        base_url: "http://test/".into(),
+        width: 40,
+        height: 40,
+        device_scale_factor: 1.0,
+        ..Default::default()
+    };
+    Renderer::new().render(&snapshot, Area::Viewport, Backend::Cpu, &fetcher).unwrap();
+    let asked = seen.0.lock().unwrap().clone();
+    assert!(asked.iter().any(|u| u == "http://test/new/img.png"), "{asked:?}");
+    assert!(!asked.iter().any(|u| u == "http://test/old/img.png"), "{asked:?}");
+}

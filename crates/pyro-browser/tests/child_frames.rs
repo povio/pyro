@@ -983,3 +983,20 @@ fn first_same_origin_document_reuses_the_initial_window() {
         "next undefined"
     );
 }
+
+/// A frame document is given to the renderer at its own base URL (its `<base href>`), as the top
+/// document's capture is (security review cycle 5, 5).
+#[test]
+fn a_frame_document_is_rendered_at_its_own_base_url() {
+    let mut t = crate::browser_thread().unwrap();
+    let page = t.browser.create_page().unwrap();
+    let root = main_realm(&t, page);
+    eval(&root, "globalThis.f=document.createElement('iframe'); f.srcdoc='<base href=\"http://other.test/dir/\"><p>x</p>'; document.body.appendChild(f); 'ok'");
+    settle(&mut t);
+    let p = t.browser.page(page).unwrap();
+    p.update_frame_documents();
+    let dom = p.main_frame.page_dom.clone().unwrap();
+    let table = dom.dom.borrow().frame_table(dom.document());
+    let urls: Vec<String> = table.entries.iter().map(|(_, e)| e.url.clone()).collect();
+    assert_eq!(urls, vec!["http://other.test/dir/".to_string()]);
+}
