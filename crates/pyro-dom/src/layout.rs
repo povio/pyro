@@ -3412,6 +3412,9 @@ impl Layout {
         let mut moved = false;
         for key in source.mandatory_snap_containers() {
             let Some(el) = crate::geometry::node_of(dom, key) else { continue };
+            if Some(el) == dom.document_element(self.document()).ok().flatten() {
+                continue;
+            }
             // (An offset of zero is no scroll: a script read or a reveal that found nothing to do.)
             if self.element_scroll.get(&el).is_some_and(|&o| o != (0, 0)) || !self.initially_snapped.insert(el) {
                 continue;
