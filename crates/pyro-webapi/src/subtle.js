@@ -122,6 +122,9 @@
   };
   const FORMATS = ['raw', 'spki', 'pkcs8', 'jwk'];
   const USAGES = ['encrypt', 'decrypt', 'sign', 'verify', 'deriveKey', 'deriveBits', 'wrapKey', 'unwrapKey'];
+  // These are valid KeyUsage enum values even when the selected algorithm
+  // cannot use them. Its own usage checks run after WebIDL conversion.
+  const KEM_USAGES = ['encapsulateKey', 'encapsulateBits', 'decapsulateKey', 'decapsulateBits'];
   const keyFormat = (v) => {
     const format = toString(v);
     if (!has(FORMATS, format)) throw new TypeErrorC(`The provided value '${format}' is not a valid enum value of type KeyFormat.`);
@@ -132,7 +135,9 @@
     const out = [];
     for (const item of v) {
       const usage = toString(item);
-      if (!has(USAGES, usage)) throw new TypeErrorC(`The provided value '${usage}' is not a valid enum value of type KeyUsage.`);
+      if (!has(USAGES, usage) && !has(KEM_USAGES, usage)) {
+        throw new TypeErrorC(`The provided value '${usage}' is not a valid enum value of type KeyUsage.`);
+      }
       out.push(usage);
     }
     return out;
