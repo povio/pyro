@@ -3345,7 +3345,7 @@ index a8dbbcf2..02cf8fdc 100644
 +        .maybe_add(ratio_inset)
 +}
 diff --git a/src/compute/float.rs b/src/compute/float.rs
-index 82d0bd0a..2ca93603 100644
+index 82d0bd0a..a851491c 100644
 --- a/src/compute/float.rs
 +++ b/src/compute/float.rs
 @@ -104,6 +104,12 @@ struct Segment {
@@ -3578,7 +3578,7 @@ index 82d0bd0a..2ca93603 100644
              }
              Clear::None => float_start,
          };
-@@ -522,16 +670,29 @@ impl FloatContext {
+@@ -522,16 +670,34 @@ impl FloatContext {
                      y: last_y_end..start_y,
                      insets: FloatInsets::ZERO,
                      has_float: [false; 2],
@@ -3593,9 +3593,14 @@ index 82d0bd0a..2ca93603 100644
 -            insets[direction] += floated_box.width;
 +            // pyro: the float occupies its own side only: its containing block's inset on the other
 +            // side is no float there (a float of a narrower block made the other side look
-+            // occupied to a later, wider block's floats; WPT css-ui `outline-028`).
++            // occupied to a later, wider block's floats; WPT css-ui `outline-028`). A negative one
++            // (a block wider than the formatting context) is kept: it occupies nothing, and the
++            // content beside the float reaches out with it (WPT css-shapes
++            // `shape-outside-padding-box-003`).
 +            let mut insets = FloatInsets::ZERO;
 +            insets[direction] = containing_block_insets[direction] + floated_box.width;
++            let trail = direction.opposite();
++            insets[trail] = containing_block_insets[trail].min(0.0);
              let mut has_float = [false; 2];
              has_float[slot] = true;
 -            self.segments.push(Segment { y: start_y..(start_y + floated_box.height), insets, has_float });
@@ -3611,14 +3616,17 @@ index 82d0bd0a..2ca93603 100644
  
              // Update last_placed_float
              let start_idx = self.segments.len() - 1;
-@@ -576,8 +737,15 @@ impl FloatContext {
+@@ -576,8 +742,18 @@ impl FloatContext {
                  let last_y_end = self.segments[self.segments.len() - 1].y.end;
                  let end_y = start_y + floated_box.height;
                  if end_y > last_y_end {
 -                    let insets = containing_block_insets;
 -                    self.segments.push(Segment { y: last_y_end..end_y, insets, has_float: [false; 2] });
-+                    // (Its own side set below, with the other segments it spans.)
-+                    let insets = FloatInsets::ZERO;
++                    // (Its own side set below, with the other segments it spans; the other only
++                    // where its containing block reaches out of the formatting context.)
++                    let mut insets = FloatInsets::ZERO;
++                    let trail = direction.opposite();
++                    insets[trail] = containing_block_insets[trail].min(0.0);
 +                    self.segments.push(Segment {
 +                        y: last_y_end..end_y,
 +                        insets,
@@ -3629,7 +3637,7 @@ index 82d0bd0a..2ca93603 100644
                  }
                  self.segments.len() - 1
              }
-@@ -608,7 +776,11 @@ impl FloatContext {
+@@ -608,7 +784,11 @@ impl FloatContext {
          let placed_inset_plus_width = placed_inset + floated_box.width;
          for segment in &mut self.segments[start_idx..=end_idx] {
              segment.insets[direction] = placed_inset_plus_width;
@@ -3641,7 +3649,7 @@ index 82d0bd0a..2ca93603 100644
          }
  
          // Update last_placed_float
-@@ -675,7 +847,7 @@ impl FloatContext {
+@@ -675,7 +855,7 @@ impl FloatContext {
  
          // The min starting segment index
          let at_least = after.map(|idx| idx + 1).unwrap_or(0);
@@ -3650,7 +3658,7 @@ index 82d0bd0a..2ca93603 100644
  
          let start_idx = self
              .segments
-@@ -690,12 +862,15 @@ impl FloatContext {
+@@ -690,12 +870,15 @@ impl FloatContext {
  
                  // Combine the insets of every segment beside the content's height, then extend
                  // the slot down over any further segments that don't narrow it
@@ -3669,7 +3677,7 @@ index 82d0bd0a..2ca93603 100644
                          slot_height = segment.y.start - y;
                          break;
                      }
-@@ -775,7 +950,7 @@ impl FloatContext {
+@@ -775,7 +958,7 @@ impl FloatContext {
  
          // The min starting segment index
          let at_least = after.map(|idx| idx + 1).unwrap_or(0);
@@ -3678,7 +3686,7 @@ index 82d0bd0a..2ca93603 100644
  
          let start_idx = self
              .segments
-@@ -796,29 +971,52 @@ impl FloatContext {
+@@ -796,29 +979,52 @@ impl FloatContext {
                  let slot_height = lower_segments
                      .find(|seg| seg.is_narrower_than(&combined))
                      .map_or(f32::INFINITY, |seg| seg.y.start - y);
@@ -3738,7 +3746,7 @@ index 82d0bd0a..2ca93603 100644
                  BfcSlot {
                      segment_id: Some(start_idx),
                      x: fit_insets.left,
-@@ -889,3 +1087,4 @@ impl FloatIntrinsicWidthCalculator {
+@@ -889,3 +1095,4 @@ impl FloatIntrinsicWidthCalculator {
          }
      }
  }
