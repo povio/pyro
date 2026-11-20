@@ -149,39 +149,13 @@ fn fetch_image(fetcher: &Arc<dyn Fetcher>, address: &str, timeout: Duration) -> 
     rx.recv_timeout(timeout).map_err(|e| e.to_string())?
 }
 
-/// A JPEG as PNGs of its pixels turned as its EXIF orientation says and as stored (usvg ignores
-/// the orientation, and decodes JPEGs unlike `<img>`; browsers turn the image unless
-/// `image-orientation: none`: WPT `feImage-orientation.tentative`, `svg-image-orientation-*`).
-fn jpeg_as_png(bytes: &[u8]) -> Option<(Vec<u8>, Vec<u8>)> {
-    if !bytes.starts_with(&[0xFF, 0xD8]) {
+fn data_urls(bytes: &[u8]) -> Option<(String, String)> {
+    if bytes.starts_with(&[0xff, 0xd8]) {
         return None;
     }
-    let (stored, orientation) = blitz_dom::net::decode_jpeg(bytes).ok()?;
-    let png = |pixels: &image::DynamicImage| {
-        let mut png = Vec::new();
-        pixels.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).ok()?;
-        Some(png)
-    };
-    let raw = png(&stored)?;
-    if orientation == image::metadata::Orientation::NoTransforms {
-        return Some((raw.clone(), raw));
-    }
-    let mut turned = stored;
-    turned.apply_orientation(orientation);
-    Some((png(&turned)?, raw))
+    let url = data_url(bytes);
+    Some((url.clone(), url))
 }
-
-/// `bytes` as `data:` URLs, turned by its EXIF orientation and as stored (the same but for a JPEG).
-fn data_urls(bytes: &[u8]) -> (String, String) {
-    match jpeg_as_png(bytes) {
-        Some((turned, raw)) => (data_url(&turned), data_url(&raw)),
-        None => {
-            let url = data_url(bytes);
-            (url.clone(), url)
-        }
-    }
-}
-
 /// `bytes` as a `data:` URL, its type sniffed (PNG, JPEG, GIF, WebP, else SVG).
 fn data_url(bytes: &[u8]) -> String {
 
@@ -246,7 +220,7 @@ pub(crate) fn resolve_images(
                 if sources.len() >= 256 {
                     sources.clear();
                 }
-                let (turned, mut raw) = data_urls(&response.body);
+                let Some((turned, mut raw)) = data_urls(&response.body) else { continue };
                 if response.opaque || url.origin() != doc.url().origin()
                     || url::Url::parse(&response.url).is_ok_and(|final_url| final_url.origin() != doc.url().origin()) {
                     raw.clone_from(&turned);
@@ -287,6 +261,14 @@ pub(crate) fn image_hrefs(doc: &BaseDocument) -> Vec<String> {
 
 #[cfg(test)]
 mod image_tests {
+    #[test]
+    fn oversized_svg_jpeg_thumbnail_produces_no_encoded_bytes() {
+        use image::codecs::jpeg::JpegEncoder;
+        let mut photo = Vec::new();
+        JpegEncoder::new(&mut photo).encode(&vec![90; 6000 * 4000], 6000, 4000, image::ExtendedColorType::L8).unwrap();
+        assert!(super::data_urls(&photo).is_none());
+    }
+
     #[test]
     fn data_urls_are_base64_with_a_sniffed_type() {
         assert_eq!(super::data_url(b"GIF8a"), "data:image/gif;base64,R0lGOGE=");

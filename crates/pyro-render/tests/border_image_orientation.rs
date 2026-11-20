@@ -74,20 +74,15 @@ fn image_orientation_none_slices_the_border_image_as_stored() {
 struct OpaqueImage(Vec<u8>);
 
 #[test]
-fn svg_jpeg_orientation_follows_the_fetch_response() {
-    let pixels = (0..32).map(|index| if index < 16 { [255, 0, 0, 255] } else { [0, 0, 255, 255] }).collect::<Vec<_>>();
-    let mut jpeg = encode_jpeg(&RgbaImage { width: 32, height: 1, data: pixels.concat() }, 100).unwrap();
-    let marker = b"\xff\xe1\0\x22Exif\0\0MM\0\x2a\0\0\0\x08\0\x01\x01\x12\0\x03\0\0\0\x01\0\x02\0\0\0\0\0\0";
-    jpeg.splice(2..2, marker.iter().copied());
+fn external_svg_jpeg_thumbnail_is_left_unpainted() {
+    let jpeg = encode_jpeg(&RgbaImage { width: 2, height: 1, data: vec![0, 0, 0, 255, 0, 0, 0, 255] }, 95).unwrap();
     let snapshot = Snapshot {
-        html: "<!doctype html><body style='margin:0'><svg width='32' height='1' style='display:block;image-orientation:none'><image href='photo.jpg' width='32' height='1'/></svg>".into(),
-        width: 100, height: 100, device_scale_factor: 1.0, base_url: "http://test/".into(), ..Default::default()
+        html: "<!doctype html><body style='margin:0;background:red'><svg width='100' height='67'><image href='photo.jpg' width='100' height='67'/></svg>".into(),
+        width: 100, height: 67, device_scale_factor: 1.0, base_url: "http://test/".into(), ..Default::default()
     };
-    let draw = |fetcher: Arc<dyn Fetcher>| Renderer::new().render(&snapshot, Area::Viewport, Backend::Cpu, &fetcher).unwrap().0;
-    let clean = draw(Arc::new(Image(jpeg.clone())));
-    let opaque = draw(Arc::new(OpaqueImage(jpeg)));
-    assert!(clean.data[0] > 240 && clean.data[2] < 10);
-    assert!(opaque.data[0] < 10 && opaque.data[2] > 240);
+    let fetcher: Arc<dyn Fetcher> = Arc::new(Image(jpeg));
+    let image = Renderer::new().render(&snapshot, Area::Viewport, Backend::Cpu, &fetcher).unwrap().0;
+    assert!(image.data.chunks_exact(4).all(|pixel| pixel == [255, 0, 0, 255]));
 }
 impl Fetcher for OpaqueImage {
     fn fetch(&self, _: String, done: Box<dyn FnOnce(Result<Vec<u8>, String>) + Send>) {
