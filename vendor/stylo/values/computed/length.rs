@@ -464,6 +464,47 @@ pub type NonNegativeLengthOrNumber = GenericLengthOrNumber<NonNegativeLength, No
 /// A computed value for `min-width`, `min-height`, `width` or `height` property.
 pub type Size = GenericSize<NonNegativeLengthPercentage>;
 
+impl crate::values::animated::Animate for Size {
+    fn animate(&self, other: &Self, procedure: crate::values::animated::Procedure) -> Result<Self, ()> {
+        let identity = NonNegative(LengthPercentage::new_percent(Percentage(1.0)));
+        let calculation = |value: &Self, basis: &Self| -> Option<NonNegativeLengthPercentage> {
+            match (value, basis) {
+                (Self::CalcSizeAuto(value), Self::CalcSizeAuto(_))
+                | (Self::CalcSizeMinContent(value), Self::CalcSizeMinContent(_))
+                | (Self::CalcSizeMaxContent(value), Self::CalcSizeMaxContent(_))
+                | (Self::CalcSizeFitContent(value), Self::CalcSizeFitContent(_)) => Some(value.clone()),
+                (Self::Auto, Self::CalcSizeAuto(_))
+                | (Self::MinContent, Self::CalcSizeMinContent(_))
+                | (Self::MaxContent, Self::CalcSizeMaxContent(_))
+                | (Self::FitContent, Self::CalcSizeFitContent(_)) => Some(identity.clone()),
+                (Self::LengthPercentage(value), _) if !value.0.has_percentage() => Some(value.clone()),
+                _ => None,
+            }
+        };
+        match (self, other) {
+            (Self::Auto, Self::Auto) => Ok(Self::Auto),
+            (Self::LengthPercentage(from), Self::LengthPercentage(to)) => Ok(Self::LengthPercentage(from.animate(to, procedure)?)),
+            (Self::AnchorContainingCalcFunction(from), Self::AnchorContainingCalcFunction(to)) => Ok(Self::AnchorContainingCalcFunction(from.animate(to, procedure)?)),
+            (Self::AnchorSizeFunction(from), Self::AnchorSizeFunction(to)) => Ok(Self::AnchorSizeFunction(from.animate(to, procedure)?)),
+            _ => {
+                for basis in [self, other] {
+                    let wrap: fn(NonNegativeLengthPercentage) -> Self = match basis {
+                        Self::CalcSizeAuto(_) => Self::CalcSizeAuto,
+                        Self::CalcSizeMinContent(_) => Self::CalcSizeMinContent,
+                        Self::CalcSizeMaxContent(_) => Self::CalcSizeMaxContent,
+                        Self::CalcSizeFitContent(_) => Self::CalcSizeFitContent,
+                        _ => continue,
+                    };
+                    let from = calculation(self, basis).ok_or(())?;
+                    let to = calculation(other, basis).ok_or(())?;
+                    return Ok(wrap(from.animate(&to, procedure)?));
+                }
+                Err(())
+            },
+        }
+    }
+}
+
 /// A computed value for `max-width` or `max-height` property.
 pub type MaxSize = GenericMaxSize<NonNegativeLengthPercentage>;
 

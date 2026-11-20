@@ -351,8 +351,10 @@ nor keeps a scroll offset. Other mixes still turn `visible` into `auto` and `cli
   `calc-size(auto | fit-content | min-content | max-content, <calculation>)` in the `Size` properties (`width`,
   `height`, their logical and min forms). The calculation is kept as a length-percentage whose `size` keyword is
   `100%` (other percentages are rejected), so its percentage basis is the size of the basis: layout resolves it
-  against that size (stylo_taffy, blitz-dom). A `<length-percentage>` or `calc-size()` basis, `any`, `max-*` and
-  interpolation are not supported; the value serializes as `calc-size(<calculation>)` with `size` as `100%`.
+  against that size (stylo_taffy, blitz-dom). Animation combines calculations with a common intrinsic basis,
+  including its bare keyword (the identity calculation) and absolute lengths (basis-independent calculations).
+  A `<length-percentage>` or `calc-size()` basis, `any`, `max-*` and ordinary percentages in the calculation
+  are not supported; the value serializes as `calc-size(<calculation>)` with `size` as `100%`.
 
 ## Legacy `-webkit-box` alignment and flexing for servo (WPT round 3, lane FO)
 

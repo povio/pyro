@@ -138,7 +138,6 @@ impl<LengthPercentage: Parse> Parse for LengthPercentageOrAuto<LengthPercentage>
 /// Note that it only accepts non-negative values.
 #[allow(missing_docs)]
 #[derive(
-    Animate,
     ComputeSquaredDistance,
     Clone,
     Debug,

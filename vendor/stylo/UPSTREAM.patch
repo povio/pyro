@@ -6231,8 +6231,8 @@ diff -ruN a/values/computed/image.rs b/values/computed/image.rs
          }
      }
 diff -ruN a/values/computed/length.rs b/values/computed/length.rs
---- a/values/computed/length.rs	2026-11-11 19:55:57
-+++ b/values/computed/length.rs	2026-11-16 23:22:52
+--- a/values/computed/length.rs
++++ b/values/computed/length.rs
 @@ -453,6 +453,8 @@
  pub type NonNegativeLengthPercentageOrNormal =
      GenericLengthPercentageOrNormal<NonNegativeLengthPercentage>;
@@ -6242,7 +6242,55 @@ diff -ruN a/values/computed/length.rs b/values/computed/length.rs
  /// A computed `fit-tolerance` value.
  pub type FitTolerance = GenericFitTolerance<NonNegativeLengthPercentage>;
  
-@@ -548,7 +550,11 @@
+@@ -462,6 +464,47 @@
+ /// A computed value for `min-width`, `min-height`, `width` or `height` property.
+ pub type Size = GenericSize<NonNegativeLengthPercentage>;
+ 
++impl crate::values::animated::Animate for Size {
++    fn animate(&self, other: &Self, procedure: crate::values::animated::Procedure) -> Result<Self, ()> {
++        let identity = NonNegative(LengthPercentage::new_percent(Percentage(1.0)));
++        let calculation = |value: &Self, basis: &Self| -> Option<NonNegativeLengthPercentage> {
++            match (value, basis) {
++                (Self::CalcSizeAuto(value), Self::CalcSizeAuto(_))
++                | (Self::CalcSizeMinContent(value), Self::CalcSizeMinContent(_))
++                | (Self::CalcSizeMaxContent(value), Self::CalcSizeMaxContent(_))
++                | (Self::CalcSizeFitContent(value), Self::CalcSizeFitContent(_)) => Some(value.clone()),
++                (Self::Auto, Self::CalcSizeAuto(_))
++                | (Self::MinContent, Self::CalcSizeMinContent(_))
++                | (Self::MaxContent, Self::CalcSizeMaxContent(_))
++                | (Self::FitContent, Self::CalcSizeFitContent(_)) => Some(identity.clone()),
++                (Self::LengthPercentage(value), _) if !value.0.has_percentage() => Some(value.clone()),
++                _ => None,
++            }
++        };
++        match (self, other) {
++            (Self::Auto, Self::Auto) => Ok(Self::Auto),
++            (Self::LengthPercentage(from), Self::LengthPercentage(to)) => Ok(Self::LengthPercentage(from.animate(to, procedure)?)),
++            (Self::AnchorContainingCalcFunction(from), Self::AnchorContainingCalcFunction(to)) => Ok(Self::AnchorContainingCalcFunction(from.animate(to, procedure)?)),
++            (Self::AnchorSizeFunction(from), Self::AnchorSizeFunction(to)) => Ok(Self::AnchorSizeFunction(from.animate(to, procedure)?)),
++            _ => {
++                for basis in [self, other] {
++                    let wrap: fn(NonNegativeLengthPercentage) -> Self = match basis {
++                        Self::CalcSizeAuto(_) => Self::CalcSizeAuto,
++                        Self::CalcSizeMinContent(_) => Self::CalcSizeMinContent,
++                        Self::CalcSizeMaxContent(_) => Self::CalcSizeMaxContent,
++                        Self::CalcSizeFitContent(_) => Self::CalcSizeFitContent,
++                        _ => continue,
++                    };
++                    let from = calculation(self, basis).ok_or(())?;
++                    let to = calculation(other, basis).ok_or(())?;
++                    return Ok(wrap(from.animate(&to, procedure)?));
++                }
++                Err(())
++            },
++        }
++    }
++}
++
+ /// A computed value for `max-width` or `max-height` property.
+ pub type MaxSize = GenericMaxSize<NonNegativeLengthPercentage>;
+ 
+@@ -548,7 +591,11 @@
              | Self::MinContent
              | Self::FitContent
              | Self::WebkitFillAvailable
@@ -6677,9 +6725,17 @@ diff -ruN a/values/generics/image.rs b/values/generics/image.rs
      }
  }
 diff -ruN a/values/generics/length.rs b/values/generics/length.rs
---- a/values/generics/length.rs	2026-11-11 19:55:57
-+++ b/values/generics/length.rs	2026-11-16 23:22:52
-@@ -174,6 +174,23 @@
+--- a/values/generics/length.rs
++++ b/values/generics/length.rs
+@@ -138,7 +138,6 @@
+ /// Note that it only accepts non-negative values.
+ #[allow(missing_docs)]
+ #[derive(
+-    Animate,
+     ComputeSquaredDistance,
+     Clone,
+     Debug,
+@@ -174,6 +173,23 @@
      FitContentFunction(LengthPercent),
      AnchorSizeFunction(Box<GenericAnchorSizeFunction<Self>>),
      AnchorContainingCalcFunction(LengthPercent),
@@ -6703,7 +6759,7 @@ diff -ruN a/values/generics/length.rs b/values/generics/length.rs
  }
  
  impl<LengthPercent> SpecifiedValueInfo for GenericSize<LengthPercent>
-@@ -367,6 +384,32 @@
+@@ -367,6 +383,32 @@
  }
  
  pub use self::GenericLengthPercentageOrNormal as LengthPercentageOrNormal;
