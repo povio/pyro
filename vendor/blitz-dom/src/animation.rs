@@ -1461,15 +1461,20 @@ fn cascade_pseudo<'a>(
     pseudo: &style::selector_parser::PseudoElement,
     primary: &ServoArc<ComputedValues>,
 ) -> ServoArc<ComputedValues> {
-    context.thread_local.current_dom_depth = TNode::depth(&node);
-    let mut resolver =
-        StyleResolverForElement::new(node, context, RuleInclusion::All, PseudoElementResolution::IfApplicable);
     let inputs = CascadeInputs {
         rules: Some(rules),
         visited_rules: None,
         flags: style.flags.for_cascade_inputs(),
         included_cascade_flags: RuleCascadeFlags::empty(),
     };
+    if !pseudo.is_eager() {
+        return context.shared.stylist.compute_pseudo_element_style_with_inputs(
+            inputs, pseudo, &context.shared.guards, Some(primary), Some(node),
+        );
+    }
+    context.thread_local.current_dom_depth = TNode::depth(&node);
+    let mut resolver =
+        StyleResolverForElement::new(node, context, RuleInclusion::All, PseudoElementResolution::IfApplicable);
     let primary = style::style_resolver::PrimaryStyle {
         style: style::style_resolver::ResolvedStyle(primary.clone()),
         reused_via_rule_node: false,

@@ -187,6 +187,38 @@ fn view_transition_worker_resolves_child_keys_only_in_their_frame() {
 }
 
 #[test]
+fn view_transition_captures_inline_opacity_on_generated_text() {
+    let page = Page::new("<!doctype html><style>section::first-letter{opacity:0} p{view-transition-name:paragraph}</style><section><p>Text</p></section>");
+    let root = pyro_dom::snapshot::render_key(page.find("section"));
+    let mut renderer = Renderer::new();
+    renderer.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+    for old in [false, true] {
+        let mut work = 1 << 18;
+        let mut recordings = 0;
+        let boxes = renderer.capture_transition_budgeted(1, root, old, 1 << 24, &mut work, &mut recordings)
+            .unwrap_or_else(|| panic!("old={old}, recordings={recordings}, remaining={work}"));
+        assert_eq!(boxes.len(), 1);
+        assert_eq!(boxes[0].key, pyro_dom::snapshot::render_key(page.find("p")));
+        assert_eq!(recordings, usize::from(old));
+    }
+}
+
+#[test]
+fn view_transition_animations_end_when_origin_is_hidden() {
+    let page = Page::new("<!doctype html><style>::view-transition-group(*){animation-duration:500s}</style><p>Text</p>");
+    let origin = page.find("html");
+    let root = pyro_dom::snapshot::render_key(origin);
+    let mut renderer = Renderer::new();
+    renderer.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+    let boxes = renderer.capture_transition_boxes(1, root, false, 0).unwrap();
+    renderer.set_transition_boxes(1, root, &boxes, &boxes).unwrap();
+    assert!(!renderer.transition_animation_styles(1, root).unwrap().is_empty());
+    page.dom.borrow_mut().set_attribute(origin, "style", "display:none").unwrap();
+    renderer.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+    assert!(renderer.transition_animation_styles(1, root).is_none());
+}
+
+#[test]
 fn view_transition_boxes_cascade_and_charge_created_nodes() {
     use style::properties::{LonghandId, PropertyDeclarationId};
     use style::selector_parser::PseudoElement::*;

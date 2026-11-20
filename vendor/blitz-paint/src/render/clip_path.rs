@@ -1041,8 +1041,21 @@ impl ElementCx<'_, '_> {
             return false;
         }
         if let Some(budget) = self.capture_budget {
-            budget.exhausted.set(true);
-            return true;
+            let simple = effects.len() == 1 && layout.len() <= 16 && effects.iter().all(|&id| {
+                dom.get_node(id).and_then(|node| node.primary_styles()).is_some_and(|style| {
+                    matches!(style.get_clip_path(), StyloClipPath::None)
+                        && style.get_effects().filter.0.is_empty()
+                        && style.get_effects().backdrop_filter.0.is_empty()
+                        && style.get_effects().box_shadow.0.is_empty()
+                        && style.get_svg().mask_image.0.iter().all(|image| matches!(image, GenericImage::None))
+                })
+            });
+            if !simple || !budget.take(layout.len().saturating_pow(3)) || !layout.lines().all(|line| {
+                budget.take(line.len().saturating_mul(styles.len().saturating_add(1)))
+            }) {
+                budget.exhausted.set(true);
+                return true;
+            }
         }
         // pyro: a mask over vertical fragments (its strip is laid out horizontally) is not done:
         // such a layout paints plainly, as before.
@@ -1282,7 +1295,11 @@ impl ElementCx<'_, '_> {
         // faded span 8% more instructions.
         let mut layout = anyrender::Scene::new();
         let recorded = text.borrow().runs.as_ref().map(Vec::len);
-        self.draw_inline_layout(&mut layout, pos);
+        if let Some(budget) = self.capture_budget {
+            self.draw_inline_layout(&mut crate::capture::Recording(&mut layout, budget), pos);
+        } else {
+            self.draw_inline_layout(&mut layout, pos);
+        }
         let mut appended = false;
         if let Some(ink) = crate::bounds::scene_bounds(&layout.commands)
             && transform.determinant().abs() > 1e-12

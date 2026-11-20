@@ -1855,6 +1855,7 @@ impl Renderer {
     }
 
     pub fn transition_animation_styles(&self, page: u64, root: u64) -> Option<Vec<(usize,String, style::servo_arc::Arc<style::properties::ComputedValues>)>> {
+        if self.element_displayed(page, root) == Some(false) { return None; }
         let mirror = self.mirrors.get(&page)?;
         mirror.doc.transition_animation_styles(mirror.node(root)?)
     }
