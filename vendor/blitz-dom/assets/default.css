@@ -1095,6 +1095,9 @@ frameset {
     position: static ! important;
     float: none ! important;
     border: none ! important;
+    /* pyro: a frameset is the viewport's size wherever it is, whatever its author size (Chrome). */
+    width: 100vw ! important;
+    height: 100vh ! important;
 }
 
 frame {

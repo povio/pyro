@@ -435,7 +435,16 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  table[align="center"]>caption {
      margin-inline-start: auto;
      margin-inline-end: auto;
-@@ -838,10 +1101,42 @@
+@@ -832,16 +1095,51 @@
+     position: static ! important;
+     float: none ! important;
+     border: none ! important;
++    /* pyro: a frameset is the viewport's size wherever it is, whatever its author size (Chrome). */
++    width: 100vw ! important;
++    height: 100vh ! important;
+ }
+ 
+ frame {
      border-radius: 0 ! important;
  }
  
@@ -478,7 +487,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  spacer {
      position: static ! important;
      float: none ! important;
-@@ -851,8 +1146,18 @@
+@@ -851,8 +1149,18 @@
      user-select: none;
  }
  
@@ -497,7 +506,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  html:focus-visible {
      /* These elements historically don't show outlines when focused by default.
     * We could consider changing that if needed. */
-@@ -886,14 +1191,15 @@
+@@ -886,14 +1194,15 @@
      display: none;
  }
  
@@ -516,7 +525,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      padding: unset !important;
  }
  
-@@ -922,6 +1228,11 @@
+@@ -922,6 +1231,11 @@
      display: none !important;
  }
  
@@ -528,7 +537,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  /* media elements */
  video {
      object-fit: contain;
-@@ -996,7 +1307,9 @@
+@@ -996,7 +1310,9 @@
      display: none;
  }
  
@@ -539,7 +548,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      -moz-top-layer: top !important;
      position: fixed;
      overflow: auto;
-@@ -1128,37 +1441,48 @@
+@@ -1128,37 +1444,48 @@
  }
  
  /* Popover UA style, https://html.spec.whatwg.org/#flow-content-3 */

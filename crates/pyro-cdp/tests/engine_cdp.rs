@@ -11803,6 +11803,29 @@ fn add_module_of_an_import_settles_with_its_graph() {
     assert_eq!(value(&mut h, "st.b"), json!("rejected"));
 }
 
+/// A `<frameset>` is the viewport's size wherever it is and whatever its author size (Chrome 158:
+/// 800x513 in an 800x513 viewport, in `<body>`, in a 200px `<div>`, with `height: 50px`), so a click at
+/// its centre reaches it (WPT fullscreen/crashtests/frameset-crash clicks a frameset in `<body>`).
+#[test]
+fn a_frameset_is_the_viewports_size() {
+    let mut h = Harness::new();
+    // (The parser drops a <frameset> in <body>: script makes them, as the WPT page does.)
+    load_html(&mut h, "<!doctype html><body><div style='height:200px'></div><script>const a = document.createElement('frameset'); a.style.height = '50px'; document.querySelector('div').append(a); document.body.append(document.createElement('frameset'));</script>");
+    let value = |h: &mut Harness, expression: &str| {
+        let r = h.page("Runtime.evaluate", json!({ "expression": expression, "returnByValue": true }));
+        r["result"]["result"]["value"].clone()
+    };
+    assert_eq!(
+        value(&mut h, "[...document.querySelectorAll('frameset')].map((f) => { const r = f.getBoundingClientRect(); return [r.width === innerWidth, r.height === innerHeight, r.height > 0]; }).flat().join()"),
+        json!("true,true,true,true,true,true")
+    );
+    // The second frameset's centre hits it.
+    assert_eq!(
+        value(&mut h, "(() => { const f = document.querySelectorAll('frameset')[1]; const r = f.getBoundingClientRect(); return document.elementFromPoint(r.x + r.width / 2, r.y + Math.min(r.height / 2, innerHeight - r.y - 1)) === f; })()"),
+        json!(true)
+    );
+}
+
 /// The opener's WindowProxy for a popup targets the browsing context, not a document: once the popup
 /// navigated (here to a document of another origin), the opener's postMessage reaches the popup's
 /// current document.
