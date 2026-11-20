@@ -12410,7 +12410,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
  };
  use style::{
      computed_values::position::T as PositionProperty,
-@@ -12,15 +12,400 @@
+@@ -12,15 +12,401 @@
  };
  use stylo_taffy::CopyStyleGetters;
  
@@ -12755,7 +12755,8 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +    parley_style.text_box_trim = crate::layout::text_box::span_trim(style);
 +    builder.push_style_span(parley_style);
 +    // (A sticky one is painted moved too: `BaseDocument::inline_span_relative_offset`.)
-+    bidi_scan.relative |= matches!(style.clone_position(), PositionProperty::Relative | PositionProperty::Sticky);
++    bidi_scan.relative |= matches!(style.clone_position(), PositionProperty::Relative | PositionProperty::Sticky)
++        || crate::layout::inline::relative::effect_entry(style);
 +    let rtl = style.clone_direction() == style::computed_values::direction::T::Rtl;
 +    let controls = bidi_controls(style);
 +    if let Some((start_controls, _)) = controls {
@@ -12813,7 +12814,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
  pub(crate) fn build_inline_layout_into(
      nodes: &crate::NodeTree,
      layout_ctx: &mut LayoutContext<TextBrush>,
-@@ -29,6 +414,101 @@
+@@ -29,6 +415,101 @@
      scale: f32,
      inline_context_root_node_id: NodeId,
  ) {
@@ -12915,7 +12916,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
      // Get the inline context's root node's text styles
      let root_node = &nodes[inline_context_root_node_id];
      let root_node_style = root_node.primary_styles().or_else(|| {
-@@ -36,8 +516,12 @@
+@@ -36,8 +517,12 @@
              .parent
              .and_then(|parent_id| nodes[parent_id].primary_styles())
      });
@@ -12929,7 +12930,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
          .as_ref()
          .map(|s| stylo_to_parley::style(inline_context_root_node_id, s))
          .unwrap_or_else(|| parley::TextStyle {
-@@ -45,12 +529,45 @@
+@@ -45,12 +530,45 @@
              ..Default::default()
          });
  
@@ -12977,7 +12978,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
          ));
      }
  
-@@ -59,16 +576,94 @@
+@@ -59,16 +577,94 @@
          .map(|s| CaseTransform::from_style(s))
          .unwrap_or(CaseTransform::NONE);
  
@@ -13072,7 +13073,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
              // Bullet glyphs live in the bundled bullet font. The position-outside
              // path already asks for it; without the same span here a marker like
              // disclosure-closed (U+25B8) falls back to the element's own font and
-@@ -76,54 +671,512 @@
+@@ -76,54 +672,512 @@
              Marker::Char(char) => {
                  let mut marker_style = parley_style.clone();
                  marker_style.font_family = BULLET_FONT_FAMILY.into();
@@ -13591,7 +13592,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
      ) {
          let node = &nodes[node_id];
  
-@@ -143,6 +1196,51 @@
+@@ -143,6 +1197,51 @@
                      }
                  }
  
@@ -13643,7 +13644,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                  let display = node.display_style().unwrap_or(Display::inline());
                  let position = style
                      .map(|s| s.clone_position())
-@@ -161,41 +1259,44 @@
+@@ -161,41 +1260,44 @@
                          // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
                      }
                      (DisplayOutside::None, DisplayInside::Contents) => {
@@ -13710,7 +13711,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                              }
                              builder.push_inline_box(InlineBox {
                                  id: node_id.as_u64(),
-@@ -210,66 +1311,262 @@
+@@ -210,66 +1312,263 @@
                                      .primary_styles()
                                      .map(|s| stylo_to_parley::vertical_align(&s))
                                      .unwrap_or_default(),
@@ -13831,6 +13832,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
 +
 +                            bidi_scan.relative |= node.primary_styles().is_some_and(|style| {
 +                                matches!(style.clone_position(), PositionProperty::Relative | PositionProperty::Sticky)
++                                    || crate::layout::inline::relative::effect_entry(&style)
 +                            });
 +                            bidi_scan.block_edges |= node.primary_styles().is_some_and(|style| has_block_edges(&style));
 +                            // pyro: the bidi formatting characters its `unicode-bidi` stands for,
@@ -13994,7 +13996,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
                          }
                          builder.push_inline_box(InlineBox {
                              id: node_id.as_u64(),
-@@ -284,17 +1581,139 @@
+@@ -284,17 +1583,139 @@
                                  .primary_styles()
                                  .map(|s| stylo_to_parley::vertical_align(&s))
                                  .unwrap_or_default(),
@@ -14137,7 +14139,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/build.rs b/packages/blitz-dom/
              }
              NodeData::Comment { .. } => {
                  // node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
-@@ -303,3 +1722,314 @@
+@@ -303,3 +1724,314 @@
          }
      }
  }
@@ -17300,7 +17302,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 diff --git a/packages/blitz-dom/src/layout/inline/mod.rs b/packages/blitz-dom/src/layout/inline/mod.rs
 --- a/packages/blitz-dom/src/layout/inline/mod.rs
 +++ b/packages/blitz-dom/src/layout/inline/mod.rs
-@@ -1,4 +1,7 @@
+@@ -1,4 +1,8 @@
 -mod build;
 +pub(crate) mod build;
  mod layout;
@@ -17310,11 +17312,12 @@ diff --git a/packages/blitz-dom/src/layout/inline/mod.rs b/packages/blitz-dom/sr
 +pub(crate) use build::{build_inline_layout_into, span_edge_widths, span_edge_widths_in};
 +pub use build::span_edge_margins;
 +pub(crate) use relative::inline_span_flow_offset;
++pub use relative::effect_entry;
 diff --git a/packages/blitz-dom/src/layout/inline/relative.rs b/packages/blitz-dom/src/layout/inline/relative.rs
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/inline/relative.rs
-@@ -0,0 +1,167 @@
+@@ -0,0 +1,220 @@
 +//! pyro: relative positioning of inline boxes that are not atomic (CSS 2.1 § 9.4.3): such a box
 +//! has no layout box of its own, so the offset moves what its fragments hold where they are
 +//! painted (glyph runs, the boxes of its fragments) and the atomic inline boxes in it.
@@ -17448,7 +17451,8 @@ new file mode 100644
 +
 +    /// pyro: the positioned (relative or sticky) inline boxes that are not atomic from `node_id`
 +    /// up to the inline root `root_id`, innermost first: their content paints with them, after
-+    /// the in-flow content (CSS 2.1 Appendix E step 8), not in the root's text.
++    /// the in-flow content (CSS 2.1 Appendix E step 8), not in the root's text. An inline box faded
++    /// or filtered (a stacking context, [`effect_entry`]) paints so too, at its stacking level.
 +    pub fn inline_span_positioned_chain(&self, node_id: NodeId, root_id: NodeId) -> Vec<NodeId> {
 +        let root = &self.nodes[root_id];
 +        let root_parent = root.is_anonymous().then_some(root.parent).flatten();
@@ -17464,7 +17468,10 @@ new file mode 100644
 +                if !display.is_inline_flow() && !display.is_contents() {
 +                    break;
 +                }
-+                if matches!(style.clone_position(), Position::Relative | Position::Sticky) && display.is_inline_flow() {
++                if display.is_inline_flow()
++                    && (matches!(style.clone_position(), Position::Relative | Position::Sticky)
++                        || (effect_entry(&style) && painted_ancestor(&self.nodes, id, root_id)))
++                {
 +                    chain.push(id);
 +                }
 +            }
@@ -17481,6 +17488,55 @@ new file mode 100644
 +            .and_then(|element| element.inline_layout_data.as_deref())
 +            .is_some_and(|layout| layout.relative_spans)
 +    }
++}
++
++/// pyro: whether an inline box between `id` and its inline root `root_id` paints a box (a background,
++/// a border or a shadow): the root's effect pass (blitz-paint `draw_inline_effects`), which paints a
++/// faded or filtered inline box's area after the rest of the layout, would paint that box over it
++/// again; such an inline box paints at its own entry instead ([`effect_entry`]).
++pub(crate) fn painted_ancestor(nodes: &crate::NodeTree, id: NodeId, root_id: NodeId) -> bool {
++    let root = &nodes[root_id];
++    let container = root.is_anonymous().then_some(root.parent).flatten();
++    let mut ancestor = nodes.get(id).and_then(|node| node.parent);
++    while let Some(node) = ancestor.filter(|&a| a != root_id && Some(a) != container).and_then(|a| nodes.get(a)) {
++        if let Some(style) = node.primary_styles() {
++            let background = style.get_background();
++            let border = style.get_border();
++            let paints = background.background_color.resolve_to_absolute(&style.clone_color()).alpha > 0.0
++                || background.background_image.0.iter().any(|image| !matches!(image, style::values::generics::image::GenericImage::None))
++                || [
++                    (border.border_top_style, &border.border_top_width),
++                    (border.border_right_style, &border.border_right_width),
++                    (border.border_bottom_style, &border.border_bottom_width),
++                    (border.border_left_style, &border.border_left_width),
++                ]
++                .iter()
++                .any(|(line, width)| !line.none_or_hidden() && width.0.to_f32_px() > 0.0)
++                || !style.get_effects().box_shadow.0.is_empty();
++            if paints {
++                return true;
++            }
++        }
++        ancestor = node.parent;
++    }
++    false
++}
++
++/// pyro: whether an inline box (not atomic) of style `style` is a stacking context by its opacity or
++/// filter functions alone (no clip path, mask, SVG filter or backdrop filter, which its inline root
++/// paints for it): its
++/// content paints at its stacking level, as a positioned inline box's does, in its effect's group,
++/// after the in-flow content and over its ancestors' boxes (CSS 2.1 Appendix E step 8; Chromium).
++pub fn effect_entry(style: &style::properties::ComputedValues) -> bool {
++    use style::values::computed::basic_shape::ClipPath;
++    use style::values::generics::image::GenericImage;
++    let effects = style.get_effects();
++    (effects.opacity < 1.0 || !effects.filter.0.is_empty())
++        // (An SVG filter, a graph its inline root paints in its filter region, is left to it.)
++        && !effects.filter.0.iter().any(|filter| matches!(filter, style::values::computed::Filter::Url(_)))
++        && effects.backdrop_filter.0.is_empty()
++        && matches!(style.get_clip_path(), ClipPath::None)
++        && style.get_svg().mask_image.0.iter().all(|image| matches!(image, GenericImage::None))
 +}
 diff --git a/packages/blitz-dom/src/layout/line_clamp.rs b/packages/blitz-dom/src/layout/line_clamp.rs
 new file mode 100644
@@ -37318,7 +37374,7 @@ diff --git a/packages/blitz-dom/src/lib.rs b/packages/blitz-dom/src/lib.rs
  
  /// The nodes themsleves, and their data.
  pub mod node;
-@@ -46,21 +48,48 @@
+@@ -46,21 +48,49 @@
  mod events;
  mod font_metrics;
  mod form;
@@ -37332,6 +37388,7 @@ diff --git a/packages/blitz-dom/src/lib.rs b/packages/blitz-dom/src/lib.rs
 +pub use layout::table::{CollapsedEdge, CollapsedEdges, TableCell, TableContext};
 +pub use layout::multicol::{ColumnFragment, ColumnFragments};
 +pub use layout::inline::span_edge_margins;
++pub use layout::inline::effect_entry as inline_effect_entry;
 +#[cfg(feature = "svg")]
 +pub use layout::shape_outside::{SvgRasterizer, set_svg_rasterizer};
  mod mutator;
@@ -37367,7 +37424,7 @@ diff --git a/packages/blitz-dom/src/lib.rs b/packages/blitz-dom/src/lib.rs
  mod stylo_device;
  mod stylo_to_cursor_icon;
  mod stylo_to_kurbo;
-@@ -76,7 +105,7 @@
+@@ -76,7 +106,7 @@
      css_property_is_supported, parse_transform_matrix, resolved_style_property_names,
  };
  pub use stylo_taffy::CopyStyleGetters;
@@ -37376,7 +37433,7 @@ diff --git a/packages/blitz-dom/src/lib.rs b/packages/blitz-dom/src/lib.rs
  
  pub mod net;
  pub mod util;
-@@ -84,7 +113,7 @@
+@@ -84,7 +114,7 @@
  #[cfg(feature = "accessibility")]
  mod accessibility;
  
@@ -37385,7 +37442,7 @@ diff --git a/packages/blitz-dom/src/lib.rs b/packages/blitz-dom/src/lib.rs
  pub use crate::layout::replaced::IntrinsicSizes;
  pub use crate::layout::text_transform::{full_size_kana, full_width};
  #[cfg(feature = "custom-widget")]
-@@ -93,10 +122,14 @@
+@@ -93,10 +123,14 @@
  pub use blitz_traits::node_id::NodeId;
  // Re-export taffy: it is part of blitz-dom's public API (e.g. `Node::style`,
  // `Node::final_layout`)

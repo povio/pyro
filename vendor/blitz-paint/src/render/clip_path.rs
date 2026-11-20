@@ -1005,6 +1005,8 @@ impl ElementCx<'_, '_> {
         let has_effect = |id: blitz_dom::NodeId| {
             dom.get_node(id)
                 .filter(|node| node.element_data().is_some())
+                // pyro: one painted at its entry in the paint tree (blitz-dom `effect_entry`).
+                .filter(|node| !node.flags.contains(blitz_dom::node::NodeFlags::INLINE_PASS_ENTRY))
                 .and_then(|node| node.primary_styles())
                 // pyro: a `display: contents` element has no box to clip, mask or fade.
                 .filter(|style| !style.clone_display().is_contents())

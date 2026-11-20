@@ -351,7 +351,8 @@ fn open_span(
     parley_style.text_box_trim = crate::layout::text_box::span_trim(style);
     builder.push_style_span(parley_style);
     // (A sticky one is painted moved too: `BaseDocument::inline_span_relative_offset`.)
-    bidi_scan.relative |= matches!(style.clone_position(), PositionProperty::Relative | PositionProperty::Sticky);
+    bidi_scan.relative |= matches!(style.clone_position(), PositionProperty::Relative | PositionProperty::Sticky)
+        || crate::layout::inline::relative::effect_entry(style);
     let rtl = style.clone_direction() == style::computed_values::direction::T::Rtl;
     let controls = bidi_controls(style);
     if let Some((start_controls, _)) = controls {
@@ -1416,6 +1417,7 @@ fn build_inline_layout_with(
 
                             bidi_scan.relative |= node.primary_styles().is_some_and(|style| {
                                 matches!(style.clone_position(), PositionProperty::Relative | PositionProperty::Sticky)
+                                    || crate::layout::inline::relative::effect_entry(&style)
                             });
                             bidi_scan.block_edges |= node.primary_styles().is_some_and(|style| has_block_edges(&style));
                             // pyro: the bidi formatting characters its `unicode-bidi` stands for,

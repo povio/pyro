@@ -2175,6 +2175,20 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
         };
         let Some(root) = self.dom.get_node(root_id) else { return };
         let cx = self.element_cx(root, root.final_layout().clone(), transform, None);
+        // pyro: a faded or filtered inline box (blitz-dom `effect_entry`) paints all it holds in its
+        // effect's group.
+        let effect = self.dom.get_node(span_id).and_then(|span| span.primary_styles()).and_then(|style| {
+            if !blitz_dom::inline_effect_entry(&style) {
+                return None;
+            }
+            let opacity = style.get_effects().opacity;
+            let filter = convert_filters(&style.get_effects().filter.0, self.scale, &style.clone_color(), self.dom).map(Arc::new);
+            Some((opacity, filter))
+        });
+        if let Some((opacity, filter)) = effect.clone() {
+            let viewport = Rect::new(0.0, 0.0, self.width as f64, self.height as f64);
+            scene.push_layer(Fill::NonZero, BlendMode::default(), opacity, Affine::IDENTITY, &viewport, filter, None);
+        }
         // pyro: an inline stacking context keeping out-of-flow boxes (blitz-dom
         // `restore_out_of_flow_stacking_owners`) paints them after its fragments, in a group that is
         // their backdrop root (WPT filter-effects `backdrop-filter-backdrop-root-clip-path-2`).
@@ -2229,6 +2243,9 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             let pushed = push_column(scene);
             self.render_node(scene, child_id, child_transform, everything);
             pop_column(scene, pushed);
+        }
+        if effect.is_some() {
+            scene.pop_layer();
         }
     }
 

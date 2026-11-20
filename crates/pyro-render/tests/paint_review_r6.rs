@@ -414,3 +414,19 @@ fn a_path_of_countless_curves_is_flattened_within_a_cap() {
     let segments = anyrender_vello_cpu::fine_segments() - before;
     assert!(segments <= 200_000, "{segments} segments");
 }
+
+/// An inline element faded by `opacity` inside an inline whose background is painted is a stacking
+/// context painted at its own level, in its opacity group over its ancestor's background (as a
+/// positioned inline is): its atomic inline is faded over the yellow. It was painted unfaded with
+/// its inline root's content (the root's effect pass leaves inline opacity under a painted ancestor).
+#[test]
+fn a_faded_inline_inside_a_painted_inline_is_faded_over_it() {
+    let img = render(
+        "<style>body{margin:0;font:20px/50px monospace}</style>\
+         <div><span style='background:yellow;padding:0 20px'><span style='opacity:.5'>\
+         <span style='display:inline-block;width:50px;height:40px;background:blue;vertical-align:top'></span>\
+         </span></span></div>",
+    );
+    let [r, g, b] = pixel(&img, 45, 20);
+    assert!(r.abs_diff(127) <= 3 && g.abs_diff(127) <= 3 && b.abs_diff(127) <= 3, "blue at half over yellow: {:?}", [r, g, b]);
+}
