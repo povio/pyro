@@ -2688,17 +2688,27 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
                 || [&margin.margin_left,&margin.margin_top,&margin.margin_bottom,&margin.margin_right].iter().any(|v|matches!(v,Margin::AnchorSizeFunction(f) if f.target_element.value.0.is_empty()));
             node.anchor_invalid.set(referenced);
         }
-        if pos.position_area.is_none() { return None; }
-        let (anchor,mut point, extent) = default?;
-        node.anchor_scroll_axes.set((Some(anchor),Some(anchor)));
-        if trial {
-            let shift = self.position_try_scroll_offset(taffy_node_id(node.id), taffy_node_id(container.id));
-            point.x -= shift.x;
-            point.y -= shift.y;
+        if pos.position_area.is_none() || default.is_none() {
+            if !trial { self.anchor_area_snapshots.borrow_mut().remove(&node.id); }
+            return None;
         }
+        let (anchor,mut point, extent) = default?;
         use stylo_taffy::WritingModeExt;
         let wm = container.primary_styles()?.writing_mode;
         let area = pos.position_area.to_physical(wm, style.writing_mode);
+        let tracks = (area.first.track()?, area.second.track()?);
+        let axes = (tracks.0 != PositionAreaTrack::SpanAll, tracks.1 != PositionAreaTrack::SpanAll);
+        node.anchor_scroll_axes.set((axes.0.then_some(anchor), axes.1.then_some(anchor)));
+        let live = || self.position_try_scroll_offset(taffy_node_id(node.id), taffy_node_id(container.id));
+        let shift = if trial { live() } else {
+            let key = (anchor, container.id, area, self.anchor_flush_choices.get(&node.id).copied().flatten());
+            let mut snapshots = self.anchor_area_snapshots.borrow_mut();
+            let entry = snapshots.entry(node.id).or_insert_with(|| (key, live()));
+            if entry.0 != key { *entry = (key, live()); }
+            entry.1
+        };
+        point.x -= shift.x;
+        point.y -= shift.y;
         let reverse = wm.swaps_axes() && !wm.is_vertical_lr();
         let size = wm.logical_size(size);
         let mut offset = wm.logical_point(offset);
@@ -2718,7 +2728,9 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
         let (left,right,horizontal) = axis(area.first.track()?, point.x, point.x + extent.width, offset.x, offset.x + size.width);
         let (top,bottom,vertical) = axis(area.second.track()?, point.y, point.y + extent.height, offset.y, offset.y + size.height);
         let horizontal = if reverse { match horizontal { taffy::AlignSelf::START => taffy::AlignSelf::END, taffy::AlignSelf::END => taffy::AlignSelf::START, other => other } } else { horizontal };
-        Some((wm.logical_size(taffy::Size { width: right-left, height: bottom-top }), wm.logical_point(taffy::Point { x:if reverse {mirror-right} else {left}, y:top }), wm.logical_point(taffy::Point { x:horizontal, y:vertical })))
+        let dx = if !trial && axes.0 { shift.x } else { 0.0 };
+        let dy = if !trial && axes.1 { shift.y } else { 0.0 };
+        Some((wm.logical_size(taffy::Size { width: right-left, height: bottom-top }), wm.logical_point(taffy::Point { x:if reverse {mirror-right-dx} else {left+dx}, y:top+dy }), wm.logical_point(taffy::Point { x:horizontal, y:vertical })))
     }
 
     fn clear_anchor_geometry_dependencies(&mut self, node_id: NodeId) {

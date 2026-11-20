@@ -169,6 +169,25 @@ fn scroll_fit_splits_area_at_visual_anchor_edges() {
 }
 
 #[test]
+fn area_percentage_remembers_visual_edges_from_first_layout() {
+    let html = "<!doctype html><style>main{position:relative;width:200px;height:200px}section{height:100px;overflow:auto;padding-top:80px;box-sizing:border-box}i{display:block;height:20px;anchor-name:--a}section div{height:300px}b{position:absolute;position-anchor:--a;position-area:bottom;position-try-fallbacks:flip-block;width:10px;height:50%}</style><main><section><i></i><div></div></section><b></b></main>";
+    let mut doc = blitz_html::HtmlDocument::from_html(html, blitz_dom::DocumentConfig::default());
+    doc.viewport_mut().window_size = (400, 300);
+    let scroller = doc.query_selector("section").unwrap().unwrap();
+    let target = doc.query_selector("b").unwrap().unwrap();
+    for scroll in [40., 60., 100., 0.] {
+        let before = doc.anchor_try_visits();
+        doc.set_timeline_scroll([(scroller, (0., scroll))].into(), (0., 0.));
+        doc.resolve(0.0);
+        let node = doc.get_node(target).unwrap();
+        let layout = node.final_layout();
+        let live = node.anchor_scroll_offset_with(|id| blitz_dom::Point { x:0., y:if id == Some(scroller) { scroll } else { 0. } });
+        assert_eq!((layout.location.y as f64 + live.y, layout.size.height), (100. - scroll, 70.));
+        assert!(doc.anchor_try_visits() - before <= 2);
+    }
+}
+
+#[test]
 fn changed_rule_media_updates_only_subscribed_blocks() {
     use blitz_dom::{local_name, ns, QualName};
     let html = "<!doctype html><style>section{position:relative;width:100px;height:100px}b{position:absolute;left:999px;width:10px;height:10px;position-try-fallbacks:--changed}aside b{position-try-fallbacks:--stable}@position-try --stable{left:4px}</style><style id=sheet media=print>@position-try --changed{left:8px}</style><section><b id=target></b></section><aside><section><b></b></section></aside>";

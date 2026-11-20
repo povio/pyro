@@ -680,6 +680,7 @@ pub struct BaseDocument {
     pub(crate) anchor_last_option: HashMap<NodeId, (usize, style::servo_arc::Arc<style::properties::ComputedValues>)>,
     pub(crate) anchor_flush_choices: HashMap<NodeId, Option<usize>>,
     pub(crate) anchor_rendered_options: HashMap<NodeId, usize>,
+    pub(crate) anchor_area_snapshots: RefCell<HashMap<NodeId, ((NodeId, NodeId, style::values::specified::position::PositionArea, Option<usize>), taffy::Point<f32>)>>,
     pub(crate) anchor_pending_options: HashSet<NodeId>,
     /// pyro: an element styled with a `scroll-marker-group` that names a side, or with
     /// `scroll-target-group: auto` (sticky).
@@ -1016,6 +1017,7 @@ impl BaseDocument {
             anchor_last_option: Default::default(),
             anchor_flush_choices: Default::default(),
             anchor_rendered_options: Default::default(),
+            anchor_area_snapshots: Default::default(),
             anchor_pending_options: Default::default(),
             scroll_marker_groups: false,
             scroll_pseudo_owners: Default::default(),
@@ -1497,6 +1499,7 @@ impl BaseDocument {
         }
         self.anchor_transform_dirty.remove(&node_id);
         self.anchor_last_option.remove(&node_id);
+        self.anchor_area_snapshots.get_mut().remove(&node_id);
         self.anchor_rendered_options.remove(&node_id);
         self.anchor_pending_options.remove(&node_id);
         self.anchor_scroll_dirty.remove(&node_id);
@@ -1552,6 +1555,7 @@ impl BaseDocument {
         if rules.is_none() && self.anchor_user_rules.is_empty() { return; }
         if self.anchor_user_rules.get(&id).map(|list| list.0.as_ptr()) == rules.as_ref().map(|list| list.0.as_ptr()) { return; }
         if let Some(old) = self.anchor_user_rules.remove(&id) {
+            self.anchor_area_snapshots.get_mut().remove(&id);
             self.anchor_rendered_options.remove(&id);
             self.anchor_last_option.remove(&id);
             self.anchor_pending_options.remove(&id);
@@ -1590,6 +1594,7 @@ impl BaseDocument {
                     if let Some(node) = self.nodes.get(*id).filter(|node| node.flags.is_in_document()) {
                         blocks.extend(node.containing_block());
                         self.anchor_last_option.remove(id);
+                        self.anchor_area_snapshots.get_mut().remove(id);
                         self.anchor_rendered_options.remove(id);
                         self.anchor_pending_options.remove(id);
                     }

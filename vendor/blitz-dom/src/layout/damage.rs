@@ -141,6 +141,7 @@ impl BaseDocument {
             });
             let node = &mut self.nodes[node_id];
             node.flags.set(NodeFlags::POSITION_TRY_OPTIONS, options);
+            if !queries && !self.anchor_area_snapshots.get_mut().is_empty() { self.anchor_area_snapshots.get_mut().remove(&node_id); }
             node.flags.set(NodeFlags::ANCHOR_QUERIES, queries);
             node.flags.set(NodeFlags::POSITION_VISIBILITY_CHECK, visibility);
             if !visibility || !out_of_flow { node.anchor_hidden.set(false); }
