@@ -303,7 +303,7 @@ impl<Color> ColorFunction<Color> {
                 // styles as text, so an `hsl()`/`hwb()` origin comes back as `rgb()` and its
                 // authored hue would otherwise be lost to the conversion.
                 let converted = abs_origin.map(|o| {
-                    let mut c = o.to_color_space($space);
+                    let mut c = o.convert_with_missing($space);
                     if o.color_space == ColorSpace::Srgb
                         && o.flags.contains(ColorFlags::IS_LEGACY_SRGB)
                         && !o.flags.intersects(ColorFlags::NONE_FLAGS)
@@ -323,7 +323,7 @@ impl<Color> ColorFunction<Color> {
                 )
             }};
             ($variant:ident, $space:expr, $c0:expr, $c1:expr, $c2:expr, $alpha:expr) => {{
-                let converted = abs_origin.map(|o| o.to_color_space($space));
+                let converted = abs_origin.map(|o| o.convert_with_missing($space));
                 ColorFunction::$variant(
                     Optional::from(origin),
                     $c0.to_computed_value(context, converted.as_ref())?,
@@ -339,7 +339,7 @@ impl<Color> ColorFunction<Color> {
                 // rgb(..) channels are in the [0..255] range, so map the origin's
                 // components accordingly.
                 let converted = abs_origin.map(|o| {
-                    let o = o.to_color_space(ColorSpace::Srgb);
+                    let o = o.convert_with_missing(ColorSpace::Srgb);
                     AbsoluteColor::new(
                         ColorSpace::Srgb,
                         o.c0().map(|v| v * 255.0),
@@ -376,7 +376,7 @@ impl<Color> ColorFunction<Color> {
             },
             ColorFunction::Color(_, c0, c1, c2, alpha, color_space) => {
                 let converted = abs_origin.map(|o| {
-                    let mut result = o.to_color_space(*color_space);
+                    let mut result = o.convert_with_missing(*color_space);
                     // Drop the legacy flag so the origin is read as a `color()`.
                     result.flags.set(ColorFlags::IS_LEGACY_SRGB, false);
                     result
