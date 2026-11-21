@@ -1191,6 +1191,21 @@ fn flow_parity_shrink_to_fit_min_content_floor() {
 }
 
 #[test]
+fn flex_nested_container_exports_edge_item_baselines() {
+    for (direction, first, last) in [("row", 5.0, 25.0), ("row-reverse", 25.0, 5.0), ("column", 5.0, 35.0), ("column-reverse", 25.0, 35.0)] {
+        for (alignment, expected) in [("first baseline", first), ("last baseline", last)] {
+            let html = format!(
+                "<!doctype html><style>body{{margin:0}}main{{display:flex;align-items:{alignment};font-size:20px;line-height:0}}\
+                 section{{display:flex;flex-direction:{direction};padding:10px;border:5px solid}}\
+                 span{{display:inline-block;width:1em;height:1em}}</style><main><div id=probe><span></span></div>\
+                 <section><div style='font-size:10px'><span></span></div><div style='font-size:30px'><span></span></div></section></main>"
+            );
+            assert_eq!(page(&html).metrics("probe")[1], expected, "{direction} {alignment}");
+        }
+    }
+}
+
+#[test]
 fn flex_column_aligns_orthogonal_first_baselines() {
     for (mode, first_x, second_x) in [("vertical-lr", 10.0, 40.0), ("vertical-rl", 150.0, 190.0)] {
         let html = format!(
