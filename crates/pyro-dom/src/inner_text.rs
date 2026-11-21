@@ -328,7 +328,7 @@ impl Dom {
         for node in dom.descendants(container)? {
             match &dom.n(node.idx).kind {
                 NodeKind::Text(data) => text.extend(data.chars().map(|c| if c == '\n' || c == '\r' { ' ' } else { c })),
-                NodeKind::Element(el) if el.is_html() && el.local_name().as_ref() == "br" => text.push(' '),
+                NodeKind::Element(el) if el.is_html() && el.local_name() == &markup5ever::local_name!("br") => text.push(' '),
                 _ => {}
             }
         }
