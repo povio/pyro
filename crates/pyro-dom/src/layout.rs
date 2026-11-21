@@ -4277,6 +4277,21 @@ impl Layout {
             return v;
         }
         let declared = self.style.computed_value(dom, el, name);
+        if !self.style.style_overridden()
+            && matches!(name, "margin" | "margin-inline" | "margin-block" | "margin-inline-start" | "margin-inline-end"
+                | "margin-block-start" | "margin-block-end" | "margin-left" | "margin-right" | "margin-top" | "margin-bottom"
+                | "padding" | "padding-inline" | "padding-block" | "padding-inline-start" | "padding-inline-end"
+                | "padding-block-start" | "padding-block-end" | "padding-left" | "padding-right" | "padding-top" | "padding-bottom")
+            && declared.as_deref().is_some_and(|value| value.contains('%') || value.contains("auto"))
+            && !self.style.has_display_none(dom, el) && !self.computed(dom, el).display_contents
+        {
+            if let Some(value) = self.synced_geometry_source(dom)
+                .and_then(|source| source.resolved_style_value(crate::snapshot::render_key(el), name))
+                .filter(|value| !value.is_empty())
+            {
+                return value;
+            }
+        }
         // Resolve percentages against the renderer's actual reference box, also
         // for a sampled transition. Keep the sampled style read-only: the live
         // document must not be restyled to an intermediate animation value.
