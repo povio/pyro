@@ -51,7 +51,7 @@ impl ToAnimatedValue for BorderSideWidth {
 
     #[inline]
     fn from_animated_value(animated: Self::AnimatedValue) -> Self {
-        Self(Au::from_animated_value(animated))
+        Self(Au::from_animated_value(animated).max(Au(0)))
     }
 }
 

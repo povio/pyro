@@ -7043,7 +7043,16 @@ diff -ruN a/values/computed/basic_shape.rs b/values/computed/basic_shape.rs
      generic::GenericBasicShape<Angle, LengthPercentage, Position, LengthPercentage, InsetRect>;
 diff -ruN a/values/computed/border.rs b/values/computed/border.rs
 --- a/values/computed/border.rs	2026-11-11 19:55:57
-+++ b/values/computed/border.rs	2026-11-19 20:43:48
++++ b/values/computed/border.rs	2026-11-21 06:46:07
+@@ -51,7 +51,7 @@
+ 
+     #[inline]
+     fn from_animated_value(animated: Self::AnimatedValue) -> Self {
+-        Self(Au::from_animated_value(animated))
++        Self(Au::from_animated_value(animated).max(Au(0)))
+     }
+ }
+ 
 @@ -92,6 +92,41 @@
  /// A computed value for outline-offset
  pub type BorderSideOffset = Au;
