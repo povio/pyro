@@ -1258,3 +1258,23 @@ fn matrix_strings_use_css_tokens_and_context_independent_transforms() {
     "#);
     assert_eq!(actual, "2|10|true|true|true|true");
 }
+
+#[test]
+fn numeric_math_percent_hints_survive_inversion_and_dimension_cancellation() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        const distance = new CSSMathClamp(CSS.percent(2), CSS.px(1), CSS.percent(8));
+        const duration = new CSSMathSum(CSS.s(1), CSS.percent(3));
+        const dimensionless = new CSSMathProduct(distance, new CSSMathInvert(distance)).type();
+        const inverse = new CSSMathInvert(distance).type();
+        let errors = 0;
+        for (const f of [() => distance.div(duration),
+                         () => new CSSMathSum(new CSSMathProduct(CSS.px(2), CSS.px(3)), CSS.percent(4))]) {
+          try { f(); } catch(e) { if (e instanceof TypeError) errors++; }
+        }
+        const copy = distance.type(); copy.length = 7;
+        [distance.type().length, inverse.length, inverse.percentHint,
+         dimensionless.length, dimensionless.percentHint, errors, CSS.cm(2).add(CSS.cm(3)).toString()].join('|')
+    "#);
+    assert_eq!(actual, "1|-1|length||length|2|5cm");
+}
