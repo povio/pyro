@@ -1,0 +1,5 @@
+native-adjacent.log:test referrer_policy::a_srcdoc_document_inherits_its_containers_policy ... ok
+native-adjacent.log:test referrer_policy::a_link_into_a_frame_uses_the_navigating_documents_policy ... ok
+native-adjacent.log:test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 492 filtered out; finished in 0.12s
+native.log:test referrer_policy::network_frames_navigated_from_srcdoc_use_the_enclosing_document_as_referrer ... ok
+native.log:test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 493 filtered out; finished in 0.14s

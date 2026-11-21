@@ -1,0 +1,410 @@
+{
+  "base-rapid": {
+    "counts": {
+      "0/src total": 48,
+      "0/src first result": 48,
+      "0/src matched intended source": 48,
+      "0/src HTTP header as standard": 48,
+      "0/src DOM and wire agree": 48,
+      "0/srcdoc total": 48,
+      "0/srcdoc first result": 48,
+      "0/srcdoc matched intended source": 48,
+      "0/srcdoc HTTP header as standard": 0,
+      "0/srcdoc DOM and wire agree": 48
+    },
+    "ms": {
+      "0/src actual ms": [
+        5,
+        67.0,
+        181
+      ],
+      "0/src first ms": [
+        5,
+        67.0,
+        181
+      ],
+      "0/srcdoc actual ms": [
+        5,
+        41.5,
+        206
+      ],
+      "0/srcdoc first ms": [
+        5,
+        41.5,
+        206
+      ]
+    }
+  },
+  "candidate-rapid": {
+    "counts": {
+      "0/src total": 48,
+      "0/src first result": 48,
+      "0/src matched intended source": 48,
+      "0/src HTTP header as standard": 48,
+      "0/src DOM and wire agree": 48,
+      "0/srcdoc total": 48,
+      "0/srcdoc first result": 48,
+      "0/srcdoc matched intended source": 48,
+      "0/srcdoc HTTP header as standard": 48,
+      "0/srcdoc DOM and wire agree": 48
+    },
+    "ms": {
+      "0/src actual ms": [
+        7,
+        83.0,
+        272
+      ],
+      "0/src first ms": [
+        7,
+        83.0,
+        272
+      ],
+      "0/srcdoc actual ms": [
+        6,
+        136.0,
+        453
+      ],
+      "0/srcdoc first ms": [
+        6,
+        136.0,
+        453
+      ]
+    }
+  },
+  "chrome-rapid": {
+    "counts": {
+      "0/src total": 48,
+      "0/src first result": 48,
+      "0/src matched intended source": 48,
+      "0/src HTTP header as standard": 48,
+      "0/src DOM and wire agree": 48,
+      "0/srcdoc total": 48,
+      "0/srcdoc first result": 48,
+      "0/srcdoc matched intended source": 48,
+      "0/srcdoc HTTP header as standard": 48,
+      "0/srcdoc DOM and wire agree": 48
+    },
+    "ms": {
+      "0/src actual ms": [
+        10,
+        101.0,
+        249
+      ],
+      "0/src first ms": [
+        10,
+        101.0,
+        249
+      ],
+      "0/srcdoc actual ms": [
+        9,
+        57.5,
+        229
+      ],
+      "0/srcdoc first ms": [
+        9,
+        57.5,
+        229
+      ]
+    }
+  },
+  "head-rapid": {
+    "counts": {
+      "0/src total": 48,
+      "0/src first result": 48,
+      "0/src matched intended source": 48,
+      "0/src HTTP header as standard": 48,
+      "0/src DOM and wire agree": 48,
+      "0/srcdoc total": 48,
+      "0/srcdoc first result": 48,
+      "0/srcdoc matched intended source": 48,
+      "0/srcdoc HTTP header as standard": 0,
+      "0/srcdoc DOM and wire agree": 48
+    },
+    "ms": {
+      "0/src actual ms": [
+        7,
+        23.0,
+        173
+      ],
+      "0/src first ms": [
+        7,
+        23.0,
+        173
+      ],
+      "0/srcdoc actual ms": [
+        4,
+        28.0,
+        139
+      ],
+      "0/srcdoc first ms": [
+        4,
+        28.0,
+        139
+      ]
+    }
+  },
+  "base-delayed": {
+    "counts": {
+      "7000/src total": 2,
+      "7000/src first result": 2,
+      "7000/src matched intended source": 2,
+      "7000/src HTTP header as standard": 2,
+      "7000/src DOM and wire agree": 2,
+      "11000/src total": 2,
+      "11000/src first complete": 2,
+      "11000/src matched intended source": 2,
+      "11000/src HTTP header as standard": 2,
+      "11000/src DOM and wire agree": 2,
+      "7000/srcdoc total": 2,
+      "7000/srcdoc first result": 2,
+      "7000/srcdoc matched intended source": 2,
+      "7000/srcdoc HTTP header as standard": 0,
+      "7000/srcdoc DOM and wire agree": 2,
+      "11000/srcdoc total": 2,
+      "11000/srcdoc first complete": 2,
+      "11000/srcdoc matched intended source": 2,
+      "11000/srcdoc HTTP header as standard": 0,
+      "11000/srcdoc DOM and wire agree": 2
+    },
+    "ms": {
+      "7000/src actual ms": [
+        7027,
+        7029.5,
+        7032
+      ],
+      "7000/src first ms": [
+        7027,
+        7029.5,
+        7032
+      ],
+      "11000/src actual ms": [
+        11029,
+        11031.0,
+        11033
+      ],
+      "11000/src first ms": [
+        10005,
+        10005.5,
+        10006
+      ],
+      "7000/srcdoc actual ms": [
+        7006,
+        7007.0,
+        7008
+      ],
+      "7000/srcdoc first ms": [
+        7006,
+        7007.0,
+        7008
+      ],
+      "11000/srcdoc actual ms": [
+        11008,
+        11014.0,
+        11020
+      ],
+      "11000/srcdoc first ms": [
+        10002,
+        10002.0,
+        10002
+      ]
+    }
+  },
+  "candidate-delayed": {
+    "counts": {
+      "7000/src total": 2,
+      "7000/src first result": 2,
+      "7000/src matched intended source": 2,
+      "7000/src HTTP header as standard": 2,
+      "7000/src DOM and wire agree": 2,
+      "11000/src total": 2,
+      "11000/src first complete": 2,
+      "11000/src matched intended source": 2,
+      "11000/src HTTP header as standard": 2,
+      "11000/src DOM and wire agree": 2,
+      "7000/srcdoc total": 2,
+      "7000/srcdoc first result": 2,
+      "7000/srcdoc matched intended source": 2,
+      "7000/srcdoc HTTP header as standard": 2,
+      "7000/srcdoc DOM and wire agree": 2,
+      "11000/srcdoc total": 2,
+      "11000/srcdoc first complete": 2,
+      "11000/srcdoc matched intended source": 2,
+      "11000/srcdoc HTTP header as standard": 2,
+      "11000/srcdoc DOM and wire agree": 2
+    },
+    "ms": {
+      "7000/src actual ms": [
+        7066,
+        7091.5,
+        7117
+      ],
+      "7000/src first ms": [
+        7066,
+        7091.5,
+        7117
+      ],
+      "11000/src actual ms": [
+        11068,
+        11068.5,
+        11069
+      ],
+      "11000/src first ms": [
+        10002,
+        10002.5,
+        10003
+      ],
+      "7000/srcdoc actual ms": [
+        7009,
+        7014.5,
+        7020
+      ],
+      "7000/srcdoc first ms": [
+        7009,
+        7014.5,
+        7020
+      ],
+      "11000/srcdoc actual ms": [
+        11012,
+        11012.5,
+        11013
+      ],
+      "11000/srcdoc first ms": [
+        10002,
+        10002.5,
+        10003
+      ]
+    }
+  },
+  "chrome-delayed": {
+    "counts": {
+      "7000/src total": 2,
+      "7000/src first result": 2,
+      "7000/src matched intended source": 2,
+      "7000/src HTTP header as standard": 2,
+      "7000/src DOM and wire agree": 2,
+      "11000/src total": 2,
+      "11000/src first complete": 2,
+      "11000/src matched intended source": 2,
+      "11000/src HTTP header as standard": 2,
+      "11000/src DOM and wire agree": 2,
+      "7000/srcdoc total": 2,
+      "7000/srcdoc first result": 2,
+      "7000/srcdoc matched intended source": 2,
+      "7000/srcdoc HTTP header as standard": 2,
+      "7000/srcdoc DOM and wire agree": 2,
+      "11000/srcdoc total": 2,
+      "11000/srcdoc first complete": 2,
+      "11000/srcdoc matched intended source": 2,
+      "11000/srcdoc HTTP header as standard": 2,
+      "11000/srcdoc DOM and wire agree": 2
+    },
+    "ms": {
+      "7000/src actual ms": [
+        7020,
+        7022.0,
+        7024
+      ],
+      "7000/src first ms": [
+        7020,
+        7022.0,
+        7024
+      ],
+      "11000/src actual ms": [
+        11013,
+        11015.5,
+        11018
+      ],
+      "11000/src first ms": [
+        10002,
+        10002.0,
+        10002
+      ],
+      "7000/srcdoc actual ms": [
+        7023,
+        7024.5,
+        7026
+      ],
+      "7000/srcdoc first ms": [
+        7023,
+        7024.5,
+        7026
+      ],
+      "11000/srcdoc actual ms": [
+        11104,
+        11131.0,
+        11158
+      ],
+      "11000/srcdoc first ms": [
+        10001,
+        10002.0,
+        10003
+      ]
+    }
+  },
+  "head-delayed": {
+    "counts": {
+      "7000/src total": 2,
+      "7000/src first result": 2,
+      "7000/src matched intended source": 2,
+      "7000/src HTTP header as standard": 2,
+      "7000/src DOM and wire agree": 2,
+      "11000/src total": 2,
+      "11000/src first complete": 2,
+      "11000/src matched intended source": 2,
+      "11000/src HTTP header as standard": 2,
+      "11000/src DOM and wire agree": 2,
+      "7000/srcdoc total": 2,
+      "7000/srcdoc first result": 2,
+      "7000/srcdoc matched intended source": 2,
+      "7000/srcdoc HTTP header as standard": 0,
+      "7000/srcdoc DOM and wire agree": 2,
+      "11000/srcdoc total": 2,
+      "11000/srcdoc first complete": 2,
+      "11000/srcdoc matched intended source": 2,
+      "11000/srcdoc HTTP header as standard": 0,
+      "11000/srcdoc DOM and wire agree": 2
+    },
+    "ms": {
+      "7000/src actual ms": [
+        7012,
+        7012.0,
+        7012
+      ],
+      "7000/src first ms": [
+        7012,
+        7012.0,
+        7012
+      ],
+      "11000/src actual ms": [
+        11011,
+        11018.0,
+        11025
+      ],
+      "11000/src first ms": [
+        10001,
+        10002.5,
+        10004
+      ],
+      "7000/srcdoc actual ms": [
+        7011,
+        7018.5,
+        7026
+      ],
+      "7000/srcdoc first ms": [
+        7011,
+        7018.5,
+        7026
+      ],
+      "11000/srcdoc actual ms": [
+        11008,
+        11009.0,
+        11010
+      ],
+      "11000/srcdoc first ms": [
+        10000,
+        10001.0,
+        10002
+      ]
+    }
+  }
+}

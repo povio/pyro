@@ -1,0 +1,17 @@
+[
+  "referrer-policy/gen/iframe.http-rp/no-referrer/iframe-tag.http.html",
+  "referrer-policy/gen/iframe.http-rp/unset/iframe-tag.http.html",
+  "referrer-policy/gen/iframe.meta/no-referrer/iframe-tag.http.html",
+  "referrer-policy/gen/iframe.meta/origin/a-tag.http.html",
+  "referrer-policy/gen/iframe.meta/strict-origin-when-cross-origin/iframe-tag.http.html",
+  "referrer-policy/gen/iframe.meta/unsafe-url/iframe-tag.http.html",
+  "referrer-policy/gen/iframe.meta/unset/iframe-tag.http.html",
+  "referrer-policy/gen/srcdoc-inherit.http-rp/origin-when-cross-origin/iframe-tag.http.html",
+  "referrer-policy/gen/srcdoc-inherit.http-rp/unset/iframe-tag.http.html",
+  "referrer-policy/gen/srcdoc-inherit.meta/no-referrer-when-downgrade/iframe-tag.http.html",
+  "referrer-policy/gen/srcdoc-inherit.meta/no-referrer-when-downgrade/xhr.http.html",
+  "referrer-policy/gen/srcdoc-inherit.meta/origin-when-crossorigin/iframe-tag.http.html",
+  "referrer-policy/gen/srcdoc.meta/never/iframe-tag.http.html",
+  "referrer-policy/gen/srcdoc.meta/strict-origin/iframe-tag.http.html",
+  "referrer-policy/gen/srcdoc.meta/unsafe-url/iframe-tag.http.html"
+]

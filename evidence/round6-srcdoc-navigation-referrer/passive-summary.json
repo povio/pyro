@@ -1,0 +1,224 @@
+{
+  "observed2-head": [
+    {
+      "url": "referrer-policy/gen/iframe.http-rp/no-referrer/iframe-tag.http.html",
+      "events": 182,
+      "topCompletion": null
+    },
+    {
+      "url": "referrer-policy/gen/iframe.http-rp/unset/iframe-tag.http.html",
+      "events": 182,
+      "topCompletion": null
+    },
+    {
+      "url": "referrer-policy/gen/iframe.meta/unsafe-url/iframe-tag.http.html",
+      "events": 182,
+      "topCompletion": null
+    },
+    {
+      "url": "referrer-policy/gen/srcdoc.meta/unsafe-url/iframe-tag.http.html",
+      "events": 174,
+      "topCompletion": {
+        "ms": 10025,
+        "source": "child-0",
+        "status": 2,
+        "lastEventMs": 370,
+        "lastEvent": "load",
+        "quietMs": 9655
+      },
+      "lastCommand": {
+        "key": "2198e549-cb13-44e0-a327-d0f2fc80c9dc",
+        "ms": 361,
+        "responses": [
+          [
+            200,
+            366
+          ]
+        ],
+        "observedEchoMessages": 0,
+        "atLoad": [
+          {
+            "ms": 370,
+            "recv": "7mgdm504agb",
+            "parentSlot": 0,
+            "scopeSlot": 7,
+            "resultDefined": "object",
+            "documentReferrer": "",
+            "echoedServerReferrer": null
+          },
+          {
+            "ms": 370,
+            "recv": "sfkxkahiov",
+            "parentSlot": 0,
+            "scopeSlot": 7,
+            "resultDefined": "object",
+            "documentReferrer": "",
+            "echoedServerReferrer": null
+          }
+        ]
+      }
+    }
+  ],
+  "observed2-chrome158": [
+    {
+      "url": "referrer-policy/gen/iframe.http-rp/no-referrer/iframe-tag.http.html",
+      "events": 149,
+      "topCompletion": null
+    },
+    {
+      "url": "referrer-policy/gen/iframe.http-rp/unset/iframe-tag.http.html",
+      "events": 149,
+      "topCompletion": null
+    },
+    {
+      "url": "referrer-policy/gen/iframe.meta/unsafe-url/iframe-tag.http.html",
+      "events": 149,
+      "topCompletion": null
+    },
+    {
+      "url": "referrer-policy/gen/srcdoc.meta/unsafe-url/iframe-tag.http.html",
+      "events": 137,
+      "topCompletion": null
+    }
+  ],
+  "observed2-base": [
+    {
+      "url": "referrer-policy/gen/iframe.http-rp/no-referrer/iframe-tag.http.html",
+      "events": 186,
+      "topCompletion": {
+        "ms": 10042,
+        "source": "child-0",
+        "status": 2,
+        "lastEventMs": 1107,
+        "lastEvent": "load",
+        "quietMs": 8935
+      },
+      "lastCommand": {
+        "key": "16164629-45b7-4ef5-97a3-ff7a4930aa92",
+        "ms": 1040,
+        "responses": [
+          [
+            200,
+            1077
+          ]
+        ],
+        "observedEchoMessages": 0,
+        "atLoad": [
+          {
+            "ms": 1107,
+            "recv": "we2pos6mthh",
+            "parentSlot": 0,
+            "scopeSlot": 7,
+            "resultDefined": "object",
+            "documentReferrer": "",
+            "echoedServerReferrer": null
+          },
+          {
+            "ms": 1107,
+            "recv": "oh22zrfa7ch",
+            "parentSlot": 0,
+            "scopeSlot": 7,
+            "resultDefined": "object",
+            "documentReferrer": "",
+            "echoedServerReferrer": null
+          }
+        ]
+      }
+    },
+    {
+      "url": "referrer-policy/gen/iframe.http-rp/unset/iframe-tag.http.html",
+      "events": 182,
+      "topCompletion": null
+    },
+    {
+      "url": "referrer-policy/gen/iframe.meta/unsafe-url/iframe-tag.http.html",
+      "events": 184,
+      "topCompletion": {
+        "ms": 10034,
+        "source": "child-0",
+        "status": 2,
+        "lastEventMs": 1058,
+        "lastEvent": "load",
+        "quietMs": 8976
+      },
+      "lastCommand": {
+        "key": "48000759-2d71-4cd0-a5ae-a80f7b00bec5",
+        "ms": 1050,
+        "responses": [
+          [
+            200,
+            1053
+          ]
+        ],
+        "observedEchoMessages": 0,
+        "atLoad": [
+          {
+            "ms": 1058,
+            "recv": "nd68ti4nel",
+            "parentSlot": 0,
+            "scopeSlot": 7,
+            "resultDefined": "object",
+            "documentReferrer": "http://web-platform.test:53467/common/security-features/scope/document.py?policyDeliveries=%5B%7B%22deliveryType%22%3A%22meta%22%2C%22key%22%3A%22referrerPolicy%22%2C%22value%22%3A%22unsafe-url%22%7D%5D",
+            "echoedServerReferrer": "http://web-platform.test:53467/common/security-features/scope/document.py?policyDeliveries=%5B%7B%22deliveryType%22%3A%22meta%22%2C%22key%22%3A%22referrerPolicy%22%2C%22value%22%3A%22unsafe-url%22%7D%5D"
+          },
+          {
+            "ms": 1058,
+            "recv": "2ttdgrb19pj",
+            "parentSlot": 0,
+            "scopeSlot": 7,
+            "resultDefined": "object",
+            "documentReferrer": "http://web-platform.test:53467/common/security-features/scope/document.py?policyDeliveries=%5B%7B%22deliveryType%22%3A%22meta%22%2C%22key%22%3A%22referrerPolicy%22%2C%22value%22%3A%22unsafe-url%22%7D%5D",
+            "echoedServerReferrer": "http://web-platform.test:53467/common/security-features/scope/document.py?policyDeliveries=%5B%7B%22deliveryType%22%3A%22meta%22%2C%22key%22%3A%22referrerPolicy%22%2C%22value%22%3A%22unsafe-url%22%7D%5D"
+          }
+        ]
+      }
+    },
+    {
+      "url": "referrer-policy/gen/srcdoc.meta/unsafe-url/iframe-tag.http.html",
+      "events": 166,
+      "topCompletion": {
+        "ms": 10044,
+        "source": "child-0",
+        "status": 2,
+        "lastEventMs": 1071,
+        "lastEvent": "load",
+        "quietMs": 8973
+      },
+      "lastCommand": {
+        "key": "361ead0f-0edd-48b9-986e-51dfd1a47e68",
+        "ms": 1012,
+        "responses": [
+          [
+            301,
+            1015
+          ],
+          [
+            200,
+            1019
+          ]
+        ],
+        "observedEchoMessages": 0,
+        "atLoad": [
+          {
+            "ms": 1071,
+            "recv": "xon6p5y0hgq",
+            "parentSlot": 0,
+            "scopeSlot": 6,
+            "resultDefined": "object",
+            "documentReferrer": "",
+            "echoedServerReferrer": null
+          },
+          {
+            "ms": 1071,
+            "recv": "sees2iq5wxd",
+            "parentSlot": 0,
+            "scopeSlot": 6,
+            "resultDefined": "object",
+            "documentReferrer": "",
+            "echoedServerReferrer": null
+          }
+        ]
+      }
+    }
+  ]
+}
