@@ -227,6 +227,28 @@ pub fn declaration_text(name: &str, value: &str, important: bool) -> Option<Stri
     Some(block.css_text())
 }
 
+/// Whether editing this explicit longhand can change the shorthand serialization
+/// or the relative order of another declaration (including logical/physical pairs).
+pub fn serializes_independently<'a>(name: &str, others: impl Iterator<Item = &'a str>) -> bool {
+    use style::properties::{PropertyDeclarationId as Id, ShorthandId};
+    let Some(id) = property_id(name) else { return false };
+    let Some(Id::Longhand(target)) = id.as_shorthand().err() else { return false };
+    if target.name() != name { return false }
+    let related = |other: style::properties::LonghandId| {
+        other == target || (target.logical_group().is_some() && target.logical_group() == other.logical_group())
+            || target.shorthands().any(|s| s != ShorthandId::All && other.is_longhand_of(s))
+    };
+    for other in others.filter(|&p| p != name) {
+        let Some(id) = property_id(other) else { return false };
+        match id.as_shorthand() {
+            Ok(s) if s == ShorthandId::All || s.longhands().any(related) => return false,
+            Err(Id::Longhand(id)) if related(id) => return false,
+            _ => {}
+        }
+    }
+    true
+}
+
 /// Whether properties `a` and `b` set a longhand in common (`margin` and
 /// `margin-top`, `border` and `border-color`, a property and itself): in a
 /// block, a declaration of one can change what the other reads.

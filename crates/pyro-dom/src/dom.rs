@@ -3399,18 +3399,20 @@ impl Dom {
     /// Set both the CSSOM serialization and the style parser's backing in one DOM mutation.
     pub fn set_cssom_inline_style(&mut self, id: NodeId, canonical: String, semantic: Option<String>) -> DomResult<()> {
         let (i, el) = self.el(id)?;
-        let name = QualName::new(None, ns!(), local_name!("style"));
-        let same_attr = el.attr_local(&name.local) == Some(&canonical);
+        let local = local_name!("style");
+        let slot = el.attrs.iter().position(|a| a.name.local == local && a.name.ns == ns!());
         let backing = semantic.map(std::sync::Arc::new);
-        let changed_backing = el.semantic_style != backing;
-        self.set_attribute_local(id, &name.local, &canonical)?;
+        let semantic_only = el.semantic_style != backing && slot.is_some_and(|k| *el.attrs[k].value == *canonical);
+        match slot {
+            Some(k) => self.change_attr(i, k, &canonical),
+            None => self.append_attr(i, QualName::new(None, ns!(), local.clone()), &canonical),
+        }
         let el = self.n_mut(i).element_mut().unwrap();
         el.semantic_style = backing;
         el.checked_style_backing = true;
-        if same_attr && changed_backing {
-            // The attribute write already advanced tree_version and queued the record.
+        if semantic_only {
             self.bump();
-            self.note(Change::attr(i, &name));
+            self.note(Change::attr(i, &QualName::new(None, ns!(), local)));
         }
         Ok(())
     }

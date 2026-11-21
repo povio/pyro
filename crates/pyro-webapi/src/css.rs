@@ -240,6 +240,85 @@ fn property_arg(name: String) -> String {
 
 pub struct StyleData {
     source: StyleSource,
+    // Owned by a live CSSOM wrapper, never by ordinary DOM elements.
+    edits: RefCell<Option<Box<DeclarationEdits>>>,
+}
+
+struct DeclarationEdits {
+    canonical: String,
+    semantic: Option<String>,
+    slots: Vec<(String, std::ops::Range<usize>, Option<std::ops::Range<usize>>)>,
+}
+
+impl DeclarationEdits {
+    fn source(&self) -> &str { self.semantic.as_deref().unwrap_or(&self.canonical) }
+
+    fn independent_range(text: &str, name: &str) -> Option<std::ops::Range<usize>> {
+        use cssparser::{Delimiter, ParseError, Parser};
+        if !text.contains(name) { return None }
+        let mut parser = Parser::new(text);
+        let mut names = Vec::new();
+        let mut found = None;
+        while !parser.is_exhausted() {
+            parser.skip_whitespace();
+            let start = parser.position().byte_index();
+            let prop = parser.expect_ident_cloned().ok()?;
+            parser.expect_colon().ok()?;
+            parser.parse_until_before(Delimiter::Semicolon, |input| -> Result<(), ParseError<()>> {
+                while input.next().is_ok() {}
+                Ok(())
+            }).ok()?;
+            parser.expect_semicolon().ok()?;
+            if prop.as_ref() == name {
+                if found.is_some() { return None }
+                found = Some(start..parser.position().byte_index());
+            }
+            names.push(prop);
+        }
+        let found = found?;
+        declarations::serializes_independently(name, names.iter().map(|p| p.as_ref())).then_some(found)
+    }
+
+    fn slot(&mut self, name: &str) -> Option<usize> {
+        if let Some(i) = self.slots.iter().position(|(n, ..)| n == name) { return Some(i) }
+        let canonical = Self::independent_range(&self.canonical, name)?;
+        let semantic = match &self.semantic {
+            Some(text) => {
+                let range = Self::independent_range(text, name)?;
+                // An exposed zero may stand for a negative zero in this very longhand.
+                if self.canonical[canonical.clone()] != text[range.clone()] { return None }
+                Some(range)
+            }
+            None => None,
+        };
+        if self.slots.len() == 4 { self.slots.remove(0); }
+        self.slots.push((name.to_owned(), canonical, semantic));
+        Some(self.slots.len() - 1)
+    }
+
+    fn replace(&mut self, slot: usize, css: &str) {
+        fn replace_ranges<'a>(
+            text: &mut String, old: std::ops::Range<usize>, css: &str,
+            ranges: impl Iterator<Item = &'a mut std::ops::Range<usize>>,
+        ) {
+            let delta = css.len() as isize - old.len() as isize;
+            text.replace_range(old.clone(), css);
+            for r in ranges {
+                if r.start >= old.end {
+                    r.start = r.start.checked_add_signed(delta).unwrap();
+                    r.end = r.end.checked_add_signed(delta).unwrap();
+                } else if r.start == old.start {
+                    r.end = r.start + css.len();
+                }
+            }
+        }
+        let canonical = self.slots[slot].1.clone();
+        let semantic = self.slots[slot].2.clone();
+        replace_ranges(&mut self.canonical, canonical, css, self.slots.iter_mut().map(|s| &mut s.1));
+        if let (Some(text), Some(range)) = (&mut self.semantic, semantic) {
+            replace_ranges(text, range, css, self.slots.iter_mut().filter_map(|s| s.2.as_mut()));
+        }
+    }
 }
 
 /// A declaration block as CSSOM sees it: Stylo's declarations, then the
@@ -285,6 +364,8 @@ enum StyleSource {
 }
 
 impl StyleData {
+    fn new(source: StyleSource) -> Self { Self { source, edits: RefCell::default() } }
+
     fn is_keyframe(&self) -> bool {
         matches!(&self.source, StyleSource::Rule { node, .. } if matches!(node.kind, RuleKind::Other { rule_type: 8, .. }))
     }
@@ -331,6 +412,9 @@ impl StyleData {
     fn declaration_rule(&self) -> Option<CssRuleType> {
         if self.is_keyframe() { return Some(CssRuleType::Keyframe); }
         if self.is_page_rule() { return Some(CssRuleType::Page); }
+        if matches!(&self.source, StyleSource::Rule { node, .. } if matches!(node.kind, RuleKind::Other { rule_type: MARGIN_RULE, .. })) {
+            return Some(CssRuleType::Margin);
+        }
         self.is_position_try().then_some(CssRuleType::PositionTry)
     }
 
@@ -339,27 +423,60 @@ impl StyleData {
         self.declaration_rule().is_none_or(|rule| DeclarationBlock::allowed_in_rule(name, rule))
     }
     /// The block's text: the `style` attribute, or the rule's block.
-    fn text(&self) -> String {
+    fn text(&self) -> String { self.text_and_backing().0 }
+
+    fn text_and_backing(&self) -> (String, Option<bool>) {
         match &self.source {
             StyleSource::Inline(el) => {
                 let dom = el.page.dom.borrow();
-                dom.element(el.id).ok().and_then(|e| e.semantic_inline_style().or_else(|| e.attr("style")))
-                    .unwrap_or("").to_owned()
+                let Ok(e) = dom.element(el.id) else { return (String::new(), None) };
+                (e.semantic_inline_style().or_else(|| e.attr_local(&markup5ever::local_name!("style")))
+                    .unwrap_or("").to_owned(), e.checked_inline_style_backing())
             }
-            // pyro: (through the sheet object's accessor: nothing of a sheet not origin-clean.)
-            StyleSource::Rule { owner, .. } if owner.access().is_err() => String::new(),
+            StyleSource::Rule { owner, .. } if owner.access().is_err() => (String::new(), None),
             StyleSource::Rule { node, .. } => match &node.kind {
-                RuleKind::Style { block, .. } | RuleKind::Declarations(block) => block.borrow().clone(),
-                // `@page` (its declarations, not its margin rules), margin and descriptor rules.
+                RuleKind::Style { block, .. } | RuleKind::Declarations(block) =>
+                    (block.borrow().clone(), node.checked_style_backing.get()),
                 RuleKind::Other { text, .. } => {
                     let text = text.borrow();
-                    let Some((_, body)) = split_block(&text) else { return String::new() };
-                    if is_page(node) { page_parts(body).0 } else { body.trim().to_owned() }
+                    let Some((_, body)) = split_block(&text) else { return (String::new(), None) };
+                    (if is_page(node) { page_parts(body).0 } else { body.trim().to_owned() }, None)
                 }
-                _ => String::new(),
+                _ => (String::new(), None),
             },
         }
     }
+
+    /// An independently serialized longhand can be replaced in both strings directly.
+    /// Keying by the actual source also checks edits through other wrappers and DOM APIs.
+    fn replace_independent(&self, text: &str, signed: bool, name: &str, value: &str, important: bool) -> JsResult<bool> {
+        let mut cache = self.edits.borrow_mut();
+        if cache.as_ref().is_none_or(|c| c.source() != text || c.semantic.is_some() != signed) {
+            if !text.contains(name) { return Ok(false) }
+            let canonical = if signed {
+                match &self.source {
+                    StyleSource::Inline(el) => el.page.dom.borrow().get_attribute(el.id, "style").ok().flatten().unwrap_or("").to_owned(),
+                    StyleSource::Rule { .. } => Block::parse(text).css_text(),
+                }
+            } else { text.to_owned() };
+            *cache = Some(Box::new(DeclarationEdits { canonical, semantic: signed.then(|| text.to_owned()), slots: Vec::new() }));
+        }
+        let edit = cache.as_mut().unwrap();
+        let Some(slot) = edit.slot(name) else { return Ok(false) };
+        let Some(css) = declarations::declaration_text(name, value, important) else { return Ok(true) };
+        if !css.strip_prefix(name).is_some_and(|tail| tail.starts_with(':')) { return Ok(false) }
+        if edit.canonical[edit.slots[slot].1.clone()] == css {
+            // An unchanged public string may hide a typed-value change. Let the signed
+            // path compare the parsed declaration as it does for uncached writes.
+            return Ok(!signed);
+        }
+        edit.replace(slot, &css);
+        let (canonical, semantic) = (edit.canonical.clone(), edit.semantic.clone());
+        drop(cache);
+        self.write_semantic(canonical, semantic)?;
+        Ok(true)
+    }
+
     /// Serializes `block` back into the attribute or the rule.
     fn write(&self, block: &Block) -> JsResult<()> {
         let canonical = block.css_text();
@@ -454,11 +571,7 @@ impl StyleData {
         decls.retain(|d| css_property(&d.name));
         decls
     }
-    fn signed_block(&self, text: &str) -> Option<Block> {
-        let known = match &self.source {
-            StyleSource::Inline(el) => el.page.dom.borrow().element(el.id).ok()?.checked_inline_style_backing(),
-            StyleSource::Rule { node, .. } => node.checked_style_backing.get(),
-        };
+    fn signed_block(text: &str, known: Option<bool>) -> Option<Block> {
         match known {
             Some(false) => None,
             Some(true) => Some(Block::parse(text)),
@@ -499,10 +612,17 @@ impl StyleData {
         if !css_property(name) {
             return Ok(());
         }
-        let text = self.text();
+        let (text, known) = self.text_and_backing();
+        let may_need_backing = declarations::may_need_signed_zero_backing(value);
+        if let Some(signed) = known
+            && !may_need_backing && text.len() <= 8192 && !unparsed(name)
+            && self.replace_independent(&text, signed, name, value, important)?
+        {
+            return Ok(());
+        }
         let mut incoming = None;
-        let mut signed = self.signed_block(&text);
-        if signed.is_none() && !unparsed(name) && declarations::may_need_signed_zero_backing(value) {
+        let mut signed = Self::signed_block(&text, known);
+        if signed.is_none() && !unparsed(name) && may_need_backing {
             let mut declaration = DeclarationBlock::parse("");
             if declaration.set(name, value, important).is_none() { return Ok(()); }
             if declaration.css_for_reparse().is_some() { signed = Some(Block::parse(&text)); }
@@ -565,7 +685,7 @@ impl StyleData {
     }
     /// `removeProperty(name)`: the value it had.
     fn remove(&self, name: &str) -> JsResult<String> {
-        let text = self.text();
+        let (text, known) = self.text_and_backing();
         if let Some(rule) = self.declaration_rule() {
             let mut block = DeclarationBlock::parse_in_rule(&text, rule);
             let old = block.value(name);
@@ -580,7 +700,7 @@ impl StyleData {
         if !text.contains(':') {
             return Ok(String::new());
         }
-        if let Some(mut block) = self.signed_block(&text) {
+        if let Some(mut block) = Self::signed_block(&text, known) {
             let old = if unparsed(name) {
                 let Some(i) = block.kept.iter().position(|d| d.name == name) else { return Ok(String::new()) };
                 block.kept.remove(i).value
@@ -714,7 +834,7 @@ pub fn inline_style<'s>(s: &Scope<'s>, page: &PageDom, id: NodeId) -> JsResult<O
         return Ok(o);
     }
     let page = crate::target::page_of(s)?;
-    s.wrap::<CssStyleProperties>(StyleData { source: StyleSource::Inline(NodeHold::new(&page, id)?) }, Some(key))
+    s.wrap::<CssStyleProperties>(StyleData::new(StyleSource::Inline(NodeHold::new(&page, id)?)), Some(key))
 }
 
 // ----- stylesheets ------------------------------------------------------------
@@ -848,17 +968,28 @@ impl RuleNode {
                 let decls = DeclarationBlock::keyframe(body).css_text();
                 if decls.is_empty() { format!("{head} {{ }}") } else { format!("{head} {{ {decls} }}") }
             }
+            RuleKind::Other { rule_type: MARGIN_RULE, text } => {
+                let text = text.borrow();
+                canonical_margin_text(&text).unwrap_or_else(|| text.clone())
+            }
             RuleKind::Other { rule_type, text } if *rule_type == 6 || text.borrow().starts_with("@position-try ") => {
                 let text = text.borrow();
                 if !declarations::may_need_signed_zero_backing(&text) { return text.clone(); }
                 let Some((head, body)) = split_block(&text) else { return text.clone() };
-                let (block, margins) = if *rule_type == 6 {
+                let (block, mut margins) = if *rule_type == 6 {
                     let (decls, margins) = page_parts(body);
                     (DeclarationBlock::page(&decls), margins)
                 } else {
                     (DeclarationBlock::position_try(body), Vec::new())
                 };
-                if block.css_for_reparse().is_none() { return text.clone(); }
+                let mut changed = block.css_for_reparse().is_some();
+                for margin in &mut margins {
+                    if let Some(canonical) = canonical_margin_text(margin) {
+                        *margin = canonical;
+                        changed = true;
+                    }
+                }
+                if !changed { return text.clone(); }
                 let inner = std::iter::once(block.css_text()).chain(margins)
                     .filter(|part| !part.is_empty()).collect::<Vec<_>>().join(" ");
                 format!("{head} {{ {inner} }}")
@@ -1000,7 +1131,7 @@ fn insert_into(
         }
         let declarations = DeclarationBlock::parse(rule);
         if declarations.is_empty() { return Err(invalid()); }
-        Ok(ParsedRule::Declarations(declarations.css_text()))
+        Ok(ParsedRule::Declarations(declarations.source_text()))
     })?];
     // CSSOM "insert a CSS rule": past the end is an IndexSizeError; @import and
     // @namespace only belong at the top of a sheet.
@@ -1289,11 +1420,11 @@ impl JsClass for CssStyleRule {
                     return Ok(o.value());
                 }
                 let source = StyleSource::Rule { owner: r.owner.hold()?, node: r.node()?.clone() };
-                Ok(s.wrap::<CssStyleProperties>(StyleData { source }, Some(key))?.value())
+                Ok(s.wrap::<CssStyleProperties>(StyleData::new(source), Some(key))?.value())
             },
             |_s, r, v| {
                 let source = StyleSource::Rule { owner: r.owner.hold()?, node: r.node()?.clone() };
-                StyleData { source }.set_css_text(&dom_string(v)?)
+                StyleData::new(source).set_css_text(&dom_string(v)?)
             },
         );
         // CSS Typed OM: the declaration block as a StylePropertyMap.
@@ -1303,7 +1434,7 @@ impl JsClass for CssStyleRule {
                 Some(o) => o.value(),
                 None => {
                     let source = StyleSource::Rule { owner: r.owner.hold()?, node: r.node()?.clone() };
-                    s.wrap::<CssStyleProperties>(StyleData { source }, Some(key))?.value()
+                    s.wrap::<CssStyleProperties>(StyleData::new(source), Some(key))?.value()
                 }
             };
             let page = crate::target::page_of(s)?;
@@ -1378,6 +1509,15 @@ fn split_block(text: &str) -> Option<(&str, &str)> {
     let open = if text.starts_with("@position-try ") { text.find(" { ")? + 1 } else { text.find('{')? };
     let close = text.rfind('}').filter(|&c| c > open)?;
     Some((text[..open].trim_end(), &text[open + 1..close]))
+}
+
+/// Public margin-rule text when the internal declaration source retains a negative zero.
+fn canonical_margin_text(text: &str) -> Option<String> {
+    if !declarations::may_need_signed_zero_backing(text) { return None; }
+    let (name, body) = split_block(text)?;
+    let block = DeclarationBlock::parse_in_rule(body, CssRuleType::Margin);
+    block.css_for_reparse()?;
+    Some(format!("{name} {{ {} }}", block.css_text()))
 }
 
 /// A `@page` body split into its declarations and its margin at-rules.
@@ -1638,7 +1778,7 @@ rule_class!(CssImportRule, "CSSImportRule", CssRule, |def| {
 rule_class!(CssFontFaceRule, "CSSFontFaceRule", CssRule, |def| {
     def.accessor("style", rule_style::<CssFontFaceDescriptors>, |_s, rule, value| {
         let source = StyleSource::Rule { owner: rule.owner.hold()?, node: rule.node()?.clone() };
-        StyleData { source }.set_css_text(&dom_string(value)?)
+        StyleData::new(source).set_css_text(&dom_string(value)?)
     });
 });
 
@@ -1671,7 +1811,7 @@ fn rule_style<'s, C: JsClass<Data = StyleData>>(s: &Scope<'s>, r: &RuleData) -> 
         return Ok(o.value());
     }
     let source = StyleSource::Rule { owner: r.owner.hold()?, node: r.node()?.clone() };
-    Ok(s.wrap::<C>(StyleData { source }, Some(key))?.value())
+    Ok(s.wrap::<C>(StyleData::new(source), Some(key))?.value())
 }
 
 macro_rules! descriptor_accessors {
@@ -1706,7 +1846,7 @@ rule_class!(CssMarginRule, "CSSMarginRule", CssRule, |def| {
     def.getter("name", |s, r| Ok(s.string(&at_name(&rule_text(r)))));
     def.accessor("style", rule_style::<CssStyleProperties>, |_s, r, v| {
         let source = StyleSource::Rule { owner: r.owner.hold()?, node: r.node()?.clone() };
-        StyleData { source }.set_css_text(&dom_string(v)?)
+        StyleData::new(source).set_css_text(&dom_string(v)?)
     });
 });
 
@@ -1738,7 +1878,7 @@ fn page_selector(text: &str) -> Option<String> {
 rule_class!(CssPageRule, "CSSPageRule", CssGroupRule, |def| {
     def.accessor("style", rule_style::<CssPageDescriptors>, |_s, r, v| {
         let source = StyleSource::Rule { owner: r.owner.hold()?, node: r.node()?.clone() };
-        StyleData { source }.set_css_text(&dom_string(v)?)
+        StyleData::new(source).set_css_text(&dom_string(v)?)
     });
     def.accessor(
         "selectorText",
@@ -1770,7 +1910,7 @@ rule_class!(CssKeyframeRule, "CSSKeyframeRule", CssRule, |def| {
     });
     def.accessor("style", rule_style::<CssStyleProperties>, |_s, r, value| {
         let source = StyleSource::Rule { owner: r.owner.hold()?, node: r.node()?.clone() };
-        StyleData { source }.set_css_text(&dom_string(value)?)
+        StyleData::new(source).set_css_text(&dom_string(value)?)
     });
 });
 
@@ -1970,7 +2110,7 @@ fn property_rule(data: &RuleData) -> JsResult<&PropertyRule> {
 rule_class!(CssNestedDeclarations, "CSSNestedDeclarations", CssRule, |def| {
     def.accessor("style", rule_style::<CssStyleProperties>, |_s, r, v| {
         let source = StyleSource::Rule { owner: r.owner.hold()?, node: r.node()?.clone() };
-        StyleData { source }.set_css_text(&dom_string(v)?)
+        StyleData::new(source).set_css_text(&dom_string(v)?)
     });
 });
 
@@ -2007,7 +2147,7 @@ rule_class!(CssPositionTryRule, "CSSPositionTryRule", CssRule, |def| {
     });
     def.accessor("style", rule_style::<CssPositionTryDescriptors>, |_s, r, v| {
         let source = StyleSource::Rule { owner: r.owner.hold()?, node: r.node()?.clone() };
-        StyleData { source }.set_css_text(&dom_string(v)?)
+        StyleData::new(source).set_css_text(&dom_string(v)?)
     });
 });
 

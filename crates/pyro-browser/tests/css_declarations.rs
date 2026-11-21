@@ -793,3 +793,49 @@ fn connected_keyframe_edits_retain_signed_zero_and_keyframe_grammar() {
     "#);
     assert_eq!(result, "-1|-1|-1|-1|true|true|true|13");
 }
+
+#[test]
+fn margin_rule_keeps_signed_zero_private_during_cssom_edits() {
+    let (_t, realm) = page();
+    let result = eval(&realm, r#"
+        const sheet = new CSSStyleSheet();
+        sheet.replaceSync('@page { @top-left { width:calc(1px * sign(-0em)); } }');
+        const pageRule = sheet.cssRules[0], margin = pageRule.cssRules[0];
+        margin.style.color = 'red';
+        const serializations = () => [margin.style.width, margin.style.cssText, margin.cssText, pageRule.cssText];
+        const clean = () => serializations().every(t => t.includes('0em') && !t.includes('-0em'));
+        const set = clean();
+        margin.style.removeProperty('color');
+        [set, clean()].join('|')
+    "#);
+    assert_eq!(result, "true|true");
+}
+
+#[test]
+fn cached_longhand_writes_follow_external_edits_ranges_and_priority() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        const el = document.body.appendChild(document.createElement('div'));
+        const style = el.style, z = 'clamp(-1, 1 / sign(-0em), 1)';
+        style.cssText = `opacity: .2; --label: "a;b"; z-index: ${z}; color: red; letter-spacing: 1px`;
+        style.opacity = '0.75';
+        style.letterSpacing = '120px';
+        style.color = 'rebeccapurple';
+        style.opacity = '1';
+        style.letterSpacing = '3px';
+        style.setProperty('color', 'blue', 'important');
+        const read = () => getComputedStyle(el);
+        const out = [read().zIndex, style.opacity, style.letterSpacing, style.getPropertyPriority('color'),
+                     style.getPropertyValue('--label'), !el.getAttribute('style').includes('-0em')];
+        el.setAttribute('style', `color: green; z-index: ${z}; margin-left: 4px; margin-inline-start: 9px; opacity: .25`);
+        style.opacity = '0.5';
+        style.marginLeft = '7px';
+        out.push(read().color, read().marginLeft, read().zIndex, style.letterSpacing,
+                 style.getPropertyPriority('color'), style.opacity);
+        style.margin = '2px 4px';
+        style.marginLeft = '11px';
+        out.push(read().marginLeft, read().marginRight, read().zIndex);
+        out.join('|')
+    "#);
+    assert_eq!(actual, r#"-1|1|3px|important|"a;b"|true|rgb(0, 128, 0)|7px|-1|||0.5|11px|4px|-1"#);
+}
