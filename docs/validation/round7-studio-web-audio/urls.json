@@ -1,0 +1,12 @@
+[
+  "webaudio/the-audio-api/the-audioparam-interface/k-rate-gain.html",
+  "webaudio/the-audio-api/the-analysernode-interface/test-analyser-output.html",
+  "webaudio/the-audio-api/the-analysernode-interface/test-analysernode.html",
+  "webaudio/the-audio-api/the-analysernode-interface/realtimeanalyser-fft-scaling.html",
+  "webaudio/the-audio-api/the-analysernode-interface/realtimeanalyser-fft-sizing.html",
+  "webaudio/the-audio-api/the-analysernode-interface/test-analyser-gain.html",
+  "webaudio/the-audio-api/the-analysernode-interface/test-analyser-minimum.html",
+  "webaudio/the-audio-api/the-analysernode-interface/test-analyser-scale.html",
+  "webaudio/the-audio-api/the-analysernode-interface/realtimeanalyser-basic.html",
+  "webaudio/the-audio-api/the-analysernode-interface/ctor-analyser.html"
+]

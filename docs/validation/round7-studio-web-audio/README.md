@@ -1,0 +1,17 @@
+# Ordinary Web Audio: AnalyserNode on Studio
+
+Parent `c6600a40c`; candidate `0b75234ff43889ed1396e47a04374e3112048cca`. WPT `a421f2fea5eb7f91e0db399e44b0fb0779ee1603`. Selection source `01f49f43`: IDL harness was the largest mixed gap (+438 Chrome passes), then AudioParam nominal ranges (+96 on one page). The absent AnalyserNode accounted for a coherent +60 constructor and +39 FFT-sizing gap plus independent signal coverage. Only nine explicit ordinary analyser pages and the already-green k-rate gain control ran. No unrestricted directory execution, crash/withheld fixtures, or corpus extrapolation.
+
+| Engine | Strict pages | Passing / emitted subtests | Runner wall |
+|---|---:|---:|---:|
+| Parent twice | 1/10 | 36/66 | 227, 251 ms |
+| Candidate twice | 9/10 | 143/144 | 190, 168 ms |
+| Signed Chrome 158.0.8127.37, autoplay permitted | 10/10 | 144/144 | 1627 ms |
+
+Net +8 strict pages and +107 passes. Exact (URL, name) reconciliation: 33 Pass→Pass, 13 Fail→Pass, 97 new passing names, 1 Fail→Fail, 16 failing names removed, 3 passing names removed, zero Pass→Fail. The three removed passes were exception assertions whose names included “undefined is not a constructor”; the candidate now tests the actual constructor. Only 72 of the 110 added or improved names are byte-identical passing names in native Chrome. Audit.js embeds engine-specific exception/debug text. Parent and candidate repeat status maps are identical to their first runs. The only remaining failed page, `test-analyser-minimum.html`, requires the separate unimplemented ScriptProcessorNode. Realtime contexts in Pyro remain clock-only; no device rendering claim.
+
+`tests/e2e/audio-analyser.mjs` exercises the native signed browser and candidate against the same analytic signal. Both preserve independent stereo outputs, record mono history on an unconnected output, retain older samples on increasing FFT size, leave a destination suffix untouched, map 0.25 to byte 160, and return −25.596813201904297 dB on both same-quantum DC reads. `control-24781.json` is candidate; `control-24782.json` is Chrome. WPT also tests sine peak scaling over all supported FFT sizes. `codesign --verify` succeeded for the installed Google Chrome.app (Google LLC, EQHXZ8M8AV). The initial default-autoplay Chrome run (`chrome.json.gz`) timed out on the realtime silence page; retained, not counted as a pass. Explicit autoplay enabled for `chrome-autoplay.json.gz`.
+
+Build: Studio `pyro-build`, one build at a time, CARGO_BUILD_JOBS=3, CARGO_PROFILE_WPTITER_INCREMENTAL=false, isolated APFS clone target; parent 157 s, candidate 56 s. SHA-256 parent `82ace2a925881dc21f08d3c6906296816d1d1a95c3ac67a72b876ecc150fabbc`, candidate `a1a0825c76033da487b3948a531e4ebaa4dec989b731d0283cc0f35799b773c3`. Host sample snapshots every ~30 s in `load.log`, covering baseline tests through repeat runs, not the whole parent build: 71.0–94.36% idle, memory free 81–82%. Disk 16 GiB available after testing, before cleanup.
+
+Reproduce: install bench dependencies, run `bun bench/wpt/serve.mjs "$WPT_DIR" 24780`, then `bun bench/wpt/run.mjs --base http://127.0.0.1:24780 --wpt "$WPT_DIR" --dirs webaudio --tests docs/validation/round7-studio-web-audio/urls.json --jobs 1 --bin label=/absolute/path/to/pyro --out result.json`. Use the included Chrome launcher instead of Pyro for native WPT (create its isolated profile parent first). For direct controls, start each CDP server and run `bun tests/e2e/audio-analyser.mjs http://127.0.0.1:PORT`.

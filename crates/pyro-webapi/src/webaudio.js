@@ -695,6 +695,110 @@
   }
   webidl(GainNode, 'GainNode');
 
+  const analysers = new WeakMap();
+  function analyserOf(self) {
+    const state = analysers.get(self);
+    if (!state) throw invocation();
+    return state;
+  }
+  function analyserSpectrum(state) {
+    if (!state.dirty) return;
+    const size = state.size, real = new F64(size), imaginary = new F64(size);
+    for (let index = 0, reversed = 0; index < size; index++) {
+      const angle = 2 * PI * index / size;
+      const sample = state.history[(state.cursor - size + index) & 32767];
+      real[reversed] = sample * (0.42 - 0.5 * cos(angle) + 0.08 * cos(2 * angle));
+      let bit = size >> 1;
+      while (bit && (reversed & bit)) { reversed ^= bit; bit >>= 1; }
+      reversed ^= bit;
+    }
+    for (let width = 2; width <= size; width *= 2) {
+      const half = width / 2;
+      for (let offset = 0; offset < half; offset++) {
+        const angle = -2 * PI * offset / width, cosine = cos(angle), sine = sin(angle);
+        for (let left = offset; left < size; left += width) {
+          const right = left + half;
+          const re = real[right] * cosine - imaginary[right] * sine;
+          const im = real[right] * sine + imaginary[right] * cosine;
+          real[right] = real[left] - re; imaginary[right] = imaginary[left] - im;
+          real[left] += re; imaginary[left] += im;
+        }
+      }
+    }
+    for (let bin = 0; bin < size / 2; bin++) {
+      state.spectrum[bin] = state.smoothing * state.spectrum[bin] + (1 - state.smoothing) * hypot(real[bin], imaginary[bin]) / size;
+    }
+    state.dirty = false;
+  }
+  function readAnalyser(self, array, frequency, bytes) {
+    const state = analyserOf(self);
+    const type = bytes ? 'Uint8Array' : 'Float32Array';
+    if (apply(arrayKind, array, []) !== type) throw new TypeErrorC(`Expected a ${type}`);
+    const buffer = apply(arrayBufferOf, array, []);
+    apply(bufferLength, buffer, []);
+    if (resizable && apply(resizable, buffer, [])) throw new TypeErrorC('Expected a fixed-length ArrayBuffer');
+    const count = min(apply(arrayLength, array, []), frequency ? state.size / 2 : state.size);
+    if (frequency) analyserSpectrum(state);
+    for (let index = 0; index < count; index++) {
+      const value = frequency ? 20 * Math.log10(state.spectrum[index]) : state.history[(state.cursor - state.size + index) & 32767];
+      array[index] = bytes ? min(255, max(0, floor(frequency ? 255 * (value - state.low) / (state.high - state.low) : 128 * (1 + value)))) : value;
+    }
+  }
+  class AnalyserNode extends AudioNode {
+    constructor(context, options) {
+      contextArg(context, 'AnalyserNode');
+      super(secret, context, {});
+      const node = nodeOf(this), opts = nodeOptions(node, options, 'AnalyserNode');
+      const { fftSize = 2048, maxDecibels = -30, minDecibels = -100, smoothingTimeConstant = 0.8 } = opts;
+      const high = finite(maxDecibels, 'construct', 'AnalyserNode', 'double'), low = finite(minDecibels, 'construct', 'AnalyserNode', 'double');
+      if (low >= high) throw new DE('Invalid decibel range.', 'IndexSizeError');
+      const state = { history: new F32(32768), cursor: 0, low, high };
+      analysers.set(this, state);
+      this.fftSize = fftSize;
+      this.smoothingTimeConstant = smoothingTimeConstant;
+      (ctxOf(context).analyserNodes ??= new Set()).add(new WeakRefC(node));
+      node.process = (frame, quantum) => {
+        const bus = input(node, quantum, frame) ?? silentBus();
+        const mono = new F32(QUANTUM);
+        mix(bus, [mono], 'speakers');
+        state.history.set(mono, state.cursor);
+        state.cursor = (state.cursor + QUANTUM) & 32767;
+        state.dirty = true;
+        return bus;
+      };
+    }
+    get fftSize() { return analyserOf(this).size; }
+    set fftSize(value) {
+      const state = analyserOf(this), size = ulong(value);
+      if (size < 32 || size > 32768 || (size & (size - 1))) throw new DE('Invalid FFT size.', 'IndexSizeError');
+      if (state.size !== size) { state.size = size; state.spectrum = new F64(size / 2); state.dirty = true; }
+    }
+    get frequencyBinCount() { return analyserOf(this).size / 2; }
+    get minDecibels() { return analyserOf(this).low; }
+    set minDecibels(value) {
+      const state = analyserOf(this), low = finite(value, 'set', 'AnalyserNode', 'double');
+      if (low >= state.high) throw new DE('Invalid minimum decibels.', 'IndexSizeError');
+      state.low = low;
+    }
+    get maxDecibels() { return analyserOf(this).high; }
+    set maxDecibels(value) {
+      const state = analyserOf(this), high = finite(value, 'set', 'AnalyserNode', 'double');
+      if (high <= state.low) throw new DE('Invalid maximum decibels.', 'IndexSizeError');
+      state.high = high;
+    }
+    get smoothingTimeConstant() { return analyserOf(this).smoothing; }
+    set smoothingTimeConstant(value) {
+      const state = analyserOf(this), smoothing = finite(value, 'set', 'AnalyserNode', 'double');
+      if (smoothing < 0 || smoothing > 1) throw new DE('Invalid smoothing constant.', 'IndexSizeError');
+      state.smoothing = smoothing;
+    }
+    getByteTimeDomainData(array) { readAnalyser(this, array, false, true); }
+    getFloatTimeDomainData(array) { readAnalyser(this, array, false, false); }
+    getByteFrequencyData(array) { readAnalyser(this, array, true, true); }
+    getFloatFrequencyData(array) { readAnalyser(this, array, true, false); }
+  }
+  webidl(AnalyserNode, 'AnalyserNode');
+
   function writeEqualPower(bus, left, right, i, pan, gain) {
     if (bus.length === 1) {
       const angle = (pan + 1) * PI / 4;
@@ -1673,6 +1777,7 @@
     createBufferSource() { return new AudioBufferSourceNode(this); }
     createConvolver() { return new ConvolverNode(this); }
     createGain() { return new GainNode(this); }
+    createAnalyser() { return new AnalyserNode(this); }
     createDelay(maxDelayTime = 1) { return new DelayNode(this, {maxDelayTime}); }
     createPanner() { return new PannerNode(this); }
     createStereoPanner() { return new StereoPannerNode(this); }
@@ -1936,6 +2041,11 @@
       for (let ch = 0; ch < c.channels; ch++) c.output[ch].set(count === QUANTUM ? bus[ch] : bus[ch].subarray(0, count), f0);
       // Started sources nothing pulled still play (and end) on time.
       for (const n of c.sources) if (n.q !== q) pull(n, q, f0);
+      if (c.analyserNodes) for (const ref of c.analyserNodes) {
+        const node = ref.deref();
+        if (!node) c.analyserNodes.delete(ref);
+        else if (node.q !== q) pull(node, q, f0);
+      }
       // Preserve a fed convolver's history even while its output is disconnected.
       if (c.convolverNodes) for (const ref of c.convolverNodes) {
         const n = ref.deref();
@@ -1984,6 +2094,6 @@
   return {
     localImpulseInfo, BaseAudioContext, AudioContext, OfflineAudioContext, AudioBuffer, AudioParam, AudioNode,
     AudioDestinationNode, AudioScheduledSourceNode, AudioBufferSourceNode, OscillatorNode,
-    ConstantSourceNode, GainNode, DelayNode, ConvolverNode, AudioListener, PannerNode, StereoPannerNode, BiquadFilterNode, IIRFilterNode, ChannelMergerNode, ChannelSplitterNode, OfflineAudioCompletionEvent,
+    ConstantSourceNode, GainNode, AnalyserNode, DelayNode, ConvolverNode, AudioListener, PannerNode, StereoPannerNode, BiquadFilterNode, IIRFilterNode, ChannelMergerNode, ChannelSplitterNode, OfflineAudioCompletionEvent,
   };
 })
