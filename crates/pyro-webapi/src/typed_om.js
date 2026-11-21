@@ -1161,6 +1161,19 @@
     return all ? values : values.slice(0, 1);
   };
   const reifyMapValue = (src, name, all) => {
+    if (src.computed && name.startsWith('--')) {
+      const components = src.components(name);
+      if (components) return (all ? components : components.slice(0, 1)).map(([kind, text]) => {
+        switch (kind) {
+          case 'keyword': return new CSSKeywordValue(text);
+          case 'numeric': return parseNumeric(text) ?? plain(name, text);
+          case 'transform-function': return transformFrom(text)?.[0] ?? plain(name, text);
+          case 'transform': return transformFrom(text) ?? plain(name, text);
+          case 'image': if (/^url\(/i.test(text)) return new CSSImageValue(ILLEGAL, text);
+        }
+        return plain(name, text);
+      });
+    }
     // CSS column rules store parsed CSS text as a repeatable list. A scalar
     // supplied through Typed OM keeps its numeric or keyword specified value.
     if (COLUMN_RULE_VALUES.has(name)) {
@@ -1400,6 +1413,7 @@
     const cs = () => getComputedStyle(el);
     return new StylePropertyMapReadOnly(ILLEGAL, {
       computed: true,
+      components: computedValue,
       // Computed values: for the properties whose getComputedStyle value is a resolved (used) one,
       // the style engine's computed value; getComputedStyle's for the rest.
       get: (name) => (RESOLVED.test(name) ? computedValue(name) : null) ?? cs().getPropertyValue(name),

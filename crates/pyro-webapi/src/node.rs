@@ -1269,6 +1269,14 @@ impl JsClass for Element {
                 let name = crate::util::dom_string(a.get(0))?;
                 crate::animation_events::observe(&page, id);
                 let (Ok(layout), Ok(dom)) = (page.layout.try_borrow(), page.dom.try_borrow()) else { return Ok(s.null()) };
+                if name.starts_with("--") {
+                    let Some(parts) = layout.style().registered_value_components(&dom, id, &name) else { return Ok(s.null()) };
+                    let mut values = Vec::with_capacity(parts.len());
+                    for (kind, text) in parts {
+                        values.push(s.array(&[s.string(kind), s.string(&text)])?.value());
+                    }
+                    return Ok(s.array(&values)?.value());
+                }
                 Ok(match layout.typed_computed_value(&dom, id, &name) {
                     Some(v) if !v.is_empty() => s.string(&v),
                     _ => s.null(),

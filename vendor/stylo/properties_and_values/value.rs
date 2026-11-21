@@ -411,6 +411,15 @@ impl SpecifiedValue {
 }
 
 impl ComputedValue {
+    /// The matched computed components, retaining list boundaries and the syntax branch.
+    pub fn components(&self) -> Option<&[ComputedValueComponent]> {
+        match &self.v {
+            ValueInner::Component(value) => Some(std::slice::from_ref(value)),
+            ValueInner::List(list) => Some(&list.components),
+            ValueInner::Universal(_) => None,
+        }
+    }
+
     /// Uncomputes the value so that it can go back into the cascade.
     pub fn to_declared_value(&self) -> properties::CustomDeclarationValue {
         if let ValueInner::Universal(ref var) = self.v {

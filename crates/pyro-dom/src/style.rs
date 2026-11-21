@@ -1022,6 +1022,31 @@ impl StyleEngine {
         })
     }
 
+    pub fn registered_value_components(&self, dom: &Dom, el: NodeId, name: &str) -> Option<Vec<(&'static str, String)>> {
+        use style::properties::PropertyId;
+        use style::properties_and_values::value::ComputedValueComponent as C;
+        use style::values::resolved::{Context, ToResolvedValue};
+        use style_traits::ToCss;
+
+        let name = style::Atom::from(style::custom_properties::parse_name(name).ok()?);
+        let style = self.stylo_style(dom, el)?;
+        let properties = style.custom_properties();
+        let value = properties.inherited.get(&name).or_else(|| properties.non_inherited.get(&name))?;
+        let context = Context { style: &style, for_property: PropertyId::Custom(name), current_longhand: None };
+        Some(value.components()?.iter().map(|component| {
+            let kind = match component {
+                C::CustomIdent(_) => "keyword",
+                C::Image(_) => "image",
+                C::TransformFunction(_) => "transform-function",
+                C::TransformList(_) => "transform",
+                C::Url(_) | C::Color(_) | C::String(_) => "plain",
+                C::Length(_) | C::LengthPercentage(_) | C::Number(_) | C::Integer(_) | C::Percentage(_) |
+                C::Angle(_) | C::Time(_) | C::Resolution(_) => "numeric",
+            };
+            (kind, component.clone().to_resolved_value(&context).to_css_string())
+        }).collect())
+    }
+
     pub fn computed_custom_names(&self, dom: &Dom, el: NodeId, pseudo: &crate::stylo::PseudoArg) -> Vec<String> {
         use crate::stylo::PseudoArg;
         let computed = match pseudo {

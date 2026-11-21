@@ -4949,7 +4949,7 @@ diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
  spec = "https://drafts.csswg.org/css-overflow-4/#webkit-line-clamp"
 diff -ruN a/properties_and_values/value.rs b/properties_and_values/value.rs
 --- a/properties_and_values/value.rs	2026-11-11 19:55:57
-+++ b/properties_and_values/value.rs	2026-11-21 17:15:53
++++ b/properties_and_values/value.rs	2026-11-21 22:30:43
 @@ -215,6 +215,9 @@
      /// Flag indicating whether this value is tainted by an attr().
      #[css(skip)]
@@ -4997,14 +4997,13 @@ diff -ruN a/properties_and_values/value.rs b/properties_and_values/value.rs
      }
  
      /// Parse and validate a registered custom property value according to its syntax descriptor,
-@@ -366,9 +374,18 @@
-             attr_taint,
+@@ -367,8 +375,17 @@
              property_id,
          );
-+
+ 
 +        Self::parse_with_context(&context, input, syntax)
 +    }
- 
++
 +    pub(crate) fn parse_with_context(
 +        context: &ParserContext,
 +        input: &mut CSSParser,
@@ -5026,7 +5025,23 @@ diff -ruN a/properties_and_values/value.rs b/properties_and_values/value.rs
          }
          let v = if let Some(multiplier) = multiplier {
              ValueInner::List(ComponentList {
-@@ -559,9 +576,15 @@
+@@ -394,6 +411,15 @@
+ }
+ 
+ impl ComputedValue {
++    /// The matched computed components, retaining list boundaries and the syntax branch.
++    pub fn components(&self) -> Option<&[ComputedValueComponent]> {
++        match &self.v {
++            ValueInner::Component(value) => Some(std::slice::from_ref(value)),
++            ValueInner::List(list) => Some(&list.components),
++            ValueInner::Universal(_) => None,
++        }
++    }
++
+     /// Uncomputes the value so that it can go back into the cascade.
+     pub fn to_declared_value(&self) -> properties::CustomDeclarationValue {
+         if let ValueInner::Universal(ref var) = self.v {
+@@ -559,9 +585,15 @@
              DataType::Resolution => {
                  SpecifiedValueComponent::Resolution(specified::Resolution::parse(context, input)?)
              },
@@ -5045,7 +5060,7 @@ diff -ruN a/properties_and_values/value.rs b/properties_and_values/value.rs
              DataType::CustomIdent => {
                  let name = CustomIdent::parse(input, &[])?;
                  SpecifiedValueComponent::CustomIdent(name)
-@@ -632,7 +655,7 @@
+@@ -632,13 +664,23 @@
  }
  
  /// An animated value for custom property.
@@ -5054,10 +5069,11 @@ diff -ruN a/properties_and_values/value.rs b/properties_and_values/value.rs
  pub struct CustomAnimatedValue {
      /// The name of the custom property.
      pub(crate) name: crate::custom_properties::Name,
-@@ -641,12 +664,30 @@
+     /// The computed value of the custom property.
+     /// `None` represents the guaranteed-invalid value.
      pub(crate) value: Option<ComputedValue>,
- }
- 
++}
++
 +impl PartialEq for CustomAnimatedValue {
 +    fn eq(&self, other: &Self) -> bool {
 +        // The sampled value goes back into the cascade. A change in its taint alone
@@ -5066,11 +5082,10 @@ diff -ruN a/properties_and_values/value.rs b/properties_and_values/value.rs
 +            && self.value == other.value
 +            && self.value.as_ref().map(|v| v.attr_tainted) == other.value.as_ref().map(|v| v.attr_tainted)
 +    }
-+}
-+
+ }
+ 
  impl Animate for CustomAnimatedValue {
-     fn animate(&self, other: &Self, procedure: Procedure) -> Result<Self, ()> {
-         if self.name != other.name {
+@@ -647,6 +689,14 @@
              return Err(());
          }
          let value = self.value.animate(&other.value, procedure)?;
