@@ -1,0 +1,30 @@
+floatclamp-main-candidate 8082 page passes 5549 named passes 178500 observed names 194540 statuses {'complete:0': 7866, 'complete:2': 106, 'timeout:None': 11, 'complete:1': 98, 'hang:None': 1}
+floatclamp-main-parent 8082 page passes 5551 named passes 178487 observed names 194540 statuses {'complete:0': 7867, 'complete:2': 105, 'timeout:None': 11, 'complete:1': 98, 'hang:None': 1}
+floatclamp-main-stable 8082 page passes 6950 named passes 182963 observed names 194912 statuses {'complete:0': 7986, 'complete:2': 62, 'complete:1': 23, 'timeout:None': 10, 'hang:None': 1}
+floatclamp-main-parent pages left only 0 right only 2
+floatclamp-main-parent passes left only 15 right only 2
+floatclamp-main-parent observed left only 0 right only 0
+floatclamp-main-stable pages left only 272 right only 1673
+floatclamp-main-stable passes left only 5802 right only 10265
+floatclamp-main-stable observed left only 309 right only 681
+Losses vs parent by URL: Counter({'css/css-animations/transition-ready-time-offscreen.html': 1, 'css/css-overflow/scroll-markers/root-scroll-marker-activation-in-iframe.html': 1})
+floatclamp-focus-candidate 10 page passes 5 named passes 362 observed names 444 statuses {'complete:0': 10}
+floatclamp-focus-parent 10 page passes 5 named passes 356 observed names 444 statuses {'complete:0': 10}
+floatclamp-focus-stable 10 page passes 10 named passes 444 observed names 444 statuses {'complete:0': 10}
+floatclamp-focus-parent pages left only 0 right only 0
+floatclamp-focus-parent passes left only 6 right only 0
+floatclamp-focus-parent observed left only 0 right only 0
+floatclamp-focus-stable pages left only 0 right only 5
+floatclamp-focus-stable passes left only 0 right only 82
+floatclamp-focus-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()
+floatclamp-supplement-candidate 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+floatclamp-supplement-parent 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+floatclamp-supplement-stable 41 page passes 35 named passes 619 observed names 874 statuses {'complete:0': 41}
+floatclamp-supplement-parent pages left only 0 right only 0
+floatclamp-supplement-parent passes left only 0 right only 0
+floatclamp-supplement-parent observed left only 0 right only 0
+floatclamp-supplement-stable pages left only 0 right only 8
+floatclamp-supplement-stable passes left only 0 right only 42
+floatclamp-supplement-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()
