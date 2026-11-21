@@ -62,12 +62,33 @@ static MODULE: LazyModule = LazyModule {
     natives: Some(natives),
 };
 
+static VIDEO_FRAMES: LazyModule = LazyModule {
+    key: "lpVideoFrames",
+    source: include_str!("video_frame.js"),
+    url: "pyro://internal/video_frame.js",
+    natives: Some(|s| {
+        let limits = s.object();
+        limits.set_atom("maxSide", s.number(f64::from(pyro_canvas::MAX_SIDE)))?;
+        limits.set_atom("maxArea", s.number(pyro_canvas::MAX_AREA as f64))?;
+        Ok(limits)
+    }),
+};
+
+pub(crate) fn define_video_globals<W>(def: &mut ClassDef<W>)
+where
+    W: JsClass,
+    W::Data: WindowHost,
+{
+    lazy_globals!(def, VIDEO_FRAMES, "VideoFrame", "VideoColorSpace");
+}
+
 /// Adds the lazy interface names to pyro-browser's `Window` class.
 pub(crate) fn define_globals<W>(def: &mut ClassDef<W>)
 where
     W: JsClass,
     W::Data: WindowHost,
 {
+    define_video_globals(def);
     lazy_globals!(
         def,
         MODULE,
@@ -769,7 +790,14 @@ fn image_source(
     if !value.is_object() {
         return Err(not_source());
     }
-    let source = MODULE.helper(s, page, "sourceOf", &[value, s.boolean(image_data)])?;
+    let mut source = MODULE.helper(s, page, "sourceOf", &[value, s.boolean(image_data)])?;
+    if source.is_null() {
+        if let Some(module) = VIDEO_FRAMES.existing(s, page)? {
+            if let Some(source_of) = module.get("canvasSource")?.as_object() {
+                source = source_of.call(None, &[value])?;
+            }
+        }
+    }
     let Some(desc) = source.as_object().filter(|_| source.is_array()) else { return Err(not_source()) };
     let kind = desc.get_index(0)?.to_number()? as u32;
     match kind {
@@ -790,11 +818,18 @@ fn image_source(
                 None => ImageHandle { pixmap: None, width: w, height: h, clean: true },
             }))
         }
-        2 => {
+        // An ImageData or a buffer-backed VideoFrame, both with straight RGBA
+        // pixels. A frame may specify a display size different from the bitmap.
+        2 | 5 => {
             let (w, h) = (size_u32(desc.get_index(2)?.to_number()?), size_u32(desc.get_index(3)?.to_number()?));
             let data = typed_bytes(s, desc.get_index(1)?)?;
             let pixmap = pyro_canvas::pixmap_from_straight(data, w, h).and_then(Bitmap::new);
-            Ok(Some(ImageHandle { pixmap, width: w, height: h, clean: true }))
+            let (width, height) = if kind == 5 {
+                (size_u32(desc.get_index(4)?.to_number()?), size_u32(desc.get_index(5)?.to_number()?))
+            } else {
+                (w, h)
+            };
+            Ok(Some(ImageHandle { pixmap, width, height, clean: true }))
         }
         3 => {
             let blob = s.unwrap::<crate::file::Blob>(desc.get_index(1)?).ok_or_else(not_source)?;
