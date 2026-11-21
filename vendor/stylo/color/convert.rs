@@ -90,13 +90,13 @@ pub fn hsl_to_rgb(from: &ColorComponents) -> ColorComponents {
 pub fn rgb_to_hsl(from: &ColorComponents) -> ColorComponents {
     let ColorComponents(red, green, blue) = *from;
 
-    let (hue, min, max) = rgb_to_hue_min_max(red, green, blue);
+    let (mut hue, min, max) = rgb_to_hue_min_max(red, green, blue);
 
     let lightness = (min + max) / 2.0;
     let delta = max - min;
 
-    let saturation = if delta != 0.0 {
-        if lightness == 0.0 || lightness == 1.0 {
+    let mut saturation = if delta != 0.0 {
+        if lightness.abs() <= 0.00001 || (1.0 - lightness).abs() < 0.00001 {
             0.0
         } else {
             (max - lightness) / lightness.min(1.0 - lightness)
@@ -105,6 +105,14 @@ pub fn rgb_to_hsl(from: &ColorComponents) -> ColorComponents {
         0.0
     };
 
+    if saturation < 0.0 {
+        hue = normalize_hue(hue + 180.0);
+        saturation = -saturation;
+    }
+    if saturation <= 0.00001 {
+        hue = f32::NAN;
+        saturation = 0.0;
+    }
     ColorComponents(hue, saturation * 100.0, lightness * 100.0)
 }
 
@@ -138,14 +146,14 @@ pub fn rgb_to_hwb(from: &ColorComponents) -> ColorComponents {
     let whiteness = min;
     let blackness = 1.0 - max;
 
+    if whiteness + blackness >= 0.99999 {
+        return ColorComponents(f32::NAN, whiteness * 100.0, (1.0 - whiteness) * 100.0);
+    }
     ColorComponents(hue, whiteness * 100.0, blackness * 100.0)
 }
 
-/// Calculate an epsilon for a specified range.
-#[inline]
-pub fn epsilon_for_range(min: f32, max: f32) -> f32 {
-    (max - min) / 1.0e5
-}
+pub(crate) const LCH_CHROMA_EPSILON: f32 = 0.0015;
+pub(crate) const OKLCH_CHROMA_EPSILON: f32 = 0.000004;
 
 /// Convert from the rectangular orthogonal to the cylindrical polar coordinate
 /// system. This is used to convert (ok)lab to (ok)lch.
@@ -156,20 +164,14 @@ pub fn orthogonal_to_polar(from: &ColorComponents, e: f32) -> ColorComponents {
 
     let chroma = (a * a + b * b).sqrt();
 
-    let hue = if a.abs() < e && b.abs() < e {
-        // For extremely small values of a and b ... the reported hue angle
-        // swinging about wildly and being essentially random ... this means
-        // the hue is powerless, and treated as missing when converted into LCH
-        // or Oklch.
-        f32::NAN
-    } else if chroma.abs() < e {
+    let hue = if chroma <= e {
         // Very small chroma values make the hue component powerless.
         f32::NAN
     } else {
         normalize_hue(b.atan2(a).to_degrees())
     };
 
-    ColorComponents(lightness, chroma, hue)
+    ColorComponents(lightness, if chroma <= e { 0.0 } else { chroma }, hue)
 }
 
 /// Convert from the cylindrical polar to the rectangular orthogonal coordinate
@@ -844,7 +846,7 @@ impl ColorSpaceConversion for Lch {
         let lab = Lab::from_xyz(from);
 
         // Then convert the Lab to LCH.
-        orthogonal_to_polar(&lab, epsilon_for_range(0.0, 100.0))
+        orthogonal_to_polar(&lab, LCH_CHROMA_EPSILON)
     }
 
     fn to_gamma_encoded(from: &ColorComponents) -> ColorComponents {
@@ -946,7 +948,7 @@ impl ColorSpaceConversion for Oklch {
         let lab = Oklab::from_xyz(from);
 
         // Then convert Oklab to OkLCH.
-        orthogonal_to_polar(&lab, epsilon_for_range(0.0, 1.0))
+        orthogonal_to_polar(&lab, OKLCH_CHROMA_EPSILON)
     }
 
     fn to_gamma_encoded(from: &ColorComponents) -> ColorComponents {
