@@ -2194,6 +2194,20 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                 } else {
                     item_known_width
                 };
+                let item_known_height = if item.min_size_keyword.height.is_stretch() || item.max_size_keyword.height.is_stretch() {
+                    container_percentage_resolution_height.map(|height| {
+                        let stretch = (height - item_non_auto_margin.vertical_axis_sum()).max(0.0);
+                        let preferred = item_known_height.or(item.size.height).unwrap_or_else(|| tree.measure_child_size(
+                            item.node_id, Size { width: item_known_width, height: None }, parent_size,
+                            Size { width: item_available_width, height: AvailableSpace::MaxContent },
+                            SizingMode::InherentSize, crate::AbsoluteAxis::Vertical, Line::FALSE,
+                        ));
+                        preferred.maybe_clamp(item.min_size.height, item.max_size.height)
+                            .maybe_min(item.max_size_keyword.height.is_stretch().then_some(stretch))
+                            .maybe_max(item.min_size_keyword.height.is_stretch().then_some(stretch))
+                            .maybe_max(item.min_size.height)
+                    }).or(item_known_height)
+                } else { item_known_height };
                 let mut item_layout = tree.perform_child_layout(
                     item.node_id,
                     Size { width: item_known_width, height: item_known_height },

@@ -2076,7 +2076,7 @@ impl LayoutPassState<'_> {
                                     continue;
                                 }
 
-                                let (direction, clear, margin) = {
+                                let (direction, clear, margin, mut box_inputs, min_size_keyword, max_size_keyword) = {
                                     let style = self.child_layout_style(&self.nodes[node_id]);
                                     // We can assume that the box is a float because we only set `break_on_box: true` for floats
                                     let direction = match style.float() {
@@ -2084,18 +2084,52 @@ impl LayoutPassState<'_> {
                                         Float::Right => taffy::FloatDirection::Right,
                                         Float::None => unreachable!(),
                                     };
-                                    (
-                                        direction,
-                                        style.clear(),
-                                        style
-                                            .margin()
-                                            .resolve_or_zero(inputs.parent_size, resolve_calc_value),
-                                    )
+                                    let container_width = width / scale;
+                                    let mut sizing = float_child_inputs;
+                                    sizing.parent_size.width = Some(container_width);
+                                    sizing.available_space.width = AvailableSpace::Definite(container_width);
+                                    let margin = style.margin().resolve_or_zero(sizing.parent_size, resolve_calc_value);
+                                    let box_inputs = inline_box_inputs(
+                                        style.size().width, style.size().height,
+                                        stretch_height.filter(|_| !style.flags.contains(StyleFlags::IS_REPLACED)),
+                                        margin, sizing,
+                                    );
+                                    (direction, style.clear(), margin, box_inputs,
+                                        taffy::BlockItemStyle::min_size_keyword(&style),
+                                        taffy::BlockItemStyle::max_size_keyword(&style))
                                 };
+
+                                let (min_keyword, max_keyword) = (min_size_keyword.width, max_size_keyword.width);
+                                if !min_keyword.is_auto() || !max_keyword.is_auto() {
+                                    let float_id = crate::taffy_node_id(node_id);
+                                    let measure = LayoutInput { run_mode: RunMode::ComputeSize, axis: RequestedAxis::Horizontal, ..box_inputs };
+                                    let preferred = self.compute_child_layout(float_id, measure).size.width;
+                                    let mut limit = |keyword: taffy::Dimension| {
+                                        if keyword.is_auto() { return None; }
+                                        let mut outer = measure;
+                                        outer.available_space.width = AvailableSpace::Definite(width / scale);
+                                        outer.known_dimensions.width = None;
+                                        let mut constrained = inline_box_inputs(keyword, taffy::Dimension::auto(), None, margin, outer);
+                                        constrained.sizing_mode = SizingMode::ContentSize;
+                                        Some(constrained.known_dimensions.width.unwrap_or_else(|| self.compute_child_layout(float_id, constrained).size.width))
+                                    };
+                                    let capped = preferred.maybe_min(limit(max_keyword));
+                                    box_inputs.known_dimensions.width = Some(capped.maybe_max(limit(min_keyword)));
+                                }
+                                if let Some(height) = stretch_height
+                                    && (min_size_keyword.height.is_stretch() || max_size_keyword.height.is_stretch())
+                                {
+                                    let stretch = (height - margin.vertical_axis_sum()).max(0.0);
+                                    let measure = LayoutInput { run_mode: RunMode::ComputeSize, axis: RequestedAxis::Vertical, ..box_inputs };
+                                    let preferred = self.compute_child_layout(crate::taffy_node_id(node_id), measure).size.height;
+                                    box_inputs.known_dimensions.height = Some(preferred
+                                        .maybe_min(max_size_keyword.height.is_stretch().then_some(stretch))
+                                        .maybe_max(min_size_keyword.height.is_stretch().then_some(stretch)));
+                                }
 
                                 let output = self.compute_child_layout(
                                     crate::taffy_node_id(node_id),
-                                    float_child_inputs,
+                                    box_inputs,
                                 );
                                 let float_width = (output.size.width + margin.left + margin.right) * scale;
                                 let float = PendingFloat {
