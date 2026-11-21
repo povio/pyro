@@ -7,19 +7,6 @@ warning: unused field `repository` in `workspace.package`
    = note: `cargo::unused_workspace_package_fields` is set to `warn` by default
 help: consider removing the field `workspace.package.repository`
 warning: workspace (manifest) generated 1 warning
-    Blocking waiting for file lock on build directory
-warning: variant `Cached` is never constructed
-    --> vendor/stylo/stylist.rs:3495:5
-     |
-3493 | enum StylistImplicitScopeRoot {
-     |      ------------------------ variant in this enum
-3494 |     Normal(ImplicitScopeRoot),
-3495 |     Cached(usize),
-     |     ^^^^^^
-     |
-     = note: `StylistImplicitScopeRoot` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
-     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
-
 warning: use of deprecated method `std::sync::atomic::Atomic::<usize>::fetch_update`: renamed to `try_update` for consistency
    --> crates/pyro-raster/src/lib.rs:204:19
     |
@@ -33,9 +20,20 @@ help: replace the use of the deprecated method
 204 +         self.used.try_update(Ordering::AcqRel, Ordering::Acquire, |used| {
     |
 
-warning: `stylo` (lib) generated 1 warning
+warning: variant `Cached` is never constructed
+    --> vendor/stylo/stylist.rs:3495:5
+     |
+3493 | enum StylistImplicitScopeRoot {
+     |      ------------------------ variant in this enum
+3494 |     Normal(ImplicitScopeRoot),
+3495 |     Cached(usize),
+     |     ^^^^^^
+     |
+     = note: `StylistImplicitScopeRoot` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
 warning: `pyro-raster` (lib) generated 1 warning (run `cargo fix --lib -p pyro-raster` to apply 1 suggestion)
-   Compiling pyro-dom v0.0.17 (/Users/xban1x/Library/Caches/lightningpanda/round6-noncss-measure/template-for-study/src/crates/pyro-dom)
+warning: `stylo` (lib) generated 1 warning
 warning: unused import: `style::values::computed::ToComputedValue as _`
    --> crates/pyro-dom/src/animation.rs:263:9
     |
@@ -82,20 +80,21 @@ help: remove these parentheses
     |
 
 warning: `pyro-dom` (test "integration") generated 2 warnings (run `cargo fix --test "integration" -p pyro-dom` to apply 2 suggestions)
-    Finished `wptiter` profile [optimized + debuginfo] target(s) in 3m 25s
-     Running tests/integration.rs (/Users/xban1x/Library/Caches/lightningpanda/round6-noncss-measure/template-for-study/target/wptiter/build/pyro-dom/75466d68b0622067/out/integration-75466d68b0622067)
+    Finished `wptiter` profile [optimized + debuginfo] target(s) in 0.27s
+     Running tests/integration.rs (../target/wptiter/build/pyro-dom/75466d68b0622067/out/integration-75466d68b0622067)
 
-running 10 tests
-test html_processing_instructions::void_elements_serialize_no_children ... ok
+running 11 tests
+test fragment_context::fragment_initializes_form_pointer_from_the_context_tree ... ok
+test fragment_context::range_editing_and_external_fragment_templates_keep_their_contents ... ok
+test fragment_context::explicit_template_end_removes_patch_markers_but_eof_preserves_them ... ok
+test fragment_context::sibling_patches_preserve_the_template_contents_scope ... ok
 test fragment_context::table_in_paragraph_inherits_context_document_quirks ... ok
 test fragment_context::tokenizer_uses_context_document_scripting ... ok
-test html_processing_instructions::noscript_text_is_raw_only_where_scripting_is_enabled ... ok
 test fragment_context::template_fragment_keeps_forms_in_body_and_table_modes ... ok
-test fragment_context::fragment_initializes_form_pointer_from_the_context_tree ... ok
-test fragment_context::explicit_template_end_removes_patch_markers_but_eof_preserves_them ... ok
-test fragment_context::range_editing_and_external_fragment_templates_keep_their_contents ... ok
-test fragment_context::sibling_patches_preserve_the_template_contents_scope ... ok
+test fragment_context::xml_document_setter_preserves_inline_template_markers ... ok
+test html_processing_instructions::noscript_text_is_raw_only_where_scripting_is_enabled ... ok
+test html_processing_instructions::void_elements_serialize_no_children ... ok
 test html_processing_instructions::question_mark_markup_is_a_processing_instruction_when_its_target_is_one ... ok
 
-test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 226 filtered out; finished in 0.00s
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 226 filtered out; finished in 0.00s
 
