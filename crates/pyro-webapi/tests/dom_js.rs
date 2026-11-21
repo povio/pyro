@@ -6684,6 +6684,12 @@ fn style_block_replacement_supersedes_cssom_without_another_sheet_read() {
 }
 
 #[test]
+fn nested_style_blocks_distinguish_braced_variable_values_from_selectors() {
+    let env = env("<style>.outer { color: { var(--x) }; color:hover { width: 2px } }</style>");
+    assert_eq!(eval(&env.main, "const rule = document.styleSheets[0].cssRules[0]; [rule.style.color, rule.cssRules[0].selectorText].join('|')"), "{ var(--x) }|& color:hover");
+}
+
+#[test]
 fn page_descriptor_edits_use_page_grammar() {
     let env = env("<style>@page { size: A4; page-orientation: rotate-right; @top-left { content: 'x' } }</style>");
     let realm = &env.main;

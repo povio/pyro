@@ -142,6 +142,14 @@ fn parse_list(p: &mut Parser<'_>, namespaces: &mut Namespaces, top: bool, relati
         if relative != ParseRelative::No && matches!(token, Token::Ident(_)) {
             let after_name = p.state();
             if p.expect_colon().is_ok() {
+                if !matches!(&token, Token::Ident(name) if name.starts_with("--")) {
+                    let value_start = p.state();
+                    if p.expect_curly_bracket_block().is_ok() {
+                        skip_block(p);
+                    } else {
+                        p.reset(&value_start);
+                    }
+                }
                 let end = loop {
                     let before = p.position();
                     match p.next_including_whitespace_and_comments() {
