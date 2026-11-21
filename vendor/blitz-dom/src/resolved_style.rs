@@ -363,6 +363,7 @@ impl BaseDocument {
         let (live, sampled) = (live.get_position(), sampled.get_position());
         let sizes = if width { (&live.width, &sampled.width) } else { (&live.height, &sampled.height) };
         let calculation = match (sizes.0.prepared_size(), sizes.1.prepared_size()) {
+            (Size::CalcSizeAny(_) | Size::CalcSizePercentage(_), Size::CalcSizeAny(value) | Size::CalcSizePercentage(value)) => value,
             (Size::CalcSizeAuto(_), Size::CalcSizeAuto(value)) |
             (Size::CalcSizeStretch(_), Size::CalcSizeStretch(value)) |
             (Size::CalcSizeFitContent(_), Size::CalcSizeFitContent(value)) |
@@ -370,7 +371,8 @@ impl BaseDocument {
             (Size::CalcSizeMaxContent(_), Size::CalcSizeMaxContent(value)) => value,
             _ => return None,
         };
-        Some(calculation.0.resolve(CSSPixelLength::new(basis)).px().min(max.unwrap_or(f32::INFINITY)).max(min))
+        let reference = if calculation.0.has_percentage() { basis? } else { 0.0 };
+        Some(calculation.0.resolve(CSSPixelLength::new(reference)).px().min(max.unwrap_or(f32::INFINITY)).max(min))
     }
 
     fn resolved_style_value_with_style(

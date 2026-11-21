@@ -124,7 +124,7 @@ fn has_calc_size(styles: &style::properties::ComputedValues) -> bool {
         matches!(
             size.prepared_size(),
             Size::CalcSizeAuto(_) | Size::CalcSizeFitContent(_) | Size::CalcSizeMinContent(_) | Size::CalcSizeMaxContent(_)
-            | Size::CalcSizeStretch(_)
+            | Size::CalcSizeStretch(_) | Size::CalcSizePercentage(_) | Size::CalcSizeAny(_)
         )
     };
     let position = styles.get_position();
@@ -445,8 +445,15 @@ impl LayoutPassState<'_> {
         // An `auto` or `fit-content` basis shrinks to fit when its parent measures it.
         let shrinks = matches!(styles.get_position().width.prepared_size(), StyloSize::CalcSizeAuto(_) | StyloSize::CalcSizeFitContent(_));
         let position = styles.get_position();
+        let numeric_basis = |size: &StyloSize, parent: Option<f32>| match size.prepared_size() {
+            StyloSize::CalcSizePercentage(_) | StyloSize::CalcSizeAny(_) => Some(parent),
+            _ => None,
+        };
+        let numeric_width = numeric_basis(&position.width, inputs.parent_size.width);
+        let numeric_height = numeric_basis(&position.height, inputs.parent_size.height);
         let mut functions = taffy::Size { width: calculation(&position.width), height: calculation(&position.height) };
-        if functions.width.is_none() && functions.height.is_none() {
+        if functions.width.is_none() && functions.height.is_none() &&
+            (inputs.run_mode != RunMode::PerformLayout || (numeric_width.is_none() && numeric_height.is_none())) {
             return inputs;
         }
         let content_box = styles.get_position().box_sizing == style::computed_values::box_sizing::T::ContentBox;
@@ -543,12 +550,14 @@ impl LayoutPassState<'_> {
             inputs.known_dimensions.height = Some(height.max(padding_border.height));
         }
         if inputs.run_mode == RunMode::PerformLayout {
-            let limits = |basis: Option<f32>, inset: f32, padding: f32, minimum: Option<f32>, maximum: Option<f32>| {
-                basis.map(|size| ((size - inset).max(0.0), (minimum.unwrap_or(0.0).max(padding) - inset).max(0.0), maximum.map(|value| value - inset)))
+            let limits = |intrinsic: Option<f32>, numeric: Option<Option<f32>>, inset: f32, padding: f32, minimum: Option<f32>, maximum: Option<f32>| {
+                numeric.or_else(|| intrinsic.map(|size| Some((size - inset).max(0.0)))).map(|basis| {
+                    (basis, (minimum.unwrap_or(0.0).max(padding) - inset).max(0.0), maximum.map(|value| value - inset))
+                })
             };
             self.nodes[dom_node_id(node_id)].layout_data_mut().calc_size_inputs = [
-                limits(width_basis, box_inset.width, padding_border.width, min.width, max.width),
-                limits(height_basis, box_inset.height, padding_border.height, min.height, max.height),
+                limits(width_basis, numeric_width, box_inset.width, padding_border.width, min.width, max.width),
+                limits(height_basis, numeric_height, box_inset.height, padding_border.height, min.height, max.height),
             ];
         }
         inputs
