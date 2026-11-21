@@ -1,0 +1,11 @@
+running 4 tests
+test style_text_revision::the_sheets_key_follows_the_style_text_and_connected_owners ... ok
+test style_text_revision::link_sheet_revision_tracks_whether_the_loaded_text_applies ... ok
+test style_text_revision::alternate_link_enabling_belongs_to_the_original_element ... ok
+test style_text_revision::preferred_sheet_name_survives_removal_of_its_first_owner ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 238 filtered out; finished in 0.00s
+
+real 11.74
+user 33.03
+sys 0.74

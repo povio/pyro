@@ -1,0 +1,34 @@
+running 4 tests
+test style_text_revision::link_sheet_revision_tracks_whether_the_loaded_text_applies ... ok
+test style_text_revision::the_sheets_key_follows_the_style_text_and_connected_owners ... ok
+test style_text_revision::preferred_sheet_name_survives_removal_of_its_first_owner ... FAILED
+test style_text_revision::alternate_link_enabling_belongs_to_the_original_element ... FAILED
+
+failures:
+
+---- style_text_revision::preferred_sheet_name_survives_removal_of_its_first_owner stdout ----
+
+thread 'style_text_revision::preferred_sheet_name_survives_removal_of_its_first_owner' (49360274) panicked at crates/pyro-dom/tests/style_text_revision.rs:146:5:
+assertion `left == right` failed
+  left: ["b{}", "c{}"]
+ right: ["c{}"]
+
+---- style_text_revision::alternate_link_enabling_belongs_to_the_original_element stdout ----
+
+thread 'style_text_revision::alternate_link_enabling_belongs_to_the_original_element' (49360272) panicked at crates/pyro-dom/tests/style_text_revision.rs:124:5:
+assertion `left == right` failed
+  left: Some("a{}")
+ right: Some("")
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    style_text_revision::alternate_link_enabling_belongs_to_the_original_element
+    style_text_revision::preferred_sheet_name_survives_removal_of_its_first_owner
+
+test result: FAILED. 2 passed; 2 failed; 0 ignored; 0 measured; 238 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p pyro-dom --test integration`
+real 3.31
+user 7.98
+sys 0.41
