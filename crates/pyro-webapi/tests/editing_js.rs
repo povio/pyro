@@ -296,6 +296,16 @@ fn removing_bold_preserves_editability_boundaries() {
         "#);
         assert_eq!(eval(&e.main, &script), format!("true|{expected}|backward"));
     }
+    let partial = r#"
+        ed.innerHTML = '<b>left<span contenteditable="false"><i contenteditable="true"><b>inner</b></i></span>right</b>';
+        ed.focus();
+        const carrier = ed.firstChild, island = carrier.firstElementChild;
+        getSelection().setBaseAndExtent(carrier.lastChild, 2, carrier.firstChild, 2);
+        document.execCommand('bold');
+        [ed.innerHTML, ed.contains(island), getSelection().direction, document.queryCommandIndeterm('bold')].join('|')
+    "#;
+    assert_eq!(eval(&e.main, partial), r#"<b>le</b>ft<span contenteditable="false"><i contenteditable="true">inner</i></span>ri<b>ght</b>|true|backward|false"#);
+
 }
 
 #[test]

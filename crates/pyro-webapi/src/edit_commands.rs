@@ -1546,15 +1546,28 @@ fn remove_inline(page: &Rc<PageDom>, host: NodeId, names: &[&str], input_type: &
             let last = (last, editing::len(&dom, last));
             for &t in &texts {
                 let Some(owner) = editing::plaintext_root(&dom, t).or_else(|| editing::editing_host(&dom, t)) else { continue };
-                while let Some(a) = ancestor_format(&dom, t, owner, names, true) {
+                while let Some(mut a) = ancestor_format(&dom, t, owner, names, true) {
                     // Remove a completely selected carrier as a unit. Hoisting
                     // only its editable text would leave a formatting wrapper
                     // around its locked children or clone their ancestors.
                     let begins = editing::deep_forward(&dom, (a, 0));
                     let ends = editing::deep_backward(&dom, (a, editing::len(&dom, a)));
-                    if crate::range::compare_boundary_points_dom(&dom, first, begins) <= 0
-                        && crate::range::compare_boundary_points_dom(&dom, ends, last) <= 0
+                    let mut whole = crate::range::compare_boundary_points_dom(&dom, first, begins) <= 0
+                        && crate::range::compare_boundary_points_dom(&dom, ends, last) <= 0;
+                    if !whole && t == first.0 && first.0 != last.0 && dom.contains(a, last.0).unwrap_or(false)
+                        && editing::editing_host(&dom, last.0) == Some(owner)
                     {
+                        // Isolate the whole selected middle before unwrapping
+                        // it. Hoisting the two text edges independently leaves
+                        // a styled clone around any locked node between them.
+                        let Some(parent) = dom.parent(a).ok().flatten() else { break };
+                        let mut points = [first, last];
+                        let Some(middle) = alignment::split_edge(&mut dom, parent, first.0, false, &mut points) else { break };
+                        if alignment::split_edge(&mut dom, parent, last.0, true, &mut points).is_none() { break; }
+                        a = middle;
+                        whole = true;
+                    }
+                    if whole {
                         let Some(parent) = dom.parent(a).ok().flatten() else { break };
                         while let Ok(Some(child)) = dom.first_child(a) {
                             if dom.insert_before(parent, child, Some(a)).is_err() { break; }
