@@ -46,6 +46,11 @@ Development after RC.4 gained **133 net passing assertions** on a focused select
 All 63 assertions for `random()` inside custom CSS functions now pass. Across the 27 pages, 135 assertions gained a pass and two lost a pass. Both losses remain counted. The pinned tests expect a reference to a later function parameter to be invalid, while Pyro and Chrome 158 resolve its value as described in the current CSS Mixins draft. [Matched results and browser readbacks](https://github.com/povio/pyro/tree/ef55fa319e4be0159dc74ea42d38665d06c60a6c/docs/validation/round7-css-values)
 
 
+### Signed zero in CSSOM updates
+
+Style edits now preserve negative zero inside unresolved calculations, so `sign()` and division produce the correct results even when CSSOM displays the value as zero. Independent checks on a separate 17-page CSS Values and CSSOM selection found **11 gains and zero losses**. Passing assertions rose from **523 to 534 of 554**, and fully passing pages rose from **11 to 12 of 17**. The development branch integrated this change at `47b4a0028`, after RC.4. [Signed-zero results and raw comparisons](https://github.com/povio/pyro/tree/61f118fcd11fd6b16c268a63b8b74536b47a037c/docs/validation/round7-css-values/signed-zero)
+
+
 <style scoped>
 .pass-count { width: clamp(3.5rem, 12vw, 9rem); margin-inline-start: .5rem; vertical-align: middle; accent-color: var(--vp-c-brand-1); }
 .pass-count::-webkit-meter-optimum-value { background: var(--vp-c-brand-1); }
