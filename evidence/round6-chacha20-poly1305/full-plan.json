@@ -1,0 +1,22 @@
+{
+  "reference": "chrome158",
+  "allowMissingReference": true,
+  "supplementalChrome": [
+    [
+      "@merged-aa0268/chacha/chrome158-wpt.json",
+      "merged-aa0268/chacha/chrome158-wpt.log"
+    ]
+  ],
+  "control": [
+    [
+      "merged-aa-crypto-base",
+      "merged-aa0268/chacha/base.log"
+    ]
+  ],
+  "candidate": [
+    [
+      "merged-aa-crypto-final",
+      "merged-aa0268/chacha/final.log"
+    ]
+  ]
+}

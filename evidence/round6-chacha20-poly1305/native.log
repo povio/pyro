@@ -1,0 +1,13 @@
+running 9 tests
+test crypto_js::navigator_storage_reports_usage_and_no_persistence ... ok
+test crypto_js::crypto_key_is_a_lazy_global_with_cached_slots ... ok
+test crypto_js::crypto_keys_are_structured_cloneable ... ok
+test crypto_js::subtle_reports_spec_error_names_in_spec_order ... ok
+test crypto_js::hmac_aes_and_key_derivation_match_reference_vectors ... ok
+test crypto_js::compression_streams_round_trip_every_format ... ok
+test crypto_js::rsa_matches_known_answers_through_subtle ... ok
+test crypto_js::dedicated_workers_expose_streams_file_reader_crypto_keys_and_storage ... ok
+test crypto_js::asymmetric_algorithms_sign_derive_and_round_trip_keys ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 627 filtered out; finished in 0.06s
+

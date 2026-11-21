@@ -1,0 +1,21 @@
+{
+  "rfc8439": {
+    "exception": "TypeError"
+  },
+  "authenticated-data": {
+    "exception": "TypeError"
+  },
+  "jwk-roundtrip": {
+    "exception": "NotSupportedError"
+  },
+  "key-wrap": {
+    "exception": "TypeError"
+  },
+  "derived-key": {
+    "exception": "NotSupportedError"
+  },
+  "classic-public-format": {
+    "exception": "TypeError"
+  },
+  "usage-before-format": false
+}

@@ -1,0 +1,9 @@
+{
+  "rfc8439": true,
+  "authenticated-data": true,
+  "jwk-roundtrip": true,
+  "key-wrap": true,
+  "derived-key": true,
+  "classic-public-format": true,
+  "usage-before-format": true
+}

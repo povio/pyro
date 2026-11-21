@@ -1,0 +1,125 @@
+{
+  "urls": 10,
+  "reference": "chrome158",
+  "counts": [
+    {
+      "namedPass": 0,
+      "full": 0,
+      "reported": 1044,
+      "complete": 10
+    },
+    {
+      "namedPass": 1044,
+      "full": 10,
+      "reported": 1044,
+      "complete": 10
+    },
+    {
+      "namedPass": 1044,
+      "full": 10,
+      "reported": 1044,
+      "complete": 10
+    }
+  ],
+  "delta": {
+    "gained": 1044,
+    "lost": 0,
+    "added": 0,
+    "missing": 0,
+    "chromeOnly": 0,
+    "lpOnly": 0
+  },
+  "areas": {
+    "WebCryptoAPI": {
+      "gained": 1044,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    }
+  },
+  "losses": [],
+  "perURL": {
+    "WebCryptoAPI/modern-algos/encrypt_decrypt/chacha20_poly1305.https.any.html": {
+      "gained": 28,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "WebCryptoAPI/modern-algos/encrypt_decrypt/chacha20_poly1305.https.any.worker.html": {
+      "gained": 28,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "WebCryptoAPI/modern-algos/generateKey/failures_chacha20_poly1305.https.any.html": {
+      "gained": 276,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "WebCryptoAPI/modern-algos/generateKey/failures_chacha20_poly1305.https.any.worker.html": {
+      "gained": 276,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "WebCryptoAPI/modern-algos/generateKey/successes_chacha20_poly1305.https.any.html": {
+      "gained": 192,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "WebCryptoAPI/modern-algos/generateKey/successes_chacha20_poly1305.https.any.worker.html": {
+      "gained": 192,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "WebCryptoAPI/modern-algos/import_export/ChaCha20-Poly1305_importKey.https.any.html": {
+      "gained": 24,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "WebCryptoAPI/modern-algos/import_export/ChaCha20-Poly1305_importKey.https.any.worker.html": {
+      "gained": 24,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "WebCryptoAPI/modern-algos/serialization/chacha20-poly1305.https.any.html": {
+      "gained": 2,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "WebCryptoAPI/modern-algos/serialization/chacha20-poly1305.https.any.worker.html": {
+      "gained": 2,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    }
+  }
+}
