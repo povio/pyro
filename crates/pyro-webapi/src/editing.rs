@@ -823,7 +823,11 @@ pub fn insert_text(page: &Rc<PageDom>, host: NodeId, text: &str) {
             }
             caret
         };
-        set_selection(page, caret, caret);
+        if text.ends_with('\n') {
+            crate::edit_commands::inline_value::set_break_caret(page, (start, end), caret);
+        } else {
+            set_selection(page, caret, caret);
+        }
     });
 }
 
