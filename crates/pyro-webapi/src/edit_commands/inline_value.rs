@@ -115,6 +115,26 @@ impl Format {
 pub(crate) struct TypingValues {
     range: (Point, Point),
     values: Vec<Format>,
+    toggles: Vec<(&'static str, bool)>,
+}
+
+fn pending_at(slot: &mut Option<TypingValues>, range: (Point, Point)) -> &mut TypingValues {
+    if slot.as_ref().is_none_or(|v| v.range != range) {
+        *slot = Some(TypingValues { range, values: Vec::new(), toggles: Vec::new() });
+    }
+    slot.as_mut().unwrap()
+}
+
+pub(super) fn toggle_state(page: &PageDom, range: (Point, Point), tag: &str) -> Option<bool> {
+    let slot = page.typing_values.borrow();
+    slot.as_ref().filter(|v| v.range == range)?.toggles.iter().find(|(t, _)| *t == tag).map(|(_, on)| *on)
+}
+
+pub(super) fn set_toggle(page: &PageDom, range: (Point, Point), tag: &'static str, enabled: bool) {
+    let mut slot = page.typing_values.borrow_mut();
+    let pending = pending_at(&mut slot, range);
+    pending.toggles.retain(|(t, _)| *t != tag);
+    pending.toggles.push((tag, enabled));
 }
 
 /// Structural commands keep the formatting values attached to the selection
@@ -327,10 +347,7 @@ pub(super) fn apply(page: &Rc<PageDom>, host: NodeId, kind: Kind, value: &str) -
     let mut nodes = formattable_nodes(page, &page.dom.borrow(), host, start, end);
     if nodes.is_empty() {
         let mut slot = page.typing_values.borrow_mut();
-        if slot.as_ref().is_none_or(|v| v.range != (start, end)) {
-            *slot = Some(TypingValues { range: (start, end), values: Vec::new() });
-        }
-        let pending = slot.as_mut().unwrap();
+        let pending = pending_at(&mut slot, (start, end));
         pending.values.retain(|v| v.kind != kind);
         pending.values.push(fmt);
         return true;
@@ -416,7 +433,19 @@ pub(crate) fn format_typed(
     let mut slot = page.typing_values.borrow_mut();
     let pending = slot.as_mut().filter(|v| v.range == range)?;
     pending.values.retain(|fmt| !equivalent(fmt, &effective(page, dom, fmt.kind, end.0)));
-    if pending.values.is_empty() {
+    let host = editing::editing_host(dom, end.0)?;
+    let parent = dom.parent_element(end.0).ok()??;
+    let layout = page.layout();
+    pending.toggles.retain(|&(tag, enabled)| {
+        let active = if tag == "b" {
+            layout.computed_style_value(dom, parent, "font-weight").parse::<f64>().is_ok_and(|w| w >= 600.0)
+        } else {
+            let style = layout.computed_style_value(dom, parent, "font-style");
+            style.starts_with("italic") || style.starts_with("oblique")
+        };
+        enabled != active
+    });
+    if pending.values.is_empty() && pending.toggles.is_empty() {
         *slot = None;
         return Some(end);
     }
@@ -434,6 +463,33 @@ pub(crate) fn format_typed(
         } else {
             wrap(dom, typed, fmt)?;
         }
+    }
+    for &(tag, enabled) in &pending.toggles {
+        let (property, value) = super::inline_css(tag)?;
+        let carriers: &[&str] = if tag == "b" { &["b", "strong"] } else { &["i", "em"] };
+        if !enabled {
+            while let Some(ancestor) = super::ancestor_format(dom, typed, host, carriers, true) {
+                super::hoist(dom, typed, ancestor);
+                if dom.contains(ancestor, typed).unwrap_or(false) {
+                    break;
+                }
+            }
+            let parent = dom.parent_element(typed).ok()??;
+            let style = layout.computed_style_value(dom, parent, property);
+            if matches!(style.as_str(), "normal" | "400") {
+                continue;
+            }
+        }
+        let doc = dom.node_document(typed).ok()?;
+        let css = !enabled || dom.document_data(doc).ok()?.style_with_css;
+        let wrapper = dom.create_element(doc, if css { "span" } else { tag }).ok()?;
+        if css {
+            let value = if enabled { value } else { "normal" };
+            dom.set_attribute(wrapper, "style", &format!("{property}: {value};")).ok()?;
+        }
+        let parent = dom.parent_element(typed).ok()??;
+        dom.insert_before(parent, wrapper, Some(typed)).ok()?;
+        dom.append_child(wrapper, typed).ok()?;
     }
     *slot = None;
     Some((typed, units))
