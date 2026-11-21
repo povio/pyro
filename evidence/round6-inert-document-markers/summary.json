@@ -1,0 +1,88 @@
+{
+  "focus": {
+    "labels": [
+      "base",
+      "head",
+      "chrome158"
+    ],
+    "urlCounts": [
+      32,
+      32,
+      32
+    ],
+    "names": [
+      494,
+      494,
+      494
+    ],
+    "passCounts": [
+      138,
+      172,
+      475
+    ],
+    "strictPages": [
+      7,
+      7,
+      30
+    ],
+    "pageOutcomes": [
+      {
+        "complete/OK": 32
+      },
+      {
+        "complete/OK": 32
+      },
+      {
+        "complete/OK": 32
+      }
+    ],
+    "gained": 34,
+    "lost": 0,
+    "added": 0,
+    "missing": 0,
+    "newlyPassingMatchChrome": 34
+  },
+  "guard": {
+    "labels": [
+      "guard-base",
+      "guard-head",
+      "guard-chrome158"
+    ],
+    "urlCounts": [
+      33,
+      33,
+      33
+    ],
+    "names": [
+      801,
+      801,
+      801
+    ],
+    "passCounts": [
+      778,
+      779,
+      788
+    ],
+    "strictPages": [
+      27,
+      27,
+      31
+    ],
+    "pageOutcomes": [
+      {
+        "complete/OK": 33
+      },
+      {
+        "complete/OK": 33
+      },
+      {
+        "complete/OK": 33
+      }
+    ],
+    "gained": 1,
+    "lost": 0,
+    "added": 0,
+    "missing": 0,
+    "newlyPassingMatchChrome": 1
+  }
+}
