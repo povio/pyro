@@ -289,6 +289,26 @@ fn a_srcdoc_document_inherits_its_containers_policy() {
     assert_eq!(loader.referer_of("https://other.test/i.png?own"), Some(FULL.map(str::to_owned)));
 }
 
+#[test]
+fn network_frames_navigated_from_srcdoc_use_the_enclosing_document_as_referrer() {
+    let (mut thread, page, loader) = setup();
+    loader.insert(
+        PAGE,
+        "text/html",
+        r#"<!doctype html><iframe srcdoc="<base href='/unrelated/'><iframe name='result' src='/f.html'></iframe><a id='next' href='/n.html' target='result'>Next</a>"></iframe>"#,
+        Duration::ZERO,
+    );
+    thread.browser.navigate(page, NavigateOpts::address_bar(PAGE)).unwrap();
+    settle(&mut thread);
+    assert_eq!(loader.referer_of("https://site.test/f.html"), Some(FULL.map(str::to_owned)));
+    assert_eq!(eval(&thread, page, "frames[0].frames[0].document.referrer"), PAGE);
+
+    eval(&thread, page, "frames[0].document.getElementById('next').click(); 0");
+    settle(&mut thread);
+    assert_eq!(loader.referer_of("https://site.test/n.html"), Some(FULL.map(str::to_owned)));
+    assert_eq!(eval(&thread, page, "frames[0].frames[0].document.referrer"), PAGE);
+}
+
 /// A style sheet's requests are sent under the sheet's own `Referrer-Policy` when it was served
 /// with one (as Chrome sends them): its `@import`s carry it from the sheet that imports them, and
 /// the renderer gets it for its `url()`s on the sheet's link in the render snapshot (an engine
