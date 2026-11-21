@@ -1080,6 +1080,17 @@ pub(crate) fn query_supported(command: &str) -> bool {
     SUPPORTED.contains(&command.to_ascii_lowercase().as_str())
 }
 
+fn requires_rich_selection(cmd: &str) -> bool {
+    format_of(cmd).is_some()
+        || inline_value::Kind::command(cmd).is_some()
+        || alignment::value_for(cmd).is_some()
+        || matches!(
+            cmd,
+            "indent" | "outdent" | "insertimage" | "inserthorizontalrule" | "createlink" | "unlink"
+                | "removeformat" | "insertorderedlist" | "insertunorderedlist" | "formatblock"
+        )
+}
+
 /// `document.execCommand(command, showUI, value)`: whether it ran.
 /// `paste` is not available to script (as in Chromium, where reading the
 /// clipboard from the DOM is off for web pages). `copy` and `cut` run as
@@ -1154,16 +1165,17 @@ pub(crate) fn exec_command(page: &Rc<PageDom>, doc: NodeId, command: &str, value
         };
     }
     let Some(Target::Host(host)) = target else { return false };
+    if requires_rich_selection(&cmd) && !rich_selection(page, host) {
+        return false;
+    }
     if let Some(kind) = inline_value::Kind::command(&cmd) {
-        return rich_selection(page, host) && inline_value::apply(page, host, kind, value);
+        return inline_value::apply(page, host, kind, value);
     }
     if matches!(cmd.as_str(), "indent" | "outdent") {
-        if !rich_selection(page, host) { return false; }
         indentation::apply(page, host, cmd == "indent");
         return true;
     }
     if let Some(target) = alignment::value_for(&cmd) {
-        if !rich_selection(page, host) { return false; }
         alignment::apply(page, host, target);
         return true;
     }
@@ -1174,7 +1186,7 @@ pub(crate) fn exec_command(page: &Rc<PageDom>, doc: NodeId, command: &str, value
         "insertlinebreak" => editing::insert_line_break(page, host),
         "inserthtml" => editing::insert_html(page, host, value, "insertHTML"),
         "insertimage" | "inserthorizontalrule" => {
-            if !rich_selection(page, host) || (cmd == "insertimage" && value.is_empty()) {
+            if cmd == "insertimage" && value.is_empty() {
                 return false;
             }
             // Record the original selection and content only if insertion
@@ -1731,7 +1743,7 @@ pub(crate) fn query_enabled(page: &PageDom, doc: NodeId, command: &str) -> bool 
     if doc != page.document() || !query_supported(&cmd) {
         return false;
     }
-    if inline_value::Kind::command(&cmd).is_some() {
+    if requires_rich_selection(&cmd) {
         return matches!(command_target(page), Some(Target::Host(h)) if rich_selection(page, h));
     }
     let has_range = || match command_target(page) {
@@ -1740,9 +1752,6 @@ pub(crate) fn query_enabled(page: &PageDom, doc: NodeId, command: &str) -> bool 
     };
     match cmd.as_str() {
         "selectall" | "stylewithcss" | "usecss" | "defaultparagraphseparator" => true,
-        "insertimage" | "inserthorizontalrule" | "indent" | "outdent" | "justifycenter" | "justifyfull" | "justifyleft" | "justifyright" => {
-            matches!(command_target(page), Some(Target::Host(h)) if rich_selection(page, h))
-        }
         "copy" => has_range(),
         "cut" => command_target(page).is_some() && has_range(),
         "undo" => !page.undo.borrow().undo.is_empty(),
