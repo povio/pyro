@@ -1690,7 +1690,22 @@ impl JsClass for HtmlElement {
             },
         );
         reflect_bool!(def, "inert", "inert");
-        reflect_str!(def, "popover", "popover");
+        def.accessor(
+            "popover",
+            |s, n| {
+                let dom = n.page().dom.borrow();
+                Ok(dom.get_attribute(n.id, "popover").js()?.map_or(s.null(), |value| {
+                    s.string(pyro_dom::PopoverType::from_value(value).keyword())
+                }))
+            },
+            |_s, n, value| {
+                if value.is_nullish() {
+                    n.page().dom.borrow_mut().remove_attribute(n.id, "popover").js()?;
+                    return Ok(());
+                }
+                set_attr(n, "popover", &dom_string(value)?)
+            },
+        );
         define_focus_attributes(def);
         def.accessor(
             "draggable",

@@ -14,6 +14,34 @@ use crate::dom::Dom;
 use crate::error::DomResult;
 use crate::node::NodeId;
 
+/// The enumerated states of the HTML popover attribute. A missing attribute has no state.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum PopoverType {
+    Auto,
+    Hint,
+    Manual,
+}
+
+impl PopoverType {
+    pub fn from_value(value: &str) -> Self {
+        if value.is_empty() || value.eq_ignore_ascii_case("auto") {
+            Self::Auto
+        } else if value.eq_ignore_ascii_case("hint") {
+            Self::Hint
+        } else {
+            Self::Manual
+        }
+    }
+
+    pub fn keyword(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Hint => "hint",
+            Self::Manual => "manual",
+        }
+    }
+}
+
 /// Which popover stack a showing popover belongs to (HTML "popover
 /// attribute" states that have light dismiss).
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -28,6 +56,8 @@ pub(crate) struct TopLayer {
     modal: FxHashSet<NodeId>,
     /// Popovers whose visibility state is "showing".
     popovers: FxHashSet<NodeId>,
+    /// Showing elements whose popover attribute changed state during a DOM write.
+    changed_popovers: Vec<NodeId>,
     /// The document's top layer, bottom first: modal dialogs and showing
     /// popovers in the order they entered it.
     order: Vec<NodeId>,
@@ -187,6 +217,36 @@ impl Dom {
 
     pub(crate) fn is_popover_showing_idx(&self, idx: u32) -> bool {
         !self.top_layer.popovers.is_empty() && self.top_layer.popovers.contains(&self.id_of(idx))
+    }
+
+    pub(crate) fn popover_attribute_changed(&mut self, idx: u32, old: Option<&str>, new: Option<&str>) {
+        if self.is_popover_showing_idx(idx) && old.map(PopoverType::from_value) != new.map(PopoverType::from_value) {
+            let el = self.id_of(idx);
+            if !self.top_layer.changed_popovers.contains(&el) {
+                self.top_layer.changed_popovers.push(el);
+                self.touch_hook();
+            }
+        }
+    }
+
+    pub fn has_changed_popovers(&self) -> bool {
+        !self.top_layer.changed_popovers.is_empty()
+    }
+
+    /// Return showing elements belonging to this document. Nodes disconnected or
+    /// collected since the mutation have already left the top layer.
+    pub fn take_changed_popovers(&mut self, document: NodeId) -> Vec<NodeId> {
+        let mut changed = Vec::new();
+        for el in std::mem::take(&mut self.top_layer.changed_popovers) {
+            if self.is_popover_showing(el) {
+                if self.node_document(el).ok() == Some(document) {
+                    changed.push(el);
+                } else {
+                    self.top_layer.changed_popovers.push(el);
+                }
+            }
+        }
+        changed
     }
 
     /// Pushes a showing popover on top of its popover stack.

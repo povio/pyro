@@ -480,7 +480,7 @@ pub(crate) fn bind(s: &Scope<'_>, page: &Rc<PageDom>) -> JsResult<()> {
             {
                 page.sweep_released_nodes();
             }
-            page.flush_iframe_events();
+            page.flush_mutation_events(Some(s));
             page.update_render_blocking();
             crate::custom::run_reactions(&page);
             crate::custom::run_upgrades(&page);
@@ -544,6 +544,7 @@ fn follows_version(page: &PageDom, dom: &pyro_dom::Dom, m: &BindingState) -> boo
 
 fn hook_pending_slow(page: &PageDom, dom: &pyro_dom::Dom, m: &BindingState) -> bool {
     dom.has_iframe_events()
+        || dom.has_changed_popovers()
         || dom.has_details_toggles()
         || dom.has_media_events()
         || page.render_blocking_pending(dom)
