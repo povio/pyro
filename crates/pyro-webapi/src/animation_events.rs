@@ -549,7 +549,7 @@ fn update(page: &Rc<PageDom>, defer: bool) {
                 wanted.extend(rules.element(&dom, el, &style_of).animations.into_iter().map(|a| (el, None, a)));
                 // Its `::before`/`::after`, while it generates a box.
                 if pseudo_rules {
-                    for pseudo in [PseudoElement::Before, PseudoElement::After] {
+                    for pseudo in [PseudoElement::Before, PseudoElement::After, PseudoElement::Marker] {
                         let timing = rules.element_for(&dom, el, Some(pseudo), &style_of);
                         if !timing.animations.is_empty() && style.pseudo_style(&dom, el, pseudo, false).is_some() {
                             wanted.extend(timing.animations.into_iter().map(|a| (el, Some(pseudo), a)));
@@ -1573,6 +1573,7 @@ fn pseudo_name(pseudo: Option<PseudoElement>) -> &'static str {
         None => "",
         Some(PseudoElement::Before) => "::before",
         Some(PseudoElement::After) => "::after",
+        Some(PseudoElement::Marker) => "::marker",
     }
 }
 

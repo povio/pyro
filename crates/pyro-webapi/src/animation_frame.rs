@@ -318,6 +318,7 @@ impl Pseudo {
             None => Pseudo::None,
             Some(pyro_dom::style::PseudoElement::Before) => Pseudo::Before,
             Some(pyro_dom::style::PseudoElement::After) => Pseudo::After,
+            Some(pyro_dom::style::PseudoElement::Marker) => Pseudo::Marker,
         }
     }
 
@@ -726,10 +727,12 @@ fn walk_at(page: &PageDom, clock: Clock, transitions: bool, visit: &mut dyn FnMu
             Some(s) if s.el.is_some() => s.pseudo,
             _ => Pseudo::of(t.pseudo()),
         };
-        let level = match (pseudo.generated_index(), level) {
-            (None, level) => level,
-            (Some(i), Level::Animation) => Level::PseudoAnimation(i),
-            (Some(_), _) => continue,
+        let level = match (pseudo, level) {
+            (Pseudo::None, level) => level,
+            (Pseudo::Marker, Level::Animation) => Level::Marker,
+            (Pseudo::Backdrop, Level::Animation) => Level::Backdrop,
+            (pseudo, Level::Animation) if pseudo.generated_index().is_some() => Level::PseudoAnimation(pseudo.generated_index().unwrap()),
+            _ => continue,
         };
         visit(el, level, effect);
     }

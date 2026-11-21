@@ -383,6 +383,12 @@ impl crate::document::BaseDocument {
             Some((primary, eager))
         });
         if generated_only {
+            if *pseudo == PseudoElement::Marker {
+                let (primary, _) = stored?;
+                if !primary.get_box().display.is_list_item() { return None; }
+                let _scope = LayoutThreadScope::enter();
+                return crate::layout::list::marker_pseudo_style(self, node_id, &primary);
+            }
             return stored.and_then(|(_, eager)| eager);
         }
         let (primary, eager) = match stored {
@@ -469,6 +475,11 @@ impl crate::document::BaseDocument {
                 false,
                 (pseudo.is_highlight() || pseudo.transition_argument().is_some()).then_some(&matches as &dyn Fn(&PseudoElement) -> bool),
             );
+            if *pseudo == PseudoElement::Marker {
+                if let Some(style) = self.animated_marker_style(node, &primary, lazy.as_ref()) {
+                    return Some(style);
+                }
+            }
             if lazy.is_some() {
                 return lazy;
             }

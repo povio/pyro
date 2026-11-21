@@ -351,6 +351,24 @@ struct ResolvedFrame {
 }
 
 impl BaseDocument {
+    pub(crate) fn animated_marker_style(
+        &self, node: &Node, primary: &ServoArc<ComputedValues>, base: Option<&ServoArc<ComputedValues>>,
+    ) -> Option<ServoArc<ComputedValues>> {
+        let block = node.element_data()?.sampled_marker.as_ref()?;
+        let guard = self.guard.read();
+        let guards = StylesheetGuards::same(&guard);
+        let tree = self.stylist.rule_tree();
+        let path = base.map_or_else(|| tree.root(), |style| style.rules());
+        let rules = tree.update_rule_at_level(CascadeLevel::new(CascadeOrigin::Animations), LayerOrder::root(),
+            Some(block.borrow_arc()), path, &guards, &mut false)?;
+        let inputs = CascadeInputs {
+            rules: Some(rules), flags: base.map_or_else(Default::default, |style| style.flags.for_cascade_inputs()),
+            ..Default::default()
+        };
+        Some(self.stylist.compute_pseudo_element_style_with_inputs(inputs, &style::selector_parser::PseudoElement::Marker,
+            &guards, Some(primary), Some(node)))
+    }
+
     pub(crate) fn sample_transition_style(&self, origin: NodeId, parent: NodeId, pseudo: style::selector_parser::PseudoElement, style: ServoArc<ComputedValues>, samples: &[(usize,f64)], generated: Option<&(Atom,String)>, budget: &mut usize) -> Option<ServoArc<ComputedValues>> {
         if samples.is_empty() { return Some(style); }
         use style_traits::ToCss;
@@ -717,7 +735,14 @@ impl BaseDocument {
             })
         };
         let (animations, transitions) = (block(sampled.animations), block(sampled.transitions));
-        let marker = block(sampled.marker);
+        let marker = block(sampled.marker.map(|mut values| {
+            let restriction = style::selector_parser::PseudoElement::Marker.property_restriction();
+            values.retain(|property, _| match property.as_borrowed() {
+                PropertyDeclarationId::Longhand(id) => id.flags().contains(restriction),
+                PropertyDeclarationId::Custom(..) => true,
+            });
+            values
+        }));
         let backdrop = block(sampled.backdrop);
         let [(before_a, before_t), (after_a, after_t)] = sampled.pseudos;
         let pseudos = [(block(before_a), block(before_t)), (block(after_a), block(after_t))];

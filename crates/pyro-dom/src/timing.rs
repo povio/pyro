@@ -190,6 +190,7 @@ fn pseudo_selector(selector: &str) -> Option<(String, PseudoElement)> {
     for (suffix, pseudo) in [
         ("::before", PseudoElement::Before),
         ("::after", PseudoElement::After),
+        ("::marker", PseudoElement::Marker),
         (":before", PseudoElement::Before),
         (":after", PseudoElement::After),
     ] {
@@ -1140,7 +1141,7 @@ fn rule_list(p: &mut Parser<'_>, src: &str, viewport: &Viewport, out: &mut Timin
                             // `::part()` selectors become rules of their own on the host.
                             let mut plain = Vec::new();
                             // `::before`/`::after` selectors too, by pseudo-element.
-                            let mut pseudos: [Vec<String>; 2] = Default::default();
+                            let mut pseudos: [Vec<String>; 3] = Default::default();
                             for selector in split_selectors(prelude) {
                                 if let Some((host, pseudo)) = pseudo_selector(selector) {
                                     pseudos[pseudo as usize].push(host);
@@ -1161,7 +1162,7 @@ fn rule_list(p: &mut Parser<'_>, src: &str, viewport: &Viewport, out: &mut Timin
                                     None => plain.push(selector),
                                 }
                             }
-                            for (pseudo, hosts) in [PseudoElement::Before, PseudoElement::After].into_iter().zip(&pseudos) {
+                            for (pseudo, hosts) in [PseudoElement::Before, PseudoElement::After, PseudoElement::Marker].into_iter().zip(&pseudos) {
                                 if hosts.is_empty() {
                                     continue;
                                 }

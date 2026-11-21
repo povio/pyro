@@ -78,6 +78,7 @@ pub enum Display {
 pub enum PseudoElement {
     Before,
     After,
+    Marker,
 }
 
 impl PseudoElement {
@@ -89,6 +90,8 @@ impl PseudoElement {
             Some(PseudoElement::Before)
         } else if name.eq_ignore_ascii_case("after") {
             Some(PseudoElement::After)
+        } else if text.starts_with("::") && name.eq_ignore_ascii_case("marker") {
+            Some(PseudoElement::Marker)
         } else {
             None
         }
@@ -1358,6 +1361,7 @@ impl StyleEngine {
         let pseudo = match pseudo {
             PseudoElement::Before => style::selector_parser::PseudoElement::Before,
             PseudoElement::After => style::selector_parser::PseudoElement::After,
+            PseudoElement::Marker => style::selector_parser::PseudoElement::Marker,
         };
         self.stylo_pseudo_style(dom, el, &pseudo, !synthesize)
     }
