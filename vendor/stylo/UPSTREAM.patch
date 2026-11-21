@@ -1232,7 +1232,7 @@ diff -ruN a/properties/counted_unknown_properties.py b/properties/counted_unknow
      "-webkit-app-region",
 diff -ruN a/properties/data.py b/properties/data.py
 --- a/properties/data.py	2026-11-11 19:55:57
-+++ b/properties/data.py	2026-11-21 07:19:03
++++ b/properties/data.py	2026-11-21 08:08:01
 @@ -342,9 +342,19 @@
          allow_quirks=False,
          ignored_when_colors_disabled=False,
@@ -1254,15 +1254,43 @@ diff -ruN a/properties/data.py b/properties/data.py
          Property.__init__(
              self,
              name=name,
-@@ -508,6 +518,7 @@
+@@ -506,8 +516,34 @@
+         if not self.predefined_type:
+             return False
          # TODO: Get this from SpecifiedValueInfo or so instead; see bug 1887627.
-         return self.predefined_type in {
+-        return self.predefined_type in {
++        return self.predefined_type.rsplit("::", 1)[-1] in {
++            "AnimationRangeEnd",
++            "AnimationRangeStart",
++            "BackgroundSize",
++            "BaselineShift",
++            "BorderCornerRadius",
++            "BorderImageWidth",
++            "BorderShape",
++            "ClipPath",
++            "Image",
++            "OffsetPath",
++            "ShapeOutside",
              "BorderSideWidth",
-+            "column::RuleWidth",
++            "RuleWidth",
++            "RuleInset",
++            "ClipRectOrAuto",
++            "ContainIntrinsicSize",
++            "FlexBasis",
++            "GridTemplateComponent",
++            "HorizontalPosition",
++            "ImplicitGridTracks",
++            "OffsetPosition",
++            "OverflowClipMargin",
++            "Perspective",
++            "TransformOrigin",
++            "Translate",
++            "VerticalPosition",
++            "ViewTimelineInset",
              "BorderSpacing",
              "BoxShadow",
              "Filter",
-@@ -583,6 +594,7 @@
+@@ -583,6 +619,7 @@
                  "MaskType",
                  "ObjectFit",
                  "BoxSizing",
@@ -1270,7 +1298,7 @@ diff -ruN a/properties/data.py b/properties/data.py
                  "FlexDirection",
                  "ListStylePosition",
                  "TextWrapStyle",
-@@ -600,16 +612,25 @@
+@@ -600,16 +637,25 @@
                  "ShapeRendering",
                  "TextAnchor",
                  "ImageOrientation",
@@ -1296,7 +1324,7 @@ diff -ruN a/properties/data.py b/properties/data.py
                  "TopLayer",
                  "FloatEdge",
                  "ImageLayerAttachment",
-@@ -670,6 +691,7 @@
+@@ -670,6 +716,7 @@
                  "OverscrollBehavior",
                  "PageOrientation",
                  "PointerEvents",
@@ -1304,7 +1332,7 @@ diff -ruN a/properties/data.py b/properties/data.py
                  "PositionTryOrder",
                  "PositionVisibility",
                  "PrintColorAdjust",
-@@ -686,6 +708,12 @@
+@@ -686,6 +733,12 @@
                  "TextAlign",
                  "TextAlignLast",
                  "TextAutospace",
@@ -1317,7 +1345,7 @@ diff -ruN a/properties/data.py b/properties/data.py
                  "TextBoxEdge",
                  "TextBoxTrim",
                  "TextDecorationLine",
-@@ -1323,8 +1351,17 @@
+@@ -1323,8 +1376,17 @@
                  "cursor",
                  "direction",
                  "hyphens",
