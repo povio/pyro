@@ -325,6 +325,40 @@ pub(super) fn after_replaced_element(page: &PageDom, dom: &mut Dom, host: NodeId
     at(page, dom, host, point, Repair::RemovedBox);
 }
 
+/// Preserve the visible width of the whitespace carried onto a new line.
+pub(super) fn after_line_break(page: &PageDom, dom: &mut Dom, host: NodeId, point: Point, split_text: bool) {
+    let (node, offset) = point;
+    let Ok(text) = dom.char_data(node) else { return };
+    let Ok((byte, _)) = pyro_dom::dom::utf16_range(text, offset, 0) else { return };
+    let suffix = &text[byte..];
+    let run = &suffix[..suffix.len() - suffix.trim_start_matches(space).len()];
+    if run.is_empty() || editing::editing_host(dom, node) != Some(host) || !collapses(page, dom, node) {
+        return;
+    }
+    let at_end = run.len() == suffix.len() && matches!(adjacent(page, dom, host, node, true), Next::Boundary | Next::Break);
+    let mut count = 0;
+    let mut ordinary = false;
+    for ch in run.chars() {
+        if !split_text || ch != ' ' || !ordinary {
+            count += 1;
+        }
+        ordinary = ch == ' ';
+    }
+    if split_text && at_end && ordinary {
+        count -= 1;
+    }
+    if count == 0 {
+        return;
+    }
+    let replacement: String = (0..count)
+        .map(|i| if i % 2 == 0 || (at_end && i + 1 == count) { '\u{a0}' } else { ' ' })
+        .collect();
+    if run != replacement {
+        let units = pyro_dom::dom::utf16_len(run);
+        let _ = dom.replace_data(node, offset, units, &replacement);
+    }
+}
+
 /// Normalize only the run touching the edit, retaining UTF-16 offsets.
 pub(super) fn at(page: &PageDom, dom: &mut Dom, host: NodeId, (node, offset): Point, repair: Repair) {
     if !editing::is_text(dom, node) || editing::editing_host(dom, node) != Some(host) {

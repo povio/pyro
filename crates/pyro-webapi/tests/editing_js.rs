@@ -550,7 +550,7 @@ fn contenteditable_line_breaks_arrows_and_words() {
     press(&e.page, "Enter", "\r", mods(true, false, false, false));
     assert_eq!(
         eval(r, "ed.innerHTML + '|' + sel() + '|' + types.join()"),
-        r#"<p>hello<br> world</p>|" world",0," world",0|insertLineBreak"#
+        "<p>hello<br>&nbsp;world</p>|\"\u{a0}world\",0,\"\u{a0}world\",0|insertLineBreak"
     );
     // ArrowUp keeps the column on the line above; ArrowDown comes back.
     press(&e.page, "ArrowRight", "", input::Modifiers::default());
@@ -558,11 +558,11 @@ fn contenteditable_line_breaks_arrows_and_words() {
     press(&e.page, "ArrowUp", "", input::Modifiers::default());
     assert_eq!(eval(r, "sel()"), r#""hello",2,"hello",2"#);
     press(&e.page, "ArrowDown", "", input::Modifiers::default());
-    assert_eq!(eval(r, "sel()"), r#"" world",2," world",2"#);
+    assert_eq!(eval(r, "sel()"), "\"\u{a0}world\",2,\"\u{a0}world\",2");
     press(&e.page, "End", "", input::Modifiers::default());
-    assert_eq!(eval(r, "sel()"), r#"" world",6," world",6"#);
+    assert_eq!(eval(r, "sel()"), "\"\u{a0}world\",6,\"\u{a0}world\",6");
     press(&e.page, "Backspace", "", word(false));
-    assert_eq!(eval(r, "ed.innerHTML + '|' + types.join()"), "<p>hello<br> </p>|insertLineBreak,deleteWordBackward");
+    assert_eq!(eval(r, "ed.innerHTML + '|' + types.join()"), "<p>hello<br>&nbsp;</p>|insertLineBreak,deleteWordBackward");
     press(&e.page, "Home", "", input::Modifiers::default());
     press(&e.page, "ArrowUp", "", input::Modifiers::default());
     press(&e.page, "ArrowRight", "", word(true));
