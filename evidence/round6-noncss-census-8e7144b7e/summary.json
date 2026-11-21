@@ -1,0 +1,34 @@
+{
+ "head": "8e7144b7e7de68be3b5b345138abe2c1dcc6d232",
+ "binarySHA256": "daea9cf80d257a1a0574e625ba38e58358104defbf2b7dee408fd8af667d72f8",
+ "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+ "chrome": "158.0.8127.37",
+ "official": 31827,
+ "historicalWithheld": 1468,
+ "newHolds": {
+  "websockets/back-forward-cache-with-open-websocket-connection-and-close-it-in-pagehide.window.html": [
+   [
+    "Chrome158",
+    "hang"
+   ],
+   [
+    "census",
+    "ordinary-178",
+    "hang"
+   ]
+  ]
+ },
+ "missingEligible": 0,
+ "counts": {
+  "referenceObserved": 30359,
+  "matched": 30358,
+  "lpFull": 15327,
+  "chromeFull": 24533,
+  "lpOnlyFull": 605,
+  "chromeOnlyFull": 9811,
+  "lpPass": 1688041,
+  "chromePass": 1755476,
+  "lpOnly": 12119,
+  "chromeOnly": 79554
+ }
+}
