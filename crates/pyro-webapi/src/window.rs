@@ -430,8 +430,62 @@ impl JsClass for Navigator {
             };
             Ok(s.boolean(crate::fetch::send_beacon(s, p, url, a.get(1))?))
         });
+        for name in ["registerProtocolHandler", "unregisterProtocolHandler"] {
+            def.method(name, 2, protocol_handler);
+        }
         def.method("vibrate", 0, |s, _p, _a| Ok(s.boolean(false)));
     }
+}
+
+/// HTML's normalize protocol handler parameters. This headless browser declines
+/// registration requests, so a successful registration or removal needs no UI.
+fn protocol_handler<'s>(s: &Scope<'s>, page: &Rc<PageDom>, args: pyro_js::Args<'s>) -> JsResult<Value<'s>> {
+    args.require(2, "Navigator protocol handler")?;
+    let scheme = dom_string(args.get(0))?.to_ascii_lowercase();
+    let url = dom_string(args.get(1))?;
+    let safelisted = matches!(
+        scheme.as_str(),
+        "bitcoin"
+            | "ftp"
+            | "ftps"
+            | "geo"
+            | "im"
+            | "irc"
+            | "ircs"
+            | "magnet"
+            | "mailto"
+            | "matrix"
+            | "mms"
+            | "news"
+            | "nntp"
+            | "openpgp4fpr"
+            | "sftp"
+            | "sip"
+            | "sms"
+            | "smsto"
+            | "ssh"
+            | "tel"
+            | "urn"
+            | "webcal"
+            | "wtai"
+            | "xmpp"
+    );
+    let custom = scheme
+        .strip_prefix("web+")
+        .is_some_and(|name| !name.is_empty() && name.bytes().all(|b| b.is_ascii_lowercase()));
+    if !safelisted && !custom {
+        return Err(JsError::dom("SecurityError", "Unsupported protocol handler scheme."));
+    }
+    if !url.contains("%s") {
+        return Err(JsError::dom("SyntaxError", "A protocol handler URL must contain %s."));
+    }
+    let resolved = crate::html::resolve_url(&page.dom.borrow(), page.document(), &url);
+    let handler =
+        pyro_net::Url::parse(&resolved).map_err(|_| JsError::dom("SyntaxError", "Invalid protocol handler URL."))?;
+    if !matches!(handler.scheme(), "http" | "https") || handler.origin().ascii_serialization() != page.origin_key() {
+        return Err(JsError::dom("SecurityError", "A protocol handler must use a same-origin HTTP(S) URL."));
+    }
+    Ok(s.undefined())
 }
 
 fn dialog(
