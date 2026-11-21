@@ -14,7 +14,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use pyro_dom::cssom::{normalize_selector, parse_rules, Namespaces, PaletteRule, ParsedRule, PropertyRule};
+use pyro_dom::cssom::{normalize_selector, parse_rules, CounterDescriptor, CounterRule, Namespaces, PaletteRule, ParsedRule, PropertyRule};
 use pyro_dom::stylo::declarations::{self, DeclarationBlock};
 use pyro_dom::NodeId;
 use pyro_js::{ClassDef, IdentityKey, JsClass, JsError, JsResult, NoParent, Object, Scope, Value};
@@ -445,7 +445,7 @@ impl StyleData {
                             write_page(&*owner.rules()?, &page, None);
                         }
                     }
-                    RuleKind::Group { .. } | RuleKind::Property(_) | RuleKind::Palette(_) | RuleKind::ViewTransition { .. } => return Ok(()),
+                    RuleKind::Counter(_) | RuleKind::Group { .. } | RuleKind::Property(_) | RuleKind::Palette(_) | RuleKind::ViewTransition { .. } => return Ok(()),
                 }
                 owner.commit(&*owner.rules()?);
                 Ok(())
@@ -740,6 +740,7 @@ impl RuleList {
 }
 
 enum RuleKind {
+    Counter(RefCell<CounterRule>),
     ViewTransition { navigation: String, types: Vec<String>, text: String },
     Declarations(RefCell<String>),
     Property(PropertyRule),
@@ -772,6 +773,7 @@ impl RuleNode {
                     RuleKind::Group { name: "scope".into(), condition: RefCell::new(parts.join(" ")), list, bounds: Some((start, end)) }
                 }
                 ParsedRule::Property(rule) => RuleKind::Property(rule),
+                ParsedRule::Counter(rule) => RuleKind::Counter(RefCell::new(rule)),
                 ParsedRule::Palette(rule) => RuleKind::Palette(rule),
                 ParsedRule::Style { selector, block } => {
                     RuleKind::Style { selector: RefCell::new(selector), block: RefCell::new(block) }
@@ -792,6 +794,7 @@ impl RuleNode {
         match &self.kind {
             RuleKind::ViewTransition { text, .. } => text.clone(),
             RuleKind::Declarations(text) => text.borrow().clone(),
+            RuleKind::Counter(rule) => rule.borrow().text(),
             RuleKind::Palette(rule) => rule.text.clone(),
             RuleKind::Property(rule) => rule.text.clone(),
             RuleKind::Style { selector, block } => format!("{} {{{}}}", selector.borrow(), block.borrow()),
@@ -813,6 +816,7 @@ impl RuleNode {
                 if decls.is_empty() { format!("{head} {{ }}") } else { format!("{head} {{ {decls} }}") }
             }
             RuleKind::Declarations(text) => DeclarationBlock::parse(&text.borrow()).css_text(),
+            RuleKind::Counter(rule) => rule.borrow().text(),
             RuleKind::Palette(rule) => rule.text.clone(),
             RuleKind::Property(rule) => rule.text.clone(),
             RuleKind::Style { selector, block } => {
@@ -1050,7 +1054,7 @@ fn rule_wrapper<'s>(s: &Scope<'s>, rule: &Rc<RuleNode>, owner: &SheetOwner) -> J
         RuleKind::Group { name, .. } if name == "container" => s.wrap::<CssContainerRule>(data, key),
         RuleKind::Group { bounds: Some(_), .. } => s.wrap::<CssScopeRule>(data, key),
         RuleKind::Group { .. } => s.wrap::<CssConditionRule>(data, key),
-        RuleKind::Other { rule_type: COUNTER_STYLE_RULE, .. } => s.wrap::<CssCounterStyleRule>(data, key),
+        RuleKind::Counter(_) => s.wrap::<CssCounterStyleRule>(data, key),
         RuleKind::Other { rule_type: MARGIN_RULE, .. } => s.wrap::<CssMarginRule>(data, key),
         RuleKind::Other { text, .. } => {
             let text = text.borrow();
@@ -1155,6 +1159,7 @@ fn define_rule<C: JsClass<Data = RuleData>>(def: &mut ClassDef<C>) {
     }
     def.getter("type", |s, r| {
         Ok(s.number(match &r.node()?.kind {
+            RuleKind::Counter(_) => 11.0,
             RuleKind::Style { .. } => 1.0,
             RuleKind::Group { name, .. } if matches!(name.as_str(), "keyframes" | "-webkit-keyframes") => 7.0,
             RuleKind::Group { name, .. } if name == "media" => 4.0,
@@ -1842,136 +1847,44 @@ rule_class!(CssViewTransitionRule, "CSSViewTransitionRule", CssRule, |def| {
 /// `CSSRule.type` of `@import`.
 const IMPORT_RULE: u16 = 3;
 
-/// `CSSRule.type` of `@counter-style`.
-const COUNTER_STYLE_RULE: u16 = 11;
-
-/// The `(name, value)` declarations of a rule block, split at top-level `;` (quotes and brackets
-/// kept whole).
-fn block_declarations(block: &str) -> Vec<(String, String)> {
-    let mut out = Vec::new();
-    let (mut depth, mut quote, mut start) = (0i32, None::<char>, 0usize);
-    let mut push = |piece: &str| {
-        if let Some((name, value)) = piece.split_once(':') {
-            out.push((name.trim().to_ascii_lowercase(), value.trim().to_string()));
-        }
-    };
-    let mut escaped = false;
-    for (i, c) in block.char_indices() {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        match (quote, c) {
-            (_, '\\') => escaped = true,
-            (Some(q), c) if c == q => quote = None,
-            (Some(_), _) => {}
-            (None, '"' | '\'') => quote = Some(c),
-            (None, '(' | '[' | '{') => depth += 1,
-            (None, ')' | ']' | '}') => depth -= 1,
-            (None, ';') if depth == 0 => {
-                push(&block[start..i]);
-                start = i + 1;
-            }
-            _ => {}
-        }
-    }
-    push(&block[start..]);
-    out
-}
-
-/// `CSSCounterStyleRule` (CSS Counter Styles 3 §6): `name` and the descriptors read and write
-/// the rule's text; a change commits the sheet, so markers and counters follow it (WPT css-lists
-/// `list-marker-counter-style-mutation`).
 pub struct CssCounterStyleRule;
 impl JsClass for CssCounterStyleRule {
     const NAME: &'static str = "CSSCounterStyleRule";
     type Data = RuleData;
     type Parent = CssRule;
     fn define(def: &mut ClassDef<Self>) {
-        // (prelude name, block) of `@counter-style <name> {<block>}`.
-        fn parts(text: &str) -> Option<(String, String)> {
-            let open = text.find('{')?;
-            let close = text.rfind('}')?;
-            let name = text["@counter-style".len().min(open)..open].trim().to_string();
-            Some((name, text[open + 1..close].to_string()))
+        fn counter(data: &RuleData) -> JsResult<&RefCell<CounterRule>> {
+            match &data.node()?.kind { RuleKind::Counter(rule) => Ok(rule), _ => unreachable!() }
         }
-        fn text_of(r: &RuleData) -> Option<std::cell::Ref<'_, String>> {
-            match &r.node().ok()?.kind {
-                RuleKind::Other { text, .. } => Some(text.borrow()),
-                _ => None,
+        fn edit(data: &RuleData, update: impl FnOnce(&mut CounterRule) -> bool) -> JsResult<()> {
+            let changed = update(&mut counter(data)?.borrow_mut());
+            if changed {
+                if let Ok(model) = data.owner.rules() { data.owner.commit(&model); }
             }
+            Ok(())
         }
-        fn write(r: &RuleData, name: &str, declarations: &[(String, String)]) {
-            let Ok(node) = r.node() else { return };
-            if let RuleKind::Other { text, .. } = &node.kind {
-                let body: String = declarations.iter().map(|(n, v)| format!(" {n}: {v};")).collect();
-                *text.borrow_mut() = format!("@counter-style {name} {{{body} }}");
-                // (Not for a detached or not origin-clean sheet: `SheetOwner::rules`.)
-                if let Ok(model) = r.owner.rules() {
-                    r.owner.commit(&model);
-                }
-            }
-        }
-        def.accessor(
-            "name",
-            |s, r| Ok(s.string(&text_of(r).and_then(|t| parts(&t)).map(|p| p.0).unwrap_or_default())),
-            |_s, r, v| {
-                let name = dom_string(v)?;
-                let name = name.trim();
-                let Some((_, block)) = text_of(r).and_then(|t| parts(&t)) else { return Ok(()) };
-                // A name that is no identifier, or a CSS-wide keyword or `none`, is ignored.
-                let valid = !name.is_empty()
-                    && name.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_' || !c.is_ascii())
-                    && !name.starts_with(|c: char| c.is_ascii_digit())
-                    && !matches!(name.to_ascii_lowercase().as_str(), "none" | "inherit" | "initial" | "unset" | "revert" | "revert-layer" | "default" | "decimal" | "disc");
-                if valid {
-                    write(r, name, &block_declarations(&block));
-                }
-                Ok(())
-            },
-        );
-        fn get_descriptor(r: &RuleData, descriptor: &str) -> String {
-            text_of(r)
-                .and_then(|t| parts(&t))
-                .and_then(|(_, block)| block_declarations(&block).into_iter().rev().find(|(n, _)| n == descriptor))
-                .map(|(_, v)| v)
-                .unwrap_or_default()
-        }
-        fn set_descriptor(r: &RuleData, descriptor: &str, value: &str) {
-            let value = value.trim();
-            // `system` cannot change after creation (CSSOM for counter styles); an empty value
-            // is invalid.
-            if value.is_empty() || descriptor == "system" {
-                return;
-            }
-            let Some((name, block)) = text_of(r).and_then(|t| parts(&t)) else { return };
-            let mut declarations: Vec<(String, String)> =
-                block_declarations(&block).into_iter().filter(|(n, _)| n != descriptor).collect();
-            declarations.push((descriptor.to_string(), value.to_string()));
-            write(r, &name, &declarations);
-        }
+        def.accessor("name", |scope, data| Ok(scope.string(&counter(data)?.borrow().name())), |_, data, value| {
+            let value = dom_string(value)?;
+            edit(data, |rule| rule.set_name(&value))
+        });
         macro_rules! descriptor {
-            ($attr:literal, $descriptor:literal) => {
-                def.accessor(
-                    $attr,
-                    |s, r| Ok(s.string(&get_descriptor(r, $descriptor))),
-                    |_s, r, v| {
-                        set_descriptor(r, $descriptor, &dom_string(v)?);
-                        Ok(())
-                    },
-                );
+            ($attribute:literal, $id:ident) => {
+                def.accessor($attribute, |scope, data| Ok(scope.string(&counter(data)?.borrow().descriptor(CounterDescriptor::$id))), |_, data, value| {
+                    let value = dom_string(value)?;
+                    edit(data, |rule| rule.set_descriptor(CounterDescriptor::$id, &value))
+                });
             };
         }
-        descriptor!("system", "system");
-        descriptor!("symbols", "symbols");
-        descriptor!("additiveSymbols", "additive-symbols");
-        descriptor!("negative", "negative");
-        descriptor!("prefix", "prefix");
-        descriptor!("suffix", "suffix");
-        descriptor!("range", "range");
-        descriptor!("pad", "pad");
-        descriptor!("speakAs", "speak-as");
-        descriptor!("fallback", "fallback");
+        descriptor!("system", System);
+        descriptor!("symbols", Symbols);
+        descriptor!("additiveSymbols", AdditiveSymbols);
+        descriptor!("negative", Negative);
+        descriptor!("prefix", Prefix);
+        descriptor!("suffix", Suffix);
+        descriptor!("range", Range);
+        descriptor!("pad", Pad);
+        descriptor!("speakAs", SpeakAs);
+        descriptor!("fallback", Fallback);
     }
 }
 
@@ -2364,7 +2277,7 @@ impl MediaList {
                         let media = if text.is_empty() { String::new() } else { format!(" {text}") };
                         *rule.borrow_mut() = format!("@import {head}{media};");
                     }
-                    RuleKind::Style { .. } | RuleKind::Property(_) | RuleKind::Palette(_) | RuleKind::Declarations(_) | RuleKind::ViewTransition { .. } => return Ok(()),
+                    RuleKind::Counter(_) | RuleKind::Style { .. } | RuleKind::Property(_) | RuleKind::Palette(_) | RuleKind::Declarations(_) | RuleKind::ViewTransition { .. } => return Ok(()),
                 }
                 r.owner.commit(&*r.owner.rules()?);
                 return Ok(());

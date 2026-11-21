@@ -6499,6 +6499,18 @@ fn css_keyframes_names_are_css_tokens() {
 }
 
 #[test]
+fn counter_style_edits_validate_values_and_system_changes() {
+    let e = env(r#"<style>@counter-style sample { system: fixed; symbols: A B; }</style>"#);
+    assert_eq!(eval(&e.main, r#"const sheet = document.styleSheets[0], rule = sheet.cssRules[0];
+        rule.system = 'fixed 2'; rule.system = 'alphabetic'; rule.prefix = '"a;b"';
+        rule.prefix = 'invalid pair'; rule.name = 'circle'; rule.symbols = '1 invalid';
+        [rule.name, rule.system, rule.symbols, rule.prefix].join('|')"#), r#"sample|fixed 2|A B|"a;b""#);
+    assert_eq!(eval(&e.main, r#"sheet.deleteRule(0); rule.name = 'a\\ b'; rule.system = 'fixed 3';
+        [rule.name, rule.system, rule.cssText.startsWith('@counter-style a\\ b {'), sheet.cssRules.length].join('|')"#), "a b|fixed 3|true|0");
+    e.page.dispose();
+}
+
+#[test]
 fn view_transition_descriptors_retain_their_frozen_types() {
     let e = env(r"<style>@view-transition { navigation: auto; types: a\ b c c; types: invalid, list }</style>");
     assert_eq!(eval(&e.main, "const rule = document.styleSheets[0].cssRules[0];

@@ -575,8 +575,60 @@ diff -ruN a/color/to_css.rs b/color/to_css.rs
                      ColorSpace::SrgbLinear
 diff -ruN a/counter_style/mod.rs b/counter_style/mod.rs
 --- a/counter_style/mod.rs	2026-11-11 19:55:57
-+++ b/counter_style/mod.rs	2026-11-21 12:26:11
-@@ -506,7 +506,7 @@
++++ b/counter_style/mod.rs	2026-11-21 12:29:40
+@@ -260,22 +260,7 @@
+     location: SourceLocation,
+ ) -> Result<CounterStyleRule, ParseError> {
+     let start = input.current_source_location();
+-    let mut rule = CounterStyleRule::empty(name, location);
+-    {
+-        let mut parser = DescriptorParser {
+-            context,
+-            descriptors: &mut rule.descriptors,
+-        };
+-        let iter = RuleBodyParser::new(input, &mut parser);
+-        for declaration in iter {
+-            if let Err((error, slice, location)) = declaration {
+-                let error = ContextualParseError::UnsupportedCounterStyleDescriptorDeclaration(
+-                    slice, error,
+-                );
+-                context.log_css_error(location, error)
+-            }
+-        }
+-    }
++    let rule = CounterStyleRule::parse_for_cssom(name, context, input, location);
+     let error = match *rule.resolved_system() {
+         ref system @ System::Cyclic
+         | ref system @ System::Fixed { .. }
+@@ -329,6 +314,27 @@
+ // Implements the special checkers for some setters.
+ // See <https://drafts.csswg.org/css-counter-styles/#the-csscounterstylerule-interface>
+ impl CounterStyleRule {
++    /// Parse CSSOM descriptors even if their combination cannot generate a marker.
++    pub fn parse_for_cssom(name: CustomIdent, context: &ParserContext, input: &mut Parser, location: SourceLocation) -> Self {
++        let mut rule = Self::empty(name, location);
++        {
++            let mut parser = DescriptorParser {
++                context,
++                descriptors: &mut rule.descriptors,
++            };
++            let iter = RuleBodyParser::new(input, &mut parser);
++            for declaration in iter {
++                if let Err((error, slice, location)) = declaration {
++                    let error = ContextualParseError::UnsupportedCounterStyleDescriptorDeclaration(
++                        slice, error,
++                    );
++                    context.log_css_error(location, error)
++                }
++            }
++        }
++        rule
++    }
++
+     fn empty(name: CustomIdent, source_location: SourceLocation) -> Self {
+         Self {
+             name,
+@@ -506,7 +512,7 @@
  
  /// <https://drafts.csswg.org/css-counter-styles/#typedef-symbol>
  #[derive(
@@ -585,7 +637,7 @@ diff -ruN a/counter_style/mod.rs b/counter_style/mod.rs
  )]
  #[repr(u8)]
  pub enum Symbol {
-@@ -514,13 +514,27 @@
+@@ -514,13 +520,27 @@
      String(crate::OwnedStr),
      /// <custom-ident>
      Ident(CustomIdent),
@@ -617,7 +669,7 @@ diff -ruN a/counter_style/mod.rs b/counter_style/mod.rs
          match *input.next()? {
              Token::QuotedString(ref s) => Ok(Symbol::String(s.as_ref().to_owned().into())),
              Token::Ident(ref s) => Ok(Symbol::Ident(CustomIdent::from_ident(s, &[])?)),
-@@ -721,15 +735,14 @@
+@@ -721,15 +741,14 @@
      Numbers,
      /// words
      Words,
@@ -635,7 +687,7 @@ diff -ruN a/counter_style/mod.rs b/counter_style/mod.rs
          let result = input.try_parse(|input| {
              let ident = input.expect_ident().map_err(|_| ())?;
              match_ignore_ascii_case! { ident,
-@@ -737,18 +750,10 @@
+@@ -737,18 +756,10 @@
                  "bullets" => Ok(SpeakAs::Bullets),
                  "numbers" => Ok(SpeakAs::Numbers),
                  "words" => Ok(SpeakAs::Words),

@@ -8,6 +8,54 @@ use crate::select;
 /// `(prefix, url)` of the `@namespace` rules in scope; `""` is the default.
 pub type Namespaces = Vec<(String, String)>;
 
+pub use style::counter_style::DescriptorId as CounterDescriptor;
+
+#[derive(Debug, Clone)]
+pub struct CounterRule(style::counter_style::CounterStyleRule);
+
+impl PartialEq for CounterRule {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.name() == other.0.name() && self.0.descriptors() == other.0.descriptors()
+    }
+}
+
+impl Eq for CounterRule {}
+
+impl CounterRule {
+    fn with_context<T>(action: impl FnOnce(&style::parser::ParserContext) -> T) -> T {
+        use style::stylesheets::{CssRuleType, Origin};
+        let url = crate::stylo::url_data();
+        action(&style::parser::ParserContext::new(
+            Origin::Author, &url, Some(CssRuleType::CounterStyle), style_traits::ParsingMode::DEFAULT,
+            style::context::QuirksMode::NoQuirks, Default::default(), None, None, Default::default(),
+        ))
+    }
+
+    pub fn text(&self) -> String {
+        use style::shared_lock::{SharedRwLock, ToCssWithGuard};
+        self.0.to_css_string(&SharedRwLock::new().read())
+    }
+
+    pub fn name(&self) -> String { self.0.name().0.to_string() }
+
+    pub fn set_name(&mut self, value: &str) -> bool {
+        let Ok(name) = Parser::new(value).parse_entirely(style::counter_style::parse_counter_style_name_definition) else { return false };
+        if self.0.name() == &name { return false; }
+        self.0.set_name(name);
+        true
+    }
+
+    pub fn descriptor(&self, id: CounterDescriptor) -> String {
+        let mut value = String::new();
+        self.0.descriptors().get(id, &mut value).unwrap();
+        value
+    }
+
+    pub fn set_descriptor(&mut self, id: CounterDescriptor, value: &str) -> bool {
+        Self::with_context(|context| self.0.set_descriptor(id, context, &mut Parser::new(value)).unwrap_or(false))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PropertyRule {
     pub name: String,
@@ -28,6 +76,7 @@ pub struct PaletteRule {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParsedRule {
+    Counter(CounterRule),
     ViewTransition { navigation: String, types: Vec<String>, text: String },
     Palette(PaletteRule),
     Declarations(String),
@@ -359,22 +408,13 @@ fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces, sc
     }
     let (prelude, block) = parse_prelude_and_block(p, start, raw_block);
     if lower == "counter-style" {
-        use style::counter_style::{parse_counter_style_name_definition, DescriptorParser, Descriptors};
-        use style::stylesheets::{CssRuleType, Origin};
-        use style_traits::ToCss as StyleToCss;
-
-        let name = Parser::new(&prelude).parse_entirely(parse_counter_style_name_definition).ok()?;
+        let name = Parser::new(&prelude).parse_entirely(style::counter_style::parse_counter_style_name_definition).ok()?;
         let block = block?;
-        let url = crate::stylo::url_data();
-        let context = style::parser::ParserContext::new(
-            Origin::Author, &url, Some(CssRuleType::CounterStyle), style_traits::ParsingMode::DEFAULT,
-            style::context::QuirksMode::NoQuirks, Default::default(), None, None, Default::default(),
-        );
-        let mut descriptors = Descriptors::default();
-        let mut parser = DescriptorParser { context: &context, descriptors: &mut descriptors };
-        cssparser::RuleBodyParser::new(&mut Parser::new(&block), &mut parser).for_each(drop);
-        let text = format!("@counter-style {} {{ {}}}", name.to_css_string(), descriptors.to_css_string());
-        return Some(ParsedRule::Other { rule_type: 11, text });
+        let mut input = Parser::new(&block);
+        let location = input.current_source_location();
+        return Some(ParsedRule::Counter(CounterRule(CounterRule::with_context(|context| {
+            style::counter_style::CounterStyleRule::parse_for_cssom(name, context, &mut input, location)
+        }))));
     }
     if lower == "view-transition" {
         use style::shared_lock::{SharedRwLock, ToCssWithGuard};
@@ -881,12 +921,14 @@ mod tests {
         assert!(parse("@counter-style Disclosure-Closed {}").is_err());
         assert!(parse("@counter-style a b {}").is_err());
         assert!(parse("@counter-style a;").is_err());
-        let ParsedRule::Other { rule_type: 11, text } = parse(r#"@counter-style a\ b { prefix: 'x;y'; prefix: 12; speak-as: SPELL-OUT; symbols: url(pic.png) }"#).unwrap() else { panic!() };
+        let ParsedRule::Counter(rule) = parse(r#"@counter-style a\ b { prefix: 'x;y'; prefix: 12; speak-as: SPELL-OUT; symbols: url(pic.png) }"#).unwrap() else { panic!() };
+        let text = rule.text();
         assert!(text.starts_with(r"@counter-style a\ b { "));
         assert!(text.contains(r#"prefix: "x;y";"#));
         assert!(text.contains(r#"symbols: url("pic.png");"#));
         assert!(text.contains("speak-as: spell-out;"));
-        assert_eq!(parse("@counter-style a { prefix: initial }").unwrap(), ParsedRule::Other { rule_type: 11, text: "@counter-style a { }".into() });
+        let ParsedRule::Counter(empty) = parse("@counter-style a { prefix: initial }").unwrap() else { panic!() };
+        assert_eq!(empty.text(), "@counter-style a { }");
     }
 
     #[test]

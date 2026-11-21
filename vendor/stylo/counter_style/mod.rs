@@ -260,22 +260,7 @@ pub fn parse_counter_style_body(
     location: SourceLocation,
 ) -> Result<CounterStyleRule, ParseError> {
     let start = input.current_source_location();
-    let mut rule = CounterStyleRule::empty(name, location);
-    {
-        let mut parser = DescriptorParser {
-            context,
-            descriptors: &mut rule.descriptors,
-        };
-        let iter = RuleBodyParser::new(input, &mut parser);
-        for declaration in iter {
-            if let Err((error, slice, location)) = declaration {
-                let error = ContextualParseError::UnsupportedCounterStyleDescriptorDeclaration(
-                    slice, error,
-                );
-                context.log_css_error(location, error)
-            }
-        }
-    }
+    let rule = CounterStyleRule::parse_for_cssom(name, context, input, location);
     let error = match *rule.resolved_system() {
         ref system @ System::Cyclic
         | ref system @ System::Fixed { .. }
@@ -329,6 +314,27 @@ impl ToCssWithGuard for CounterStyleRule {
 // Implements the special checkers for some setters.
 // See <https://drafts.csswg.org/css-counter-styles/#the-csscounterstylerule-interface>
 impl CounterStyleRule {
+    /// Parse CSSOM descriptors even if their combination cannot generate a marker.
+    pub fn parse_for_cssom(name: CustomIdent, context: &ParserContext, input: &mut Parser, location: SourceLocation) -> Self {
+        let mut rule = Self::empty(name, location);
+        {
+            let mut parser = DescriptorParser {
+                context,
+                descriptors: &mut rule.descriptors,
+            };
+            let iter = RuleBodyParser::new(input, &mut parser);
+            for declaration in iter {
+                if let Err((error, slice, location)) = declaration {
+                    let error = ContextualParseError::UnsupportedCounterStyleDescriptorDeclaration(
+                        slice, error,
+                    );
+                    context.log_css_error(location, error)
+                }
+            }
+        }
+        rule
+    }
+
     fn empty(name: CustomIdent, source_location: SourceLocation) -> Self {
         Self {
             name,
