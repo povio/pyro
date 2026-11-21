@@ -1,0 +1,12 @@
+<!doctype html><meta charset="utf-8"><title>Conic gradient controls</title>
+<div id="target"></div><pre id="results"></pre>
+<script>
+const positions = ["90deg", "25%", "calc(90deg + 50%)", "calc(0% + 90deg)",
+  "calc(100% - 45deg)", "min(50%, 90deg)", "max(90deg, 75%)", "calc(1px + 10%)"];
+const rows = positions.map(position => {
+  target.style.backgroundImage = "";
+  target.style.backgroundImage = `conic-gradient(red ${position}, blue)`;
+  return [position, target.style.backgroundImage, getComputedStyle(target).backgroundImage];
+});
+document.getElementById("results").textContent = JSON.stringify(rows);
+</script>

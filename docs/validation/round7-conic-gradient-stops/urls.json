@@ -1,0 +1,14 @@
+[
+  "css/css-backgrounds/parsing/background-image-computed.sub.html",
+  "css/css-backgrounds/parsing/background-image-invalid.html",
+  "css/css-backgrounds/parsing/background-image-valid.html",
+  "css/css-images/parsing/conic-gradient-calc-angle-percentage-invalid.html",
+  "css/css-images/parsing/conic-gradient-calc-angle-percentage-valid.html",
+  "css/css-images/parsing/gradient-interpolation-method-computed.html",
+  "css/css-images/parsing/gradient-interpolation-method-invalid.html",
+  "css/css-images/parsing/gradient-interpolation-method-valid.html",
+  "css/css-images/parsing/gradient-position-computed.html",
+  "css/css-images/parsing/gradient-position-invalid.html",
+  "css/css-images/parsing/gradient-position-valid.html",
+  "css/css-shapes/shape-outside/values/shape-outside-gradient-computed.html"
+]
