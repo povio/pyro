@@ -3738,8 +3738,12 @@ simple_class!(SvgGeometryElement, "SVGGeometryElement", SvgGraphicsElement, |def
     def.getter("pathLength", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &PATH_LENGTH)?.value()));
 });
 simple_class!(SvgPathElement, "SVGPathElement", SvgGeometryElement);
-simple_class!(SvgPolylineElement, "SVGPolylineElement", SvgGeometryElement);
-simple_class!(SvgPolygonElement, "SVGPolygonElement", SvgGeometryElement);
+fn svg_animated_points<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
+    def.getter("points", |s, n| collections::point_list(s, n, false));
+    def.getter("animatedPoints", |s, n| collections::point_list(s, n, true));
+}
+simple_class!(SvgPolylineElement, "SVGPolylineElement", SvgGeometryElement, |def| { svg_animated_points(def); });
+simple_class!(SvgPolygonElement, "SVGPolygonElement", SvgGeometryElement, |def| { svg_animated_points(def); });
 simple_class!(SvgStopElement, "SVGStopElement", SvgElement, |def| {
     def.getter("offset", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &STOP_OFFSET)?.value()));
 });
