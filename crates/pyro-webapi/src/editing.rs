@@ -1612,6 +1612,26 @@ pub(crate) fn insert_replaced_element(page: &Rc<PageDom>, host: NodeId, image_sr
 /// replaces the selection; the caret goes after it.
 pub(crate) fn insert_html(page: &Rc<PageDom>, host: NodeId, html: &str, input_type: &str) {
     let (start, end) = host_range(page, host);
+    if plaintext_at(&page.dom.borrow(), start.0) {
+        let Ok(text) = Dom::plaintext_from_html(html) else { return };
+        let newline = crate::edit_commands::newlines_significant(page, start.0);
+        edit(page, host, input_type, None, |page| {
+            let mut dom = page.dom.borrow_mut();
+            let mut caret = if start != end { delete_range(&mut dom, host, start, end, false) } else { start };
+            for (index, line) in text.split('\n').enumerate() {
+                if index != 0 {
+                    caret = if newline { insert_at(&mut dom, caret, "\n") } else { line_break_at(&mut dom, host, caret) };
+                }
+                if !line.is_empty() {
+                    caret = insert_at(&mut dom, caret, line);
+                    whitespace::inserted(page, &mut dom, host, caret, line);
+                }
+            }
+            drop(dom);
+            set_selection(page, caret, caret);
+        });
+        return;
+    }
     let transfer = crate::data_transfer::NativeTransfer::new(
         page,
         &[("text/html".to_owned(), html.to_owned())],
