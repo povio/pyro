@@ -74,7 +74,11 @@ impl VarFunction {
         context: &mut SubstitutionReplacementContext<'a, '_, '_, '_>,
     ) -> Option<Substitution<'a>> {
         let registration = context.stylist.get_custom_property_registration(name);
-        match context.substitution_functions.get_var(registration, name) {
+        let value = context.substitution_functions.get_var(registration, name);
+        if value.is_some_and(|v| v.viewport_dependent) {
+            context.computed_context.builder.add_flags(crate::computed_value_flags::ComputedValueFlags::USES_VIEWPORT_UNITS);
+        }
+        match value {
             None => None,
             // If the referenced value is itself still unresolved (i.e. it has references), we
             // are substituting against a partially-resolved map -- this happens while applying

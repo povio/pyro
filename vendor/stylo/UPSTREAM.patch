@@ -709,8 +709,42 @@ diff -ruN a/counter_style/mod.rs b/counter_style/mod.rs
  }
 diff -ruN a/custom_properties.rs b/custom_properties.rs
 --- a/custom_properties.rs	2026-11-11 19:55:57
-+++ b/custom_properties.rs	2026-11-21 16:18:24
-@@ -862,7 +862,7 @@
++++ b/custom_properties.rs	2026-11-21 17:04:59
+@@ -756,14 +756,14 @@
+     }
+ 
+     let url_data = &value.url_data;
+-    let substitution = SubstitutionReplacementContext::new(
++    let (substitution, viewport_dependent) = context.track_viewport_use(|| SubstitutionReplacementContext::new(
+         Some(PropertyIdRef::from(name)),
+         &context.builder.substitution_functions,
+         stylist,
+         context,
+         attribute_tracker,
+     )
+-    .substitute_variable_value(value, None);
++    .substitute_variable_value(value, None));
+ 
+     let Ok(substitution) = substitution else {
+         if is_var {
+@@ -832,7 +832,7 @@
+ 
+     match kind {
+         SubstitutionFunctionKind::Var => {
+-            let value = match substitution.into_value(
++            let mut value = match substitution.into_value(
+                 url_data,
+                 registration,
+                 context,
+@@ -844,6 +844,7 @@
+                     return;
+                 },
+             };
++            value.viewport_dependent |= viewport_dependent;
+             context
+                 .builder
+                 .substitution_functions
+@@ -862,7 +863,7 @@
                  .substitution_functions
                  .insert_attr(name, value);
          },
@@ -4345,17 +4379,55 @@ diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
  spec = "https://drafts.csswg.org/css-overflow-4/#webkit-line-clamp"
 diff -ruN a/properties_and_values/value.rs b/properties_and_values/value.rs
 --- a/properties_and_values/value.rs	2026-11-11 19:55:57
-+++ b/properties_and_values/value.rs	2026-11-21 16:24:12
-@@ -230,7 +230,7 @@
++++ b/properties_and_values/value.rs	2026-11-21 17:04:59
+@@ -215,6 +215,9 @@
+     /// Flag indicating whether this value is tainted by an attr().
+     #[css(skip)]
+     pub attr_tainted: bool,
++    /// Whether computing this value consulted a viewport-relative length.
++    #[css(skip)]
++    pub(crate) viewport_dependent: bool,
+ }
+ 
+ impl<Component: PartialEq> PartialEq for Value<Component> {
+@@ -230,7 +233,8 @@
          Ok(Value {
              v,
              url_data: self.url_data.clone(),
 -            attr_tainted: self.attr_tainted,
 +            attr_tainted: self.attr_tainted || other.attr_tainted,
++            viewport_dependent: self.viewport_dependent || other.viewport_dependent,
          })
      }
  }
-@@ -559,9 +559,15 @@
+@@ -242,6 +246,7 @@
+             v,
+             url_data,
+             attr_tainted: Default::default(),
++            viewport_dependent: false,
+         }
+     }
+ 
+@@ -254,6 +259,7 @@
+             v,
+             url_data,
+             attr_tainted,
++            viewport_dependent: false,
+         }
+     }
+ }
+@@ -337,7 +343,9 @@
+             return Err(());
+         };
+ 
+-        Ok(value.to_computed_value(context))
++        let (mut computed, used) = context.track_viewport_use(|| value.to_computed_value(context));
++        computed.viewport_dependent |= used;
++        Ok(computed)
+     }
+ 
+     /// Parse and validate a registered custom property value according to its syntax descriptor,
+@@ -559,9 +567,15 @@
              DataType::Resolution => {
                  SpecifiedValueComponent::Resolution(specified::Resolution::parse(context, input)?)
              },
@@ -4374,7 +4446,7 @@ diff -ruN a/properties_and_values/value.rs b/properties_and_values/value.rs
              DataType::CustomIdent => {
                  let name = CustomIdent::parse(input, &[])?;
                  SpecifiedValueComponent::CustomIdent(name)
-@@ -632,13 +638,23 @@
+@@ -632,7 +646,7 @@
  }
  
  /// An animated value for custom property.
@@ -4383,11 +4455,10 @@ diff -ruN a/properties_and_values/value.rs b/properties_and_values/value.rs
  pub struct CustomAnimatedValue {
      /// The name of the custom property.
      pub(crate) name: crate::custom_properties::Name,
-     /// The computed value of the custom property.
-     /// `None` represents the guaranteed-invalid value.
+@@ -641,12 +655,30 @@
      pub(crate) value: Option<ComputedValue>,
-+}
-+
+ }
+ 
 +impl PartialEq for CustomAnimatedValue {
 +    fn eq(&self, other: &Self) -> bool {
 +        // The sampled value goes back into the cascade. A change in its taint alone
@@ -4396,10 +4467,11 @@ diff -ruN a/properties_and_values/value.rs b/properties_and_values/value.rs
 +            && self.value == other.value
 +            && self.value.as_ref().map(|v| v.attr_tainted) == other.value.as_ref().map(|v| v.attr_tainted)
 +    }
- }
- 
++}
++
  impl Animate for CustomAnimatedValue {
-@@ -647,6 +663,14 @@
+     fn animate(&self, other: &Self, procedure: Procedure) -> Result<Self, ()> {
+         if self.name != other.name {
              return Err(());
          }
          let value = self.value.animate(&other.value, procedure)?;
@@ -7544,8 +7616,8 @@ diff -ruN a/substitution/attr.rs b/substitution/attr.rs
  
 diff -ruN a/substitution/conditional.rs b/substitution/conditional.rs
 --- a/substitution/conditional.rs	1970-01-01 00:00:00.000000000 +0000
-+++ b/substitution/conditional.rs	2026-11-21 16:27:55
-@@ -0,0 +1,98 @@
++++ b/substitution/conditional.rs	2026-11-21 17:04:59
+@@ -0,0 +1,120 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
 + * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
@@ -7623,10 +7695,32 @@ diff -ruN a/substitution/conditional.rs b/substitution/conditional.rs
 +    ) -> Result<Substitution<'a>, ()> {
 +        let mut attr_tainted = false;
 +        for branch in &self.branches {
-+            let (condition, tainted) = branch.parsed_condition(source, context);
++            use crate::properties::{LonghandId, PropertyIdRef};
++            let computed = context.computed_context;
++            let guards_viewport = computed.is_root_element() && matches!(context.property_id,
++                Some(PropertyIdRef::NonCustom(id)) if [LonghandId::OverflowX, LonghandId::OverflowY,
++                    LonghandId::ScrollbarWidth, LonghandId::ScrollbarGutter].iter().any(|axis| axis.is_or_is_longhand_of(id)));
++            let ((condition, tainted), mut cyclic) = if guards_viewport {
++                computed.track_viewport_use(|| branch.parsed_condition(source, context))
++            } else {
++                (branch.parsed_condition(source, context), false)
++            };
 +            attr_tainted |= tainted;
 +            let Some(condition) = condition else { continue };
-+            let result = condition.evaluate(&mut |predicate| predicate.matches(source, context, &mut attr_tainted));
++            let result = condition.evaluate(&mut |predicate| {
++                if guards_viewport && matches!(predicate, crate::queries::condition::IfPredicate::Style(_)) {
++                    predicate.for_each_property(&mut |name| {
++                        let registration = context.stylist.get_custom_property_registration(&name);
++                        cyclic |= context.substitution_functions.get_var(registration, &name).is_some_and(|v| v.viewport_dependent);
++                    });
++                    let (matched, used) = computed.track_viewport_use(|| predicate.matches(source, context, &mut attr_tainted));
++                    cyclic |= used;
++                    matched
++                } else {
++                    predicate.matches(source, context, &mut attr_tainted)
++                }
++            });
++            if cyclic { return Err(()); }
 +            context.consulted_attr_taint |= attr_tainted;
 +            if result.to_bool(false) {
 +                let mut result = context.substitute_declaration_value(&branch.value, source)?;
@@ -7806,6 +7900,22 @@ diff -ruN a/substitution/mod.rs b/substitution/mod.rs
  
              // Optimize the property: var(--...) case to avoid allocating at all.
              if reference.start == start && reference.end == end {
+diff -ruN a/substitution/var.rs b/substitution/var.rs
+--- a/substitution/var.rs	2026-11-11 19:55:57
++++ b/substitution/var.rs	2026-11-21 17:04:59
+@@ -74,7 +74,11 @@
+         context: &mut SubstitutionReplacementContext<'a, '_, '_, '_>,
+     ) -> Option<Substitution<'a>> {
+         let registration = context.stylist.get_custom_property_registration(name);
+-        match context.substitution_functions.get_var(registration, name) {
++        let value = context.substitution_functions.get_var(registration, name);
++        if value.is_some_and(|v| v.viewport_dependent) {
++            context.computed_context.builder.add_flags(crate::computed_value_flags::ComputedValueFlags::USES_VIEWPORT_UNITS);
++        }
++        match value {
+             None => None,
+             // If the referenced value is itself still unresolved (i.e. it has references), we
+             // are substituting against a partially-resolved map -- this happens while applying
 diff -ruN a/traversal.rs b/traversal.rs
 --- a/traversal.rs	2026-11-11 19:55:57
 +++ b/traversal.rs	2026-11-17 23:56:40
@@ -8978,7 +9088,7 @@ diff -ruN a/values/computed/length_percentage.rs b/values/computed/length_percen
      #[inline]
 diff -ruN a/values/computed/mod.rs b/values/computed/mod.rs
 --- a/values/computed/mod.rs	2026-11-11 19:55:57
-+++ b/values/computed/mod.rs	2026-11-21 16:29:35
++++ b/values/computed/mod.rs	2026-11-21 17:04:59
 @@ -60,23 +60,23 @@
  pub use self::basic_shape::FillRule;
  pub use self::border::{
@@ -9088,6 +9198,24 @@ diff -ruN a/values/computed/mod.rs b/values/computed/mod.rs
              rule_cache_conditions: RefCell::new(rule_cache_conditions),
              scope: CascadeLevel::same_tree_author_normal(),
              included_cascade_flags: RuleCascadeFlags::empty(),
+@@ -439,6 +450,17 @@
+         self.builder.is_root_element
+     }
+ 
++    /// Collect viewport dependencies for one computation while retaining the element-wide flags.
++    pub(crate) fn track_viewport_use<T>(&self, compute: impl FnOnce() -> T) -> (T, bool) {
++        let flag = ComputedValueFlags::USES_VIEWPORT_UNITS;
++        let previous = self.builder.flags() & flag;
++        self.builder.remove_flags(flag);
++        let value = compute();
++        let used = self.builder.flags().contains(flag);
++        self.builder.add_flags(previous);
++        (value, used)
++    }
++
+     /// Queries font metrics.
+     pub fn query_font_metrics(
+         &self,
 diff -ruN a/values/computed/position.rs b/values/computed/position.rs
 --- a/values/computed/position.rs	2026-11-11 19:55:57
 +++ b/values/computed/position.rs	2026-11-17 14:08:59

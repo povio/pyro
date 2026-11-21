@@ -75,10 +75,32 @@ impl IfFunction {
     ) -> Result<Substitution<'a>, ()> {
         let mut attr_tainted = false;
         for branch in &self.branches {
-            let (condition, tainted) = branch.parsed_condition(source, context);
+            use crate::properties::{LonghandId, PropertyIdRef};
+            let computed = context.computed_context;
+            let guards_viewport = computed.is_root_element() && matches!(context.property_id,
+                Some(PropertyIdRef::NonCustom(id)) if [LonghandId::OverflowX, LonghandId::OverflowY,
+                    LonghandId::ScrollbarWidth, LonghandId::ScrollbarGutter].iter().any(|axis| axis.is_or_is_longhand_of(id)));
+            let ((condition, tainted), mut cyclic) = if guards_viewport {
+                computed.track_viewport_use(|| branch.parsed_condition(source, context))
+            } else {
+                (branch.parsed_condition(source, context), false)
+            };
             attr_tainted |= tainted;
             let Some(condition) = condition else { continue };
-            let result = condition.evaluate(&mut |predicate| predicate.matches(source, context, &mut attr_tainted));
+            let result = condition.evaluate(&mut |predicate| {
+                if guards_viewport && matches!(predicate, crate::queries::condition::IfPredicate::Style(_)) {
+                    predicate.for_each_property(&mut |name| {
+                        let registration = context.stylist.get_custom_property_registration(&name);
+                        cyclic |= context.substitution_functions.get_var(registration, &name).is_some_and(|v| v.viewport_dependent);
+                    });
+                    let (matched, used) = computed.track_viewport_use(|| predicate.matches(source, context, &mut attr_tainted));
+                    cyclic |= used;
+                    matched
+                } else {
+                    predicate.matches(source, context, &mut attr_tainted)
+                }
+            });
+            if cyclic { return Err(()); }
             context.consulted_attr_taint |= attr_tainted;
             if result.to_bool(false) {
                 let mut result = context.substitute_declaration_value(&branch.value, source)?;

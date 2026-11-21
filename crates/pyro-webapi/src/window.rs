@@ -685,14 +685,32 @@ pub fn css_namespace<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
     })?;
     o.set_atom("supports", supports.value())?;
     let escape = s.function("escape", |s, _this, a| {
-        let v = arg_string(&a, 0, "CSS.escape")?;
-        let mut out = String::new();
-        cssparser::serialize_identifier(&v, &mut out).map_err(|_| JsError::Type("CSS.escape failed".into()))?;
-        Ok(s.string(&out))
+        a.require(1, "CSS.escape")?;
+        let input = a.get(0).to_js_string()?;
+        let units = input.utf16();
+        let mut escaped = Vec::with_capacity(units.len());
+        for (index, &unit) in units.iter().enumerate() {
+            match unit {
+                0 => escaped.push(0xfffd),
+                1..=31 | 127 => escaped.extend(format!("\\{unit:x} ").encode_utf16()),
+                48..=57 if index == 0 || (index == 1 && units[0] == 45) => {
+                    escaped.extend(format!("\\{unit:x} ").encode_utf16());
+                },
+                45 if units.len() == 1 => escaped.extend([92, unit]),
+                45 | 48..=57 | 65..=90 | 95 | 97..=122 | 128.. => escaped.push(unit),
+                _ => escaped.extend([92, unit]),
+            }
+        }
+        Ok(s.string_utf16(&escaped))
     })?;
     o.set_atom("escape", escape.value())?;
     // escape(CSSOMString ident): length 1.
     let define = s.global().get_atom("Object")?.as_object().expect("Object").get_atom("defineProperty")?;
+    let tag = s.global().get_atom("Symbol")?.as_object().expect("Symbol").get_atom("toStringTag")?;
+    let tag_descriptor = s.object();
+    tag_descriptor.set_atom("value", s.string("CSS"))?;
+    tag_descriptor.set_atom("configurable", s.boolean(true))?;
+    define.as_object().expect("Object.defineProperty").call(None, &[o.value(), tag, tag_descriptor.value()])?;
     let descriptor = s.object();
     descriptor.set_atom("value", s.number(1.0))?;
     define.as_object().expect("Object.defineProperty").call(None, &[escape.value(), s.string("length"), descriptor.value()])?;
