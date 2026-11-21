@@ -22,7 +22,9 @@
 // ['C', index] (its pixels or placeholder travel beside the text);
 // `host(value, 8)` is 'C' for one that can be transferred (DataCloneError
 // if detached), `host(value, 9)` detaches it and `host(index, 10)` makes the
-// one of a decoded 'C' tree.
+// one of a decoded 'C' tree. For WebCodecs chunks, host(value, 11) stores
+// the immutable slots and returns their index, and host(index, 12) restores
+// a 'Q' record in the receiving realm.
 // Blob bytes travel beside the text, shared, not copied. Transferred
 // MessagePorts travel beside it too: `encode` returns them in transfer-list
 // order, then the ports of the transferred streams, with the count of the
@@ -111,7 +113,7 @@
         return [buffers, ports, streams, kinds, canvases];
     }
 
-    function encode(clone, value, options) {
+    function encode(clone, value, options, forStorage) {
         const lists = transferList(options), transfer = lists[0], ports = lists[1];
         const streams = lists[2], kinds = lists[3], canvases = lists[4];
         // Listed ports, streams and canvases stay themselves in the copy;
@@ -120,7 +122,7 @@
         for (let i = 0; i < ports.length; ++i) put(keep, keep.length, ports[i]);
         for (let i = 0; i < streams.length; ++i) put(keep, keep.length, streams[i]);
         for (let i = 0; i < canvases.length; ++i) put(keep, keep.length, canvases[i]);
-        const copy = clone(value, undefined, undefined, keep.length ? keep : undefined);
+        const copy = clone(value, undefined, undefined, keep.length ? keep : undefined, undefined, undefined, forStorage);
         // Only a message that transfers something pays for these lookups.
         const portIndex = ports.length ? new M() : undefined;
         const streamTrees = streams.length ? new M() : undefined;
@@ -169,6 +171,10 @@
                 const buffer = node(call(dvBuffer, source));
                 return '["w",' + buffer + ',' + call(dvOffset, source) + ',' + call(dvLength, source) + ']';
             }
+            // Preserve native encoded-chunk slots without consulting mutable
+            // JavaScript getters or Symbol.toStringTag on its prototype.
+            const chunk = host(source, 11);
+            if (chunk !== undefined) return '["Q",' + chunk + ']';
             const kind = call(objectTag, source);
             switch (kind) {
                 case '[object Date]': return '["d",' + node(call(dateTime, source)) + ']';
@@ -311,6 +317,7 @@
                 }
                 case 'F': return remember(id, host(tree, 1));
                 case 'C': return remember(id, host(tree[1], 10));
+                case 'Q': return remember(id, host(tree[1], 12));
                 case 'S': {
                     const streamPorts = [ports[tree[2]]];
                     if (tree.length > 3) put(streamPorts, 1, ports[tree[3]]);

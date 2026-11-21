@@ -1380,7 +1380,7 @@ fn change_state<'s>(s: &Scope<'s>, n: &PageNav, a: pyro_js::Args<'s>, kind: Same
     // DataCloneError; Date, Map, Set, typed arrays, cycles, Blob, ... survive.
     let state = match a.get(0) {
         v if v.is_nullish() => None,
-        v => Some(HistoryState(Rc::new(pyro_webapi::serialize_message(s, v, s.undefined())?))),
+        v => Some(HistoryState(Rc::new(pyro_webapi::serialize_for_storage(s, v)?))),
     };
     let url = match a.opt(2).filter(|v| !v.is_nullish()) {
         Some(v) => {

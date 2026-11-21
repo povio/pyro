@@ -906,7 +906,7 @@ fn natives<'s>(
         Ok(s.undefined())
     })?;
     add(s, &natives, &ctx, "nextId", |s, _ctx, _a| Ok(s.number(next_id() as f64)))?;
-    add(s, &natives, &ctx, "clone", |s, _ctx, a| crate::structured_clone::clone_value(s, a.get(0), s.undefined()))?;
+    add(s, &natives, &ctx, "clone", |s, _ctx, a| crate::structured_clone::clone_for_storage(s, a.get(0)))?;
     // DOM "get the parent" of a request (its transaction) or transaction (its connection).
     add(s, &natives, &ctx, "setParent", |s, ctx, a| {
         let child = s.unwrap::<crate::target::EventTarget>(a.get(0)).map(|t| t.key);

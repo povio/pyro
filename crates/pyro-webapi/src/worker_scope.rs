@@ -1289,6 +1289,7 @@ fn register(engine: &Engine, service: bool, shared_worker: bool) -> pyro_js::Cla
     if shared_worker {
         return engine.register::<SharedWorkerGlobalScope>();
     }
+    crate::encoded_chunks::register(engine);
     engine.register::<DedicatedWorkerGlobalScope>()
 }
 
