@@ -1,0 +1,9 @@
+[
+  "css/css-anchor-position/at-position-try-allowed-declarations.html",
+  "css/css-anchor-position/at-position-try-cssom.html",
+  "css/css-anchor-position/at-position-try-invalidation-shadow-dom.html",
+  "css/css-anchor-position/at-position-try-invalidation.html",
+  "css/css-anchor-position/at-position-try-parse.html",
+  "css/css-anchor-position/idlharness.html",
+  "css/cssom/page-descriptors.html"
+]
