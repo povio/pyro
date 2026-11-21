@@ -893,6 +893,12 @@ pub trait GeometrySource {
 
     fn css_animation_frames(&self, _key: u64, _name: &str) -> Option<Vec<crate::animation::CssKeyframeStep>> { None }
 
+    /// Recompute same-element properties with sampled font-size or line-height values.
+    fn sampled_font_style(
+        &self, _key: u64, _pseudo: Option<&style::selector_parser::PseudoElement>,
+        _size: Option<&style::properties::ComputedValues>, _line_height: Option<&style::properties::ComputedValues>,
+    ) -> Option<crate::timing::StyleSnapshot> { None }
+
     /// Authored timing values whose computation needs the element or its pseudo-element.
     fn element_timing_style(
         &self, _key: u64, _pseudo: Option<&style::selector_parser::PseudoElement>,

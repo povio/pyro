@@ -2276,6 +2276,14 @@ impl Renderer {
         mirror.doc.css_animation_frames(mirror.node(key)?, name)
     }
 
+    pub fn sampled_font_style(
+        &self, page: u64, key: u64, pseudo: Option<&style::selector_parser::PseudoElement>,
+        size: Option<&style::properties::ComputedValues>, line_height: Option<&style::properties::ComputedValues>,
+    ) -> Option<pyro_dom::timing::StyleSnapshot> {
+        let mirror = self.mirrors.get(&page)?;
+        mirror.doc.sampled_font_style(mirror.node(key)?, pseudo, size, line_height)
+    }
+
     /// The element or pseudo's timing properties with the renderer's suppression rule omitted.
     pub fn element_timing_style(
         &self, page: u64, key: u64, pseudo: Option<&style::selector_parser::PseudoElement>,

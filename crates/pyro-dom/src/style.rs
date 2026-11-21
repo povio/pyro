@@ -1114,6 +1114,31 @@ impl StyleEngine {
         self.animation_laid_out.set(stamp);
     }
 
+    /// A read-only cascade for CSSOM consumers of font units on a transitioning target.
+    pub fn sampled_font_style(
+        &self, dom: &Dom, el: NodeId, pseudo: Option<PseudoElement>, property: &str,
+        size: Option<&style::properties::ComputedValues>, line_height: Option<&style::properties::ComputedValues>,
+    ) -> Option<crate::timing::StyleSnapshot> {
+        let base = match pseudo {
+            Some(p) => self.pseudo_style(dom, el, p, true)?,
+            None => self.stylo_style(dom, el)?,
+        };
+        if !base.flags.contains(style::computed_value_flags::ComputedValueFlags::USES_FONT_OR_WM_RELATIVE_UNITS) {
+            return None;
+        }
+        let pseudo = pseudo.map(|p| match p {
+            PseudoElement::Before => style::selector_parser::PseudoElement::Before,
+            PseudoElement::After => style::selector_parser::PseudoElement::After,
+            PseudoElement::Marker => style::selector_parser::PseudoElement::Marker,
+        });
+        let sampled = self.external.borrow().as_ref()?.0.sampled_font_style(
+            crate::snapshot::render_key(el), pseudo.as_ref(), size, line_height,
+        )?;
+        // An unrelated property must keep its normal used-value path (e.g. a flex
+        // item's used width). Apply the transient style only for a changed value.
+        (crate::stylo::serialize(&base, property)? != crate::stylo::serialize(&sampled, property)?).then_some(sampled)
+    }
+
     /// The value a running CSS transition of `longhand` gives `el` now
     /// ([`crate::animation::AnimationSource::transition_value`]).
     pub fn transition_value(&self, el: NodeId, longhand: &str) -> Option<crate::animation::TransitionValue> {

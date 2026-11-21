@@ -1217,6 +1217,13 @@ impl GeometrySource for BlitzGeometry {
         RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.css_animation_frames(self.page, key, name))
     }
 
+    fn sampled_font_style(
+        &self, key: u64, pseudo: Option<&style::selector_parser::PseudoElement>,
+        size: Option<&style::properties::ComputedValues>, line_height: Option<&style::properties::ComputedValues>,
+    ) -> Option<pyro_dom::timing::StyleSnapshot> {
+        RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.sampled_font_style(self.page, key, pseudo, size, line_height))
+    }
+
     fn element_timing_style(
         &self, key: u64, pseudo: Option<&style::selector_parser::PseudoElement>,
     ) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {

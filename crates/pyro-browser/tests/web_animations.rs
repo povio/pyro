@@ -1375,3 +1375,25 @@ fn dynamic_range_limit_interpolates_the_three_weights_on_sdr() {
         "dynamic-range-limit-mix(standard 90%, no-limit 10%)"
     ));
 }
+
+#[test]
+fn computed_font_relative_lengths_follow_the_sampled_transition() {
+    let (_thread, realm) = page();
+    let values = eval(&realm, r#"
+        const el = document.body.appendChild(document.createElement('div'));
+        el.style.cssText = 'font-size:10px;line-height:10px;width:max(290px,20lh);padding-top:3em';
+        const read = () => {
+            const style = getComputedStyle(el);
+            return [style.width, style.paddingTop].join(',');
+        };
+        const initial = read();
+        el.style.transition = 'line-height 100s steps(2, jump-end) -50s, font-size 100s steps(2, jump-end) -50s';
+        el.style.fontSize = '20px';
+        el.style.lineHeight = '20px';
+        const sampled = read();
+        const active = el.getAnimations().map(a => a.transitionProperty).sort().join(',');
+        el.style.transition = 'none';
+        [initial, sampled, active, read()].join('|')
+    "#);
+    assert_eq!(values, "290px,30px|300px,45px|font-size,line-height|400px,60px");
+}

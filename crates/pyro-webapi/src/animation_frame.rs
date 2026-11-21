@@ -887,26 +887,68 @@ impl Source {
         pseudo: Option<pyro_dom::style::PseudoElement>,
         longhand: &str,
     ) -> Option<pyro_dom::animation::TransitionValue> {
-        // A shorthand: its longhands' running transitions, together.
-        if let Some(longhands) = pyro_dom::animation::shorthand_longhands(longhand) {
-            let mut out: Option<pyro_dom::timing::StyleSnapshot> = None;
-            for l in longhands {
-                if let Some(pyro_dom::animation::TransitionValue::Style(s)) = self.transition_value_of(el, pseudo, l) {
+        self.transition_sample(el, pseudo, longhand, true)
+    }
+
+    fn transition_sample(
+        &self, el: NodeId, pseudo: Option<pyro_dom::style::PseudoElement>, longhand: &str, include_font_dependencies: bool,
+    ) -> Option<pyro_dom::animation::TransitionValue> {
+        // Combine direct longhand transitions once, on top of a cascade using the
+        // current font metrics when any shorthand component depends on them.
+        let components = pyro_dom::animation::shorthand_longhands(longhand);
+        let page = self.page.upgrade().filter(|page| !page.is_disposed())?;
+        let state = &page.animation_events;
+        let (_, transitions) = state.try_timelines()?;
+        if transitions.is_empty() { return None }
+        let mut font_size = None;
+        let mut line_height = None;
+        for t in transitions.iter().rev().filter(|t| t.is_live() && t.el() == el && t.pseudo() == pseudo) {
+            if components.is_none() && (t.name() == longhand || t.styles.as_ref().is_some_and(|(_, after)|
+                pyro_dom::animation::physical_property(longhand, after) == Some(t.name()))) {
+                return self.sample_timeline(&page, t);
+            }
+            if include_font_dependencies {
+                match t.name() {
+                    "font-size" => { font_size.get_or_insert(t); }
+                    "line-height" => { line_height.get_or_insert(t); }
+                    _ => {}
+                }
+            }
+        }
+        let mut out = if font_size.is_some() || line_height.is_some() {
+            let sampled = |timeline| match self.sample_timeline(&page, timeline) {
+                Some(pyro_dom::animation::TransitionValue::Style(style)) => Some(style),
+                _ => None,
+            };
+            let size = font_size.and_then(sampled);
+            let line = line_height.and_then(sampled);
+            if size.is_some() || line.is_some() {
+                let layout = page.try_layout()?;
+                let dom = page.dom.try_borrow().ok()?;
+                layout.style().sampled_font_style(&dom, el, pseudo, longhand, size.as_deref(), line.as_deref())
+            } else { None }
+        } else { None };
+        if let Some(components) = components {
+            for component in components {
+                if let Some(pyro_dom::animation::TransitionValue::Style(s)) = self.transition_sample(el, pseudo, component, false) {
                     out = Some(match out {
                         None => s,
-                        Some(into) => pyro_dom::animation::with_longhand_of(into, &s, l),
+                        Some(into) => pyro_dom::animation::with_longhand_of(into, &s, component),
                     });
                 }
             }
-            return out.map(pyro_dom::animation::TransitionValue::Style);
         }
-        let page = self.page.upgrade().filter(|page| !page.is_disposed())?;
-        let now = self.now(&page);
+        out.map(pyro_dom::animation::TransitionValue::Style)
+    }
+
+    fn sample_timeline(
+        &self, page: &Rc<PageDom>, t: &crate::animation_events::Timeline,
+    ) -> Option<pyro_dom::animation::TransitionValue> {
+        let el = t.el();
+        let pseudo = t.pseudo();
+        let longhand = t.name();
+        let now = self.now(page);
         let state = &page.animation_events;
-        let (_, transitions) = state.try_timelines()?;
-        let t = transitions.iter().rev().find(|t| t.is_live() && t.el() == el && t.pseudo() == pseudo &&
-            (t.name() == longhand || t.styles.as_ref().is_some_and(|(_, after)|
-                pyro_dom::animation::physical_property(longhand, after) == Some(t.name()))))?;
         if state.effect_removed.try_borrow().ok()?.contains(&t.id()) {
             return None;
         }
