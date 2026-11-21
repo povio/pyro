@@ -7875,6 +7875,18 @@ fn a_dialog_closing_through_an_overlay_transition_stays_laid_out_as_modal() {
 }
 
 #[test]
+fn oversized_snap_reserves_smaller_targets_and_keeps_open_gaps_scrollable() {
+    let e = env("<style>#s{position:relative;width:200px;height:100px;overflow:hidden;scroll-snap-type:x mandatory}\
+        .area{position:absolute;top:0;height:70px;scroll-snap-align:start}</style>\
+        <div id=s><div class=area style='left:0;width:1000px'></div>\
+        <div class=area style='left:300px;width:80px'></div></div>");
+    assert_eq!(eval(&e.main, "s.scrollTo(320,0);String(s.scrollLeft)"), "300");
+    assert_eq!(eval(&e.main, "s.scrollTo(370,0);String(s.scrollLeft)"), "380");
+    assert_eq!(eval(&e.main, "s.scrollTo(480,0);String(s.scrollLeft)"), "480");
+    e.page.dispose();
+}
+
+#[test]
 fn logical_snap_axes_use_the_scroll_containers_writing_mode() {
     let e = env("<style>#s{position:relative;overflow:hidden;width:200px;height:150px;writing-mode:vertical-lr;scroll-snap-type:inline mandatory}\
         #space{width:800px;height:800px}#t{position:absolute;left:300px;top:280px;width:70px;height:50px;writing-mode:horizontal-tb;scroll-snap-align:start end}\
