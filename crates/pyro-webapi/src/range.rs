@@ -1078,9 +1078,19 @@ impl JsClass for Selection {
             None => Ok(s.string("")),
         });
         def.method("deleteFromDocument", 0, |s, sel, _a| {
-            if let Some((start, end)) = editing::selection_range(&sel.page) {
-                let to = delete_contents(&mut sel.page.dom.borrow_mut(), start, end)?;
-                editing::set_selection(&sel.page, to, to);
+            if let Some((anchor, focus)) = editing::legacy_endpoints(&sel.page) {
+                // A composed selection may span roots even when its live
+                // Range is collapsed. Deletion operates on that live Range.
+                if anchor != focus {
+                    let (start, end) = if editing::compare(&sel.page, anchor, focus) > 0 {
+                        (focus, anchor)
+                    } else {
+                        (anchor, focus)
+                    };
+                    let to = delete_contents(&mut sel.page.dom.borrow_mut(), start, end)?;
+                    sel.page.typing_values.take();
+                    editing::retarget_selection(&sel.page, to, to);
+                }
             }
             Ok(s.undefined())
         });
