@@ -227,14 +227,8 @@ fn deletes_visible_space(
     let loses_width = (prefix.ends_with(' ') && suffix.starts_with(' '))
         || (begin_line && prefix.is_empty() && suffix.starts_with(' '))
         || (end_line && suffix.is_empty() && prefix.ends_with(' '));
-    // Otherwise leave the author's representation alone unless the deleted
-    // ASCII space was the only wrapping opportunity between two pieces of
-    // content. No additional soft break is needed at a hard line edge.
     if loses_width {
         return true;
-    }
-    if begin_line || end_line || ch != ' ' || prefix.contains(' ') || suffix.contains(' ') {
-        return false;
     }
     let Some(el) = dom.parent_element(node).ok().flatten() else {
         return false;
@@ -249,23 +243,28 @@ fn deletes_visible_space(
     }
 }
 
+pub(super) enum Repair {
+    Exposed,
+    Deleted,
+}
+
 /// Whether the deletion needs whitespace repair at the resulting caret.
-pub(super) fn exposes_space(page: &PageDom, dom: &Dom, host: NodeId, point: Point, backward: bool) -> bool {
+pub(super) fn deletion_repair(page: &PageDom, dom: &Dom, host: NodeId, point: Point, backward: bool) -> Option<Repair> {
     let (node, off) = point;
     if !editing::is_text(dom, node) {
-        return false;
+        return None;
     }
     let Ok(text) = dom.char_data(node) else {
-        return false;
+        return None;
     };
     let Ok((at, _)) = pyro_dom::dom::utf16_range(text, off, 0) else {
-        return false;
+        return None;
     };
     let Some(ch) = (if backward { text[..at].chars().next_back() } else { text[at..].chars().next() }) else {
-        return false;
+        return None;
     };
     if ch == '\n' {
-        return false;
+        return None;
     }
     let cut = if backward { at - ch.len_utf8() } else { at };
     let before = &text[..cut];
@@ -275,11 +274,11 @@ pub(super) fn exposes_space(page: &PageDom, dom: &Dom, host: NodeId, point: Poin
         // scalar's start. Such a delete isn't targeting the preceding space.
         if text[at..].chars().next().is_some_and(|c| c.len_utf16() == 2) && pyro_dom::dom::utf16_len(&text[..at]) != off
         {
-            return false;
+            return None;
         }
-        return deletes_visible_space(page, dom, host, node, before, after, ch);
+        return deletes_visible_space(page, dom, host, node, before, after, ch).then_some(Repair::Deleted);
     }
-    (after.is_empty()
+    let exposed = (after.is_empty()
         && before.chars().next_back().is_some_and(space)
         && (!before.trim_end_matches(space).is_empty()
             || !matches!(adjacent(page, dom, host, node, false), Next::Boundary | Next::Break))
@@ -288,7 +287,8 @@ pub(super) fn exposes_space(page: &PageDom, dom: &Dom, host: NodeId, point: Poin
             && after.chars().next().is_some_and(space)
             && (!after.trim_start_matches(space).is_empty()
                 || !matches!(adjacent(page, dom, host, node, true), Next::Boundary | Next::Break))
-            && matches!(adjacent(page, dom, host, node, false), Next::Boundary | Next::Break))
+            && matches!(adjacent(page, dom, host, node, false), Next::Boundary | Next::Break));
+    exposed.then_some(Repair::Exposed)
 }
 
 fn has_sibling(dom: &Dom, host: NodeId, mut node: NodeId, forward: bool) -> bool {
@@ -306,7 +306,7 @@ fn has_sibling(dom: &Dom, host: NodeId, mut node: NodeId, forward: bool) -> bool
 }
 
 /// Normalize only the run touching the edit, retaining UTF-16 offsets.
-pub(super) fn at(page: &PageDom, dom: &mut Dom, host: NodeId, (node, offset): Point) {
+pub(super) fn at(page: &PageDom, dom: &mut Dom, host: NodeId, (node, offset): Point, repair: Repair) {
     if !editing::is_text(dom, node) || editing::editing_host(dom, node) != Some(host) {
         return;
     }
@@ -347,7 +347,19 @@ pub(super) fn at(page: &PageDom, dom: &mut Dom, host: NodeId, (node, offset): Po
         first |= left_char == Some('\n');
         last |= right_char == Some('\n');
     }
-    let sequence = canonical(parts.iter().map(|p| p.2 as usize).sum(), first, last);
+    let count = parts.iter().map(|p| p.2 as usize).sum();
+    let sequence = match repair {
+        Repair::Exposed => canonical(count, first, last),
+        // Blink rebalances a visible run after deletion from left to right.
+        // Keep the last space visible at a line end and allow an isolated
+        // internal space to wrap.
+        Repair::Deleted => (0..count)
+            .map(|i| {
+                let nonbreaking = (i % 2 == 0 && (count > 1 || first)) || (last && i + 1 == count);
+                if nonbreaking { '\u{a0}' } else { ' ' }
+            })
+            .collect(),
+    };
     let mut chars = sequence.chars();
     for (n, start, count) in parts {
         let replacement: String = chars.by_ref().take(count as usize).collect();
@@ -359,14 +371,14 @@ pub(super) fn at(page: &PageDom, dom: &mut Dom, host: NodeId, (node, offset): Po
 
 pub(super) fn inserted(page: &PageDom, dom: &mut Dom, host: NodeId, end: Point, text: &str) {
     let mut off = end.1.saturating_sub(pyro_dom::dom::utf16_len(text));
-    at(page, dom, host, (end.0, off));
+    at(page, dom, host, (end.0, off), Repair::Exposed);
     let mut was_space = true; // The first boundary was already visited.
     for c in text.chars() {
         if space(c) && !was_space {
-            at(page, dom, host, (end.0, off));
+            at(page, dom, host, (end.0, off), Repair::Exposed);
         }
         was_space = space(c);
         off += c.len_utf16() as u32;
     }
-    at(page, dom, host, end);
+    at(page, dom, host, end, Repair::Exposed);
 }

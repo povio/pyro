@@ -775,14 +775,14 @@ pub fn delete(page: &Rc<PageDom>, host: NodeId, backward: bool) {
     apply_edit(page, host, input_type, None, None, |page| {
         let caret = {
             let mut dom = page.dom.borrow_mut();
-            let repair_space = start == end && whitespace::exposes_space(page, &dom, host, start, backward);
+            let repair = if start == end { whitespace::deletion_repair(page, &dom, host, start, backward) } else { None };
             let caret = if let Some(caret) = paragraph_join::at_boundary(page, &mut dom, host, start, end, backward) {
                 caret
             } else {
                 delete_content(page, &mut dom, host, start, end, backward, (from, to))
             };
-            if repair_space {
-                whitespace::at(page, &mut dom, host, caret);
+            if let Some(repair) = repair {
+                whitespace::at(page, &mut dom, host, caret, repair);
             }
             caret
         };
