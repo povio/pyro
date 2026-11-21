@@ -32,6 +32,13 @@ Handled commands run in order in place of the key's default action; when none
 is handled (`scrollPageDown`, `cancelOperation`, ...) the key's default action
 runs.
 
+For a collapsed caret in contenteditable text, forward Delete uses the next
+Unicode extended grapheme boundary. Backspace removes a single trailing scalar
+in combining text and removes complete emoji sequences, including flags,
+modifiers, keycaps and ZWJ sequences. The range exposed during trusted
+`beforeinput` and the default deletion use the same UTF-16 boundaries.
+Selections moved by a listener are resolved again before the edit.
+
 Words are runs of letters, digits and `_` (with `'` and `.` inside a word);
 symbols and spaces before a word are skipped, as Chromium does on macOS and
 Linux. Lines are logical lines: block boundaries, `<br>` and preserved
