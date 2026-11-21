@@ -280,12 +280,10 @@ pub(super) fn at_boundary(
     {
         return None;
     }
-    let mut carried = if pre_join {
-        layout.synced_geometry_source(dom)
-            .map(|engine| engine.authored_editing_style(pyro_dom::snapshot::render_key(source), TEXT_STYLE, &source_style))
-            .unwrap_or_default()
+    let (mut carried, inherited) = if pre_join {
+        pre_join_style(page, dom, source, destination, &source_style)
     } else {
-        vec![("white-space", source_style)]
+        (vec![("white-space", source_style)], Vec::new())
     };
     carried.retain(|(name, value)| {
         if *name == "white-space" { *value != dest_style }
@@ -296,14 +294,30 @@ pub(super) fn at_boundary(
     if len(dom, fragment) > 0 {
         let content = if !carried.is_empty() {
             let span = dom.create_element(dom.node_document(right).ok()?, "span").ok()?;
-            let style = carried.iter().map(|(name, value)| format!("{name}: {value};")).collect::<Vec<_>>().join(" ");
-            dom.set_attribute(span, "style", &style).ok()?;
+            dom.set_attribute(span, "style", &declaration_text(&carried)).ok()?;
             dom.append_child(span, fragment).ok()?;
             span
         } else {
             fragment
         };
         dom.insert_before(destination, content, (!left_block).then_some(right)).ok()?;
+        // An inherited declaration may contain a relative unit or a variable
+        // scoped to the old ancestor. Keep the author's spelling when it
+        // still resolves correctly, otherwise pin its original computed value.
+        if !inherited.is_empty() && content != fragment {
+            let mut changed = false;
+            for (name, expected) in inherited {
+                if layout.computed_style_value(dom, content, name) != expected {
+                    if let Some((_, value)) = carried.iter_mut().find(|(key, _)| *key == name) {
+                        *value = expected;
+                        changed = true;
+                    }
+                }
+            }
+            if changed {
+                dom.set_attribute(content, "style", &declaration_text(&carried)).ok()?;
+            }
+        }
     }
     for (node, values) in styled {
         preserve_style(page, dom, node, &values)?;
@@ -323,6 +337,42 @@ pub(super) fn at_boundary(
         emptied = parent;
     }
     Some(seam)
+}
+
+type Declarations = Vec<(&'static str, String)>;
+
+fn declaration_text(declarations: &Declarations) -> String {
+    declarations.iter().map(|(name, value)| format!("{name}: {value};")).collect::<Vec<_>>().join(" ")
+}
+
+fn pre_join_style(
+    page: &PageDom, dom: &Dom, source: NodeId, destination: NodeId, source_white_space: &str,
+) -> (Declarations, Declarations) {
+    let layout = page.layout();
+    let Some(engine) = layout.synced_geometry_source(dom) else { return (Vec::new(), Vec::new()) };
+    let mut carried = engine.authored_editing_style(pyro_dom::snapshot::render_key(source), TEXT_STYLE, source_white_space);
+    let mut inherited = Vec::new();
+    let mut pending: Declarations = TEXT_STYLE.iter().filter_map(|&name| {
+        if carried.iter().any(|(key, _)| *key == name) { return None; }
+        let value = layout.computed_style_value(dom, source, name);
+        (!value.is_empty() && value != layout.computed_style_value(dom, destination, name)).then_some((name, value))
+    }).collect();
+    // Walk only as long as the candidate property is inherited unchanged.
+    // This prevents a pre's own UA font or whitespace from being copied.
+    let mut parent = dom.parent_element(source).ok().flatten();
+    while let Some(ancestor) = parent {
+        pending.retain(|(name, original)| layout.computed_style_value(dom, ancestor, name) == *original);
+        if pending.is_empty() { break; }
+        let white_space = layout.computed_style_value(dom, ancestor, "white-space");
+        for (name, specified) in engine.authored_editing_style(pyro_dom::snapshot::render_key(ancestor), TEXT_STYLE, &white_space) {
+            if let Some(index) = pending.iter().position(|(key, _)| *key == name) {
+                inherited.push(pending.remove(index));
+                carried.push((name, specified));
+            }
+        }
+        parent = dom.parent_element(ancestor).ok().flatten();
+    }
+    (carried, inherited)
 }
 
 /// Properties of editable text whose resolved values can change when an
