@@ -440,6 +440,23 @@ fn relative_colors_keep_missing_components() {
     );
 }
 
+#[test]
+fn missing_polar_color_components_round_trip() {
+    let env = Env::new("http://color.test/");
+    assert_eq!(env.eval(r#"(() => {
+        const target = document.body.appendChild(document.createElement('div'));
+        const compute = value => {
+            target.style.color = value;
+            return getComputedStyle(target).color;
+        };
+        const extended = compute('hsl(from lch(none 20 180) h s l)');
+        return [compute('hsl(none 160% 120%)'), compute('hsl(none -10% 40%)'),
+                compute(extended) === extended, compute('hsl(from hwb(180 none 25%) h s l)'),
+                compute('color-mix(in hsl, black, white)'),
+                compute('color-mix(in hwb, red, red)')].join('|');
+    })()"#), "hsl(none 160% 120%)|hsl(none 0% 40%)|true|color(srgb 0 0.75 0.75)|hsl(none 0% 50%)|color(srgb 1 0 0)");
+}
+
 /// A color function with a `calc()` component keeps its function form as its specified value, the
 /// `calc()`s simplified and the other components as the numbers the function resolves them to
 /// (css-color-4 § 15, as Chromium); legacy `rgb()`, `hsl()` and `hwb()` with numeric `calc()`s

@@ -186,6 +186,11 @@ pub fn mix_many(
     let all_legacy = items.iter().all(|item| item.color.is_legacy_syntax());
     let finalize = |result: AbsoluteColor| -> AbsoluteColor {
         if flags.contains(ColorMixFlags::RESULT_IN_MODERN_SYNTAX) {
+            if matches!(result.color_space, ColorSpace::Hsl | ColorSpace::Hwb)
+                && result.flags.intersects(ColorFlags::NONE_FLAGS)
+            {
+                return result;
+            }
             if result.is_legacy_syntax() {
                 // If the result *MUST* be in modern syntax, then make sure it is in a color space
                 // that allows the modern syntax. So hsl and hwb will be converted to srgb.
