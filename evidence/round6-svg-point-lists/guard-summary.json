@@ -1,0 +1,49 @@
+{
+  "urls": 787,
+  "columns": [
+    "base",
+    "namespace",
+    "Chrome stable 158.0.8127.37"
+  ],
+  "counts": [
+    {
+      "namedPass": 13009,
+      "full": 312,
+      "complete": 720,
+      "timeout": 58,
+      "error": 9
+    },
+    {
+      "namedPass": 13092,
+      "full": 316,
+      "complete": 720,
+      "timeout": 58,
+      "error": 9
+    },
+    {
+      "namedPass": 14799,
+      "full": 672,
+      "complete": 786,
+      "timeout": 1
+    }
+  ],
+  "delta": {
+    "missing": 0,
+    "added": 0,
+    "gained": 83
+  },
+  "losses": [],
+  "netByUrl": {
+    "svg/animations/svgpointlist-animation-invalid-value-1.html": 1,
+    "svg/animations/svgpointlist-animation-invalid-value-2.html": 1,
+    "svg/animations/svgpointlist-animation-invalid-value-3.html": 1,
+    "svg/idlharness.window.html": 40,
+    "svg/types/scripted/SVGList-animVal-reflects-base-value.html": 4,
+    "svg/types/scripted/SVGList-getItem-identity.html": 4,
+    "svg/types/scripted/SVGList-identity-across-attribute-change.html": 4,
+    "svg/types/scripted/SVGList-mutator-return-identity.html": 4,
+    "svg/types/scripted/SVGList-parse-invalid-clears-items.html": 1,
+    "svg/types/scripted/SVGList-reflected-attribute-synchronize.html": 9,
+    "svg/types/scripted/SVGPointList-error-handling.html": 14
+  }
+}

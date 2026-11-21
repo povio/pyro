@@ -1,0 +1,286 @@
+{
+  "initial": {
+    "chrome158": [
+      true,
+      true,
+      true,
+      false,
+      [
+        [
+          1,
+          2
+        ],
+        [
+          3,
+          4
+        ],
+        [
+          5,
+          6
+        ]
+      ],
+      "NoModificationAllowedError",
+      [
+        "0",
+        "1",
+        "2"
+      ]
+    ],
+    "candidate": [
+      true,
+      true,
+      true,
+      true,
+      [
+        [
+          1,
+          2
+        ],
+        [
+          3,
+          4
+        ],
+        [
+          5,
+          6
+        ]
+      ],
+      "NoModificationAllowedError",
+      [
+        "0",
+        "1",
+        "2"
+      ]
+    ]
+  },
+  "insert": {
+    "chrome158": [
+      false,
+      false,
+      false,
+      "7 8 1 2 3 4 5 6"
+    ],
+    "candidate": [
+      true,
+      true,
+      true,
+      "7 8 1 2 3 4 5 6"
+    ]
+  },
+  "animAfterInsert": {
+    "chrome158": [
+      [
+        3,
+        4
+      ],
+      [
+        5,
+        6
+      ],
+      [
+        [
+          7,
+          8
+        ],
+        [
+          1,
+          2
+        ],
+        [
+          3,
+          4
+        ],
+        [
+          5,
+          6
+        ]
+      ],
+      "NoModificationAllowedError"
+    ],
+    "candidate": [
+      [
+        1,
+        2
+      ],
+      [
+        3,
+        4
+      ],
+      [
+        [
+          7,
+          8
+        ],
+        [
+          1,
+          2
+        ],
+        [
+          3,
+          4
+        ],
+        [
+          5,
+          6
+        ]
+      ],
+      "NoModificationAllowedError"
+    ]
+  },
+  "copy": {
+    "chrome158": [
+      true,
+      false,
+      [
+        3,
+        4
+      ]
+    ],
+    "candidate": [
+      true,
+      true,
+      [
+        3,
+        4
+      ]
+    ]
+  },
+  "remove": {
+    "chrome158": [
+      false,
+      [
+        3,
+        4
+      ]
+    ],
+    "candidate": [
+      true,
+      [
+        3,
+        4
+      ]
+    ]
+  },
+  "move": {
+    "chrome158": [
+      false,
+      false
+    ],
+    "candidate": [
+      true,
+      true
+    ]
+  },
+  "external": {
+    "chrome158": [
+      [
+        12,
+        13
+      ],
+      [
+        1,
+        2
+      ],
+      [
+        5,
+        6
+      ],
+      [
+        3,
+        4
+      ],
+      [
+        5,
+        6
+      ],
+      [
+        [
+          12,
+          13
+        ],
+        [
+          14,
+          15
+        ]
+      ]
+    ],
+    "candidate": [
+      [
+        12,
+        13
+      ],
+      [
+        14,
+        15
+      ],
+      [
+        5,
+        6
+      ],
+      [
+        14,
+        15
+      ],
+      [
+        5,
+        6
+      ],
+      [
+        [
+          12,
+          13
+        ],
+        [
+          14,
+          15
+        ]
+      ]
+    ]
+  },
+  "replace": {
+    "chrome158": [
+      false,
+      false,
+      [
+        20,
+        21
+      ]
+    ],
+    "candidate": [
+      true,
+      false,
+      [
+        20,
+        21
+      ]
+    ]
+  },
+  "initializeHeld": {
+    "chrome158": [
+      false,
+      false,
+      "11 11"
+    ],
+    "candidate": [
+      true,
+      true,
+      "11 15"
+    ]
+  },
+  "adopt": {
+    "chrome158": [
+      [
+        11,
+        4
+      ],
+      false
+    ],
+    "candidate": [
+      [
+        11,
+        4
+      ],
+      true
+    ]
+  }
+}

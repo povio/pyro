@@ -1,0 +1,189 @@
+{
+  "initial": [
+    true,
+    true,
+    true,
+    true,
+    [
+      [
+        1,
+        2
+      ],
+      [
+        3,
+        4
+      ],
+      [
+        5,
+        6
+      ]
+    ],
+    "NoModificationAllowedError",
+    [
+      "0",
+      "1",
+      "2"
+    ]
+  ],
+  "insert": [
+    true,
+    true,
+    true,
+    "7 8 1 2 3 4 5 6"
+  ],
+  "animAfterInsert": [
+    [
+      1,
+      2
+    ],
+    [
+      3,
+      4
+    ],
+    [
+      [
+        7,
+        8
+      ],
+      [
+        1,
+        2
+      ],
+      [
+        3,
+        4
+      ],
+      [
+        5,
+        6
+      ]
+    ],
+    "NoModificationAllowedError"
+  ],
+  "copy": [
+    true,
+    true,
+    [
+      3,
+      4
+    ]
+  ],
+  "copyIsolation": [
+    [
+      3,
+      4
+    ],
+    "11 4"
+  ],
+  "remove": [
+    true,
+    [
+      3,
+      4
+    ]
+  ],
+  "move": [
+    true,
+    true
+  ],
+  "external": [
+    [
+      12,
+      13
+    ],
+    [
+      14,
+      15
+    ],
+    [
+      5,
+      6
+    ],
+    [
+      14,
+      15
+    ],
+    [
+      5,
+      6
+    ],
+    [
+      [
+        12,
+        13
+      ],
+      [
+        14,
+        15
+      ]
+    ]
+  ],
+  "grow": [
+    [
+      5,
+      6
+    ],
+    false
+  ],
+  "readonly": [
+    "NoModificationAllowedError",
+    "NoModificationAllowedError",
+    "NoModificationAllowedError"
+  ],
+  "replace": [
+    true,
+    false,
+    [
+      20,
+      21
+    ]
+  ],
+  "geometry": [
+    10,
+    3,
+    4,
+    "5 7 8 11"
+  ],
+  "edited": [
+    14.422204971313477,
+    "5 7 11 11"
+  ],
+  "initializeHeld": [
+    true,
+    true,
+    "11 15"
+  ],
+  "validation": [
+    "IndexSizeError",
+    "TypeError",
+    "TypeError",
+    null
+  ],
+  "cleared": [
+    null,
+    0,
+    0
+  ],
+  "adopt": [
+    [
+      11,
+      4
+    ],
+    true
+  ],
+  "namespace": [
+    [
+      [
+        0,
+        0
+      ],
+      [
+        3,
+        4
+      ]
+    ],
+    5,
+    3,
+    4
+  ]
+}
