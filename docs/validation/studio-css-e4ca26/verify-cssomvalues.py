@@ -10,7 +10,7 @@ second = json.loads((values / 'conditional-keyframes-fonts/differential.json').r
 targets = {tuple(entry) for entry in first['gained'] + second['matchedInventoryGains']}
 assert len(targets) == 299
 
-for label, expected in [('mixmath', 27), ('cssomnames', 27), ('cssomvalues', 299)]:
+for label, expected in [('mixmath', 27), ('cssomnames', 27), ('cssomvalues', 299), ('csspriority', 299)]:
     with gzip.open(here / f'outcomes-{label}-main-candidate.json.gz', 'rt') as stream:
         outcomes = json.load(stream)
     assert len(outcomes) == 8082

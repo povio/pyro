@@ -1,0 +1,30 @@
+csspriority-main-candidate 8082 page passes 5820 named passes 182428 observed names 194673 statuses {'complete:0': 7871, 'complete:2': 104, 'timeout:None': 11, 'complete:1': 95, 'hang:None': 1}
+csspriority-main-parent 8082 page passes 5819 named passes 182427 observed names 194673 statuses {'complete:0': 7871, 'complete:2': 104, 'timeout:None': 11, 'complete:1': 95, 'hang:None': 1}
+csspriority-main-stable 8082 page passes 6950 named passes 182963 observed names 194912 statuses {'complete:0': 7986, 'complete:2': 62, 'complete:1': 23, 'timeout:None': 10, 'hang:None': 1}
+csspriority-main-parent pages left only 1 right only 0
+csspriority-main-parent passes left only 1 right only 0
+csspriority-main-parent observed left only 0 right only 0
+csspriority-main-stable pages left only 287 right only 1417
+csspriority-main-stable passes left only 5920 right only 6455
+csspriority-main-stable observed left only 260 right only 499
+Losses vs parent by URL: Counter()
+csspriority-focus-candidate 607 page passes 493 named passes 9405 observed names 9843 statuses {'complete:0': 606, 'complete:1': 1}
+csspriority-focus-parent 607 page passes 492 named passes 9404 observed names 9843 statuses {'complete:0': 606, 'complete:1': 1}
+csspriority-focus-stable 607 page passes 519 named passes 9183 observed names 9822 statuses {'complete:0': 605, 'complete:1': 2}
+csspriority-focus-parent pages left only 1 right only 0
+csspriority-focus-parent passes left only 1 right only 0
+csspriority-focus-parent observed left only 0 right only 0
+csspriority-focus-stable pages left only 41 right only 67
+csspriority-focus-stable passes left only 497 right only 275
+csspriority-focus-stable observed left only 42 right only 21
+Losses vs parent by URL: Counter()
+csspriority-supplement-candidate 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+csspriority-supplement-parent 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+csspriority-supplement-stable 41 page passes 35 named passes 619 observed names 874 statuses {'complete:0': 41}
+csspriority-supplement-parent pages left only 0 right only 0
+csspriority-supplement-parent passes left only 0 right only 0
+csspriority-supplement-parent observed left only 0 right only 0
+csspriority-supplement-stable pages left only 0 right only 8
+csspriority-supplement-stable passes left only 0 right only 42
+csspriority-supplement-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()
