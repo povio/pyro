@@ -8,6 +8,8 @@ crate (`diff -ruN`).
 
 ## The change
 
+- Servo exposes the `page` property and the `size` and `page-orientation` descriptors through the style system. The latter two remain restricted to `@page`. This does not implement named-page pagination or rotated print output.
+
 - The six standard system-font shorthands resolve through the Servo device font provider for both cascade and interpolation. Internal Gecko keywords remain Gecko-only.
 
 - Gap decoration inset offsets are signed length-percentages or `overlap-join`. Row and column cap and junction offsets participate in the cascade and animation. The inset shorthands expand into those same eight longhands. This is style-system support, not gap-decoration painting.

@@ -1634,7 +1634,7 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
                  self.${shorthand.sub_properties[i].ident},
 diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 --- a/properties/longhands.toml	2026-11-11 19:55:57
-+++ b/properties/longhands.toml	2026-11-21 07:18:12
++++ b/properties/longhands.toml	2026-11-21 09:24:31
 @@ -129,7 +129,6 @@
  type = "ColorOrAuto"
  initial = "generics::color::ColorOrAuto::Auto"
@@ -1747,12 +1747,10 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  spec = "https://svgwg.org/svg2-draft/masking.html#ClipRuleProperty"
  affects = "paint"
-@@ -567,8 +594,64 @@
- animation_type = "discrete"
- ignored_when_colors_disabled = true
+@@ -569,6 +596,62 @@
  servo_restyle_damage = "repaint"
-+affects = "paint"
-+
+ affects = "paint"
+ 
 +[column-rule-inset-cap-start]
 +type = "length::RuleInset"
 +initial = "computed::length::RuleInset::LengthPercentage(computed::LengthPercentage::zero())"
@@ -1786,8 +1784,8 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +initial = "computed::length::RuleInset::LengthPercentage(computed::LengthPercentage::zero())"
 +struct = "column"
 +spec = "https://drafts.csswg.org/css-gaps-1/#inset"
- affects = "paint"
- 
++affects = "paint"
++
 +[row-rule-inset-cap-end]
 +type = "length::RuleInset"
 +initial = "computed::length::RuleInset::LengthPercentage(computed::LengthPercentage::zero())"
@@ -2123,7 +2121,23 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  gecko_pref = "layout.css.scroll-anchoring.enabled"
  spec = "https://drafts.csswg.org/css-scroll-anchoring/#exclusion-api"
  animation_type = "discrete"
-@@ -1666,7 +1821,6 @@
+@@ -1647,7 +1802,6 @@
+ type = "PageName"
+ initial = "computed::PageName::auto()"
+ struct = "page"
+-engine = "gecko"
+ spec = "https://drafts.csswg.org/css-page-3/#using-named-pages"
+ animation_type = "discrete"
+ affects = "layout"
+@@ -1656,7 +1810,6 @@
+ type = "PageOrientation"
+ initial = "computed::PageOrientation::Upright"
+ struct = "page"
+-engine = "gecko"
+ spec = "https://drafts.csswg.org/css-page-3/#page-orientation-prop"
+ animation_type = "none"
+ rule_types_allowed = ["page"]
+@@ -1666,7 +1819,6 @@
  type = "SVGPaintOrder"
  initial = "computed::SVGPaintOrder::normal()"
  struct = "inherited_svg"
@@ -2131,7 +2145,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  spec = "https://svgwg.org/svg2-draft/painting.html#PaintOrder"
  affects = "paint"
-@@ -1761,7 +1915,7 @@
+@@ -1761,7 +1913,7 @@
  
  [position-visibility]
  type = "PositionVisibility"
@@ -2140,7 +2154,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  struct = "position"
  servo_pref = "layout.css.anchor-positioning.enabled"
  animation_type = "discrete"
-@@ -1791,7 +1945,6 @@
+@@ -1791,7 +1943,6 @@
  type = "Resize"
  initial = "computed::Resize::None"
  struct = "box"
@@ -2148,7 +2162,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  gecko_ffi_name = "mResize"
  spec = "https://drafts.csswg.org/css-ui/#propdef-resize"
-@@ -1843,7 +1996,6 @@
+@@ -1843,7 +1994,6 @@
  type = "ScrollSnapAlign"
  initial = "computed::ScrollSnapAlign::none()"
  struct = "box"
@@ -2156,15 +2170,15 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#scroll-snap-align"
  animation_type = "discrete"
  affects = "paint"
-@@ -1852,16 +2004,34 @@
+@@ -1852,16 +2002,34 @@
  type = "ScrollSnapStop"
  initial = "computed::ScrollSnapStop::Normal"
  struct = "box"
 -engine = "gecko"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#scroll-snap-stop"
-+animation_type = "discrete"
-+affects = "paint"
-+
+ animation_type = "discrete"
+ affects = "paint"
+ 
 +[scroll-marker-group]
 +type = "ScrollMarkerGroup"
 +initial = "computed::ScrollMarkerGroup::NONE"
@@ -2180,11 +2194,11 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +initial = "computed::ScrollTargetGroup::None"
 +struct = "box"
 +engine = "servo"
- animation_type = "discrete"
++animation_type = "discrete"
 +servo_restyle_damage = "repaint"
 +spec = "https://drafts.csswg.org/css-overflow-5/#scroll-target-group"
- affects = "paint"
- 
++affects = "paint"
++
  [scroll-snap-type]
  type = "ScrollSnapType"
  initial = "computed::ScrollSnapType::none()"
@@ -2193,7 +2207,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#scroll-snap-type"
  animation_type = "discrete"
  affects = "paint"
-@@ -1932,7 +2102,6 @@
+@@ -1932,7 +2100,6 @@
  type = "ScrollbarGutter"
  initial = "computed::ScrollbarGutter::AUTO"
  struct = "box"
@@ -2201,7 +2215,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  spec = "https://drafts.csswg.org/css-overflow-3/#scrollbar-gutter-property"
  affects = "layout"
-@@ -1941,7 +2110,6 @@
+@@ -1941,7 +2108,6 @@
  type = "Opacity"
  initial = "0.0"
  struct = "box"
@@ -2209,7 +2223,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-shapes/#shape-image-threshold-property"
  affects = "layout"
  
-@@ -1949,7 +2117,6 @@
+@@ -1949,7 +2115,6 @@
  type = "NonNegativeLengthPercentage"
  initial = "computed::NonNegativeLengthPercentage::zero()"
  struct = "box"
@@ -2217,7 +2231,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-shapes/#shape-margin-property"
  affects = "layout"
  
-@@ -1957,7 +2124,6 @@
+@@ -1957,7 +2122,6 @@
  type = "basic_shape::ShapeOutside"
  initial = "generics::basic_shape::ShapeOutside::None"
  struct = "box"
@@ -2225,7 +2239,15 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-shapes/#shape-outside-property"
  affects = "layout"
  
-@@ -1975,7 +2141,6 @@
+@@ -1965,7 +2129,6 @@
+ type = "PageSize"
+ initial = "computed::PageSize::auto()"
+ struct = "page"
+-engine = "gecko"
+ spec = "https://drafts.csswg.org/css-page-3/#page-size-prop"
+ animation_type = "none"
+ rule_types_allowed = ["page"]
+@@ -1975,7 +2138,6 @@
  type = "Color"
  initial = "computed::Color::BLACK"
  struct = "svg"
@@ -2233,7 +2255,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://svgwg.org/svg2-draft/pservers.html#StopColorProperties"
  affects = "paint"
  
-@@ -1983,7 +2148,6 @@
+@@ -1983,7 +2145,6 @@
  type = "Opacity"
  initial = "1.0"
  struct = "svg"
@@ -2241,7 +2263,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://svgwg.org/svg2-draft/pservers.html#StopOpacityProperty"
  affects = "paint"
  
-@@ -2117,7 +2281,6 @@
+@@ -2117,7 +2278,6 @@
  type = "TransformBox"
  initial = "computed::TransformBox::ViewBox"
  struct = "box"
@@ -2249,7 +2271,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-transforms/#transform-box"
  animation_type = "discrete"
  affects = "overflow"
-@@ -2272,10 +2435,10 @@
+@@ -2272,10 +2432,10 @@
  type = "ScrollAxis"
  initial = "computed::ScrollAxis::default()"
  struct = "ui"
@@ -2261,7 +2283,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/scroll-animations-1/#scroll-timeline-axis"
  rule_types_allowed = ["style"]
  affects = ""
-@@ -2284,10 +2447,10 @@
+@@ -2284,10 +2444,10 @@
  type = "TimelineName"
  initial = "computed::TimelineName::none()"
  struct = "ui"
@@ -2273,7 +2295,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/scroll-animations-1/#scroll-timeline-name"
  rule_types_allowed = ["style"]
  affects = ""
-@@ -2296,10 +2459,10 @@
+@@ -2296,10 +2456,10 @@
  type = "ScrollAxis"
  initial = "computed::ScrollAxis::default()"
  struct = "ui"
@@ -2285,7 +2307,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/scroll-animations-1/#view-timeline-axis"
  rule_types_allowed = ["style"]
  affects = ""
-@@ -2308,10 +2471,10 @@
+@@ -2308,10 +2468,10 @@
  type = "ViewTimelineInset"
  initial = "computed::ViewTimelineInset::default()"
  struct = "ui"
@@ -2297,7 +2319,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/scroll-animations-1/#view-timeline-axis"
  rule_types_allowed = ["style"]
  affects = ""
-@@ -2320,10 +2483,10 @@
+@@ -2320,10 +2480,10 @@
  type = "TimelineName"
  initial = "computed::TimelineName::none()"
  struct = "ui"
@@ -2309,7 +2331,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/scroll-animations-1/#view-timeline-name"
  rule_types_allowed = ["style"]
  affects = ""
-@@ -2337,6 +2500,16 @@
+@@ -2337,6 +2497,16 @@
  spec = "https://drafts.csswg.org/css-view-transitions-2/#view-transition-class-prop"
  affects = ""
  
@@ -2326,7 +2348,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [view-transition-name]
  type = "ViewTransitionName"
  initial = "computed::ViewTransitionName::none()"
-@@ -2350,7 +2523,6 @@
+@@ -2350,7 +2520,6 @@
  type = "VectorEffect"
  initial = "computed::VectorEffect::none()"
  struct = "svg"
@@ -2334,7 +2356,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  spec = "https://svgwg.org/svg2-draft/coords.html#VectorEffects"
  affects = "layout"
-@@ -2521,7 +2693,6 @@
+@@ -2521,7 +2690,6 @@
  type = "Color"
  initial = "computed_value::T::currentcolor()"
  struct = "inherited_text"
@@ -2342,7 +2364,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  ignored_when_colors_disabled = true
  spec = "https://compat.spec.whatwg.org/#the-webkit-text-stroke-color"
  affects = "paint"
-@@ -2530,7 +2701,6 @@
+@@ -2530,7 +2698,6 @@
  type = "LineWidth"
  initial = "app_units::Au(0)"
  struct = "inherited_text"
@@ -2350,7 +2372,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://compat.spec.whatwg.org/#the-webkit-text-stroke-width"
  animation_type = "discrete"
  affects = "overflow"
-@@ -2588,6 +2758,56 @@
+@@ -2588,6 +2755,56 @@
  extra_gecko_aliases = ["-moz-tab-size"]
  affects = "layout"
  
@@ -2407,7 +2429,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [text-autospace]
  type = "TextAutospace"
  initial = "computed::text::TextAutospace::NO_AUTOSPACE"
-@@ -2599,6 +2819,28 @@
+@@ -2599,6 +2816,28 @@
  spec = "https://drafts.csswg.org/css-text-4/#text-autospace-property"
  affects = "layout"
  
@@ -2436,7 +2458,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [text-autospace-size]
  type = "Number"
  initial = "0.125"
-@@ -2635,7 +2877,6 @@
+@@ -2635,7 +2874,6 @@
  type = "TextDecorationSkipInk"
  initial = "computed::TextDecorationSkipInk::Auto"
  struct = "inherited_text"
@@ -2444,7 +2466,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  spec = "https://drafts.csswg.org/css-text-decor-4/#text-decoration-skip-ink-property"
  affects = "overflow"
-@@ -2665,6 +2906,7 @@
+@@ -2665,6 +2903,7 @@
  servo_pref = "layout.css.text-emphasis.enabled"
  animation_type = "discrete"
  spec = "https://drafts.csswg.org/css-text-decor/#propdef-text-emphasis-style"
@@ -2452,7 +2474,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  affects = "overflow"
  
  [text-underline-offset]
-@@ -3171,6 +3413,15 @@
+@@ -3171,6 +3410,15 @@
  boxed = true
  logical_group = "border-radius"
  logical = true
@@ -2468,7 +2490,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  affects = "paint"
  
  [corner-top-left-shape]
-@@ -3383,9 +3634,9 @@
+@@ -3383,9 +3631,9 @@
  type = "MarginTrim"
  initial = "computed::MarginTrim::empty()"
  struct = "margin"
@@ -2479,7 +2501,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-box-4/#propdef-margin-trim"
  affects = "layout"
  
-@@ -3393,7 +3644,6 @@
+@@ -3393,7 +3641,6 @@
  type = "Length"
  initial = "computed::Length::zero()"
  struct = "margin"
@@ -2487,7 +2509,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical_group = "scroll-margin"
  gecko_ffi_name = "mScrollMargin.0"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-margin-top"
-@@ -3403,7 +3653,6 @@
+@@ -3403,7 +3650,6 @@
  type = "Length"
  initial = "computed::Length::zero()"
  struct = "margin"
@@ -2495,7 +2517,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical_group = "scroll-margin"
  gecko_ffi_name = "mScrollMargin.1"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-margin-right"
-@@ -3413,7 +3662,6 @@
+@@ -3413,7 +3659,6 @@
  type = "Length"
  initial = "computed::Length::zero()"
  struct = "margin"
@@ -2503,7 +2525,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical_group = "scroll-margin"
  gecko_ffi_name = "mScrollMargin.2"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-margin-bottom"
-@@ -3423,7 +3671,6 @@
+@@ -3423,7 +3668,6 @@
  type = "Length"
  initial = "computed::Length::zero()"
  struct = "margin"
@@ -2511,7 +2533,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical_group = "scroll-margin"
  gecko_ffi_name = "mScrollMargin.3"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-margin-left"
-@@ -3433,7 +3680,6 @@
+@@ -3433,7 +3677,6 @@
  type = "Length"
  initial = "computed::Length::zero()"
  struct = "margin"
@@ -2519,7 +2541,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical = true
  logical_group = "scroll-margin"
  gecko_ffi_name = "mScrollMargin.4"
-@@ -3444,7 +3690,6 @@
+@@ -3444,7 +3687,6 @@
  type = "Length"
  initial = "computed::Length::zero()"
  struct = "margin"
@@ -2527,7 +2549,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical = true
  logical_group = "scroll-margin"
  gecko_ffi_name = "mScrollMargin.5"
-@@ -3455,7 +3700,6 @@
+@@ -3455,7 +3697,6 @@
  type = "Length"
  initial = "computed::Length::zero()"
  struct = "margin"
@@ -2535,7 +2557,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical = true
  logical_group = "scroll-margin"
  gecko_ffi_name = "mScrollMargin.6"
-@@ -3466,7 +3710,6 @@
+@@ -3466,7 +3707,6 @@
  type = "Length"
  initial = "computed::Length::zero()"
  struct = "margin"
@@ -2543,7 +2565,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical = true
  logical_group = "scroll-margin"
  gecko_ffi_name = "mScrollMargin.7"
-@@ -3567,7 +3810,6 @@
+@@ -3567,7 +3807,6 @@
  type = "NonNegativeLengthPercentageOrAuto"
  initial = "computed::NonNegativeLengthPercentageOrAuto::auto()"
  struct = "padding"
@@ -2551,7 +2573,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical_group = "scroll-padding"
  gecko_ffi_name = "mScrollPadding.0"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-padding-top"
-@@ -3577,7 +3819,6 @@
+@@ -3577,7 +3816,6 @@
  type = "NonNegativeLengthPercentageOrAuto"
  initial = "computed::NonNegativeLengthPercentageOrAuto::auto()"
  struct = "padding"
@@ -2559,7 +2581,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical_group = "scroll-padding"
  gecko_ffi_name = "mScrollPadding.1"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-padding-right"
-@@ -3587,7 +3828,6 @@
+@@ -3587,7 +3825,6 @@
  type = "NonNegativeLengthPercentageOrAuto"
  initial = "computed::NonNegativeLengthPercentageOrAuto::auto()"
  struct = "padding"
@@ -2567,7 +2589,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical_group = "scroll-padding"
  gecko_ffi_name = "mScrollPadding.2"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-padding-bottom"
-@@ -3597,7 +3837,6 @@
+@@ -3597,7 +3834,6 @@
  type = "NonNegativeLengthPercentageOrAuto"
  initial = "computed::NonNegativeLengthPercentageOrAuto::auto()"
  struct = "padding"
@@ -2575,7 +2597,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical_group = "scroll-padding"
  gecko_ffi_name = "mScrollPadding.3"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-padding-left"
-@@ -3607,7 +3846,6 @@
+@@ -3607,7 +3843,6 @@
  type = "NonNegativeLengthPercentageOrAuto"
  initial = "computed::NonNegativeLengthPercentageOrAuto::auto()"
  struct = "padding"
@@ -2583,7 +2605,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical = true
  logical_group = "scroll-padding"
  gecko_ffi_name = "mScrollPadding.4"
-@@ -3618,7 +3856,6 @@
+@@ -3618,7 +3853,6 @@
  type = "NonNegativeLengthPercentageOrAuto"
  initial = "computed::NonNegativeLengthPercentageOrAuto::auto()"
  struct = "padding"
@@ -2591,7 +2613,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical = true
  logical_group = "scroll-padding"
  gecko_ffi_name = "mScrollPadding.5"
-@@ -3629,7 +3866,6 @@
+@@ -3629,7 +3863,6 @@
  type = "NonNegativeLengthPercentageOrAuto"
  initial = "computed::NonNegativeLengthPercentageOrAuto::auto()"
  struct = "padding"
@@ -2599,7 +2621,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical = true
  logical_group = "scroll-padding"
  gecko_ffi_name = "mScrollPadding.6"
-@@ -3640,7 +3876,6 @@
+@@ -3640,7 +3873,6 @@
  type = "NonNegativeLengthPercentageOrAuto"
  initial = "computed::NonNegativeLengthPercentageOrAuto::auto()"
  struct = "padding"
@@ -2607,7 +2629,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical = true
  logical_group = "scroll-padding"
  gecko_ffi_name = "mScrollPadding.7"
-@@ -3694,6 +3929,7 @@
+@@ -3694,6 +3926,7 @@
  [box-decoration-break]
  struct = "border"
  spec = "https://drafts.csswg.org/css-break/#propdef-box-decoration-break"
@@ -2615,7 +2637,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  affects = "layout"
  type = "BoxDecorationBreak"
-@@ -3730,6 +3966,27 @@
+@@ -3730,6 +3963,27 @@
  type = "TopLayer"
  initial = "computed::TopLayer::None"
  
@@ -2643,7 +2665,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [scroll-behavior]
  struct = "box"
  servo_pref = "layout.css.scroll-behavior.enabled"
-@@ -3770,13 +4027,31 @@
+@@ -3770,13 +4024,31 @@
  
  [column-fill]
  struct = "column"
@@ -2676,7 +2698,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [column-span]
  struct = "column"
  spec = "https://drafts.csswg.org/css-multicol/#propdef-column-span"
-@@ -3872,6 +4147,15 @@
+@@ -3872,6 +4144,15 @@
  gecko_ffi_name = "mVisible"
  type = "Visibility"
  initial = "computed::Visibility::Visible"
@@ -2692,7 +2714,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  
  [direction]
  struct = "inherited_box"
-@@ -3901,9 +4185,9 @@
+@@ -3901,9 +4182,9 @@
  type = "TextOrientation"
  initial = "computed::TextOrientation::Mixed"
  
@@ -2703,7 +2725,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-images/#propdef-image-orientation"
  animation_type = "discrete"
  affects = "layout"
-@@ -3912,7 +4196,6 @@
+@@ -3912,7 +4193,6 @@
  
  [text-anchor]
  struct = "inherited_svg"
@@ -2711,7 +2733,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://svgwg.org/svg2-draft/text.html#TextAnchorProperty"
  animation_type = "discrete"
  affects = "layout"
-@@ -3921,7 +4204,6 @@
+@@ -3921,7 +4201,6 @@
  
  [color-interpolation]
  struct = "inherited_svg"
@@ -2719,7 +2741,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://svgwg.org/svg2-draft/painting.html#ColorInterpolationProperty"
  animation_type = "discrete"
  affects = "paint"
-@@ -3930,7 +4212,6 @@
+@@ -3930,7 +4209,6 @@
  
  [color-interpolation-filters]
  struct = "inherited_svg"
@@ -2727,7 +2749,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://svgwg.org/svg2-draft/painting.html#ColorInterpolationFiltersProperty"
  animation_type = "discrete"
  affects = "paint"
-@@ -3939,7 +4220,6 @@
+@@ -3939,7 +4217,6 @@
  
  [shape-rendering]
  struct = "inherited_svg"
@@ -2735,7 +2757,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://svgwg.org/svg2-draft/painting.html#ShapeRenderingProperty"
  animation_type = "discrete"
  affects = "paint"
-@@ -4001,6 +4281,16 @@
+@@ -4001,6 +4278,16 @@
  type = "TextSizeAdjust"
  initial = "computed::TextSizeAdjust::Auto"
  
@@ -2752,7 +2774,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [ruby-align]
  struct = "inherited_text"
  servo_pref = "layout.css.ruby.enabled"
-@@ -4093,6 +4383,17 @@
+@@ -4093,6 +4380,17 @@
  type = "BoxSizing"
  initial = "computed::BoxSizing::ContentBox"
  
@@ -2770,7 +2792,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [object-fit]
  struct = "position"
  spec = "https://drafts.csswg.org/css-images/#propdef-object-fit"
-@@ -4109,7 +4410,62 @@
+@@ -4109,7 +4407,62 @@
  affects = "paint"
  type = "MaskType"
  initial = "computed::MaskType::Luminance"
@@ -2784,7 +2806,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +spec = "https://drafts.fxtf.org/css-masking-1/#propdef-mask-border-source"
 +animation_type = "discrete"
 +affects = "paint"
- 
++
 +[mask-border-slice]
 +type = "BorderImageSlice"
 +initial = "computed::BorderImageSlice::zero()"
@@ -2820,7 +2842,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +spec = "https://drafts.fxtf.org/css-masking-1/#propdef-mask-border-repeat"
 +animation_type = "discrete"
 +affects = "paint"
-+
+ 
 +[mask-border-mode]
 +type = "MaskType"
 +initial = "computed::MaskType::Alpha"
@@ -2833,7 +2855,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [mask-mode]
  struct = "svg"
  servo_pref = "layout.css.masking.enabled"
-@@ -4249,7 +4605,7 @@
+@@ -4249,7 +4602,7 @@
  
  [field-sizing]
  struct = "ui"
@@ -2842,7 +2864,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-ui/#field-sizing"
  animation_type = "discrete"
  affects = "layout"
-@@ -4289,7 +4645,62 @@
+@@ -4289,7 +4642,62 @@
  aliases = ["-webkit-box-orient"]
  type = "BoxOrient"
  initial = "computed::BoxOrient::Horizontal"
@@ -2905,7 +2927,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [-moz-box-pack]
  struct = "xul"
  engine = "gecko"
-@@ -4344,8 +4755,8 @@
+@@ -4344,8 +4752,8 @@
  type = "ScopedName"
  initial = "computed::ScopedName::none()"
  struct = "ui"
@@ -2917,7 +2939,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  affects = ""
 diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
 --- a/properties/properties.mako.rs	2026-11-11 19:55:57
-+++ b/properties/properties.mako.rs	2026-11-20 12:39:19
++++ b/properties/properties.mako.rs	2026-11-21 09:25:31
 @@ -1557,7 +1557,8 @@
              /// Whether this is a multicol style.
              #[cfg(feature = "servo")]
@@ -3173,8 +3195,8 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
  size_of_test!(ComputedValues, 248);
  #[cfg(feature = "servo")]
 -size_of_test!(ComputedValues, 232);
-+// pyro: + `pyro_unvisited`.
-+size_of_test!(ComputedValues, 240);
++// pyro: + `pyro_unvisited` and the shared Page style struct.
++size_of_test!(ComputedValues, 248);
  
  // FFI relies on this.
  size_of_test!(Option<Arc<ComputedValues>>, 8);
