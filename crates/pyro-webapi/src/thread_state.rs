@@ -45,6 +45,8 @@ pub const STATICS: &[&str] = &[
     "paint_worklet::FORCE_GRAPH_FALLBACK",
     "port_link::RELEASE_ACTIVE",
     "port_link::RELEASING",
+    "public_key::PENDING",
+    "public_key::QUEUE",
     "resource_timing::PAGES",
     "service_worker::FINISHERS",
     "service_worker::VERSIONS",
@@ -78,7 +80,7 @@ pub const STATICS: &[&str] = &[
 /// first static that still holds something of them; the thread must then not
 /// serve another client.
 pub fn reset_thread() -> Result<(), &'static str> {
-    let checks: [fn() -> Option<&'static str>; 22] = [
+    let checks: [fn() -> Option<&'static str>; 23] = [
         crate::dom_pages_leftover,
         crate::abort::thread_leftover,
         crate::canvas::thread_leftover,
@@ -91,6 +93,7 @@ pub fn reset_thread() -> Result<(), &'static str> {
         crate::web_locks::thread_leftover,
         crate::node::thread_leftover,
         crate::port_link::thread_leftover,
+        crate::crypto_subtle::public_key::thread_leftover,
         crate::resource_timing::thread_leftover,
         crate::service_worker::thread_leftover,
         crate::service_worker_scope::thread_leftover,
