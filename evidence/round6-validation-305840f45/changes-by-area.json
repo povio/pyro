@@ -1,0 +1,19 @@
+{
+ "css-values": {
+  "css/gains": 1
+ },
+ "css-00": {
+  "css/gains": 1
+ },
+ "css-03": {
+  "css/gains": 1
+ },
+ "production-00": {
+  "html/losses": 1,
+  "html/gains": 1,
+  "referrer-policy/gains": 52,
+  "referrer-policy/losses": 42,
+  "subresource-integrity/gains": 6,
+  "subresource-integrity/losses": 6
+ }
+}

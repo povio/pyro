@@ -1,0 +1,5 @@
+test dom_js::cssom_namespace_preserves_webidl_string_shape ... ok
+test dom_js::css_root_viewport_condition_cycle_guards_only_scrollbar_properties ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 651 filtered out; finished in 0.07s
+

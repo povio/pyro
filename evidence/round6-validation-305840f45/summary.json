@@ -1,0 +1,258 @@
+{
+ "studio-closeout": {
+  "count": 31,
+  "jobs": 6,
+  "old": 423,
+  "new": 423,
+  "gains": 0,
+  "losses": 0,
+  "nameDifferences": 0,
+  "oldFull": 26,
+  "newFull": 26,
+  "fullGains": [],
+  "fullLosses": [],
+  "restarts": 0,
+  "watchdog": 0,
+  "statuses": {
+   "complete": 31
+  },
+  "referenceHash": "03233db7cf141dacf41caca0c570009dc88b4d64eb041e7d7fbef375dca7947c",
+  "receiptHash": "59d86aa1d7ec55e78afe298330b4b594373341faa0bf21a26e09538db9a0e6c9"
+ },
+ "css-values": {
+  "count": 227,
+  "jobs": 1,
+  "old": 4537,
+  "new": 4538,
+  "gains": 1,
+  "losses": 0,
+  "nameDifferences": 0,
+  "oldFull": 171,
+  "newFull": 171,
+  "fullGains": [],
+  "fullLosses": [],
+  "restarts": 0,
+  "watchdog": 0,
+  "statuses": {
+   "complete": 227
+  },
+  "referenceHash": "e41d2480640f50539c13f57bb05c20a4a9f5b12a702230f850ca3121b365c6f0",
+  "receiptHash": "54b530e2bf0f831c7ee347ebd0d988a4fff29bc26c6203a10970a824ee1e329f"
+ },
+ "focus-00": {
+  "count": 32,
+  "jobs": 2,
+  "old": 172,
+  "new": 172,
+  "gains": 0,
+  "losses": 0,
+  "nameDifferences": 0,
+  "oldFull": 7,
+  "newFull": 7,
+  "fullGains": [],
+  "fullLosses": [],
+  "restarts": 0,
+  "watchdog": 0,
+  "statuses": {
+   "complete": 32
+  },
+  "referenceHash": "ff044f0864743a2d0423d22c3b359380d28f240087804019c5df1deaccc1525e",
+  "receiptHash": "c1530f95e1925bd6381da9d8de4938ef0603f93ee333e9268b80e37afdfeb2e2"
+ },
+ "guard-00": {
+  "count": 33,
+  "jobs": 2,
+  "old": 779,
+  "new": 779,
+  "gains": 0,
+  "losses": 0,
+  "nameDifferences": 0,
+  "oldFull": 27,
+  "newFull": 27,
+  "fullGains": [],
+  "fullLosses": [],
+  "restarts": 0,
+  "watchdog": 0,
+  "statuses": {
+   "complete": 33
+  },
+  "referenceHash": "cb3a7e683781e47e07212b195a8084e528faece60ad22a4cae1929c5edbf674b",
+  "receiptHash": "6302de35e54edc6ba8d2c2297ea3af36baffc18a12d4ffbfd3d98cd49ec14a24"
+ },
+ "navigator-00": {
+  "count": 20,
+  "jobs": 4,
+  "old": 279,
+  "new": 279,
+  "gains": 0,
+  "losses": 0,
+  "nameDifferences": 0,
+  "oldFull": 7,
+  "newFull": 7,
+  "fullGains": [],
+  "fullLosses": [],
+  "restarts": 0,
+  "watchdog": 0,
+  "statuses": {
+   "error": 5,
+   "complete": 15
+  },
+  "referenceHash": "1d0a0ab2f8f1ae274087f1431cf659955bb7aabd657630a77f14827183c7e957",
+  "receiptHash": "50fe42b58b2d7f732bf061b1475d302cf8d818c0e47462ca4542c7696903f8de"
+ },
+ "css-00": {
+  "count": 80,
+  "jobs": 2,
+  "old": 297,
+  "new": 298,
+  "gains": 1,
+  "losses": 0,
+  "nameDifferences": 0,
+  "oldFull": 69,
+  "newFull": 70,
+  "fullGains": [
+   "css/css-animations/transition-ready-time-offscreen.html"
+  ],
+  "fullLosses": [],
+  "restarts": 0,
+  "watchdog": 0,
+  "statuses": {
+   "complete": 80
+  },
+  "referenceHash": "2fc7fc89ed7a99093c64cfb0f79713a35b31e4c22a2e7eb4644c0db4ed312295",
+  "receiptHash": "91abb2fccf26dbbb56df311d70f4abcfee0807d628afb0ad747ce75929b79aeb"
+ },
+ "css-01": {
+  "count": 80,
+  "jobs": 2,
+  "old": 535,
+  "new": 535,
+  "gains": 0,
+  "losses": 0,
+  "nameDifferences": 0,
+  "oldFull": 48,
+  "newFull": 48,
+  "fullGains": [],
+  "fullLosses": [],
+  "restarts": 0,
+  "watchdog": 0,
+  "statuses": {
+   "complete": 80
+  },
+  "referenceHash": "38e7478848a477cd4c847d0e54bcc562f945b1ba3d7129b25453f525d0d9524e",
+  "receiptHash": "8799c7c80e810a618b398763816d00b5e28da37cb1f7ad6ff0a20ec6af287613"
+ },
+ "css-02": {
+  "count": 80,
+  "jobs": 2,
+  "old": 1621,
+  "new": 1621,
+  "gains": 0,
+  "losses": 0,
+  "nameDifferences": 0,
+  "oldFull": 52,
+  "newFull": 52,
+  "fullGains": [],
+  "fullLosses": [],
+  "restarts": 0,
+  "watchdog": 0,
+  "statuses": {
+   "complete": 80
+  },
+  "referenceHash": "bec16d12a91fe54e8087609d46062e6fa84681972539f4f3e069ad6969c17536",
+  "receiptHash": "7176a71c171a738a77ace226aa2afa63a5d2f3b3f3aabfa5e0a01b009b9c1c82"
+ },
+ "css-03": {
+  "count": 75,
+  "jobs": 2,
+  "old": 1513,
+  "new": 1514,
+  "gains": 1,
+  "losses": 0,
+  "nameDifferences": 0,
+  "oldFull": 55,
+  "newFull": 56,
+  "fullGains": [
+   "css/css-transitions/CSSTransition-startTime.tentative.html"
+  ],
+  "fullLosses": [],
+  "restarts": 0,
+  "watchdog": 0,
+  "statuses": {
+   "complete": 75
+  },
+  "referenceHash": "6db1d333f23c87a4a7859087ca356be2c13d712218ea60be65152b9ef0c5e762",
+  "receiptHash": "9e9f76495839926c524416b44428c9dfd94663a49d61c642f295536095ab6ffe"
+ },
+ "video-focus": {
+  "count": 30,
+  "jobs": 4,
+  "old": 922,
+  "new": 922,
+  "gains": 0,
+  "losses": 0,
+  "nameDifferences": 0,
+  "oldFull": 18,
+  "newFull": 18,
+  "fullGains": [],
+  "fullLosses": [],
+  "restarts": 0,
+  "watchdog": 0,
+  "statuses": {
+   "complete": 30
+  },
+  "referenceHash": "bc86abd0612cbf3817f5c6836e146976ad4e9f7f294b1bca8f2e4fe6832e9afc",
+  "receiptHash": "d72ba5c59a890eb5dfe227e4ddc6d4c0688c81575fbb36c1214f36d3ab382e53"
+ },
+ "video-guard": {
+  "count": 19,
+  "jobs": 4,
+  "old": 19,
+  "new": 19,
+  "gains": 0,
+  "losses": 0,
+  "nameDifferences": 0,
+  "oldFull": 19,
+  "newFull": 19,
+  "fullGains": [],
+  "fullLosses": [],
+  "restarts": 0,
+  "watchdog": 0,
+  "statuses": {
+   "complete": 19
+  },
+  "referenceHash": "bd9b957fc5d94fce7aa1c72cee0b64d9acbf7fb24de7365ee22c4da2d2db95d6",
+  "receiptHash": "f655ea4d0b1ab2a4b0d20c8b4a078e5ba3b60d3885636ee57f364ec2ea058626"
+ },
+ "production-00": {
+  "count": 58,
+  "jobs": 2,
+  "old": 9188,
+  "new": 9198,
+  "gains": 59,
+  "losses": 49,
+  "nameDifferences": 24,
+  "oldFull": 14,
+  "newFull": 16,
+  "fullGains": [
+   "referrer-policy/gen/iframe.meta/default/iframe-tag.http.html",
+   "referrer-policy/gen/srcdoc-inherit.http-rp/no-referrer/iframe-tag.http.html",
+   "referrer-policy/gen/srcdoc-inherit.http-rp/strict-origin/iframe-tag.http.html",
+   "referrer-policy/gen/srcdoc.meta/no-referrer/iframe-tag.http.html",
+   "referrer-policy/gen/srcdoc.meta/strict-origin/iframe-tag.http.html"
+  ],
+  "fullLosses": [
+   "referrer-policy/gen/iframe.meta/no-referrer/iframe-tag.http.html",
+   "referrer-policy/gen/srcdoc-inherit.meta/origin/iframe-tag.http.html",
+   "referrer-policy/gen/srcdoc.meta/origin/iframe-tag.http.html"
+  ],
+  "restarts": 0,
+  "watchdog": 0,
+  "statuses": {
+   "complete": 57,
+   "timeout": 1
+  },
+  "referenceHash": "4546960a0703a04c84616bca2aff125882fbd4c1ac6136f7e71f63014904e69f",
+  "receiptHash": "a0501b28cea61215004c4d6d072c5b4a4e2633368c2d456bf1ee0de472f50529"
+ }
+}

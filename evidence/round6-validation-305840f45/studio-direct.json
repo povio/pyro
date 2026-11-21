@@ -1,0 +1,51 @@
+{
+ "old": 416,
+ "new": 423,
+ "gains": [
+  [
+   "css/css-values/dynamic-viewport-units-rule-cache.html",
+   "dynamic-viewport-units-rule-cache",
+   1
+  ],
+  [
+   "css/css-values/viewport-units-scroll-no-cycles-001.tentative.html",
+   "CSS Values and Units Test: Viewport units and scrollbars",
+   1
+  ],
+  [
+   "css/cssom/CSS-namespace-object-class-string.html",
+   "@@toStringTag exists on the namespace object with the appropriate descriptor",
+   1
+  ],
+  [
+   "css/cssom/CSS-namespace-object-class-string.html",
+   "Object.prototype.toString applied after deleting @@toStringTag",
+   1
+  ],
+  [
+   "css/cssom/CSS-namespace-object-class-string.html",
+   "Object.prototype.toString applied after modifying the namespace object's @@toStringTag",
+   1
+  ],
+  [
+   "css/cssom/CSS-namespace-object-class-string.html",
+   "Object.prototype.toString applied to the namespace object",
+   1
+  ],
+  [
+   "css/cssom/escape.html",
+   "Surrogates",
+   1
+  ]
+ ],
+ "losses": [],
+ "oldFull": 22,
+ "newFull": 26,
+ "fullGains": [
+  "css/css-values/dynamic-viewport-units-rule-cache.html",
+  "css/css-values/viewport-units-scroll-no-cycles-001.tentative.html",
+  "css/cssom/CSS-namespace-object-class-string.html",
+  "css/cssom/escape.html"
+ ],
+ "fullLosses": []
+}

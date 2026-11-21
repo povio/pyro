@@ -1,0 +1,59 @@
+{
+ "css-00": {
+  "urls": 80,
+  "fullGains": 0,
+  "fullLosses": 0
+ },
+ "css-01": {
+  "urls": 80,
+  "fullGains": 0,
+  "fullLosses": 0
+ },
+ "css-02": {
+  "urls": 80,
+  "fullGains": 0,
+  "fullLosses": 0
+ },
+ "css-03": {
+  "urls": 75,
+  "fullGains": 0,
+  "fullLosses": 0
+ },
+ "css-values": {
+  "urls": 227,
+  "fullGains": 0,
+  "fullLosses": 0
+ },
+ "focus-00": {
+  "urls": 32,
+  "fullGains": 0,
+  "fullLosses": 0
+ },
+ "guard-00": {
+  "urls": 33,
+  "fullGains": 0,
+  "fullLosses": 0
+ },
+ "navigator-00": {
+  "urls": 20,
+  "fullGains": 0,
+  "fullLosses": 0
+ },
+ "production-00": {
+  "losses": 40,
+  "gains": 60,
+  "urls": 58,
+  "fullGains": 5,
+  "fullLosses": 1
+ },
+ "video-focus": {
+  "urls": 30,
+  "fullGains": 0,
+  "fullLosses": 0
+ },
+ "video-guard": {
+  "urls": 19,
+  "fullGains": 0,
+  "fullLosses": 0
+ }
+}
