@@ -436,6 +436,17 @@ fn flex_target_size_is_not_an_intrinsic_calculation_basis() {
 }
 
 #[test]
+fn flex_basis_calculates_from_content_independently_of_height() {
+    let page = Page::new(r#"<!doctype html><div style="display:flex;flex-direction:column;height:280px">
+        <div id=item style="flex:0 0 calc-size(calc-size(content,size * 2),size + 7px);height:100px">
+        <div style="height:20px"></div></div></div>
+        <div id=ordinary style="width:50px;width:calc-size(content,size * 2)"></div>"#);
+    let used = |selector, name| page.layout.computed_style_value(&page.dom.borrow(), page.find(selector), name);
+    assert_eq!(used("#item", "height"), "47px");
+    assert_eq!(used("#ordinary", "width"), "50px");
+}
+
+#[test]
 fn flex_basis_calculation_uses_the_items_box_sizing() {
     let page = Page::new(r#"<!doctype html><div style="display:flex;width:240px">
         <div id=content style="width:40px;padding:5px;flex:0 0 calc-size(auto,size * 2)"></div>

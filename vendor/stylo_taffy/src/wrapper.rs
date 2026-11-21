@@ -904,7 +904,7 @@ impl<T: Deref<Target = ComputedValues>> taffy::FlexboxItemStyle for TaffyStyloSt
         match size.prepared_size() {
             stylo::Size::CalcSizeAuto(calc) | stylo::Size::CalcSizeStretch(calc) |
             stylo::Size::CalcSizeFitContent(calc) | stylo::Size::CalcSizeMinContent(calc) |
-            stylo::Size::CalcSizeMaxContent(calc) => Some(convert::calc_size_function(&calc.0)),
+            stylo::Size::CalcSizeContent(calc) | stylo::Size::CalcSizeMaxContent(calc) => Some(convert::calc_size_function(&calc.0)),
             _ => None,
         }
     }

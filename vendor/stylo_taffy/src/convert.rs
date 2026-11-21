@@ -115,6 +115,7 @@ pub fn dimension(val: &stylo::Size) -> taffy::Dimension {
         stylo::Size::CalcSizeAuto(_) => taffy::Dimension::AUTO,
         stylo::Size::CalcSizeFitContent(_) => taffy::Dimension::fit_content(),
         stylo::Size::CalcSizeMinContent(_) => taffy::Dimension::min_content(),
+        stylo::Size::CalcSizeContent(_) => taffy::Dimension::content(),
         stylo::Size::CalcSizeMaxContent(_) => taffy::Dimension::max_content(),
 
         stylo::Size::AnchorSizeFunction(anchor) => anchor.fallback.as_ref().map_or(taffy::Dimension::AUTO, dimension),
@@ -176,6 +177,7 @@ pub fn min_size(val: &stylo::Size) -> taffy::LengthPercentageAuto {
         | stylo::Size::CalcSizeStretch(_)
         | stylo::Size::CalcSizeFitContent(_)
         | stylo::Size::CalcSizeMinContent(_)
+        | stylo::Size::CalcSizeContent(_)
         | stylo::Size::CalcSizeMaxContent(_) => taffy::LengthPercentageAuto::AUTO,
 
         stylo::Size::AnchorSizeFunction(anchor) => anchor.fallback.as_ref().map_or(taffy::LengthPercentageAuto::AUTO, min_size),
@@ -196,6 +198,7 @@ pub fn min_size_keyword(val: &stylo::Size) -> taffy::Dimension {
         | stylo::Size::CalcSizeAuto(_)
         | stylo::Size::CalcSizeFitContent(_)
         | stylo::Size::CalcSizeMinContent(_)
+        | stylo::Size::CalcSizeContent(_)
         | stylo::Size::CalcSizeMaxContent(_) => taffy::Dimension::AUTO,
         keyword => dimension(keyword),
     }

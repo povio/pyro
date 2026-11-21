@@ -1856,6 +1856,7 @@ impl Size {
             allow_quirks,
             allow_webkit_fill_available,
             ParseAnchorFunctions::Yes,
+            false,
         )
     }
 
@@ -1870,6 +1871,7 @@ impl Size {
             AllowQuirks::No,
             true,
             ParseAnchorFunctions::No,
+            true,
         )
     }
 
@@ -1883,12 +1885,13 @@ impl Size {
         allow_quirks: AllowQuirks,
         allow_webkit_fill_available: bool,
         allow_anchor_functions: ParseAnchorFunctions,
+        allow_content_basis: bool,
     ) -> Result<Self, ParseError> {
         parse_size_non_length!(Size, input, allow_webkit_fill_available,
                                "auto" => Auto);
         parse_fit_content_function!(Size, input, context, allow_quirks);
         // pyro: `calc-size(<intrinsic keyword>, <calculation>)`.
-        if let Ok(size) = input.try_parse(|input| Self::parse_calc_size(context, input, 0, &mut 0)) {
+        if let Ok(size) = input.try_parse(|input| Self::parse_calc_size(context, input, 0, &mut 0, allow_content_basis)) {
             return Ok(size);
         }
 
@@ -1932,6 +1935,7 @@ impl Size {
             allow_quirks,
             allow_webkit_fill_available,
             ParseAnchorFunctions::Yes,
+            false,
         )
     }
 
@@ -1951,6 +1955,7 @@ impl Size {
             AllowQuirks::No,
             allow_webkit_fill_available,
             ParseAnchorFunctions::Yes,
+            false,
         )
     }
 
@@ -1960,7 +1965,7 @@ impl Size {
         GenericSize::LengthPercentage(NonNegativeLengthPercentage::zero_percent())
     }
     /// pyro: `calc-size(auto | fit-content | min-content | max-content, <calculation>)`.
-    fn parse_calc_size(context: &ParserContext, input: &mut Parser, depth: usize, expanded: &mut usize) -> Result<Self, ParseError> {
+    fn parse_calc_size(context: &ParserContext, input: &mut Parser, depth: usize, expanded: &mut usize, allow_content_basis: bool) -> Result<Self, ParseError> {
         if depth >= 32 { return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError)); }
         input.expect_function_matching("calc-size")?;
         input.parse_nested_block(|input| {
@@ -1971,10 +1976,12 @@ impl Size {
                 "max-content" => 3u8,
                 "stretch" => 4u8,
                 "any" => 5u8,
+                "content" => 6u8,
             }));
+            if matches!(keyword, Ok(6)) && !allow_content_basis { return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError)); }
             let basis = if keyword.is_err() {
                 Some(input.parse_until_before(cssparser::Delimiter::Comma, |input| {
-                    if let Ok(nested) = input.try_parse(|input| Self::parse_calc_size(context, input, depth + 1, expanded)) { return Ok(nested); }
+                    if let Ok(nested) = input.try_parse(|input| Self::parse_calc_size(context, input, depth + 1, expanded, allow_content_basis)) { return Ok(nested); }
                     let mut calc = CalcNode::parse_calc_size_calculation(context, input, AllowedNumericType::All, false)?;
                     calc.0.node.visit_depth_first(|_| *expanded += 1);
                     Ok(Self::LengthPercentage(NonNegative(LengthPercentage::Calc(Box::new(calc)))))
@@ -2000,6 +2007,7 @@ impl Size {
                 2 => GenericSize::CalcSizeMinContent(length),
                 3 => GenericSize::CalcSizeMaxContent(length),
                 4 => GenericSize::CalcSizeStretch(length),
+                6 => GenericSize::CalcSizeContent(length),
                 _ => GenericSize::CalcSizeAny(length),
             })
         })
@@ -2017,7 +2025,7 @@ macro_rules! convert_size {
     ($source:expr, $from:ident, $to:ident, $convert:expr, $pair:expr) => {
         convert_size!($source, $from, $to, $convert, $pair; Auto, MaxContent, MinContent, FitContent, Stretch, WebkitFillAvailable;
             LengthPercentage, FitContentFunction, AnchorSizeFunction, AnchorContainingCalcFunction,
-            CalcSizeAuto, CalcSizeStretch, CalcSizeMinContent, CalcSizeMaxContent, CalcSizeFitContent, CalcSizeAny, CalcSizePercentage)
+            CalcSizeAuto, CalcSizeStretch, CalcSizeMinContent, CalcSizeMaxContent, CalcSizeFitContent, CalcSizeContent, CalcSizeAny, CalcSizePercentage)
     };
 }
 

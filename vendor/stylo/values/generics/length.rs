@@ -190,6 +190,9 @@ pub enum GenericSize<LengthPercent> {
     CalcSizeMaxContent(LengthPercent),
     #[animation(error)]
     #[css(function = "calc-size")]
+    CalcSizeContent(LengthPercent),
+    #[animation(error)]
+    #[css(function = "calc-size")]
     CalcSizeStretch(LengthPercent),
     #[animation(error)]
     #[css(function = "calc-size")]
@@ -229,6 +232,7 @@ impl<LengthPercent: SizeCalculationCss> ToCss for GenericSize<LengthPercent> {
                 value.calculation.calculation_css::<true, _>(dest)?;
                 return dest.write_char(')');
             },
+            Self::CalcSizeContent(value) => ("content", value),
             Self::CalcSizeAuto(value) => ("auto", value),
             Self::CalcSizeFitContent(value) => ("fit-content", value),
             Self::CalcSizeMinContent(value) => ("min-content", value),
