@@ -86,15 +86,15 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
 +   (`a[href]` above). A `::scroll-button()` takes the rules for `button`. */
 +::scroll-marker-group {
 +    display: block;
-+}
-+
+ }
+ 
 +::scroll-marker,
 +::column::scroll-marker {
 +    color: rgb(0, 0, 238);
 +    text-decoration: underline;
 +    cursor: pointer;
- }
- 
++}
++
 +/* https://html.spec.whatwg.org/#bidi-rendering */
  input {
      display: inline-block;
@@ -435,7 +435,22 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  table[align="center"]>caption {
      margin-inline-start: auto;
      margin-inline-end: auto;
-@@ -832,16 +1095,51 @@
+@@ -762,6 +1025,14 @@
+     text-align: match-parent;
+ }
+ 
++::marker, ::before::marker, ::after::marker {
++    unicode-bidi: isolate;
++    font-variant-numeric: tabular-nums;
++    white-space: pre;
++    text-transform: none;
++    text-indent: 0;
++}
++
+ /* nested lists have no top/bottom margins */
+ :is(ul, ol, dir, menu, dl) ul,
+ :is(ul, ol, dir, menu, dl) ol,
+@@ -832,16 +1103,51 @@
      position: static ! important;
      float: none ! important;
      border: none ! important;
@@ -487,7 +502,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  spacer {
      position: static ! important;
      float: none ! important;
-@@ -851,8 +1149,18 @@
+@@ -851,8 +1157,18 @@
      user-select: none;
  }
  
@@ -506,7 +521,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  html:focus-visible {
      /* These elements historically don't show outlines when focused by default.
     * We could consider changing that if needed. */
-@@ -886,14 +1194,15 @@
+@@ -886,14 +1202,15 @@
      display: none;
  }
  
@@ -525,7 +540,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      padding: unset !important;
  }
  
-@@ -922,6 +1231,11 @@
+@@ -922,6 +1239,11 @@
      display: none !important;
  }
  
@@ -537,7 +552,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  /* media elements */
  video {
      object-fit: contain;
-@@ -996,7 +1310,9 @@
+@@ -996,7 +1318,9 @@
      display: none;
  }
  
@@ -548,7 +563,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      -moz-top-layer: top !important;
      position: fixed;
      overflow: auto;
-@@ -1128,37 +1444,48 @@
+@@ -1128,37 +1452,48 @@
  }
  
  /* Popover UA style, https://html.spec.whatwg.org/#flow-content-3 */
