@@ -885,14 +885,18 @@ pub fn delete(page: &Rc<PageDom>, host: NodeId, backward: bool) {
     apply_edit(page, host, input_type, None, None, |page| {
         let caret = {
             let mut dom = page.dom.borrow_mut();
+            let adjacent_text = start == end && from.0 == to.0 && is_text(&dom, from.0)
+                && [dom.prev_sibling(from.0), dom.next_sibling(from.0)].into_iter()
+                    .any(|s| s.ok().flatten().is_some_and(|n| is_text(&dom, n)));
+            let rebalance = adjacent_text && whitespace::visible_before_deletion(&dom, from, to);
             let repair = if start == end { whitespace::deletion_repair(page, &dom, host, start, backward) } else { None };
             let caret = if let Some(caret) = paragraph_join::at_boundary(page, &mut dom, host, start, end, backward) {
                 caret
             } else {
                 delete_content(page, &mut dom, host, start, end, backward, (from, to))
             };
-            let adjacent = (start == end && from.0 == to.0 && caret == from && is_text(&dom, from.0))
-                .then(|| whitespace::after_text_deletion(page, &mut dom, host, caret)).flatten();
+            let adjacent = (adjacent_text && caret == from)
+                .then(|| whitespace::after_text_deletion(page, &mut dom, host, caret, rebalance)).flatten();
             adjacent.unwrap_or_else(|| {
                 if let Some(repair) = repair {
                     whitespace::at(page, &mut dom, host, caret, repair);
