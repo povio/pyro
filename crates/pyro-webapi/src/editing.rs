@@ -9,6 +9,7 @@
 //! explicitly, and a boundary node that leaves the document clears the
 //! selection when read.
 
+mod character;
 mod paragraph_join;
 mod target_range;
 mod whitespace;
@@ -493,7 +494,8 @@ pub(crate) fn host_range(page: &PageDom, host: NodeId) -> (Point, Point) {
 pub(crate) fn placeholder_if_empty(dom: &mut Dom, block: NodeId) -> Option<Point> {
     let has_content = dom.descendants(block).ok()?.any(|d| {
         d != block
-            && (is_text(dom, d) && dom.char_length(d).unwrap_or(0) > 0 || (!is_text(dom, d) && !is_container(dom, d)))
+            && (is_text(dom, d) && dom.char_length(d).unwrap_or(0) > 0
+                || (!is_text(dom, d) && (!is_container(dom, d) || editable_attr(dom, d) == Some(false))))
     });
     if has_content {
         return None;
@@ -758,12 +760,18 @@ pub fn delete(page: &Rc<PageDom>, host: NodeId, backward: bool) {
         let Some(host) = current_owner else { return };
         (host, start, end)
     };
-    let span = if start == end {
-        target_range::deletion_span(&page.dom.borrow(), host, start, backward)
+    let (start, end, span) = if start == end {
+        let (caret, span) = target_range::deletion_plan(page, &page.dom.borrow(), host, start, backward);
+        (caret, caret, span)
     } else {
-        Some((start, end))
+        (start, end, Some((start, end)))
     };
-    if span.is_some_and(|(from, to)| from == to) { return; }
+    let Some((from, to)) = span else {
+        return;
+    };
+    if from == to {
+        return;
+    }
     apply_edit(page, host, input_type, None, None, |page| {
         let caret = {
             let mut dom = page.dom.borrow_mut();
@@ -771,7 +779,7 @@ pub fn delete(page: &Rc<PageDom>, host: NodeId, backward: bool) {
             let caret = if let Some(caret) = paragraph_join::at_boundary(page, &mut dom, host, start, end, backward) {
                 caret
             } else {
-                delete_content(&mut dom, host, start, end, backward, span)
+                delete_content(page, &mut dom, host, start, end, backward, (from, to))
             };
             if repair_space {
                 whitespace::at(page, &mut dom, host, caret);
@@ -788,31 +796,49 @@ fn selection_host(dom: &Dom, start: Point, end: Point) -> Option<NodeId> {
 }
 
 fn delete_content(
-    dom: &mut Dom, host: NodeId, start: Point, end: Point, backward: bool, span: Option<(Point, Point)>,
+    page: &PageDom,
+    dom: &mut Dom,
+    host: NodeId,
+    start: Point,
+    end: Point,
+    backward: bool,
+    (from, to): (Point, Point),
 ) -> Point {
-    if let Some((from, to)) = span {
-        if let Some(right_list) = adjacent_list_boundary(dom, host, from, to) {
-            // Join the two list items across the paragraph boundary. Other
-            // items keep their original list; remove an exhausted list shell.
-            let caret = delete_range(dom, host, from, to, true);
-            if dom.child_count(right_list).ok() == Some(0) {
-                let _ = dom.remove_node(right_list);
-            }
-            return caret;
+    if start == end
+        && backward
+        && dom.parent(to.0).ok().flatten() == Some(from.0)
+        && dom.index_in_parent(to.0).ok() == Some(from.1)
+        && to.1 == len(dom, to.0)
+        && to.0 != host
+        && placeholder_block(dom, to.0)
+    {
+        let _ = dom.remove_child(from.0, to.0);
+        return from;
+    }
+    if start == end && from.0 == to.0 && is_text(dom, from.0) {
+        return remove_character(dom, host, from, to);
+    }
+    if let Some(right_list) = adjacent_list_boundary(dom, host, from, to) {
+        // Join the two list items across the paragraph boundary. Other
+        // items keep their original list; remove an exhausted list shell.
+        let caret = delete_range(dom, host, from, to, true);
+        if dom.child_count(right_list).ok() == Some(0) {
+            let _ = dom.remove_node(right_list);
         }
-        if start == end && from.0 == to.0 && !is_text(dom, from.0) && to.1 == from.1 + 1 {
-            if let Ok(Some(child)) = dom.child_at(from.0, from.1) {
-                if matches!(local(dom, child).as_str(), "img" | "br") {
-                    let _ = dom.remove_child(from.0, child);
-                    return placeholder_if_empty(dom, block_of(dom, from.0, host)).unwrap_or(from);
-                }
+        return caret;
+    }
+    if start == end && from.0 == to.0 && !is_text(dom, from.0) && to.1 == from.1 + 1 {
+        if let Ok(Some(child)) = dom.child_at(from.0, from.1) {
+            if !is_container(dom, child) || !is_editable(dom, child) {
+                let _ = dom.remove_child(from.0, child);
+                return placeholder_if_empty(dom, block_of(dom, from.0, host)).unwrap_or(from);
             }
         }
     }
     if start != end {
         delete_range(dom, host, start, end, true)
     } else {
-        delete_char(dom, host, start, backward)
+        merge_blocks(page, dom, host, from, to).unwrap_or(start)
     }
 }
 
@@ -830,68 +856,154 @@ fn adjacent_list_boundary(dom: &Dom, host: NodeId, from: Point, to: Point) -> Op
     [a, b].into_iter().all(|n| n != host && matches!(local(dom, n).as_str(), "dl" | "ul" | "ol")).then_some(b)
 }
 
-fn delete_char(dom: &mut Dom, host: NodeId, caret: Point, backward: bool) -> Point {
-    let p = if backward { deep_backward(dom, caret) } else { deep_forward(dom, caret) };
-    let p = insertion_point(dom, p);
-    if is_text(dom, p.0) {
-        let (from, to) = if let Some((from, to)) = target_range::character(dom, p, backward) {
-            (from.1, to.1)
-        } else {
-            // At a text edge: the adjacent text in the same block, else merge blocks.
-            let block = block_of(dom, p.0, host);
-            if let Some(t) = adjacent_text(dom, p.0, block, !backward) {
-                let edge = if backward { (t, len(dom, t)) } else { (t, 0) };
-                return delete_char(dom, host, edge, backward);
-            }
-            return merge_blocks(dom, host, block, backward).unwrap_or(p);
-        };
-        let _ = dom.replace_data(p.0, from, to - from, "");
-        let block = block_of(dom, p.0, host);
-        if let Some(c) = placeholder_if_empty(dom, block) {
-            return c;
-        }
-        return (p.0, from);
-    }
-    let block = block_of(dom, p.0, host);
-    merge_blocks(dom, host, block, backward).unwrap_or(p)
+fn remove_character(dom: &mut Dom, host: NodeId, from: Point, to: Point) -> Point {
+    let _ = dom.replace_data(from.0, from.1, to.1 - from.1, "");
+    let block = block_of(dom, from.0, host);
+    placeholder_if_empty(dom, block).unwrap_or(from)
 }
 
-/// Merges `block` into the previous block (backward) or the next block into
-/// it (forward); returns the caret at the seam.
-fn merge_blocks(dom: &mut Dom, host: NodeId, block: NodeId, backward: bool) -> Option<Point> {
-    if block == host {
+fn placeholder_block(dom: &Dom, n: NodeId) -> bool {
+    let Some(host) = editing_host(dom, n) else { return false };
+    is_block(dom, n) && dom.child_count(n).ok() == Some(1)
+        && dom.first_child(n).ok().flatten().is_some_and(|br| local(dom, br) == "br" && editing_host(dom, br) == Some(host))
+}
+
+/// Merge the blocks selected by the planner. In particular, retain any
+/// hidden sibling that was skipped when resolving the visible target.
+fn merge_blocks(page: &PageDom, dom: &mut Dom, host: NodeId, from: Point, to: Point) -> Option<Point> {
+    let mut first = block_of(dom, from.0, host);
+    let second = block_of(dom, to.0, host);
+    if first == second {
         return None;
     }
-    let (first, second) = if backward {
-        let prev = dom.parent(block).ok()??;
-        let idx = dom.index_in_parent(block).ok()?;
-        let p = (idx > 0).then(|| dom.child_at(prev, idx - 1).ok().flatten()).flatten()?;
-        (p, block)
-    } else {
-        let parent = dom.parent(block).ok()??;
-        let idx = dom.index_in_parent(block).ok()?;
-        (block, dom.child_at(parent, idx + 1).ok()??)
-    };
-    if !is_block(dom, first) || !is_block(dom, second) {
+    if second == host && dom.parent(first).ok()? == Some(host) {
+        let mut source = to.0;
+        while source != host && dom.parent(source).ok()?? != host {
+            source = dom.parent(source).ok()??;
+        }
+        if source == host {
+            return None;
+        }
+        let mut seam = from;
+        let mut trailing_break = None;
+        let inline = dom
+            .descendants(first)
+            .ok()?
+            .skip(1)
+            .filter(|&n| is_text(dom, n) || dom.node_type(n).ok() == Some(NodeType::Element) && !is_container(dom, n))
+            .collect::<Vec<_>>();
+        for n in inline.into_iter().rev() {
+            if !target_range::rendered(page, dom, n) {
+                continue;
+            }
+            if local(dom, n) == "br" && trailing_break.is_none() && editing_host(dom, n) == Some(host) {
+                trailing_break = Some(n);
+                continue;
+            }
+            if is_text(dom, n) && editing_host(dom, n) == Some(host) {
+                seam = (n, len(dom, n));
+            }
+            break;
+        }
+        let moved = paragraph_join::join_anonymous_right(page, dom, host, first, source, seam)?;
+        if let Some(br) = trailing_break {
+            dom.remove_node(br).ok()?;
+        }
+        return Some(moved);
+    }
+    if first == host && dom.parent(second).ok()? == Some(host) {
+        return paragraph_join::join_first_line(page, dom, host, second, host, Some(second), from);
+    }
+    if first == host || second == host || dom.contains(first, second).ok()? || dom.contains(second, first).ok()? {
         return None;
     }
-    // A lone placeholder in the first block goes away.
-    if dom.child_count(first).ok()? == 1 && dom.child_at(first, 0).ok()?.is_some_and(|c| local(dom, c) == "br") {
-        let br = dom.child_at(first, 0).ok()??;
-        let _ = dom.remove_child(first, br);
+    // A nested paragraph in the preceding list item remains a child of
+    // that item; append the promoted text after it rather than inside it.
+    if let Some(item) = dom.parent_element(first).ok()? {
+        if matches!(local(dom, item).as_str(), "li" | "dt" | "dd")
+            && matches!(local(dom, second).as_str(), "li" | "dt" | "dd")
+            && dom.parent(item).ok()? == dom.parent(second).ok()?
+            && item != host
+        {
+            first = item;
+        }
     }
-    let seam = deep_backward(dom, (first, len(dom, first)));
-    let kids: Vec<NodeId> = dom
-        .children(second)
+    if !is_block(dom, first)
+        || !is_block(dom, second)
+        || [first, second].into_iter().any(|n| editing_host(dom, n) != Some(host))
+    {
+        return None;
+    }
+    if placeholder_block(dom, first)
+        && dom.parent(first).ok()? == dom.parent(second).ok()?
+        && editable_edge(dom, (second, 0), true) == editable_edge(dom, to, true)
+    {
+        dom.remove_node(first).ok()?;
+        return Some(to);
+    }
+    // An empty following paragraph contributes no line content.
+    if placeholder_block(dom, second) || dom.child_count(second).ok() == Some(0) {
+        dom.remove_node(second).ok()?;
+        return Some(from);
+    }
+    let last = dom
+        .descendants(first)
         .ok()?
-        .filter(|&k| local(dom, k) != "br" || dom.child_count(second).unwrap_or(0) > 1)
-        .collect();
-    for k in kids {
-        let _ = dom.append_child(first, k);
+        .filter(|&n| {
+            n != first
+                && target_range::rendered(page, dom, n)
+                && (is_text(dom, n) && len(dom, n) > 0
+                    || dom.node_type(n).ok() == Some(NodeType::Element) && !is_container(dom, n))
+        })
+        .last();
+    let trailing = last.filter(|&n| {
+        local(dom, n) == "br"
+            && editing_host(dom, n) == Some(host)
+            && (placeholder_block(dom, first)
+                || dom
+                    .parent(n)
+                    .ok()
+                    .flatten()
+                    .zip(dom.index_in_parent(n).ok())
+                    .is_some_and(|edge| crate::range::compare_boundary_points_dom(dom, from, edge) <= 0))
+    });
+    let has_later_line = dom.descendants(second).ok()?.skip(1).any(|n| {
+        if is_text(dom, n) {
+            dom.char_data(n).is_ok_and(|s| s.contains('\n'))
+                && crate::edit_commands::newlines_significant_in(page, dom, n)
+        } else {
+            local(dom, n) == "br"
+                || is_block(dom, n)
+                || page.layout().computed_style_value(dom, n, "display") == "block"
+        }
+    });
+    // Joining sibling items of the same list retains their contents and
+    // internal line breaks under one item (and one list marker).
+    let same_list = dom.parent_element(first).ok()?.is_some_and(|parent| {
+        dom.parent_element(second).ok().flatten() == Some(parent)
+            && [first, second, parent].iter().all(|&n| dom.element(n).is_ok_and(|el| el.is_html()))
+            && match local(dom, parent).as_str() {
+                "ol" | "ul" | "menu" => [first, second].iter().all(|&n| local(dom, n) == "li"),
+                "dl" => [first, second].iter().all(|&n| matches!(local(dom, n).as_str(), "dt" | "dd")),
+                _ => false,
+            }
+    });
+    if has_later_line && !same_list {
+        paragraph_join::join_first_line(page, dom, host, second, first, None, from)?;
+    } else {
+        // A single complete paragraph can move its existing nodes, keeping
+        // their identities, attributes and formatting elements.
+        while let Some(child) = dom.first_child(second).ok()? {
+            dom.append_child(first, child).ok()?;
+        }
+        dom.remove_node(second).ok()?;
     }
-    let parent = dom.parent(second).ok()??;
-    let _ = dom.remove_child(parent, second);
-    placeholder_if_empty(dom, first).or(Some(seam))
+    if let Some(br) = trailing {
+        dom.remove_node(br).ok()?;
+    }
+    let seam =
+        if dom.contains(first, from.0).ok()? && from.1 <= len(dom, from.0) { from } else { (first, len(dom, first)) };
+    Some(placeholder_if_empty(dom, first).unwrap_or(seam))
 }
 
 /// Enter: splits the caret's block (insertParagraph).

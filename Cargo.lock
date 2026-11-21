@@ -3043,6 +3043,8 @@ dependencies = [
  "ghash",
  "hkdf",
  "hmac",
+ "icu_properties",
+ "icu_segmenter",
  "kurbo",
  "markup5ever",
  "p256",
