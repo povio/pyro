@@ -149,6 +149,10 @@
       if (codedWidth / codedHeight < ratio) displayWidth = Math.round(codedHeight * ratio);
       else displayHeight = Math.round(codedWidth / ratio);
     }
+    // VideoFrameInit takes the final display dimensions. Apply orientation
+    // after deriving the unrotated size from the stream's display aspect.
+    const turns = Math.floor(((((c.rotation % 360) + 360) % 360) + 45) / 90);
+    if (turns % 2) [displayWidth, displayHeight] = [displayHeight, displayWidth];
     // The native conversion supplies packed sRGB pixels. VideoFrame's RGBA
     // defaults describe those bytes; YUV matrix metadata wouldn't.
     return new Frame(data, { format, codedWidth, codedHeight, timestamp,

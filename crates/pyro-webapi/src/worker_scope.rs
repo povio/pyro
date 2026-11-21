@@ -76,6 +76,7 @@ pub(crate) struct WorkerStart {
     frame_id: Option<String>,
     origin: Option<String>,
     creator_cluster: Option<crate::page::AgentCluster>,
+    creator_secure: bool,
     user_agent: Option<UserAgentOverride>,
     extra_headers: HeaderMap,
     cache_disabled: bool,
@@ -118,6 +119,8 @@ impl WorkerStart {
             frame_id: page.request_context().frame_id,
             origin: s.realm().origin(),
             creator_cluster: Some(page.agent_cluster()),
+            creator_secure: s.global_data::<WorkerGlobalScope>()
+                .map_or_else(|| crate::secure_context::secure(s, page), |parent| parent.secure),
             user_agent: page.identity.borrow().value.clone(),
             extra_headers: page.extra_http_headers(),
             cache_disabled: page.cache_disabled(),
@@ -159,6 +162,7 @@ impl WorkerStart {
             frame_id: None,
             origin: Some(origin),
             creator_cluster: None,
+            creator_secure: true,
             user_agent: page.identity.borrow().value.clone(),
             extra_headers: page.extra_http_headers(),
             cache_disabled: page.cache_disabled(),
@@ -588,6 +592,8 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
         shared: start.shared.clone(),
         poster: start.poster.clone(),
         url: start.url.clone(),
+        secure: pyro_net::is_potentially_trustworthy_url(&start.url)
+            && (start.creator_secure || start.shared_worker || start.service.is_some()),
         name: start.name.clone(),
         user_agent: crate::window::user_agent(&page),
         sched: event_loop.scheduler(),
@@ -865,6 +871,7 @@ pub struct ScopeData {
     shared: Arc<Shared>,
     poster: RemotePoster,
     url: pyro_net::Url,
+    secure: bool,
     name: String,
     user_agent: String,
     sched: Scheduler<WorkerLoop>,
@@ -961,7 +968,7 @@ impl JsClass for WorkerGlobalScope {
         def.getter("origin", |s, _g| Ok(s.string(s.realm().origin().as_deref().unwrap_or("null"))));
         // The worker's URL stands for its owner's context: a same-origin
         // script, or a blob:/data: URL whose origin is the creator's.
-        def.getter("isSecureContext", |s, g| Ok(s.boolean(pyro_net::is_potentially_trustworthy_url(&g.url))));
+        def.getter("isSecureContext", |s, g| Ok(s.boolean(g.secure)));
         // No COOP/COEP isolation here.
         def.getter("crossOriginIsolated", |s, _g| Ok(s.boolean(false)));
         def.method_this("reportError", 1, |s, _g, this, a| {
@@ -1328,7 +1335,7 @@ fn install(s: &Scope<'_>, page: &Rc<PageDom>, global: &str) -> JsResult<()> {
     {
         page.define_properties.borrow_mut().insert(s.realm_id(), Persistent::new(s, define));
     }
-    if s.global_data::<DedicatedWorkerGlobalScope>().is_some_and(|g| !pyro_net::is_potentially_trustworthy_url(&g.url)) {
+    if s.global_data::<DedicatedWorkerGlobalScope>().is_some_and(|g| !g.secure) {
         s.global().delete("VideoDecoder")?;
     }
     // Before the worker's script can change the intrinsics they capture.
