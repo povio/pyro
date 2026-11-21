@@ -1,0 +1,67 @@
+html {'pages': 357, 'lpNames': 778, 'chromeNames': 2289, 'net': 1511, 'timeout/None': 23, 'timeout/Timeout': 255, 'error/Error': 79}
+webcodecs {'pages': 75, 'lpNames': 0, 'chromeNames': 844, 'net': 844, 'error/Error': 70, 'timeout/Timeout': 5}
+webnn {'pages': 34, 'lpNames': 0, 'chromeNames': 504, 'net': 504, 'error/Error': 33, 'error/None': 1}
+speculation-rules {'pages': 239, 'lpNames': 0, 'chromeNames': 305, 'net': 305, 'error/Error': 236, 'timeout/Timeout': 3}
+service-workers {'pages': 45, 'lpNames': 163, 'chromeNames': 460, 'net': 297, 'timeout/Timeout': 31, 'timeout/None': 12, 'error/Error': 2}
+pointerevents {'pages': 19, 'lpNames': 66, 'chromeNames': 324, 'net': 258, 'error/Error': 11, 'timeout/Timeout': 6, 'timeout/None': 2}
+media-source {'pages': 55, 'lpNames': 10, 'chromeNames': 218, 'net': 208, 'timeout/Timeout': 33, 'timeout/None': 18, 'error/Error': 4}
+fetch {'pages': 38, 'lpNames': 152, 'chromeNames': 352, 'net': 200, 'timeout/None': 8, 'error/Error': 12, 'timeout/Timeout': 17, 'error/Optional Feature Unsupported': 1}
+webvtt {'pages': 51, 'lpNames': 0, 'chromeNames': 125, 'net': 125, 'timeout/Timeout': 48, 'error/Error': 3}
+long-animation-frame {'pages': 38, 'lpNames': 0, 'chromeNames': 122, 'net': 122, 'error/Error': 37, 'timeout/None': 1}
+custom-elements {'pages': 7, 'lpNames': 3, 'chromeNames': 121, 'net': 118, 'error/Error': 7}
+svg {'pages': 64, 'lpNames': 2, 'chromeNames': 107, 'net': 105, 'timeout/Timeout': 51, 'error/Error': 9, 'timeout/None': 4}
+webaudio {'pages': 15, 'lpNames': 1, 'chromeNames': 94, 'net': 93, 'error/Error': 10, 'timeout/None': 1, 'timeout/Timeout': 4}
+resource-timing {'pages': 7, 'lpNames': 0, 'chromeNames': 93, 'net': 93, 'timeout/Timeout': 4, 'error/Error': 3}
+encoding {'pages': 3, 'lpNames': 256, 'chromeNames': 338, 'net': 82, 'timeout/Timeout': 1, 'timeout/None': 1, 'error/Error': 1}
+domparsing {'pages': 1, 'lpNames': 0, 'chromeNames': 80, 'net': 80, 'error/Error': 1}
+media-capabilities {'pages': 2, 'lpNames': 0, 'chromeNames': 72, 'net': 72, 'error/Error': 2}
+webrtc-svc {'pages': 4, 'lpNames': 0, 'chromeNames': 62, 'net': 62, 'error/Error': 4}
+preload {'pages': 10, 'lpNames': 1, 'chromeNames': 50, 'net': 49, 'timeout/Timeout': 8, 'timeout/None': 2}
+navigation-api {'pages': 39, 'lpNames': 2, 'chromeNames': 49, 'net': 47, 'error/Error': 2, 'timeout/Timeout': 35, 'timeout/None': 2}
+IndexedDB {'pages': 8, 'lpNames': 28, 'chromeNames': 70, 'net': 42, 'timeout/Timeout': 2, 'error/Error': 5, 'timeout/None': 1}
+soft-navigation-heuristics {'pages': 14, 'lpNames': 0, 'chromeNames': 40, 'net': 40, 'timeout/Timeout': 14}
+resize-observer {'pages': 3, 'lpNames': 4, 'chromeNames': 36, 'net': 32, 'timeout/Timeout': 3}
+web-locks {'pages': 17, 'lpNames': 11, 'chromeNames': 42, 'net': 31, 'timeout/None': 13, 'timeout/Timeout': 4}
+xhr {'pages': 3, 'lpNames': 0, 'chromeNames': 27, 'net': 27, 'error/None': 1, 'error/Error': 1, 'timeout/Timeout': 1}
+
+webcodecs {'pages': 75, 'lpNames': 0, 'chromeNames': 844, 'net': 844, 'error/Error': 70, 'timeout/Timeout': 5}
+html/browsers {'pages': 145, 'lpNames': 43, 'chromeNames': 635, 'net': 592, 'timeout/None': 13, 'timeout/Timeout': 118, 'error/Error': 14}
+webnn/conformance_tests {'pages': 27, 'lpNames': 0, 'chromeNames': 474, 'net': 474, 'error/Error': 27}
+html/canvas {'pages': 16, 'lpNames': 442, 'chromeNames': 856, 'net': 414, 'error/Error': 13, 'timeout/Timeout': 3}
+html/semantics {'pages': 154, 'lpNames': 196, 'chromeNames': 559, 'net': 363, 'timeout/Timeout': 99, 'error/Error': 46, 'timeout/None': 9}
+pointerevents {'pages': 12, 'lpNames': 65, 'chromeNames': 318, 'net': 253, 'error/Error': 5, 'timeout/Timeout': 5, 'timeout/None': 2}
+service-workers/service-worker {'pages': 43, 'lpNames': 34, 'chromeNames': 283, 'net': 249, 'timeout/Timeout': 30, 'timeout/None': 11, 'error/Error': 2}
+media-source {'pages': 55, 'lpNames': 10, 'chromeNames': 218, 'net': 208, 'timeout/Timeout': 33, 'timeout/None': 18, 'error/Error': 4}
+speculation-rules/prefetch {'pages': 170, 'lpNames': 0, 'chromeNames': 189, 'net': 189, 'error/Error': 170}
+fetch/api {'pages': 18, 'lpNames': 124, 'chromeNames': 284, 'net': 160, 'timeout/None': 4, 'error/Error': 6, 'timeout/Timeout': 8}
+long-animation-frame {'pages': 38, 'lpNames': 0, 'chromeNames': 122, 'net': 122, 'error/Error': 37, 'timeout/None': 1}
+webvtt/parsing {'pages': 48, 'lpNames': 0, 'chromeNames': 119, 'net': 119, 'timeout/Timeout': 48}
+custom-elements/registries {'pages': 5, 'lpNames': 0, 'chromeNames': 109, 'net': 109, 'error/Error': 5}
+webaudio/the-audio-api {'pages': 15, 'lpNames': 1, 'chromeNames': 94, 'net': 93, 'error/Error': 10, 'timeout/None': 1, 'timeout/Timeout': 4}
+resource-timing {'pages': 5, 'lpNames': 0, 'chromeNames': 88, 'net': 88, 'timeout/Timeout': 2, 'error/Error': 3}
+html/webappapis {'pages': 14, 'lpNames': 2, 'chromeNames': 85, 'net': 83, 'error/Error': 3, 'timeout/Timeout': 11}
+domparsing/tentative {'pages': 1, 'lpNames': 0, 'chromeNames': 80, 'net': 80, 'error/Error': 1}
+media-capabilities {'pages': 2, 'lpNames': 0, 'chromeNames': 72, 'net': 72, 'error/Error': 2}
+encoding {'pages': 2, 'lpNames': 256, 'chromeNames': 326, 'net': 70, 'timeout/None': 1, 'error/Error': 1}
+speculation-rules/speculation-tags {'pages': 11, 'lpNames': 0, 'chromeNames': 66, 'net': 66, 'error/Error': 11}
+webrtc-svc {'pages': 4, 'lpNames': 0, 'chromeNames': 62, 'net': 62, 'error/Error': 4}
+preload {'pages': 10, 'lpNames': 1, 'chromeNames': 50, 'net': 49, 'timeout/Timeout': 8, 'timeout/None': 2}
+svg/animations {'pages': 43, 'lpNames': 0, 'chromeNames': 46, 'net': 46, 'timeout/Timeout': 43}
+service-workers {'pages': 1, 'lpNames': 129, 'chromeNames': 175, 'net': 46, 'timeout/None': 1}
+speculation-rules/prerender {'pages': 51, 'lpNames': 0, 'chromeNames': 43, 'net': 43, 'error/Error': 51}
+
+eligible rows 1313 raw cause rows 1308
+No reported harness error message / html 278 936
+Missing binding EncodedVideoChunk 37 366
+`test` invoked after `promise_setup` 3 324
+Error: assert_implements: <script type="speculationrules"> must be supported undefined 236 300
+No reported harness error message / service-workers 43 294
+Missing binding AudioDecoder 26 262
+Unhandled rejection: The source image could not be decoded. 4 195
+Uncaught TypeError: Illegal constructor 6 189
+No reported harness error message / media-source 51 186
+Unhandled rejection: Too many pending fetches 1 156
+Error: assert_implements: missing navigator.ml undefined 27 153
+Uncaught Error: assert_equals: Button attribute on pointerleave expected -1 but got 0 4 140
+Error: assert_implements: Long animation frames are not supported. undefined 37 121
+No reported harness error message / webvtt 48 119
