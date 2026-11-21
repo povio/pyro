@@ -1581,7 +1581,6 @@ type = "basic_shape::ClipPath"
 initial = "generics::basic_shape::ClipPath::None"
 struct = "position"
 parse_method = "parse_object_view_box"
-animation_type = "discrete"
 spec = "https://drafts.csswg.org/css-images-5/#the-object-view-box"
 affects = "layout"
 
