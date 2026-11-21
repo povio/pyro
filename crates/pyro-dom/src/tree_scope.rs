@@ -115,6 +115,9 @@ impl Dom {
                 let id = e.id_atom().filter(|a| !a.is_empty()).cloned();
                 let label_for = label_for_of(e).map(Box::<str>::from);
                 base_moved |= doc_tree && e.is_html() && e.name.local == local_name!("base");
+                if entering && doc_tree && e.name.local == local_name!("style") {
+                    self.note_preferred_style(cur);
+                }
                 if let Some(id) = id {
                     if scope == NIL {
                         scope = self.root_idx(node);
