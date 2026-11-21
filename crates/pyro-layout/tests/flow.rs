@@ -92,6 +92,20 @@ fn check(name: &str, html: &str, scroll_y: i32, expected: &[(&str, [f64; 8])], d
 }
 
 #[test]
+fn flex_container_intrinsic_height_bounds() {
+    let layout = page("<!doctype html><style>
+        section {display:inline-flex;vertical-align:top;width:50px;border:2px solid}
+        section > div {height:30px;flex:none}
+        </style>
+        <section id=min style='height:0;min-height:min-content'><div></div></section>
+        <section id=max style='height:90px;max-height:max-content;flex-direction:column'><div></div><div></div></section>
+        <section id=unclamped style='height:90px;min-height:max-content'><div></div></section>");
+    assert_eq!(layout.metrics("min")[3], 34.0);
+    assert_eq!(layout.metrics("max")[3], 64.0);
+    assert_eq!(layout.metrics("unclamped")[3], 94.0);
+}
+
+#[test]
 fn flow_parity_stack() {
     let html = "<!doctype html><body><div id=a style=\"height:30px\"></div><div id=b style=\"height:40px;margin-top:10px\"></div><div id=c style=\"width:200px;height:20px;margin:5px auto\"></div><div id=d style=\"width:50%;height:10px\"></div></body>";
     check(
