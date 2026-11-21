@@ -244,6 +244,7 @@ pub struct Dom {
     /// pyro: the user agent's pan and zoom of an `<svg>` (`SVGSVGElement.currentTranslate` and
     /// `currentScale`): its translation and scale, when not the identity.
     pub(crate) svg_points: rustc_hash::FxHashMap<u32, std::rc::Weak<crate::svg_point_list::PointLists>>,
+    pub(crate) svg_none_slice: FxHashSet<u32>,
     pub(crate) svg_strings: rustc_hash::FxHashMap<(u32, crate::svg_string_list::StringListAttribute), Vec<String>>,
     pub(crate) svg_pans: rustc_hash::FxHashMap<u32, (f64, f64, f64)>,
     /// The document each iframe shows as the renderer paints it (by slot): its render HTML, URL and
@@ -350,6 +351,7 @@ impl Dom {
             journal: Vec::new(),
             frame_content_heights: Default::default(),
             svg_points: Default::default(),
+            svg_none_slice: Default::default(),
             svg_strings: Default::default(),
             svg_pans: Default::default(),
             frame_documents: Default::default(),
@@ -3475,6 +3477,9 @@ impl Dom {
     /// follows.
     pub(crate) fn edit_attrs<R>(&mut self, i: u32, name: &QualName, f: impl FnOnce(&mut ElementData) -> R) -> R {
         let plain = name.ns == ns!();
+        if plain && !self.svg_none_slice.is_empty() && &*name.local == "preserveAspectRatio" {
+            self.svg_none_slice.remove(&i);
+        }
         if plain && !self.svg_strings.is_empty() {
             if let Some(kind) = crate::svg_string_list::StringListAttribute::from_name(&name.local) {
                 self.svg_strings.remove(&(i, kind));
@@ -4380,6 +4385,7 @@ impl Dom {
 
     fn free_slot(&mut self, i: u32, component_root: u32) {
         let owner = self.n(i).owner_doc;
+        if !self.svg_none_slice.is_empty() { self.svg_none_slice.remove(&i); }
         if !self.svg_points.is_empty() { self.svg_points.remove(&i); }
         if !self.svg_strings.is_empty() {
             use crate::svg_string_list::StringListAttribute;

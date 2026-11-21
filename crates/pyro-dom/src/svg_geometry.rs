@@ -82,26 +82,14 @@ fn view_box_transform(dom: &Dom, svg: NodeId, viewport: (f64, f64)) -> Option<[f
     if w <= 0.0 || h <= 0.0 || viewport.0 <= 0.0 || viewport.1 <= 0.0 {
         return None;
     }
-    let par = dom.get_attribute(svg, "preserveAspectRatio").ok().flatten().unwrap_or_default();
-    let mut words = par.split_whitespace();
-    let align = words.next().unwrap_or("xMidYMid");
+    let aspect = dom.svg_aspect_ratio(svg).ok()?;
     let (mut sx, mut sy) = (viewport.0 / w, viewport.1 / h);
     let (mut tx, mut ty) = (0.0, 0.0);
-    if align != "none" {
-        let s = if words.next() == Some("slice") { sx.max(sy) } else { sx.min(sy) };
-        (sx, sy) = (s, s);
-        let lower = align.to_ascii_lowercase();
-        let place = |which: &str, free: f64| {
-            if lower.contains(&format!("{which}mid")) {
-                free / 2.0
-            } else if lower.contains(&format!("{which}max")) {
-                free
-            } else {
-                0.0
-            }
-        };
-        tx = place("x", viewport.0 - w * s);
-        ty = place("y", viewport.1 - h * s);
+    if let Some((x, y)) = aspect.alignment() {
+        let scale = if aspect.meet_or_slice() == 2 { sx.max(sy) } else { sx.min(sy) };
+        (sx, sy) = (scale, scale);
+        tx = x * (viewport.0 - w * scale);
+        ty = y * (viewport.1 - h * scale);
     }
     Some([sx, 0.0, 0.0, sy, tx - min_x * sx, ty - min_y * sy])
 }

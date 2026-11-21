@@ -18,6 +18,9 @@ use crate::node::{wrap_node, NodeData};
 use crate::page::PageDom;
 use crate::util::*;
 
+mod svg_aspect;
+pub(crate) use svg_aspect::animated_aspect;
+
 const COLL_NS: u64 = 1 << 61;
 
 fn coll_identity(page: &PageDom, slot: u64, id: NodeId) -> IdentityKey {
@@ -2496,6 +2499,7 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<SvgAnimatedBoolean>();
     engine.register::<SvgAngle>();
     engine.register::<SvgAnimatedAngle>();
+    svg_aspect::register(engine);
     engine.register::<SvgAnimatedLength>();
     engine.register::<SvgLength>();
     engine.register::<SvgPoint>();
