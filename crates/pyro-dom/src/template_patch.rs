@@ -13,6 +13,9 @@ struct Patch {
 
 #[derive(Default)]
 pub(super) struct Patches {
+    // In a scriptless document parse the actual document body is on the
+    // open-elements stack whenever the parser inserts a template into it.
+    pub(super) document_scope: bool,
     // The tree builder asks for the template contents when inserting its
     // children. Nested template elements have different content fragments.
     by_contents: FxHashMap<u32, Patch>,
@@ -44,6 +47,11 @@ impl Patches {
         if !owned_scope(dom, scope, parser_doc) {
             return false;
         }
+        let scope = if self.document_scope && dom.body(dom.id_of(parser_doc)).ok().flatten() == Some(dom.id_of(scope)) {
+            dom.n(scope).parent
+        } else {
+            scope
+        };
         let Some((start, end)) = markers(dom, scope, name) else { return false };
         let target = dom.n(start).parent;
         let patch = Patch { target: dom.id_of(target), start: dom.id_of(start), end: end.map(|idx| dom.id_of(idx)) };
