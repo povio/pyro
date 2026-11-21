@@ -2445,8 +2445,10 @@ impl JsClass for StyleSheet {
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
         def.getter("ownerNode", |s, sh| match &sh.owner {
-            SheetOwner::Node(h, _) => Ok(crate::node::wrap_node(s, &h.page, h.id)?.value()),
-            SheetOwner::Constructed(_) => Ok(s.null()),
+            SheetOwner::Node(h, _) if sh.owner.is_current() && h.page.dom.borrow().is_connected(h.id).js()? => {
+                Ok(crate::node::wrap_node(s, &h.page, h.id)?.value())
+            }
+            _ => Ok(s.null()),
         });
         def.getter("parentStyleSheet", |s, sh| match &sh.owner {
             SheetOwner::Constructed(c) => match &c.import {
