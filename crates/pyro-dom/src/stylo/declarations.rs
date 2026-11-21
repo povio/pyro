@@ -7,7 +7,8 @@ use style::context::QuirksMode;
 use style::properties::{
     Importance, PropertyDeclarationBlock, PropertyId, SourcePropertyDeclaration, SourcePropertyDeclarationUpdate,
 };
-use style::stylesheets::{CssRuleType, Origin};
+pub use style::stylesheets::CssRuleType;
+use style::stylesheets::Origin;
 use style_traits::ParsingMode;
 
 use super::{property_id, url_data};
@@ -23,32 +24,32 @@ pub(crate) fn parse_block(text: &str) -> PropertyDeclarationBlock {
 pub struct DeclarationBlock(PropertyDeclarationBlock);
 
 impl DeclarationBlock {
-    pub fn keyframe(text: &str) -> Self {
+    pub fn parse_in_rule(text: &str, rule: CssRuleType) -> Self {
         super::enable_features();
-        Self(style::properties::parse_style_attribute(text, &url_data(), None, QuirksMode::NoQuirks, CssRuleType::Keyframe))
+        Self(style::properties::parse_style_attribute(text, &url_data(), None, QuirksMode::NoQuirks, rule))
     }
 
-    pub fn keyframe_allows(name: &str) -> bool {
-        property_id(name).is_some_and(|id| id.allowed_in_rule(CssRuleType::Keyframe.into()))
+    pub fn keyframe(text: &str) -> Self {
+        Self::parse_in_rule(text, CssRuleType::Keyframe)
     }
 
     pub fn page(text: &str) -> Self {
-        super::enable_features();
-        Self(style::properties::parse_style_attribute(text, &url_data(), None, QuirksMode::NoQuirks, CssRuleType::Page))
+        Self::parse_in_rule(text, CssRuleType::Page)
     }
 
     pub fn position_try(text: &str) -> Self {
-        super::enable_features();
-        Self(style::properties::parse_style_attribute(text, &url_data(), None, QuirksMode::NoQuirks, CssRuleType::PositionTry))
+        Self::parse_in_rule(text, CssRuleType::PositionTry)
     }
 
-    pub fn position_try_allows(name: &str) -> bool {
-        property_id(name).is_some_and(|id| id.allowed_in_rule(CssRuleType::PositionTry.into()))
+    pub fn allowed_in_rule(name: &str, rule: CssRuleType) -> bool {
+        property_id(name).is_some_and(|id| id.allowed_in_rule(rule.into()))
     }
 
-    pub fn page_allows(name: &str) -> bool {
-        property_id(name).is_some_and(|id| id.allowed_in_rule(CssRuleType::Page.into()))
-    }
+    pub fn keyframe_allows(name: &str) -> bool { Self::allowed_in_rule(name, CssRuleType::Keyframe) }
+
+    pub fn page_allows(name: &str) -> bool { Self::allowed_in_rule(name, CssRuleType::Page) }
+
+    pub fn position_try_allows(name: &str) -> bool { Self::allowed_in_rule(name, CssRuleType::PositionTry) }
 
     /// The declarations of `text` (a `style` attribute or a rule's block);
     /// invalid ones are dropped.
@@ -114,7 +115,7 @@ impl DeclarationBlock {
         self.set_in_rule(name, value, important, CssRuleType::Page)
     }
 
-    fn set_in_rule(&mut self, name: &str, value: &str, important: bool, rule: CssRuleType) -> Option<bool> {
+    pub fn set_in_rule(&mut self, name: &str, value: &str, important: bool, rule: CssRuleType) -> Option<bool> {
         let id = property_id(name)?;
         if !id.allowed_in_rule(rule.into()) { return None; }
         super::enable_features();
@@ -159,6 +160,11 @@ impl DeclarationBlock {
         self.0.css_for_reparse().ok().flatten()
     }
 
+    /// Text suitable for the stylesheet parser, including hidden signed-zero operands.
+    pub fn source_text(&self) -> String {
+        self.css_for_reparse().unwrap_or_else(|| self.css_text())
+    }
+
     /// The block serialized (`cssText`), shorthands where the longhands
     /// make one.
     pub fn css_text(&self) -> String {
@@ -168,6 +174,48 @@ impl DeclarationBlock {
         }
         out
     }
+}
+
+/// Whether raw CSS contains a numeric token already rounded to negative zero, or a
+/// math function that could produce it. Strings, comments and URL payloads are opaque.
+pub fn may_need_signed_zero_backing(text: &str) -> bool {
+    use cssparser::{Parser, Token};
+    use style::values::specified::calc::MathFunction;
+
+    fn math(name: &str) -> bool {
+        MathFunction::from_ident(name).is_ok() || name.eq_ignore_ascii_case("calc-size")
+            || name.eq_ignore_ascii_case("calc-mix")
+    }
+    fn candidate(input: &mut Parser) -> bool {
+        while let Ok(token) = input.next() {
+            match token {
+                Token::Number { value, .. } | Token::Dimension { value, .. }
+                | Token::Percentage { unit_value: value, .. } if value.to_bits() == (-0.0_f32).to_bits() => return true,
+                Token::Function(name) if math(name) => return true,
+                Token::Function(_) | Token::ParenthesisBlock | Token::SquareBracketBlock | Token::CurlyBracketBlock => {
+                    // An Err stops the walk as soon as a candidate is found (or the parser's depth limit is hit).
+                    if input.parse_nested_block(|p| {
+                        if candidate(p) { Err(cssparser::ParseError::<()>::custom(())) } else { Ok(()) }
+                    }).is_err() { return true; }
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
+    let bytes = text.as_bytes();
+    let possible = memchr::memchr3_iter(b'(', b'-', b'\\', bytes).any(|i| match bytes[i] {
+        b'-' => bytes.get(i + 1).is_some_and(|b| b.is_ascii_digit() || *b == b'.'),
+        b'(' => {
+            let start = bytes[..i].iter().rposition(|b| !(b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_')))
+                .map_or(0, |at| at + 1);
+            math(&text[start..i])
+        }
+        // The tokenizer decodes escaped identifiers (including their optional trailing whitespace).
+        _ => true,
+    });
+    possible && candidate(&mut Parser::new(text))
 }
 
 /// `name: value` (with `!important`) as a block of that one declaration
@@ -228,6 +276,24 @@ pub fn normalized_value(name: &str, value: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn signed_zero_screen_recognizes_math_and_numeric_underflow() {
+        for css in [
+            r#"background-image: url("calc(-0px)"); color: rgba(0,0,0,.3); transform: translate(-20px, 10px)"#,
+            r#"--text: "min(-0px)"; width: var(--width, 10px); /* calc(-0px) */"#,
+            "transform: translateX(1e-10px)",
+            r#"transform: tr\61 nslate(20px)"#,
+        ] {
+            assert!(!may_need_signed_zero_backing(css), "{css}");
+        }
+        for css in [
+            "margin: -0em", "margin: -1e-9999px", "width: -.00000000000000000000000000000000000000000000000000001%",
+            "z-index: sIgN(1em - 1px)", r#"transform: translate(c\61 lc(1px / -infinity))"#,
+        ] {
+            assert!(may_need_signed_zero_backing(css), "{css}");
+        }
+    }
 
     #[test]
     fn shorthands_expand_and_values_are_validated_and_serialized() {

@@ -350,6 +350,8 @@ pub struct ElementData {
     pub attrs: Vec<Attr>,
     /// Internal CSS input only when CSSOM serialization discarded a parsed numeric sign.
     pub(crate) semantic_style: Option<std::sync::Arc<String>>,
+    /// CSSOM already checked whether the current style text needs a separate parser input.
+    pub(crate) checked_style_backing: bool,
     /// The `id` attribute (no namespace) as an atom, parsed when written.
     id: Option<Atom>,
     /// The `class` attribute (no namespace) split on ASCII whitespace,
@@ -399,6 +401,7 @@ impl ElementData {
             name,
             attrs: Vec::new(),
             semantic_style: None,
+            checked_style_backing: false,
             id: None,
             classes: Box::default(),
             template_contents: NIL,
@@ -428,6 +431,9 @@ impl ElementData {
     }
     /// Override for the style parser. DOM attribute access and selector matching use `attrs`.
     pub fn semantic_inline_style(&self) -> Option<&str> { self.semantic_style.as_ref().map(|s| s.as_str()) }
+    pub fn checked_inline_style_backing(&self) -> Option<bool> {
+        self.checked_style_backing.then(|| self.semantic_style.is_some())
+    }
 
     /// The attribute in no namespace named `local` (a dynamic name; see
     /// [`ElementData::attr_local`] for a constant one).
@@ -494,9 +500,12 @@ impl ElementData {
     }
     /// Replaces every attribute (element creation, cloning).
     pub(crate) fn set_attrs(&mut self, attrs: Vec<Attr>) {
-        if self.semantic_style.is_some() {
+        if self.checked_style_backing {
             let next = attrs.iter().find(|a| a.name.local == local_name!("style") && a.name.ns == markup5ever::ns!());
-            if self.attr_local(&local_name!("style")) != next.map(|a| &*a.value) { self.semantic_style = None; }
+            if self.attr_local(&local_name!("style")) != next.map(|a| &*a.value) {
+                self.semantic_style = None;
+                self.checked_style_backing = false;
+            }
         }
         self.attrs = attrs;
         self.refresh(&local_name!("id"));
@@ -505,10 +514,11 @@ impl ElementData {
     /// The attributes with their parsed atoms, for [`ElementData::set_attr_state`]
     /// (cloning: nothing is parsed again).
     pub(crate) fn attr_state(&self) -> AttrState {
-        AttrState(self.attrs.clone(), self.id.clone(), self.classes.clone(), self.semantic_style.clone())
+        AttrState(self.attrs.clone(), self.id.clone(), self.classes.clone(), self.semantic_style.clone(), self.checked_style_backing)
     }
     pub(crate) fn set_attr_state(&mut self, state: AttrState) {
-        let AttrState(attrs, id, classes, semantic_style) = state;
+        let AttrState(attrs, id, classes, semantic_style, checked_style_backing) = state;
+        self.checked_style_backing = checked_style_backing;
         self.semantic_style = semantic_style;
         self.attrs = attrs;
         self.id = id;
@@ -564,7 +574,7 @@ impl ElementData {
 }
 
 /// An element's attributes with their parsed id and classes.
-pub(crate) struct AttrState(Vec<Attr>, Option<Atom>, Box<[Atom]>, Option<std::sync::Arc<String>>);
+pub(crate) struct AttrState(Vec<Attr>, Option<Atom>, Box<[Atom]>, Option<std::sync::Arc<String>>, bool);
 
 /// Whether an attribute of this name feeds `ElementData::id` or `classes`.
 #[inline]

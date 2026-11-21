@@ -15,7 +15,7 @@ use std::rc::{Rc, Weak};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use pyro_dom::cssom::{normalize_relative_selector, parse_rules, CounterDescriptor, CounterRule, FeatureRule, Namespaces, PaletteRule, ParsedRule, ParseRelative, PropertyRule};
-use pyro_dom::stylo::declarations::{self, DeclarationBlock};
+use pyro_dom::stylo::declarations::{self, CssRuleType, DeclarationBlock};
 use pyro_dom::NodeId;
 use pyro_js::{ClassDef, IdentityKey, JsClass, JsError, JsResult, NoParent, Object, Scope, Value};
 
@@ -315,24 +315,28 @@ impl StyleData {
 
     fn names(&self) -> Vec<String> {
         let text = self.text();
-        if self.is_page_rule() { return DeclarationBlock::page(&text).names(); }
+        if let Some(rule) = self.declaration_rule() { return DeclarationBlock::parse_in_rule(&text, rule).names(); }
         self.font_block(&text).map_or_else(|| Block::parse(&text).names(), |block| block.names())
     }
 
     fn css_text(&self) -> String {
         let text = self.text();
-        if self.is_page_rule() { return DeclarationBlock::page(&text).css_text(); }
+        if let Some(rule) = self.declaration_rule() { return DeclarationBlock::parse_in_rule(&text, rule).css_text(); }
         self.font_block(&text).map_or_else(|| Block::parse(&text).css_text(), |block| block.css_text())
     }
     fn is_position_try(&self) -> bool {
         matches!(&self.source, StyleSource::Rule { node, .. } if matches!(&node.kind, RuleKind::Other { rule_type: 0, text } if text.borrow().starts_with("@position-try ")))
     }
 
+    fn declaration_rule(&self) -> Option<CssRuleType> {
+        if self.is_keyframe() { return Some(CssRuleType::Keyframe); }
+        if self.is_page_rule() { return Some(CssRuleType::Page); }
+        self.is_position_try().then_some(CssRuleType::PositionTry)
+    }
+
     fn allows(&self, name: &str) -> bool {
-        if self.is_keyframe() { return DeclarationBlock::keyframe_allows(name); }
-        if self.is_page_rule() { return DeclarationBlock::page_allows(name); }
         if self.is_font_face() { return pyro_dom::font_face::DescriptorBlock::supports(name); }
-        !self.is_position_try() || DeclarationBlock::position_try_allows(name)
+        self.declaration_rule().is_none_or(|rule| DeclarationBlock::allowed_in_rule(name, rule))
     }
     /// The block's text: the `style` attribute, or the rule's block.
     fn text(&self) -> String {
@@ -359,7 +363,7 @@ impl StyleData {
     /// Serializes `block` back into the attribute or the rule.
     fn write(&self, block: &Block) -> JsResult<()> {
         let canonical = block.css_text();
-        let semantic = block.parsed.css_for_reparse().map(|css| block.with_kept(css)).unwrap_or_else(|| canonical.clone());
+        let semantic = block.parsed.css_for_reparse().map(|css| block.with_kept(css)).filter(|css| *css != canonical);
         self.write_semantic(canonical, semantic)
     }
     /// Writes `text` unless it is what the block already holds (`before`):
@@ -371,22 +375,30 @@ impl StyleData {
         self.write_raw(text)
     }
     /// Rule blocks are the renderer's input. CSSOM reads serialize that input canonically.
-    fn write_semantic(&self, canonical: String, semantic: String) -> JsResult<()> {
+    fn write_semantic(&self, canonical: String, semantic: Option<String>) -> JsResult<()> {
         match &self.source {
             StyleSource::Inline(el) => el.page.dom.borrow_mut().set_cssom_inline_style(el.id, canonical, semantic).js(),
             StyleSource::Rule { node, .. } => match &node.kind {
-                RuleKind::Style { .. } | RuleKind::Declarations(_) => self.write_raw(semantic),
+                RuleKind::Style { .. } | RuleKind::Declarations(_) => {
+                    let signed = semantic.is_some();
+                    self.write_raw(semantic.unwrap_or(canonical))?;
+                    node.checked_style_backing.set(Some(signed));
+                    Ok(())
+                }
                 _ => self.write_raw(canonical),
             },
         }
     }
     fn write_raw(&self, text: String) -> JsResult<()> {
         match &self.source {
-            StyleSource::Inline(el) => el.page.dom.borrow_mut().set_attribute(el.id, "style", &text).js(),
+            StyleSource::Inline(el) => el.page.dom.borrow_mut().set_cssom_inline_style(el.id, text, None).js(),
             StyleSource::Rule { owner, node } => {
                 owner.access()?;
                 match &node.kind {
-                    RuleKind::Style { block, .. } | RuleKind::Declarations(block) => *block.borrow_mut() = text,
+                    RuleKind::Style { block, .. } | RuleKind::Declarations(block) => {
+                        *block.borrow_mut() = text;
+                        node.checked_style_backing.set(Some(false));
+                    }
                     RuleKind::Other { .. } if is_page(node) => write_page(&*owner.rules()?, node, Some(&text)),
                     RuleKind::Other { text: rule, .. } => {
                         let head = split_block(&rule.borrow()).map(|(h, _)| h.to_owned());
@@ -416,7 +428,7 @@ impl StyleData {
     /// answer are parsed.
     fn get(&self, name: &str) -> String {
         let text = self.text();
-        if self.is_page_rule() { return DeclarationBlock::page(&text).value(name); }
+        if let Some(rule) = self.declaration_rule() { return DeclarationBlock::parse_in_rule(&text, rule).value(name); }
         if let Some(block) = self.font_block(&text) { return block.get(name); }
         if text.is_empty() {
             return String::new();
@@ -429,7 +441,7 @@ impl StyleData {
     /// `getPropertyPriority(name) == "important"`.
     fn important(&self, name: &str) -> bool {
         let text = self.text();
-        if self.is_page_rule() { return DeclarationBlock::page(&text).important(name); }
+        if let Some(rule) = self.declaration_rule() { return DeclarationBlock::parse_in_rule(&text, rule).important(name); }
         if self.is_font_face() { return false; }
         if unparsed(name) {
             return parse_declarations(&text).iter().any(|d| d.name == name && d.important);
@@ -442,17 +454,20 @@ impl StyleData {
         decls.retain(|d| css_property(&d.name));
         decls
     }
-    // A scalar can be written with a negative sign or produced by a calculation.
-    // Ordinary keywords and positive literals need no extra parse.
-    fn might_have_signed_zero(text: &str) -> bool {
-        text.contains('(') || text.contains("-0") || text.contains("-.") ||
-            text.contains("e-") || text.contains("E-")
-    }
-
-    fn signed_block(text: &str) -> Option<Block> {
-        if !Self::might_have_signed_zero(text) { return None }
-        let block = Block::parse(text);
-        block.parsed.css_for_reparse().is_some().then_some(block)
+    fn signed_block(&self, text: &str) -> Option<Block> {
+        let known = match &self.source {
+            StyleSource::Inline(el) => el.page.dom.borrow().element(el.id).ok()?.checked_inline_style_backing(),
+            StyleSource::Rule { node, .. } => node.checked_style_backing.get(),
+        };
+        match known {
+            Some(false) => None,
+            Some(true) => Some(Block::parse(text)),
+            None if declarations::may_need_signed_zero_backing(text) => {
+                let block = Block::parse(text);
+                block.parsed.css_for_reparse().is_some().then_some(block)
+            }
+            None => None,
+        }
     }
 
     /// `setProperty(name, value, priority)`: an empty value removes the
@@ -465,9 +480,9 @@ impl StyleData {
             return Ok(());
         }
         let value = value.trim();
-        if self.is_page_rule() && !value.is_empty() {
-            let mut block = DeclarationBlock::page(&self.text());
-            if block.set_page(name, value, important) == Some(true) { self.write_raw(block.css_text())?; }
+        if let Some(rule) = self.declaration_rule().filter(|_| !value.is_empty()) {
+            let mut block = DeclarationBlock::parse_in_rule(&self.text(), rule);
+            if block.set_in_rule(name, value, important, rule) == Some(true) { self.write_raw(block.source_text())?; }
             return Ok(());
         }
         if self.is_font_face() {
@@ -485,12 +500,14 @@ impl StyleData {
             return Ok(());
         }
         let text = self.text();
-        let signed = Self::signed_block(&text).or_else(|| {
-            if unparsed(name) || !Self::might_have_signed_zero(value) { return None }
-            let mut incoming = DeclarationBlock::parse("");
-            incoming.set(name, value, important)?;
-            incoming.css_for_reparse().map(|_| Block::parse(&text))
-        });
+        let mut incoming = None;
+        let mut signed = self.signed_block(&text);
+        if signed.is_none() && !unparsed(name) && declarations::may_need_signed_zero_backing(value) {
+            let mut declaration = DeclarationBlock::parse("");
+            if declaration.set(name, value, important).is_none() { return Ok(()); }
+            if declaration.css_for_reparse().is_some() { signed = Some(Block::parse(&text)); }
+            incoming = Some(declaration);
+        }
         if let Some(mut block) = signed {
             if unparsed(name) {
                 match block.kept.iter_mut().find(|d| d.name == name) {
@@ -522,7 +539,13 @@ impl StyleData {
                 _ => Ok(()),
             };
         }
-        let Some(declaration) = declarations::declaration_text(name, value, important) else { return Ok(()) };
+        let declaration = match incoming {
+            Some(block) => block.css_text(),
+            None => match declarations::declaration_text(name, value, important) {
+                Some(css) => css,
+                None => return Ok(()),
+            },
+        };
         let mut out = Vec::with_capacity(decls.len() + 1);
         let mut replaced = false;
         for d in &decls {
@@ -543,10 +566,10 @@ impl StyleData {
     /// `removeProperty(name)`: the value it had.
     fn remove(&self, name: &str) -> JsResult<String> {
         let text = self.text();
-        if self.is_page_rule() {
-            let mut block = DeclarationBlock::page(&text);
+        if let Some(rule) = self.declaration_rule() {
+            let mut block = DeclarationBlock::parse_in_rule(&text, rule);
             let old = block.value(name);
-            if block.remove(name) { self.write_raw(block.css_text())?; }
+            if block.remove(name) { self.write_raw(block.source_text())?; }
             return Ok(old);
         }
         if let Some(mut block) = self.font_block(&text) {
@@ -557,7 +580,7 @@ impl StyleData {
         if !text.contains(':') {
             return Ok(String::new());
         }
-        if let Some(mut block) = Self::signed_block(&text) {
+        if let Some(mut block) = self.signed_block(&text) {
             let old = if unparsed(name) {
                 let Some(i) = block.kept.iter().position(|d| d.name == name) else { return Ok(String::new()) };
                 block.kept.remove(i).value
@@ -594,12 +617,10 @@ impl StyleData {
     }
     /// `cssText = text`: the block parsed from `text`, serialized.
     fn set_css_text(&self, text: &str) -> JsResult<()> {
-        if self.is_keyframe() { return self.write_raw(DeclarationBlock::keyframe(text).css_text()); }
-        if self.is_page_rule() { return self.write_raw(DeclarationBlock::page(text).css_text()); }
-        if let Some(block) = self.font_block(text) { return self.write_raw(block.css_text()); }
-        if self.is_position_try() {
-            return self.write_raw(DeclarationBlock::position_try(text).css_text());
+        if let Some(rule) = self.declaration_rule() {
+            return self.write_raw(DeclarationBlock::parse_in_rule(text, rule).source_text());
         }
+        if let Some(block) = self.font_block(text) { return self.write_raw(block.css_text()); }
         self.write(&Block::parse(text))
     }
 }
@@ -753,6 +774,7 @@ enum RuleKind {
 }
 
 struct RuleNode {
+    checked_style_backing: Cell<Option<bool>>,
     identity: IdentityKey,
     kind: RuleKind,
     parent: RefCell<Weak<RuleNode>>,
@@ -790,7 +812,7 @@ impl RuleNode {
                 }
                 ParsedRule::Other { rule_type, text } => RuleKind::Other { rule_type, text: RefCell::new(text) },
             };
-            RuleNode { identity, kind, parent: RefCell::new(parent) }
+            RuleNode { identity, kind, parent: RefCell::new(parent), checked_style_backing: Cell::new(None) }
         })
     }
 
@@ -823,8 +845,23 @@ impl RuleNode {
             RuleKind::Other { rule_type: 8, text } => {
                 let text = text.borrow();
                 let Some((head, body)) = split_block(&text) else { return String::new() };
-                let decls = Block::parse(body).css_text();
+                let decls = DeclarationBlock::keyframe(body).css_text();
                 if decls.is_empty() { format!("{head} {{ }}") } else { format!("{head} {{ {decls} }}") }
+            }
+            RuleKind::Other { rule_type, text } if *rule_type == 6 || text.borrow().starts_with("@position-try ") => {
+                let text = text.borrow();
+                if !declarations::may_need_signed_zero_backing(&text) { return text.clone(); }
+                let Some((head, body)) = split_block(&text) else { return text.clone() };
+                let (block, margins) = if *rule_type == 6 {
+                    let (decls, margins) = page_parts(body);
+                    (DeclarationBlock::page(&decls), margins)
+                } else {
+                    (DeclarationBlock::position_try(body), Vec::new())
+                };
+                if block.css_for_reparse().is_none() { return text.clone(); }
+                let inner = std::iter::once(block.css_text()).chain(margins)
+                    .filter(|part| !part.is_empty()).collect::<Vec<_>>().join(" ");
+                format!("{head} {{ {inner} }}")
             }
             RuleKind::Declarations(text) => DeclarationBlock::parse(&text.borrow()).css_text(),
             RuleKind::Counter(rule) => rule.borrow().text(),

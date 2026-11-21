@@ -764,3 +764,32 @@ fn sibling_inline_styles_do_not_share_opposite_zero_signs_in_unresolved_math() {
     "#);
     assert_eq!(result, "1,-1,1,-1");
 }
+
+#[test]
+fn connected_keyframe_edits_retain_signed_zero_and_keyframe_grammar() {
+    let (_t, root) = page();
+    let result = eval(&root, r#"
+        const s = document.head.appendChild(document.createElement('style'));
+        const value = 'clamp(-1, 1 / sign(sign(-0em)), 1)';
+        s.textContent = '@keyframes number-sign { from { z-index: '+value+'; } to { z-index: 7; } }';
+        const anim = s.sheet.cssRules[0], from = anim.cssRules[0];
+        const el = document.body.appendChild(document.createElement('div'));
+        el.style.cssText = 'position:relative; z-index:13; animation:number-sign 100s step-end paused';
+        const sample = () => getComputedStyle(el).zIndex;
+        const before = sample();
+        from.style.color = 'green';
+        from.style.setProperty('z-index', '9', 'important');
+        const afterSet = sample();
+        from.style.removeProperty('color');
+        const afterRemove = sample();
+        from.style.cssText = 'z-index: '+value+'; opacity: 0.5 !important; animation-name: other;';
+        const afterText = sample();
+        const filtered = !from.style.opacity && !from.style.animationName;
+        const publicText = [from.style.zIndex, from.style.cssText, from.cssText, anim.cssText]
+            .every(text => text.includes('0em') && !text.includes('-0em'));
+        const removed = from.style.removeProperty('z-index');
+        [before, afterSet, afterRemove, afterText, filtered, publicText,
+         removed.includes('0em') && !removed.includes('-0em'), sample()].join('|')
+    "#);
+    assert_eq!(result, "-1|-1|-1|-1|true|true|true|13");
+}

@@ -338,7 +338,7 @@ pub fn keyframe_selector(text: &str) -> Option<String> {
 fn read_keyframe(parser: &mut Parser<'_>) -> Option<ParsedRule> {
     let (head, body) = parse_prelude_and_block(parser, parser.position(), raw_block);
     let selector = keyframe_selector(&head)?;
-    let declarations = crate::stylo::declarations::DeclarationBlock::keyframe(&body?).css_text();
+    let declarations = crate::stylo::declarations::DeclarationBlock::keyframe(&body?).source_text();
     Some(ParsedRule::Other { rule_type: 8, text: format!("{selector} {{{declarations}}}") })
 }
 
@@ -694,7 +694,7 @@ fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces, re
         let mut text = String::from("@position-try ");
         cssparser::serialize_identifier(&ident, &mut text).ok()?;
         text.push_str(" { ");
-        let descriptors = crate::stylo::declarations::DeclarationBlock::position_try(&block?).css_text();
+        let descriptors = crate::stylo::declarations::DeclarationBlock::position_try(&block?).source_text();
         if !descriptors.is_empty() {
             text.push_str(&descriptors);
             text.push(' ');

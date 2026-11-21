@@ -3397,14 +3397,16 @@ impl Dom {
     }
 
     /// Set both the CSSOM serialization and the style parser's backing in one DOM mutation.
-    pub fn set_cssom_inline_style(&mut self, id: NodeId, canonical: String, semantic: String) -> DomResult<()> {
+    pub fn set_cssom_inline_style(&mut self, id: NodeId, canonical: String, semantic: Option<String>) -> DomResult<()> {
         let (i, el) = self.el(id)?;
         let name = QualName::new(None, ns!(), local_name!("style"));
         let same_attr = el.attr_local(&name.local) == Some(&canonical);
-        let backing = (semantic != canonical).then(|| std::sync::Arc::new(semantic));
+        let backing = semantic.map(std::sync::Arc::new);
         let changed_backing = el.semantic_style != backing;
         self.set_attribute_local(id, &name.local, &canonical)?;
-        self.n_mut(i).element_mut().unwrap().semantic_style = backing;
+        let el = self.n_mut(i).element_mut().unwrap();
+        el.semantic_style = backing;
+        el.checked_style_backing = true;
         if same_attr && changed_backing {
             // The attribute write already advanced tree_version and queued the record.
             self.bump();
@@ -3501,7 +3503,9 @@ impl Dom {
         let old = self.edit_attrs(i, &name, |el| el.replace_attr_value(k, value.into()));
         if *old != *value {
             if name.ns == ns!() && name.local == local_name!("style") {
-                self.n_mut(i).element_mut().unwrap().semantic_style = None;
+                let el = self.n_mut(i).element_mut().unwrap();
+                el.semantic_style = None;
+                el.checked_style_backing = false;
             }
             self.note_style_attr(i, &name, Some(&old));
         }
@@ -3574,7 +3578,10 @@ impl Dom {
     fn remove_attr_at(&mut self, i: u32, k: usize) {
         let name = self.n(i).element().unwrap().attrs[k].name.clone();
         let attr = self.edit_attrs(i, &name, |el| {
-            if name.ns == ns!() && name.local == local_name!("style") { el.semantic_style = None; }
+            if name.ns == ns!() && name.local == local_name!("style") {
+                el.semantic_style = None;
+                el.checked_style_backing = false;
+            }
             el.remove_attr(k)
         });
         if !self.attr_nodes.is_empty() {
