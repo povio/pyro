@@ -51,6 +51,13 @@ All 63 assertions for `random()` inside custom CSS functions now pass. Across th
 Style edits now preserve negative zero inside unresolved calculations, so `sign()` and division produce the correct results even when CSSOM displays the value as zero. Independent checks on a separate 17-page CSS Values and CSSOM selection found **11 gains and zero losses**. Passing assertions rose from **523 to 534 of 554**, and fully passing pages rose from **11 to 12 of 17**. The development branch integrated this change at `47b4a0028`, after RC.4. [Signed-zero results and raw comparisons](https://github.com/povio/pyro/tree/61f118fcd11fd6b16c268a63b8b74536b47a037c/docs/validation/round7-css-values/signed-zero)
 
 
+### CSS Color HDR
+
+A separate four-page comparison tested `dynamic-range-limit` after RC.4. Pyro rose from **17 to 113 of 116 passing assertions**, with **99 gains and three pinned losses**. Fully passing pages rose from zero to three of four. All 64 animation interpolation assertions passed. Chrome 158.0.8127.37 passed 115 of 116 on the same pages.
+
+These checks cover style computation, CSSOM and animation. On the 8-bit SDR color and gradient fixture, all four settings produced byte-identical PNGs on both builds. HDR-device tone mapping remains unmeasured. [CSS Color HDR results and SDR pixel readbacks](https://github.com/povio/pyro/tree/b45f7b410928b778272794a98e277e4d3062f4c9/docs/validation/round7-css-color-hdr)
+
+
 <style scoped>
 .pass-count { width: clamp(3.5rem, 12vw, 9rem); margin-inline-start: .5rem; vertical-align: middle; accent-color: var(--vp-c-brand-1); }
 .pass-count::-webkit-meter-optimum-value { background: var(--vp-c-brand-1); }
