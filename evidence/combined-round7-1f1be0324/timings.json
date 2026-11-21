@@ -1,0 +1,58 @@
+{
+  "base-edit": {
+    "wallMs": 2824,
+    "browserCpuS": 1.22,
+    "runnerCpuS": 1.295297,
+    "serverCpuS": 0,
+    "watchdogKills": 0,
+    "restarts": 0
+  },
+  "base-css": {
+    "wallMs": 368,
+    "browserCpuS": 0.21,
+    "runnerCpuS": 0.579937,
+    "serverCpuS": 0,
+    "watchdogKills": 0,
+    "restarts": 0
+  },
+  "base-guards": {
+    "wallMs": 41460,
+    "browserCpuS": 1.71,
+    "runnerCpuS": 1.757775,
+    "serverCpuS": 0,
+    "watchdogKills": 0,
+    "restarts": 0
+  },
+  "head-edit": {
+    "wallMs": 1877,
+    "browserCpuS": 0.9,
+    "runnerCpuS": 1.111561,
+    "serverCpuS": 0,
+    "watchdogKills": 0,
+    "restarts": 0
+  },
+  "head-css": {
+    "wallMs": 213,
+    "browserCpuS": 0.15,
+    "runnerCpuS": 0.489692,
+    "serverCpuS": 0,
+    "watchdogKills": 0,
+    "restarts": 0
+  },
+  "head-guards": {
+    "wallMs": 1391,
+    "browserCpuS": 1.21,
+    "runnerCpuS": 1.167833,
+    "serverCpuS": 0,
+    "watchdogKills": 0,
+    "restarts": 0
+  },
+  "chrome-css": {
+    "wallMs": 2432,
+    "browserCpuS": 2.29,
+    "runnerCpuS": 0.993097,
+    "serverCpuS": 0,
+    "watchdogKills": 0,
+    "restarts": 0
+  }
+}

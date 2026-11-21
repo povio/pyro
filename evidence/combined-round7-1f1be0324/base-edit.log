@@ -1,0 +1,22 @@
+wptserve on http://web-platform.test:58143 (log /var/folders/nn/qnd33c214r50y2h5h2b3bp700000gn/T/pyro-wptserve-eVosAy/serve.log)
+base: done 25 pages in 2.8 s (CPU: browser 1.2 s, runner 1.3 s, server 0.0 s), restarts 0, event loop lag p50 2 ms p99 11 ms
+real 5.53
+user 1.14
+sys 0.26
+           621527040  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+               41160  page reclaims
+                  93  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                1034  messages sent
+                 942  messages received
+                   0  signals received
+                 277  voluntary context switches
+                6499  involuntary context switches
+          8652421783  instructions retired
+          3747938977  cycles elapsed
+           539509888  peak memory footprint

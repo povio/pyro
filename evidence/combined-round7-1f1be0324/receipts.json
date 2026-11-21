@@ -1,0 +1,584 @@
+{
+  "base": {
+    "editing/other/insert-text-in-void-element.tentative.html": {
+      "file": "base-edit.json",
+      "sha256": "31dd34d322372150804413b7ad277853949a9aa08a2b486a0b85069d981d34ce"
+    },
+    "editing/plaintext-only/styling-commands.html?styleWithCSS=false": {
+      "file": "base-edit.json",
+      "sha256": "31dd34d322372150804413b7ad277853949a9aa08a2b486a0b85069d981d34ce"
+    },
+    "editing/plaintext-only/styling-commands.html?styleWithCSS=true": {
+      "file": "base-edit.json",
+      "sha256": "31dd34d322372150804413b7ad277853949a9aa08a2b486a0b85069d981d34ce"
+    },
+    "editing/run/inserttext.html?1-1000": {
+      "file": "base-edit.json",
+      "sha256": "31dd34d322372150804413b7ad277853949a9aa08a2b486a0b85069d981d34ce"
+    },
+    "editing/run/inserttext.html?1001-2000": {
+      "file": "base-edit.json",
+      "sha256": "31dd34d322372150804413b7ad277853949a9aa08a2b486a0b85069d981d34ce"
+    },
+    "editing/run/inserttext.html?2001-last": {
+      "file": "base-edit.json",
+      "sha256": "31dd34d322372150804413b7ad277853949a9aa08a2b486a0b85069d981d34ce"
+    },
+    "editing/whitespaces/chrome-compat/delete.tentative.html": {
+      "file": "base-edit.json",
+      "sha256": "31dd34d322372150804413b7ad277853949a9aa08a2b486a0b85069d981d34ce"
+    },
+    "editing/whitespaces/chrome-compat/forwarddelete.tentative.html": {
+      "file": "base-edit.json",
+      "sha256": "31dd34d322372150804413b7ad277853949a9aa08a2b486a0b85069d981d34ce"
+    },
+    "editing/whitespaces/chrome-compat/inserttext.tentative.html": {
+      "file": "base-edit.json",
+      "sha256": "31dd34d322372150804413b7ad277853949a9aa08a2b486a0b85069d981d34ce"
+    },
+    "selection/contenteditable/initial-selection-on-focus.tentative.html?div": {
+      "file": "base-edit.json",
+      "sha256": "31dd34d322372150804413b7ad277853949a9aa08a2b486a0b85069d981d34ce"
+    },
+    "selection/contenteditable/initial-selection-on-focus.tentative.html?span": {
+      "file": "base-edit.json",
+      "sha256": "31dd34d322372150804413b7ad277853949a9aa08a2b486a0b85069d981d34ce"
+    },
+    "selection/fire-selectionchange-event-on-document-if-textcontrol-element-is-in-shadow-tree.html": {
+      "file": "base-edit.json",
+      "sha256": "31dd34d322372150804413b7ad277853949a9aa08a2b486a0b85069d981d34ce"
+    },
+    "selection/onselectionchange-on-distinct-text-controls.html": {
+      "file": "base-edit.json",
+      "sha256": "31dd34d322372150804413b7ad277853949a9aa08a2b486a0b85069d981d34ce"
+    },
+    "selection/shadow-dom/tentative/Range-isPointInRange.html": {
+      "file": "base-edit.json",
+      "sha256": "31dd34d322372150804413b7ad277853949a9aa08a2b486a0b85069d981d34ce"
+    },
+    "selection/shadow-dom/tentative/Selection-collapse-and-extend.html": {
+      "file": "base-edit.json",
+      "sha256": "31dd34d322372150804413b7ad277853949a9aa08a2b486a0b85069d981d34ce"
+    },
+    "selection/shadow-dom/tentative/Selection-getComposedRanges-collapsed.html": {
+      "file": "base-edit.json",
+      "sha256": "31dd34d322372150804413b7ad277853949a9aa08a2b486a0b85069d981d34ce"
+    },
+    "selection/shadow-dom/tentative/Selection-getComposedRanges-dom-mutations-removal.html?mode=closed": {
+      "file": "base-edit.json",
+      "sha256": "31dd34d322372150804413b7ad277853949a9aa08a2b486a0b85069d981d34ce"
+    },
+    "selection/shadow-dom/tentative/Selection-getComposedRanges-dom-mutations-removal.html?mode=open": {
+      "file": "base-edit.json",
+      "sha256": "31dd34d322372150804413b7ad277853949a9aa08a2b486a0b85069d981d34ce"
+    },
+    "selection/shadow-dom/tentative/Selection-getComposedRanges-range-update.html": {
+      "file": "base-edit.json",
+      "sha256": "31dd34d322372150804413b7ad277853949a9aa08a2b486a0b85069d981d34ce"
+    },
+    "selection/shadow-dom/tentative/Selection-getComposedRanges-slot.html": {
+      "file": "base-edit.json",
+      "sha256": "31dd34d322372150804413b7ad277853949a9aa08a2b486a0b85069d981d34ce"
+    },
+    "selection/shadow-dom/tentative/Selection-getComposedRanges.html": {
+      "file": "base-edit.json",
+      "sha256": "31dd34d322372150804413b7ad277853949a9aa08a2b486a0b85069d981d34ce"
+    },
+    "selection/shadow-dom/tentative/Selection-isCollapsed.html": {
+      "file": "base-edit.json",
+      "sha256": "31dd34d322372150804413b7ad277853949a9aa08a2b486a0b85069d981d34ce"
+    },
+    "selection/textcontrols/selectionchange-bubble.html": {
+      "file": "base-edit.json",
+      "sha256": "31dd34d322372150804413b7ad277853949a9aa08a2b486a0b85069d981d34ce"
+    },
+    "selection/textcontrols/selectionchange-on-shadow-dom.html": {
+      "file": "base-edit.json",
+      "sha256": "31dd34d322372150804413b7ad277853949a9aa08a2b486a0b85069d981d34ce"
+    },
+    "selection/textcontrols/selectionchange.html": {
+      "file": "base-edit.json",
+      "sha256": "31dd34d322372150804413b7ad277853949a9aa08a2b486a0b85069d981d34ce"
+    },
+    "css/css-mixins/function-definition-scope.html": {
+      "file": "base-css.json",
+      "sha256": "2e1cae70d1d38f7f99c08ebb036f58c113793d2d1f780d981733060d42409fa1"
+    },
+    "css/css-mixins/function-parameter-scoping.html": {
+      "file": "base-css.json",
+      "sha256": "2e1cae70d1d38f7f99c08ebb036f58c113793d2d1f780d981733060d42409fa1"
+    },
+    "css/css-mixins/function-property-context.html": {
+      "file": "base-css.json",
+      "sha256": "2e1cae70d1d38f7f99c08ebb036f58c113793d2d1f780d981733060d42409fa1"
+    },
+    "css/css-mixins/function-relative-units.html": {
+      "file": "base-css.json",
+      "sha256": "2e1cae70d1d38f7f99c08ebb036f58c113793d2d1f780d981733060d42409fa1"
+    },
+    "css/css-mixins/functions/local-if-substitution.html": {
+      "file": "base-css.json",
+      "sha256": "2e1cae70d1d38f7f99c08ebb036f58c113793d2d1f780d981733060d42409fa1"
+    },
+    "css/css-mixins/functions/local-inherit-substitution.html": {
+      "file": "base-css.json",
+      "sha256": "2e1cae70d1d38f7f99c08ebb036f58c113793d2d1f780d981733060d42409fa1"
+    },
+    "css/css-values/if-media-invalidation.html": {
+      "file": "base-css.json",
+      "sha256": "2e1cae70d1d38f7f99c08ebb036f58c113793d2d1f780d981733060d42409fa1"
+    },
+    "referrer-policy/gen/iframe.http-rp/no-referrer/iframe-tag.http.html": {
+      "file": "base-guards.json",
+      "sha256": "6691fa873e7d7618e9e23e22cd600c78ee0dc2baccc895c34c3f36e6bc6107ed"
+    },
+    "referrer-policy/gen/iframe.http-rp/unset/iframe-tag.http.html": {
+      "file": "base-guards.json",
+      "sha256": "6691fa873e7d7618e9e23e22cd600c78ee0dc2baccc895c34c3f36e6bc6107ed"
+    },
+    "referrer-policy/gen/iframe.meta/unsafe-url/iframe-tag.http.html": {
+      "file": "base-guards.json",
+      "sha256": "6691fa873e7d7618e9e23e22cd600c78ee0dc2baccc895c34c3f36e6bc6107ed"
+    },
+    "referrer-policy/gen/srcdoc.meta/unsafe-url/iframe-tag.http.html": {
+      "file": "base-guards.json",
+      "sha256": "6691fa873e7d7618e9e23e22cd600c78ee0dc2baccc895c34c3f36e6bc6107ed"
+    },
+    "dom/events/EventTarget-add-listener-platform-object.html": {
+      "file": "base-guards.json",
+      "sha256": "6691fa873e7d7618e9e23e22cd600c78ee0dc2baccc895c34c3f36e6bc6107ed"
+    },
+    "dom/events/EventTarget-dispatchEvent-returnvalue.html": {
+      "file": "base-guards.json",
+      "sha256": "6691fa873e7d7618e9e23e22cd600c78ee0dc2baccc895c34c3f36e6bc6107ed"
+    },
+    "dom/events/EventTarget-this-of-listener.html": {
+      "file": "base-guards.json",
+      "sha256": "6691fa873e7d7618e9e23e22cd600c78ee0dc2baccc895c34c3f36e6bc6107ed"
+    },
+    "webmessaging/MessageEvent.any.html": {
+      "file": "base-guards.json",
+      "sha256": "6691fa873e7d7618e9e23e22cd600c78ee0dc2baccc895c34c3f36e6bc6107ed"
+    },
+    "webmessaging/MessagePort_onmessage_start.any.html": {
+      "file": "base-guards.json",
+      "sha256": "6691fa873e7d7618e9e23e22cd600c78ee0dc2baccc895c34c3f36e6bc6107ed"
+    },
+    "webmessaging/broadcastchannel/basics.any.html": {
+      "file": "base-guards.json",
+      "sha256": "6691fa873e7d7618e9e23e22cd600c78ee0dc2baccc895c34c3f36e6bc6107ed"
+    },
+    "webmessaging/event.ports.sub.htm": {
+      "file": "base-guards.json",
+      "sha256": "6691fa873e7d7618e9e23e22cd600c78ee0dc2baccc895c34c3f36e6bc6107ed"
+    },
+    "webmessaging/event.source.htm": {
+      "file": "base-guards.json",
+      "sha256": "6691fa873e7d7618e9e23e22cd600c78ee0dc2baccc895c34c3f36e6bc6107ed"
+    },
+    "webmessaging/message-channels/cross-document.html": {
+      "file": "base-guards.json",
+      "sha256": "6691fa873e7d7618e9e23e22cd600c78ee0dc2baccc895c34c3f36e6bc6107ed"
+    },
+    "webmessaging/multi-globals/messageport-current.html": {
+      "file": "base-guards.json",
+      "sha256": "6691fa873e7d7618e9e23e22cd600c78ee0dc2baccc895c34c3f36e6bc6107ed"
+    },
+    "webmessaging/postMessage_Date.sub.htm": {
+      "file": "base-guards.json",
+      "sha256": "6691fa873e7d7618e9e23e22cd600c78ee0dc2baccc895c34c3f36e6bc6107ed"
+    },
+    "webmessaging/postMessage_MessagePorts_sorigin.htm": {
+      "file": "base-guards.json",
+      "sha256": "6691fa873e7d7618e9e23e22cd600c78ee0dc2baccc895c34c3f36e6bc6107ed"
+    }
+  },
+  "head": {
+    "editing/other/insert-text-in-void-element.tentative.html": {
+      "file": "head-edit.json",
+      "sha256": "80924aa61e55d62875848822cd14413aa14662ed74638ae61e262347f9cb1500"
+    },
+    "editing/plaintext-only/styling-commands.html?styleWithCSS=false": {
+      "file": "head-edit.json",
+      "sha256": "80924aa61e55d62875848822cd14413aa14662ed74638ae61e262347f9cb1500"
+    },
+    "editing/plaintext-only/styling-commands.html?styleWithCSS=true": {
+      "file": "head-edit.json",
+      "sha256": "80924aa61e55d62875848822cd14413aa14662ed74638ae61e262347f9cb1500"
+    },
+    "editing/run/inserttext.html?1-1000": {
+      "file": "head-edit.json",
+      "sha256": "80924aa61e55d62875848822cd14413aa14662ed74638ae61e262347f9cb1500"
+    },
+    "editing/run/inserttext.html?1001-2000": {
+      "file": "head-edit.json",
+      "sha256": "80924aa61e55d62875848822cd14413aa14662ed74638ae61e262347f9cb1500"
+    },
+    "editing/run/inserttext.html?2001-last": {
+      "file": "head-edit.json",
+      "sha256": "80924aa61e55d62875848822cd14413aa14662ed74638ae61e262347f9cb1500"
+    },
+    "editing/whitespaces/chrome-compat/delete.tentative.html": {
+      "file": "head-edit.json",
+      "sha256": "80924aa61e55d62875848822cd14413aa14662ed74638ae61e262347f9cb1500"
+    },
+    "editing/whitespaces/chrome-compat/forwarddelete.tentative.html": {
+      "file": "head-edit.json",
+      "sha256": "80924aa61e55d62875848822cd14413aa14662ed74638ae61e262347f9cb1500"
+    },
+    "editing/whitespaces/chrome-compat/inserttext.tentative.html": {
+      "file": "head-edit.json",
+      "sha256": "80924aa61e55d62875848822cd14413aa14662ed74638ae61e262347f9cb1500"
+    },
+    "selection/contenteditable/initial-selection-on-focus.tentative.html?div": {
+      "file": "head-edit.json",
+      "sha256": "80924aa61e55d62875848822cd14413aa14662ed74638ae61e262347f9cb1500"
+    },
+    "selection/contenteditable/initial-selection-on-focus.tentative.html?span": {
+      "file": "head-edit.json",
+      "sha256": "80924aa61e55d62875848822cd14413aa14662ed74638ae61e262347f9cb1500"
+    },
+    "selection/fire-selectionchange-event-on-document-if-textcontrol-element-is-in-shadow-tree.html": {
+      "file": "head-edit.json",
+      "sha256": "80924aa61e55d62875848822cd14413aa14662ed74638ae61e262347f9cb1500"
+    },
+    "selection/onselectionchange-on-distinct-text-controls.html": {
+      "file": "head-edit.json",
+      "sha256": "80924aa61e55d62875848822cd14413aa14662ed74638ae61e262347f9cb1500"
+    },
+    "selection/shadow-dom/tentative/Range-isPointInRange.html": {
+      "file": "head-edit.json",
+      "sha256": "80924aa61e55d62875848822cd14413aa14662ed74638ae61e262347f9cb1500"
+    },
+    "selection/shadow-dom/tentative/Selection-collapse-and-extend.html": {
+      "file": "head-edit.json",
+      "sha256": "80924aa61e55d62875848822cd14413aa14662ed74638ae61e262347f9cb1500"
+    },
+    "selection/shadow-dom/tentative/Selection-getComposedRanges-collapsed.html": {
+      "file": "head-edit.json",
+      "sha256": "80924aa61e55d62875848822cd14413aa14662ed74638ae61e262347f9cb1500"
+    },
+    "selection/shadow-dom/tentative/Selection-getComposedRanges-dom-mutations-removal.html?mode=closed": {
+      "file": "head-edit.json",
+      "sha256": "80924aa61e55d62875848822cd14413aa14662ed74638ae61e262347f9cb1500"
+    },
+    "selection/shadow-dom/tentative/Selection-getComposedRanges-dom-mutations-removal.html?mode=open": {
+      "file": "head-edit.json",
+      "sha256": "80924aa61e55d62875848822cd14413aa14662ed74638ae61e262347f9cb1500"
+    },
+    "selection/shadow-dom/tentative/Selection-getComposedRanges-range-update.html": {
+      "file": "head-edit.json",
+      "sha256": "80924aa61e55d62875848822cd14413aa14662ed74638ae61e262347f9cb1500"
+    },
+    "selection/shadow-dom/tentative/Selection-getComposedRanges-slot.html": {
+      "file": "head-edit.json",
+      "sha256": "80924aa61e55d62875848822cd14413aa14662ed74638ae61e262347f9cb1500"
+    },
+    "selection/shadow-dom/tentative/Selection-getComposedRanges.html": {
+      "file": "head-edit.json",
+      "sha256": "80924aa61e55d62875848822cd14413aa14662ed74638ae61e262347f9cb1500"
+    },
+    "selection/shadow-dom/tentative/Selection-isCollapsed.html": {
+      "file": "head-edit.json",
+      "sha256": "80924aa61e55d62875848822cd14413aa14662ed74638ae61e262347f9cb1500"
+    },
+    "selection/textcontrols/selectionchange-bubble.html": {
+      "file": "head-edit.json",
+      "sha256": "80924aa61e55d62875848822cd14413aa14662ed74638ae61e262347f9cb1500"
+    },
+    "selection/textcontrols/selectionchange-on-shadow-dom.html": {
+      "file": "head-edit.json",
+      "sha256": "80924aa61e55d62875848822cd14413aa14662ed74638ae61e262347f9cb1500"
+    },
+    "selection/textcontrols/selectionchange.html": {
+      "file": "head-edit.json",
+      "sha256": "80924aa61e55d62875848822cd14413aa14662ed74638ae61e262347f9cb1500"
+    },
+    "css/css-mixins/function-definition-scope.html": {
+      "file": "head-css.json",
+      "sha256": "3fa80748ef2e1796a390a70d3cd34d6efd5961de54897c76bbbf24367be92391"
+    },
+    "css/css-mixins/function-parameter-scoping.html": {
+      "file": "head-css.json",
+      "sha256": "3fa80748ef2e1796a390a70d3cd34d6efd5961de54897c76bbbf24367be92391"
+    },
+    "css/css-mixins/function-property-context.html": {
+      "file": "head-css.json",
+      "sha256": "3fa80748ef2e1796a390a70d3cd34d6efd5961de54897c76bbbf24367be92391"
+    },
+    "css/css-mixins/function-relative-units.html": {
+      "file": "head-css.json",
+      "sha256": "3fa80748ef2e1796a390a70d3cd34d6efd5961de54897c76bbbf24367be92391"
+    },
+    "css/css-mixins/functions/local-if-substitution.html": {
+      "file": "head-css.json",
+      "sha256": "3fa80748ef2e1796a390a70d3cd34d6efd5961de54897c76bbbf24367be92391"
+    },
+    "css/css-mixins/functions/local-inherit-substitution.html": {
+      "file": "head-css.json",
+      "sha256": "3fa80748ef2e1796a390a70d3cd34d6efd5961de54897c76bbbf24367be92391"
+    },
+    "css/css-values/if-media-invalidation.html": {
+      "file": "head-css.json",
+      "sha256": "3fa80748ef2e1796a390a70d3cd34d6efd5961de54897c76bbbf24367be92391"
+    },
+    "referrer-policy/gen/iframe.http-rp/no-referrer/iframe-tag.http.html": {
+      "file": "head-guards.json",
+      "sha256": "e181c0791e66c5d8b695ca7662944483a10e3d0c0815103d67f137fb1531e398"
+    },
+    "referrer-policy/gen/iframe.http-rp/unset/iframe-tag.http.html": {
+      "file": "head-guards.json",
+      "sha256": "e181c0791e66c5d8b695ca7662944483a10e3d0c0815103d67f137fb1531e398"
+    },
+    "referrer-policy/gen/iframe.meta/unsafe-url/iframe-tag.http.html": {
+      "file": "head-guards.json",
+      "sha256": "e181c0791e66c5d8b695ca7662944483a10e3d0c0815103d67f137fb1531e398"
+    },
+    "referrer-policy/gen/srcdoc.meta/unsafe-url/iframe-tag.http.html": {
+      "file": "head-guards.json",
+      "sha256": "e181c0791e66c5d8b695ca7662944483a10e3d0c0815103d67f137fb1531e398"
+    },
+    "dom/events/EventTarget-add-listener-platform-object.html": {
+      "file": "head-guards.json",
+      "sha256": "e181c0791e66c5d8b695ca7662944483a10e3d0c0815103d67f137fb1531e398"
+    },
+    "dom/events/EventTarget-dispatchEvent-returnvalue.html": {
+      "file": "head-guards.json",
+      "sha256": "e181c0791e66c5d8b695ca7662944483a10e3d0c0815103d67f137fb1531e398"
+    },
+    "dom/events/EventTarget-this-of-listener.html": {
+      "file": "head-guards.json",
+      "sha256": "e181c0791e66c5d8b695ca7662944483a10e3d0c0815103d67f137fb1531e398"
+    },
+    "webmessaging/MessageEvent.any.html": {
+      "file": "head-guards.json",
+      "sha256": "e181c0791e66c5d8b695ca7662944483a10e3d0c0815103d67f137fb1531e398"
+    },
+    "webmessaging/MessagePort_onmessage_start.any.html": {
+      "file": "head-guards.json",
+      "sha256": "e181c0791e66c5d8b695ca7662944483a10e3d0c0815103d67f137fb1531e398"
+    },
+    "webmessaging/broadcastchannel/basics.any.html": {
+      "file": "head-guards.json",
+      "sha256": "e181c0791e66c5d8b695ca7662944483a10e3d0c0815103d67f137fb1531e398"
+    },
+    "webmessaging/event.ports.sub.htm": {
+      "file": "head-guards.json",
+      "sha256": "e181c0791e66c5d8b695ca7662944483a10e3d0c0815103d67f137fb1531e398"
+    },
+    "webmessaging/event.source.htm": {
+      "file": "head-guards.json",
+      "sha256": "e181c0791e66c5d8b695ca7662944483a10e3d0c0815103d67f137fb1531e398"
+    },
+    "webmessaging/message-channels/cross-document.html": {
+      "file": "head-guards.json",
+      "sha256": "e181c0791e66c5d8b695ca7662944483a10e3d0c0815103d67f137fb1531e398"
+    },
+    "webmessaging/multi-globals/messageport-current.html": {
+      "file": "head-guards.json",
+      "sha256": "e181c0791e66c5d8b695ca7662944483a10e3d0c0815103d67f137fb1531e398"
+    },
+    "webmessaging/postMessage_Date.sub.htm": {
+      "file": "head-guards.json",
+      "sha256": "e181c0791e66c5d8b695ca7662944483a10e3d0c0815103d67f137fb1531e398"
+    },
+    "webmessaging/postMessage_MessagePorts_sorigin.htm": {
+      "file": "head-guards.json",
+      "sha256": "e181c0791e66c5d8b695ca7662944483a10e3d0c0815103d67f137fb1531e398"
+    }
+  },
+  "chrome": {
+    "css/css-mixins/function-definition-scope.html": {
+      "file": "chrome-css.json",
+      "sha256": "ee45c5730051fa49fc3238225b31714603d622f00fabc34378f67238bfd44cc7"
+    },
+    "css/css-mixins/function-parameter-scoping.html": {
+      "file": "chrome-css.json",
+      "sha256": "ee45c5730051fa49fc3238225b31714603d622f00fabc34378f67238bfd44cc7"
+    },
+    "css/css-mixins/function-property-context.html": {
+      "file": "chrome-css.json",
+      "sha256": "ee45c5730051fa49fc3238225b31714603d622f00fabc34378f67238bfd44cc7"
+    },
+    "css/css-mixins/function-relative-units.html": {
+      "file": "chrome-css.json",
+      "sha256": "ee45c5730051fa49fc3238225b31714603d622f00fabc34378f67238bfd44cc7"
+    },
+    "css/css-mixins/functions/local-if-substitution.html": {
+      "file": "chrome-css.json",
+      "sha256": "ee45c5730051fa49fc3238225b31714603d622f00fabc34378f67238bfd44cc7"
+    },
+    "css/css-mixins/functions/local-inherit-substitution.html": {
+      "file": "chrome-css.json",
+      "sha256": "ee45c5730051fa49fc3238225b31714603d622f00fabc34378f67238bfd44cc7"
+    },
+    "css/css-values/if-media-invalidation.html": {
+      "file": "chrome-css.json",
+      "sha256": "ee45c5730051fa49fc3238225b31714603d622f00fabc34378f67238bfd44cc7"
+    },
+    "selection/shadow-dom/tentative/Selection-getComposedRanges-dom-mutations-removal.html?mode=open": {
+      "file": "census/raw/ordinary-026.json",
+      "sha256": "51b6b33c6181273b38c7e9d46e8ff0ffaa8cbea99b2d892f25fd315a85c075a7"
+    },
+    "webmessaging/event.source.htm": {
+      "file": "census/raw/ordinary-129.json",
+      "sha256": "833369ec3307930cf790bf0dc38bce41e4b4c8351fa21dd4f5a84cfbe2380d66"
+    },
+    "webmessaging/event.ports.sub.htm": {
+      "file": "census/raw/ordinary-132.json",
+      "sha256": "935ec30d93ee32a128c759c7cada7f4983f0a81577803745dec16c0bd959fe41"
+    },
+    "selection/shadow-dom/tentative/Range-isPointInRange.html": {
+      "file": "census/raw/ordinary-048.json",
+      "sha256": "5d3e575ccde41a53fd875ced1e2936c7a5942e15bd21a6284d73a88734756c62"
+    },
+    "selection/shadow-dom/tentative/Selection-getComposedRanges-range-update.html": {
+      "file": "census/raw/ordinary-097.json",
+      "sha256": "b2715ffd40c32b85809c83df7d2795d93ed3398e54a3f1c4456f47e08598f73b"
+    },
+    "webmessaging/postMessage_Date.sub.htm": {
+      "file": "census/raw/ordinary-085.json",
+      "sha256": "a2aa5078697f3946414508f8cabd5d2456e4f9cac2e789a95e8d0dbf61f0251b"
+    },
+    "editing/run/inserttext.html?1-1000": {
+      "file": "census/raw/guard-main-007.json",
+      "sha256": "56f5c6cc281df2fb4c77dc499d176ae95229af98a993bac27c89d208655c543d"
+    },
+    "dom/events/EventTarget-add-listener-platform-object.html": {
+      "file": "census/raw/ordinary-105.json",
+      "sha256": "0c782252ab4d1539f5629aeab98c38c6a782d0b0e6a0be014a4ea2ebf5b3f4e3"
+    },
+    "selection/contenteditable/initial-selection-on-focus.tentative.html?div": {
+      "file": "census/raw/ordinary-160.json",
+      "sha256": "665c88a378b33e4ce2b5a0a644ca6ccda0c47410799a56b612372c6707c4faf3"
+    },
+    "selection/contenteditable/initial-selection-on-focus.tentative.html?span": {
+      "file": "census/raw/ordinary-095.json",
+      "sha256": "e88f14ea60dae8935438c6c6b609bb76fdb1b9c227f04d6b701b42d126f75ee2"
+    },
+    "editing/whitespaces/chrome-compat/delete.tentative.html": {
+      "file": "census/raw/guard-main-004.json",
+      "sha256": "e24b33a657f83ef43ba54917b782f0a06129a706514c026e5c46dd2d689012ce"
+    },
+    "webmessaging/multi-globals/messageport-current.html": {
+      "file": "census/raw/ordinary-148.json",
+      "sha256": "a0dd824fa2555b58ea10c3c5b9e271b655447c1628069a6db50812a37d3b84b2"
+    },
+    "webmessaging/MessageEvent.any.html": {
+      "file": "census/raw/ordinary-029.json",
+      "sha256": "a58099ebafd3f5f50baf647307a654ee3637f6e803dc1f6beb9286c1cbf11a13"
+    },
+    "selection/shadow-dom/tentative/Selection-getComposedRanges-collapsed.html": {
+      "file": "census/raw/ordinary-127.json",
+      "sha256": "9e5d7de2072f8bd5d22edd6644c33ad93f19304ea6e953041782c8f8cd49e121"
+    },
+    "editing/other/insert-text-in-void-element.tentative.html": {
+      "file": "census/raw/guard-main-009.json",
+      "sha256": "3de62da0077752116c3e16c5ecd89b81706c497f5c65d7ab9660414a7ca2a198"
+    },
+    "selection/onselectionchange-on-distinct-text-controls.html": {
+      "file": "census/raw/ordinary-221.json",
+      "sha256": "321a578cc7534b0ee1e669863ac2875f33be4a2f11c972e0f5a176618c464e5e"
+    },
+    "editing/whitespaces/chrome-compat/inserttext.tentative.html": {
+      "file": "census/raw/guard-main-024.json",
+      "sha256": "05444e56a404290bd7a1d5fd0e6c45f98283d8cc1a8ec30c627fe396d9368a85"
+    },
+    "selection/textcontrols/selectionchange.html": {
+      "file": "census/raw/ordinary-184.json",
+      "sha256": "771810d99089c920de964a262fbbb446673d30aacb211e916d40e2007d97389f"
+    },
+    "selection/fire-selectionchange-event-on-document-if-textcontrol-element-is-in-shadow-tree.html": {
+      "file": "census/raw/ordinary-120.json",
+      "sha256": "9589fd8e639b86d6848a4c33a377984d2d4d1636472fb8404e127c09b9300cae"
+    },
+    "selection/textcontrols/selectionchange-bubble.html": {
+      "file": "census/raw/ordinary-120.json",
+      "sha256": "9589fd8e639b86d6848a4c33a377984d2d4d1636472fb8404e127c09b9300cae"
+    },
+    "dom/events/EventTarget-dispatchEvent-returnvalue.html": {
+      "file": "census/raw/ordinary-144.json",
+      "sha256": "ed145b16ba7c656bd479bb08661c0f97e287dd900c155f35175c0277e773e042"
+    },
+    "selection/shadow-dom/tentative/Selection-getComposedRanges-dom-mutations-removal.html?mode=closed": {
+      "file": "census/raw/ordinary-153.json",
+      "sha256": "24a20f790fa6b6ef57253c8d119936084306d9cff0b07eb877dae2d4978dbce5"
+    },
+    "editing/run/inserttext.html?2001-last": {
+      "file": "census/raw/guard-history-000.json",
+      "sha256": "406fe56363d80d688b76f4a7f24437ea92d34df582ae1eb1cc5311f8b816a162"
+    },
+    "editing/plaintext-only/styling-commands.html?styleWithCSS=false": {
+      "file": "census/raw/guard-main-028.json",
+      "sha256": "74e2aa71abf5b45ac4fc7e1f4ae2d55cdb3c9987af724027ed18289b0f6898a3"
+    },
+    "editing/run/inserttext.html?1001-2000": {
+      "file": "census/raw/guard-history-001.json",
+      "sha256": "a709394a98c160c3de115d750ea5bbc665fd717a7d3ccb90bb05b36d937a7c73"
+    },
+    "referrer-policy/gen/iframe.http-rp/no-referrer/iframe-tag.http.html": {
+      "file": "census/raw/guard-history-001.json",
+      "sha256": "a709394a98c160c3de115d750ea5bbc665fd717a7d3ccb90bb05b36d937a7c73"
+    },
+    "referrer-policy/gen/iframe.meta/unsafe-url/iframe-tag.http.html": {
+      "file": "census/raw/guard-history-001.json",
+      "sha256": "a709394a98c160c3de115d750ea5bbc665fd717a7d3ccb90bb05b36d937a7c73"
+    },
+    "selection/shadow-dom/tentative/Selection-isCollapsed.html": {
+      "file": "census/raw/ordinary-179.json",
+      "sha256": "d52a249106e8838c6cc472e12e425d5b8a74b8ba838b32f95402fd692e221120"
+    },
+    "webmessaging/message-channels/cross-document.html": {
+      "file": "census/raw/ordinary-092.json",
+      "sha256": "6278428faa1fb16531a1893338c079a6263adb3b7488ddf82d669c5af569c48a"
+    },
+    "editing/plaintext-only/styling-commands.html?styleWithCSS=true": {
+      "file": "census/raw/guard-main-002.json",
+      "sha256": "0073071781a512506283bade02be64b4792269383d7c43a168192ce7c35d64a9"
+    },
+    "webmessaging/MessagePort_onmessage_start.any.html": {
+      "file": "census/raw/ordinary-033.json",
+      "sha256": "61333203a0ab69334394ee2204c06aad8cba706d87aa661735f69db60dd051ad"
+    },
+    "selection/textcontrols/selectionchange-on-shadow-dom.html": {
+      "file": "census/raw/ordinary-110.json",
+      "sha256": "4f4385399de9b9b210a07e81bb4929ad579c19623074d7b5cc9974902b53b5c1"
+    },
+    "webmessaging/broadcastchannel/basics.any.html": {
+      "file": "census/raw/ordinary-017.json",
+      "sha256": "7642748aa34d04ea399a6d00291e3b1dcd084c222a9c7fc9a9c9da1146e8e887"
+    },
+    "editing/whitespaces/chrome-compat/forwarddelete.tentative.html": {
+      "file": "census/raw/guard-main-025.json",
+      "sha256": "815d247f1ac38e359cf0aacc91ea6e9044f6426f2ad0ca4653d3fd287bd8b2e7"
+    },
+    "selection/shadow-dom/tentative/Selection-getComposedRanges.html": {
+      "file": "census/raw/ordinary-147.json",
+      "sha256": "7263f5342434d78e4d6a1d7361f97769994be28fdd7aef1b8d0336f757cd5a9a"
+    },
+    "selection/shadow-dom/tentative/Selection-collapse-and-extend.html": {
+      "file": "census/raw/ordinary-155.json",
+      "sha256": "3e4a57ecf571bf6c85b4f987b8d0238ac1630faeb0f34ee0db300cac19c37a4a"
+    },
+    "webmessaging/postMessage_MessagePorts_sorigin.htm": {
+      "file": "census/raw/ordinary-047.json",
+      "sha256": "8b2044380491e9312ee3eb73edfc91b06134b2f1fd0e00746ddf55d1688b8f2e"
+    },
+    "dom/events/EventTarget-this-of-listener.html": {
+      "file": "census/raw/ordinary-004.json",
+      "sha256": "bccfb039b65cf13f966f7f3798700d5d4cf06ccf60720cfdcd56fc08859729a5"
+    },
+    "selection/shadow-dom/tentative/Selection-getComposedRanges-slot.html": {
+      "file": "census/raw/ordinary-098.json",
+      "sha256": "1eff29a8d2ac86e4c86e7127d8dcb0b350b967effd4cbb85a0d5bf774b5ceb99"
+    },
+    "referrer-policy/gen/iframe.http-rp/unset/iframe-tag.http.html": {
+      "file": "census/raw/guard-history-002.json",
+      "sha256": "f20a45c916637308bb30f9fcd6a3d2a69b850b300214fea29f545337cfce9157"
+    },
+    "referrer-policy/gen/srcdoc.meta/unsafe-url/iframe-tag.http.html": {
+      "file": "census/raw/guard-history-002.json",
+      "sha256": "f20a45c916637308bb30f9fcd6a3d2a69b850b300214fea29f545337cfce9157"
+    }
+  }
+}

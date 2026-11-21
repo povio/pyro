@@ -1,0 +1,9 @@
+#!/bin/bash
+set -eu
+d=$(cd "$(dirname "$0")" && pwd)
+c=$HOME/Library/Caches/lightningpanda
+cd "$c/round6-reference-158/census/runner"
+case $1 in base) bin="$c/round6-noncss-measure/combined-305840f45/pyro";; head) bin="$d/pyro";; chrome) bin="$c/round6-reference-158/census/launch-158";; esac
+dirs=non-css
+[[ $2 == css ]] && dirs=css
+exec /usr/bin/time -lp bun bench/wpt/run-no-native-retry.mjs --kind testharness --wpt "$c/wptci/wpt-full" --server wptserve --testdriver --http2 --generated-globals "$c/round6-inventory/MANIFEST-pinned.json" --manifest-inventory --measure-reviewed-skips --dirs "$dirs" --jobs 1 --slow-jobs 0 --tests "$d/$2.urls" --bin "$1=$bin" --out "$d/$1-$2.json" > "$d/$1-$2.log" 2>&1

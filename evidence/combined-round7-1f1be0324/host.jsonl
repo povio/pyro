@@ -1,0 +1,7 @@
+{"at": "2026-11-21T18:57:06.578Z", "elapsedMs": 30011, "cpuBusyPct": 56.7, "logicalCpu": 10, "pressureLevel": "1", "freePct": 83, "swap": "total = 0.00M  used = 0.00M  free = 0.00M  (encrypted)"}
+{"at": "2026-11-21T18:57:36.581Z", "elapsedMs": 30003, "cpuBusyPct": 89.5, "logicalCpu": 10, "pressureLevel": "1", "freePct": 83, "swap": "total = 0.00M  used = 0.00M  free = 0.00M  (encrypted)"}
+{"at": "2026-11-21T18:58:06.583Z", "elapsedMs": 30002, "cpuBusyPct": 80.4, "logicalCpu": 10, "pressureLevel": "1", "freePct": 83, "swap": "total = 0.00M  used = 0.00M  free = 0.00M  (encrypted)"}
+{"at": "2026-11-21T18:58:36.584Z", "elapsedMs": 30001, "cpuBusyPct": 94.2, "logicalCpu": 10, "pressureLevel": "1", "freePct": 83, "swap": "total = 0.00M  used = 0.00M  free = 0.00M  (encrypted)"}
+{"at": "2026-11-21T18:59:06.586Z", "elapsedMs": 30002, "cpuBusyPct": 83, "logicalCpu": 10, "pressureLevel": "1", "freePct": 83, "swap": "total = 0.00M  used = 0.00M  free = 0.00M  (encrypted)"}
+{"at": "2026-11-21T18:59:36.588Z", "elapsedMs": 30002, "cpuBusyPct": 68.9, "logicalCpu": 10, "pressureLevel": "1", "freePct": 83, "swap": "total = 0.00M  used = 0.00M  free = 0.00M  (encrypted)"}
+{"at": "2026-11-21T19:00:06.591Z", "elapsedMs": 30003, "cpuBusyPct": 65.2, "logicalCpu": 10, "pressureLevel": "1", "freePct": 83, "swap": "total = 0.00M  used = 0.00M  free = 0.00M  (encrypted)"}
