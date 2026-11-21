@@ -1112,7 +1112,18 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn flex_direction(&self) -> taffy::FlexDirection {
          convert::flex_direction(self.style.get_position().flex_direction)
-@@ -585,6 +899,16 @@
+@@ -580,11 +894,27 @@
+ // FlexboxItemStyle impl
+ #[cfg(feature = "flexbox")]
+ impl<T: Deref<Target = ComputedValues>> taffy::FlexboxItemStyle for TaffyStyloStyle<T> {
++    fn orthogonal_block_start_is_far(&self) -> Option<bool> {
++        let child = self.style.writing_mode;
++        let parent = self.layout_wm();
++        (child.is_vertical() != parent.is_vertical()).then(|| parent.direction_of(child).is_rtl())
++    }
++
+     #[inline]
+     fn flex_basis(&self) -> taffy::Dimension {
          convert::flex_basis(&self.style.get_position().flex_basis)
      }
  
@@ -1129,7 +1140,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn flex_grow(&self) -> f32 {
          self.style.get_position().flex_grow.0
-@@ -595,6 +919,26 @@
+@@ -595,6 +925,26 @@
          self.style.get_position().flex_shrink.0
      }
  
@@ -1156,7 +1167,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn align_self(&self) -> Option<taffy::AlignSelf> {
          self.self_alignment(
-@@ -874,6 +1218,70 @@
+@@ -874,6 +1224,70 @@
          convert::grid_auto_flow(self.style.get_position().grid_auto_flow)
      }
  
@@ -1227,7 +1238,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn gap(&self) -> taffy::Size<taffy::LengthPercentage> {
          let position_styles = self.style.get_position();
-@@ -922,11 +1330,66 @@
+@@ -922,11 +1336,66 @@
  // GridItemStyle impl
  #[cfg(feature = "grid")]
  impl<T: Deref<Target = ComputedValues>> taffy::GridItemStyle for TaffyStyloStyle<T> {
@@ -1294,7 +1305,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
      #[inline]
      fn grid_column(&self) -> taffy::Line<taffy::GridPlacement<Atom>> {
          self.grid_column_placement()
-@@ -950,6 +1413,16 @@
+@@ -950,6 +1419,16 @@
  }
  
  impl<T: Deref<Target = ComputedValues>> taffy::OofItemStyle for TaffyStyloStyle<T> {

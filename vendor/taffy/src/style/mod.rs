@@ -1493,6 +1493,10 @@ impl<S: CheapCloneStr> FlexboxItemStyle for Style<S> {
 
 #[cfg(feature = "flexbox")]
 impl<T: FlexboxItemStyle> FlexboxItemStyle for &'_ T {
+    fn orthogonal_block_start_is_far(&self) -> Option<bool> {
+        (*self).orthogonal_block_start_is_far()
+    }
+
     #[inline(always)]
     fn flex_basis(&self) -> Dimension {
         (*self).flex_basis()

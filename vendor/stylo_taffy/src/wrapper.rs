@@ -894,6 +894,12 @@ impl<T: Deref<Target = ComputedValues>> taffy::FlexboxContainerStyle for TaffySt
 // FlexboxItemStyle impl
 #[cfg(feature = "flexbox")]
 impl<T: Deref<Target = ComputedValues>> taffy::FlexboxItemStyle for TaffyStyloStyle<T> {
+    fn orthogonal_block_start_is_far(&self) -> Option<bool> {
+        let child = self.style.writing_mode;
+        let parent = self.layout_wm();
+        (child.is_vertical() != parent.is_vertical()).then(|| parent.direction_of(child).is_rtl())
+    }
+
     #[inline]
     fn flex_basis(&self) -> taffy::Dimension {
         convert::flex_basis(&self.style.get_position().flex_basis)

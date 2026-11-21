@@ -1191,6 +1191,21 @@ fn flow_parity_shrink_to_fit_min_content_floor() {
 }
 
 #[test]
+fn flex_column_aligns_orthogonal_first_baselines() {
+    for (mode, first_x, second_x) in [("vertical-lr", 10.0, 40.0), ("vertical-rl", 150.0, 190.0)] {
+        let html = format!(
+            "<!doctype html><style>body{{margin:0}}main{{display:flex;flex-direction:column;width:200px;\
+             align-items:baseline;font:10px/10px monospace}}main>div{{writing-mode:{mode}}}\
+             #first{{padding-left:30px;margin-left:10px}}</style><main>\
+             <div id=first>two<br>lines</div><div id=second>one</div></main>"
+        );
+        let layout = page(&html);
+        assert_eq!(layout.metrics("first")[0], first_x, "{mode}");
+        assert_eq!(layout.metrics("second")[0], second_x, "{mode}");
+    }
+}
+
+#[test]
 fn flex_compressible_mixed_percentage_keeps_length() {
     for (direction, writing_mode, metric) in [("row", "horizontal-tb", 2), ("column", "vertical-lr", 3)] {
         for kind in ["text", "range"] {

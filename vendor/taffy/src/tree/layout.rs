@@ -321,7 +321,7 @@ pub struct Baselines {
     pub last: Option<f32>,
     /// pyro: the first and last baselines of a node laid out in a writing mode orthogonal to its parent's
     /// (`LayoutOutput::transpose`), measured along the parent's inline axis from the node's own block-start
-    /// edge. Only grid baseline alignment in the inline axis (`justify-self: baseline`) reads them.
+    /// edge, for inline-axis baseline alignment in grid and column flex layout.
     pub orthogonal_first: Option<f32>,
     /// pyro: see `orthogonal_first`
     pub orthogonal_last: Option<f32>,
