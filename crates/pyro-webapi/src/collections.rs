@@ -2783,12 +2783,8 @@ pub fn animated_number_list<'s>(s: &Scope<'s>, n: &NodeData, attr: &'static str)
         return Ok(obj.value());
     }
     let hold = NodeHold::new(n.page(), n.id)?;
-    let write = Box::new(move |text: Option<&str>| {
-        let mut dom = hold.page.dom.borrow_mut();
-        match text {
-            Some(text) => dom.set_attribute_local(hold.id, &pyro_dom::LocalName::from(attr), text),
-            None => dom.remove_attribute_ns(hold.id, None, attr).map(|_| ()),
-        }
+    let write = Box::new(move |text: &str| {
+        hold.page.dom.borrow_mut().set_attribute_local(hold.id, &pyro_dom::LocalName::from(attr), text)
     });
     let lists = n.page().dom.borrow_mut().svg_number_lists(n.id, attr, write).js()?;
     Ok(s.wrap::<SvgAnimatedNumberList>(lists, Some(key))?.value())

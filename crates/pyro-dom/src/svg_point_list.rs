@@ -7,7 +7,7 @@ use std::fmt::Write;
 use std::rc::{Rc, Weak};
 
 type Pair = (f32, f32);
-type Writer = Box<dyn Fn(Option<&str>) -> DomResult<()>>;
+type Writer = Box<dyn Fn(&str) -> DomResult<()>>;
 
 pub(crate) fn parse_points(text: &str) -> impl Iterator<Item = Pair> + '_ {
     svgtypes::PointsParser::from(text).map_while(|(x, y)| {
@@ -151,7 +151,7 @@ impl<T: Copy> ListStorage<T> {
         // The ordinary attribute write queues mutation records and dirties
         // geometry. Its observer must not renumber the just-edited objects.
         self.writing.set(true);
-        let result = (self.write)((!text.is_empty()).then_some(&text));
+        let result = (self.write)(&text);
         self.writing.set(false);
         result
     }
@@ -274,12 +274,13 @@ impl NumberLists {
 }
 
 impl Dom {
-    pub fn svg_point_lists(&mut self, id: NodeId, write: Writer) -> DomResult<Rc<PointLists>> {
+    pub fn svg_point_lists(&mut self, id: NodeId, write: Box<dyn Fn(Option<&str>) -> DomResult<()>>) -> DomResult<Rc<PointLists>> {
         let index = self.check(id)?;
         if let Some(lists) = self.svg_points.get(&index).and_then(Weak::upgrade) {
             return Ok(lists);
         }
-        let lists = PointLists::new(write, |text, (x, y)| {
+        let point_writer = Box::new(move |text: &str| write((!text.is_empty()).then_some(text)));
+        let lists = PointLists::new(point_writer, |text, (x, y)| {
             write!(text, "{x} {y}").expect("writing to String is infallible");
         });
         lists.attribute_changed(self.get_attribute_ns(id, None, "points")?.unwrap_or_default());
