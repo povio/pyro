@@ -1,0 +1,88 @@
+<!doctype html>
+<title>IndexedDB interface and handler checks</title>
+<script src="/resources/testharness.js"></script>
+<script src="/resources/testharnessreport.js"></script>
+<body>
+<script>
+test(() => {
+  for (const name of ['only','lowerBound','upperBound','bound']) {
+    const d=Object.getOwnPropertyDescriptor(IDBKeyRange,name);
+    assert_true(d.enumerable);assert_true(d.writable);assert_true(d.configurable);
+  }
+  assert_false(Object.getOwnPropertyDescriptor(IDBKeyRange.prototype,'constructor').enumerable);
+  assert_false(Object.getOwnPropertyDescriptor(DOMStringList.prototype,Symbol.iterator).enumerable);
+  assert_false(Object.getOwnPropertyDescriptor(IDBIndex.prototype,Symbol.toStringTag).enumerable);
+},'Enumerability preserves constructor, iterator and toStringTag descriptors');
+test(() => {
+  for (const C of [IDBKeyRange,IDBRequest,IDBOpenDBRequest,IDBCursor,IDBCursorWithValue,IDBIndex,IDBRecord,IDBTransaction,IDBObjectStore,IDBDatabase,DOMStringList]) {
+    assert_equals(C.length,0,C.name); assert_throws_js(TypeError,()=>new C());
+  }
+  assert_equals(IDBVersionChangeEvent.length,1);assert_equals(new IDBVersionChangeEvent('upgrade').oldVersion,0);
+},'Public and illegal constructors retain their IDL lengths');
+test(() => {
+  for (const [C,n] of [[IDBRequest,'onsuccess'],[IDBOpenDBRequest,'onblocked'],[IDBTransaction,'oncomplete'],[IDBDatabase,'onclose']]) {
+    const d=Object.getOwnPropertyDescriptor(C.prototype,n);
+    assert_equals(d.get.name,'get '+n);assert_equals(d.set.name,'set '+n);
+    assert_equals(d.get.length,0);assert_equals(d.set.length,1);
+    assert_equals(d.get,Object.getOwnPropertyDescriptor(C.prototype,n).get);
+    assert_throws_js(TypeError,()=>d.get.call(Object.create(C.prototype)));
+    assert_throws_js(TypeError,()=>d.set.call(new EventTarget(),()=>{}));
+  }
+},'Stable computed accessor names, lengths and receiver checks');
+promise_test(async t=>{
+  const iframe=document.createElement('iframe');document.body.append(iframe);t.add_cleanup(()=>iframe.remove());
+  const win=iframe.contentWindow;
+  const request=win.indexedDB.open('borrowed-'+Math.random());
+  const getter=Object.getOwnPropertyDescriptor(IDBRequest.prototype,'onsuccess').get;
+  const setter=Object.getOwnPropertyDescriptor(IDBRequest.prototype,'onsuccess').set;
+  await new Promise((resolve,reject)=>{
+    request.onerror=()=>reject(request.error);
+    const handler=t.step_func(()=>{assert_equals(request.onsuccess,handler);request.result.close();resolve();});
+    assert_equals(getter.call(request),null);
+    setter.call(request,handler);
+    assert_equals(getter.call(request),handler);
+  });
+},'Borrowed request accessor sees and sets same-origin frame handler');
+promise_test(async t=>{
+  const db=await new Promise((resolve,reject)=>{
+    const r=indexedDB.open('idl-binding-'+Math.random());
+    r.onupgradeneeded=()=>r.result.createObjectStore('s');r.onerror=()=>reject(r.error);r.onsuccess=()=>resolve(r.result);
+  });t.add_cleanup(()=>db.close());
+  const tx=db.transaction('s','readwrite');const store=tx.objectStore('s');
+  const write=store.put('one',1);const read=store.get(1);
+  assert_throws_js(TypeError,()=>Object.getOwnPropertyDescriptor(IDBOpenDBRequest.prototype,'onblocked').get.call(read));
+  const events=[];const replacement=()=>events.push('stored');
+  write.onsuccess=()=>events.push('old');write.onsuccess=replacement;
+  read.onsuccess=()=>events.push(read.result);
+  await new Promise((resolve,reject)=>{tx.oncomplete=resolve;tx.onabort=()=>reject(tx.error);});
+  assert_array_equals(events,['stored','one']);
+},'Request subtyping and handler replacement preserve transactions');
+promise_test(async()=>{
+  const r=indexedDB.open('listener-slots-'+Math.random());
+  await new Promise((resolve,reject)=>{r.onsuccess=resolve;r.onerror=()=>reject(r.error)});
+  const order=[];
+  r.onerror=null;
+  r.addEventListener('error',()=>order.push('first'));
+  r.onerror=()=>order.push('removed');
+  r.onerror=null;
+  r.addEventListener('error',()=>order.push('second'));
+  r.onerror=()=>{order.push('last');return false};
+  const dispatched=r.dispatchEvent(new Event('error',{cancelable:true}));
+  assert_array_equals(order,['first','second','last']);assert_false(dispatched);
+  r.result.close();
+},'Handler reactivation rejoins after active listeners and cancels on false');
+promise_test(async()=>{
+  const f=document.createElement('iframe');document.body.append(f);
+  const borrowed=Object.getOwnPropertyDescriptor(f.contentWindow.IDBRequest.prototype,'onsuccess').set;
+  const r=indexedDB.open('teardown-'+Math.random());
+  let fired=0;borrowed.call(r,()=>++fired);f.remove();
+  await new Promise((resolve,reject)=>{r.addEventListener('success',resolve);r.onerror=()=>reject(r.error)});
+  assert_equals(fired,1);r.result.close();
+},'A parent request retains its handler after the accessor iframe is removed');
+promise_test(async()=>{
+  const r=indexedDB.open('assignment-'+Math.random());
+  await new Promise(resolve=>r.onsuccess=resolve);
+  const object={};r.onerror=object;assert_equals(r.onerror,object);
+  r.onerror=42;assert_equals(r.onerror,null);r.result.close();
+},'Non-callable objects and primitive EventHandler assignments');
+</script>

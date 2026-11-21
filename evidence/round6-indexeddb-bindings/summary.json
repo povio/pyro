@@ -1,0 +1,465 @@
+{
+  "base": {
+    "Pass": 825,
+    "fullPages": 44,
+    "page_complete": 55,
+    "Fail": 455,
+    "page_error": 5
+  },
+  "head": {
+    "Pass": 1225,
+    "fullPages": 44,
+    "page_complete": 55,
+    "Fail": 55,
+    "page_error": 5
+  },
+  "chrome": {
+    "Pass": 1280,
+    "fullPages": 60,
+    "page_complete": 60
+  },
+  "gains": 400,
+  "losses": 0,
+  "failures": [
+    [
+      "IndexedDB/idbdatabase_deleteObjectStore.any.html",
+      "Attempting to access an index that was deleted as part of object store deletion and then recreated using the same object store name should throw a NotFoundError",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idbdatabase_deleteObjectStore.any.html",
+      "Deleted object store's name should be removed from database's list. Attempting to use a deleted IDBObjectStore should throw an InvalidStateError",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idbdatabase_deleteObjectStore.any.serviceworker.html",
+      "Attempting to access an index that was deleted as part of object store deletion and then recreated using the same object store name should throw a NotFoundError",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idbdatabase_deleteObjectStore.any.serviceworker.html",
+      "Deleted object store's name should be removed from database's list. Attempting to use a deleted IDBObjectStore should throw an InvalidStateError",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idbdatabase_deleteObjectStore.any.sharedworker.html",
+      "Attempting to access an index that was deleted as part of object store deletion and then recreated using the same object store name should throw a NotFoundError",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idbdatabase_deleteObjectStore.any.sharedworker.html",
+      "Deleted object store's name should be removed from database's list. Attempting to use a deleted IDBObjectStore should throw an InvalidStateError",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idbdatabase_deleteObjectStore.any.worker.html",
+      "Attempting to access an index that was deleted as part of object store deletion and then recreated using the same object store name should throw a NotFoundError",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idbdatabase_deleteObjectStore.any.worker.html",
+      "Deleted object store's name should be removed from database's list. Attempting to use a deleted IDBObjectStore should throw an InvalidStateError",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idbobjectstore_createIndex.any.html",
+      "Attempt to create an index that requires unique values on an object store already contains duplicates",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idbobjectstore_createIndex.any.html",
+      "Event order when unique constraint is triggered",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idbobjectstore_createIndex.any.html",
+      "Event ordering for a later deleted index",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idbobjectstore_createIndex.any.serviceworker.html",
+      "Attempt to create an index that requires unique values on an object store already contains duplicates",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idbobjectstore_createIndex.any.serviceworker.html",
+      "Event order when unique constraint is triggered",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idbobjectstore_createIndex.any.serviceworker.html",
+      "Event ordering for a later deleted index",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idbobjectstore_createIndex.any.sharedworker.html",
+      "Attempt to create an index that requires unique values on an object store already contains duplicates",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idbobjectstore_createIndex.any.sharedworker.html",
+      "Event order when unique constraint is triggered",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idbobjectstore_createIndex.any.sharedworker.html",
+      "Event ordering for a later deleted index",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idbobjectstore_createIndex.any.worker.html",
+      "Attempt to create an index that requires unique values on an object store already contains duplicates",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idbobjectstore_createIndex.any.worker.html",
+      "Event order when unique constraint is triggered",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idbobjectstore_createIndex.any.worker.html",
+      "Event ordering for a later deleted index",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idbtransaction_abort.any.html",
+      "Abort event should fire during transaction",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idbtransaction_abort.any.serviceworker.html",
+      "Abort event should fire during transaction",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idbtransaction_abort.any.sharedworker.html",
+      "Abort event should fire during transaction",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idbtransaction_abort.any.worker.html",
+      "Abort event should fire during transaction",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idlharness.any.html",
+      "Window interface: attribute indexedDB",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idlharness.any.serviceworker.html",
+      "IDBCursor interface: existence and properties of interface object",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idlharness.any.serviceworker.html",
+      "IDBCursorWithValue interface: existence and properties of interface object",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idlharness.any.serviceworker.html",
+      "IDBDatabase interface: existence and properties of interface object",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idlharness.any.serviceworker.html",
+      "IDBIndex interface: existence and properties of interface object",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idlharness.any.serviceworker.html",
+      "IDBObjectStore interface: existence and properties of interface object",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idlharness.any.serviceworker.html",
+      "IDBOpenDBRequest interface: existence and properties of interface object",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idlharness.any.serviceworker.html",
+      "IDBRecord interface: existence and properties of interface object",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idlharness.any.serviceworker.html",
+      "IDBRequest interface: existence and properties of interface object",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idlharness.any.serviceworker.html",
+      "IDBTransaction interface: existence and properties of interface object",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idlharness.any.serviceworker.html",
+      "IDBVersionChangeEvent interface: existence and properties of interface object",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idlharness.any.sharedworker.html",
+      "IDBCursor interface: existence and properties of interface object",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idlharness.any.sharedworker.html",
+      "IDBCursorWithValue interface: existence and properties of interface object",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idlharness.any.sharedworker.html",
+      "IDBDatabase interface: existence and properties of interface object",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idlharness.any.sharedworker.html",
+      "IDBIndex interface: existence and properties of interface object",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idlharness.any.sharedworker.html",
+      "IDBObjectStore interface: existence and properties of interface object",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idlharness.any.sharedworker.html",
+      "IDBOpenDBRequest interface: existence and properties of interface object",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idlharness.any.sharedworker.html",
+      "IDBRecord interface: existence and properties of interface object",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idlharness.any.sharedworker.html",
+      "IDBRequest interface: existence and properties of interface object",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idlharness.any.sharedworker.html",
+      "IDBTransaction interface: existence and properties of interface object",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idlharness.any.sharedworker.html",
+      "IDBVersionChangeEvent interface: existence and properties of interface object",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idlharness.any.worker.html",
+      "IDBCursor interface: existence and properties of interface object",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idlharness.any.worker.html",
+      "IDBCursorWithValue interface: existence and properties of interface object",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idlharness.any.worker.html",
+      "IDBDatabase interface: existence and properties of interface object",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idlharness.any.worker.html",
+      "IDBIndex interface: existence and properties of interface object",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idlharness.any.worker.html",
+      "IDBObjectStore interface: existence and properties of interface object",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idlharness.any.worker.html",
+      "IDBOpenDBRequest interface: existence and properties of interface object",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idlharness.any.worker.html",
+      "IDBRecord interface: existence and properties of interface object",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idlharness.any.worker.html",
+      "IDBRequest interface: existence and properties of interface object",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idlharness.any.worker.html",
+      "IDBTransaction interface: existence and properties of interface object",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ],
+    [
+      "IndexedDB/idlharness.any.worker.html",
+      "IDBVersionChangeEvent interface: existence and properties of interface object",
+      1,
+      "Fail",
+      "Fail",
+      "Pass"
+    ]
+  ]
+}
