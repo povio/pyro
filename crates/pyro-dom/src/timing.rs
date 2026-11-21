@@ -432,6 +432,19 @@ impl TimingRules {
         self.keyframe_longhands.get(name).is_some_and(|l| l.contains(longhand))
     }
 
+    pub fn may_sample_display(&self, effect: &crate::animation::Effect) -> bool {
+        match &effect.keyframes {
+            crate::animation::Keyframes::Css { name, .. } => {
+                self.keyframes_declare(name, "display") || self.keyframes_declare(name, "--*")
+            }
+            crate::animation::Keyframes::Text(frames) => frames.frames.iter().any(|frame| {
+                crate::style::parse_declarations(&frame.declarations).iter().any(|decl| {
+                    decl.name.eq_ignore_ascii_case("display") || decl.name.starts_with("--") || decl.name.eq_ignore_ascii_case("all")
+                })
+            }),
+        }
+    }
+
     /// The elements of `doc` that may run an animation: those a rule
     /// declaring an animation name matches, and those whose `style`
     /// attribute declares one.
@@ -1399,6 +1412,10 @@ fn keyframe_longhands(p: &mut Parser<'_>, src: &str) -> Vec<&'static str> {
             while n.next_including_whitespace_and_comments().is_ok() {}
             let body = src.get(start..n.position().byte_index()).unwrap_or("");
             for d in crate::style::parse_declarations(body) {
+                if d.name.starts_with("--") {
+                    out.push("--*");
+                    continue;
+                }
                 let Some(id) = crate::stylo::property_id(&d.name.to_ascii_lowercase()) else { continue };
                 match id.as_shorthand() {
                     Ok(shorthand) => out.extend(shorthand.longhands().map(|l| l.name())),
