@@ -1,4 +1,5 @@
 use super::*;
+use pyro_dom::svg_aspect_ratio::PreserveAspectRatio;
 
 pub(super) fn register(engine: &pyro_js::Engine) {
     engine.register::<AnimatedAspect>();
@@ -17,16 +18,37 @@ impl JsClass for AnimatedAspect {
     type Data = NodeHold;
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
-        for (name, readonly) in [("baseVal", false), ("animVal", true)] {
-            def.getter(name, move |s, el| {
-                let key = coll_identity(&el.page, 445 + u64::from(readonly), el.id);
-                if let Some(value) = s.lookup_identity(key) {
-                    return Ok(value.value());
-                }
-                let data = AspectData { el: NodeHold::new(&el.page, el.id)?, readonly };
-                Ok(s.wrap::<Aspect>(data, Some(key))?.value())
-            });
+        def.getter("baseVal", |s, el| reflected(s, el, false));
+        def.getter("animVal", |s, el| reflected(s, el, true));
+    }
+}
+
+fn reflected<'s>(s: &Scope<'s>, el: &NodeHold, readonly: bool) -> JsResult<Value<'s>> {
+    let key = coll_identity(&el.page, 445 + u64::from(readonly), el.id);
+    if let Some(value) = s.lookup_identity(key) {
+        return Ok(value.value());
+    }
+    let data = AspectData { el: NodeHold::new(&el.page, el.id)?, readonly };
+    Ok(s.wrap::<Aspect>(data, Some(key))?.value())
+}
+
+impl AspectData {
+    fn aspect(&self) -> JsResult<PreserveAspectRatio> {
+        self.el.page.dom.borrow().svg_aspect_ratio(self.el.id).js()
+    }
+
+    fn set(
+        &self,
+        value: Value<'_>,
+        update: fn(PreserveAspectRatio, u16) -> Option<PreserveAspectRatio>,
+    ) -> JsResult<()> {
+        let value = to_u32(value)? as u16;
+        if self.readonly {
+            return Err(JsError::dom("NoModificationAllowedError", "The animated value is read-only."));
         }
+        let next = update(self.aspect()?, value)
+            .ok_or_else(|| JsError::Type("Unsupported preserveAspectRatio value.".into()))?;
+        self.el.page.dom.borrow_mut().set_svg_aspect_ratio(self.el.id, next).js()
     }
 }
 
@@ -56,26 +78,16 @@ impl JsClass for Aspect {
         def.constant("SVG_MEETORSLICE_UNKNOWN", 0.);
         def.constant("SVG_MEETORSLICE_MEET", 1.);
         def.constant("SVG_MEETORSLICE_SLICE", 2.);
-        for (name, align) in [("align", true), ("meetOrSlice", false)] {
-            def.accessor(
-                name,
-                move |s, data| {
-                    let aspect = data.el.page.dom.borrow().svg_aspect_ratio(data.el.id).js()?;
-                    Ok(s.number(f64::from(if align { aspect.align() } else { aspect.meet_or_slice() })))
-                },
-                move |_s, data, value| {
-                    let value = to_u32(value)? as u16;
-                    if data.readonly {
-                        return Err(JsError::dom("NoModificationAllowedError", "The animated value is read-only."));
-                    }
-                    let mut dom = data.el.page.dom.borrow_mut();
-                    let current = dom.svg_aspect_ratio(data.el.id).js()?;
-                    let next = if align { current.with_align(value) } else { current.with_meet_or_slice(value) }
-                        .ok_or_else(|| JsError::Type("Unsupported preserveAspectRatio value.".into()))?;
-                    dom.set_svg_aspect_ratio(data.el.id, next).js()
-                },
-            );
-        }
+        def.accessor(
+            "align",
+            |s, d| Ok(s.number(f64::from(d.aspect()?.align()))),
+            |_, d, value| d.set(value, PreserveAspectRatio::with_align),
+        );
+        def.accessor(
+            "meetOrSlice",
+            |s, d| Ok(s.number(f64::from(d.aspect()?.meet_or_slice()))),
+            |_, d, value| d.set(value, PreserveAspectRatio::with_meet_or_slice),
+        );
     }
 }
 
