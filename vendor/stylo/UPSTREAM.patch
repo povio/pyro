@@ -8418,8 +8418,96 @@ diff -ruN a/values/generics/basic_shape.rs b/values/generics/basic_shape.rs
  
 diff -ruN a/values/generics/calc.rs b/values/generics/calc.rs
 --- a/values/generics/calc.rs	2026-11-11 19:55:57
-+++ b/values/generics/calc.rs	2026-11-20 20:06:02
-@@ -2554,10 +2554,29 @@
++++ b/values/generics/calc.rs	2026-11-21 16:11:37
+@@ -27,6 +27,30 @@
+ 
+ use thin_vec::ThinVec;
+ 
++// CSS Values 4 specifies the exceptional results before ordinary exponentiation.
++fn css_pow(base: f32, exponent: f32) -> f32 {
++    if base.is_nan() || exponent.is_nan() || (base.abs() == 1.0 && exponent.is_infinite()) {
++        return f32::NAN;
++    }
++    base.powf(exponent)
++}
++
++fn css_log(value: f32, base: f32) -> f32 {
++    if base.is_nan() || base <= 0.0 || base == 1.0 {
++        return f32::NAN;
++    }
++    if value == 0.0 {
++        return f32::NEG_INFINITY;
++    }
++    if value == 1.0 {
++        return 0.0;
++    }
++    if value == f32::INFINITY {
++        return f32::INFINITY;
++    }
++    value.log(base)
++}
++
+ /// Whether we're a `min` or `max` function.
+ #[derive(
+     Clone,
+@@ -1404,7 +1428,7 @@
+                 // TODO(emilio): Seems like at least a few of these
+                 // special-cases could be removed if we do the math in a
+                 // particular order.
+-                if step.is_zero() {
++                if step.is_zero() || step.is_nan() || value.is_nan() {
+                     value = f32::NAN;
+                 } else if value.is_infinite() {
+                     if step.is_infinite() {
+@@ -1534,7 +1558,7 @@
+                 if !a_ty.is_number() || !b_ty.is_number() {
+                     return Err(());
+                 }
+-                Ok((a.powf(b), NumericType::number()))
++                Ok((css_pow(a, b), NumericType::number()))
+             },
+             Self::Sqrt(c) => {
+                 let (value, ty) = c.resolve_internal(leaf_to_output_fn)?;
+@@ -1566,7 +1590,7 @@
+                         if !b_ty.is_number() {
+                             return Err(());
+                         }
+-                        a.log(b)
++                        css_log(a, b)
+                     },
+                     Optional::None => a.ln(),
+                 };
+@@ -1923,7 +1947,10 @@
+                 ref mut value,
+                 ref mut step,
+             } => {
+-                if value_or_stop!(step.is_zero_leaf()) {
++                if value_or_stop!(step.is_zero_leaf())
++                    || value_or_stop!(step.is_nan_leaf())
++                    || value_or_stop!(value.is_nan_leaf())
++                {
+                     value_or_stop!(value.coerce_to_value(f32::NAN));
+                     replace_self_with!(&mut **value);
+                     return SimplificationResult::Simplified;
+@@ -2333,7 +2360,7 @@
+                 if let (CalcNode::Leaf(la), CalcNode::Leaf(lb)) = (&**a, &**b)
+                     && let (Some(a_val), Some(b_val)) = (la.as_number(), lb.as_number())
+                 {
+-                    let mut result = Self::Leaf(L::new_number(a_val.powf(b_val)));
++                    let mut result = Self::Leaf(L::new_number(css_pow(a_val, b_val)));
+                     replace_self_with!(&mut result);
+                     return SimplificationResult::Simplified;
+                 }
+@@ -2369,7 +2396,7 @@
+                     let folded = match b {
+                         &mut Optional::Some(ref b) => {
+                             if let CalcNode::Leaf(ref lb) = **b {
+-                                lb.as_number().map(|b_val| a_val.log(b_val))
++                                lb.as_number().map(|b_val| css_log(a_val, b_val))
+                             } else {
+                                 None
+                             }
+@@ -2554,10 +2581,29 @@
          res
      }
  
@@ -8450,7 +8538,7 @@ diff -ruN a/values/generics/calc.rs b/values/generics/calc.rs
          let write_closing_paren = match self {
              Self::MinMax(_, op) => {
                  dest.write_str(match op {
-@@ -2703,11 +2722,11 @@
+@@ -2703,11 +2749,11 @@
                          dest.write_str(", ")?;
                      }
                      first = false;
@@ -8464,7 +8552,7 @@ diff -ruN a/values/generics/calc.rs b/values/generics/calc.rs
              },
              Self::Sum(ref children) => {
                  let mut first = true;
-@@ -2721,24 +2740,24 @@
+@@ -2721,24 +2767,24 @@
                                      // We can unwrap here, because we already
                                      // checked if the value inside is negative.
                                      negated.map(std::ops::Neg::neg).unwrap();
@@ -8494,7 +8582,7 @@ diff -ruN a/values/generics/calc.rs b/values/generics/calc.rs
                      }
                  }
              },
-@@ -2749,16 +2768,16 @@
+@@ -2749,16 +2795,16 @@
                          match child {
                              Self::Invert(n) => {
                                  dest.write_str(" / ")?;
@@ -8514,7 +8602,7 @@ diff -ruN a/values/generics/calc.rs b/values/generics/calc.rs
                      }
                  }
              },
-@@ -2767,58 +2786,58 @@
+@@ -2767,58 +2813,58 @@
                  ref center,
                  ref max,
              } => {
@@ -8589,7 +8677,7 @@ diff -ruN a/values/generics/calc.rs b/values/generics/calc.rs
              },
              Self::Progress {
                  clamping_mode,
-@@ -2830,28 +2849,28 @@
+@@ -2830,28 +2876,28 @@
                      clamping_mode.to_css(dest)?;
                      dest.write_char(' ')?;
                  }
@@ -12198,6 +12286,25 @@ diff -ruN a/values/specified/text.rs b/values/specified/text.rs
  /// https://svgwg.org/svg2-draft/painting.html#TextRenderingProperty
  #[allow(missing_docs)]
  #[derive(
+diff -ruN a/values/specified/time.rs b/values/specified/time.rs
+--- a/values/specified/time.rs	2026-11-11 19:55:57
++++ b/values/specified/time.rs	2026-11-21 16:10:02
+@@ -217,6 +217,15 @@
+         self.0.is_boxed()
+     }
+ 
++    /// Resolves an arithmetic expression whose operands need no element context.
++    pub fn calc_seconds_without_context(&self) -> Option<CSSFloat> {
++        let Unpacked::Boxed(calc) = self.0.unpack() else {
++            return None;
++        };
++        let value = calc.clamping_mode.clamp(calc.as_time()?.seconds());
++        Some(crate::values::normalize(value).clamp(f32::MIN, f32::MAX))
++    }
++
+     fn parse_with_clamping_mode(
+         context: &ParserContext,
+         input: &mut Parser,
 diff -ruN a/values/specified/transform.rs b/values/specified/transform.rs
 --- a/values/specified/transform.rs	2026-11-11 19:55:57
 +++ b/values/specified/transform.rs	2026-11-14 18:55:29
