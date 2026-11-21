@@ -596,7 +596,11 @@ impl JsClass for CssStyleDeclaration {
             a.require(2, "CSSStyleDeclaration.setProperty")?;
             let name = property_arg(arg_string(&a, 0, "CSSStyleDeclaration.setProperty")?);
             let value = null_to_empty(a.get(1))?;
-            let prio = if a.get(2).is_undefined() { String::new() } else { dom_string(a.get(2))? };
+            let prio = if a.get(2).is_undefined() { String::new() } else { null_to_empty(a.get(2))? };
+            if value.is_empty() {
+                st.remove(&name)?;
+                return Ok(s.undefined());
+            }
             if !prio.is_empty() && !prio.eq_ignore_ascii_case("important") {
                 return Ok(s.undefined());
             }

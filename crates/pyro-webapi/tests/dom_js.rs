@@ -6681,6 +6681,15 @@ fn nested_style_rules_preserve_live_children_and_declaration_order() {
 }
 
 #[test]
+fn cssom_set_property_priority_conversion_and_removal() {
+    let env = env("<style>div { color: red !important }</style>");
+    assert_eq!(eval(&env.main, "const style = document.styleSheets[0].cssRules[0].style;
+        style.setProperty('color', 'blue', null); style.setProperty('color', 'red', 'unknown');
+        const before = [style.color, style.getPropertyPriority('color')];
+        style.setProperty('color', '', 'unknown'); [...before, style.length].join('|')"), "blue||0");
+}
+
+#[test]
 fn nested_cssom_edits_respect_rule_context() {
     let env = env("<style>.outer { @media all { .a {} } }</style>");
     assert_eq!(eval(&env.main, "const outer = document.styleSheets[0].cssRules[0], group = outer.cssRules[0], child = group.cssRules[0];
