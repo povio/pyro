@@ -1,0 +1,22 @@
+{
+  "unstyledLimit": {
+    "ordinary-base": [
+      2.728,
+      1.5
+    ],
+    "hdr-fixed": [
+      3.619,
+      2.0
+    ]
+  },
+  "inheritedLimit": {
+    "ordinary-base": [
+      3.314,
+      1.0
+    ],
+    "hdr-fixed": [
+      3.338,
+      2.0
+    ]
+  }
+}

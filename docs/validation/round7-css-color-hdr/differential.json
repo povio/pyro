@@ -1,0 +1,538 @@
+{
+  "pages": 4,
+  "names": 116,
+  "old": 17,
+  "new": 113,
+  "gained": [
+    [
+      "css/css-color-hdr/computed.html",
+      "Property dynamic-range-limit value 'constrained'",
+      1
+    ],
+    [
+      "css/css-color-hdr/computed.html",
+      "Property dynamic-range-limit value 'dynamic-range-limit-mix(constrained 25%, no-limit 25%)'",
+      1
+    ],
+    [
+      "css/css-color-hdr/computed.html",
+      "Property dynamic-range-limit value 'dynamic-range-limit-mix(constrained 75%, standard 25%)'",
+      1
+    ],
+    [
+      "css/css-color-hdr/computed.html",
+      "Property dynamic-range-limit value 'dynamic-range-limit-mix(dynamic-range-limit-mix(standard 10%, no-limit 30%) 20%, standard 80%)'",
+      1
+    ],
+    [
+      "css/css-color-hdr/computed.html",
+      "Property dynamic-range-limit value 'dynamic-range-limit-mix(dynamic-range-limit-mix(standard 25%, no-limit 75%) 20%, dynamic-range-limit-mix(standard 25%, constrained 75%) 40%, dynamic-range-limit-mix(constrained 25%, no-limit 75%) 40%)'",
+      1
+    ],
+    [
+      "css/css-color-hdr/computed.html",
+      "Property dynamic-range-limit value 'dynamic-range-limit-mix(no-limit 10%, dynamic-range-limit-mix(standard 25%, constrained 75%) 20%, dynamic-range-limit-mix(constrained 10%, no-limit 30%) 20%)'",
+      1
+    ],
+    [
+      "css/css-color-hdr/computed.html",
+      "Property dynamic-range-limit value 'dynamic-range-limit-mix(no-limit 10%, standard 30%)'",
+      1
+    ],
+    [
+      "css/css-color-hdr/computed.html",
+      "Property dynamic-range-limit value 'dynamic-range-limit-mix(no-limit 100%, no-limit 0%)'",
+      1
+    ],
+    [
+      "css/css-color-hdr/computed.html",
+      "Property dynamic-range-limit value 'dynamic-range-limit-mix(no-limit 100%, standard 0%)'",
+      1
+    ],
+    [
+      "css/css-color-hdr/computed.html",
+      "Property dynamic-range-limit value 'dynamic-range-limit-mix(no-limit 100%, standard 100%)'",
+      1
+    ],
+    [
+      "css/css-color-hdr/computed.html",
+      "Property dynamic-range-limit value 'dynamic-range-limit-mix(no-limit 25%, standard 25%, standard 25%, standard 25%)'",
+      1
+    ],
+    [
+      "css/css-color-hdr/computed.html",
+      "Property dynamic-range-limit value 'dynamic-range-limit-mix(no-limit 25%, standard 75%)'",
+      1
+    ],
+    [
+      "css/css-color-hdr/computed.html",
+      "Property dynamic-range-limit value 'dynamic-range-limit-mix(no-limit 80%, standard 60%, constrained 60%)'",
+      1
+    ],
+    [
+      "css/css-color-hdr/computed.html",
+      "Property dynamic-range-limit value 'dynamic-range-limit-mix(standard 10%, constrained 20%, no-limit 20%)'",
+      1
+    ],
+    [
+      "css/css-color-hdr/computed.html",
+      "Property dynamic-range-limit value 'dynamic-range-limit-mix(standard 25%, constrained 50%, no-limit 25%)'",
+      1
+    ],
+    [
+      "css/css-color-hdr/computed.html",
+      "Property dynamic-range-limit value 'dynamic-range-limit-mix(standard 25%, constrained 75%)'",
+      1
+    ],
+    [
+      "css/css-color-hdr/computed.html",
+      "Property dynamic-range-limit value 'dynamic-range-limit-mix(standard 25%, no-limit 75%)'",
+      1
+    ],
+    [
+      "css/css-color-hdr/computed.html",
+      "Property dynamic-range-limit value 'dynamic-range-limit-mix(standard 75%, no-limit 25%)'",
+      1
+    ],
+    [
+      "css/css-color-hdr/computed.html",
+      "Property dynamic-range-limit value 'dynamic-range-limit-mix(standard calc(50% * sign(10em - 1px)), constrained 50%)'",
+      1
+    ],
+    [
+      "css/css-color-hdr/computed.html",
+      "Property dynamic-range-limit value 'no-limit'",
+      1
+    ],
+    [
+      "css/css-color-hdr/computed.html",
+      "Property dynamic-range-limit value 'standard'",
+      1
+    ],
+    [
+      "css/css-color-hdr/inheritance.html",
+      "Property dynamic-range-limit has initial value no-limit",
+      1
+    ],
+    [
+      "css/css-color-hdr/inheritance.html",
+      "Property dynamic-range-limit inherits",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "CSS Animations: property <dynamic-range-limit> from [constrained] to [standard] at (0) should be [constrained]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "CSS Animations: property <dynamic-range-limit> from [constrained] to [standard] at (0.5) should be [dynamic-range-limit-mix(standard 50%, constrained 50%)]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "CSS Animations: property <dynamic-range-limit> from [constrained] to [standard] at (1) should be [standard]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "CSS Animations: property <dynamic-range-limit> from [dynamic-range-limit-mix(constrained 90%, standard 10%)] to [dynamic-range-limit-mix(no-limit 10%, standard 90%)] at (0) should be [dynamic-range-limit-mix(standard 10%, constrained 90%)]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "CSS Animations: property <dynamic-range-limit> from [dynamic-range-limit-mix(constrained 90%, standard 10%)] to [dynamic-range-limit-mix(no-limit 10%, standard 90%)] at (0.5) should be [dynamic-range-limit-mix(standard 50%, constrained 45%, no-limit 5%)]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "CSS Animations: property <dynamic-range-limit> from [dynamic-range-limit-mix(constrained 90%, standard 10%)] to [dynamic-range-limit-mix(no-limit 10%, standard 90%)] at (1) should be [dynamic-range-limit-mix(standard 90%, no-limit 10%)]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "CSS Animations: property <dynamic-range-limit> from [dynamic-range-limit-mix(standard 50%, no-limit 50%)] to [standard] at (0) should be [dynamic-range-limit-mix(standard 50%, no-limit 50%)]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "CSS Animations: property <dynamic-range-limit> from [dynamic-range-limit-mix(standard 50%, no-limit 50%)] to [standard] at (0.75) should be [dynamic-range-limit-mix(standard 87.5%, no-limit 12.5%)]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "CSS Animations: property <dynamic-range-limit> from [dynamic-range-limit-mix(standard 50%, no-limit 50%)] to [standard] at (1) should be [standard]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "CSS Animations: property <dynamic-range-limit> from [dynamic-range-limit-mix(standard 90%, no-limit 10%)] to [dynamic-range-limit-mix(standard 10%, no-limit 90%)] at (0) should be [dynamic-range-limit-mix(standard 90%, no-limit 10%)]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "CSS Animations: property <dynamic-range-limit> from [dynamic-range-limit-mix(standard 90%, no-limit 10%)] to [dynamic-range-limit-mix(standard 10%, no-limit 90%)] at (0.5) should be [dynamic-range-limit-mix(standard 50%, no-limit 50%)]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "CSS Animations: property <dynamic-range-limit> from [dynamic-range-limit-mix(standard 90%, no-limit 10%)] to [dynamic-range-limit-mix(standard 10%, no-limit 90%)] at (1) should be [dynamic-range-limit-mix(standard 10%, no-limit 90%)]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "CSS Animations: property <dynamic-range-limit> from [no-limit] to [standard] at (0) should be [no-limit]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "CSS Animations: property <dynamic-range-limit> from [no-limit] to [standard] at (0.25) should be [dynamic-range-limit-mix(standard 25%, no-limit 75%)]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "CSS Animations: property <dynamic-range-limit> from [no-limit] to [standard] at (0.75) should be [dynamic-range-limit-mix(standard 75%, no-limit 25%)]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "CSS Animations: property <dynamic-range-limit> from [no-limit] to [standard] at (1) should be [standard]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "CSS Transitions with transition: all: property <dynamic-range-limit> from [constrained] to [standard] at (0) should be [constrained]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "CSS Transitions with transition: all: property <dynamic-range-limit> from [constrained] to [standard] at (0.5) should be [dynamic-range-limit-mix(standard 50%, constrained 50%)]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "CSS Transitions with transition: all: property <dynamic-range-limit> from [constrained] to [standard] at (1) should be [standard]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "CSS Transitions with transition: all: property <dynamic-range-limit> from [dynamic-range-limit-mix(constrained 90%, standard 10%)] to [dynamic-range-limit-mix(no-limit 10%, standard 90%)] at (0) should be [dynamic-range-limit-mix(standard 10%, constrained 90%)]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "CSS Transitions with transition: all: property <dynamic-range-limit> from [dynamic-range-limit-mix(constrained 90%, standard 10%)] to [dynamic-range-limit-mix(no-limit 10%, standard 90%)] at (0.5) should be [dynamic-range-limit-mix(standard 50%, constrained 45%, no-limit 5%)]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "CSS Transitions with transition: all: property <dynamic-range-limit> from [dynamic-range-limit-mix(constrained 90%, standard 10%)] to [dynamic-range-limit-mix(no-limit 10%, standard 90%)] at (1) should be [dynamic-range-limit-mix(standard 90%, no-limit 10%)]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "CSS Transitions with transition: all: property <dynamic-range-limit> from [dynamic-range-limit-mix(standard 50%, no-limit 50%)] to [standard] at (0) should be [dynamic-range-limit-mix(standard 50%, no-limit 50%)]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "CSS Transitions with transition: all: property <dynamic-range-limit> from [dynamic-range-limit-mix(standard 50%, no-limit 50%)] to [standard] at (0.75) should be [dynamic-range-limit-mix(standard 87.5%, no-limit 12.5%)]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "CSS Transitions with transition: all: property <dynamic-range-limit> from [dynamic-range-limit-mix(standard 50%, no-limit 50%)] to [standard] at (1) should be [standard]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "CSS Transitions with transition: all: property <dynamic-range-limit> from [dynamic-range-limit-mix(standard 90%, no-limit 10%)] to [dynamic-range-limit-mix(standard 10%, no-limit 90%)] at (0) should be [dynamic-range-limit-mix(standard 90%, no-limit 10%)]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "CSS Transitions with transition: all: property <dynamic-range-limit> from [dynamic-range-limit-mix(standard 90%, no-limit 10%)] to [dynamic-range-limit-mix(standard 10%, no-limit 90%)] at (0.5) should be [dynamic-range-limit-mix(standard 50%, no-limit 50%)]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "CSS Transitions with transition: all: property <dynamic-range-limit> from [dynamic-range-limit-mix(standard 90%, no-limit 10%)] to [dynamic-range-limit-mix(standard 10%, no-limit 90%)] at (1) should be [dynamic-range-limit-mix(standard 10%, no-limit 90%)]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "CSS Transitions with transition: all: property <dynamic-range-limit> from [no-limit] to [standard] at (0) should be [no-limit]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "CSS Transitions with transition: all: property <dynamic-range-limit> from [no-limit] to [standard] at (0.25) should be [dynamic-range-limit-mix(standard 25%, no-limit 75%)]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "CSS Transitions with transition: all: property <dynamic-range-limit> from [no-limit] to [standard] at (0.75) should be [dynamic-range-limit-mix(standard 75%, no-limit 25%)]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "CSS Transitions with transition: all: property <dynamic-range-limit> from [no-limit] to [standard] at (1) should be [standard]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "CSS Transitions: property <dynamic-range-limit> from [constrained] to [standard] at (0) should be [constrained]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "CSS Transitions: property <dynamic-range-limit> from [constrained] to [standard] at (0.5) should be [dynamic-range-limit-mix(standard 50%, constrained 50%)]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "CSS Transitions: property <dynamic-range-limit> from [constrained] to [standard] at (1) should be [standard]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "CSS Transitions: property <dynamic-range-limit> from [dynamic-range-limit-mix(constrained 90%, standard 10%)] to [dynamic-range-limit-mix(no-limit 10%, standard 90%)] at (0) should be [dynamic-range-limit-mix(standard 10%, constrained 90%)]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "CSS Transitions: property <dynamic-range-limit> from [dynamic-range-limit-mix(constrained 90%, standard 10%)] to [dynamic-range-limit-mix(no-limit 10%, standard 90%)] at (0.5) should be [dynamic-range-limit-mix(standard 50%, constrained 45%, no-limit 5%)]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "CSS Transitions: property <dynamic-range-limit> from [dynamic-range-limit-mix(constrained 90%, standard 10%)] to [dynamic-range-limit-mix(no-limit 10%, standard 90%)] at (1) should be [dynamic-range-limit-mix(standard 90%, no-limit 10%)]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "CSS Transitions: property <dynamic-range-limit> from [dynamic-range-limit-mix(standard 50%, no-limit 50%)] to [standard] at (0) should be [dynamic-range-limit-mix(standard 50%, no-limit 50%)]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "CSS Transitions: property <dynamic-range-limit> from [dynamic-range-limit-mix(standard 50%, no-limit 50%)] to [standard] at (0.75) should be [dynamic-range-limit-mix(standard 87.5%, no-limit 12.5%)]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "CSS Transitions: property <dynamic-range-limit> from [dynamic-range-limit-mix(standard 50%, no-limit 50%)] to [standard] at (1) should be [standard]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "CSS Transitions: property <dynamic-range-limit> from [dynamic-range-limit-mix(standard 90%, no-limit 10%)] to [dynamic-range-limit-mix(standard 10%, no-limit 90%)] at (0) should be [dynamic-range-limit-mix(standard 90%, no-limit 10%)]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "CSS Transitions: property <dynamic-range-limit> from [dynamic-range-limit-mix(standard 90%, no-limit 10%)] to [dynamic-range-limit-mix(standard 10%, no-limit 90%)] at (0.5) should be [dynamic-range-limit-mix(standard 50%, no-limit 50%)]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "CSS Transitions: property <dynamic-range-limit> from [dynamic-range-limit-mix(standard 90%, no-limit 10%)] to [dynamic-range-limit-mix(standard 10%, no-limit 90%)] at (1) should be [dynamic-range-limit-mix(standard 10%, no-limit 90%)]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "CSS Transitions: property <dynamic-range-limit> from [no-limit] to [standard] at (0) should be [no-limit]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "CSS Transitions: property <dynamic-range-limit> from [no-limit] to [standard] at (0.25) should be [dynamic-range-limit-mix(standard 25%, no-limit 75%)]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "CSS Transitions: property <dynamic-range-limit> from [no-limit] to [standard] at (0.75) should be [dynamic-range-limit-mix(standard 75%, no-limit 25%)]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "CSS Transitions: property <dynamic-range-limit> from [no-limit] to [standard] at (1) should be [standard]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "Web Animations: property <dynamic-range-limit> from [constrained] to [standard] at (0) should be [constrained]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "Web Animations: property <dynamic-range-limit> from [constrained] to [standard] at (0.5) should be [dynamic-range-limit-mix(standard 50%, constrained 50%)]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "Web Animations: property <dynamic-range-limit> from [constrained] to [standard] at (1) should be [standard]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "Web Animations: property <dynamic-range-limit> from [dynamic-range-limit-mix(constrained 90%, standard 10%)] to [dynamic-range-limit-mix(no-limit 10%, standard 90%)] at (0) should be [dynamic-range-limit-mix(standard 10%, constrained 90%)]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "Web Animations: property <dynamic-range-limit> from [dynamic-range-limit-mix(constrained 90%, standard 10%)] to [dynamic-range-limit-mix(no-limit 10%, standard 90%)] at (0.5) should be [dynamic-range-limit-mix(standard 50%, constrained 45%, no-limit 5%)]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "Web Animations: property <dynamic-range-limit> from [dynamic-range-limit-mix(constrained 90%, standard 10%)] to [dynamic-range-limit-mix(no-limit 10%, standard 90%)] at (1) should be [dynamic-range-limit-mix(standard 90%, no-limit 10%)]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "Web Animations: property <dynamic-range-limit> from [dynamic-range-limit-mix(standard 50%, no-limit 50%)] to [standard] at (0) should be [dynamic-range-limit-mix(standard 50%, no-limit 50%)]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "Web Animations: property <dynamic-range-limit> from [dynamic-range-limit-mix(standard 50%, no-limit 50%)] to [standard] at (0.75) should be [dynamic-range-limit-mix(standard 87.5%, no-limit 12.5%)]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "Web Animations: property <dynamic-range-limit> from [dynamic-range-limit-mix(standard 50%, no-limit 50%)] to [standard] at (1) should be [standard]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "Web Animations: property <dynamic-range-limit> from [dynamic-range-limit-mix(standard 90%, no-limit 10%)] to [dynamic-range-limit-mix(standard 10%, no-limit 90%)] at (0) should be [dynamic-range-limit-mix(standard 90%, no-limit 10%)]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "Web Animations: property <dynamic-range-limit> from [dynamic-range-limit-mix(standard 90%, no-limit 10%)] to [dynamic-range-limit-mix(standard 10%, no-limit 90%)] at (0.5) should be [dynamic-range-limit-mix(standard 50%, no-limit 50%)]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "Web Animations: property <dynamic-range-limit> from [dynamic-range-limit-mix(standard 90%, no-limit 10%)] to [dynamic-range-limit-mix(standard 10%, no-limit 90%)] at (1) should be [dynamic-range-limit-mix(standard 10%, no-limit 90%)]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "Web Animations: property <dynamic-range-limit> from [no-limit] to [standard] at (0) should be [no-limit]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "Web Animations: property <dynamic-range-limit> from [no-limit] to [standard] at (0.25) should be [dynamic-range-limit-mix(standard 25%, no-limit 75%)]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "Web Animations: property <dynamic-range-limit> from [no-limit] to [standard] at (0.75) should be [dynamic-range-limit-mix(standard 75%, no-limit 25%)]",
+      1
+    ],
+    [
+      "css/css-color-hdr/interpolation.html",
+      "Web Animations: property <dynamic-range-limit> from [no-limit] to [standard] at (1) should be [standard]",
+      1
+    ],
+    [
+      "css/css-color-hdr/parsing.html",
+      "e.style['dynamic-range-limit'] = \"constrained\" should set the property value",
+      1
+    ],
+    [
+      "css/css-color-hdr/parsing.html",
+      "e.style['dynamic-range-limit'] = \"dynamic-range-limit-mix(constrained 20%, no-limit 80%)\" should set the property value",
+      1
+    ],
+    [
+      "css/css-color-hdr/parsing.html",
+      "e.style['dynamic-range-limit'] = \"dynamic-range-limit-mix(dynamic-range-limit-mix(constrained 90%, no-limit 10%) 1%, no-limit 80%)\" should set the property value",
+      1
+    ],
+    [
+      "css/css-color-hdr/parsing.html",
+      "e.style['dynamic-range-limit'] = \"dynamic-range-limit-mix(dynamic-range-limit-mix(no-limit 1%, standard 2%) 3%, dynamic-range-limit-mix(constrained 5%, no-limit 5%) 6%)\" should set the property value",
+      1
+    ],
+    [
+      "css/css-color-hdr/parsing.html",
+      "e.style['dynamic-range-limit'] = \"dynamic-range-limit-mix(no-limit 1%, dynamic-range-limit-mix(constrained 2%, no-limit 10%) 80%)\" should set the property value",
+      1
+    ],
+    [
+      "css/css-color-hdr/parsing.html",
+      "e.style['dynamic-range-limit'] = \"dynamic-range-limit-mix(no-limit 8%, standard 2%)\" should set the property value",
+      1
+    ],
+    [
+      "css/css-color-hdr/parsing.html",
+      "e.style['dynamic-range-limit'] = \"dynamic-range-limit-mix(no-limit 80%, standard 20%)\" should set the property value",
+      1
+    ],
+    [
+      "css/css-color-hdr/parsing.html",
+      "e.style['dynamic-range-limit'] = \"dynamic-range-limit-mix(no-limit 99%, standard 99%)\" should set the property value",
+      1
+    ],
+    [
+      "css/css-color-hdr/parsing.html",
+      "e.style['dynamic-range-limit'] = \"dynamic-range-limit-mix(no-limit 99%, standard 99%, constrained 10%)\" should set the property value",
+      1
+    ],
+    [
+      "css/css-color-hdr/parsing.html",
+      "e.style['dynamic-range-limit'] = \"dynamic-range-limit-mix(standard calc(50% * sign(10em - 1px)), constrained 50%)\" should set the property value",
+      1
+    ],
+    [
+      "css/css-color-hdr/parsing.html",
+      "e.style['dynamic-range-limit'] = \"no-limit\" should set the property value",
+      1
+    ],
+    [
+      "css/css-color-hdr/parsing.html",
+      "e.style['dynamic-range-limit'] = \"standard\" should set the property value",
+      1
+    ]
+  ],
+  "lost": [
+    [
+      "css/css-color-hdr/parsing.html",
+      "e.style['dynamic-range-limit'] = \"dynamic-range-limit-mix(dynamic-range-limit-mix(no-limit 1%, standard 2%) 3%, dynamic-range-limit-mix(constrained 0%, no-limit 0%) 6%)\" should not set the property value",
+      1
+    ],
+    [
+      "css/css-color-hdr/parsing.html",
+      "e.style['dynamic-range-limit'] = \"dynamic-range-limit-mix(no-limit 0%, standard 0%)\" should not set the property value",
+      1
+    ],
+    [
+      "css/css-color-hdr/parsing.html",
+      "e.style['dynamic-range-limit'] = \"dynamic-range-limit-mix(no-limit 1%)\" should not set the property value",
+      1
+    ]
+  ],
+  "parentPassingPages": [],
+  "candidatePassingPages": [
+    "css/css-color-hdr/computed.html",
+    "css/css-color-hdr/inheritance.html",
+    "css/css-color-hdr/interpolation.html"
+  ],
+  "gainedPages": [
+    "css/css-color-hdr/computed.html",
+    "css/css-color-hdr/inheritance.html",
+    "css/css-color-hdr/interpolation.html"
+  ],
+  "lostPages": [],
+  "statusChanges": {},
+  "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+  "wallMs": [
+    334,
+    194
+  ]
+}
