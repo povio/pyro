@@ -1,0 +1,25 @@
+<!doctype html><meta charset=utf-8><div id="box"><div id="child"></div></div><pre id="results"></pre>
+<script>
+const rows = [];
+for (const display of ['flow-root','flex','grid']) {
+  for (const writingMode of ['horizontal-tb','vertical-lr','vertical-rl','sideways-lr']) {
+    for (const direction of ['ltr','rtl']) {
+      for (const overflow of ['visible','clip','hidden']) {
+        box.style.cssText = `display:${display}; writing-mode:${writingMode}; direction:${direction}; overflow:${overflow}; width:80px; height:80px; border:solid; border-width:1px 50px 40px 4px; padding:1px 4px 8px 16px`;
+        child.style.cssText = 'width:300px;height:300px;margin:-100px';
+        rows.push([display,writingMode,direction,overflow,box.scrollWidth,box.scrollHeight]);
+      }
+    }
+  }
+}
+for (const display of ['grid','block','inline-grid']) {
+  for (const width of [0,20]) {
+    for (const overflow of ['visible','clip','hidden']) {
+      box.style.cssText = `display:${display};contain:layout;width:${width}px;height:0;padding:2px;overflow:${overflow}`;
+      child.style.cssText = 'height:2000px';
+      rows.push([display,'contain',width,overflow,box.scrollWidth,box.scrollHeight]);
+    }
+  }
+}
+results.textContent = JSON.stringify(rows);
+</script>
