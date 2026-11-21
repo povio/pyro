@@ -474,6 +474,13 @@ fn wire_host<'s>(s: &Scope<'s>, args: &pyro_js::Args<'s>) -> JsResult<pyro_js::V
                 .ok_or_else(|| JsError::dom("DataCloneError", "Malformed encoded chunk"))?;
             crate::encoded_chunks::wrap(s, &chunk)
         }
+        13 => crate::canvas::MODULE.helper(s, &crate::target::page_of(s)?, "imageInfo", &[value]),
+        14 => {
+            let tree = value.as_object().ok_or_else(|| JsError::dom("DataCloneError", "Malformed ImageData"))?;
+            crate::canvas::MODULE.helper(s, &crate::target::page_of(s)?, "imageDataOf", &[
+                args.get(2), tree.get_index(1)?, tree.get_index(2)?, tree.get_index(3)?,
+            ])
+        }
         _ => {
             let parts = value.as_object().ok_or_else(|| JsError::dom("DataCloneError", "Malformed message"))?;
             crate::streams::transfer_in(s, parts.get_index(0)?, parts.get_index(1)?)

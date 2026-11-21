@@ -177,6 +177,13 @@
             if (chunk !== undefined) return '["Q",' + chunk + ']';
             const kind = call(objectTag, source);
             switch (kind) {
+                case '[object ImageData]': {
+                    const parts = host(source, 13);
+                    if (parts == null) fail('Invalid ImageData');
+                    // Encode the pixel view through the graph so a separately
+                    // listed reference to image.data retains its identity.
+                    return '["I",' + parts[0] + ',' + parts[1] + ',' + stringify(parts[3]) + ',' + node(parts[2]) + ']';
+                }
                 case '[object Date]': return '["d",' + node(call(dateTime, source)) + ']';
                 case '[object RegExp]':
                     return '["x",' + stringify(call(regexpSource, source)) + ','
@@ -318,6 +325,7 @@
                 case 'F': return remember(id, host(tree, 1));
                 case 'C': return remember(id, host(tree[1], 10));
                 case 'Q': return remember(id, host(tree[1], 12));
+                case 'I': return remember(id, host(tree, 14, node(tree[4])));
                 case 'S': {
                     const streamPorts = [ports[tree[2]]];
                     if (tree.length > 3) put(streamPorts, 1, ports[tree[3]]);

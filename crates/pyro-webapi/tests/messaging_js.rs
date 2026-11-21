@@ -256,3 +256,24 @@ fn streams_transfer_through_structured_clone_and_ports() {
         "true|true|true|a+1|DataCloneError|DataCloneError|true|x+y+closed|true|HI|true|RangeError:boom|why"
     );
 }
+
+#[test]
+fn encoded_chunk_and_image_data_keep_graph_aliases_in_a_message() {
+    let env = env();
+    env.eval(r#"
+        globalThis.received = '';
+        const channel = new MessageChannel();
+        const image = new ImageData(new Uint8ClampedArray([11,22,33,44]), 1, 1);
+        const chunk = new EncodedVideoChunk({type:'key', timestamp:42, data:new Uint8Array([7])});
+        const other = new Uint8Array([8]);
+        channel.port2.onmessage = ({data}) => {
+            received = [data.chunk.timestamp, data.chunk === data.alias, data.image instanceof ImageData,
+                data.image.data === data.pixels, data.image.colorSpace, data.pixels.join(','),
+                data.other[0], other.byteLength].join('|');
+        };
+        channel.port1.postMessage({chunk,alias:chunk,image,pixels:image.data,other}, [other.buffer]);
+        image.data[0] = 99;
+    "#);
+    env.until("received !== ''");
+    assert_eq!(env.eval("received"), "42|true|true|true|srgb|11,22,33,44|8|0");
+}

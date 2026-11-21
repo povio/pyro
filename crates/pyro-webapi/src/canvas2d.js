@@ -957,8 +957,8 @@
       oc(canvas).placeholder = placeholder;
       return canvas;
     },
-    // [width, height, data] of an ImageData, or null.
-    imageInfo(value) { const s = images.get(value); return s ? [s.width, s.height, s.data] : null; },
+    // [width, height, data, colorSpace] of an ImageData, or null.
+    imageInfo(value) { const s = images.get(value); return s ? [s.width, s.height, s.data, s.colorSpace] : null; },
     // The gradient or pattern record of a fill/stroke style.
     paintRecord(value) { return gradients.get(value) || patterns.get(value) || null; },
     sourceOf,
