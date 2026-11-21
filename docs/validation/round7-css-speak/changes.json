@@ -1,0 +1,66 @@
+[
+ {
+  "url": "css/css-typed-om/the-stylepropertymap/properties/speak.html",
+  "name": "Can set 'speak' to CSS-wide keywords: initial",
+  "occurrence": 1,
+  "archived578": "Fail",
+  "head": "Pass",
+  "studioChrome158": "Pass"
+ },
+ {
+  "url": "css/css-typed-om/the-stylepropertymap/properties/speak.html",
+  "name": "Can set 'speak' to CSS-wide keywords: inherit",
+  "occurrence": 1,
+  "archived578": "Fail",
+  "head": "Pass",
+  "studioChrome158": "Pass"
+ },
+ {
+  "url": "css/css-typed-om/the-stylepropertymap/properties/speak.html",
+  "name": "Can set 'speak' to CSS-wide keywords: unset",
+  "occurrence": 1,
+  "archived578": "Fail",
+  "head": "Pass",
+  "studioChrome158": "Pass"
+ },
+ {
+  "url": "css/css-typed-om/the-stylepropertymap/properties/speak.html",
+  "name": "Can set 'speak' to CSS-wide keywords: revert",
+  "occurrence": 1,
+  "archived578": "Fail",
+  "head": "Pass",
+  "studioChrome158": "Pass"
+ },
+ {
+  "url": "css/css-typed-om/the-stylepropertymap/properties/speak.html",
+  "name": "Can set 'speak' to var() references:  var(--A)",
+  "occurrence": 1,
+  "archived578": "Fail",
+  "head": "Pass",
+  "studioChrome158": "Pass"
+ },
+ {
+  "url": "css/css-typed-om/the-stylepropertymap/properties/speak.html",
+  "name": "Can set 'speak' to the 'auto' keyword: auto",
+  "occurrence": 1,
+  "archived578": "Fail",
+  "head": "Pass",
+  "studioChrome158": "Fail"
+ },
+ {
+  "url": "css/css-typed-om/the-stylepropertymap/properties/speak.html",
+  "name": "Can set 'speak' to the 'never' keyword: never",
+  "occurrence": 1,
+  "archived578": "Fail",
+  "head": "Pass",
+  "studioChrome158": "Fail"
+ },
+ {
+  "url": "css/css-typed-om/the-stylepropertymap/properties/speak.html",
+  "name": "Can set 'speak' to the 'always' keyword: always",
+  "occurrence": 1,
+  "archived578": "Fail",
+  "head": "Pass",
+  "studioChrome158": "Fail"
+ }
+]
