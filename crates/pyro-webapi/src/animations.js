@@ -172,7 +172,7 @@
     if (m) {
       const [x1, y1, x2, y2] = m.slice(1).map(Number);
       if (x1 >= 0 && x1 <= 1 && x2 >= 0 && x2 <= 1) {
-        return { text: `cubic-bezier(${fmt(x1)}, ${fmt(y1)}, ${fmt(x2)}, ${fmt(y2)})`, fn: bezier(x1, y1, x2, y2) };
+        return { text: `cubic-bezier(${x1}, ${y1}, ${x2}, ${y2})`, fn: bezier(x1, y1, x2, y2) };
       }
     }
     m = STEPS.exec(text);
@@ -1043,7 +1043,7 @@
     a.pendingGen++;
   }
 
-  function schedulePending(a, kind) {
+  function schedulePending(a, kind, generationTime) {
     a.pending = kind;
     const gen = ++a.pendingGen;
     let tries = 0;
@@ -1062,7 +1062,7 @@
         }
         return;
       }
-      if (kind === 'play') runPendingPlay(a); else runPendingPause(a);
+      if (kind === 'play') runPendingPlay(a, generationTime); else runPendingPause(a);
     };
     // A progress-based timeline's pending task runs after the next frame, as the timeline moves.
     // (At the start of that frame, before its callbacks that script requested later, as the
@@ -1107,8 +1107,7 @@
     });
   }
 
-  function runPendingPlay(a) {
-    const ready = timelineTime(a.timeline);
+  function runPendingPlay(a, ready = timelineTime(a.timeline)) {
     // On a progress-based timeline the start time aligns with its start (or end, playing
     // backwards): the animation's progress is the timeline's (Web Animations 2, auto-aligned
     // start time), unless script seeked it.
@@ -1809,7 +1808,7 @@
       a.startTime = null;
       a.holdTime = 0;
       a.ready = deferred();
-      schedulePending(a, 'play');
+      schedulePending(a, 'play', transition ? start : undefined);
     } else {
       a.startTime = start;
       a.holdTime = null;
@@ -1970,7 +1969,10 @@
       live.delete(object);
       // (A run the style dropped no longer waits for its trigger.)
       const gone = animations.get(object);
-      if (gone) triggered.delete(gone);
+      if (gone) {
+        triggered.delete(gone);
+        if (gone.css === CSS_TRANSITION && playStateOf(gone) !== 'finished') cancel(gone);
+      }
     }
   }
 
@@ -2209,6 +2211,10 @@
     Animation, AnimationEffect, KeyframeEffect, AnimationTimeline, DocumentTimeline, AnimationPlaybackEvent,
     ScrollTimeline, ViewTimeline,
     CSSAnimation, CSSTransition,
+    validateEventAnimation(value, transition) {
+      if (animations.get(value)?.css !== (transition ? CSS_TRANSITION : CSS_ANIMATION))
+        throw new TypeError(transition ? 'Expected a CSSTransition' : 'Expected a CSSAnimation');
+    },
     animate, elementAnimations, rootAnimations, cssSync, viewRuns, timeline: () => documentTimeline,
   };
 })

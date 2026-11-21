@@ -1,0 +1,30 @@
+markercascade-main-candidate 8082 page passes 5620 named passes 180476 observed names 194655 statuses {'complete:0': 7871, 'complete:2': 104, 'timeout:None': 11, 'complete:1': 95, 'hang:None': 1}
+markercascade-main-parent 8082 page passes 5618 named passes 180434 observed names 194655 statuses {'complete:0': 7870, 'complete:2': 105, 'timeout:None': 11, 'complete:1': 95, 'hang:None': 1}
+markercascade-main-stable 8082 page passes 6950 named passes 182963 observed names 194912 statuses {'complete:0': 7986, 'complete:2': 62, 'complete:1': 23, 'timeout:None': 10, 'hang:None': 1}
+markercascade-main-parent pages left only 2 right only 0
+markercascade-main-parent passes left only 42 right only 0
+markercascade-main-parent observed left only 0 right only 0
+markercascade-main-stable pages left only 273 right only 1603
+markercascade-main-stable passes left only 5868 right only 8355
+markercascade-main-stable observed left only 309 right only 566
+Losses vs parent by URL: Counter()
+markercascade-focus-candidate 156 page passes 51 named passes 1669 observed names 1949 statuses {'complete:0': 151, 'complete:2': 2, 'complete:1': 3}
+markercascade-focus-parent 156 page passes 49 named passes 1627 observed names 1949 statuses {'complete:0': 150, 'complete:2': 3, 'complete:1': 3}
+markercascade-focus-stable 156 page passes 142 named passes 1907 observed names 1951 statuses {'complete:0': 156}
+markercascade-focus-parent pages left only 2 right only 0
+markercascade-focus-parent passes left only 42 right only 0
+markercascade-focus-parent observed left only 0 right only 0
+markercascade-focus-stable pages left only 2 right only 93
+markercascade-focus-stable passes left only 6 right only 244
+markercascade-focus-stable observed left only 0 right only 2
+Losses vs parent by URL: Counter()
+markercascade-supplement-candidate 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+markercascade-supplement-parent 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+markercascade-supplement-stable 41 page passes 35 named passes 619 observed names 874 statuses {'complete:0': 41}
+markercascade-supplement-parent pages left only 0 right only 0
+markercascade-supplement-parent passes left only 0 right only 0
+markercascade-supplement-parent observed left only 0 right only 0
+markercascade-supplement-stable pages left only 0 right only 8
+markercascade-supplement-stable passes left only 0 right only 42
+markercascade-supplement-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()

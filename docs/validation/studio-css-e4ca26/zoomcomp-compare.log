@@ -1,0 +1,30 @@
+zoomcomp-main-candidate 8082 page passes 5623 named passes 180566 observed names 194655 statuses {'complete:0': 7871, 'complete:2': 104, 'timeout:None': 11, 'complete:1': 95, 'hang:None': 1}
+zoomcomp-main-parent 8082 page passes 5622 named passes 180509 observed names 194655 statuses {'complete:0': 7871, 'complete:2': 104, 'timeout:None': 11, 'complete:1': 95, 'hang:None': 1}
+zoomcomp-main-stable 8082 page passes 6950 named passes 182963 observed names 194912 statuses {'complete:0': 7986, 'complete:2': 62, 'complete:1': 23, 'timeout:None': 10, 'hang:None': 1}
+zoomcomp-main-parent pages left only 1 right only 0
+zoomcomp-main-parent passes left only 57 right only 0
+zoomcomp-main-parent observed left only 57 right only 57
+zoomcomp-main-stable pages left only 274 right only 1601
+zoomcomp-main-stable passes left only 5875 right only 8272
+zoomcomp-main-stable observed left only 258 right only 515
+Losses vs parent by URL: Counter()
+zoomcomp-focus-candidate 30 page passes 20 named passes 516 observed names 580 statuses {'complete:0': 29, 'complete:2': 1}
+zoomcomp-focus-parent 30 page passes 19 named passes 459 observed names 580 statuses {'complete:0': 29, 'complete:2': 1}
+zoomcomp-focus-stable 30 page passes 25 named passes 578 observed names 597 statuses {'complete:0': 30}
+zoomcomp-focus-parent pages left only 1 right only 0
+zoomcomp-focus-parent passes left only 57 right only 0
+zoomcomp-focus-parent observed left only 57 right only 57
+zoomcomp-focus-stable pages left only 1 right only 6
+zoomcomp-focus-stable passes left only 16 right only 78
+zoomcomp-focus-stable observed left only 12 right only 29
+Losses vs parent by URL: Counter()
+zoomcomp-supplement-candidate 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+zoomcomp-supplement-parent 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+zoomcomp-supplement-stable 41 page passes 35 named passes 619 observed names 874 statuses {'complete:0': 41}
+zoomcomp-supplement-parent pages left only 0 right only 0
+zoomcomp-supplement-parent passes left only 0 right only 0
+zoomcomp-supplement-parent observed left only 0 right only 0
+zoomcomp-supplement-stable pages left only 0 right only 8
+zoomcomp-supplement-stable passes left only 0 right only 42
+zoomcomp-supplement-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()

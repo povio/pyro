@@ -252,36 +252,41 @@ impl JsClass for AbortSignal {
             let list =
                 a.get(0).as_object().ok_or_else(|| JsError::Type("AbortSignal.any requires an iterable".into()))?;
             let len = list.get_atom("length")?.to_number()? as u32;
-            // "create a dependent abort signal": an aborted signal in the
-            // list gives its reason; otherwise the result follows each
-            // signal, or the sources of one that is itself dependent.
-            let Some(result) = s.unwrap::<AbortSignal>(sig.value()) else { return Ok(sig.value()) };
-            for i in 0..len {
-                let Some(src) = s.unwrap::<AbortSignal>(list.get_index(i)?) else { continue };
-                if src.aborted() {
-                    result.set_aborted(s, src.reason(s));
-                    return Ok(sig.value());
-                }
-            }
-            result.dependent.set(true);
-            for i in 0..len {
-                let v = list.get_index(i)?;
-                let Some(src) = s.unwrap::<AbortSignal>(v) else { continue };
-                if !src.dependent.get() {
-                    follow(s, v, sig)?;
-                    continue;
-                }
-                let Some(sources) = s.get_hidden(src.wrapper.get(s)?, SOURCES)?.and_then(|v| v.as_object()) else {
-                    continue;
-                };
-                let count = sources.get_atom("length")?.to_number()? as u32;
-                for j in 0..count {
-                    follow(s, sources.get_index(j)?, sig)?;
-                }
-            }
+            link_dependents(s, sig, list, len)?;
             Ok(sig.value())
         });
     }
+}
+
+pub(crate) fn link_dependents<'s>(s: &Scope<'s>, sig: Object<'s>, list: Object<'s>, len: u32) -> JsResult<()> {
+    // "create a dependent abort signal": an aborted signal in the
+    // list gives its reason; otherwise the result follows each
+    // signal, or the sources of one that is itself dependent.
+    let Some(result) = s.unwrap::<AbortSignal>(sig.value()) else { return Ok(()) };
+    for i in 0..len {
+        let Some(src) = s.unwrap::<AbortSignal>(list.get_index(i)?) else { continue };
+        if src.aborted() {
+            result.set_aborted(s, src.reason(s));
+            return Ok(());
+        }
+    }
+    result.dependent.set(true);
+    for i in 0..len {
+        let v = list.get_index(i)?;
+        let Some(src) = s.unwrap::<AbortSignal>(v) else { continue };
+        if !src.dependent.get() {
+            follow(s, v, sig)?;
+            continue;
+        }
+        let Some(sources) = s.get_hidden(src.wrapper.get(s)?, SOURCES)?.and_then(|v| v.as_object()) else {
+            continue;
+        };
+        let count = sources.get_atom("length")?.to_number()? as u32;
+        for j in 0..count {
+            follow(s, sources.get_index(j)?, sig)?;
+        }
+    }
+    Ok(())
 }
 
 /// Makes the new signal `dependent` a dependent signal of the signal `source`
@@ -312,6 +317,11 @@ fn hidden_list<'s>(s: &Scope<'s>, owner: Object<'s>, key: &'static str) -> JsRes
 }
 
 pub fn new_signal<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
+    let (data, key) = signal_data(s)?;
+    s.wrap::<AbortSignal>(data, Some(key))
+}
+
+pub(crate) fn signal_data(s: &Scope<'_>) -> JsResult<(AbortSignalData, pyro_js::IdentityKey)> {
     let page: Rc<PageDom> = page_of(s)?;
     let target = EventTargetData::new(&page);
     let TargetKey::Other(k) = target.key else { unreachable!() };
@@ -325,18 +335,18 @@ pub fn new_signal<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         hooks: Rc::new(RefCell::new(Vec::new())),
         next_hook: Cell::new(1),
     };
-    s.wrap::<AbortSignal>(data, Some(key))
+    Ok((data, key))
 }
 
 /// The controller's signal, a hidden property of the controller's wrapper.
-const SIGNAL: &str = "__lpAbortControllerSignal";
+pub(crate) const SIGNAL: &str = "__lpAbortControllerSignal";
 
 pub struct ControllerData {
-    wrapper: WrapperRef,
+    pub(crate) wrapper: WrapperRef,
 }
 
 impl ControllerData {
-    fn signal<'s>(&self, s: &Scope<'s>) -> JsResult<Value<'s>> {
+    pub(crate) fn signal<'s>(&self, s: &Scope<'s>) -> JsResult<Value<'s>> {
         Ok(self.wrapper.hidden(s, SIGNAL)?.unwrap_or(s.undefined()))
     }
 }
@@ -370,6 +380,7 @@ impl JsClass for AbortController {
 pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<AbortSignal>();
     engine.register::<AbortController>();
+    crate::task_signal::register(engine);
 }
 
 /// This module's part of [`crate::thread_state::reset_thread`]: what of its

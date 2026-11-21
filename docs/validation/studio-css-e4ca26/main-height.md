@@ -1,0 +1,3 @@
+# Height readback: full main cohort
+
+Same pinned local stable, JSC and WPT as `calc-size-readback.md`; this measures `5c9d80c8`, not the subsequent width change. All 8,082 input URLs accounted for. LP 5,375 strict pages and 172,121 named passes versus stable 6,950 and 182,963. Against `8bb0f703`: pages +2/-0, named +215/-69, observed +3/-3. Against stable, LP-only / stable-only: 242 / 1,817 pages, 5,391 / 16,233 named passes, 252 / 855 observed names. LP runner: 11 timeouts, 1 hang; completed harness statuses OK/error/timeout: 7,864/101/105. Chrome runner: 10 timeouts, 1 hang; harness: 7,986/23/62. The separate 41 supplemental URLs and 39 exclusions remain outside this cohort. Exact sets and statuses are in `difference-main-height-*` and `outcomes-main-height`.

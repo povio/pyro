@@ -560,17 +560,6 @@ fn svg_link_href(dom: &Dom, el: NodeId) -> Option<&str> {
         .or_else(|| dom.get_attribute_ns(el, Some("http://www.w3.org/1999/xlink"), "href").ok().flatten())
 }
 
-/// A `summary` that is the summary of its parent `details`.
-fn is_details_summary(dom: &Dom, el: NodeId) -> bool {
-    let Some(parent) = dom.parent(el).ok().flatten() else { return false };
-    local(dom, parent).as_deref() == Some("details")
-        && dom
-            .element_children(parent)
-            .ok()
-            .and_then(|mut children| children.find(|&c| local(dom, c).as_deref() == Some("summary")))
-            == Some(el)
-}
-
 /// HTML elements that have activation behavior: every `input` and `button`
 /// (whatever their type or state: a disabled control is still the
 /// activation target and merely does nothing), `label`, and, as in
@@ -579,7 +568,7 @@ fn has_activation_behavior(dom: &Dom, el: NodeId) -> bool {
     match local(dom, el).as_deref() {
         Some("input" | "button" | "label") => true,
         Some("a" | "area") => dom.has_attribute(el, "href").unwrap_or(false),
-        Some("summary") => is_details_summary(dom, el),
+        Some("summary") => dom.is_details_summary(el),
         _ => svg_link_href(dom, el).is_some(),
     }
 }
@@ -814,7 +803,7 @@ fn run_activation_behavior(
             }
         }
         "summary" => {
-            if !is_details_summary(&page.dom.borrow(), el) {
+            if !page.dom.borrow().is_details_summary(el) {
                 return;
             }
             let details = page.dom.borrow().parent(el).ok().flatten();
@@ -900,7 +889,7 @@ fn space_clickable(dom: &Dom, el: NodeId) -> bool {
     }
     match local(dom, el).as_deref() {
         Some("button") => true,
-        Some("summary") => is_details_summary(dom, el),
+        Some("summary") => dom.is_details_summary(el),
         Some("input") => matches!(
             dom.input_type(el),
             Ok(InputType::Checkbox

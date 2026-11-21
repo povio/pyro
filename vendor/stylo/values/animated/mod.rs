@@ -429,6 +429,7 @@ trivial_to_animated_value!(u16);
 trivial_to_animated_value!(u32);
 trivial_to_animated_value!(usize);
 trivial_to_animated_value!(AbsoluteColor);
+trivial_to_animated_value!(crate::values::computed::FontPalette);
 trivial_to_animated_value!(crate::values::generics::color::ColorMixFlags);
 // Note: This implementation is for ToAnimatedValue of ShapeSource.
 //

@@ -1,0 +1,30 @@
+classprefix-main-candidate 8082 page passes 5551 named passes 178487 observed names 194540 statuses {'complete:0': 7867, 'complete:2': 105, 'timeout:None': 11, 'complete:1': 98, 'hang:None': 1}
+classprefix-main-parent 8082 page passes 5542 named passes 178417 observed names 194540 statuses {'complete:0': 7867, 'complete:2': 105, 'timeout:None': 11, 'complete:1': 98, 'hang:None': 1}
+classprefix-main-stable 8082 page passes 6950 named passes 182963 observed names 194912 statuses {'complete:0': 7986, 'complete:2': 62, 'complete:1': 23, 'timeout:None': 10, 'hang:None': 1}
+classprefix-main-parent pages left only 9 right only 0
+classprefix-main-parent passes left only 71 right only 1
+classprefix-main-parent observed left only 0 right only 0
+classprefix-main-stable pages left only 272 right only 1671
+classprefix-main-stable passes left only 5802 right only 10278
+classprefix-main-stable observed left only 309 right only 681
+Losses vs parent by URL: Counter({'css/css-transitions/CSSTransition-startTime.tentative.html': 1})
+classprefix-focus-candidate 73 page passes 52 named passes 3304 observed names 3411 statuses {'complete:0': 72, 'timeout:None': 1}
+classprefix-focus-parent 73 page passes 44 named passes 3234 observed names 3411 statuses {'complete:0': 72, 'timeout:None': 1}
+classprefix-focus-stable 73 page passes 54 named passes 3281 observed names 3411 statuses {'complete:0': 72, 'timeout:None': 1}
+classprefix-focus-parent pages left only 8 right only 0
+classprefix-focus-parent passes left only 70 right only 0
+classprefix-focus-parent observed left only 0 right only 0
+classprefix-focus-stable pages left only 10 right only 12
+classprefix-focus-stable passes left only 123 right only 100
+classprefix-focus-stable observed left only 1 right only 1
+Losses vs parent by URL: Counter()
+classprefix-supplement-candidate 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+classprefix-supplement-parent 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+classprefix-supplement-stable 41 page passes 35 named passes 619 observed names 874 statuses {'complete:0': 41}
+classprefix-supplement-parent pages left only 0 right only 0
+classprefix-supplement-parent passes left only 0 right only 0
+classprefix-supplement-parent observed left only 0 right only 0
+classprefix-supplement-stable pages left only 0 right only 8
+classprefix-supplement-stable passes left only 0 right only 42
+classprefix-supplement-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()

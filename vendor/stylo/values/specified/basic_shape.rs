@@ -373,7 +373,7 @@ impl BasicShape {
                         .map(BasicShape::Ellipse)
                 },
                 "polygon" if flags.contains(AllowedBasicShapes::POLYGON) => {
-                    Polygon::parse_function_arguments(context, i, shape_type)
+                    Polygon::parse_function_arguments(context, i)
                         .map(BasicShape::Polygon)
                 },
                 "path" if flags.contains(AllowedBasicShapes::PATH) => {
@@ -528,7 +528,7 @@ fn parse_fill_rule(input: &mut Parser, shape_type: ShapeType, expect_comma: bool
 impl Parse for Polygon {
     fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
         input.expect_function_matching("polygon")?;
-        input.parse_nested_block(|i| Self::parse_function_arguments(context, i, ShapeType::Filled))
+        input.parse_nested_block(|i| Self::parse_function_arguments(context, i))
     }
 }
 
@@ -537,9 +537,17 @@ impl Polygon {
     fn parse_function_arguments(
         context: &ParserContext,
         input: &mut Parser,
-        shape_type: ShapeType,
     ) -> Result<Self, ParseError> {
-        let fill = parse_fill_rule(input, shape_type, true /* has comma */);
+        let fill = input.try_parse(FillRule::parse).ok();
+        let round = if input.try_parse(|i| i.expect_ident_matching("round")).is_ok() {
+            let radius = crate::values::specified::NonNegativeLength::parse(context, input)?;
+            Some(crate::values::generics::NonNegative(radius.0.into()))
+        } else {
+            None
+        };
+        if fill.is_some() || round.is_some() {
+            input.expect_comma()?;
+        }
         let coordinates = input
             .parse_comma_separated(|i| {
                 Ok(PolygonCoord(
@@ -549,7 +557,7 @@ impl Polygon {
             })?
             .into();
 
-        Ok(Polygon { fill, coordinates })
+        Ok(Polygon { fill: fill.unwrap_or_default(), round: round.unwrap_or_else(NonNegativeLengthPercentage::zero), coordinates })
     }
 }
 

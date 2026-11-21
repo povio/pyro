@@ -12,14 +12,15 @@ use super::{
 use crate::custom_properties::{ComputedValue, Name, VariableValue};
 use crate::parser::{Parse, ParserContext};
 use crate::properties_and_values::{
-    syntax::Descriptor as SyntaxDescriptor,
+    syntax::{ComponentName, Descriptor as SyntaxDescriptor, data_type::DataType},
     value::{
         AllowComputationallyDependent, ComputedValue as ComputedRegisteredValue,
         SpecifiedValue as SpecifiedRegisteredValue,
     },
 };
 use crate::stylesheets::UrlExtraData;
-use crate::values::generics::calc::SortKey as AttrUnit;
+use crate::typed_om::NumericType;
+use crate::values::CustomIdent;
 use crate::values::specified::ParsedNamespace;
 use crate::{Atom, FxHashMap, LocalName, Namespace, Prefix, derives::*};
 use cssparser::{Delimiter, Parser, Token, TokenSerializationType};
@@ -60,9 +61,12 @@ enum AttrType {
     RawString,
     /// Parse the attribute value as the given <syntax>.
     Type(SyntaxDescriptor),
-    /// Parse the attribute value as a dimension with the given unit,
-    /// or as a <number-token> if the unit is `number`.
-    Unit(AttrUnit),
+    /// Parse the attribute as a single number token.
+    Number,
+    /// Interpret the number as a percentage.
+    Percentage,
+    /// Interpret the number in this dimension unit, or use the fallback if unknown.
+    Dimension(CustomIdent),
 }
 
 impl Parse for AttrType {
@@ -73,18 +77,22 @@ impl Parse for AttrType {
             .try_parse(|input| {
                 Ok(match input.next()? {
                     Token::Function(name) if name.eq_ignore_ascii_case("type") => {
-                        Self::Type(input.parse_nested_block(SyntaxDescriptor::from_css_parser)?)
+                        let syntax = input.parse_nested_block(SyntaxDescriptor::from_css_parser)?;
+                        if syntax.components.iter().any(|c| matches!(c.name(), ComponentName::DataType(DataType::Url))) {
+                            return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
+                        }
+                        Self::Type(syntax)
                     },
                     Token::Ident(ident) => {
                         if ident.eq_ignore_ascii_case("raw-string") {
                             Self::RawString
-                        } else if let Ok(unit) = AttrUnit::from_ident(ident) {
-                            Self::Unit(unit)
+                        } else if ident.eq_ignore_ascii_case("number") {
+                            Self::Number
                         } else {
-                            return Err(ParseError::custom(StyleParseErrorKind::UnexpectedIdent));
+                            Self::Dimension(CustomIdent::from_ident(ident, &[])?)
                         }
                     },
-                    Token::Delim('%') => Self::Unit(AttrUnit::Percentage),
+                    Token::Delim('%') => Self::Percentage,
                     _ => return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError)),
                 })
             })
@@ -220,6 +228,9 @@ impl AttrFunction {
         source: &'a VariableValue,
         context: &mut SubstitutionReplacementContext<'a, '_, '_, '_>,
     ) -> Result<Substitution<'a>, ()> {
+        // An enclosing conditional may continue after a failed conversion with no fallback.
+        // Its choice still depends on whether this attribute was present and convertible.
+        context.consulted_attr_taint = true;
         let arg = self.replace_arg(source, context);
         let is_type_omitted = arg
             .value
@@ -268,18 +279,29 @@ impl AttrFunction {
                     };
                     let mut parser = Parser::new(&attr);
                     match &arg.ty {
-                        AttrType::Unit(unit) => {
-                            let css = {
-                                // Verify that attribute data is a <number-token>.
-                                parser.expect_number().ok()?;
-                                let mut s = attr.clone();
-                                s.push_str(unit.as_ref());
-                                s
-                            };
-                            let serialization = match unit {
-                                AttrUnit::Number => TokenSerializationType::Number,
-                                AttrUnit::Percentage => TokenSerializationType::Percentage,
-                                _ => TokenSerializationType::Dimension,
+                        AttrType::Number | AttrType::Percentage | AttrType::Dimension(_) => {
+                            // Keep the numeric token's integer flag, sign and exponent. Serializing
+                            // its float value would turn e.g. 1.0 into an <integer>.
+                            parser.skip_whitespace();
+                            let start = parser.position();
+                            parser.expect_number().ok()?;
+                            let mut css = parser.slice_from(start).to_owned();
+                            parser.expect_exhausted().ok()?;
+                            let serialization = match &arg.ty {
+                                AttrType::Dimension(unit) => {
+                                    let unit = unit.0.as_str();
+                                    // Typed OM uses "percent" for the % unit; attr() requires % itself.
+                                    if unit.eq_ignore_ascii_case("percent") || NumericType::try_from_unit(unit).is_err() {
+                                        return None;
+                                    }
+                                    css.push_str(&unit.to_ascii_lowercase());
+                                    TokenSerializationType::Dimension
+                                },
+                                AttrType::Percentage => {
+                                    css.push('%');
+                                    TokenSerializationType::Percentage
+                                },
+                                _ => TokenSerializationType::Number,
                             };
                             let value = ComputedValue::new(
                                 css,
@@ -316,7 +338,9 @@ impl AttrFunction {
             .or_else(|_| {
                 context.substitute_declaration_value(self.fallback.as_ref().ok_or(())?, source)
             })?;
-        substitution.attr_tainted |= arg.attr_tainted;
+        // Every value produced by attr() is tainted, including a fallback selected by
+        // a missing attribute or a failed conversion (CSS Values 5, attr-security).
+        substitution.attr_tainted = true;
         Ok(substitution)
     }
 

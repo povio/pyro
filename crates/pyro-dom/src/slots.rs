@@ -22,26 +22,28 @@ pub(crate) struct SlotState {
 }
 
 impl Dom {
-    /// Re-reads slot `slot`'s assignment; a change queues the signal.
-    fn check_slot(&mut self, slot: u32) {
+    /// Recompute the assigned list, queuing slotchange only when it differs.
+    fn check_slot(&mut self, slot: u32) -> bool {
         let now = self.slot_assigned(slot);
-        let changed = self.slot_state.assignments.get(&slot) != Some(&now);
-        if changed {
-            if now.is_empty() && !self.slot_state.assignments.contains_key(&slot) {
-                // A slot never seen with assigned nodes: nothing changed.
-                self.slot_state.assignments.insert(slot, now);
-                return;
+        if now.is_empty() {
+            if self.slot_state.assignments.remove(&slot).is_none() {
+                return false;
+            }
+        } else {
+            if self.slot_state.assignments.get(&slot) == Some(&now) {
+                return false;
             }
             self.slot_state.assignments.insert(slot, now);
-            if !self.slot_state.signaled.contains(&slot) {
-                self.slot_state.signaled.push(slot);
-                self.touch_hook();
-            }
         }
+        if !self.slot_state.signaled.contains(&slot) {
+            self.slot_state.signaled.push(slot);
+            self.touch_hook();
+        }
+        true
     }
 
     /// Checks every slot of the shadow tree rooted at `root`.
-    fn check_slots_in_root(&mut self, root: u32) {
+    fn check_slots_in_root(&mut self, root: u32) -> bool {
         let mut slots = Vec::new();
         let mut cur = self.n(root).first_child;
         while cur != NIL {
@@ -50,9 +52,11 @@ impl Dom {
             }
             cur = self.following_in(cur, root);
         }
+        let mut changed = false;
         for slot in slots {
-            self.check_slot(slot);
+            changed |= self.check_slot(slot);
         }
+        changed
     }
 
     /// The shadow root `host` hosts (by name or manually assigning: a child of the host that
@@ -72,7 +76,7 @@ impl Dom {
     /// (each once, in order) from the slots they were assigned to, its old nodes are unassigned,
     /// and the slots of the trees concerned are checked for `slotchange`.
     pub fn slot_assign(&mut self, slot: NodeId, nodes: &[NodeId]) -> DomResult<()> {
-        let s = self.check(slot)?;
+        self.check(slot)?;
         let mut touched = vec![slot];
         self.slot_state.manual.remove(&slot);
         let mut set: Vec<NodeId> = Vec::with_capacity(nodes.len());
@@ -101,10 +105,15 @@ impl Dom {
                 }
             }
         }
+        let mut changed = false;
         for root in roots {
-            self.check_slots_in_root(root);
+            changed |= self.check_slots_in_root(root);
         }
-        let _ = s;
+        if changed {
+            // The flat tree changed without a light-tree mutation. Cached
+            // layout and paint snapshots must pick up the new slot contents.
+            self.bump();
+        }
         Ok(())
     }
 
@@ -137,12 +146,16 @@ impl Dom {
         }
         if self.in_shadow_tree(parent) && nodes.iter().any(|&n| self.subtree_has_slot(n)) {
             let root = self.root_idx(parent);
+            self.check_slots_in_root(root);
+            // Removal assigns slottables in the former parent's tree first,
+            // then in the removed subtree. Detached slots lose their list.
             for &n in nodes {
                 if self.n(n).parent == NIL {
-                    self.slot_state.assignments.remove(&n);
+                    for slot in self.slots_in_subtree(n) {
+                        self.check_slot(slot);
+                    }
                 }
             }
-            self.check_slots_in_root(root);
         }
     }
 

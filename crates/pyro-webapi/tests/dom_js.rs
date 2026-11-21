@@ -442,6 +442,10 @@ fn style_layout_and_media() {
     let e = env("<html><head><style>.hidden{display:none} @media (min-width: 37.5rem){ .wide{visibility: hidden} }</style></head><body><div id=v>visible</div><div id=h class=hidden>x</div><p id=w class=wide>w</p></body></html>");
     let r = &e.main;
     assert_eq!(eval(r, "matchMedia('(min-width: 37.5rem)').matches"), "true");
+    assert_eq!(eval(r, "matchMedia(' SCREEN ').media"), "screen");
+    assert_eq!(eval(r, "matchMedia('screen') === matchMedia('screen')"), "false");
+    assert_eq!(eval(r, "matchMedia('not (unknown-media-feature)').matches"), "false");
+    assert_eq!(eval(r, "matchMedia('not (navigation-controls: back-button)').matches"), "true");
     assert_eq!(eval(r, "getComputedStyle(document.getElementById('h')).display"), "none");
     assert_eq!(eval(r, "getComputedStyle(document.getElementById('w')).getPropertyValue('visibility')"), "hidden");
     assert_eq!(
@@ -2869,8 +2873,7 @@ fn resize_observer_entries_report_each_box_and_skip_disconnected_targets() {
 fn element_metrics_are_whole_pixels_like_chromium() {
     // Gap 36: a chip label reported scrollWidth 44.7135000001 > clientWidth
     // 44.7135 and was taken for truncated. Chromium's scroll, client and
-    // offset metrics are integers: offsets round, sizes snap at the box's
-    // offset (round(left + width) - round(left)).
+    // offset metrics are integers.
     let e = env(
         "<body style='margin:0'><div id=a style='width:44.7135px;overflow:hidden;white-space:nowrap'><span style='display:inline-block;width:44.7135px'></span></div>\
          <div id=b style='margin-left:10.6px;width:20.6px;height:10.4px;padding-top:0.3px'></div></body>",
@@ -2884,7 +2887,7 @@ fn element_metrics_are_whole_pixels_like_chromium() {
             &e.main,
             "var b = document.getElementById('b'); [b.offsetLeft, b.offsetWidth, b.clientWidth, b.scrollWidth, b.offsetHeight, b.clientHeight].join()"
         ),
-        "11,20,20,20,11,11"
+        "11,21,20,20,11,11"
     );
     // getBoundingClientRect keeps the fractional geometry.
     assert_eq!(eval(&e.main, "b.getBoundingClientRect().width"), "20.59375");
@@ -2999,6 +3002,36 @@ fn dom_parser_parses_inert_html_documents() {
     assert_eq!(eval(r, "new DOMParser().parseFromString('<a/>','application/xml').documentElement.nodeName"), "a");
     assert_eq!(eval(r, "try{new DOMParser().parseFromString('x','text/plain')}catch(e){e.name}"), "TypeError");
     assert_eq!(eval(r, "try{DOMParser()}catch(e){e.name}"), "TypeError");
+}
+
+#[test]
+fn dom_parser_inline_patches_stay_in_the_inert_html_document() {
+    let e = env("<body><main></main></body>");
+    let r = &e.main;
+    assert_eq!(
+        eval(r, r#"const parser = new DOMParser();
+            const html = parser.parseFromString(
+              '<main><?marker name="slot"></main><template for="slot"><b>new</b><script>globalThis.patchRan=true</script></template>',
+              'text/html');
+            [html.querySelector('main').firstChild.textContent, html.querySelector('main script') !== null,
+             html.querySelector('template') === null, typeof globalThis.patchRan, document.querySelector('main').childNodes.length].join('|')"#),
+        "new|true|true|undefined|0"
+    );
+    assert_eq!(
+        eval(r, r#"const start = '<head><?marker name="h"></head><body>';
+            const inline = '<template for="h"><meta id="added"></template>';
+            const parse = s => parser.parseFromString(s, 'text/html');
+            [parse(start + inline).head.lastChild.id, parse(start + '<div>' + inline + '</div>').head.querySelector('meta') === null,
+             parse(start + '<template for="h" src="part.html">fallback</template>').body.firstChild.localName].join('|')"#),
+        "added|true|template"
+    );
+    assert_eq!(
+        eval(r, r#"const xml = parser.parseFromString(
+            '<div xmlns="http://www.w3.org/1999/xhtml"><?marker name="slot"?><template for="slot"><b>xml</b></template></div>',
+            'application/xhtml+xml');
+            [xml.documentElement.firstChild.nodeType, xml.getElementsByTagName('template').length].join('|')"#),
+        "7|1"
+    );
 }
 
 #[test]
@@ -5661,6 +5694,21 @@ fn scroll_offsets_round_like_chromium_so_synced_panes_settle() {
 }
 
 #[test]
+fn computed_shorthands_use_their_own_grammar() {
+    let environment = env("<!doctype html><div id=target style='break-before:page;-webkit-line-clamp:2;background-position:center'></div>");
+    let result = eval(&environment.main, "(() => {
+        const target = document.getElementById('target');
+        const computed = getComputedStyle(target);
+        const values = [computed.pageBreakBefore, computed.breakBefore,
+            computed.getPropertyValue('-webkit-line-clamp'), computed.backgroundPosition];
+        target.style.breakBefore = 'column';
+        values.push(computed.pageBreakBefore, computed.breakBefore);
+        return values.join('|');
+    })()");
+    assert_eq!(result, "always|page|2|50% 50%||column");
+}
+
+#[test]
 fn single_axis_overflow_makes_a_scroll_container_like_chromium() {
     // TOS bookkeeping exports (bookkeeping-vat-lines.e2e.ts:65): the table's
     // scroller is `flex h-full grow flex-col overflow-x-auto`. CSS Overflow 3
@@ -6500,6 +6548,44 @@ fn body_window_event_handlers_forward_to_the_window() {
     e.page.dispose();
 }
 
+#[test]
+fn keyframes_parse_and_mutate_in_keyframe_context() {
+    let e = env("<style>@keyframes k { from { animation-name: k; animation-timing-function: ease; color: red !important; } }</style>");
+    assert_eq!(eval(&e.main, "const frames = document.styleSheets[0].cssRules[0]; const decl = frames.cssRules[0].style; decl.cssText"), "animation-timing-function: ease;");
+    assert_eq!(eval(&e.main, "decl.cssText = 'opacity: 0.5; animation: k 1s'; decl.animationDuration = '2s'; decl.setProperty('opacity', '1', 'important'); decl.cssText"), "opacity: 0.5;");
+    assert_eq!(eval(&e.main, "frames.appendRule('to { --x: end; opacity: 1 !important; }'); frames.findRule('to').style.cssText"), "--x: end;");
+    e.page.dispose();
+}
+
+#[test]
+fn css_keyframes_names_are_css_tokens() {
+    let e = env(r#"<style id=s>@keyframes none {} @keyframes foo; @-webkit-keyframes 'a;{b' {} @keyframes \66 oo {} @keyframes 'inherit' {}</style>"#);
+    assert_eq!(eval(&e.main, "[...document.getElementById('s').sheet.cssRules].map(rule => rule.name).join('|')"), "a;{b|foo|inherit");
+    e.page.dispose();
+}
+
+#[test]
+fn counter_style_edits_validate_values_and_system_changes() {
+    let e = env(r#"<style>@counter-style sample { system: fixed; symbols: A B; }</style>"#);
+    assert_eq!(eval(&e.main, r#"const sheet = document.styleSheets[0], rule = sheet.cssRules[0];
+        rule.system = 'fixed 2'; rule.system = 'alphabetic'; rule.prefix = '"a;b"';
+        rule.prefix = 'invalid pair'; rule.name = 'circle'; rule.symbols = '1 invalid';
+        [rule.name, rule.system, rule.symbols, rule.prefix].join('|')"#), r#"sample|fixed 2|A B|"a;b""#);
+    assert_eq!(eval(&e.main, r#"sheet.deleteRule(0); rule.name = 'a\\ b'; rule.system = 'fixed 3';
+        [rule.name, rule.system, rule.cssText.startsWith('@counter-style a\\ b {'), sheet.cssRules.length].join('|')"#), "a b|fixed 3|true|0");
+    e.page.dispose();
+}
+
+#[test]
+fn view_transition_descriptors_retain_their_frozen_types() {
+    let e = env(r"<style>@view-transition { navigation: auto; types: a\ b c c; types: invalid, list }</style>");
+    assert_eq!(eval(&e.main, "const rule = document.styleSheets[0].cssRules[0];
+        const types = rule.types; document.styleSheets[0].deleteRule(0);
+        [rule.navigation, types === rule.types, Object.isFrozen(types), types.join('|')].join('|')"),
+        "auto|true|true|a b|c|c");
+    e.page.dispose();
+}
+
 /// Rules wrap as their CSSOM interfaces (all CSSRule subclasses), `cssRules`
 /// is a live CSSRuleList, and `media` of `@media`/`@import` is a MediaList
 /// serialized by the style engine (css/cssom CSSRule-type, MediaList-parsing).
@@ -6532,6 +6618,11 @@ fn css_rule_interfaces_rule_lists_and_rule_media() {
         ),
         "not print, not all|not print, not all|@import url(\"x.css\") layer(L) tv;|named:first"
     );
+    assert_eq!(eval(&e.main, "const media = rs[3].media; media.mediaText = 'screen, print, screen';
+        media.appendMedium('SCREEN'); media.deleteMedium('screen, print'); media.appendMedium('tv, all');
+        const before = media.mediaText; media.deleteMedium('SCREEN');
+        let missing; try { media.deleteMedium('all'); } catch (err) { missing = err.name; }
+        [before, media.length, media[0], missing].join('|')"), "screen, print, screen|1|print|NotFoundError");
     e.page.dispose();
 }
 
@@ -6610,6 +6701,87 @@ fn image_data_structured_clones() {
     e.page.dispose();
 }
 
+#[test]
+fn position_try_prototype_accessors_share_the_declaration_block() {
+    let env = env("<style>@position-try --fallback { inset-inline-start: 2px }</style>");
+    assert_eq!(eval(&env.main, "const style = document.styleSheets[0].cssRules[0].style;
+        const proto = CSSPositionTryDescriptors.prototype;
+        const dashed = Object.getOwnPropertyDescriptor(proto, 'inset-inline-start');
+        const camel = Object.getOwnPropertyDescriptor(proto, 'insetInlineStart');
+        dashed.set.call(style, '4px'); camel.set.call(style, 'invalid');
+        [camel.get.call(style), style.getPropertyValue('inset-inline-start'), Object.hasOwn(proto, 'color')].join('|')"), "4px|4px|false");
+    env.page.dispose();
+}
+
+#[test]
+fn nested_style_rules_preserve_live_children_and_declaration_order() {
+    let env = env("<style>.outer { color: red; > .inner { height: 2px } width: 4px }</style>");
+    assert_eq!(eval(&env.main, "const outer = document.styleSheets[0].cssRules[0], list = outer.cssRules, child = list[0];
+        [outer.style.color, outer.style.width, child.selectorText, list[1].cssText, child.parentRule === outer].join('|')"), "red||& > .inner|width: 4px;|true");
+    assert_eq!(eval(&env.main, "outer.insertRule('height: 7px', 1); outer.deleteRule(0);
+        [list.length, list[0].cssText, child.parentRule === null, child.parentStyleSheet === null].join('|')"), "2|height: 7px;|true|true");
+}
+
+#[test]
+fn cssom_namespace_preserves_webidl_string_shape() {
+    let env = env("");
+    assert_eq!(eval(&env.main, r#"const tag = Object.getOwnPropertyDescriptor(CSS, Symbol.toStringTag);
+        [tag.value, tag.writable, tag.enumerable, tag.configurable, CSS.escape('-2\ud800!') === '-\\32 \ud800\\!'].join('|')"#), "CSS|false|false|true|true");
+}
+
+#[test]
+fn css_root_viewport_condition_cycle_guards_only_scrollbar_properties() {
+    let env = env(r#"<!doctype html><style>
+        @property --tracker { syntax:'<length>'; initial-value:0px; inherits:false }
+        @property --alias { syntax:'<length>'; initial-value:0px; inherits:false }
+        :root, section { --tracker:100vw; --alias:var(--tracker); overflow:if(style(--alias > 1px):scroll;else:hidden); opacity:if(style(--alias > 1px):.5;else:1) }
+        :root.absolute { --tracker:20px }
+        </style><section></section>"#);
+    assert_eq!(eval(&env.main, "const root = document.documentElement, child = document.querySelector('section');
+        [getComputedStyle(root).overflow, getComputedStyle(root).opacity, getComputedStyle(child).overflow].join('|')"), "visible|0.5|scroll");
+    assert_eq!(eval(&env.main, "root.className='absolute';getComputedStyle(root).overflow"), "scroll");
+}
+
+#[test]
+fn cssom_set_property_priority_conversion_and_removal() {
+    let env = env("<style>div { color: red !important }</style>");
+    assert_eq!(eval(&env.main, "const style = document.styleSheets[0].cssRules[0].style;
+        style.setProperty('color', 'blue', null); style.setProperty('color', 'red', 'unknown');
+        const before = [style.color, style.getPropertyPriority('color')];
+        style.setProperty('color', '', 'unknown'); [...before, style.length].join('|')"), "blue||0");
+}
+
+#[test]
+fn nested_cssom_edits_respect_rule_context() {
+    let env = env("<style>.outer { @media all { .a {} } }</style>");
+    assert_eq!(eval(&env.main, "const outer = document.styleSheets[0].cssRules[0], group = outer.cssRules[0], child = group.cssRules[0];
+        child.selectorText = '> .b'; child.selectorText = '.invalid,'; outer.selectorText = '.parent';
+        [outer.selectorText, child.selectorText, ...['@font-face {}', '@font-face {} .extra {}'].map(text => { try { group.insertRule(text); } catch (error) { return error.name; } }), group.cssRules.length].join('|')"), ".parent|& > .b|HierarchyRequestError|SyntaxError|1");
+}
+
+#[test]
+fn style_block_replacement_supersedes_cssom_without_another_sheet_read() {
+    let env = env("<style id=source>.target { z-index: 1 }</style><div class=target></div>");
+    assert_eq!(eval(&env.main, "const elem = document.querySelector('.target'), source = document.querySelector('style');
+        const style = source.sheet.cssRules[0].style; style.zIndex = '2'; const edited = getComputedStyle(elem).zIndex;
+        source.textContent = '.target { z-index: 3 }'; [edited, getComputedStyle(elem).zIndex].join('|')"), "2|3");
+}
+
+#[test]
+fn nested_style_blocks_distinguish_braced_variable_values_from_selectors() {
+    let env = env("<style>.outer { color: { var(--x) }; color:hover { width: 2px } }</style>");
+    assert_eq!(eval(&env.main, "const rule = document.styleSheets[0].cssRules[0]; [rule.style.color, rule.cssRules[0].selectorText].join('|')"), "{ var(--x) }|& color:hover");
+}
+
+#[test]
+fn page_descriptor_edits_use_page_grammar() {
+    let env = env("<style>@page { size: A4; page-orientation: rotate-right; @top-left { content: 'x' } }</style>");
+    let realm = &env.main;
+    assert_eq!(eval(realm, "const page = document.styleSheets[0].cssRules[0], declarations = page.style; [declarations.size, declarations.pageOrientation, declarations.cssFloat].join('|')"), "a4|rotate-right|");
+    assert_eq!(eval(realm, "declarations.cssText = 'size: letter landscape !important'; declarations.size = 'invalid-paper'; [declarations.size, declarations.getPropertyPriority('size'), declarations.removeProperty('size'), page.cssRules.length].join('|')"), "letter landscape|important|letter landscape|1");
+    assert_eq!(eval(realm, "getComputedStyle(document.documentElement).getPropertyValue('page-orientation')"), "");
+}
+
 /// `@page` rules expose their declarations as CSSPageDescriptors and their
 /// margin rules as CSSMarginRules, edits write back into the page rule, and
 /// a removed rule has no parent sheet (css/cssom/idlharness.html,
@@ -6639,6 +6811,21 @@ fn page_rules_have_descriptors_and_margin_rules() {
 /// sheet attributes, styles are CSSStyleProperties, required arguments are
 /// required (a bare `deleteRule()` must not delete rule 0), and an `@import`
 /// serializes its URL as `url("...")` with its layer and supports() parts.
+#[test]
+fn font_face_descriptors_share_a_live_block() {
+    let e = env("<style id=s>@font-face { font-family: Demo; src: local(Demo); }</style>");
+    assert_eq!(eval(&e.main, "const rule = document.getElementById('s').sheet.cssRules[0];
+        const descriptors = rule.style; const kept = descriptors.src;
+        descriptors.fontWeight = '200 700'; descriptors.fontWeight = 'bolder';
+        const result = [rule.style === descriptors, descriptors.parentRule === rule,
+            descriptors instanceof CSSFontFaceDescriptors, descriptors.src === kept,
+            descriptors.removeProperty('font-weight'), descriptors.fontWeight];
+        rule.style = 'unicode-range: U+61-7A; color: red';
+        result.push(descriptors.length, descriptors.item(0), descriptors.unicodeRange.toUpperCase());
+        result.join('|')"), "true|true|true|true|200 700||1|unicode-range|U+61-7A");
+    e.page.dispose();
+}
+
 #[test]
 fn cssom_interface_shapes_and_import_parts() {
     let e = env(concat!(

@@ -862,6 +862,8 @@ impl Layout {
         }
         let mobile = MobileViewport::new(self.meta.as_ref(), self.device.width, self.device.height);
         let mut layout = self.device.clone();
+        layout.screen_width.get_or_insert(self.device.width);
+        layout.screen_height.get_or_insert(self.device.height);
         (layout.width, layout.height) = mobile.layout_size();
         if self.mobile.is_none() || (layout.width, layout.height) != (self.viewport().width, self.viewport().height) {
             // Laid out again at another width: until then, as wide as the layout viewport.
@@ -1047,14 +1049,17 @@ impl Layout {
         if (self.html_local(dom, idx) == Some("body")) != self.is_quirks(dom) {
             return None;
         }
-        let v = self.viewport();
-        // pyro: less the viewport's shown classic scrollbars.
-        let (bar_width, bar_height) =
-            self.synced_geometry_source(dom).map_or((0.0, 0.0), |s| s.viewport_scrollbar_sizes());
+        let viewport = self.viewport();
+        let (width, height) = self.without_scrollbars(dom, (viewport.width, viewport.height));
         Some(match axis {
-            Axis::Width => (v.width as f64 - bar_width).max(0.0),
-            Axis::Height => (v.height as f64 - bar_height).max(0.0),
+            Axis::Width => width,
+            Axis::Height => height,
         })
+    }
+
+    fn without_scrollbars(&self, dom: &Dom, (width, height): (u32, u32)) -> (f64, f64) {
+        let (bar_width, bar_height) = self.synced_geometry_source(dom).map_or((0.0, 0.0), |s| s.viewport_scrollbar_sizes());
+        ((width as f64 - bar_width).max(0.0), (height as f64 - bar_height).max(0.0))
     }
 
     /// Element.zig:1671-1675.
@@ -1179,7 +1184,7 @@ impl Layout {
     }
 
     /// `offsetTop`/`offsetLeft`: border-box offset from the offset parent's
-    /// border box (document coordinates for the body/none).
+    /// padding edge (document coordinates for the body/none).
     fn box_offset(&self, dom: &Dom, el: NodeId) -> (f64, f64) {
         let Some(b) = self.layout_box(dom, el) else { return (0.0, 0.0) };
         let parent = self.offset_parent(dom, el).filter(|&p| !self.is_root_container(dom, p));
@@ -1193,7 +1198,7 @@ impl Layout {
             Some((parent, p)) => {
                 let (px, py) = self.sticky_shift_in(dom, &sticky, parent);
                 let (ox, oy) = origin(&p);
-                (bx + kx - ox - px, by + ky - oy - py)
+                (bx + kx - ox - px - p.border[LEFT], by + ky - oy - py - p.border[TOP])
             }
             None => (bx + kx, by + ky),
         }
@@ -1217,9 +1222,8 @@ impl Layout {
 
     /// An element metric as script reads it, pixel-snapped to whole pixels
     /// like Chromium (Gap 36: `scrollWidth > clientWidth` must not come from
-    /// a fractional width). Offsets round; sizes snap at the box's offset
-    /// (client and scroll sizes at its padding edge) so that equal
-    /// fractional sizes snap alike.
+    /// a fractional width). Offsets and offset dimensions round independently;
+    /// client and scroll sizes snap at the padding edge.
     pub fn metric(&self, dom: &Dom, el: NodeId, metric: Metric) -> f64 {
         let raw = match metric {
             Metric::ScrollWidth => self.scroll_width(dom, el),
@@ -1236,9 +1240,7 @@ impl Layout {
         }
         let border = |side: usize| self.layout_box(dom, el).map_or(0.0, |b| b.border[side]);
         match metric {
-            Metric::OffsetTop | Metric::OffsetLeft => round_layout_unit(raw),
-            Metric::OffsetWidth => snap_size_to_pixel(raw, self.offset_left(dom, el)),
-            Metric::OffsetHeight => snap_size_to_pixel(raw, self.offset_top(dom, el)),
+            Metric::OffsetTop | Metric::OffsetLeft | Metric::OffsetWidth | Metric::OffsetHeight => round_layout_unit(raw),
             Metric::ScrollWidth | Metric::ClientWidth => {
                 snap_size_to_pixel(raw, self.offset_left(dom, el) + border(LEFT))
             }
@@ -1363,7 +1365,11 @@ impl Layout {
                 } else {
                     continue;
                 };
-                let rect = Rect { x: left, width: right - left, ..run.rect };
+                let rect = if run.vertical_edges {
+                    Rect { y: left, height: right - left, ..run.rect }
+                } else {
+                    Rect { x: left, width: right - left, ..run.rect }
+                };
                 if start == end {
                     return Some(self.text_client_rect(dom, text, rect, run.fixed));
                 }
@@ -1432,13 +1438,15 @@ impl Layout {
                     0.0
                 }
             };
-            let key = (gap(y, top, run.rect.height), gap(x, left, run.rect.width));
+            let inline_gap = gap(x, left, run.rect.width);
+            let block_gap = gap(y, top, run.rect.height);
+            let key = if run.vertical_edges { (inline_gap, block_gap) } else { (block_gap, inline_gap) };
             if best.is_none_or(|b| key < b.0) {
-                best = Some((key, i as u32, run.node, left));
+                best = Some((key, i as u32, run.node, if run.vertical_edges { y - top } else { x - left }));
             }
         }
         // The flag: the point is on the word itself.
-        best.map(|(key, i, node, left)| (node, result.text_runs[i as usize].offset_at(x - left), key == (0.0, 0.0)))
+        best.map(|(key, i, node, distance)| (node, result.text_runs[i as usize].offset_at(distance), key == (0.0, 0.0)))
     }
 
     /// Whether a text box (viewport coordinates) lies entirely outside the
@@ -2061,10 +2069,8 @@ impl Layout {
     /// viewport-sized.
     pub fn document_scroll_size(&self, dom: &Dom) -> (f64, f64) {
         let (w, h) = self.document_extent(dom);
-        let (vw, vh) = self.window_size();
-        // pyro: less the viewport's shown classic scrollbars (Chrome).
-        let (bw, bh) = self.synced_geometry_source(dom).map_or((0.0, 0.0), |s| s.viewport_scrollbar_sizes());
-        (w.max(vw as f64 - bw), h.max(vh as f64 - bh))
+        let (vw, vh) = self.without_scrollbars(dom, self.window_size());
+        (w.max(vw), h.max(vh))
     }
 
     // ----- hit testing -------------------------------------------------------
@@ -2538,7 +2544,14 @@ impl Layout {
             // (Nor is a box a line clamp discarded: `ExternalBox::hidden`.)
             let hit = inside(&r) || ((r.width == 0.0 || r.height == 0.0)
                 && self.overflowing_text_hits(el, b.rect, r, geometry).iter().any(inside));
-            if b.hidden || !hit || !self.is_visible(dom, el) || !self.style.is_hit_testable(dom, el) {
+            if b.hidden || !hit || !self.is_visible(dom, el) {
+                continue;
+            }
+            let svg_viewport = !ignore_x && dom.element(el).is_ok_and(|e| {
+                e.name.ns == markup5ever::ns!(svg) && e.name.local == local_name!("svg")
+            });
+            let self_hit = self.style.is_hit_testable(dom, el);
+            if !self_hit && (!svg_viewport || self.computed(dom, el).inert) {
                 continue;
             }
             // A box split into fragments (columns) is hit in one of them: its rect is their union.
@@ -2594,7 +2607,22 @@ impl Layout {
                 out_x || out_y
             });
             if !clipped {
-                best = Some((key, el));
+                let target = if svg_viewport {
+                    // SVG graphics are painted inside the viewport's CSS box and
+                    // have no CSS boxes of their own. Hit them in local user space.
+                    let left = b.border[LEFT] + b.padding[LEFT];
+                    let top = b.border[TOP] + b.padding[TOP];
+                    let viewport = (
+                        b.client_width - b.padding[LEFT] - b.padding[RIGHT],
+                        b.client_height - b.padding[TOP] - b.padding[BOTTOM],
+                    );
+                    crate::svg_geometry::hit_test(dom, &self.style, el, viewport, x - r.x - left, y - r.y - top)
+                } else {
+                    None
+                };
+                if let Some(target) = target.or_else(|| self_hit.then_some(el)) {
+                    best = Some((key, target));
+                }
             }
         }
         // Outside the topmost modal dialog everything is inert: the point
@@ -2737,10 +2765,11 @@ impl Layout {
 
     /// pyro: the viewport's scroll range on each axis ([`Self::viewport_x_reversed`]).
     fn viewport_scroll_range(&self, dom: &Dom) -> ((i32, i32), (i32, i32)) {
-        let (w, h) = self.document_scroll_size(dom);
+        let (w, h) = self.document_extent(dom);
+        let (vw, vh) = self.without_scrollbars(dom, self.window_size());
         // (Saturated: an extent past i32::MAX px stays a valid range, min <= max.)
-        let limit = |size: f64, visible: u32| scroll_limit(size, visible).min(i32::MAX as u32) as i32;
-        let (mx, my) = (limit(w, self.inner_width()), limit(h, self.inner_height()));
+        let limit = |size: f64, visible: f64| (round_layout_unit(size) - round_layout_unit(visible)).clamp(0.0, i32::MAX as f64) as i32;
+        let (mx, my) = (limit(w, vw), limit(h, vh));
         let x = if self.viewport_x_reversed(dom) { (-mx, 0) } else { (0, mx) };
         (x, (0, my))
     }
@@ -4184,7 +4213,7 @@ impl Layout {
             return String::new();
         }
         let Some(style) = self.style.stylo_pseudo_style(dom, el, pseudo, false) else { return String::new() };
-        let name = if name.starts_with("--") { Cow::Borrowed(name) } else { lowercase(name) };
+        let name = resolved_property_name(name);
         // The animation and transition properties of a `::before`/`::after`, from the page's own
         // timing cascade (the engine's has them all `none`), as the element's are.
         let timing_pseudo = match pseudo {
@@ -4197,7 +4226,7 @@ impl Layout {
         }
         // A running CSS transition of the pseudo-element: its value now (the layout engine samples
         // none), in the after-change style.
-        if let Some(p) = timing_pseudo.filter(|_| !name.starts_with("--")) {
+        if let Some(p) = timing_pseudo {
             match self.style.pseudo_transition_value(el, p, &name) {
                 Some(crate::animation::TransitionValue::Text(v)) => return v,
                 Some(crate::animation::TransitionValue::Style(style)) => {
@@ -4211,6 +4240,29 @@ impl Layout {
             return "none".into();
         }
         value
+    }
+
+    pub fn typed_computed_value(&self, dom: &Dom, el: NodeId, name: &str) -> Option<String> {
+        let computed = || {
+            let css = self.style.computed_value(dom, el, name)?;
+            if css.starts_with(|c: char| c.is_ascii_digit() || c == '-' || c == '.') {
+                if let Some(value) = self.style.stylo_style(dom, el)
+                    .and_then(|style| crate::stylo::precise_typed_numeric(&style, name, &css)) {
+                    return Some(value);
+                }
+            }
+            Some(css)
+        };
+        if !self.style.style_overridden() {
+            match self.style.transition_value(el, name) {
+                Some(crate::animation::TransitionValue::Text(value)) => return Some(value),
+                Some(crate::animation::TransitionValue::Style(sample)) => {
+                    return self.style.with_style_override(el, sample, computed).flatten();
+                }
+                None => {}
+            }
+        }
+        computed()
     }
 
     /// `getComputedStyle(el).getPropertyValue(name)`
@@ -4228,11 +4280,12 @@ impl Layout {
             return String::new();
         }
         let custom = name.starts_with("--");
-        let name = if custom { Cow::Borrowed(name) } else { lowercase(name) };
+        let name = resolved_property_name(name);
         let name: &str = &name;
+        if matches!(name, "page-orientation" | "size") { return String::new(); }
         // pyro: a running CSS transition's value now (the layout engine samples none), serialized
         // as this function serializes the after-change style with that value in it
-        if !custom && !self.style.style_overridden() {
+        if !self.style.style_overridden() {
             match self.style.transition_value(el, name) {
                 Some(crate::animation::TransitionValue::Text(v)) => return v,
                 Some(crate::animation::TransitionValue::Style(style)) => {
@@ -4243,10 +4296,14 @@ impl Layout {
                 None => {}
             }
         }
+        let name = if matches!(name, "inline-size" | "block-size" | "min-inline-size" | "min-block-size" | "max-inline-size" | "max-block-size") {
+            self.style.stylo_style(dom, el).and_then(|style| crate::animation::physical_property(name, &style)).unwrap_or(name)
+        } else {
+            name
+        };
         match name {
             "display" if self.style.has_display_none(dom, el) => return "none".into(),
             "display" => return self.style.computed_display(dom, el).unwrap_or_default(),
-            "visibility" if self.style.has_visibility_hidden_inherited(dom, el) => return "hidden".into(),
             "pointer-events" if self.style.has_pointer_events_none(dom, el) => return "none".into(),
             "text-transform" => return self.style.text_transform(dom, el).keyword().into(),
             "overflow-x" | "overflow-y" | "overflow" => {
@@ -4280,16 +4337,29 @@ impl Layout {
         if let Some(v) = self.style.timing_value(dom, el, name) {
             return v;
         }
-        let declared = self.style.computed_value(dom, el, name);
+        let (declared, zoom) = self.style.computed_value_with_zoom(dom, el, name).unzip();
+        if !self.style.style_overridden()
+            && matches!(name, "margin" | "margin-inline" | "margin-block" | "margin-inline-start" | "margin-inline-end"
+                | "margin-block-start" | "margin-block-end" | "margin-left" | "margin-right" | "margin-top" | "margin-bottom"
+                | "padding" | "padding-inline" | "padding-block" | "padding-inline-start" | "padding-inline-end"
+                | "padding-block-start" | "padding-block-end" | "padding-left" | "padding-right" | "padding-top" | "padding-bottom")
+            && declared.as_deref().is_some_and(|value| value.contains('%') || value.contains("auto"))
+            && !self.style.has_display_none(dom, el) && !self.computed(dom, el).display_contents
+        {
+            if let Some(value) = self.synced_geometry_source(dom)
+                .and_then(|source| source.resolved_style_value(crate::snapshot::render_key(el), name))
+                .filter(|value| !value.is_empty())
+            {
+                return value;
+            }
+        }
         // Resolve percentages against the renderer's actual reference box, also
         // for a sampled transition. Keep the sampled style read-only: the live
         // document must not be restyled to an intermediate animation value.
-        // Only percentages need the reference box; everything else keeps the declared-value serialization, whose
-        // rounding the WPT transform-composition expectations depend on.
-        if name == "transform" && declared.as_deref().is_some_and(|value| value.contains('%')) {
+        if matches!(name, "transform-origin" | "perspective-origin") || (name == "transform" && declared.as_deref().is_some_and(|value| value != "none")) {
             if let Some(value) = self.synced_geometry_source(dom).and_then(|source| {
                 let style = self.style.stylo_style(dom, el)?;
-                source.resolved_transform_value(crate::snapshot::render_key(el), &style)
+                source.resolved_transform_value(crate::snapshot::render_key(el), name, &style)
             }) {
                 return value;
             }
@@ -4322,8 +4392,24 @@ impl Layout {
                 // as Chromium reports it (`7px`, `50%`, `auto`).
                 return declared.unwrap_or_else(|| "auto".into());
             }
+            if self.style.style_overridden() && declared.as_deref().is_some_and(|v| v.starts_with("calc-size(")) {
+                if let Some(size) = self.synced_geometry_source(dom).and_then(|source| {
+                    let sampled = self.style.stylo_style(dom, el)?;
+                    source.sampled_calc_size(crate::snapshot::render_key(el), name == "width", &sampled)
+                }) {
+                    return format!("{}px", crate::computed::fmt_num(f64::from(size)));
+                }
+            }
             // A declared absolute length is the used size the renderless layout cannot derive.
             if let Some(px) = declared.filter(|v| v.ends_with("px")) {
+                if !self.style.style_overridden() && self.is_flex_item(dom, el) {
+                    if let Some(used) = self.synced_geometry_source(dom)
+                        .and_then(|source| source.resolved_style_value(crate::snapshot::render_key(el), name))
+                        .filter(|value| value.ends_with("px"))
+                    {
+                        return used;
+                    }
+                }
                 return px;
             }
             // The used size: content box, or border box under `box-sizing: border-box`.
@@ -4344,7 +4430,7 @@ impl Layout {
                 }
             }
         }
-        if let Some(v) = declared.as_deref().and_then(|v| self.resolved_value(dom, el, name, v)) {
+        if let Some(v) = declared.as_deref().and_then(|v| self.resolved_value(dom, el, name, v, zoom.unwrap_or(1.0))) {
             return v;
         }
         if let Some(v) = declared {
@@ -4398,9 +4484,19 @@ fn without_identity_transforms(value: &str) -> Option<String> {
     (!kept.is_empty() && kept.len() < items.len()).then(|| kept.join(" "))
 }
 
-/// A property name ASCII-lowercased, borrowed when it is lowercase already
-/// (the names the bindings pass are).
-fn lowercase(name: &str) -> Cow<'_, str> {
+fn resolved_property_name(name: &str) -> Cow<'_, str> {
+    if name.starts_with("--") {
+        return Cow::Borrowed(name);
+    }
+    if name.starts_with('-') {
+        if let Some(style::properties::PropertyId::NonCustom(property)) = crate::stylo::property_id(name) {
+            return Cow::Borrowed(match property.unaliased().name() {
+                "-webkit-transform" => "transform",
+                "-webkit-perspective" => "perspective",
+                canonical => canonical,
+            });
+        }
+    }
     if name.bytes().any(|b| b.is_ascii_uppercase()) {
         Cow::Owned(name.to_ascii_lowercase())
     } else {
@@ -4409,12 +4505,25 @@ fn lowercase(name: &str) -> Cow<'_, str> {
 }
 
 impl Layout {
+    fn is_flex_item(&self, dom: &Dom, el: NodeId) -> bool {
+        if matches!(self.position_of(dom, el), Position::Absolute | Position::Fixed) || self.computed(dom, el).display_contents {
+            return false;
+        }
+        let mut index = dom.check(el).ok();
+        while let Some(parent) = index.and_then(|child| crate::style::flat_tree_parent_element(dom, child)) {
+            let style = self.computed(dom, dom.id_of(parent));
+            if !style.display_contents { return style.display == Display::Flex; }
+            index = Some(parent);
+        }
+        false
+    }
+
     /// getComputedStyle's resolved value where it differs from Stylo's
     /// computed one (CSSOM §resolved values, as Chromium reports them):
     /// `auto` minimum sizes outside flex and grid items, `auto` insets of
     /// relatively positioned boxes, lengths clamped to Blink's LayoutUnit
     /// range. `None`: the computed value stands.
-    fn resolved_value(&self, dom: &Dom, el: NodeId, name: &str, value: &str) -> Option<String> {
+    fn resolved_value(&self, dom: &Dom, el: NodeId, name: &str, value: &str, zoom: f32) -> Option<String> {
         let position = || self.position_of(dom, el);
         match name {
             "min-width" | "min-height" | "max-width" | "max-height" if value.contains("anchor-size(") => {
@@ -4433,6 +4542,10 @@ impl Layout {
             }
             "top" | "bottom" | "left" | "right" if value == "auto" || value.contains('%') || value.contains("anchor(") || value.contains("anchor-size(") => {
                 self.resolved_inset(dom, el, name, value, position()).or_else(|| clamp_layout_units(value))
+            }
+            "top" | "bottom" | "left" | "right"
+            | "inset-inline-start" | "inset-inline-end" | "inset-block-start" | "inset-block-end" => {
+                serialize_large_inset(value, zoom).or_else(|| clamp_layout_units(value))
             }
             _ => clamp_layout_units(value),
         }
@@ -4558,6 +4671,27 @@ impl Layout {
     }
 }
 
+/// Blink's layout coordinates use a signed 32-bit fixed point with six fractional bits.
+/// CSSPrimitiveValue reserves two pixels at either end for float round trips.
+pub(crate) fn bounded_layout_px(px: f32) -> f32 {
+    const MIN: f32 = (i32::MIN / 64 + 2) as f32;
+    const MAX: f32 = (i32::MAX / 64 - 2) as f32;
+    px.clamp(MIN, MAX)
+}
+
+/// Resolved physical and logical inset lengths are exposed in unzoomed CSS pixels.
+fn serialize_large_inset(value: &str, zoom: f32) -> Option<String> {
+    let px = value.strip_suffix("px")?.parse::<f32>().ok()?;
+    let zoom = if zoom > 0.0 { zoom } else { 1.0 };
+    let zoomed = px * zoom;
+    let bounded = bounded_layout_px(zoomed);
+    if bounded == zoomed && px.abs() < 1e6 {
+        return None;
+    }
+    let px = if bounded == zoomed { px } else { bounded / zoom };
+    Some(format!("{}px", crate::computed::serialize_css_number(f64::from(px))))
+}
+
 /// `value` with every px length beyond Blink's LayoutUnit range (±2^25)
 /// clamped as Chromium serializes it; `None` when none is.
 fn clamp_layout_units(value: &str) -> Option<String> {
@@ -4657,13 +4791,6 @@ fn focus_scroll_offset(start: f64, size: f64, viewport: f64, current: i64) -> Op
         return None;
     }
     Some((current as f64 + start + size / 2.0 - viewport / 2.0).round().clamp(i32::MIN as f64, i32::MAX as f64) as i32)
-}
-
-/// Window.zig:848-851. The document's pixel-snapped size (what `scrollHeight`
-/// reads) less the viewport, as Chromium clamps: a document whose overflow
-/// ends a layout unit short of a pixel still scrolls to that pixel.
-fn scroll_limit(size: f64, visible: u32) -> u32 {
-    (round_layout_unit(size) - visible as f64).clamp(0.0, u32::MAX as f64) as u32
 }
 
 /// frame/user_input.zig:612-615.

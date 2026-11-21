@@ -243,6 +243,8 @@ pub struct Dom {
     pub(crate) frame_content_heights: rustc_hash::FxHashMap<u32, f32>,
     /// pyro: the user agent's pan and zoom of an `<svg>` (`SVGSVGElement.currentTranslate` and
     /// `currentScale`): its translation and scale, when not the identity.
+    pub(crate) svg_points: rustc_hash::FxHashMap<u32, std::rc::Weak<crate::svg_point_list::PointLists>>,
+    pub(crate) svg_strings: rustc_hash::FxHashMap<(u32, crate::svg_string_list::StringListAttribute), Vec<String>>,
     pub(crate) svg_pans: rustc_hash::FxHashMap<u32, (f64, f64, f64)>,
     /// The document each iframe shows as the renderer paints it (by slot): its render HTML, URL and
     /// scroll position (`set_frame_documents`, snapshot `srcdoc` + `data-pyro-frame-*`).
@@ -347,6 +349,8 @@ impl Dom {
             removal_log: VecDeque::new(),
             journal: Vec::new(),
             frame_content_heights: Default::default(),
+            svg_points: Default::default(),
+            svg_strings: Default::default(),
             svg_pans: Default::default(),
             frame_documents: Default::default(),
             snapshot_nonces: Default::default(),
@@ -935,6 +939,8 @@ impl Dom {
             activated: NIL,
             focus_visible: false,
             design_mode: false,
+            style_with_css: false,
+            default_paragraph_separator: "div",
             document_element: NIL,
             head: NIL,
             body: NIL,
@@ -956,6 +962,27 @@ impl Dom {
     /// HTML `document.designMode` of `doc`: whether the whole document is editable.
     pub fn design_mode(&self, doc: NodeId) -> bool {
         self.check(doc).ok().is_some_and(|i| matches!(&self.n(i).kind, NodeKind::Document(d) if d.design_mode))
+    }
+
+    pub fn set_style_with_css(&mut self, doc: NodeId, css: bool) -> DomResult<()> {
+        let i = self.check(doc)?;
+        let NodeKind::Document(d) = &mut self.n_mut(i).kind else { return Err(DomError::Type("not a document")) };
+        d.style_with_css = css;
+        Ok(())
+    }
+
+    pub fn set_paragraph_separator(&mut self, doc: NodeId, value: &str) -> DomResult<bool> {
+        let tag = if value.eq_ignore_ascii_case("div") {
+            "div"
+        } else if value.eq_ignore_ascii_case("p") {
+            "p"
+        } else {
+            return Ok(false);
+        };
+        let i = self.check(doc)?;
+        let NodeKind::Document(d) = &mut self.n_mut(i).kind else { return Err(DomError::Type("not a document")) };
+        d.default_paragraph_separator = tag;
+        Ok(true)
     }
 
     /// Sets `doc`'s `designMode` (`on`).
@@ -3418,6 +3445,11 @@ impl Dom {
     /// follows.
     pub(crate) fn edit_attrs<R>(&mut self, i: u32, name: &QualName, f: impl FnOnce(&mut ElementData) -> R) -> R {
         let plain = name.ns == ns!();
+        if plain && !self.svg_strings.is_empty() {
+            if let Some(kind) = crate::svg_string_list::StringListAttribute::from_name(&name.local) {
+                self.svg_strings.remove(&(i, kind));
+            }
+        }
         let el = self.n_mut(i).element_mut().expect("element");
         let old_id = (plain && name.local == local_name!("id")).then(|| el.id_atom().cloned());
         let old_for = (plain && name.local == local_name!("for") && el.is_html() && el.name.local == local_name!("label"))
@@ -3425,6 +3457,11 @@ impl Dom {
         let r = f(el);
         debug_assert!(el.derived_in_step());
         let base = plain && name.local == local_name!("href") && el.is_html() && el.name.local == local_name!("base");
+        if plain && &*name.local == "points" && !self.svg_points.is_empty() {
+            if let Some(lists) = self.svg_points.get(&i).and_then(std::rc::Weak::upgrade) {
+                lists.attribute_changed(self.n(i).element().unwrap().attr_local(&name.local).unwrap_or_default());
+            }
+        }
         if plain && name.local == local_name!("class") {
             self.resummarize(i);
         }
@@ -4247,6 +4284,12 @@ impl Dom {
 
     fn free_slot(&mut self, i: u32, component_root: u32) {
         let owner = self.n(i).owner_doc;
+        if !self.svg_points.is_empty() { self.svg_points.remove(&i); }
+        if !self.svg_strings.is_empty() {
+            use crate::svg_string_list::StringListAttribute;
+            self.svg_strings.remove(&(i, StringListAttribute::RequiredExtensions));
+            self.svg_strings.remove(&(i, StringListAttribute::SystemLanguage));
+        }
         if owner == i {
             self.snapshot_nonces.get_mut().remove(&i);
         }
@@ -4623,6 +4666,7 @@ mod walk_tests {
 /// and its viewport's scroll position (CSS px).
 #[derive(Clone, Debug, PartialEq)]
 pub struct FrameDocument {
+    pub document_url: Option<String>,
     pub html: String,
     pub url: String,
     pub scroll: (f64, f64),
@@ -4652,6 +4696,7 @@ impl FrameDocument {
         let mut h = rustc_hash::FxHasher::default();
         self.html.hash(&mut h);
         self.url.hash(&mut h);
+        self.document_url.hash(&mut h);
         self.client.hash(&mut h);
         self.sheets.hash(&mut h);
         for (index, frame) in &self.frames.entries {

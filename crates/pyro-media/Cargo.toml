@@ -14,6 +14,7 @@ h264 = ["dep:openh264", "dep:openh264-sys2"]
 
 [dependencies]
 bytes = "1"
+rustfft = "6.4.1"
 # Pure Rust audio: demuxers for every container Chrome's decodeAudioData
 # reads and the codecs but Opus.
 symphonia = { version = "0.6.1", default-features = false, features = ["aac", "flac", "mp3", "pcm", "vorbis", "isomp4", "mkv", "ogg", "wav", "aiff", "caf", "alac", "adpcm", "opt-simd"] }

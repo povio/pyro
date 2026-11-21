@@ -87,6 +87,30 @@ fn eval(realm: &Realm, src: &str) -> String {
 }
 
 #[test]
+fn transform_readback_separates_computed_and_resolved_values() {
+    let env = env("<style>#target { width: 80px; transform: translateX(25%); zoom: 2 }</style><div id=target></div>");
+    assert_eq!(eval(&env.main, r#"(() => {
+        const target = document.querySelector('#target');
+        return [getComputedStyle(target).transform, target.computedStyleMap().get('transform').toString()].join('|');
+    })()"#), "matrix(1, 0, 0, 1, 20, 0)|translate(25%, 0px)");
+}
+
+#[test]
+fn math_auto_preserves_dom_range_and_partial_node_text() {
+    let env = env("<style>#outer { text-transform: math-auto }</style><div id=outer><span id=target>h</span></div>");
+    let read = |source: &str, end: u32| eval(&env.main, &format!(r#"(() => {{
+        const target = document.querySelector('#target');
+        target.textContent = {source:?};
+        const selection = getSelection();
+        selection.setBaseAndExtent(target.firstChild, 0, target.firstChild, {end});
+        return [target.innerText, selection.toString(), selection.getRangeAt(0).toString(), target.textContent].join('|');
+    }})()"#));
+    assert_eq!(read("h", 1), "ℎ|ℎ|h|h");
+    assert_eq!(read("ab", 1), "ab|a|a|ab");
+    assert_eq!(read("∇", 1), "𝛻|𝛻|∇|∇");
+}
+
+#[test]
 fn inner_text_reads_computed_display() {
     let e = env("<div id=t></div>");
     let text = |html: &str| {
@@ -228,9 +252,16 @@ fn css_supports_parses_with_stylo() {
 }
 
 #[test]
+fn indexed_computed_longhands_have_named_accessors() {
+    let environment = env("<div id=target></div>");
+    assert_eq!(eval(&environment.main, "const declaration=getComputedStyle(target); declaration.length>0 && Array.from(declaration).every(name=>declaration[name]===declaration.getPropertyValue(name))"), "true");
+    environment.page.dispose();
+}
+
+#[test]
 fn get_computed_style_reads_pseudo_elements() {
     let e = env("<style>#t{width:100px;color:rgb(255,0,0)}#t::before{content:'icon';color:rgb(0,128,0);display:block}\
-         #t::after{content:attr(data-x)}#n{display:none}#n::before{content:'Foo'}\
+         #t::after{content:attr(data-x)}#t::first-line{color:blue}#n{display:none}#n::before{content:'Foo'}\
          #c::before{color:rgb(0,128,0)}li::marker{color:rgb(0,0,255)}input::placeholder{color:rgb(1,2,3)}</style>\
          <div id=t data-x=tail>x</div><div id=n></div><div id=c>c</div><p id=p>p</p><ul><li id=l>i</li></ul><input id=i placeholder=a>");
     let v = |js: &str| eval(&e.main, js);
@@ -252,6 +283,7 @@ fn get_computed_style_reads_pseudo_elements() {
         "rgb(0, 128, 0)|none|rgb(0, 0, 0)"
     );
     assert_eq!(v("getComputedStyle(l,'::marker').color"), "rgb(0, 0, 255)");
+    assert_eq!(v("[':first-line','::first-line'].map(p=>getComputedStyle(t,p).color).join('|')"), "rgb(0, 0, 255)|rgb(0, 0, 255)");
     assert_eq!(v("getComputedStyle(i,'::placeholder').color"), "rgb(1, 2, 3)");
     // Without a colon the argument is ignored; an unknown or malformed one is an empty style.
     assert_eq!(
@@ -271,6 +303,15 @@ fn get_computed_style_reads_pseudo_elements() {
 }
 
 #[test]
+fn registering_a_property_recomputes_existing_declarations() {
+    let env = env("<div id=t style='font-size:10px; --gap:2em'><span id=child></span></div>");
+    let read = |script: &str| eval(&env.main, script);
+    assert_eq!(read("const style = getComputedStyle(t); style.getPropertyValue('--gap')"), "2em");
+    assert_eq!(read("CSS.registerProperty({name:'--gap',syntax:'<length>',inherits:false,initialValue:'1px'}); [style.getPropertyValue('--gap'),getComputedStyle(child).getPropertyValue('--gap')].join('|')"), "20px|1px");
+    env.page.dispose();
+}
+
+#[test]
 fn css_register_property_validates_and_supplies_initial_values() {
     let e = env("<div id=t style='--set:4px'></div>");
     let v = |js: &str| eval(&e.main, js);
@@ -283,7 +324,13 @@ fn css_register_property_validates_and_supplies_initial_values() {
     assert_eq!(err("{name:'--no-initial',syntax:'<length>',inherits:false}"), "SyntaxError");
     assert_eq!(err("{name:'--wrong',syntax:'<length>',inherits:false,initialValue:'red'}"), "SyntaxError");
     assert_eq!(err("{name:'--relative',syntax:'<length>',inherits:false,initialValue:'1em'}"), "SyntaxError");
+    assert_eq!(err("{name:'--container',syntax:'<length>',inherits:false,initialValue:'calc(1px + 1cqi)'}"), "SyntaxError");
+    assert_eq!(err("{name:'--viewport',syntax:'<length>',inherits:false,initialValue:'1vw'}"), "ok");
     assert_eq!(err("{name:'--keyword',syntax:'<length>',inherits:false,initialValue:'inherit'}"), "SyntaxError");
+    assert_eq!(err("{name:'--single',syntax:'<transform-function>',inherits:false,initialValue:'scale(2) rotate(1deg)'}"), "SyntaxError");
+    assert_eq!(err("{name:'--list',syntax:'<transform-list>',inherits:false,initialValue:'scale(2) rotate(1deg)'}"), "ok");
+    assert_eq!(err("{name:'--not-list',syntax:'<transform-list>',inherits:false,initialValue:'none'}"), "SyntaxError");
+    assert_eq!(err("{name:'--union',syntax:'<transform-list>|none',inherits:false,initialValue:'none'}"), "ok");
     assert_eq!(err("{syntax:'*',inherits:false}"), "TypeError");
     assert_eq!(err("{name:'--x'}"), "TypeError");
     assert_eq!(err("{name:'--set',syntax:'<length>',inherits:false,initialValue:'1px'}"), "ok");

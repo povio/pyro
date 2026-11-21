@@ -131,6 +131,7 @@ impl LayoutPassState<'_> {
         let mut output = if node_wm.is_vertical() == parent_wm.is_vertical() {
             let mut output = self.compute_child_layout_in_current_wm(node_id, inputs, block_ctx);
             if node_wm.is_vertical() && node_wm.is_vertical_lr() != parent_wm.is_vertical_lr() {
+                core::mem::swap(&mut output.top_margin, &mut output.bottom_margin);
                 // Parallel writing modes with opposite block directions (`vertical-lr` in `vertical-rl`
                 // or vice versa) share Taffy's axes but run the block axis the other way.
                 let extent = output.size.height;
@@ -415,7 +416,7 @@ impl LayoutPassState<'_> {
         let position = computed.get_position();
         let block_size = if parent_wm.is_vertical() { &position.width } else { &position.height };
         matches!(block_size, style::values::computed::Size::Auto)
-            && computed.get_box().slow_clone_contain().intersects(style::values::computed::Contain::SIZE | style::values::computed::Contain::BLOCK_SIZE)
+            && computed.get_box().used_containment().intersects(style::values::computed::Contain::SIZE | style::values::computed::Contain::BLOCK_SIZE)
     }
 
     /// pyro: the limit an indefinite containing block (the box's layout parent) puts on an

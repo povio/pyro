@@ -78,6 +78,7 @@ pub enum Display {
 pub enum PseudoElement {
     Before,
     After,
+    Marker,
 }
 
 impl PseudoElement {
@@ -89,6 +90,8 @@ impl PseudoElement {
             Some(PseudoElement::Before)
         } else if name.eq_ignore_ascii_case("after") {
             Some(PseudoElement::After)
+        } else if text.starts_with("::") && name.eq_ignore_ascii_case("marker") {
+            Some(PseudoElement::Marker)
         } else {
             None
         }
@@ -105,6 +108,7 @@ pub enum TextTransform {
     Capitalize,
     Uppercase,
     Lowercase,
+    MathAuto,
 }
 
 impl TextTransform {
@@ -128,10 +132,9 @@ impl TextTransform {
                 TextTransform::Lowercase
             } else if token.eq_ignore_ascii_case("capitalize") {
                 TextTransform::Capitalize
-            } else if token.eq_ignore_ascii_case("full-width")
-                || token.eq_ignore_ascii_case("full-size-kana")
-                || token.eq_ignore_ascii_case("math-auto")
-            {
+            } else if token.eq_ignore_ascii_case("math-auto") {
+                TextTransform::MathAuto
+            } else if token.eq_ignore_ascii_case("full-width") || token.eq_ignore_ascii_case("full-size-kana") {
                 continue;
             } else {
                 return None;
@@ -154,6 +157,7 @@ impl TextTransform {
             TextTransform::Capitalize => "capitalize",
             TextTransform::Uppercase => "uppercase",
             TextTransform::Lowercase => "lowercase",
+            TextTransform::MathAuto => "math-auto",
         }
     }
 }
@@ -799,6 +803,7 @@ pub enum SheetSource {
     StyleElement,
     /// Text supplied by the loader (`<link rel=stylesheet>`, CSSOM edits).
     Text(String),
+    EditedStyleElement { text: String, generation: u32 },
 }
 
 struct Sheet {
@@ -817,6 +822,16 @@ struct Sheet {
     disabled_at: u32,
 }
 
+impl Sheet {
+    fn supplied_text(&self, dom: &Dom) -> Option<&str> {
+        match &self.source {
+            SheetSource::Text(text) => Some(text),
+            SheetSource::EditedStyleElement { text, generation } if *generation == dom.style_sheet_generation(self.owner) => Some(text),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 struct Stamp {
     version: u64,
@@ -829,6 +844,7 @@ struct Stamp {
 pub struct StyleEngine {
     doc: NodeId,
     viewport: Viewport,
+    media_device: std::cell::OnceCell<style::device::Device>,
     sheets: Vec<Sheet>,
     /// pyro: the URL of the response each `<link>`'s sheet text came from (after redirects):
     /// its URLs resolve against it, in the renderer too ([`StyleEngine::sheet_url`]).
@@ -938,6 +954,7 @@ impl StyleEngine {
         StyleEngine {
             doc,
             viewport,
+            media_device: Default::default(),
             sheets: Vec::new(),
             popover_open: FxHashSet::default(),
             sheet_urls: rustc_hash::FxHashMap::default(),
@@ -1003,6 +1020,22 @@ impl StyleEngine {
             Some(view) => style::servo_arc::Arc::new(view),
             None => style,
         })
+    }
+
+    pub fn computed_custom_names(&self, dom: &Dom, el: NodeId, pseudo: &crate::stylo::PseudoArg) -> Vec<String> {
+        use crate::stylo::PseudoArg;
+        let computed = match pseudo {
+            PseudoArg::Element => self.stylo_style(dom, el),
+            PseudoArg::Pseudo(pseudo) => self.stylo_pseudo_style(dom, el, pseudo, false),
+            PseudoArg::Invalid => None,
+        };
+        let Some(computed) = computed else { return Vec::new() };
+        let properties = computed.custom_properties();
+        let mut names: Vec<_> = properties.inherited.iter().chain(properties.non_inherited.iter())
+            .filter(|(_, value)| value.is_some()).map(|(name, _)| format!("--{name}")).collect();
+        names.sort_unstable();
+        names.dedup();
+        names
     }
 
     /// Whether the layout engine records the elements whose computed style a
@@ -1162,6 +1195,7 @@ impl StyleEngine {
             return false;
         }
         self.registered_properties.push(property);
+        self.invalidate();
         true
     }
 
@@ -1234,6 +1268,7 @@ impl StyleEngine {
     /// styles; `None`: elements have none.
     pub fn set_style_engine(&self, source: Option<std::rc::Rc<dyn crate::geometry::GeometrySource>>) {
         *self.external.borrow_mut() = source.map(|s| (s, None));
+        self.timing_rules.borrow_mut().take();
     }
 
     /// The layout engine synced `dom` (styles and layout).
@@ -1354,6 +1389,7 @@ impl StyleEngine {
         let pseudo = match pseudo {
             PseudoElement::Before => style::selector_parser::PseudoElement::Before,
             PseudoElement::After => style::selector_parser::PseudoElement::After,
+            PseudoElement::Marker => style::selector_parser::PseudoElement::Marker,
         };
         self.stylo_pseudo_style(dom, el, &pseudo, !synthesize)
     }
@@ -1477,12 +1513,16 @@ impl StyleEngine {
     /// next query (CDP `Emulation.setDeviceMetricsOverride`).
     pub fn set_viewport(&mut self, viewport: Viewport) {
         if viewport != self.viewport {
+            self.media_device.take();
             self.viewport = viewport;
             self.invalidate();
         }
     }
 
-    /// `window.matchMedia(query).matches`.
+    pub fn matches_media_list(&self, list: &crate::cssom::MediaQueryList) -> bool {
+        list.matches(self.media_device.get_or_init(|| crate::picture::sizes_device(&self.viewport)))
+    }
+
     pub fn match_media(&self, query: &str) -> bool {
         media::matches(query, &self.viewport)
     }
@@ -1580,8 +1620,7 @@ impl StyleEngine {
         self.sheets.iter().find(|s| s.owner == owner).and_then(|s| match &s.source {
             // pyro: and a link that applies nothing now (its `disabled` attribute, its `rel`).
             _ if Self::is_off(s, dom) || link_not_stylesheet(dom, owner) => Some(""),
-            SheetSource::Text(t) => Some(t.as_str()),
-            SheetSource::StyleElement => None,
+            _ => s.supplied_text(dom),
         })
     }
 
@@ -1589,7 +1628,7 @@ impl StyleEngine {
     /// keeps its rules; it only applies nothing, which [`Self::sheet_text`] says): the CSSOM's.
     pub fn sheet_own_text(&self, owner: NodeId) -> Option<&str> {
         self.sheets.iter().find(|s| s.owner == owner).and_then(|s| match &s.source {
-            SheetSource::Text(t) => Some(t.as_str()),
+            SheetSource::Text(t) | SheetSource::EditedStyleElement { text: t, .. } => Some(t.as_str()),
             SheetSource::StyleElement => None,
         })
     }
@@ -1640,9 +1679,9 @@ impl StyleEngine {
             if Self::is_off(sheet, dom) || !dom.is_alive(sheet.owner) || !dom.is_connected(sheet.owner).unwrap_or(false) || link_not_stylesheet(dom, sheet.owner) {
                 continue;
             }
-            match &sheet.source {
-                SheetSource::Text(text) => f(Some(sheet.owner), text),
-                SheetSource::StyleElement => f(Some(sheet.owner), &dom.child_text_content(sheet.owner)),
+            match sheet.supplied_text(dom) {
+                Some(text) => f(Some(sheet.owner), text),
+                None => f(Some(sheet.owner), &dom.child_text_content(sheet.owner)),
             }
         }
         if let Some(text) = &self.script_fonts {
@@ -1667,9 +1706,9 @@ impl StyleEngine {
             }
             let Ok(owner) = dom.check(sheet.owner) else { continue };
             let scope = dom.id_of(dom.root_idx(owner));
-            match &sheet.source {
-                SheetSource::Text(text) => f(scope, text),
-                SheetSource::StyleElement => f(scope, &dom.child_text_content(sheet.owner)),
+            match sheet.supplied_text(dom) {
+                Some(text) => f(scope, text),
+                None => f(scope, &dom.child_text_content(sheet.owner)),
             }
         }
         if let Some(text) = &self.script_fonts {
@@ -1798,9 +1837,9 @@ impl StyleEngine {
         if Self::is_off(sheet, dom) {
             return Some((sheet.revision << 2) | 2);
         }
-        Some(match &sheet.source {
-            SheetSource::Text(_) => sheet.revision << 2,
-            SheetSource::StyleElement => (dom.style_element_text_revision(owner).unwrap_or_default() << 2) | 1,
+        Some(match sheet.supplied_text(dom) {
+            Some(_) => sheet.revision << 2,
+            None => (dom.style_element_text_revision(owner).unwrap_or_default() << 2) | 1,
         })
     }
 
@@ -2012,6 +2051,15 @@ impl StyleEngine {
         self.value_with(dom, el, name, false)
     }
 
+    /// A CSSOM value and the zoom at which its layout lengths were computed.
+    pub(crate) fn computed_value_with_zoom(&self, dom: &Dom, el: NodeId, name: &str) -> Option<(String, f32)> {
+        if crate::gecko_only::handles(name) {
+            return self.gecko_only_value(dom, el, name).map(|value| (value, 1.0));
+        }
+        let style = self.stylo_style(dom, el)?;
+        Some((crate::stylo::serialize(&style, name)?, style.effective_zoom.value()))
+    }
+
     /// Computed `display`: the author value or the UA default, blockified
     /// (css-display-3 §2.7) for the root, floats, absolutely positioned
     /// boxes and flex/grid items, so a `<span>` in a flex `<label>` reports
@@ -2044,10 +2092,7 @@ impl StyleEngine {
                 _ => "normal".into(),
             });
         }
-        if crate::gecko_only::handles(name) {
-            return self.gecko_only_value(dom, el, name);
-        }
-        self.stylo_value(dom, el, name)
+        self.computed_value_with_zoom(dom, el, name).map(|(value, _)| value)
     }
 
     /// The animation and transition rules of the document's sheets
@@ -2078,10 +2123,11 @@ impl StyleEngine {
             let idx = dom.check(*n).ok()?;
             Some((dom.id_of(dom.root_idx(idx)), dom.child_text_content(*n).into_owned()))
         }));
-        let rules = Rc::new(crate::timing::TimingRules::parse_scoped(
-            texts.iter().map(|(scope, text)| (*scope, text.as_str())),
-            &self.viewport,
-        ));
+        let mut rules = crate::timing::TimingRules::parse_scoped(
+            texts.iter().map(|(scope, text)| (*scope, text.as_str())), &self.viewport,
+        );
+        rules.geometry = self.external.borrow().as_ref().map(|(source, _)| Rc::downgrade(source));
+        let rules = Rc::new(rules);
         *self.timing_rules.borrow_mut() = Some((key, unregistered, rules.clone()));
         rules
     }
@@ -2195,7 +2241,7 @@ fn containing_block_claims(
                 | WillChangeBits::FIXPOS_CB_NON_SVG
                 | WillChangeBits::CONTAIN,
         )
-        || b.contain.intersects(Contain::LAYOUT | Contain::PAINT)
+        || b.used_containment().intersects(Contain::LAYOUT | Contain::PAINT)
         || filtered;
     (fixed, absolute_only)
 }

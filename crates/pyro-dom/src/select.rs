@@ -365,7 +365,11 @@ impl<'i> selectors::parser::Parser<'i> for SelParser<'_> {
                 let pseudo = style::selector_parser::transition_selector(&lower, parser).map_err(|_| invalid())?;
                 return Ok(PseudoElement(pseudo.to_css_string()[2..].to_owned()));
             }
-            "highlight" | "cue" | "cue-region"
+            "highlight" => {
+                let pseudo = style::selector_parser::highlight_selector(parser).map_err(|_| invalid())?;
+                return Ok(PseudoElement(pseudo.to_css_string()[2..].to_owned()));
+            }
+            "cue" | "cue-region"
             | "picker"
             | "scroll-button"
             | "column" => {
@@ -782,6 +786,9 @@ impl selectors::Element for ElemRef<'_> {
             CaseSensitivity::CaseSensitive => classes.contains(&name.0),
             CaseSensitivity::AsciiCaseInsensitive => classes.iter().any(|c| c.eq_ignore_ascii_case(&name.0)),
         }
+    }
+    fn has_class_prefix(&self, prefix: &CssIdent, quirks: bool) -> bool {
+        self.data().classes().iter().any(|class| selectors::attr::matches_class_prefix(class, &prefix.0, quirks))
     }
     fn has_custom_state(&self, name: &CssIdent) -> bool {
         self.dom.has_custom_state_idx(self.idx, &name.0)

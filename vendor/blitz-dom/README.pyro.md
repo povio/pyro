@@ -12,7 +12,12 @@ blitz-html and stylo_taffy are vendored from the same commit unchanged (`vendor/
 `UPSTREAM.patch` (applies with `git apply` from the root of an upstream checkout at the commit above) is
 the whole diff: every section below.
 
+SVG `pointer-events` presentation attributes participate in Stylo's author cascade, supplying the computed hit-testing value for each graphics element.
+
 ## Updating or dropping the patch
+
+Preserve the macOS `objc2-core-text` manifest dependency when regenerating `Cargo.toml`.
+The font metrics provider resolves the six standard CSS system font roles using Core Text UI fonts at their default sizes, routing family selection through `system-ui`.
 
 - To move to a newer blitz main: in a blitz checkout, commit this directory's `src/` and `assets/` over
   `packages/blitz-dom` at the commit above (or apply `UPSTREAM.patch`) and merge or cherry-pick onto the new
@@ -2321,6 +2326,9 @@ inline layout for its atomic inlines), Chromium's `UseParentPercentageResolution
 `crates/pyro-render/tests/intrinsic_percentages.rs`.
 
 Round 3 lane C2T (CSS2), covered by `crates/pyro-render/tests/css2_intrinsic_and_hints.rs`:
+- `src/stylo.rs`: legacy HTML `font[color]` maps to the color presentational hint.
+- `src/stylo.rs`: the HTML `align` presentational hint on divs, table row groups, rows, and cells
+  accepts ASCII case-insensitive `left`, `right`, `center`, `middle`, and `justify`.
 - `src/stylo.rs`: the `<br clear>` presentational hint (`left`, `right`, `all`/`both` → `clear`), WPT
   `css/CSS2/floats-clear/floats-clear-multicol-*`.
 - `src/layout/inline/layout.rs`: an atomic inline's percentage margins resolve against the line root's content
@@ -2408,6 +2416,8 @@ both edges, as in Blink; WPT css-overflow `input-scrollable-region-001`).
   `min-*` and `max-*`. Measured in definite space, an `auto`/`fit-content` basis gives the space between the
   calculations of its min-content and max-content widths (Blink's fit-content of the result). A size it measured
   and its parent hands back is not calculated again (`calc_size_results`, per pass). Horizontal writing modes only.
+  Final layout retains each measured basis and its used limits (except shrink-to-fit widths that depend on two measurements) for CSSOM to resolve an interpolated calculation
+  with the same intrinsic basis, without substituting the live endpoint or mutating the layout during readback.
 ## List item numbers from the `list-item` counter (WPT round 3, lane IT)
 
 A marker's number is its item's `list-item` counter value, computed by the counter walk (`layout::counters`, which

@@ -911,7 +911,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
 
     fn should_clip_node(&self, node: &Node, styles: &ComputedValues) -> bool {
         let box_style = styles.get_box();
-        let contain_paint = box_style.slow_clone_contain().contains(Contain::PAINT) && {
+        let contain_paint = box_style.used_containment().contains(Contain::PAINT) && {
             let display = styles.clone_display();
             let is_internal_table_box_other_than_cell = display.outside()
                 == DisplayOutside::InternalTable
@@ -2522,7 +2522,7 @@ fn canvas_background_source(dom: &BaseDocument) -> Option<NodeId> {
                 .alpha
                 > 0.0
     };
-    let contained = |style: &ComputedValues| !style.get_box().slow_clone_contain().is_empty();
+    let contained = |style: &ComputedValues| !style.get_box().used_containment().is_empty();
     // pyro: a root its `content: url()` replaces renders no `body` (WPT css-content
     // `element-replacement-root-canvas-bg-from-body`).
     let replaced = root.element_data().is_some_and(|element| element.content_image.is_some());
@@ -6197,7 +6197,7 @@ impl ElementCx<'_, '_> {
                 let box_style = style.get_box();
                 if box_style.position != style::computed_values::position::T::Static
                     || !box_style.transform.0.is_empty()
-                    || box_style.slow_clone_contain().intersects(
+                    || box_style.used_containment().intersects(
                         style::values::specified::box_::Contain::LAYOUT | style::values::specified::box_::Contain::PAINT,
                     )
                 {

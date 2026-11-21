@@ -113,6 +113,35 @@ fn values_parse_reify_and_serialize() {
 }
 
 #[test]
+fn border_width_is_not_a_typed_border_shorthand() {
+    let env = env("<!doctype html><div id=d></div>");
+    let realm = &env.main;
+    assert_eq!(eval(realm, "const map = document.getElementById('d').attributeStyleMap; map.set('border-inline-end-width', CSS.px(2)); String(map.get('border-inline-end-width'))"), "2px");
+    for name in ["border", "border-left", "border-block", "border-inline-end"] {
+        assert_eq!(eval(realm, &format!("try {{ map.set('{name}', CSS.px(2)) }} catch (error) {{ error.name }}")), "TypeError", "{name}");
+    }
+    assert_eq!(eval(realm, "map.set('border-inline-end', '2px solid'); String(map.get('border-inline-end-width'))"), "2px");
+}
+
+#[test]
+fn opaque_values_preserve_property_and_list() {
+    let env = env("<!doctype html><div id=d></div>");
+    let realm = &env.main;
+    assert_eq!(eval(realm, "const map = d.attributeStyleMap; const flow = CSSStyleValue.parse('flex-flow', 'row'); map.set('flex-flow', flow); [flow.constructor.name, d.style.flexDirection].join()"), "CSSStyleValue,row");
+    assert_eq!(eval(realm, "try { map.set('flex-direction', flow) } catch (error) { error.name }"), "TypeError");
+    assert_eq!(eval(realm, "const fonts = CSSStyleValue.parseAll('font-family', 'serif, sans-serif'); map.set('font-family', fonts[0]); [fonts.length, String(map.get('font-family'))].join('|')"), "1|serif, sans-serif");
+    assert_eq!(eval(realm, "[['flex-flow','inherit'], ['text-shadow','none'], ['will-change','auto']].every(([name, value]) => CSSStyleValue.parse(name, value) instanceof CSSKeywordValue)"), "true");
+}
+
+#[test]
+fn border_image_specified_components_and_computed_tuples() {
+    let env = env("<!doctype html><div id=d style='border-image-width: 3px; border-image-repeat: round'></div>");
+    let realm = &env.main;
+    assert_eq!(eval(realm, "const specified = d.attributeStyleMap, computed = d.computedStyleMap(); [specified.get('border-image-width').unit, specified.get('border-image-repeat').value].join()"), "px,round");
+    assert_eq!(eval(realm, "[computed.get('border-image-width'), computed.getAll('border-image-repeat')[0], CSSStyleValue.parse('border-image-width', '1px 2px')].every(value => value.constructor === CSSStyleValue)"), "true");
+}
+
+#[test]
 fn attribute_style_map_reads_and_writes_the_inline_style() {
     let e = env("<!doctype html><div id=d style='width: 10px; margin-top: 2em'></div>");
     let r = &e.main;

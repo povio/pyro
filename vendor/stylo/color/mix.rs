@@ -173,6 +173,12 @@ pub fn mix_many(
     flags: ColorMixFlags,
 ) -> AbsoluteColor {
     let mut items = items.into_iter().collect::<ColorMixItemList<_>>();
+    let interpolation = match items.as_slice() {
+        [left, right] if flags.contains(ColorMixFlags::ANIMATION_SPACE) => {
+            ColorInterpolationMethod::best_interpolation_between(&left.color, &right.color)
+        },
+        _ => interpolation,
+    };
 
     // Convert a mix result into the syntax required by the flags:
     // - modern syntax when requested (converting legacy spaces like hsl/hwb to srgb), otherwise;
@@ -308,72 +314,35 @@ impl ComponentMixOutcome {
 }
 
 impl AbsoluteColor {
-    /// Calculate the flags that should be carried forward a color before converting
-    /// it to the interpolation color space according to:
-    /// <https://drafts.csswg.org/css-color-4/#interpolation-missing>
-    fn carry_forward_analogous_missing_components(&mut self, source: &AbsoluteColor) {
-        use ColorFlags as F;
-        use ColorSpace as S;
-
-        if source.color_space == self.color_space {
-            return;
+    pub(super) fn convert_with_missing(&self, target: ColorSpace) -> AbsoluteColor {
+        let mut converted = self.to_color_space(target);
+        if self.color_space == target || !self.flags.intersects(ColorFlags::NONE_FLAGS) {
+            return converted;
         }
-
-        // Reds             r, x
-        // Greens           g, y
-        // Blues            b, z
-        if source.color_space.is_rgb_or_xyz_like() && self.color_space.is_rgb_or_xyz_like() {
-            return;
-        }
-
-        // Lightness        L
-        if matches!(source.color_space, S::Lab | S::Lch | S::Oklab | S::Oklch) {
-            if matches!(self.color_space, S::Lab | S::Lch | S::Oklab | S::Oklch) {
-                self.flags |= source.flags & F::C0_IS_NONE;
-            } else if matches!(self.color_space, S::Hsl) && source.flags.contains(F::C0_IS_NONE) {
-                self.flags.insert(F::C2_IS_NONE)
-            }
-        } else if matches!(source.color_space, S::Hsl)
-            && matches!(self.color_space, S::Lab | S::Lch | S::Oklab | S::Oklch)
-            && source.flags.contains(F::C2_IS_NONE)
-        {
-            self.flags.insert(F::C0_IS_NONE)
-        }
-
-        // Colorfulness     C, S
-        if matches!(source.color_space, S::Hsl | S::Lch | S::Oklch)
-            && matches!(self.color_space, S::Hsl | S::Lch | S::Oklch)
-        {
-            self.flags |= source.flags & F::C1_IS_NONE;
-        }
-
-        // Hue              H
-        if matches!(source.color_space, S::Hsl | S::Hwb) {
-            if matches!(self.color_space, S::Hsl | S::Hwb) {
-                self.flags |= source.flags & F::C0_IS_NONE;
-            } else if matches!(self.color_space, S::Lch | S::Oklch)
-                && source.flags.contains(F::C0_IS_NONE)
-            {
-                self.flags.insert(F::C2_IS_NONE)
-            }
-        } else if matches!(source.color_space, S::Lch | S::Oklch) {
-            if matches!(self.color_space, S::Hsl | S::Hwb) {
-                if source.flags.contains(F::C2_IS_NONE) {
-                    self.flags.insert(F::C0_IS_NONE)
-                }
-            } else if matches!(self.color_space, S::Lch | S::Oklch) {
-                self.flags |= source.flags & F::C2_IS_NONE;
+        #[derive(Clone, Copy, PartialEq)]
+        enum Channel { Red, Green, Blue, Lightness, Chroma, Hue, OpponentA, OpponentB, White, Black }
+        use Channel::*;
+        let channels = |space| match space {
+            ColorSpace::Hsl => [Hue, Chroma, Lightness],
+            ColorSpace::Hwb => [Hue, White, Black],
+            ColorSpace::Lab | ColorSpace::Oklab => [Lightness, OpponentA, OpponentB],
+            ColorSpace::Lch | ColorSpace::Oklch => [Lightness, Chroma, Hue],
+            _ => [Red, Green, Blue],
+        };
+        let flags = [ColorFlags::C0_IS_NONE, ColorFlags::C1_IS_NONE, ColorFlags::C2_IS_NONE];
+        let source_channels = channels(self.color_space);
+        let target_channels = channels(target);
+        let remainder_missing = source_channels.iter().enumerate().all(|(index, channel)| {
+            target_channels.contains(channel) || self.flags.contains(flags[index])
+        });
+        for (index, channel) in target_channels.iter().enumerate() {
+            let missing = source_channels.iter().position(|source| source == channel)
+                .map_or(remainder_missing, |source| self.flags.contains(flags[source]));
+            if missing {
+                converted.flags.insert(flags[index]);
             }
         }
-
-        // Opponent         a, a
-        // Opponent         b, b
-        if matches!(source.color_space, S::Lab | S::Oklab)
-            && matches!(self.color_space, S::Lab | S::Oklab)
-        {
-            self.flags |= source.flags & F::C1_IS_NONE;
-            self.flags |= source.flags & F::C2_IS_NONE;
-        }
+        converted
     }
 }
 
@@ -415,9 +384,7 @@ fn mix_with_weights(
 }
 
 fn convert_for_mix(color: &AbsoluteColor, color_space: ColorSpace) -> AbsoluteColor {
-    let mut converted = color.to_color_space(color_space);
-    converted.carry_forward_analogous_missing_components(color);
-    converted
+    color.convert_with_missing(color_space)
 }
 
 fn interpolate_premultiplied_component(

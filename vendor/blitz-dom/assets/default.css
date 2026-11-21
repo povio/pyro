@@ -66,7 +66,7 @@ bdi:dir(rtl) {
 
 /* https://html.spec.whatwg.org/#phrasing-content-3: only links are styled */
 a[href] {
-    color: rgb(0, 0, 238);
+    color: LinkText;
     text-decoration: underline;
     /* pyro: Chromium's `a:-webkit-any-link { cursor: pointer }`. */
     cursor: pointer;
@@ -81,7 +81,7 @@ a[href] {
 
 ::scroll-marker,
 ::column::scroll-marker {
-    color: rgb(0, 0, 238);
+    color: LinkText;
     text-decoration: underline;
     cursor: pointer;
 }
@@ -132,10 +132,11 @@ input[type="color" i] {
     box-sizing: border-box;
     inline-size: 50px;
     block-size: 27px;
-    border: 1px solid #767676;
+    border: 1px solid ButtonBorder;
     padding-block: 1px;
     padding-inline: 2px;
-    background-color: #EFEFEF;
+    background-color: ButtonFace;
+    color: ButtonText;
     cursor: default;
 }
 
@@ -173,6 +174,7 @@ meter {
    draws as Chromium's themed field (`native_textfield`); `appearance: none` shows this border. */
 input {
     border: 2px inset #767676;
+    color: FieldText;
     padding-block: 1px;
     padding-inline: 2px;
     background-color: Field;
@@ -181,6 +183,7 @@ input {
 
 textarea {
     appearance: auto;
+    color: FieldText;
     border: 1px solid #999;
     padding: 2px;
     background-color: Field;
@@ -208,7 +211,8 @@ select {
     display: inline-block;
     box-sizing: border-box;
     border: 1px solid #767676;
-    line-height: normal !important;
+    /* The native menulist fixup runs after other properties resolve lh. */
+    line-height: normal;
     /* pyro: blitz-paint rounds a native menu list's corners (not of `appearance: none` or
        `menulist-button`, which is painted with its CSS border). */
     -moz-default-appearance: menulist;
@@ -292,7 +296,7 @@ button,
 input[type="submit"],
 input[type="reset"],
 input[type="button"] {
-    border: 1px solid #999;
+    border: 1px solid ButtonBorder;
     /* pyro: Chromium's native look rounds a button's corners by 1px. Not a `border-radius` here
        (Chromium's computed one is 0): blitz-paint rounds a button of native appearance
        (`-moz-default-appearance: button`, `appearance: auto`, no author border or background),
@@ -302,8 +306,8 @@ input[type="button"] {
     appearance: auto;
     padding-block: 1px;
     padding-inline: 6px;
-    color: black;
-    background-color: #EFEFEF;
+    color: ButtonText;
+    background-color: ButtonFace;
     text-align: center;
     display: inline-block;
     /* pyro: Chromium's buttons size their border box. */
@@ -336,13 +340,13 @@ input[type="file" i] {
 }
 
 input[type="file" i]::file-selector-button {
-    border: 1px solid #999;
+    border: 1px solid ButtonBorder;
     -moz-default-appearance: button;
     appearance: auto;
     padding-block: 1px;
     padding-inline: 6px;
-    color: black;
-    background-color: #EFEFEF;
+    color: ButtonText;
+    background-color: ButtonFace;
     text-align: center;
     display: inline-block;
     box-sizing: border-box;
@@ -1023,6 +1027,14 @@ ol {
 li {
     display: list-item;
     text-align: match-parent;
+}
+
+::marker, ::before::marker, ::after::marker {
+    unicode-bidi: isolate;
+    font-variant-numeric: tabular-nums;
+    white-space: pre;
+    text-transform: none;
+    text-indent: 0;
 }
 
 /* nested lists have no top/bottom margins */

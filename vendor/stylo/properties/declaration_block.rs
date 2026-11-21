@@ -1112,6 +1112,22 @@ impl PropertyDeclarationBlock {
         // attempted to serialize appear here.
         let mut already_serialized = NonCustomPropertyIdSet::new();
 
+        #[cfg(feature = "servo")]
+        if let Some((role, importance)) = self.declaration_importance_iter().find_map(|(decl, importance)| decl.get_system().map(|role| (role, importance))) {
+            let mut shorthand = CssString::new();
+            self.shorthand_to_css(ShorthandId::Font, &mut shorthand)?;
+            if shorthand.is_empty() && ShorthandId::Font.longhands().all(|id| self.get(PropertyDeclarationId::Longhand(id)).is_some_and(|(_, level)| !importance.important() || level.important())) {
+                let keyword = role.to_css_string();
+                append_serialization(dest, &ShorthandId::Font, AppendableValue::Css(&keyword), importance, &mut is_first_serialization)?;
+                already_serialized.insert(ShorthandId::Font.into());
+                for declaration in self.declarations() {
+                    if declaration.get_system() == Some(role) {
+                        if let PropertyDeclarationId::Longhand(id) = declaration.id() { already_serialized.insert(id.into()); }
+                    }
+                }
+            }
+        }
+
         // Step 3
         'declaration_loop: for (declaration, importance) in self.declaration_importance_iter() {
             // Step 3.1

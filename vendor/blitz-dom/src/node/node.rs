@@ -570,6 +570,7 @@ impl Node {
     pub fn clear_layout_cache(&mut self) {
         if let Some(layout_data) = self.try_layout_data_mut() {
             layout_data.cache.clear();
+            layout_data.calc_size_inputs = [None; 2];
         }
     }
 
@@ -1032,7 +1033,7 @@ impl Node {
             && !groups(b.overflow_y)
             && b.isolation != style::computed_values::isolation::T::Isolate
             && s.get_effects().mix_blend_mode == style::computed_values::mix_blend_mode::T::Normal
-            && !b.slow_clone_contain().contains(Contain::PAINT)
+            && !b.used_containment().contains(Contain::PAINT)
             && !self.applies_atomic_paint_effect()
     }
 
@@ -2293,7 +2294,13 @@ impl Node {
                     flags |= stylo_taffy::StyleFlags::IS_AUDIO_CONTROL;
                 }
                 // pyro
-                if styles.get_position().aspect_ratio.auto && crate::layout::replaced::has_natural_ratio(el) {
+                if styles.get_position().aspect_ratio.auto && crate::layout::replaced::has_natural_ratio(el)
+                    && {
+                        use style::values::computed::Contain;
+                        let containment = crate::layout::node_size_containment(self, &styles);
+                        !containment.contains(Contain::INLINE_SIZE) || containment.contains(Contain::BLOCK_SIZE)
+                    }
+                {
                     flags |= stylo_taffy::StyleFlags::HAS_NATURAL_RATIO;
                     natural_ratio = crate::layout::replaced::natural_ratio(el);
                 }
@@ -2618,7 +2625,7 @@ impl Node {
                 || !matches!(b.rotate, Rotate::None)
                 || !matches!(b.scale, Scale::None)
                 || !matches!(b.perspective, Perspective::None)
-                || b.contain.intersects(Contain::LAYOUT | Contain::PAINT)
+                || b.used_containment().intersects(Contain::LAYOUT | Contain::PAINT)
                 || b.will_change.bits.intersects(WillChangeBits::TRANSFORM | WillChangeBits::PERSPECTIVE | WillChangeBits::CONTAIN)
         })
     }
@@ -2723,7 +2730,7 @@ impl Node {
         // than a cell (WPT css-contain `contain-paint-stacking-context-*`).
         {
             use style::values::specified::box_::{Contain, DisplayInside, DisplayOutside};
-            if box_style.slow_clone_contain().intersects(Contain::LAYOUT | Contain::PAINT) {
+            if box_style.used_containment().intersects(Contain::LAYOUT | Contain::PAINT) {
                 let display = box_style.display;
                 let inline_box = display.outside() == DisplayOutside::Inline && display.inside() == DisplayInside::Flow;
                 let table_internal =

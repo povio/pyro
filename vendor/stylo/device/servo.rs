@@ -33,11 +33,36 @@ use mime::Mime;
 use parking_lot::RwLock;
 use servo_arc::Arc;
 use std::fmt::Debug;
-use std::hash::{DefaultHasher, Hasher};
+use std::hash::{BuildHasher, Hasher, RandomState};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use style_traits::{CSSPixel, DevicePixel};
 
 use crate::device::Device;
+use crate::values::{computed::font, specified::font::SystemFont};
+
+/// Platform values selected by a system font shorthand.
+#[allow(missing_docs)]
+#[derive(Clone)]
+pub struct SystemFontMetrics {
+    pub font_size: Length,
+    pub font_weight: font::FontWeight,
+    pub font_style: font::FontStyle,
+    pub font_width: font::FontWidth,
+    pub font_family: font::FontFamily,
+}
+
+impl SystemFontMetrics {
+    /// Default system UI face at the supplied size.
+    pub fn regular(size: Length) -> Self {
+        Self {
+            font_size: size,
+            font_weight: font::FontWeight::NORMAL,
+            font_style: font::FontStyle::NORMAL,
+            font_width: font::FontWidth::NORMAL,
+            font_family: font::FontFamily::generic(GenericFontFamily::SystemUi).clone(),
+        }
+    }
+}
 
 /// A trait used to query font metrics in clients of Stylo. This is used by Device to
 /// query font metrics in a way that is specific to the client using Stylo.
@@ -52,6 +77,10 @@ pub trait FontMetricsProvider: Debug + Sync {
     ) -> FontMetrics;
     /// Gets the base size given a generic font family.
     fn base_size_for_generic(&self, generic: GenericFontFamily) -> Length;
+    /// Gets the UI font corresponding to a system role.
+    fn system_font(&self, _role: SystemFont) -> SystemFontMetrics {
+        SystemFontMetrics::regular(self.base_size_for_generic(GenericFontFamily::SystemUi))
+    }
     /// pyro: the used `line-height: normal` of `font` at `size` (from its first available
     /// font's metrics), when the client can measure it: what the `lh` unit resolves against.
     fn normal_line_height(&self, _font: &Font, _size: CSSPixelLength) -> Option<CSSPixelLength> {
@@ -61,6 +90,11 @@ pub trait FontMetricsProvider: Debug + Sync {
 
 #[derive(Debug, MallocSizeOf)]
 pub(super) struct ExtraDeviceData {
+    style_uses_font_metrics: AtomicBool,
+    #[ignore_malloc_size_of = "Shared document URL"]
+    document_url: Option<Arc<url::Url>>,
+    #[ignore_malloc_size_of = "Inline hash keys"]
+    random_state: RandomState,
     /// Data which Stylo uses to evaluate media queries
     media_data: MediaData,
     /// An implementation of a trait which implements support for querying font metrics.
@@ -93,6 +127,8 @@ pub struct MediaData {
     /// Whether the user prefers light mode or dark mode
     #[ignore_malloc_size_of = "Pure stack type"]
     pub prefers_color_scheme: PrefersColorScheme,
+    /// Whether motion reduction is requested by the emulated device.
+    pub prefers_reduced_motion: bool,
     /// The capabilities of the primary pointer input
     #[ignore_malloc_size_of = "Pure stack type"]
     pub primary_pointer_capabilities: PointerCapabilities,
@@ -102,6 +138,25 @@ pub struct MediaData {
 }
 
 impl Device {
+    /// Records a computed value that depends on font metrics, as distinct from text layout.
+    pub fn note_style_font_metrics(&self) {
+        self.extra.style_uses_font_metrics.store(true, Ordering::Relaxed);
+    }
+
+    /// Whether a computed style has needed metrics that can change when a face loads.
+    pub fn style_uses_font_metrics(&self) -> bool {
+        self.extra.style_uses_font_metrics.load(Ordering::Relaxed)
+    }
+
+    /// The document associated with local fragment references, independent of the stylesheet URL.
+    pub fn set_document_url(&mut self, url: Arc<url::Url>) {
+        self.extra.document_url = Some(url);
+    }
+
+    pub(crate) fn document_url(&self) -> Option<&url::Url> {
+        self.extra.document_url.as_deref()
+    }
+
     /// Trivially construct a new `Device`.
     pub fn new(
         default_values: Arc<ComputedValues>,
@@ -129,6 +184,9 @@ impl Device {
             body_text_color: RwLock::new(AbsoluteColor::BLACK),
             submit_string,
             extra: ExtraDeviceData {
+                style_uses_font_metrics: AtomicBool::new(false),
+                document_url: None,
+                random_state: RandomState::new(),
                 media_data,
                 font_metrics_provider,
                 page_color_scheme: ColorSchemeFlags::empty(),
@@ -170,8 +228,11 @@ impl Device {
     /// base values of `random()` functions between document instances.
     #[inline]
     pub fn document_random_hasher(&self) -> impl Hasher {
-        // TODO: Implement a document-specific hasher (like Gecko in Bug 2081781).
-        DefaultHasher::new()
+        self.extra.random_state.build_hasher()
+    }
+
+    pub(crate) fn inherit_document_random_state(&mut self, previous: &Device) {
+        self.extra.random_state = previous.extra.random_state.clone();
     }
 
     /// Gets the base size given a generic font family.
@@ -179,6 +240,11 @@ impl Device {
         self.extra
             .font_metrics_provider
             .base_size_for_generic(generic)
+    }
+
+    /// Gets the platform font for a CSS system role.
+    pub fn system_font(&self, role: SystemFont) -> SystemFontMetrics {
+        self.extra.font_metrics_provider.system_font(role)
     }
 
     /// Whether a given animation name may be referenced from style.
@@ -320,6 +386,7 @@ impl Device {
         track_usage: bool,
     ) -> FontMetrics {
         if track_usage {
+            self.note_style_font_metrics();
             self.used_font_metrics.store(true, Ordering::Relaxed);
         }
         self.extra
@@ -502,12 +569,12 @@ impl Device {
                 | SystemColor::Threedhighlight
                 | SystemColor::Threedlightshadow
                 | SystemColor::Threedshadow
-                | SystemColor::Windowframe => srgb(169, 169, 169),
+                | SystemColor::Windowframe => srgb(153, 153, 153),
                 SystemColor::Buttonface
                 // Deprecated system colors (CSS Color 4) mapped to Buttonface.
                 | SystemColor::Buttonhighlight
                 | SystemColor::Buttonshadow
-                | SystemColor::Threedface => srgb(220, 220, 220),
+                | SystemColor::Threedface => srgb(239, 239, 239),
                 SystemColor::Buttontext => srgb(0, 0, 0),
                 SystemColor::Canvas
                 // Deprecated system colors (CSS Color 4) mapped to Canvas.

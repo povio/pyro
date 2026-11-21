@@ -121,6 +121,7 @@ pub(crate) fn init_stylo_prefs() {
         style_config::set_pref!("layout.css.basic-shape-shape.enabled", true);
         style_config::set_pref!("layout.css.tree-counting-functions.enabled", true);
         style_config::set_pref!("layout.css.progress-function.enabled", true);
+        style_config::set_pref!("layout.css.random.enabled", true);
         style_config::set_pref!("layout.css.font-variations.enabled", true);
         style_config::set_pref!("layout.css.text-indent-keywords.enabled", true);
         // pyro: `grid-template-rows/columns: subgrid` (Taffy lays subgrids out, css-grid-2 §9).
@@ -372,12 +373,14 @@ pub struct BaseDocument {
     // Config
     /// Base url for resolving linked resources (stylesheets, images, fonts, etc)
     pub(crate) url: DocumentUrl,
+    fragment_document: Option<DocumentUrl>,
     // Devtool settings. Currently used to render debug overlays
     pub(crate) devtool_settings: DevtoolSettings,
     // Viewport details such as the dimensions, HiDPI scale, and zoom factor,
     pub(crate) viewport: Viewport,
     /// CSS media type used to evaluate `@media` rules.
     pub(crate) media_type: MediaType,
+    pub(crate) media_environment: crate::MediaEnvironment,
     /// External `<use href>` targets, by href as written: the local id that
     /// replaces it and the definition (SVG source with that id). Added to
     /// each `<svg>` that refers to them when it is rendered.
@@ -869,8 +872,7 @@ impl BaseDocument {
 
         let viewport = config.viewport.unwrap_or_default();
         let media_type = config.media_type.unwrap_or_else(MediaType::screen);
-        let device = make_device(&viewport, None, media_type.clone(), font_ctx.clone());
-        let stylist = Stylist::new(device, QuirksMode::NoQuirks);
+        let mut device = make_device(&viewport, None, media_type.clone(), config.media_environment, font_ctx.clone());
         let snapshots = SnapshotMap::new();
         let mut nodes = Box::new(NodeTree::new(config.raster_budget.clone()));
         nodes.xml_document = config.xml_document;
@@ -886,6 +888,9 @@ impl BaseDocument {
             .base_url
             .and_then(|url| DocumentUrl::from_str(&url).ok())
             .unwrap_or_default();
+        let fragment_document = config.document_url.and_then(|text| DocumentUrl::from_str(&text).ok());
+        device.set_document_url(fragment_document.as_ref().unwrap_or(&base_url).inline_url_data().clone());
+        let stylist = Stylist::new(device, QuirksMode::NoQuirks);
         nodes.base_url = without_fragment(base_url.as_str()).to_owned();
 
         let net_provider = config
@@ -917,6 +922,7 @@ impl BaseDocument {
             nodes_to_id,
             viewport,
             media_type,
+            media_environment: config.media_environment,
             svg_sprites: HashMap::new(),
             svg_images: Default::default(),
             pending_device_changes: DeviceChanges::empty(),
@@ -940,6 +946,7 @@ impl BaseDocument {
             inline_urls: std::sync::Arc::new(std::sync::Mutex::new(vec![base_url.inline_url_data().clone()])),
             devtool_settings: DevtoolSettings::default(),
             url: base_url,
+            fragment_document,
             nodes_to_stylesheet: BTreeMap::new(),
             shadow_sheet_hosts: HashMap::new(),
             linked_page_css: BTreeMap::new(),
@@ -1150,6 +1157,7 @@ impl BaseDocument {
     /// Set base url for resolving linked resources (stylesheets, images, fonts, etc)
     pub fn set_base_url(&mut self, url: &str) {
         self.url = DocumentUrl::from(Url::parse(url).unwrap());
+        self.stylist.device_mut().set_document_url(self.fragment_document.as_ref().unwrap_or(&self.url).inline_url_data().clone());
         crate::net::adopt_inline(&self.inline_urls, self.url.inline_url_data());
         self.nodes.base_url = without_fragment(self.url.as_str()).to_owned();
     }
@@ -2282,9 +2290,14 @@ impl BaseDocument {
         urls
     }
 
-    /// The document's base URL
+    /// Whether a resolved CSS URL refers to this document, ignoring its fragment.
+    pub fn is_document_url(&self, url: &Url) -> bool {
+        self.fragment_document.as_ref().unwrap_or(&self.url).is_same_document(url)
+    }
+
+    /// The document URL used to identify same-document resources.
     pub fn url(&self) -> &url::Url {
-        &self.url
+        self.fragment_document.as_ref().unwrap_or(&self.url)
     }
 
     /// pyro: `options` for a request this document makes, with this document's frame as the
@@ -2843,7 +2856,23 @@ impl BaseDocument {
                 }
                 drop(global_font_ctx);
 
-                // TODO: see if we can only invalidate if resolved fonts may have changed
+                // Reshaping updates text advances. Font-relative values in computed
+                // styles (including pseudo-elements) also need the new metrics.
+                let device = self.stylist.device();
+                if device.used_root_font_metrics() {
+                    device.update_root_font_metrics();
+                }
+                if let Some(root) = self.try_root_element()
+                    && device.style_uses_font_metrics()
+                {
+                    let id = root.id;
+                    if let Some(style) = root.primary_styles() {
+                        let height = device.calc_line_height(style.get_font(), style.writing_mode, None);
+                        device.set_root_line_height(style.effective_zoom.unzoom(height.0.px()));
+                    }
+                    self.nodes[id].set_restyle_hint(RestyleHint::recascade_subtree());
+                    self.sampled_animations.invalidate_bases();
+                }
                 self.invalidate_inline_contexts();
             }
             Resource::None => {
@@ -3942,6 +3971,13 @@ impl BaseDocument {
         self.queue_device_changes(DeviceChanges::MEDIA_TYPE);
     }
 
+    pub fn set_media_environment(&mut self, environment: crate::MediaEnvironment) {
+        if self.media_environment != environment {
+            self.media_environment = environment;
+            self.queue_device_changes(DeviceChanges::MEDIA_TYPE);
+        }
+    }
+
     pub fn viewport(&self) -> &Viewport {
         &self.viewport
     }
@@ -4149,7 +4185,8 @@ impl BaseDocument {
             return;
         }
 
-        let mut device = make_device(&self.viewport, self.layout_size, self.media_type.clone(), self.font_ctx.clone());
+        let mut device = make_device(&self.viewport, self.layout_size, self.media_type.clone(), self.media_environment, self.font_ctx.clone());
+        device.set_document_url(self.fragment_document.as_ref().unwrap_or(&self.url).inline_url_data().clone());
         device.set_page_color_scheme(self.page_color_scheme);
         device.set_viewport_unit_inset(self.viewport_unit_inset);
         self.set_stylist_device(device);
@@ -4200,6 +4237,9 @@ impl BaseDocument {
         drop(root_styles);
 
         let old_device = self.stylist.device();
+        if old_device.style_uses_font_metrics() {
+            device.note_style_font_metrics();
+        }
         let viewport_size_changed = old_device.au_viewport_size() != device.au_viewport_size()
             || old_device.au_viewport_unit_size() != device.au_viewport_unit_size();
         let styles_use_viewport_units = old_device.used_viewport_size();
@@ -5908,8 +5948,10 @@ impl BaseDocument {
                 let config = crate::DocumentConfig {
                     viewport: Some(viewport.clone()),
                     base_url: None,
+                    document_url: None,
                     font_ctx: Some(self.font_ctx.lock().unwrap().clone()),
                     media_type: Some(self.media_type.clone()),
+                    media_environment: self.media_environment,
                     subdocument_depth: self.subdocument_depth + 1,
                     raster_budget: self.raster_budget.clone(),
                     xml_document: true,
@@ -5931,6 +5973,7 @@ impl BaseDocument {
             let mut doc = entry.document.inner_mut();
             if current {
                 doc.set_viewport(viewport);
+                doc.set_media_environment(self.media_environment);
             }
             doc.resolve(0.0);
             doc.ensure_paint_tree();

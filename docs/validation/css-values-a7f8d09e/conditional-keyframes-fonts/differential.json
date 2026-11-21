@@ -1,0 +1,2272 @@
+{
+  "pages": 164,
+  "basePass": 2350,
+  "candidatePass": 2631,
+  "observedBase": 2888,
+  "observedCandidate": 2888,
+  "basePages": 102,
+  "candidatePages": 121,
+  "matchedInventoryGains": [
+    [
+      "css/css-values/attr-all-types.html",
+      "CSS Values and Units Test: attr 126"
+    ],
+    [
+      "css/css-values/attr-all-types.html",
+      "CSS Values and Units Test: attr 127"
+    ],
+    [
+      "css/css-values/attr-parse-url.html",
+      "CSS Values and Units Test: Parsing URLs in attr"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 1"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 10"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 100"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 101"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 102"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 103"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 104"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 105"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 106"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 107"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 108"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 109"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 11"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 110"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 111"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 112"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 113"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 114"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 115"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 116"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 117"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 118"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 119"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 12"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 120"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 121"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 122"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 123"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 124"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 125"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 126"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 127"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 128"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 129"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 13"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 130"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 131"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 132"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 133"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 134"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 135"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 136"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 137"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 138"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 139"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 14"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 140"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 141"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 142"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 143"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 144"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 145"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 146"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 147"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 148"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 149"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 15"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 150"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 151"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 152"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 153"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 154"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 155"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 156"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 157"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 158"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 159"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 16"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 160"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 161"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 162"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 163"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 164"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 165"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 166"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 167"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 168"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 169"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 17"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 170"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 171"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 172"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 173"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 174"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 175"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 176"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 177"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 178"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 179"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 18"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 180"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 181"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 182"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 183"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 184"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 185"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 186"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 187"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 188"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 189"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 19"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 190"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 194"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 195"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 196"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 197"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 198"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 199"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 2"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 20"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 200"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 201"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 21"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 22"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 23"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 24"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 25"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 26"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 27"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 28"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 29"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 3"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 30"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 31"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 32"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 33"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 34"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 35"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 36"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 37"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 38"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 39"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 4"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 40"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 41"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 42"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 43"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 44"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 45"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 46"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 47"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 48"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 49"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 5"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 50"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 51"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 52"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 53"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 54"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 55"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 56"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 57"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 58"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 59"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 6"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 60"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 61"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 62"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 63"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 64"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 65"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 66"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 67"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 68"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 69"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 7"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 70"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 71"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 72"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 73"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 74"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 75"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 76"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 77"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 78"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 79"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 8"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 80"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 81"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 82"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 83"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 84"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 85"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 86"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 87"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 88"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 89"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 9"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 90"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 91"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 92"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 93"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 94"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 95"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 96"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 97"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 98"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 99"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 14"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 15"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 17"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 20"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 21"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 22"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 23"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 24"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 25"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 26"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 27"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 28"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 29"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 30"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 31"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 32"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 33"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 34"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 35"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 36"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 37"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 38"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 39"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 40"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 41"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 42"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 43"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 44"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 45"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 7"
+    ],
+    [
+      "css/css-values/if-function-revert-rule.html",
+      "The revert-rule works as a branch in if()"
+    ],
+    [
+      "css/css-values/if-function-revert-rule.html",
+      "The revert-rule works as a branch in if(), earlier return"
+    ],
+    [
+      "css/css-values/if-initial-unregistered.html",
+      "if-testing the initial keyword without any property registrations"
+    ],
+    [
+      "css/css-values/if-invalidation.html",
+      "CSS Values and Units Test: if() invalidation"
+    ],
+    [
+      "css/css-values/if-style-invalidation.html",
+      "CSS Values and Units Test: if() style() condition invalidation"
+    ],
+    [
+      "css/css-values/random-in-if.tentative.html",
+      "Sharing element-scoped random() in if() style() condition across different elements"
+    ],
+    [
+      "css/css-values/random-in-if.tentative.html",
+      "Sharing property-index-scoped random() in if() style() condition across different properties"
+    ],
+    [
+      "css/css-values/random-in-if.tentative.html",
+      "Sharing random() in same if() condition"
+    ],
+    [
+      "css/css-values/random-in-if.tentative.html",
+      "random() in var() should be allowed in if() style() condition"
+    ],
+    [
+      "css/css-values/random-in-if.tentative.html",
+      "random() should be allowed in if() style() condition"
+    ],
+    [
+      "css/css-values/random-in-if.tentative.html",
+      "random() with different property names should not be shared in if() declaration value"
+    ],
+    [
+      "css/css-values/random-in-if.tentative.html",
+      "random() with same property name on different elements in if() declaration value should be equal"
+    ],
+    [
+      "css/css-values/tree-counting/sibling-function-if-style-query.html",
+      "sibling-count() in an if() style() comparison"
+    ],
+    [
+      "css/css-values/tree-counting/sibling-function-if-style-query.html",
+      "sibling-index() compared against a registered custom property"
+    ],
+    [
+      "css/css-values/tree-counting/sibling-function-if-style-query.html",
+      "sibling-index() in an if() style() comparison"
+    ],
+    [
+      "css/css-values/tree-counting/sibling-function-if-style-query.html",
+      "sibling-index() inside mod() in an if() style() comparison"
+    ],
+    [
+      "css/css-values/tree-counting/sibling-index-keyframe-font-style-dynamic.html",
+      "Removing a preceding sibling of #target reduces the sibling-index()"
+    ],
+    [
+      "css/css-values/tree-counting/sibling-index-keyframe-font-variation-settings-dynamic.html",
+      "Removing a preceding sibling of #target reduces the sibling-index()"
+    ],
+    [
+      "css/css-values/tree-counting/sibling-index-keyframe-font-weight-dynamic.html",
+      "Removing a preceding sibling of #target reduces the sibling-index()"
+    ],
+    [
+      "css/css-values/tree-counting/sibling-index-keyframe-length-value-dynamic.html",
+      "Removing a preceding sibling of #target reduces the sibling-index()"
+    ],
+    [
+      "css/css-values/tree-counting/sibling-index-keyframe-percent-dynamic.html",
+      "Removing a preceding sibling of #target reduces the sibling-index()"
+    ],
+    [
+      "css/css-values/tree-counting/sibling-index-keyframe-registered-properties-dynamic.html",
+      "Removing a preceding sibling of #target reduces the sibling-index() for --angle"
+    ],
+    [
+      "css/css-values/tree-counting/sibling-index-keyframe-registered-properties-dynamic.html",
+      "Removing a preceding sibling of #target reduces the sibling-index() for --color"
+    ],
+    [
+      "css/css-values/tree-counting/sibling-index-keyframe-registered-properties-dynamic.html",
+      "Removing a preceding sibling of #target reduces the sibling-index() for --integer"
+    ],
+    [
+      "css/css-values/tree-counting/sibling-index-keyframe-registered-properties-dynamic.html",
+      "Removing a preceding sibling of #target reduces the sibling-index() for --length"
+    ],
+    [
+      "css/css-values/tree-counting/sibling-index-keyframe-registered-properties-dynamic.html",
+      "Removing a preceding sibling of #target reduces the sibling-index() for --length-percentage"
+    ],
+    [
+      "css/css-values/tree-counting/sibling-index-keyframe-registered-properties-dynamic.html",
+      "Removing a preceding sibling of #target reduces the sibling-index() for --list"
+    ],
+    [
+      "css/css-values/tree-counting/sibling-index-keyframe-registered-properties-dynamic.html",
+      "Removing a preceding sibling of #target reduces the sibling-index() for --number"
+    ],
+    [
+      "css/css-values/tree-counting/sibling-index-keyframe-registered-properties-dynamic.html",
+      "Removing a preceding sibling of #target reduces the sibling-index() for --percentage"
+    ],
+    [
+      "css/css-values/tree-counting/sibling-index-keyframe-registered-properties-dynamic.html",
+      "Removing a preceding sibling of #target reduces the sibling-index() for --resolution"
+    ],
+    [
+      "css/css-values/tree-counting/sibling-index-keyframe-registered-properties-dynamic.html",
+      "Removing a preceding sibling of #target reduces the sibling-index() for --time"
+    ],
+    [
+      "css/css-values/tree-counting/sibling-index-keyframe-rotate-dynamic.html",
+      "Removing a preceding sibling of #target reduces the sibling-index()"
+    ],
+    [
+      "css/css-values/tree-counting/sibling-index-keyframe-scale-dynamic.html",
+      "Removing a preceding sibling of #target reduces the sibling-index()"
+    ],
+    [
+      "css/css-values/tree-counting/sibling-index-keyframe-transform-dynamic.html",
+      "Removing a preceding sibling of #target reduces the sibling-index()"
+    ],
+    [
+      "css/css-values/tree-counting/sibling-index-keyframe-value-dynamic.html",
+      "Removing a preceding sibling of #target reduces the sibling-index()"
+    ],
+    [
+      "css/css-values/using-font-relative-units-in-font-properties.html",
+      "Property font-feature-settings value '\"swsh\" calc(1em / 1px)'"
+    ],
+    [
+      "css/css-values/using-font-relative-units-in-font-properties.html",
+      "Property font-size-adjust value 'calc(1em / 1px)'"
+    ],
+    [
+      "css/css-values/using-font-relative-units-in-font-properties.html",
+      "Property font-style value 'oblique calc(1em / 1px * 1deg)'"
+    ],
+    [
+      "css/css-values/using-font-relative-units-in-font-properties.html",
+      "Property font-variation-settings value '\"xhgt\" calc(1em / 1px)'"
+    ],
+    [
+      "css/css-values/using-font-relative-units-in-font-properties.html",
+      "Property font-weight value 'calc(1em / 1px)'"
+    ]
+  ],
+  "gained": [
+    [
+      "css/css-values/attr-all-types.html",
+      "CSS Values and Units Test: attr 126"
+    ],
+    [
+      "css/css-values/attr-all-types.html",
+      "CSS Values and Units Test: attr 127"
+    ],
+    [
+      "css/css-values/attr-parse-url.html",
+      "CSS Values and Units Test: Parsing URLs in attr"
+    ],
+    [
+      "css/css-values/attr-security-if.html",
+      "'--x: image-set(if(style(--condition-val >= attr(data-foo type(*))): url(https://does-not-exist.test/404.png);))' with data-foo=\"3\""
+    ],
+    [
+      "css/css-values/attr-security-if.html",
+      "'--x: image-set(if(style(--condition-val: if(style(--true): attr(data-foo type(*));)): url(https://does-not-exist.test/404.png);))' with data-foo=\"3\""
+    ],
+    [
+      "css/css-values/attr-security-if.html",
+      "'--x: image-set(if(style(--true): attr(data-foo);))' with data-foo=\"https://does-not-exist.test/404.png\""
+    ],
+    [
+      "css/css-values/attr-security-transition-retarget-taint.html",
+      "A taint-only destination change must rebuild an active registered-property transition"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 1"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 10"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 100"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 101"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 102"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 103"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 104"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 105"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 106"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 107"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 108"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 109"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 11"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 110"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 111"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 112"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 113"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 114"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 115"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 116"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 117"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 118"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 119"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 12"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 120"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 121"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 122"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 123"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 124"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 125"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 126"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 127"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 128"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 129"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 13"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 130"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 131"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 132"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 133"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 134"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 135"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 136"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 137"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 138"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 139"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 14"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 140"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 141"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 142"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 143"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 144"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 145"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 146"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 147"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 148"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 149"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 15"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 150"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 151"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 152"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 153"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 154"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 155"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 156"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 157"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 158"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 159"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 16"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 160"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 161"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 162"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 163"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 164"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 165"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 166"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 167"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 168"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 169"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 17"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 170"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 171"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 172"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 173"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 174"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 175"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 176"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 177"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 178"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 179"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 18"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 180"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 181"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 182"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 183"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 184"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 185"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 186"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 187"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 188"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 189"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 19"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 190"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 191"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 192"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 193"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 194"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 195"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 196"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 197"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 198"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 199"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 2"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 20"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 200"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 201"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 202"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 21"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 22"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 23"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 24"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 25"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 26"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 27"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 28"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 29"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 3"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 30"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 31"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 32"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 33"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 34"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 35"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 36"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 37"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 38"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 39"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 4"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 40"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 41"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 42"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 43"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 44"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 45"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 46"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 47"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 48"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 49"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 5"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 50"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 51"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 52"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 53"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 54"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 55"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 56"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 57"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 58"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 59"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 6"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 60"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 61"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 62"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 63"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 64"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 65"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 66"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 67"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 68"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 69"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 7"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 70"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 71"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 72"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 73"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 74"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 75"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 76"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 77"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 78"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 79"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 8"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 80"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 81"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 82"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 83"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 84"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 85"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 86"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 87"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 88"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 89"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 9"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 90"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 91"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 92"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 93"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 94"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 95"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 96"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 97"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 98"
+    ],
+    [
+      "css/css-values/if-conditionals.html",
+      "CSS Values and Units Test: CSS inline if() function 99"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 14"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 15"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 17"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 20"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 21"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 22"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 23"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 24"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 25"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 26"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 27"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 28"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 29"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 30"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 31"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 32"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 33"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 34"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 35"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 36"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 37"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 38"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 39"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 40"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 41"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 42"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 43"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 44"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 45"
+    ],
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 7"
+    ],
+    [
+      "css/css-values/if-function-revert-rule.html",
+      "The revert-rule works as a branch in if()"
+    ],
+    [
+      "css/css-values/if-function-revert-rule.html",
+      "The revert-rule works as a branch in if(), earlier return"
+    ],
+    [
+      "css/css-values/if-initial-unregistered.html",
+      "if-testing the initial keyword without any property registrations"
+    ],
+    [
+      "css/css-values/if-invalidation.html",
+      "CSS Values and Units Test: if() invalidation"
+    ],
+    [
+      "css/css-values/if-style-invalidation.html",
+      "CSS Values and Units Test: if() style() condition invalidation"
+    ],
+    [
+      "css/css-values/random-in-if.tentative.html",
+      "Sharing element-scoped random() in if() style() condition across different elements"
+    ],
+    [
+      "css/css-values/random-in-if.tentative.html",
+      "Sharing property-index-scoped random() in if() style() condition across different properties"
+    ],
+    [
+      "css/css-values/random-in-if.tentative.html",
+      "Sharing random() in same if() condition"
+    ],
+    [
+      "css/css-values/random-in-if.tentative.html",
+      "random() in var() should be allowed in if() style() condition"
+    ],
+    [
+      "css/css-values/random-in-if.tentative.html",
+      "random() should be allowed in if() style() condition"
+    ],
+    [
+      "css/css-values/random-in-if.tentative.html",
+      "random() with different property names should not be shared in if() declaration value"
+    ],
+    [
+      "css/css-values/random-in-if.tentative.html",
+      "random() with same property name on different elements in if() declaration value should be equal"
+    ],
+    [
+      "css/css-values/tree-counting/sibling-function-if-style-query.html",
+      "sibling-count() in an if() style() comparison"
+    ],
+    [
+      "css/css-values/tree-counting/sibling-function-if-style-query.html",
+      "sibling-index() compared against a registered custom property"
+    ],
+    [
+      "css/css-values/tree-counting/sibling-function-if-style-query.html",
+      "sibling-index() in an if() style() comparison"
+    ],
+    [
+      "css/css-values/tree-counting/sibling-function-if-style-query.html",
+      "sibling-index() inside mod() in an if() style() comparison"
+    ],
+    [
+      "css/css-values/tree-counting/sibling-index-keyframe-font-style-dynamic.html",
+      "Removing a preceding sibling of #target reduces the sibling-index()"
+    ],
+    [
+      "css/css-values/tree-counting/sibling-index-keyframe-font-variation-settings-dynamic.html",
+      "Removing a preceding sibling of #target reduces the sibling-index()"
+    ],
+    [
+      "css/css-values/tree-counting/sibling-index-keyframe-font-weight-dynamic.html",
+      "Removing a preceding sibling of #target reduces the sibling-index()"
+    ],
+    [
+      "css/css-values/tree-counting/sibling-index-keyframe-length-value-dynamic.html",
+      "Removing a preceding sibling of #target reduces the sibling-index()"
+    ],
+    [
+      "css/css-values/tree-counting/sibling-index-keyframe-percent-dynamic.html",
+      "Removing a preceding sibling of #target reduces the sibling-index()"
+    ],
+    [
+      "css/css-values/tree-counting/sibling-index-keyframe-registered-properties-dynamic.html",
+      "Removing a preceding sibling of #target reduces the sibling-index() for --angle"
+    ],
+    [
+      "css/css-values/tree-counting/sibling-index-keyframe-registered-properties-dynamic.html",
+      "Removing a preceding sibling of #target reduces the sibling-index() for --color"
+    ],
+    [
+      "css/css-values/tree-counting/sibling-index-keyframe-registered-properties-dynamic.html",
+      "Removing a preceding sibling of #target reduces the sibling-index() for --integer"
+    ],
+    [
+      "css/css-values/tree-counting/sibling-index-keyframe-registered-properties-dynamic.html",
+      "Removing a preceding sibling of #target reduces the sibling-index() for --length"
+    ],
+    [
+      "css/css-values/tree-counting/sibling-index-keyframe-registered-properties-dynamic.html",
+      "Removing a preceding sibling of #target reduces the sibling-index() for --length-percentage"
+    ],
+    [
+      "css/css-values/tree-counting/sibling-index-keyframe-registered-properties-dynamic.html",
+      "Removing a preceding sibling of #target reduces the sibling-index() for --list"
+    ],
+    [
+      "css/css-values/tree-counting/sibling-index-keyframe-registered-properties-dynamic.html",
+      "Removing a preceding sibling of #target reduces the sibling-index() for --number"
+    ],
+    [
+      "css/css-values/tree-counting/sibling-index-keyframe-registered-properties-dynamic.html",
+      "Removing a preceding sibling of #target reduces the sibling-index() for --percentage"
+    ],
+    [
+      "css/css-values/tree-counting/sibling-index-keyframe-registered-properties-dynamic.html",
+      "Removing a preceding sibling of #target reduces the sibling-index() for --resolution"
+    ],
+    [
+      "css/css-values/tree-counting/sibling-index-keyframe-registered-properties-dynamic.html",
+      "Removing a preceding sibling of #target reduces the sibling-index() for --time"
+    ],
+    [
+      "css/css-values/tree-counting/sibling-index-keyframe-rotate-dynamic.html",
+      "Removing a preceding sibling of #target reduces the sibling-index()"
+    ],
+    [
+      "css/css-values/tree-counting/sibling-index-keyframe-scale-dynamic.html",
+      "Removing a preceding sibling of #target reduces the sibling-index()"
+    ],
+    [
+      "css/css-values/tree-counting/sibling-index-keyframe-transform-dynamic.html",
+      "Removing a preceding sibling of #target reduces the sibling-index()"
+    ],
+    [
+      "css/css-values/tree-counting/sibling-index-keyframe-value-dynamic.html",
+      "Removing a preceding sibling of #target reduces the sibling-index()"
+    ],
+    [
+      "css/css-values/using-font-relative-units-in-font-properties.html",
+      "Property font-feature-settings value '\"swsh\" calc(1em / 1px)'"
+    ],
+    [
+      "css/css-values/using-font-relative-units-in-font-properties.html",
+      "Property font-size-adjust value 'calc(1em / 1px)'"
+    ],
+    [
+      "css/css-values/using-font-relative-units-in-font-properties.html",
+      "Property font-style value 'oblique calc(1em / 1px * 1deg)'"
+    ],
+    [
+      "css/css-values/using-font-relative-units-in-font-properties.html",
+      "Property font-variation-settings value '\"xhgt\" calc(1em / 1px)'"
+    ],
+    [
+      "css/css-values/using-font-relative-units-in-font-properties.html",
+      "Property font-weight value 'calc(1em / 1px)'"
+    ],
+    [
+      "css/css-values/using-font-relative-units-in-font-properties.html",
+      "Property font-width value 'calc(1em / 1px * 1%)'"
+    ],
+    [
+      "css/css-variables/variable-reference-name-substitution.html",
+      "var() name comes from if()"
+    ]
+  ],
+  "lost": [
+    [
+      "css/css-values/if-cycle.html",
+      "CSS Values and Units Test: CSS if() function cycles 4"
+    ]
+  ],
+  "newNames": [],
+  "missingNames": [],
+  "gainedPages": [
+    "css/css-values/attr-parse-url.html",
+    "css/css-values/attr-security-if.html",
+    "css/css-values/attr-security-transition-retarget-taint.html",
+    "css/css-values/if-conditionals.html",
+    "css/css-values/if-function-revert-rule.html",
+    "css/css-values/if-initial-unregistered.html",
+    "css/css-values/if-invalidation.html",
+    "css/css-values/if-style-invalidation.html",
+    "css/css-values/tree-counting/sibling-function-if-style-query.html",
+    "css/css-values/tree-counting/sibling-index-keyframe-font-style-dynamic.html",
+    "css/css-values/tree-counting/sibling-index-keyframe-font-variation-settings-dynamic.html",
+    "css/css-values/tree-counting/sibling-index-keyframe-font-weight-dynamic.html",
+    "css/css-values/tree-counting/sibling-index-keyframe-length-value-dynamic.html",
+    "css/css-values/tree-counting/sibling-index-keyframe-percent-dynamic.html",
+    "css/css-values/tree-counting/sibling-index-keyframe-registered-properties-dynamic.html",
+    "css/css-values/tree-counting/sibling-index-keyframe-rotate-dynamic.html",
+    "css/css-values/tree-counting/sibling-index-keyframe-scale-dynamic.html",
+    "css/css-values/tree-counting/sibling-index-keyframe-transform-dynamic.html",
+    "css/css-values/tree-counting/sibling-index-keyframe-value-dynamic.html"
+  ],
+  "lostPages": [],
+  "statusChanges": {},
+  "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+  "jsc": "0e0dd7038a7a-6f4649e395e0",
+  "browserSHA256": {
+    "final": "5b141a01c9fe82df86973e798ab40086accb9c7e8fce368d3ab006d9f9b67ca1",
+    "topic2": "ea45a61412987f598c3a1c3ff12f3c0306600c656818a2c33849e9e877100907"
+  },
+  "wallMs": [
+    7094,
+    4688
+  ],
+  "parentCommit": "056e6e6630d14e5804ef7ab751b2df1ca4cd828f",
+  "candidateCommit": "f224e5521a509545fceebd4abe51844b9ea6c690"
+}

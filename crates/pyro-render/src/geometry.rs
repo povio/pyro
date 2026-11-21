@@ -741,9 +741,7 @@ impl Geometry {
             }
             return Some(b);
         }
-        let inline =
-            doc.get_node(id).and_then(|n| n.primary_styles()).is_some_and(|s| s.clone_display().is_inline_flow());
-        if inline {
+        if doc.get_node(id).is_some_and(|node| node.is_non_atomic_inline()) {
             if let Some(r) = self.inline_union(doc, id) {
                 return Some(LayoutBox {
                     client_width: 0.0,
@@ -1331,8 +1329,8 @@ pub struct TextWord {
     pub width: f64,
     pub height: f64,
     pub fixed: bool,
-    /// Caret positions along the word: a UTF-16 offset into the node's data
-    /// and its x, from the word's start to its end.
+    pub vertical_edges: bool,
+    /// UTF-16 offsets and their document coordinate on the physical inline axis.
     pub edges: Vec<(u32, f64)>,
 }
 
@@ -1476,10 +1474,13 @@ impl Geometry {
                         let (x0, x1) = (edges[0].1, edges[edges.len() - 1].1);
                         let r =
                             origin.transform_rect_bbox(Rect::new(x0 / scale, top / scale, x1 / scale, bottom / scale));
+                        let [inline_x, inline_y, ..] = origin.as_coeffs();
+                        let vertical_edges = inline_x.abs() < inline_y.abs();
                         let edges = edges
                             .into_iter()
                             .map(|(o, ex)| {
-                                (o, origin.transform_rect_bbox(Rect::new(ex / scale, 0.0, ex / scale, 0.0)).x0)
+                                let point = origin * kurbo::Point::new(ex / scale, top / scale);
+                                (o, if vertical_edges { point.y } else { point.x })
                             })
                             .collect();
                         out.push(TextWord {
@@ -1490,6 +1491,7 @@ impl Geometry {
                             width: (r.width() * 64.0 - 0.01).ceil() / 64.0,
                             height: r.height(),
                             fixed,
+                            vertical_edges,
                             edges,
                         });
                     };

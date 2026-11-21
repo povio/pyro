@@ -2963,7 +2963,7 @@ fn layout_metrics_report_viewport_scroll_and_document_size() {
 #[test]
 fn emulated_media_flips_match_media_and_fires_change() {
     let mut h = Harness::new();
-    load_html(&mut h, "<style>p{color:red}@media (prefers-color-scheme: dark){p{color:blue}}</style><p id=p>x</p>");
+    load_html(&mut h, "<style>p{color:red}@media (prefers-color-scheme: dark){p{color:blue}}@media (prefers-reduced-motion: reduce){p{opacity:.5}}</style><p id=p>x</p>");
     eval_value(
         &mut h,
         "globalThis.log = []; globalThis.p = document.getElementById('p'); matchMedia('(prefers-color-scheme: dark)').addEventListener('change', e => log.push('dark:' + e.matches)); \
@@ -2976,10 +2976,12 @@ fn emulated_media_flips_match_media_and_fires_change() {
         json!([{"name":"prefers-color-scheme","value":"dark"},{"name":"prefers-reduced-motion","value":"reduce"}]);
     assert_eq!(h.page("Emulation.setEmulatedMedia", json!({"features": features}))["result"], json!({}));
     assert_eq!(eval_value(&mut h, probe), json!([true, true, false, "rgb(0, 0, 255)"]));
+    assert_eq!(eval_value(&mut h, "getComputedStyle(p).opacity"), json!("0.5"));
     // `change` fires at the next safe point, after `matches` already flipped.
     h.run_for(50);
     assert_eq!(h.page("Emulation.setEmulatedMedia", json!({"media": "print"}))["result"], json!({}));
     assert_eq!(eval_value(&mut h, probe), json!([false, false, true, "rgb(255, 0, 0)"]));
+    assert_eq!(eval_value(&mut h, "getComputedStyle(p).opacity"), json!("1"));
     let metrics = json!({"width":400,"height":300,"deviceScaleFactor":1,"mobile":false});
     assert_eq!(h.page("Emulation.setDeviceMetricsOverride", metrics)["result"], json!({}));
     h.run_for(50);

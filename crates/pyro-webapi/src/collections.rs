@@ -1385,6 +1385,130 @@ pub fn dataset<'s>(s: &Scope<'s>, page: &PageDom, id: NodeId) -> JsResult<Object
     s.wrap::<DomStringMap>(StringMapData { el: NodeHold::new(&page, id)? }, Some(key))
 }
 
+// ----- SVGStringList -----------------------------------------------------------
+
+use pyro_dom::svg_string_list::StringListAttribute;
+
+pub struct StringListData {
+    el: NodeHold,
+    kind: StringListAttribute,
+}
+
+impl StringListData {
+    fn with_items<R>(&self, f: impl FnOnce(&[String]) -> R) -> JsResult<R> {
+        let mut dom = self.el.page.dom.borrow_mut();
+        Ok(f(dom.svg_string_list(self.el.id, self.kind).js()?))
+    }
+
+    fn edit<R>(&self, f: impl FnOnce(&mut Vec<String>) -> JsResult<R>) -> JsResult<R> {
+        let mut dom = self.el.page.dom.borrow_mut();
+        let mut items = dom.svg_string_list(self.el.id, self.kind).js()?.to_vec();
+        let result = f(&mut items)?;
+        dom.set_svg_string_list(self.el.id, self.kind, items).js()?;
+        Ok(result)
+    }
+
+    fn replace(&self, index: usize, value: String) -> JsResult<()> {
+        self.edit(|items| {
+            *items.get_mut(index).ok_or_else(string_list_index_error)? = value;
+            Ok(())
+        })
+    }
+}
+
+/// Web IDL unsigned long conversion uses modulo after truncation, even for
+/// doubles outside Rust's signed integer range. NaN and infinities map to zero.
+fn svg_list_index(value: Value<'_>) -> JsResult<usize> {
+    Ok(value.to_number()?.trunc().rem_euclid(4_294_967_296.0) as u32 as usize)
+}
+
+fn string_list_index_error() -> JsError {
+    JsError::dom("IndexSizeError", "The index is outside the SVG string list.")
+}
+
+pub struct SvgStringList;
+impl JsClass for SvgStringList {
+    const NAME: &'static str = "SVGStringList";
+    type Data = StringListData;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        for name in ["length", "numberOfItems"] {
+            def.getter(name, |s, l| l.with_items(|v| s.number(v.len() as f64)));
+        }
+        def.legacy_platform_object();
+        def.indexed(|s, l, i| l.with_items(|v| v.get(i as usize).map(|item| s.string(item))));
+        def.indexed_iterator();
+        def.named_setter(|_, l, name, value| {
+            let Some(i) = name.parse::<u32>().ok().filter(|i| *i != u32::MAX && i.to_string() == name) else {
+                return Ok(false);
+            };
+            l.replace(i as usize, dom_string(value)?)?;
+            Ok(true)
+        });
+        def.method("clear", 0, |s, l, _| {
+            l.el.page.dom.borrow_mut().set_svg_string_list(l.el.id, l.kind, Vec::new()).js()?;
+            Ok(s.undefined())
+        });
+        def.method("getItem", 1, |s, l, a| {
+            a.require(1, "SVGStringList.getItem")?;
+            let i = svg_list_index(a.get(0))?;
+            l.with_items(|v| v.get(i).map(|item| s.string(item)))?.ok_or_else(string_list_index_error)
+        });
+        def.method("initialize", 1, |s, l, a| {
+            a.require(1, "SVGStringList.initialize")?;
+            let value = dom_string(a.get(0))?;
+            let result = s.string(&value);
+            l.el.page.dom.borrow_mut().set_svg_string_list(l.el.id, l.kind, vec![value]).js()?;
+            Ok(result)
+        });
+        def.method("appendItem", 1, |s, l, a| {
+            a.require(1, "SVGStringList.appendItem")?;
+            let value = dom_string(a.get(0))?;
+            let result = s.string(&value);
+            l.edit(|items| { items.push(value); Ok(()) })?;
+            Ok(result)
+        });
+        def.method("insertItemBefore", 2, |s, l, a| {
+            a.require(2, "SVGStringList.insertItemBefore")?;
+            let value = dom_string(a.get(0))?;
+            let i = svg_list_index(a.get(1))?;
+            let result = s.string(&value);
+            l.edit(|items| { items.insert(i.min(items.len()), value); Ok(()) })?;
+            Ok(result)
+        });
+        def.method("replaceItem", 2, |s, l, a| {
+            a.require(2, "SVGStringList.replaceItem")?;
+            let value = dom_string(a.get(0))?;
+            let i = svg_list_index(a.get(1))?;
+            let result = s.string(&value);
+            l.replace(i, value)?;
+            Ok(result)
+        });
+        def.method("removeItem", 1, |s, l, a| {
+            a.require(1, "SVGStringList.removeItem")?;
+            let i = svg_list_index(a.get(0))?;
+            let value = l.edit(|items| {
+                if i >= items.len() { return Err(string_list_index_error()); }
+                Ok(items.remove(i))
+            })?;
+            Ok(s.string(&value))
+        });
+    }
+}
+
+pub fn svg_string_list<'s>(s: &Scope<'s>, n: &NodeData, kind: StringListAttribute) -> JsResult<Value<'s>> {
+    let slot = match kind {
+        StringListAttribute::RequiredExtensions => 440,
+        StringListAttribute::SystemLanguage => 441,
+    };
+    let key = coll_identity(n.page(), slot, n.id);
+    if let Some(obj) = s.lookup_identity(key) {
+        return Ok(obj.value());
+    }
+    let el = NodeHold::new(n.page(), n.id)?;
+    Ok(s.wrap::<SvgStringList>(StringListData { el, kind }, Some(key))?.value())
+}
+
 // ----- SVGAnimatedEnumeration ---------------------------------------------------
 
 /// An SVG element's enumerated attribute (`clipPathUnits`, `spreadMethod`, ...):
@@ -1406,9 +1530,9 @@ pub struct AnimatedEnumData {
 impl AnimatedEnumData {
     fn value(&self) -> u16 {
         let dom = self.el.page.dom.borrow();
-        let keyword = dom.get_attribute(self.el.id, self.e.attr).ok().flatten();
+        let keyword = dom.get_attribute_ns(self.el.id, None, self.e.attr).ok().flatten();
         keyword
-            .and_then(|k| self.e.keywords.iter().position(|w| *w == k.trim()))
+            .and_then(|k| self.e.keywords.iter().position(|w| *w == k))
             .map_or(self.e.initial, |i| i as u16 + 1)
     }
 }
@@ -1434,7 +1558,15 @@ impl JsClass for SvgAnimatedEnumeration {
                         format!("The enumeration value provided ({n}) is not a valid value for '{}'.", t.e.attr).into(),
                     ));
                 };
-                t.el.page.dom.borrow_mut().set_attribute(t.el.id, t.e.attr, keyword).js()
+                // Selecting ANGLE preserves a current angle and resets a keyword
+                // or invalid attribute to the initial zero angle.
+                if t.e.attr == "orient" && n == 2 {
+                    let dom = t.el.page.dom.borrow();
+                    if dom.get_attribute_ns(t.el.id, None, "orient").js()?.and_then(Angle::parse).is_some() {
+                        return Ok(());
+                    }
+                }
+                t.el.page.dom.borrow_mut().set_attribute_ns(t.el.id, None, t.e.attr, keyword).js()
             },
         );
         def.getter("animVal", |s, t| Ok(s.number(t.value() as f64)));
@@ -1464,6 +1596,7 @@ pub fn animated_enumeration<'s>(
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SvgPart {
     Whole,
+    NumberOrPercentage,
     First,
     Second,
 }
@@ -1484,30 +1617,59 @@ pub struct AnimatedAttrData {
 }
 
 impl AnimatedAttrData {
+    /// SVG 2 linking: href is reflected in no namespace unless only the
+    /// legacy XLink attribute exists. Its DOM prefix is immaterial.
+    fn name(&self, dom: &Dom) -> (Option<&'static str>, &'static str) {
+        let primary = self.a.attrs[0];
+        if self.a.attrs.len() == 1 || dom.get_attribute_ns(self.el.id, None, primary).ok().flatten().is_some() {
+            return (None, primary);
+        }
+        for alias in &self.a.attrs[1..] {
+            let (ns, local) = match alias.strip_prefix("xlink:") {
+                Some(local) => (Some("http://www.w3.org/1999/xlink"), local),
+                None => (None, *alias),
+            };
+            if dom.get_attribute_ns(self.el.id, ns, local).ok().flatten().is_some() {
+                return (ns, local);
+            }
+        }
+        (None, primary)
+    }
     fn text(&self) -> Option<String> {
         let dom = self.el.page.dom.borrow();
-        self.a.attrs.iter().find_map(|name| dom.get_attribute(self.el.id, name).ok().flatten().map(|v| v.to_string()))
-    }
-    /// The attribute to write: the first present one, else the first name.
-    fn write_name(&self) -> &'static str {
-        let dom = self.el.page.dom.borrow();
-        self.a.attrs.iter().copied().find(|name| dom.has_attribute(self.el.id, name).unwrap_or(false)).unwrap_or(self.a.attrs[0])
+        let (ns, name) = self.name(&dom);
+        dom.get_attribute_ns(self.el.id, ns, name).ok().flatten().map(str::to_owned)
     }
     fn set(&self, value: &str) -> JsResult<()> {
-        let name = self.write_name();
-        self.el.page.dom.borrow_mut().set_attribute(self.el.id, name, value).js()
+        let mut dom = self.el.page.dom.borrow_mut();
+        let (ns, name) = self.name(&dom);
+        dom.set_attribute_ns(self.el.id, ns, name, value).js()
     }
     /// The attribute's numbers (separated by whitespace and/or a comma); `None` when it does not parse
     /// as one number (or, for a pair, one or two).
     fn numbers(&self) -> Option<Vec<f64>> {
         let text = self.text()?;
-        let parts: Vec<&str> =
-            text.split(|c: char| c.is_ascii_whitespace() || c == ',').filter(|p| !p.is_empty()).collect();
-        let max = if self.a.part == SvgPart::Whole { 1 } else { 2 };
-        if parts.is_empty() || parts.len() > max {
+        let text = text.trim_matches(|c: char| c.is_ascii_whitespace());
+        if self.a.part == SvgPart::NumberOrPercentage {
+            let n = match text.strip_suffix('%') {
+                Some(percent) => svg_number(percent)? / 100.0,
+                None => svg_number(text)?,
+            };
+            return Some(vec![n]);
+        }
+        if self.a.part == SvgPart::Whole {
+            return Some(vec![svg_number(text)?]);
+        }
+        let parts: Vec<_> = if let Some((x, y)) = text.split_once(',') {
+            let whitespace = |c: char| c.is_ascii_whitespace();
+            vec![x.trim_matches(whitespace), y.trim_matches(whitespace)]
+        } else {
+            text.split_ascii_whitespace().collect()
+        };
+        if parts.is_empty() || parts.len() > 2 {
             return None;
         }
-        parts.iter().map(|p| svg_number(p)).collect()
+        parts.into_iter().map(svg_number).collect()
     }
     fn number(&self) -> f64 {
         self.number_as(self.a.part)
@@ -1515,7 +1677,7 @@ impl AnimatedAttrData {
     /// Writes `v` as this part, keeping the other number of a pair.
     fn set_number(&self, v: f64) -> JsResult<()> {
         let text = match self.a.part {
-            SvgPart::Whole => fmt_number(v),
+            SvgPart::Whole | SvgPart::NumberOrPercentage => fmt_number(v),
             SvgPart::First => format!("{} {}", fmt_number(v), fmt_number(self.number_as(SvgPart::Second))),
             SvgPart::Second => format!("{} {}", fmt_number(self.number_as(SvgPart::First)), fmt_number(v)),
         };
@@ -1535,6 +1697,9 @@ fn svg_number(text: &str) -> Option<f64> {
     if text.is_empty() || text.contains(|c: char| !(c.is_ascii_digit() || matches!(c, '.' | '-' | '+' | 'e' | 'E'))) {
         return None;
     }
+    if text.split(['e', 'E']).next()?.ends_with('.') {
+        return None;
+    }
     text.parse::<f64>().ok().filter(|v| v.is_finite())
 }
 
@@ -1542,7 +1707,9 @@ fn fmt_number(v: f64) -> String {
     if v == v.trunc() && v.abs() < 1e15 {
         format!("{}", v as i64)
     } else {
-        format!("{v}")
+        // SVGAnimatedNumber is a WebIDL float. Serializing the widened
+        // JS double would expose extra digits for values such as 0.2.
+        (v as f32).to_string()
     }
 }
 
@@ -1563,6 +1730,20 @@ impl JsClass for SvgAnimatedString {
     fn define(def: &mut ClassDef<Self>) {
         def.accessor("baseVal", |s, t| Ok(s.string(&t.text().unwrap_or_default())), |_s, t, v| t.set(&dom_string(v)?));
         def.getter("animVal", |s, t| Ok(s.string(&t.text().unwrap_or_default())));
+    }
+}
+
+/// A detached SVG number object, as returned by SVGSVGElement.createSVGNumber().
+pub struct SvgNumber;
+impl JsClass for SvgNumber {
+    const NAME: &'static str = "SVGNumber";
+    type Data = Cell<f32>;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        def.accessor("value", |s, n| Ok(s.number(f64::from(n.get()))), |_s, n, v| {
+            n.set(finite_float(v, "SVGNumber")? as f32);
+            Ok(())
+        });
     }
 }
 
@@ -1632,6 +1813,195 @@ pub fn animated_attr<'s, C: JsClass<Data = AnimatedAttrData>>(
     }
     let page = page_rc(s)?;
     s.wrap::<C>(AnimatedAttrData { el: NodeHold::new(&page, id)?, a }, Some(key))
+}
+
+// SVG angles are stored in their specified units. The unitless form is in
+// degrees, and a turn is accepted by CSS but has no SVGAngle unit constant.
+#[derive(Clone, Copy)]
+struct Angle {
+    value: f32,
+    unit: u16,
+}
+impl Angle {
+    const ZERO: Self = Self { value: 0.0, unit: 1 };
+    const UNITS: [&'static str; 6] = ["", "", "deg", "rad", "grad", "turn"];
+    fn parse(text: &str) -> Option<Self> {
+        let text = text.trim_matches(|c: char| c.is_ascii_whitespace());
+        // grad precedes rad because the suffixes overlap.
+        for unit in [4, 3, 2, 5, 1] {
+            let suffix = Self::UNITS[unit];
+            let Some(n) = text.len().checked_sub(suffix.len()) else { continue };
+            if text.is_char_boundary(n) && text[n..].eq_ignore_ascii_case(suffix) {
+                let value = svg_number(&text[..n])? as f32;
+                return value.is_finite().then_some(Self { value, unit: unit as u16 });
+            }
+        }
+        None
+    }
+    fn factor(unit: u16) -> f64 {
+        match unit {
+            3 => 180.0 / std::f64::consts::PI,
+            4 => 0.9,
+            5 => 360.0,
+            _ => 1.0,
+        }
+    }
+    fn degrees(self) -> f64 {
+        f64::from(self.value) * Self::factor(self.unit)
+    }
+    fn clamp(value: f64) -> f32 {
+        value.clamp(-f64::from(f32::MAX), f64::from(f32::MAX)) as f32
+    }
+    fn string(self) -> String {
+        let value = if self.value == 0.0 { 0.0 } else { self.value };
+        format!("{value}{}", Self::UNITS[self.unit as usize])
+    }
+}
+
+pub enum SvgAngleData {
+    Detached(Cell<(f32, u16)>),
+    Reflected { el: NodeHold, anim: bool },
+}
+impl SvgAngleData {
+    fn get(&self) -> Angle {
+        match self {
+            Self::Detached(cell) => {
+                let (value, unit) = cell.get();
+                Angle { value, unit }
+            }
+            Self::Reflected { el, .. } => el
+                .page
+                .dom
+                .borrow()
+                .get_attribute_ns(el.id, None, "orient")
+                .ok()
+                .flatten()
+                .and_then(Angle::parse)
+                .unwrap_or(Angle::ZERO),
+        }
+    }
+    fn writable(&self) -> JsResult<()> {
+        if matches!(self, Self::Reflected { anim: true, .. }) {
+            return Err(JsError::dom("NoModificationAllowedError", "The animated value is read-only."));
+        }
+        Ok(())
+    }
+    fn set(&self, angle: Angle) -> JsResult<()> {
+        self.writable()?;
+        match self {
+            Self::Detached(cell) => {
+                cell.set((angle.value, angle.unit));
+                Ok(())
+            }
+            Self::Reflected { el, .. } => el.page.dom.borrow_mut().set_attribute_ns(el.id, None, "orient", &angle.string()).js(),
+        }
+    }
+}
+
+pub struct SvgAngle;
+impl JsClass for SvgAngle {
+    const NAME: &'static str = "SVGAngle";
+    type Data = SvgAngleData;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        for (i, key) in [
+            "SVG_ANGLETYPE_UNKNOWN",
+            "SVG_ANGLETYPE_UNSPECIFIED",
+            "SVG_ANGLETYPE_DEG",
+            "SVG_ANGLETYPE_RAD",
+            "SVG_ANGLETYPE_GRAD",
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            def.constant(key, i as f64);
+        }
+        def.getter("unitType", |s, t| {
+            let k = t.get().unit;
+            Ok(s.number(if k == 5 { 0.0 } else { f64::from(k) }))
+        });
+        def.accessor(
+            "value",
+            |s, t| Ok(s.number(f64::from(Angle::clamp(t.get().degrees())))),
+            |_s, t, v| {
+                let n = finite_float(v, "SVGAngle")?;
+                let unit = t.get().unit;
+                t.set(Angle { value: Angle::clamp(n / Angle::factor(unit)), unit })
+            },
+        );
+        def.accessor(
+            "valueInSpecifiedUnits",
+            |s, t| Ok(s.number(f64::from(t.get().value))),
+            |_s, t, v| {
+                let value = finite_float(v, "SVGAngle")? as f32;
+                t.set(Angle { value, unit: t.get().unit })
+            },
+        );
+        def.accessor(
+            "valueAsString",
+            |s, t| Ok(s.string(&t.get().string())),
+            |_s, t, v| {
+                let input = dom_string(v)?;
+                t.writable()?;
+                t.set(Angle::parse(&input).ok_or_else(|| JsError::dom("SyntaxError", "Invalid SVG angle."))?)
+            },
+        );
+        def.method("newValueSpecifiedUnits", 2, |s, t, a| {
+            a.require(2, "SVGAngle.newValueSpecifiedUnits")?;
+            let unit = to_u32(a.get(0))? as u16;
+            let value = finite_float(a.get(1), "SVGAngle")? as f32;
+            t.writable()?;
+            check_angle_unit(unit)?;
+            t.set(Angle { value, unit })?;
+            Ok(s.undefined())
+        });
+        def.method("convertToSpecifiedUnits", 1, |s, t, a| {
+            a.require(1, "SVGAngle.convertToSpecifiedUnits")?;
+            let unit = to_u32(a.get(0))? as u16;
+            t.writable()?;
+            check_angle_unit(unit)?;
+            t.set(Angle { value: Angle::clamp(t.get().degrees() / Angle::factor(unit)), unit })?;
+            Ok(s.undefined())
+        });
+    }
+}
+fn check_angle_unit(unit: u16) -> JsResult<()> {
+    if (1..=4).contains(&unit) {
+        Ok(())
+    } else {
+        Err(JsError::dom("NotSupportedError", "Unsupported SVG angle unit."))
+    }
+}
+pub fn create_svg_angle<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
+    s.wrap::<SvgAngle>(SvgAngleData::Detached(Cell::new((0.0, 1))), None)
+}
+pub fn angle_string(s: &Scope<'_>, value: Value<'_>) -> JsResult<String> {
+    let angle = s.unwrap::<SvgAngle>(value).ok_or_else(|| JsError::Type("Expected an SVGAngle.".into()))?;
+    Ok(angle.get().string())
+}
+pub struct SvgAnimatedAngle;
+impl JsClass for SvgAnimatedAngle {
+    const NAME: &'static str = "SVGAnimatedAngle";
+    type Data = NodeHold;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        def.getter("baseVal", |s, el| Ok(reflected_angle(s, el, false)?.value()));
+        def.getter("animVal", |s, el| Ok(reflected_angle(s, el, true)?.value()));
+    }
+}
+fn reflected_angle<'s>(s: &Scope<'s>, el: &NodeHold, anim: bool) -> JsResult<Object<'s>> {
+    let key = coll_identity(&el.page, 429 + u64::from(anim), el.id);
+    if let Some(o) = s.lookup_identity(key) {
+        return Ok(o);
+    }
+    s.wrap::<SvgAngle>(SvgAngleData::Reflected { el: NodeHold::new(&el.page, el.id)?, anim }, Some(key))
+}
+pub fn animated_angle<'s>(s: &Scope<'s>, page: &PageDom, id: NodeId) -> JsResult<Object<'s>> {
+    let key = coll_identity(page, 428, id);
+    if let Some(o) = s.lookup_identity(key) {
+        return Ok(o);
+    }
+    s.wrap::<SvgAnimatedAngle>(NodeHold::new(&page_rc(s)?, id)?, Some(key))
 }
 
 // ----- SVGAnimatedLength, SVGLength ------------------------------------------------------------
@@ -2113,18 +2483,23 @@ pub fn animated_transform_list<'s>(s: &Scope<'s>, page: &PageDom, id: NodeId, at
 }
 
 pub(crate) fn register(engine: &pyro_js::Engine) {
+    engine.register::<SvgStringList>();
     engine.register::<SvgAnimatedTransformList>();
     engine.register::<SvgTransformList>();
     engine.register::<SvgTransform>();
     engine.register::<SvgMatrix>();
     engine.register::<SvgAnimatedEnumeration>();
     engine.register::<SvgAnimatedString>();
+    engine.register::<SvgNumber>();
     engine.register::<SvgAnimatedNumber>();
     engine.register::<SvgAnimatedInteger>();
     engine.register::<SvgAnimatedBoolean>();
+    engine.register::<SvgAngle>();
+    engine.register::<SvgAnimatedAngle>();
     engine.register::<SvgAnimatedLength>();
     engine.register::<SvgLength>();
-    engine.register::<SvgCurrentTranslate>();
+    engine.register::<SvgPoint>();
+    engine.register::<SvgPointList>();
     engine.register::<NodeList>();
     engine.register::<RadioNodeList>();
     engine.register::<HtmlCollection>();
@@ -2154,28 +2529,174 @@ mod tests {
     }
 }
 
-/// pyro: `SVGSVGElement.currentTranslate`: a point whose `x` and `y` are the `<svg>`'s pan (pyro-dom
-/// `Dom::svg_pan`), live.
-pub struct SvgCurrentTranslate;
-impl JsClass for SvgCurrentTranslate {
+/// A detached SVG point or the live pan of an SVG viewport.
+pub enum SvgPointData {
+    Item(Rc<pyro_dom::svg_point_list::PointItem>),
+    Translate(NodeHold),
+}
+
+impl SvgPointData {
+    fn coordinates(&self) -> (f64, f64) {
+        match self {
+            Self::Item(value) => {
+                let (x, y) = value.coordinates();
+                (f64::from(x), f64::from(y))
+            }
+            Self::Translate(node) => {
+                let (x, y, _) = node.page.dom.borrow().svg_pan(node.id);
+                (x, y)
+            }
+        }
+    }
+
+    fn set(&self, value: Value<'_>, horizontal: bool) -> JsResult<()> {
+        let value = value.to_number()? as f32;
+        if !value.is_finite() {
+            return Err(JsError::Type("The provided float value is non-finite.".into()));
+        }
+        match self {
+            Self::Item(point) => {
+                let (x, y) = point.coordinates();
+                point.set_coordinates(if horizontal { (value, y) } else { (x, value) }).js()?;
+            }
+            Self::Translate(node) => {
+                let mut dom = node.page.dom.borrow_mut();
+                let (x, y, scale) = dom.svg_pan(node.id);
+                let position = if horizontal { (f64::from(value), y, scale) } else { (x, f64::from(value), scale) };
+                dom.set_svg_pan(node.id, position);
+            }
+        }
+        Ok(())
+    }
+}
+
+pub fn detached_point<'s>(s: &Scope<'s>, x: f64, y: f64) -> JsResult<Value<'s>> {
+    point_value(s, PointItem::detached((x as f32, y as f32)))
+}
+
+pub struct SvgPoint;
+impl JsClass for SvgPoint {
     const NAME: &'static str = "SVGPoint";
-    type Data = NodeHold;
+    type Data = SvgPointData;
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
-        fn set(t: &NodeHold, v: Value<'_>, axis: usize) -> JsResult<()> {
-            let value = v.to_number()?;
-            if !value.is_finite() {
-                return Err(JsError::Type("The provided float value is non-finite.".into()));
-            }
-            let mut dom = t.page.dom.borrow_mut();
-            let (mut tx, mut ty, scale) = dom.svg_pan(t.id);
-            if axis == 0 { tx = value as f32 as f64 } else { ty = value as f32 as f64 }
-            dom.set_svg_pan(t.id, (tx, ty, scale));
-            Ok(())
-        }
-        def.accessor("x", |s, t| Ok(s.number(t.page.dom.borrow().svg_pan(t.id).0)), |_s, t, v| set(t, v, 0));
-        def.accessor("y", |s, t| Ok(s.number(t.page.dom.borrow().svg_pan(t.id).1)), |_s, t, v| set(t, v, 1));
-        def.getter("w", |s, _t| Ok(s.number(1.0)));
-        def.getter("z", |s, _t| Ok(s.number(0.0)));
+        def.accessor("x", |s, p| Ok(s.number(p.coordinates().0)), |_s, p, v| p.set(v, true));
+        def.accessor("y", |s, p| Ok(s.number(p.coordinates().1)), |_s, p, v| p.set(v, false));
+        def.getter("w", |s, _| Ok(s.number(1.0)));
+        def.getter("z", |s, _| Ok(s.number(0.0)));
+        def.method("matrixTransform", 1, |s, p, args| {
+            args.require(1, "SVGPoint.matrixTransform")?;
+            let matrix = s.unwrap::<SvgMatrix>(args.get(0))
+                .ok_or_else(|| JsError::Type("Expected an SVGMatrix.".into()))?;
+            let (x, y) = p.coordinates();
+            detached_point(s, matrix[0] * x + matrix[2] * y + matrix[4], matrix[1] * x + matrix[3] * y + matrix[5])
+        });
     }
+}
+
+use pyro_dom::svg_point_list::{PointItem, PointLists};
+
+fn point_value<'s>(s: &Scope<'s>, item: Rc<PointItem>) -> JsResult<Value<'s>> {
+    // The wrapper owns this Rc and its weak identity entry ends at GC. Each
+    // realm therefore gets one wrapper per point for as long as it is held.
+    let key = IdentityKey((1 << 59) | (1 << 56), Rc::as_ptr(&item) as u64);
+    Ok(s.wrap::<SvgPoint>(SvgPointData::Item(item), Some(key))?.value())
+}
+
+fn point_argument(s: &Scope<'_>, value: Value<'_>) -> JsResult<Rc<PointItem>> {
+    let point = s.unwrap::<SvgPoint>(value).ok_or_else(|| JsError::Type("Expected an SVGPoint.".into()))?;
+    Ok(match &*point {
+        SvgPointData::Item(item) => item.clone(),
+        SvgPointData::Translate(_) => {
+            let (x, y) = point.coordinates();
+            PointItem::detached((x as f32, y as f32))
+        }
+    })
+}
+
+pub struct PointListData {
+    lists: Rc<PointLists>,
+    animated: bool,
+}
+
+impl PointListData {
+    fn writable(&self) -> JsResult<&Rc<PointLists>> {
+        if self.animated { return Err(dom_err(pyro_dom::svg_point_list::read_only())); }
+        Ok(&self.lists)
+    }
+}
+
+pub struct SvgPointList;
+impl JsClass for SvgPointList {
+    const NAME: &'static str = "SVGPointList";
+    type Data = PointListData;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        for name in ["numberOfItems", "length"] {
+            def.getter(name, |s, l| Ok(s.number(l.lists.len(l.animated) as f64)));
+        }
+        def.legacy_platform_object();
+        def.indexed_iterator();
+        def.indexed(|s, l, i| l.lists.item(i as usize, l.animated).map(|v| point_value(s, v)).transpose());
+        def.named_setter(|s, l, name, value| {
+            let Some(i) = name.parse::<u32>().ok().filter(|i| *i != u32::MAX && i.to_string() == name) else {
+                return Ok(false);
+            };
+            let item = point_argument(s, value)?;
+            l.writable()?.insert(i as usize, &item, true).js()?;
+            Ok(true)
+        });
+        def.method("getItem", 1, |s, l, a| {
+            a.require(1, "SVGPointList.getItem")?;
+            let i = svg_list_index(a.get(0))?;
+            let item = l.lists.item(i, l.animated).ok_or_else(|| JsError::dom("IndexSizeError", "The index is outside the SVG point list."))?;
+            point_value(s, item)
+        });
+        def.method("clear", 0, |s, l, _| {
+            l.writable()?.clear().js()?;
+            Ok(s.undefined())
+        });
+        def.method("initialize", 1, |s, l, a| {
+            a.require(1, "SVGPointList.initialize")?;
+            let item = point_argument(s, a.get(0))?;
+            point_value(s, l.writable()?.initialize(&item).js()?)
+        });
+        def.method("appendItem", 1, |s, l, a| {
+            a.require(1, "SVGPointList.appendItem")?;
+            let item = point_argument(s, a.get(0))?;
+            point_value(s, l.writable()?.insert(usize::MAX, &item, false).js()?)
+        });
+        def.method("insertItemBefore", 2, |s, l, a| {
+            a.require(2, "SVGPointList.insertItemBefore")?;
+            let item = point_argument(s, a.get(0))?;
+            let i = svg_list_index(a.get(1))?;
+            point_value(s, l.writable()?.insert(i, &item, false).js()?)
+        });
+        def.method("replaceItem", 2, |s, l, a| {
+            a.require(2, "SVGPointList.replaceItem")?;
+            let item = point_argument(s, a.get(0))?;
+            let i = svg_list_index(a.get(1))?;
+            point_value(s, l.writable()?.insert(i, &item, true).js()?)
+        });
+        def.method("removeItem", 1, |s, l, a| {
+            a.require(1, "SVGPointList.removeItem")?;
+            let i = svg_list_index(a.get(0))?;
+            point_value(s, l.writable()?.remove(i).js()?)
+        });
+    }
+}
+
+pub fn point_list<'s>(s: &Scope<'s>, n: &NodeData, animated: bool) -> JsResult<Value<'s>> {
+    let key = coll_identity(n.page(), if animated { 443 } else { 442 }, n.id);
+    if let Some(obj) = s.lookup_identity(key) { return Ok(obj.value()); }
+    let hold = NodeHold::new(n.page(), n.id)?;
+    let write = Box::new(move |text: Option<&str>| {
+        let mut dom = hold.page.dom.borrow_mut();
+        match text {
+            Some(text) => dom.set_attribute_local(hold.id, &pyro_dom::LocalName::from("points"), text),
+            None => dom.remove_attribute_ns(hold.id, None, "points").map(|_| ()),
+        }
+    });
+    let lists = n.page().dom.borrow_mut().svg_point_lists(n.id, write).js()?;
+    Ok(s.wrap::<SvgPointList>(PointListData { lists, animated }, Some(key))?.value())
 }

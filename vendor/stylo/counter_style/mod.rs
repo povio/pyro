@@ -260,22 +260,7 @@ pub fn parse_counter_style_body(
     location: SourceLocation,
 ) -> Result<CounterStyleRule, ParseError> {
     let start = input.current_source_location();
-    let mut rule = CounterStyleRule::empty(name, location);
-    {
-        let mut parser = DescriptorParser {
-            context,
-            descriptors: &mut rule.descriptors,
-        };
-        let iter = RuleBodyParser::new(input, &mut parser);
-        for declaration in iter {
-            if let Err((error, slice, location)) = declaration {
-                let error = ContextualParseError::UnsupportedCounterStyleDescriptorDeclaration(
-                    slice, error,
-                );
-                context.log_css_error(location, error)
-            }
-        }
-    }
+    let rule = CounterStyleRule::parse_for_cssom(name, context, input, location);
     let error = match *rule.resolved_system() {
         ref system @ System::Cyclic
         | ref system @ System::Fixed { .. }
@@ -329,6 +314,27 @@ impl ToCssWithGuard for CounterStyleRule {
 // Implements the special checkers for some setters.
 // See <https://drafts.csswg.org/css-counter-styles/#the-csscounterstylerule-interface>
 impl CounterStyleRule {
+    /// Parse CSSOM descriptors even if their combination cannot generate a marker.
+    pub fn parse_for_cssom(name: CustomIdent, context: &ParserContext, input: &mut Parser, location: SourceLocation) -> Self {
+        let mut rule = Self::empty(name, location);
+        {
+            let mut parser = DescriptorParser {
+                context,
+                descriptors: &mut rule.descriptors,
+            };
+            let iter = RuleBodyParser::new(input, &mut parser);
+            for declaration in iter {
+                if let Err((error, slice, location)) = declaration {
+                    let error = ContextualParseError::UnsupportedCounterStyleDescriptorDeclaration(
+                        slice, error,
+                    );
+                    context.log_css_error(location, error)
+                }
+            }
+        }
+        rule
+    }
+
     fn empty(name: CustomIdent, source_location: SourceLocation) -> Self {
         Self {
             name,
@@ -506,7 +512,7 @@ impl ToCss for System {
 
 /// <https://drafts.csswg.org/css-counter-styles/#typedef-symbol>
 #[derive(
-    Clone, Debug, Eq, MallocSizeOf, PartialEq, ToComputedValue, ToResolvedValue, ToCss, ToShmem,
+    Clone, Debug, Eq, MallocSizeOf, PartialEq, ToComputedValue, ToResolvedValue, ToShmem,
 )]
 #[repr(u8)]
 pub enum Symbol {
@@ -514,13 +520,27 @@ pub enum Symbol {
     String(crate::OwnedStr),
     /// <custom-ident>
     Ident(CustomIdent),
-    // Not implemented:
-    // /// <image>
-    // Image(Image),
+    /// The serialized specified image.
+    Image(crate::OwnedStr),
+}
+
+impl ToCss for Symbol {
+    fn to_css<W: Write>(&self, dest: &mut CssWriter<W>) -> fmt::Result {
+        match self {
+            Self::Image(image) => dest.write_str(image),
+            Self::String(string) => string.to_css(dest),
+            Self::Ident(ident) => ident.to_css(dest),
+        }
+    }
 }
 
 impl Parse for Symbol {
-    fn parse(_context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
+    fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
+        if context.rule_types().contains(crate::stylesheets::CssRuleType::CounterStyle) {
+            if let Ok(image) = input.try_parse(|p| crate::values::specified::Image::parse_forbid_none(context, p)) {
+                return Ok(Symbol::Image(image.to_css_string().into()));
+            }
+        }
         match *input.next()? {
             Token::QuotedString(ref s) => Ok(Symbol::String(s.as_ref().to_owned().into())),
             Token::Ident(ref s) => Ok(Symbol::Ident(CustomIdent::from_ident(s, &[])?)),
@@ -721,15 +741,14 @@ pub enum SpeakAs {
     Numbers,
     /// words
     Words,
-    // /// spell-out, not supported, see bug 1024178
-    // SpellOut,
+    /// spell-out
+    SpellOut,
     /// <counter-style-name>
     Other(CustomIdent),
 }
 
 impl Parse for SpeakAs {
     fn parse(_context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
-        let mut is_spell_out = false;
         let result = input.try_parse(|input| {
             let ident = input.expect_ident().map_err(|_| ())?;
             match_ignore_ascii_case! { ident,
@@ -737,18 +756,10 @@ impl Parse for SpeakAs {
                 "bullets" => Ok(SpeakAs::Bullets),
                 "numbers" => Ok(SpeakAs::Numbers),
                 "words" => Ok(SpeakAs::Words),
-                "spell-out" => {
-                    is_spell_out = true;
-                    Err(())
-                },
+                "spell-out" => Ok(SpeakAs::SpellOut),
                 _ => Err(()),
             }
         });
-        if is_spell_out {
-            // spell-out is not supported, but don’t parse it as a <counter-style-name>.
-            // See bug 1024178.
-            return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
-        }
         result.or_else(|_| Ok(SpeakAs::Other(parse_counter_style_name(input)?)))
     }
 }

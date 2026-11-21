@@ -143,6 +143,17 @@ impl AttrSelectorOperator {
 /// The definition of whitespace per CSS Selectors Level 3 § 4.
 pub static SELECTOR_WHITESPACE: &[char] = &[' ', '\t', '\n', '\r', '\x0C'];
 
+pub fn matches_class_prefix(class: &str, prefix: &str, quirks: bool) -> bool {
+    let bytes = class.as_bytes();
+    if !bytes.get(prefix.len()).is_some_and(|byte| *byte != b'-') { return false; }
+    let start = &bytes[..prefix.len()];
+    if quirks {
+        start.iter().zip(prefix.bytes()).all(|(actual, wanted)| actual.to_ascii_lowercase() == wanted)
+    } else {
+        start == prefix.as_bytes()
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "to_shmem", derive(ToShmem))]
 pub enum ParsedCaseSensitivity {

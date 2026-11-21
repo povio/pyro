@@ -1,0 +1,12 @@
+[
+  "css/css-backgrounds/animations/background-size-composition.html",
+  "css/css-backgrounds/animations/background-size-interpolation.html",
+  "css/css-backgrounds/background-size-001.html",
+  "css/css-backgrounds/parsing/background-size-computed.html",
+  "css/css-backgrounds/parsing/background-size-invalid.html",
+  "css/css-backgrounds/parsing/background-size-valid.html",
+  "css/css-masking/parsing/mask-size-computed.html",
+  "css/css-masking/parsing/mask-size-invalid.html",
+  "css/css-masking/parsing/mask-size-valid.html",
+  "css/css-typed-om/the-stylepropertymap/properties/background-size.html"
+]

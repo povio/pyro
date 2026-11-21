@@ -1,0 +1,7 @@
+# Used box spacing in CSSOM
+
+Candidate `9412472a` (`boxused`) versus `35b761a5` (`keyframe`); same WPT `a421f2fea5eb7f91e0db399e44b0fb0779ee1603`, Chrome stable `158.0.8127.37`, LP 0.0.17 and JSC `0e0dd7038a7a-6f4649e395e0`. Six jobs, wptserve and testdriver. For box-generating elements, CSSOM now consults the renderer for physical or logical margin/padding values containing a percentage or auto instead of returning the computed token string. This includes shorthands. Style overrides continue to use the sampled style rather than the live layout.
+
+The 66-URL focus subset gained four strict pages and 14 named assertions: physical margin/padding and logical margin/padding. The 8,082-URL main run gained 13 strict pages (nine additional grid-item percentage spacing pages) and 70 named assertions. Controls include track changes, horizontal and vertical writing modes and auto margins. No strict page, named pass or observed name was lost. LP 5,745 strict pages / 181,618 names; Chrome 6,950 / 182,963. Chrome-only 1,486 / 7,246; LP-only 281 / 5,901. LP 11 timeouts and one hang; Chrome ten timeouts and one hang.
+
+The separate 41-URL worker supplement remained LP 27 / 577 versus Chrome 35 / 619 with identical parent/candidate sets; 39 further URLs remain withheld and unscored. The boxused-prefixed comparisons preserve the directional page, pass and observed-name sets. Outcome archives preserve per-URL status and per-assertion results.

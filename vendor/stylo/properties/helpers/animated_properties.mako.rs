@@ -183,6 +183,20 @@ impl PartialEq for AnimationValue {
 }
 
 impl AnimationValue {
+    /// Sample intrinsic sizes using the element's underlying interpolation policy.
+    #[cfg(feature = "servo")]
+    pub fn animate_with_size_policy(&self, other: &Self, procedure: Procedure, allow_keywords: bool) -> Result<Self, ()> {
+        if allow_keywords {
+            match (self, other) {
+                % for name in ['Width', 'Height', 'MinWidth', 'MinHeight']:
+                (Self::${name}(from), Self::${name}(to)) => return Ok(Self::${name}(from.animate_size(to, procedure, true)?)),
+                % endfor
+                _ => {},
+            }
+        }
+        self.animate(other, procedure)
+    }
+
     /// Returns the longhand id this animated value corresponds to.
     #[inline]
     pub fn id(&self) -> PropertyDeclarationId<'_> {
@@ -273,11 +287,12 @@ impl AnimationValue {
                 x.animation_type not in ["discrete", "none"],
                 x.style_struct.inherited,
                 x.ident in SYSTEM_FONT_LONGHANDS and engine == "gecko",
+                x.is_font_affecting(),
             )
         %>
 
         let animatable = match *decl {
-            % for (specified_ty, ty, boxed, to_animated, inherit, system), props in groupby(animated_with_logical, key=keyfunc):
+            % for (specified_ty, ty, boxed, to_animated, inherit, system, font_affecting), props in groupby(animated_with_logical, key=keyfunc):
             ${" |\n".join("PropertyDeclaration::{}(ref value)".format(prop.camel_case) for prop in props)} => {
                 let decl_repr = unsafe {
                     &*(decl as *const _ as *const PropertyDeclarationVariantRepr<${specified_ty}>)
@@ -291,10 +306,16 @@ impl AnimationValue {
                     gecko::system_font::resolve_system_font(sf, context)
                 }
                 % endif
+                % if font_affecting:
+                let previous_font_basis = std::mem::replace(&mut context.for_font_affecting_property, true);
+                % endif
                 % if boxed:
                 let value = (**value).to_computed_value(context);
                 % else:
                 let value = value.to_computed_value(context);
+                % endif
+                % if font_affecting:
+                context.for_font_affecting_property = previous_font_basis;
                 % endif
                 % if to_animated:
                 let value = value.to_animated_value(&crate::values::animated::Context { style });

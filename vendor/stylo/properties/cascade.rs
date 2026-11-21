@@ -386,6 +386,17 @@ where
             if using_cached_reset_properties {
                 LonghandIdSet::late_group_only_inherited()
             } else {
+                #[cfg(feature = "servo")]
+                if !context.builder.effective_zoom.is_one() {
+                    let medium = specified::BorderSideWidth::medium().to_computed_value(&context);
+                    context.builder.set_border_top_width(medium.clone());
+                    context.builder.set_border_right_width(medium.clone());
+                    context.builder.set_border_bottom_width(medium.clone());
+                    context.builder.set_border_left_width(medium.clone());
+                    context.builder.set_outline_width(medium.clone());
+                    context.builder.set_column_rule_width(medium.clone().into());
+                    context.builder.set_row_rule_width(medium.into());
+                }
                 LonghandIdSet::late_group()
             }
         },
@@ -2290,6 +2301,7 @@ fn substitute_all(
         lowlink: &mut usize,
         self_ref: &mut bool,
         non_custom_references: &mut ReferenceFlags,
+        early_random_count: &mut i32,
     ) {
         macro_rules! check_declaration_value_cycle {
             ($arg:expr) => {{
@@ -2306,6 +2318,7 @@ fn substitute_all(
                     &mut arg_lowlink,
                     &mut arg_self_ref,
                     non_custom_references,
+                    early_random_count,
                 );
                 *lowlink = cmp::min(*lowlink, arg_lowlink);
                 *self_ref |= arg_self_ref;
@@ -2314,20 +2327,64 @@ fn substitute_all(
         }
 
         // FIXME: Maybe avoid visiting the same var twice if not needed?
-        let mut refs_stack = SmallVec::<[&References; 5]>::new();
-        refs_stack.push(root);
-        while let Some(refs) = refs_stack.pop() {
-            *non_custom_references |= refs.flags;
-            for next in &refs.refs {
+        // Follow chosen fallback and branch values in substitution order before resuming
+        // their enclosing value. Early random indexes belong to that ordered evaluation.
+        let mut refs_stack = SmallVec::<[std::slice::Iter<'_, _>; 5]>::new();
+        macro_rules! queue_references {
+            ($refs:expr) => {{
+                let refs: &References = $refs;
+                *non_custom_references |= refs.flags;
+                if !refs.refs.is_empty() {
+                    refs_stack.push(refs.refs.iter());
+                }
+            }};
+        }
+        queue_references!(root);
+        while let Some(mut iter) = refs_stack.pop() {
+            if let Some(next) = iter.next() {
+                if !iter.as_slice().is_empty() {
+                    refs_stack.push(iter);
+                }
                 let (next_var, fallback) = match next.function {
+                    SubstitutionFunction::If(ref function) => {
+                        for branch in &function.branches {
+                            let before = *early_random_count;
+                            if check_declaration_value_cycle!(branch.condition) {
+                                break;
+                            }
+                            let mut replacement = context.replacement_context(property_id);
+                            replacement.early_random_count = before;
+                            let (test, _) = branch.parsed_condition(source, &mut replacement);
+                            *early_random_count = replacement.early_random_count;
+                            let Some(test) = test else { continue };
+                            let result = test.evaluate(&mut |predicate| {
+                                predicate.for_each_property(&mut |name| {
+                                    // An already guarded query evaluates to false without a var() edge.
+                                    if context.index_map.var.get(&name).is_some_and(|&i| context.var_info[i].var.is_some()) {
+                                        return;
+                                    }
+                                    visit_link(VarType::Custom(name), index, references_from_non_custom_properties,
+                                        context, lowlink, self_ref);
+                                });
+                                predicate.matches(source, &mut context.replacement_context(property_id), &mut false)
+                            });
+                            if result.to_bool(false) {
+                                queue_references!(&branch.value.references);
+                                break;
+                            }
+                        }
+                        continue;
+                    },
                     SubstitutionFunction::Env(ref env_fn) => {
                         let name = match &env_fn.name {
                             SubstitutionArgument::Unparsed(arg) => {
+                                let before = *early_random_count;
                                 if check_declaration_value_cycle!(arg) {
                                     continue;
                                 }
                                 let mut replacement_context =
                                     context.replacement_context(property_id);
+                                replacement_context.early_random_count = before;
                                 env_fn
                                     .replace_name(source, &mut replacement_context)
                                     .value
@@ -2349,21 +2406,20 @@ fn substitute_all(
                             })
                             .is_some();
                         if !present && let Some(ref fallback) = env_fn.fallback {
-                            refs_stack.push(&fallback.references);
+                            queue_references!(&fallback.references);
                         }
                         continue;
                     },
                     SubstitutionFunction::Attr(ref attr_fn) => {
                         let arg = match &attr_fn.arg {
                             SubstitutionArgument::Unparsed(arg) => {
+                                let before = *early_random_count;
                                 if check_declaration_value_cycle!(arg) {
                                     continue;
                                 }
-                                attr_fn
-                                    .replace_arg(
-                                        source,
-                                        &mut context.replacement_context(property_id),
-                                    )
+                                let mut replacement_context = context.replacement_context(property_id);
+                                replacement_context.early_random_count = before;
+                                attr_fn.replace_arg(source, &mut replacement_context)
                                     .value
                                     .map(|arg| Cow::Owned(arg.into_owned()))
                             },
@@ -2372,7 +2428,7 @@ fn substitute_all(
                         };
                         let Some(arg) = arg else {
                             if let Some(ref fallback) = attr_fn.fallback {
-                                refs_stack.push(&fallback.references);
+                                queue_references!(&fallback.references);
                             }
                             continue;
                         };
@@ -2398,11 +2454,13 @@ fn substitute_all(
                     SubstitutionFunction::Var(ref var_fn) => {
                         let name = match &var_fn.name {
                             SubstitutionArgument::Unparsed(arg) => {
+                                let before = *early_random_count;
                                 if check_declaration_value_cycle!(arg) {
                                     continue;
                                 }
                                 let mut replacement_context =
                                     context.replacement_context(property_id);
+                                replacement_context.early_random_count = before;
                                 var_fn
                                     .replace_name(source, &mut replacement_context)
                                     .value
@@ -2413,7 +2471,7 @@ fn substitute_all(
                         };
                         let Some(name) = name else {
                             if let Some(ref fallback) = var_fn.fallback {
-                                refs_stack.push(&fallback.references);
+                                queue_references!(&fallback.references);
                             }
                             continue;
                         };
@@ -2456,7 +2514,7 @@ fn substitute_all(
                 }
 
                 if !primary_valid && let Some(fallback) = fallback {
-                    refs_stack.push(&fallback.references);
+                    queue_references!(&fallback.references);
                 }
             }
         }
@@ -2624,6 +2682,7 @@ fn substitute_all(
                 &mut lowlink,
                 &mut self_ref,
                 &mut value_non_custom_refs,
+                &mut 0,
             );
 
             // ... Then the non-custom properties this value depends on (font-size, line-height,
@@ -2688,6 +2747,7 @@ fn substitute_all(
                         &mut lowlink,
                         &mut self_ref,
                         &mut Default::default(),
+                        &mut 0,
                     );
                 }
             }
@@ -2818,6 +2878,7 @@ fn substitute_all(
             &mut lowlink,
             &mut self_ref,
             &mut Default::default(),
+            &mut 0,
         );
     }
 }

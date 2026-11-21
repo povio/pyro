@@ -1494,7 +1494,6 @@ impl TouchAction {
     Parse,
     PartialEq,
     SpecifiedValueInfo,
-    ToComputedValue,
     ToCss,
     ToResolvedValue,
     ToShmem,
@@ -1502,7 +1501,7 @@ impl TouchAction {
 )]
 #[css(bitflags(
     single = "none,strict,content",
-    mixed = "size,layout,style,paint,inline-size",
+    mixed = "size,inline-size,layout,style,paint",
     overlapping_bits
 ))]
 #[repr(C)]
@@ -1528,6 +1527,25 @@ bitflags! {
         const CONTENT = 1 << 6 | Contain::LAYOUT.bits() | Contain::STYLE.bits() | Contain::PAINT.bits();
         /// `strict` variant, turns on all types of containment
         const STRICT = 1 << 7 | Contain::LAYOUT.bits() | Contain::STYLE.bits() | Contain::PAINT.bits() | Contain::SIZE.bits();
+    }
+}
+
+impl crate::values::computed::ToComputedValue for Contain {
+    type ComputedValue = Self;
+
+    fn to_computed_value(&self, _: &crate::values::computed::Context) -> Self {
+        let content = Self::LAYOUT | Self::STYLE | Self::PAINT;
+        if *self == content {
+            Self::CONTENT
+        } else if *self == content | Self::SIZE {
+            Self::STRICT
+        } else {
+            *self
+        }
+    }
+
+    fn from_computed_value(value: &Self) -> Self {
+        *value
     }
 }
 
@@ -2422,6 +2440,15 @@ pub enum ScrollBehavior {
     Smooth,
 }
 
+#[allow(missing_docs)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, FromPrimitive, Hash, MallocSizeOf, Parse, PartialEq,
+         Serialize, SpecifiedValueInfo, ToComputedValue, ToCss, ToResolvedValue, ToShmem, ToTyped)]
+#[repr(u8)]
+pub enum ScrollAxisLock {
+    Auto,
+    None,
+}
+
 /// https://drafts.fxtf.org/compositing/#isolation
 #[allow(missing_docs)]
 #[derive(
@@ -2624,6 +2651,15 @@ pub enum TextOrientation {
 pub enum ImageOrientation {
     FromImage,
     None,
+}
+
+/// Controls interpolation between intrinsic sizing keywords and numeric sizes.
+#[allow(missing_docs)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, FromPrimitive, Hash, MallocSizeOf, Parse, PartialEq, Serialize, SpecifiedValueInfo, ToComputedValue, ToCss, ToResolvedValue, ToShmem, ToTyped)]
+#[repr(u8)]
+pub enum InterpolateSize {
+    NumericOnly,
+    AllowKeywords,
 }
 
 /// Nonstandard (https://developer.mozilla.org/en-US/docs/Web/CSS/box-align)

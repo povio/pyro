@@ -589,6 +589,7 @@ impl EngineHost {
             transition_frames,
             html: String::new(),
             frames,
+            document_url: (frame.url != base_url).then(|| frame.url.clone()),
             base_url,
             sheets: s.sheets,
             width: s.width,
@@ -596,6 +597,7 @@ impl EngineHost {
             device_scale_factor: s.device_scale_factor,
             dark: s.dark,
             print: s.print,
+            media_environment: pyro_render::media_environment(&page.viewport()),
             input: pyro_render::InputCapabilities {
                 pointer: match page.viewport().pointer {
                     pyro_dom::media::Pointer::None => pyro_render::Pointer::None,
@@ -1064,10 +1066,11 @@ impl EngineHost {
             let page = self.thread.browser.page(pid).ok_or_else(|| CdpError::server("page is gone"))?;
             let frame = &page.main_frame;
             let dom = frame.page_dom.as_ref().ok_or_else(|| CdpError::server("page has no document"))?;
-            let s = dom.render_snapshot(&frame.base_url, element.map(|id| (id, pyro_render::CLIP_ATTRIBUTE)));
+            let base_url = dom.render_base_url(&frame.base_url);
+            let s = dom.render_snapshot(&base_url, element.map(|id| (id, pyro_render::CLIP_ATTRIBUTE)));
             let value = json!({
                 "captured": true, "snapshotMs": ms(started.elapsed()),
-                "snapshot": { "html": s.html, "baseUrl": frame.base_url, "sheets": s.sheets,
+                "snapshot": { "html": s.html, "baseUrl": base_url, "documentUrl": frame.url, "sheets": s.sheets,
                     "width": s.width, "height": s.height, "deviceScaleFactor": s.device_scale_factor,
                     "dark": s.dark, "scrollX": s.scroll_x, "scrollY": s.scroll_y,
                     "xmlDocument": s.xml_document, "quirksMode": s.quirks_mode,

@@ -62,19 +62,45 @@ static MODULE: LazyModule = LazyModule {
     natives: Some(natives),
 };
 
+static VIDEO_FRAMES: LazyModule = LazyModule {
+    key: "lpVideoFrames",
+    source: include_str!("video_frame.js"),
+    url: "pyro://internal/video_frame.js",
+    natives: Some(|s| {
+        let limits = s.object();
+        limits.set_atom("maxSide", s.number(f64::from(pyro_canvas::MAX_SIDE)))?;
+        limits.set_atom("maxArea", s.number(pyro_canvas::MAX_AREA as f64))?;
+        Ok(limits)
+    }),
+};
+
+pub(crate) fn define_video_globals<W>(def: &mut ClassDef<W>)
+where
+    W: JsClass,
+    W::Data: WindowHost,
+{
+    lazy_globals!(def, VIDEO_FRAMES, "VideoFrame", "VideoColorSpace");
+}
+
 /// Adds the lazy interface names to pyro-browser's `Window` class.
 pub(crate) fn define_globals<W>(def: &mut ClassDef<W>)
 where
     W: JsClass,
     W::Data: WindowHost,
 {
+    define_video_globals(def);
     lazy_globals!(
         def,
         MODULE,
+        "DOMRectReadOnly",
+        "DOMRect",
+        "DOMQuad",
         "DOMPointReadOnly",
         "DOMPoint",
         "DOMMatrixReadOnly",
         "DOMMatrix",
+        "SVGRect",
+        "DOMRectList",
         "WebKitCSSMatrix",
         "Path2D",
         "ImageData",
@@ -83,7 +109,6 @@ where
         "TextMetrics",
         "ImageBitmap",
         "OffscreenCanvas",
-        "OffscreenCanvasRenderingContext2D",
         "createImageBitmap",
     );
 }
@@ -97,6 +122,9 @@ where
     lazy_globals!(
         def,
         MODULE,
+        "DOMRectReadOnly",
+        "DOMRect",
+        "DOMQuad",
         "DOMPointReadOnly",
         "DOMPoint",
         "DOMMatrixReadOnly",
@@ -108,9 +136,16 @@ where
         "TextMetrics",
         "ImageBitmap",
         "OffscreenCanvas",
-        "OffscreenCanvasRenderingContext2D",
         "createImageBitmap",
     );
+}
+
+pub(crate) fn rect_value<'s>(s: &Scope<'s>, page: &Rc<PageDom>, readonly: bool, rect: pyro_dom::layout::Rect) -> JsResult<Value<'s>> {
+    MODULE.helper(s, page, "rectValue", &[s.number(rect.x), s.number(rect.y), s.number(rect.width), s.number(rect.height), s.boolean(readonly)])
+}
+
+pub(crate) fn rect_list<'s>(s: &Scope<'s>, page: &Rc<PageDom>, rects: &[Value<'s>]) -> JsResult<Value<'s>> {
+    MODULE.helper(s, page, "rectList", &[s.array(rects)?.value()])
 }
 
 fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
@@ -136,7 +171,7 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         // An OffscreenCanvas of `transferControlToOffscreen`: its frames go
         // to the placeholder `<canvas>`.
         if let (Some(placeholder), Some(c)) =
-            (placeholder_of(a.get(3))?, s.unwrap::<CanvasRenderingContext2D>(context.value()))
+            (placeholder_of(a.get(3))?, s.unwrap::<OffscreenCanvasRenderingContext2D>(context.value()))
         {
             let mut commits = page.canvas_commits.borrow_mut();
             commits.retain(|c| c.surface.strong_count() > 0);
@@ -146,7 +181,7 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
     })?;
     natives.set_atom("offscreenContext", offscreen.value())?;
     let resize = s.function("resizeContext", |s, _this, a| {
-        if let Some(c) = s.unwrap::<CanvasRenderingContext2D>(a.get(0)) {
+        if let Some(c) = s.unwrap::<OffscreenCanvasRenderingContext2D>(a.get(0)) {
             let (w, h) = (size_u32(a.get(1).to_number()?), size_u32(a.get(2).to_number()?));
             c.reset();
             c.surface.borrow_mut().resize(w, h);
@@ -155,7 +190,7 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
     })?;
     natives.set_atom("resizeContext", resize.value())?;
     let transfer = s.function("transferContext", |s, _this, a| {
-        let c = s.unwrap::<CanvasRenderingContext2D>(a.get(0)).ok_or(JsError::ContextDestroyed)?;
+        let c = s.unwrap::<OffscreenCanvasRenderingContext2D>(a.get(0)).ok_or(JsError::ContextDestroyed)?;
         let handle = {
             let mut surface = c.surface.borrow_mut();
             let handle = ImageHandle {
@@ -175,7 +210,7 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         let mime = dom_string(a.get(3))?;
         let quality = if a.get(4).is_undefined() { None } else { Some(a.get(4).to_number()?) };
         let (encoding, mime) = pyro_canvas::codec::encoding_for(&mime, quality);
-        let bytes = match s.unwrap::<CanvasRenderingContext2D>(a.get(0)) {
+        let bytes = match s.unwrap::<OffscreenCanvasRenderingContext2D>(a.get(0)) {
             Some(c) => {
                 if !c.clean.get() {
                     return Err(security_error());
@@ -453,10 +488,13 @@ fn new_context<'s>(s: &Scope<'s>, page: &Rc<PageDom>, target: Target, w: u32, h:
         surface: Rc::new(RefCell::new(Surface::new(w, h))),
         clean: Cell::new(true),
     };
-    if let Target::Element(canvas) = target {
-        page.register_canvas(canvas, Rc::downgrade(&data.surface));
+    match target {
+        Target::Element(canvas) => {
+            page.register_canvas(canvas, Rc::downgrade(&data.surface));
+            s.wrap::<CanvasRenderingContext2D>(data, None)
+        }
+        Target::Offscreen => s.wrap::<OffscreenCanvasRenderingContext2D>(data, None),
     }
-    s.wrap::<CanvasRenderingContext2D>(data, None)
 }
 
 /// `HTMLCanvasElement.getContext(type)`: one 2D context per canvas; other
@@ -752,7 +790,14 @@ fn image_source(
     if !value.is_object() {
         return Err(not_source());
     }
-    let source = MODULE.helper(s, page, "sourceOf", &[value, s.boolean(image_data)])?;
+    let mut source = MODULE.helper(s, page, "sourceOf", &[value, s.boolean(image_data)])?;
+    if source.is_null() {
+        if let Some(module) = VIDEO_FRAMES.existing(s, page)? {
+            if let Some(source_of) = module.get("canvasSource")?.as_object() {
+                source = source_of.call(None, &[value])?;
+            }
+        }
+    }
     let Some(desc) = source.as_object().filter(|_| source.is_array()) else { return Err(not_source()) };
     let kind = desc.get_index(0)?.to_number()? as u32;
     match kind {
@@ -765,7 +810,7 @@ fn image_source(
                     "The image argument is an OffscreenCanvas with a width or height of 0.",
                 ));
             }
-            Ok(Some(match s.unwrap::<CanvasRenderingContext2D>(desc.get_index(1)?) {
+            Ok(Some(match s.unwrap::<OffscreenCanvasRenderingContext2D>(desc.get_index(1)?) {
                 Some(c) => {
                     let pixmap = c.surface.borrow_mut().snapshot();
                     ImageHandle { pixmap, width: w, height: h, clean: c.clean.get() }
@@ -773,11 +818,18 @@ fn image_source(
                 None => ImageHandle { pixmap: None, width: w, height: h, clean: true },
             }))
         }
-        2 => {
+        // An ImageData or a buffer-backed VideoFrame, both with straight RGBA
+        // pixels. A frame may specify a display size different from the bitmap.
+        2 | 5 => {
             let (w, h) = (size_u32(desc.get_index(2)?.to_number()?), size_u32(desc.get_index(3)?.to_number()?));
             let data = typed_bytes(s, desc.get_index(1)?)?;
             let pixmap = pyro_canvas::pixmap_from_straight(data, w, h).and_then(Bitmap::new);
-            Ok(Some(ImageHandle { pixmap, width: w, height: h, clean: true }))
+            let (width, height) = if kind == 5 {
+                (size_u32(desc.get_index(4)?.to_number()?), size_u32(desc.get_index(5)?.to_number()?))
+            } else {
+                (w, h)
+            };
+            Ok(Some(ImageHandle { pixmap, width, height, clean: true }))
         }
         3 => {
             let blob = s.unwrap::<crate::file::Blob>(desc.get_index(1)?).ok_or_else(not_source)?;
@@ -1421,6 +1473,25 @@ impl JsClass for CanvasRenderingContext2D {
     type Data = ContextData;
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
+        ContextData::define_members(def);
+        def.method("drawFocusIfNeeded", 1, |s, _c, _a| Ok(s.undefined()));
+    }
+}
+
+pub struct OffscreenCanvasRenderingContext2D;
+impl JsClass for OffscreenCanvasRenderingContext2D {
+    const NAME: &'static str = "OffscreenCanvasRenderingContext2D";
+    type Data = ContextData;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        ContextData::define_members(def);
+    }
+}
+
+impl ContextData {
+    /// HTML includes the same drawing mixins on two distinct interfaces.
+    /// Register each operation against the brand of its owning prototype.
+    fn define_members<C: JsClass<Data = ContextData>>(def: &mut ClassDef<C>) {
         def.getter_this("canvas", |s, c, this| match c.target {
             Target::Element(canvas) => node_value(s, &c.page, Some(canvas)),
             Target::Offscreen => Ok(s.get_hidden(this, OFFSCREEN)?.unwrap_or_else(|| s.null())),
@@ -1813,7 +1884,6 @@ impl JsClass for CanvasRenderingContext2D {
         });
         def.method("drawImage", 3, draw_image);
         // Focus rings are not drawn.
-        def.method("drawFocusIfNeeded", 1, |s, _c, _a| Ok(s.undefined()));
         def.method("setLineDash", 1, |s, c, a| {
             a.require(1, "CanvasRenderingContext2D.setLineDash")?;
             let list = a.get(0).as_object().ok_or_else(|| {
@@ -1921,6 +1991,11 @@ fn gradient<'s>(s: &Scope<'s>, c: &ContextData, kind: &str, args: &[f64]) -> JsR
 
 pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<CanvasRenderingContext2D>();
+    register_worker(engine);
+}
+
+pub(crate) fn register_worker(engine: &pyro_js::Engine) {
+    engine.register::<OffscreenCanvasRenderingContext2D>();
 }
 
 // ---- Transfer and placeholders ----------------------------------------------

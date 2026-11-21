@@ -138,7 +138,6 @@ impl<LengthPercentage: Parse> Parse for LengthPercentageOrAuto<LengthPercentage>
 /// Note that it only accepts non-negative values.
 #[allow(missing_docs)]
 #[derive(
-    Animate,
     ComputeSquaredDistance,
     Clone,
     Debug,
@@ -146,8 +145,6 @@ impl<LengthPercentage: Parse> Parse for LengthPercentageOrAuto<LengthPercentage>
     PartialEq,
     ToAnimatedValue,
     ToAnimatedZero,
-    ToComputedValue,
-    ToCss,
     ToResolvedValue,
     ToShmem,
     ToTyped,
@@ -191,6 +188,82 @@ pub enum GenericSize<LengthPercent> {
     #[animation(error)]
     #[css(function = "calc-size")]
     CalcSizeMaxContent(LengthPercent),
+    #[animation(error)]
+    #[css(function = "calc-size")]
+    CalcSizeContent(LengthPercent),
+    #[animation(error)]
+    #[css(function = "calc-size")]
+    CalcSizeStretch(LengthPercent),
+    #[animation(error)]
+    #[css(function = "calc-size")]
+    CalcSizeAny(LengthPercent),
+    #[animation(error)]
+    #[css(function = "calc-size")]
+    #[typed(skip)]
+    CalcSizePercentage(LengthPercent),
+    #[animation(error)]
+    #[css(function = "calc-size")]
+    #[typed(skip)]
+    CalcSizeBasis(Box<GenericSizeBasis<LengthPercent>>),
+}
+
+#[allow(missing_docs)]
+#[derive(Clone, Debug, PartialEq, MallocSizeOf, ToShmem, ToAnimatedValue, ToResolvedValue)]
+pub struct GenericSizeBasis<L> {
+    pub basis: GenericSize<L>,
+    pub calculation: L,
+    pub prepared: Option<GenericSize<L>>,
+}
+
+pub(crate) trait SizeCalculationCss: ToCss {
+    fn calculation_css<const SIZE: bool, W: Write>(&self, dest: &mut CssWriter<W>) -> std::fmt::Result;
+}
+
+impl<LengthPercent: SizeCalculationCss> ToCss for GenericSize<LengthPercent> {
+    fn to_css<W: Write>(&self, dest: &mut CssWriter<W>) -> std::fmt::Result {
+        let (basis, calculation) = match self {
+            Self::CalcSizeBasis(value) => {
+                dest.write_str("calc-size(")?;
+                match &value.basis {
+                    Self::LengthPercentage(value) => value.calculation_css::<false, _>(dest)?,
+                    other => other.to_css(dest)?,
+                }
+                dest.write_str(", ")?;
+                value.calculation.calculation_css::<true, _>(dest)?;
+                return dest.write_char(')');
+            },
+            Self::CalcSizeContent(value) => ("content", value),
+            Self::CalcSizeAuto(value) => ("auto", value),
+            Self::CalcSizeFitContent(value) => ("fit-content", value),
+            Self::CalcSizeMinContent(value) => ("min-content", value),
+            Self::CalcSizeMaxContent(value) => ("max-content", value),
+            Self::CalcSizeStretch(value) => ("stretch", value),
+            Self::CalcSizePercentage(value) => ("100%", value),
+            Self::CalcSizeAny(value) => {
+                dest.write_str("calc-size(any, ")?;
+                value.calculation_css::<false, _>(dest)?;
+                return dest.write_char(')');
+            },
+            Self::Auto => return dest.write_str("auto"),
+            Self::MaxContent => return dest.write_str("max-content"),
+            Self::MinContent => return dest.write_str("min-content"),
+            Self::FitContent => return dest.write_str("fit-content"),
+            Self::Stretch => return dest.write_str("stretch"),
+            Self::WebkitFillAvailable => return dest.write_str("-webkit-fill-available"),
+            #[cfg(feature = "gecko")]
+            Self::MozAvailable => return dest.write_str("-moz-available"),
+            Self::LengthPercentage(value) | Self::AnchorContainingCalcFunction(value) => return value.to_css(dest),
+            Self::AnchorSizeFunction(value) => return value.to_css(dest),
+            Self::FitContentFunction(value) => {
+                dest.write_str("fit-content(")?;
+                value.to_css(dest)?;
+                return dest.write_char(')');
+            },
+        };
+        write!(dest, "calc-size({basis}, ")?;
+        calculation.calculation_css::<true, _>(dest)?;
+        dest.write_char(')')
+    }
 }
 
 impl<LengthPercent> SpecifiedValueInfo for GenericSize<LengthPercent>
@@ -384,6 +457,32 @@ pub enum GenericLengthPercentageOrNormal<LengthPercent> {
 }
 
 pub use self::GenericLengthPercentageOrNormal as LengthPercentageOrNormal;
+
+/// A gap decoration inset offset.
+#[derive(
+    Animate,
+    Clone,
+    ComputeSquaredDistance,
+    Copy,
+    Debug,
+    MallocSizeOf,
+    Parse,
+    PartialEq,
+    SpecifiedValueInfo,
+    ToAnimatedValue,
+    ToAnimatedZero,
+    ToComputedValue,
+    ToCss,
+    ToResolvedValue,
+    ToShmem,
+    ToTyped,
+)]
+#[repr(C, u8)]
+#[allow(missing_docs)]
+pub enum GenericRuleInset<LengthPercent> {
+    LengthPercentage(LengthPercent),
+    OverlapJoin,
+}
 
 /// A generic `normal | <length-percentage> | infinite` value, as used by `fit-tolerance`.
 #[derive(

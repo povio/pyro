@@ -128,8 +128,8 @@
     #controller = new AC();
     #active = true;
     #unsubscribers = []; // [signal, abort algorithm] of each observer's signal
-    constructor(token) {
-      if (token !== INTERNAL) throw new TypeError('Illegal constructor');
+    constructor() {
+      if (arguments[0] !== INTERNAL) throw new TypeError('Illegal constructor');
     }
     get active() { return this.#active; }
     get signal() { return signalOf(this.#controller); }
@@ -837,6 +837,16 @@
       });
     }
   }
+  // Web IDL operations and attributes are enumerable on their holder.
+  function enumerableMembers(prototype, names) {
+    for (let i = 0; i < names.length; i++) Object.defineProperty(prototype, names[i], { enumerable: true });
+  }
+  enumerableMembers(Subscriber.prototype, ['next', 'error', 'complete', 'addTeardown', 'active', 'signal']);
+  enumerableMembers(Observable.prototype, [
+    'subscribe', 'takeUntil', 'map', 'filter', 'take', 'drop', 'flatMap', 'switchMap', 'inspect', 'catch', 'finally',
+    'toArray', 'forEach', 'every', 'first', 'last', 'find', 'some', 'reduce',
+  ]);
+  Object.defineProperty(Observable, 'from', { enumerable: true });
   Object.defineProperty(Observable.prototype, Symbol.toStringTag, { value: 'Observable', configurable: true });
 
   // `EventTarget.when(type, options)`.

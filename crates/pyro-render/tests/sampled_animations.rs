@@ -110,6 +110,23 @@ const BOX: &str = "<!doctype html><style>body{margin:0;background:#fff} #target{
     @keyframes stepped{0%{background-color:rgb(0,0,0);animation-timing-function:steps(2,jump-end)}100%{background-color:rgb(200,200,200)}}</style>\
     <div id=target></div>";
 
+#[test]
+fn a_sibling_move_recomputes_the_underlying_value_of_an_implicit_keyframe() {
+    let (mut snap, key) = page(
+        "<style>body{margin:0;background:white} #target{height:50px;background:green;width:calc(20px * sibling-index())}</style><i></i><div id=target></div>",
+    );
+    let effect = text(&[(1.0, "width:100px")], 0.5, None);
+    let mut renderer = Renderer::new();
+    let mut width = |snap: &Snapshot| {
+        let image = render(&mut renderer, snap, frame(key, vec![], vec![effect.clone()]));
+        (0..200).filter(|&x| pixel(&image, x, 10) == [0, 128, 0]).count()
+    };
+    assert_eq!(width(&snap), 70);
+    let tree = Arc::make_mut(&mut snap.live.as_mut().unwrap().tree);
+    tree.nodes.retain(|n| !matches!(&n.kind, TreeKind::Element { name, .. } if &*name.local == "i"));
+    assert_eq!(width(&snap), 60);
+}
+
 /// A CSS animation's `@keyframes` interpolate at the progress the page gives
 /// (linear here), and an empty frame puts the base value back.
 #[test]
@@ -122,6 +139,16 @@ fn a_css_animation_is_sampled_at_its_progress_and_dropped_with_it() {
     assert_near(pixel(&img, 50, 50), [50, 150, 0], "a quarter of the way, the same document");
     let img = render(&mut r, &snap, Vec::new());
     assert_near(pixel(&img, 50, 50), [0, 200, 0], "no animation: the base value");
+}
+
+#[test]
+fn color_animation_selects_the_space_from_the_resolved_endpoints() {
+    for (foreground, expected) in [("white", 128), ("color(srgb 1 1 1)", 99)] {
+        let (snapshot, key) = page(&format!("<style>body{{margin:0}}#target{{width:100px;height:100px;color:{foreground}}}</style><div id=target></div>"));
+        let effect = text(&[(0.0, "background-color:black"), (1.0, "background-color:currentcolor")], 0.5, None);
+        let image = render(&mut Renderer::new(), &snapshot, frame(key, vec![], vec![effect]));
+        assert_near(pixel(&image, 50, 50), [expected; 3], foreground);
+    }
 }
 
 /// A missing 0% keyframe takes the element's base value (not the animated
@@ -350,6 +377,7 @@ fn a_frame_scrolled_past_its_reach_lays_out_its_timelines_at_the_reachable_offse
                <div style='height:260px'></div><div id=s data-pyro-key=7></div>"
             .into(),
         url: "http://test/".into(),
+        document_url: None,
         scroll: (0.0, 0.0),
         client: "F#L".into(),
         frames: Default::default(),

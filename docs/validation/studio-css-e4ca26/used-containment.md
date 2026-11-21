@@ -1,0 +1,5 @@
+# Content visibility and containment
+
+`78943833` versus `cqstyle`: on WPT `a421f2fea5eb7f91e0db399e44b0fb0779ee1603`, Studio Chrome stable `158.0.8127.37`, LP 0.0.17 / JSC `0e0dd7038a7a-6f4649e395e0`, six jobs. Content visibility implies containment for layout, paint and counters without changing the cascaded `contain` property. Complete explicit sets compute to `content` or `strict`; specified-value CSSOM keeps the explicit form. Seven renderer containment and content-visibility controls passed. All four affected vendor patches reproduced their source trees in both directions.
+
+The 106-URL focus and 8,082-URL main both gained `content-visibility-026.html` and `contain-computed.html` (+2 strict pages, +4 named passes); no previous pass or observed name was lost. Main LP 5,760 / 181,713 versus Chrome 6,950 / 182,963; Chrome-only 1,472 / 7,152, LP-only 282 / 5,902. LP had 11 timeouts and one hang, Chrome ten timeouts and one hang. The 41-URL supplement remained LP 27 / 577 versus Chrome 35 / 619, with no pass-set change. Another 39 withheld URLs remain unscored. Exact directional sets and candidate outcomes are archived with prefix `usedcontain`.

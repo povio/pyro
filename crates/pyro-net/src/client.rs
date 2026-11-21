@@ -1939,7 +1939,7 @@ impl Io {
         // the loader names it (else the referrer), never `req.origin`: that
         // is the Origin header's, for a form POST the frame's own document.
         // An iframe whose parent is unknown fails closed (an opaque origin).
-        let timing_origin = if req.destination == Destination::Iframe {
+        let mut timing_origin = if req.destination == Destination::Iframe {
             Some(req.timing_origin.clone().unwrap_or_else(|| {
                 req.referrer.as_ref().map_or_else(|| "null".into(), |r| r.origin().ascii_serialization())
             }))
@@ -1948,6 +1948,9 @@ impl Io {
         };
         loop {
             crate::timing::note(|t| {
+                // Authorization belongs to this response. Local or intercepted
+                // responses must not inherit a grant from a preceding hop.
+                t.timing_allow_checked = false;
                 t.fetch_start = if redirects == 0 { t.start } else { Some(Instant::now()) };
                 t.connection = None;
                 t.request_start = None;
@@ -2271,7 +2274,6 @@ impl Io {
                 t.connection = connection;
                 t.request_start = Some(connection.map_or(request_start, |c| c.end.max(request_start)));
             });
-            crate::timing::note_timing_allow(&url, &resp_headers, timing_origin.as_deref());
             if protocol == Version::HTTP_2 {
                 self.multiplexing(&url);
             }
@@ -2299,6 +2301,7 @@ impl Io {
                     );
                     match updated {
                         Some(updated) => {
+                            crate::timing::note_timing_allow(&url, &updated.headers, timing_origin.as_deref());
                             let hop = Hop { cors_cross, same_origin: basic_tainting, redirected: redirects > 0 };
                             return self.serve_cached(id, &req, sink, &url, updated, hop, false, 0);
                         }
@@ -2314,6 +2317,7 @@ impl Io {
             if status.is_redirection() && status != StatusCode::NOT_MODIFIED {
                 if let Some(loc) = resp_headers.get(header::LOCATION).and_then(|v| v.to_str().ok()) {
                     let target = url.join(loc).map_err(|_| NetError::InvalidUrl)?;
+                    crate::timing::note_timing_allow(&url, &resp_headers, timing_origin.as_deref());
                     drop(resp.into_body().collect().await);
                     drop(permit);
                     match req.redirect {
@@ -2367,6 +2371,11 @@ impl Io {
                         }
                     }
                     if !cors::same_origin(&url, &target) {
+                        // Fetch serializes a redirect-tainted request origin
+                        // as "null" for subsequent Timing-Allow-Origin checks.
+                        if timing_origin.as_ref().is_some_and(|origin| *origin != url.origin().ascii_serialization()) {
+                            timing_origin = Some("null".into());
+                        }
                         req.headers.remove(header::AUTHORIZATION);
                         req.headers.remove(header::COOKIE);
                         if cors_cross {
@@ -2416,6 +2425,7 @@ impl Io {
                     Ok(ResponseDecision::Fail(reason)) => return Err(NetError::Blocked(cdp_reason(&reason))),
                     Err(_) => return Err(NetError::Other("response interception dropped".into())),
                 };
+                crate::timing::note_timing_allow(&url, &resp_headers, timing_origin.as_deref());
                 let mut head = self.head(&url, status, resp_headers, kind, redirects > 0).over(protocol);
                 if let Some(reason) = reason.filter(|_| head.status == net_status) {
                     head.status_text = reason;
@@ -2437,6 +2447,7 @@ impl Io {
             }
             let shared_response = shared_store.map(|_| resp_headers.clone());
             let mut stored: Option<Vec<Bytes>> = (store.is_some() || shared_store.is_some()).then(Vec::new);
+            crate::timing::note_timing_allow(&url, &resp_headers, timing_origin.as_deref());
             let mut head = self.head(&url, status, resp_headers, kind, redirects > 0).over(protocol);
             if let Some(reason) = reason {
                 head.status_text = reason;

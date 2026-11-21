@@ -130,8 +130,9 @@ fn has_calc_size(styles: &style::properties::ComputedValues) -> bool {
     use style::values::computed::Size;
     let is_calc_size = |size: &Size| {
         matches!(
-            size,
+            size.prepared_size(),
             Size::CalcSizeAuto(_) | Size::CalcSizeFitContent(_) | Size::CalcSizeMinContent(_) | Size::CalcSizeMaxContent(_)
+            | Size::CalcSizeStretch(_) | Size::CalcSizePercentage(_) | Size::CalcSizeAny(_)
         )
     };
     let position = styles.get_position();
@@ -176,7 +177,7 @@ pub(crate) struct LayoutPassState<'doc> {
     pub(crate) column_spanners: Option<(crate::NodeId, f32)>,
     /// pyro: the sizes `calc_size_inputs` measured for boxes this pass (box, axis 0 width or 1
     /// height, size): a parent that hands one back as a known size hands back the result.
-    calc_size_results: Vec<(NodeId, u8, f32)>,
+    calc_size_results: Vec<(NodeId, u8, f32, Option<f32>)>,
     try_styles: std::collections::HashMap<NodeId, style::servo_arc::Arc<style::properties::ComputedValues>>,
     try_options: std::cell::RefCell<std::collections::HashMap<(Option<crate::NodeId>, usize), ([usize; 5], usize)>>,
     /// pyro: the multi-column container whose strip is being laid out and the border-box height
@@ -440,8 +441,9 @@ impl LayoutPassState<'_> {
             return inputs;
         }
         let calculation = |size: &StyloSize| -> Option<LengthPercentage> {
-            match size {
+            match size.prepared_size() {
                 StyloSize::CalcSizeAuto(lp)
+                | StyloSize::CalcSizeStretch(lp)
                 | StyloSize::CalcSizeFitContent(lp)
                 | StyloSize::CalcSizeMinContent(lp)
                 | StyloSize::CalcSizeMaxContent(lp) => Some(lp.0.clone()),
@@ -449,10 +451,33 @@ impl LayoutPassState<'_> {
             }
         };
         // An `auto` or `fit-content` basis shrinks to fit when its parent measures it.
-        let shrinks = matches!(styles.get_position().width, StyloSize::CalcSizeAuto(_) | StyloSize::CalcSizeFitContent(_));
+        let shrinks = matches!(styles.get_position().width.prepared_size(), StyloSize::CalcSizeAuto(_) | StyloSize::CalcSizeFitContent(_));
         let position = styles.get_position();
+        let numeric_basis = |size: &StyloSize, parent: Option<f32>| match size.prepared_size() {
+            StyloSize::CalcSizePercentage(_) | StyloSize::CalcSizeAny(_) => Some(parent),
+            _ => None,
+        };
+        let numeric_width = numeric_basis(&position.width, inputs.parent_size.width);
+        let numeric_height = numeric_basis(&position.height, inputs.parent_size.height);
         let mut functions = taffy::Size { width: calculation(&position.width), height: calculation(&position.height) };
-        if functions.width.is_none() && functions.height.is_none() {
+        let mut measuring_flex_width = false;
+        if inputs.sizing_mode == taffy::SizingMode::ContentSize
+            && !styles.get_box().get_position().is_absolutely_positioned()
+            && let Some(parent) = node.layout_parent.get().and_then(|parent| self.nodes[parent].primary_styles())
+            && parent.clone_display().inside() == style::values::specified::box_::DisplayInside::Flex
+        {
+            let column = matches!(parent.get_position().flex_direction,
+                style::computed_values::flex_direction::T::Column | style::computed_values::flex_direction::T::ColumnReverse);
+            if column == parent.writing_mode.is_horizontal() {
+                if inputs.known_dimensions.height.is_some() { functions.height = None; }
+            } else if inputs.known_dimensions.width.is_some() {
+                functions.width = None;
+            } else {
+                measuring_flex_width = true;
+            }
+        }
+        if functions.width.is_none() && functions.height.is_none() &&
+            (inputs.run_mode != RunMode::PerformLayout || (numeric_width.is_none() && numeric_height.is_none())) {
             return inputs;
         }
         let content_box = styles.get_position().box_sizing == style::computed_values::box_sizing::T::ContentBox;
@@ -484,23 +509,31 @@ impl LayoutPassState<'_> {
             };
             self.dispatch_child_layout(node_id, probe, None).size
         });
-        let apply = |function: &LengthPercentage, size: f32, inset: f32| -> f32 {
+        let apply = |function: &LengthPercentage, size: f32, inset: f32, percent: Option<f32>| -> f32 {
             let basis = (size - inset).max(0.0);
-            function.resolve(CSSPixelLength::new(basis)).px().max(0.0) + inset
+            function.resolve_size(CSSPixelLength::new(basis), CSSPixelLength::new(percent.unwrap_or_default())).px().max(0.0) + inset
         };
-        let given = |state: &Self, axis: u8, known: Option<f32>| {
-            known.is_some_and(|known| state.calc_size_results.iter().any(|&(id, a, size)| id == node_id && a == axis && size == known))
+        let previous = |axis, known, has_function: bool| {
+            if !has_function { return None; }
+            self.calc_size_results.iter().rev().find_map(|&(id, recorded_axis, result, basis)| {
+                (id == node_id && recorded_axis == axis && Some(result) == known).then_some(basis)
+            })
         };
         let known_width = inputs.known_dimensions.width;
-        if functions.width.is_some() && given(self, 0, known_width) {
+        let mut width_basis = None;
+        let mut height_basis = None;
+        if let Some(basis) = previous(0, known_width, functions.width.is_some()) {
             functions.width = None;
+            width_basis = basis;
         }
-        if functions.height.is_some() && given(self, 1, inputs.known_dimensions.height) {
+        if let Some(basis) = previous(1, inputs.known_dimensions.height, functions.height.is_some()) {
             functions.height = None;
+            height_basis = basis;
         }
         if let Some(function) = &functions.width {
             let size = inputs.known_dimensions.width.or(measured.map(|size| size.width)).unwrap_or(0.0);
-            let mut width = apply(function, size, box_inset.width);
+            width_basis = Some(size);
+            let mut width = apply(function, size, box_inset.width, inputs.parent_size.width);
             // A size measured in definite space is the box's fit-content size: the space between
             // the calculation of its min-content and max-content sizes (as Blink), not the
             // calculation of the fit-content size of its basis.
@@ -515,28 +548,48 @@ impl LayoutPassState<'_> {
                         available_space: taffy::Size { width: available, ..inputs.available_space },
                         ..inputs
                     };
-                    apply(function, self.dispatch_child_layout(node_id, probe, None).size.width, box_inset.width)
+                    self.dispatch_child_layout(node_id, probe, None).size.width
                 };
                 let min_content = content(AvailableSpace::MinContent);
                 let max_content = content(AvailableSpace::MaxContent).max(min_content);
-                width = space.clamp(min_content, max_content);
+                if measuring_flex_width {
+                    let fit = space.clamp(min_content, max_content);
+                    width = apply(function, fit, box_inset.width, inputs.parent_size.width);
+                    width_basis = Some(fit);
+                } else {
+                    let minimum = apply(function, min_content, box_inset.width, inputs.parent_size.width);
+                    width = space.clamp(minimum, apply(function, max_content, box_inset.width, inputs.parent_size.width).max(minimum));
+                    width_basis = None;
+                }
             }
             let width = width.maybe_min(max.width).maybe_max(min.width);
             inputs.known_dimensions.width = Some(width.max(padding_border.width));
             if known_width.is_none() {
-                self.calc_size_results.push((node_id, 0, width.max(padding_border.width)));
+                self.calc_size_results.push((node_id, 0, width.max(padding_border.width), width_basis));
             }
         }
         if let Some(function) = &functions.height {
             let size = inputs.known_dimensions.height.or(measured.map(|size| size.height)).unwrap_or(0.0);
-            let height = apply(function, size, box_inset.height).maybe_min(max.height).maybe_max(min.height);
+            height_basis = Some(size);
+            let height = apply(function, size, box_inset.height, inputs.parent_size.height).maybe_min(max.height).maybe_max(min.height);
             if inputs.known_dimensions.height.is_none() {
-                self.calc_size_results.push((node_id, 1, height.max(padding_border.height)));
+                self.calc_size_results.push((node_id, 1, height.max(padding_border.height), height_basis));
                 if column_flex {
                     inputs.known_dimensions_are_definite.height = false;
                 }
             }
             inputs.known_dimensions.height = Some(height.max(padding_border.height));
+        }
+        if inputs.run_mode == RunMode::PerformLayout {
+            let limits = |percent, intrinsic: Option<f32>, numeric: Option<Option<f32>>, inset: f32, padding: f32, minimum: Option<f32>, maximum: Option<f32>| {
+                numeric.or_else(|| intrinsic.map(|size| Some((size - inset).max(0.0)))).map(|basis| {
+                    (basis, percent, (minimum.unwrap_or(0.0).max(padding) - inset).max(0.0), maximum.map(|value| value - inset))
+                })
+            };
+            self.nodes[dom_node_id(node_id)].layout_data_mut().calc_size_inputs = [
+                limits(inputs.parent_size.width, width_basis, numeric_width, box_inset.width, padding_border.width, min.width, max.width),
+                limits(inputs.parent_size.height, height_basis, numeric_height, box_inset.height, padding_border.height, min.height, max.height),
+            ];
         }
         inputs
     }
@@ -1752,6 +1805,25 @@ impl LayoutPassState<'_> {
                             (intrinsic_sizes, default_object_size)
                         };
 
+                    let mut intrinsic_sizes = intrinsic_sizes;
+                    if let Some(styles) = node.primary_styles() {
+                        use style::values::computed::Contain;
+                        use style::values::generics::box_::ContainIntrinsicSize;
+                        let contain = node_size_containment(node, &styles);
+                        if contain.contains(Contain::INLINE_SIZE) && !contain.contains(Contain::BLOCK_SIZE) {
+                            let position = styles.get_position();
+                            let vertical = styles.writing_mode.is_vertical();
+                            let override_size = if vertical { &position.contain_intrinsic_height } else { &position.contain_intrinsic_width };
+                            intrinsic_sizes.width = Some(match override_size {
+                                ContainIntrinsicSize::AutoNone | ContainIntrinsicSize::AutoLength(_)
+                                    if let Some((width, height)) = node.layout_data().remembered_size => if vertical { height } else { width },
+                                ContainIntrinsicSize::Length(length) | ContainIntrinsicSize::AutoLength(length) => length.0.px(),
+                                _ => 0.0,
+                            });
+                            intrinsic_sizes.height.get_or_insert(default_object_size.height);
+                            intrinsic_sizes.ratio = None;
+                        }
+                    }
                     let ratio_in_box_sizing_box = node
                         .primary_styles()
                         .is_some_and(|style| !style.get_position().aspect_ratio.auto);
@@ -2394,6 +2466,11 @@ impl LayoutPartialTree for LayoutPassState<'_> {
                 *unrounded = *layout;
                 if let Some(height) = border_height { unrounded.size.height = height; }
             });
+    }
+
+    fn resolve_size_calculation(&self, calc_ptr: *const (), size: f32, percent: f32) -> f32 {
+        let calc = unsafe { &*(calc_ptr as *const CalcLengthPercentage) };
+        calc.resolve_size(CSSPixelLength::new(size), CSSPixelLength::new(percent)).px()
     }
 
     fn resolve_calc_value(&self, calc_ptr: *const (), parent_size: f32) -> f32 {
@@ -3624,7 +3701,7 @@ pub(crate) fn effective_size_containment(styles: &style::properties::ComputedVal
     use style::values::computed::Contain;
     use style::values::specified::box_::ContainerType;
     let box_style = styles.get_box();
-    let mut contain = box_style.contain;
+    let mut contain = box_style.used_containment();
     if box_style.container_type.intersects(ContainerType::SIZE) {
         contain |= Contain::INLINE_SIZE | Contain::BLOCK_SIZE;
     } else if box_style.container_type.intersects(ContainerType::INLINE_SIZE) {

@@ -299,6 +299,11 @@ where
                             self.unexpected(&tag);
                         } else {
                             self.generate_implied_end_tags(thorough_implied_end);
+                            if let Some(close) = self.close_patch {
+                                let template = self.open_elems.borrow().iter().rev()
+                                    .find(|n| self.html_elem_named(n, local_name!("template"))).cloned();
+                                if let Some(template) = template { close(&self.sink, &template); }
+                            }
                             self.expect_to_close(local_name!("template"));
                             self.clear_active_formatting_to_marker();
                             self.template_modes.borrow_mut().pop();
@@ -542,13 +547,13 @@ where
 
                 Token::Tag(tag @ tag!(<form>)) => {
                     if self.form_elem.borrow().is_some()
-                        && !self.in_html_elem_named(local_name!("template"))
+                        && !self.parsing_template_contents()
                     {
                         self.sink.parse_error(Borrowed("nested forms"));
                     } else {
                         self.close_p_element_in_button_scope();
                         let elem = self.insert_element_for(tag);
-                        if !self.in_html_elem_named(local_name!("template")) {
+                        if !self.parsing_template_contents() {
                             *self.form_elem.borrow_mut() = Some(elem);
                         }
                     }
@@ -630,7 +635,7 @@ where
                 },
 
                 Token::Tag(tag!(</form>)) => {
-                    if !self.in_html_elem_named(local_name!("template")) {
+                    if !self.parsing_template_contents() {
                         let Some(node) = self.form_elem.take() else {
                             self.sink
                                 .parse_error(Borrowed("Null form element pointer on </form>"));
@@ -1116,10 +1121,12 @@ where
 
                 Token::Tag(tag @ tag!(<form>)) => {
                     self.unexpected(&tag);
-                    if !self.in_html_elem_named(local_name!("template"))
-                        && self.form_elem.borrow().is_none()
-                    {
-                        *self.form_elem.borrow_mut() = Some(self.insert_and_pop_element_for(tag));
+                    let in_template = self.parsing_template_contents();
+                    if in_template || self.form_elem.borrow().is_none() {
+                        let form = self.insert_and_pop_element_for(tag);
+                        if !in_template {
+                            *self.form_elem.borrow_mut() = Some(form);
+                        }
                     }
                     ProcessResult::Done
                 },

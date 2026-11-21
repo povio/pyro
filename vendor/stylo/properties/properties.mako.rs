@@ -2887,8 +2887,8 @@ macro_rules! longhand_properties_idents {
 #[cfg(feature = "gecko")]
 size_of_test!(ComputedValues, 248);
 #[cfg(feature = "servo")]
-// pyro: + `pyro_unvisited`.
-size_of_test!(ComputedValues, 240);
+// pyro: + `pyro_unvisited` and the shared Page style struct.
+size_of_test!(ComputedValues, 248);
 
 // FFI relies on this.
 size_of_test!(Option<Arc<ComputedValues>>, 8);

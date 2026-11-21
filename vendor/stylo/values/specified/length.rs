@@ -189,12 +189,12 @@ impl LengthUnit {
             // Container query lengths. Inherit the limitation from viewport units since
             // we may fall back to them. pyro: for servo too (Blitz answers container size
             // queries for `@container`).
-            "cqw" if !in_page_rule => Self::Cqw,
-            "cqh" if !in_page_rule => Self::Cqh,
-            "cqi" if !in_page_rule => Self::Cqi,
-            "cqb" if !in_page_rule => Self::Cqb,
-            "cqmin" if !in_page_rule => Self::Cqmin,
-            "cqmax" if !in_page_rule => Self::Cqmax,
+            "cqw" if !in_page_rule && allows_computational_dependence => Self::Cqw,
+            "cqh" if !in_page_rule && allows_computational_dependence => Self::Cqh,
+            "cqi" if !in_page_rule && allows_computational_dependence => Self::Cqi,
+            "cqb" if !in_page_rule && allows_computational_dependence => Self::Cqb,
+            "cqmin" if !in_page_rule && allows_computational_dependence => Self::Cqmin,
+            "cqmax" if !in_page_rule && allows_computational_dependence => Self::Cqmax,
             _ => return Err(()),
         })
     }
@@ -684,6 +684,18 @@ impl NoCalcLength {
         base_size: FontBaseSize,
         line_height_base: LineHeightBase,
     ) -> computed::Length {
+        #[cfg(feature = "servo")]
+        if !matches!(self.unit, LengthUnit::Em | LengthUnit::Rem) {
+            context.device().note_style_font_metrics();
+        }
+        // Font-affecting longhands use the parent's metrics, even when a length is
+        // nested inside typed arithmetic. Root-relative units still use the root
+        // on descendants, as handled by reference_font_size_and_length.
+        let (base_size, line_height_base) = if context.for_font_affecting_property {
+            (FontBaseSize::InheritedStyle, LineHeightBase::InheritedStyle)
+        } else {
+            (base_size, line_height_base)
+        };
         let (reference_size, length) =
             self.reference_font_size_and_length(context, base_size, line_height_base);
         (reference_size * length).finite()
@@ -729,9 +741,13 @@ impl NoCalcLength {
                 FontMetricsOrientation::MatchContextPreferHorizontal,
                 QueryFontMetricsFlags::NEEDS_CH,
             );
+            let writing_mode = match base_size {
+                FontBaseSize::CurrentStyle => context.style().writing_mode,
+                FontBaseSize::InheritedStyle => *context.style().inherited_writing_mode(),
+            };
             metrics.zero_advance_measure_or_default(
                 reference_font_size.used_size(),
-                context.style().writing_mode.is_upright(),
+                writing_mode.is_vertical() && writing_mode.is_upright(),
             )
         }
 
@@ -764,6 +780,10 @@ impl NoCalcLength {
             .add_flags(ComputedValueFlags::USES_FONT_OR_WM_RELATIVE_UNITS);
 
         let reference_font_size = base_size.resolve(context);
+        let line_height_writing_mode = || match line_height_base {
+            LineHeightBase::CurrentStyle => context.style().writing_mode,
+            LineHeightBase::InheritedStyle => *context.style().inherited_writing_mode(),
+        };
         let length = self.value;
         match self.unit {
             LengthUnit::Em => {
@@ -790,7 +810,7 @@ impl NoCalcLength {
                     let line_height = context.builder.calc_line_height(
                         context.device(),
                         line_height_base,
-                        context.style().writing_mode,
+                        line_height_writing_mode(),
                     );
                     if context.for_non_inherited_property
                         && line_height_base == LineHeightBase::CurrentStyle
@@ -870,7 +890,7 @@ impl NoCalcLength {
                         .calc_line_height(
                             context.device(),
                             line_height_base,
-                            context.style().writing_mode,
+                            line_height_writing_mode(),
                         )
                         .0
                 } else if context.in_media_query {
@@ -1680,10 +1700,21 @@ impl NonNegativeLengthPercentageOrAuto {
 /// A wrapper of LengthPercentage, whose value must be >= 0.
 pub type NonNegativeLengthPercentage = NonNegative<LengthPercentage>;
 
+impl crate::values::generics::length::SizeCalculationCss for NonNegativeLengthPercentage {
+    fn calculation_css<const SIZE: bool, W: Write>(&self, dest: &mut CssWriter<W>) -> fmt::Result {
+        match &self.0 {
+            LengthPercentage::Calc(calc) => calc.0.node.write_size_calculation::<SIZE, _>(dest),
+            other => other.to_css(dest),
+        }
+    }
+}
+
 /// Either a NonNegativeLengthPercentage or the `normal` keyword.
 pub type NonNegativeLengthPercentageOrNormal =
     GenericLengthPercentageOrNormal<NonNegativeLengthPercentage>;
 
+/// An inset at a gap decoration endpoint.
+pub type RuleInset = crate::values::generics::length::GenericRuleInset<LengthPercentage>;
 /// A specified `fit-tolerance` value.
 pub type FitTolerance = GenericFitTolerance<NonNegativeLengthPercentage>;
 
@@ -1845,6 +1876,7 @@ impl Size {
             allow_quirks,
             allow_webkit_fill_available,
             ParseAnchorFunctions::Yes,
+            false,
         )
     }
 
@@ -1859,6 +1891,7 @@ impl Size {
             AllowQuirks::No,
             true,
             ParseAnchorFunctions::No,
+            true,
         )
     }
 
@@ -1872,12 +1905,13 @@ impl Size {
         allow_quirks: AllowQuirks,
         allow_webkit_fill_available: bool,
         allow_anchor_functions: ParseAnchorFunctions,
+        allow_content_basis: bool,
     ) -> Result<Self, ParseError> {
         parse_size_non_length!(Size, input, allow_webkit_fill_available,
                                "auto" => Auto);
         parse_fit_content_function!(Size, input, context, allow_quirks);
         // pyro: `calc-size(<intrinsic keyword>, <calculation>)`.
-        if let Ok(size) = input.try_parse(|input| Self::parse_calc_size(context, input)) {
+        if let Ok(size) = input.try_parse(|input| Self::parse_calc_size(context, input, 0, &mut 0, allow_content_basis)) {
             return Ok(size);
         }
 
@@ -1921,6 +1955,7 @@ impl Size {
             allow_quirks,
             allow_webkit_fill_available,
             ParseAnchorFunctions::Yes,
+            false,
         )
     }
 
@@ -1940,6 +1975,7 @@ impl Size {
             AllowQuirks::No,
             allow_webkit_fill_available,
             ParseAnchorFunctions::Yes,
+            false,
         )
     }
 
@@ -1949,25 +1985,86 @@ impl Size {
         GenericSize::LengthPercentage(NonNegativeLengthPercentage::zero_percent())
     }
     /// pyro: `calc-size(auto | fit-content | min-content | max-content, <calculation>)`.
-    fn parse_calc_size(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
+    fn parse_calc_size(context: &ParserContext, input: &mut Parser, depth: usize, expanded: &mut usize, allow_content_basis: bool) -> Result<Self, ParseError> {
+        if depth >= 32 { return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError)); }
         input.expect_function_matching("calc-size")?;
         input.parse_nested_block(|input| {
-            let basis = try_match_ident_ignore_ascii_case! { input,
+            let keyword = input.try_parse(|input| Ok::<_, ParseError>(try_match_ident_ignore_ascii_case! { input,
                 "auto" => 0u8,
                 "fit-content" => 1u8,
                 "min-content" => 2u8,
                 "max-content" => 3u8,
-            };
+                "stretch" => 4u8,
+                "any" => 5u8,
+                "content" => 6u8,
+            }));
+            if matches!(keyword, Ok(6)) && !allow_content_basis { return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError)); }
+            let basis = if keyword.is_err() {
+                Some(input.parse_until_before(cssparser::Delimiter::Comma, |input| {
+                    if let Ok(nested) = input.try_parse(|input| Self::parse_calc_size(context, input, depth + 1, expanded, allow_content_basis)) { return Ok(nested); }
+                    let mut calc = CalcNode::parse_calc_size_calculation(context, input, AllowedNumericType::All, false)?;
+                    calc.0.node.visit_depth_first(|_| *expanded += 1);
+                    Ok(Self::LengthPercentage(NonNegative(LengthPercentage::Calc(Box::new(calc)))))
+                })?)
+            } else { None };
             input.expect_comma()?;
-            let calc = CalcNode::parse_calc_size_calculation(context, input, AllowedNumericType::NonNegative)?;
+            let range = if depth == 0 && basis.is_none() { AllowedNumericType::NonNegative } else { AllowedNumericType::All };
+            let mut calc = CalcNode::parse_calc_size_calculation(context, input, range, !matches!(keyword, Ok(5)))?;
+            let inner_cost = *expanded;
+            let mut cost = 0usize;
+            calc.0.node.visit_depth_first(|node| {
+                cost = cost.saturating_add(if matches!(node, CalcNode::Leaf(super::calc::Leaf::Percentage(_))) {
+                    inner_cost.saturating_add(3)
+                } else { 1 });
+            });
+            if cost > 16384 { return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError)); }
+            *expanded = cost;
             let length = NonNegative(LengthPercentage::Calc(Box::new(calc)));
-            Ok(match basis {
+            if let Some(basis) = basis { return Ok(Self::CalcSizeBasis(Box::new(generics::GenericSizeBasis { basis, calculation: length, prepared: None }))); }
+            Ok(match keyword? {
                 0 => GenericSize::CalcSizeAuto(length),
                 1 => GenericSize::CalcSizeFitContent(length),
                 2 => GenericSize::CalcSizeMinContent(length),
-                _ => GenericSize::CalcSizeMaxContent(length),
+                3 => GenericSize::CalcSizeMaxContent(length),
+                4 => GenericSize::CalcSizeStretch(length),
+                6 => GenericSize::CalcSizeContent(length),
+                _ => GenericSize::CalcSizeAny(length),
             })
         })
+    }
+}
+
+macro_rules! convert_size {
+    ($source:expr, $from:ident, $to:ident, $convert:expr, $pair:expr; $($unit:ident),*; $($value:ident),*) => { match $source {
+                $($from::$unit => $to::$unit,)*
+                #[cfg(feature = "gecko")]
+                $from::MozAvailable => $to::MozAvailable,
+                $($from::$value(value) => $to::$value($convert(value)),)*
+                $from::CalcSizeBasis(value) => $pair(&value.basis, &value.calculation),
+            } };
+    ($source:expr, $from:ident, $to:ident, $convert:expr, $pair:expr) => {
+        convert_size!($source, $from, $to, $convert, $pair; Auto, MaxContent, MinContent, FitContent, Stretch, WebkitFillAvailable;
+            LengthPercentage, FitContentFunction, AnchorSizeFunction, AnchorContainingCalcFunction,
+            CalcSizeAuto, CalcSizeStretch, CalcSizeMinContent, CalcSizeMaxContent, CalcSizeFitContent, CalcSizeContent, CalcSizeAny, CalcSizePercentage)
+    };
+}
+
+impl ToComputedValue for Size {
+    type ComputedValue = computed::Size;
+    fn to_computed_value(&self, context: &Context) -> computed::Size {
+        use computed::Size as Output;
+        convert_size!(self, Self, Output, |value| ToComputedValue::to_computed_value(value, context), |basis: &Size, calc: &NonNegativeLengthPercentage| {
+            let basis = basis.to_computed_value(context);
+            let calculation = calc.to_computed_value(context);
+            let prepared = Some(basis.prepared_size().compose_size(&calculation));
+            Output::CalcSizeBasis(Box::new(generics::GenericSizeBasis { basis, calculation, prepared }))
+        })
+    }
+    fn from_computed_value(value: &computed::Size) -> Self {
+        use computed::Size as Input;
+        convert_size!(value, Input, Self, ToComputedValue::from_computed_value, |basis, calculation| Self::CalcSizeBasis(Box::new(generics::GenericSizeBasis {
+            basis: Self::from_computed_value(basis), calculation: ToComputedValue::from_computed_value(calculation), prepared: None,
+        })))
     }
 }
 

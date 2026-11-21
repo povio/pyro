@@ -1,8 +1,30 @@
+diff --git a/attr.rs b/attr.rs
+index 2a80f93..f23b72c 100644
+--- a/attr.rs
++++ b/attr.rs
+@@ -143,6 +143,17 @@ impl AttrSelectorOperator {
+ /// The definition of whitespace per CSS Selectors Level 3 § 4.
+ pub static SELECTOR_WHITESPACE: &[char] = &[' ', '\t', '\n', '\r', '\x0C'];
+ 
++pub fn matches_class_prefix(class: &str, prefix: &str, quirks: bool) -> bool {
++    let bytes = class.as_bytes();
++    if !bytes.get(prefix.len()).is_some_and(|byte| *byte != b'-') { return false; }
++    let start = &bytes[..prefix.len()];
++    if quirks {
++        start.iter().zip(prefix.bytes()).all(|(actual, wanted)| actual.to_ascii_lowercase() == wanted)
++    } else {
++        start == prefix.as_bytes()
++    }
++}
++
+ #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+ #[cfg_attr(feature = "to_shmem", derive(ToShmem))]
+ pub enum ParsedCaseSensitivity {
 diff --git a/builder.rs b/builder.rs
-index bbcd0d2..340dbb7 100644
+index bbcd0d2..19a83d2 100644
 --- a/builder.rs
 +++ b/builder.rs
-@@ -337,6 +337,13 @@ where
+@@ -337,10 +337,18 @@ where
                      flags.insert(selector.flags());
                  }
              },
@@ -16,6 +38,11 @@ index bbcd0d2..340dbb7 100644
              Component::ID(..) => {
                  specificity.id_selectors += 1;
              },
+             Component::Class(..)
++            | Component::ClassPrefix(..)
+             | Component::AttributeInNoNamespace { .. }
+             | Component::AttributeInNoNamespaceExists { .. }
+             | Component::AttributeOther(..)
 diff --git a/context.rs b/context.rs
 index 4dffd8f..a3ae4f8 100644
 --- a/context.rs
@@ -39,7 +66,7 @@ index 4dffd8f..a3ae4f8 100644
              current_relative_selector_anchor: None,
              selector_caches,
 diff --git a/matching.rs b/matching.rs
-index 475e776..d290442 100644
+index 475e776..f1226ad 100644
 --- a/matching.rs
 +++ b/matching.rs
 @@ -475,7 +475,7 @@ where
@@ -197,7 +224,15 @@ index 475e776..d290442 100644
      matches
  }
  
-@@ -1290,6 +1350,9 @@ where
+@@ -1233,6 +1293,7 @@ where
+         Component::Class(ref class) => {
+             element.has_class(class, context.shared.classes_and_ids_case_sensitivity())
+         },
++        Component::ClassPrefix(ref prefix) => element.has_class_prefix(prefix, context.shared.quirks_mode() == QuirksMode::Quirks),
+         Component::LocalName(ref local_name) => matches_local_name(element, local_name),
+         Component::AttributeInNoNamespaceExists {
+             ref local_name,
+@@ -1290,6 +1351,9 @@ where
          Component::Host(ref selector) => {
              return matches_host(element, selector.as_ref(), context.shared, rightmost);
          },
@@ -207,7 +242,7 @@ index 475e776..d290442 100644
          Component::ParentSelector => match context.shared.scope_element {
              Some(ref scope_element) => element.opaque() == *scope_element,
              None => element.is_root(),
-@@ -1334,18 +1397,27 @@ where
+@@ -1334,18 +1398,27 @@ where
              });
          },
          Component::Has(ref relative_selectors) => {
@@ -242,10 +277,18 @@ index 475e776..d290442 100644
              anchor.is_none_or(|a| a == element.opaque())
          },
 diff --git a/parser.rs b/parser.rs
-index cac3c1d..565c3f0 100644
+index cac3c1d..e9e927d 100644
 --- a/parser.rs
 +++ b/parser.rs
-@@ -1331,6 +1331,13 @@ impl<Impl: SelectorImpl> Selector<Impl> {
+@@ -1255,6 +1255,7 @@ impl<Impl: SelectorImpl> Selector<Impl> {
+                 LocalName(..)
+                 | ID(..)
+                 | Class(..)
++                | ClassPrefix(..)
+                 | AttributeInNoNamespaceExists { .. }
+                 | AttributeInNoNamespace { .. }
+                 | AttributeOther(..)
+@@ -1331,6 +1332,13 @@ impl<Impl: SelectorImpl> Selector<Impl> {
                      &mut flags,
                      forbidden_flags,
                  ))),
@@ -259,7 +302,7 @@ index cac3c1d..565c3f0 100644
                  NthOf(ref data) => {
                      let selectors = replace_parent_on_selector_list(
                          data.selectors(),
-@@ -1515,26 +1522,26 @@ impl<'a, Impl: 'a + SelectorImpl> SelectorIter<'a, Impl> {
+@@ -1515,26 +1523,26 @@ impl<'a, Impl: 'a + SelectorImpl> SelectorIter<'a, Impl> {
      }
  
      #[inline]
@@ -291,7 +334,15 @@ index cac3c1d..565c3f0 100644
                  return false;
              }
          }
-@@ -2144,6 +2151,9 @@ pub enum Component<Impl: SelectorImpl> {
+@@ -2075,6 +2083,7 @@ pub enum Component<Impl: SelectorImpl> {
+ 
+     ID(#[cfg_attr(feature = "to_shmem", shmem(field_bound))] Impl::Identifier),
+     Class(#[cfg_attr(feature = "to_shmem", shmem(field_bound))] Impl::Identifier),
++    ClassPrefix(#[cfg_attr(feature = "to_shmem", shmem(field_bound))] Impl::Identifier),
+ 
+     AttributeInNoNamespaceExists {
+         #[cfg_attr(feature = "to_shmem", shmem(field_bound))]
+@@ -2144,6 +2153,9 @@ pub enum Component<Impl: SelectorImpl> {
      ///
      /// See https://github.com/w3c/csswg-drafts/issues/2158
      Host(Option<Selector<Impl>>),
@@ -301,7 +352,7 @@ index cac3c1d..565c3f0 100644
      /// The `:where` pseudo-class.
      ///
      /// https://drafts.csswg.org/selectors/#zero-matches
-@@ -2187,7 +2197,7 @@ impl<Impl: SelectorImpl> Component<Impl> {
+@@ -2187,7 +2199,7 @@ impl<Impl: SelectorImpl> Component<Impl> {
      /// Returns true if this is a :host() selector.
      #[inline]
      pub fn is_host(&self) -> bool {
@@ -310,7 +361,7 @@ index cac3c1d..565c3f0 100644
      }
  
      /// Returns the value as a combinator if applicable, None otherwise.
-@@ -2201,18 +2211,19 @@ impl<Impl: SelectorImpl> Component<Impl> {
+@@ -2201,18 +2213,19 @@ impl<Impl: SelectorImpl> Component<Impl> {
      /// Whether a given selector (to the right of a pseudo-element) should match for stateless
      /// pseudo-elements. Note that generally nothing matches for those, but since we have :not(),
      /// we still need to traverse nested selector lists.
@@ -334,7 +385,7 @@ index cac3c1d..565c3f0 100644
                  })
              },
              _ => false,
-@@ -2234,7 +2245,7 @@ impl<Impl: SelectorImpl> Component<Impl> {
+@@ -2234,7 +2247,7 @@ impl<Impl: SelectorImpl> Component<Impl> {
                      return false;
                  }
              },
@@ -343,7 +394,32 @@ index cac3c1d..565c3f0 100644
                  if !selector.visit(visitor) {
                      return false;
                  }
-@@ -2664,6 +2675,11 @@ impl<Impl: SelectorImpl> ToCss for Component<Impl> {
+@@ -2251,6 +2264,12 @@ impl<Impl: SelectorImpl> Component<Impl> {
+                     return false;
+                 }
+             },
++            ClassPrefix(_) => {
++                let class_name = Impl::LocalName::from("class");
++                if !visitor.visit_attribute_selector(&NamespaceConstraint::Specific(&namespace_empty_string::<Impl>()), &class_name, &class_name) {
++                    return false;
++                }
++            },
+             AttributeInNoNamespace { ref local_name, .. } => {
+                 if !visitor.visit_attribute_selector(
+                     &NamespaceConstraint::Specific(&namespace_empty_string::<Impl>()),
+@@ -2612,6 +2631,11 @@ impl<Impl: SelectorImpl> ToCss for Component<Impl> {
+                 dest.write_char('.')?;
+                 s.to_css(dest)
+             },
++            ClassPrefix(ref prefix) => {
++                dest.write_char('.')?;
++                prefix.to_css(dest)?;
++                dest.write_char('*')
++            },
+             LocalName(ref s) => s.to_css(dest),
+             ExplicitUniversalType => dest.write_char('*'),
+ 
+@@ -2664,6 +2688,11 @@ impl<Impl: SelectorImpl> ToCss for Component<Impl> {
                  }
                  Ok(())
              },
@@ -355,7 +431,7 @@ index cac3c1d..565c3f0 100644
              Nth(ref nth_data) => {
                  nth_data.write_start(dest)?;
                  if nth_data.is_function {
-@@ -2806,8 +2822,27 @@ where
+@@ -2806,8 +2835,27 @@ where
          }
      }
      loop {
@@ -383,7 +459,7 @@ index cac3c1d..565c3f0 100644
          if empty {
              return Err(ParseError::custom(if builder.has_combinators() {
                  SelectorParseErrorKind::DanglingCombinator
-@@ -3375,7 +3410,7 @@ where
+@@ -3375,7 +3423,7 @@ where
              let ignore_default_ns = state.intersects(SelectorParsingState::SKIP_DEFAULT_NAMESPACE)
                  || matches!(
                      result,
@@ -392,7 +468,7 @@ index cac3c1d..565c3f0 100644
                  );
              if !ignore_default_ns {
                  builder.push_simple_selector(Component::DefaultNamespace(url));
-@@ -3505,6 +3540,12 @@ where
+@@ -3505,6 +3553,12 @@ where
              }
              return Ok(Component::Host(Some(parse_inner_compound_selector(parser, input, state)?)));
          },
@@ -405,3 +481,33 @@ index cac3c1d..565c3f0 100644
          "not" => {
              return parse_negation(parser, input, state)
          },
+@@ -3628,7 +3682,15 @@ where
+                         return Err(ParseError::custom(e));
+                     },
+                 };
+-                Component::Class(class.as_ref().into())
++                let ends_with_dash = class.ends_with('-');
++                let name = class.as_ref().into();
++                if ends_with_dash && input.try_parse(|input| {
++                    matches!(input.next_including_whitespace(), Ok(Token::Delim('*'))).then_some(()).ok_or(())
++                }).is_ok() {
++                    Component::ClassPrefix(name)
++                } else {
++                    Component::Class(name)
++                }
+             })
+         },
+         Token::SquareBracketBlock => {
+diff --git a/tree.rs b/tree.rs
+index aa9b89f..969dc07 100644
+--- a/tree.rs
++++ b/tree.rs
+@@ -152,6 +152,8 @@ pub trait Element: Sized + Copy + Clone + Debug {
+ 
+     fn has_custom_state(&self, name: &<Self::Impl as SelectorImpl>::Identifier) -> bool;
+ 
++    fn has_class_prefix(&self, prefix: &<Self::Impl as SelectorImpl>::Identifier, quirks: bool) -> bool;
++
+     /// Returns the mapping from the `exportparts` attribute in the reverse
+     /// direction, that is, in an outer-tree -> inner-tree direction.
+     fn imported_part(

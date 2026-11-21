@@ -1,0 +1,30 @@
+boxused-main-candidate 8082 page passes 5745 named passes 181618 observed names 194657 statuses {'complete:0': 7871, 'complete:2': 104, 'timeout:None': 11, 'complete:1': 95, 'hang:None': 1}
+boxused-main-parent 8082 page passes 5732 named passes 181548 observed names 194657 statuses {'complete:0': 7871, 'complete:2': 104, 'timeout:None': 11, 'complete:1': 95, 'hang:None': 1}
+boxused-main-stable 8082 page passes 6950 named passes 182963 observed names 194912 statuses {'complete:0': 7986, 'complete:2': 62, 'complete:1': 23, 'timeout:None': 10, 'hang:None': 1}
+boxused-main-parent pages left only 13 right only 0
+boxused-main-parent passes left only 70 right only 0
+boxused-main-parent observed left only 0 right only 0
+boxused-main-stable pages left only 281 right only 1486
+boxused-main-stable passes left only 5901 right only 7246
+boxused-main-stable observed left only 260 right only 515
+Losses vs parent by URL: Counter()
+boxused-focus-candidate 66 page passes 61 named passes 1205 observed names 1225 statuses {'complete:0': 65, 'complete:2': 1}
+boxused-focus-parent 66 page passes 57 named passes 1191 observed names 1225 statuses {'complete:0': 65, 'complete:2': 1}
+boxused-focus-stable 66 page passes 65 named passes 1240 observed names 1241 statuses {'complete:0': 66}
+boxused-focus-parent pages left only 4 right only 0
+boxused-focus-parent passes left only 14 right only 0
+boxused-focus-parent observed left only 0 right only 0
+boxused-focus-stable pages left only 0 right only 4
+boxused-focus-stable passes left only 0 right only 35
+boxused-focus-stable observed left only 0 right only 16
+Losses vs parent by URL: Counter()
+boxused-supplement-candidate 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+boxused-supplement-parent 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+boxused-supplement-stable 41 page passes 35 named passes 619 observed names 874 statuses {'complete:0': 41}
+boxused-supplement-parent pages left only 0 right only 0
+boxused-supplement-parent passes left only 0 right only 0
+boxused-supplement-parent observed left only 0 right only 0
+boxused-supplement-stable pages left only 0 right only 8
+boxused-supplement-stable passes left only 0 right only 42
+boxused-supplement-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()

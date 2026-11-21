@@ -48,8 +48,12 @@ fn flush_autofocus(page: &Rc<PageDom>, doc: NodeId) {
             return;
         }
         let Ok(mut desc) = dom.descendants(doc) else { return };
-        desc.find(|&id| dom.element(id).is_ok_and(|e| e.is_html() && e.attr("autofocus").is_some()))
-            .filter(|&id| dom.is_focusable(id).unwrap_or(false))
+        desc.find(|&id| {
+            dom.element(id).is_ok_and(|e| {
+                e.attr("autofocus").is_some()
+                    && (e.is_html() || e.namespace() == &markup5ever::ns!(svg) || e.namespace() == &markup5ever::ns!(mathml))
+            }) && crate::input::is_focusable_area(&page.layout(), &dom, id)
+        })
     };
     if let Some(el) = candidate {
         crate::input::focus_element(page, el);
@@ -290,6 +294,8 @@ pub fn realm_disposed(page: &PageDom, realm: RealmId) {
 /// bindings drop their roots into it, but its wrappers stay registered, so
 /// a node keeps its wrapper while script still reaches the document.
 pub fn realm_detached(page: &PageDom, realm: RealmId) {
+    page.web_tasks.cancel_realm(realm);
+    crate::crypto_subtle::public_key::cancel(page.id(), Some(realm));
     crate::fetch::cancel_realm(page, realm);
     crate::websocket::cancel_realm(realm);
     crate::xhr::cancel_realm(page, realm);
@@ -297,7 +303,7 @@ pub fn realm_detached(page: &PageDom, realm: RealmId) {
     crate::mutation_observer::cancel_realm(page, realm);
     crate::intersection_observer::cancel_realm(page, realm);
     crate::resize_observer::cancel_realm(page, realm);
-    page.data_view_readers.borrow_mut().remove(&realm);
+    page.encoding_helpers.borrow_mut().remove(&realm);
     page.blob_parts.borrow_mut().remove(&realm);
     page.header_helpers.borrow_mut().remove(&realm);
     page.url_params_helpers.borrow_mut().remove(&realm);

@@ -82,6 +82,7 @@ pub(crate) struct WorkerStart {
     indexed_db: crate::indexeddb::Namespace,
     /// Its Cache Storage, likewise.
     caches: crate::cache_storage::Namespace,
+    permissions: crate::navigator_extras::PermissionTable,
     /// `new Worker(url, {type: 'module'})`: the script is a module.
     pub(crate) module: bool,
     pub(crate) early: Vec<Early>,
@@ -120,6 +121,7 @@ impl WorkerStart {
             cache_disabled: page.cache_disabled(),
             indexed_db: page.local_storage.borrow().indexed_db(),
             caches: page.local_storage.borrow().caches(),
+            permissions: page.context_services().permissions.clone(),
             module: false,
             early: Vec::new(),
             service: None,
@@ -159,6 +161,7 @@ impl WorkerStart {
             cache_disabled: page.cache_disabled(),
             indexed_db: page.local_storage.borrow().indexed_db(),
             caches: page.local_storage.borrow().caches(),
+            permissions: page.context_services().permissions.clone(),
             module,
             early: Vec::new(),
             service: Some(service),
@@ -415,6 +418,15 @@ impl PageHooks for ScopeHooks {
         self.sched.post(TaskSource::DomManipulation, move |_| task());
     }
 
+    fn post_web_task(
+        &self,
+        priority: pyro_runtime::WebPrioritySource,
+        delay: std::time::Duration,
+        task: Box<dyn FnOnce()>,
+    ) -> Option<Box<dyn FnOnce()>> {
+        Some(self.sched.post_web_task(priority, delay, Box::new(move |_| task())))
+    }
+
     fn post_delayed_task(&self, delay: Duration, task: Box<dyn FnOnce()>) {
         let task = RefCell::new(Some(task));
         self.sched.set_timer(delay, false, true, move |_| {
@@ -541,11 +553,12 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
     let document = dom.borrow_mut().create_document(pyro_dom::DocumentKind::Html, start.url.as_str());
     dom.borrow_mut().set_document_active(document, true).map_err(|e| JsError::Type(format!("{e:?}").into()))?;
     let page = PageDom::new(dom, document);
+    page.set_context_services(Rc::new(crate::navigator_extras::ContextServices::for_worker(start.permissions.clone())));
     // The worker's time origin: `performance.now()`, `Event.timeStamp` and
     // its Resource Timing entries count from here.
     let started = Instant::now();
     let origin_wall_ms = epoch_ms();
-    page.set_event_clock(Rc::new(move || crate::performance::now_since(started)));
+    page.set_event_clock(Rc::new(move |at| crate::performance::time_since(started, at)));
     page.set_user_agent_override(start.user_agent.clone()).map_err(|e| JsError::Type(e.to_string().into()))?;
     page.set_extra_http_headers(start.extra_headers.clone());
     page.set_cache_disabled(start.cache_disabled);
@@ -925,7 +938,16 @@ impl JsClass for WorkerGlobalScope {
             }
             Ok(s.wrap::<WorkerLocation>(g.url.clone(), Some(IdentityKey(KEY_LOCATION, 0)))?.value())
         });
-        def.getter("navigator", |s, g| Ok(navigator(s, g)?.value()));
+        def.getter("navigator", navigator);
+        def.global_value_accessor(
+            "Notification",
+            |s, g| {
+                let value = crate::navigator_extras::member(s, &g.target.page, "Notification")?;
+                crate::lazy_module::replace(s, &g.target.page, "Notification", value)?;
+                Ok(value)
+            },
+            |s, g, v| crate::lazy_module::replace(s, &g.target.page, "Notification", v),
+        );
         def.getter("origin", |s, _g| Ok(s.string(s.realm().origin().as_deref().unwrap_or("null"))));
         // The worker's URL stands for its owner's context: a same-origin
         // script, or a blob:/data: URL whose origin is the creator's.
@@ -953,6 +975,8 @@ impl JsClass for WorkerGlobalScope {
         );
         crate::crypto::define_globals(def);
         crate::streams::define_globals(def);
+        crate::observable::define_globals(def);
+        crate::scheduler::define_global(def);
         crate::canvas::define_worker_globals(def);
         // CSS Font Loading: `FontFace` and the worker's `FontFaceSet`.
         crate::font_loading::define_globals(def);
@@ -1061,6 +1085,7 @@ impl JsClass for DedicatedWorkerGlobalScope {
     type Data = ScopeData;
     type Parent = WorkerGlobalScope;
     fn define(def: &mut ClassDef<Self>) {
+        crate::canvas::define_video_globals(def);
         def.getter("name", |s, g| Ok(s.string(&g.name)));
         def.method("postMessage", 1, |s, g, a| {
             a.require(1, "DedicatedWorkerGlobalScope.postMessage")?;
@@ -1202,21 +1227,22 @@ pub(crate) fn performance<'s>(s: &Scope<'s>) -> JsResult<pyro_js::Object<'s>> {
     performance_of(s, g)
 }
 
-fn navigator<'s>(s: &Scope<'s>, g: &ScopeData) -> JsResult<pyro_js::Object<'s>> {
-    if let Some(o) = s.lookup_identity(IdentityKey(KEY_NAVIGATOR, 0)) {
-        return Ok(o);
-    }
-    s.wrap::<WorkerNavigator>(g.user_agent.clone(), Some(IdentityKey(KEY_NAVIGATOR, 0)))
+fn navigator<'s>(s: &Scope<'s>, g: &ScopeData) -> JsResult<Value<'s>> {
+    let key = IdentityKey(KEY_NAVIGATOR, 0);
+    // The worker owns its navigator and the per-realm modules
+    // stored on it even when script retains only a CryptoKey or a stream.
+    crate::window::same_object(s, &g.target.page, key, || s.wrap::<WorkerNavigator>(g.user_agent.clone(), Some(key)))
 }
 
 /// The per-realm object the lazily made script modules (streams, Web Crypto,
 /// StorageManager) hang from as hidden properties: the realm's `navigator`.
 pub(crate) fn module_holder<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<pyro_js::Object<'s>> {
     let unavailable = || JsError::Type("this realm has no navigator".into());
-    match s.global_data::<WorkerGlobalScope>() {
-        Some(g) => navigator(s, g),
-        None => crate::window::navigator(s, page)?.as_object().ok_or_else(unavailable),
-    }
+    let holder = match s.global_data::<WorkerGlobalScope>() {
+        Some(g) => navigator(s, g)?,
+        None => crate::window::navigator(s, page)?,
+    };
+    holder.as_object().ok_or_else(unavailable)
 }
 
 /// Whether `s` runs in a worker global scope rather than a Window: the XHR
@@ -1228,6 +1254,8 @@ pub(crate) fn is_worker(s: &Scope<'_>) -> bool {
 /// The classes a worker's realm exposes; returns its global's class.
 fn register(engine: &Engine, service: bool, shared_worker: bool) -> pyro_js::ClassId {
     engine.register::<EventTarget>();
+    crate::trusted_types::register(engine);
+    engine.register::<crate::scheduler::WebScheduler>();
     crate::event::register_for_worker(engine);
     crate::abort::register(engine);
     crate::message_channel::register(engine);
@@ -1238,6 +1266,7 @@ fn register(engine: &Engine, service: bool, shared_worker: bool) -> pyro_js::Cla
     crate::form_data::register(engine);
     engine.register::<crate::headers::Headers>();
     engine.register::<crate::url::URL>();
+    engine.register::<crate::url_pattern::URLPattern>();
     engine.register::<crate::url_search_params::URLSearchParams>();
     engine.register::<crate::url_search_params::ParamsIterator>();
     engine.register::<crate::response::Response>();
@@ -1251,11 +1280,12 @@ fn register(engine: &Engine, service: bool, shared_worker: bool) -> pyro_js::Cla
     engine.register::<WorkerLocation>();
     engine.register::<WorkerNavigator>();
     crate::performance::register_for_worker(engine);
-    crate::canvas::register(engine);
+    crate::canvas::register_worker(engine);
     engine.register::<WorkerGlobalScope>();
     if service {
         return engine.register::<ServiceWorkerGlobalScope>();
     }
+    engine.register::<crate::file_reader::FileReaderSync>();
     if shared_worker {
         return engine.register::<SharedWorkerGlobalScope>();
     }
@@ -1274,7 +1304,7 @@ fn install(s: &Scope<'_>, page: &Rc<PageDom>, global: &str) -> JsResult<()> {
     realm.set_exception_reporter(Some(crate::lifecycle::report_exception));
     let helpers = crate::install_helpers(s)?;
     crate::file::install(s, helpers.get_atom("blobParts")?)?;
-    crate::encoding::install(s, helpers.get_atom("dataView")?)?;
+    crate::encoding::install(s, helpers.get_atom("encoding")?)?;
     crate::headers::install(s, helpers.get_atom("headers")?)?;
     crate::url_search_params::install(s, helpers.get_atom("urlSearchParams")?)?;
     crate::form_data::install(s, helpers.get_atom("formData")?)?;

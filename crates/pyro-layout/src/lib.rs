@@ -143,6 +143,7 @@ pub fn install(fetcher: Arc<dyn Fetcher>) {
 /// from its network ([`GeometrySource::set_subresource_loader`]), so what it
 /// is laid out with loads the way its own sub-resource requests go.
 pub fn install_with(fetchers: FetcherFactory) {
+    pyro_dom::picture::set_media_font_provider(Some(pyro_render::media_font_metrics));
     // pyro: before a page's scripts draw on a canvas (an SVG image, a `filter`).
     pyro_render::register_hooks();
     if profile::on() {
@@ -157,7 +158,7 @@ pub fn install_with(fetchers: FetcherFactory) {
             resources: std::cell::Cell::new(RESOURCES.load(Ordering::Relaxed)),
             scroll_stale: Default::default(),
             base_url: RefCell::new(BaseUrl::new(BLANK)),
-            snapshot_base: RefCell::new(String::new()),
+            snapshot_base: RefCell::new(Default::default()),
             fetcher: RefCell::new(fetchers(None)),
             loader: RefCell::new(None),
             fetchers: fetchers.clone(),
@@ -171,6 +172,7 @@ pub fn install_with(fetchers: FetcherFactory) {
 /// page's rendering state (the next `install` and the next layout make them
 /// again). The fetcher, which reaches the old client's network, goes too.
 pub fn release_thread() {
+    pyro_dom::picture::set_media_font_provider(None);
     pyro_dom::layout::set_geometry_source_factory(None);
     let renderer = RENDERER.with(|r| r.try_borrow_mut().ok().and_then(|mut r| r.take()));
     drop(renderer);
@@ -179,7 +181,7 @@ pub fn release_thread() {
 /// The Blitz document of one page document.
 /// DOM version, style generation, viewport (width, height, device pixel
 /// ratio bits, dark) and style invalidations.
-type SyncedAt = (u64, u64, (u32, u32, u64, bool, bool, pyro_render::InputCapabilities), u64);
+type SyncedAt = (u64, u64, pyro_render::ViewportKey, u64);
 
 /// A document's base URL as given, and parsed once when it is set: links
 /// resolve against the parsed form on every sync, while the snapshot keeps
@@ -194,6 +196,7 @@ pub fn frame_table(table: pyro_dom::FrameTable) -> pyro_render::FrameTable {
             let content = pyro_render::FrameContent {
                 html: frame.html,
                 url: frame.url,
+                document_url: frame.document_url,
                 scroll: frame.scroll,
                 client: frame.client,
                 frames: frame_table(frame.frames),
@@ -235,7 +238,7 @@ pub struct BlitzGeometry {
     base_url: RefCell<BaseUrl>,
     /// pyro: the base URL the last whole snapshot resolved against ([`Self::document_base`]); a
     /// delta resolves against it too, so a changed base takes a whole snapshot.
-    snapshot_base: RefCell<String>,
+    snapshot_base: RefCell<(String, String)>,
     /// Loads the document's sub-resources: made by `fetchers` from `loader`.
     fetcher: RefCell<Arc<dyn Fetcher>>,
     /// The document's network (`None` until the embedder gives it one).
@@ -457,7 +460,8 @@ impl BlitzGeometry {
     fn snapshot(&self, dom: &Dom, style: &StyleEngine) -> Option<Snapshot> {
         let t = pyro_render::profiling::on().then(Instant::now);
         let base = self.document_base(dom, style.document());
-        *self.snapshot_base.borrow_mut() = base.text.clone();
+        let location = dom.document_url_parsed(style.document()).ok().flatten().map_or("", url::Url::as_str);
+        *self.snapshot_base.borrow_mut() = (base.text.clone(), location.to_owned());
         let sheets = RefCell::new(HashMap::new());
         let tree = {
             let (style_text, stylesheet_href) = Self::render_opts(dom, style, base.parsed.as_ref(), Some(&sheets));
@@ -475,6 +479,7 @@ impl BlitzGeometry {
             raster_budget: dom.document_data(style.document()).ok()?.raster_budget.clone(),
             frames: frame_table(dom.frame_table(style.document())),
             html: String::new(),
+            document_url: (!location.is_empty() && location != base.text).then(|| location.to_owned()),
             base_url: base.text.clone(),
             sheets: sheets.into_inner(),
             width: v.width,
@@ -491,6 +496,7 @@ impl BlitzGeometry {
                 hover: v.hover,
             },
             scroll_x: 0.0,
+            media_environment: pyro_render::media_environment(v),
             scroll_y: 0.0,
             // pyro: one document's: a navigation's next document reuses none of its responses.
             resource_scope: format!("geometry-{}-{}", self.page, self.resource_document()),
@@ -585,6 +591,7 @@ impl BlitzGeometry {
                 },
                 hover: v.hover,
             },
+            pyro_render::media_environment(v),
         );
         let now = (dom.version(), style.observation_stamp(dom).1, viewport, style.invalidations());
         let last = self.synced.replace(Some(now));
@@ -609,7 +616,8 @@ impl BlitzGeometry {
                 None
             };
             let base = self.document_base(dom, style.document());
-            let same_base = base.text == *self.snapshot_base.borrow();
+            let location = dom.document_url_parsed(style.document()).ok().flatten().map_or("", url::Url::as_str);
+            let same_base = { let previous = self.snapshot_base.borrow(); previous.0 == base.text && previous.1 == location };
             if let (Some(restyled), true) = (restyled, vp == viewport && same_base) {
                 let profiling = pyro_render::profiling::on();
                 let t = profiling.then(Instant::now);
@@ -829,6 +837,7 @@ impl BlitzGeometry {
                             width: w.width,
                             height: w.height,
                             fixed: w.fixed,
+                            vertical_edges: w.vertical_edges,
                             edges: w.edges,
                         },
                     )
@@ -949,8 +958,16 @@ impl GeometrySource for BlitzGeometry {
         RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.anchor_scroll_shift(self.page, key, scroll, sticky)).unwrap_or_default()
     }
 
-    fn resolved_transform_value(&self, key: u64, style: &style::properties::ComputedValues) -> Option<String> {
-        RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.resolved_transform_value(self.page, key, style))
+    fn resolved_transform_value(&self, key: u64, property: &str, style: &style::properties::ComputedValues) -> Option<String> {
+        RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.resolved_transform_value(self.page, key, property, style))
+    }
+
+    fn svg_geometry_properties(&self, key: u64) -> Vec<(&'static str, String)> {
+        RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.svg_geometry_properties(self.page, key)).unwrap_or_default()
+    }
+
+    fn sampled_calc_size(&self, key: u64, width: bool, style: &style::properties::ComputedValues) -> Option<f32> {
+        RENDERER.with(|renderer| renderer.try_borrow().ok()?.as_ref()?.sampled_calc_size(self.page, key, width, style))
     }
 
     fn viewport_scrolls_leftward(&self) -> Option<bool> {
@@ -1115,6 +1132,12 @@ impl GeometrySource for BlitzGeometry {
             self.undisplayed.borrow_mut().insert(key, style.clone());
         }
         Some(style)
+    }
+
+    fn element_timing_style(
+        &self, key: u64, pseudo: Option<&style::selector_parser::PseudoElement>,
+    ) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
+        RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.element_timing_style(self.page, key, pseudo))
     }
 
     fn element_starting_style(&self, key: u64) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
@@ -1317,7 +1340,7 @@ mod tests {
             resources: Default::default(),
             scroll_stale: Default::default(),
             base_url: RefCell::new(super::BaseUrl::new(super::BLANK)),
-            snapshot_base: RefCell::new(String::new()),
+            snapshot_base: RefCell::new(Default::default()),
             fetcher: RefCell::new(std::sync::Arc::new(NoFetch)),
             loader: RefCell::new(None),
             fetchers: Rc::new(|_| std::sync::Arc::new(NoFetch)),

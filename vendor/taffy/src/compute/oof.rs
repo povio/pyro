@@ -658,6 +658,16 @@ fn solve_oof_box<Tree: LayoutContainingBlock>(
         child_style.justify_self().unwrap_or(AlignSelf::NORMAL).resolve_self_relative(item_direction, direction, true);
     let align_self =
         child_style.align_self().unwrap_or(AlignSelf::NORMAL).resolve_self_relative(item_direction, direction, false);
+    let area_insets = |start: Option<f32>, end: Option<f32>, alignment: AlignSelf| {
+        if anchor_area.is_some() && (alignment != AlignSelf::NORMAL || start.is_some() == end.is_some()) {
+            (Some(start.unwrap_or(0.0)), Some(end.unwrap_or(0.0)))
+        } else {
+            (start, end)
+        }
+    };
+    let (left, right) = area_insets(left, right, justify_self);
+    let (top, bottom) = area_insets(top, bottom, align_self);
+    if anchor_area.is_some() { margin = margin.map(|value| Some(value.unwrap_or(0.0))); }
     let justify_self = anchor_area.filter(|_| justify_self == AlignSelf::NORMAL).map_or(justify_self, |area| area.2.x);
     let align_self = anchor_area.filter(|_| align_self == AlignSelf::NORMAL).map_or(align_self, |area| area.2.y);
     let overflow = child_style.overflow();
@@ -961,6 +971,10 @@ fn solve_oof_box<Tree: LayoutContainingBlock>(
     };
     before_layout(tree, &layout_input);
     let mut layout_output = tree.compute_child_layout(candidate.node, layout_input);
+    let final_size = Size {
+        width: if size_style.width.is_stretch() { layout_output.size.width } else { final_size.width },
+        height: if size_style.height.is_stretch() { layout_output.size.height } else { final_size.height },
+    };
 
     // Resolve auto margins <https://www.w3.org/TR/css-position-3/#abspos-margins>
     let horizontal_margin = horizontal.resolve_margins(final_size.width);

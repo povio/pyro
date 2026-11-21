@@ -1,0 +1,30 @@
+scrollportrange-main-candidate 8082 page passes 5597 named passes 180072 observed names 194541 statuses {'complete:0': 7867, 'complete:2': 105, 'timeout:None': 11, 'complete:1': 98, 'hang:None': 1}
+scrollportrange-main-parent 8082 page passes 5595 named passes 180068 observed names 194541 statuses {'complete:0': 7867, 'complete:2': 105, 'timeout:None': 11, 'complete:1': 98, 'hang:None': 1}
+scrollportrange-main-stable 8082 page passes 6950 named passes 182963 observed names 194912 statuses {'complete:0': 7986, 'complete:2': 62, 'complete:1': 23, 'timeout:None': 10, 'hang:None': 1}
+scrollportrange-main-parent pages left only 2 right only 0
+scrollportrange-main-parent passes left only 4 right only 0
+scrollportrange-main-parent observed left only 0 right only 0
+scrollportrange-main-stable pages left only 272 right only 1625
+scrollportrange-main-stable passes left only 5802 right only 8693
+scrollportrange-main-stable observed left only 309 right only 680
+Losses vs parent by URL: Counter()
+scrollportrange-focus-candidate 239 page passes 122 named passes 1424 observed names 1761 statuses {'complete:0': 230, 'complete:2': 8, 'complete:1': 1}
+scrollportrange-focus-parent 239 page passes 120 named passes 1420 observed names 1761 statuses {'complete:0': 230, 'complete:2': 8, 'complete:1': 1}
+scrollportrange-focus-stable 239 page passes 216 named passes 1696 observed names 1790 statuses {'complete:0': 234, 'complete:2': 5}
+scrollportrange-focus-parent pages left only 2 right only 0
+scrollportrange-focus-parent passes left only 4 right only 0
+scrollportrange-focus-parent observed left only 0 right only 0
+scrollportrange-focus-stable pages left only 3 right only 97
+scrollportrange-focus-stable passes left only 52 right only 324
+scrollportrange-focus-stable observed left only 29 right only 58
+Losses vs parent by URL: Counter()
+scrollportrange-supplement-candidate 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+scrollportrange-supplement-parent 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+scrollportrange-supplement-stable 41 page passes 35 named passes 619 observed names 874 statuses {'complete:0': 41}
+scrollportrange-supplement-parent pages left only 0 right only 0
+scrollportrange-supplement-parent passes left only 0 right only 0
+scrollportrange-supplement-parent observed left only 0 right only 0
+scrollportrange-supplement-stable pages left only 0 right only 8
+scrollportrange-supplement-stable passes left only 0 right only 42
+scrollportrange-supplement-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()

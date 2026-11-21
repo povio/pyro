@@ -46,6 +46,7 @@ pub enum EventInterface {
     TransitionEvent,
     ToggleEvent,
     CommandEvent,
+    TaskPriorityChangeEvent,
     /// Made in JS on first use (`crate::editing_globals`): natively an
     /// Event wrapper with ClipboardEvent.prototype.
     ClipboardEvent,
@@ -84,6 +85,7 @@ pub enum StorageAreaRef {
 /// Interface-specific fields (flat; unused fields keep defaults).
 #[derive(Default)]
 pub struct EventFields {
+    pub(crate) previous_task_priority: Option<pyro_runtime::WebTaskPriority>,
     pub detail: f64,
     pub custom_detail: Option<Persistent>,
     /// `UIEvent.view` given to a constructor or init method (a Window).
@@ -110,6 +112,7 @@ pub struct EventFields {
     pub char_code: u32,
     pub data: Option<String>,
     pub input_type: String,
+    pub(crate) editing_range: Option<Box<(TargetKey, crate::range::StaticRangeData)>>,
     pub pointer_id: i32,
     pub pointer_type: String,
     pub is_primary: bool,
@@ -174,6 +177,7 @@ pub struct EventFields {
     pub touch: Option<Rc<TouchLists>>,
     /// `AnimationEvent.animationName`.
     pub animation_name: String,
+    pub css_animation: Option<Persistent>,
     /// `TransitionEvent.propertyName`.
     pub property_name: String,
     /// `elapsedTime` (seconds) and `pseudoElement` of both.
@@ -432,6 +436,7 @@ pub fn wrap_event<'s>(s: &Scope<'s>, core: &EventData) -> JsResult<Object<'s>> {
         EventInterface::AnimationEvent => s.wrap::<AnimationEvent>(d, Some(key)),
         EventInterface::TransitionEvent => s.wrap::<TransitionEvent>(d, Some(key)),
         EventInterface::ToggleEvent => s.wrap::<ToggleEvent>(d, Some(key)),
+        EventInterface::TaskPriorityChangeEvent => s.wrap::<crate::task_signal::TaskPriorityChangeEvent>(d, Some(key)),
         EventInterface::CommandEvent => s.wrap::<CommandEvent>(d, Some(key)),
         EventInterface::ClipboardEvent => crate::editing_globals::wrap_clipboard_event(s, d, key),
     }?;
@@ -528,7 +533,7 @@ fn get_str(init: Option<Object<'_>>, name: &'static str) -> JsResult<String> {
 }
 
 /// Shared constructor: `new XEvent(type, init)`.
-fn construct<'s, C: JsClass<Data = EventData>>(
+pub(crate) fn construct<'s, C: JsClass<Data = EventData>>(
     s: &Scope<'s>,
     new_target: Object<'s>,
     a: Args<'s>,
@@ -933,14 +938,24 @@ fn fill_message<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>
     Ok(())
 }
 
-fn fill_animation<'s>(_: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
+fn css_event_animation<'s>(s: &Scope<'s>, init: Option<Object<'s>>, transition: bool) -> JsResult<Option<Persistent>> {
+    let Some(init) = init else { return Ok(None) };
+    let value = init.get_atom("animation")?;
+    if value.is_undefined() || value.is_null() { return Ok(None); }
+    crate::animations::validate_event_animation(s, value, transition)?;
+    Ok(Some(Persistent::new(s, value)))
+}
+
+fn fill_animation<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
+    f.css_animation = css_event_animation(s, init, false)?;
     f.animation_name = get_str(init, "animationName")?;
     f.elapsed_time = get_num(init, "elapsedTime", 0.0)?;
     f.pseudo_element = get_str(init, "pseudoElement")?;
     Ok(())
 }
 
-fn fill_transition<'s>(_: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
+fn fill_transition<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
+    f.css_animation = css_event_animation(s, init, true)?;
     f.property_name = get_str(init, "propertyName")?;
     f.elapsed_time = get_num(init, "elapsedTime", 0.0)?;
     f.pseudo_element = get_str(init, "pseudoElement")?;
@@ -1506,7 +1521,22 @@ impl JsClass for InputEvent {
                 None => s.null(),
             })
         });
-        def.pure_method("getTargetRanges", 0, |s, _e, _a| Ok(s.array(&[])?.value()));
+        def.method("getTargetRanges", 0, |s, e, _a| {
+            let fields = e.fields.borrow();
+            if let Some((host, range)) = fields.editing_range.as_deref() {
+                // The dispatch path retargets the editing host at shadow boundaries.
+                // Later DOM mutations must not hide the snapshot from a listener
+                // on the original path or expose it to a retargeted ancestor.
+                let state = e.state.borrow();
+                if state.current_target.is_some() && state.target == Some(*host) {
+                    let (start, end) = range.points();
+                    let data = crate::range::StaticRangeData::from_points(&e.page, start, end)?;
+                    let range = s.wrap::<crate::range::StaticRange>(data, None)?;
+                    return Ok(s.array(&[range.value()])?.value());
+                }
+            }
+            Ok(s.array(&[])?.value())
+        });
     }
 }
 
@@ -1903,6 +1933,7 @@ impl JsClass for AnimationEvent {
             construct::<AnimationEvent>(s, nt, a, EventInterface::AnimationEvent, fill_animation)
         });
         def.getter("animationName", |s, e| Ok(s.string(&e.fields.borrow().animation_name)));
+        def.getter("animation", |s, e| Ok(e.fields.borrow().css_animation.as_ref().map_or(s.null(), |value| value.get(s))));
         def.getter("elapsedTime", |s, e| Ok(s.number(e.fields.borrow().elapsed_time)));
         def.getter("pseudoElement", |s, e| Ok(s.string(&e.fields.borrow().pseudo_element)));
     }
@@ -1920,6 +1951,7 @@ impl JsClass for TransitionEvent {
             construct::<TransitionEvent>(s, nt, a, EventInterface::TransitionEvent, fill_transition)
         });
         def.getter("propertyName", |s, e| Ok(s.string(&e.fields.borrow().property_name)));
+        def.getter("animation", |s, e| Ok(e.fields.borrow().css_animation.as_ref().map_or(s.null(), |value| value.get(s))));
         def.getter("elapsedTime", |s, e| Ok(s.number(e.fields.borrow().elapsed_time)));
         def.getter("pseudoElement", |s, e| Ok(s.string(&e.fields.borrow().pseudo_element)));
     }

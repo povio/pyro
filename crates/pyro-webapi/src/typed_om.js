@@ -70,7 +70,12 @@
       return parseValues(`${property}`, `${cssText}`, true, 'parseAll');
     }
   }
-  const plain = (text) => new CSSStyleValue(ILLEGAL, text);
+  const associatedProperties = new WeakMap();
+  const plain = (property, text) => {
+    const value = new CSSStyleValue(ILLEGAL, text);
+    associatedProperties.set(value, property);
+    return value;
+  };
 
   // ---------- CSSUnparsedValue / CSSVariableReferenceValue ----------
   const isUnparsedMember = (v) => typeof v === 'string' || v instanceof CSSVariableReferenceValue;
@@ -1074,9 +1079,12 @@
   // Longhands whose values are several components ({1,2}, {1,4}) or whose grammar level 1 does not
   // reify (as in Chromium): always a plain CSSStyleValue.
   const UNREIFIED = new Set(['border-top-left-radius', 'border-top-right-radius', 'border-bottom-left-radius',
-    'border-bottom-right-radius', 'border-image-width', 'border-image-outset', 'border-image-slice', 'border-image-repeat',
+    'border-bottom-right-radius',
     'border-spacing', 'column-rule-width', 'vertical-align']);
   const CSS_WIDE = /^(inherit|initial|unset|revert|revert-layer|default)$/i;
+  const OPAQUE_PROPERTIES = new Set(['flex-flow', 'font', 'font-family', 'font-variant', 'gap', 'grid-gap',
+    'grid', 'grid-area', 'grid-template', 'marker', 'mask', 'offset', 'scroll-margin', 'scroll-padding',
+    'text-decoration', 'text-shadow', 'will-change']);
   const LIST_VALUED = new Set(['transition', 'transition-property', 'transition-duration', 'transition-timing-function',
     'transition-delay', 'transition-behavior', 'animation', 'animation-name', 'animation-duration', 'animation-timing-function',
     'animation-delay', 'animation-iteration-count', 'animation-direction', 'animation-fill-mode', 'animation-play-state',
@@ -1111,25 +1119,29 @@
   const reifyOne = (property, text, custom, shorthand = false) => {
     if (custom || /var\(/i.test(text)) return unparsedFrom(text);
     if (CSS_WIDE.test(text)) return new CSSKeywordValue(text.toLowerCase());
-    if (UNREIFIED.has(property)) return plain(text);
+    if (UNREIFIED.has(property)) return plain(property, text);
     // A grid line's number (with or without a name) is no single numeric value.
-    if (/^grid-(row|column)-(start|end)$/.test(property) && !/^[A-Za-z_-][A-Za-z0-9_-]*$/.test(text)) return plain(text);
-    if (/^-?[A-Za-z_][A-Za-z0-9_-]*$/.test(text)) return NAMED_COLORS.has(text.toLowerCase()) ? plain(text) : new CSSKeywordValue(text);
+    if (/^grid-(row|column)-(start|end)$/.test(property) && !/^[A-Za-z_-][A-Za-z0-9_-]*$/.test(text)) return plain(property, text);
+    if (/^-?[A-Za-z_][A-Za-z0-9_-]*$/.test(text)) return NAMED_COLORS.has(text.toLowerCase()) ? plain(property, text) : new CSSKeywordValue(text);
     if (property === 'transform') { const t = transformFrom(text); if (t) return t; }
     if (!shorthand && /^url\((?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^()'"\s]*)\)$/i.test(text)) return new CSSImageValue(ILLEGAL, text);
     const n = parseNumeric(text);
     if (n) return n;
-    return plain(text);
+    return plain(property, text);
   };
-  const reify = (property, text, all) => {
+  const BORDER_IMAGE_TUPLES = new Set(['border-image-width', 'border-image-outset', 'border-image-slice', 'border-image-repeat']);
+  const reify = (property, text, all, computed = false) => {
     const k = kind(property);
     if (!k) return null;
     const [name, which] = k;
     if (which === 2) return [unparsedFrom(text)];
     if (CSS_WIDE.test(text) || /var\(/i.test(text)) return [reifyOne(name, text, false)];
+    if (computed && BORDER_IMAGE_TUPLES.has(name)) return [plain(name, text)];
+    if ((name === 'text-shadow' && text === 'none') || (name === 'will-change' && text === 'auto')) return [new CSSKeywordValue(text)];
+    if (OPAQUE_PROPERTIES.has(name)) return [plain(name, text)];
     // A shorthand's value of several components is not reified (a plain CSSStyleValue); one
     // component is, as a longhand's.
-    if (which === 1) return [splitSpaces(text).length > 1 ? plain(text) : reifyOne(name, text, false, true)];
+    if (which === 1) return [splitSpaces(text).length > 1 ? plain(name, text) : reifyOne(name, text, false, true)];
     const parts = LIST_VALUED.has(name) ? splitTop(text) : [text];
     const values = parts.map((t) => reifyOne(name, t, false));
     return all ? values : values.slice(0, 1);
@@ -1143,7 +1155,7 @@
       if (cssText.trim() === '') throw new TypeError(`Failed to execute '${what}' on 'CSSStyleValue': The value provided ('${cssText}') could not be parsed as a '${property}'.`);
       return [unparsedFrom(cssText.trim())];
     }
-    if (text === '') return [plain(cssText.trim())];
+    if (text === '') return [plain(k[0], cssText.trim())];
     return reify(k[0], text, all);
   }
 
@@ -1173,7 +1185,7 @@
       const [name, which] = nameOf(property, 'get', 'StylePropertyMapReadOnly');
       const text = src.get(name);
       if (text === '') return which === 2 ? undefined : undefined;
-      const values = reify(name, text, false);
+      const values = reify(name, text, false, src.computed);
       return values ? values[0] : undefined;
     }
     getAll(property) {
@@ -1182,7 +1194,7 @@
       const [name] = nameOf(property, 'getAll', 'StylePropertyMapReadOnly');
       const text = src.get(name);
       if (text === '') return [];
-      return reify(name, text, true) || [];
+      return reify(name, text, true, src.computed) || [];
     }
     has(property) {
       const src = mapSource(this);
@@ -1193,10 +1205,10 @@
     get size() { return mapSource(this).names().length; }
     entries() {
       const src = mapSource(this);
-      return src.names().map((n) => [n, reify(n, src.get(n), true) || []])[Symbol.iterator]();
+      return src.names().map((n) => [n, reify(n, src.get(n), true, src.computed) || []])[Symbol.iterator]();
     }
     keys() { const src = mapSource(this); return src.names()[Symbol.iterator](); }
-    values() { const src = mapSource(this); return src.names().map((n) => reify(n, src.get(n), true) || [])[Symbol.iterator](); }
+    values() { const src = mapSource(this); return src.names().map((n) => reify(n, src.get(n), true, src.computed) || [])[Symbol.iterator](); }
     forEach(cb, thisArg = undefined) {
       for (const [k, v] of this.entries()) apply(cb, thisArg, [v, k, this]);
     }
@@ -1207,6 +1219,9 @@
   // against the property), or a string parsed as the property.
   const valueText = (name, which, v, what) => {
     if (v instanceof CSSStyleValue) {
+      if (associatedProperties.has(v) && associatedProperties.get(v) !== name) {
+        throw new TypeError(`Failed to execute '${what}' on 'StylePropertyMap': Value belongs to another property`);
+      }
       if (which === 2) {
         if (!(v instanceof CSSUnparsedValue)) throw new TypeError(`Failed to execute '${what}' on 'StylePropertyMap': Invalid type for property`);
         return v.toString();
@@ -1224,6 +1239,9 @@
       }
       // A shorthand takes a typed value only where it stands for the whole shorthand (one component).
       if (typed && which === 1) {
+        if (v instanceof CSSNumericValue && /^border(?:-(?:top|right|bottom|left|(?:block|inline)(?:-(?:start|end))?))?$/.test(name)) {
+          throw new TypeError(`Failed to execute '${what}' on 'StylePropertyMap': Invalid type for property`);
+        }
         const normalized = parse(name, text);
         if (normalized === null || splitSpaces(normalized).length > 1) throw new TypeError(`Failed to execute '${what}' on 'StylePropertyMap': Invalid type for property`);
         return text;
@@ -1315,10 +1333,11 @@
   };
   const attributeStyleMap = (el) => declarationMap(declOf(el));
   // `element.computedStyleMap()`: the element's computed values (`getComputedStyle`).
-  const RESOLVED = /^((min-|max-)?(width|height|inline-size|block-size)|(margin|padding|inset)(-(top|right|bottom|left|block|inline|block-start|block-end|inline-start|inline-end))?|top|right|bottom|left)$/;
+  const RESOLVED = /^((min-|max-)?(width|height|inline-size|block-size)|(margin|padding|inset)(-(top|right|bottom|left|block|inline|block-start|block-end|inline-start|inline-end))?|top|right|bottom|left|transform)$/;
   const computedStyleMap = (el, computedValue) => {
     const cs = () => getComputedStyle(el);
     return new StylePropertyMapReadOnly(ILLEGAL, {
+      computed: true,
       // Computed values: for the properties whose getComputedStyle value is a resolved (used) one,
       // the style engine's computed value; getComputedStyle's for the rest.
       get: (name) => (RESOLVED.test(name) ? computedValue(name) : null) ?? cs().getPropertyValue(name),

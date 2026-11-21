@@ -756,14 +756,14 @@ pub fn substitute_references_if_needed_and_apply(
     }
 
     let url_data = &value.url_data;
-    let substitution = SubstitutionReplacementContext::new(
+    let (substitution, viewport_dependent) = context.track_viewport_use(|| SubstitutionReplacementContext::new(
         Some(PropertyIdRef::from(name)),
         &context.builder.substitution_functions,
         stylist,
         context,
         attribute_tracker,
     )
-    .substitute_variable_value(value, None);
+    .substitute_variable_value(value, None));
 
     let Ok(substitution) = substitution else {
         if is_var {
@@ -832,7 +832,7 @@ pub fn substitute_references_if_needed_and_apply(
 
     match kind {
         SubstitutionFunctionKind::Var => {
-            let value = match substitution.into_value(
+            let mut value = match substitution.into_value(
                 url_data,
                 registration,
                 context,
@@ -844,6 +844,7 @@ pub fn substitute_references_if_needed_and_apply(
                     return;
                 },
             };
+            value.viewport_dependent |= viewport_dependent;
             context
                 .builder
                 .substitution_functions
@@ -862,7 +863,7 @@ pub fn substitute_references_if_needed_and_apply(
                 .substitution_functions
                 .insert_attr(name, value);
         },
-        SubstitutionFunctionKind::Env => unreachable!("Kind cannot be env."),
+        SubstitutionFunctionKind::Env | SubstitutionFunctionKind::If => unreachable!("Only var and attr populate the substitution map."),
     }
 }
 

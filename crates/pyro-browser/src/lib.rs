@@ -522,6 +522,12 @@ pub struct NavigationError {
 }
 
 impl Frame {
+    /// The document providing the navigation's client referrer; a srcdoc
+    /// document obtains it from its nearest non-srcdoc container document.
+    pub(crate) fn navigation_referrer(&self) -> Option<String> {
+        self.page_dom.as_ref()?.client_referrer().map(Into::into)
+    }
+
     /// Field-wise equality by identity (realm ids, shared `Rc`s), without cloning.
     pub(crate) fn same_as(&self, other: &Frame) -> bool {
         self.id == other.id
@@ -567,6 +573,8 @@ pub struct DocumentState {
     pub main_frame: Frame,
     pub nav: Rc<PageNav>,
     pub(crate) pending_loader: Option<LoaderId>,
+    /// Container attribute processing queued before its navigation has a loader.
+    pub(crate) pending_frame_attributes: usize,
     pub(crate) pending_cancel: Option<ResourceCancellation>,
     /// The loader and URL of `pending_loader` when the frame's scripts
     /// started it, which `document.open()` stops (HTML "stop loading").
@@ -734,8 +742,8 @@ impl Page {
             // (Its animated elements keyed, its animations kept for the renderer.)
             // pyro: at the frame document's own base (its `<base href>`), as the top document's
             // capture takes it (`render_base_url`).
-            let frame_base = if base_url.is_empty() { url } else { base_url };
-            let base = page_dom.render_base_url(&frame_base);
+            let frame_base = if base_url.is_empty() { &url } else { &base_url };
+            let base = page_dom.render_base_url(frame_base);
             // pyro: with its own frames' table (set before, deeper first), which its markup names.
             let frames = page_dom.dom.try_borrow().map(|dom| dom.frame_table(page_dom.document())).unwrap_or_default();
             let start = transitions.len();
@@ -743,6 +751,7 @@ impl Page {
             let (snapshot, animations) = page_dom.render_snapshot_frame(&base, &transitions[start..]);
             let document = pyro_dom::FrameDocument {
                 html: snapshot.html,
+                document_url: (url != base).then_some(url),
                 url: base,
                 scroll: (snapshot.scroll_x, snapshot.scroll_y),
                 client,
@@ -877,7 +886,6 @@ impl Browser {
         let pages: Vec<_> = self.pages.iter().filter(|p| !Self::page_idle(p)).map(|p| p.id).collect();
         for id in pages {
             let Some(host) = self.page(id).map(|p| p.frames.clone()) else { continue };
-            self.apply_same_document_url(id);
             self.sync_root(id);
             // Resource events are queued per page; one drain covers every frame.
             self.drain_dom_resources(id.into());
@@ -886,14 +894,7 @@ impl Browser {
                     bindings.after_task();
                 }
                 if key.child.is_some() {
-                    if let Some(mut d) = self.doc_mut(key) {
-                        if let Some(url) = d.nav.take_pending_frame_url() {
-                            if !matches!(d.main_frame.url.as_str(), "about:blank" | "about:srcdoc") {
-                                d.main_frame.base_url = url.clone();
-                            }
-                            d.main_frame.url = url;
-                        }
-                    }
+                    self.apply_same_document_url(key);
                 }
             }
             host.drain_retired();
@@ -981,6 +982,7 @@ impl BrowserThread {
         engine.register::<pyro_webapi::performance::PerformanceMark>();
         engine.register::<pyro_webapi::performance::PerformanceMeasure>();
         engine.register::<pyro_webapi::performance::PerformanceResourceTiming>();
+        engine.register::<pyro_webapi::server_timing::PerformanceServerTiming>();
         engine.register::<pyro_webapi::performance::PerformanceNavigationTiming>();
         engine.register::<nav::PerformanceTiming>();
         engine.register::<nav::PerformanceNavigation>();
@@ -1597,6 +1599,7 @@ impl Browser {
             document: DocumentState {
                 main_frame: frame,
                 pending_loader: None,
+                pending_frame_attributes: 0,
                 pending_cancel: None,
                 pending_script: None,
                 pending_planned: None,

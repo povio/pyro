@@ -1,3 +1,78 @@
+[column-rule-inset]
+sub_properties = ["column-rule-inset-cap-start", "column-rule-inset-cap-end", "column-rule-inset-junction-start", "column-rule-inset-junction-end"]
+spec = "https://drafts.csswg.org/css-gaps-1/#inset"
+kind = "inset_quad"
+
+[column-rule-inset-cap]
+sub_properties = ["column-rule-inset-cap-start", "column-rule-inset-cap-end"]
+spec = "https://drafts.csswg.org/css-gaps-1/#inset"
+kind = "two_properties"
+
+[column-rule-inset-junction]
+sub_properties = ["column-rule-inset-junction-start", "column-rule-inset-junction-end"]
+spec = "https://drafts.csswg.org/css-gaps-1/#inset"
+kind = "two_properties"
+
+[column-rule-inset-start]
+sub_properties = ["column-rule-inset-cap-start", "column-rule-inset-junction-start"]
+spec = "https://drafts.csswg.org/css-gaps-1/#inset"
+kind = "inset_single"
+
+[column-rule-inset-end]
+sub_properties = ["column-rule-inset-cap-end", "column-rule-inset-junction-end"]
+spec = "https://drafts.csswg.org/css-gaps-1/#inset"
+kind = "inset_single"
+
+[row-rule-inset]
+sub_properties = ["row-rule-inset-cap-start", "row-rule-inset-cap-end", "row-rule-inset-junction-start", "row-rule-inset-junction-end"]
+spec = "https://drafts.csswg.org/css-gaps-1/#inset"
+kind = "inset_quad"
+
+[row-rule-inset-cap]
+sub_properties = ["row-rule-inset-cap-start", "row-rule-inset-cap-end"]
+spec = "https://drafts.csswg.org/css-gaps-1/#inset"
+kind = "two_properties"
+
+[row-rule-inset-junction]
+sub_properties = ["row-rule-inset-junction-start", "row-rule-inset-junction-end"]
+spec = "https://drafts.csswg.org/css-gaps-1/#inset"
+kind = "two_properties"
+
+[row-rule-inset-start]
+sub_properties = ["row-rule-inset-cap-start", "row-rule-inset-junction-start"]
+spec = "https://drafts.csswg.org/css-gaps-1/#inset"
+kind = "inset_single"
+
+[row-rule-inset-end]
+sub_properties = ["row-rule-inset-cap-end", "row-rule-inset-junction-end"]
+spec = "https://drafts.csswg.org/css-gaps-1/#inset"
+kind = "inset_single"
+
+[rule-inset]
+sub_properties = ["column-rule-inset-cap-start", "column-rule-inset-cap-end", "column-rule-inset-junction-start", "column-rule-inset-junction-end", "row-rule-inset-cap-start", "row-rule-inset-cap-end", "row-rule-inset-junction-start", "row-rule-inset-junction-end"]
+spec = "https://drafts.csswg.org/css-gaps-1/#inset"
+kind = "inset_quad"
+
+[rule-inset-cap]
+sub_properties = ["column-rule-inset-cap-start", "column-rule-inset-cap-end", "row-rule-inset-cap-start", "row-rule-inset-cap-end"]
+spec = "https://drafts.csswg.org/css-gaps-1/#inset"
+kind = "inset_pair"
+
+[rule-inset-junction]
+sub_properties = ["column-rule-inset-junction-start", "column-rule-inset-junction-end", "row-rule-inset-junction-start", "row-rule-inset-junction-end"]
+spec = "https://drafts.csswg.org/css-gaps-1/#inset"
+kind = "inset_pair"
+
+[rule-inset-start]
+sub_properties = ["column-rule-inset-cap-start", "column-rule-inset-junction-start", "row-rule-inset-cap-start", "row-rule-inset-junction-start"]
+spec = "https://drafts.csswg.org/css-gaps-1/#inset"
+kind = "inset_single"
+
+[rule-inset-end]
+sub_properties = ["column-rule-inset-cap-end", "column-rule-inset-junction-end", "row-rule-inset-cap-end", "row-rule-inset-junction-end"]
+spec = "https://drafts.csswg.org/css-gaps-1/#inset"
+kind = "inset_single"
+
 [margin]
 flags = "SCROLL_LINKED_EFFECTIVE"
 sub_properties = ["margin-top", "margin-right", "margin-bottom", "margin-left"]
@@ -381,7 +456,7 @@ sub_properties = ["background-position-x", "background-position-y"]
 spec = "https://drafts.csswg.org/css-backgrounds-4/#the-background-position"
 
 [mask]
-sub_properties = ["mask-mode", "mask-repeat", "mask-clip", "mask-origin", "mask-composite", "mask-position-x", "mask-position-y", "mask-size", "mask-image"]
+sub_properties = ["mask-mode", "mask-repeat", "mask-clip", "mask-origin", "mask-composite", "mask-position-x", "mask-position-y", "mask-size", "mask-image", "mask-border-mode", "mask-border-outset", "mask-border-repeat", "mask-border-slice", "mask-border-source", "mask-border-width"]
 spec = "https://drafts.fxtf.org/css-masking/#propdef-mask"
 extra_prefixes = ["webkit"]
 servo_pref = "layout.css.masking.enabled"
@@ -470,9 +545,51 @@ spec = "https://drafts.csswg.org/css-multicol/#propdef-columns"
 servo_pref = "layout.css.columns.enabled"
 
 [column-rule]
+kind = "gap_rule"
 sub_properties = ["column-rule-width", "column-rule-style", "column-rule-color"]
 spec = "https://drafts.csswg.org/css-multicol/#propdef-column-rule"
-derive_serialize = true
+
+[row-rule]
+sub_properties = ["row-rule-width", "row-rule-style", "row-rule-color"]
+engine = "servo"
+spec = "https://drafts.csswg.org/css-gaps-1/#propdef-row-rule"
+kind = "gap_rule"
+
+[rule-break]
+sub_properties = ["column-rule-break", "row-rule-break"]
+engine = "servo"
+spec = "https://drafts.csswg.org/css-gaps-1/#propdef-rule-break"
+kind = "mirrored"
+
+[rule-visibility-items]
+sub_properties = ["column-rule-visibility-items", "row-rule-visibility-items"]
+engine = "servo"
+spec = "https://drafts.csswg.org/css-gaps-1/#propdef-rule-visibility-items"
+kind = "mirrored"
+
+[rule-color]
+sub_properties = ["column-rule-color", "row-rule-color"]
+engine = "servo"
+spec = "https://drafts.csswg.org/css-gaps-1/#propdef-rule-color"
+kind = "mirrored"
+
+[rule-style]
+sub_properties = ["column-rule-style", "row-rule-style"]
+engine = "servo"
+spec = "https://drafts.csswg.org/css-gaps-1/#propdef-rule-style"
+kind = "mirrored"
+
+[rule-width]
+sub_properties = ["column-rule-width", "row-rule-width"]
+engine = "servo"
+spec = "https://drafts.csswg.org/css-gaps-1/#propdef-rule-width"
+kind = "mirrored"
+
+[rule]
+sub_properties = ["column-rule-width", "column-rule-style", "column-rule-color", "row-rule-width", "row-rule-style", "row-rule-color"]
+engine = "servo"
+spec = "https://drafts.csswg.org/css-gaps-1/#propdef-rule"
+kind = "mirrored_border"
 
 [text-decoration]
 sub_properties = ["text-decoration-color", "text-decoration-line", "text-decoration-style", "text-decoration-thickness"]

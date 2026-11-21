@@ -23,6 +23,7 @@
   const TypeErrorC = TypeError;
   const RangeErrorC = RangeError;
   const PromiseC = Promise;
+  const WeakRefC = WeakRef;
   const F32 = Float32Array;
   const ArrayBufferC = ArrayBuffer;
   const detachedOf = (Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, 'detached') || {}).get;
@@ -33,7 +34,7 @@
   const getOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
   const queueMicrotaskC = queueMicrotask;
   const reportErrorC = typeof reportError === 'function' ? reportError : () => {};
-  const { sin, exp, pow, floor, ceil, min, max, PI, abs } = Math;
+  const { sin, cos, asin, acos, fround, exp, pow, floor, ceil, min, max, PI, abs } = Math;
   // Captured now: page fake timers installed later do not stall audio.
   const setTimer = setTimeout;
   const perf = performance;
@@ -192,12 +193,7 @@
     set value(v) {
       const p = paramOf(this);
       const value = finite(v, 'set the \'value\' property on', 'AudioParam');
-      p.value = Math.fround(value);
-      // Setting `value` is setValueAtTime(value, currentTime).
-      const t = ctxOf(p.ctx).time();
-      const at = p.events.findIndex((e) => e.type === SET && e.time === t);
-      if (at >= 0) p.events[at].value = value;
-      else if (p.events.length) insertEvent(p, { type: SET, time: t, value });
+      setParamValue(p, value, ctxOf(p.ctx).time());
     }
     get defaultValue() { return paramOf(this).defaultValue; }
     get minValue() { return paramOf(this).minValue; }
@@ -283,6 +279,24 @@
   }
   webidl(AudioParam, 'AudioParam');
 
+  function checkValueAtTime(p, t) {
+    if (p.events.some(e => e.type === CURVE && e.time <= t && t < e.time + e.duration)) {
+      throw new DE('The current time overlaps an automation curve.', 'NotSupportedError');
+    }
+  }
+  function setParamValue(p, value, t) {
+    // Setting value is equivalent to inserting a setValueAtTime at currentTime.
+    checkValueAtTime(p, t);
+    const at = p.events.findIndex(e => e.type === SET && e.time === t);
+    if (at >= 0) p.events[at].value = value;
+    else if (p.events.length) insertEvent(p, {type: SET, time: t, value});
+    p.value = Math.fround(value);
+  }
+  function nodeParam(n, ...options) {
+    const param = new AudioParam(secret, n.ctx, ...options);
+    (n.audioParams ??= []).push(params.get(param));
+    return param;
+  }
   function time(v, method) {
     const t = finite(v, 'execute', `${method}' on 'AudioParam`, 'double');
     if (t < 0) throw new RangeErrorC(`Failed to execute '${method}' on 'AudioParam': Time must be a finite non-negative number: ${t}`);
@@ -377,7 +391,9 @@
     }
     for (let i = 0; i < QUANTUM; i++) {
       const v = out[i];
-      if (v < p.minValue) out[i] = p.minValue; else if (v > p.maxValue) out[i] = p.maxValue;
+      if (v !== v) out[i] = p.defaultValue;
+      else if (v < p.minValue) out[i] = p.minValue;
+      else if (v > p.maxValue) out[i] = p.maxValue;
     }
     return out;
   }
@@ -435,12 +451,24 @@
     return context;
   }
   // The output of `node` (state) for quantum q at frame f0.
-  function pull(n, q, f0) {
+  function pull(n, q, f0, output = 0) {
+    const bus = renderNode(n, q, f0);
+    // A splitter exposes each discrete input channel as its own mono output port.
+    return n.splitChannels ? (bus[output] ? [bus[output]] : silentBus()) : bus;
+  }
+  function renderNode(n, q, f0) {
     if (n.q === q) return n.out;
     if (n.busy) return silentBus();
     n.busy = true;
     try {
+      const track = ctxOf(n.ctx).trackConvolverActivity;
+      if (track) n.activeInput = false;
       n.out = n.process(f0, q);
+      if (track) {
+        // A scheduled source can be active even when it outputs zero. A
+        // processor may also be emitting its own tail after its inputs end.
+        n.active = n.activeInput || n.processingFrame === f0 || n.out.some(ch => ch.some(v => v !== 0));
+      }
     } finally {
       n.busy = false;
     }
@@ -449,10 +477,11 @@
   }
   // Input 0 of `n` for the quantum, mixed to its computed channel count;
   // null without connections.
-  function input(n, q, f0) {
-    const sources = n.inputs;
+  function input(n, q, f0, port = 0) {
+    const sources = n.numberOfInputs > 1 ? n.inputs.filter(s => s.input === port) : n.inputs;
     if (!sources.length) return null;
-    const buses = sources.map((s) => pull(s.node, q, f0));
+    const buses = sources.map((s) => pull(s.node, q, f0, s.output));
+    if (ctxOf(n.ctx).trackConvolverActivity && sources.some(s => s.node.q === q && s.node.active)) n.activeInput = true;
     let channels = 0;
     for (const b of buses) channels = max(channels, b.length);
     if (n.mode === 'clamped-max') channels = min(channels, n.channelCount);
@@ -491,6 +520,9 @@
       const n = nodeOf(this);
       const mode = `${v}`;
       if (mode !== 'max' && mode !== 'clamped-max' && mode !== 'explicit') return;
+      if (mode === 'max' && n.disallowMaxMode) {
+        throw new DE('This node supports only explicit or clamped-max channel count.', 'NotSupportedError');
+      }
       if (n.fixedMode && mode !== n.mode) {
         throw new DE(`Failed to set the 'channelCountMode' property on 'AudioNode': ChannelCountMode cannot be changed from '${n.mode}' to '${mode}'`, 'InvalidStateError');
       }
@@ -500,7 +532,9 @@
     set channelInterpretation(v) {
       const n = nodeOf(this);
       const interp = `${v}`;
-      if (interp === 'speakers' || interp === 'discrete') n.interp = interp;
+      if (interp !== 'speakers' && interp !== 'discrete') return;
+      if (n.fixedInterpretation && interp !== n.interp) throw new DE('The channel interpretation is fixed.', 'InvalidStateError');
+      n.interp = interp;
     }
     connect(destination, output = 0, input = 0) {
       const n = nodeOf(this);
@@ -516,23 +550,25 @@
         throw new DE(`Failed to execute 'connect' on 'AudioNode': output index (${out}) exceeds number of outputs (${n.numberOfOutputs}).`, 'IndexSizeError');
       }
       if (p) {
-        if (!p.inputs.some((s) => s.node === n)) p.inputs.push({ node: n, output: out });
-        if (!n.outs.some((o) => o.param === p)) n.outs.push({ param: p, target: destination, output: out });
+        if (!p.inputs.some((s) => s.node === n && s.output === out)) p.inputs.push({ node: n, output: out });
+        if (!n.outs.some((o) => o.param === p && o.output === out)) n.outs.push({ param: p, target: destination, output: out });
         return undefined;
       }
       const inp = ulong(input);
       if (inp >= d.numberOfInputs) {
         throw new DE(`Failed to execute 'connect' on 'AudioNode': input index (${inp}) exceeds number of inputs (${d.numberOfInputs}).`, 'IndexSizeError');
       }
-      if (!d.inputs.some((s) => s.node === n)) d.inputs.push({ node: n, output: out });
-      if (!n.outs.some((o) => o.node === d)) n.outs.push({ node: d, target: destination, output: out });
+      if (!d.inputs.some(s => s.node === n && s.output === out && s.input === inp)) {
+        d.inputs.push({ node: n, output: out, input: inp });
+        n.outs.push({ node: d, target: destination, output: out, input: inp });
+      }
       return destination;
     }
     disconnect(destination, output, input) {
       const n = nodeOf(this);
       const drop = (o) => {
-        if (o.param) o.param.inputs = o.param.inputs.filter((s) => s.node !== n);
-        else o.node.inputs = o.node.inputs.filter((s) => s.node !== n);
+        if (o.param) o.param.inputs = o.param.inputs.filter((s) => s.node !== n || s.output !== o.output);
+        else o.node.inputs = o.node.inputs.filter(s => s.node !== n || s.output !== o.output || s.input !== o.input);
       };
       if (arguments.length === 0) {
         for (const o of n.outs) drop(o);
@@ -548,20 +584,23 @@
         n.outs = n.outs.filter((o) => o.output !== out);
         return;
       }
-      if (output !== undefined) {
-        const out = ulong(output);
+      if (arguments.length >= 3 && params.has(destination)) throw new TypeErrorC('The three-argument overload requires an AudioNode.');
+      const out = arguments.length >= 2 ? ulong(output) : null;
+      if (out !== null) {
         if (out >= n.numberOfOutputs) {
           throw new DE(`Failed to execute 'disconnect' on 'AudioNode': The output index provided (${out}) is outside the range [0, ${n.numberOfOutputs - 1}].`, 'IndexSizeError');
         }
       }
-      if (input !== undefined && nodes.has(destination)) {
-        const inp = ulong(input);
+      const inp = arguments.length >= 3 ? ulong(input) : null;
+      if (inp !== null && nodes.has(destination)) {
         const d = nodes.get(destination);
         if (inp >= d.numberOfInputs) {
           throw new DE(`Failed to execute 'disconnect' on 'AudioNode': The input index provided (${inp}) is outside the range [0, ${d.numberOfInputs - 1}].`, 'IndexSizeError');
         }
       }
-      const matching = n.outs.filter((o) => o.target === destination && (output === undefined || o.output === ulong(output)));
+      const matching = n.outs.filter(o => o.target === destination
+        && (out === null || o.output === out)
+        && (inp === null || o.input === inp));
       if (!matching.length) {
         throw new DE("Failed to execute 'disconnect' on 'AudioNode': the given destination is not connected.", 'InvalidAccessError');
       }
@@ -571,16 +610,35 @@
   }
   webidl(AudioNode, 'AudioNode');
 
-  // AudioNodeOptions shared by the node constructors.
-  function nodeOptions(n, options, iface) {
-    if (options === undefined || options === null) return {};
+  // WebIDL converts inherited dictionary members before derived members.
+  function readNodeOptions(options, iface) {
+    if (options == null) return {};
     if (typeof options !== 'object' && typeof options !== 'function') {
       throw new TypeErrorC(`Failed to construct '${iface}': The provided value is not of type '${iface}Options'.`);
     }
-    if (options.channelCount !== undefined) n.self.channelCount = options.channelCount;
-    if (options.channelCountMode !== undefined) n.self.channelCountMode = options.channelCountMode;
-    if (options.channelInterpretation !== undefined) n.self.channelInterpretation = options.channelInterpretation;
-    return options;
+    const result = {};
+    const count = options.channelCount;
+    if (count !== undefined) result.channelCount = ulong(count);
+    const mode = options.channelCountMode;
+    if (mode !== undefined) {
+      result.channelCountMode = `${mode}`;
+      if (!['max', 'clamped-max', 'explicit'].includes(result.channelCountMode)) throw new TypeErrorC('Invalid ChannelCountMode.');
+    }
+    const interpretation = options.channelInterpretation;
+    if (interpretation !== undefined) {
+      result.channelInterpretation = `${interpretation}`;
+      if (!['speakers', 'discrete'].includes(result.channelInterpretation)) throw new TypeErrorC('Invalid ChannelInterpretation.');
+    }
+    return result;
+  }
+  function applyNodeOptions(node, options) {
+    if (options.channelCount !== undefined) node.channelCount = options.channelCount;
+    if (options.channelCountMode !== undefined) node.channelCountMode = options.channelCountMode;
+    if (options.channelInterpretation !== undefined) node.channelInterpretation = options.channelInterpretation;
+  }
+  function nodeOptions(n, options, iface) {
+    applyNodeOptions(n.self, readNodeOptions(options, iface));
+    return options ?? {};
   }
 
   // ---- AudioDestinationNode ------------------------------------------------------
@@ -621,7 +679,7 @@
       contextArg(context, 'GainNode');
       super(secret, context, {});
       const n = nodeOf(this);
-      const gain = new AudioParam(secret, context, 1);
+      const gain = nodeParam(n, 1);
       n.gain = gain;
       const o = nodeOptions(n, options, 'GainNode');
       if (o.gain !== undefined) params.get(gain).value = Math.fround(finite(o.gain, 'construct', 'GainNode'));
@@ -636,6 +694,695 @@
     get gain() { return nodeOf(this).gain; }
   }
   webidl(GainNode, 'GainNode');
+
+  function writeEqualPower(bus, left, right, i, pan, gain) {
+    if (bus.length === 1) {
+      const angle = (pan + 1) * PI / 4;
+      left[i] = bus[0][i] * cos(angle);
+      right[i] = bus[0][i] * sin(angle);
+    } else if (pan <= 0) {
+      const angle = (pan + 1) * PI / 2;
+      left[i] = bus[0][i] + bus[1][i] * cos(angle);
+      right[i] = bus[1][i] * sin(angle);
+    } else {
+      const angle = pan * PI / 2;
+      left[i] = bus[0][i] * cos(angle);
+      right[i] = bus[1][i] + bus[0][i] * sin(angle);
+    }
+    // Distance and cone attenuation act on the stereo PCM produced by the panner.
+    if (gain !== 1) {
+      left[i] *= gain;
+      right[i] *= gain;
+    }
+  }
+
+  function pannerChannels(count) {
+    if (count < 1 || count > 2) {
+      const kind = this.spatial ? 'spatial' : 'stereo';
+      throw new DE(`A ${kind} panner accepts one or two input channels.`, 'NotSupportedError');
+    }
+    this.channelCount = count;
+  }
+
+  class StereoPannerNode extends AudioNode {
+    constructor(context, options = {}) {
+      contextArg(context, 'StereoPannerNode');
+      const settings = readNodeOptions(options, 'StereoPannerNode');
+      const initialPan = options?.pan;
+      const value = initialPan === undefined ? 0 : finite(Math.fround(initialPan), 'construct', 'StereoPannerNode');
+      super(secret, context, {
+        mode: 'clamped-max',
+        disallowMaxMode: true,
+        checkCount: pannerChannels,
+      });
+      applyNodeOptions(this, settings);
+      const n = nodeOf(this);
+      const pan = nodeParam(n, 0, -1, 1);
+      pan.value = value;
+      n.pan = pan;
+      n.process = (f0, q) => {
+        const bus = input(n, q, f0);
+        const left = new F32(QUANTUM), right = new F32(QUANTUM);
+        if (bus) {
+          const values = paramValues(params.get(pan), f0, ctxOf(context).rate, q);
+          for (let i = 0; i < QUANTUM; i++) writeEqualPower(bus, left, right, i, values[i], 1);
+        }
+        return [left, right];
+      };
+    }
+    get pan() {
+      const n = nodeOf(this);
+      if (!n.pan) throw invocation();
+      return n.pan;
+    }
+  }
+  webidl(StereoPannerNode, 'StereoPannerNode');
+
+  // Spatial AudioParams are shared by the legacy coordinate setters and the
+  // renderer. A listener belongs to its context, independently of its panners.
+  const listenerStates = new WeakMap();
+  const positionNames = ['positionX', 'positionY', 'positionZ'];
+  const orientationNames = ['orientationX', 'orientationY', 'orientationZ'];
+  const listenerOrientation = ['forwardX', 'forwardY', 'forwardZ', 'upX', 'upY', 'upZ'];
+  const listenerNames = [...positionNames, ...listenerOrientation];
+  const pannerNames = [...positionNames, ...orientationNames];
+
+  function spatialParams(ctx, names, defaults) {
+    const result = Object.create(null);
+    for (let j = 0; j < names.length; j++) result[names[j]] = new AudioParam(secret, ctx, defaults[j]);
+    return result;
+  }
+  function spatialAttributes(C, stateOf, names) {
+    for (const name of names) {
+      defineProperty(C.prototype, name, {
+        configurable: true, get() { return stateOf(this).spatial[name]; },
+      });
+    }
+  }
+  function setCoordinates(state, names, args) {
+    const values = names.map((name, i) => finite(Math.fround(args[i]), 'set', name));
+    const t = ctxOf(params.get(state.spatial[names[0]]).ctx).time();
+    for (const name of names) checkValueAtTime(params.get(state.spatial[name]), t);
+    for (let i = 0; i < names.length; i++) setParamValue(params.get(state.spatial[names[i]]), values[i], t);
+  }
+  function listenerOf(receiver) {
+    const state = listenerStates.get(receiver);
+    if (!state) throw invocation();
+    return state;
+  }
+  class AudioListener {
+    constructor(token = undefined, context) {
+      if (token !== secret) throw illegal();
+      listenerStates.set(this, {spatial: spatialParams(context, listenerNames, [0, 0, 0, 0, 0, -1, 0, 1, 0])});
+    }
+    setPosition(x, y, z) { setCoordinates(listenerOf(this), positionNames, arguments); }
+    setOrientation(x, y, z, xUp, yUp, zUp) { setCoordinates(listenerOf(this), listenerOrientation, arguments); }
+  }
+  spatialAttributes(AudioListener, listenerOf, listenerNames);
+  webidl(AudioListener, 'AudioListener');
+  function contextListener(ctx) {
+    const c = ctxOf(ctx);
+    return c.listener || (c.listener = new AudioListener(secret, ctx));
+  }
+  function pannerOf(receiver) {
+    const state = nodeOf(receiver);
+    if (!state.spatial) throw invocation();
+    return state;
+  }
+  const distanceModels = ['linear', 'inverse', 'exponential'];
+  function distanceAttenuation(n, d) {
+    const ref = n.refDistance, rolloff = n.rolloffFactor;
+    if (n.distanceModel === 'linear') {
+      const low = min(ref, n.maxDistance), high = max(ref, n.maxDistance);
+      const fraction = low === high ? 1 : (min(max(d, low), high) - low) / (high - low);
+      return 1 - min(rolloff, 1) * fraction;
+    }
+    if (ref === 0) return 0;
+    d = max(d, ref);
+    return n.distanceModel === 'inverse' ? ref / (ref + rolloff * (d - ref)) : pow(d / ref, -rolloff);
+  }
+  function coneAttenuation(n, dx, dy, dz, d, ox, oy, oz) {
+    if (n.coneInnerAngle === 360 && n.coneOuterAngle === 360) return 1;
+    const length = hypot(ox, oy, oz);
+    if (!length) return 1;
+    const cosine = d === 0 ? 0 : -(dx * ox + dy * oy + dz * oz) / (d * length);
+    const angle = acos(max(-1, min(1, cosine))) * 180 / PI;
+    const inner = abs(n.coneInnerAngle) / 2, outer = abs(n.coneOuterAngle) / 2;
+    if (angle <= inner) return 1;
+    if (angle >= outer) return n.coneOuterGain;
+    return 1 + (n.coneOuterGain - 1) * (angle - inner) / (outer - inner);
+  }
+  function renderSpatial(n, f0, q) {
+    const left = new F32(QUANTUM), right = new F32(QUANTUM);
+    const bus = input(n, q, f0);
+    if (!bus) return [left, right];
+    const rate = ctxOf(n.ctx).rate;
+    const source = n.spatial, listener = listenerOf(contextListener(n.ctx)).spatial;
+    let stride = QUANTUM;
+    function values(param) {
+      const state = params.get(param);
+      if (state.rate === 'a-rate' && (state.events.length || state.inputs.length)) stride = 1;
+      return paramValues(state, f0, rate, q);
+    }
+    const [sx, sy, sz, ox, oy, oz] = pannerNames.map(k => values(source[k]));
+    const [lx, ly, lz, fx, fy, fz, ux, uy, uz] = listenerNames.map(k => values(listener[k]));
+    // Static and k-rate coordinates have one listener-relative position per quantum.
+    for (let i = 0; i < QUANTUM; i += stride) {
+      const dx = sx[i] - lx[i], dy = sy[i] - ly[i], dz = sz[i] - lz[i];
+      const d = hypot(dx, dy, dz);
+      // Project the source onto the listener's orthonormal right/forward axes.
+      // asin of its horizontal right component folds rear azimuths into [-90, 90].
+      const rx = fy[i] * uz[i] - fz[i] * uy[i];
+      const ry = fz[i] * ux[i] - fx[i] * uz[i];
+      const rz = fx[i] * uy[i] - fy[i] * ux[i];
+      const rightLength = hypot(rx, ry, rz), forwardLength = hypot(fx[i], fy[i], fz[i]);
+      let pan = 0;
+      if (d && rightLength && forwardLength) {
+        const side = (dx * rx + dy * ry + dz * rz) / rightLength;
+        const front = (dx * fx[i] + dy * fy[i] + dz * fz[i]) / forwardLength;
+        const horizontal = hypot(side, front);
+        if (horizontal) pan = asin(max(-1, min(1, side / horizontal))) * 2 / PI;
+      }
+      const gain = fround(distanceAttenuation(n, d) * coneAttenuation(n, dx, dy, dz, d, ox[i], oy[i], oz[i]));
+      for (let j = i; j < i + stride; j++) writeEqualPower(bus, left, right, j, pan, gain);
+    }
+    return [left, right];
+  }
+  const pannerDefaults = {coneInnerAngle: 360, coneOuterAngle: 360, coneOuterGain: 0,
+    maxDistance: 10000, refDistance: 1, rolloffFactor: 1};
+  function setPannerScalar(n, name, value) {
+    if (name === 'coneOuterGain' && (value < 0 || value > 1)) throw new DE('Cone gain is outside [0, 1].', 'InvalidStateError');
+    if ((name === 'maxDistance' && value <= 0) ||
+        ((name === 'refDistance' || name === 'rolloffFactor') && value < 0)) throw new RangeErrorC('Invalid panner distance or rolloff.');
+    n[name] = value;
+  }
+  function setPanningModel(model) {
+    if (model === 'HRTF') throw new DE('HRTF rendering is unavailable.', 'NotSupportedError');
+  }
+  class PannerNode extends AudioNode {
+    constructor(context, options = {}) {
+      contextArg(context, 'PannerNode');
+      const inherited = readNodeOptions(options, 'PannerNode');
+      const settings = Object.create(null);
+      for (const name of pannerOptionNames) {
+        const value = options?.[name];
+        if (value === undefined) continue;
+        if (name === 'panningModel' || name === 'distanceModel') {
+          const allowed = name === 'panningModel' ? ['equalpower', 'HRTF'] : distanceModels;
+          const model = `${value}`;
+          if (!allowed.includes(model)) throw new TypeErrorC('Invalid ' + name);
+          settings[name] = model;
+        } else {
+          settings[name] = finite(pannerNames.includes(name) ? Math.fround(value) : value, 'construct', 'PannerNode');
+        }
+      }
+      super(secret, context, {mode: 'clamped-max', disallowMaxMode: true, checkCount: pannerChannels,
+        ...pannerDefaults, distanceModel: 'inverse', spatial: spatialParams(context, pannerNames, [0, 0, 0, 1, 0, 0])});
+      applyNodeOptions(this, inherited);
+      const n = nodeOf(this);
+      const listener = listenerOf(contextListener(context)).spatial;
+      n.audioParams = [...pannerNames.map(k => params.get(n.spatial[k])), ...listenerNames.map(k => params.get(listener[k]))];
+      for (const name of Object.keys(settings)) {
+        if (pannerNames.includes(name)) params.get(n.spatial[name]).value = settings[name];
+        else if (name === 'panningModel') setPanningModel(settings[name]);
+        else if (name === 'distanceModel') n.distanceModel = settings[name];
+        else setPannerScalar(n, name, settings[name]);
+      }
+      n.process = (f0, q) => renderSpatial(n, f0, q);
+    }
+    get distanceModel() { return pannerOf(this).distanceModel; }
+    set distanceModel(v) {
+      const n = pannerOf(this), model = `${v}`;
+      if (distanceModels.includes(model)) n.distanceModel = model;
+    }
+    get panningModel() { pannerOf(this); return 'equalpower'; }
+    set panningModel(v) { pannerOf(this); setPanningModel(`${v}`); }
+    setPosition(x, y, z) { setCoordinates(pannerOf(this), positionNames, arguments); }
+    setOrientation(x, y, z) { setCoordinates(pannerOf(this), orientationNames, arguments); }
+  }
+  const pannerOptionNames = [...Object.keys(pannerDefaults), ...pannerNames, 'distanceModel', 'panningModel'].sort();
+  spatialAttributes(PannerNode, pannerOf, pannerNames);
+  for (const name of Object.keys(pannerDefaults)) {
+    defineProperty(PannerNode.prototype, name, {
+      configurable: true, get() { return pannerOf(this)[name]; },
+      set(v) { setPannerScalar(pannerOf(this), name, finite(v, 'set', name, 'double')); },
+    });
+  }
+  webidl(PannerNode, 'PannerNode');
+
+  // A delay in a feedback path reads the previous render quantum before its
+  // current input is pulled. Include signal connections to AudioParams when
+  // finding the path. Topology is stable between offline render suspensions.
+  function delayInCycle(delay) {
+    const ctx = ctxOf(delay.ctx);
+    if (delay.graphEpoch === ctx.graphEpoch) return delay.inCycle;
+    const pending = [delay], seen = new Set([delay]);
+    let cyclic = false;
+    function visit(connection) {
+      const source = connection.node;
+      if (source === delay) cyclic = true;
+      else if (!seen.has(source)) { seen.add(source); pending.push(source); }
+    }
+    while (pending.length && !cyclic) {
+      const node = pending.pop();
+      for (const edge of node.inputs) visit(edge);
+      if (node.audioParams) for (const p of node.audioParams) for (const edge of p.inputs) visit(edge);
+    }
+    delay.graphEpoch = ctx.graphEpoch;
+    delay.inCycle = cyclic;
+    return cyclic;
+  }
+  function writeDelay(n, q, f0) {
+    const bus = input(n, q, f0), slot = q % n.slots;
+    if (bus) n.blocks.set(slot, {q, bus});
+    else n.blocks.delete(slot);
+  }
+  function delayBlock(n, frame) {
+    if (frame < 0) return null;
+    const q = floor(frame / QUANTUM), block = n.blocks.get(q % n.slots);
+    return block?.q === q ? block.bus : null;
+  }
+  function readDelay(n, q, f0) {
+    const ctx = ctxOf(n.ctx), cyclic = delayInCycle(n);
+    if (cyclic) (ctx.delayWriters ??= new Set()).add(n);
+    else writeDelay(n, q, f0);
+    const times = paramValues(params.get(n.delayTime), f0, ctx.rate, q);
+    const positions = n.positions;
+    let channels = 1;
+    // Delay the channel layout with the samples. Where interpolation or
+    // automation touches two layouts, mix them to this quantum's output width.
+    for (let i = 0; i < QUANTUM; i++) {
+      const duration = max(cyclic ? QUANTUM : 0, fround(times[i] * ctx.rate));
+      const pos = f0 + i - duration, prev = floor(pos);
+      positions[i] = pos;
+      channels = max(channels, delayBlock(n, prev)?.length ?? 1);
+      if (prev !== pos) channels = max(channels, delayBlock(n, prev + 1)?.length ?? 1);
+    }
+    const out = Array.from({length: channels}, () => new F32(QUANTUM));
+    const converted = new Map();
+    function source(frame) {
+      const bus = delayBlock(n, frame);
+      if (!bus || bus.length === channels) return bus;
+      if (!converted.has(bus)) {
+        const normalized = Array.from({length: channels}, () => new F32(QUANTUM));
+        mix(bus, normalized, n.interp);
+        converted.set(bus, normalized);
+      }
+      return converted.get(bus);
+    }
+    for (let i = 0; i < QUANTUM; i++) {
+      const pos = positions[i], a = floor(pos), frac = pos - a;
+      const first = source(a), second = frac ? source(a + 1) : null;
+      for (let ch = 0; ch < channels; ch++) {
+        const v = first ? first[ch][a % QUANTUM] : 0;
+        out[ch][i] = frac ? v + frac * ((second ? second[ch][(a + 1) % QUANTUM] : 0) - v) : v;
+      }
+    }
+    return out;
+  }
+  class DelayNode extends AudioNode {
+    constructor(context, options = {}) {
+      contextArg(context, 'DelayNode');
+      const inherited = readNodeOptions(options, 'DelayNode');
+      const initial = options?.delayTime, delay = initial === undefined ? 0 : finite(initial, 'construct', 'DelayNode', 'double');
+      const requested = options?.maxDelayTime, limit = requested === undefined ? 1 : finite(requested, 'construct', 'DelayNode', 'double');
+      if (limit <= 0 || limit >= 180) throw new DE('Maximum delay must be greater than zero and below 180 seconds.', 'NotSupportedError');
+      super(secret, context, {});
+      applyNodeOptions(this, inherited);
+      const n = nodeOf(this);
+      n.delayTime = nodeParam(n, 0, 0, fround(limit));
+      params.get(n.delayTime).value = fround(delay);
+      // Store only the rendered part of the delay line, bounded by its maximum
+      // age. Two extra quanta cover the neighboring sample and the current write.
+      n.slots = max(1, ceil(limit * ctxOf(context).rate / QUANTUM)) + 2;
+      n.blocks = new Map();
+      n.positions = new Float64Array(QUANTUM);
+      n.process = (f0, q) => readDelay(n, q, f0);
+      (ctxOf(context).delayNodes ??= new Set()).add(new WeakRefC(n));
+    }
+    get delayTime() {
+      const n = nodeOf(this);
+      if (!n.delayTime) throw invocation();
+      return n.delayTime;
+    }
+  }
+  webidl(DelayNode, 'DelayNode');
+
+  // ---- Convolver -------------------------------------------------------------
+  const WeakConvolver = WeakRef;
+  function convolverOf(self) {
+    const n = nodeOf(self);
+    if (n.convolve === undefined) throw invocation();
+    return n;
+  }
+  // Buffer acquisition runs in the AudioBuffer's own realm so its refreshed
+  // channel views have that realm's intrinsic Float32Array prototype.
+  function localImpulseInfo(buffer) {
+    const b = buffers.get(buffer);
+    if (!b) return undefined;
+    return {rate: b.rate, length: b.length, count: b.data.length, acquire() {
+      if (b.data.some(ch => apply(arrayLength, ch, []) !== b.length)) return null;
+      b.data = b.data.map(ch => {
+        const backing = apply(arrayBufferOf, ch, []);
+        const next = transferOf ? apply(transferOf, backing, []) : structuredCloneC(backing, {transfer: [backing]});
+        return new F32(next);
+      });
+      return b.data;
+    }};
+  }
+  function impulseInfo(buffer) {
+    if (buffer == null) return null;
+    const info = localImpulseInfo(buffer) || natives.foreignImpulseInfo(buffer);
+    if (!info) throw new TypeErrorC('Expected an AudioBuffer');
+    return info;
+  }
+  function setImpulse(n, buffer, info) {
+    if (!info) {
+      n.convolve = n.impulse = null;
+      n.tail = 0;
+      return;
+    }
+    if (![1, 2, 4].includes(info.count) || info.rate !== ctxOf(n.ctx).rate) {
+      throw new DE('The impulse response requires 1, 2 or 4 channels and the context sample rate.', 'NotSupportedError');
+    }
+    const data = info.acquire();
+    n.convolve = data ? natives.makeConvolver(data, info.rate, n.normalize) : null;
+    n.impulse = buffer;
+    n.impulseLength = info.length;
+    n.tail = 0;
+  }
+  class ConvolverNode extends AudioNode {
+    constructor(context, options = undefined) {
+      contextArg(context, 'ConvolverNode');
+      const inherited = readNodeOptions(options, 'ConvolverNode');
+      const source = options?.buffer;
+      const info = impulseInfo(source);
+      const normalize = !options?.disableNormalization;
+      super(secret, context, {
+        mode: 'clamped-max', disallowMaxMode: true, normalize,
+        impulse: null, convolve: null, tail: 0, impulseLength: 0,
+        checkCount(count) {
+          if (count !== 1 && count !== 2) throw new DE('Convolver input requires 1 or 2 channels.', 'NotSupportedError');
+          this.channelCount = count;
+        },
+      });
+      const n = nodeOf(this);
+      applyNodeOptions(this, inherited);
+      const c = ctxOf(context);
+      c.trackConvolverActivity = true;
+      (c.convolverNodes ??= new Set()).add(new WeakConvolver(n));
+      if (source != null) setImpulse(n, source, info);
+      n.process = (f0, q) => {
+        if (!n.convolve) return silentBus();
+        const bus = input(n, q, f0);
+        if (!n.activeInput && n.tail === 0) return silentBus();
+        n.processingFrame = f0;
+        n.tail = n.activeInput ? n.impulseLength - 1 : max(0, n.tail - QUANTUM);
+        return n.convolve(bus ? bus[0] : new F32(QUANTUM), bus?.[1], n.interp === 'speakers');
+      };
+    }
+    get normalize() { return convolverOf(this).normalize; }
+    set normalize(value) { convolverOf(this).normalize = !!value; }
+    get buffer() { return convolverOf(this).impulse; }
+    set buffer(value) { setImpulse(convolverOf(this), value, impulseInfo(value)); }
+  }
+  webidl(ConvolverNode, 'ConvolverNode');
+
+  // ---- Recursive filters -----------------------------------------------------
+  const F64 = Float64Array;
+  const typedArrayPrototype = Object.getPrototypeOf(F32.prototype);
+  const arrayKind = getOwnPropertyDescriptor(typedArrayPrototype, Symbol.toStringTag).get;
+  const arrayBufferOf = getOwnPropertyDescriptor(typedArrayPrototype, 'buffer').get;
+  const arrayLength = getOwnPropertyDescriptor(typedArrayPrototype, 'length').get;
+  const bufferLength = getOwnPropertyDescriptor(ArrayBufferC.prototype, 'byteLength').get;
+  const resizable = getOwnPropertyDescriptor(ArrayBufferC.prototype, 'resizable')?.get;
+  const { sqrt, hypot, atan2 } = Math;
+
+  // Both nodes implement a rational transfer function B(z)/A(z). Keep input
+  // and output samples separately: a biquad's coefficients can change at each
+  // sample, while its previous samples still belong to the same channel.
+  function filterProcess(n, f0, q, update) {
+    const bus = input(n, q, f0);
+    const channels = bus || silentBus();
+    // A channel disappearing from the input remains audible for its tail.
+    // Retire it once its delay line no longer contributes to any output.
+    while (n.history.length > channels.length) {
+      const last = n.history[n.history.length - 1];
+      if (last.x.some(v => v !== 0) || last.y.some(v => v !== 0)) break;
+      n.history.pop();
+    }
+    const count = max(channels.length, n.history.length);
+    while (channels.length < count) channels.push(new F32(QUANTUM));
+    const size = max(n.a.length, n.b.length);
+    while (n.history.length < count) n.history.push({x: new F64(size), y: new F64(size)});
+    for (let i = 0; i < QUANTUM; i++) {
+      if (update) update(i);
+      const position = n.position;
+      for (let c = 0; c < count; c++) {
+        const {x, y} = n.history[c];
+        const sample = channels[c][i];
+        x[position] = sample;
+        let filtered = n.b[0] * sample;
+        for (let k = 1, previous = position; k < size; k++) {
+          if (--previous < 0) previous = size - 1;
+          if (k < n.b.length) filtered += n.b[k] * x[previous];
+          if (k < n.a.length) filtered -= n.a[k] * y[previous];
+        }
+        y[position] = filtered;
+        channels[c][i] = filtered;
+      }
+      n.position = (position + 1) % size;
+    }
+    return channels;
+  }
+
+  function polynomial(coefficients, re, im) {
+    let real = 0, imaginary = 0;
+    for (let k = coefficients.length - 1; k >= 0; k--) {
+      const nextReal = real * re - imaginary * im + coefficients[k];
+      imaginary = real * im + imaginary * re;
+      real = nextReal;
+    }
+    return [real, imaginary];
+  }
+
+  function frequencyResponse(n, frequencies, magnitudes, phases) {
+    const lengths = [frequencies, magnitudes, phases].map(a => {
+      if (apply(arrayKind, a, []) !== 'Float32Array') throw new TypeErrorC('Expected a Float32Array');
+      const buffer = apply(arrayBufferOf, a, []);
+      // The ArrayBuffer getter brand-checks the backing buffer, excluding
+      // SharedArrayBuffer even when it belongs to another realm.
+      apply(bufferLength, buffer, []);
+      if (resizable && apply(resizable, buffer, [])) throw new TypeErrorC('Expected a fixed-length ArrayBuffer');
+      return apply(arrayLength, a, []);
+    });
+    const length = lengths[0];
+    if (length !== lengths[1] || length !== lengths[2]) {
+      throw new DE('The frequency and response arrays must have the same length.', 'InvalidAccessError');
+    }
+    const rate = ctxOf(n.ctx).rate;
+    for (let i = 0; i < length; i++) {
+      const hz = frequencies[i];
+      if (!(hz >= 0 && hz <= rate / 2)) {
+        magnitudes[i] = phases[i] = NaN;
+        continue;
+      }
+      const angle = -2 * PI * hz / rate;
+      const re = cos(angle), im = sin(angle);
+      const [br, bi] = polynomial(n.b, re, im);
+      const [ar, ai] = polynomial(n.a, re, im);
+      magnitudes[i] = hypot(br, bi) / hypot(ar, ai);
+      phases[i] = atan2(bi * ar - br * ai, br * ar + bi * ai);
+    }
+  }
+
+  function filterOf(receiver, kind) {
+    const n = nodeOf(receiver);
+    if (n.filterKind !== kind) throw invocation();
+    return n;
+  }
+
+  const biquadTypes = ['lowpass', 'highpass', 'bandpass', 'lowshelf', 'highshelf', 'peaking', 'notch', 'allpass'];
+
+  // Web Audio's Audio EQ Cookbook transfer functions, normalized to a0=1.
+  // At DC, Nyquist and zero Q use the limits; a pole and a cancelling zero
+  // on the unit circle would otherwise produce a spurious singularity.
+  function biquadCoefficients(n, hz, cents, quality, gain) {
+    const f = max(0, min(1, hz * pow(2, cents / 1200) / (ctxOf(n.ctx).rate / 2)));
+    if (n.lastType === n.type && n.lastF === f && n.lastQ === quality && n.lastGain === gain) return;
+    n.lastType = n.type; n.lastF = f; n.lastQ = quality; n.lastGain = gain;
+    const t = n.type;
+    const A = pow(10, gain / 40);
+    let a0 = 1, a1 = 0, a2 = 0, b0 = 1, b1 = 0, b2 = 0;
+    if (f === 0 || f === 1) {
+      if (t === 'lowpass') b0 = f;
+      else if (t === 'highpass') b0 = 1 - f;
+      else if (t === 'bandpass') b0 = 0;
+      else if ((t === 'lowshelf' && f === 1) || (t === 'highshelf' && f === 0)) b0 = A * A;
+    } else if (t === 'highshelf' || t === 'lowshelf') {
+      const c = cos(PI * f), beta = sqrt(2 * A) * sin(PI * f);
+      const sum = A + 1, diff = A - 1;
+      const sign = t === 'highshelf' ? 1 : -1;
+      b0 = A * (sum + sign * diff * c + beta);
+      b1 = -2 * A * (sign * diff + sum * c);
+      b2 = A * (sum + sign * diff * c - beta);
+      a0 = sum - sign * diff * c + beta;
+      a1 = 2 * (sign * diff - sum * c);
+      a2 = sum - sign * diff * c - beta;
+    } else if (t === 'lowpass' || t === 'highpass') {
+      const c = cos(PI * f), alpha = sin(PI * f) / (2 * pow(10, max(-20 * Math.log10(F32_MAX), min(20 * Math.log10(F32_MAX), quality)) / 20));
+      const sign = t === 'lowpass' ? 1 : -1;
+      b0 = b2 = (1 - sign * c) / 2;
+      b1 = 2 * sign * b0;
+      a0 = 1 + alpha; a1 = -2 * c; a2 = 1 - alpha;
+    } else if (quality <= 0) {
+      if (t === 'notch') b0 = 0;
+      else if (t === 'allpass') b0 = -1;
+      else if (t === 'peaking') b0 = A * A;
+    } else {
+      const c = cos(PI * f), alpha = sin(PI * f) / (2 * quality);
+      a0 = 1 + alpha; a1 = -2 * c; a2 = 1 - alpha;
+      if (t === 'bandpass') {
+        b0 = alpha; b2 = -alpha;
+      } else if (t === 'notch') {
+        b0 = b2 = 1; b1 = a1;
+      } else if (t === 'allpass') {
+        b0 = a2; b1 = a1; b2 = a0;
+      } else {
+        a0 = 1 + alpha / A; a2 = 1 - alpha / A;
+        b0 = 1 + alpha * A; b1 = a1; b2 = 1 - alpha * A;
+      }
+    }
+    n.b[0] = b0 / a0; n.b[1] = b1 / a0; n.b[2] = b2 / a0;
+    n.a[1] = a1 / a0; n.a[2] = a2 / a0;
+  }
+
+  class BiquadFilterNode extends AudioNode {
+    constructor(context, options) {
+      contextArg(context, 'BiquadFilterNode');
+      super(secret, context, {filterKind: 'biquad', type: 'lowpass', a: [1, 0, 0], b: [0, 0, 0], history: [], position: 0});
+      const n = nodeOf(this);
+      const inherited = readNodeOptions(options, 'BiquadFilterNode');
+      const rate = ctxOf(context).rate;
+      const parameter = (name, value, lo, hi) => {
+        const param = nodeParam(n, value, lo, hi);
+        const supplied = options?.[name];
+        if (supplied !== undefined) {
+          const rounded = Math.fround(+supplied);
+          if (!Number.isFinite(rounded)) throw new TypeErrorC(`Expected a finite float for ${name}.`);
+          param.value = rounded;
+        }
+        return param;
+      };
+      n.Q = parameter('Q', 1, -F32_MAX, F32_MAX);
+      n.detune = parameter('detune', 0, -153600, 153600);
+      n.frequency = parameter('frequency', 350, 0, rate / 2);
+      n.gain = parameter('gain', 0, -F32_MAX, Math.fround(40 * Math.log10(F32_MAX)));
+      const suppliedType = options?.type;
+      if (suppliedType !== undefined) {
+        const type = `${suppliedType}`;
+        if (!biquadTypes.includes(type)) throw new TypeErrorC('Unknown BiquadFilterType');
+        n.type = type;
+      }
+      applyNodeOptions(this, inherited);
+      n.process = (f0, q) => {
+        const values = [n.frequency, n.detune, n.Q, n.gain].map(p => paramValues(params.get(p), f0, rate, q));
+        return filterProcess(n, f0, q, i => biquadCoefficients(n, values[0][i], values[1][i], values[2][i], values[3][i]));
+      };
+    }
+    get type() { return filterOf(this, 'biquad').type; }
+    set type(value) {
+      const n = filterOf(this, 'biquad'), type = String(value);
+      if (biquadTypes.includes(type)) n.type = type;
+    }
+    get Q() { return filterOf(this, 'biquad').Q; }
+    get frequency() { return filterOf(this, 'biquad').frequency; }
+    get detune() { return filterOf(this, 'biquad').detune; }
+    get gain() { return filterOf(this, 'biquad').gain; }
+    getFrequencyResponse(frequencies, magnitudes, phases) {
+      const n = filterOf(this, 'biquad');
+      const current = p => clampParam(params.get(p), p.value);
+      biquadCoefficients(n, current(n.frequency), current(n.detune), current(n.Q), current(n.gain));
+      frequencyResponse(n, frequencies, magnitudes, phases);
+    }
+  }
+  webidl(BiquadFilterNode, 'BiquadFilterNode');
+
+  function coefficients(value) {
+    const iterator = value != null && (typeof value === 'object' || typeof value === 'function')
+      ? value[Symbol.iterator] : undefined;
+    if (typeof iterator !== 'function') throw new TypeErrorC('Filter coefficients must be an iterable sequence.');
+    // Fetch the iterator method only once, including for proxies/getters.
+    return Array.from({[Symbol.iterator]: () => apply(iterator, value, [])},
+      v => finite(v, 'construct', 'IIRFilterNode', 'double'));
+  }
+  class IIRFilterNode extends AudioNode {
+    constructor(context, options, converted = undefined) {
+      contextArg(context, 'IIRFilterNode');
+      const inherited = readNodeOptions(options, 'IIRFilterNode');
+      const feedback = converted === secret ? options.feedback : coefficients(options?.feedback);
+      const feedforward = converted === secret ? options.feedforward : coefficients(options?.feedforward);
+      if (![feedback, feedforward].every(a => a.length >= 1 && a.length <= 20)) {
+        throw new DE('Filter coefficient lengths must be between 1 and 20.', 'NotSupportedError');
+      }
+      if (feedback[0] === 0 || feedforward.every(x => x === 0)) {
+        throw new DE('The first feedback coefficient and at least one feedforward coefficient must be nonzero.', 'InvalidStateError');
+      }
+      super(secret, context, {
+        filterKind: 'iir', a: feedback.map(v => v / feedback[0]), b: feedforward.map(v => v / feedback[0]), history: [], position: 0,
+      });
+      const n = nodeOf(this);
+      applyNodeOptions(this, inherited);
+      n.process = (f0, q) => filterProcess(n, f0, q);
+    }
+    getFrequencyResponse(frequencies, magnitudes, phases) {
+      frequencyResponse(filterOf(this, 'iir'), frequencies, magnitudes, phases);
+    }
+  }
+  webidl(IIRFilterNode, 'IIRFilterNode');
+
+  class ChannelSplitterNode extends AudioNode {
+    constructor(context, options = {}) {
+      contextArg(context, 'ChannelSplitterNode');
+      const inherited = readNodeOptions(options, 'ChannelSplitterNode');
+      const outputs = options?.numberOfOutputs;
+      const count = outputs === undefined ? 6 : ulong(outputs);
+      if (!count || count > MAX_CHANNELS) throw new DE('Unsupported number of splitter outputs.', 'IndexSizeError');
+      super(secret, context, {
+        numberOfOutputs: count, channelCount: count, mode: 'explicit', interp: 'discrete',
+        fixedMode: true, fixedInterpretation: true, splitChannels: true,
+        checkCount(value) {
+          if (value !== count) throw new DE('Splitter channel count must match the number of outputs.', 'InvalidStateError');
+        },
+      });
+      applyNodeOptions(this, inherited);
+      const n = nodeOf(this);
+      n.process = (f0, q) => input(n, q, f0) || [];
+    }
+  }
+  webidl(ChannelSplitterNode, 'ChannelSplitterNode');
+
+  // Each connected input is down-mixed to mono; unconnected inputs still
+  // occupy their channel in the output.
+  class ChannelMergerNode extends AudioNode {
+    constructor(context, options) {
+      contextArg(context, 'ChannelMergerNode');
+      const inherited = readNodeOptions(options, 'ChannelMergerNode');
+      const suppliedCount = options?.numberOfInputs;
+      const count = suppliedCount === undefined ? 6 : ulong(suppliedCount);
+      if (!count || count > MAX_CHANNELS) throw new DE('Unsupported number of merger inputs.', 'IndexSizeError');
+      super(secret, context, {
+        numberOfInputs: count, channelCount: 1, mode: 'explicit', fixedMode: true,
+        checkCount(value) {
+          if (value !== 1) throw new DE('A merger input has one channel.', 'InvalidStateError');
+        },
+      });
+      const n = nodeOf(this);
+      applyNodeOptions(this, inherited);
+      n.process = (f0, q) => Array.from({length: count}, (_, port) => input(n, q, f0, port)?.[0] || new F32(QUANTUM));
+    }
+  }
+  webidl(ChannelMergerNode, 'ChannelMergerNode');
 
   // ---- Scheduled sources ------------------------------------------------------
   class AudioScheduledSourceNode extends AudioNode {
@@ -685,6 +1432,7 @@
     const last = min(f0 + QUANTUM, stopAt);
     if (stopAt <= f0) { end(n); return null; }
     if (first >= f0 + QUANTUM || first >= last) return null;
+    n.processingFrame = f0;
     return [first - f0, last - f0, stopAt <= f0 + QUANTUM];
   }
 
@@ -693,8 +1441,8 @@
       contextArg(context, 'AudioBufferSourceNode');
       super(secret, context, { buffer: null, loop: false, loopStart: 0, loopEnd: 0, pos: undefined, played: 0 });
       const n = nodeOf(this);
-      n.playbackRate = new AudioParam(secret, context, 1, -F32_MAX, F32_MAX, 'k-rate', true);
-      n.detune = new AudioParam(secret, context, 0, -F32_MAX, F32_MAX, 'k-rate', true);
+      n.playbackRate = nodeParam(n, 1, -F32_MAX, F32_MAX, 'k-rate', true);
+      n.detune = nodeParam(n, 0, -F32_MAX, F32_MAX, 'k-rate', true);
       const o = nodeOptions(n, options, 'AudioBufferSourceNode');
       if (o.buffer !== undefined && o.buffer !== null) this.buffer = o.buffer;
       if (o.loop !== undefined) n.loop = !!o.loop;
@@ -811,8 +1559,8 @@
       super(secret, context, { type: 'sine', phase: 0 });
       const n = nodeOf(this);
       const nyquist = context.sampleRate / 2;
-      n.frequency = new AudioParam(secret, context, 440, -nyquist, nyquist);
-      n.detune = new AudioParam(secret, context, 0, -153600, 153600);
+      n.frequency = nodeParam(n, 440, -nyquist, nyquist);
+      n.detune = nodeParam(n, 0, -153600, 153600);
       const o = nodeOptions(n, options, 'OscillatorNode');
       if (o.type !== undefined) {
         if (o.type === 'custom') throw new DE("Failed to construct 'OscillatorNode': A PeriodicWave must be specified if the type is set to \"custom\"", 'InvalidStateError');
@@ -867,7 +1615,7 @@
       contextArg(context, 'ConstantSourceNode');
       super(secret, context, {});
       const n = nodeOf(this);
-      n.offset = new AudioParam(secret, context, 1);
+      n.offset = nodeParam(n, 1);
       const o = nodeOptions(n, options, 'ConstantSourceNode');
       if (o.offset !== undefined) params.get(n.offset).value = Math.fround(finite(o.offset, 'construct', 'ConstantSourceNode'));
       n.process = (f0, q) => {
@@ -910,6 +1658,7 @@
     get sampleRate() { return ctxOf(this).rate; }
     get currentTime() { return ctxOf(this).time(); }
     get destination() { return ctxOf(this).destination; }
+    get listener() { return contextListener(this); }
     get state() { return ctxOf(this).state; }
     createBuffer(numberOfChannels, length, sampleRate) {
       ctxOf(this);
@@ -922,7 +1671,23 @@
       return makeBuffer(rate, data);
     }
     createBufferSource() { return new AudioBufferSourceNode(this); }
+    createConvolver() { return new ConvolverNode(this); }
     createGain() { return new GainNode(this); }
+    createDelay(maxDelayTime = 1) { return new DelayNode(this, {maxDelayTime}); }
+    createPanner() { return new PannerNode(this); }
+    createStereoPanner() { return new StereoPannerNode(this); }
+    createBiquadFilter() { return new BiquadFilterNode(this); }
+    createIIRFilter(feedforward, feedback) {
+      ctxOf(this);
+      if (arguments.length < 2) throw new TypeErrorC('Two coefficient sequences are required.');
+      // Positional arguments are converted left to right; the IIR options
+      // dictionary instead enumerates feedback before feedforward.
+      const b = coefficients(feedforward);
+      const a = coefficients(feedback);
+      return new IIRFilterNode(this, {feedforward: b, feedback: a}, secret);
+    }
+    createChannelSplitter(numberOfOutputs = 6) { return new ChannelSplitterNode(this, {numberOfOutputs}); }
+    createChannelMerger(numberOfInputs = 6) { return new ChannelMergerNode(this, {numberOfInputs}); }
     createOscillator() { return new OscillatorNode(this); }
     createConstantSource() { return new ConstantSourceNode(this); }
     decodeAudioData(audioData, successCallback, errorCallback) {
@@ -1153,6 +1918,7 @@
   // Renders quanta until the end or a suspend point.
   function render(c) {
     setState(c, 'running');
+    c.graphEpoch = (c.graphEpoch ?? 0) + 1;
     const dest = nodes.get(c.destination);
     while (c.frames < c.length) {
       const pause = c.suspends.get(c.frames);
@@ -1170,6 +1936,23 @@
       for (let ch = 0; ch < c.channels; ch++) c.output[ch].set(count === QUANTUM ? bus[ch] : bus[ch].subarray(0, count), f0);
       // Started sources nothing pulled still play (and end) on time.
       for (const n of c.sources) if (n.q !== q) pull(n, q, f0);
+      // Preserve a fed convolver's history even while its output is disconnected.
+      if (c.convolverNodes) for (const ref of c.convolverNodes) {
+        const n = ref.deref();
+        if (!n) c.convolverNodes.delete(ref);
+        else if (n.convolve && n.q !== q && (n.inputs.length || n.tail)) pull(n, q, f0);
+      }
+      // A fed delay keeps the signal it will output even while downstream is
+      // disconnected. A weak registration does not keep an unused node alive.
+      if (c.delayNodes) for (const ref of c.delayNodes) {
+        const n = ref.deref();
+        if (!n) c.delayNodes.delete(ref);
+        else if (n.q !== q && (n.inputs.length || n.blocks.size)) pull(n, q, f0);
+      }
+      if (c.delayWriters?.size) {
+        for (const n of c.delayWriters) writeDelay(n, q, f0);
+        c.delayWriters.clear();
+      }
       c.frames += QUANTUM;
     }
     c.frames = c.length;
@@ -1199,8 +1982,8 @@
   webidl(OfflineAudioCompletionEvent, 'OfflineAudioCompletionEvent');
 
   return {
-    BaseAudioContext, AudioContext, OfflineAudioContext, AudioBuffer, AudioParam, AudioNode,
+    localImpulseInfo, BaseAudioContext, AudioContext, OfflineAudioContext, AudioBuffer, AudioParam, AudioNode,
     AudioDestinationNode, AudioScheduledSourceNode, AudioBufferSourceNode, OscillatorNode,
-    ConstantSourceNode, GainNode, OfflineAudioCompletionEvent,
+    ConstantSourceNode, GainNode, DelayNode, ConvolverNode, AudioListener, PannerNode, StereoPannerNode, BiquadFilterNode, IIRFilterNode, ChannelMergerNode, ChannelSplitterNode, OfflineAudioCompletionEvent,
   };
 })

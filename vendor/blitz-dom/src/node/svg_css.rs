@@ -2845,15 +2845,12 @@ fn shape_element(shape: &BasicShape, reference: Rect) -> Option<String> {
             if polygon.coordinates.is_empty() {
                 return None;
             }
-            let points: Vec<String> = polygon
-                .coordinates
-                .iter()
-                .map(|point| format!("{},{}", num(ox + lp(&point.0, w)), num(oy + lp(&point.1, h))))
-                .collect();
+            let path = crate::shape_path::polygon_path(polygon.coordinates.iter().map(|coord|
+                kurbo::Point::new(ox + lp(&coord.0, w), oy + lp(&coord.1, h))), lp(&polygon.round.0, 0.0));
             let evenodd = matches!(polygon.fill, style::values::generics::basic_shape::FillRule::Evenodd);
             format!(
-                "<polygon points=\"{}\"{} />",
-                points.join(" "),
+                "<path d=\"{}\"{} />",
+                path.to_svg(),
                 if evenodd { " clip-rule=\"evenodd\"" } else { "" }
             )
         }

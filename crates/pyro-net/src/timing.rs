@@ -49,6 +49,9 @@ pub struct NetTiming {
     /// the Timing-Allow-Origin check: only the fetch's start and end may be
     /// exposed (Fetch "TAO check").
     pub timing_allow_failed: bool,
+    /// A TAO check ran for the requesting origin. A response with no
+    /// requester or no HTTP timing observations does not grant access.
+    pub timing_allow_checked: bool,
 }
 
 /// The phases of opening a connection.
@@ -288,8 +291,12 @@ where
 /// request task: once a hop fails, the fetch's details stay hidden. No
 /// requesting origin (a browser-initiated navigation): nothing to check.
 pub(crate) fn note_timing_allow(url: &url::Url, headers: &http::HeaderMap, origin: Option<&str>) {
-    if origin.is_some_and(|origin| !timing_allowed(url, headers, origin)) {
-        note(|t| t.timing_allow_failed = true);
+    if let Some(origin) = origin {
+        let allowed = timing_allowed(url, headers, origin);
+        note(|t| {
+            t.timing_allow_checked = true;
+            t.timing_allow_failed |= !allowed;
+        });
     }
 }
 

@@ -87,6 +87,7 @@ pub fn is_color_property(name: &str) -> bool {
             | "border-left-color"
             | "caret-color"
             | "column-rule-color"
+            | "row-rule-color"
             | "fill"
             | "outline-color"
             | "stroke"
@@ -421,6 +422,20 @@ fn split_top_level_comma(s: &str) -> Option<(&str, &str)> {
 // ---------------------------------------------------------------------------
 // Numbers and lengths
 // ---------------------------------------------------------------------------
+
+/// A CSSOM number with six significant digits, including when rounding changes the exponent.
+pub(crate) fn serialize_css_number(value: f64) -> String {
+    if value == 0.0 || !value.is_finite() {
+        return "0".to_owned();
+    }
+    let scientific = format!("{value:.5e}");
+    let (mantissa, exponent) = scientific.split_once('e').unwrap();
+    let exponent: i32 = exponent.parse().unwrap();
+    if (-4..6).contains(&exponent) {
+        return scientific.parse::<f64>().unwrap().to_string();
+    }
+    format!("{}e{exponent:+03}", mantissa.trim_end_matches('0').trim_end_matches('.'))
+}
 
 /// Chromium-style number serialization: at most six significant digits,
 /// no trailing zeros, no exponent for the ranges CSS values use.

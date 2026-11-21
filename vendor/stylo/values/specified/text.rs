@@ -392,6 +392,30 @@ pub enum TextTransformCase {
     MathAuto,
 }
 
+/// Maps one mathematical identifier character to its italic counterpart.
+pub fn math_auto_char(c: char) -> char {
+    let codepoint = match c {
+        'A'..='Z' => c as u32 + 0x1D3F3,
+        'h' => 0x210E,
+        'a'..='z' => c as u32 + 0x1D3ED,
+        '\u{131}' => 0x1D6A4,
+        '\u{237}' => 0x1D6A5,
+        '\u{391}'..='\u{3A1}' | '\u{3A3}'..='\u{3A9}' => c as u32 + 0x1D351,
+        '\u{3B1}'..='\u{3C9}' => c as u32 + 0x1D34B,
+        '\u{3F4}' => 0x1D6F3,
+        '\u{2207}' => 0x1D6FB,
+        '\u{2202}' => 0x1D715,
+        '\u{3F5}' => 0x1D716,
+        '\u{3D1}' => 0x1D717,
+        '\u{3F0}' => 0x1D718,
+        '\u{3D5}' => 0x1D719,
+        '\u{3F1}' => 0x1D71A,
+        '\u{3D6}' => 0x1D71B,
+        _ => return c,
+    };
+    char::from_u32(codepoint).unwrap_or(c)
+}
+
 #[derive(
     Clone,
     Copy,

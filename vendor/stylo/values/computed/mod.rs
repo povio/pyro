@@ -67,9 +67,9 @@ pub use self::box_::{
     AlignmentBaseline, Appearance, BackfaceVisibility, BaselineShift, BaselineSource, BoxAlign,
     BoxCollapse, BoxDirection, BoxOrient, BoxPack, BreakBetween, BreakWithin, Clear, Contain,
     ContainIntrinsicSize, ContainerName, ContainerType, ContentVisibility, DirectionProperty,
-    Display, DominantBaseline, Float, ImageOrientation, Isolation, LineClamp, MarginTrim, Orient, ViewTransitionScope,
+    Display, DominantBaseline, Float, ImageOrientation, InterpolateSize, Isolation, LineClamp, MarginTrim, Orient, ViewTransitionScope,
     Overflow, OverflowAnchor, OverflowClipMargin, OverscrollBehavior, Perspective,
-    PositionProperty, Resize, ScrollBehavior, ScrollMarkerGroup, ScrollTargetGroup, ScrollSnapAlign, ScrollSnapAxis, ScrollSnapStop,
+    PositionProperty, Resize, ScrollAxisLock, ScrollBehavior, ScrollMarkerGroup, ScrollTargetGroup, ScrollSnapAlign, ScrollSnapAxis, ScrollSnapStop,
     ScrollSnapStrictness, ScrollSnapType, ScrollbarGutter, ScrollbarInset, TextOrientation,
     TopLayer, TouchAction, Visibility, WillChange, WritingModeProperty, Zoom,
 };
@@ -105,6 +105,9 @@ pub use self::outline::OutlineStyle;
 pub use self::page::{PageName, PageOrientation, PageSize, PageSizeOrientation, PaperSize};
 pub use self::param::LinkParameters;
 pub use self::percentage::{NonNegativePercentage, Percentage};
+
+/// The computed text inflation control.
+pub type TextAdjustment = super::generics::text::GenericTextAdjustment<NonNegativePercentage>;
 pub use self::position::{
     AnchorFunction, AnchorName, AspectRatio, BoxSizing, FrameSizing, DashedIdentAndOrTryTactic, FlexDirection,
     FlexWrap, GridAutoFlow, GridTemplateAreas, Inset, ObjectFit, Position, PositionAnchor,
@@ -232,6 +235,9 @@ pub struct Context<'a> {
     /// at all (e.g. in a media query evaluation).
     pub for_non_inherited_property: bool,
 
+    /// Whether font-relative units in the current specified value use the parent's metrics.
+    pub for_font_affecting_property: bool,
+
     /// The conditions to cache a rule node on the rule cache.
     ///
     /// FIXME(emilio): Drop the refcell.
@@ -282,6 +288,7 @@ impl<'a> Context<'a> {
             for_smil_animation: false,
             container_info: None,
             for_non_inherited_property: false,
+            for_font_affecting_property: false,
             rule_cache_conditions: RefCell::new(&mut conditions),
             scope: CascadeLevel::same_tree_author_normal(),
             included_cascade_flags: RuleCascadeFlags::empty(),
@@ -324,6 +331,7 @@ impl<'a> Context<'a> {
             for_smil_animation: false,
             container_info,
             for_non_inherited_property: false,
+            for_font_affecting_property: false,
             rule_cache_conditions: RefCell::new(&mut conditions),
             scope: CascadeLevel::same_tree_author_normal(),
             included_cascade_flags: RuleCascadeFlags::empty(),
@@ -360,6 +368,7 @@ impl<'a> Context<'a> {
             container_info: None,
             for_smil_animation: false,
             for_non_inherited_property: false,
+            for_font_affecting_property: false,
             rule_cache_conditions: RefCell::new(rule_cache_conditions),
             scope: CascadeLevel::same_tree_author_normal(),
             included_cascade_flags,
@@ -388,6 +397,7 @@ impl<'a> Context<'a> {
             container_info: None,
             for_smil_animation,
             for_non_inherited_property: false,
+            for_font_affecting_property: false,
             rule_cache_conditions: RefCell::new(rule_cache_conditions),
             scope: CascadeLevel::same_tree_author_normal(),
             included_cascade_flags: RuleCascadeFlags::empty(),
@@ -415,6 +425,7 @@ impl<'a> Context<'a> {
             container_info: None,
             for_smil_animation: false,
             for_non_inherited_property: false,
+            for_font_affecting_property: false,
             rule_cache_conditions: RefCell::new(rule_cache_conditions),
             scope: CascadeLevel::same_tree_author_normal(),
             included_cascade_flags: RuleCascadeFlags::empty(),
@@ -437,6 +448,17 @@ impl<'a> Context<'a> {
     /// Whether the style is for the root element.
     pub fn is_root_element(&self) -> bool {
         self.builder.is_root_element
+    }
+
+    /// Collect viewport dependencies for one computation while retaining the element-wide flags.
+    pub(crate) fn track_viewport_use<T>(&self, compute: impl FnOnce() -> T) -> (T, bool) {
+        let flag = ComputedValueFlags::USES_VIEWPORT_UNITS;
+        let previous = self.builder.flags() & flag;
+        self.builder.remove_flags(flag);
+        let value = compute();
+        let used = self.builder.flags().contains(flag);
+        self.builder.add_flags(previous);
+        (value, used)
     }
 
     /// Queries font metrics.

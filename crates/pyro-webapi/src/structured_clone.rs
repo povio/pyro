@@ -66,7 +66,7 @@ pub(crate) fn install(s: &Scope<'_>, page: &crate::page::PageDom, factory: pyro_
     s.global().set_atom("structuredClone", public)
 }
 
-fn realm_clone<'s>(s: &Scope<'s>) -> JsResult<pyro_js::Object<'s>> {
+pub(crate) fn realm_clone<'s>(s: &Scope<'s>) -> JsResult<pyro_js::Object<'s>> {
     let page = crate::target::page_of(s)?;
     let clone = page.structured_clones.borrow().get(&s.realm_id()).map(|p| p.get(s));
     clone
@@ -83,6 +83,12 @@ pub(crate) fn clone_value<'s>(
     options: pyro_js::Value<'s>,
 ) -> JsResult<pyro_js::Value<'s>> {
     realm_clone(s)?.call(None, &[value, options])
+}
+
+/// Clone a value for persistent storage, observing member access in graph order.
+pub(crate) fn clone_for_storage<'s>(s: &Scope<'s>, value: pyro_js::Value<'s>) -> JsResult<pyro_js::Value<'s>> {
+    let unused = s.undefined();
+    realm_clone(s)?.call(None, &[value, unused, unused, unused, unused, unused, s.boolean(true)])
 }
 
 /// [`clone_value`] that also returns the new ports of the transferred

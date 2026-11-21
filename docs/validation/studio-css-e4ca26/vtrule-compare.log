@@ -1,0 +1,30 @@
+vtrule-main-candidate 8082 page passes 5713 named passes 181469 observed names 194657 statuses {'complete:0': 7871, 'complete:2': 104, 'timeout:None': 11, 'complete:1': 95, 'hang:None': 1}
+vtrule-main-parent 8082 page passes 5711 named passes 181440 observed names 194657 statuses {'complete:0': 7871, 'complete:2': 104, 'timeout:None': 11, 'complete:1': 95, 'hang:None': 1}
+vtrule-main-stable 8082 page passes 6950 named passes 182963 observed names 194912 statuses {'complete:0': 7986, 'complete:2': 62, 'complete:1': 23, 'timeout:None': 10, 'hang:None': 1}
+vtrule-main-parent pages left only 2 right only 0
+vtrule-main-parent passes left only 29 right only 0
+vtrule-main-parent observed left only 0 right only 0
+vtrule-main-stable pages left only 278 right only 1515
+vtrule-main-stable passes left only 5899 right only 7393
+vtrule-main-stable observed left only 260 right only 515
+Losses vs parent by URL: Counter()
+vtrule-focus-candidate 179 page passes 70 named passes 1306 observed names 1471 statuses {'complete:0': 116, 'complete:2': 48, 'timeout:None': 8, 'complete:1': 7}
+vtrule-focus-parent 179 page passes 68 named passes 1277 observed names 1471 statuses {'complete:0': 116, 'complete:2': 48, 'timeout:None': 8, 'complete:1': 7}
+vtrule-focus-stable 179 page passes 118 named passes 1404 observed names 1470 statuses {'complete:0': 125, 'complete:1': 3, 'complete:2': 41, 'timeout:None': 9, 'hang:None': 1}
+vtrule-focus-parent pages left only 2 right only 0
+vtrule-focus-parent passes left only 29 right only 0
+vtrule-focus-parent observed left only 0 right only 0
+vtrule-focus-stable pages left only 4 right only 52
+vtrule-focus-stable passes left only 5 right only 103
+vtrule-focus-stable observed left only 2 right only 1
+Losses vs parent by URL: Counter()
+vtrule-supplement-candidate 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+vtrule-supplement-parent 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+vtrule-supplement-stable 41 page passes 35 named passes 619 observed names 874 statuses {'complete:0': 41}
+vtrule-supplement-parent pages left only 0 right only 0
+vtrule-supplement-parent passes left only 0 right only 0
+vtrule-supplement-parent observed left only 0 right only 0
+vtrule-supplement-stable pages left only 0 right only 8
+vtrule-supplement-stable passes left only 0 right only 42
+vtrule-supplement-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()

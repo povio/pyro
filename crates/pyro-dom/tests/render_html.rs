@@ -443,7 +443,7 @@ fn render_tree_keeps_event_handler_attributes_markup_drops() {
 }
 
 fn frame(html: &str, client: &str) -> FrameDocument {
-    FrameDocument { html: html.into(), url: "http://test/frame".into(), scroll: (0.0, 0.0), client: client.into(), frames: Default::default(), sheets: Default::default() }
+    FrameDocument { document_url: None, html: html.into(), url: "http://test/frame".into(), scroll: (0.0, 0.0), client: client.into(), frames: Default::default(), sheets: Default::default() }
 }
 
 /// Every attribute the renderer reads from the engine is the engine's: a page attribute whose

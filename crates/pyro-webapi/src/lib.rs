@@ -15,6 +15,7 @@
 //! 6. Before disposing a document's realms on navigation/page teardown:
 //!    `page.dispose()`. Per-world removal can use `lifecycle::realm_disposed`.
 
+mod task_signal;
 pub mod abort;
 mod animation_events;
 mod animation_frame;
@@ -80,9 +81,14 @@ pub mod mutation_observer;
 mod names;
 pub mod navigator_extras;
 pub mod node;
+mod positional_html;
+mod scheduler;
+mod sanitizer_options;
+mod streaming_html;
 pub mod observable;
 pub mod page;
 pub mod performance;
+pub mod server_timing;
 mod pointer_capture;
 mod popover;
 mod popup;
@@ -107,6 +113,7 @@ pub mod target;
 pub mod thread_state;
 pub mod traversal;
 pub mod url;
+mod url_pattern;
 pub mod url_search_params;
 pub mod util;
 pub mod validity;
@@ -154,6 +161,8 @@ pub use xhr::XhrLimits;
 pub fn register(engine: &pyro_js::Engine) {
     engine.set_wrapper_property_hook(target::pin_wrapper_with_properties);
     engine.register::<target::EventTarget>();
+    trusted_types::register(engine);
+    engine.register::<scheduler::WebScheduler>();
     event::register(engine);
     popup::register(engine);
     node::register(engine);
@@ -190,6 +199,7 @@ pub fn register(engine: &pyro_js::Engine) {
     engine.register::<cache_storage::StoredBody>();
     engine.register::<headers::Headers>();
     engine.register::<url::URL>();
+    engine.register::<url_pattern::URLPattern>();
     engine.register::<url_search_params::URLSearchParams>();
     engine.register::<url_search_params::ParamsIterator>();
     engine.register::<response::Response>();
@@ -325,7 +335,7 @@ pub fn adopt_window(old: &PageDom, new: &Rc<PageDom>, realm: pyro_js::RealmId) -
     // The realm's helpers (made by install.js once) and roots go along.
     for (from, to) in [
         (&old.window_holders, &new.window_holders),
-        (&old.data_view_readers, &new.data_view_readers),
+        (&old.encoding_helpers, &new.encoding_helpers),
         (&old.header_helpers, &new.header_helpers),
         (&old.url_params_helpers, &new.url_params_helpers),
         (&old.structured_clones, &new.structured_clones),
@@ -363,7 +373,7 @@ fn install_page<'s>(scope: &Scope<'s>, page: Rc<PageDom>) -> JsResult<Object<'s>
     file::install(scope, helpers.get_atom("blobParts")?)?;
     mutation_observer::install(scope, &page, helpers.get_atom("mutationOptions")?)?;
     intersection_observer::install(scope, &page, helpers.get_atom("intersection")?)?;
-    encoding::install(scope, helpers.get_atom("dataView")?)?;
+    encoding::install(scope, helpers.get_atom("encoding")?)?;
     headers::install(scope, helpers.get_atom("headers")?)?;
     url_search_params::install(scope, helpers.get_atom("urlSearchParams")?)?;
     form_data::install(scope, helpers.get_atom("formData")?)?;

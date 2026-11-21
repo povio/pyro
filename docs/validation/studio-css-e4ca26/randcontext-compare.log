@@ -1,0 +1,30 @@
+randcontext-main-candidate 8082 page passes 5660 named passes 181130 observed names 194657 statuses {'complete:0': 7871, 'complete:2': 104, 'timeout:None': 11, 'complete:1': 95, 'hang:None': 1}
+randcontext-main-parent 8082 page passes 5657 named passes 180875 observed names 194657 statuses {'complete:0': 7871, 'complete:2': 104, 'timeout:None': 11, 'complete:1': 95, 'hang:None': 1}
+randcontext-main-stable 8082 page passes 6950 named passes 182963 observed names 194912 statuses {'complete:0': 7986, 'complete:2': 62, 'complete:1': 23, 'timeout:None': 10, 'hang:None': 1}
+randcontext-main-parent pages left only 3 right only 0
+randcontext-main-parent passes left only 256 right only 1
+randcontext-main-parent observed left only 0 right only 0
+randcontext-main-stable pages left only 276 right only 1566
+randcontext-main-stable passes left only 5897 right only 7730
+randcontext-main-stable observed left only 260 right only 515
+Losses vs parent by URL: Counter({'css/css-values/random-in-animations.tentative.html': 1})
+randcontext-focus-candidate 59 page passes 42 named passes 1132 observed names 1480 statuses {'complete:0': 59}
+randcontext-focus-parent 59 page passes 39 named passes 877 observed names 1480 statuses {'complete:0': 59}
+randcontext-focus-stable 59 page passes 43 named passes 1158 observed names 1480 statuses {'complete:0': 59}
+randcontext-focus-parent pages left only 3 right only 0
+randcontext-focus-parent passes left only 256 right only 1
+randcontext-focus-parent observed left only 0 right only 0
+randcontext-focus-stable pages left only 4 right only 5
+randcontext-focus-stable passes left only 76 right only 102
+randcontext-focus-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter({'css/css-values/random-in-animations.tentative.html': 1})
+randcontext-supplement-candidate 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+randcontext-supplement-parent 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+randcontext-supplement-stable 41 page passes 35 named passes 619 observed names 874 statuses {'complete:0': 41}
+randcontext-supplement-parent pages left only 0 right only 0
+randcontext-supplement-parent passes left only 0 right only 0
+randcontext-supplement-parent observed left only 0 right only 0
+randcontext-supplement-stable pages left only 0 right only 8
+randcontext-supplement-stable passes left only 0 right only 42
+randcontext-supplement-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()

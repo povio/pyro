@@ -7,6 +7,7 @@
 
 pub mod attr;
 pub mod env;
+pub mod conditional;
 pub mod var;
 
 use crate::custom_properties::{
@@ -47,6 +48,8 @@ pub enum SubstitutionFunctionKind {
     Env,
     /// DOM attribute
     Attr,
+    /// Inline conditional value.
+    If,
 }
 
 /// Context for parsing an arbitrary substitution function.
@@ -89,6 +92,14 @@ impl ArbitraryDeclarationValue {
         context: &mut SubstitutionParserContext,
         additional_delimiters: Delimiters,
     ) -> Result<Self, ParseError> {
+        Self::parse_internal_mode::<false>(input, context, additional_delimiters)
+    }
+
+    fn parse_internal_mode<const IF_PRELUDE: bool>(
+        input: &mut Parser,
+        context: &mut SubstitutionParserContext,
+        additional_delimiters: Delimiters,
+    ) -> Result<Self, ParseError> {
         let start = num::NonZeroUsize::new(
             input.position().byte_index() - context.input_start.byte_index(),
         )
@@ -96,8 +107,11 @@ impl ArbitraryDeclarationValue {
         let mut references = References::default();
         // NOTE(emilio): Intentionally using parse_declaration_value rather than
         // parse_declaration_value_block, since that's what parse_fallback used to do.
-        let (first_token_type, last_token_type) =
-            parse_declaration_value(input, context, &mut references, additional_delimiters)?;
+        let (first_token_type, last_token_type) = if IF_PRELUDE {
+            parse_block_tokens::<true>(input, context, &mut references)?
+        } else {
+            parse_declaration_value(input, context, &mut references, additional_delimiters)?
+        };
         let end = num::NonZeroUsize::new(
             input.position().byte_index() - context.input_start.byte_index()
                 + context.missing_closing_characters.len(),
@@ -200,16 +214,29 @@ fn parse_declaration_value_block(
     context: &mut SubstitutionParserContext,
     references: &mut References,
 ) -> Result<(TokenSerializationType, TokenSerializationType), ParseError> {
+    parse_block_tokens::<false>(input, context, references)
+}
+
+fn parse_block_tokens<const IF_PRELUDE: bool>(
+    input: &mut Parser,
+    context: &mut SubstitutionParserContext,
+    references: &mut References,
+) -> Result<(TokenSerializationType, TokenSerializationType), ParseError> {
     let mut is_first = true;
     let mut first_token_type = TokenSerializationType::Nothing;
     let mut last_token_type = TokenSerializationType::Nothing;
     let mut prev_reference_index: Option<usize> = None;
     loop {
+        let state = IF_PRELUDE.then(|| input.state());
         let token_start = input.position();
         let Ok(token) = input.next_including_whitespace_and_comments() else {
             break;
         };
 
+        if IF_PRELUDE && matches!(token, Token::Colon | Token::Semicolon | Token::Comma | Token::CurlyBracketBlock | Token::Delim('!')) {
+            input.reset(&state.unwrap());
+            break;
+        }
         let prev_token_type = last_token_type;
         let serialization_type = token.serialization_type();
         last_token_type = serialization_type;
@@ -289,7 +316,13 @@ fn parse_declaration_value_block(
                     // Bubble up flags from our nested values, so we know what we might reference
                     // from the outer scope.
                     function.for_each_unparsed_value(|value| {
-                        references.flags |= value.references.flags
+                        let mut flags = value.references.flags;
+                        if matches!(function, SubstitutionFunction::If(_)) {
+                            // A registered property only depends on font metrics in conditions
+                            // that were reached and in the selected value. The graph visits those.
+                            flags.remove(ReferenceFlags::NON_CUSTOM);
+                        }
+                        references.flags |= flags;
                     });
                     prev_reference_index = Some(references.refs.len());
                     references.refs.push(SubstitutionFunctionReference {
@@ -445,6 +478,8 @@ pub enum SubstitutionFunction {
     Env(EnvFunction),
     /// An `attr()` reference.
     Attr(AttrFunction),
+    /// A conditional substitution.
+    If(conditional::IfFunction),
 }
 
 impl SubstitutionFunction {
@@ -456,6 +491,7 @@ impl SubstitutionFunction {
         context: &mut SubstitutionParserContext,
     ) -> Result<Self, ParseError> {
         Ok(match kind {
+            SubstitutionFunctionKind::If => Self::If(conditional::IfFunction::parse(input, context)?),
             SubstitutionFunctionKind::Var => Self::Var(VarFunction::parse(input, context)?),
             SubstitutionFunctionKind::Env => Self::Env(EnvFunction::parse(input, context)?),
             SubstitutionFunctionKind::Attr => Self::Attr(AttrFunction::parse(input, context)?),
@@ -466,7 +502,7 @@ impl SubstitutionFunction {
     #[inline]
     pub fn reference_flags(&self) -> ReferenceFlags {
         match self {
-            Self::Var(..) => ReferenceFlags::VAR,
+            Self::Var(..) | Self::If(..) => ReferenceFlags::VAR,
             Self::Env(..) => ReferenceFlags::ENV,
             Self::Attr(..) => ReferenceFlags::ATTR,
         }
@@ -478,6 +514,7 @@ impl SubstitutionFunction {
         context: &mut SubstitutionReplacementContext<'a, '_, '_, '_>,
     ) -> Result<Substitution<'a>, ()> {
         match self {
+            Self::If(function) => function.replace(source, context),
             Self::Var(function) => function.replace(source, context),
             Self::Env(function) => function.replace(source, context),
             Self::Attr(function) => function.replace(source, context),
@@ -491,6 +528,7 @@ impl SubstitutionFunction {
         F: FnMut(&ArbitraryDeclarationValue),
     {
         match self {
+            Self::If(function) => function.for_each_unparsed_value(f),
             Self::Var(function) => function.for_each_unparsed_value(f),
             Self::Env(function) => function.for_each_unparsed_value(f),
             Self::Attr(function) => function.for_each_unparsed_value(f),
@@ -750,6 +788,11 @@ pub struct SubstitutionReplacementContext<'a, 'b, 'c, 't> {
     pub computed_context: &'b computed::Context<'c>,
     /// Tracks the attributes queried by `attr()`.
     pub attribute_tracker: &'b mut AttributeTracker<'t>,
+    /// Records tainted inputs encountered before a substitution fails. An enclosing if()
+    /// may recover from that failure by choosing a different branch.
+    pub(crate) consulted_attr_taint: bool,
+    /// Number of random functions parsed during substitution of this declaration.
+    pub(crate) early_random_count: i32,
     /// The custom properties currently being resolved, for cycle detection.
     pub seen: SmallVec<[Name; 8]>,
 }
@@ -770,6 +813,8 @@ impl<'a, 'b, 'c, 't> SubstitutionReplacementContext<'a, 'b, 'c, 't> {
             computed_context,
             attribute_tracker,
             seen: SmallVec::new(),
+            consulted_attr_taint: false,
+            early_random_count: 0,
         }
     }
 
@@ -849,6 +894,7 @@ impl<'a, 'b, 'c, 't> SubstitutionReplacementContext<'a, 'b, 'c, 't> {
             }
 
             let substitution = reference.function.replace(source, self)?;
+            self.consulted_attr_taint |= substitution.attr_tainted;
 
             // Optimize the property: var(--...) case to avoid allocating at all.
             if reference.start == start && reference.end == end {

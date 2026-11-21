@@ -13,14 +13,47 @@
 //! test (focusable, not inert, being rendered). Only Tab and `focus()` on a
 //! `delegatesFocus` host run this code; nothing is kept between calls.
 
-use markup5ever::local_name;
+use markup5ever::{local_name, ns};
+
+use crate::error::DomResult;
+use crate::forms::parse_html_int;
 
 use crate::dom::Dom;
 use crate::node::{shadow_flags, NodeId, NodeKind, NIL};
 
 impl Dom {
-    fn tabindex_attr(&self, i: u32) -> Option<i32> {
-        self.n(i).element()?.attr_local(&local_name!("tabindex"))?.trim().parse().ok()
+    pub(crate) fn tabindex_attr(&self, i: u32) -> Option<i32> {
+        let value = self.n(i).element()?.attr_local(&local_name!("tabindex"))?;
+        i32::try_from(parse_html_int(value)?).ok()
+    }
+
+    /// HTML's tabIndex getter has tag-specific defaults even on disconnected,
+    /// disabled or hidden elements. Focusability is checked separately.
+    pub fn tab_index(&self, id: NodeId) -> DomResult<i32> {
+        let i = self.check(id)?;
+        if let Some(index) = self.tabindex_attr(i) {
+            return Ok(index);
+        }
+        let el = self.element(id)?;
+        let default_zero = if el.is_html() {
+            match &*el.name.local {
+                "a" | "area" | "button" | "frame" | "iframe" | "input" | "object" | "select" | "textarea" => true,
+                "summary" => self.is_details_summary(id),
+                _ => false,
+            }
+        } else {
+            el.name.local == local_name!("a") && (el.namespace() == &ns!(svg) || el.namespace() == &ns!(mathml))
+        };
+        Ok(if default_zero { 0 } else { -1 })
+    }
+
+    /// Whether this is the first HTML summary child of an HTML details element.
+    pub fn is_details_summary(&self, el: NodeId) -> bool {
+        let Ok(Some(parent)) = self.parent(el) else { return false };
+        self.element(parent).is_ok_and(|e| e.is_html() && e.name.local == local_name!("details"))
+            && self.element_children(parent).ok().and_then(|mut children| {
+                children.find(|&child| self.element(child).is_ok_and(|e| e.is_html() && e.name.local == local_name!("summary")))
+            }) == Some(el)
     }
 
     fn delegates_focus_idx(&self, i: u32) -> bool {

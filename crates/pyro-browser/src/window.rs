@@ -82,6 +82,10 @@ pub struct WindowData {
     sched: Scheduler<Browser>,
     nav: Rc<PageNav>,
     target: pyro_webapi::EventTargetData,
+    /// A Window owns its associated Document while the realm is reachable,
+    /// including after a child frame navigates and the Document becomes inactive.
+    /// A reused initial about:blank Window receives new WindowData at commit.
+    _associated_document: pyro_webapi::collections::NodeHold,
     /// JS timer handle -> loop timer and, for `setTimeout`, when it is due.
     timers: RefCell<HashMap<u32, (TimerId, Option<Instant>)>>,
     /// Pending `requestAnimationFrame` callbacks, in registration order, and
@@ -128,11 +132,13 @@ impl WindowData {
         let key = page.window_target().expect("document window target");
         // `Event.timeStamp` reads the clock `performance.now()` reads.
         let clock = nav.clone();
-        page.set_event_clock(Rc::new(move || clock.now_ms()));
+        page.set_event_clock(Rc::new(move |at| clock.time_at(at)));
         WindowData {
             sched,
             nav,
             target: pyro_webapi::EventTargetData::window(page, key),
+            _associated_document: pyro_webapi::collections::NodeHold::new(page, page.document())
+                .expect("live Window document"),
             timers: RefCell::new(HashMap::new()),
             animation: RefCell::new(AnimationFrame::default()),
             next_handle: Cell::new(1),

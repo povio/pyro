@@ -76,6 +76,11 @@ fn unavailable() -> JsError {
     JsError::Type("Web Animations are unavailable".into())
 }
 
+pub(crate) fn validate_event_animation<'s>(s: &Scope<'s>, value: Value<'s>, transition: bool) -> JsResult<()> {
+    call(module(s, &page_of(s)?)?, "validateEventAnimation", &[value, s.boolean(transition)])?;
+    Ok(())
+}
+
 pub(crate) fn view_runs<'s>(s: &Scope<'s>, page: &Rc<PageDom>, target: Value<'s>, runs: Value<'s>) -> JsResult<Value<'s>> {
     call(module(s, page)?, "viewRuns", &[target, runs])
 }
@@ -360,6 +365,7 @@ fn with_css_runs<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Option<Objec
                     None => s.null(),
                     Some(pyro_dom::style::PseudoElement::Before) => s.string("::before"),
                     Some(pyro_dom::style::PseudoElement::After) => s.string("::after"),
+                    Some(pyro_dom::style::PseudoElement::Marker) => s.string("::marker"),
                 },
                 match &run.timeline {
                     Some((text, start, end)) => s.array(&[s.string(text), s.string(start), s.string(end)])?.value(),

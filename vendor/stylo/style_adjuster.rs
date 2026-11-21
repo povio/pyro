@@ -921,7 +921,9 @@ impl<'a, 'b: 'a> StyleAdjuster<'a, 'b> {
             a => a,
         };
 
-        if appearance == Appearance::Menulist {
+        if appearance == Appearance::Menulist
+            || (appearance == Appearance::MenulistButton && *box_.get__moz_default_appearance() == Appearance::Menulist)
+        {
             if *self.style.get_font().get_line_height() == LineHeight::normal() {
                 return;
             }
@@ -997,26 +999,6 @@ impl<'a, 'b: 'a> StyleAdjuster<'a, 'b> {
         border.set_border_top_right_radius(BorderCornerRadius::zero());
         border.set_border_bottom_right_radius(BorderCornerRadius::zero());
         border.set_border_bottom_left_radius(BorderCornerRadius::zero());
-    }
-
-    /// pyro: `content-visibility: auto` turns on layout, style and paint containment (CSS
-    /// Contain 2 § 4.1). Every element is taken as relevant to the user: no size containment, its
-    /// contents laid out and painted. `hidden` is not supported (no containment, contents shown,
-    /// as before servo parsed the property). pyro, round 4 lane S4: `hidden` adds size containment
-    /// as well, and blitz-dom skips its contents.
-    #[cfg(feature = "servo")]
-    fn adjust_for_content_visibility(&mut self) {
-        use crate::values::specified::box_::{Contain, ContentVisibility};
-        let box_style = self.style.get_box();
-        let contain = match box_style.slow_clone_content_visibility() {
-            ContentVisibility::Auto => Contain::LAYOUT | Contain::STYLE | Contain::PAINT,
-            // pyro: `hidden` skips the element's contents (blitz-dom builds no boxes for them) and
-            // turns on size containment besides (CSS Contain 2 § 4.1).
-            ContentVisibility::Hidden => Contain::SIZE | Contain::LAYOUT | Contain::STYLE | Contain::PAINT,
-            _ => return,
-        };
-        let contain = box_style.slow_clone_contain() | contain;
-        self.style.mutate_box().set_contain(contain);
     }
 
     /// pyro: a `::scroll-marker-group` contains its layout always, and its size unless it is
@@ -1349,7 +1331,6 @@ impl<'a, 'b: 'a> StyleAdjuster<'a, 'b> {
         self.adjust_for_marker_pseudo(author_or_user_specified_properties);
         #[cfg(feature = "servo")]
         {
-            self.adjust_for_content_visibility();
             self.adjust_for_scroll_marker_group();
             self.adjust_for_author_styled_button(element, author_or_user_specified_properties);
             self.adjust_for_backface_in_3d_context(layout_parent_style);

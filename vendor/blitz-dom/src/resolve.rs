@@ -68,7 +68,11 @@ impl BaseDocument {
             device_changed || root.has_damaged_descendants() || root.damage().is_none_or(|damage| !damage.is_empty());
         // A size query is the exceptional style read which needs geometry.
         // Ordinary style reads leave construction/layout and damage untouched.
-        if self.stylist.has_container_queries() {
+        let has_queries = self.stylist.has_container_queries();
+        if !has_queries {
+            self.nodes.anchor_query_choices.lock().unwrap().clear();
+        }
+        if has_queries || self.has_queried_container_units() {
             // Style-only queries also call the size adapter, including on normal
             // containers. Inspect final styles now that traversal has released
             // element data, and only lay out real size-container dependencies.
@@ -97,8 +101,15 @@ impl BaseDocument {
             }
         } else {
             self.nodes.container_query_sizes.lock().unwrap().clear();
-            self.nodes.anchor_query_choices.lock().unwrap().clear();
         }
+    }
+
+    fn has_queried_container_units(&self) -> bool {
+        use style::computed_value_flags::ComputedValueFlags;
+        !self.nodes.container_query_sizes.lock().unwrap().is_empty()
+            && self.nodes.iter().any(|(_, node)| {
+                node.primary_styles().is_some_and(|style| style.flags.contains(ComputedValueFlags::USES_CONTAINER_UNITS))
+            })
     }
 
     /// pyro: whether an element's restyle damage reaches layout (a box changed, not only what
@@ -187,19 +198,8 @@ impl BaseDocument {
             // pyro: counters and quotes in generated content, before damage propagates.
             self.resolve_generated_content();
             timer.record_time("style");
-            if !self.stylist.has_container_queries() {
-                // pyro: container units (`cqw`, ...) query container sizes too: keep those of a
-                // document that has styles using them.
-                use style::computed_value_flags::ComputedValueFlags;
-                let mut sizes = self.nodes.container_query_sizes.lock().unwrap();
-                if !sizes.is_empty()
-                    && !self.nodes.iter().any(|(_, node)| {
-                        node.primary_styles()
-                            .is_some_and(|style| style.flags.contains(ComputedValueFlags::USES_CONTAINER_UNITS))
-                    })
-                {
-                    sizes.clear();
-                }
+            if !self.stylist.has_container_queries() && !self.has_queried_container_units() {
+                self.nodes.container_query_sizes.lock().unwrap().clear();
             }
             phase_profile::mark(0, &mut phase_t);
 
@@ -362,6 +362,7 @@ impl BaseDocument {
                 .map(|frame| frame.scroll)
                 .filter(|&(x, y)| x.is_finite() && y.is_finite() && (x, y) != (0.0, 0.0));
             if let Some(mut sub_doc) = node.subdoc_mut().map(|doc| doc.inner_mut()) {
+                sub_doc.set_media_environment(self.media_environment);
                 if sub_doc.frame_no_scrollbars != no_scrollbars {
                     sub_doc.frame_no_scrollbars = no_scrollbars;
                     sub_doc.last_layout_space = None;
@@ -373,6 +374,7 @@ impl BaseDocument {
                 sub_viewport.hidpi_scale = self.viewport.hidpi_scale;
                 sub_viewport.zoom = self.viewport.zoom;
                 sub_viewport.color_scheme = self.viewport.color_scheme;
+                sub_viewport.input = self.viewport.input;
 
                 let viewport_scale = self.viewport.scale();
                 sub_viewport.window_size =
@@ -1664,7 +1666,7 @@ impl BaseDocument {
             // 2 § 3.2, § 3.4; Taffy's `compute_scrollable_overflow_contribution` agrees). WPT
             // css-contain `contain-layout-ink-overflow-*`.
             use style::values::specified::box_::Contain;
-            let contain = style.get_box().slow_clone_contain();
+            let contain = style.get_box().used_containment();
             // pyro: paint containment alone clips as `overflow: clip` does, at its
             // `overflow-clip-margin` (below; WPT css-overflow `overflow-clip-margin-005`).
             let inline_flow = {

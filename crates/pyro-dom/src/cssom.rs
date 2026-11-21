@@ -4,15 +4,88 @@
 use cssparser::{ParseError, Parser, ToCss, Token};
 
 use crate::select;
+pub use selectors::parser::ParseRelative;
 
 /// `(prefix, url)` of the `@namespace` rules in scope; `""` is the default.
 pub type Namespaces = Vec<(String, String)>;
 
+pub use style::counter_style::DescriptorId as CounterDescriptor;
+
+#[derive(Debug, Clone)]
+pub struct CounterRule(style::counter_style::CounterStyleRule);
+
+impl PartialEq for CounterRule {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.name() == other.0.name() && self.0.descriptors() == other.0.descriptors()
+    }
+}
+
+impl Eq for CounterRule {}
+
+impl CounterRule {
+    fn with_context<T>(action: impl FnOnce(&style::parser::ParserContext) -> T) -> T {
+        use style::stylesheets::{CssRuleType, Origin};
+        let url = crate::stylo::url_data();
+        action(&style::parser::ParserContext::new(
+            Origin::Author, &url, Some(CssRuleType::CounterStyle), style_traits::ParsingMode::DEFAULT,
+            style::context::QuirksMode::NoQuirks, Default::default(), None, None, Default::default(),
+        ))
+    }
+
+    pub fn text(&self) -> String {
+        use style::shared_lock::{SharedRwLock, ToCssWithGuard};
+        self.0.to_css_string(&SharedRwLock::new().read())
+    }
+
+    pub fn name(&self) -> String { self.0.name().0.to_string() }
+
+    pub fn set_name(&mut self, value: &str) -> bool {
+        let Ok(name) = Parser::new(value).parse_entirely(style::counter_style::parse_counter_style_name_definition) else { return false };
+        if self.0.name() == &name { return false; }
+        self.0.set_name(name);
+        true
+    }
+
+    pub fn descriptor(&self, id: CounterDescriptor) -> String {
+        let mut value = String::new();
+        self.0.descriptors().get(id, &mut value).unwrap();
+        value
+    }
+
+    pub fn set_descriptor(&mut self, id: CounterDescriptor, value: &str) -> bool {
+        Self::with_context(|context| self.0.set_descriptor(id, context, &mut Parser::new(value)).unwrap_or(false))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PropertyRule {
+    pub name: String,
+    pub syntax: String,
+    pub inherits: bool,
+    pub initial_value: Option<String>,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PaletteRule {
+    pub name: String,
+    pub font_family: String,
+    pub base_palette: String,
+    pub override_colors: String,
+    pub text: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParsedRule {
+    Counter(CounterRule),
+    ViewTransition { navigation: String, types: Vec<String>, text: String },
+    Palette(PaletteRule),
+    Declarations(String),
+    Scope { start: Option<String>, end: Option<String>, rules: Vec<ParsedRule> },
+    Property(PropertyRule),
     /// A style rule: serialized selector and the block's raw text.
-    Style { selector: String, block: String },
-    /// `@media` / `@supports`: name, condition and child rules.
+    Style { selector: String, block: String, rules: Vec<ParsedRule> },
+    /// A grouping rule: at-keyword, serialized prelude and child rules.
     Group { name: String, condition: String, rules: Vec<ParsedRule> },
     /// Any other known at-rule, kept as written. `rule_type` is `CSSRule.type`.
     Other { rule_type: u16, text: String },
@@ -22,12 +95,16 @@ pub enum ParsedRule {
 /// selectors, unknown at-rules and a rule cut off before its block.
 pub fn parse_rules(text: &str, namespaces: &mut Namespaces) -> Vec<ParsedRule> {
     let mut parser = Parser::new(text);
-    parse_list(&mut parser, namespaces, true)
+    parse_list(&mut parser, namespaces, true, ParseRelative::No)
 }
 
 /// CSSOM "parse a CSS rule": the one rule `text` holds, `Err` when anything
 /// but whitespace and comments follows it (or it holds none).
 pub fn parse_one_rule(text: &str, namespaces: &mut Namespaces) -> Result<ParsedRule, ()> {
+    parse_one_rule_in_scope(text, namespaces, ParseRelative::No)
+}
+
+pub fn parse_one_rule_in_scope(text: &str, namespaces: &mut Namespaces, relative: ParseRelative) -> Result<ParsedRule, ()> {
     let mut p = Parser::new(text);
     let mut rule = None;
     loop {
@@ -36,8 +113,8 @@ pub fn parse_one_rule(text: &str, namespaces: &mut Namespaces) -> Result<ParsedR
         match token {
             Token::WhiteSpace(_) | Token::Comment(_) => continue,
             _ if rule.is_some() => return Err(()),
-            Token::AtKeyword(name) => rule = Some(parse_at_rule(&mut p, &name, namespaces).ok_or(())?),
-            token => rule = Some(parse_style_rule(&mut p, start, &token, namespaces).ok_or(())?),
+            Token::AtKeyword(name) => rule = Some(parse_at_rule(&mut p, &name, namespaces, relative).ok_or(())?),
+            token => rule = Some(parse_style_rule(&mut p, start, &token, namespaces, relative).ok_or(())?),
         }
     }
     rule.ok_or(())
@@ -52,22 +129,74 @@ pub fn normalize_selector(text: &str, namespaces: &Namespaces) -> Option<String>
     crate::stylo::select::parse(text).map(|list| list.to_css_string())
 }
 
-fn parse_list(p: &mut Parser<'_>, namespaces: &mut Namespaces, top: bool) -> Vec<ParsedRule> {
+pub fn normalize_relative_selector(text: &str, namespaces: &Namespaces, relative: ParseRelative) -> Option<String> {
+    if relative == ParseRelative::No { return normalize_selector(text, namespaces); }
+    let url = crate::stylo::url_data();
+    let namespaces = stylo_namespaces(namespaces);
+    let selector_parser = style::selector_parser::SelectorParser {
+        stylesheet_origin: style::stylesheets::Origin::Author, namespaces: &namespaces, url_data: &url, for_supports_rule: false,
+    };
+    Some(Parser::new(text).parse_entirely(|input| selectors::SelectorList::parse(&selector_parser, input, relative)).ok()?.to_css_string())
+}
+
+fn parse_list(p: &mut Parser<'_>, namespaces: &mut Namespaces, top: bool, relative: ParseRelative) -> Vec<ParsedRule> {
     let mut rules: Vec<ParsedRule> = Vec::new();
     // `@import` and `@namespace` only count before every other rule (`@layer`
     // statements aside); later ones are dropped, as browsers drop them.
     let mut past_prologue = false;
+    let mut saw_namespace = false;
     loop {
         let start = p.position();
         let Ok(token) = p.next_including_whitespace_and_comments().cloned() else { return rules };
+        if relative != ParseRelative::No && matches!(token, Token::Semicolon) { continue; }
+        if relative != ParseRelative::No && matches!(token, Token::Ident(_)) {
+            let after_name = p.state();
+            if p.expect_colon().is_ok() {
+                if !matches!(&token, Token::Ident(name) if name.starts_with("--")) {
+                    let value_start = p.state();
+                    if p.expect_curly_bracket_block().is_ok() {
+                        skip_block(p);
+                    } else {
+                        p.reset(&value_start);
+                    }
+                }
+                let end = loop {
+                    let before = p.position();
+                    match p.next_including_whitespace_and_comments() {
+                        Err(_) | Ok(Token::Semicolon) => break Some(before),
+                        Ok(Token::CurlyBracketBlock) if !matches!(&token, Token::Ident(name) if name.starts_with("--")) => break None,
+                        Ok(Token::CurlyBracketBlock | Token::Function(_) | Token::ParenthesisBlock | Token::SquareBracketBlock) => skip_block(p),
+                        _ => {},
+                    }
+                };
+                if let Some(end) = end {
+                    let declaration = p.slice(start..end);
+                    if crate::stylo::declarations::DeclarationBlock::parse(declaration).is_empty() { continue; }
+                    if let Some(ParsedRule::Declarations(text)) = rules.last_mut() {
+                        text.push_str(declaration);
+                        text.push(';');
+                    } else {
+                        rules.push(ParsedRule::Declarations(format!("{declaration};")));
+                    }
+                    continue;
+                }
+            }
+            p.reset(&after_name);
+        }
         let rule = match token {
             Token::WhiteSpace(_) | Token::Comment(_) => continue,
             Token::CDO | Token::CDC if top => continue,
-            Token::AtKeyword(name) => parse_at_rule(p, &name, namespaces),
-            token => parse_style_rule(p, start, &token, namespaces),
+            Token::AtKeyword(ref name) if (name.eq_ignore_ascii_case("namespace") && (!top || past_prologue))
+                || (name.eq_ignore_ascii_case("import") && (!top || past_prologue || saw_namespace)) => {
+                parse_prelude_and_block(p, p.position(), |body| while body.next().is_ok() {});
+                continue;
+            }
+            Token::AtKeyword(name) => parse_at_rule(p, &name, namespaces, relative),
+            token => parse_style_rule(p, start, &token, namespaces, relative),
         };
         let Some(rule) = rule else { continue };
         if top {
+            saw_namespace |= matches!(rule, ParsedRule::Other { rule_type: 10, .. });
             let prologue = match &rule {
                 ParsedRule::Other { rule_type: 3 | 10, .. } => true,
                 ParsedRule::Other { rule_type: 0, text } => text.starts_with("@layer") && text.ends_with(';'),
@@ -120,11 +249,38 @@ fn raw_block(n: &mut Parser<'_>) -> String {
     n.slice_from(start).to_owned()
 }
 
+pub fn keyframe_selector(text: &str) -> Option<String> {
+    use style::stylesheets::keyframes_rule::KeyframeSelectors;
+    use style_traits::ToCss;
+    Parser::new(text).parse_entirely(KeyframeSelectors::parse).ok().map(|selectors| selectors.to_css_string())
+}
+
+fn read_keyframe(parser: &mut Parser<'_>) -> Option<ParsedRule> {
+    let (head, body) = parse_prelude_and_block(parser, parser.position(), raw_block);
+    let selector = keyframe_selector(&head)?;
+    let declarations = crate::stylo::declarations::DeclarationBlock::keyframe(&body?).css_text();
+    Some(ParsedRule::Other { rule_type: 8, text: format!("{selector} {{{declarations}}}") })
+}
+
+pub fn parse_one_keyframe(text: &str) -> Option<ParsedRule> {
+    let mut parser = Parser::new(text);
+    let rule = read_keyframe(&mut parser)?;
+    parser.expect_exhausted().ok()?;
+    Some(rule)
+}
+
+pub fn serialize_keyframes_name(name: &str) -> String {
+    use style_traits::ToCss;
+    if name.is_empty() { return "\"\"".into(); }
+    style::values::KeyframesName::from_ident(name).to_css_string()
+}
+
 fn parse_style_rule(
     p: &mut Parser<'_>,
     start: cssparser::SourcePosition,
     first: &Token<'_>,
     namespaces: &Namespaces,
+    relative: ParseRelative,
 ) -> Option<ParsedRule> {
     match first {
         // The prelude's first token is the block: `{}` has no selector.
@@ -136,8 +292,45 @@ fn parse_style_rule(
         _ => {}
     }
     let (prelude, block) = parse_prelude_and_block(p, start, raw_block);
-    let selector = normalize_selector(&prelude, namespaces)?;
-    Some(ParsedRule::Style { selector, block: block? })
+    let selector = normalize_relative_selector(&prelude, namespaces, relative)?;
+    let mut block = block?;
+    let mut rules = Vec::new();
+    if block.contains('{') {
+        rules = parse_list(&mut Parser::new(&block), &mut namespaces.clone(), false, ParseRelative::ForNesting);
+        block.clear();
+        if let Some(ParsedRule::Declarations(text)) = rules.first_mut() {
+            block = std::mem::take(text);
+            rules.remove(0);
+        }
+    }
+    Some(ParsedRule::Style { selector, block, rules })
+}
+
+fn parse_property_rule(prelude: &str, block: &str) -> Option<ParsedRule> {
+    use style::properties_and_values::rule::{parse_property_block, PropertyRuleName};
+    use style::shared_lock::{SharedRwLock, ToCssWithGuard};
+    use style::stylesheets::{CssRuleType, Origin, UrlExtraData};
+
+    let mut name_parser = Parser::new(prelude);
+    let name = name_parser.expect_ident_cloned().ok()?;
+    name_parser.expect_exhausted().ok()?;
+    let rule_name = PropertyRuleName(style::custom_properties::parse_name(&name).ok()?.into());
+    let url = UrlExtraData(style::servo_arc::Arc::new(url::Url::parse("about:blank").ok()?));
+    let context = style::parser::ParserContext::new(
+        Origin::Author, &url, Some(CssRuleType::Property), style_traits::ParsingMode::DEFAULT,
+        style::context::QuirksMode::NoQuirks, Default::default(), None, None, Default::default(),
+    );
+    let mut input = Parser::new(block);
+    let location = input.current_source_location();
+    let rule = parse_property_block(&context, &mut input, rule_name, location).ok()?;
+    let text = rule.to_css_string(&SharedRwLock::new().read());
+    Some(ParsedRule::Property(PropertyRule {
+        name: name.to_string(),
+        syntax: rule.descriptors.syntax.as_ref()?.specified_string()?.to_owned(),
+        inherits: rule.descriptors.inherits(),
+        initial_value: rule.descriptors.initial_value.as_ref().map(|v| v.css_text().to_owned()),
+        text,
+    }))
 }
 
 fn collapse(text: &str) -> String {
@@ -145,23 +338,24 @@ fn collapse(text: &str) -> String {
 }
 
 /// An `@import` prelude with its URL serialized as CSSOM does: `url("...")`.
-fn import_url_form(prelude: &str) -> String {
+fn import_url_form(prelude: &str) -> Option<String> {
+    use style::parser::Parse;
+    use style::stylesheets::{CssRuleType, Origin};
+    use style_traits::ToCss as StyleToCss;
     let mut p = Parser::new(prelude);
-    let url = match p.next() {
-        Ok(Token::QuotedString(v)) | Ok(Token::UnquotedUrl(v)) => v.to_string(),
-        Ok(Token::Function(f)) if f.eq_ignore_ascii_case("url") => {
-            let inner: Result<String, ParseError<()>> =
-                p.parse_nested_block(|n| n.expect_string().map(|v| v.to_string()).map_err(Into::into));
-            match inner {
-                Ok(v) => v,
-                Err(_) => return prelude.to_owned(),
-            }
-        }
-        _ => return prelude.to_owned(),
+    let mut out = if let Ok(string) = p.try_parse(|input| input.expect_string_cloned()) {
+        let mut out = String::from("url(");
+        cssparser::serialize_string(&string, &mut out).ok()?;
+        out.push(')');
+        out
+    } else {
+        let url = crate::stylo::url_data();
+        let context = style::parser::ParserContext::new(
+            Origin::Author, &url, Some(CssRuleType::Import), style_traits::ParsingMode::DEFAULT,
+            style::context::QuirksMode::NoQuirks, Default::default(), None, None, Default::default(),
+        );
+        style::url::CssUrl::parse(&context, &mut p).ok()?.to_css_string()
     };
-    let mut out = String::from("url(");
-    let _ = cssparser::serialize_string(&url, &mut out);
-    out.push(')');
     // The layer and supports() parts as written, the media queries serialized.
     let (head, media) = import_split(prelude);
     let modifiers = head[head.len().min(p.position().byte_index())..].trim().to_owned();
@@ -172,7 +366,7 @@ fn import_url_form(prelude: &str) -> String {
             out.push_str(&part);
         }
     }
-    out
+    Some(out)
 }
 
 /// A `layer()` argument that names a layer: dot-separated identifiers.
@@ -226,16 +420,172 @@ pub fn import_split(prelude: &str) -> (String, String) {
 
 
 
-fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces) -> Option<ParsedRule> {
+fn stylo_namespaces(namespaces: &Namespaces) -> style::stylesheets::Namespaces {
+    let mut result = style::stylesheets::Namespaces::default();
+    for (prefix, namespace) in namespaces {
+        if prefix.is_empty() { result.default = Some(namespace.as_str().into()); }
+        else { result.prefixes.insert(prefix.as_str().into(), namespace.as_str().into()); }
+    }
+    result
+}
+
+fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces, relative: ParseRelative) -> Option<ParsedRule> {
     let lower = name.to_ascii_lowercase();
     let start = p.position();
+    if relative == ParseRelative::ForNesting && !matches!(lower.as_str(), "media" | "supports" | "container" | "layer" | "scope" | "starting-style") {
+        parse_prelude_and_block(p, start, raw_block);
+        return None;
+    }
     if matches!(lower.as_str(), "media" | "supports") {
         let mut inner = namespaces.clone();
-        let (condition, rules) = parse_prelude_and_block(p, start, |n| parse_list(n, &mut inner, false));
+        let (condition, rules) = parse_prelude_and_block(p, start, |n| parse_list(n, &mut inner, false, relative));
         let condition = if lower == "media" { serialize_media_list(&condition) } else { collapse(&condition) };
         return Some(ParsedRule::Group { name: lower, condition, rules: rules? });
     }
     let (prelude, block) = parse_prelude_and_block(p, start, raw_block);
+    if block.is_some() && matches!(lower.as_str(), "namespace" | "import") { return None; }
+    if lower == "counter-style" {
+        let name = Parser::new(&prelude).parse_entirely(style::counter_style::parse_counter_style_name_definition).ok()?;
+        let block = block?;
+        let mut input = Parser::new(&block);
+        let location = input.current_source_location();
+        return Some(ParsedRule::Counter(CounterRule(CounterRule::with_context(|context| {
+            style::counter_style::CounterStyleRule::parse_for_cssom(name, context, &mut input, location)
+        }))));
+    }
+    if lower == "view-transition" {
+        use style::shared_lock::{SharedRwLock, ToCssWithGuard};
+        use style::stylesheets::{CssRuleType, Origin, ViewTransitionRule};
+        use style_traits::ToCss as StyleToCss;
+
+        Parser::new(&prelude).expect_exhausted().ok()?;
+        let url = crate::stylo::url_data();
+        let context = style::parser::ParserContext::new(
+            Origin::Author, &url, Some(CssRuleType::ViewTransition), style_traits::ParsingMode::DEFAULT,
+            style::context::QuirksMode::NoQuirks, Default::default(), None, None, Default::default(),
+        );
+        let block = block?;
+        let mut input = Parser::new(&block);
+        let location = input.current_source_location();
+        let rule = ViewTransitionRule::parse(&context, &mut input, location);
+        return Some(ParsedRule::ViewTransition {
+            navigation: rule.descriptors.navigation.to_css_string(),
+            types: rule.descriptors.types.iter().flat_map(|types| types.iter()).map(|ident| ident.0.to_string()).collect(),
+            text: rule.to_css_string(&SharedRwLock::new().read()),
+        });
+    }
+    if lower == "font-palette-values" {
+        use style::shared_lock::{SharedRwLock, ToCssWithGuard};
+        use style::stylesheets::{CssRuleType, FontPaletteValuesRule, Origin};
+        use style_traits::ToCss as StyleToCss;
+
+        let mut input = Parser::new(&prelude);
+        let ident = input.expect_ident_cloned().ok()?;
+        input.expect_exhausted().ok()?;
+        let name = style::values::DashedIdent::from_ident(&ident).ok()?;
+        let url = crate::stylo::url_data();
+        let context = style::parser::ParserContext::new(
+            Origin::Author, &url, Some(CssRuleType::FontPaletteValues), style_traits::ParsingMode::DEFAULT,
+            style::context::QuirksMode::NoQuirks, Default::default(), None, None, Default::default(),
+        );
+        let block = block?;
+        let mut input = Parser::new(&block);
+        let location = input.current_source_location();
+        let rule = FontPaletteValuesRule::parse(&context, &mut input, name, location);
+        return Some(ParsedRule::Palette(PaletteRule {
+            name: ident.to_string(),
+            font_family: if rule.family_names.is_empty() { String::new() } else { rule.family_names.to_css_string() },
+            base_palette: rule.base_palette.as_ref().map(StyleToCss::to_css_string).unwrap_or_default(),
+            override_colors: if rule.override_colors.is_empty() { String::new() } else { rule.override_colors.to_css_string() },
+            text: rule.to_css_string(&SharedRwLock::new().read()),
+        }));
+    }
+    if lower == "property" {
+        return parse_property_rule(&prelude, &block?);
+    }
+    if lower == "scope" {
+        use selectors::parser::ParseRelative;
+        use style::stylesheets::{scope_rule::ScopeBounds, CssRuleType, Origin};
+        let url = crate::stylo::url_data();
+        let context = style::parser::ParserContext::new(
+            Origin::Author, &url, Some(CssRuleType::Scope), style_traits::ParsingMode::DEFAULT,
+            style::context::QuirksMode::NoQuirks, std::borrow::Cow::Owned(stylo_namespaces(namespaces)), None, None, Default::default(),
+        );
+        let bounds = Parser::new(&prelude).parse_entirely(|input| ScopeBounds::parse(&context, input, relative)).ok()?;
+        let rules = parse_list(&mut Parser::new(&block?), &mut namespaces.clone(), false, ParseRelative::ForScope);
+        return Some(ParsedRule::Scope { start: bounds.start.map(|s| s.to_css_string()), end: bounds.end.map(|s| s.to_css_string()), rules });
+    }
+    if lower == "container" {
+        let block = block?;
+        let conditions = container_conditions(&prelude)?;
+        let condition = conditions.into_iter().map(|(name, query)| {
+            if name.is_empty() { query } else if query.is_empty() { name } else { format!("{name} {query}") }
+        }).collect::<Vec<_>>().join(", ");
+        let rules = parse_list(&mut Parser::new(&block), &mut namespaces.clone(), false, relative);
+        return Some(ParsedRule::Group { name: lower, condition, rules });
+    }
+    if lower == "font-feature-values" {
+        use style::shared_lock::{SharedRwLock, ToCssWithGuard};
+        use style::stylesheets::{font_feature_values_rule::parse_family_name_list, CssRuleType, FontFeatureValuesRule, Origin, UrlExtraData};
+
+        let url = UrlExtraData(style::servo_arc::Arc::new(url::Url::parse("about:blank").ok()?));
+        let context = style::parser::ParserContext::new(
+            Origin::Author, &url, Some(CssRuleType::FontFeatureValues), style_traits::ParsingMode::DEFAULT,
+            style::context::QuirksMode::NoQuirks, Default::default(), None, None, Default::default(),
+        );
+        let families = Parser::new(&prelude).parse_entirely(|input| parse_family_name_list(&context, input)).ok()?;
+        let block = block?;
+        let mut input = Parser::new(&block);
+        let location = input.current_source_location();
+        let rule = FontFeatureValuesRule::parse(&context, &mut input, families, location);
+        let mut text = String::new();
+        rule.to_css(&SharedRwLock::new().read(), &mut text).ok()?;
+        return Some(ParsedRule::Other { rule_type: 14, text });
+    }
+    if lower == "layer" {
+        use style::parser::Parse;
+        use style::stylesheets::{layer_rule::LayerName, CssRuleType, Origin, UrlExtraData};
+        use style_traits::ToCss;
+
+        let url = UrlExtraData(style::servo_arc::Arc::new(url::Url::parse("about:blank").ok()?));
+        let context = style::parser::ParserContext::new(
+            Origin::Author, &url, Some(CssRuleType::LayerBlock), style_traits::ParsingMode::DEFAULT,
+            style::context::QuirksMode::NoQuirks, Default::default(), None, None, Default::default(),
+        );
+        let mut parser = Parser::new(&prelude);
+        if let Some(block) = block {
+            let condition = if parser.is_exhausted() {
+                String::new()
+            } else {
+                parser.parse_entirely(|p| LayerName::parse(&context, p)).ok()?.to_css_string()
+            };
+            let rules = parse_list(&mut Parser::new(&block), &mut namespaces.clone(), false, relative);
+            return Some(ParsedRule::Group { name: lower, condition, rules });
+        }
+        let names = parser.parse_comma_separated(|p| LayerName::parse(&context, p)).ok()?;
+        let names = names.iter().map(ToCss::to_css_string).collect::<Vec<_>>().join(", ");
+        return Some(ParsedRule::Other { rule_type: 0, text: format!("@layer {names};") });
+    }
+    if matches!(lower.as_str(), "keyframes" | "-webkit-keyframes") {
+        use style::parser::Parse;
+        use style::stylesheets::{CssRuleType, Origin, UrlExtraData};
+        use style::values::KeyframesName;
+        use style_traits::ToCss;
+
+        let block = block?;
+        let url = UrlExtraData(style::servo_arc::Arc::new(url::Url::parse("about:blank").ok()?));
+        let context = style::parser::ParserContext::new(
+            Origin::Author, &url, Some(CssRuleType::Keyframes), style_traits::ParsingMode::DEFAULT,
+            style::context::QuirksMode::NoQuirks, Default::default(), None, None, Default::default(),
+        );
+        let name = Parser::new(&prelude).parse_entirely(|input| KeyframesName::parse(&context, input)).ok()?;
+        let mut parser = Parser::new(&block);
+        let mut rules = Vec::new();
+        while !parser.is_exhausted() {
+            rules.extend(read_keyframe(&mut parser));
+        }
+        return Some(ParsedRule::Group { name: lower, condition: name.to_css_string(), rules });
+    }
     if lower == "position-try" {
         let mut parser = Parser::new(&prelude);
         let ident = parser.expect_ident().ok()?.clone();
@@ -257,12 +607,8 @@ fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces) ->
         "import" => 3,
         "font-face" => 5,
         "page" => 6,
-        "keyframes" | "-webkit-keyframes" => 7,
         "namespace" => 10,
-        "counter-style" => 11,
-        "font-feature-values" => 14,
-        "layer" | "container" | "property" | "font-palette-values" | "starting-style" | "scope"
-        | "view-transition" => 0,
+        "starting-style" => 0,
         _ => return None,
     };
     if lower == "namespace" {
@@ -281,14 +627,13 @@ fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces) ->
         return Some(ParsedRule::Other { rule_type: 10, text });
     }
     // `@name prelude {block}`, without a second space when the prelude is empty.
-    let prelude = collapse(&prelude);
-    let prelude = if lower == "import" { import_url_form(&prelude) } else { prelude };
+    let prelude = if lower == "import" { import_url_form(prelude.trim())? } else { collapse(&prelude) };
     let head = if prelude.is_empty() { format!("@{name}") } else { format!("@{name} {prelude}") };
     let text = match block {
         // An empty descriptor block serializes as `{ }`.
         Some(block)
             if block.trim().is_empty()
-                && matches!(lower.as_str(), "page" | "font-face" | "property" | "counter-style" | "font-palette-values" | "position-try" | "view-transition") =>
+                && matches!(lower.as_str(), "page" | "font-face" | "font-palette-values" | "position-try") =>
         {
             format!("{head} {{ }}")
         }
@@ -534,7 +879,16 @@ mod tests {
     }
 
     fn style(selector: &str, block: &str) -> ParsedRule {
-        ParsedRule::Style { selector: selector.into(), block: block.into() }
+        ParsedRule::Style { selector: selector.into(), block: block.into(), rules: Vec::new() }
+    }
+
+    #[test]
+    fn feature_value_rules_drop_invalid_entries_and_merge_named_values() {
+        let parse = |source| parse_one_rule(source, &mut Namespaces::new());
+        assert!(parse("@font-feature-values serif { }").is_err());
+        assert!(parse("@font-feature-values Demo;").is_err());
+        assert_eq!(parse("@font-feature-values Demo { @styleset { first: 1; bad: -1; second: 2; } font-display: swap; @styleset { first: 3; } }"),
+            Ok(ParsedRule::Other { rule_type: 14, text: "@font-feature-values Demo { font-display: swap; @styleset { first: 3; second: 2; } }".into() }));
     }
 
     /// CSS Syntax's order (WPT css/CSS2/syntax/at-charset-*): byte order mark, protocol
@@ -579,6 +933,73 @@ mod tests {
     }
 
     #[test]
+    fn scoped_declarations_keep_their_order_around_style_rules() {
+        let ParsedRule::Scope { rules, .. } = parse_one_rule("@scope { color: red; color: invalid; width:1px; a:hover {} --blocks: {a:b}; }", &mut Vec::new()).unwrap() else { panic!() };
+        assert_eq!(rules, [ParsedRule::Declarations("color: red;width:1px;".into()), style("a:hover", ""), ParsedRule::Declarations("--blocks: {a:b};".into())]);
+    }
+
+    #[test]
+    fn scope_bounds_resolve_namespaces_and_retain_relative_children() {
+        let mut namespaces = vec![("svg".into(), "http://www.w3.org/2000/svg".into())];
+        let parsed = parse_one_rule("@scope (svg|g) to (> .limit) { > .child { color:red } }", &mut namespaces).unwrap();
+        let ParsedRule::Scope { start, end, rules } = parsed else { panic!() };
+        assert_eq!(start.as_deref(), Some("svg|g"));
+        assert_eq!(end.as_deref(), Some("> .limit"));
+        assert_eq!(rules, [style("> .child", " color:red ")]);
+        assert!(parse_one_rule("@scope (unknown|g) {}", &mut namespaces).is_err());
+        assert!(parse_one_rule("@scope (a::before) {}", &mut namespaces).is_err());
+    }
+
+    #[test]
+    fn counter_style_rule_recovers_after_invalid_descriptors() {
+        let parse = |source| parse_one_rule(source, &mut Namespaces::new());
+        assert!(parse("@counter-style Disclosure-Closed {}").is_err());
+        assert!(parse("@counter-style a b {}").is_err());
+        assert!(parse("@counter-style a;").is_err());
+        let ParsedRule::Counter(rule) = parse(r#"@counter-style a\ b { prefix: 'x;y'; prefix: 12; speak-as: SPELL-OUT; symbols: url(pic.png) }"#).unwrap() else { panic!() };
+        let text = rule.text();
+        assert!(text.starts_with(r"@counter-style a\ b { "));
+        assert!(text.contains(r#"prefix: "x;y";"#));
+        assert!(text.contains(r#"symbols: url("pic.png");"#));
+        assert!(text.contains("speak-as: spell-out;"));
+        let ParsedRule::Counter(empty) = parse("@counter-style a { prefix: initial }").unwrap() else { panic!() };
+        assert_eq!(empty.text(), "@counter-style a { }");
+    }
+
+    #[test]
+    fn palette_rule_exposes_only_accepted_descriptors() {
+        let mut namespaces = Namespaces::new();
+        assert!(parse_one_rule("@font-palette-values plain {}", &mut namespaces).is_err());
+        let ParsedRule::Palette(empty) = parse_one_rule("@font-palette-values --empty {}", &mut namespaces).unwrap() else { panic!() };
+        assert_eq!(empty.text, "@font-palette-values --empty { }");
+        let ParsedRule::Palette(rule) = parse_one_rule(r"@font-palette-values --a\ b { base-palette: 2; base-palette: bogus; override-colors: invalid }", &mut namespaces).unwrap() else { panic!() };
+        assert_eq!(rule.name, "--a b");
+        assert_eq!(rule.base_palette, "2");
+        assert!(rule.font_family.is_empty() && rule.override_colors.is_empty());
+    }
+
+    #[test]
+    fn property_rules_require_valid_descriptors_and_keep_specified_values() {
+        let mut namespaces = Namespaces::new();
+        for text in ["@property x { syntax:'*'; inherits:true }", "@property --x { syntax:'*' }", "@property --x { syntax:'<length>'; inherits:true; initial-value:1em }"] {
+            assert!(parse_one_rule(text, &mut namespaces).is_err());
+        }
+        let ParsedRule::Property(rule) = parse_one_rule(r"@property --a\ b {inherits:true; syntax:' * '}", &mut namespaces).unwrap() else { panic!() };
+        assert_eq!(rule.name, "--a b");
+        assert_eq!(rule.syntax, " * ");
+        assert!(rule.inherits);
+        assert_eq!(rule.initial_value, None);
+    }
+
+    #[test]
+    fn container_groups_keep_children_and_reject_invalid_preludes() {
+        assert_eq!(parse_rules("@container (width), { b {} } @container sidebar (width) { p {color:red} }", &mut Vec::new()), [
+            ParsedRule::Group { name: "container".into(), condition: "sidebar (width)".into(), rules: vec![style("p", "color:red")] },
+        ]);
+        assert!(parse_one_rule("@container sidebar;", &mut Vec::new()).is_err());
+    }
+
+    #[test]
     fn rules_are_parsed_and_invalid_ones_dropped() {
         let rules = parse_rules(
             "<!-- a{color:red} /* c */ b,, c{} [x y]{} [z]:not(q){} @foo bar; @media  all  { d{} e!{} } {} f",
@@ -603,7 +1024,7 @@ mod tests {
             rules,
             [
                 ParsedRule::Other { rule_type: 0, text: "@position-try --opt { }".into() },
-                ParsedRule::Other { rule_type: 0, text: "@view-transition { navigation: auto }".into() },
+                ParsedRule::ViewTransition { navigation: "auto".into(), types: vec![], text: "@view-transition { navigation: auto; }".into() },
             ]
         );
     }
@@ -647,6 +1068,21 @@ mod tests {
     }
 
     #[test]
+    fn import_url_serialization_preserves_string_spaces_and_orders_modifiers() {
+        let rule = parse_one_rule(r#"@import url("a  b" referrer-policy(no-referrer) cross-origin(anonymous)) screen;"#, &mut Namespaces::new()).unwrap();
+        assert_eq!(rule, ParsedRule::Other { rule_type: 3, text: r#"@import url("a  b" cross-origin(anonymous) referrer-policy(no-referrer)) screen;"#.into() });
+    }
+
+    #[test]
+    fn ignored_prologue_rules_do_not_register_namespaces() {
+        let mut namespaces = Namespaces::new();
+        let rules = parse_rules("@import supports(display:grid); @namespace ok 'urn:ok'; @import 'late.css'; @media all { @namespace nested 'urn:nested'; b {} } @namespace late 'urn:late';", &mut namespaces);
+        assert_eq!(namespaces, [("ok".into(), "urn:ok".into())]);
+        assert_eq!(rules.len(), 2);
+        assert!(matches!(&rules[1], ParsedRule::Group { rules, .. } if rules == &[style("b", "")]));
+    }
+
+    #[test]
     fn namespace_rules_declare_prefixes() {
         let mut ns = Vec::new();
         let rules = parse_rules("@namespace x 'a'; [x|foo='' i]{} [y|foo]{}", &mut ns);
@@ -662,10 +1098,19 @@ mod tests {
 /// by the style engine, so keywords lowercase, whitespace collapses and an
 /// invalid query becomes `not all`.
 pub fn serialize_media_list(text: &str) -> String {
-    use style::stylesheets::{CssRuleType, Origin, UrlExtraData};
     use style_traits::ToCss;
+    parse_media_list(text).to_css_string()
+}
+
+pub fn media_queries(text: &str) -> Vec<String> {
+    use style_traits::ToCss;
+    parse_media_list(text).media_queries.iter().map(ToCss::to_css_string).collect()
+}
+
+fn parse_media_list(text: &str) -> style::media_queries::MediaList {
+    use style::stylesheets::{CssRuleType, Origin, UrlExtraData};
     crate::stylo::enable_features();
-    let Ok(url) = url::Url::parse("about:blank") else { return String::new() };
+    let url = url::Url::parse("about:blank").expect("static URL");
     let url = UrlExtraData(style::servo_arc::Arc::new(url));
     let mut context = style::parser::ParserContext::new(
         Origin::Author,
@@ -679,7 +1124,24 @@ pub fn serialize_media_list(text: &str) -> String {
         Default::default(),
     );
     let mut parser = Parser::new(text);
-    style::media_queries::MediaList::parse(&mut context, &mut parser).to_css_string()
+    style::media_queries::MediaList::parse(&mut context, &mut parser)
+}
+
+pub struct MediaQueryList(style::media_queries::MediaList);
+
+impl MediaQueryList {
+    pub fn parse(text: &str) -> Self {
+        Self(parse_media_list(text))
+    }
+
+    pub fn media(&self) -> String {
+        use style_traits::ToCss;
+        self.0.to_css_string()
+    }
+
+    pub(crate) fn matches(&self, device: &style::device::Device) -> bool {
+        self.0.evaluate(device, style::context::QuirksMode::NoQuirks, &mut style::stylesheets::CustomMediaEvaluator::none())
+    }
 }
 
 #[cfg(test)]

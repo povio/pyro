@@ -1390,7 +1390,7 @@ impl Node {
         style.clone_position() != Position::Static
             || !matches!(box_style.overflow_x, Overflow::Visible)
             || !matches!(box_style.overflow_y, Overflow::Visible)
-            || box_style.slow_clone_contain().contains(Contain::PAINT)
+            || box_style.used_containment().contains(Contain::PAINT)
             || self.element_data().is_some_and(|e| {
                 e.raster_image_data().is_some()
                     || e.sub_doc_data().is_some()
@@ -1479,7 +1479,7 @@ impl Node {
         let clips = !matches!(box_style.overflow_x, Overflow::Visible) || !matches!(box_style.overflow_y, Overflow::Visible);
         if !clips
             || style.clone_position() != Position::Static
-            || box_style.slow_clone_contain().contains(Contain::PAINT)
+            || box_style.used_containment().contains(Contain::PAINT)
             || self.element_data().is_some_and(|e| {
                 e.raster_image_data().is_some() || e.sub_doc_data().is_some() || e.text_input_data().is_some()
             })

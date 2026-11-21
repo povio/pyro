@@ -155,11 +155,10 @@ fn bounds(dom: &Dom, style: &StyleEngine, el: NodeId, depth: u8) -> Option<Bound
             Some(b)
         }
         "polyline" | "polygon" => {
-            let points = dom.get_attribute(el, "points").ok().flatten()?;
-            let nums = numbers(points);
+            let points = dom.get_attribute_ns(el, None, "points").ok().flatten()?;
             let mut b: Option<Bounds> = None;
-            for p in nums.as_chunks::<2>().0 {
-                b = Some(Bounds::union(b, Bounds::point(p[0], p[1])));
+            for (x, y) in crate::svg_point_list::parse_points(points) {
+                b = Some(Bounds::union(b, Bounds::point(f64::from(x), f64::from(y))));
             }
             b
         }
@@ -597,4 +596,436 @@ fn transform_bounds(m: [f64; 6], b: Bounds) -> Bounds {
         out.add(px, py);
     }
     out
+}
+
+/// Hit-test SVG graphics in reverse paint order. The caller has resolved
+/// the viewport's position among the surrounding CSS boxes.
+pub(crate) fn hit_test(
+    dom: &Dom,
+    style: &StyleEngine,
+    svg: NodeId,
+    viewport: (f64, f64),
+    x: f64,
+    y: f64,
+) -> Option<NodeId> {
+    use kurbo::{Affine, Point};
+    if x < 0. || y < 0. || x > viewport.0 || y > viewport.1 {
+        return None;
+    }
+    let transform = view_box_transform(dom, svg, viewport).map(Affine::new).unwrap_or(Affine::IDENTITY);
+    hit_children(dom, style, svg, Point::new(x, y), transform, 0)
+}
+
+fn hit_children(
+    dom: &Dom,
+    style: &StyleEngine,
+    parent: NodeId,
+    point: kurbo::Point,
+    parent_transform: kurbo::Affine,
+    depth: u8,
+) -> Option<NodeId> {
+    if depth >= 64 {
+        return None;
+    }
+    let mut child = dom.last_child(parent).ok().flatten();
+    while let Some(el) = child {
+        child = dom.prev_sibling(el).ok().flatten();
+        let Ok(element) = dom.element(el) else { continue };
+        if element.name.ns != markup5ever::ns!(svg) {
+            continue;
+        }
+        let tag = &*element.name.local;
+        if !matches!(
+            tag,
+            "g" | "a" | "rect" | "circle" | "ellipse" | "line" | "polygon" | "polyline" | "path" | "text" | "image"
+        ) {
+            continue;
+        }
+        let Some(computed) = style.stylo_style(dom, el) else { continue };
+        // A clipped subtree needs its clip geometry to select a target.
+        // Leave it to the existing viewport hit until that geometry is available.
+        if computed.get_box().display.is_none()
+            || !matches!(computed.slow_clone_clip_path(), style::values::computed::basic_shape::ClipPath::None)
+        {
+            continue;
+        }
+        let transform = match dom.get_attribute(el, "transform").ok().flatten().and_then(parse_transform) {
+            Some(matrix) => parent_transform * kurbo::Affine::new(matrix),
+            None => parent_transform,
+        };
+        let p = transform.inverse() * point;
+        if !p.x.is_finite() || !p.y.is_finite() {
+            continue;
+        }
+        // Non-graphics elements such as defs, clipPath and mask do not
+        // participate in the viewport's painting order.
+        let container = matches!(tag, "g" | "a");
+        if container {
+            if let Some(hit) = hit_children(dom, style, el, point, transform, depth + 1) {
+                return Some(hit);
+            }
+        }
+        use style::computed_values::pointer_events::T as Pe;
+        let pe = computed.get_inherited_ui().pointer_events;
+        if pe == Pe::None
+            || matches!(pe, Pe::Auto | Pe::Visiblepainted | Pe::Visiblefill | Pe::Visiblestroke | Pe::Visible)
+                && computed.get_inherited_box().visibility != style::computed_values::visibility::T::Visible
+        {
+            continue;
+        }
+        let in_bounds = || {
+            bounds(dom, style, el, 0)
+                .is_some_and(|b| p.x >= b.min_x && p.x <= b.max_x && p.y >= b.min_y && p.y <= b.max_y)
+        };
+        if pe == Pe::BoundingBox {
+            if in_bounds() {
+                return Some(el);
+            }
+            continue;
+        }
+        if container {
+            continue;
+        }
+        // Transparent paints and zero opacity still paint for pointer-events.
+        use style::values::generics::svg::SVGPaintKind;
+        let svg = computed.get_inherited_svg();
+        let painted = matches!(pe, Pe::Auto | Pe::Visiblepainted | Pe::Painted);
+        let fill =
+            !matches!(pe, Pe::Stroke | Pe::Visiblestroke) && (!painted || !matches!(svg.fill.kind, SVGPaintKind::None));
+        let stroke =
+            !matches!(pe, Pe::Fill | Pe::Visiblefill) && (!painted || !matches!(svg.stroke.kind, SVGPaintKind::None));
+        if !fill && !stroke {
+            continue;
+        }
+        if tag == "text" {
+            // SVG text hits character cells for both fill and stroke.
+            if in_bounds() {
+                return Some(el);
+            }
+            continue;
+        }
+        if let Some(path) = shape_path(dom, el, tag, false, |name| attr(dom, el, name)) {
+            if fill
+                && tag != "line"
+                && fill_hit(&path, p, crate::stylo::serialize(&computed, "fill-rule").as_deref() == Some("evenodd"))
+            {
+                return Some(el);
+            }
+            if stroke {
+                use kurbo::{Cap, Join, Stroke};
+                let property = |name| crate::stylo::serialize(&computed, name).unwrap_or_default();
+                let length = |s: &str| s.trim_end_matches("px").parse::<f64>().ok();
+                let width = length(&property("stroke-width")).unwrap_or(1.);
+                if width <= 0. {
+                    continue;
+                }
+                let cap = match property("stroke-linecap").as_str() {
+                    "square" => Cap::Square,
+                    "round" => Cap::Round,
+                    _ => Cap::Butt,
+                };
+                let join = match property("stroke-linejoin").as_str() {
+                    "bevel" => Join::Bevel,
+                    "round" => Join::Round,
+                    _ => Join::Miter,
+                };
+                let mut outline = Stroke::new(width)
+                    .with_caps(cap)
+                    .with_join(join)
+                    .with_miter_limit(length(&property("stroke-miterlimit")).unwrap_or(4.));
+                let dashes = property("stroke-dasharray");
+                let dashes: Vec<_> = dashes.split([',', ' ']).filter_map(length).collect();
+                if dashes.iter().any(|&n| n > 0.) {
+                    outline = outline.with_dashes(length(&property("stroke-dashoffset")).unwrap_or(0.), dashes);
+                }
+                // Non-scaling strokes are constructed in host coordinates.
+                use style::values::specified::svg::VectorEffect;
+                let (path, stroke_point) =
+                    if computed.get_svg().vector_effect.contains(VectorEffect::NON_SCALING_STROKE) {
+                        (transform * path, point)
+                    } else {
+                        (path, p)
+                    };
+                if path_hit(&kurbo::stroke(path.iter(), &outline, &Default::default(), 0.01), stroke_point, false) {
+                    return Some(el);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// SVG closes every open contour for fill. The stroke still follows the
+/// original open path, including its end caps.
+fn fill_hit(path: &kurbo::BezPath, p: kurbo::Point, evenodd: bool) -> bool {
+    use kurbo::PathEl;
+    let mut previous: Option<&PathEl> = None;
+    let mut closed = None;
+    for (i, el) in path.elements().iter().enumerate() {
+        if matches!(el, PathEl::MoveTo(_)) && previous.is_some_and(|e| !matches!(e, PathEl::ClosePath)) {
+            closed.get_or_insert_with(|| kurbo::BezPath::from_vec(path.elements()[..i].to_vec())).close_path();
+        }
+        if let Some(copy) = &mut closed {
+            copy.push(*el);
+        }
+        previous = Some(el);
+    }
+    if previous.is_some_and(|e| !matches!(e, PathEl::ClosePath)) {
+        closed.get_or_insert_with(|| path.clone()).close_path();
+    }
+    path_hit(closed.as_ref().unwrap_or(path), p, evenodd)
+}
+
+fn path_hit(path: &kurbo::BezPath, p: kurbo::Point, evenodd: bool) -> bool {
+    use kurbo::{ParamCurveNearest, Shape};
+    let bounds = path.bounding_box();
+    if p.x < bounds.x0 - 1e-6 || p.x > bounds.x1 + 1e-6 || p.y < bounds.y0 - 1e-6 || p.y > bounds.y1 + 1e-6 {
+        return false;
+    }
+    let winding = path.winding(p);
+    (if evenodd { winding % 2 != 0 } else { winding != 0 })
+        || path.segments().any(|s| s.nearest(p, 0.001).distance_sq < 1e-12)
+}
+
+/// Path metrics use the element's equivalent path in local user coordinates.
+/// Author calibration via pathLength affects rendering, not these DOM APIs.
+pub fn total_length(dom: &Dom, layout: &crate::layout::Layout, el: NodeId) -> f64 {
+    use kurbo::ParamCurveArclen;
+    metric_path(dom, layout, el).map_or(0.0, |path| {
+        path.segments().fold(0.0, |total, segment| total + segment.arclen(1e-5))
+    })
+}
+
+pub fn point_at_length(dom: &Dom, layout: &crate::layout::Layout, el: NodeId, distance: f64) -> Option<kurbo::Point> {
+    use kurbo::{ParamCurve, ParamCurveArclen, PathEl};
+    let path = metric_path(dom, layout, el)?;
+    let PathEl::MoveTo(mut endpoint) = *path.elements().first()? else { return None };
+    if distance <= 0.0 {
+        return Some(endpoint);
+    }
+    let mut remaining = distance;
+    for segment in path.segments() {
+        let length = segment.arclen(1e-5);
+        if remaining < length {
+            return Some(segment.eval(segment.inv_arclen(remaining, 1e-5)));
+        }
+        endpoint = segment.end();
+        if remaining == length {
+            break;
+        }
+        remaining -= length;
+    }
+    Some(endpoint)
+}
+
+fn metric_path(dom: &Dom, layout: &crate::layout::Layout, el: NodeId) -> Option<kurbo::BezPath> {
+    let tag = local_name(dom, el)?;
+    let css = geometry_properties(dom, layout, el);
+    let property = |name: &str| css.iter().find(|(key, _)| *key == name).map(|(_, value)| value.as_str());
+    if tag == "path" {
+        if let Some(value) = property("d") {
+            let data = value.strip_prefix("path(")?.strip_suffix(')')?.trim().trim_matches('"');
+            return Some(parse_shape_path(data));
+        }
+    }
+    let viewport = std::cell::OnceCell::new();
+    let font_context = std::cell::OnceCell::new();
+    let length = |name: &str| {
+        let value = property(name).or_else(|| dom.get_attribute(el, name).ok().flatten())?.trim();
+        if let Ok(n) = value.parse::<f64>() {
+            return n.is_finite().then_some(n);
+        }
+        let cx = font_context.get_or_init(|| length_context(dom, layout, el));
+        let (px, pct) = crate::computed::resolve_len(value, cx)?;
+        if pct == 0.0 {
+            return Some(px);
+        }
+        let (w, h) = (*viewport.get_or_init(|| user_viewport(dom, layout, el)))?;
+        let axis = match name {
+            "y" | "y1" | "y2" | "cy" | "ry" | "height" => h,
+            "r" => w.hypot(h) / 2.0_f64.sqrt(),
+            _ => w,
+        };
+        Some(px + pct * axis / 100.0)
+    };
+    shape_path(dom, el, &tag, true, length)
+}
+
+fn geometry_properties(dom: &Dom, layout: &crate::layout::Layout, el: NodeId) -> Vec<(&'static str, String)> {
+    layout.synced_geometry_source(dom)
+        .map(|source| source.svg_geometry_properties(crate::snapshot::render_key(el)))
+        .unwrap_or_default()
+}
+
+fn length_context(dom: &Dom, layout: &crate::layout::Layout, el: NodeId) -> crate::computed::LengthContext {
+    let root = dom.node_document(el).ok().and_then(|doc| dom.document_element(doc).ok().flatten());
+    crate::computed::LengthContext {
+        viewport_width: f64::from(layout.inner_width()),
+        viewport_height: f64::from(layout.inner_height()),
+        ..crate::computed::LengthContext::fonts(
+            layout.style().computed_font_size(dom, Some(el)),
+            layout.style().computed_font_size(dom, root),
+        )
+    }
+}
+
+fn user_viewport(dom: &Dom, layout: &crate::layout::Layout, el: NodeId) -> Option<(f64, f64)> {
+    let mut ancestor = dom.parent_element(el).ok()?;
+    let mut viewports = Vec::new();
+    let mut basis = (f64::from(layout.inner_width()), f64::from(layout.inner_height()));
+    while let Some(id) = ancestor {
+        if local_name(dom, id).as_deref() == Some("svg") {
+            if let Some(vb) = dom.get_attribute(id, "viewBox").ok()?.and_then(|v| v.parse::<svgtypes::ViewBox>().ok()) {
+                basis = (vb.w, vb.h);
+                break;
+            }
+            viewports.push(id);
+        }
+        ancestor = dom.parent_element(id).ok()?;
+    }
+    if ancestor.is_none() && viewports.is_empty() {
+        return None;
+    }
+    for id in viewports.into_iter().rev() {
+        // In HTML layout, an inline SVG's percentage width and height are
+        // already resolved against its CSS containing block. The content box
+        // is the resulting SVG viewport, before transforms or borders.
+        if dom.parent_element(id).ok().flatten().is_some_and(|parent| dom.element(parent).is_ok_and(|e| e.is_html())) {
+            if let Some(size) = layout.content_size(dom, id) {
+                basis = size;
+                continue;
+            }
+        }
+        let css = geometry_properties(dom, layout, id);
+        let cx = length_context(dom, layout, id);
+        let (w, h) = layout.content_size(dom, id).unwrap_or(basis);
+        let size = |name: &str, reference: f64, fallback| {
+            let value = css.iter().find(|(k, _)| *k == name).map(|(_, v)| v.as_str())
+                .or_else(|| dom.get_attribute(id, name).ok().flatten());
+            let Some(value) = value else { return fallback };
+            value.trim().parse::<f64>().ok().filter(|n| n.is_finite()).or_else(|| {
+                crate::computed::resolve_len(value, &cx).map(|(px, pct)| px + pct * reference / 100.0)
+            }).unwrap_or(fallback)
+        };
+        basis = (size("width", basis.0, w), size("height", basis.1, h));
+    }
+    Some(basis)
+}
+
+/// SVG path error handling keeps every complete segment before the first
+/// malformed command. The parser expands relative and shorthand commands.
+fn parse_shape_path(data: &str) -> kurbo::BezPath {
+    use style::values::generics::basic_shape::{ArcSize, ArcSweep, ShapeCommand};
+    use style::values::specified::svg_path::{CoordPair, SVGPathData};
+    let (data, _) = SVGPathData::parse_bytes(data.as_bytes());
+    let mut path = kurbo::BezPath::new();
+    let coord = |p: CoordPair| kurbo::Point::new(f64::from(p.x), f64::from(p.y));
+    for &command in data.normalize(true).commands() {
+        match command {
+            ShapeCommand::Move { point } => path.move_to(coord(point.into())),
+            ShapeCommand::Line { point } => path.line_to(coord(point.into())),
+            ShapeCommand::CubicCurve { point, control1, control2 } => {
+                path.curve_to(coord(control1.into()), coord(control2.into()), coord(point.into()));
+            }
+            ShapeCommand::Arc { point, radii, arc_sweep, arc_size, rotate } => {
+                let to = coord(point.into());
+                let arc = kurbo::SvgArc {
+                    from: path.current_position().unwrap_or_default(), to,
+                    radii: kurbo::Vec2::new(f64::from(radii.rx), f64::from(radii.ry.as_ref().copied().unwrap_or(radii.rx))),
+                    x_rotation: f64::from(rotate).to_radians(),
+                    large_arc: arc_size == ArcSize::Large,
+                    sweep: arc_sweep == ArcSweep::Cw,
+                };
+                if let Some(arc) = kurbo::Arc::from_svg_arc(&arc) {
+                    path.extend(arc.append_iter(0.001));
+                } else {
+                    path.line_to(to);
+                }
+            }
+            ShapeCommand::Close => path.close_path(),
+            _ => unreachable!("normalized SVG path contains only M, L, C, A and Z"),
+        }
+    }
+    path
+}
+
+fn shape_path(dom: &Dom, el: NodeId, tag: &str, allow_degenerate: bool, length: impl Fn(&str) -> Option<f64>) -> Option<kurbo::BezPath> {
+    use kurbo::{Arc, BezPath, Circle, Line, Rect, Shape};
+    let v = |name| length(name).unwrap_or(0.0);
+    let path = match tag {
+        "rect" => {
+            let (w, h) = (v("width"), v("height"));
+            if w < 0.0 || h < 0.0 || w == 0.0 && h == 0.0 || !allow_degenerate && (w == 0.0 || h == 0.0) {
+                return None;
+            }
+            let rect = Rect::new(v("x"), v("y"), v("x") + w, v("y") + h);
+            let rx = length("rx").unwrap_or(v("ry")).clamp(0., w / 2.);
+            let ry = length("ry").unwrap_or(v("rx")).clamp(0., h / 2.);
+            if rx > 0. && ry > 0. {
+                // The SVG equivalent path starts on the top edge after the
+                // upper-left arc. That origin matters for distance queries.
+                use std::f64::consts::{FRAC_PI_2, PI};
+                let mut path = BezPath::new();
+                path.move_to((rect.x0 + rx, rect.y0));
+                for (edge, center, angle) in [
+                    ((rect.x1 - rx, rect.y0), (rect.x1 - rx, rect.y0 + ry), -FRAC_PI_2),
+                    ((rect.x1, rect.y1 - ry), (rect.x1 - rx, rect.y1 - ry), 0.0),
+                    ((rect.x0 + rx, rect.y1), (rect.x0 + rx, rect.y1 - ry), FRAC_PI_2),
+                    ((rect.x0, rect.y0 + ry), (rect.x0 + rx, rect.y0 + ry), PI),
+                ] {
+                    path.line_to(edge);
+                    path.extend(Arc::new(center, (rx, ry), angle, FRAC_PI_2, 0.0).append_iter(0.001));
+                }
+                path.close_path();
+                path
+            } else {
+                rect.to_path(0.01)
+            }
+        }
+        "circle" if v("r") > 0. => Circle::new((v("cx"), v("cy")), v("r")).to_path(0.01),
+        "ellipse" => {
+            // Hit testing only supplies the XML lengths. Inferring an auto
+            // radius there would also override a CSS radius of zero. Metrics
+            // receive the cascade, so can resolve SVG 2's auto radii.
+            let (rx, ry) = if allow_degenerate {
+                (length("rx").unwrap_or(v("ry")), length("ry").unwrap_or(v("rx")))
+            } else {
+                (v("rx"), v("ry"))
+            };
+            if rx < 0.0 || ry < 0.0 || rx == 0.0 && ry == 0.0 || !allow_degenerate && (rx == 0.0 || ry == 0.0) {
+                return None;
+            }
+            if rx == 0.0 || ry == 0.0 {
+                let (cx, cy) = (v("cx"), v("cy"));
+                let mut path = BezPath::new();
+                path.move_to((cx + rx, cy));
+                path.line_to((cx, cy + ry));
+                path.line_to((cx - rx, cy));
+                path.line_to((cx, cy - ry));
+                path.close_path();
+                return Some(path);
+            }
+            // An ellipse begins on its positive x-axis even when ry > rx.
+            let mut path = Arc::new((v("cx"), v("cy")), (rx, ry), 0.0, std::f64::consts::TAU, 0.0).to_path(0.001);
+            path.close_path();
+            path
+        }
+        "line" => Line::new((v("x1"), v("y1")), (v("x2"), v("y2"))).to_path(0.01),
+        "path" => parse_shape_path(dom.get_attribute(el, "d").ok()??),
+        "polygon" | "polyline" => {
+            let mut coords = crate::svg_point_list::parse_points(dom.get_attribute_ns(el, None, "points").ok()??).map(|(x, y)| (f64::from(x), f64::from(y)));
+            let start = coords.next()?;
+            let mut path = BezPath::new();
+            path.move_to(start);
+            for pt in coords {
+                path.line_to(pt);
+            }
+            if tag == "polygon" {
+                path.close_path();
+            }
+            path
+        }
+        _ => return None,
+    };
+    Some(path)
 }

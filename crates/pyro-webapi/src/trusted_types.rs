@@ -14,6 +14,7 @@ use pyro_js::{JsError, JsResult, Object, Scope, Value};
 use crate::page::PageDom;
 
 use crate::lazy_module::LazyModule;
+use crate::sanitizer_options::ParserOptions;
 
 pub(crate) static MODULE: LazyModule = LazyModule {
     key: "lpTrustedTypes",
@@ -21,6 +22,40 @@ pub(crate) static MODULE: LazyModule = LazyModule {
     url: "pyro://internal/trusted_types.js",
     natives: Some(natives),
 };
+
+// Engine-private properties are traced with their host object, including when
+// the document that created it has gone. A retained policy holds its creation
+// realm's callback; retained parse inputs hold only their immutable payload.
+struct TrustedValue;
+impl pyro_js::JsClass for TrustedValue {
+    const NAME: &'static str = "TrustedValue";
+    type Data = Option<ParserOptions>;
+    type Parent = pyro_js::NoParent;
+    fn define(def: &mut pyro_js::ClassDef<Self>) {
+        def.not_exposed();
+    }
+}
+
+pub(crate) fn register(engine: &pyro_js::Engine) {
+    engine.register::<TrustedValue>();
+}
+
+const HTML_DATA: &str = "lpTrustedHTMLData";
+const POLICY_CALLBACK: &str = "lpTrustedParserPolicy";
+const OPTIONS_PROTOTYPE: &str = "lpTrustedParserPrototype";
+
+fn wrap_value<'s>(s: &Scope<'s>, prototype: Value<'_>, slot: &'static str, value: Value<'_>) -> JsResult<Object<'s>> {
+    let object = s.wrap::<TrustedValue>(None, None)?;
+    object.set_prototype(prototype);
+    s.set_hidden(object, slot, value)?;
+    Ok(object)
+}
+
+fn wrap_parser_options<'s>(s: &Scope<'s>, proto: Value<'_>, options: ParserOptions) -> JsResult<Value<'s>> {
+    let object = s.wrap::<TrustedValue>(Some(options), None)?;
+    object.set_prototype(proto);
+    Ok(object.value())
+}
 
 /// The Trusted Types interfaces and `trustedTypes` on a window or worker global.
 pub(crate) fn define_globals<W>(def: &mut pyro_js::ClassDef<W>)
@@ -41,8 +76,46 @@ where
     );
 }
 
+/// TrustedHTMLParserOptions is exposed only in Window realms.
+pub(crate) fn define_parser_options_global<W>(def: &mut pyro_js::ClassDef<W>)
+where
+    W: pyro_js::JsClass,
+    W::Data: crate::window::WindowHost,
+{
+    crate::lazy_module::lazy_globals!(def, MODULE, "TrustedHTMLParserOptions");
+}
+
 fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
     let natives = s.object();
+    natives.set_atom("windowRealm", s.boolean(!crate::worker_scope::is_worker(s)))?;
+    let make_value = s.function("makeValue", |s, _this, a| {
+        let key = match crate::util::dom_string(a.get(0))?.as_str() {
+            "html" => HTML_DATA,
+            "policy" => POLICY_CALLBACK,
+            _ => return Err(JsError::Type("Invalid Trusted Types value".into())),
+        };
+        let object = wrap_value(s, a.get(1), key, a.get(2))?;
+        if key == POLICY_CALLBACK {
+            s.set_hidden(object, OPTIONS_PROTOTYPE, a.get(3))?;
+        }
+        Ok(object.value())
+    })?;
+    natives.set_atom("makeValue", make_value.value())?;
+    let create_options = s.function("createParserOptions", |s, _this, a| {
+        let invalid_receiver = || JsError::Type("Expected a TrustedTypePolicy receiver".into());
+        let policy = a.get(0).as_object().ok_or_else(invalid_receiver)?;
+        let callback = s.get_hidden(policy, POLICY_CALLBACK)?.and_then(|v| v.as_object()).ok_or_else(invalid_receiver)?;
+        let result = callback.call(None, &[a.get(1), a.get(2)])?;
+        let options = ParserOptions::convert(s, result)?;
+        let proto = s.get_hidden(policy, OPTIONS_PROTOTYPE)?.ok_or_else(invalid_receiver)?;
+        if let Some(realm) = s.object_realm(policy).filter(|r| r.id() != s.realm_id() && !r.is_disposed()) {
+            return Ok(s.rehome(wrap_parser_options(&realm.scope()?, proto, options)?));
+        }
+        // A removed frame can retain its policy in another window. The
+        // callback and public prototype still belong to its original realm.
+        wrap_parser_options(s, proto, options)
+    })?;
+    natives.set_atom("createParserOptions", create_options.value())?;
     // The policies of the realm's document that have Trusted Types directives: [text, report-only].
     let policies = s.function("policies", |s, _this, _a| {
         let mut entries = Vec::new();
@@ -209,6 +282,76 @@ pub(crate) fn attribute_value(
     }
 }
 
+/// Converted (TrustedHTML or DOMString) argument, before a positional HTML
+/// method reads its following options dictionary or invokes the default policy.
+pub(crate) enum HtmlInput {
+    Trusted(String),
+    String(String),
+}
+
+impl HtmlInput {
+    pub(crate) fn convert(s: &Scope<'_>, value: Value<'_>) -> JsResult<Self> {
+        if let Some(object) = value.as_object() {
+            if let Some(data) = s.get_hidden(object, HTML_DATA)? {
+                return Ok(Self::Trusted(crate::util::dom_string(data)?));
+            }
+        }
+        Ok(Self::String(crate::util::dom_string(value)?))
+    }
+
+    /// Resolve parser options before applying the HTML policy. A branded
+    /// options object or a successful options policy approves this parse.
+    pub(crate) fn for_html_insertion(
+        self,
+        s: &Scope<'_>,
+        page: &Rc<PageDom>,
+        options: Value<'_>,
+        sink: &str,
+    ) -> JsResult<(String, ParserOptions)> {
+        let (options, vetted) = parser_options(s, page, options, sink, false)?;
+        if vetted {
+            return Ok((match self { Self::Trusted(html) | Self::String(html) => html }, options));
+        }
+        Ok((self.compliant(s, page, sink)?, options))
+    }
+
+    pub(crate) fn compliant(self, s: &Scope<'_>, page: &Rc<PageDom>, sink: &str) -> JsResult<String> {
+        match self {
+            Self::Trusted(html) => Ok(html),
+            Self::String(html) if requires_for_script(page) => {
+                compliant_string(s, page, Kind::Html, s.string(&html), sink, false)
+            }
+            Self::String(html) => Ok(html),
+        }
+    }
+}
+
+/// Convert and vet the complete options snapshot before parsing. A streaming
+/// sink has no separate HTML argument on which to enforce a missing policy.
+pub(crate) fn parser_options(
+    s: &Scope<'_>, page: &Rc<PageDom>, value: Value<'_>, sink: &str, streaming: bool,
+) -> JsResult<(ParserOptions, bool)> {
+    if let Some(wrapper) = s.unwrap::<TrustedValue>(value) {
+        if let Some(snapshot) = wrapper.as_ref() {
+            return Ok((snapshot.clone(), true));
+        }
+    }
+    let options = ParserOptions::convert(s, value)?;
+    if requires_for_script(page) {
+        let module = MODULE.module(s, page)?;
+        let callback = module.get("defaultParserOptions")?.as_object()
+            .ok_or_else(|| JsError::Type("Trusted Types are unavailable".into()))?;
+        let result = callback.call(None, &[s.boolean(options.run_scripts), s.string(sink), s.boolean(options.filter.is_some())])?;
+        if !result.is_null() && !result.is_undefined() {
+            return Ok((ParserOptions::convert(s, result)?, true));
+        }
+        if (streaming || options.needs_vetting || result.is_null()) && sink_violation(s, page, sink, "")? {
+            return Err(JsError::Type("This document requires trusted HTML parser options".into()));
+        }
+    }
+    Ok((options, false))
+}
+
 /// The Trusted Types a sink takes.
 #[derive(Clone, Copy)]
 pub(crate) enum Kind {
@@ -266,11 +409,19 @@ pub(crate) fn compliant_string_in(
     if result.is_null() || result.is_undefined() {
         // A violation, reported to every policy that requires Trusted Types; blocked when one
         // of them is enforced (report-only ones let the string through).
-        let enforced = call("sinkViolation", &[s.string(sink), s.string(&input)])?.to_bool();
+        let enforced = sink_violation(s, page, sink, &input)?;
         if enforced {
             return Err(JsError::Type(format!("Failed to set '{sink}': This document requires '{name}' assignment.").into()));
         }
         return Ok(input);
     }
     crate::util::dom_string(result)
+}
+
+/// Report an unvetted value to applicable CSP policies and return whether any blocks it.
+pub(crate) fn sink_violation(s: &Scope<'_>, page: &Rc<PageDom>, sink: &str, input: &str) -> JsResult<bool> {
+    let module = MODULE.module(s, page)?;
+    let report = module.get("sinkViolation")?.as_object()
+        .ok_or_else(|| JsError::Type("Trusted Types are unavailable".into()))?;
+    Ok(report.call(None, &[s.string(sink), s.string(input)])?.to_bool())
 }

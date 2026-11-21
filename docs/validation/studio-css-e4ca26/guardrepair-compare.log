@@ -1,0 +1,30 @@
+guardrepair-main-candidate 8082 page passes 5542 named passes 178417 observed names 194540 statuses {'complete:0': 7867, 'complete:2': 105, 'timeout:None': 11, 'complete:1': 98, 'hang:None': 1}
+guardrepair-main-parent 8082 page passes 5534 named passes 178360 observed names 194540 statuses {'complete:0': 7867, 'complete:2': 105, 'timeout:None': 11, 'complete:1': 98, 'hang:None': 1}
+guardrepair-main-stable 8082 page passes 6950 named passes 182963 observed names 194912 statuses {'complete:0': 7986, 'complete:2': 62, 'complete:1': 23, 'timeout:None': 10, 'hang:None': 1}
+guardrepair-main-parent pages left only 9 right only 1
+guardrepair-main-parent passes left only 58 right only 1
+guardrepair-main-parent observed left only 0 right only 0
+guardrepair-main-stable pages left only 264 right only 1672
+guardrepair-main-stable passes left only 5732 right only 10278
+guardrepair-main-stable observed left only 309 right only 681
+Losses vs parent by URL: Counter({'css/css-animations/transition-ready-time-offscreen.html': 1})
+guardrepair-focus-candidate 66 page passes 44 named passes 3230 observed names 3348 statuses {'complete:0': 65, 'timeout:None': 1}
+guardrepair-focus-parent 66 page passes 39 named passes 3198 observed names 3348 statuses {'complete:0': 65, 'timeout:None': 1}
+guardrepair-focus-stable 66 page passes 54 named passes 3277 observed names 3348 statuses {'complete:0': 65, 'timeout:None': 1}
+guardrepair-focus-parent pages left only 5 right only 0
+guardrepair-focus-parent passes left only 32 right only 0
+guardrepair-focus-parent observed left only 0 right only 0
+guardrepair-focus-stable pages left only 2 right only 12
+guardrepair-focus-stable passes left only 53 right only 100
+guardrepair-focus-stable observed left only 1 right only 1
+Losses vs parent by URL: Counter()
+guardrepair-supplement-candidate 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+guardrepair-supplement-parent 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+guardrepair-supplement-stable 41 page passes 35 named passes 619 observed names 874 statuses {'complete:0': 41}
+guardrepair-supplement-parent pages left only 0 right only 0
+guardrepair-supplement-parent passes left only 0 right only 0
+guardrepair-supplement-parent observed left only 0 right only 0
+guardrepair-supplement-stable pages left only 0 right only 8
+guardrepair-supplement-stable passes left only 0 right only 42
+guardrepair-supplement-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()

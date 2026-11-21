@@ -975,38 +975,41 @@ pub mod columns {
     }
 }
 
-pub mod column_rule {
-    pub use crate::properties::generated::shorthands::column_rule::*;
+use crate::values::generics::column::{RuleEntry, RuleList};
+use specified::column::{RuleColor, RuleWidth, RuleStyle};
 
-    use super::*;
-    use crate::properties::longhands::column_rule_color;
-    use crate::properties::longhands::{column_rule_style, column_rule_width};
+struct GapRule(specified::BorderSideWidth, specified::BorderStyle, specified::Color);
 
-    pub fn parse_value(
-        context: &ParserContext,
-        input: &mut Parser,
-    ) -> Result<Longhands, ParseError> {
-        let mut column_rule_width = None;
-        let mut column_rule_style = None;
-        let mut column_rule_color = None;
-        let mut parsed = 0;
-        loop {
-            parsed += 1;
-            try_parse_one!(context, input, column_rule_width, column_rule_width::parse);
-            try_parse_one!(context, input, column_rule_style, column_rule_style::parse);
-            try_parse_one!(context, input, column_rule_color, column_rule_color::parse);
-            parsed -= 1;
-            break;
-        }
-        if parsed == 0 {
-            return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
-        }
-        Ok(expanded! {
-            column_rule_width: unwrap_or_initial!(column_rule_width),
-            column_rule_style: unwrap_or_initial!(column_rule_style),
-            column_rule_color: unwrap_or_initial!(column_rule_color),
-        })
+impl Parse for GapRule {
+    fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
+        parse_border(context, input).map(|(width, style, color)| Self(width, style, color))
     }
+}
+
+impl ToCss for GapRule {
+    fn to_css<W: Write>(&self, dest: &mut CssWriter<W>) -> fmt::Result {
+        serialize_directional_border(dest, &self.0, &self.1, &self.2)
+    }
+}
+
+pub fn parse_gap_rules(context: &ParserContext, input: &mut Parser) -> Result<(RuleWidth, RuleStyle, RuleColor), ParseError> {
+    let rules = RuleList::<GapRule, specified::Integer>::parse(context, input)?;
+    Ok((rules.map(|rule| rule.0.clone()), rules.map(|rule| rule.1), rules.map(|rule| rule.2.clone())))
+}
+
+pub fn serialize_gap_rules<W: Write>(dest: &mut CssWriter<W>, width: &RuleWidth, style: &RuleStyle, color: &RuleColor) -> fmt::Result {
+    if width.0.len() != style.0.len() || width.0.len() != color.0.len() { return Ok(()); }
+    let mut rules = Vec::new();
+    for ((width, style), color) in width.0.iter().zip(&style.0).zip(&color.0) {
+        rules.push(match (width, style, color) {
+            (RuleEntry::Single(w), RuleEntry::Single(s), RuleEntry::Single(c)) => RuleEntry::Single(GapRule(w.clone(), *s, c.clone())),
+            (RuleEntry::Repeat(n,w), RuleEntry::Repeat(m,s), RuleEntry::Repeat(k,c)) if n == m && n == k && w.len() == s.len() && w.len() == c.len() => {
+                RuleEntry::Repeat(n.clone(), w.iter().zip(s).zip(c).map(|((w,s),c)| GapRule(w.clone(), *s, c.clone())).collect())
+            }
+            _ => return Ok(()),
+        });
+    }
+    RuleList(rules.into_boxed_slice()).to_css(dest)
 }
 
 pub mod text_wrap {
@@ -2626,7 +2629,7 @@ pub mod font {
         let mut variant_caps = None;
         let mut weight = None;
         let mut width = None;
-        if let Ok(sys) = input.try_parse(|i| SystemFont::parse(context, i)) {
+        if let Ok(sys) = input.try_parse(|i| <SystemFont as Parse>::parse(context, i)) {
             return Ok(Longhands {
                 font_family: font_family::SpecifiedValue::system_font(sys),
                 font_size: font_size::SpecifiedValue::system_font(sys),
@@ -2726,12 +2729,6 @@ pub mod font {
         where
             W: fmt::Write,
         {
-            match self.check_system() {
-                CheckSystemResult::AllSystem(sys) => return sys.to_css(dest),
-                CheckSystemResult::SomeSystem => return Ok(()),
-                CheckSystemResult::None => {},
-            }
-
             #[cfg(feature = "gecko")]
             if self.font_optical_sizing != &font_optical_sizing::get_initial_specified_value() {
                 return Ok(());
@@ -2806,6 +2803,12 @@ pub mod font {
                 return Ok(());
             }
 
+            match self.check_system() {
+                CheckSystemResult::AllSystem(sys) if self.font_variant_caps == &font_variant_caps::get_initial_specified_value() => return sys.to_css(dest),
+                CheckSystemResult::AllSystem(_) | CheckSystemResult::SomeSystem => return Ok(()),
+                CheckSystemResult::None => {},
+            }
+
             let font_width = match self.font_width {
                 FontWidth::Keyword(kw) => *kw,
                 FontWidth::Width(percentage) => {
@@ -2871,7 +2874,7 @@ pub mod font {
                 ($v:expr) => {
                     match $v.get_system() {
                         Some(s) => {
-                            debug_assert!(sys.is_none() || s == sys.unwrap());
+                            if sys.is_some_and(|previous| previous != s) { all = false; }
                             sys = Some(s);
                         },
                         None => {
@@ -3627,6 +3630,10 @@ pub mod mask {
     pub use crate::properties::generated::shorthands::mask::*;
 
     use super::*;
+    use crate::properties::longhands::{
+        mask_border_mode, mask_border_outset, mask_border_repeat, mask_border_slice,
+        mask_border_source, mask_border_width,
+    };
     use crate::parser::Parse;
     use crate::properties::longhands::{
         mask_clip, mask_composite, mask_mode, mask_origin, mask_position_x, mask_position_y,
@@ -3753,6 +3760,12 @@ pub mod mask {
            mask_origin: mask_origin::SpecifiedValue(mask_origin.into()),
            mask_clip: mask_clip::SpecifiedValue(mask_clip.into()),
            mask_composite: mask_composite::SpecifiedValue(mask_composite.into()),
+           mask_border_mode: mask_border_mode::get_initial_specified_value(),
+           mask_border_outset: mask_border_outset::get_initial_specified_value(),
+           mask_border_repeat: mask_border_repeat::get_initial_specified_value(),
+           mask_border_slice: mask_border_slice::get_initial_specified_value(),
+           mask_border_source: mask_border_source::get_initial_specified_value(),
+           mask_border_width: mask_border_width::get_initial_specified_value(),
         })
     }
 
@@ -3766,6 +3779,15 @@ pub mod mask {
             use style_traits::values::SequenceWriter;
 
             let len = self.mask_image.0.len();
+            if *self.mask_border_mode != mask_border_mode::get_initial_specified_value()
+                || *self.mask_border_outset != mask_border_outset::get_initial_specified_value()
+                || *self.mask_border_repeat != mask_border_repeat::get_initial_specified_value()
+                || *self.mask_border_slice != mask_border_slice::get_initial_specified_value()
+                || *self.mask_border_source != mask_border_source::get_initial_specified_value()
+                || *self.mask_border_width != mask_border_width::get_initial_specified_value()
+            {
+                return Ok(());
+            }
             if len == 0 {
                 return Ok(());
             }

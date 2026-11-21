@@ -9,6 +9,11 @@
 //! explicitly, and a boundary node that leaves the document clears the
 //! selection when read.
 
+mod character;
+mod paragraph_join;
+mod target_range;
+mod whitespace;
+
 use std::rc::Rc;
 
 use pyro_dom::{Dom, NodeId, NodeType};
@@ -94,8 +99,28 @@ pub fn set_selection(page: &Rc<PageDom>, anchor: Point, focus: Point) {
     let old = page.selection.replace(Some(DocSelection { range, backward, wrappers: Vec::new(), origin, cross_tree }));
     drop(old);
     if changed {
+        page.typing_values.take();
         queue_selectionchange(page);
     }
+}
+
+/// Retarget the selection after an edit while maintaining its associated
+/// live Range and any Range objects already held by script.
+pub(crate) fn retarget_selection(page:&Rc<PageDom>, anchor:Point, focus:Point) {
+    let previous=selection(page);
+    let backward=compare(page,anchor,focus)>0;
+    let (start,end)=if backward{(focus,anchor)}else{(anchor,focus)};
+    let mut slot=page.selection.borrow_mut();
+    let Some(current)=slot.as_mut() else{return};
+    if page.dom.borrow_mut().set_live_range(&current.range.live,start,end).is_err(){return;}
+    current.backward=backward;
+    current.cross_tree=None;
+    if current.origin.is_some() {
+        current.origin=crate::collections::NodeHold::new(page,anchor.0).ok()
+            .zip(crate::collections::NodeHold::new(page,focus.0).ok());
+    }
+    drop(slot);
+    if previous!=Some((anchor,focus)){queue_selectionchange(page);}
 }
 
 /// `addRange()`: `range` becomes the selection's range, `wrapper` being the
@@ -112,12 +137,14 @@ pub(crate) fn set_selection_range(
         origin: None,
         cross_tree: None,
     };
+    page.typing_values.take();
     let old = page.selection.replace(Some(selection));
     drop(old);
     queue_selectionchange(page);
 }
 
 pub fn clear_selection(page: &Rc<PageDom>) {
+    page.typing_values.take();
     let old = page.selection.take();
     if old.is_some() {
         drop(old);
@@ -232,7 +259,7 @@ pub(crate) fn local(dom: &Dom, n: NodeId) -> String {
 }
 
 pub(crate) fn is_text(dom: &Dom, n: NodeId) -> bool {
-    dom.node_type(n).ok() == Some(NodeType::Text)
+    matches!(dom.node_type(n), Ok(NodeType::Text | NodeType::CDataSection))
 }
 
 /// Elements a caret descends into (not void/replaced ones).
@@ -324,12 +351,27 @@ pub(crate) fn deep_backward(dom: &Dom, (mut n, mut off): Point) -> Point {
     }
 }
 
+/// Descend into a nearby leaf only while each edge stays in the same
+/// editing host. A non-editable child is an atomic boundary for typing.
+fn editable_edge(dom: &Dom, mut point: Point, forward: bool) -> Point {
+    let host = editing_host(dom, point.0);
+    while !is_text(dom, point.0) {
+        let index = if forward { Some(point.1) } else { point.1.checked_sub(1) };
+        let Some(child) = index.and_then(|i| dom.child_at(point.0, i).ok().flatten()) else { break };
+        if (!is_text(dom, child) && !is_container(dom, child)) || editing_host(dom, child) != host {
+            break;
+        }
+        point = (child, if forward { 0 } else { len(dom, child) });
+    }
+    point
+}
+
 pub fn host_start(dom: &Dom, host: NodeId) -> Point {
-    deep_forward(dom, (host, 0))
+    editable_edge(dom, (host, 0), true)
 }
 
 pub fn host_end(dom: &Dom, host: NodeId) -> Point {
-    deep_backward(dom, (host, len(dom, host)))
+    editable_edge(dom, (host, len(dom, host)), false)
 }
 
 /// Next/previous text node after/before `n` in tree order inside `within`.
@@ -374,11 +416,16 @@ pub(crate) fn input_event_with(
     let ev = EventCore::trusted(page, EventInterface::InputEvent, ty, true, cancelable);
     {
         let mut f = ev.fields.borrow_mut();
+        if ty == "beforeinput" && (page.dom.borrow().listens_for(ty) || page.dom.borrow().has_pending_inline_handlers()) {
+            f.editing_range = target_range::for_input(page, host, input_type).map(|range| Box::new((key, range)));
+        }
         f.input_type = input_type.to_owned();
         f.data = data.map(str::to_owned);
         f.data_transfer = transfer.map(|t| t.reference.clone());
     }
-    fire(page, key, &ev)
+    let proceed = fire(page, key, &ev);
+    ev.fields.borrow_mut().editing_range.take();
+    proceed
 }
 
 /// beforeinput, then the edit, then input (when the edit ran).
@@ -396,13 +443,32 @@ pub(crate) fn edit_with(
     transfer: Option<&crate::data_transfer::NativeTransfer>,
     op: impl FnOnce(&Rc<PageDom>),
 ) {
-    let doc = page.document();
-    if !input_event_with(page, host, "beforeinput", input_type, data, transfer, true)
-        || page.document() != doc
-        || !connected(page, host)
-    {
-        return;
+    if before_edit(page, host, input_type, data, transfer) {
+        apply_edit(page, host, input_type, data, transfer, op);
     }
+}
+
+fn before_edit(
+    page: &Rc<PageDom>,
+    host: NodeId,
+    input_type: &str,
+    data: Option<&str>,
+    transfer: Option<&crate::data_transfer::NativeTransfer>,
+) -> bool {
+    let doc = page.document();
+    input_event_with(page, host, "beforeinput", input_type, data, transfer, true)
+        && page.document() == doc
+        && connected(page, host)
+}
+
+fn apply_edit(
+    page: &Rc<PageDom>,
+    host: NodeId,
+    input_type: &str,
+    data: Option<&str>,
+    transfer: Option<&crate::data_transfer::NativeTransfer>,
+    op: impl FnOnce(&Rc<PageDom>),
+) {
     crate::edit_commands::record_host_edit(page, host, input_type);
     op(page);
     crate::edit_commands::note_host_edited(page, host);
@@ -428,7 +494,8 @@ pub(crate) fn host_range(page: &PageDom, host: NodeId) -> (Point, Point) {
 pub(crate) fn placeholder_if_empty(dom: &mut Dom, block: NodeId) -> Option<Point> {
     let has_content = dom.descendants(block).ok()?.any(|d| {
         d != block
-            && (is_text(dom, d) && dom.char_length(d).unwrap_or(0) > 0 || (!is_text(dom, d) && !is_container(dom, d)))
+            && (is_text(dom, d) && dom.char_length(d).unwrap_or(0) > 0
+                || (!is_text(dom, d) && (!is_container(dom, d) || editable_attr(dom, d) == Some(false))))
     });
     if has_content {
         return None;
@@ -447,6 +514,17 @@ pub(crate) fn placeholder_if_empty(dom: &mut Dom, block: NodeId) -> Option<Point
 /// block, and returns the caret. With `placeholder`, a block left empty gets
 /// `<br>`; text replacing the selection skips it and reuses the text node.
 pub(crate) fn delete_range(dom: &mut Dom, host: NodeId, start: Point, end: Point, placeholder: bool) -> Point {
+    delete_range_with_merging(dom, host, start, end, placeholder, true)
+}
+
+fn delete_range_with_merging(
+    dom: &mut Dom,
+    host: NodeId,
+    start: Point,
+    end: Point,
+    placeholder: bool,
+    merge_blocks: bool,
+) -> Point {
     let start = deep_forward(dom, start);
     let end = deep_backward(dom, end);
     if crate::range::compare_boundary_points_dom(dom, start, end) >= 0 {
@@ -484,13 +562,34 @@ pub(crate) fn delete_range(dom: &mut Dom, host: NodeId, start: Point, end: Point
                 }
             }
         }
-        if start_block != end_block && dom.is_connected(end_block).unwrap_or(false) {
-            let kids: Vec<NodeId> = dom.children(end_block).map(|c| c.collect()).unwrap_or_default();
-            for k in kids {
-                let _ = dom.append_child(start_block, k);
-            }
-            if let Ok(Some(p)) = dom.parent(end_block) {
-                let _ = dom.remove_child(p, end_block);
+        if merge_blocks && start_block != end_block && dom.is_connected(end_block).unwrap_or(false) {
+            if dom.contains(end_block, start_block).unwrap_or(false) {
+                // The end lies in an anonymous line of an ancestor block
+                // (possibly the editing host). Join that line to the start
+                // block, leaving the ancestor and subsequent lines intact.
+                let mut branch = start_block;
+                while let Ok(Some(parent)) = dom.parent(branch) {
+                    if parent == end_block { break; }
+                    branch = parent;
+                }
+                let mut next = dom.next_sibling(branch).ok().flatten();
+                while let Some(child) = next {
+                    if is_block(dom, child) || !is_editable(dom, child) { break; }
+                    if local(dom, child) == "br" {
+                        let _ = dom.remove_child(end_block, child);
+                        break;
+                    }
+                    next = dom.next_sibling(child).ok().flatten();
+                    if dom.append_child(start_block, child).is_err() { break; }
+                }
+            } else {
+                let kids: Vec<NodeId> = dom.children(end_block).map(|c| c.collect()).unwrap_or_default();
+                for k in kids {
+                    let _ = dom.append_child(start_block, k);
+                }
+                if let Ok(Some(p)) = dom.parent(end_block) {
+                    let _ = dom.remove_child(p, end_block);
+                }
             }
         }
     }
@@ -512,15 +611,12 @@ pub(crate) fn insertion_point(dom: &Dom, caret: Point) -> Point {
     if is_text(dom, caret.0) {
         return caret;
     }
-    let f = deep_forward(dom, caret);
-    if is_text(dom, f.0) {
-        return f;
+    let forward = editable_edge(dom, caret, true);
+    if is_text(dom, forward.0) {
+        return forward;
     }
-    let b = deep_backward(dom, caret);
-    if is_text(dom, b.0) {
-        return b;
-    }
-    f
+    let backward = editable_edge(dom, caret, false);
+    if is_text(dom, backward.0) { backward } else { forward }
 }
 
 pub(crate) fn insert_at(dom: &mut Dom, caret: Point, text: &str) -> Point {
@@ -555,7 +651,27 @@ pub fn insert_text(page: &Rc<PageDom>, host: NodeId, text: &str) {
         let caret = {
             let mut dom = page.dom.borrow_mut();
             let caret = if start != end { delete_range(&mut dom, host, start, end, false) } else { start };
-            insert_at(&mut dom, caret, text)
+            let mut caret = caret;
+            for (index, part) in text.split('\n').enumerate() {
+                if index != 0 {
+                    // An inserted linefeed performs insertParagraph within
+                    // the same edit and undo step as the surrounding text.
+                    caret = split_block(page, &mut dom, host, caret);
+                }
+                if !part.is_empty() {
+                    let inserted_end = insert_at(&mut dom, caret, part);
+                    whitespace::inserted(page, &mut dom, host, inserted_end, part);
+                    caret = crate::edit_commands::inline_value::format_typed(
+                        page,
+                        &mut dom,
+                        (start, end),
+                        inserted_end,
+                        part,
+                    )
+                    .unwrap_or(inserted_end);
+                }
+            }
+            caret
         };
         set_selection(page, caret, caret);
     });
@@ -628,95 +744,266 @@ pub(crate) fn is_text_entry_control(dom: &Dom, el: NodeId) -> bool {
 /// Backspace / Delete: deletes the selection, else one character (merging
 /// blocks at a block edge).
 pub fn delete(page: &Rc<PageDom>, host: NodeId, backward: bool) {
-    let (start, end) = host_range(page, host);
     let input_type = if backward { "deleteContentBackward" } else { "deleteContentForward" };
-    edit(page, host, input_type, None, |page| {
+    let original_selection = selection_range(page);
+    let original_owner = original_selection.and_then(|(s, e)| selection_host(&page.dom.borrow(), s, e));
+    if !before_edit(page, host, input_type, None, None) { return; }
+    // A moved selection may choose another host. When the listeners leave
+    // it alone, retain the command's editing host (including designMode's
+    // document-body editing scope).
+    let Some((start, end)) = selection_range(page) else { return };
+    let current_owner = selection_host(&page.dom.borrow(), start, end);
+    let (host, start, end) = if original_selection == Some((start, end)) && original_owner == current_owner {
+        let (start, end) = host_range(page, host);
+        (host, start, end)
+    } else {
+        let Some(host) = current_owner else { return };
+        (host, start, end)
+    };
+    let (start, end, span) = if start == end {
+        let (caret, span) = target_range::deletion_plan(page, &page.dom.borrow(), host, start, backward);
+        (caret, caret, span)
+    } else {
+        (start, end, Some((start, end)))
+    };
+    let Some((from, to)) = span else {
+        return;
+    };
+    if from == to {
+        return;
+    }
+    apply_edit(page, host, input_type, None, None, |page| {
         let caret = {
             let mut dom = page.dom.borrow_mut();
-            if start != end {
-                delete_range(&mut dom, host, start, end, true)
+            let repair_space = start == end && whitespace::exposes_space(page, &dom, host, start, backward);
+            let caret = if let Some(caret) = paragraph_join::at_boundary(page, &mut dom, host, start, end, backward) {
+                caret
             } else {
-                delete_char(&mut dom, host, start, backward)
+                delete_content(page, &mut dom, host, start, end, backward, (from, to))
+            };
+            if repair_space {
+                whitespace::at(page, &mut dom, host, caret);
             }
+            caret
         };
         set_selection(page, caret, caret);
     });
 }
 
-fn delete_char(dom: &mut Dom, host: NodeId, caret: Point, backward: bool) -> Point {
-    let p = if backward { deep_backward(dom, caret) } else { deep_forward(dom, caret) };
-    let p = insertion_point(dom, p);
-    if is_text(dom, p.0) {
-        let data = dom.char_data(p.0).unwrap_or("").to_owned();
-        let units: Vec<u16> = data.encode_utf16().collect();
-        let (from, to) = if backward && p.1 > 0 {
-            let mut from = p.1 as usize - 1;
-            if from > 0 && (0xDC00..0xE000).contains(&units[from]) {
-                from -= 1;
-            }
-            (from as u32, p.1)
-        } else if !backward && (p.1 as usize) < units.len() {
-            let mut to = p.1 as usize + 1;
-            if to < units.len() && (0xDC00..0xE000).contains(&units[to]) {
-                to += 1;
-            }
-            (p.1, to as u32)
-        } else {
-            // At a text edge: the adjacent text in the same block, else merge blocks.
-            let block = block_of(dom, p.0, host);
-            if let Some(t) = adjacent_text(dom, p.0, block, !backward) {
-                let edge = if backward { (t, len(dom, t)) } else { (t, 0) };
-                return delete_char(dom, host, edge, backward);
-            }
-            return merge_blocks(dom, host, block, backward).unwrap_or(p);
-        };
-        let _ = dom.replace_data(p.0, from, to - from, "");
-        let block = block_of(dom, p.0, host);
-        if let Some(c) = placeholder_if_empty(dom, block) {
-            return c;
-        }
-        return (p.0, from);
-    }
-    let block = block_of(dom, p.0, host);
-    merge_blocks(dom, host, block, backward).unwrap_or(p)
+fn selection_host(dom: &Dom, start: Point, end: Point) -> Option<NodeId> {
+    let host = editing_host(dom, start.0)?;
+    (editing_host(dom, end.0) == Some(host)).then_some(host)
 }
 
-/// Merges `block` into the previous block (backward) or the next block into
-/// it (forward); returns the caret at the seam.
-fn merge_blocks(dom: &mut Dom, host: NodeId, block: NodeId, backward: bool) -> Option<Point> {
-    if block == host {
-        return None;
+fn delete_content(
+    page: &PageDom,
+    dom: &mut Dom,
+    host: NodeId,
+    start: Point,
+    end: Point,
+    backward: bool,
+    (from, to): (Point, Point),
+) -> Point {
+    if start == end
+        && backward
+        && dom.parent(to.0).ok().flatten() == Some(from.0)
+        && dom.index_in_parent(to.0).ok() == Some(from.1)
+        && to.1 == len(dom, to.0)
+        && to.0 != host
+        && placeholder_block(dom, to.0)
+    {
+        let _ = dom.remove_child(from.0, to.0);
+        return from;
     }
-    let (first, second) = if backward {
-        let prev = dom.parent(block).ok()??;
-        let idx = dom.index_in_parent(block).ok()?;
-        let p = (idx > 0).then(|| dom.child_at(prev, idx - 1).ok().flatten()).flatten()?;
-        (p, block)
+    if start == end && from.0 == to.0 && is_text(dom, from.0) {
+        return remove_character(dom, host, from, to);
+    }
+    if let Some(right_list) = adjacent_list_boundary(dom, host, from, to) {
+        // Join the two list items across the paragraph boundary. Other
+        // items keep their original list; remove an exhausted list shell.
+        let caret = delete_range(dom, host, from, to, true);
+        if dom.child_count(right_list).ok() == Some(0) {
+            let _ = dom.remove_node(right_list);
+        }
+        return caret;
+    }
+    if start == end && from.0 == to.0 && !is_text(dom, from.0) && to.1 == from.1 + 1 {
+        if let Ok(Some(child)) = dom.child_at(from.0, from.1) {
+            if !is_container(dom, child) || !is_editable(dom, child) {
+                let _ = dom.remove_child(from.0, child);
+                return placeholder_if_empty(dom, block_of(dom, from.0, host)).unwrap_or(from);
+            }
+        }
+    }
+    if start != end {
+        delete_range(dom, host, start, end, true)
     } else {
-        let parent = dom.parent(block).ok()??;
-        let idx = dom.index_in_parent(block).ok()?;
-        (block, dom.child_at(parent, idx + 1).ok()??)
-    };
-    if !is_block(dom, first) || !is_block(dom, second) {
+        merge_blocks(page, dom, host, from, to).unwrap_or(start)
+    }
+}
+
+fn adjacent_list_boundary(dom: &Dom, host: NodeId, from: Point, to: Point) -> Option<NodeId> {
+    let left = block_of(dom, from.0, host);
+    let right = block_of(dom, to.0, host);
+    if left == right || ![left, right].into_iter().all(|n| matches!(local(dom, n).as_str(), "dt" | "dd" | "li")) {
         return None;
     }
-    // A lone placeholder in the first block goes away.
-    if dom.child_count(first).ok()? == 1 && dom.child_at(first, 0).ok()?.is_some_and(|c| local(dom, c) == "br") {
-        let br = dom.child_at(first, 0).ok()??;
-        let _ = dom.remove_child(first, br);
+    let a = dom.parent(left).ok()??;
+    let b = dom.parent(right).ok()??;
+    if a == b || dom.next_sibling(a).ok()?? != b {
+        return None;
     }
-    let seam = deep_backward(dom, (first, len(dom, first)));
-    let kids: Vec<NodeId> = dom
-        .children(second)
+    [a, b].into_iter().all(|n| n != host && matches!(local(dom, n).as_str(), "dl" | "ul" | "ol")).then_some(b)
+}
+
+fn remove_character(dom: &mut Dom, host: NodeId, from: Point, to: Point) -> Point {
+    let _ = dom.replace_data(from.0, from.1, to.1 - from.1, "");
+    let block = block_of(dom, from.0, host);
+    placeholder_if_empty(dom, block).unwrap_or(from)
+}
+
+fn placeholder_block(dom: &Dom, n: NodeId) -> bool {
+    let Some(host) = editing_host(dom, n) else { return false };
+    is_block(dom, n) && dom.child_count(n).ok() == Some(1)
+        && dom.first_child(n).ok().flatten().is_some_and(|br| local(dom, br) == "br" && editing_host(dom, br) == Some(host))
+}
+
+/// Merge the blocks selected by the planner. In particular, retain any
+/// hidden sibling that was skipped when resolving the visible target.
+fn merge_blocks(page: &PageDom, dom: &mut Dom, host: NodeId, from: Point, to: Point) -> Option<Point> {
+    let mut first = block_of(dom, from.0, host);
+    let second = block_of(dom, to.0, host);
+    if first == second {
+        return None;
+    }
+    if second == host && dom.parent(first).ok()? == Some(host) {
+        let mut source = to.0;
+        while source != host && dom.parent(source).ok()?? != host {
+            source = dom.parent(source).ok()??;
+        }
+        if source == host {
+            return None;
+        }
+        let mut seam = from;
+        let mut trailing_break = None;
+        let inline = dom
+            .descendants(first)
+            .ok()?
+            .skip(1)
+            .filter(|&n| is_text(dom, n) || dom.node_type(n).ok() == Some(NodeType::Element) && !is_container(dom, n))
+            .collect::<Vec<_>>();
+        for n in inline.into_iter().rev() {
+            if !target_range::rendered(page, dom, n) {
+                continue;
+            }
+            if local(dom, n) == "br" && trailing_break.is_none() && editing_host(dom, n) == Some(host) {
+                trailing_break = Some(n);
+                continue;
+            }
+            if is_text(dom, n) && editing_host(dom, n) == Some(host) {
+                seam = (n, len(dom, n));
+            }
+            break;
+        }
+        let moved = paragraph_join::join_anonymous_right(page, dom, host, first, source, seam)?;
+        if let Some(br) = trailing_break {
+            dom.remove_node(br).ok()?;
+        }
+        return Some(moved);
+    }
+    if first == host && dom.parent(second).ok()? == Some(host) {
+        return paragraph_join::join_first_line(page, dom, host, second, host, Some(second), from);
+    }
+    if first == host || second == host || dom.contains(first, second).ok()? || dom.contains(second, first).ok()? {
+        return None;
+    }
+    // A nested paragraph in the preceding list item remains a child of
+    // that item; append the promoted text after it rather than inside it.
+    if let Some(item) = dom.parent_element(first).ok()? {
+        if matches!(local(dom, item).as_str(), "li" | "dt" | "dd")
+            && matches!(local(dom, second).as_str(), "li" | "dt" | "dd")
+            && dom.parent(item).ok()? == dom.parent(second).ok()?
+            && item != host
+        {
+            first = item;
+        }
+    }
+    if !is_block(dom, first)
+        || !is_block(dom, second)
+        || [first, second].into_iter().any(|n| editing_host(dom, n) != Some(host))
+    {
+        return None;
+    }
+    if placeholder_block(dom, first)
+        && dom.parent(first).ok()? == dom.parent(second).ok()?
+        && editable_edge(dom, (second, 0), true) == editable_edge(dom, to, true)
+    {
+        dom.remove_node(first).ok()?;
+        return Some(to);
+    }
+    // An empty following paragraph contributes no line content.
+    if placeholder_block(dom, second) || dom.child_count(second).ok() == Some(0) {
+        dom.remove_node(second).ok()?;
+        return Some(from);
+    }
+    let last = dom
+        .descendants(first)
         .ok()?
-        .filter(|&k| local(dom, k) != "br" || dom.child_count(second).unwrap_or(0) > 1)
-        .collect();
-    for k in kids {
-        let _ = dom.append_child(first, k);
+        .filter(|&n| {
+            n != first
+                && target_range::rendered(page, dom, n)
+                && (is_text(dom, n) && len(dom, n) > 0
+                    || dom.node_type(n).ok() == Some(NodeType::Element) && !is_container(dom, n))
+        })
+        .last();
+    let trailing = last.filter(|&n| {
+        local(dom, n) == "br"
+            && editing_host(dom, n) == Some(host)
+            && (placeholder_block(dom, first)
+                || dom
+                    .parent(n)
+                    .ok()
+                    .flatten()
+                    .zip(dom.index_in_parent(n).ok())
+                    .is_some_and(|edge| crate::range::compare_boundary_points_dom(dom, from, edge) <= 0))
+    });
+    let has_later_line = dom.descendants(second).ok()?.skip(1).any(|n| {
+        if is_text(dom, n) {
+            dom.char_data(n).is_ok_and(|s| s.contains('\n'))
+                && crate::edit_commands::newlines_significant_in(page, dom, n)
+        } else {
+            local(dom, n) == "br"
+                || is_block(dom, n)
+                || page.layout().computed_style_value(dom, n, "display") == "block"
+        }
+    });
+    // Joining sibling items of the same list retains their contents and
+    // internal line breaks under one item (and one list marker).
+    let same_list = dom.parent_element(first).ok()?.is_some_and(|parent| {
+        dom.parent_element(second).ok().flatten() == Some(parent)
+            && [first, second, parent].iter().all(|&n| dom.element(n).is_ok_and(|el| el.is_html()))
+            && match local(dom, parent).as_str() {
+                "ol" | "ul" | "menu" => [first, second].iter().all(|&n| local(dom, n) == "li"),
+                "dl" => [first, second].iter().all(|&n| matches!(local(dom, n).as_str(), "dt" | "dd")),
+                _ => false,
+            }
+    });
+    if has_later_line && !same_list {
+        paragraph_join::join_first_line(page, dom, host, second, first, None, from)?;
+    } else {
+        // A single complete paragraph can move its existing nodes, keeping
+        // their identities, attributes and formatting elements.
+        while let Some(child) = dom.first_child(second).ok()? {
+            dom.append_child(first, child).ok()?;
+        }
+        dom.remove_node(second).ok()?;
     }
-    let parent = dom.parent(second).ok()??;
-    let _ = dom.remove_child(parent, second);
-    placeholder_if_empty(dom, first).or(Some(seam))
+    if let Some(br) = trailing {
+        dom.remove_node(br).ok()?;
+    }
+    let seam =
+        if dom.contains(first, from.0).ok()? && from.1 <= len(dom, from.0) { from } else { (first, len(dom, first)) };
+    Some(placeholder_if_empty(dom, first).unwrap_or(seam))
 }
 
 /// Enter: splits the caret's block (insertParagraph).
@@ -726,7 +1013,7 @@ pub fn insert_paragraph(page: &Rc<PageDom>, host: NodeId) {
         let caret = {
             let mut dom = page.dom.borrow_mut();
             let caret = if start != end { delete_range(&mut dom, host, start, end, true) } else { start };
-            split_block(&mut dom, host, caret)
+            split_block(page, &mut dom, host, caret)
         };
         set_selection(page, caret, caret);
     });
@@ -744,32 +1031,90 @@ fn in_text_only_element(dom: &Dom, node: NodeId) -> bool {
     })
 }
 
-fn split_block(dom: &mut Dom, host: NodeId, caret: Point) -> Point {
+fn split_block(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point) -> Point {
     let caret = insertion_point(dom, caret);
     // Content that is text only (a `<script>` or `<style>` in the head of a designMode
     // document) gets a linefeed, as in browsers: no element goes into it.
     if in_text_only_element(dom, caret.0) {
         return insert_at(dom, caret, "\n");
     }
-    let block = block_of(dom, caret.0, host);
-    let Ok(doc) = dom.node_document(host) else { return caret };
-    if block == host {
-        // No block to split: a line break.
-        let Ok(br) = dom.create_element(doc, "br") else { return caret };
-        let (n, off) = caret;
-        if is_text(dom, n) {
-            let Ok(after) = dom.split_text(n, off) else { return caret };
-            if let Ok(Some(p)) = dom.parent(after) {
-                let _ = dom.insert_before(p, br, Some(after));
-            }
-            return (after, 0);
+    let Ok(doc) = dom.node_document(host) else {
+        return caret;
+    };
+    // Address and preformatted paragraphs continue with a line break.
+    let mut ancestor = Some(caret.0);
+    while let Some(node) = ancestor {
+        if matches!(local(dom, node).as_str(), "address" | "listing" | "pre") {
+            return line_break_at(dom, host, caret);
         }
-        let before = dom.child_at(n, off).ok().flatten();
-        let _ = dom.insert_before(n, br, before);
-        return (n, off + 1);
+        if node == host || is_block(dom, node) { break; }
+        ancestor = dom.parent(node).ok().flatten();
+    }
+    let mut block = block_of(dom, caret.0, host);
+    let mut caret = caret;
+    let display = page.layout().computed_style_value(dom, block, "display");
+    let inline_box = display == "inline" || display.starts_with("inline-");
+    if block == host {
+        if inline_box {
+            return if crate::edit_commands::newlines_significant_in(page, dom, caret.0) {
+                preserved_break_at(page, dom, host, caret)
+            } else {
+                line_break_at(dom, host, caret)
+            };
+        }
+        // An inline editing host, heading, term or paragraph can't acquire
+        // child paragraphs. Its surrounding block may lie outside this host.
+        if !is_block(dom, host) && local(dom, host) != "body"
+            || matches!(local(dom, host).as_str(), "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "p" | "dt")
+        {
+            return line_break_at(dom, host, caret);
+        }
+        // Make the anonymous paragraph containing the caret explicit before
+        // splitting it. Neighbouring block elements remain outside it.
+        let separator = dom.document_data(doc).map(|d| d.default_paragraph_separator).unwrap_or("div");
+        let Ok(wrapper) = dom.create_element(doc, separator) else {
+            return caret;
+        };
+        let mut child = caret.0;
+        while child != host && dom.parent(child).ok().flatten() != Some(host) {
+            let Ok(Some(parent)) = dom.parent(child) else {
+                return caret;
+            };
+            child = parent;
+        }
+        let children = dom.children(host).map(|c| c.collect::<Vec<_>>()).unwrap_or_default();
+        let at = if child == host {
+            caret.1 as usize
+        } else {
+            let Ok(idx) = dom.index_in_parent(child) else {
+                return caret;
+            };
+            idx as usize
+        };
+        let mut begin = at.min(children.len());
+        while begin > 0 && !is_block(dom, children[begin - 1]) {
+            begin -= 1;
+        }
+        let mut end = at.min(children.len());
+        while end < children.len() && !is_block(dom, children[end]) {
+            end += 1;
+        }
+        if dom.insert_before(host, wrapper, children.get(begin).copied()).is_err() {
+            return caret;
+        }
+        for &node in &children[begin..end] {
+            let _ = dom.append_child(wrapper, node);
+        }
+        if child == host {
+            caret = (wrapper, (at - begin) as u32);
+        }
+        block = wrapper;
     }
     let tag = local(dom, block);
-    let Ok(new_block) = dom.create_element(doc, &tag) else { return caret };
+    let Ok(new_block) = dom.clone_node(block, false, None) else {
+        return caret;
+    };
+    let _ = dom.remove_attribute(new_block, "id");
     // Move everything after the caret (within the block) into the new block.
     let (n, off) = caret;
     let mut split_from = if is_text(dom, n) {
@@ -784,28 +1129,62 @@ fn split_block(dom: &mut Dom, host: NodeId, caret: Point) -> Point {
     } else {
         dom.child_at(n, off).ok().flatten()
     };
-    // Climb to the block's direct child, carrying following siblings.
-    let mut anchor_parent = if is_text(dom, n) { dom.parent(n).ok().flatten() } else { Some(n) };
-    let mut moved: Vec<NodeId> = Vec::new();
-    while let Some(p) = anchor_parent {
-        let mut cur = split_from;
-        while let Some(c) = cur {
-            let next = dom.next_sibling(c).ok().flatten();
-            moved.push(c);
-            cur = next;
+    // Reconstruct the inline ancestor chain on the right side of the split.
+    // The original nodes and their IDs stay in the first paragraph.
+    let mut container = if is_text(dom, n) { dom.parent(n).ok().flatten() } else { Some(n) };
+    let mut right_child = None;
+    while let Some(parent) = container {
+        let dest = if parent == block {
+            new_block
+        } else {
+            let Ok(clone) = dom.clone_node(parent, false, None) else {
+                return caret;
+            };
+            let _ = dom.remove_attribute(clone, "id");
+            clone
+        };
+        if let Some(child) = right_child {
+            let _ = dom.append_child(dest, child);
         }
-        if p == block {
+        let mut next = split_from;
+        while let Some(child) = next {
+            next = dom.next_sibling(child).ok().flatten();
+            let _ = dom.append_child(dest, child);
+        }
+        if parent == block {
             break;
         }
-        split_from = dom.next_sibling(p).ok().flatten();
-        anchor_parent = dom.parent(p).ok().flatten();
-    }
-    for m in moved {
-        let _ = dom.append_child(new_block, m);
+        right_child = (dom.child_count(dest).unwrap_or(0) > 0).then_some(dest);
+        split_from = dom.next_sibling(parent).ok().flatten();
+        container = dom.parent(parent).ok().flatten();
     }
     let parent = dom.parent(block).ok().flatten().unwrap_or(host);
     let next = dom.next_sibling(block).ok().flatten();
     let _ = dom.insert_before(parent, new_block, next);
+    // Duplicating an inline-styled p or div alone does not start a new
+    // visual paragraph. Keep its styles and put each half in a block.
+    if inline_box && matches!(tag.as_str(), "p" | "div") {
+        for child in [block, new_block] {
+            let Ok(wrapper) = dom.create_element(doc, "div") else {
+                break;
+            };
+            if dom.insert_before(parent, wrapper, Some(child)).is_ok() {
+                let _ = dom.append_child(wrapper, child);
+            }
+        }
+    }
+    // A break at the end of a link is the new paragraph's placeholder.
+    // Starting the next line inside that link would continue its href.
+    let mut only_child = new_block;
+    let mut inside_link = false;
+    while dom.child_count(only_child).ok() == Some(1) {
+        let Ok(Some(child)) = dom.first_child(only_child) else { break };
+        inside_link |= local(dom, only_child) == "a";
+        only_child = child;
+    }
+    if inside_link && local(dom, only_child) == "br" {
+        let _ = dom.replace_all(new_block, Some(only_child));
+    }
     placeholder_if_empty(dom, block);
     placeholder_if_empty(dom, new_block).unwrap_or_else(|| host_start(dom, new_block))
 }
@@ -969,6 +1348,150 @@ fn insert_fragment(dom: &mut Dom, host: NodeId, caret: Point, frag: NodeId, sani
     }
 }
 
+/// Split containers which cannot contain an hr, keeping both sides and their
+/// attributes. An id stays with the original element when it splits in two.
+fn lift_horizontal_rule(dom: &mut Dom, host: NodeId, rule: NodeId) {
+    let mut highest = None;
+    let mut cur = dom.parent_element(rule).ok().flatten();
+    while let Some(el) = cur {
+        if el == host {
+            break;
+        }
+        if matches!(
+            local(dom, el).as_str(),
+            "a" | "abbr"
+                | "acronym"
+                | "b"
+                | "bdi"
+                | "bdo"
+                | "big"
+                | "blink"
+                | "cite"
+                | "code"
+                | "dfn"
+                | "em"
+                | "font"
+                | "h1"
+                | "h2"
+                | "h3"
+                | "h4"
+                | "h5"
+                | "h6"
+                | "i"
+                | "kbd"
+                | "listing"
+                | "mark"
+                | "marquee"
+                | "nobr"
+                | "p"
+                | "pre"
+                | "q"
+                | "rp"
+                | "rt"
+                | "ruby"
+                | "s"
+                | "samp"
+                | "small"
+                | "span"
+                | "strike"
+                | "strong"
+                | "sub"
+                | "sup"
+                | "tt"
+                | "u"
+                | "var"
+                | "xmp"
+        ) {
+            highest = Some(el);
+        }
+        cur = dom.parent_element(el).ok().flatten();
+    }
+    let Some(last) = highest else { return };
+    while let Ok(Some(parent)) = dom.parent(rule) {
+        let Ok(Some(grandparent)) = dom.parent(parent) else { return };
+        let next = dom.next_sibling(parent).ok().flatten();
+        if dom.prev_sibling(rule).ok().flatten().is_none() {
+            if dom.insert_before(grandparent, rule, Some(parent)).is_err() {
+                return;
+            }
+            if dom.child_count(parent).ok() == Some(0) {
+                let _ = dom.remove_child(grandparent, parent);
+            }
+        } else {
+            if dom.next_sibling(rule).ok().flatten().is_some() {
+                let Ok(right) = dom.clone_node(parent, false, None) else { return };
+                let _ = dom.remove_attribute(right, "id");
+                while let Ok(Some(child)) = dom.next_sibling(rule) {
+                    if dom.append_child(right, child).is_err() {
+                        return;
+                    }
+                }
+                let _ = dom.insert_before(grandparent, right, next);
+            }
+            let before = dom.next_sibling(parent).ok().flatten();
+            if dom.insert_before(grandparent, rule, before).is_err() {
+                return;
+            }
+        }
+        if parent == last {
+            break;
+        }
+    }
+}
+
+/// Insert an image or horizontal rule directly into the selected range
+/// without reparsing the supplied URL as markup.
+pub(crate) fn insert_replaced_element(page: &Rc<PageDom>, host: NodeId, image_src: Option<&str>) -> bool {
+    let (start, end) = host_range(page, host);
+    let mut dom = page.dom.borrow_mut();
+    let (node, offset) = if start == end {
+        start
+    } else {
+        delete_range_with_merging(&mut dom, host, start, end, false, image_src.is_some())
+    };
+    let (parent, before) = if is_text(&dom, node) {
+        let Ok(Some(p)) = dom.parent(node) else { return false };
+        let before = if offset == 0 {
+            Some(node)
+        } else if offset == len(&dom, node) {
+            dom.next_sibling(node).ok().flatten()
+        } else {
+            let Ok(right) = dom.split_text(node, offset) else { return false };
+            Some(right)
+        };
+        (p, before)
+    } else if matches!(dom.node_type(node), Ok(NodeType::Comment | NodeType::ProcessingInstruction)) {
+        // These boundaries have no visible caret positions. Editing resolves
+        // them to the next position in their parent.
+        let Ok(Some(parent)) = dom.parent(node) else { return false };
+        (parent, dom.next_sibling(node).ok().flatten())
+    } else {
+        (node, dom.child_at(node, offset).ok().flatten())
+    };
+    let Ok(doc) = dom.node_document(host) else { return false };
+    let tag = if image_src.is_some() { "img" } else { "hr" };
+    let Ok(el) = dom.create_element(doc, tag) else { return false };
+    if let Some(src) = image_src {
+        let _ = dom.set_attribute(el, "src", src);
+    }
+    if dom.insert_before(parent, el, before).is_err() {
+        return false;
+    }
+    if let Some(br) = before {
+        if dom.child_count(parent).ok() == Some(2) && is_block(&dom, parent) && local(&dom, br) == "br" {
+            let _ = dom.remove_child(parent, br);
+        }
+    }
+    if image_src.is_none() {
+        lift_horizontal_rule(&mut dom, host, el);
+    }
+    let Ok(Some(p)) = dom.parent(el) else { return false };
+    let caret = (p, 1 + dom.index_in_parent(el).unwrap_or(0));
+    drop(dom);
+    set_selection(page, caret, caret);
+    true
+}
+
 /// `insertHTML` (and rich paste): `html` parsed in the host's context
 /// replaces the selection; the caret goes after it.
 pub(crate) fn insert_html(page: &Rc<PageDom>, host: NodeId, html: &str, input_type: &str) {
@@ -1072,21 +1595,34 @@ pub fn insert_line_break(page: &Rc<PageDom>, host: NodeId) {
             let mut dom = page.dom.borrow_mut();
             let caret = if start != end { delete_range(&mut dom, host, start, end, true) } else { start };
             if newline {
-                let p = insertion_point(&dom, caret);
-                let at_end =
-                    !is_text(&dom, p.0) || (p.1 >= len(&dom, p.0) && dom.next_sibling(p.0).ok().flatten().is_none());
-                let after = insert_at(&mut dom, caret, if at_end { "\n\n" } else { "\n" });
-                if at_end {
-                    (after.0, after.1 - 1)
-                } else {
-                    after
-                }
+                preserved_break_at(page, &mut dom, host, caret)
             } else {
                 line_break_at(&mut dom, host, caret)
             }
         };
         set_selection(page, caret, caret);
     });
+}
+
+fn preserved_break_at(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point) -> Point {
+    let point = insertion_point(dom, caret);
+    let at_end = whitespace::at_line_end(page, dom, host, point);
+    let after = insert_at(dom, caret, if at_end { "\n\n" } else { "\n" });
+    if at_end {
+        (after.0, after.1.saturating_sub(1))
+    } else {
+        after
+    }
+}
+
+fn next_in_block(dom: &Dom, host: NodeId, node: NodeId) -> Option<NodeId> {
+    let block = block_of(dom, node, host);
+    let mut current = node;
+    loop {
+        if let Some(next) = dom.next_sibling(current).ok()? { return Some(next); }
+        current = dom.parent(current).ok()??;
+        if current == host || current == block { return None; }
+    }
 }
 
 fn line_break_at(dom: &mut Dom, host: NodeId, caret: Point) -> Point {
@@ -1110,17 +1646,7 @@ fn line_break_at(dom: &mut Dom, host: NodeId, caret: Point) -> Point {
     let _ = dom.insert_before(parent, br, before);
     // Nothing follows on the line inside its block: a placeholder <br> keeps
     // the new line visible.
-    let block = block_of(dom, br, host);
-    let mut cur = br;
-    let next = loop {
-        if let Some(n) = dom.next_sibling(cur).ok().flatten() {
-            break Some(n);
-        }
-        match dom.parent(cur).ok().flatten() {
-            Some(p) if p != block && p != host => cur = p,
-            _ => break None,
-        }
-    };
+    let next = next_in_block(dom, host, br);
     if next.is_none_or(|n| is_block(dom, n)) {
         if let Ok(extra) = dom.create_element(doc, "br") {
             let after = dom.next_sibling(br).ok().flatten();

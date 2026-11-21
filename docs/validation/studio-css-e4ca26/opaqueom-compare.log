@@ -1,0 +1,30 @@
+opaqueom-main-candidate 8082 page passes 5643 named passes 180702 observed names 194655 statuses {'complete:0': 7871, 'complete:2': 104, 'timeout:None': 11, 'complete:1': 95, 'hang:None': 1}
+opaqueom-main-parent 8082 page passes 5628 named passes 180680 observed names 194655 statuses {'complete:0': 7870, 'complete:2': 105, 'timeout:None': 11, 'complete:1': 95, 'hang:None': 1}
+opaqueom-main-stable 8082 page passes 6950 named passes 182963 observed names 194912 statuses {'complete:0': 7986, 'complete:2': 62, 'complete:1': 23, 'timeout:None': 10, 'hang:None': 1}
+opaqueom-main-parent pages left only 15 right only 0
+opaqueom-main-parent passes left only 22 right only 0
+opaqueom-main-parent observed left only 0 right only 0
+opaqueom-main-stable pages left only 274 right only 1581
+opaqueom-main-stable passes left only 5875 right only 8136
+opaqueom-main-stable observed left only 258 right only 515
+Losses vs parent by URL: Counter()
+opaqueom-focus-candidate 287 page passes 196 named passes 11210 observed names 11570 statuses {'complete:0': 282, 'complete:1': 5}
+opaqueom-focus-parent 287 page passes 181 named passes 11188 observed names 11570 statuses {'complete:0': 282, 'complete:1': 5}
+opaqueom-focus-stable 287 page passes 219 named passes 11115 observed names 11570 statuses {'complete:0': 282, 'complete:1': 5}
+opaqueom-focus-parent pages left only 15 right only 0
+opaqueom-focus-parent passes left only 22 right only 0
+opaqueom-focus-parent observed left only 0 right only 0
+opaqueom-focus-stable pages left only 18 right only 41
+opaqueom-focus-stable passes left only 284 right only 189
+opaqueom-focus-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()
+opaqueom-supplement-candidate 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+opaqueom-supplement-parent 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+opaqueom-supplement-stable 41 page passes 35 named passes 619 observed names 874 statuses {'complete:0': 41}
+opaqueom-supplement-parent pages left only 0 right only 0
+opaqueom-supplement-parent passes left only 0 right only 0
+opaqueom-supplement-parent observed left only 0 right only 0
+opaqueom-supplement-stable pages left only 0 right only 8
+opaqueom-supplement-stable passes left only 0 right only 42
+opaqueom-supplement-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()

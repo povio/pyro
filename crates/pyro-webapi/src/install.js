@@ -199,6 +199,30 @@
   const viewBuffer = getOwnPropertyDescriptor(typedArrayProto, 'buffer').get;
   const viewOffset = getOwnPropertyDescriptor(typedArrayProto, 'byteOffset').get;
   const viewLength = getOwnPropertyDescriptor(typedArrayProto, 'byteLength').get;
+  const viewName = getOwnPropertyDescriptor(typedArrayProto, toStringTag).get;
+  // JSC's public typed-array enum does not cover every ECMAScript view.
+  const viewBytes = value => {
+    if (!isView(value)) return null;
+    if (apply(viewName, value, []) === undefined) return dataView(value);
+    const length = apply(viewLength, value, []);
+    if (length === 0) return new Uint8Array_(0);
+    return new Uint8Array_(apply(viewBuffer, value, []), apply(viewOffset, value, []), length);
+  };
+  const resizable = getOwnPropertyDescriptor(ArrayBuffer.prototype, 'resizable')?.get;
+  const growable = typeof SharedArrayBuffer === 'function'
+    ? getOwnPropertyDescriptor(SharedArrayBuffer.prototype, 'growable')?.get : undefined;
+  // Web IDL [AllowShared] Uint8Array, without [AllowResizable].
+  const encodeIntoCapacity = view => {
+    if (apply(viewName, view, []) !== 'Uint8Array') throw new TypeError_('Expected a Uint8Array');
+    const buffer = apply(viewBuffer, view, []);
+    let variable = false;
+    if (resizable) {
+      try { variable = apply(resizable, buffer, []); }
+      catch (_) { if (growable) variable = apply(growable, buffer, []); }
+    }
+    if (variable) throw new TypeError_('Expected a fixed-length backing buffer');
+    return apply(viewLength, view, []);
+  };
   const toWellFormed = String.prototype.toWellFormed;
   const blobParts = (parts) => {
     const out = [];
@@ -216,12 +240,8 @@
       if (v !== null && typeof v === 'object') {
         try { apply(blobSize, v, []); append(out, v); continue; } catch (_) {}
         // A buffer source over a detached buffer holds no bytes.
-        if (isView(v)) {
-          let bytes;
-          try { bytes = new Uint8Array_(apply(viewBuffer, v, []), apply(viewOffset, v, []), apply(viewLength, v, [])); }
-          catch (_) { bytes = dataView(v); }
-          append(out, bytes || new Uint8Array_(0)); continue;
-        }
+        const view = viewBytes(v);
+        if (view !== null) { append(out, view); continue; }
         let isBuffer = false;
         try { apply(bufferLength, v, []); isBuffer = true; } catch (_) {}
         if (!isBuffer && sharedLength) try { apply(sharedLength, v, []); isBuffer = true; } catch (_) {}
@@ -238,7 +258,7 @@
 
   return {
     blobParts,
-    dataView,
+    encoding: { __proto__: null, viewBytes, encodeIntoCapacity },
     mutationOptions,
     intersection: [intersectionThresholds, freeze],
     formData: [formDataPopulated, formDataIteratorPopulated],

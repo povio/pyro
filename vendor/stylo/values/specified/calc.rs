@@ -467,9 +467,9 @@ impl generic::CalcNodeLeaf for Leaf {
         }
     }
 
-    fn as_percentage(&self) -> Option<(f32, Optional<NumericBaseType>)> {
+    fn size_coefficient(&self) -> Option<f32> {
         match *self {
-            Self::Percentage(p) => Some((p.get(), p.hint)),
+            Self::Percentage(p) if p.size_basis => Some(p.get()),
             _ => None,
         }
     }
@@ -621,7 +621,8 @@ impl generic::CalcNodeLeaf for Leaf {
                 *one = NoCalcNumber::new(one.value() + other.value());
             },
             (&mut Percentage(ref mut one), Percentage(other)) => {
-                *one = CalcPercentageLeaf::new(one.get() + other.get(), one.combined_hint(other));
+                if one.size_basis != other.size_basis { return Err(()); }
+                *one = one.scaled(one.get() + other.get());
             },
             (&mut Angle(ref mut one), Angle(other)) => {
                 *one = NoCalcAngle::from_degrees(one.degrees() + other.degrees());
@@ -711,10 +712,10 @@ impl generic::CalcNodeLeaf for Leaf {
                 one.value(),
                 other.value(),
             )))),
-            (Percentage(one), Percentage(other)) => Ok(Leaf::Percentage(CalcPercentageLeaf::new(
-                op(one.get(), other.get()),
-                one.combined_hint(other),
-            ))),
+            (Percentage(one), Percentage(other)) => Ok(Leaf::Percentage({
+                if one.size_basis != other.size_basis { return Err(()); }
+                one.scaled(op(one.get(), other.get()))
+            })),
             (Angle(one), Angle(other)) => Ok(Leaf::Angle(NoCalcAngle::from_degrees(op(
                 one.degrees(),
                 other.degrees(),
@@ -755,7 +756,7 @@ impl generic::CalcNodeLeaf for Leaf {
             Leaf::Angle(one) => *one = NoCalcAngle::from_degrees(op(one.degrees())),
             Leaf::Time(one) => *one = NoCalcTime::from_seconds(op(one.seconds())),
             Leaf::Resolution(one) => *one = NoCalcResolution::from_dppx(op(one.dppx())),
-            Leaf::Percentage(one) => *one = CalcPercentageLeaf::new(op(one.get()), one.hint),
+            Leaf::Percentage(one) => *one = one.scaled(op(one.get())),
             Leaf::Number(one) => *one = NoCalcNumber::new(op(one.value())),
             Leaf::ColorComponent(..) | Leaf::TreeCountingFunction(..) | Leaf::RandomKey(..) => {
                 return Err(());
@@ -932,11 +933,6 @@ impl CalcNode {
                 }
                 Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError))
             },
-            &Token::Percentage { .. }
-                if flags.additional_functions.intersects(AdditionalFunctions::CALC_SIZE) =>
-            {
-                Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError))
-            },
             &Token::Percentage { unit_value, .. } => {
                 let hint = match flags.percentage_context {
                     PercentageContext::NotAllowed => {
@@ -982,10 +978,7 @@ impl CalcNode {
                 if flags.additional_functions.intersects(AdditionalFunctions::CALC_SIZE)
                     && ident.eq_ignore_ascii_case("size") =>
             {
-                Ok(CalcNode::Leaf(Leaf::Percentage(CalcPercentageLeaf::new(
-                    1.0,
-                    Optional::Some(NumericBaseType::Length),
-                ))))
+                Ok(CalcNode::Leaf(Leaf::Percentage(CalcPercentageLeaf { size_basis: true, ..CalcPercentageLeaf::new(1.0, Optional::Some(NumericBaseType::Length)) })))
             },
             Token::Ident(ident) => {
                 let leaf = match_ignore_ascii_case! { &**ident,
@@ -1265,7 +1258,10 @@ impl CalcNode {
                     })
                 },
                 MathFunction::Random => {
-                    if !crate::pref!("layout.css.random.enabled") {
+                    if !crate::pref!("layout.css.random.enabled")
+                        || !context.has_element_context()
+                        || context.property_declaration_context.property_id().is_none()
+                    {
                         return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
                     }
 
@@ -1273,7 +1269,7 @@ impl CalcNode {
                     // random keys construct the correct random cache name when parsed.
                     context
                         .property_declaration_context
-                        .increment_random_count();
+                        .increment_random_count(input.position().byte_index());
 
                     let key = match input.try_parse(|input| RandomKey::parse(context, input)) {
                         Ok(key) => {
@@ -1653,9 +1649,10 @@ impl CalcNode {
         context: &ParserContext,
         input: &mut Parser,
         clamping_mode: AllowedNumericType,
+        allow_size: bool,
     ) -> Result<CalcLengthPercentage, ParseError> {
         let flags = CalcParseFlags {
-            additional_functions: AdditionalFunctions::CALC_SIZE,
+            additional_functions: if allow_size { AdditionalFunctions::CALC_SIZE } else { AdditionalFunctions::empty() },
             percentage_context: PercentageContext::allowed_with_hint(NumericBaseType::Length),
             ..Default::default()
         };

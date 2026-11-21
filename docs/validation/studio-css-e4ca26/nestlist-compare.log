@@ -1,0 +1,30 @@
+nestlist-main-candidate 8082 page passes 5783 named passes 181851 observed names 194673 statuses {'complete:0': 7871, 'complete:2': 104, 'timeout:None': 11, 'complete:1': 95, 'hang:None': 1}
+nestlist-main-parent 8082 page passes 5770 named passes 181740 observed names 194657 statuses {'complete:0': 7871, 'complete:2': 104, 'timeout:None': 11, 'complete:1': 95, 'hang:None': 1}
+nestlist-main-stable 8082 page passes 6950 named passes 182963 observed names 194912 statuses {'complete:0': 7986, 'complete:2': 62, 'complete:1': 23, 'timeout:None': 10, 'hang:None': 1}
+nestlist-main-parent pages left only 13 right only 0
+nestlist-main-parent passes left only 113 right only 2
+nestlist-main-parent observed left only 16 right only 0
+nestlist-main-stable pages left only 287 right only 1454
+nestlist-main-stable passes left only 5905 right only 7017
+nestlist-main-stable observed left only 260 right only 499
+Losses vs parent by URL: Counter({'css/css-syntax/var-with-blocks.html': 2})
+nestlist-focus-candidate 157 page passes 121 named passes 867 observed names 937 statuses {'complete:0': 157}
+nestlist-focus-parent 157 page passes 113 named passes 773 observed names 921 statuses {'complete:0': 157}
+nestlist-focus-stable 157 page passes 136 named passes 894 observed names 937 statuses {'complete:0': 157}
+nestlist-focus-parent pages left only 8 right only 0
+nestlist-focus-parent passes left only 94 right only 0
+nestlist-focus-parent observed left only 16 right only 0
+nestlist-focus-stable pages left only 8 right only 23
+nestlist-focus-stable passes left only 27 right only 54
+nestlist-focus-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()
+nestlist-supplement-candidate 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+nestlist-supplement-parent 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+nestlist-supplement-stable 41 page passes 35 named passes 619 observed names 874 statuses {'complete:0': 41}
+nestlist-supplement-parent pages left only 0 right only 0
+nestlist-supplement-parent passes left only 0 right only 0
+nestlist-supplement-parent observed left only 0 right only 0
+nestlist-supplement-stable pages left only 0 right only 8
+nestlist-supplement-stable passes left only 0 right only 42
+nestlist-supplement-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()

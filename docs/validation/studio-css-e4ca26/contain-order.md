@@ -1,0 +1,3 @@
+# Containment keyword order
+
+The `inline-size` alternative occupies the same grammar position as `size`, before `layout`, `style` and `paint`. Preserve that order when serializing a combination. The 97-URL css-contain focus gained two names over `226894e1` and one strict page. The 8,082-URL main comparison reproduced those exact changes without losing pages, names, or changing any URL's harness status. The 41 supplemental outcomes stayed unchanged; 39 withheld URLs remain unscored. Same Studio Chrome stable 158.0.8127.37, WPT `a421f2fea5eb7f91e0db399e44b0fb0779ee1603`, LP/JSC and six workers as `numericbasis`. See `containorder` differences and outcomes for exact membership.

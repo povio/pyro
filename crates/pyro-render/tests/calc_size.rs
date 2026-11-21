@@ -50,6 +50,18 @@ fn width_and_height_are_the_calculation_of_their_basis() {
 }
 
 #[test]
+fn nested_basis_keeps_negative_intermediates() {
+    let img = render("<div style='background:green;width:calc-size(calc-size(10px, size - 30px), size + 70px);height:calc-size(15px, size * 2)'></div>");
+    check(&img, &[(49, 29, GREEN), (50, 29, WHITE), (49, 30, WHITE)]);
+}
+
+#[test]
+fn nested_percent_basis_uses_the_containing_axis() {
+    let img = render("<div style='width:200px;height:80px'><div style='background:green;width:calc-size(calc-size(25%, size + 10px), size * 2);height:calc-size(50%, size - 5px)'></div></div>");
+    check(&img, &[(119, 34, GREEN), (120, 34, WHITE), (119, 35, WHITE)]);
+}
+
+#[test]
 fn a_shrink_to_fit_parent_takes_the_calculated_contributions() {
     // Min-content 20px + 70px, max-content 40px + 70px: in 100px the parent is 100px wide.
     let img = render(

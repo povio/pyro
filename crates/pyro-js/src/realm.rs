@@ -1785,6 +1785,14 @@ impl<'s> Scope<'s> {
         }
     }
 
+    /// Invoke a WebIDL callback with undefined as its this value and no
+    /// arguments. JavaScriptCore's C API substitutes the global for a null
+    /// object receiver; the realm's intrinsic Reflect.apply preserves undefined.
+    pub fn invoke_callback(&self, callback: Object<'_>) -> JsResult<Value<'s>> {
+        let call = self.realm.cached_helper(self, "callWith")?;
+        call.call(None, &[callback.value(), self.undefined()])
+    }
+
     /// Runs `f` inside a JavaScript frame (a helper calls it), so the
     /// microtasks the callbacks it invokes queue run when the frame returns,
     /// not after each callback (JavaScriptCore performs a checkpoint when the
@@ -1800,8 +1808,7 @@ impl<'s> Scope<'s> {
             }
             Ok(s.undefined())
         })?;
-        let call = self.realm.cached_helper(self, "callWith")?;
-        let called = call.call(None, &[native.value(), self.undefined()]);
+        let called = self.invoke_callback(native);
         let result = out.borrow_mut().take();
         match (result, called) {
             (Some(r), _) => Ok(r),
@@ -1912,6 +1919,25 @@ impl<'s> Scope<'s> {
     pub fn sequence(&self, value: Value<'_>, what: &str) -> JsResult<Object<'s>> {
         let seq = self.realm.cached_helper(self, "sequence")?.call(None, &[value, self.string(what)])?;
         seq.as_object().ok_or_else(|| JsError::Type("sequence conversion produced no array".into()))
+    }
+
+    /// WebIDL sequence conversion with observable per-item conversions.
+    pub fn convert_sequence<T: 'static>(
+        &self,
+        value: Value<'_>,
+        what: &str,
+        convert: impl for<'a> Fn(&Scope<'a>, Value<'a>) -> JsResult<T> + 'static,
+    ) -> JsResult<Vec<T>> {
+        let values = Rc::new(RefCell::new(Vec::new()));
+        let output = values.clone();
+        let item = self.function("", move |s, _, args| {
+            let converted = convert(s, args.get(0))?;
+            output.borrow_mut().push(converted);
+            Ok(s.undefined())
+        })?;
+        self.realm.cached_helper(self, "sequence")?.call(None, &[value, self.string(what), item.value()])?;
+        let converted = std::mem::take(&mut *values.borrow_mut());
+        Ok(converted)
     }
 
     // -- host objects ------------------------------------------------------
@@ -2457,6 +2483,12 @@ impl<'s> Scope<'s> {
             .ok_or_else(|| JsError::Type("class registered after this realm was created".into()))?;
         // SAFETY: kept alive by the realm's protected prototype list.
         Ok(unsafe { Value::from_raw(self.ctx, p) })
+    }
+
+    /// Freeze a native binding's array using this realm's intrinsic.
+    pub fn frozen_array(&self, items: &[Value<'_>]) -> JsResult<Value<'s>> {
+        let array = self.array(items)?;
+        self.realm.cached_helper(self, "freeze")?.call(None, &[array.value()])
     }
 
     /// Stores a GC-traced hidden value on a host object (wrappers and the
@@ -3357,8 +3389,8 @@ fn install_members_raw(
         }
         let g = native(name, 0, get)?;
         let st = match set {
-            // Setters keep length 0, as JSC's callback functions had.
-            Some(f) => native(name, 0, f)?.value(),
+            // Web IDL attribute setters have one argument on both installation paths.
+            Some(f) => native(name, 1, f)?.value(),
             None => undefined,
         };
         let mut args = vec![proto.value(), string(name), g.value(), st];

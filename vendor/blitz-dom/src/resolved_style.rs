@@ -50,20 +50,23 @@ fn resolve_inset<P>(val: &GenericInset<P, LengthPercentage>, basis: f32) -> Opti
     }
 }
 
-/// Serialize a transform matrix component rounded to 6 decimal places (as
-/// browsers do when serializing resolved transform matrices)
+/// Serialize a transform matrix component with six significant digits.
 fn format_matrix_component(v: f64) -> String {
-    let rounded = (v * 1e6).round() / 1e6;
-    // Avoid "-0"
-    let rounded = if rounded == 0.0 { 0.0 } else { rounded };
-    format!("{rounded}")
+    if v == 0.0 { return "0".into(); }
+    let rounded = format!("{v:.5e}");
+    let (mantissa, exponent) = rounded.split_once('e').unwrap_or((&rounded, "0"));
+    let exponent = exponent.parse::<i32>().unwrap_or(0);
+    if !(-6..21).contains(&exponent) {
+        return format!("{}e{exponent}", mantissa.trim_end_matches('0').trim_end_matches('.'));
+    }
+    rounded.parse::<f64>().unwrap_or(v).to_string()
 }
 
 /// Serialize a used transform matrix the way `getComputedStyle()` does
 /// (`matrix(...)` for 2D transforms, `matrix3d(...)` otherwise).
-fn format_matrix(m: &euclid::default::Transform3D<f64>, is_3d: bool) -> String {
+fn format_matrix(m: &euclid::default::Transform3D<f64>) -> String {
     let c = format_matrix_component;
-    if is_3d {
+    if !m.is_2d() {
         format!(
             "matrix3d({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
             c(m.m11),
@@ -347,8 +350,29 @@ impl BaseDocument {
 
     /// Resolve a sampled transform against the existing layout without mutating
     /// the document (used for CSS transition transform readback).
-    pub fn resolved_transform_value(&self, node_id: NodeId, style: &ComputedValues) -> String {
-        self.resolved_style_value_with_style(node_id, "transform", Some(style))
+    pub fn resolved_transform_value(&self, node_id: NodeId, property: &str, style: &ComputedValues) -> String {
+        self.resolved_style_value_with_style(node_id, property, Some(style))
+    }
+
+    pub fn sampled_calc_size(&self, node_id: NodeId, width: bool, sampled: &ComputedValues) -> Option<f32> {
+        use style::values::computed::Size;
+        let node = self.get_node(node_id)?;
+        let live = node.primary_styles()?;
+        let (basis, percent, min, max) = node.layout_data().calc_size_inputs[usize::from(!width)]?;
+        if !live.writing_mode.is_horizontal() { return None; }
+        let (live, sampled) = (live.get_position(), sampled.get_position());
+        let sizes = if width { (&live.width, &sampled.width) } else { (&live.height, &sampled.height) };
+        let calculation = match (sizes.0.prepared_size(), sizes.1.prepared_size()) {
+            (Size::CalcSizeAny(_) | Size::CalcSizePercentage(_), Size::CalcSizeAny(value) | Size::CalcSizePercentage(value)) => value,
+            (Size::CalcSizeAuto(_), Size::CalcSizeAuto(value)) |
+            (Size::CalcSizeStretch(_), Size::CalcSizeStretch(value)) |
+            (Size::CalcSizeFitContent(_), Size::CalcSizeFitContent(value)) |
+            (Size::CalcSizeMinContent(_), Size::CalcSizeMinContent(value)) |
+            (Size::CalcSizeMaxContent(_), Size::CalcSizeMaxContent(value)) => value,
+            _ => return None,
+        };
+        let reference = if calculation.0.has_percentage() { basis? } else { 0.0 };
+        Some(calculation.0.resolve_size(CSSPixelLength::new(reference), CSSPixelLength::new(percent.unwrap_or_default())).px().min(max.unwrap_or(f32::INFINITY)).max(min))
     }
 
     fn resolved_style_value_with_style(
@@ -512,7 +536,7 @@ impl BaseDocument {
             "width" | "height" if has_layout_box => {
                 // Used value: the layout size interpreted according to `box-sizing`
                 // (border-box size for `border-box`, content-box size for `content-box`)
-                let layout = node.unrounded_layout();
+                let layout = self.physical_unrounded_layout(node_id);
                 let border_box = styles.get_position().box_sizing == BoxSizing::BorderBox;
                 let size = if property_name == "width" {
                     if border_box {
@@ -728,14 +752,21 @@ impl BaseDocument {
                     let reference_box = euclid::Rect::new(
                         euclid::Point2D::new(CSSPixelLength::new(0.0), CSSPixelLength::new(0.0)),
                         euclid::Size2D::new(
-                            CSSPixelLength::new(layout.size.width),
-                            CSSPixelLength::new(layout.size.height),
+                            CSSPixelLength::new(layout.size.width / zoom),
+                            CSSPixelLength::new(layout.size.height / zoom),
                         ),
                     );
-                    if let Ok((matrix, is_3d)) =
+                    use resolved::ToResolvedValue;
+                    let longhand = style::properties::LonghandId::Transform;
+                    let transform = transform.clone().to_resolved_value(&resolved::Context {
+                        style: styles,
+                        for_property: PropertyId::NonCustom(longhand.into()),
+                        current_longhand: Some(longhand),
+                    });
+                    if let Ok((matrix, _)) =
                         transform.to_transform_3d_matrix_f64(Some(&reference_box))
                     {
-                        return format_matrix(&matrix, is_3d);
+                        return format_matrix(&matrix);
                     }
                 }
             }

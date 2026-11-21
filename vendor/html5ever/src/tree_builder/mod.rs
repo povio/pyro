@@ -88,6 +88,13 @@ pub struct TreeBuilder<Handle, Sink> {
     /// Consumer of tree modifications.
     pub sink: Sink,
 
+    /// Whether a reconstructed formatting element or furthest block is
+    /// removed by the parser sanitizer. Ordinary parsers leave this unset.
+    pub removed_formatting_element: Option<fn(&Sink, &Handle) -> bool>,
+    /// An explicit template end tag finalizes a content patch before its
+    /// template is popped. EOF unwinding does not perform these steps.
+    pub close_patch: Option<fn(&Sink, &Handle)>,
+
     /// Insertion mode.
     mode: Cell<InsertionMode>,
 
@@ -152,6 +159,8 @@ where
     pub fn new(sink: Sink, opts: TreeBuilderOpts) -> TreeBuilder<Handle, Sink> {
         let doc_handle = sink.get_document();
         TreeBuilder {
+            removed_formatting_element: None,
+            close_patch: None,
             opts,
             sink,
             mode: Cell::new(InsertionMode::Initial),
@@ -192,6 +201,8 @@ where
         };
 
         let tb = TreeBuilder {
+            removed_formatting_element: None,
+            close_patch: None,
             opts,
             sink,
             mode: Cell::new(InsertionMode::Initial),
@@ -792,7 +803,9 @@ where
             // 13.
             let mut node;
             let mut node_index = furthest_block_index;
-            let mut last_node = furthest_block.clone();
+            let removed = |node: &Handle| self.removed_formatting_element.is_some_and(|f| f(&self.sink, node));
+            let mut last_node = (!removed(&furthest_block)).then(|| furthest_block.clone());
+            let mut bookmark_moved = false;
 
             // 13.1.
             let mut inner_counter = 0;
@@ -845,23 +858,31 @@ where
                 node = new_element;
 
                 // 13.8.
-                if self.sink.same_node(&last_node, &furthest_block) {
+                if !bookmark_moved {
+                    bookmark_moved = true;
                     bookmark = Bookmark::InsertAfter(node.clone());
                 }
 
                 // 13.9.
-                self.sink.remove_from_parent(&last_node);
-                self.sink.append(&node, AppendNode(last_node.clone()));
+                let keep = !removed(&node);
+                if let Some(last) = last_node {
+                    self.sink.remove_from_parent(&last);
+                    if keep {
+                        self.sink.append(&node, AppendNode(last));
+                    }
+                }
 
                 // 13.10.
-                last_node = node.clone();
+                last_node = keep.then(|| node.clone());
 
                 // 13.11.
             }
 
             // 14.
-            self.sink.remove_from_parent(&last_node);
-            self.insert_appropriately(AppendNode(last_node.clone()), Some(common_ancestor));
+            if let Some(last_node) = last_node {
+                self.sink.remove_from_parent(&last_node);
+                self.insert_appropriately(AppendNode(last_node), Some(common_ancestor));
+            }
 
             // 15.
             // FIXME: Is there a way to avoid cloning the attributes twice here (once on their own,
@@ -1110,6 +1131,13 @@ where
     fn html_elem_named(&self, elem: &Handle, name: LocalName) -> bool {
         let elem_name = self.sink.elem_name(elem);
         *elem_name.ns() == ns!(html) && *elem_name.local_name() == name
+    }
+
+    // HTML "parsing template contents": the template insertion mode stack
+    // has an entry for each open template and, in a fragment parser, for
+    // a template context element even though it is not on the open stack.
+    fn parsing_template_contents(&self) -> bool {
+        !self.template_modes.borrow().is_empty()
     }
 
     fn in_html_elem_named(&self, name: LocalName) -> bool {
@@ -1385,7 +1413,8 @@ where
         let qname = QualName::new(None, ns, name);
         let form_is_associatable = form_associatable(qname.expanded())
             && self.form_elem.borrow().is_some()
-            && !self.in_html_elem_named(local_name!("template"))
+            && !self.is_fragment()
+            && !self.parsing_template_contents()
             && !(listed(qname.expanded())
                 && attrs
                     .iter()

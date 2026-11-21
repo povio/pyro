@@ -73,8 +73,8 @@ impl<T> CheapCloneStr for T where
 /// basis gives.
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum CalcSizeFunction {
-    /// `size` times this factor
-    Scale(f32),
+    /// A fraction of the percentage reference length
+    Percentage(f32),
     /// This length, whatever the size
     Length(f32),
     /// A `calc()` whose percentage basis is the size (an opaque handle, as `CompactLength::calc`)
@@ -84,11 +84,11 @@ pub enum CalcSizeFunction {
 impl CalcSizeFunction {
     /// The calculation applied to `size`, never negative.
     #[inline]
-    pub fn apply(self, size: f32, calc_resolver: impl Fn(*const (), f32) -> f32) -> f32 {
+    pub fn apply(self, size: f32, percent_basis: Option<f32>, calc_resolver: impl Fn(*const (), f32, f32) -> f32) -> f32 {
         let value = match self {
-            Self::Scale(factor) => size * factor,
+            Self::Percentage(factor) => percent_basis.unwrap_or_default() * factor,
             Self::Length(length) => length,
-            Self::Calc(calc) => calc_resolver(calc, size),
+            Self::Calc(calc) => calc_resolver(calc, size, percent_basis.unwrap_or_default()),
         };
         value.max(0.0)
     }
@@ -1496,6 +1496,10 @@ impl<T: FlexboxItemStyle> FlexboxItemStyle for &'_ T {
     #[inline(always)]
     fn flex_basis(&self) -> Dimension {
         (*self).flex_basis()
+    }
+    #[inline(always)]
+    fn flex_basis_calculation(&self) -> Option<CalcSizeFunction> {
+        (*self).flex_basis_calculation()
     }
     #[inline(always)]
     fn flex_grow(&self) -> f32 {

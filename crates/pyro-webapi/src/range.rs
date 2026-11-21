@@ -187,7 +187,7 @@ fn before_after(r: &RangeData, s: &Scope<'_>, a: &Args<'_>, start: bool, after: 
 }
 
 /// Text content of the range (Range.toString()).
-fn range_text(r: &RangeData) -> JsResult<String> {
+fn range_text(r: &RangeData, rendered: bool) -> JsResult<String> {
     let page = r.page();
     let (sn, so, en, eo) = points(r);
     let dom = page.dom.borrow();
@@ -208,6 +208,12 @@ fn range_text(r: &RangeData) -> JsResult<String> {
         }
         let start = if n == sn { so } else { 0 };
         let end = if n == en { eo } else { len };
+        if rendered && start == 0 && end == len {
+            if let Some(character) = dom.math_auto_text(page.layout().style(), n) {
+                out.push(character);
+                continue;
+            }
+        }
         out.push_str(&dom.substring_data(n, start, end.saturating_sub(start)).js()?);
     }
     Ok(out)
@@ -277,7 +283,7 @@ fn clone_substring(dom: &mut Dom, node: NodeId, from: u32, to: u32) -> JsResult<
 
 /// "Clone the contents" or, with `extract`, "extract" of `s..e`, leaving
 /// the boundary points to the caller.
-fn contents(dom: &mut Dom, s: Point, e: Point, extract: bool) -> JsResult<NodeId> {
+pub(crate) fn contents(dom: &mut Dom, s: Point, e: Point, extract: bool) -> JsResult<NodeId> {
     let doc = dom.node_document(s.0).js()?;
     let frag = dom.create_fragment(doc).js()?;
     if s == e {
@@ -518,7 +524,7 @@ impl JsClass for Range {
             r.page.dom.borrow_mut().set_live_range(&d.live, r.live.start(), r.live.end()).js()?;
             Ok(s.wrap::<Range>(d, None)?.value())
         });
-        def.pure_method("toString", 0, |s, r, _a| Ok(s.string(&range_text(r)?)));
+        def.pure_method("toString", 0, |s, r, _a| Ok(s.string(&range_text(r, false)?)));
         def.method("detach", 0, |s, _r, _a| Ok(s.undefined()));
         def.pure_method("compareBoundaryPoints", 2, |s, r, a| {
             a.require(2, "Range.compareBoundaryPoints")?;
@@ -599,13 +605,11 @@ impl JsClass for Range {
             let ctx = {
                 let dom = page.dom.borrow();
                 let sn = points(r).0;
-                if dom.node_type(sn).js()? == NodeType::Element {
-                    sn
-                } else {
-                    dom.parent_element(sn)
-                        .js()?
-                        .or(dom.body(page.document()).js()?)
-                        .ok_or_else(|| JsError::Type("no context element".into()))?
+                match dom.node_type(sn).js()? {
+                    NodeType::Text | NodeType::CDataSection | NodeType::Comment => {
+                        dom.parent_element(sn).js()?.unwrap_or(sn)
+                    }
+                    _ => sn,
                 }
             };
             let frag = pyro_dom::parse::parse_contextual_fragment(&mut page.dom.borrow_mut(), ctx, &html).js()?;
@@ -614,7 +618,7 @@ impl JsClass for Range {
         def.method("getBoundingClientRect", 0, |s, r, _a| crate::layout_api::range_rect(s, &r.page(), points(r)));
         def.method("getClientRects", 0, |s, r, _a| {
             let rect = crate::layout_api::range_rect(s, &r.page(), points(r))?;
-            Ok(s.array(&[rect])?.value())
+            crate::canvas::rect_list(s, &r.page(), &[rect])
         });
         def.method("deleteContents", 0, |s, r, _a| {
             let mut dom = r.page.dom.borrow_mut();
@@ -676,6 +680,15 @@ fn static_point(
 }
 
 impl StaticRangeData {
+    pub(crate) fn from_points(page: &Rc<PageDom>, start: Point, end: Point) -> JsResult<Self> {
+        Ok(Self {
+            start: NodeHold::new(page, start.0)?,
+            start_offset: start.1,
+            end: NodeHold::new(page, end.0)?,
+            end_offset: end.1,
+        })
+    }
+
     /// Its boundary points.
     pub(crate) fn points(&self) -> ((NodeId, u32), (NodeId, u32)) {
         ((self.start.id, self.start_offset), (self.end.id, self.end_offset))
@@ -860,7 +873,10 @@ impl JsClass for Selection {
             };
             // A range of another tree is ignored, and so is a second range.
             let (start, end) = (r.live.start(), r.live.end());
-            if !Rc::ptr_eq(&r.page, &sel.page)
+            // A range created in another same-origin frame can have both
+            // live endpoints moved into this document. Compare the arena
+            // before looking up node IDs, then check the endpoints below.
+            if !Rc::ptr_eq(&r.page.dom, &sel.page.dom)
                 || !in_document(&sel.page, start.0)
                 || !in_document(&sel.page, end.0)
                 || editing::selection(&sel.page).is_some()
@@ -974,7 +990,7 @@ impl JsClass for Selection {
                 let r = RangeData::new(&sel.page, start.0)?;
                 set_point(&r, start.0, start.1, true)?;
                 set_point(&r, end.0, end.1, false)?;
-                Ok(s.string(&range_text(&r)?))
+                Ok(s.string(&range_text(&r, true)?))
             }
             None => Ok(s.string("")),
         });

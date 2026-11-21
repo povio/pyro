@@ -1334,6 +1334,7 @@ fn determine_flex_base_size(
         let percent_resolution_main_size =
             if constants.known_main_size_is_definite { constants.node_inner_size.main(dir) } else { None };
         let flex_basis_style = child_style.flex_basis();
+        let basis_calculation = child_style.flex_basis_calculation();
         let flex_basis = flex_basis_style
             .maybe_resolve(percent_resolution_main_size, |val, basis| tree.calc(val, basis))
             .maybe_add(box_sizing_adjustment);
@@ -1506,6 +1507,9 @@ fn determine_flex_base_size(
         // Spec: https://www.w3.org/TR/css-flexbox-1/#intrinsic-item-contributions
         // Spec: https://www.w3.org/TR/css-flexbox-1/#change-2016-max-contribution
         let padding_border_sum = child.padding.main_axis_sum(constants.dir) + child.border.main_axis_sum(constants.dir);
+        if let Some(calculation) = basis_calculation {
+            child.flex_basis = calculation.apply((child.flex_basis - box_sizing_adjustment).max(0.0), percent_resolution_main_size, |val, size, percent| tree.resolve_size_calculation(val, size, percent)) + box_sizing_adjustment;
+        }
         child.flex_basis = child.flex_basis.max(padding_border_sum);
 
         // The hypothetical main size is the item’s flex base size clamped according to its
@@ -1602,6 +1606,8 @@ fn determine_flex_base_size(
             // suggestion); the min and max cross sizes bound it through the ratio.
             let specified_main_size = match content_ratio_item && child.size_style.main(dir).is_auto() {
                 true => None,
+                false if child.size_style.main(dir).is_stretch() => percent_resolution_main_size
+                    .map(|size| (size - child.margin.main_axis_sum(dir)).max(padding_border_sum)),
                 false => child.size.main(dir),
             };
             let clamped_min_content_size = min_content_main_size
@@ -1615,7 +1621,7 @@ fn determine_flex_base_size(
         if style_min_main_size.is_none() {
             if let Some(function) = tree.get_flexbox_child_style(child.node).calc_size_min().main(dir) {
                 child.resolved_minimum_main_size =
-                    function.apply(child.resolved_minimum_main_size, |val, basis| tree.calc(val, basis));
+                    function.apply(child.resolved_minimum_main_size, percent_resolution_main_size, |val, size, percent| tree.resolve_size_calculation(val, size, percent));
             }
         }
 
@@ -2898,6 +2904,8 @@ fn determine_used_cross_size(
         for child in line.items.iter_mut() {
             // A cross size of `stretch` stretches to the flex line like align-self: stretch
             // (but regardless of the alignment style)
+            let stretch = (line_cross_size - child.margin.cross_axis_sum(constants.dir))
+                .max((child.padding + child.border).cross_axis_sum(constants.dir));
             child.target_size.set_cross(
                 constants.dir,
                 if child.is_stretched(constants.dir) {
@@ -2954,7 +2962,14 @@ fn determine_used_cross_size(
                     fit.maybe_clamp(child.min_size.width, child.max_size.width)
                         .max(child.hypothetical_inner_size.cross(constants.dir))
                 } else {
-                    child.hypothetical_inner_size.cross(constants.dir)
+                    let hypothetical = child.hypothetical_inner_size.cross(constants.dir);
+                    if child.min_size_keyword.cross(constants.dir).is_stretch() {
+                        hypothetical.max(stretch)
+                    } else if child.max_size_keyword.cross(constants.dir).is_stretch() {
+                        hypothetical.min(stretch).maybe_max(child.min_size.cross(constants.dir))
+                    } else {
+                        hypothetical
+                    }
                 },
             );
 

@@ -203,7 +203,6 @@ pub struct GenericBorderShapeItem<BasicShape> {
     ToAnimatedValue,
     ToComputedValue,
     ToCss,
-    ToResolvedValue,
     ToShmem,
     ToTyped,
 )]
@@ -217,12 +216,106 @@ pub enum GenericBorderShape<BasicShape> {
 
 pub use self::GenericBorderShape as BorderShape;
 
+impl<Shape> crate::values::resolved::ToResolvedValue for BorderShape<Shape>
+where
+    Shape: crate::values::resolved::ToResolvedValue,
+    Shape::ResolvedValue: PartialEq,
+{
+    type ResolvedValue = BorderShape<Shape::ResolvedValue>;
+
+    fn to_resolved_value(self, context: &crate::values::resolved::Context) -> Self::ResolvedValue {
+        let single = |mut item: GenericBorderShapeItem<Shape::ResolvedValue>| {
+            if item.reference == BorderShapeBox::HalfBorderBox { item.reference = BorderShapeBox::Default; }
+            BorderShape::Single(item)
+        };
+        match self {
+            Self::None => BorderShape::None,
+            Self::Single(item) => single(item.to_resolved_value(context)),
+            Self::Double(outer, inner) => {
+                let mut outer = outer.to_resolved_value(context);
+                let mut inner = inner.to_resolved_value(context);
+                let border = BorderShapeBox::ShapeBox(ShapeBox::BorderBox);
+                let padding = BorderShapeBox::ShapeBox(ShapeBox::PaddingBox);
+                if outer.reference == BorderShapeBox::Default { outer.reference = border; }
+                if inner.reference == BorderShapeBox::Default { inner.reference = padding; }
+                if outer == inner { return single(outer); }
+                if outer.reference == border { outer.reference = BorderShapeBox::Default; }
+                if inner.reference == padding { inner.reference = BorderShapeBox::Default; }
+                BorderShape::Double(outer, inner)
+            },
+        }
+    }
+
+    fn from_resolved_value(resolved: Self::ResolvedValue) -> Self {
+        use crate::values::resolved::ToResolvedValue;
+        match resolved {
+            BorderShape::None => Self::None,
+            BorderShape::Single(item) => Self::Single(ToResolvedValue::from_resolved_value(item)),
+            BorderShape::Double(outer, inner) => Self::Double(
+                ToResolvedValue::from_resolved_value(outer), ToResolvedValue::from_resolved_value(inner),
+            ),
+        }
+    }
+}
+
 impl<B> GenericBorderShape<B> {
     /// `none`.
     #[inline]
     pub fn none() -> Self {
         Self::None
     }
+
+    fn component(&self, inner: bool) -> Result<(&B, BorderShapeBox), ()> {
+        use BorderShapeBox::{HalfBorderBox, ShapeBox as BoxKind};
+        let (item, default) = match self {
+            Self::None => return Err(()),
+            Self::Single(item) => (item, HalfBorderBox),
+            Self::Double(_, item) if inner => (item, BoxKind(ShapeBox::PaddingBox)),
+            Self::Double(item, _) => (item, BoxKind(ShapeBox::BorderBox)),
+        };
+        Ok((&item.shape, if item.reference == BorderShapeBox::Default { default } else { item.reference }))
+    }
+
+    fn compatible_component<'a>(&'a self, other: &'a Self, inner: bool) -> Result<(&'a B, &'a B, BorderShapeBox), ()> {
+        let (left, reference) = self.component(inner)?;
+        let (right, other_reference) = other.component(inner)?;
+        if reference != other_reference { return Err(()); }
+        Ok((left, right, reference))
+    }
+}
+
+impl<B: Animate> Animate for BorderShape<B> {
+    fn animate(&self, other: &Self, procedure: Procedure) -> Result<Self, ()> {
+        if matches!((self, other), (Self::None, Self::None)) { return Ok(Self::None); }
+        let single = matches!((self, other), (Self::Single(_), Self::Single(_)));
+        let item = |inner| {
+            let (left, right, reference) = self.compatible_component(other, inner)?;
+            let default = if single { BorderShapeBox::HalfBorderBox } else if inner {
+                BorderShapeBox::ShapeBox(ShapeBox::PaddingBox)
+            } else { BorderShapeBox::ShapeBox(ShapeBox::BorderBox) };
+            Ok(GenericBorderShapeItem {
+                shape: Box::new(left.animate(right, procedure)?),
+                reference: if reference == default { BorderShapeBox::Default } else { reference },
+            })
+        };
+        if single { Ok(Self::Single(item(false)?)) } else { Ok(Self::Double(item(false)?, item(true)?)) }
+    }
+}
+
+impl<B: ComputeSquaredDistance> ComputeSquaredDistance for BorderShape<B> {
+    fn compute_squared_distance(&self, other: &Self) -> Result<SquaredDistance, ()> {
+        if matches!((self, other), (Self::None, Self::None)) { return Ok(SquaredDistance::from_sqrt(0.0)); }
+        let distance = |inner| {
+            let (left, right, _) = self.compatible_component(other, inner)?;
+            left.compute_squared_distance(right)
+        };
+        let outer = distance(false)?;
+        if matches!((self, other), (Self::Single(_), Self::Single(_))) { Ok(outer) } else { Ok(outer + distance(true)?) }
+    }
+}
+
+impl<B> ToAnimatedZero for BorderShape<B> {
+    fn to_animated_zero(&self) -> Result<Self, ()> { Err(()) }
 }
 
 /// A value for the `shape-outside` property.
@@ -295,7 +388,7 @@ pub enum GenericBasicShape<Angle, AxisPosition, Position, LengthPercentage, Basi
         Ellipse<Position, LengthPercentage>,
     ),
     /// Defines a polygon with pair arguments.
-    Polygon(GenericPolygon<LengthPercentage>),
+    Polygon(#[animation(field_bound)] #[css(field_bound)] GenericPolygon<LengthPercentage>),
     /// Defines a path() or shape().
     PathOrShape(
         #[animation(field_bound)]
@@ -439,24 +532,58 @@ pub use self::GenericShapeRadius as ShapeRadius;
     PartialEq,
     Serialize,
     SpecifiedValueInfo,
-    ToAnimatedValue,
     ToComputedValue,
-    ToCss,
     ToResolvedValue,
     ToShmem,
 )]
-#[css(comma, function = "polygon")]
 #[repr(C)]
 pub struct GenericPolygon<LengthPercentage> {
     /// The filling rule for a polygon.
-    #[css(skip_if = "is_default")]
     pub fill: FillRule,
+    /// The corner rounding radius, zero for sharp corners.
+    pub round: NonNegative<LengthPercentage>,
     /// A collection of (x, y) coordinates to draw the polygon.
-    #[css(iterable)]
     pub coordinates: crate::OwnedSlice<PolygonCoord<LengthPercentage>>,
 }
 
+impl<L: ToCss + Zero> ToCss for GenericPolygon<L> {
+    fn to_css<W: Write>(&self, dest: &mut CssWriter<W>) -> fmt::Result {
+        dest.write_str("polygon(")?;
+        if !is_default(&self.fill) {
+            self.fill.to_css(dest)?;
+            dest.write_str(if self.round.0.is_zero() { ", " } else { " " })?;
+        }
+        if !self.round.0.is_zero() {
+            dest.write_str("round ")?;
+            self.round.0.to_css(dest)?;
+            dest.write_str(", ")?;
+        }
+        for (index, coordinate) in self.coordinates.iter().enumerate() {
+            if index != 0 { dest.write_str(", ")?; }
+            coordinate.to_css(dest)?;
+        }
+        dest.write_char(')')
+    }
+}
+
 pub use self::GenericPolygon as Polygon;
+
+impl<L> crate::values::animated::ToAnimatedValue for GenericPolygon<L>
+where
+    L: crate::values::animated::ToAnimatedValue + crate::values::generics::ClampToNonNegative,
+{
+    type AnimatedValue = GenericPolygon<L::AnimatedValue>;
+
+    fn to_animated_value(self, context: &crate::values::animated::Context) -> Self::AnimatedValue {
+        GenericPolygon { fill: self.fill, round: self.round.to_animated_value(context),
+            coordinates: self.coordinates.to_animated_value(context) }
+    }
+
+    fn from_animated_value(value: Self::AnimatedValue) -> Self {
+        Self { fill: value.fill, round: NonNegative::from_animated_value(value.round),
+            coordinates: crate::OwnedSlice::from_animated_value(value.coordinates) }
+    }
+}
 
 /// Coordinates for Polygon.
 #[derive(
@@ -595,7 +722,23 @@ where
         W: Write,
     {
         dest.write_str("inset(")?;
-        self.rect.to_css(dest)?;
+        let sides = [&self.rect.0, &self.rect.1, &self.rect.2, &self.rect.3]
+            .map(|side| side.to_css_string());
+        let count = if sides[3] != sides[1] {
+            4
+        } else if sides[2] != sides[0] {
+            3
+        } else if sides[1] != sides[0] {
+            2
+        } else {
+            1
+        };
+        for (index, side) in sides[..count].iter().enumerate() {
+            if index != 0 {
+                dest.write_char(' ')?;
+            }
+            dest.write_str(side)?;
+        }
         if !self.round.is_zero() {
             dest.write_str(" round ")?;
             self.round.to_css(dest)?;
@@ -684,6 +827,7 @@ where
             lists::by_computed_value::animate(&self.coordinates, &other.coordinates, procedure)?;
         Ok(Polygon {
             fill: self.fill,
+            round: NonNegative(self.round.0.animate(&other.round.0, procedure)?),
             coordinates,
         })
     }
@@ -697,7 +841,8 @@ where
         if self.fill != other.fill {
             return Err(());
         }
-        lists::by_computed_value::squared_distance(&self.coordinates, &other.coordinates)
+        Ok(lists::by_computed_value::squared_distance(&self.coordinates, &other.coordinates)? +
+            self.round.0.compute_squared_distance(&other.round.0)?)
     }
 }
 

@@ -303,4 +303,9 @@ body {margin:0}
     assert_eq!(size(&doc, "#m"), (50.0, 20.0));
     // Without a container, the small viewport.
     assert_eq!(size(&doc, "#no"), (400.0, 5.0));
+    let container = doc.query_selector("#c").unwrap().unwrap();
+    doc.set_style_property(container, "width", "300px");
+    doc.resolve_style(0.0);
+    assert_eq!(size(&doc, "#w"), (150.0, 10.0));
+    assert_eq!(size(&doc, "#no"), (400.0, 5.0));
 }

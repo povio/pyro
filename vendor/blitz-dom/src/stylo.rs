@@ -303,6 +303,72 @@ impl crate::document::BaseDocument {
         if !changed_rules.is_empty() { self.invalidate_anchor_rule_users(changed_rules); }
     }
 
+    /// A read-only cascade without a single-rule embedder stylesheet. The normal
+    /// document retains that rule (Pyro uses it to suppress native animation scheduling).
+    pub fn style_without_override(
+        &self,
+        id: NodeId,
+        pseudo: Option<&PseudoElement>,
+        sheet: &crate::UserAgentStylesheet,
+    ) -> Option<Arc<ComputedValues>> {
+        use style::computed_value_flags::ComputedValueFlags;
+        use style::context::CascadeInputs;
+        use style::properties::FirstLineReparenting;
+        use style::stylesheets::CssRule;
+
+        let sheet = &sheet.sheet().0;
+        let sheet_guard = sheet.shared_lock.read();
+        let contents = sheet.contents.read_with(&sheet_guard);
+        let [CssRule::Style(rule)] = contents.rules.read_with(&sheet_guard).0.as_slice() else { return None };
+        let ignored = &rule.read_with(&sheet_guard).block;
+        let primary = |node: &Node| node.primary_styles().map(|s| (*s).clone())
+            .or_else(|| self.resolve_undisplayed_style(node.id));
+        let cascade = |node: &Node, pseudo: Option<&PseudoElement>, base: &ComputedValues, parent: Option<&ComputedValues>| {
+            let _scope = LayoutThreadScope::enter();
+            let guard = self.guard.read();
+            let guards = StylesheetGuards::same(&guard);
+            let mut inputs = CascadeInputs::new_from_style(base);
+            for path in [&mut inputs.rules, &mut inputs.visited_rules].into_iter().flatten() {
+                let rules: Vec<_> = path.self_and_ancestors().filter_map(|n| {
+                    let source = n.style_source()?;
+                    (!Arc::ptr_eq(source.get(), ignored)).then(|| (source.borrow(), n.cascade_priority()))
+                }).collect();
+                *path = self.stylist.rule_tree().insert_ordered_rules(rules.into_iter().rev());
+            }
+            self.stylist.cascade_style_and_visited(
+                Some(node), pseudo, &inputs, &guards, parent, parent, FirstLineReparenting::No,
+                &Default::default(), None, &mut Default::default(), &mut Default::default(),
+            )
+        };
+
+        let mut node = self.get_node(id)?;
+        let mut pseudo = pseudo;
+        let mut base = match pseudo {
+            Some(p) => self.pseudo_element_style(id, p, false)?,
+            None => primary(node)?,
+        };
+        let mut children = Vec::new();
+        // Timing longhands are reset properties. Reconstruct a parent's author timing
+        // only when an explicit inherit (possibly from substitution) was used.
+        let mut result = loop {
+            let parent = if pseudo.is_some() { Some(node) } else { TElement::inheritance_parent(&node) };
+            let parent_style = parent.and_then(primary);
+            let style = cascade(node, pseudo, &base, parent_style.as_deref());
+            if !style.flags.contains(ComputedValueFlags::INHERITS_RESET_STYLE) {
+                break style;
+            }
+            let (Some(p), Some(p_style)) = (parent, parent_style) else { break style };
+            children.push((node, pseudo, base));
+            node = p;
+            pseudo = None;
+            base = p_style;
+        };
+        while let Some((child, pseudo, base)) = children.pop() {
+            result = cascade(child, pseudo, &base, Some(&result));
+        }
+        Some(result)
+    }
+
     /// Compute the style of an element which the regular style traversal
     /// skipped because it lives inside a `display: none` subtree.
     ///
@@ -383,6 +449,12 @@ impl crate::document::BaseDocument {
             Some((primary, eager))
         });
         if generated_only {
+            if *pseudo == PseudoElement::Marker {
+                let (primary, _) = stored?;
+                if !primary.get_box().display.is_list_item() { return None; }
+                let _scope = LayoutThreadScope::enter();
+                return crate::layout::list::marker_pseudo_style(self, node_id, &primary);
+            }
             return stored.and_then(|(_, eager)| eager);
         }
         let (primary, eager) = match stored {
@@ -458,7 +530,8 @@ impl crate::document::BaseDocument {
             };
             // pyro: `::highlight(<name>)` rules share one map; the name must match.
             let wanted = pseudo.clone();
-            let matches = move |pe: &PseudoElement| wanted.matches_transition_selector(pe);
+            let matches = move |pe: &PseudoElement| wanted.matches_transition_selector(pe)
+                || (wanted.is_highlight() && *pe == PseudoElement::Highlight(style::selector_parser::ANY_HIGHLIGHT));
             let lazy = self.stylist.lazily_compute_pseudo_element_style(
                 &guards,
                 node,
@@ -468,6 +541,11 @@ impl crate::document::BaseDocument {
                 false,
                 (pseudo.is_highlight() || pseudo.transition_argument().is_some()).then_some(&matches as &dyn Fn(&PseudoElement) -> bool),
             );
+            if *pseudo == PseudoElement::Marker {
+                if let Some(style) = self.animated_marker_style(node, &primary, lazy.as_ref()) {
+                    return Some(style);
+                }
+            }
             if lazy.is_some() {
                 return lazy;
             }
@@ -1023,6 +1101,10 @@ impl selectors::Element for BlitzNode<'_> {
             .and_then(|data| data.id.as_ref())
             .map(|id_attr| case_sensitivity.eq_atom(id_attr, id))
             .unwrap_or(false)
+    }
+
+    fn has_class_prefix(&self, prefix: &AtomIdent, quirks: bool) -> bool {
+        self.element_data().is_some_and(|data| data.classes.iter().any(|class| selectors::attr::matches_class_prefix(class, &prefix.0, quirks)))
     }
 
     fn has_class(
@@ -1850,7 +1932,7 @@ impl Node {
             if elem.name.ns == ns!(svg)
                 && attr.name.ns == ns!()
                 && matches!(&**name,
-                    "clip-path" | "transform-origin" | "overflow"
+                    "clip-path" | "transform-origin" | "overflow" | "pointer-events"
                     | "fill" | "fill-opacity" | "fill-rule"
                     | "stroke" | "stroke-width" | "stroke-opacity" | "stroke-linecap"
                     | "stroke-linejoin" | "stroke-miterlimit" | "stroke-dasharray" | "stroke-dashoffset"
@@ -1910,10 +1992,22 @@ impl Node {
 
             if *name == local_name!("align") {
                 use style::values::specified::TextAlign;
+                // The HTML rendering rules for divs, table row groups, rows and
+                // cells also accept "middle" and "justify", case-insensitively.
+                let html_alignment = elem.name.ns == ns!(html)
+                    && matches!(*tag, local_name!("div") | local_name!("thead")
+                        | local_name!("tbody") | local_name!("tfoot") | local_name!("tr")
+                        | local_name!("td") | local_name!("th"));
                 let keyword = match value {
                     "left" => Some(StyloTextAlign::MozLeft),
                     "right" => Some(StyloTextAlign::MozRight),
                     "center" => Some(StyloTextAlign::MozCenter),
+                    s if html_alignment && s.eq_ignore_ascii_case("left") => Some(StyloTextAlign::MozLeft),
+                    s if html_alignment && s.eq_ignore_ascii_case("right") => Some(StyloTextAlign::MozRight),
+                    s if html_alignment && (s.eq_ignore_ascii_case("center") || s.eq_ignore_ascii_case("middle")) => {
+                        Some(StyloTextAlign::MozCenter)
+                    }
+                    s if html_alignment && s.eq_ignore_ascii_case("justify") => Some(StyloTextAlign::Justify),
                     _ => None,
                 };
 
@@ -2145,7 +2239,8 @@ impl Node {
 
             // pyro: `<body text>` colours the document's text (HTML rendering, "phrasing
             // content"), a legacy colour value (named colours included).
-            if *name == local_name!("text") && *tag == local_name!("body") {
+            if elem.name.ns == ns!(html) && ((*name == local_name!("text") && *tag == local_name!("body"))
+                || (*name == local_name!("color") && *tag == local_name!("font"))) {
                 use style::values::specified::{Color, ColorPropertyValue};
                 if let Ok(color) = style::servo::attr::parse_legacy_color(value) {
                     push_style(PropertyDeclaration::Color(ColorPropertyValue(Color::from_absolute_color(color))));

@@ -29,6 +29,16 @@ fn render(body: &str) -> RgbaImage {
 
 const GREEN: [u8; 3] = [0, 128, 0];
 
+#[test]
+fn replaced_inline_containment_preserves_the_natural_block_size() {
+    for (mode, expected) in [("horizontal-tb", (70, 20)), ("vertical-lr", (40, 30))] {
+        check(
+            &format!("<canvas width='40' height='20' style='display:inline-block;vertical-align:top;background:green;aspect-ratio:auto;writing-mode:{mode};contain:inline-size;contain-intrinsic-size:70px 30px'></canvas>"),
+            expected,
+        );
+    }
+}
+
 /// The width and height of the green area that starts at the top left corner.
 fn green_size(img: &RgbaImage) -> (usize, usize) {
     let at = |x: usize, y: usize| {

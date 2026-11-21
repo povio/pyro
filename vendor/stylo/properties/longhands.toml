@@ -223,6 +223,7 @@ vector = { need_index = true }
 animation_type = "none"
 extra_prefixes = ["moz:layout.css.prefixes.animations", "webkit"]
 spec = "https://drafts.csswg.org/css-animations-2/#animation-duration"
+rule_types_allowed = ["style"]
 affects = ""
 
 [animation-fill-mode]
@@ -499,7 +500,7 @@ type = "PositiveInteger"
 initial = "From::from(2)"
 struct = "inherited_text"
 spec = "https://drafts.csswg.org/css-break/#propdef-orphans"
-animation_type = "discrete"
+animation_type = "normal"
 servo_restyle_damage = "repaint"
 affects = "layout"
 
@@ -508,7 +509,7 @@ type = "PositiveInteger"
 initial = "From::from(2)"
 struct = "inherited_text"
 spec = "https://drafts.csswg.org/css-break/#propdef-widows"
-animation_type = "discrete"
+animation_type = "normal"
 servo_restyle_damage = "repaint"
 affects = "layout"
 
@@ -596,6 +597,62 @@ ignored_when_colors_disabled = true
 servo_restyle_damage = "repaint"
 affects = "paint"
 
+[column-rule-inset-cap-start]
+type = "length::RuleInset"
+initial = "computed::length::RuleInset::LengthPercentage(computed::LengthPercentage::zero())"
+struct = "column"
+spec = "https://drafts.csswg.org/css-gaps-1/#inset"
+affects = "paint"
+
+[column-rule-inset-cap-end]
+type = "length::RuleInset"
+initial = "computed::length::RuleInset::LengthPercentage(computed::LengthPercentage::zero())"
+struct = "column"
+spec = "https://drafts.csswg.org/css-gaps-1/#inset"
+affects = "paint"
+
+[column-rule-inset-junction-start]
+type = "length::RuleInset"
+initial = "computed::length::RuleInset::LengthPercentage(computed::LengthPercentage::zero())"
+struct = "column"
+spec = "https://drafts.csswg.org/css-gaps-1/#inset"
+affects = "paint"
+
+[column-rule-inset-junction-end]
+type = "length::RuleInset"
+initial = "computed::length::RuleInset::LengthPercentage(computed::LengthPercentage::zero())"
+struct = "column"
+spec = "https://drafts.csswg.org/css-gaps-1/#inset"
+affects = "paint"
+
+[row-rule-inset-cap-start]
+type = "length::RuleInset"
+initial = "computed::length::RuleInset::LengthPercentage(computed::LengthPercentage::zero())"
+struct = "column"
+spec = "https://drafts.csswg.org/css-gaps-1/#inset"
+affects = "paint"
+
+[row-rule-inset-cap-end]
+type = "length::RuleInset"
+initial = "computed::length::RuleInset::LengthPercentage(computed::LengthPercentage::zero())"
+struct = "column"
+spec = "https://drafts.csswg.org/css-gaps-1/#inset"
+affects = "paint"
+
+[row-rule-inset-junction-start]
+type = "length::RuleInset"
+initial = "computed::length::RuleInset::LengthPercentage(computed::LengthPercentage::zero())"
+struct = "column"
+spec = "https://drafts.csswg.org/css-gaps-1/#inset"
+affects = "paint"
+
+[row-rule-inset-junction-end]
+type = "length::RuleInset"
+initial = "computed::length::RuleInset::LengthPercentage(computed::LengthPercentage::zero())"
+struct = "column"
+spec = "https://drafts.csswg.org/css-gaps-1/#inset"
+affects = "paint"
+
 [column-count]
 type = "ColumnCount"
 initial = "computed::ColumnCount::Auto"
@@ -615,28 +672,100 @@ servo_restyle_damage = "rebuild_box"
 affects = "layout"
 
 [column-rule-color]
-type = "Color"
-initial = "computed_value::T::currentcolor()"
+type = "column::RuleColor"
+initial = "computed::Color::currentcolor().into()"
 struct = "column"
 ignored_when_colors_disabled = true
 spec = "https://drafts.csswg.org/css-multicol/#propdef-column-rule-color"
 affects = "paint"
 
 [column-rule-style]
-type = "BorderStyle"
-initial = "computed::BorderStyle::None"
+type = "column::RuleStyle"
+initial = "computed::BorderStyle::None.into()"
 struct = "column"
 animation_type = "discrete"
 spec = "https://drafts.csswg.org/css-multicol/#propdef-column-rule-style"
 affects = "paint"
 
 [column-rule-width]
-type = "BorderSideWidth"
-initial = "computed::BorderSideWidth::medium()"
+type = "column::RuleWidth"
+initial = "computed::BorderSideWidth::medium().into()"
 struct = "column"
-initial_specified_value = "specified::BorderSideWidth::medium()"
+initial_specified_value = "specified::BorderSideWidth::medium().into()"
 spec = "https://drafts.csswg.org/css-multicol/#propdef-column-rule-width"
 affects = "layout"
+
+[column-rule-break]
+type = "column::RuleBreak"
+initial = "computed::column::RuleBreak::Normal"
+struct = "column"
+engine = "servo"
+animation_type = "discrete"
+spec = "https://drafts.csswg.org/css-gaps-1/#propdef-column-rule-break"
+affects = "paint"
+
+[row-rule-break]
+type = "column::RuleBreak"
+initial = "computed::column::RuleBreak::Normal"
+struct = "column"
+engine = "servo"
+animation_type = "discrete"
+spec = "https://drafts.csswg.org/css-gaps-1/#propdef-row-rule-break"
+affects = "paint"
+
+[column-rule-visibility-items]
+type = "column::RuleVisibilityItems"
+initial = "computed::column::RuleVisibilityItems::Normal"
+struct = "column"
+engine = "servo"
+animation_type = "discrete"
+spec = "https://drafts.csswg.org/css-gaps-1/#propdef-column-rule-visibility-items"
+affects = "paint"
+
+[row-rule-visibility-items]
+type = "column::RuleVisibilityItems"
+initial = "computed::column::RuleVisibilityItems::Normal"
+struct = "column"
+engine = "servo"
+animation_type = "discrete"
+spec = "https://drafts.csswg.org/css-gaps-1/#propdef-row-rule-visibility-items"
+affects = "paint"
+
+[rule-overlap]
+type = "column::RuleOverlap"
+initial = "computed::column::RuleOverlap::RowOverColumn"
+struct = "column"
+engine = "servo"
+animation_type = "discrete"
+spec = "https://drafts.csswg.org/css-gaps-1/#propdef-rule-overlap"
+affects = "paint"
+
+[row-rule-color]
+type = "column::RuleColor"
+initial = "computed::Color::currentcolor().into()"
+struct = "column"
+engine = "servo"
+ignored_when_colors_disabled = true
+spec = "https://drafts.csswg.org/css-gaps-1/#column-row-rule-color"
+affects = "paint"
+
+[row-rule-style]
+type = "column::RuleStyle"
+initial = "computed::BorderStyle::None.into()"
+struct = "column"
+engine = "servo"
+animation_type = "discrete"
+spec = "https://drafts.csswg.org/css-gaps-1/#column-row-rule-style"
+affects = "paint"
+
+[row-rule-width]
+type = "column::RuleWidth"
+initial = "computed::BorderSideWidth::medium().into()"
+initial_specified_value = "specified::BorderSideWidth::medium().into()"
+struct = "column"
+engine = "servo"
+spec = "https://drafts.csswg.org/css-gaps-1/#column-row-rule-width"
+affects = "paint"
 
 [column-width]
 type = "length::NonNegativeLengthOrAuto"
@@ -914,7 +1043,6 @@ type = "FontPalette"
 initial = "computed::FontPalette::normal()"
 struct = "font"
 servo_pref = "layout.css.font-palette.enabled"
-animation_type = "discrete"
 spec = "https://drafts.csswg.org/css-fonts/#font-palette-prop"
 affects = "layout"
 
@@ -1454,7 +1582,6 @@ type = "basic_shape::ClipPath"
 initial = "generics::basic_shape::ClipPath::None"
 struct = "position"
 parse_method = "parse_object_view_box"
-animation_type = "discrete"
 spec = "https://drafts.csswg.org/css-images-5/#the-object-view-box"
 affects = "layout"
 
@@ -1675,7 +1802,6 @@ affects = "paint"
 type = "PageName"
 initial = "computed::PageName::auto()"
 struct = "page"
-engine = "gecko"
 spec = "https://drafts.csswg.org/css-page-3/#using-named-pages"
 animation_type = "discrete"
 affects = "layout"
@@ -1684,7 +1810,6 @@ affects = "layout"
 type = "PageOrientation"
 initial = "computed::PageOrientation::Upright"
 struct = "page"
-engine = "gecko"
 spec = "https://drafts.csswg.org/css-page-3/#page-orientation-prop"
 animation_type = "none"
 rule_types_allowed = ["page"]
@@ -2004,7 +2129,6 @@ affects = "layout"
 type = "PageSize"
 initial = "computed::PageSize::auto()"
 struct = "page"
-engine = "gecko"
 spec = "https://drafts.csswg.org/css-page-3/#page-size-prop"
 animation_type = "none"
 rule_types_allowed = ["page"]
@@ -3292,7 +3416,6 @@ affects = "paint"
 type = "basic_shape::BorderShape"
 initial = "generics::basic_shape::BorderShape::None"
 struct = "border"
-animation_type = "none"
 boxed = true
 spec = "https://drafts.csswg.org/css-borders-4/#propdef-border-shape"
 affects = "paint"
@@ -3851,6 +3974,15 @@ affects = "layout"
 type = "TopLayer"
 initial = "computed::TopLayer::None"
 
+[scroll-axis-lock]
+struct = "box"
+engine = "servo"
+spec = "https://drafts.csswg.org/css-overflow-5/#scroll-axis-locking"
+animation_type = "discrete"
+affects = ""
+type = "ScrollAxisLock"
+initial = "computed::ScrollAxisLock::Auto"
+
 [scroll-behavior]
 struct = "box"
 servo_pref = "layout.css.scroll-behavior.enabled"
@@ -4012,6 +4144,15 @@ gecko_ffi_name = "mVisible"
 type = "Visibility"
 initial = "computed::Visibility::Visible"
 
+[interpolate-size]
+struct = "inherited_box"
+engine = "servo"
+spec = "https://drafts.csswg.org/css-values-5/#interpolate-size"
+animation_type = "none"
+affects = "layout"
+type = "InterpolateSize"
+initial = "computed::InterpolateSize::NumericOnly"
+
 [direction]
 struct = "inherited_box"
 spec = "https://drafts.csswg.org/css-writing-modes/#propdef-direction"
@@ -4135,6 +4276,16 @@ gecko_ffi_name = "mTextSizeAdjust"
 aliases = ["-webkit-text-size-adjust"]
 type = "TextSizeAdjust"
 initial = "computed::TextSizeAdjust::Auto"
+
+[text-size-adjust]
+struct = "inherited_text"
+engine = "servo"
+spec = "https://drafts.csswg.org/css-size-adjust/#adjustment-control"
+animation_type = "normal"
+affects = "layout"
+aliases = ["-webkit-text-size-adjust"]
+type = "TextAdjustment"
+initial = "computed::TextAdjustment::Auto"
 
 [ruby-align]
 struct = "inherited_text"

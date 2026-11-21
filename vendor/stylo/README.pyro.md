@@ -8,6 +8,14 @@ crate (`diff -ruN`).
 
 ## The change
 
+- Container-relative lengths, including those inside math functions, are invalid in computationally independent typed initial values. Ordinary declarations can still use them; viewport units keep their existing behavior.
+
+- Servo exposes the `page` property and the `size` and `page-orientation` descriptors through the style system. The latter two remain restricted to `@page`. This does not implement named-page pagination or rotated print output.
+
+- The six standard system-font shorthands resolve through the Servo device font provider for both cascade and interpolation. Internal Gecko keywords remain Gecko-only.
+
+- Gap decoration inset offsets are signed length-percentages or `overlap-join`. Row and column cap and junction offsets participate in the cascade and animation. The inset shorthands expand into those same eight longhands. This is style-system support, not gap-decoration painting.
+
 - `rule_cache.rs`, `properties/helpers.mako.rs`: a style that inherits a reset property explicitly
   (`inherit` on a non-inherited property) stays in the rule cache when the property is one of
   `box-sizing`, `baseline-shift`, `baseline-source` and `alignment-baseline`: the parent's value is
@@ -46,7 +54,7 @@ crate (`diff -ruN`).
 
 - `properties/longhands.toml`, `properties/counted_unknown_properties.py`: `orphans` and `widows`
   are added (upstream has neither; both were counted unknown properties), inherited, in
-  `inherited_text`. pyro-render's PDF output reads them to place page cuts of paper-cut documents.
+  `inherited_text`. Both interpolate as positive integers. pyro-render's PDF output reads them to place page cuts of paper-cut documents.
 
 - `stylist.rs`, `style_resolver.rs`: each origin's `CascadeData` also files its single-level
   `::before`/`::after` rules that declare `content`, `display` or `animation-name` (on the
@@ -232,9 +240,10 @@ kept for serialization (`1.23 drop`) and `sink` stays 0 then. pyro turns the pro
 - `properties/longhands.toml`: `font-palette` is parsed and computed for servo too, behind
   `layout.css.font-palette.enabled` (upstream: gecko only). blitz-paint draws COLR glyphs in the palette it selects.
 - `values/specified/font.rs`: `FontPalette` is an enum: a name (`normal`, `light`, `dark`, `<dashed-ident>`) or
-  `palette-mix(<color-interpolation-method>, <palette> <percentage>?, <palette> <percentage>?)` (CSS Fonts 5,
-  nested mixes too; `FontPaletteMix::weights` normalizes the percentages). Its computed and resolved values are
-  the specified one, written out (deriving them recurses without end). `color/mix.rs`: `ColorInterpolationMethod`
+  `palette-mix()` of one or more weighted palettes, including nested mixes. The interpolation space defaults to
+  Oklab. Omitted percentages share the remainder; specified math expressions serialize as math until computed.
+  Animation mixes unequal endpoints in Oklab, clamping progress to the endpoints. Equal endpoints retain their value.
+  `color/mix.rs`: `ColorInterpolationMethod`
   and `HueInterpolationMethod` derive serde, as servo's font style struct needs.
 - `values/specified/number.rs` (`Integer::resolve_with_font_size`), `stylesheets/font_palette_values_rule.rs`:
   an `<integer>` of `base-palette` or `override-colors` whose calc() has font-relative lengths
@@ -346,11 +355,14 @@ nor keeps a scroll offset. Other mixes still turn `visible` into `auto` and `cli
 - `values/generics/length.rs` (`GenericSize::CalcSizeAuto`, `CalcSizeFitContent`, `CalcSizeMinContent`,
   `CalcSizeMaxContent`), `values/specified/length.rs` (`Size::parse_calc_size`), `values/specified/calc.rs`
   (`AdditionalFunctions::CALC_SIZE`, `CalcNode::parse_calc_size_calculation`), `values/computed/length.rs`:
-  `calc-size(auto | fit-content | min-content | max-content, <calculation>)` in the `Size` properties (`width`,
+  `calc-size(auto | fit-content | min-content | max-content | stretch, <calculation>)` in the `Size` properties (`width`,
   `height`, their logical and min forms). The calculation is kept as a length-percentage whose `size` keyword is
   `100%` (other percentages are rejected), so its percentage basis is the size of the basis: layout resolves it
-  against that size (stylo_taffy, blitz-dom). A `<length-percentage>` or `calc-size()` basis, `any`, `max-*` and
-  interpolation are not supported; the value serializes as `calc-size(<calculation>)` with `size` as `100%`.
+  against that size (stylo_taffy, blitz-dom). Animation combines calculations with a common intrinsic basis,
+  including its bare keyword (the identity calculation) and absolute lengths (basis-independent calculations).
+  A `<length-percentage>` or `calc-size()` basis, `any`, `max-*` and ordinary percentages in the calculation
+  are not supported. The serializer retains the basis and writes the internal percentage as a multiple of
+  `size`, so a CSSOM declaration can be parsed again without changing its meaning.
 
 ## Legacy `-webkit-box` alignment and flexing for servo (WPT round 3, lane FO)
 

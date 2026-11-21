@@ -61,7 +61,7 @@
     // transfers them afterwards. `streams` (internal callers) receives the
     // transferred streams' new streams, `canvases` the transferred
     // ImageBitmaps' and OffscreenCanvases' copies.
-    function clone(value, options, ports, keep, streams, canvases) {
+    function clone(value, options, ports, keep, streams, canvases, forStorage = false) {
         const memory = new M(), buffers = [], moved = [];
         let piped, detached;
         if (keep) for (let i = 0; i < keep.length; ++i) call(mapSet, memory, [keep[i], keep[i]]);
@@ -165,6 +165,10 @@
                         fail('Custom object tags are not supported', true);
                 }
                 const kind = call(objectTag, source);
+                // Modules and shared buffers cannot be serialized for storage.
+                // Apply this at the point of traversal, before any general clone support.
+                if (forStorage && (kind === '[object WebAssembly.Module]' || kind === '[object SharedArrayBuffer]'))
+                    fail('Object cannot be serialized for storage');
                 if (kind === '[object Date]') return remember(source, new D(call(dateTime, source)));
                 if (kind === '[object RegExp]') {
                     let text = '';

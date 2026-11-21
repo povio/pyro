@@ -149,6 +149,10 @@ impl LengthPercentage {
         Self::new_percent(Percentage::hundred())
     }
 
+    pub(crate) fn size_identity() -> Self {
+        Self::new_calc(CalcNode::Leaf(ComputedLeaf::Percentage(CalcPercentageLeaf { size_basis: true, ..CalcPercentageLeaf::new(1.0, Optional::Some(NumericBaseType::Length)) })), AllowedNumericType::All)
+    }
+
     fn to_calc_node(&self) -> CalcNode {
         match self.unpack() {
             Unpacked::Length(l) => CalcNode::Leaf(ComputedLeaf::Length(l)),
@@ -157,6 +161,21 @@ impl LengthPercentage {
             )),
             Unpacked::Calc(p) => p.node.clone(),
         }
+    }
+
+    pub(crate) fn substitute_size(&self, basis: &Self) -> Self {
+        let mut result = self.to_calc_node();
+        result.visit_depth_first(|node| {
+            if let CalcNode::Leaf(ComputedLeaf::Percentage(factor)) = node && factor.size_basis {
+                let mut scale = CalcNode::Leaf(ComputedLeaf::Number(factor.get()));
+                let mut replacement = basis.to_calc_node();
+                if !replacement.try_product_in_place(&mut scale) {
+                    replacement = CalcNode::Product(vec![scale, replacement].into());
+                }
+                *node = replacement;
+            }
+        });
+        Self::new_calc(result, AllowedNumericType::All)
     }
 
     fn map_lengths(&self, mut map_fn: impl FnMut(Length) -> Length) -> Self {
@@ -234,6 +253,9 @@ impl LengthPercentage {
     pub fn new_calc(mut node: CalcNode, clamping_mode: AllowedNumericType) -> Self {
         node.simplify_and_sort();
 
+        if matches!(&node, CalcNode::Leaf(ComputedLeaf::Percentage(p)) if p.size_basis) {
+            return Self::new_calc_unchecked(Box::new(CalcLengthPercentage { clamping_mode, node }));
+        }
         match node {
             CalcNode::Leaf(l) => match l {
                 ComputedLeaf::Length(l) => {
@@ -317,10 +339,15 @@ impl LengthPercentage {
     /// Resolves the percentage.
     #[inline]
     pub fn resolve(&self, basis: Length) -> Length {
+        self.resolve_size(basis, basis)
+    }
+
+    /// Resolves size and percentages against independent references.
+    pub fn resolve_size(&self, size: Length, basis: Length) -> Length {
         match self.unpack() {
             Unpacked::Length(l) => l,
             Unpacked::Percentage(p) => (basis * p.0).normalized(),
-            Unpacked::Calc(c) => c.resolve(basis),
+            Unpacked::Calc(c) => c.resolve_size(size, basis),
         }
     }
 
@@ -665,12 +692,17 @@ impl CalcLengthPercentage {
     /// Resolves the percentage.
     #[inline]
     pub fn resolve(&self, basis: Length) -> Length {
+        self.resolve_size(basis, basis)
+    }
+
+    /// Resolves size and percentages against independent references.
+    pub fn resolve_size(&self, size: Length, basis: Length) -> Length {
         // unwrap() is fine because the conversion below is infallible.
         if let ComputedLeaf::Length(px) = self
             .node
             .resolve_map(|leaf| {
                 Ok(if let ComputedLeaf::Percentage(p) = leaf {
-                    ComputedLeaf::Length(Length::new(basis.px() * p.get()))
+                    ComputedLeaf::Length(Length::new((if p.size_basis { size } else { basis }).px() * p.get()))
                 } else {
                     leaf.clone()
                 })
@@ -842,7 +874,7 @@ impl specified::CalcLengthPercentage {
 
         let node = self.0.node.map_leaves(|leaf| match *leaf {
             Leaf::Percentage(p) => {
-                ComputedLeaf::Percentage(CalcPercentageLeaf::new(p.get(), p.hint))
+                ComputedLeaf::Percentage(p)
             },
             Leaf::Length(l) => ComputedLeaf::Length({
                 let result =
@@ -1010,8 +1042,23 @@ impl Animate for LengthPercentage {
                 }
 
                 let (l, r) = procedure.weights();
-                let one = product_with(self.to_calc_node(), l as f32);
-                let other = product_with(other.to_calc_node(), r as f32);
+                let one = self.to_calc_node();
+                let other = other.to_calc_node();
+                if let (CalcNode::Sum(left), CalcNode::Sum(right)) = (&one, &other) {
+                    if left.len() == right.len() {
+                        let terms = left.iter().zip(right.iter()).map(|(left, right)| {
+                            let merged = left.as_leaf().ok_or(())?.try_op(right.as_leaf().ok_or(())?, |from, to| {
+                                (f64::from(from) * l + f64::from(to) * r) as f32
+                            })?;
+                            Ok::<_, ()>(CalcNode::Leaf(merged))
+                        }).collect::<Result<Vec<_>, _>>();
+                        if let Ok(terms) = terms {
+                            return Ok(Self::new_calc(CalcNode::Sum(terms.into()), AllowedNumericType::All));
+                        }
+                    }
+                }
+                let one = product_with(one, l as f32);
+                let other = product_with(other, r as f32);
 
                 Self::new_calc(
                     CalcNode::Sum(vec![one, other].into()),
@@ -1024,6 +1071,12 @@ impl Animate for LengthPercentage {
 
 /// A wrapper of LengthPercentage, whose value must be >= 0.
 pub type NonNegativeLengthPercentage = NonNegative<LengthPercentage>;
+
+impl crate::values::generics::length::SizeCalculationCss for NonNegativeLengthPercentage {
+    fn calculation_css<const SIZE: bool, W: Write>(&self, dest: &mut CssWriter<W>) -> fmt::Result {
+        self.0.to_calc_node().write_size_calculation::<SIZE, _>(dest)
+    }
+}
 
 impl NonNegativeLengthPercentage {
     /// Returns the used value.

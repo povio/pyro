@@ -48,6 +48,7 @@ mod cssom;
 mod debug;
 mod events;
 mod font_metrics;
+pub use font_metrics::font_metrics_provider;
 mod form;
 mod has_invalidation;
 pub use has_invalidation::PYRO_STATE_NS;
@@ -126,7 +127,7 @@ pub use blitz_traits::node_id::NodeId;
 pub use document::SHEET_ATTRIBUTE;
 pub use config::{
     DocumentConfig, REJECT_ALL_NONCE, FRAME_ATTRIBUTE, FrameContent, FrameTable, FrameTableData, StyleThreading, ENGINE_FIELDS, engine_field, engine_marked, engine_state,
-    same_secret,
+    same_secret, MediaEnvironment,
 };
 pub use document::{SvgImageDocument, 
     StyleChange,

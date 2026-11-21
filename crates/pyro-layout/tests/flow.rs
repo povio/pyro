@@ -3884,6 +3884,36 @@ fn text_range_and_hit_test_share_fractional_cluster_edges() {
 }
 
 #[test]
+fn offset_parent_origin_excludes_borders_before_transforms() {
+    let page = page("<body><div id=parent style='position:relative;border:solid;border-width:9px 3px 12px 6px;padding:20px;transform:scale(2)'><div id=flow>flow</div><div id=abs style='position:absolute;left:25px;top:-4px'>abs</div></div>");
+    for (id, left, top) in [("abs", 25.0, -4.0), ("flow", 20.0, 20.0)] {
+        let node = page.id(id);
+        assert_eq!(page.layout.offset_parent(&page.dom, node), Some(page.id("parent")));
+        assert_eq!(page.layout.offset_left(&page.dom, node), left);
+        assert_eq!(page.layout.offset_top(&page.dom, node), top);
+    }
+}
+
+#[test]
+fn vertical_ranges_and_carets_follow_the_inline_axis() {
+    for mode in ["vertical-rl", "vertical-lr", "sideways-lr"] {
+        let html = format!("<body><div id=p style='writing-mode:{mode};font:20px monospace'>ABC</div>");
+        let page = page(&html);
+        let element = page.id("p");
+        let text = page.dom.first_child(element).unwrap().unwrap();
+        let range = |start, end| page.layout.text_range_rect(&page.dom, text, start, end).unwrap();
+        let first = range(0, 1);
+        let second = range(1, 2);
+        let caret = range(1, 1);
+        assert!(first.width > 0.0 && first.height > 0.0, "{mode}");
+        assert_eq!(first.x, second.x, "{mode}");
+        assert_eq!(caret.height, 0.0, "{mode}");
+        assert_eq!(caret.y, if mode == "sideways-lr" { first.top() } else { first.bottom() }, "{mode}");
+        assert_eq!(page.layout.caret_from_point(&page.dom, element, second.x + second.width / 2.0, caret.y, &|_| true).unwrap().1, 1, "{mode}");
+    }
+}
+
+#[test]
 fn caret_from_point_takes_the_nearest_character_boundary_like_chromium() {
     // Native selection needs the caret under a point. Chromium (measured,
     // monospace 20px): a point 20% into the third character is at offset 2,

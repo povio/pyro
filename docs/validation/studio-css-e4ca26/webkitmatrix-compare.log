@@ -1,0 +1,30 @@
+webkitmatrix-main-candidate 8082 page passes 5591 named passes 180009 observed names 194540 statuses {'complete:0': 7867, 'complete:2': 105, 'timeout:None': 11, 'complete:1': 98, 'hang:None': 1}
+webkitmatrix-main-parent 8082 page passes 5584 named passes 179902 observed names 194540 statuses {'complete:0': 7867, 'complete:2': 105, 'timeout:None': 11, 'complete:1': 98, 'hang:None': 1}
+webkitmatrix-main-stable 8082 page passes 6950 named passes 182963 observed names 194912 statuses {'complete:0': 7986, 'complete:2': 62, 'complete:1': 23, 'timeout:None': 10, 'hang:None': 1}
+webkitmatrix-main-parent pages left only 7 right only 0
+webkitmatrix-main-parent passes left only 107 right only 0
+webkitmatrix-main-parent observed left only 0 right only 0
+webkitmatrix-main-stable pages left only 272 right only 1631
+webkitmatrix-main-stable passes left only 5802 right only 8756
+webkitmatrix-main-stable observed left only 309 right only 681
+Losses vs parent by URL: Counter()
+webkitmatrix-focus-candidate 185 page passes 159 named passes 9532 observed names 9673 statuses {'complete:0': 183, 'complete:1': 2}
+webkitmatrix-focus-parent 185 page passes 152 named passes 9425 observed names 9673 statuses {'complete:0': 183, 'complete:1': 2}
+webkitmatrix-focus-stable 185 page passes 182 named passes 9657 observed names 9670 statuses {'complete:0': 185}
+webkitmatrix-focus-parent pages left only 7 right only 0
+webkitmatrix-focus-parent passes left only 107 right only 0
+webkitmatrix-focus-parent observed left only 0 right only 0
+webkitmatrix-focus-stable pages left only 2 right only 25
+webkitmatrix-focus-stable passes left only 3 right only 128
+webkitmatrix-focus-stable observed left only 3 right only 0
+Losses vs parent by URL: Counter()
+webkitmatrix-supplement-candidate 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+webkitmatrix-supplement-parent 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+webkitmatrix-supplement-stable 41 page passes 35 named passes 619 observed names 874 statuses {'complete:0': 41}
+webkitmatrix-supplement-parent pages left only 0 right only 0
+webkitmatrix-supplement-parent passes left only 0 right only 0
+webkitmatrix-supplement-parent observed left only 0 right only 0
+webkitmatrix-supplement-stable pages left only 0 right only 8
+webkitmatrix-supplement-stable passes left only 0 right only 42
+webkitmatrix-supplement-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()

@@ -71,8 +71,8 @@ pub struct ExternalWord {
     pub width: f64,
     pub height: f64,
     pub fixed: bool,
-    /// Caret positions: UTF-16 offset into the node's data and its x, from
-    /// the word's start to its end.
+    pub vertical_edges: bool,
+    /// UTF-16 offsets and their document coordinate on the physical inline axis.
     pub edges: Vec<(u32, f64)>,
 }
 
@@ -698,7 +698,15 @@ pub trait GeometrySource {
     }
     /// Resolves a transform using the element's layout box and a possibly
     /// sampled style, without modifying the renderer's stored style.
-    fn resolved_transform_value(&self, _key: u64, _style: &style::properties::ComputedValues) -> Option<String> {
+    fn resolved_transform_value(&self, _key: u64, _property: &str, _style: &style::properties::ComputedValues) -> Option<String> {
+        None
+    }
+    /// Computed CSS geometry declarations on an SVG shape, excluding the
+    /// default values that must leave XML presentation attributes in effect.
+    fn svg_geometry_properties(&self, _key: u64) -> Vec<(&'static str, String)> {
+        Vec::new()
+    }
+    fn sampled_calc_size(&self, _key: u64, _width: bool, _style: &style::properties::ComputedValues) -> Option<f32> {
         None
     }
     /// One element's boxes as quads as of the last sync (`None`: not
@@ -811,6 +819,11 @@ pub trait GeometrySource {
     fn element_style(&self, _key: u64) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
         None
     }
+    /// Authored timing values whose computation needs the element or its pseudo-element.
+    fn element_timing_style(
+        &self, _key: u64, _pseudo: Option<&style::selector_parser::PseudoElement>,
+    ) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> { None }
+
     /// One element's starting style (`@starting-style`), as of the last sync (`None`: none applies).
     fn element_starting_style(&self, _key: u64) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
         None
@@ -973,21 +986,20 @@ pub struct TextRun {
     pub end: u32,
     pub rect: Rect,
     pub fixed: bool,
-    /// Caret positions (offset, document x) from `start` to `end`.
+    pub vertical_edges: bool,
+    /// Caret positions (offset, physical inline coordinate) from `start` to `end`.
     edges: Rc<[(u32, f64)]>,
 }
 
 impl TextRun {
-    /// Caret positions (UTF-16 offset, document x) from `start` to `end`.
+    /// UTF-16 offsets paired with document x (horizontal) or y (vertical).
     pub fn edges(&self) -> &[(u32, f64)] {
         &self.edges
     }
 
-    /// The offset of the character boundary nearest to `dx` px from the
-    /// run's left edge, as Chromium places a caret under a point.
-    pub fn offset_at(&self, dx: f64) -> u32 {
-        let x = self.rect.x + dx;
-        self.edges.iter().min_by(|a, b| (a.1 - x).abs().total_cmp(&(b.1 - x).abs())).map_or(self.start, |e| e.0)
+    pub fn offset_at(&self, distance: f64) -> u32 {
+        let coord = distance + if self.vertical_edges { self.rect.y } else { self.rect.x };
+        self.edges.iter().min_by(|a, b| (a.1 - coord).abs().total_cmp(&(b.1 - coord).abs())).map_or(self.start, |e| e.0)
     }
 }
 
@@ -1034,7 +1046,7 @@ impl TextResult {
                 let (x1, y1) = ((r.x + r.width).max(rect.x + rect.width), (r.y + r.height).max(rect.y + rect.height));
                 union.0 = Rect { x: x0, y: y0, width: x1 - x0, height: y1 - y0 };
             }
-            out.text_runs.push(TextRun { node, start, end, rect, fixed: w.fixed, edges: w.edges.into() });
+            out.text_runs.push(TextRun { node, start, end, rect, fixed: w.fixed, vertical_edges: w.vertical_edges, edges: w.edges.into() });
         }
         out
     }

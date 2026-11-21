@@ -6,7 +6,7 @@
 use std::fmt::Write as _;
 
 use style::context::QuirksMode;
-use style::font_face::Source;
+use style::font_face::{FontFaceSourceFormat, FontFaceSourceFormatKeyword, FontFaceSourceTechFlags, Source};
 use style::properties::font_face::{DescriptorId, Descriptors};
 use style::servo_arc::Arc;
 use style::shared_lock::SharedRwLock;
@@ -64,6 +64,48 @@ pub fn descriptor(name: &str, value: &str) -> Option<String> {
     Some(css)
 }
 
+pub struct DescriptorBlock {
+    descriptors: Descriptors,
+    base: UrlExtraData,
+}
+
+impl DescriptorBlock {
+    pub fn supports(name: &str) -> bool {
+        DescriptorId::from_ident(name).is_ok()
+    }
+
+    pub fn parse(text: &str, base: &str) -> Self {
+        crate::stylo::enable_features();
+        let base = url_data(base);
+        let mut input = cssparser::Parser::new(text);
+        let location = input.current_source_location();
+        let rule = style::font_face::parse_font_face_block(&context(&base), &mut input, location);
+        Self { descriptors: rule.descriptors, base }
+    }
+
+    pub fn names(&self) -> Vec<String> {
+        (0..self.descriptors.len()).filter_map(|index| self.descriptors.at(index)).map(|id| id.name().to_owned()).collect()
+    }
+
+    pub fn get(&self, name: &str) -> String {
+        let mut value = String::new();
+        if let Ok(id) = DescriptorId::from_ident(name) {
+            let _ = self.descriptors.get(id, &mut value);
+        }
+        value
+    }
+
+    pub fn update(&mut self, name: &str, value: &str) -> bool {
+        let Ok(id) = DescriptorId::from_ident(name) else { return false };
+        if value.is_empty() { return self.descriptors.remove(id); }
+        self.descriptors.set(id, &context(&self.base), &mut cssparser::Parser::new(value)).unwrap_or(false)
+    }
+
+    pub fn css_text(&self) -> String {
+        self.descriptors.to_css_string().trim_end().to_owned()
+    }
+}
+
 /// One source of a face, in the order to try.
 #[derive(Clone, Debug, PartialEq)]
 pub enum FontSource {
@@ -78,6 +120,19 @@ fn convert_sources(list: &style::font_face::SourceList) -> Vec<FontSource> {
         .iter()
         .filter_map(|source| match source {
             Source::Url(u) => {
+                if !FontFaceSourceTechFlags::SERVO_SUPPORTED.contains(u.tech_flags) {
+                    return None;
+                }
+                let supported = match &u.format_hint {
+                    None => true,
+                    Some(FontFaceSourceFormat::Keyword(keyword)) => matches!(keyword,
+                        FontFaceSourceFormatKeyword::Collection | FontFaceSourceFormatKeyword::Opentype |
+                        FontFaceSourceFormatKeyword::Truetype | FontFaceSourceFormatKeyword::Woff | FontFaceSourceFormatKeyword::Woff2),
+                    Some(FontFaceSourceFormat::String(hint)) => matches!(hint.to_ascii_lowercase().as_str(),
+                        "collection" | "opentype" | "truetype" | "woff" | "woff2" | "opentype-variations" |
+                        "truetype-variations" | "woff-variations" | "woff2-variations"),
+                };
+                if !supported { return None; }
                 let url = u.url.url()?.to_string();
                 let format = u.format_hint.as_ref().map(|f| f.to_css_string());
                 Some(FontSource::Url(url, format))
@@ -255,6 +310,10 @@ mod tests {
         assert!(matches!(&s[0], FontSource::Url(u, Some(_)) if u == "https://e.test/css/a.woff2"));
         assert_eq!(s[1], FontSource::Local("Foo".into()));
         assert!(sources("x", "https://e.test/").is_none());
+        let fallback = sources("url(bad) format('xyzwoff'), url(svg) tech(color-svg), local(Foo), url(ok) format('WOFF2-variations')", "https://e.test/").unwrap();
+        assert_eq!(fallback.len(), 2);
+        assert_eq!(fallback[0], FontSource::Local("Foo".into()));
+        assert!(matches!(&fallback[1], FontSource::Url(url, _) if url == "https://e.test/ok"));
     }
 
     #[test]

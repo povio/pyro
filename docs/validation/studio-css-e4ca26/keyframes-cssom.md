@@ -1,0 +1,5 @@
+# Live keyframes CSSOM
+
+On Studio, `2beb6602` versus `8156da0d` uses WPT `a421f2fea5eb7f91e0db399e44b0fb0779ee1603`, Chrome stable `158.0.8127.37`, LP `0.0.17`, JSC `0e0dd7038a7a-6f4649e395e0`, six workers. CSSOM now exposes live keyframe lists, selector edits, rule lookup and mutations, and updates stylesheet text used for animation. The 89-URL focused run went from 48 pages/337 names to 57/432; Chrome passed 81/556. All eight `css/cssom/CSSKey*` interface and mutation pages passed. The marker animation page now registers all 98 assertions (44 pass); this is not a strict page pass.
+
+Across the 8,082 main URLs, LP gained **11 strict pages and 127 named passes**, with 114 newly observed names and no lost passes or observations. LP passes 5,618 pages/180,434 names; Chrome passes 6,950/182,963. Chrome alone passes 1,605/8,396, LP alone 273/5,867. LP retains 11 timeouts and one hang. On the separate 41-URL worker supplement LP remains 27/577 and Chrome 35/619, with no changed outcomes. The 39 withheld URLs are not scored. Exact sets and statuses are in `difference-keycss-*`, `outcomes-keycss-*`, and `keycss-compare.log`.

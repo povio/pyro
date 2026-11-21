@@ -636,11 +636,17 @@ impl AbsoluteColor {
             ($c:expr) => {{ crate::values::normalize($c.unwrap_or(0.0)) }};
         }
 
-        let components = ColorComponents(
+        let mut components = ColorComponents(
             missing_to_zero!(self.c0()),
             missing_to_zero!(self.c1()),
             missing_to_zero!(self.c2()),
         );
+
+        match self.color_space {
+            Lch if components.1 <= convert::LCH_CHROMA_EPSILON => components.1 = 0.0,
+            Oklch if components.1 <= convert::OKLCH_CHROMA_EPSILON => components.1 = 0.0,
+            _ => {},
+        }
 
         let result = match (self.color_space, color_space) {
             // We have simplified conversions that do not need to convert to XYZ
@@ -652,7 +658,7 @@ impl AbsoluteColor {
             (Hwb, Srgb) => convert::hwb_to_rgb(&components),
             (Lab, Lch) | (Oklab, Oklch) => convert::orthogonal_to_polar(
                 &components,
-                convert::epsilon_for_range(0.0, if color_space == Lch { 100.0 } else { 1.0 }),
+                if color_space == Lch { convert::LCH_CHROMA_EPSILON } else { convert::OKLCH_CHROMA_EPSILON },
             ),
             (Lch, Lab) | (Oklch, Oklab) => convert::polar_to_orthogonal(&components),
 

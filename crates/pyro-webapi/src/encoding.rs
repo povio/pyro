@@ -74,17 +74,9 @@ pub fn buffer_source_bytes(s: &Scope<'_>, v: Value<'_>) -> JsResult<Option<Vec<u
             }
         }
         sys::kJSTypedArrayTypeNone => {
-            // Captured native getters perform the DataView brand check and
-            // ignore spoofable constructor/name/buffer properties. Never recurse
-            // through an arbitrary user-provided "buffer" object.
-            let page = crate::target::page_of(s)?;
-            let reader = page
-                .data_view_readers
-                .borrow()
-                .get(&s.realm_id())
-                .cloned()
-                .ok_or_else(|| pyro_js::JsError::Type("BufferSource bindings are not installed".into()))?;
-            let view = reader.get(s).as_object().expect("DataView reader").call(None, &[v])?;
+            // DataView and typed arrays without a JSC C API type (e.g. Float16Array)
+            // expose their byte range through the realm's intrinsic view getters.
+            let view = encoding_helper(s, "viewBytes")?.call(None, &[v])?;
             if view.is_null() {
                 return Ok(None);
             }
@@ -111,12 +103,17 @@ pub fn buffer_source_bytes(s: &Scope<'_>, v: Value<'_>) -> JsResult<Option<Vec<u
     }
 }
 
-/// Keeps the realm's DataView reader (install.js `dataView`, made before
-/// page scripts can replace the builtins it captures): it accepts only a
-/// native DataView and produces a genuine Uint8Array over the same view.
-pub(crate) fn install(s: &Scope<'_>, reader: pyro_js::Value<'_>) -> JsResult<()> {
-    crate::target::page_of(s)?.data_view_readers.borrow_mut().insert(s.realm_id(), pyro_js::Persistent::new(s, reader));
+/// Buffer conversions use the realm's original typed-array and DataView intrinsics.
+pub(crate) fn install(s: &Scope<'_>, helpers: Value<'_>) -> JsResult<()> {
+    crate::target::page_of(s)?.encoding_helpers.borrow_mut().insert(s.realm_id(), pyro_js::Persistent::new(s, helpers));
     Ok(())
+}
+
+fn encoding_helper<'s>(s: &Scope<'s>, name: &'static str) -> JsResult<pyro_js::Object<'s>> {
+    let page = crate::target::page_of(s)?;
+    let helpers = page.encoding_helpers.borrow().get(&s.realm_id()).cloned()
+        .ok_or_else(|| JsError::Type("Encoding bindings are not installed".into()))?;
+    Ok(helpers.get(s).as_object().expect("encoding helpers").get_atom(name)?.as_object().expect("encoding function"))
 }
 
 /// New `Uint8Array` holding a copy of `bytes`.
@@ -159,10 +156,11 @@ impl JsClass for TextEncoder {
             uint8_array(s, text.as_bytes())
         });
         def.method("encodeInto", 2, |s, _d, a| {
+            a.require(2, "TextEncoder.encodeInto")?;
             let text = dom_string(a.get(0))?;
-            let dest =
-                a.get(1).as_object().ok_or_else(|| JsError::Type("parameter 2 is not of type 'Uint8Array'.".into()))?;
-            let cap = dest.get_atom("length")?.to_number()? as usize;
+            let value = a.get(1);
+            let cap = encoding_helper(s, "encodeIntoCapacity")?.call(None, &[value])?.to_number()? as usize;
+            let dest = value.as_object().expect("validated Uint8Array");
             // Largest prefix of whole code points that fits.
             let mut end = 0;
             let mut read16 = 0;
@@ -200,7 +198,7 @@ impl JsClass for TextDecoder {
     fn define(def: &mut ClassDef<Self>) {
         def.constructor(0, |s, nt, a| {
             let label = if a.get(0).is_undefined() { "utf-8".to_owned() } else { dom_string(a.get(0))? };
-            let encoding = encoding_rs::Encoding::for_label(label.as_bytes())
+            let encoding = encoding_rs::Encoding::for_label_no_replacement(label.as_bytes())
                 .ok_or_else(|| JsError::Range(format!("The encoding label provided ('{label}') is invalid.").into()))?;
             let (fatal, ignore_bom) = match a.get(1).as_object() {
                 Some(o) => (o.get_atom("fatal")?.to_bool(), o.get_atom("ignoreBOM")?.to_bool()),
@@ -245,7 +243,9 @@ impl JsClass for TextDecoder {
                 let _ = decoder.decode_to_string(&bytes, &mut text, last);
                 false
             };
-            if last || malformed {
+            // A streaming error can leave the decoder in a valid shifted state
+            // (such as ISO-2022-JP Roman). A final call starts the next stream afresh.
+            if last {
                 *slot = None;
             }
             if malformed {

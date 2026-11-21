@@ -120,7 +120,7 @@ pub struct PageDom {
     /// The custom element definitions of this page's realms (`crate::custom`).
     pub(crate) custom_elements: RefCell<crate::custom::Registry>,
     pub(crate) header_helpers: RefCell<FxHashMap<RealmId, Persistent>>,
-    pub(crate) data_view_readers: RefCell<FxHashMap<RealmId, Persistent>>,
+    pub(crate) encoding_helpers: RefCell<FxHashMap<RealmId, Persistent>>,
     /// install.js's `blobParts` conversion, per realm (file.rs).
     pub(crate) blob_parts: RefCell<FxHashMap<RealmId, Persistent>>,
     /// Wrappers kept alive because they hold listeners for a connected
@@ -154,7 +154,7 @@ pub struct PageDom {
     /// (registered by their wrappers, removed when those are collected), for
     /// the embedder's resize and orientation change events.
     pub(crate) viewport_targets: RefCell<Vec<(crate::window::ViewportTarget, TargetKey)>>,
-    /// Live `MediaQueryList` targets (one per realm and query text) with the
+    /// Live `MediaQueryList` targets with the
     /// last `matches` each reported, for the embedder's `change` events.
     pub(crate) media_queries: RefCell<Vec<crate::layout_api::MediaQueryEntry>>,
     /// Each realm's original `structuredClone` (MessagePort cloning).
@@ -191,7 +191,7 @@ pub struct PageDom {
     pub(crate) error_event_world: Cell<Option<(u64, RealmId)>>,
     /// The document's clock (`performance.now()`), which `Event.timeStamp`
     /// reads so both share a time origin and a resolution.
-    event_clock: RefCell<Option<Rc<dyn Fn() -> f64>>>,
+    event_clock: RefCell<Option<Rc<dyn Fn(std::time::Instant) -> f64>>>,
     /// Each realm's installer of `isTrusted`, a [LegacyUnforgeable] accessor:
     /// an own property of every event (`event::define_unforgeables`).
     pub(crate) event_unforgeables: RefCell<FxHashMap<RealmId, Persistent>>,
@@ -319,6 +319,8 @@ pub struct PageDom {
     pub(crate) target_text: RefCell<Vec<Rc<crate::range::RangeOwner>>>,
     /// Undo/redo steps of user edits (`crate::edit_commands`).
     pub(crate) undo: RefCell<crate::edit_commands::UndoHistory>,
+    /// Values set by a formatting command on a collapsed selection.
+    pub(crate) typing_values: RefCell<Option<crate::edit_commands::inline_value::TypingValues>>,
     /// The native drag-and-drop session in progress, if any.
     pub(crate) drag: RefCell<Option<crate::input::DragSession>>,
     /// `document.open()`'s script-created parser (`crate::html` document
@@ -377,6 +379,7 @@ pub struct PageDom {
     css_font_faces: RefCell<Option<(pyro_dom::style::AuthorSheetsKey, Rc<Vec<pyro_dom::font_face::CssFace>>)>>,
     /// Tasks queued through [`PageDom::post_task`] so far.
     posted_tasks: Cell<u64>,
+    pub(crate) web_tasks: crate::scheduler::PendingTasks,
     /// HTML "completely loaded": the document's `load` and `pageshow` have
     /// been dispatched. Until then a navigation its script starts without a
     /// user gesture replaces its history entry.
@@ -629,6 +632,9 @@ pub enum FrameContainer {
 }
 
 /// Embedder (pyro-browser) services the bindings need.
+pub type StreamScriptJob = Box<dyn FnOnce(Box<dyn FnOnce()>)>;
+pub type StreamScriptReady = Box<dyn FnOnce(StreamScriptJob)>;
+
 pub trait PageHooks {
     /// Where the document is shown: geometry across frames (an
     /// IntersectionObserver's implicit root is the top-level document's
@@ -676,6 +682,15 @@ pub trait PageHooks {
 
     /// Schedules `task` on the page's event loop as a separate task.
     fn post_task(&self, task: Box<dyn FnOnce()>);
+    /// Admit a prioritized web task onto the window or worker's event loop.
+    fn post_web_task(
+        &self,
+        _priority: pyro_runtime::WebPrioritySource,
+        _delay: std::time::Duration,
+        _task: Box<dyn FnOnce()>,
+    ) -> Option<Box<dyn FnOnce()>> {
+        None
+    }
     /// Schedules `task` as a separate task after `delay` (default: at once).
     fn post_delayed_task(&self, _delay: std::time::Duration, task: Box<dyn FnOnce()>) {
         self.post_task(task)
@@ -773,6 +788,7 @@ pub trait PageHooks {
     /// loader (a blocking one reports through
     /// `lifecycle::written_script_fetched`). False when the embedder cannot
     /// load scripts; the write then reports them as unsupported.
+    fn streamed_script(&self, _node: NodeId, _live: Rc<dyn Fn() -> bool>, ready: StreamScriptReady) { ready(Box::new(|done| done())); }
     fn written_script_queued(&self) -> bool {
         false
     }
@@ -864,7 +880,7 @@ impl PageDom {
             current_script: Cell::new(None),
             realms: RefCell::new(FxHashMap::default()),
             main_world: RefCell::new(None),
-            data_view_readers: RefCell::new(FxHashMap::default()),
+            encoding_helpers: RefCell::new(FxHashMap::default()),
             blob_parts: RefCell::new(FxHashMap::default()),
             header_helpers: RefCell::new(FxHashMap::default()),
             url_params_helpers: RefCell::new(FxHashMap::default()),
@@ -949,6 +965,7 @@ impl PageDom {
             highlights: RefCell::new(Vec::new()),
             target_text: RefCell::new(Vec::new()),
             undo: RefCell::new(Default::default()),
+            typing_values: Default::default(),
             script_parser: RefCell::new(None),
             script_parser_active: Cell::new(false),
             script_parser_close: Cell::new(false),
@@ -972,6 +989,7 @@ impl PageDom {
             adopted_sheets: RefCell::new(FxHashMap::default()),
             css_font_faces: RefCell::new(None),
             posted_tasks: Cell::new(0),
+            web_tasks: Default::default(),
             completely_loaded: Cell::new(false),
             input_activation: Cell::new(None),
             fullscreen_stack: RefCell::new(Vec::new()),
@@ -1164,6 +1182,7 @@ impl PageDom {
     }
 
     fn release_activity(&self) {
+        self.web_tasks.clear();
         self.transition_captures.borrow_mut().take();
         crate::input::clear_document_focus(self);
         self.clear_render_blocking(true);
@@ -1175,6 +1194,7 @@ impl PageDom {
         crate::xhr::dispose(self);
         crate::resource_timing::dispose(self);
         crate::file_reader::dispose(self);
+        crate::crypto_subtle::public_key::cancel(self.id(), None);
         crate::mutation_observer::dispose(self);
         crate::intersection_observer::dispose(self);
         crate::resize_observer::dispose(self);
@@ -1201,7 +1221,7 @@ impl PageDom {
         drop(self.event_clock.take());
         self.animation_events.clear();
         drop(self.pending_port_reconcile.take());
-        drop(self.data_view_readers.take());
+        drop(self.encoding_helpers.take());
         drop(self.blob_parts.take());
         drop(self.header_helpers.take());
         drop(self.url_params_helpers.take());
@@ -1209,6 +1229,7 @@ impl PageDom {
         drop(self.drag.take());
         // The selection owns Persistents to its Range wrappers.
         drop(self.selection.take());
+        self.typing_values.take();
         // Highlights hold their ranges' nodes.
         drop(self.highlights.take());
         drop(self.target_text.take());
@@ -1894,6 +1915,10 @@ impl PageDom {
     pub fn set_stylesheet_text(&self, link: NodeId, text: &str) {
         self.layout.borrow_mut().style_mut().set_sheet_text(link, text);
     }
+    pub(crate) fn set_edited_style_element(&self, owner: NodeId, text: String, generation: u32) {
+        self.layout.borrow_mut().style_mut().add_sheet(owner, pyro_dom::style::SheetSource::EditedStyleElement { text, generation });
+    }
+
     /// pyro: reserves `link`'s cascade slot for the response it now loads (empty, of no URL yet).
     pub fn reserve_stylesheet(&self, link: NodeId) {
         let mut layout = self.layout.borrow_mut();
@@ -1916,6 +1941,12 @@ impl PageDom {
     pub fn current_script(&self) -> Option<NodeId> {
         self.current_script.get()
     }
+    pub fn set_executing_classic_script(&self, script: NodeId) {
+        let dom = self.dom.borrow();
+        let in_shadow = dom.root_node(script, false).and_then(|root| dom.is_shadow_root(root)).unwrap_or(false);
+        self.current_script.set((!in_shadow).then_some(script));
+    }
+
     pub fn set_current_script(&self, script: Option<NodeId>) {
         self.current_script.set(script);
     }
@@ -1982,9 +2013,9 @@ impl PageDom {
         let layout = self.layout();
         let mut out = Vec::new();
         for entry in self.media_queries.borrow().iter() {
-            let now = layout.style().match_media(&entry.query);
+            let now = layout.style().matches_media_list(&entry.query);
             if entry.last.replace(now) != now {
-                out.push((entry.target, entry.query.clone(), now));
+                out.push((entry.target, entry.media.clone(), now));
             }
         }
         out
@@ -2029,12 +2060,15 @@ impl PageDom {
     }
     /// Installs the clock `Event.timeStamp` reads: milliseconds since the
     /// document's time origin, as `performance.now()` reports them.
-    pub fn set_event_clock(&self, clock: Rc<dyn Fn() -> f64>) {
+    pub fn set_event_clock(&self, clock: Rc<dyn Fn(std::time::Instant) -> f64>) {
         *self.event_clock.borrow_mut() = Some(clock);
     }
     /// The document's clock now, if the embedder installed one.
     pub(crate) fn event_time(&self) -> Option<f64> {
-        self.event_clock.borrow().as_ref().map(|clock| clock())
+        self.event_clock.borrow().as_ref().map(|clock| clock(std::time::Instant::now()))
+    }
+    pub(crate) fn clock_for_entries(&self) -> Option<Rc<dyn Fn(std::time::Instant) -> f64>> {
+        self.event_clock.borrow().clone()
     }
     pub(crate) fn next_event_id(&self) -> u64 {
         let n = self.next_event.get();
@@ -2195,7 +2229,7 @@ impl PageDom {
         self.header_helpers.borrow_mut().retain(|realm, _| {
             self.realms.borrow().get(realm).and_then(|r| r.upgrade()).is_some_and(|r| !r.is_disposed())
         });
-        self.data_view_readers.borrow_mut().retain(|realm, _| {
+        self.encoding_helpers.borrow_mut().retain(|realm, _| {
             self.realms.borrow().get(realm).and_then(|r| r.upgrade()).is_some_and(|r| !r.is_disposed())
         });
         self.blob_parts.borrow_mut().retain(|realm, _| {
@@ -2232,6 +2266,7 @@ impl PageDom {
             && !self.render_blocking_pending(&dom)
             && !dom.has_pending_mutations()
             && !dom.has_gc_candidates()
+            && !dom.has_released_listeners()
             && self.mutations.pending_drops_is_empty()
             && self.pending_release.borrow().is_empty()
             && self.pending_port_reconcile.borrow().is_empty()

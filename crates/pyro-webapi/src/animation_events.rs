@@ -242,7 +242,7 @@ impl State {
         match self.task_clock.get() {
             Some((at, now)) if at == seq => now,
             _ => {
-                let now = crate::event::page_now_ms(page);
+                let now = page.timeline_now_ms();
                 self.task_clock.set(Some((seq, now)));
                 now
             }
@@ -549,7 +549,7 @@ fn update(page: &Rc<PageDom>, defer: bool) {
                 wanted.extend(rules.element(&dom, el, &style_of).animations.into_iter().map(|a| (el, None, a)));
                 // Its `::before`/`::after`, while it generates a box.
                 if pseudo_rules {
-                    for pseudo in [PseudoElement::Before, PseudoElement::After] {
+                    for pseudo in [PseudoElement::Before, PseudoElement::After, PseudoElement::Marker] {
                         let timing = rules.element_for(&dom, el, Some(pseudo), &style_of);
                         if !timing.animations.is_empty() && style.pseudo_style(&dom, el, pseudo, false).is_some() {
                             wanted.extend(timing.animations.into_iter().map(|a| (el, Some(pseudo), a)));
@@ -842,6 +842,7 @@ pub(crate) fn runs(page: &Rc<PageDom>) -> Vec<Run> {
         let Ok(dom) = page.dom.try_borrow() else { return Vec::new() };
         let Some(layout) = page.try_layout() else { return Vec::new() };
         let style = layout.style();
+        track_style_changes(state, &dom, style);
         style.engine_styled(&dom);
         state.stamp.get() == Some(style.observation_stamp(&dom))
     };
@@ -1323,9 +1324,10 @@ fn is_ancestor(dom: &pyro_dom::Dom, ancestor: NodeId, node: NodeId) -> bool {
 /// hundreds per frame, and a pass per start cost more than the restyle.
 #[derive(Default)]
 struct Starting {
+    changed: FxHashMap<(NodeId, Option<PseudoElement>), (StyleSnapshot, Vec<String>)>,
     timelines: Vec<Timeline>,
     /// The properties started, by element, with their index in `timelines`.
-    keys: FxHashMap<(NodeId, Option<PseudoElement>), Vec<(&'static str, usize)>>,
+    keys: FxHashMap<(NodeId, Option<PseudoElement>), Vec<(String, usize)>>,
     /// Their events, planned after the cancel events of the transitions
     /// they replace.
     events: Vec<Planned>,
@@ -1351,21 +1353,25 @@ impl Starting {
     /// Replaces the running transitions of the elements and properties that
     /// start again, and starts the new ones.
     fn commit(self, state: &State, planned: &mut Vec<Planned>) {
-        if self.timelines.is_empty() {
+        if self.timelines.is_empty() && self.changed.is_empty() {
             return;
         }
         let mut running = state.transitions.borrow_mut();
+        let previous_count = running.len();
         running.retain(|known| {
             let same = self
                 .keys
                 .get(&(known.el, known.pseudo))
                 .is_some_and(|started| started.iter().any(|(name, _)| *name == known.name));
-            if same && known.live.get() && !known.ended.get() {
+            let unlisted = self.changed.get(&(known.el, known.pseudo))
+                .is_some_and(|(style, properties)| !pyro_dom::timing::lists_transition(style, properties, &known.name));
+            if (same || unlisted) && known.live.get() && !known.ended.get() {
                 known.live.set(false);
                 planned.push(cancel_event(known.el, known.pseudo, &known.name));
             }
-            !same
+            !same && !unlisted
         });
+        if running.len() == previous_count && self.timelines.is_empty() { return; }
         planned.extend(self.events);
         running.extend(self.timelines);
         state.bump();
@@ -1410,16 +1416,24 @@ fn start_transitions_of(
     // The after-change style's custom properties resolve `var()` (a pseudo-element's: the
     // element's).
     let style_of = |e: NodeId| if e == el && pseudo.is_none() { Some(now.clone()) } else { style.stylo_style(dom, e) };
-    let ElementTiming { transitions, .. } = rules.element_for(dom, el, pseudo, &style_of);
-    let mut started: Vec<&'static str> = Vec::new();
-    for transition in &transitions {
+    let ElementTiming { transitions, transition_properties, .. } = rules.element_for(dom, el, pseudo, &style_of);
+    if !state.transitions.borrow().is_empty() {
+        if let Some(properties) = transition_properties {
+            starting.changed.insert((el, pseudo), (now.clone(), properties));
+        }
+    }
+    let mut started = Vec::new();
+    for transition in transitions.iter().rev() {
+        let custom = if transition.property == "all" {
+            pyro_dom::timing::changed_custom_properties(before, now, transition.allow_discrete)
+        } else { Vec::new() };
         let changed =
             pyro_dom::timing::changed_longhands_with(before, now, &transition.property, transition.allow_discrete);
-        for longhand in changed {
-            if started.contains(&longhand) {
+        for longhand in changed.into_iter().chain(custom.iter().map(String::as_str)) {
+            if started.iter().any(|name| name == longhand) {
                 continue;
             }
-            started.push(longhand);
+            started.push(longhand.to_owned());
             // A property a CSS or script animation drives does not
             // transition: its value changes with the animation's.
             if crate::animation_frame::animates(state, rules, el, pseudo, longhand) {
@@ -1435,7 +1449,7 @@ fn start_transitions_of(
                     starting.events.push(cancel_event(el, pseudo, longhand));
                     *first = index;
                 }
-                None => keys.push((longhand, index)),
+                None => keys.push((longhand.to_owned(), index)),
             }
             let timeline = Timeline {
                 timeline_text: None,
@@ -1573,6 +1587,7 @@ fn pseudo_name(pseudo: Option<PseudoElement>) -> &'static str {
         None => "",
         Some(PseudoElement::Before) => "::before",
         Some(PseudoElement::After) => "::after",
+        Some(PseudoElement::Marker) => "::marker",
     }
 }
 

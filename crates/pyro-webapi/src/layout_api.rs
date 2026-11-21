@@ -12,62 +12,11 @@ use crate::node::{wrap_node, NodeData};
 use crate::page::PageDom;
 use crate::util::*;
 
-/// `DOMRect` / `DOMRectReadOnly` values as a plain JS object with the
-/// DOMRect shape (x, y, width, height, top, right, bottom, left, toJSON).
-pub fn rect_value<'s>(s: &Scope<'s>, r: pyro_dom::layout::Rect) -> JsResult<Value<'s>> {
-    let o = s.wrap::<DomRect>(r, None)?;
-    Ok(o.value())
-}
-
-pub struct DomRect;
-impl JsClass for DomRect {
-    const NAME: &'static str = "DOMRect";
-    type Data = pyro_dom::layout::Rect;
-    type Parent = NoParent;
-    fn define(def: &mut ClassDef<Self>) {
-        def.constructor(0, |s, nt, a| {
-            let n = |i: usize| -> JsResult<f64> {
-                if a.get(i).is_undefined() {
-                    Ok(0.0)
-                } else {
-                    a.get(i).to_number()
-                }
-            };
-            let r = pyro_dom::layout::Rect { x: n(0)?, y: n(1)?, width: n(2)?, height: n(3)? };
-            s.wrap_new::<DomRect>(r, nt, None)
-        });
-        def.getter("x", |s, r| Ok(s.number(r.x)));
-        def.getter("y", |s, r| Ok(s.number(r.y)));
-        def.getter("width", |s, r| Ok(s.number(r.width)));
-        def.getter("height", |s, r| Ok(s.number(r.height)));
-        def.getter("left", |s, r| Ok(s.number(r.left())));
-        def.getter("top", |s, r| Ok(s.number(r.top())));
-        def.getter("right", |s, r| Ok(s.number(r.right())));
-        def.getter("bottom", |s, r| Ok(s.number(r.bottom())));
-        def.method("toJSON", 0, |s, r, _a| {
-            let o = s.object();
-            for (k, v) in [
-                ("x", r.x),
-                ("y", r.y),
-                ("width", r.width),
-                ("height", r.height),
-                ("top", r.top()),
-                ("right", r.right()),
-                ("bottom", r.bottom()),
-                ("left", r.left()),
-            ] {
-                o.set(k, s.number(v))?;
-            }
-            Ok(o.value())
-        });
-    }
-}
-
 pub(crate) fn bounding_rect<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
     let page = n.page();
     crate::animation_events::layout_flush(page, n.id);
     let r = page.layout().bounding_client_rect(&page.dom.borrow(), n.id);
-    rect_value(s, r.layout_units())
+    crate::canvas::rect_value(s, page, false, r.layout_units())
 }
 
 pub(crate) fn client_rects<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
@@ -76,9 +25,9 @@ pub(crate) fn client_rects<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s
     let rects = page.layout().client_rects(&page.dom.borrow(), n.id);
     let mut vals = pyro_js::RootedVec::new();
     for r in rects {
-        vals.push(s, rect_value(s, r.layout_units())?);
+        vals.push(s, crate::canvas::rect_value(s, page, false, r.layout_units())?);
     }
-    Ok(s.array(&vals.iter(s).collect::<Vec<_>>())?.value())
+    crate::canvas::rect_list(s, page, &vals.iter(s).collect::<Vec<_>>())
 }
 
 /// Range geometry for (start container, start offset, end container, end
@@ -106,11 +55,11 @@ pub(crate) fn range_rect<'s>(
     if let Some(t) = text {
         if t == start && start == end {
             if let Some(rect) = page.layout().text_range_rect(&page.dom.borrow(), t, start_offset, end_offset) {
-                return rect_value(s, rect.layout_units());
+                return crate::canvas::rect_value(s, page, false, rect.layout_units());
             }
         }
         if let Some(r) = page.layout().text_rect(&page.dom.borrow(), t) {
-            return rect_value(s, r.layout_units());
+            return crate::canvas::rect_value(s, page, false, r.layout_units());
         }
     }
     // A range over the children of one node (`selectNodeContents`,
@@ -131,7 +80,7 @@ pub(crate) fn range_rect<'s>(
             for c in children {
                 unite_node_rects(&dom, &layout, c, &mut union);
             }
-            return rect_value(s, union.unwrap_or_default().layout_units());
+            return crate::canvas::rect_value(s, page, false, union.unwrap_or_default().layout_units());
         }
     }
     let el = {
@@ -146,7 +95,7 @@ pub(crate) fn range_rect<'s>(
         Some(e) => page.layout().bounding_client_rect(&page.dom.borrow(), e),
         None => pyro_dom::layout::Rect::default(),
     };
-    rect_value(s, r.layout_units())
+    crate::canvas::rect_value(s, page, false, r.layout_units())
 }
 
 /// Adds `node`'s rect to `union`: a text node's line box, an element's
@@ -769,18 +718,37 @@ pub struct ComputedData {
 }
 
 impl ComputedData {
+    fn rendered_document(&self) -> Option<Rc<PageDom>> {
+        let home = &self.el.page;
+        let document = home.dom.borrow().owner_document(self.el.id).ok().flatten()?;
+        let page = if home.document() == document {
+            home.clone()
+        } else {
+            home.hooks()?.frame_tree().into_iter().find(|other| {
+                other.document() == document && Rc::ptr_eq(&other.dom, &home.dom)
+            })?
+        };
+        let mut frame = page.clone();
+        while frame.is_nested_frame() {
+            let crate::page::FrameContainer::Frame(parent, owner) = frame.container() else { return None };
+            parent.layout().client_rect(&parent.dom.borrow(), owner)?;
+            frame = parent;
+        }
+        Some(page)
+    }
+
     /// The computed value of `name` for the element or its pseudo-element.
     fn value(&self, name: &str) -> String {
         use pyro_dom::stylo::PseudoArg;
-        let page = &self.el.page;
+        let Some(page) = self.rendered_document() else { return String::new() };
         match &self.pseudo {
             PseudoArg::Element => {
-                crate::animation_events::observe(page, self.el.id);
+                crate::animation_events::observe(&page, self.el.id);
                 page.layout().computed_style_value(&page.dom.borrow(), self.el.id, name)
             }
             PseudoArg::Pseudo(pseudo) => {
                 // A style flush too: the pseudo-element's transitions start at it.
-                crate::animation_events::observe(page, self.el.id);
+                crate::animation_events::observe(&page, self.el.id);
                 page.layout().computed_pseudo_style_value(&page.dom.borrow(), self.el.id, pseudo, name)
             }
             PseudoArg::Invalid => String::new(),
@@ -806,8 +774,12 @@ fn computed_string<'s>(s: &Scope<'s>, value: &str) -> Value<'s> {
 fn computed_property_names() -> &'static [&'static str] {
     static NAMES: std::sync::OnceLock<Vec<&'static str>> = std::sync::OnceLock::new();
     NAMES.get_or_init(|| {
-        let names = crate::computed_properties::COMPUTED_PROPERTIES.iter().copied();
-        names.chain(crate::computed_properties::EPUB_ALIASES.iter().map(|&(_, property)| property)).collect()
+        let mut names = crate::computed_properties::COMPUTED_PROPERTIES.to_vec();
+        names.extend(pyro_dom::stylo::longhand_names());
+        names.sort_unstable();
+        names.dedup();
+        names.extend(crate::computed_properties::EPUB_ALIASES.iter().map(|&(_, property)| property));
+        names
     })
 }
 
@@ -831,11 +803,11 @@ macro_rules! property_getters {
 }
 
 /// Room for the property list; the class definition asserts that it fits.
-const MAX_PROPERTIES: usize = 768;
+const MAX_PROPERTIES: usize = 832;
 /// The getters by property index, in blocks of 16.
 static PROPERTY_GETTERS: [[ComputedGetter; 16]; MAX_PROPERTIES / 16] = property_getters!(
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
-    31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47
+    31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51
 );
 
 /// The attribute names of each entry of [`computed_property_names`], each
@@ -865,7 +837,9 @@ fn property_attribute_names() -> &'static [Vec<(&'static str, bool)>] {
             out
         };
         let leak = |n: String| -> &'static str { Box::leak(n.into_boxed_str()) };
-        let mut all: Vec<Vec<(&'static str, bool)>> = crate::computed_properties::COMPUTED_PROPERTIES
+        let properties = computed_property_names();
+        let ordinary = properties.len() - crate::computed_properties::EPUB_ALIASES.len();
+        let mut all: Vec<Vec<(&'static str, bool)>> = properties[..ordinary]
             .iter()
             .map(|&name| {
                 let mut names = Vec::with_capacity(3);
@@ -971,11 +945,14 @@ impl JsClass for ComputedStyle {
         // The longhands, as indexed properties; an element without computed
         // style (not rendered) lists nothing, as in Chrome.
         def.method("item", 1, |s, c, a| {
-            let names = computed_names(c);
-            Ok(s.string(names.get(to_u32(a.get(0))? as usize).copied().unwrap_or("")))
+            Ok(computed_item(s, c, to_u32(a.get(0))? as usize).unwrap_or_else(|| s.string("")))
         });
-        def.getter("length", |s, c| Ok(s.number(computed_names(c).len() as f64)));
-        def.indexed(|s, c, i| Ok(computed_names(c).get(i as usize).map(|name| s.string(name))));
+        def.getter("length", |s, c| {
+            let names = computed_names(c);
+            let count = if names.is_empty() { 0 } else { names.len() + computed_custom_names(c).len() };
+            Ok(s.number(count as f64))
+        });
+        def.indexed(|s, c, i| Ok(computed_item(s, c, i as usize)));
         def.indexed_iterator();
         def.getter("cssText", |s, _c| Ok(s.string("")));
         def.getter("parentRule", |s, _c| Ok(s.null()));
@@ -996,11 +973,25 @@ impl JsClass for ComputedStyle {
 }
 
 /// The property names a computed style lists.
+fn computed_custom_names(c: &ComputedData) -> Vec<String> {
+    let Some(page) = c.rendered_document() else { return Vec::new() };
+    let dom = page.dom.borrow();
+    let names = page.layout().style().computed_custom_names(&dom, c.el.id, &c.pseudo);
+    names
+}
+
+fn computed_item<'s>(scope: &Scope<'s>, computed: &ComputedData, index: usize) -> Option<Value<'s>> {
+    let names = computed_names(computed);
+    if let Some(name) = names.get(index) { return Some(scope.string(name)); }
+    if names.is_empty() { return None; }
+    computed_custom_names(computed).get(index - names.len()).map(|name| scope.string(name))
+}
+
 fn computed_names(c: &ComputedData) -> &'static [&'static str] {
     if c.pseudo == pyro_dom::stylo::PseudoArg::Invalid {
         return &[];
     }
-    let page = &c.el.page;
+    let Some(page) = c.rendered_document() else { return &[] };
     let dom = page.dom.borrow();
     if page.layout().computed_style_value(&dom, c.el.id, "display").is_empty() {
         return &[];
@@ -1028,18 +1019,18 @@ pub fn get_computed_style<'s>(
 /// `change` only on the lists it flipped.
 pub struct MediaQueryEntry {
     pub(crate) target: pyro_dom::events::TargetKey,
-    pub(crate) query: String,
+    pub(crate) query: Rc<pyro_dom::cssom::MediaQueryList>,
+    pub(crate) media: String,
     pub(crate) last: std::cell::Cell<bool>,
 }
 
 /// `MediaQueryList`: an EventTarget whose `change` fires when the embedder's
-/// viewport or media emulation flips `matches`. `matchMedia` returns one
-/// object per realm and query text, kept alive with the realm (as a Window
-/// [SameObject]) so a listener added without keeping a reference still runs,
-/// as in Chromium, where a list with listeners is not collected.
+/// viewport or media emulation flips `matches`. Each call creates a fresh
+/// object, kept alive while it has change listeners.
 pub struct MqlData {
     target: crate::target::EventTargetData,
-    query: String,
+    query: Rc<pyro_dom::cssom::MediaQueryList>,
+    media: String,
 }
 
 impl Drop for MqlData {
@@ -1058,8 +1049,8 @@ impl JsClass for MediaQueryList {
     type Parent = crate::target::EventTarget;
     fn define(def: &mut ClassDef<Self>) {
         def.upcast(|d: &MqlData| &d.target);
-        def.getter("media", |s, m| Ok(s.string(&m.query)));
-        def.getter("matches", |s, m| Ok(s.boolean(m.target.page.layout().style().match_media(&m.query))));
+        def.getter("media", |s, m| Ok(s.string(&m.media)));
+        def.getter("matches", |s, m| Ok(s.boolean(m.target.page.layout().style().matches_media_list(&m.query))));
         // Legacy aliases of addEventListener/removeEventListener('change').
         def.method("addListener", 1, |s, m, a| mql_listener(s, m, "addEventListener", a.get(0)));
         def.method("removeListener", 1, |s, m, a| mql_listener(s, m, "removeEventListener", a.get(0)));
@@ -1081,43 +1072,33 @@ fn mql_listener<'s>(s: &Scope<'s>, m: &MqlData, method: &str, listener: Value<'s
     Ok(s.undefined())
 }
 
-fn media_query_identity(page: &PageDom, query: &str) -> pyro_js::IdentityKey {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = rustc_hash::FxHasher::default();
-    query.hash(&mut hasher);
-    pyro_js::IdentityKey(page.id() | (1 << 54), hasher.finish())
-}
-
 /// `window.matchMedia(query)`.
 pub fn match_media<'s>(s: &Scope<'s>, page: &Rc<PageDom>, query: String) -> JsResult<Object<'s>> {
-    let key = media_query_identity(page, &query);
-    let value = crate::window::same_object(s, page, key, || {
-        let target = crate::target::EventTargetData::new(page);
-        let last = page.layout().style().match_media(&query);
-        page.media_queries.borrow_mut().push(MediaQueryEntry {
-            target: target.key,
-            query: query.clone(),
-            last: std::cell::Cell::new(last),
-        });
-        s.wrap::<MediaQueryList>(MqlData { target, query: query.clone() }, Some(key))
-    })?;
-    Ok(value.as_object().expect("a MediaQueryList wrapper"))
+    let target = crate::target::EventTargetData::new(page);
+    let key = target.wrapper_identity();
+    let query = Rc::new(pyro_dom::cssom::MediaQueryList::parse(&query));
+    let media = query.media();
+    let last = page.layout().style().matches_media_list(&query);
+    page.media_queries.borrow_mut().push(MediaQueryEntry {
+        target: target.key,
+        query: query.clone(),
+        media: media.clone(),
+        last: std::cell::Cell::new(last),
+    });
+    s.wrap::<MediaQueryList>(MqlData { target, query, media }, key)
 }
 
-/// This realm's `MediaQueryList` owning target `key`, if it is one.
-pub(crate) fn media_query_object<'s>(
-    s: &Scope<'s>,
-    page: &PageDom,
-    key: pyro_dom::events::TargetKey,
-) -> Option<Object<'s>> {
-    let query = page.media_queries.borrow().iter().find(|e| e.target == key).map(|e| e.query.clone())?;
-    let object = s.lookup_identity(media_query_identity(page, &query))?;
-    let owns = s.unwrap::<MediaQueryList>(object.value()).map(|d| d.target.key);
-    (owns == Some(key)).then_some(object)
+pub(crate) fn sync_media_listener(s: &Scope<'_>, object: Object<'_>) {
+    let Some(list) = s.unwrap::<MediaQueryList>(object.value()) else { return };
+    let target = &list.target;
+    if target.page.dom.borrow().has_listener_for(target.key, "change") {
+        crate::target::pin_target(s, &target.page, target.key, object);
+    } else {
+        crate::target::unpin_target(s, &target.page, target.key);
+    }
 }
 
 pub(crate) fn register(engine: &pyro_js::Engine) {
-    engine.register::<DomRect>();
     engine.register::<ComputedStyle>();
     engine.register::<MediaQueryList>();
 }

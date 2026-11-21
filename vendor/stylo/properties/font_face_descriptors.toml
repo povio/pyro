@@ -11,13 +11,13 @@ type = "FamilyName"
 type = "SourceList"
 
 [font-style]
-type = "FontStyleRange"
+type = "FaceRange<FontStyleRange>"
 
 [font-weight]
-type = "FontWeightRange"
+type = "FaceRange<FontWeightRange>"
 
 [font-width]
-type = "FontWidthRange"
+type = "FaceRange<FontWidthRange>"
 aliases = ["font-stretch"]
 
 [font-display]

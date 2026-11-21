@@ -173,6 +173,7 @@ where
     def.getter("ClipboardItem", |s, w| crate::navigator_extras::member(s, w.page(), "ClipboardItem"));
     def.getter("Notification", |s, w| crate::navigator_extras::member(s, w.page(), "Notification"));
     crate::streams::define_globals(def);
+    crate::scheduler::define_global(def);
     crate::observable::define_globals(def);
     crate::lazy_module::lazy_globals!(def, crate::view_transition::MODULE, "ViewTransition");
     crate::crypto::define_globals(def);
@@ -189,6 +190,7 @@ where
     crate::paint_worklet::define_globals(def);
     crate::typed_om::define_globals(def);
     crate::trusted_types::define_globals(def);
+    crate::trusted_types::define_parser_options_global(def);
     // `Highlight` and `HighlightRegistry` (CSS Custom Highlight API), made on first use.
     def.global_value_accessor(
         "Highlight",
@@ -226,9 +228,10 @@ where
             s.wrap::<VisualViewport>(ViewportTargetData::new(w.page(), ViewportTarget::VisualViewport), Some(key))
         })
     });
-    def.method("getComputedStyle", 1, |s, w, a| {
-        let el = crate::node::node_arg(s, a.get(0), "Window.getComputedStyle")?;
-        Ok(crate::layout_api::get_computed_style(s, w.page(), el, a.get(1))?.value())
+    def.method("getComputedStyle", 1, |s, _, a| {
+        let element = s.unwrap::<crate::node::Element>(a.get(0))
+            .ok_or_else(|| JsError::Type("Window.getComputedStyle requires an Element".into()))?;
+        Ok(crate::layout_api::get_computed_style(s, element.page(), element.id, a.get(1))?.value())
     });
     def.method("matchMedia", 1, |s, w, a| {
         let q = arg_string(&a, 0, "Window.matchMedia")?;
@@ -428,8 +431,62 @@ impl JsClass for Navigator {
             };
             Ok(s.boolean(crate::fetch::send_beacon(s, p, url, a.get(1))?))
         });
+        for name in ["registerProtocolHandler", "unregisterProtocolHandler"] {
+            def.method(name, 2, protocol_handler);
+        }
         def.method("vibrate", 0, |s, _p, _a| Ok(s.boolean(false)));
     }
+}
+
+/// HTML's normalize protocol handler parameters. This headless browser declines
+/// registration requests, so a successful registration or removal needs no UI.
+fn protocol_handler<'s>(s: &Scope<'s>, page: &Rc<PageDom>, args: pyro_js::Args<'s>) -> JsResult<Value<'s>> {
+    args.require(2, "Navigator protocol handler")?;
+    let scheme = dom_string(args.get(0))?.to_ascii_lowercase();
+    let url = dom_string(args.get(1))?;
+    let safelisted = matches!(
+        scheme.as_str(),
+        "bitcoin"
+            | "ftp"
+            | "ftps"
+            | "geo"
+            | "im"
+            | "irc"
+            | "ircs"
+            | "magnet"
+            | "mailto"
+            | "matrix"
+            | "mms"
+            | "news"
+            | "nntp"
+            | "openpgp4fpr"
+            | "sftp"
+            | "sip"
+            | "sms"
+            | "smsto"
+            | "ssh"
+            | "tel"
+            | "urn"
+            | "webcal"
+            | "wtai"
+            | "xmpp"
+    );
+    let custom = scheme
+        .strip_prefix("web+")
+        .is_some_and(|name| !name.is_empty() && name.bytes().all(|b| b.is_ascii_lowercase()));
+    if !safelisted && !custom {
+        return Err(JsError::dom("SecurityError", "Unsupported protocol handler scheme."));
+    }
+    if !url.contains("%s") {
+        return Err(JsError::dom("SyntaxError", "A protocol handler URL must contain %s."));
+    }
+    let resolved = crate::html::resolve_url(&page.dom.borrow(), page.document(), &url);
+    let handler =
+        pyro_net::Url::parse(&resolved).map_err(|_| JsError::dom("SyntaxError", "Invalid protocol handler URL."))?;
+    if !matches!(handler.scheme(), "http" | "https") || handler.origin().ascii_serialization() != page.origin_key() {
+        return Err(JsError::dom("SecurityError", "A protocol handler must use a same-origin HTTP(S) URL."));
+    }
+    Ok(s.undefined())
 }
 
 fn dialog(
@@ -678,24 +735,36 @@ pub fn css_namespace<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
             return Ok(s.boolean(pyro_dom::stylo::supports_declaration(&property, &value)));
         }
         let text = dom_string(a.get(0))?;
-        let selector = text.trim().strip_prefix("selector(").and_then(|t| t.strip_suffix(')'));
-        if let Some(selector) = selector {
-            if pyro_dom::cssom::normalize_selector(selector, &Vec::new()).is_some() {
-                return Ok(s.boolean(true));
-            }
-        }
         Ok(s.boolean(pyro_dom::stylo::supports_condition(&text)))
     })?;
     o.set_atom("supports", supports.value())?;
     let escape = s.function("escape", |s, _this, a| {
-        let v = arg_string(&a, 0, "CSS.escape")?;
-        let mut out = String::new();
-        cssparser::serialize_identifier(&v, &mut out).map_err(|_| JsError::Type("CSS.escape failed".into()))?;
-        Ok(s.string(&out))
+        a.require(1, "CSS.escape")?;
+        let input = a.get(0).to_js_string()?;
+        let units = input.utf16();
+        let mut escaped = Vec::with_capacity(units.len());
+        for (index, &unit) in units.iter().enumerate() {
+            match unit {
+                0 => escaped.push(0xfffd),
+                1..=31 | 127 => escaped.extend(format!("\\{unit:x} ").encode_utf16()),
+                48..=57 if index == 0 || (index == 1 && units[0] == 45) => {
+                    escaped.extend(format!("\\{unit:x} ").encode_utf16());
+                },
+                45 if units.len() == 1 => escaped.extend([92, unit]),
+                45 | 48..=57 | 65..=90 | 95 | 97..=122 | 128.. => escaped.push(unit),
+                _ => escaped.extend([92, unit]),
+            }
+        }
+        Ok(s.string_utf16(&escaped))
     })?;
     o.set_atom("escape", escape.value())?;
     // escape(CSSOMString ident): length 1.
     let define = s.global().get_atom("Object")?.as_object().expect("Object").get_atom("defineProperty")?;
+    let tag = s.global().get_atom("Symbol")?.as_object().expect("Symbol").get_atom("toStringTag")?;
+    let tag_descriptor = s.object();
+    tag_descriptor.set_atom("value", s.string("CSS"))?;
+    tag_descriptor.set_atom("configurable", s.boolean(true))?;
+    define.as_object().expect("Object.defineProperty").call(None, &[o.value(), tag, tag_descriptor.value()])?;
     let descriptor = s.object();
     descriptor.set_atom("value", s.number(1.0))?;
     define.as_object().expect("Object.defineProperty").call(None, &[escape.value(), s.string("length"), descriptor.value()])?;

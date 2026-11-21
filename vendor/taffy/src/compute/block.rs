@@ -1144,7 +1144,7 @@ fn compute_inner(
             Some(height) if min_height_is_content => {
                 // pyro: `min-height: calc-size(auto, ...)` is its calculation of the content height
                 let content = match calc_size_min_height {
-                    Some(function) => function.apply(intrinsic_outer_height, |val, basis| tree.calc(val, basis)),
+                    Some(function) => function.apply(intrinsic_outer_height, parent_size.height, |val, size, percent| tree.resolve_size_calculation(val, size, percent)),
                     None => intrinsic_outer_height,
                 };
                 height.max(content.maybe_min(max_size.height))
@@ -1772,7 +1772,7 @@ fn ratio_min_content_width(
     );
     // pyro: `min-width: calc-size(auto, ...)` is its calculation of it.
     let width = match item.calc_size_min_width {
-        Some(function) => function.apply(width, |val, basis| tree.calc(val, basis)),
+        Some(function) => function.apply(width, parent_size.width, |val, size, percent| tree.resolve_size_calculation(val, size, percent)),
         None => width,
     };
     width.maybe_min(item.max_size.width)
@@ -2175,6 +2175,39 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                     // The margins of a float never collapse
                     Line::FALSE,
                 );
+                let item_known_width = if !item.min_size_keyword.width.is_auto() || !item.max_size_keyword.width.is_auto() {
+                    let preferred = item_known_width.or(item.size.width).unwrap_or_else(|| {
+                        tree.measure_child_size(
+                            item.node_id,
+                            Size { width: None, height: item_known_height },
+                            parent_size,
+                            Size { width: item_available_width, height: AvailableSpace::MaxContent },
+                            SizingMode::InherentSize,
+                            crate::AbsoluteAxis::Horizontal,
+                            Line::FALSE,
+                        )
+                    });
+                    Some(clamp_width_by_keywords(
+                        tree, item, preferred.maybe_clamp(item.min_size.width, item.max_size.width),
+                        Some(available_width), Some(container_inner_width), parent_size,
+                    ).maybe_max(item.min_size.width))
+                } else {
+                    item_known_width
+                };
+                let item_known_height = if item.min_size_keyword.height.is_stretch() || item.max_size_keyword.height.is_stretch() {
+                    container_percentage_resolution_height.map(|height| {
+                        let stretch = (height - item_non_auto_margin.vertical_axis_sum()).max(0.0);
+                        let preferred = item_known_height.or(item.size.height).unwrap_or_else(|| tree.measure_child_size(
+                            item.node_id, Size { width: item_known_width, height: None }, parent_size,
+                            Size { width: item_available_width, height: AvailableSpace::MaxContent },
+                            SizingMode::InherentSize, crate::AbsoluteAxis::Vertical, Line::FALSE,
+                        ));
+                        preferred.maybe_clamp(item.min_size.height, item.max_size.height)
+                            .maybe_min(item.max_size_keyword.height.is_stretch().then_some(stretch))
+                            .maybe_max(item.min_size_keyword.height.is_stretch().then_some(stretch))
+                            .maybe_max(item.min_size.height)
+                    }).or(item_known_height)
+                } else { item_known_height };
                 let mut item_layout = tree.perform_child_layout(
                     item.node_id,
                     Size { width: item_known_width, height: item_known_height },

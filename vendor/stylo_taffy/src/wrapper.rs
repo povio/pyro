@@ -332,7 +332,7 @@ impl<T: Deref<Target = ComputedValues>> taffy::CoreStyle for TaffyStyloStyle<T> 
     #[inline]
     fn contain(&self) -> taffy::Contain {
         let box_styles = self.style.get_box();
-        convert::contain(box_styles.contain, self.effective_display())
+        convert::contain(box_styles.used_containment(), self.effective_display())
     }
 
     #[inline]
@@ -903,6 +903,16 @@ impl<T: Deref<Target = ComputedValues>> taffy::FlexboxItemStyle for TaffyStyloSt
         convert::flex_basis(&self.style.get_position().flex_basis)
     }
 
+    fn flex_basis_calculation(&self) -> Option<taffy::CalcSizeFunction> {
+        let stylo::FlexBasis::Size(size) = &self.style.get_position().flex_basis else { return None };
+        match size.prepared_size() {
+            stylo::Size::CalcSizeAuto(calc) | stylo::Size::CalcSizeStretch(calc) |
+            stylo::Size::CalcSizeFitContent(calc) | stylo::Size::CalcSizeMinContent(calc) |
+            stylo::Size::CalcSizeContent(calc) | stylo::Size::CalcSizeMaxContent(calc) => Some(convert::calc_size_function(&calc.0)),
+            _ => None,
+        }
+    }
+
     #[inline]
     fn flex_grow(&self) -> f32 {
         self.style.get_position().flex_grow.0
@@ -1345,7 +1355,7 @@ impl<T: Deref<Target = ComputedValues>> taffy::GridItemStyle for TaffyStyloStyle
         if matches!(self.style.clone_position(), stylo::Position::Absolute | stylo::Position::Fixed) {
             return false;
         }
-        if self.style.get_box().contain.intersects(Contain::LAYOUT | Contain::PAINT) {
+        if self.style.get_box().used_containment().intersects(Contain::LAYOUT | Contain::PAINT) {
             return false;
         }
         // A size container has layout containment too (css-contain-3 §2)

@@ -2157,6 +2157,12 @@ impl<'le> ::selectors::Element for GeckoElement<'le> {
     }
 
     #[inline(always)]
+    fn has_class_prefix(&self, prefix: &AtomIdent, quirks: bool) -> bool {
+        let mut found = false;
+        self.each_class(|class| found |= crate::values::matches_class_prefix(class, prefix, quirks));
+        found
+    }
+
     fn has_class(&self, name: &AtomIdent, case_sensitivity: CaseSensitivity) -> bool {
         let attr = match self.get_class_attr() {
             Some(c) => c,

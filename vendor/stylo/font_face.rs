@@ -307,6 +307,32 @@ pub enum FontDisplay {
     Optional,
 }
 
+#[derive(Clone, Debug, MallocSizeOf, PartialEq, ToCss, ToShmem)]
+#[allow(missing_docs)]
+pub enum FaceRange<T> {
+    Auto,
+    Explicit(T),
+}
+
+impl<T: Parse> Parse for FaceRange<T> {
+    fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
+        if input.try_parse(|input| input.expect_ident_matching("auto")).is_ok() {
+            return Ok(Self::Auto);
+        }
+        T::parse(context, input).map(Self::Explicit)
+    }
+}
+
+impl<T> FaceRange<T> {
+    #[allow(missing_docs)]
+    pub fn explicit(&self) -> Option<&T> {
+        match self {
+            Self::Auto => None,
+            Self::Explicit(range) => Some(range),
+        }
+    }
+}
+
 macro_rules! impl_range {
     ($range:ident, $component:ident) => {
         impl Parse for $range {

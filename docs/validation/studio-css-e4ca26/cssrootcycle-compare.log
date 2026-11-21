@@ -1,0 +1,30 @@
+cssrootcycle-main-candidate 8082 page passes 5823 named passes 182434 observed names 194673 statuses {'complete:0': 7871, 'complete:2': 104, 'timeout:None': 11, 'complete:1': 95, 'hang:None': 1}
+cssrootcycle-main-parent 8082 page passes 5820 named passes 182428 observed names 194673 statuses {'complete:0': 7871, 'complete:2': 104, 'timeout:None': 11, 'complete:1': 95, 'hang:None': 1}
+cssrootcycle-main-stable 8082 page passes 6950 named passes 182963 observed names 194912 statuses {'complete:0': 7986, 'complete:2': 62, 'complete:1': 23, 'timeout:None': 10, 'hang:None': 1}
+cssrootcycle-main-parent pages left only 3 right only 0
+cssrootcycle-main-parent passes left only 6 right only 0
+cssrootcycle-main-parent observed left only 0 right only 0
+cssrootcycle-main-stable pages left only 288 right only 1415
+cssrootcycle-main-stable passes left only 5921 right only 6450
+cssrootcycle-main-stable observed left only 260 right only 499
+Losses vs parent by URL: Counter()
+cssrootcycle-focus-candidate 29 page passes 24 named passes 409 observed names 427 statuses {'complete:0': 29}
+cssrootcycle-focus-parent 29 page passes 23 named passes 408 observed names 427 statuses {'complete:0': 29}
+cssrootcycle-focus-stable 29 page passes 28 named passes 426 observed names 427 statuses {'complete:0': 29}
+cssrootcycle-focus-parent pages left only 1 right only 0
+cssrootcycle-focus-parent passes left only 1 right only 0
+cssrootcycle-focus-parent observed left only 0 right only 0
+cssrootcycle-focus-stable pages left only 1 right only 5
+cssrootcycle-focus-stable passes left only 1 right only 18
+cssrootcycle-focus-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()
+cssrootcycle-supplement-candidate 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+cssrootcycle-supplement-parent 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+cssrootcycle-supplement-stable 41 page passes 35 named passes 619 observed names 874 statuses {'complete:0': 41}
+cssrootcycle-supplement-parent pages left only 0 right only 0
+cssrootcycle-supplement-parent passes left only 0 right only 0
+cssrootcycle-supplement-parent observed left only 0 right only 0
+cssrootcycle-supplement-stable pages left only 0 right only 8
+cssrootcycle-supplement-stable passes left only 0 right only 42
+cssrootcycle-supplement-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()

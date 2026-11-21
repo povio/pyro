@@ -419,6 +419,16 @@ impl PageNav {
         pyro_webapi::lifecycle::popstate(&page, None);
     }
 
+    /// Initial iframe attribute processing updates the existing blank entry
+    /// for about:blank URLs with a query or fragment, without a new Document.
+    pub(crate) fn update_initial_blank_url(&self, url: &str) {
+        let mut state = self.state.borrow_mut();
+        let index = state.index;
+        if let Some(entry) = state.entries.get_mut(index) { entry.url = url.to_owned(); }
+        drop(state);
+        self.set_url_sync(url);
+    }
+
     fn set_url_sync(&self, url: &str) {
         self.state.borrow_mut().url = url.to_string();
         if let Some((dom, doc)) = self.document.borrow().as_ref() {
@@ -761,8 +771,12 @@ impl PageNav {
     /// frame times and `Event.timeStamp` in a document that is not
     /// cross-origin isolated (as in Chrome).
     pub fn now_ms(&self) -> f64 {
-        let ms = crate::clock::now().saturating_duration_since(self.time_origin.get()).as_secs_f64() * 1000.0;
-        (ms * 10.0).floor() / 10.0
+        self.time_at(Instant::now())
+    }
+
+    pub(crate) fn time_at(&self, real: Instant) -> f64 {
+        let elapsed = crate::clock::at(real).saturating_duration_since(self.time_origin.get());
+        (elapsed.as_micros() / 100) as f64 / 10.0
     }
 
     /// Time of the current document's first paint, once it had one.
@@ -999,16 +1013,21 @@ impl PageNav {
 }
 
 impl Browser {
-    /// Copies a synchronous same-document commit's URL to the frame.
-    pub(crate) fn apply_same_document_url(&mut self, page: PageId) {
-        // Runs at every checkpoint: take through the shared handle first so a
-        // page with nothing pending is not marked dirty (`page_mut`).
-        let Some(url) = self.page(page).and_then(|p| p.nav.take_pending_frame_url()) else { return };
-        let Some(p) = self.page_mut(page) else { return };
-        if !matches!(p.main_frame.url.as_str(), "about:blank" | "about:srcdoc") {
-            p.main_frame.base_url = url.clone();
+    /// Apply the URL already committed by history APIs before a consumer
+    /// reads the frame's URL or fallback base. A parser-triggered resource
+    /// drain can run before the next event-loop checkpoint.
+    pub(crate) fn apply_same_document_url(&mut self, key: crate::frames::FrameKey) {
+        let Some(url) = self.doc(key).and_then(|doc| doc.nav.take_pending_frame_url()) else { return };
+        if let Some(mut doc) = self.doc_mut(key) {
+            // The DOM already committed the URL. An initial blank or srcdoc
+            // Document can retain a creator-provided fallback base.
+            let frame = &mut doc.main_frame;
+            frame.base_url = frame.page_dom.as_ref().and_then(|page| {
+                page.dom.borrow().document_fallback_base_url(page.document()).ok().map(str::to_owned)
+            }).unwrap_or_else(|| url.clone());
+            frame.url = url;
         }
-        p.main_frame.url = url;
+        if key.child.is_none() { self.sync_root(key.page); }
     }
 
     pub(crate) fn same_document_committed(
@@ -1497,7 +1516,12 @@ fn navigation_entry(p: &PerformanceData) -> Option<PerformanceEntryData> {
     if !(url.starts_with("http:") || url.starts_with("https:") || url.starts_with("file:")) {
         return None;
     }
-    let values = navigation_values(&p.target.page, &p.nav);
+    let mut values = navigation_values(&p.target.page, &p.nav);
+    if let Some(fetch) = &mut values.fetch {
+        if !fetch.server_timing.is_empty() && !p.target.page.exposes_server_timing() {
+            Rc::make_mut(fetch).server_timing.clear();
+        }
+    }
     let mut entry = PerformanceEntryData::new(&url, "navigation", 0.0, values.load_end);
     entry.navigation = Some(Box::new(values));
     Some(entry)

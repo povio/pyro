@@ -170,6 +170,67 @@ pub enum TransitionValue {
     Style(crate::timing::StyleSnapshot),
 }
 
+/// Absolute inset transition endpoints are already computed layout lengths. CSS
+/// keyframes instead interpolate their specified expressions before range limiting.
+fn bounded_transition_inset(
+    property: style::properties::PropertyDeclarationId,
+    style: &style::properties::ComputedValues,
+) -> Option<style::properties::animated_properties::AnimationValue> {
+    use style::properties::{LonghandId as L, PropertyDeclarationId::Longhand};
+    use style::properties::animated_properties::AnimationValue;
+    use style::values::computed::{CSSPixelLength, LengthPercentage};
+    use style::values::generics::position::GenericInset;
+
+    let pos = style.get_position();
+    let inset = match property {
+        Longhand(L::Left) => &pos.left,
+        Longhand(L::Right) => &pos.right,
+        Longhand(L::Top) => &pos.top,
+        Longhand(L::Bottom) => &pos.bottom,
+        _ => return None,
+    };
+    let GenericInset::LengthPercentage(lp) = inset else { return None };
+    let px = lp.to_length()?.px();
+    let bounded = crate::layout::bounded_layout_px(px);
+    if px == bounded {
+        return None;
+    }
+    let inset = GenericInset::LengthPercentage(LengthPercentage::new_length(CSSPixelLength::new(bounded)));
+    Some(match property {
+        Longhand(L::Left) => AnimationValue::Left(inset),
+        Longhand(L::Right) => AnimationValue::Right(inset),
+        Longhand(L::Top) => AnimationValue::Top(inset),
+        Longhand(L::Bottom) => AnimationValue::Bottom(inset),
+        _ => unreachable!(),
+    })
+}
+
+pub(crate) fn transition_endpoint_value(
+    physical: style::properties::PropertyDeclarationId,
+    style: &style::properties::ComputedValues,
+) -> Option<style::properties::animated_properties::AnimationValue> {
+    use style::properties::animated_properties::AnimationValue;
+    bounded_transition_inset(physical, style).or_else(|| AnimationValue::from_computed_values(physical, style))
+}
+
+/// Serialize the same computed endpoint for transition creation, interruption and keyframes.
+pub(crate) fn transition_endpoint_css(
+    property: style::properties::PropertyDeclarationId,
+    style: &style::properties::ComputedValues,
+) -> String {
+    use style::properties::PropertyDeclarationId::Longhand;
+    let physical = match property {
+        Longhand(id) => Longhand(id.to_physical(style.writing_mode)),
+        custom => custom,
+    };
+    let Some(inset) = bounded_transition_inset(physical, style) else {
+        return style.computed_value_to_string(property);
+    };
+    let mut bounded = style.clone();
+    inset.set_longhand_in_style(&mut bounded);
+    bounded.computed_value_to_string(physical)
+}
+
 /// The value of `longhand` a CSS transition from the style `before` to `after` gives at iteration
 /// progress `progress` (before `easing`, CSS text; `None`: `ease`; `before_flag` for step easings).
 /// Values that do not interpolate flip halfway; a transform's ends are the ends' own lists.
@@ -183,13 +244,9 @@ pub fn transition_value(
 ) -> Option<TransitionValue> {
     use style::properties::animated_properties::AnimationValue;
     use style::properties::PropertyDeclarationId;
-    use style::values::animated::{Animate, Procedure};
+    use style::values::animated::Procedure;
     use style::values::generics::easing::BeforeFlag;
     let id = crate::stylo::property_id(longhand)?;
-    let PropertyDeclarationId::Longhand(id) = id.as_shorthand().err()? else { return None };
-    let physical = PropertyDeclarationId::Longhand(id.to_physical(after.writing_mode));
-    let from = AnimationValue::from_computed_values(physical, before)?;
-    let to = AnimationValue::from_computed_values(physical, after)?;
     let eased = match easing_function(easing.unwrap_or("ease")) {
         Some(f) => {
             let flag = if before_flag { BeforeFlag::Set } else { BeforeFlag::Unset };
@@ -197,6 +254,21 @@ pub fn transition_value(
         }
         None => progress,
     };
+    let id = match id.as_shorthand().err()? {
+        PropertyDeclarationId::Longhand(id) => id,
+        custom => {
+            let from = AnimationValue::from_computed_values(custom, before)?;
+            let to = AnimationValue::from_computed_values(custom, after)?;
+            let value = from.animate_with_size_policy(&to, Procedure::Interpolate { progress: eased }, false)
+                .unwrap_or_else(|_| if eased < 0.5 { from } else { to });
+            let mut text = String::new();
+            value.uncompute().to_css(&mut text).ok()?;
+            return Some(TransitionValue::Text(text));
+        }
+    };
+    let physical = PropertyDeclarationId::Longhand(id.to_physical(after.writing_mode));
+    let from = transition_endpoint_value(physical, before)?;
+    let to = transition_endpoint_value(physical, after)?;
     // `display` to or from `none` shows the other value throughout, `none` only at its end
     // (css-display-4 §2.1, Stylo's `Animate for Display`, which the discrete path skips).
     if longhand == "display" {
@@ -222,7 +294,7 @@ pub fn transition_value(
     } else if eased == 1.0 && own_end(after) {
         to.clone()
     } else {
-        match from.animate(&to, Procedure::Interpolate { progress: eased }) {
+        match from.animate_with_size_policy(&to, Procedure::Interpolate { progress: eased }, after.slow_clone_interpolate_size() == style::values::computed::InterpolateSize::AllowKeywords) {
             // A transform interpolation Stylo defers (a matrix it cannot decompose) is discrete,
             // as in Chromium.
             Ok(v) if matches!(id, style::properties::LonghandId::Transform) && defers_matrix(&v) => discrete(),
@@ -275,6 +347,13 @@ fn easing_function(text: &str) -> Option<style::values::computed::TimingFunction
     })
 }
 
+/// The physical property corresponding to a longhand in a given writing mode.
+pub fn physical_property(name: &str, style: &crate::timing::StyleSnapshot) -> Option<&'static str> {
+    let id = crate::stylo::property_id(name)?;
+    let style::properties::PropertyDeclarationId::Longhand(id) = id.as_shorthand().err()? else { return None };
+    Some(id.to_physical(style.writing_mode).name())
+}
+
 /// The longhands of the shorthand `name` (`None`: a longhand, `all` or unknown).
 pub fn shorthand_longhands(name: &str) -> Option<Vec<&'static str>> {
     let id = crate::stylo::property_id(name)?;
@@ -306,11 +385,9 @@ pub fn with_longhand_of(
 
 /// Whether `longhand` has the same computed value in the styles `a` and `b`.
 pub fn same_computed_value(longhand: &str, a: &crate::timing::StyleSnapshot, b: &crate::timing::StyleSnapshot) -> bool {
-    use style::properties::PropertyDeclarationId;
     let Some(id) = crate::stylo::property_id(longhand) else { return false };
-    let Some(PropertyDeclarationId::Longhand(id)) = id.as_shorthand().err() else { return false };
-    let id = PropertyDeclarationId::Longhand(id);
-    a.computed_value_to_string(id) == b.computed_value_to_string(id)
+    let Some(id) = id.as_shorthand().err() else { return false };
+    transition_endpoint_css(id, a) == transition_endpoint_css(id, b)
 }
 
 /// Whether an interpolated transform is one Stylo defers (`interpolatematrix()`,

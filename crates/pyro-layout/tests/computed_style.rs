@@ -48,6 +48,16 @@ impl Page {
     }
 }
 
+#[test]
+fn computed_custom_names_exclude_invalid_and_unrelated_values() {
+    let page = Page::new(r#"<style>@property --count { syntax: '<integer>'; inherits: false; initial-value: 2 } #parent { --shared: 1; } #target { --cyclic: var(--cyclic); } #other { --other: 0; }</style><div id=parent><i id=target></i><i id=other></i></div>"#);
+    let target = page.find("#target");
+    let names = || page.layout.style().computed_custom_names(&page.dom.borrow(), target, &stylo::PseudoArg::Element);
+    assert_eq!(names(), ["--count", "--shared"]);
+    page.dom.borrow_mut().set_attribute(target, "style", "--local: 1").unwrap();
+    assert_eq!(names(), ["--count", "--local", "--shared"]);
+}
+
 const PAGE: &str = r#"<!doctype html><html><head><style>
   body { color: rgb(1, 2, 3); font-size: 20px }
   .box { width: 100px; margin: 1em; display: flex }
@@ -410,6 +420,78 @@ fn scroll_margin_follows_media_queries_and_restyles() {
     assert_eq!(p.value("#c", "scroll-margin-top"), "4px", "a class change restyles");
     p.dom.borrow_mut().set_attribute(c, "style", "scroll-margin-top: 6px").unwrap();
     assert_eq!(p.value("#c", "scroll-margin-top"), "6px", "an inline change restyles");
+}
+
+#[test]
+fn flex_items_report_the_used_size_after_flexing() {
+    let page = Page::new(r#"<!doctype html><div style="display:flex;width:120px"><div style="display:contents">
+        <div id=row style="width:15px;flex:1"></div></div></div>
+        <div style="display:flex;flex-direction:column;height:100px"><div id=column style="height:20px;flex:0 0 60px;padding:5px;box-sizing:border-box"></div></div>
+        <div id=ordinary style="width:15px"></div>"#);
+    let used = |selector, name| page.layout.computed_style_value(&page.dom.borrow(), page.find(selector), name);
+    assert_eq!(used("#row", "width"), "120px");
+    assert_eq!(used("#column", "height"), "60px");
+    assert_eq!(used("#ordinary", "width"), "15px");
+}
+
+#[test]
+fn flex_target_size_is_not_an_intrinsic_calculation_basis() {
+    let page = Page::new(r#"<!doctype html><div style="display:flex;width:200px">
+        <div id=row style="flex:0 0 70px;width:calc-size(fit-content,size + 12px)"></div></div>
+        <div style="display:flex;flex-direction:column;height:100px">
+        <div id=column style="flex:0 0 60px;height:calc-size(auto,size * 2)"></div></div>"#);
+    let used = |selector, name| page.layout.computed_style_value(&page.dom.borrow(), page.find(selector), name);
+    assert_eq!(used("#row", "width"), "70px");
+    assert_eq!(used("#column", "height"), "60px");
+}
+
+#[test]
+fn flex_basis_calculates_from_content_independently_of_height() {
+    let page = Page::new(r#"<!doctype html><div style="display:flex;flex-direction:column;height:280px">
+        <div id=item style="flex:0 0 calc-size(calc-size(content,size * 2),size + 7px);height:100px">
+        <div style="height:20px"></div></div></div>
+        <div id=ordinary style="width:50px;width:calc-size(content,size * 2)"></div>"#);
+    let used = |selector, name| page.layout.computed_style_value(&page.dom.borrow(), page.find(selector), name);
+    assert_eq!(used("#item", "height"), "47px");
+    assert_eq!(used("#ordinary", "width"), "50px");
+}
+
+#[test]
+fn intrinsic_size_and_container_percentage_are_independent() {
+    let page = Page::new(r#"<!doctype html><div style="display:flex;width:300px">
+        <div id=row style="min-width:0;flex:0 0 calc-size(max-content,size + 10%)"><div style="width:45px"></div></div></div>
+        <div style="display:flex;flex-direction:column;height:200px">
+        <div id=column style="flex:0 0 calc-size(calc-size(content,size + 10%),size + 20%)"><div style="height:25px"></div></div></div>
+        <div style="display:flex;flex-direction:column"><div id=indefinite style="flex:0 0 calc-size(content,size + 50%)"><div style="height:35px"></div></div></div>"#);
+    let used = |selector, name| page.layout.computed_style_value(&page.dom.borrow(), page.find(selector), name);
+    assert_eq!(used("#row", "width"), "75px");
+    assert_eq!(used("#column", "height"), "85px");
+    assert_eq!(used("#indefinite", "height"), "35px");
+}
+
+#[test]
+fn percentage_endpoint_interpolates_with_intrinsic_size() {
+    use ::style::values::animated::{Animate, Procedure};
+    use ::style::values::computed::{length::CSSPixelLength, Size};
+
+    let page = Page::new(r#"<div id=start style="height:calc-size(auto, size * 2)"></div><div id=end style="height:50%"></div>"#);
+    let height = |selector| page.layout.style().stylo_style(&page.dom.borrow(), page.find(selector)).unwrap().get_position().height.clone();
+    let Size::CalcSizeAuto(sample) = height("#start").animate(&height("#end"), Procedure::Interpolate { progress: 0.75 }).unwrap() else { panic!("lost intrinsic basis") };
+    assert_eq!(sample.0.resolve_size(CSSPixelLength::new(100.0), CSSPixelLength::new(300.0)).px(), 162.5);
+    assert_eq!(sample.0.resolve_size(CSSPixelLength::new(100.0), CSSPixelLength::new(0.0)).px(), 50.0);
+}
+
+#[test]
+fn flex_basis_calculation_uses_the_items_box_sizing() {
+    let page = Page::new(r#"<!doctype html><div style="display:flex;width:240px">
+        <div id=content style="width:40px;padding:5px;flex:0 0 calc-size(auto,size * 2)"></div>
+        <div id=border style="width:40px;padding:5px;box-sizing:border-box;flex:0 0 calc-size(auto,size * 2)"></div></div>
+        <div style="display:flex;writing-mode:vertical-rl;height:120px"><div id=vertical style="height:20px;width:10px;flex:1"></div></div>"#);
+    let used = |selector, name| page.layout.computed_style_value(&page.dom.borrow(), page.find(selector), name);
+    assert_eq!(used("#content", "width"), "80px");
+    assert_eq!(used("#border", "width"), "80px");
+    assert_eq!(used("#vertical", "width"), "10px");
+    assert_eq!(used("#vertical", "height"), "120px");
 }
 
 /// pyro (lane G): a subgrid's `grid-template-columns` resolves to `subgrid` with the names of each of

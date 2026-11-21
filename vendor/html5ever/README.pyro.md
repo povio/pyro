@@ -22,3 +22,14 @@ Chromium; upstream reads it as a bogus comment, the HTML Standard's older rule).
   node when `pi::parse` gives one.
 
 Tests: `src/pi.rs` (unit), `crates/pyro-dom/tests/html_processing_instructions.rs`.
+
+Fragment sanitization supplies an optional element-removal predicate to the
+adoption agency algorithm. Removed formatting elements and furthest blocks
+participate in parser bookkeeping without being reinserted into the output.
+
+The form token rules recognize both open templates and a template fragment
+context as parsing template contents. In that context forms are inserted
+without changing the form element pointer. Outside templates, a fragment's
+nearest inclusive ancestor form still suppresses nested forms.
+
+An optional tree-builder hook reports an explicit HTML template end tag to a sink implementing content patching. It identifies the last open template after implied end tags. EOF stack unwinding leaves markers in place.

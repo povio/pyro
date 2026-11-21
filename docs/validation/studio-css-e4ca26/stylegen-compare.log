@@ -1,0 +1,30 @@
+stylegen-main-candidate 8082 page passes 5785 named passes 181859 observed names 194673 statuses {'complete:0': 7871, 'complete:2': 104, 'timeout:None': 11, 'complete:1': 95, 'hang:None': 1}
+stylegen-main-parent 8082 page passes 5783 named passes 181851 observed names 194673 statuses {'complete:0': 7871, 'complete:2': 104, 'timeout:None': 11, 'complete:1': 95, 'hang:None': 1}
+stylegen-main-stable 8082 page passes 6950 named passes 182963 observed names 194912 statuses {'complete:0': 7986, 'complete:2': 62, 'complete:1': 23, 'timeout:None': 10, 'hang:None': 1}
+stylegen-main-parent pages left only 2 right only 0
+stylegen-main-parent passes left only 8 right only 0
+stylegen-main-parent observed left only 0 right only 0
+stylegen-main-stable pages left only 287 right only 1452
+stylegen-main-stable passes left only 5905 right only 7009
+stylegen-main-stable observed left only 260 right only 499
+Losses vs parent by URL: Counter()
+stylegen-focus-candidate 157 page passes 122 named passes 873 observed names 937 statuses {'complete:0': 157}
+stylegen-focus-parent 157 page passes 121 named passes 867 observed names 937 statuses {'complete:0': 157}
+stylegen-focus-stable 157 page passes 136 named passes 894 observed names 937 statuses {'complete:0': 157}
+stylegen-focus-parent pages left only 1 right only 0
+stylegen-focus-parent passes left only 6 right only 0
+stylegen-focus-parent observed left only 0 right only 0
+stylegen-focus-stable pages left only 8 right only 22
+stylegen-focus-stable passes left only 27 right only 48
+stylegen-focus-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()
+stylegen-supplement-candidate 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+stylegen-supplement-parent 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+stylegen-supplement-stable 41 page passes 35 named passes 619 observed names 874 statuses {'complete:0': 41}
+stylegen-supplement-parent pages left only 0 right only 0
+stylegen-supplement-parent passes left only 0 right only 0
+stylegen-supplement-parent observed left only 0 right only 0
+stylegen-supplement-stable pages left only 0 right only 8
+stylegen-supplement-stable passes left only 0 right only 42
+stylegen-supplement-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()

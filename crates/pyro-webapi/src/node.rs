@@ -320,25 +320,34 @@ impl NodeArgs {
 }
 
 /// Keeps `on*` IDL handlers in sync with `setAttribute`/`removeAttribute`
-/// on HTML and SVG elements.
+/// on HTML, SVG and MathML elements.
 pub(crate) fn handler_attribute_changed(s: &Scope<'_>, n: &NodeData, name: &str, value: Option<&str>) -> JsResult<()> {
     let Some(ty) = crate::handlers::is_handler_attribute(name) else { return Ok(()) };
-    let (eligible, reflecting) = {
+    let (eligible, reflecting, scripts_enabled) = {
         let dom = n.page().dom.borrow();
+        let doc = dom.node_document(n.id).js()?;
         match dom.element(n.id) {
             Ok(e) => (
-                e.is_html() || e.namespace() == &markup5ever::ns!(svg),
+                e.is_html() || e.namespace() == &markup5ever::ns!(svg)
+                    || (e.namespace() == &markup5ever::ns!(mathml)
+                        && name.strip_prefix("on") == Some(ty)
+                        && crate::handlers::GLOBAL.contains(&ty)),
                 e.is_html()
                     && matches!(&*e.name.local, "body" | "frameset")
                     && crate::handlers::reflects_to_window(ty)
-                    && dom.node_document(n.id).ok() == Some(n.page().document()),
+                    && doc == n.page().document(),
+                (doc == n.page().document() || dom.is_in_active_document(doc))
+                    && dom.document_scripting(doc).unwrap_or(false),
             ),
-            Err(_) => (false, false),
+            Err(_) => (false, false, false),
         }
     };
     if !eligible {
         return Ok(());
     }
+    // A node may be detached while its owner still has a scripting realm.
+    // Documents created by createHTMLDocument or DOMParser have no such realm.
+    let value = if scripts_enabled { value } else { None };
     match n.page().window_target().filter(|_| reflecting) {
         Some(window) => {
             let target = crate::target::EventTargetData::window(n.page(), window);
@@ -774,6 +783,7 @@ fn sibling_element(n: &NodeData, forward: bool) -> JsResult<Option<NodeId>> {
 }
 
 fn define_non_doctype_child<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
+    crate::positional_html::define_sibling_methods(def);
     def.pure_getter_typed("previousElementSibling", pyro_js::GetterResult::ObjectOrNull, |s, n| {
         node_value(s, n.page(), sibling_element(n, false)?)
     });
@@ -997,77 +1007,7 @@ impl JsClass for ProcessingInstruction {
 /// attributes at all. A repeated name keeps its first value.
 fn pi_attributes(n: &NodeData) -> JsResult<Vec<(String, String)>> {
     let data = n.page().dom.borrow().char_data(n.id).js()?.to_owned();
-    Ok(parse_pi_attributes(&data).unwrap_or_default())
-}
-
-fn parse_pi_attributes(data: &str) -> Option<Vec<(String, String)>> {
-    let mut out: Vec<(String, String)> = Vec::new();
-    let mut rest = data.trim_start_matches(|c: char| c.is_ascii_whitespace());
-    while !rest.is_empty() {
-        let end = rest.find(|c: char| c.is_ascii_whitespace() || matches!(c, '=' | '>' | '/'))?;
-        let (name, tail) = rest.split_at(end);
-        if name.is_empty() {
-            return None;
-        }
-        let tail = tail.trim_start_matches(|c: char| c.is_ascii_whitespace()).strip_prefix('=')?;
-        let tail = tail.trim_start_matches(|c: char| c.is_ascii_whitespace());
-        let quote = tail.chars().next().filter(|c| matches!(c, '"' | '\''))?;
-        let close = tail[1..].find(quote)? + 1;
-        let value = decode_char_refs(&tail[1..close]);
-        if !out.iter().any(|(k, _)| k == name) {
-            out.push((name.to_owned(), value));
-        }
-        rest = &tail[close + 1..];
-        if !rest.is_empty() && !rest.starts_with(|c: char| c.is_ascii_whitespace()) {
-            return None;
-        }
-        rest = rest.trim_start_matches(|c: char| c.is_ascii_whitespace());
-    }
-    Some(out)
-}
-
-/// Decodes the character references an attribute serialization writes (`&amp;`, `&quot;`,
-/// `&lt;`, `&gt;`, `&nbsp;`, `&apos;`, numeric ones); others stay as written.
-fn decode_char_refs(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut rest = s;
-    while let Some(i) = rest.find('&') {
-        out.push_str(&rest[..i]);
-        rest = &rest[i..];
-        let Some(semi) = rest.find(';').filter(|&j| j <= 10) else {
-            out.push('&');
-            rest = &rest[1..];
-            continue;
-        };
-        let entity = &rest[1..semi];
-        let decoded = match entity {
-            "amp" => Some('&'),
-            "quot" => Some('"'),
-            "lt" => Some('<'),
-            "gt" => Some('>'),
-            "nbsp" => Some('\u{a0}'),
-            "apos" => Some('\''),
-            _ => entity
-                .strip_prefix("#x")
-                .or_else(|| entity.strip_prefix("#X"))
-                .map(|h| u32::from_str_radix(h, 16))
-                .or_else(|| entity.strip_prefix('#').map(|d| d.parse::<u32>()))
-                .and_then(|r| r.ok())
-                .and_then(char::from_u32),
-        };
-        match decoded {
-            Some(c) => {
-                out.push(c);
-                rest = &rest[semi + 1..];
-            }
-            None => {
-                out.push('&');
-                rest = &rest[1..];
-            }
-        }
-    }
-    out.push_str(rest);
-    out
+    Ok(pyro_dom::node::parse_pi_attributes(&data).unwrap_or_default())
 }
 
 /// A name `setAttribute`/`toggleAttribute` accept (DOM "valid attribute local name"): not empty,
@@ -1220,9 +1160,10 @@ fn set_html_unsafe<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Val
     a.require(1, "setHTMLUnsafe")?;
     let shadow = n.page().dom.borrow().node(n.id).is_ok_and(|node| matches!(node.kind, pyro_dom::node::NodeKind::Fragment(_)));
     let sink = if shadow { "ShadowRoot setHTMLUnsafe" } else { "Element setHTMLUnsafe" };
-    let html = crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::Html, a.get(0), sink, false)?;
+    let input = crate::trusted_types::HtmlInput::convert(s, a.get(0))?;
+    let (html, options) = input.for_html_insertion(s, n.page(), a.get(1), sink)?;
     crate::input::blur_before_removal(n.page(), n.id, true);
-    pyro_dom::parse::set_html_unsafe(&mut n.page().dom.borrow_mut(), n.id, &html).js()?;
+    pyro_dom::parse::set_html_unsafe_with(&mut n.page().dom.borrow_mut(), n.id, &html, options.run_scripts, options.filter).js()?;
     Ok(s.undefined())
 }
 
@@ -1232,6 +1173,7 @@ impl JsClass for ShadowRoot {
     type Data = NodeData;
     type Parent = DocumentFragment;
     fn define(def: &mut ClassDef<Self>) {
+        crate::positional_html::define_parent_methods(def);
         // Fullscreen API: the document's fullscreen element, retargeted against this shadow root.
         def.accessor("fullscreenElement", |s, n| crate::fullscreen::element_for(s, n.page(), n.id), |_s, _n, _v| Ok(()));
         def.getter("host", |s, n| {
@@ -1285,7 +1227,7 @@ impl JsClass for ShadowRoot {
                 let html = crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::Html, v, "ShadowRoot innerHTML", true)?;
                 let mut dom = n.page().dom.borrow_mut();
                 let host = dom.fragment_host(n.id).js()?.ok_or(JsError::Type("detached shadow root".into()))?;
-                let frag = pyro_dom::parse::parse_fragment(&mut dom, host, &html).js()?;
+                let frag = pyro_dom::parse::parse_setter_fragment(&mut dom, host, &html).js()?;
                 dom.replace_all(n.id, Some(frag)).js()
             },
         );
@@ -1311,6 +1253,7 @@ impl JsClass for Element {
     type Data = NodeData;
     type Parent = Node;
     fn define(def: &mut ClassDef<Self>) {
+        crate::positional_html::define_parent_methods(def);
         define_parent_node(def);
         define_child_node(def);
         define_non_doctype_child(def);
@@ -1324,8 +1267,9 @@ impl JsClass for Element {
             let (page, id) = (n.page().clone(), n.id);
             let get = s.function("computedValue", move |s, _this, a| {
                 let name = crate::util::dom_string(a.get(0))?;
+                crate::animation_events::observe(&page, id);
                 let (Ok(layout), Ok(dom)) = (page.layout.try_borrow(), page.dom.try_borrow()) else { return Ok(s.null()) };
-                Ok(match layout.style().computed_value(&dom, id, &name) {
+                Ok(match layout.typed_computed_value(&dom, id, &name) {
                     Some(v) if !v.is_empty() => s.string(&v),
                     _ => s.null(),
                 })
@@ -1512,7 +1456,11 @@ impl JsClass for Element {
                 None => dom_string(a.get(2))?,
             };
             n.page().dom.borrow_mut().set_attribute_ns(n.id, ns.as_deref(), &name, &value).js()?;
-            if ns.is_none() {
+            if ns.as_deref().unwrap_or("").is_empty() {
+                // Namespace-aware attribute methods preserve case even on HTML.
+                if !local.bytes().any(|c| c.is_ascii_uppercase()) {
+                    handler_attribute_changed(s, n, &local, Some(&value))?;
+                }
                 crate::input::blur_if_focus_disabled(n.page(), n.id, &name);
             }
             Ok(s.undefined())
@@ -1535,7 +1483,10 @@ impl JsClass for Element {
             a.require(2, "Element.removeAttributeNS")?;
             let ns = opt_dom_string(a.get(0))?;
             let local = dom_string(a.get(1))?;
-            n.page().dom.borrow_mut().remove_attribute_ns(n.id, ns.as_deref(), &local).js()?;
+            let removed = n.page().dom.borrow_mut().remove_attribute_ns(n.id, ns.as_deref(), &local).js()?;
+            if removed && ns.as_deref().unwrap_or("").is_empty() && !local.bytes().any(|c| c.is_ascii_uppercase()) {
+                handler_attribute_changed(s, n, &local, None)?;
+            }
             Ok(s.undefined())
         });
         def.pure_method("hasAttribute", 1, |s, n, a| {
@@ -1624,7 +1575,7 @@ impl JsClass for Element {
                     let doc = dom.node_document(n.id).js()?;
                     dom.create_element(doc, "body").js()?
                 };
-                let frag = pyro_dom::parse::parse_fragment(&mut dom, ctx, &html).js()?;
+                let frag = pyro_dom::parse::parse_setter_fragment(&mut dom, ctx, &html).js()?;
                 dom.replace_child(parent, frag, n.id).js()?;
                 Ok(())
             },
@@ -1637,8 +1588,8 @@ impl JsClass for Element {
             let parent = dom.parent(n.id).js()?;
             let ctx = match pos.as_str() {
                 "beforebegin" | "afterend" => match parent {
-                    Some(p) if dom.node_type(p).js()? == NodeType::Element => p,
-                    _ => return Err(JsError::dom("NoModificationAllowedError", "The element has no parent.")),
+                    Some(p) if dom.node_type(p).js()? != NodeType::Document => p,
+                    _ => return Err(JsError::dom("NoModificationAllowedError", "An insertion parent other than Document is required.")),
                 },
                 "afterbegin" | "beforeend" => n.id,
                 _ => {
@@ -1648,7 +1599,7 @@ impl JsClass for Element {
                     ));
                 }
             };
-            let frag = pyro_dom::parse::parse_fragment(&mut dom, ctx, &html).js()?;
+            let frag = pyro_dom::parse::parse_insertion_fragment(&mut dom, ctx, &html).js()?;
             insert_adjacent(&mut dom, n.id, &pos, frag)?;
             Ok(s.undefined())
         });
@@ -2217,19 +2168,19 @@ impl JsClass for Document {
         def.method("execCommand", 1, |s, n, a| {
             let command = arg_string(&a, 0, "Document.execCommand")?;
             let value = if a.get(2).is_undefined() { String::new() } else { dom_string(a.get(2))? };
-            Ok(s.boolean(crate::edit_commands::exec_command(n.page(), &command, &value)))
+            Ok(s.boolean(crate::edit_commands::exec_command(n.page(), n.id, &command, &value)))
         });
-        def.method("queryCommandSupported", 1, |s, _n, a| {
+        def.method("queryCommandSupported", 1, |s, n, a| {
             let command = arg_string(&a, 0, "Document.queryCommandSupported")?;
-            Ok(s.boolean(crate::edit_commands::query_supported(&command)))
+            Ok(s.boolean(n.id == n.page().document() && crate::edit_commands::query_supported(&command)))
         });
         def.method("queryCommandEnabled", 1, |s, n, a| {
             let command = arg_string(&a, 0, "Document.queryCommandEnabled")?;
-            Ok(s.boolean(crate::edit_commands::query_enabled(n.page(), &command)))
+            Ok(s.boolean(crate::edit_commands::query_enabled(n.page(), n.id, &command)))
         });
         def.method("queryCommandState", 1, |s, n, a| {
             let command = arg_string(&a, 0, "Document.queryCommandState")?;
-            Ok(s.boolean(crate::edit_commands::query_state(n.page(), &command)))
+            Ok(s.boolean(crate::edit_commands::query_state(n.page(), n.id, &command)))
         });
         def.method("queryCommandIndeterm", 1, |s, n, a| {
             let command = arg_string(&a, 0, "Document.queryCommandIndeterm")?;
@@ -2237,7 +2188,7 @@ impl JsClass for Document {
         });
         def.method("queryCommandValue", 1, |s, n, a| {
             let command = arg_string(&a, 0, "Document.queryCommandValue")?;
-            Ok(s.string(&crate::edit_commands::query_value(n.page(), &command)))
+            Ok(s.string(&crate::edit_commands::query_value(n.page(), n.id, &command)))
         });
         def.method("caretRangeFromPoint", 0, crate::editing_globals::caret_range_from_point);
         def.method("caretPositionFromPoint", 2, crate::editing_globals::caret_position_from_point);

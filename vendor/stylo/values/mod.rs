@@ -174,6 +174,14 @@ pub fn calc_random(base: f32, min: f32, max: f32, step: Option<f32>) -> f32 {
 /// A CSS integer value.
 pub type CSSInteger = i32;
 
+/// Tests a class atom against a Selectors 5 class prefix.
+pub fn matches_class_prefix(class: &AtomIdent, prefix: &AtomIdent, quirks: bool) -> bool {
+    #[cfg(feature = "gecko")]
+    return prefix.0.with_str(|prefix| class.0.with_str(|class| selectors::attr::matches_class_prefix(class, prefix, quirks)));
+    #[cfg(feature = "servo")]
+    return selectors::attr::matches_class_prefix(&class.0, &prefix.0, quirks);
+}
+
 /// Serialize an identifier which is represented as an atom.
 #[cfg(feature = "gecko")]
 pub fn serialize_atom_identifier<W>(ident: &Atom, dest: &mut W) -> fmt::Result

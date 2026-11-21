@@ -46,6 +46,14 @@ use anyrender_vello_cpu::VelloCpuImageRenderer;
 use blitz_dom::{DocumentConfig, StyleThreading};
 use blitz_traits::shell::{ColorScheme, Viewport as BlitzViewport};
 pub use blitz_traits::shell::{InputCapabilities, Pointer};
+pub use blitz_dom::MediaEnvironment;
+
+pub fn media_environment(viewport: &pyro_dom::media::Viewport) -> MediaEnvironment {
+    MediaEnvironment {
+        screen: Some((viewport.screen_width.unwrap_or(viewport.width), viewport.screen_height.unwrap_or(viewport.height))),
+        reduced_motion: viewport.reduced_motion,
+    }
+}
 use kurbo::{Affine, Rect};
 use parley::fontique::Blob;
 use parley::FontContext;
@@ -195,7 +203,9 @@ pub struct Snapshot {
     /// pyro: the frame table: the documents the snapshot's frame elements show, by the index
     /// their `data-pyro-frame` names (`pyro_layout::frame_table`). Markup holds no frame content or client.
     pub frames: blitz_dom::FrameTable,
-    /// Document URL; relative URLs resolve against it.
+    /// Actual document URL when it differs from the resource base.
+    pub document_url: Option<String>,
+    /// Relative URLs resolve against this base.
     pub base_url: String,
     /// Texts of `<link rel=stylesheet>` sheets by absolute URL, served to
     /// Blitz without a fetch (they include CSSOM edits).
@@ -207,6 +217,7 @@ pub struct Snapshot {
     pub dark: bool,
     /// Primary pointer precision and hover support for interaction media queries.
     pub input: InputCapabilities,
+    pub media_environment: MediaEnvironment,
     /// `print` media (CDP `Emulation.setEmulatedMedia`): `@media print`
     /// rules apply instead of `screen` ones.
     pub print: bool,
@@ -710,6 +721,13 @@ pub fn fork_safe_fonts() -> bool {
 
 /// The process's fonts (`pyro_canvas::fonts`, shared with canvas text), with
 /// Blitz's list bullet font added once: every [`Renderer`] works on a clone.
+pub fn media_font_metrics() -> Box<dyn style::device::servo::FontMetricsProvider> {
+    thread_local! {
+        static MEDIA_FONTS: Arc<std::sync::Mutex<FontContext>> = Arc::new(std::sync::Mutex::new(process_fonts()));
+    }
+    MEDIA_FONTS.with(|fonts| blitz_dom::font_metrics_provider(fonts.clone()))
+}
+
 fn process_fonts() -> FontContext {
     static BULLET: std::sync::Once = std::sync::Once::new();
     BULLET.call_once(|| pyro_canvas::fonts::register_fonts(Blob::new(Arc::new(blitz_dom::BULLET_FONT) as _)));
@@ -750,7 +768,9 @@ const PREWARM_HTML: &str = r#"<!doctype html><html><body style="font-family: sys
 /// UA rule that settles transitions and animations at their end values (the page samples them in).
 /// `animation-name` only, not the `animation` shorthand: that would also reset `animation-timeline`
 /// and `animation-range`, which the scroll-driven animations read from these styles.
-const NO_TRANSITIONS: &str = "*, *::before, *::after { transition: none !important; animation-name: none !important; }";
+static NO_TRANSITIONS: std::sync::LazyLock<blitz_dom::UserAgentStylesheet> = std::sync::LazyLock::new(|| {
+    blitz_dom::UserAgentStylesheet::parse("*, *::before, *::after { transition: none !important; animation-name: none !important; }")
+});
 /// Chrome's `<input type=file>` box ("Choose File · No file chosen"): Blitz
 /// lays the control out with no content to size it by, so it would be
 /// zero-sized and never visible or clickable.
@@ -1186,8 +1206,10 @@ impl Renderer {
         let mut config = DocumentConfig {
             raster_budget: snap.raster_budget.clone(),
             base_url: Some(snap.base_url.clone()),
+            document_url: snap.document_url.clone(),
             net_provider: Some(provider),
             viewport: Some(viewport_of(snap)),
+            media_environment: snap.media_environment,
             font_ctx: Some(self.font_ctx.clone()),
             style_threading: StyleThreading::Sequential,
             media_type: Some(media_type(snap.print)),
@@ -1203,7 +1225,7 @@ impl Renderer {
         // Documents are resolved at time 0: a CSS transition or animation
         // would stay at its first frame (a drawer sliding in stays off
         // screen). Layout queries, screenshots and PDFs take the end state.
-        config.ua_stylesheets.push(blitz_dom::UserAgentStylesheet::parse(NO_TRANSITIONS));
+        config.ua_stylesheets.push(NO_TRANSITIONS.clone());
         config.ua_stylesheets.push(blitz_dom::UserAgentStylesheet::parse(FILE_INPUT));
         config
     }
@@ -1216,6 +1238,7 @@ impl Renderer {
             Some(m)
                 if m.scope != snap.resource_scope
                     || m.base_url != snap.base_url
+                    || m.document_url != snap.document_url
                     || m.facts.0 != snap.xml_document
                     || m.facts.1 != snap.content_language
                     || m.facts.2 != snap.quirks_mode
@@ -1228,6 +1251,7 @@ impl Renderer {
                 m.bridge.retarget(snap, fetcher.clone());
                 if m.viewport != key {
                     m.doc.set_viewport(viewport_of(snap));
+                    m.doc.set_media_environment(snap.media_environment);
                     m.doc.set_media_type(media_type(snap.print));
                     m.viewport = key;
                 }
@@ -2028,11 +2052,53 @@ impl Renderer {
         &self,
         page: u64,
         key: u64,
+        property: &str,
         style: &style::properties::ComputedValues,
     ) -> Option<String> {
         let m = self.mirrors.get(&page)?;
         let id = m.node(key)?;
-        Some(m.doc.resolved_transform_value(id, style))
+        Some(m.doc.resolved_transform_value(id, property, style))
+    }
+
+    pub fn svg_geometry_properties(&self, page: u64, key: u64) -> Option<Vec<(&'static str, String)>> {
+        use style::properties::{LonghandId, PropertyDeclarationId};
+        use style::rule_tree::CascadeOrigin;
+        let mirror = self.mirrors.get(&page)?;
+        let element = mirror.doc.get_node(mirror.node(key)?)?.element_data()?;
+        let computed = self.element_style(page, key)?;
+        let guard = element.guard.as_ref()?.read();
+        let mut result = Vec::new();
+        for rule in computed.rules.as_ref()?.self_and_ancestors() {
+            let Some(source) = rule.style_source() else { continue };
+            if matches!(rule.cascade_level().origin(), CascadeOrigin::UA | CascadeOrigin::User | CascadeOrigin::PresHints) {
+                continue;
+            }
+            for declaration in source.read(&guard).declarations() {
+                let PropertyDeclarationId::Longhand(id) = declaration.id() else { continue };
+                let name = match id {
+                    LonghandId::X => "x",
+                    LonghandId::Y => "y",
+                    LonghandId::Cx => "cx",
+                    LonghandId::Cy => "cy",
+                    LonghandId::R => "r",
+                    LonghandId::Rx => "rx",
+                    LonghandId::Ry => "ry",
+                    LonghandId::Width => "width",
+                    LonghandId::Height => "height",
+                    LonghandId::D => "d",
+                    _ => continue,
+                };
+                if !result.iter().any(|(n, _)| *n == name) {
+                    result.push((name, computed.computed_value_to_string(declaration.id())));
+                }
+            }
+        }
+        Some(result)
+    }
+
+    pub fn sampled_calc_size(&self, page: u64, key: u64, width: bool, style: &style::properties::ComputedValues) -> Option<f32> {
+        let mirror = self.mirrors.get(&page)?;
+        mirror.doc.sampled_calc_size(mirror.node(key)?, width, style)
     }
 
     /// The computed style of the element keyed `key` in `page`'s persistent
@@ -2073,6 +2139,14 @@ impl Renderer {
                 caches.clear();
             }
         }
+    }
+
+    /// The element or pseudo's timing properties with the renderer's suppression rule omitted.
+    pub fn element_timing_style(
+        &self, page: u64, key: u64, pseudo: Option<&style::selector_parser::PseudoElement>,
+    ) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
+        let m = self.mirrors.get(&page)?;
+        m.doc.style_without_override(m.node(key)?, pseudo, &NO_TRANSITIONS)
     }
 
     /// The starting style (`@starting-style`) of the element keyed `key` in `page`'s persistent
@@ -3167,7 +3241,7 @@ impl Breaks {
                 monolithic = replaced
                     || atomic_inline
                     || writes_otherwise
-                    || b.slow_clone_contain().contains(Contain::SIZE)
+                    || b.used_containment().contains(Contain::SIZE)
                     || b.slow_clone_container_type().contains(ContainerType::SIZE);
                 // An inline-level box is in a line, which already holds it.
                 if avoids || (monolithic && !atomic_inline) {
@@ -3787,7 +3861,7 @@ fn bounds_of(doc: &blitz_dom::BaseDocument, id: blitz_dom::NodeId, dpr: f64, sna
 
 fn viewport_of(snap: &Snapshot) -> BlitzViewport {
     let dpr = snap.device_scale_factor.clamp(0.1, 16.0);
-    let physical = |css: u32| (css.max(1) as f64 * dpr).round() as u32;
+    let physical = |css: u32| (css as f64 * dpr).round() as u32;
     let mut viewport = BlitzViewport::new(
         physical(snap.width),
         physical(snap.height),
@@ -3798,8 +3872,10 @@ fn viewport_of(snap: &Snapshot) -> BlitzViewport {
     viewport
 }
 
-fn viewport_key(snap: &Snapshot) -> (u32, u32, u64, bool, bool, InputCapabilities) {
-    (snap.width, snap.height, snap.device_scale_factor.to_bits(), snap.dark, snap.print, snap.input)
+pub type ViewportKey = (u32, u32, u64, bool, bool, InputCapabilities, MediaEnvironment);
+
+fn viewport_key(snap: &Snapshot) -> ViewportKey {
+    (snap.width, snap.height, snap.device_scale_factor.to_bits(), snap.dark, snap.print, snap.input, snap.media_environment)
 }
 
 fn media_type(print: bool) -> style::media_queries::MediaType {
@@ -4536,7 +4612,7 @@ impl blitz_dom::HtmlParserProvider for SvgImageParser {
 
     /// A frame's document (the render snapshot's `srcdoc`), with the page's own UA additions.
     fn parse_document(&self, html: &str, mut config: DocumentConfig) -> Box<dyn blitz_dom::Document> {
-        config.ua_stylesheets.push(blitz_dom::UserAgentStylesheet::parse(NO_TRANSITIONS));
+        config.ua_stylesheets.push(NO_TRANSITIONS.clone());
         config.ua_stylesheets.push(blitz_dom::UserAgentStylesheet::parse(FILE_INPUT));
         config.html_parser_provider = Some(Arc::new(SvgImageParser));
         let mut doc = blitz_html::HtmlDocument::from_html(html, config);

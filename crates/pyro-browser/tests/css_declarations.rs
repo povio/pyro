@@ -76,6 +76,13 @@ fn named_access_knows_real_properties_only() {
         ),
         "true,false,false,string,true,true"
     );
+    assert_eq!(
+        eval(&root, "const style = document.createElement('div').style;
+             style.MozAnimationDuration = '2s';
+             [style.animationDuration, style.getPropertyValue('-moz-animation-duration'),
+              'mozAnimationDuration' in style, 'AnimationDuration' in style].join('|')"),
+        "2s|2s|false|false"
+    );
     // A name that is no property is an ordinary expando.
     assert_eq!(
         eval(&root, "const e = document.createElement('div'); e.style.foo = 'x'; [e.style.foo, e.getAttribute('style')].join('|')"),
@@ -172,4 +179,282 @@ fn scroll_margin_reads_back_computed_and_inline() {
         ),
         "0px|1px 2px 3px 4px|4px|scroll-margin: 1px 2px 3px 4px;|7px 6px 0px 5px|||7px"
     );
+}
+
+#[test]
+fn attr_number_preserves_integer_tokens_and_taints_fallbacks() {
+    let (_t, root) = page();
+    let values = eval(&root, r#"
+        document.body.innerHTML = `<style>p {
+            z-index: attr(n number, 7);
+            padding-left: attr(d em, 0px);
+            font-size: 10px;
+            background-image: attr(d number, url("data:,fallback"));
+        }</style>
+        <p id="integer" n=" /* prefix */ +1 /* suffix */ " d="1e1"></p>
+        <p id="decimal" n="1.0"></p>
+        <p id="invalid" n="1 2" d="invalid"></p>`;
+        const styles = id => getComputedStyle(document.getElementById(id));
+        [styles('integer').zIndex, styles('decimal').zIndex, styles('invalid').zIndex,
+         styles('integer').paddingLeft, styles('decimal').backgroundImage, styles('invalid').backgroundImage].join('|')
+    "#);
+    assert_eq!(values, "1|auto|7|100px|none|none");
+}
+
+#[test]
+fn inline_if_resolves_only_consulted_branches_and_predicates() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        document.body.innerHTML = `<style>
+        @property --length { syntax: "<length>"; inherits: false; initial-value: 0px }
+        @property --size { syntax: "<length>"; inherits: false; initial-value: 10px }
+        body { --x: parent }
+        p {
+            --x: child;
+            --length: 10px;
+            --size: if(else: 13px; else: 1em);
+            font-size: var(--size);
+            --lazy: if(style(--x: child) and style(9px < --length < 11px): 37px; else: var(--lazy));
+            --cycle: if(else: var(--cycle));
+            --on: yes;
+            --a: if(style(--on) or style(--b): 10px; else: 20px);
+            --b: var(--a);
+            left: var(--b);
+            --self: if(style(--self): 1px; else: 29px);
+            --negated: if(not style(--negated): 31px; else: 1px);
+            --either: if(style(--either) or style(--x: child): 41px; else: 1px);
+            padding: var(--self) var(--negated) var(--either);
+            --empty: if(style(--missing): 97px);
+            --fallthrough: if(unknown: bad; supports(display: block): 19px);
+            margin-left: var(--lazy);
+            margin-top: var(--cycle, 23px);
+            margin-bottom: 11px var(--empty, 17px);
+            margin-right: var(--fallthrough);
+        }
+        </style><p id="p">text</p>`;
+        const cs = getComputedStyle(document.querySelector('#p'));
+        ['left','font-size','padding-top','padding-right','padding-bottom','margin-left',
+         'margin-top','margin-bottom','margin-right'].map(name => cs.getPropertyValue(name)).join('|')
+    "#);
+    assert_eq!(actual, "10px|13px|29px|31px|41px|37px|23px|11px|19px");
+}
+
+#[test]
+fn inline_if_taints_only_urls_that_depend_on_attributes() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        document.body.innerHTML = `<style>
+        p { --value: attr(data-value type(<number>)); --enabled: yes }
+        #equality { background-image: if(style(--value: 7): url(data:image/gif;base64,R0lGODlhAQABAAAAACw=)) }
+        #range { background-image: if(style(--value < 5): none; else: url(data:image/gif;base64,R0lGODlhAQABAAAAACw=)) }
+        #failed {
+            background-image: if(style(--enabled: var(--value) var(--missing)): none; else: url(data:image/gif;base64,R0lGODlhAQABAAAAACw=));
+        }
+        #failed-attr { background-image: if(style(--enabled: attr(n type(<number>))): none; else: url(data:,fallback)) }
+        #nested {
+            background-image: if(if(style(--value: 7): var(--missing)): none; else: url(data:image/gif;base64,R0lGODlhAQABAAAAACw=));
+        }
+        #clean { background-image: if(style(--enabled) or style(--value: 7): url(data:image/gif;base64,R0lGODlhAQABAAAAACw=)) }
+        </style>
+        <p id="equality" data-value="7"></p><p id="range" data-value="7"></p><p id="clean" data-value="7"></p><p id="failed" data-value="7"></p><p id="nested" data-value="7"></p><p id="failed-attr" n="invalid"></p>`;
+        ['equality','range','failed','nested','failed-attr','clean']
+            .map(id => getComputedStyle(document.getElementById(id)).backgroundImage).join('|')
+    "#);
+    assert_eq!(actual, r#"none|none|none|none|none|url("data:image/gif;base64,R0lGODlhAQABAAAAACw=")"#);
+}
+
+#[test]
+fn font_affecting_properties_resolve_local_lengths_against_the_parent() {
+    let (_t, root) = page();
+    let computed = eval(&root, r#"
+        document.documentElement.style.fontSize = '32px';
+        document.body.innerHTML = `<style>
+            main { font-size: 10px; line-height: 20px }
+            #child {
+                font-size: 50px;
+                font-weight: calc(1em / 1px);
+                font-style: oblique calc(1lh / 1px * 1deg);
+                line-height: 2em;
+                margin-left: 1em;
+            }
+            #grandchild { font-weight: calc(1rem / 1px) }
+        </style><main><div id="child"><span id="grandchild"></span></div></main>`;
+        const child = getComputedStyle(document.getElementById('child'));
+        const grandchild = getComputedStyle(document.getElementById('grandchild'));
+        [child.fontWeight, child.fontStyle, child.lineHeight, child.marginLeft, grandchild.fontWeight].join('|')
+    "#);
+    assert_eq!(computed, "10|oblique 20deg|100px|50px|32");
+}
+
+#[test]
+fn a_local_url_retains_its_fragment_through_computed_style() {
+    let (_t, root) = page();
+    let actual = eval(&root, r##"
+        document.head.innerHTML = '<base href="https://example.test/assets/">';
+        document.body.innerHTML = '<div></div>';
+        const el = document.body.firstChild;
+        el.style.setProperty('--image', 'url("#mark")');
+        el.style.backgroundImage = 'var(--image)';
+        el.style.cursor = 'url(shape.svg#mark), auto';
+        const computed = getComputedStyle(el);
+        [computed.backgroundImage, computed.cursor].join('|')
+    "##);
+    assert_eq!(actual, r##"url("#mark")|url("https://example.test/assets/shape.svg#mark"), auto"##);
+}
+
+#[test]
+fn inline_if_random_indexes_follow_selected_substitutions_in_order() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        const el = document.body.appendChild(document.createElement('div'));
+        CSS.registerProperty({name:'--number',syntax:'<number>',initialValue:'1',inherits:false});
+        el.style.setProperty('--indices', [
+            'if(style(random(property-index-scoped, 0, 1) = random(ua-early---indices-1, 0, 1)): first; else: fail)',
+            'if(else: if(style(random(property-index-scoped, 0px, 1px) = random(ua-early---indices-3, 0px, 1px)): nested; else: fail))',
+            'if(style(--number: random(1,1)): registered; else: fail)',
+            'if(style(random(property-index-scoped, 0, 1) = random(ua-early---indices-6, 0, 1)): last; else: fail)'
+        ].join(' '));
+        getComputedStyle(el).getPropertyValue('--indices')
+    "#);
+    assert_eq!(actual, "first nested registered last");
+}
+
+#[test]
+fn extreme_insets_resolve_and_transition_in_layout_coordinates() {
+    let (_t, root) = page();
+    let values = eval(&root, r#"
+        const target = document.body.appendChild(document.createElement('div'));
+        target.style.cssText = 'position:absolute;left:33554400px';
+        const value = () => getComputedStyle(target).left;
+        const results = [value()];
+        target.style.zoom = '2';
+        target.style.left = 'calc(infinity * 1px)';
+        results.push(value());
+        target.style.zoom = '0.5';
+        target.style.left = '-1e20px';
+        results.push(value());
+        target.style.zoom = '1';
+        target.style.left = '0px';
+        value();
+        target.style.transition = 'left 100s steps(2, jump-end) -50s';
+        target.style.left = 'calc(infinity * 1px)';
+        results.push(value());
+        results.join('|')
+    "#);
+    assert_eq!(values, "3.35544e+07px|1.67772e+07px|-6.71089e+07px|1.67772e+07px");
+}
+
+#[test]
+fn typed_computed_numeric_retains_subpixel_precision_and_zoom() {
+    let (_t, root) = page();
+    assert_eq!(eval(&root, "document.body.style.order='16777217';document.body.computedStyleMap().get('order').value"), "16777217");
+    assert_eq!(eval(&root, r#"
+        document.body.innerHTML = `<style>
+          #n { width: 99.99999px; zoom: 2; margin-left: 32.125%; height: auto }
+        </style><div id="n"></div>`;
+        const m = document.getElementById('n').computedStyleMap();
+        const w = m.get('width'), p = m.get('margin-left');
+        [w.value === Math.fround(99.99999), w.unit, p.value, p.unit, m.get('height').value].join('|')
+    "#), "true|px|32.125|percent|auto");
+}
+
+#[test]
+fn transitions_compare_bounded_absolute_inset_endpoints() {
+    let (_t, root) = page();
+    let compared = eval(&root, r#"
+        const check = property => {
+            const target = document.body.appendChild(document.createElement('div'));
+            target.style.cssText = 'position:absolute;left:1e20px';
+            const read = () => getComputedStyle(target).left;
+            const transition = () => target.getAnimations().find(a => a.transitionProperty === 'left');
+            read();
+            target.style.transition = property + ' 100s steps(2, jump-end) -50s';
+            target.style.left = '1e30px';
+            read();
+            const noConstantTransition = !transition();
+            target.style.transition = 'none';
+            target.style.left = '0px';
+            read();
+            target.style.transition = property + ' 100s steps(2, jump-end) -50s';
+            target.style.left = '1e20px';
+            const firstSample = read();
+            const first = transition();
+            target.style.left = '1e30px';
+            const sameSample = read() === firstSample;
+            const sameTransition = !!first && transition() === first;
+            target.remove();
+            return noConstantTransition && sameSample && sameTransition;
+        };
+        [check('left'), check('all')].join('|')
+    "#);
+    assert_eq!(compared, "true|true");
+}
+
+#[test]
+fn palette_mix_weights_compute_in_the_elements_context() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        document.body.innerHTML = '<main><b></b><b id="palette"></b></main>';
+        const el = document.querySelector('#palette');
+        el.style.fontPalette = 'palette-mix(in lch, --a calc(10% * sibling-index()), --b)';
+        const specified = el.style.fontPalette.includes('sibling-index()');
+        const before = getComputedStyle(el).fontPalette;
+        el.previousElementSibling.remove();
+        const after = getComputedStyle(el).fontPalette;
+        [specified, before, after].join('|')
+    "#);
+    assert_eq!(actual, "true|palette-mix(in lch, --a 20%, --b 80%)|palette-mix(in lch, --a 10%, --b 90%)");
+}
+
+#[test]
+fn element_dependent_timing_uses_actual_attributes_and_pseudo_font_metrics() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        document.body.innerHTML = `<style>
+            @keyframes step-test { to { opacity: .5 } }
+            section { transition-delay: 5s }
+            #target {
+                font-size: 20px;
+                animation-name: attr(data-name type(<custom-ident>), var(--missing));
+                animation-duration: attr(data-time type(<time>), 3s);
+                transition-delay: attr(missing, inherit);
+            }
+            @layer weak {
+                #target#target { animation-name: wrong; animation-duration: 9s }
+            }
+            #target::before {
+                content: "";
+                font-size: 10px;
+                transition-delay: calc(2s * sign(1em - 12px));
+            }
+        </style><section><i id="target" data-name="step-test" data-time="4s"></i></section>`;
+        const target = document.getElementById('target');
+        const computed = () => getComputedStyle(target);
+        const animation = target.getAnimations().find(a => a.animationName === 'step-test');
+        const result = [computed().animationName, computed().animationDuration, computed().transitionDelay,
+            getComputedStyle(target, '::before').transitionDelay, animation?.effect.getTiming().duration];
+        target.setAttribute('data-time', 'invalid');
+        result.push(computed().animationDuration);
+        target.setAttribute('data-name', '"invalid"');
+        result.push(computed().animationName);
+        result.join('|')
+    "#);
+    assert_eq!(actual, "step-test|4s|5s|-2s|4000|3s|none");
+}
+
+#[test]
+fn menulist_line_height_is_adjusted_after_lh_units_are_computed() {
+    let (_t, realm) = page();
+    assert_eq!(eval(&realm, r#"
+        document.body.innerHTML = '<div style="line-height:100px"><select multiple></select></div>';
+        getComputedStyle(document.querySelector('select')).lineHeight
+    "#), "normal");
+    let result = eval(&realm, r#"
+        document.body.innerHTML = '<style>select{line-height:100px;width:5lh}</style><select></select><select multiple></select><select style="appearance:none"></select><select style="appearance:menulist-button"></select>';
+        [...document.querySelectorAll('select')].map(el => {
+            const style = getComputedStyle(el);
+            return style.width + '/' + style.lineHeight;
+        }).join('|')
+    "#);
+    assert_eq!(result, "500px/normal|500px/100px|500px/100px|500px/normal");
 }

@@ -1,0 +1,30 @@
+bordershape-main-candidate 8082 page passes 5698 named passes 181329 observed names 194657 statuses {'complete:0': 7871, 'complete:2': 104, 'timeout:None': 11, 'complete:1': 95, 'hang:None': 1}
+bordershape-main-parent 8082 page passes 5697 named passes 181249 observed names 194657 statuses {'complete:0': 7871, 'complete:2': 104, 'timeout:None': 11, 'complete:1': 95, 'hang:None': 1}
+bordershape-main-stable 8082 page passes 6950 named passes 182963 observed names 194912 statuses {'complete:0': 7986, 'complete:2': 62, 'complete:1': 23, 'timeout:None': 10, 'hang:None': 1}
+bordershape-main-parent pages left only 1 right only 0
+bordershape-main-parent passes left only 80 right only 0
+bordershape-main-parent observed left only 0 right only 0
+bordershape-main-stable pages left only 277 right only 1529
+bordershape-main-stable passes left only 5898 right only 7532
+bordershape-main-stable observed left only 260 right only 515
+Losses vs parent by URL: Counter()
+bordershape-focus-candidate 24 page passes 15 named passes 3642 observed names 3666 statuses {'complete:0': 24}
+bordershape-focus-parent 24 page passes 14 named passes 3562 observed names 3666 statuses {'complete:0': 24}
+bordershape-focus-stable 24 page passes 22 named passes 3657 observed names 3666 statuses {'complete:0': 24}
+bordershape-focus-parent pages left only 1 right only 0
+bordershape-focus-parent passes left only 80 right only 0
+bordershape-focus-parent observed left only 0 right only 0
+bordershape-focus-stable pages left only 1 right only 8
+bordershape-focus-stable passes left only 9 right only 24
+bordershape-focus-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()
+bordershape-supplement-candidate 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+bordershape-supplement-parent 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+bordershape-supplement-stable 41 page passes 35 named passes 619 observed names 874 statuses {'complete:0': 41}
+bordershape-supplement-parent pages left only 0 right only 0
+bordershape-supplement-parent passes left only 0 right only 0
+bordershape-supplement-parent observed left only 0 right only 0
+bordershape-supplement-stable pages left only 0 right only 8
+bordershape-supplement-stable passes left only 0 right only 42
+bordershape-supplement-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()
