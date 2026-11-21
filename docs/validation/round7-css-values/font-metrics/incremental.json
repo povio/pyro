@@ -1,0 +1,50 @@
+{
+  "previousLosses": [
+    {
+      "url": "css/css-mixins/function-parameter-scoping.html",
+      "name": "Default referencing a later parameter is guaranteed-invalid",
+      "base": "Pass",
+      "previous": "Fail",
+      "head": "Fail"
+    },
+    {
+      "url": "css/css-mixins/function-parameter-scoping.html",
+      "name": "Default referencing a later parameter does not see the calling element",
+      "base": "Pass",
+      "previous": "Fail",
+      "head": "Fail"
+    }
+  ],
+  "incrementalChanges": [
+    {
+      "url": "css/css-mixins/function-relative-units.html",
+      "name": "em in a typed parameter default",
+      "previous": "Fail",
+      "head": "Pass"
+    },
+    {
+      "url": "css/css-mixins/function-relative-units.html",
+      "name": "em in a typed result",
+      "previous": "Fail",
+      "head": "Pass"
+    },
+    {
+      "url": "css/css-mixins/function-relative-units.html",
+      "name": "em within calc() in a typed result",
+      "previous": "Fail",
+      "head": "Pass"
+    },
+    {
+      "url": "css/css-mixins/function-relative-units.html",
+      "name": "em in an untyped local substituted into a typed result",
+      "previous": "Fail",
+      "head": "Pass"
+    },
+    {
+      "url": "css/css-mixins/function-relative-units.html",
+      "name": "em in an untyped result",
+      "previous": "Fail",
+      "head": "Pass"
+    }
+  ]
+}

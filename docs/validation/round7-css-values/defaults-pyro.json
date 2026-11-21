@@ -1,0 +1,156 @@
+{
+  "version": {
+    "Browser": "Chrome/124.0.6367.29",
+    "Protocol-Version": "1.3",
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "V8-Version": "",
+    "WebKit-Version": "",
+    "webSocketDebuggerUrl": "ws://127.0.0.1:61651/"
+  },
+  "rows": [
+    {
+      "fallback": 3,
+      "caller": "99px",
+      "name": "later",
+      "observedCaller": "99px",
+      "raw": "3px",
+      "typed": "3px"
+    },
+    {
+      "fallback": 3,
+      "caller": "99px",
+      "name": "earlier",
+      "observedCaller": "99px",
+      "raw": "6px",
+      "typed": "6px"
+    },
+    {
+      "fallback": 3,
+      "caller": "99px",
+      "name": "self",
+      "observedCaller": "99px",
+      "raw": "",
+      "typed": "-1px"
+    },
+    {
+      "fallback": 3,
+      "caller": "117px",
+      "name": "later",
+      "observedCaller": "117px",
+      "raw": "3px",
+      "typed": "3px"
+    },
+    {
+      "fallback": 3,
+      "caller": "117px",
+      "name": "earlier",
+      "observedCaller": "117px",
+      "raw": "6px",
+      "typed": "6px"
+    },
+    {
+      "fallback": 3,
+      "caller": "117px",
+      "name": "self",
+      "observedCaller": "117px",
+      "raw": "",
+      "typed": "-1px"
+    },
+    {
+      "fallback": 3,
+      "caller": "",
+      "name": "later",
+      "observedCaller": "",
+      "raw": "3px",
+      "typed": "3px"
+    },
+    {
+      "fallback": 3,
+      "caller": "",
+      "name": "earlier",
+      "observedCaller": "",
+      "raw": "6px",
+      "typed": "6px"
+    },
+    {
+      "fallback": 3,
+      "caller": "",
+      "name": "self",
+      "observedCaller": "",
+      "raw": "",
+      "typed": "-1px"
+    },
+    {
+      "fallback": 7,
+      "caller": "99px",
+      "name": "later",
+      "observedCaller": "99px",
+      "raw": "7px",
+      "typed": "7px"
+    },
+    {
+      "fallback": 7,
+      "caller": "99px",
+      "name": "earlier",
+      "observedCaller": "99px",
+      "raw": "6px",
+      "typed": "6px"
+    },
+    {
+      "fallback": 7,
+      "caller": "99px",
+      "name": "self",
+      "observedCaller": "99px",
+      "raw": "",
+      "typed": "-1px"
+    },
+    {
+      "fallback": 7,
+      "caller": "117px",
+      "name": "later",
+      "observedCaller": "117px",
+      "raw": "7px",
+      "typed": "7px"
+    },
+    {
+      "fallback": 7,
+      "caller": "117px",
+      "name": "earlier",
+      "observedCaller": "117px",
+      "raw": "6px",
+      "typed": "6px"
+    },
+    {
+      "fallback": 7,
+      "caller": "117px",
+      "name": "self",
+      "observedCaller": "117px",
+      "raw": "",
+      "typed": "-1px"
+    },
+    {
+      "fallback": 7,
+      "caller": "",
+      "name": "later",
+      "observedCaller": "",
+      "raw": "7px",
+      "typed": "7px"
+    },
+    {
+      "fallback": 7,
+      "caller": "",
+      "name": "earlier",
+      "observedCaller": "",
+      "raw": "6px",
+      "typed": "6px"
+    },
+    {
+      "fallback": 7,
+      "caller": "",
+      "name": "self",
+      "observedCaller": "",
+      "raw": "",
+      "typed": "-1px"
+    }
+  ]
+}
