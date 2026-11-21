@@ -1051,18 +1051,30 @@ diff -ruN a/device/servo.rs b/device/servo.rs
                  // Deprecated system colors (CSS Color 4) mapped to Canvas.
 diff -ruN a/dom.rs b/dom.rs
 --- a/dom.rs	2026-11-11 19:55:57
-+++ b/dom.rs	2026-11-21 19:05:18
-@@ -952,6 +952,9 @@
++++ b/dom.rs	2026-11-21 19:46:25
+@@ -499,6 +499,11 @@
+     /// Get this element's style attribute.
+     fn style_attribute(&self) -> Option<ArcBorrow<'_, Locked<PropertyDeclarationBlock>>>;
+ 
++    /// Original input of the parsed inline block, when the embedder reparses CSS.
++    fn style_attribute_source(&self) -> Option<&str> {
++        None
++    }
++
+     /// Get this element's SMIL override declarations.
+     fn smil_override(&self) -> Option<ArcBorrow<'_, Locked<PropertyDeclarationBlock>>> {
+         None
+@@ -951,6 +956,9 @@
+         &self,
          display: &Display,
      ) -> euclid::default::Size2D<Option<app_units::Au>>;
- 
++
 +    /// Last layout's selected fallback, if any.
 +    fn query_anchored_fallback(&self) -> Option<crate::values::specified::position::PositionTryFallbacksItem> { None }
-+
+ 
      /// Returns true if the element has all of specified selector flags.
      fn has_selector_flags(&self, flags: ElementSelectorFlags) -> bool;
- 
-@@ -1003,6 +1006,12 @@
+@@ -1003,6 +1011,12 @@
  
  /// Provides element-level context needed during style computation.
  pub trait ElementContext {
@@ -1075,7 +1087,7 @@ diff -ruN a/dom.rs b/dom.rs
      /// Opaque handle to the element.
      fn opaque_element(&self) -> Option<OpaqueElement>;
  
-@@ -1023,6 +1032,20 @@
+@@ -1023,6 +1037,20 @@
  }
  
  impl<T: TElement> ElementContext for T {
@@ -2069,12 +2081,40 @@ diff -ruN a/properties/data.py b/properties/data.py
                  "text-emphasis-position",
 diff -ruN a/properties/declaration_block.rs b/properties/declaration_block.rs
 --- a/properties/declaration_block.rs	2026-11-11 19:55:57
-+++ b/properties/declaration_block.rs	2026-11-20 20:50:44
-@@ -1111,6 +1111,22 @@
-         // shorthand) appear here. For shorthands, all the shorthands that we've
++++ b/properties/declaration_block.rs	2026-11-21 19:36:17
+@@ -1099,6 +1099,28 @@
+     ///
+     /// https://drafts.csswg.org/cssom/#serialize-a-css-declaration-block
+     pub fn to_css(&self, dest: &mut CssStringWriter) -> fmt::Result {
++        self.serialize_block(dest, None)
++    }
++
++    /// Private style input for a renderer that reparses CSS. CSSOM serializes −0
++    /// as 0; inside unresolved math the distinction can still affect the result.
++    pub fn css_for_reparse(&self) -> Result<Option<CssString>, fmt::Error> {
++        let mut signed = LonghandIdSet::new();
++        let mut scratch = CssString::new();
++        for declaration in self.declarations() {
++            let PropertyDeclarationId::Longhand(id) = declaration.id() else { continue };
++            scratch.clear();
++            let (result, saw_signed_zero) = crate::values::serialize_for_reparse(|| declaration.to_css(&mut scratch));
++            result?;
++            if saw_signed_zero { signed.insert(id); }
++        }
++        if signed.is_empty() { return Ok(None); }
++        scratch.clear();
++        crate::values::serialize_for_reparse(|| self.serialize_block(&mut scratch, Some(&signed))).0?;
++        Ok(Some(scratch))
++    }
++
++    fn serialize_block(&self, dest: &mut CssStringWriter, signed: Option<&LonghandIdSet>) -> fmt::Result {
+         let mut is_first_serialization = true; // trailing serializations should have a prepended space
+ 
+         // Step 1 -> dest = result list
+@@ -1112,6 +1134,22 @@
          // attempted to serialize appear here.
          let mut already_serialized = NonCustomPropertyIdSet::new();
-+
+ 
 +        #[cfg(feature = "servo")]
 +        if let Some((role, importance)) = self.declaration_importance_iter().find_map(|(decl, importance)| decl.get_system().map(|role| (role, importance))) {
 +            let mut shorthand = CssString::new();
@@ -2090,9 +2130,22 @@ diff -ruN a/properties/declaration_block.rs b/properties/declaration_block.rs
 +                }
 +            }
 +        }
- 
++
          // Step 3
          'declaration_loop: for (declaration, importance) in self.declaration_importance_iter() {
+             // Step 3.1
+@@ -1141,6 +1179,11 @@
+ 
+             // Steps 3.3 & 3.4
+             for shorthand in longhand_id.shorthands() {
++                // Shorthand compression considers +0 and -0 equal. Preserve the
++                // affected longhands separately in the internal serialization.
++                if signed.is_some_and(|set| shorthand.longhands().any(|id| set.contains(id))) {
++                    continue;
++                }
+                 // We already attempted to serialize this shorthand before.
+                 if already_serialized.contains(shorthand.into()) {
+                     continue;
 diff -ruN a/properties/font_face_descriptors.toml b/properties/font_face_descriptors.toml
 --- a/properties/font_face_descriptors.toml	2026-11-11 19:55:57
 +++ b/properties/font_face_descriptors.toml	2026-11-20 21:19:07
@@ -6845,6 +6898,33 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
      }
  
      fn default_namespace(&self) -> Option<Namespace> {
+diff -ruN a/sharing/checks.rs b/sharing/checks.rs
+--- a/sharing/checks.rs	2026-11-11 19:55:57
++++ b/sharing/checks.rs	2026-11-21 19:46:25
+@@ -74,7 +74,22 @@
+                 return true;
+             }
+             let guard = shared_context.guards.author;
+-            *a.read_with(guard) == *b.read_with(guard)
++            let (a, b) = (a.read_with(guard), b.read_with(guard));
++            if a != b {
++                return false;
++            }
++            // CSSOM value equality treats signed zeros as equal. Inside math,
++            // equal-looking blocks can nevertheless compute different values.
++            // Identical source and simple non-functional values stay on the fast path.
++            if let (Some(left), Some(right)) = (target.style_attribute_source(), candidate.style_attribute_source()) {
++                if left != right && (left.contains('(') || right.contains('(')) {
++                    return match (a.css_for_reparse(), b.css_for_reparse()) {
++                        (Ok(x), Ok(y)) => x == y,
++                        _ => false,
++                    };
++                }
++            }
++            true
+         },
+     }
+ }
 diff -ruN a/style_adjuster.rs b/style_adjuster.rs
 --- a/style_adjuster.rs	2026-11-11 19:55:57
 +++ b/style_adjuster.rs	2026-11-21 17:02:38
@@ -12230,12 +12310,11 @@ diff -ruN a/values/generics/text.rs b/values/generics/text.rs
              self.sink.to_css(dest)?;
 diff -ruN a/values/mod.rs b/values/mod.rs
 --- a/values/mod.rs	2026-11-11 19:55:57
-+++ b/values/mod.rs	2026-11-21 02:02:38
-@@ -173,6 +173,14 @@
- 
++++ b/values/mod.rs	2026-11-21 19:36:17
+@@ -174,6 +174,14 @@
  /// A CSS integer value.
  pub type CSSInteger = i32;
-+
+ 
 +/// Tests a class atom against a Selectors 5 class prefix.
 +pub fn matches_class_prefix(class: &AtomIdent, prefix: &AtomIdent, quirks: bool) -> bool {
 +    #[cfg(feature = "gecko")]
@@ -12243,9 +12322,45 @@ diff -ruN a/values/mod.rs b/values/mod.rs
 +    #[cfg(feature = "servo")]
 +    return selectors::attr::matches_class_prefix(&class.0, &prefix.0, quirks);
 +}
- 
++
  /// Serialize an identifier which is represented as an atom.
  #[cfg(feature = "gecko")]
+ pub fn serialize_atom_identifier<W>(ident: &Atom, dest: &mut W) -> fmt::Result
+@@ -226,6 +234,23 @@
+     serialize_specified_dimension(v, "", /* was_calc = */ false, dest)
+ }
+ 
++thread_local! {
++    // None for public CSS serialization; Some records a negative zero written for reparsing.
++    static REPARSE_SIGNED_ZERO: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
++}
++
++pub(crate) fn serialize_for_reparse<T>(f: impl FnOnce() -> T) -> (T, bool) {
++    struct Restore<'a>(&'a std::cell::Cell<Option<bool>>, Option<bool>);
++    impl Drop for Restore<'_> {
++        fn drop(&mut self) { self.0.set(self.1); }
++    }
++    REPARSE_SIGNED_ZERO.with(|mode| {
++        let _restore = Restore(mode, mode.replace(Some(false)));
++        let result = f();
++        (result, mode.get() == Some(true))
++    })
++}
++
+ /// Serialize a specified dimension with unit, calc, and NaN/infinity handling (if enabled)
+ pub fn serialize_specified_dimension<W>(
+     v: f32,
+@@ -257,6 +282,10 @@
+         if !unit.is_empty() {
+             dest.write_str(" * 1")?;
+         }
++    } else if v.to_bits() == (-0.0_f32).to_bits() && REPARSE_SIGNED_ZERO.with(|mode| {
++        if mode.get().is_some() { mode.set(Some(true)); true } else { false }
++    }) {
++        dest.write_str("-0")?;
+     } else {
+         v.to_css(dest)?;
+     }
 diff -ruN a/values/resolved/color.rs b/values/resolved/color.rs
 --- a/values/resolved/color.rs	2026-11-11 19:55:57
 +++ b/values/resolved/color.rs	2026-11-19 20:50:37
