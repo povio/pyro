@@ -1380,6 +1380,7 @@ impl DocumentMutator<'_> {
         // Any child may hold styled elements: a new element (no style data) may hold a moved
         // one (pyro-dom builds a new wrapper by moving children into it before inserting it).
         let under_display_none = self.is_under_display_none(parent_id);
+        let mut moved_document_sheets = Vec::new();
         for child_id in child_ids.iter().copied() {
             let child = &mut self.doc.nodes[child_id];
             let child_was_in_doc = child.flags.is_in_document();
@@ -1443,6 +1444,9 @@ impl DocumentMutator<'_> {
                 let mut moved_styles = Vec::new();
                 self.doc.iter_subtree_mut(child_id, |id, doc| {
                     let node = &doc.nodes[id];
+                    if doc.nodes_to_stylesheet.contains_key(&id) && node.containing_shadow_host_id().is_none() {
+                        moved_document_sheets.push(id);
+                    }
                     if node.data.is_element_with_tag_name(&local_name!("style"))
                         && crate::document::sheet_has_scope_rules(&node.text_content())
                     {
@@ -1452,6 +1456,7 @@ impl DocumentMutator<'_> {
                 self.style_nodes.extend(moved_styles);
             }
         }
+        self.doc.reposition_document_stylesheets(moved_document_sheets);
         // pyro: the `:has()` anchors that can see the new positions,
         // once every child is linked (a sibling inserted with it counts).
         if new_parent_is_in_document {

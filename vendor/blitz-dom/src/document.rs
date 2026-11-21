@@ -2488,6 +2488,30 @@ impl BaseDocument {
         }
     }
 
+    /// Reposition already loaded document sheets after their owners move. Remove the
+    /// whole moved group first so insertion always sees an ordered set of other sheets.
+    pub(crate) fn reposition_document_stylesheets(&mut self, owners: Vec<NodeId>) {
+        if owners.is_empty() { return; }
+        let guard = self.guard.read();
+        let mut moved = Vec::with_capacity(owners.len());
+        for owner in owners {
+            if let Some(sheet) = self.nodes_to_stylesheet.remove(&owner) {
+                self.stylist.remove_stylesheet(sheet.clone(), &guard);
+                moved.push((owner, sheet));
+            }
+        }
+        for (owner, sheet) in moved {
+            let next = self.next_document_stylesheet(owner).cloned();
+            self.nodes_to_stylesheet.insert(owner, sheet.clone());
+            if let Some(next) = next {
+                self.stylist.insert_stylesheet_before(sheet, next, &guard);
+            } else {
+                self.stylist.append_stylesheet(sheet, &guard);
+            }
+        }
+        self.stylesheet_generation += 1;
+    }
+
     fn next_document_stylesheet(&self, owner: NodeId) -> Option<&DocumentStyleSheet> {
         let node = &self.nodes[owner];
         if let Some(parent) = node.parent {

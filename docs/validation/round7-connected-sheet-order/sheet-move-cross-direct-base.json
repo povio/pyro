@@ -1,0 +1,20 @@
+{
+  "label": "base",
+  "bin": "/Users/xban1x/Library/Caches/lightningpanda/round7-css-values/sheet-order-fe6f3d382",
+  "version": {
+    "Browser": "Chrome/124.0.6367.29",
+    "Protocol-Version": "1.3",
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "V8-Version": "",
+    "WebKit-Version": "",
+    "webSocketDebuggerUrl": "ws://127.0.0.1:51823/"
+  },
+  "fixtureSHA256": "7a1fbefb51ada7a1d965bdee9ffc59103c931732b058c544f5314129bb4e0003",
+  "result": [
+    "second",
+    "second",
+    "second",
+    "second"
+  ],
+  "utc": "2026-11-21T22:03:51.419Z"
+}
