@@ -7,7 +7,7 @@
 
 use super::{
     ArbitraryDeclarationValue, ParsedArgument, Substitution, SubstitutionArgument,
-    SubstitutionParserContext, SubstitutionReplacementContext, parse_optional_fallback,
+    SubstitutionParserContext, SubstitutionReplacementContext, parse_optional_fallback_with_syntax,
 };
 use crate::custom_properties::{Name, VariableValue, parse_name};
 use crate::parser::Parse;
@@ -28,7 +28,7 @@ impl Parse for CustomPropertyName {
     }
 }
 
-/// Data specific to a `var()` function.
+/// A custom property reference in `var()` or `inherit()`.
 #[derive(Clone, Debug, MallocSizeOf, PartialEq, ToShmem)]
 pub struct VarFunction {
     /// The referenced custom property name.
@@ -44,9 +44,10 @@ impl VarFunction {
     pub fn parse(
         input: &mut Parser,
         context: &mut SubstitutionParserContext,
+        non_strict_fallback: bool,
     ) -> Result<Self, ParseError> {
         let name = SubstitutionArgument::try_parse(input, context, Delimiter::Comma)?;
-        let fallback = parse_optional_fallback(input, context)?;
+        let fallback = parse_optional_fallback_with_syntax(input, context, non_strict_fallback)?;
         Ok(Self { name, fallback })
     }
 
@@ -56,17 +57,44 @@ impl VarFunction {
         &'a self,
         source: &'a VariableValue,
         context: &mut SubstitutionReplacementContext<'a, '_, '_, '_>,
+        inherited: bool,
     ) -> Result<Substitution<'a>, ()> {
         let name = self.replace_name(source, context);
         let mut substitution = name
             .value
-            .and_then(|name| Self::resolve_custom_property(&name.0, context))
+            .and_then(|name| {
+                if inherited {
+                    let value = Self::inherited_value(&name.0, context)?;
+                    if value.viewport_dependent {
+                        context.computed_context.builder.add_flags(crate::computed_value_flags::ComputedValueFlags::USES_VIEWPORT_UNITS);
+                    }
+                    Some(Substitution::from_value(value.to_variable_value(), value.attr_tainted))
+                } else {
+                    Self::resolve_custom_property(&name.0, context)
+                }
+            })
             .ok_or(())
             .or_else(|_| {
                 context.substitute_declaration_value(self.fallback.as_ref().ok_or(())?, source)
             })?;
         substitution.attr_tainted |= name.attr_tainted;
         Ok(substitution)
+    }
+
+    pub(crate) fn inherited_value<'c>(
+        name: &Name,
+        context: &'c SubstitutionReplacementContext,
+    ) -> Option<&'c crate::properties_and_values::value::ComputedValue> {
+        let registration = context.stylist.get_custom_property_registration(name);
+        if !registration.inherits() {
+            context.computed_context.builder.add_flags(crate::computed_value_flags::ComputedValueFlags::INHERITS_RESET_STYLE);
+        }
+        let inherited = if context.computed_context.is_root_element() {
+            context.stylist.get_custom_property_initial_values()
+        } else {
+            context.computed_context.inherited_custom_properties()
+        };
+        inherited.get(registration, name)
     }
 
     fn resolve_custom_property<'a>(

@@ -2451,7 +2451,7 @@ fn substitute_all(
                             attr_fn.fallback.as_ref(),
                         )
                     },
-                    SubstitutionFunction::Var(ref var_fn) => {
+                    SubstitutionFunction::Var(ref var_fn) | SubstitutionFunction::Inherit(ref var_fn) => {
                         let name = match &var_fn.name {
                             SubstitutionArgument::Unparsed(arg) => {
                                 let before = *early_random_count;
@@ -2475,6 +2475,17 @@ fn substitute_all(
                             }
                             continue;
                         };
+                        if matches!(next.function, SubstitutionFunction::Inherit(_)) {
+                            // The primary is already computed on the parent; only a selected
+                            // fallback can introduce further edges on this element.
+                            let replacement = context.replacement_context(property_id);
+                            if crate::substitution::VarFunction::inherited_value(&name.0, &replacement).is_none()
+                                && let Some(ref fallback) = var_fn.fallback
+                            {
+                                queue_references!(&fallback.references);
+                            }
+                            continue;
+                        }
                         (VarType::Custom(name.0.clone()), var_fn.fallback.as_ref())
                     },
                 };

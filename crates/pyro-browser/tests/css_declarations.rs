@@ -458,3 +458,37 @@ fn menulist_line_height_is_adjusted_after_lh_units_are_computed() {
     "#);
     assert_eq!(result, "500px/normal|500px/100px|500px/100px|500px/normal");
 }
+
+#[test]
+fn inherit_reads_the_parent_and_only_resolves_a_selected_fallback() {
+    let (_thread, realm) = page();
+    let values = eval(&realm, r#"
+        document.head.innerHTML = `<style>
+            @property --count { syntax: "<integer>"; inherits: false; initial-value: 2 }
+            :root { --root-count: inherit(--count, 99) }
+            #parent { --count: 7; --item: parent }
+            #child {
+                --name: --count; --count: 23;
+                z-index: inherit(var(--name), 99);
+                --item: inherit(--item, var(--item)) child;
+                --absent: inherit(--missing);
+                --empty: inherit(--missing,);
+                --cyclic: inherit(--missing, var(--cyclic));
+            }
+        </style>`;
+        document.body.innerHTML = '<div id="parent"><div id="child"></div></div>';
+        const parentEl = document.getElementById('parent');
+        const child = document.getElementById('child');
+        child.style.setProperty('--checks', 'var(--absent, A)/var(--empty, B)/var(--cyclic, C)');
+        const read = () => {
+            const style = getComputedStyle(child);
+            return [style.zIndex, style.getPropertyValue('--item')].join(':');
+        };
+        const before = read();
+        parentEl.style.setProperty('--count', '11');
+        parentEl.style.setProperty('--item', 'updated');
+        [before, read(), getComputedStyle(child).getPropertyValue('--checks'),
+         getComputedStyle(document.documentElement).getPropertyValue('--root-count')].join('|')
+    "#);
+    assert_eq!(values, "7:parent child|11:updated child|A//C|2");
+}
