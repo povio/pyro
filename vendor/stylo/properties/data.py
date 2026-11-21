@@ -529,6 +529,10 @@ class Longhand(Property):
             ty = "Box<{}>".format(ty)
         return ty
 
+    def is_font_affecting(self):
+        # CSS Values 4, font-relative lengths. line-height has its own basis rules.
+        return self.name.startswith("font-") or self.name in ("math-style", "math-depth")
+
     def is_zoom_dependent(self):
         if not self.predefined_type:
             return False

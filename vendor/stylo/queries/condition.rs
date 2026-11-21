@@ -257,22 +257,19 @@ impl StyleQuery {
     ) -> KleeneValue {
         ctx.builder
             .add_flags(ComputedValueFlags::DEPENDS_ON_CONTAINER_STYLE_QUERY);
-        match *self {
-            StyleQuery::Feature(ref f) => f.matches(ctx, attribute_tracker),
-            StyleQuery::Not(ref c) => !c.matches(ctx, attribute_tracker),
-            StyleQuery::InParens(ref c) => c.matches(ctx, attribute_tracker),
-            StyleQuery::Operation(ref conditions, op) => {
-                debug_assert!(!conditions.is_empty(), "We never create an empty op");
-                match op {
-                    Operator::And => KleeneValue::any_false(conditions.iter(), |c| {
-                        c.matches(ctx, attribute_tracker)
-                    }),
-                    Operator::Or => {
-                        KleeneValue::any(conditions.iter(), |c| c.matches(ctx, attribute_tracker))
-                    },
-                }
-            },
-            StyleQuery::GeneralEnclosed(_) => KleeneValue::Unknown,
+        self.evaluate(&mut |feature| feature.matches(ctx, attribute_tracker))
+    }
+
+    fn evaluate(&self, feature: &mut impl FnMut(&StyleFeature) -> KleeneValue) -> KleeneValue {
+        match self {
+            Self::Feature(f) => feature(f),
+            Self::Not(c) => !c.evaluate(feature),
+            Self::InParens(c) => c.evaluate(feature),
+            Self::Operation(conditions, Operator::And) =>
+                KleeneValue::any_false(conditions.iter(), |c| c.evaluate(feature)),
+            Self::Operation(conditions, Operator::Or) =>
+                KleeneValue::any(conditions.iter(), |c| c.evaluate(feature)),
+            Self::GeneralEnclosed(_) => KleeneValue::Unknown,
         }
     }
 
@@ -418,6 +415,33 @@ impl StyleFeaturePlain {
             StyleFeatureValue::Value(None)
         };
         Ok(Self { name, value })
+    }
+
+    fn matches_element(&self, context: &substitution::SubstitutionReplacementContext, attr_tainted: &mut bool) -> bool {
+        let ctx = context.computed_context;
+        let registration = context.stylist.get_custom_property_registration(&self.name);
+        let current = context.substitution_functions.get_var(registration, &self.name);
+        *attr_tainted |= current.is_some_and(|v| v.attr_tainted);
+        let initial = context.stylist.get_custom_property_initial_values().get(registration, &self.name);
+        let inherited = ctx.builder.inherited_style.custom_properties().get(registration, &self.name);
+        match &self.value {
+            StyleFeatureValue::Value(None) => current != initial,
+            StyleFeatureValue::Value(Some(value)) => {
+                let query = custom_properties::compute_variable_value(value, registration, ctx, None);
+                query.is_some() && query.as_ref() == current
+            }
+            StyleFeatureValue::Keyword(CSSWideKeyword::Initial) => current == initial,
+            StyleFeatureValue::Keyword(CSSWideKeyword::Inherit) => {
+                *attr_tainted |= inherited.is_some_and(|v| v.attr_tainted);
+                current == inherited
+            }
+            StyleFeatureValue::Keyword(CSSWideKeyword::Unset) if registration.inherits() => {
+                *attr_tainted |= inherited.is_some_and(|v| v.attr_tainted);
+                current == inherited
+            }
+            StyleFeatureValue::Keyword(CSSWideKeyword::Unset) => current == initial,
+            StyleFeatureValue::Keyword(_) => false,
+        }
     }
 
     // Substitute custom-property references in `value`, then re-parse and compute it,
@@ -1028,4 +1052,120 @@ impl OperationParser for QueryCondition {
     fn new_operation(conditions: Box<[Self]>, operator: Operator) -> Self {
         Self::Operation(conditions, operator)
     }
+}
+
+/// A computed-time if() test. Its tokens have already undergone arbitrary substitution.
+pub(crate) enum IfCondition {
+    Else,
+    Not(Box<Self>),
+    Operation(Box<[Self]>, Operator),
+    Style(StyleQuery),
+    Media(QueryCondition),
+    Supports(crate::stylesheets::supports_rule::SupportsCondition),
+    Unknown,
+}
+
+impl IfCondition {
+    pub(crate) fn parse(cx: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
+        if input.try_parse(|i| i.expect_ident_matching("else")).is_ok() {
+            return Ok(Self::Else);
+        }
+        Self::parse_internal(cx, input, FeatureType::Container, AllowOr::Yes)
+    }
+
+    /// Walks only the predicates needed to determine the result. The cascade uses the
+    /// same walk as substitution so untaken boolean arms add no cycle edges.
+    pub(crate) fn evaluate(&self, f: &mut impl FnMut(IfPredicate) -> KleeneValue) -> KleeneValue {
+        match self {
+            Self::Else => KleeneValue::True,
+            Self::Unknown => KleeneValue::Unknown,
+            Self::Not(c) => !c.evaluate(f),
+            Self::Operation(conditions, Operator::And) =>
+                KleeneValue::any_false(conditions.iter(), |c| c.evaluate(f)),
+            Self::Operation(conditions, Operator::Or) =>
+                KleeneValue::any(conditions.iter(), |c| c.evaluate(f)),
+            Self::Style(q) => q.evaluate(&mut |feature| f(IfPredicate::Style(feature))),
+            Self::Media(q) => f(IfPredicate::Media(q)),
+            Self::Supports(q) => f(IfPredicate::Supports(q)),
+        }
+    }
+}
+
+pub(crate) enum IfPredicate<'a> {
+    Style(&'a StyleFeature),
+    Media(&'a QueryCondition),
+    Supports(&'a crate::stylesheets::supports_rule::SupportsCondition),
+}
+
+impl IfPredicate<'_> {
+    pub(crate) fn for_each_property(&self, f: &mut impl FnMut(custom_properties::Name)) {
+        match self {
+            Self::Style(StyleFeature::Plain(p)) => f(p.name.clone()),
+            Self::Style(StyleFeature::Range(r)) => r.for_each_custom_property(f),
+            _ => {},
+        }
+    }
+
+    pub(crate) fn matches(
+        &self,
+        source: &custom_properties::VariableValue,
+        cx: &mut substitution::SubstitutionReplacementContext,
+        attr_tainted: &mut bool,
+    ) -> KleeneValue {
+        match self {
+            Self::Style(feature) => {
+                // Active properties still contain their specified substitutions. Other
+                // properties queried by this predicate have been visited before this call.
+                let mut guarded = false;
+                self.for_each_property(&mut |name| {
+                    let registration = cx.stylist.get_custom_property_registration(&name);
+                    guarded |= cx.seen.contains(&name)
+                        || matches!(cx.property_id, Some(crate::properties::PropertyIdRef::Custom(n)) if *n == name)
+                        || cx.substitution_functions.get_var(registration, &name)
+                            .and_then(|v| v.as_universal()).is_some_and(|v| v.has_references());
+                });
+                if guarded {
+                    return KleeneValue::False;
+                }
+                match feature {
+                    StyleFeature::Plain(p) => p.matches_element(cx, attr_tainted).into(),
+                    StyleFeature::Range(r) => r.evaluate_with_properties(
+                        cx.computed_context, cx.attribute_tracker, &cx.substitution_functions.custom_properties, attr_tainted),
+                }
+            },
+            Self::Media(q) => {
+                cx.computed_context.builder.add_flags(ComputedValueFlags::USES_VIEWPORT_UNITS);
+                computed::Context::for_media_query_evaluation(cx.stylist.device(), cx.computed_context.quirks_mode,
+                    |ctx| q.matches(ctx, &mut CustomMediaEvaluator::none(), cx.attribute_tracker))
+            },
+            Self::Supports(q) => cx.parser_context(&source.url_data)
+                .nest_for_rule(CssRuleType::Style, |parser| q.eval(parser)).into(),
+        }
+    }
+}
+
+impl OperationParser for IfCondition {
+    fn parse_in_parens(cx: &ParserContext, input: &mut Parser, feature_type: FeatureType) -> Result<Self, ParseError> {
+        match input.next()?.clone() {
+            Token::ParenthesisBlock => input.parse_nested_block(|i| Self::parse_internal(cx, i, feature_type, AllowOr::Yes)),
+            Token::Function(name) => input.parse_nested_block(|i| {
+                match_ignore_ascii_case! { &name,
+                    "style" => StyleQuery::parse(cx, i, FeatureType::Container).map(Self::Style),
+                    "supports" => crate::stylesheets::supports_rule::parse_condition_or_declaration(i).map(Self::Supports),
+                    "media" => {
+                        if let Ok(f) = i.try_parse(|i| i.parse_entirely(|i| QueryFeatureExpression::parse_in_parenthesis_block(cx, i, FeatureType::Media))) {
+                            Ok(Self::Media(QueryCondition::Feature(f)))
+                        } else {
+                            QueryCondition::parse(cx, i, FeatureType::Media).map(Self::Media)
+                        }
+                    },
+                    _ => { consume_any_value(i)?; Ok(Self::Unknown) }
+                }
+            }),
+            _ => Err(ParseError::unexpected_token()),
+        }
+    }
+
+    fn new_not(inner: Box<Self>) -> Self { Self::Not(inner) }
+    fn new_operation(conditions: Box<[Self]>, operator: Operator) -> Self { Self::Operation(conditions, operator) }
 }

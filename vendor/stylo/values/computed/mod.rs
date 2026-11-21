@@ -235,6 +235,9 @@ pub struct Context<'a> {
     /// at all (e.g. in a media query evaluation).
     pub for_non_inherited_property: bool,
 
+    /// Whether font-relative units in the current specified value use the parent's metrics.
+    pub for_font_affecting_property: bool,
+
     /// The conditions to cache a rule node on the rule cache.
     ///
     /// FIXME(emilio): Drop the refcell.
@@ -285,6 +288,7 @@ impl<'a> Context<'a> {
             for_smil_animation: false,
             container_info: None,
             for_non_inherited_property: false,
+            for_font_affecting_property: false,
             rule_cache_conditions: RefCell::new(&mut conditions),
             scope: CascadeLevel::same_tree_author_normal(),
             included_cascade_flags: RuleCascadeFlags::empty(),
@@ -327,6 +331,7 @@ impl<'a> Context<'a> {
             for_smil_animation: false,
             container_info,
             for_non_inherited_property: false,
+            for_font_affecting_property: false,
             rule_cache_conditions: RefCell::new(&mut conditions),
             scope: CascadeLevel::same_tree_author_normal(),
             included_cascade_flags: RuleCascadeFlags::empty(),
@@ -363,6 +368,7 @@ impl<'a> Context<'a> {
             container_info: None,
             for_smil_animation: false,
             for_non_inherited_property: false,
+            for_font_affecting_property: false,
             rule_cache_conditions: RefCell::new(rule_cache_conditions),
             scope: CascadeLevel::same_tree_author_normal(),
             included_cascade_flags,
@@ -391,6 +397,7 @@ impl<'a> Context<'a> {
             container_info: None,
             for_smil_animation,
             for_non_inherited_property: false,
+            for_font_affecting_property: false,
             rule_cache_conditions: RefCell::new(rule_cache_conditions),
             scope: CascadeLevel::same_tree_author_normal(),
             included_cascade_flags: RuleCascadeFlags::empty(),
@@ -418,6 +425,7 @@ impl<'a> Context<'a> {
             container_info: None,
             for_smil_animation: false,
             for_non_inherited_property: false,
+            for_font_affecting_property: false,
             rule_cache_conditions: RefCell::new(rule_cache_conditions),
             scope: CascadeLevel::same_tree_author_normal(),
             included_cascade_flags: RuleCascadeFlags::empty(),
