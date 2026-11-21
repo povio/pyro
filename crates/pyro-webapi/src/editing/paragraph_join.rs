@@ -164,9 +164,13 @@ pub(super) fn at_boundary(
     let parent = dom.parent(left).ok()??;
     let seam = deep_backward(dom, (left, len(dom, left)));
     let layout = page.layout();
-    let left_block = matches!(local(dom, left).as_str(), "div" | "p")
+    let left_tag = local(dom, left);
+    let right_tag = local(dom, right);
+    let pre_join = matches!((left_tag.as_str(), right_tag.as_str()),
+        ("pre", "div" | "p" | "blockquote") | ("div" | "p" | "blockquote", "pre"));
+    let left_block = (pre_join || matches!(left_tag.as_str(), "div" | "p"))
         && layout.computed_style_value(dom, left, "display") == "block";
-    if left_block && parent == host && !matches!(local(dom, right).as_str(), "div" | "p") && separators.is_empty() {
+    if left_block && !pre_join && parent == host && !matches!(right_tag.as_str(), "div" | "p") && separators.is_empty() {
         if !is_text(dom, right)
             && (!formatting_element(dom, right) || layout.computed_style_value(dom, right, "display") != "inline")
         {
@@ -226,7 +230,7 @@ pub(super) fn at_boundary(
     if !(left_block || left_inline)
         || !is_text(dom, seam.0)
         || (left != seam.0 && dom.parent(seam.0).ok()?? != left)
-        || !matches!(local(dom, right).as_str(), "div" | "p")
+        || (!pre_join && !matches!(right_tag.as_str(), "div" | "p"))
         || layout.computed_style_value(dom, right, "display") != "block"
         || [left, right].into_iter().any(|n| editing_host(dom, n) != Some(host))
     {
@@ -263,7 +267,7 @@ pub(super) fn at_boundary(
     let dest_style = layout.computed_style_value(dom, destination, "white-space");
     let left_style =
         if is_text(dom, left) { parent_style } else { layout.computed_style_value(dom, left, "white-space") };
-    if source_style.is_empty() || source_style == left_style {
+    if source_style.is_empty() || (!pre_join && source_style == left_style) {
         return None;
     }
     if !is_text(dom, deep_forward(dom, (right, 0)).0) {
@@ -276,10 +280,13 @@ pub(super) fn at_boundary(
     {
         return None;
     }
+    let carry_white_space = source_style != dest_style && (!pre_join || layout
+        .synced_geometry_source(dom)
+        .is_some_and(|engine| engine.has_author_white_space(pyro_dom::snapshot::render_key(source))));
     let line = first_line(page, dom, source, host)?;
     let (fragment, styled) = extract_styled_line(page, dom, host, source, line, source != right)?;
     if len(dom, fragment) > 0 {
-        let content = if source_style != dest_style {
+        let content = if carry_white_space {
             let span = dom.create_element(dom.node_document(right).ok()?, "span").ok()?;
             dom.set_attribute(span, "style", &format!("white-space: {source_style};")).ok()?;
             dom.append_child(span, fragment).ok()?;

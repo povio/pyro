@@ -700,6 +700,8 @@ pub trait GeometrySource {
     fn resolved_transform_value(&self, _key: u64, _property: &str, _style: &style::properties::ComputedValues) -> Option<String> {
         None
     }
+    /// Whether author CSS supplied either longhand of white-space on this element.
+    fn has_author_white_space(&self, _key: u64) -> bool { false }
     /// Computed CSS geometry declarations on an SVG shape, excluding the
     /// default values that must leave XML presentation attributes in effect.
     fn svg_geometry_properties(&self, _key: u64) -> Vec<(&'static str, String)> {

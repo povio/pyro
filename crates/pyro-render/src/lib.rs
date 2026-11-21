@@ -2060,6 +2060,26 @@ impl Renderer {
         Some(m.doc.resolved_transform_value(id, property, style))
     }
 
+    /// Editing carries authored whitespace formatting across a paragraph
+    /// join, while a pre element's UA defaults stay with the element.
+    pub fn has_author_white_space(&self, page: u64, key: u64) -> Option<bool> {
+        use style::properties::{LonghandId, PropertyDeclarationId};
+        use style::rule_tree::CascadeOrigin;
+        let mirror = self.mirrors.get(&page)?;
+        let computed = self.element_style(page, key)?;
+        let guard = mirror.doc.guard().read();
+        let authored = computed.rules.as_ref()?.self_and_ancestors().any(|rule| {
+            let level = rule.cascade_level();
+            level.origin() == CascadeOrigin::Author && rule.style_source().is_some_and(|source| {
+                source.read(&guard).declaration_importance_iter().any(|(decl, importance)| {
+                    importance.important() == level.is_important() && matches!(decl.id(),
+                        PropertyDeclarationId::Longhand(LonghandId::WhiteSpaceCollapse | LonghandId::TextWrapMode))
+                })
+            })
+        });
+        Some(authored)
+    }
+
     pub fn svg_geometry_properties(&self, page: u64, key: u64) -> Option<Vec<(&'static str, String)>> {
         use style::properties::{LonghandId, PropertyDeclarationId};
         use style::rule_tree::CascadeOrigin;
