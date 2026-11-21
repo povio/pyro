@@ -185,6 +185,11 @@ const chart = computed(() => {
       </template>
     </nav>
 
+    <p v-if="!props.path" class="round-progress">
+      <a :href="withBase('/reference/round-six.html')">Round six compatibility progress →</a>
+      <span>749 more CSS test pages pass in full on the 8,082-page comparison.</span>
+    </p>
+
     <p v-if="error" class="error">{{ error }}</p>
     <p v-else-if="!page" class="muted">Loading…</p>
     <template v-else>
@@ -312,6 +317,9 @@ const chart = computed(() => {
 .crumbs { font-size: 1.5rem; font-weight: 600; margin: 0 0 1rem; word-break: break-word; }
 .crumbs a { color: var(--vp-c-brand-1); text-decoration: none; }
 .crumbs .sep { color: var(--vp-c-text-3); margin: 0 0.35em; }
+.round-progress { display: flex; flex-wrap: wrap; gap: .25em 1em; border-left: 3px solid var(--vp-c-brand-1); padding: .45em .85em; }
+.round-progress a { font-weight: 600; }
+.round-progress span { color: var(--vp-c-text-2); }
 .tabs, .ranges, .filters { display: flex; flex-wrap: wrap; gap: 6px; }
 .tabs { margin-bottom: 1rem; }
 button { border: 1px solid var(--vp-c-divider); border-radius: 6px; padding: 4px 10px; font-size: 0.875rem; color: var(--vp-c-text-2); background: var(--vp-c-bg); }

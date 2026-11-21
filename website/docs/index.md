@@ -55,6 +55,8 @@ features:
     linkText: Install
 ---
 
+[Round six compatibility progress: 749 more CSS test pages pass in full →](/reference/round-six)
+
 ## Measured on a real app suite
 
 | Test style | Per test | Against |
