@@ -34,7 +34,7 @@ use selectors::{Element, matching::QuirksMode};
 use smallvec::SmallVec;
 use std::any::Any;
 use std::cell::RefCell;
-use std::collections::{BTreeMap, Bound, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 use std::str::FromStr;
@@ -2472,12 +2472,14 @@ impl BaseDocument {
         let element = &mut self.nodes[node_id].element_data_mut().unwrap();
         element.special_data = SpecialElementData::Stylesheet(stylesheet.clone());
 
-        // TODO: Nodes could potentially get reused so ordering by node_id might be wrong.
-        let insertion_point = self
-            .nodes_to_stylesheet
-            .range((Bound::Excluded(node_id), Bound::Unbounded))
-            .next()
-            .map(|(_, sheet)| sheet);
+        // A node slot can be reused after removal. The cascade follows the live
+        // owner elements' document order, including when a sheet is replaced.
+        let root = (&self.nodes[node_id]).owner_doc().id;
+        let insertion_point = self.nodes_to_stylesheet.keys().copied()
+            .filter(|&id| id != node_id && self.nodes.get(id).is_some_and(|n| n.owner_doc().id == root))
+            .filter(|&id| self.compare_document_order(node_id, id).is_lt())
+            .min_by(|&a, &b| self.compare_document_order(a, b))
+            .and_then(|id| self.nodes_to_stylesheet.get(&id));
 
         if let Some(insertion_point) = insertion_point {
             self.stylist.insert_stylesheet_before(

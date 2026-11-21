@@ -1107,3 +1107,36 @@ fn registered_computed_map_keeps_list_items_and_specified_token_streams() {
     "#);
     assert_eq!(actual, "20|px,px|20px,3px|CSSUnparsedValue|CSSUnparsedValue|CSSUnparsedValue");
 }
+
+#[test]
+fn later_stylesheet_registration_wins_after_earlier_sheets_are_removed() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        const el = document.body.appendChild(document.createElement('div'));
+        function sheet(text) {
+            const s = document.createElement('style');
+            s.textContent = text;
+            document.body.append(s);
+            void s.sheet.cssRules;
+            return s;
+        }
+        const add = (name, type, initial) => sheet(
+            '@property '+name+' { syntax:"<'+type+'>"; inherits:false; initial-value:'+initial+' }');
+        const read = name => el.computedStyleMap().get(name);
+        const prior = sheet('div {--earlier:100px}');
+        const priorRegistration = add('--earlier','length','0px');
+        read('--earlier');
+        priorRegistration.remove();
+        read('--earlier');
+        prior.remove();
+        sheet('div {--probe:0; --raw:0}');
+        add('--probe','length','1000px');
+        const result = [read('--probe').unit];
+        const integer = add('--probe','integer','1000');
+        result.push(read('--probe').unit,read('--raw').constructor.name);
+        integer.remove();
+        result.push(read('--probe').unit);
+        result.join('|')
+    "#);
+    assert_eq!(actual, "px|number|CSSUnparsedValue|px");
+}
