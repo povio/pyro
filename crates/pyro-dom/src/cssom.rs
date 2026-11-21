@@ -238,7 +238,9 @@ pub fn keyframe_selector(text: &str) -> Option<String> {
 
 fn read_keyframe(parser: &mut Parser<'_>) -> Option<ParsedRule> {
     let (head, body) = parse_prelude_and_block(parser, parser.position(), raw_block);
-    Some(ParsedRule::Other { rule_type: 8, text: format!("{} {{{}}}", keyframe_selector(&head)?, body?) })
+    let selector = keyframe_selector(&head)?;
+    let declarations = crate::stylo::declarations::DeclarationBlock::keyframe(&body?).css_text();
+    Some(ParsedRule::Other { rule_type: 8, text: format!("{selector} {{{declarations}}}") })
 }
 
 pub fn parse_one_keyframe(text: &str) -> Option<ParsedRule> {

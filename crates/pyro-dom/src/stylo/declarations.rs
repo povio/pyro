@@ -23,6 +23,15 @@ pub(crate) fn parse_block(text: &str) -> PropertyDeclarationBlock {
 pub struct DeclarationBlock(PropertyDeclarationBlock);
 
 impl DeclarationBlock {
+    pub fn keyframe(text: &str) -> Self {
+        super::enable_features();
+        Self(style::properties::parse_style_attribute(text, &url_data(), None, QuirksMode::NoQuirks, CssRuleType::Keyframe))
+    }
+
+    pub fn keyframe_allows(name: &str) -> bool {
+        property_id(name).is_some_and(|id| id.allowed_in_rule(CssRuleType::Keyframe.into()))
+    }
+
     pub fn page(text: &str) -> Self {
         super::enable_features();
         Self(style::properties::parse_style_attribute(text, &url_data(), None, QuirksMode::NoQuirks, CssRuleType::Page))

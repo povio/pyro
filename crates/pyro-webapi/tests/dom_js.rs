@@ -6492,6 +6492,15 @@ fn body_window_event_handlers_forward_to_the_window() {
 }
 
 #[test]
+fn keyframes_parse_and_mutate_in_keyframe_context() {
+    let e = env("<style>@keyframes k { from { animation-name: k; animation-timing-function: ease; color: red !important; } }</style>");
+    assert_eq!(eval(&e.main, "const frames = document.styleSheets[0].cssRules[0]; const decl = frames.cssRules[0].style; decl.cssText"), "animation-timing-function: ease;");
+    assert_eq!(eval(&e.main, "decl.cssText = 'opacity: 0.5; animation: k 1s'; decl.animationDuration = '2s'; decl.setProperty('opacity', '1', 'important'); decl.cssText"), "opacity: 0.5;");
+    assert_eq!(eval(&e.main, "frames.appendRule('to { --x: end; opacity: 1 !important; }'); frames.findRule('to').style.cssText"), "--x: end;");
+    e.page.dispose();
+}
+
+#[test]
 fn css_keyframes_names_are_css_tokens() {
     let e = env(r#"<style id=s>@keyframes none {} @keyframes foo; @-webkit-keyframes 'a;{b' {} @keyframes \66 oo {} @keyframes 'inherit' {}</style>"#);
     assert_eq!(eval(&e.main, "[...document.getElementById('s').sheet.cssRules].map(rule => rule.name).join('|')"), "a;{b|foo|inherit");

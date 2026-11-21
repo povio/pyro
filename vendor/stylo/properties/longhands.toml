@@ -223,6 +223,7 @@ vector = { need_index = true }
 animation_type = "none"
 extra_prefixes = ["moz:layout.css.prefixes.animations", "webkit"]
 spec = "https://drafts.csswg.org/css-animations-2/#animation-duration"
+rule_types_allowed = ["style"]
 affects = ""
 
 [animation-fill-mode]

@@ -351,6 +351,10 @@ enum StyleSource {
 }
 
 impl StyleData {
+    fn is_keyframe(&self) -> bool {
+        matches!(&self.source, StyleSource::Rule { node, .. } if matches!(node.kind, RuleKind::Other { rule_type: 8, .. }))
+    }
+
     fn is_page_rule(&self) -> bool {
         matches!(&self.source, StyleSource::Rule { node, .. } if is_page(node))
     }
@@ -391,6 +395,7 @@ impl StyleData {
     }
 
     fn allows(&self, name: &str) -> bool {
+        if self.is_keyframe() { return DeclarationBlock::keyframe_allows(name); }
         if self.is_page_rule() { return DeclarationBlock::page_allows(name); }
         if self.is_font_face() { return pyro_dom::font_face::DescriptorBlock::supports(name); }
         !self.is_position_try() || DeclarationBlock::position_try_allows(name)
@@ -495,7 +500,7 @@ impl StyleData {
     /// declaration replaces its own in place and the others stay as written;
     /// otherwise the whole block is parsed, updated and serialized.
     fn set(&self, name: &str, value: &str, important: bool) -> JsResult<()> {
-        if !self.allows(name) || (important && self.is_position_try()) {
+        if !self.allows(name) || (important && (self.is_position_try() || self.is_keyframe())) {
             return Ok(());
         }
         let value = value.trim();
@@ -598,6 +603,7 @@ impl StyleData {
     }
     /// `cssText = text`: the block parsed from `text`, serialized.
     fn set_css_text(&self, text: &str) -> JsResult<()> {
+        if self.is_keyframe() { return self.write_raw(DeclarationBlock::keyframe(text).css_text()); }
         if self.is_page_rule() { return self.write_raw(DeclarationBlock::page(text).css_text()); }
         if let Some(block) = self.font_block(text) { return self.write_raw(block.css_text()); }
         if self.is_position_try() {
