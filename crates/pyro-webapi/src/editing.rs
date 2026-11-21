@@ -1048,19 +1048,22 @@ fn merge_blocks(page: &PageDom, dom: &mut Dom, host: NodeId, from: Point, to: Po
 
 /// Plaintext-only editability is inherited until the nearest explicit
 /// contenteditable mode, including a rich island inside a plaintext host.
-pub(crate) fn plaintext_at(dom: &Dom, mut node: NodeId) -> bool {
+pub(crate) fn plaintext_root(dom: &Dom, mut node: NodeId) -> Option<NodeId> {
     loop {
         if let Ok(Some(value)) = dom.get_attribute(node, "contenteditable") {
             if value.eq_ignore_ascii_case("plaintext-only") {
-                return true;
+                return Some(node);
             }
             if value.is_empty() || value.eq_ignore_ascii_case("true") || value.eq_ignore_ascii_case("false") {
-                return false;
+                return None;
             }
         }
-        let Ok(Some(parent)) = dom.parent_element(node) else { return false };
-        node = parent;
+        node = dom.parent_element(node).ok()??;
     }
+}
+
+pub(crate) fn plaintext_at(dom: &Dom, node: NodeId) -> bool {
+    plaintext_root(dom, node).is_some()
 }
 
 /// The unmodified Enter key inserts a line break in a plaintext editor.

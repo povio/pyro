@@ -1520,7 +1520,20 @@ fn remove_inline(page: &Rc<PageDom>, host: NodeId, names: &[&str], input_type: &
     } else {
         (start, end)
     };
-    let selected = inline_texts(&page.dom.borrow(), host, start, end);
+    let selected = {
+        let dom = page.dom.borrow();
+        let mut texts = texts_in(&dom, host, start, end);
+        texts.retain(|&node| {
+            if !editing::is_editable(&dom, node) { return false; }
+            // Clearing formatting across a fully enclosed plaintext island
+            // can remove an existing carrier inside it. Keep the island itself.
+            let Some(island) = editing::plaintext_root(&dom, node) else { return true };
+            let (Ok(Some(parent)), Ok(index)) = (dom.parent(island), dom.index_in_parent(island)) else { return false };
+            crate::range::compare_boundary_points_dom(&dom, start, (parent, index)) <= 0
+                && crate::range::compare_boundary_points_dom(&dom, (parent, index + 1), end) <= 0
+        });
+        texts
+    };
     if selected.is_empty() {
         return;
     }
@@ -1528,11 +1541,11 @@ fn remove_inline(page: &Rc<PageDom>, host: NodeId, names: &[&str], input_type: &
         let texts = {
             let mut dom = page.dom.borrow_mut();
             let texts = split_texts(&mut dom, selected, start, end);
-            let first = (texts[0], 0);
-            let last = *texts.last().unwrap();
+            let (Some(&first), Some(&last)) = (texts.first(), texts.last()) else { return };
+            let first = (first, 0);
             let last = (last, editing::len(&dom, last));
             for &t in &texts {
-                let Some(owner) = editing::editing_host(&dom, t) else { continue };
+                let Some(owner) = editing::plaintext_root(&dom, t).or_else(|| editing::editing_host(&dom, t)) else { continue };
                 while let Some(a) = ancestor_format(&dom, t, owner, names, true) {
                     // Remove a completely selected carrier as a unit. Hoisting
                     // only its editable text would leave a formatting wrapper
