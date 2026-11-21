@@ -1697,12 +1697,15 @@ fn initial_caret(page: &PageDom, dom: &Dom, host: NodeId) -> Option<Point> {
             if layout.computed_style_value(dom, child, "display") == "none" {
                 continue;
             }
-            if editable_attr(dom, child) == Some(false)
+            let noneditable = editable_attr(dom, child) == Some(false);
+            if noneditable
                 || !is_container(dom, child)
                 || matches!(local(dom, child).as_str(), "button" | "select" | "textarea")
             {
                 if layout.computed_style_value(dom, child, "visibility") != "hidden" {
-                    return Some((*parent, index as u32));
+                    // At a non-editable island, preceding empty wrappers
+                    // share the caret position at the start of this container.
+                    return Some((*parent, if noneditable { 0 } else { index as u32 }));
                 }
             } else {
                 stack.push((child, dom.children(child).ok()?.enumerate()));
