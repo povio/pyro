@@ -712,9 +712,7 @@ impl Geometry {
             }
             return Some(b);
         }
-        let inline =
-            doc.get_node(id).and_then(|n| n.primary_styles()).is_some_and(|s| s.clone_display().is_inline_flow());
-        if inline {
+        if doc.get_node(id).is_some_and(|node| node.is_non_atomic_inline()) {
             if let Some(r) = self.inline_union(doc, id) {
                 return Some(LayoutBox {
                     client_width: 0.0,
