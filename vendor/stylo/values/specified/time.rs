@@ -217,6 +217,15 @@ impl Time {
         self.0.is_boxed()
     }
 
+    /// Resolves an arithmetic expression whose operands need no element context.
+    pub fn calc_seconds_without_context(&self) -> Option<CSSFloat> {
+        let Unpacked::Boxed(calc) = self.0.unpack() else {
+            return None;
+        };
+        let value = calc.clamping_mode.clamp(calc.as_time()?.seconds());
+        Some(crate::values::normalize(value).clamp(f32::MIN, f32::MAX))
+    }
+
     fn parse_with_clamping_mode(
         context: &ParserContext,
         input: &mut Parser,

@@ -5,6 +5,7 @@
 mod animation_events;
 mod adoption;
 mod attr_nodes;
+mod css_math;
 mod custom_reactions;
 mod detached_changes;
 mod dispatch_targets;

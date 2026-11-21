@@ -828,11 +828,25 @@ fn shown(longhand: Longhand, item: &str) -> String {
         | Longhand::AnimationDelay
         | Longhand::TransitionDuration
         | Longhand::TransitionDelay => match time_ms(item) {
-            Some(ms) => format!("{}s", crate::computed::fmt_num(ms / 1000.0)),
+            Some(ms) => serialize_seconds(ms / 1000.0),
             None => item.to_owned(),
         },
         _ => item.to_owned(),
     }
+}
+
+/// CSSOM time values use six significant digits, including when rounding changes the exponent.
+fn serialize_seconds(seconds: f64) -> String {
+    if seconds == 0.0 || !seconds.is_finite() {
+        return "0s".to_owned();
+    }
+    let scientific = format!("{seconds:.5e}");
+    let (mantissa, exponent) = scientific.split_once('e').unwrap();
+    let exponent: i32 = exponent.parse().unwrap();
+    if (-4..6).contains(&exponent) {
+        return format!("{}s", scientific.parse::<f64>().unwrap());
+    }
+    format!("{}e{exponent:+03}s", mantissa.trim_end_matches('0').trim_end_matches('.'))
 }
 
 /// Chromium's computed `transition`: an item per `transition-property`
@@ -1356,6 +1370,16 @@ fn parse_property(property: &str, value: &str) -> Option<Vec<(Longhand, Value)>>
                 _ => Value::Initial,
             },
             PropertyDeclaration::WithVariables(_) => Value::Initial,
+            PropertyDeclaration::AnimationDuration(list) => Value::List(list.0.iter().map(|duration| {
+                use style::values::generics::animation::AnimationDuration;
+                match duration {
+                    AnimationDuration::Time(time) => computed_time_item(*longhand, time),
+                    AnimationDuration::Auto => "auto".to_owned(),
+                }
+            }).collect()),
+            PropertyDeclaration::AnimationDelay(list) => Value::List(list.0.iter().map(|t| computed_time_item(*longhand, t)).collect()),
+            PropertyDeclaration::TransitionDelay(list) => Value::List(list.0.iter().map(|t| computed_time_item(*longhand, t)).collect()),
+            PropertyDeclaration::TransitionDuration(list) => Value::List(list.0.iter().map(|t| computed_time_item(*longhand, t)).collect()),
             PropertyDeclaration::AnimationName(list) => Value::List(list.0.iter().map(style_traits::ToCss::to_css_string).collect()),
             PropertyDeclaration::AnimationTimingFunction(list) => Value::List(list.0.iter().map(easing_text).collect()),
             PropertyDeclaration::TransitionTimingFunction(list) => {
@@ -1377,6 +1401,14 @@ fn parse_property(property: &str, value: &str) -> Option<Vec<(Longhand, Value)>>
 fn easing_text(easing: &style::values::specified::TimingFunction) -> String {
     use style_traits::ToCss;
     easing.to_computed_value_without_context().to_css_string()
+}
+
+fn computed_time_item(longhand: Longhand, time: &style::values::specified::Time) -> String {
+    use style_traits::ToCss;
+    match time.calc_seconds_without_context() {
+        Some(seconds) => format!("{seconds}s"),
+        None => computed_item(longhand, &time.to_css_string()),
+    }
 }
 
 /// One specified item (Stylo's serialization) as its computed value: times
@@ -1456,6 +1488,19 @@ mod tests {
         let (_, list) = lists.iter().find(|(n, _)| *n == name).unwrap();
         assert_eq!(list.len(), 1, "{name}");
         &list[0]
+    }
+
+    #[test]
+    fn time_serialization_uses_six_significant_digits() {
+        for (value, expected) in [
+            (0.00001, "1e-05s"),
+            (999999.0, "999999s"),
+            (999999.9, "1e+06s"),
+            (1.2345678e19, "1.23457e+19s"),
+            (-1.2345678e21, "-1.23457e+21s"),
+        ] {
+            assert_eq!(serialize_seconds(value), expected);
+        }
     }
 
     #[test]

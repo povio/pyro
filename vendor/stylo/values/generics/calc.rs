@@ -27,6 +27,30 @@ use style_traits::{CssWriter, ToCss};
 
 use thin_vec::ThinVec;
 
+// CSS Values 4 specifies the exceptional results before ordinary exponentiation.
+fn css_pow(base: f32, exponent: f32) -> f32 {
+    if base.is_nan() || exponent.is_nan() || (base.abs() == 1.0 && exponent.is_infinite()) {
+        return f32::NAN;
+    }
+    base.powf(exponent)
+}
+
+fn css_log(value: f32, base: f32) -> f32 {
+    if base.is_nan() || base <= 0.0 || base == 1.0 {
+        return f32::NAN;
+    }
+    if value == 0.0 {
+        return f32::NEG_INFINITY;
+    }
+    if value == 1.0 {
+        return 0.0;
+    }
+    if value == f32::INFINITY {
+        return f32::INFINITY;
+    }
+    value.log(base)
+}
+
 /// Whether we're a `min` or `max` function.
 #[derive(
     Clone,
@@ -1414,7 +1438,7 @@ impl<L: CalcNodeLeaf> CalcNode<L> {
                 // TODO(emilio): Seems like at least a few of these
                 // special-cases could be removed if we do the math in a
                 // particular order.
-                if step.is_zero() {
+                if step.is_zero() || step.is_nan() || value.is_nan() {
                     value = f32::NAN;
                 } else if value.is_infinite() {
                     if step.is_infinite() {
@@ -1544,7 +1568,7 @@ impl<L: CalcNodeLeaf> CalcNode<L> {
                 if !a_ty.is_number() || !b_ty.is_number() {
                     return Err(());
                 }
-                Ok((a.powf(b), NumericType::number()))
+                Ok((css_pow(a, b), NumericType::number()))
             },
             Self::Sqrt(c) => {
                 let (value, ty) = c.resolve_internal(leaf_to_output_fn)?;
@@ -1576,7 +1600,7 @@ impl<L: CalcNodeLeaf> CalcNode<L> {
                         if !b_ty.is_number() {
                             return Err(());
                         }
-                        a.log(b)
+                        css_log(a, b)
                     },
                     Optional::None => a.ln(),
                 };
@@ -1933,7 +1957,10 @@ impl<L: CalcNodeLeaf> CalcNode<L> {
                 ref mut value,
                 ref mut step,
             } => {
-                if value_or_stop!(step.is_zero_leaf()) {
+                if value_or_stop!(step.is_zero_leaf())
+                    || value_or_stop!(step.is_nan_leaf())
+                    || value_or_stop!(value.is_nan_leaf())
+                {
                     value_or_stop!(value.coerce_to_value(f32::NAN));
                     replace_self_with!(&mut **value);
                     return SimplificationResult::Simplified;
@@ -2343,7 +2370,7 @@ impl<L: CalcNodeLeaf> CalcNode<L> {
                 if let (CalcNode::Leaf(la), CalcNode::Leaf(lb)) = (&**a, &**b)
                     && let (Some(a_val), Some(b_val)) = (la.as_number(), lb.as_number())
                 {
-                    let mut result = Self::Leaf(L::new_number(a_val.powf(b_val)));
+                    let mut result = Self::Leaf(L::new_number(css_pow(a_val, b_val)));
                     replace_self_with!(&mut result);
                     return SimplificationResult::Simplified;
                 }
@@ -2379,7 +2406,7 @@ impl<L: CalcNodeLeaf> CalcNode<L> {
                     let folded = match b {
                         &mut Optional::Some(ref b) => {
                             if let CalcNode::Leaf(ref lb) = **b {
-                                lb.as_number().map(|b_val| a_val.log(b_val))
+                                lb.as_number().map(|b_val| css_log(a_val, b_val))
                             } else {
                                 None
                             }
