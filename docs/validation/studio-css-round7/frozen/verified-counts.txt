@@ -1,0 +1,132 @@
+main {
+  "chrome": {
+    "pages": 6950,
+    "passes": 182963,
+    "observed": 194912,
+    "states": {
+      "complete:0": 7986,
+      "complete:1": 23,
+      "complete:2": 62,
+      "timeout:None": 10,
+      "hang:None": 1
+    },
+    "bytes": 1076619,
+    "sha256": "7858861e3a061f3d352b47336de17ba0dc06a89f81ceb7b48e480ce94e85a4e0"
+  },
+  "historical": {
+    "pages": 5823,
+    "passes": 182434,
+    "observed": 194673,
+    "states": {
+      "complete:0": 7871,
+      "complete:1": 95,
+      "timeout:None": 11,
+      "complete:2": 104,
+      "hang:None": 1
+    },
+    "bytes": 1078100,
+    "sha256": "b9519e4de51f5df7763b4edbb2ee04c37727c5b72f61460559c774b2804724be"
+  },
+  "frozen": {
+    "pages": 5834,
+    "passes": 182498,
+    "observed": 194672,
+    "states": {
+      "complete:0": 7871,
+      "timeout:None": 12,
+      "complete:1": 95,
+      "complete:2": 103,
+      "hang:None": 1
+    },
+    "bytes": 1078049,
+    "sha256": "03bba7aa20093b10d009bf75d2766498361a59c7c1f8a83b4144cd84231ae08b"
+  },
+  "vs-chrome": {
+    "pages": {
+      "frozenOnly": 289,
+      "referenceOnly": 1405
+    },
+    "passes": {
+      "frozenOnly": 5922,
+      "referenceOnly": 6387
+    },
+    "observed": {
+      "frozenOnly": 260,
+      "referenceOnly": 500
+    }
+  },
+  "vs-historical": {
+    "pages": {
+      "frozenOnly": 11,
+      "referenceOnly": 0
+    },
+    "passes": {
+      "frozenOnly": 64,
+      "referenceOnly": 0
+    },
+    "observed": {
+      "frozenOnly": 0,
+      "referenceOnly": 1
+    }
+  }
+}
+supplement {
+  "chrome": {
+    "pages": 35,
+    "passes": 619,
+    "observed": 874,
+    "states": {
+      "complete:0": 41
+    },
+    "bytes": 4740,
+    "sha256": "436f7b57bc5b6738de8bd1f70616df2d063fc88a767fa65e8ab742d335107230"
+  },
+  "historical": {
+    "pages": 27,
+    "passes": 577,
+    "observed": 874,
+    "states": {
+      "complete:0": 41
+    },
+    "bytes": 4757,
+    "sha256": "c4f4271614e3945f086c01e7909f16447a718f88f179c195d6cf2284c35c5708"
+  },
+  "frozen": {
+    "pages": 27,
+    "passes": 577,
+    "observed": 874,
+    "states": {
+      "complete:0": 41
+    },
+    "bytes": 4757,
+    "sha256": "c4f4271614e3945f086c01e7909f16447a718f88f179c195d6cf2284c35c5708"
+  },
+  "vs-chrome": {
+    "pages": {
+      "frozenOnly": 0,
+      "referenceOnly": 8
+    },
+    "passes": {
+      "frozenOnly": 0,
+      "referenceOnly": 42
+    },
+    "observed": {
+      "frozenOnly": 0,
+      "referenceOnly": 0
+    }
+  },
+  "vs-historical": {
+    "pages": {
+      "frozenOnly": 0,
+      "referenceOnly": 0
+    },
+    "passes": {
+      "frozenOnly": 0,
+      "referenceOnly": 0
+    },
+    "observed": {
+      "frozenOnly": 0,
+      "referenceOnly": 0
+    }
+  }
+}
