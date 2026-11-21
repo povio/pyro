@@ -480,7 +480,7 @@ pub(crate) fn bind(s: &Scope<'_>, page: &Rc<PageDom>) -> JsResult<()> {
             {
                 page.sweep_released_nodes();
             }
-            page.flush_iframe_events();
+            page.flush_mutation_events(Some(s));
             page.update_render_blocking();
             crate::custom::run_reactions(&page);
             crate::custom::run_upgrades(&page);

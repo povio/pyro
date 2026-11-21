@@ -1364,12 +1364,25 @@ impl PageDom {
     /// Reentrant mutations are drained by the outer flush; a held DOM borrow
     /// defers work until the next safe point.
     pub fn flush_iframe_events(&self) {
+        self.flush_mutation_events(None);
+    }
+
+    pub(crate) fn flush_mutation_events(&self, callback: Option<&pyro_js::Scope<'_>>) {
         use pyro_dom::iframe::IframeChange;
         if self.dom.try_borrow().is_ok_and(|dom| dom.has_changed_popovers()) {
             if let Some(page) = self.this.upgrade() {
                 let changed = self.dom.borrow_mut().take_changed_popovers(self.document());
                 for el in changed {
-                    let _ = crate::popover::hide_showing_popover(&page, el, true, true, None);
+                    let hide = || {
+                        let _ = crate::popover::hide_showing_popover(&page, el, true, true, None);
+                    };
+                    // beforetoggle runs script synchronously. A setter in that listener
+                    // must complete its own attribute change steps before returning.
+                    if let Some(scope) = callback {
+                        scope.realm().reenter_native_callback_hook(hide);
+                    } else {
+                        hide();
+                    }
                 }
             }
         }

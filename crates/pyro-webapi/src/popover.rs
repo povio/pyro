@@ -418,7 +418,13 @@ pub(crate) fn show_popover(page: &Rc<PageDom>, el: NodeId, throw: bool, invoker:
         _ => {}
     }
     // The events may have changed the popover's type or state.
-    if popover_type(&page.dom.borrow(), el) != ty || !check_popover_validity(page, el, false, false)? {
+    if popover_type(&page.dom.borrow(), el) != ty {
+        if throw {
+            return Err(JsError::dom("InvalidStateError", "The popover type changed while showing the popover."));
+        }
+        return Ok(());
+    }
+    if !check_popover_validity(page, el, false, throw)? {
         return Ok(());
     }
     let previous = focused(page);
