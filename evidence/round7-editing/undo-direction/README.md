@@ -28,6 +28,8 @@ There were zero Pyro named losses or changes to Pyro membership in these cohorts
 
 Seven exact native filters ran and passed: host anchor/focus and seam affinity, control undo/redo after an intervening move, locked inline formatting, formatting removal across host boundaries, formatting/structure commands, control/host undo and redo, and the DOM test for selection-direction ownership.
 
+Independent QA on the exact optimized binary reran the 24 primary pages and confirmed all 18,523 statuses against the parent and benchmark comparator. It independently reran the readonly page (5/5, both gains signed Chrome passes), all 36 moved-selection/listener/coalescing observations (36/36 complete post-undo and redo snapshots match Chrome), and four keyboard cancellation controls. The remaining 25 text-control pages, the broader guard cohorts and timings retain builder provenance.
+
 ## Long textarea benchmark
 
 The comparison isolates the selection-state cleanup. Both arms contain the validated control-history behavior. One fresh browser process per arm ran six workloads, using a fresh context for each. The textarea contained repeated `ab😀`. Each workload performed eight untimed warmup commands, reset the original value and selection, then ran 64 scripted insertText or backward-delete commands. Each recorded batch validated the command count, resulting value, length and both caret offsets. The ten arm processes ran serially as five alternating pairs (AB, BA, AB, BA, AB).
