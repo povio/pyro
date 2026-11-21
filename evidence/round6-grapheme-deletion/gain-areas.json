@@ -1,0 +1,12 @@
+{
+ "input-events/input-events-get-target-ranges-backspace.tentative.html": 9,
+ "input-events/input-events-get-target-ranges-deleting-in-list-items.tentative.html": 2,
+ "input-events/input-events-get-target-ranges-forwarddelete.tentative.html": 9,
+ "editing/other/delete-in-child-of-head.tentative.html": 17,
+ "editing/other/delete-in-child-of-html.tentative.html": 6,
+ "editing/other/editing-around-select-element.tentative.html": 2,
+ "editing/other/join-pre-and-other-block.html": 3,
+ "editing/run/delete.html": 36,
+ "editing/run/forwarddelete.html": 52,
+ "editing/run/multitest.html": 6
+}

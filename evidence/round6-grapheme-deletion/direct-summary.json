@@ -1,0 +1,42 @@
+{
+ "measure": {
+  "cases": 20,
+  "baseExact": 6,
+  "candidateExact": 20
+ },
+ "edges": {
+  "cases": 78,
+  "baseExact": 40,
+  "candidateExact": 73
+ },
+ "text-nodes": {
+  "cases": 78,
+  "baseExact": 40,
+  "candidateExact": 73
+ },
+ "hosts": {
+  "cases": 14,
+  "baseExact": 0,
+  "candidateExact": 5
+ },
+ "structures": {
+  "cases": 14,
+  "baseExact": 1,
+  "candidateExact": 5
+ },
+ "joins": {
+  "cases": 7,
+  "baseExact": 0,
+  "candidateExact": 0
+ },
+ "containers": {
+  "cases": 6,
+  "baseExact": 0,
+  "candidateExact": 1
+ },
+ "sole-break": {
+  "cases": 7,
+  "baseExact": 0,
+  "candidateExact": 1
+ }
+}

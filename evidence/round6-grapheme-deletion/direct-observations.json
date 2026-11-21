@@ -1,0 +1,9217 @@
+{
+ "measure": [
+  {
+   "base": {
+    "name": "ascii",
+    "cluster": "a",
+    "key": "Backspace",
+    "value": "XY",
+    "caret": 1,
+    "span": [
+     1,
+     2
+    ],
+    "target": "deleteContentBackward",
+    "trusted": true
+   },
+   "candidate": {
+    "name": "ascii",
+    "cluster": "a",
+    "key": "Backspace",
+    "value": "XY",
+    "caret": 1,
+    "span": [
+     1,
+     2
+    ],
+    "target": "deleteContentBackward",
+    "trusted": true
+   },
+   "chrome158": {
+    "name": "ascii",
+    "cluster": "a",
+    "key": "Backspace",
+    "value": "XY",
+    "caret": 1,
+    "span": [
+     1,
+     2
+    ],
+    "target": "deleteContentBackward",
+    "trusted": true
+   }
+  },
+  {
+   "base": {
+    "name": "ascii",
+    "cluster": "a",
+    "key": "Delete",
+    "value": "XY",
+    "caret": 1,
+    "span": [
+     1,
+     2
+    ],
+    "target": "deleteContentForward",
+    "trusted": true
+   },
+   "candidate": {
+    "name": "ascii",
+    "cluster": "a",
+    "key": "Delete",
+    "value": "XY",
+    "caret": 1,
+    "span": [
+     1,
+     2
+    ],
+    "target": "deleteContentForward",
+    "trusted": true
+   },
+   "chrome158": {
+    "name": "ascii",
+    "cluster": "a",
+    "key": "Delete",
+    "value": "XY",
+    "caret": 1,
+    "span": [
+     1,
+     2
+    ],
+    "target": "deleteContentForward",
+    "trusted": true
+   }
+  },
+  {
+   "base": {
+    "name": "acute",
+    "cluster": "é",
+    "key": "Backspace",
+    "value": "XeY",
+    "caret": 2,
+    "span": [
+     2,
+     3
+    ],
+    "target": "deleteContentBackward",
+    "trusted": true
+   },
+   "candidate": {
+    "name": "acute",
+    "cluster": "é",
+    "key": "Backspace",
+    "value": "XeY",
+    "caret": 2,
+    "span": [
+     2,
+     3
+    ],
+    "target": "deleteContentBackward",
+    "trusted": true
+   },
+   "chrome158": {
+    "name": "acute",
+    "cluster": "é",
+    "key": "Backspace",
+    "value": "XeY",
+    "caret": 2,
+    "span": [
+     2,
+     3
+    ],
+    "target": "deleteContentBackward",
+    "trusted": true
+   }
+  },
+  {
+   "base": {
+    "name": "acute",
+    "cluster": "é",
+    "key": "Delete",
+    "value": "X́Y",
+    "caret": 1,
+    "span": [
+     1,
+     2
+    ],
+    "target": "deleteContentForward",
+    "trusted": true
+   },
+   "candidate": {
+    "name": "acute",
+    "cluster": "é",
+    "key": "Delete",
+    "value": "XY",
+    "caret": 1,
+    "span": [
+     1,
+     3
+    ],
+    "target": "deleteContentForward",
+    "trusted": true
+   },
+   "chrome158": {
+    "name": "acute",
+    "cluster": "é",
+    "key": "Delete",
+    "value": "XY",
+    "caret": 1,
+    "span": [
+     1,
+     3
+    ],
+    "target": "deleteContentForward",
+    "trusted": true
+   }
+  },
+  {
+   "base": {
+    "name": "flag",
+    "cluster": "🇸🇮",
+    "key": "Backspace",
+    "value": "X🇸Y",
+    "caret": 3,
+    "span": [
+     3,
+     5
+    ],
+    "target": "deleteContentBackward",
+    "trusted": true
+   },
+   "candidate": {
+    "name": "flag",
+    "cluster": "🇸🇮",
+    "key": "Backspace",
+    "value": "XY",
+    "caret": 1,
+    "span": [
+     1,
+     5
+    ],
+    "target": "deleteContentBackward",
+    "trusted": true
+   },
+   "chrome158": {
+    "name": "flag",
+    "cluster": "🇸🇮",
+    "key": "Backspace",
+    "value": "XY",
+    "caret": 1,
+    "span": [
+     1,
+     5
+    ],
+    "target": "deleteContentBackward",
+    "trusted": true
+   }
+  },
+  {
+   "base": {
+    "name": "flag",
+    "cluster": "🇸🇮",
+    "key": "Delete",
+    "value": "X🇮Y",
+    "caret": 1,
+    "span": [
+     1,
+     3
+    ],
+    "target": "deleteContentForward",
+    "trusted": true
+   },
+   "candidate": {
+    "name": "flag",
+    "cluster": "🇸🇮",
+    "key": "Delete",
+    "value": "XY",
+    "caret": 1,
+    "span": [
+     1,
+     5
+    ],
+    "target": "deleteContentForward",
+    "trusted": true
+   },
+   "chrome158": {
+    "name": "flag",
+    "cluster": "🇸🇮",
+    "key": "Delete",
+    "value": "XY",
+    "caret": 1,
+    "span": [
+     1,
+     5
+    ],
+    "target": "deleteContentForward",
+    "trusted": true
+   }
+  },
+  {
+   "base": {
+    "name": "modifier",
+    "cluster": "👋🏽",
+    "key": "Backspace",
+    "value": "X👋Y",
+    "caret": 3,
+    "span": [
+     3,
+     5
+    ],
+    "target": "deleteContentBackward",
+    "trusted": true
+   },
+   "candidate": {
+    "name": "modifier",
+    "cluster": "👋🏽",
+    "key": "Backspace",
+    "value": "XY",
+    "caret": 1,
+    "span": [
+     1,
+     5
+    ],
+    "target": "deleteContentBackward",
+    "trusted": true
+   },
+   "chrome158": {
+    "name": "modifier",
+    "cluster": "👋🏽",
+    "key": "Backspace",
+    "value": "XY",
+    "caret": 1,
+    "span": [
+     1,
+     5
+    ],
+    "target": "deleteContentBackward",
+    "trusted": true
+   }
+  },
+  {
+   "base": {
+    "name": "modifier",
+    "cluster": "👋🏽",
+    "key": "Delete",
+    "value": "X🏽Y",
+    "caret": 1,
+    "span": [
+     1,
+     3
+    ],
+    "target": "deleteContentForward",
+    "trusted": true
+   },
+   "candidate": {
+    "name": "modifier",
+    "cluster": "👋🏽",
+    "key": "Delete",
+    "value": "XY",
+    "caret": 1,
+    "span": [
+     1,
+     5
+    ],
+    "target": "deleteContentForward",
+    "trusted": true
+   },
+   "chrome158": {
+    "name": "modifier",
+    "cluster": "👋🏽",
+    "key": "Delete",
+    "value": "XY",
+    "caret": 1,
+    "span": [
+     1,
+     5
+    ],
+    "target": "deleteContentForward",
+    "trusted": true
+   }
+  },
+  {
+   "base": {
+    "name": "family",
+    "cluster": "👨‍👩‍👧‍👦",
+    "key": "Backspace",
+    "value": "X👨‍👩‍👧‍Y",
+    "caret": 10,
+    "span": [
+     10,
+     12
+    ],
+    "target": "deleteContentBackward",
+    "trusted": true
+   },
+   "candidate": {
+    "name": "family",
+    "cluster": "👨‍👩‍👧‍👦",
+    "key": "Backspace",
+    "value": "XY",
+    "caret": 1,
+    "span": [
+     1,
+     12
+    ],
+    "target": "deleteContentBackward",
+    "trusted": true
+   },
+   "chrome158": {
+    "name": "family",
+    "cluster": "👨‍👩‍👧‍👦",
+    "key": "Backspace",
+    "value": "XY",
+    "caret": 1,
+    "span": [
+     1,
+     12
+    ],
+    "target": "deleteContentBackward",
+    "trusted": true
+   }
+  },
+  {
+   "base": {
+    "name": "family",
+    "cluster": "👨‍👩‍👧‍👦",
+    "key": "Delete",
+    "value": "X‍👩‍👧‍👦Y",
+    "caret": 1,
+    "span": [
+     1,
+     3
+    ],
+    "target": "deleteContentForward",
+    "trusted": true
+   },
+   "candidate": {
+    "name": "family",
+    "cluster": "👨‍👩‍👧‍👦",
+    "key": "Delete",
+    "value": "XY",
+    "caret": 1,
+    "span": [
+     1,
+     12
+    ],
+    "target": "deleteContentForward",
+    "trusted": true
+   },
+   "chrome158": {
+    "name": "family",
+    "cluster": "👨‍👩‍👧‍👦",
+    "key": "Delete",
+    "value": "XY",
+    "caret": 1,
+    "span": [
+     1,
+     12
+    ],
+    "target": "deleteContentForward",
+    "trusted": true
+   }
+  },
+  {
+   "base": {
+    "name": "variation",
+    "cluster": "❤️",
+    "key": "Backspace",
+    "value": "X❤Y",
+    "caret": 2,
+    "span": [
+     2,
+     3
+    ],
+    "target": "deleteContentBackward",
+    "trusted": true
+   },
+   "candidate": {
+    "name": "variation",
+    "cluster": "❤️",
+    "key": "Backspace",
+    "value": "XY",
+    "caret": 1,
+    "span": [
+     1,
+     3
+    ],
+    "target": "deleteContentBackward",
+    "trusted": true
+   },
+   "chrome158": {
+    "name": "variation",
+    "cluster": "❤️",
+    "key": "Backspace",
+    "value": "XY",
+    "caret": 1,
+    "span": [
+     1,
+     3
+    ],
+    "target": "deleteContentBackward",
+    "trusted": true
+   }
+  },
+  {
+   "base": {
+    "name": "variation",
+    "cluster": "❤️",
+    "key": "Delete",
+    "value": "X️Y",
+    "caret": 1,
+    "span": [
+     1,
+     2
+    ],
+    "target": "deleteContentForward",
+    "trusted": true
+   },
+   "candidate": {
+    "name": "variation",
+    "cluster": "❤️",
+    "key": "Delete",
+    "value": "XY",
+    "caret": 1,
+    "span": [
+     1,
+     3
+    ],
+    "target": "deleteContentForward",
+    "trusted": true
+   },
+   "chrome158": {
+    "name": "variation",
+    "cluster": "❤️",
+    "key": "Delete",
+    "value": "XY",
+    "caret": 1,
+    "span": [
+     1,
+     3
+    ],
+    "target": "deleteContentForward",
+    "trusted": true
+   }
+  },
+  {
+   "base": {
+    "name": "keycap",
+    "cluster": "1️⃣",
+    "key": "Backspace",
+    "value": "X1️Y",
+    "caret": 3,
+    "span": [
+     3,
+     4
+    ],
+    "target": "deleteContentBackward",
+    "trusted": true
+   },
+   "candidate": {
+    "name": "keycap",
+    "cluster": "1️⃣",
+    "key": "Backspace",
+    "value": "XY",
+    "caret": 1,
+    "span": [
+     1,
+     4
+    ],
+    "target": "deleteContentBackward",
+    "trusted": true
+   },
+   "chrome158": {
+    "name": "keycap",
+    "cluster": "1️⃣",
+    "key": "Backspace",
+    "value": "XY",
+    "caret": 1,
+    "span": [
+     1,
+     4
+    ],
+    "target": "deleteContentBackward",
+    "trusted": true
+   }
+  },
+  {
+   "base": {
+    "name": "keycap",
+    "cluster": "1️⃣",
+    "key": "Delete",
+    "value": "X️⃣Y",
+    "caret": 1,
+    "span": [
+     1,
+     2
+    ],
+    "target": "deleteContentForward",
+    "trusted": true
+   },
+   "candidate": {
+    "name": "keycap",
+    "cluster": "1️⃣",
+    "key": "Delete",
+    "value": "XY",
+    "caret": 1,
+    "span": [
+     1,
+     4
+    ],
+    "target": "deleteContentForward",
+    "trusted": true
+   },
+   "chrome158": {
+    "name": "keycap",
+    "cluster": "1️⃣",
+    "key": "Delete",
+    "value": "XY",
+    "caret": 1,
+    "span": [
+     1,
+     4
+    ],
+    "target": "deleteContentForward",
+    "trusted": true
+   }
+  },
+  {
+   "base": {
+    "name": "indic",
+    "cluster": "क्षि",
+    "key": "Backspace",
+    "value": "Xक्षY",
+    "caret": 4,
+    "span": [
+     4,
+     5
+    ],
+    "target": "deleteContentBackward",
+    "trusted": true
+   },
+   "candidate": {
+    "name": "indic",
+    "cluster": "क्षि",
+    "key": "Backspace",
+    "value": "Xक्षY",
+    "caret": 4,
+    "span": [
+     4,
+     5
+    ],
+    "target": "deleteContentBackward",
+    "trusted": true
+   },
+   "chrome158": {
+    "name": "indic",
+    "cluster": "क्षि",
+    "key": "Backspace",
+    "value": "Xक्षY",
+    "caret": 4,
+    "span": [
+     4,
+     5
+    ],
+    "target": "deleteContentBackward",
+    "trusted": true
+   }
+  },
+  {
+   "base": {
+    "name": "indic",
+    "cluster": "क्षि",
+    "key": "Delete",
+    "value": "X्षिY",
+    "caret": 1,
+    "span": [
+     1,
+     2
+    ],
+    "target": "deleteContentForward",
+    "trusted": true
+   },
+   "candidate": {
+    "name": "indic",
+    "cluster": "क्षि",
+    "key": "Delete",
+    "value": "XY",
+    "caret": 1,
+    "span": [
+     1,
+     5
+    ],
+    "target": "deleteContentForward",
+    "trusted": true
+   },
+   "chrome158": {
+    "name": "indic",
+    "cluster": "क्षि",
+    "key": "Delete",
+    "value": "XY",
+    "caret": 1,
+    "span": [
+     1,
+     5
+    ],
+    "target": "deleteContentForward",
+    "trusted": true
+   }
+  },
+  {
+   "base": {
+    "name": "thai",
+    "cluster": "ที่",
+    "key": "Backspace",
+    "value": "XทีY",
+    "caret": 3,
+    "span": [
+     3,
+     4
+    ],
+    "target": "deleteContentBackward",
+    "trusted": true
+   },
+   "candidate": {
+    "name": "thai",
+    "cluster": "ที่",
+    "key": "Backspace",
+    "value": "XทีY",
+    "caret": 3,
+    "span": [
+     3,
+     4
+    ],
+    "target": "deleteContentBackward",
+    "trusted": true
+   },
+   "chrome158": {
+    "name": "thai",
+    "cluster": "ที่",
+    "key": "Backspace",
+    "value": "XทีY",
+    "caret": 3,
+    "span": [
+     3,
+     4
+    ],
+    "target": "deleteContentBackward",
+    "trusted": true
+   }
+  },
+  {
+   "base": {
+    "name": "thai",
+    "cluster": "ที่",
+    "key": "Delete",
+    "value": "Xี่Y",
+    "caret": 1,
+    "span": [
+     1,
+     2
+    ],
+    "target": "deleteContentForward",
+    "trusted": true
+   },
+   "candidate": {
+    "name": "thai",
+    "cluster": "ที่",
+    "key": "Delete",
+    "value": "XY",
+    "caret": 1,
+    "span": [
+     1,
+     4
+    ],
+    "target": "deleteContentForward",
+    "trusted": true
+   },
+   "chrome158": {
+    "name": "thai",
+    "cluster": "ที่",
+    "key": "Delete",
+    "value": "XY",
+    "caret": 1,
+    "span": [
+     1,
+     4
+    ],
+    "target": "deleteContentForward",
+    "trusted": true
+   }
+  },
+  {
+   "base": {
+    "name": "jamo",
+    "cluster": "각",
+    "key": "Backspace",
+    "value": "X가Y",
+    "caret": 3,
+    "span": [
+     3,
+     4
+    ],
+    "target": "deleteContentBackward",
+    "trusted": true
+   },
+   "candidate": {
+    "name": "jamo",
+    "cluster": "각",
+    "key": "Backspace",
+    "value": "X가Y",
+    "caret": 3,
+    "span": [
+     3,
+     4
+    ],
+    "target": "deleteContentBackward",
+    "trusted": true
+   },
+   "chrome158": {
+    "name": "jamo",
+    "cluster": "각",
+    "key": "Backspace",
+    "value": "X가Y",
+    "caret": 3,
+    "span": [
+     3,
+     4
+    ],
+    "target": "deleteContentBackward",
+    "trusted": true
+   }
+  },
+  {
+   "base": {
+    "name": "jamo",
+    "cluster": "각",
+    "key": "Delete",
+    "value": "XᅡᆨY",
+    "caret": 1,
+    "span": [
+     1,
+     2
+    ],
+    "target": "deleteContentForward",
+    "trusted": true
+   },
+   "candidate": {
+    "name": "jamo",
+    "cluster": "각",
+    "key": "Delete",
+    "value": "XY",
+    "caret": 1,
+    "span": [
+     1,
+     4
+    ],
+    "target": "deleteContentForward",
+    "trusted": true
+   },
+   "chrome158": {
+    "name": "jamo",
+    "cluster": "각",
+    "key": "Delete",
+    "value": "XY",
+    "caret": 1,
+    "span": [
+     1,
+     4
+    ],
+    "target": "deleteContentForward",
+    "trusted": true
+   }
+  }
+ ],
+ "edges": [
+  {
+   "base": {
+    "name": "single",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "😀Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "single",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "😀Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "single",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "😀Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "single",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "X😀Y",
+    "span": [
+     0,
+     1,
+     0,
+     2
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "single",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "single",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "single",
+    "key": "Backspace",
+    "offset": 2,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "single",
+    "key": "Backspace",
+    "offset": 2,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "single",
+    "key": "Backspace",
+    "offset": 2,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "single",
+    "key": "Delete",
+    "offset": 0,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "single",
+    "key": "Delete",
+    "offset": 0,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "single",
+    "key": "Delete",
+    "offset": 0,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "single",
+    "key": "Delete",
+    "offset": 1,
+    "value": "XY",
+    "span": [
+     0,
+     2,
+     0,
+     3
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "single",
+    "key": "Delete",
+    "offset": 1,
+    "value": "X😀",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "single",
+    "key": "Delete",
+    "offset": 1,
+    "value": "X😀",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "single",
+    "key": "Delete",
+    "offset": 2,
+    "value": "X😀",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "single",
+    "key": "Delete",
+    "offset": 2,
+    "value": "X😀",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "single",
+    "key": "Delete",
+    "offset": 2,
+    "value": "X😀",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "acute",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "éY",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "acute",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "éY",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "acute",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "éY",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "acute",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "X́Y",
+    "span": [
+     0,
+     1,
+     0,
+     2
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "acute",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "XeY",
+    "span": [
+     0,
+     2,
+     0,
+     3
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "acute",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "XeY",
+    "span": [
+     0,
+     2,
+     0,
+     3
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "acute",
+    "key": "Backspace",
+    "offset": 2,
+    "value": "XeY",
+    "span": [
+     0,
+     2,
+     0,
+     3
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "acute",
+    "key": "Backspace",
+    "offset": 2,
+    "value": "XeY",
+    "span": [
+     0,
+     2,
+     0,
+     3
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "acute",
+    "key": "Backspace",
+    "offset": 2,
+    "value": "XeY",
+    "span": [
+     0,
+     2,
+     0,
+     3
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "acute",
+    "key": "Delete",
+    "offset": 0,
+    "value": "X́Y",
+    "span": [
+     0,
+     1,
+     0,
+     2
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "acute",
+    "key": "Delete",
+    "offset": 0,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "acute",
+    "key": "Delete",
+    "offset": 0,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "acute",
+    "key": "Delete",
+    "offset": 1,
+    "value": "XeY",
+    "span": [
+     0,
+     2,
+     0,
+     3
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "acute",
+    "key": "Delete",
+    "offset": 1,
+    "value": "Xé",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "acute",
+    "key": "Delete",
+    "offset": 1,
+    "value": "Xé",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "acute",
+    "key": "Delete",
+    "offset": 2,
+    "value": "Xé",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "acute",
+    "key": "Delete",
+    "offset": 2,
+    "value": "Xé",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "acute",
+    "key": "Delete",
+    "offset": 2,
+    "value": "Xé",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "flag",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "🇸🇮Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "flag",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "🇸🇮Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "flag",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "🇸🇮Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "flag",
+    "key": "Backspace",
+    "offset": 2,
+    "value": "X🇮Y",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "flag",
+    "key": "Backspace",
+    "offset": 2,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     5
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "flag",
+    "key": "Backspace",
+    "offset": 2,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     5
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "flag",
+    "key": "Backspace",
+    "offset": 4,
+    "value": "X🇸Y",
+    "span": [
+     0,
+     3,
+     0,
+     5
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "flag",
+    "key": "Backspace",
+    "offset": 4,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     5
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "flag",
+    "key": "Backspace",
+    "offset": 4,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     5
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "flag",
+    "key": "Delete",
+    "offset": 0,
+    "value": "X🇮Y",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "flag",
+    "key": "Delete",
+    "offset": 0,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     5
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "flag",
+    "key": "Delete",
+    "offset": 0,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     5
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "flag",
+    "key": "Delete",
+    "offset": 2,
+    "value": "X🇸Y",
+    "span": [
+     0,
+     3,
+     0,
+     5
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "flag",
+    "key": "Delete",
+    "offset": 2,
+    "value": "X🇸🇮",
+    "span": [
+     0,
+     5,
+     0,
+     6
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "flag",
+    "key": "Delete",
+    "offset": 2,
+    "value": "X🇸🇮",
+    "span": [
+     0,
+     5,
+     0,
+     6
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "flag",
+    "key": "Delete",
+    "offset": 4,
+    "value": "X🇸🇮",
+    "span": [
+     0,
+     5,
+     0,
+     6
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "flag",
+    "key": "Delete",
+    "offset": 4,
+    "value": "X🇸🇮",
+    "span": [
+     0,
+     5,
+     0,
+     6
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "flag",
+    "key": "Delete",
+    "offset": 4,
+    "value": "X🇸🇮",
+    "span": [
+     0,
+     5,
+     0,
+     6
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "splitAcute",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "éY",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "splitAcute",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "éY",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "splitAcute",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "éY",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "splitAcute",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "X́Y",
+    "span": [
+     0,
+     1,
+     0,
+     2
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "splitAcute",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "X́Y",
+    "span": [
+     0,
+     1,
+     0,
+     2
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "splitAcute",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "X́Y",
+    "span": [
+     0,
+     1,
+     0,
+     2
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "splitAcute",
+    "key": "Backspace",
+    "offset": 2,
+    "value": "XeY",
+    "span": [
+     1,
+     0,
+     1,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "splitAcute",
+    "key": "Backspace",
+    "offset": 2,
+    "value": "XeY",
+    "span": [
+     1,
+     0,
+     1,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "splitAcute",
+    "key": "Backspace",
+    "offset": 2,
+    "value": "XeY",
+    "span": [
+     1,
+     0,
+     1,
+     1
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "splitAcute",
+    "key": "Delete",
+    "offset": 0,
+    "value": "X́Y",
+    "span": [
+     0,
+     1,
+     0,
+     2
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "splitAcute",
+    "key": "Delete",
+    "offset": 0,
+    "value": "X́Y",
+    "span": [
+     0,
+     1,
+     0,
+     2
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "splitAcute",
+    "key": "Delete",
+    "offset": 0,
+    "value": "X́Y",
+    "span": [
+     0,
+     1,
+     0,
+     2
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "splitAcute",
+    "key": "Delete",
+    "offset": 1,
+    "value": "XeY",
+    "span": [
+     1,
+     0,
+     1,
+     1
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "splitAcute",
+    "key": "Delete",
+    "offset": 1,
+    "value": "XeY",
+    "span": [
+     1,
+     0,
+     1,
+     1
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "splitAcute",
+    "key": "Delete",
+    "offset": 1,
+    "value": "XeY",
+    "span": [
+     1,
+     0,
+     1,
+     1
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "splitAcute",
+    "key": "Delete",
+    "offset": 2,
+    "value": "Xé",
+    "span": [
+     1,
+     1,
+     1,
+     2
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "splitAcute",
+    "key": "Delete",
+    "offset": 2,
+    "value": "Xé",
+    "span": [
+     1,
+     1,
+     1,
+     2
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "splitAcute",
+    "key": "Delete",
+    "offset": 2,
+    "value": "Xé",
+    "span": [
+     1,
+     1,
+     1,
+     2
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "splitFlag",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "🇸🇮Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "splitFlag",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "🇸🇮Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "splitFlag",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "🇸🇮Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "splitFlag",
+    "key": "Backspace",
+    "offset": 2,
+    "value": "X🇮Y",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "splitFlag",
+    "key": "Backspace",
+    "offset": 2,
+    "value": "X🇮Y",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "splitFlag",
+    "key": "Backspace",
+    "offset": 2,
+    "value": "X🇮Y",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "splitFlag",
+    "key": "Backspace",
+    "offset": 4,
+    "value": "X🇸Y",
+    "span": [
+     1,
+     0,
+     1,
+     2
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "splitFlag",
+    "key": "Backspace",
+    "offset": 4,
+    "value": "X🇸Y",
+    "span": [
+     1,
+     0,
+     1,
+     2
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "splitFlag",
+    "key": "Backspace",
+    "offset": 4,
+    "value": "X🇸Y",
+    "span": [
+     1,
+     0,
+     1,
+     2
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "splitFlag",
+    "key": "Delete",
+    "offset": 0,
+    "value": "X🇮Y",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "splitFlag",
+    "key": "Delete",
+    "offset": 0,
+    "value": "X🇮Y",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "splitFlag",
+    "key": "Delete",
+    "offset": 0,
+    "value": "X🇮Y",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "splitFlag",
+    "key": "Delete",
+    "offset": 2,
+    "value": "X🇸Y",
+    "span": [
+     1,
+     0,
+     1,
+     2
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "splitFlag",
+    "key": "Delete",
+    "offset": 2,
+    "value": "X🇸Y",
+    "span": [
+     1,
+     0,
+     1,
+     2
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "splitFlag",
+    "key": "Delete",
+    "offset": 2,
+    "value": "X🇸Y",
+    "span": [
+     1,
+     0,
+     1,
+     2
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "splitFlag",
+    "key": "Delete",
+    "offset": 4,
+    "value": "X🇸🇮",
+    "span": [
+     1,
+     2,
+     1,
+     3
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "splitFlag",
+    "key": "Delete",
+    "offset": 4,
+    "value": "X🇸🇮",
+    "span": [
+     1,
+     2,
+     1,
+     3
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "splitFlag",
+    "key": "Delete",
+    "offset": 4,
+    "value": "X🇸🇮",
+    "span": [
+     1,
+     2,
+     1,
+     3
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "splitFamily",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "👨‍👩‍👧‍👦Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "splitFamily",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "👨‍👩‍👧‍👦Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "splitFamily",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "👨‍👩‍👧‍👦Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "splitFamily",
+    "key": "Backspace",
+    "offset": 5,
+    "value": "X👨‍‍👧‍👦Y",
+    "span": [
+     1,
+     0,
+     1,
+     2
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "splitFamily",
+    "key": "Backspace",
+    "offset": 5,
+    "value": "X👨‍Y",
+    "span": [
+     1,
+     0,
+     1,
+     8
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "splitFamily",
+    "key": "Backspace",
+    "offset": 5,
+    "value": "X👨‍Y",
+    "span": [
+     1,
+     0,
+     1,
+     8
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "splitFamily",
+    "key": "Backspace",
+    "offset": 11,
+    "value": "X👨‍👩‍👧‍Y",
+    "span": [
+     1,
+     6,
+     1,
+     8
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "splitFamily",
+    "key": "Backspace",
+    "offset": 11,
+    "value": "X👨‍Y",
+    "span": [
+     1,
+     0,
+     1,
+     8
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "splitFamily",
+    "key": "Backspace",
+    "offset": 11,
+    "value": "X👨‍Y",
+    "span": [
+     1,
+     0,
+     1,
+     8
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "splitFamily",
+    "key": "Delete",
+    "offset": 0,
+    "value": "X‍👩‍👧‍👦Y",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "splitFamily",
+    "key": "Delete",
+    "offset": 0,
+    "value": "X👩‍👧‍👦Y",
+    "span": [
+     0,
+     1,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "splitFamily",
+    "key": "Delete",
+    "offset": 0,
+    "value": "X👩‍👧‍👦Y",
+    "span": [
+     0,
+     1,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "splitFamily",
+    "key": "Delete",
+    "offset": 5,
+    "value": "X👨‍👩👧‍👦Y",
+    "span": [
+     1,
+     2,
+     1,
+     3
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "splitFamily",
+    "key": "Delete",
+    "offset": 5,
+    "value": "X👨‍👩‍👧‍👦",
+    "span": [
+     1,
+     8,
+     1,
+     9
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "splitFamily",
+    "key": "Delete",
+    "offset": 5,
+    "value": "X👨‍👩‍👧‍👦",
+    "span": [
+     1,
+     8,
+     1,
+     9
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "splitFamily",
+    "key": "Delete",
+    "offset": 11,
+    "value": "X👨‍👩‍👧‍👦",
+    "span": [
+     1,
+     8,
+     1,
+     9
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "splitFamily",
+    "key": "Delete",
+    "offset": 11,
+    "value": "X👨‍👩‍👧‍👦",
+    "span": [
+     1,
+     8,
+     1,
+     9
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "splitFamily",
+    "key": "Delete",
+    "offset": 11,
+    "value": "X👨‍👩‍👧‍👦",
+    "span": [
+     1,
+     8,
+     1,
+     9
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "twoModifiers",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "👋🏽́Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "twoModifiers",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "👋🏽́Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "twoModifiers",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "👋🏽́Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "twoModifiers",
+    "key": "Backspace",
+    "offset": 2,
+    "value": "X🏽́Y",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "twoModifiers",
+    "key": "Backspace",
+    "offset": 2,
+    "value": "X👋🏽Y",
+    "span": [
+     0,
+     5,
+     0,
+     6
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "twoModifiers",
+    "key": "Backspace",
+    "offset": 2,
+    "value": "X👋🏽Y",
+    "span": [
+     0,
+     5,
+     0,
+     6
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "twoModifiers",
+    "key": "Backspace",
+    "offset": 5,
+    "value": "X👋🏽Y",
+    "span": [
+     0,
+     5,
+     0,
+     6
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "twoModifiers",
+    "key": "Backspace",
+    "offset": 5,
+    "value": "X👋🏽Y",
+    "span": [
+     0,
+     5,
+     0,
+     6
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "twoModifiers",
+    "key": "Backspace",
+    "offset": 5,
+    "value": "X👋🏽Y",
+    "span": [
+     0,
+     5,
+     0,
+     6
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "twoModifiers",
+    "key": "Delete",
+    "offset": 0,
+    "value": "X🏽́Y",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "twoModifiers",
+    "key": "Delete",
+    "offset": 0,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     6
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "twoModifiers",
+    "key": "Delete",
+    "offset": 0,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     6
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "twoModifiers",
+    "key": "Delete",
+    "offset": 2,
+    "value": "X👋́Y",
+    "span": [
+     0,
+     3,
+     0,
+     5
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "twoModifiers",
+    "key": "Delete",
+    "offset": 2,
+    "value": "X👋🏽́",
+    "span": [
+     0,
+     6,
+     0,
+     7
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "twoModifiers",
+    "key": "Delete",
+    "offset": 2,
+    "value": "X👋🏽́",
+    "span": [
+     0,
+     6,
+     0,
+     7
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "twoModifiers",
+    "key": "Delete",
+    "offset": 5,
+    "value": "X👋🏽́",
+    "span": [
+     0,
+     6,
+     0,
+     7
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "twoModifiers",
+    "key": "Delete",
+    "offset": 5,
+    "value": "X👋🏽́",
+    "span": [
+     0,
+     6,
+     0,
+     7
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "twoModifiers",
+    "key": "Delete",
+    "offset": 5,
+    "value": "X👋🏽́",
+    "span": [
+     0,
+     6,
+     0,
+     7
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "accentEmoji",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "❤️́Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "accentEmoji",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "❤️́Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "accentEmoji",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "❤️́Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "accentEmoji",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "X️́Y",
+    "span": [
+     0,
+     1,
+     0,
+     2
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "accentEmoji",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "X❤️Y",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "accentEmoji",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "X❤️Y",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "accentEmoji",
+    "key": "Backspace",
+    "offset": 3,
+    "value": "X❤️Y",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "accentEmoji",
+    "key": "Backspace",
+    "offset": 3,
+    "value": "X❤️Y",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "accentEmoji",
+    "key": "Backspace",
+    "offset": 3,
+    "value": "X❤️Y",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "accentEmoji",
+    "key": "Delete",
+    "offset": 0,
+    "value": "X️́Y",
+    "span": [
+     0,
+     1,
+     0,
+     2
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "accentEmoji",
+    "key": "Delete",
+    "offset": 0,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "accentEmoji",
+    "key": "Delete",
+    "offset": 0,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "accentEmoji",
+    "key": "Delete",
+    "offset": 1,
+    "value": "X❤́Y",
+    "span": [
+     0,
+     2,
+     0,
+     3
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "accentEmoji",
+    "key": "Delete",
+    "offset": 1,
+    "value": "X❤️́",
+    "span": [
+     0,
+     4,
+     0,
+     5
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "accentEmoji",
+    "key": "Delete",
+    "offset": 1,
+    "value": "X❤️́",
+    "span": [
+     0,
+     4,
+     0,
+     5
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "accentEmoji",
+    "key": "Delete",
+    "offset": 3,
+    "value": "X❤️́",
+    "span": [
+     0,
+     4,
+     0,
+     5
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "accentEmoji",
+    "key": "Delete",
+    "offset": 3,
+    "value": "X❤️́",
+    "span": [
+     0,
+     4,
+     0,
+     5
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "accentEmoji",
+    "key": "Delete",
+    "offset": 3,
+    "value": "X❤️́",
+    "span": [
+     0,
+     4,
+     0,
+     5
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "selectorText",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "A️Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "selectorText",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "A️Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "selectorText",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "A️Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "selectorText",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "X️Y",
+    "span": [
+     0,
+     1,
+     0,
+     2
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "selectorText",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "selectorText",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "selectorText",
+    "key": "Backspace",
+    "offset": 2,
+    "value": "XAY",
+    "span": [
+     0,
+     2,
+     0,
+     3
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "selectorText",
+    "key": "Backspace",
+    "offset": 2,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "selectorText",
+    "key": "Backspace",
+    "offset": 2,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "selectorText",
+    "key": "Delete",
+    "offset": 0,
+    "value": "X️Y",
+    "span": [
+     0,
+     1,
+     0,
+     2
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "selectorText",
+    "key": "Delete",
+    "offset": 0,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "selectorText",
+    "key": "Delete",
+    "offset": 0,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "selectorText",
+    "key": "Delete",
+    "offset": 1,
+    "value": "XAY",
+    "span": [
+     0,
+     2,
+     0,
+     3
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "selectorText",
+    "key": "Delete",
+    "offset": 1,
+    "value": "XA️",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "selectorText",
+    "key": "Delete",
+    "offset": 1,
+    "value": "XA️",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "selectorText",
+    "key": "Delete",
+    "offset": 2,
+    "value": "XA️",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "selectorText",
+    "key": "Delete",
+    "offset": 2,
+    "value": "XA️",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "selectorText",
+    "key": "Delete",
+    "offset": 2,
+    "value": "XA️",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "mathSelector",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "漢󠄀Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "mathSelector",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "漢󠄀Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "mathSelector",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "漢󠄀Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "mathSelector",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "X󠄀Y",
+    "span": [
+     0,
+     1,
+     0,
+     2
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "mathSelector",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     4
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "mathSelector",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     4
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "mathSelector",
+    "key": "Backspace",
+    "offset": 3,
+    "value": "X漢Y",
+    "span": [
+     0,
+     2,
+     0,
+     4
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "mathSelector",
+    "key": "Backspace",
+    "offset": 3,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     4
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "mathSelector",
+    "key": "Backspace",
+    "offset": 3,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     4
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "mathSelector",
+    "key": "Delete",
+    "offset": 0,
+    "value": "X󠄀Y",
+    "span": [
+     0,
+     1,
+     0,
+     2
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "mathSelector",
+    "key": "Delete",
+    "offset": 0,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "mathSelector",
+    "key": "Delete",
+    "offset": 0,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "mathSelector",
+    "key": "Delete",
+    "offset": 1,
+    "value": "X漢Y",
+    "span": [
+     0,
+     2,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "mathSelector",
+    "key": "Delete",
+    "offset": 1,
+    "value": "X漢󠄀",
+    "span": [
+     0,
+     4,
+     0,
+     5
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "mathSelector",
+    "key": "Delete",
+    "offset": 1,
+    "value": "X漢󠄀",
+    "span": [
+     0,
+     4,
+     0,
+     5
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "mathSelector",
+    "key": "Delete",
+    "offset": 3,
+    "value": "X漢󠄀",
+    "span": [
+     0,
+     4,
+     0,
+     5
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "mathSelector",
+    "key": "Delete",
+    "offset": 3,
+    "value": "X漢󠄀",
+    "span": [
+     0,
+     4,
+     0,
+     5
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "mathSelector",
+    "key": "Delete",
+    "offset": 3,
+    "value": "X漢󠄀",
+    "span": [
+     0,
+     4,
+     0,
+     5
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "multiAccent",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "á̂Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "multiAccent",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "á̂Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "multiAccent",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "á̂Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "multiAccent",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "X́̂Y",
+    "span": [
+     0,
+     1,
+     0,
+     2
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "multiAccent",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "XáY",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "multiAccent",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "XáY",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "multiAccent",
+    "key": "Backspace",
+    "offset": 3,
+    "value": "XáY",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "multiAccent",
+    "key": "Backspace",
+    "offset": 3,
+    "value": "XáY",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "multiAccent",
+    "key": "Backspace",
+    "offset": 3,
+    "value": "XáY",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "multiAccent",
+    "key": "Delete",
+    "offset": 0,
+    "value": "X́̂Y",
+    "span": [
+     0,
+     1,
+     0,
+     2
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "multiAccent",
+    "key": "Delete",
+    "offset": 0,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "multiAccent",
+    "key": "Delete",
+    "offset": 0,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "multiAccent",
+    "key": "Delete",
+    "offset": 1,
+    "value": "XâY",
+    "span": [
+     0,
+     2,
+     0,
+     3
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "multiAccent",
+    "key": "Delete",
+    "offset": 1,
+    "value": "Xá̂",
+    "span": [
+     0,
+     4,
+     0,
+     5
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "multiAccent",
+    "key": "Delete",
+    "offset": 1,
+    "value": "Xá̂",
+    "span": [
+     0,
+     4,
+     0,
+     5
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "multiAccent",
+    "key": "Delete",
+    "offset": 3,
+    "value": "Xá̂",
+    "span": [
+     0,
+     4,
+     0,
+     5
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "multiAccent",
+    "key": "Delete",
+    "offset": 3,
+    "value": "Xá̂",
+    "span": [
+     0,
+     4,
+     0,
+     5
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "multiAccent",
+    "key": "Delete",
+    "offset": 3,
+    "value": "Xá̂",
+    "span": [
+     0,
+     4,
+     0,
+     5
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "nonemojiJoin",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "x‍yY",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "nonemojiJoin",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "x‍yY",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "nonemojiJoin",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "x‍yY",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "nonemojiJoin",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "X‍yY",
+    "span": [
+     0,
+     1,
+     0,
+     2
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "nonemojiJoin",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "XxyY",
+    "span": [
+     0,
+     2,
+     0,
+     3
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "nonemojiJoin",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "XxyY",
+    "span": [
+     0,
+     2,
+     0,
+     3
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "nonemojiJoin",
+    "key": "Backspace",
+    "offset": 3,
+    "value": "Xx‍Y",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "nonemojiJoin",
+    "key": "Backspace",
+    "offset": 3,
+    "value": "Xx‍Y",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "nonemojiJoin",
+    "key": "Backspace",
+    "offset": 3,
+    "value": "Xx‍Y",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "nonemojiJoin",
+    "key": "Delete",
+    "offset": 0,
+    "value": "X‍yY",
+    "span": [
+     0,
+     1,
+     0,
+     2
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "nonemojiJoin",
+    "key": "Delete",
+    "offset": 0,
+    "value": "XyY",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "nonemojiJoin",
+    "key": "Delete",
+    "offset": 0,
+    "value": "XyY",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "nonemojiJoin",
+    "key": "Delete",
+    "offset": 1,
+    "value": "XxyY",
+    "span": [
+     0,
+     2,
+     0,
+     3
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "nonemojiJoin",
+    "key": "Delete",
+    "offset": 1,
+    "value": "Xx‍Y",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "nonemojiJoin",
+    "key": "Delete",
+    "offset": 1,
+    "value": "Xx‍Y",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "nonemojiJoin",
+    "key": "Delete",
+    "offset": 3,
+    "value": "Xx‍y",
+    "span": [
+     0,
+     4,
+     0,
+     5
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "nonemojiJoin",
+    "key": "Delete",
+    "offset": 3,
+    "value": "Xx‍y",
+    "span": [
+     0,
+     4,
+     0,
+     5
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "nonemojiJoin",
+    "key": "Delete",
+    "offset": 3,
+    "value": "Xx‍y",
+    "span": [
+     0,
+     4,
+     0,
+     5
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "crlf",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "\r\nY",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "crlf",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "\r\nY",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "crlf",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "\r\nY",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "crlf",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "X\nY",
+    "span": [
+     0,
+     1,
+     0,
+     2
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "crlf",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "crlf",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "\r\nY",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "crlf",
+    "key": "Backspace",
+    "offset": 2,
+    "value": "X\rY",
+    "span": [
+     0,
+     2,
+     0,
+     3
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "crlf",
+    "key": "Backspace",
+    "offset": 2,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "crlf",
+    "key": "Backspace",
+    "offset": 2,
+    "value": "\r\nY",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "crlf",
+    "key": "Delete",
+    "offset": 0,
+    "value": "X\nY",
+    "span": [
+     0,
+     1,
+     0,
+     2
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "crlf",
+    "key": "Delete",
+    "offset": 0,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "crlf",
+    "key": "Delete",
+    "offset": 0,
+    "value": "X",
+    "span": [
+     0,
+     1,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "crlf",
+    "key": "Delete",
+    "offset": 1,
+    "value": "X\rY",
+    "span": [
+     0,
+     2,
+     0,
+     3
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "crlf",
+    "key": "Delete",
+    "offset": 1,
+    "value": "X\r\n",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "crlf",
+    "key": "Delete",
+    "offset": 1,
+    "value": "X",
+    "span": [
+     0,
+     1,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "crlf",
+    "key": "Delete",
+    "offset": 2,
+    "value": "X\r\n",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "crlf",
+    "key": "Delete",
+    "offset": 2,
+    "value": "X\r\n",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "crlf",
+    "key": "Delete",
+    "offset": 2,
+    "value": "X",
+    "span": [
+     0,
+     1,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   }
+  }
+ ],
+ "text-nodes": [
+  {
+   "base": {
+    "name": "single",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "😀Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "single",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "😀Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "single",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "😀Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "single",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "X😀Y",
+    "span": [
+     0,
+     1,
+     0,
+     2
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "single",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "single",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "single",
+    "key": "Backspace",
+    "offset": 2,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "single",
+    "key": "Backspace",
+    "offset": 2,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "single",
+    "key": "Backspace",
+    "offset": 2,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "single",
+    "key": "Delete",
+    "offset": 0,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "single",
+    "key": "Delete",
+    "offset": 0,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "single",
+    "key": "Delete",
+    "offset": 0,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "single",
+    "key": "Delete",
+    "offset": 1,
+    "value": "XY",
+    "span": [
+     0,
+     2,
+     0,
+     3
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "single",
+    "key": "Delete",
+    "offset": 1,
+    "value": "X😀",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "single",
+    "key": "Delete",
+    "offset": 1,
+    "value": "X😀",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "single",
+    "key": "Delete",
+    "offset": 2,
+    "value": "X😀",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "single",
+    "key": "Delete",
+    "offset": 2,
+    "value": "X😀",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "single",
+    "key": "Delete",
+    "offset": 2,
+    "value": "X😀",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "acute",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "éY",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "acute",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "éY",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "acute",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "éY",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "acute",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "X́Y",
+    "span": [
+     0,
+     1,
+     0,
+     2
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "acute",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "XeY",
+    "span": [
+     0,
+     2,
+     0,
+     3
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "acute",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "XeY",
+    "span": [
+     0,
+     2,
+     0,
+     3
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "acute",
+    "key": "Backspace",
+    "offset": 2,
+    "value": "XeY",
+    "span": [
+     0,
+     2,
+     0,
+     3
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "acute",
+    "key": "Backspace",
+    "offset": 2,
+    "value": "XeY",
+    "span": [
+     0,
+     2,
+     0,
+     3
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "acute",
+    "key": "Backspace",
+    "offset": 2,
+    "value": "XeY",
+    "span": [
+     0,
+     2,
+     0,
+     3
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "acute",
+    "key": "Delete",
+    "offset": 0,
+    "value": "X́Y",
+    "span": [
+     0,
+     1,
+     0,
+     2
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "acute",
+    "key": "Delete",
+    "offset": 0,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "acute",
+    "key": "Delete",
+    "offset": 0,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "acute",
+    "key": "Delete",
+    "offset": 1,
+    "value": "XeY",
+    "span": [
+     0,
+     2,
+     0,
+     3
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "acute",
+    "key": "Delete",
+    "offset": 1,
+    "value": "Xé",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "acute",
+    "key": "Delete",
+    "offset": 1,
+    "value": "Xé",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "acute",
+    "key": "Delete",
+    "offset": 2,
+    "value": "Xé",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "acute",
+    "key": "Delete",
+    "offset": 2,
+    "value": "Xé",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "acute",
+    "key": "Delete",
+    "offset": 2,
+    "value": "Xé",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "flag",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "🇸🇮Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "flag",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "🇸🇮Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "flag",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "🇸🇮Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "flag",
+    "key": "Backspace",
+    "offset": 2,
+    "value": "X🇮Y",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "flag",
+    "key": "Backspace",
+    "offset": 2,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     5
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "flag",
+    "key": "Backspace",
+    "offset": 2,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     5
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "flag",
+    "key": "Backspace",
+    "offset": 4,
+    "value": "X🇸Y",
+    "span": [
+     0,
+     3,
+     0,
+     5
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "flag",
+    "key": "Backspace",
+    "offset": 4,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     5
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "flag",
+    "key": "Backspace",
+    "offset": 4,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     5
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "flag",
+    "key": "Delete",
+    "offset": 0,
+    "value": "X🇮Y",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "flag",
+    "key": "Delete",
+    "offset": 0,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     5
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "flag",
+    "key": "Delete",
+    "offset": 0,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     5
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "flag",
+    "key": "Delete",
+    "offset": 2,
+    "value": "X🇸Y",
+    "span": [
+     0,
+     3,
+     0,
+     5
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "flag",
+    "key": "Delete",
+    "offset": 2,
+    "value": "X🇸🇮",
+    "span": [
+     0,
+     5,
+     0,
+     6
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "flag",
+    "key": "Delete",
+    "offset": 2,
+    "value": "X🇸🇮",
+    "span": [
+     0,
+     5,
+     0,
+     6
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "flag",
+    "key": "Delete",
+    "offset": 4,
+    "value": "X🇸🇮",
+    "span": [
+     0,
+     5,
+     0,
+     6
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "flag",
+    "key": "Delete",
+    "offset": 4,
+    "value": "X🇸🇮",
+    "span": [
+     0,
+     5,
+     0,
+     6
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "flag",
+    "key": "Delete",
+    "offset": 4,
+    "value": "X🇸🇮",
+    "span": [
+     0,
+     5,
+     0,
+     6
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "splitAcute",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "éY",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "splitAcute",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "éY",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "splitAcute",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "éY",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "splitAcute",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "X́Y",
+    "span": [
+     0,
+     1,
+     0,
+     2
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "splitAcute",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "X́Y",
+    "span": [
+     0,
+     1,
+     0,
+     2
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "splitAcute",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "X́Y",
+    "span": [
+     0,
+     1,
+     0,
+     2
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "splitAcute",
+    "key": "Backspace",
+    "offset": 2,
+    "value": "XeY",
+    "span": [
+     1,
+     0,
+     1,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "splitAcute",
+    "key": "Backspace",
+    "offset": 2,
+    "value": "XeY",
+    "span": [
+     1,
+     0,
+     1,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "splitAcute",
+    "key": "Backspace",
+    "offset": 2,
+    "value": "XeY",
+    "span": [
+     1,
+     0,
+     1,
+     1
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "splitAcute",
+    "key": "Delete",
+    "offset": 0,
+    "value": "X́Y",
+    "span": [
+     0,
+     1,
+     0,
+     2
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "splitAcute",
+    "key": "Delete",
+    "offset": 0,
+    "value": "X́Y",
+    "span": [
+     0,
+     1,
+     0,
+     2
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "splitAcute",
+    "key": "Delete",
+    "offset": 0,
+    "value": "X́Y",
+    "span": [
+     0,
+     1,
+     0,
+     2
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "splitAcute",
+    "key": "Delete",
+    "offset": 1,
+    "value": "XeY",
+    "span": [
+     1,
+     0,
+     1,
+     1
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "splitAcute",
+    "key": "Delete",
+    "offset": 1,
+    "value": "XeY",
+    "span": [
+     1,
+     0,
+     1,
+     1
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "splitAcute",
+    "key": "Delete",
+    "offset": 1,
+    "value": "XeY",
+    "span": [
+     1,
+     0,
+     1,
+     1
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "splitAcute",
+    "key": "Delete",
+    "offset": 2,
+    "value": "Xé",
+    "span": [
+     1,
+     1,
+     1,
+     2
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "splitAcute",
+    "key": "Delete",
+    "offset": 2,
+    "value": "Xé",
+    "span": [
+     1,
+     1,
+     1,
+     2
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "splitAcute",
+    "key": "Delete",
+    "offset": 2,
+    "value": "Xé",
+    "span": [
+     1,
+     1,
+     1,
+     2
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "splitFlag",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "🇸🇮Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "splitFlag",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "🇸🇮Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "splitFlag",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "🇸🇮Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "splitFlag",
+    "key": "Backspace",
+    "offset": 2,
+    "value": "X🇮Y",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "splitFlag",
+    "key": "Backspace",
+    "offset": 2,
+    "value": "X🇮Y",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "splitFlag",
+    "key": "Backspace",
+    "offset": 2,
+    "value": "X🇮Y",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "splitFlag",
+    "key": "Backspace",
+    "offset": 4,
+    "value": "X🇸Y",
+    "span": [
+     1,
+     0,
+     1,
+     2
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "splitFlag",
+    "key": "Backspace",
+    "offset": 4,
+    "value": "X🇸Y",
+    "span": [
+     1,
+     0,
+     1,
+     2
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "splitFlag",
+    "key": "Backspace",
+    "offset": 4,
+    "value": "X🇸Y",
+    "span": [
+     1,
+     0,
+     1,
+     2
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "splitFlag",
+    "key": "Delete",
+    "offset": 0,
+    "value": "X🇮Y",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "splitFlag",
+    "key": "Delete",
+    "offset": 0,
+    "value": "X🇮Y",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "splitFlag",
+    "key": "Delete",
+    "offset": 0,
+    "value": "X🇮Y",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "splitFlag",
+    "key": "Delete",
+    "offset": 2,
+    "value": "X🇸Y",
+    "span": [
+     1,
+     0,
+     1,
+     2
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "splitFlag",
+    "key": "Delete",
+    "offset": 2,
+    "value": "X🇸Y",
+    "span": [
+     1,
+     0,
+     1,
+     2
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "splitFlag",
+    "key": "Delete",
+    "offset": 2,
+    "value": "X🇸Y",
+    "span": [
+     1,
+     0,
+     1,
+     2
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "splitFlag",
+    "key": "Delete",
+    "offset": 4,
+    "value": "X🇸🇮",
+    "span": [
+     1,
+     2,
+     1,
+     3
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "splitFlag",
+    "key": "Delete",
+    "offset": 4,
+    "value": "X🇸🇮",
+    "span": [
+     1,
+     2,
+     1,
+     3
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "splitFlag",
+    "key": "Delete",
+    "offset": 4,
+    "value": "X🇸🇮",
+    "span": [
+     1,
+     2,
+     1,
+     3
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "splitFamily",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "👨‍👩‍👧‍👦Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "splitFamily",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "👨‍👩‍👧‍👦Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "splitFamily",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "👨‍👩‍👧‍👦Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "splitFamily",
+    "key": "Backspace",
+    "offset": 5,
+    "value": "X👨‍‍👧‍👦Y",
+    "span": [
+     1,
+     0,
+     1,
+     2
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "splitFamily",
+    "key": "Backspace",
+    "offset": 5,
+    "value": "X👨‍Y",
+    "span": [
+     1,
+     0,
+     1,
+     8
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "splitFamily",
+    "key": "Backspace",
+    "offset": 5,
+    "value": "X👨‍Y",
+    "span": [
+     1,
+     0,
+     1,
+     8
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "splitFamily",
+    "key": "Backspace",
+    "offset": 11,
+    "value": "X👨‍👩‍👧‍Y",
+    "span": [
+     1,
+     6,
+     1,
+     8
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "splitFamily",
+    "key": "Backspace",
+    "offset": 11,
+    "value": "X👨‍Y",
+    "span": [
+     1,
+     0,
+     1,
+     8
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "splitFamily",
+    "key": "Backspace",
+    "offset": 11,
+    "value": "X👨‍Y",
+    "span": [
+     1,
+     0,
+     1,
+     8
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "splitFamily",
+    "key": "Delete",
+    "offset": 0,
+    "value": "X‍👩‍👧‍👦Y",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "splitFamily",
+    "key": "Delete",
+    "offset": 0,
+    "value": "X👩‍👧‍👦Y",
+    "span": [
+     0,
+     1,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "splitFamily",
+    "key": "Delete",
+    "offset": 0,
+    "value": "X👩‍👧‍👦Y",
+    "span": [
+     0,
+     1,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "splitFamily",
+    "key": "Delete",
+    "offset": 5,
+    "value": "X👨‍👩👧‍👦Y",
+    "span": [
+     1,
+     2,
+     1,
+     3
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "splitFamily",
+    "key": "Delete",
+    "offset": 5,
+    "value": "X👨‍👩‍👧‍👦",
+    "span": [
+     1,
+     8,
+     1,
+     9
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "splitFamily",
+    "key": "Delete",
+    "offset": 5,
+    "value": "X👨‍👩‍👧‍👦",
+    "span": [
+     1,
+     8,
+     1,
+     9
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "splitFamily",
+    "key": "Delete",
+    "offset": 11,
+    "value": "X👨‍👩‍👧‍👦",
+    "span": [
+     1,
+     8,
+     1,
+     9
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "splitFamily",
+    "key": "Delete",
+    "offset": 11,
+    "value": "X👨‍👩‍👧‍👦",
+    "span": [
+     1,
+     8,
+     1,
+     9
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "splitFamily",
+    "key": "Delete",
+    "offset": 11,
+    "value": "X👨‍👩‍👧‍👦",
+    "span": [
+     1,
+     8,
+     1,
+     9
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "twoModifiers",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "👋🏽́Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "twoModifiers",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "👋🏽́Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "twoModifiers",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "👋🏽́Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "twoModifiers",
+    "key": "Backspace",
+    "offset": 2,
+    "value": "X🏽́Y",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "twoModifiers",
+    "key": "Backspace",
+    "offset": 2,
+    "value": "X👋🏽Y",
+    "span": [
+     0,
+     5,
+     0,
+     6
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "twoModifiers",
+    "key": "Backspace",
+    "offset": 2,
+    "value": "X👋🏽Y",
+    "span": [
+     0,
+     5,
+     0,
+     6
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "twoModifiers",
+    "key": "Backspace",
+    "offset": 5,
+    "value": "X👋🏽Y",
+    "span": [
+     0,
+     5,
+     0,
+     6
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "twoModifiers",
+    "key": "Backspace",
+    "offset": 5,
+    "value": "X👋🏽Y",
+    "span": [
+     0,
+     5,
+     0,
+     6
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "twoModifiers",
+    "key": "Backspace",
+    "offset": 5,
+    "value": "X👋🏽Y",
+    "span": [
+     0,
+     5,
+     0,
+     6
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "twoModifiers",
+    "key": "Delete",
+    "offset": 0,
+    "value": "X🏽́Y",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "twoModifiers",
+    "key": "Delete",
+    "offset": 0,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     6
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "twoModifiers",
+    "key": "Delete",
+    "offset": 0,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     6
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "twoModifiers",
+    "key": "Delete",
+    "offset": 2,
+    "value": "X👋́Y",
+    "span": [
+     0,
+     3,
+     0,
+     5
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "twoModifiers",
+    "key": "Delete",
+    "offset": 2,
+    "value": "X👋🏽́",
+    "span": [
+     0,
+     6,
+     0,
+     7
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "twoModifiers",
+    "key": "Delete",
+    "offset": 2,
+    "value": "X👋🏽́",
+    "span": [
+     0,
+     6,
+     0,
+     7
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "twoModifiers",
+    "key": "Delete",
+    "offset": 5,
+    "value": "X👋🏽́",
+    "span": [
+     0,
+     6,
+     0,
+     7
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "twoModifiers",
+    "key": "Delete",
+    "offset": 5,
+    "value": "X👋🏽́",
+    "span": [
+     0,
+     6,
+     0,
+     7
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "twoModifiers",
+    "key": "Delete",
+    "offset": 5,
+    "value": "X👋🏽́",
+    "span": [
+     0,
+     6,
+     0,
+     7
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "accentEmoji",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "❤️́Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "accentEmoji",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "❤️́Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "accentEmoji",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "❤️́Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "accentEmoji",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "X️́Y",
+    "span": [
+     0,
+     1,
+     0,
+     2
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "accentEmoji",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "X❤️Y",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "accentEmoji",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "X❤️Y",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "accentEmoji",
+    "key": "Backspace",
+    "offset": 3,
+    "value": "X❤️Y",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "accentEmoji",
+    "key": "Backspace",
+    "offset": 3,
+    "value": "X❤️Y",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "accentEmoji",
+    "key": "Backspace",
+    "offset": 3,
+    "value": "X❤️Y",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "accentEmoji",
+    "key": "Delete",
+    "offset": 0,
+    "value": "X️́Y",
+    "span": [
+     0,
+     1,
+     0,
+     2
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "accentEmoji",
+    "key": "Delete",
+    "offset": 0,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "accentEmoji",
+    "key": "Delete",
+    "offset": 0,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "accentEmoji",
+    "key": "Delete",
+    "offset": 1,
+    "value": "X❤́Y",
+    "span": [
+     0,
+     2,
+     0,
+     3
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "accentEmoji",
+    "key": "Delete",
+    "offset": 1,
+    "value": "X❤️́",
+    "span": [
+     0,
+     4,
+     0,
+     5
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "accentEmoji",
+    "key": "Delete",
+    "offset": 1,
+    "value": "X❤️́",
+    "span": [
+     0,
+     4,
+     0,
+     5
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "accentEmoji",
+    "key": "Delete",
+    "offset": 3,
+    "value": "X❤️́",
+    "span": [
+     0,
+     4,
+     0,
+     5
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "accentEmoji",
+    "key": "Delete",
+    "offset": 3,
+    "value": "X❤️́",
+    "span": [
+     0,
+     4,
+     0,
+     5
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "accentEmoji",
+    "key": "Delete",
+    "offset": 3,
+    "value": "X❤️́",
+    "span": [
+     0,
+     4,
+     0,
+     5
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "selectorText",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "A️Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "selectorText",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "A️Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "selectorText",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "A️Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "selectorText",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "X️Y",
+    "span": [
+     0,
+     1,
+     0,
+     2
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "selectorText",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "selectorText",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "selectorText",
+    "key": "Backspace",
+    "offset": 2,
+    "value": "XAY",
+    "span": [
+     0,
+     2,
+     0,
+     3
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "selectorText",
+    "key": "Backspace",
+    "offset": 2,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "selectorText",
+    "key": "Backspace",
+    "offset": 2,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "selectorText",
+    "key": "Delete",
+    "offset": 0,
+    "value": "X️Y",
+    "span": [
+     0,
+     1,
+     0,
+     2
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "selectorText",
+    "key": "Delete",
+    "offset": 0,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "selectorText",
+    "key": "Delete",
+    "offset": 0,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "selectorText",
+    "key": "Delete",
+    "offset": 1,
+    "value": "XAY",
+    "span": [
+     0,
+     2,
+     0,
+     3
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "selectorText",
+    "key": "Delete",
+    "offset": 1,
+    "value": "XA️",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "selectorText",
+    "key": "Delete",
+    "offset": 1,
+    "value": "XA️",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "selectorText",
+    "key": "Delete",
+    "offset": 2,
+    "value": "XA️",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "selectorText",
+    "key": "Delete",
+    "offset": 2,
+    "value": "XA️",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "selectorText",
+    "key": "Delete",
+    "offset": 2,
+    "value": "XA️",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "mathSelector",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "漢󠄀Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "mathSelector",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "漢󠄀Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "mathSelector",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "漢󠄀Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "mathSelector",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "X󠄀Y",
+    "span": [
+     0,
+     1,
+     0,
+     2
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "mathSelector",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     4
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "mathSelector",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     4
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "mathSelector",
+    "key": "Backspace",
+    "offset": 3,
+    "value": "X漢Y",
+    "span": [
+     0,
+     2,
+     0,
+     4
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "mathSelector",
+    "key": "Backspace",
+    "offset": 3,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     4
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "mathSelector",
+    "key": "Backspace",
+    "offset": 3,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     4
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "mathSelector",
+    "key": "Delete",
+    "offset": 0,
+    "value": "X󠄀Y",
+    "span": [
+     0,
+     1,
+     0,
+     2
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "mathSelector",
+    "key": "Delete",
+    "offset": 0,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "mathSelector",
+    "key": "Delete",
+    "offset": 0,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "mathSelector",
+    "key": "Delete",
+    "offset": 1,
+    "value": "X漢Y",
+    "span": [
+     0,
+     2,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "mathSelector",
+    "key": "Delete",
+    "offset": 1,
+    "value": "X漢󠄀",
+    "span": [
+     0,
+     4,
+     0,
+     5
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "mathSelector",
+    "key": "Delete",
+    "offset": 1,
+    "value": "X漢󠄀",
+    "span": [
+     0,
+     4,
+     0,
+     5
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "mathSelector",
+    "key": "Delete",
+    "offset": 3,
+    "value": "X漢󠄀",
+    "span": [
+     0,
+     4,
+     0,
+     5
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "mathSelector",
+    "key": "Delete",
+    "offset": 3,
+    "value": "X漢󠄀",
+    "span": [
+     0,
+     4,
+     0,
+     5
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "mathSelector",
+    "key": "Delete",
+    "offset": 3,
+    "value": "X漢󠄀",
+    "span": [
+     0,
+     4,
+     0,
+     5
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "multiAccent",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "á̂Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "multiAccent",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "á̂Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "multiAccent",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "á̂Y",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "multiAccent",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "X́̂Y",
+    "span": [
+     0,
+     1,
+     0,
+     2
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "multiAccent",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "XáY",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "multiAccent",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "XáY",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "multiAccent",
+    "key": "Backspace",
+    "offset": 3,
+    "value": "XáY",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "multiAccent",
+    "key": "Backspace",
+    "offset": 3,
+    "value": "XáY",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "multiAccent",
+    "key": "Backspace",
+    "offset": 3,
+    "value": "XáY",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "multiAccent",
+    "key": "Delete",
+    "offset": 0,
+    "value": "X́̂Y",
+    "span": [
+     0,
+     1,
+     0,
+     2
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "multiAccent",
+    "key": "Delete",
+    "offset": 0,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "multiAccent",
+    "key": "Delete",
+    "offset": 0,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "multiAccent",
+    "key": "Delete",
+    "offset": 1,
+    "value": "XâY",
+    "span": [
+     0,
+     2,
+     0,
+     3
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "multiAccent",
+    "key": "Delete",
+    "offset": 1,
+    "value": "Xá̂",
+    "span": [
+     0,
+     4,
+     0,
+     5
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "multiAccent",
+    "key": "Delete",
+    "offset": 1,
+    "value": "Xá̂",
+    "span": [
+     0,
+     4,
+     0,
+     5
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "multiAccent",
+    "key": "Delete",
+    "offset": 3,
+    "value": "Xá̂",
+    "span": [
+     0,
+     4,
+     0,
+     5
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "multiAccent",
+    "key": "Delete",
+    "offset": 3,
+    "value": "Xá̂",
+    "span": [
+     0,
+     4,
+     0,
+     5
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "multiAccent",
+    "key": "Delete",
+    "offset": 3,
+    "value": "Xá̂",
+    "span": [
+     0,
+     4,
+     0,
+     5
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "nonemojiJoin",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "x‍yY",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "nonemojiJoin",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "x‍yY",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "nonemojiJoin",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "x‍yY",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "nonemojiJoin",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "X‍yY",
+    "span": [
+     0,
+     1,
+     0,
+     2
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "nonemojiJoin",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "XxyY",
+    "span": [
+     0,
+     2,
+     0,
+     3
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "nonemojiJoin",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "XxyY",
+    "span": [
+     0,
+     2,
+     0,
+     3
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "nonemojiJoin",
+    "key": "Backspace",
+    "offset": 3,
+    "value": "Xx‍Y",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "nonemojiJoin",
+    "key": "Backspace",
+    "offset": 3,
+    "value": "Xx‍Y",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "nonemojiJoin",
+    "key": "Backspace",
+    "offset": 3,
+    "value": "Xx‍Y",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "nonemojiJoin",
+    "key": "Delete",
+    "offset": 0,
+    "value": "X‍yY",
+    "span": [
+     0,
+     1,
+     0,
+     2
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "nonemojiJoin",
+    "key": "Delete",
+    "offset": 0,
+    "value": "XyY",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "nonemojiJoin",
+    "key": "Delete",
+    "offset": 0,
+    "value": "XyY",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "nonemojiJoin",
+    "key": "Delete",
+    "offset": 1,
+    "value": "XxyY",
+    "span": [
+     0,
+     2,
+     0,
+     3
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "nonemojiJoin",
+    "key": "Delete",
+    "offset": 1,
+    "value": "Xx‍Y",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "nonemojiJoin",
+    "key": "Delete",
+    "offset": 1,
+    "value": "Xx‍Y",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "nonemojiJoin",
+    "key": "Delete",
+    "offset": 3,
+    "value": "Xx‍y",
+    "span": [
+     0,
+     4,
+     0,
+     5
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "nonemojiJoin",
+    "key": "Delete",
+    "offset": 3,
+    "value": "Xx‍y",
+    "span": [
+     0,
+     4,
+     0,
+     5
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "nonemojiJoin",
+    "key": "Delete",
+    "offset": 3,
+    "value": "Xx‍y",
+    "span": [
+     0,
+     4,
+     0,
+     5
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "crlf",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "\r\nY",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "crlf",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "\r\nY",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "crlf",
+    "key": "Backspace",
+    "offset": 0,
+    "value": "\r\nY",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "crlf",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "X\nY",
+    "span": [
+     0,
+     1,
+     0,
+     2
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "crlf",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "crlf",
+    "key": "Backspace",
+    "offset": 1,
+    "value": "\r\nY",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "crlf",
+    "key": "Backspace",
+    "offset": 2,
+    "value": "X\rY",
+    "span": [
+     0,
+     2,
+     0,
+     3
+    ],
+    "type": "deleteContentBackward"
+   },
+   "candidate": {
+    "name": "crlf",
+    "key": "Backspace",
+    "offset": 2,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentBackward"
+   },
+   "chrome158": {
+    "name": "crlf",
+    "key": "Backspace",
+    "offset": 2,
+    "value": "\r\nY",
+    "span": [
+     0,
+     0,
+     0,
+     1
+    ],
+    "type": "deleteContentBackward"
+   }
+  },
+  {
+   "base": {
+    "name": "crlf",
+    "key": "Delete",
+    "offset": 0,
+    "value": "X\nY",
+    "span": [
+     0,
+     1,
+     0,
+     2
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "crlf",
+    "key": "Delete",
+    "offset": 0,
+    "value": "XY",
+    "span": [
+     0,
+     1,
+     0,
+     3
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "crlf",
+    "key": "Delete",
+    "offset": 0,
+    "value": "X",
+    "span": [
+     0,
+     1,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "crlf",
+    "key": "Delete",
+    "offset": 1,
+    "value": "X\rY",
+    "span": [
+     0,
+     2,
+     0,
+     3
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "crlf",
+    "key": "Delete",
+    "offset": 1,
+    "value": "X\r\n",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "crlf",
+    "key": "Delete",
+    "offset": 1,
+    "value": "X",
+    "span": [
+     0,
+     1,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   }
+  },
+  {
+   "base": {
+    "name": "crlf",
+    "key": "Delete",
+    "offset": 2,
+    "value": "X\r\n",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   },
+   "candidate": {
+    "name": "crlf",
+    "key": "Delete",
+    "offset": 2,
+    "value": "X\r\n",
+    "span": [
+     0,
+     3,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   },
+   "chrome158": {
+    "name": "crlf",
+    "key": "Delete",
+    "offset": 2,
+    "value": "X",
+    "span": [
+     0,
+     1,
+     0,
+     4
+    ],
+    "type": "deleteContentForward"
+   }
+  }
+ ],
+ "hosts": [
+  {
+   "base": {
+    "control": "locked-end",
+    "key": "Backspace",
+    "html": "😀<span id=\"b\" contenteditable=\"false\">LOCK</span>",
+    "span": [
+     "left",
+     0,
+     "left",
+     1
+    ]
+   },
+   "candidate": {
+    "control": "locked-end",
+    "key": "Backspace",
+    "html": "<span id=\"b\" contenteditable=\"false\">LOCK</span>",
+    "span": [
+     "left",
+     0,
+     "left",
+     2
+    ]
+   },
+   "chrome158": {
+    "control": "locked-end",
+    "key": "Backspace",
+    "html": "<span id=\"b\" contenteditable=\"false\">LOCK</span>",
+    "span": [
+     "left",
+     0,
+     "left",
+     2
+    ]
+   }
+  },
+  {
+   "base": {
+    "control": "locked-end",
+    "key": "Delete",
+    "html": "<span id=\"b\" contenteditable=\"false\">LOCK</span>",
+    "span": [
+     "left",
+     1,
+     "left",
+     2
+    ]
+   },
+   "candidate": {
+    "control": "locked-end",
+    "key": "Delete",
+    "html": "😀",
+    "span": [
+     "host",
+     1,
+     "host",
+     2
+    ]
+   },
+   "chrome158": {
+    "control": "locked-end",
+    "key": "Delete",
+    "html": "😀",
+    "span": [
+     "left",
+     2,
+     "host",
+     2
+    ]
+   }
+  },
+  {
+   "base": {
+    "control": "hidden-end",
+    "key": "Backspace",
+    "html": "😀<span id=\"b\" hidden=\"\">LOCK</span>",
+    "span": [
+     "left",
+     0,
+     "left",
+     1
+    ]
+   },
+   "candidate": {
+    "control": "hidden-end",
+    "key": "Backspace",
+    "html": "<span id=\"b\" hidden=\"\">LOCK</span>",
+    "span": [
+     "left",
+     0,
+     "left",
+     2
+    ]
+   },
+   "chrome158": {
+    "control": "hidden-end",
+    "key": "Backspace",
+    "html": "<br><span id=\"b\" hidden=\"\">LOCK</span>",
+    "span": [
+     "left",
+     0,
+     "left",
+     2
+    ]
+   }
+  },
+  {
+   "base": {
+    "control": "hidden-end",
+    "key": "Delete",
+    "html": "<span id=\"b\" hidden=\"\">LOCK</span>",
+    "span": [
+     "left",
+     1,
+     "left",
+     2
+    ]
+   },
+   "candidate": {
+    "control": "hidden-end",
+    "key": "Delete",
+    "html": "😀<span id=\"b\" hidden=\"\">LOCK</span>",
+    "span": [
+     "left",
+     2,
+     "left",
+     2
+    ]
+   },
+   "chrome158": {
+    "control": "hidden-end",
+    "key": "Delete",
+    "html": "😀<span id=\"b\" hidden=\"\">LOCK</span>",
+    "span": [
+     "left",
+     2,
+     "left",
+     2
+    ]
+   }
+  },
+  {
+   "base": {
+    "control": "hidden-middle",
+    "key": "Backspace",
+    "html": "😀<span id=\"b\" hidden=\"\">LOCK</span>tail",
+    "span": [
+     "left",
+     0,
+     "left",
+     1
+    ]
+   },
+   "candidate": {
+    "control": "hidden-middle",
+    "key": "Backspace",
+    "html": "<span id=\"b\" hidden=\"\">LOCK</span>tail",
+    "span": [
+     "left",
+     0,
+     "left",
+     2
+    ]
+   },
+   "chrome158": {
+    "control": "hidden-middle",
+    "key": "Backspace",
+    "html": "tail",
+    "span": [
+     "left",
+     0,
+     "left",
+     2
+    ]
+   }
+  },
+  {
+   "base": {
+    "control": "hidden-middle",
+    "key": "Delete",
+    "html": "<span id=\"b\" hidden=\"\">LOCK</span>tail",
+    "span": [
+     "left",
+     1,
+     "left",
+     2
+    ]
+   },
+   "candidate": {
+    "control": "hidden-middle",
+    "key": "Delete",
+    "html": "😀<span id=\"b\" hidden=\"\">LOCK</span>ail",
+    "span": [
+     "tail",
+     0,
+     "tail",
+     1
+    ]
+   },
+   "chrome158": {
+    "control": "hidden-middle",
+    "key": "Delete",
+    "html": "😀ail",
+    "span": [
+     "tail",
+     0,
+     "tail",
+     1
+    ]
+   }
+  },
+  {
+   "base": {
+    "control": "ordinary-next",
+    "key": "Backspace",
+    "html": "😀<span id=\"b\">LOCK</span>tail",
+    "span": [
+     "left",
+     0,
+     "left",
+     1
+    ]
+   },
+   "candidate": {
+    "control": "ordinary-next",
+    "key": "Backspace",
+    "html": "<span id=\"b\">LOCK</span>tail",
+    "span": [
+     "left",
+     0,
+     "left",
+     2
+    ]
+   },
+   "chrome158": {
+    "control": "ordinary-next",
+    "key": "Backspace",
+    "html": "<span id=\"b\">LOCK</span>tail",
+    "span": [
+     "left",
+     0,
+     "left",
+     2
+    ]
+   }
+  },
+  {
+   "base": {
+    "control": "ordinary-next",
+    "key": "Delete",
+    "html": "<span id=\"b\">LOCK</span>tail",
+    "span": [
+     "left",
+     1,
+     "left",
+     2
+    ]
+   },
+   "candidate": {
+    "control": "ordinary-next",
+    "key": "Delete",
+    "html": "😀<span id=\"b\">OCK</span>tail",
+    "span": [
+     "inner",
+     0,
+     "inner",
+     1
+    ]
+   },
+   "chrome158": {
+    "control": "ordinary-next",
+    "key": "Delete",
+    "html": "😀<span id=\"b\">OCK</span>tail",
+    "span": [
+     "inner",
+     0,
+     "inner",
+     1
+    ]
+   }
+  },
+  {
+   "base": {
+    "control": "locked-middle",
+    "key": "Backspace",
+    "html": "😀<span id=\"b\" contenteditable=\"false\">LOCK</span>tail",
+    "span": [
+     "left",
+     0,
+     "left",
+     1
+    ]
+   },
+   "candidate": {
+    "control": "locked-middle",
+    "key": "Backspace",
+    "html": "<span id=\"b\" contenteditable=\"false\">LOCK</span>tail",
+    "span": [
+     "left",
+     0,
+     "left",
+     2
+    ]
+   },
+   "chrome158": {
+    "control": "locked-middle",
+    "key": "Backspace",
+    "html": "<span id=\"b\" contenteditable=\"false\">LOCK</span>tail",
+    "span": [
+     "left",
+     0,
+     "left",
+     2
+    ]
+   }
+  },
+  {
+   "base": {
+    "control": "locked-middle",
+    "key": "Delete",
+    "html": "<span id=\"b\" contenteditable=\"false\">LOCK</span>tail",
+    "span": [
+     "left",
+     1,
+     "left",
+     2
+    ]
+   },
+   "candidate": {
+    "control": "locked-middle",
+    "key": "Delete",
+    "html": "😀tail",
+    "span": [
+     "host",
+     1,
+     "host",
+     2
+    ]
+   },
+   "chrome158": {
+    "control": "locked-middle",
+    "key": "Delete",
+    "html": "😀tail",
+    "span": [
+     "left",
+     2,
+     "tail",
+     0
+    ]
+   }
+  },
+  {
+   "base": {
+    "control": "element-hidden",
+    "key": "Backspace",
+    "html": "😀<span id=\"b\" hidden=\"\">LOC</span>tail",
+    "span": [
+     "inner",
+     3,
+     "inner",
+     4
+    ]
+   },
+   "candidate": {
+    "control": "element-hidden",
+    "key": "Backspace",
+    "html": "<span id=\"b\" hidden=\"\">LOCK</span>tail",
+    "span": [
+     "left",
+     0,
+     "left",
+     2
+    ]
+   },
+   "chrome158": {
+    "control": "element-hidden",
+    "key": "Backspace",
+    "html": "tail",
+    "span": [
+     "left",
+     0,
+     "left",
+     2
+    ]
+   }
+  },
+  {
+   "base": {
+    "control": "element-hidden",
+    "key": "Delete",
+    "html": "😀<span id=\"b\" hidden=\"\">OCK</span>tail",
+    "span": [
+     "inner",
+     0,
+     "inner",
+     1
+    ]
+   },
+   "candidate": {
+    "control": "element-hidden",
+    "key": "Delete",
+    "html": "😀<span id=\"b\" hidden=\"\">LOCK</span>ail",
+    "span": [
+     "tail",
+     0,
+     "tail",
+     1
+    ]
+   },
+   "chrome158": {
+    "control": "element-hidden",
+    "key": "Delete",
+    "html": "😀ail",
+    "span": [
+     "tail",
+     0,
+     "tail",
+     1
+    ]
+   }
+  },
+  {
+   "base": {
+    "control": "element-locked",
+    "key": "Backspace",
+    "html": "😀<span id=\"b\" contenteditable=\"false\">LOC</span>tail",
+    "span": [
+     "host",
+     2,
+     "host",
+     2
+    ]
+   },
+   "candidate": {
+    "control": "element-locked",
+    "key": "Backspace",
+    "html": "😀tail",
+    "span": [
+     "host",
+     1,
+     "host",
+     2
+    ]
+   },
+   "chrome158": {
+    "control": "element-locked",
+    "key": "Backspace",
+    "html": "😀tail",
+    "span": [
+     "left",
+     2,
+     "tail",
+     0
+    ]
+   }
+  },
+  {
+   "base": {
+    "control": "element-locked",
+    "key": "Delete",
+    "html": "😀<span id=\"b\" contenteditable=\"false\">OCK</span>tail",
+    "span": [
+     "host",
+     1,
+     "host",
+     1
+    ]
+   },
+   "candidate": {
+    "control": "element-locked",
+    "key": "Delete",
+    "html": "😀tail",
+    "span": [
+     "host",
+     1,
+     "host",
+     2
+    ]
+   },
+   "chrome158": {
+    "control": "element-locked",
+    "key": "Delete",
+    "html": "😀tail",
+    "span": [
+     "left",
+     2,
+     "tail",
+     0
+    ]
+   }
+  }
+ ],
+ "structures": [
+  {
+   "base": {
+    "control": "locked-block",
+    "key": "Backspace",
+    "html": "X<div id=\"k\" contenteditable=\"false\">guar</div>Y",
+    "objectText": "guar",
+    "preserved": true,
+    "span": [
+     "Y",
+     0,
+     "Y",
+     0
+    ]
+   },
+   "candidate": {
+    "control": "locked-block",
+    "key": "Backspace",
+    "html": "XY",
+    "objectText": "guard",
+    "preserved": false,
+    "span": [
+     "host",
+     1,
+     "host",
+     2
+    ]
+   },
+   "chrome158": {
+    "control": "locked-block",
+    "key": "Backspace",
+    "html": "XY",
+    "objectText": "guard",
+    "preserved": false,
+    "span": [
+     "X",
+     1,
+     "Y",
+     0
+    ]
+   }
+  },
+  {
+   "base": {
+    "control": "locked-block",
+    "key": "Delete",
+    "html": "X<div id=\"k\" contenteditable=\"false\">uard</div>Y",
+    "objectText": "uard",
+    "preserved": true,
+    "span": [
+     "X",
+     1,
+     "X",
+     1
+    ]
+   },
+   "candidate": {
+    "control": "locked-block",
+    "key": "Delete",
+    "html": "XY",
+    "objectText": "guard",
+    "preserved": false,
+    "span": [
+     "host",
+     1,
+     "host",
+     2
+    ]
+   },
+   "chrome158": {
+    "control": "locked-block",
+    "key": "Delete",
+    "html": "XY",
+    "objectText": "guard",
+    "preserved": false,
+    "span": [
+     "X",
+     1,
+     "Y",
+     0
+    ]
+   }
+  },
+  {
+   "base": {
+    "control": "empty-locked",
+    "key": "Backspace",
+    "html": "X<span></span><span id=\"k\" contenteditable=\"false\">guar</span>Y",
+    "objectText": "guar",
+    "preserved": true,
+    "span": [
+     "Y",
+     0,
+     "Y",
+     0
+    ]
+   },
+   "candidate": {
+    "control": "empty-locked",
+    "key": "Backspace",
+    "html": "X<span></span>Y",
+    "objectText": "guard",
+    "preserved": false,
+    "span": [
+     "host",
+     2,
+     "host",
+     3
+    ]
+   },
+   "chrome158": {
+    "control": "empty-locked",
+    "key": "Backspace",
+    "html": "XY",
+    "objectText": "guard",
+    "preserved": false,
+    "span": [
+     "",
+     0,
+     "Y",
+     0
+    ]
+   }
+  },
+  {
+   "base": {
+    "control": "empty-locked",
+    "key": "Delete",
+    "html": "X<span></span><span id=\"k\" contenteditable=\"false\">uard</span>Y",
+    "objectText": "uard",
+    "preserved": true,
+    "span": [
+     "X",
+     1,
+     "X",
+     1
+    ]
+   },
+   "candidate": {
+    "control": "empty-locked",
+    "key": "Delete",
+    "html": "X<span></span>Y",
+    "objectText": "guard",
+    "preserved": false,
+    "span": [
+     "host",
+     2,
+     "host",
+     3
+    ]
+   },
+   "chrome158": {
+    "control": "empty-locked",
+    "key": "Delete",
+    "html": "XY",
+    "objectText": "guard",
+    "preserved": false,
+    "span": [
+     "",
+     0,
+     "Y",
+     0
+    ]
+   }
+  },
+  {
+   "base": {
+    "control": "empty-hidden",
+    "key": "Backspace",
+    "html": "X<span></span><span id=\"k\" hidden=\"\">guar</span>Y",
+    "objectText": "guar",
+    "preserved": true,
+    "span": [
+     "inner",
+     4,
+     "inner",
+     5
+    ]
+   },
+   "candidate": {
+    "control": "empty-hidden",
+    "key": "Backspace",
+    "html": "<span></span><span id=\"k\" hidden=\"\">guard</span>Y",
+    "objectText": "guard",
+    "preserved": true,
+    "span": [
+     "X",
+     0,
+     "X",
+     1
+    ]
+   },
+   "chrome158": {
+    "control": "empty-hidden",
+    "key": "Backspace",
+    "html": "Y",
+    "objectText": "guard",
+    "preserved": false,
+    "span": [
+     "X",
+     0,
+     "X",
+     1
+    ]
+   }
+  },
+  {
+   "base": {
+    "control": "empty-hidden",
+    "key": "Delete",
+    "html": "X<span></span><span id=\"k\" hidden=\"\">uard</span>Y",
+    "objectText": "uard",
+    "preserved": true,
+    "span": [
+     "X",
+     1,
+     "X",
+     1
+    ]
+   },
+   "candidate": {
+    "control": "empty-hidden",
+    "key": "Delete",
+    "html": "X<span></span><span id=\"k\" hidden=\"\">guard</span>",
+    "objectText": "guard",
+    "preserved": true,
+    "span": [
+     "Y",
+     0,
+     "Y",
+     1
+    ]
+   },
+   "chrome158": {
+    "control": "empty-hidden",
+    "key": "Delete",
+    "html": "X",
+    "objectText": "guard",
+    "preserved": false,
+    "span": [
+     "Y",
+     0,
+     "Y",
+     1
+    ]
+   }
+  },
+  {
+   "base": {
+    "control": "empty-visible",
+    "key": "Backspace",
+    "html": "X<span></span><span id=\"k\">guar</span>Y",
+    "objectText": "guar",
+    "preserved": true,
+    "span": [
+     "inner",
+     4,
+     "inner",
+     5
+    ]
+   },
+   "candidate": {
+    "control": "empty-visible",
+    "key": "Backspace",
+    "html": "X<span></span><span id=\"k\">guar</span>Y",
+    "objectText": "guar",
+    "preserved": true,
+    "span": [
+     "inner",
+     4,
+     "inner",
+     5
+    ]
+   },
+   "chrome158": {
+    "control": "empty-visible",
+    "key": "Backspace",
+    "html": "X<span></span><span id=\"k\">guar</span>Y",
+    "objectText": "guar",
+    "preserved": true,
+    "span": [
+     "inner",
+     4,
+     "inner",
+     5
+    ]
+   }
+  },
+  {
+   "base": {
+    "control": "empty-visible",
+    "key": "Delete",
+    "html": "X<span></span><span id=\"k\">uard</span>Y",
+    "objectText": "uard",
+    "preserved": true,
+    "span": [
+     "X",
+     1,
+     "X",
+     1
+    ]
+   },
+   "candidate": {
+    "control": "empty-visible",
+    "key": "Delete",
+    "html": "X<span></span><span id=\"k\">uard</span>Y",
+    "objectText": "uard",
+    "preserved": true,
+    "span": [
+     "inner",
+     0,
+     "inner",
+     1
+    ]
+   },
+   "chrome158": {
+    "control": "empty-visible",
+    "key": "Delete",
+    "html": "X<span id=\"k\">uard</span>Y",
+    "objectText": "uard",
+    "preserved": true,
+    "span": [
+     "inner",
+     0,
+     "inner",
+     1
+    ]
+   }
+  },
+  {
+   "base": {
+    "control": "hr",
+    "key": "Backspace",
+    "html": "<hr id=\"k\">Y",
+    "objectText": "",
+    "preserved": true,
+    "span": [
+     "host",
+     1,
+     "host",
+     2
+    ]
+   },
+   "candidate": {
+    "control": "hr",
+    "key": "Backspace",
+    "html": "XY",
+    "objectText": "",
+    "preserved": false,
+    "span": [
+     "host",
+     1,
+     "host",
+     2
+    ]
+   },
+   "chrome158": {
+    "control": "hr",
+    "key": "Backspace",
+    "html": "XY",
+    "objectText": "",
+    "preserved": false,
+    "span": [
+     "host",
+     2,
+     "Y",
+     0
+    ]
+   }
+  },
+  {
+   "base": {
+    "control": "hr",
+    "key": "Delete",
+    "html": "X<hr id=\"k\">",
+    "objectText": "",
+    "preserved": true,
+    "span": [
+     "host",
+     1,
+     "host",
+     2
+    ]
+   },
+   "candidate": {
+    "control": "hr",
+    "key": "Delete",
+    "html": "XY",
+    "objectText": "",
+    "preserved": false,
+    "span": [
+     "host",
+     1,
+     "host",
+     2
+    ]
+   },
+   "chrome158": {
+    "control": "hr",
+    "key": "Delete",
+    "html": "XY",
+    "objectText": "",
+    "preserved": false,
+    "span": [
+     "X",
+     1,
+     "host",
+     1
+    ]
+   }
+  },
+  {
+   "base": {
+    "control": "input",
+    "key": "Backspace",
+    "html": "<input id=\"k\">Y",
+    "objectText": "",
+    "preserved": true,
+    "span": [
+     "host",
+     1,
+     "host",
+     2
+    ]
+   },
+   "candidate": {
+    "control": "input",
+    "key": "Backspace",
+    "html": "XY",
+    "objectText": "",
+    "preserved": false,
+    "span": [
+     "host",
+     1,
+     "host",
+     2
+    ]
+   },
+   "chrome158": {
+    "control": "input",
+    "key": "Backspace",
+    "html": "XY",
+    "objectText": "",
+    "preserved": false,
+    "span": [
+     "host",
+     1,
+     "host",
+     2
+    ]
+   }
+  },
+  {
+   "base": {
+    "control": "input",
+    "key": "Delete",
+    "html": "X<input id=\"k\">",
+    "objectText": "",
+    "preserved": true,
+    "span": [
+     "host",
+     1,
+     "host",
+     2
+    ]
+   },
+   "candidate": {
+    "control": "input",
+    "key": "Delete",
+    "html": "XY",
+    "objectText": "",
+    "preserved": false,
+    "span": [
+     "host",
+     1,
+     "host",
+     2
+    ]
+   },
+   "chrome158": {
+    "control": "input",
+    "key": "Delete",
+    "html": "XY",
+    "objectText": "",
+    "preserved": false,
+    "span": [
+     "host",
+     1,
+     "host",
+     2
+    ]
+   }
+  },
+  {
+   "base": {
+    "control": "empty-widget",
+    "key": "Backspace",
+    "html": "🇸<span id=\"k\" contenteditable=\"false\"></span>",
+    "objectText": "",
+    "preserved": true,
+    "span": [
+     "🇸🇮",
+     2,
+     "🇸🇮",
+     4
+    ]
+   },
+   "candidate": {
+    "control": "empty-widget",
+    "key": "Backspace",
+    "html": "<span id=\"k\" contenteditable=\"false\"></span>",
+    "objectText": "",
+    "preserved": true,
+    "span": [
+     "🇸🇮",
+     0,
+     "🇸🇮",
+     4
+    ]
+   },
+   "chrome158": {
+    "control": "empty-widget",
+    "key": "Backspace",
+    "html": "<span id=\"k\" contenteditable=\"false\"></span>",
+    "objectText": "",
+    "preserved": true,
+    "span": [
+     "🇸🇮",
+     0,
+     "🇸🇮",
+     4
+    ]
+   }
+  },
+  {
+   "base": {
+    "control": "empty-widget",
+    "key": "Delete",
+    "html": "🇮<span id=\"k\" contenteditable=\"false\"></span>",
+    "objectText": "",
+    "preserved": true,
+    "span": [
+     "🇸🇮",
+     0,
+     "🇸🇮",
+     2
+    ]
+   },
+   "candidate": {
+    "control": "empty-widget",
+    "key": "Delete",
+    "html": "<span id=\"k\" contenteditable=\"false\"></span>",
+    "objectText": "",
+    "preserved": true,
+    "span": [
+     "🇸🇮",
+     0,
+     "🇸🇮",
+     4
+    ]
+   },
+   "chrome158": {
+    "control": "empty-widget",
+    "key": "Delete",
+    "html": "<span id=\"k\" contenteditable=\"false\"></span>",
+    "objectText": "",
+    "preserved": true,
+    "span": [
+     "🇸🇮",
+     0,
+     "🇸🇮",
+     4
+    ]
+   }
+  }
+ ],
+ "joins": [
+  {
+   "base": {
+    "control": "hiddenBlock",
+    "html": "<p><br></p><p hidden=\"\">secret</p><p>Y</p>",
+    "caret": "",
+    "at": 0,
+    "span": [
+     "#text",
+     "😀",
+     1,
+     "#text",
+     "😀",
+     2
+    ]
+   },
+   "candidate": {
+    "control": "hiddenBlock",
+    "html": "<p>😀Y</p><p hidden=\"\">secret</p>",
+    "caret": "😀",
+    "at": 2,
+    "span": [
+     "#text",
+     "😀",
+     2,
+     "#text",
+     "Y",
+     0
+    ]
+   },
+   "chrome158": {
+    "control": "hiddenBlock",
+    "html": "<p>😀Y</p>",
+    "caret": "😀Y",
+    "at": 2,
+    "span": [
+     "#text",
+     "😀",
+     2,
+     "P",
+     "Y",
+     0
+    ]
+   }
+  },
+  {
+   "base": {
+    "control": "hiddenBlockBreak",
+    "html": "<p><br></p><p hidden=\"\">secret</p><p>Y</p>",
+    "caret": "",
+    "at": 1,
+    "span": [
+     "#text",
+     "😀",
+     1,
+     "#text",
+     "😀",
+     2
+    ]
+   },
+   "candidate": {
+    "control": "hiddenBlockBreak",
+    "html": "<p>😀Y</p><p hidden=\"\">secret</p>",
+    "caret": "😀",
+    "at": 2,
+    "span": [
+     "#text",
+     "😀",
+     2,
+     "#text",
+     "Y",
+     0
+    ]
+   },
+   "chrome158": {
+    "control": "hiddenBlockBreak",
+    "html": "<p>😀Y</p>",
+    "caret": "😀Y",
+    "at": 2,
+    "span": [
+     "P",
+     "😀",
+     1,
+     "P",
+     "Y",
+     0
+    ]
+   }
+  },
+  {
+   "base": {
+    "control": "hiddenSeam",
+    "html": "<p><span hidden=\"\">secret</span></p><p>Y</p>",
+    "caret": "",
+    "at": 1,
+    "span": [
+     "#text",
+     "😀",
+     1,
+     "#text",
+     "😀",
+     2
+    ]
+   },
+   "candidate": {
+    "control": "hiddenSeam",
+    "html": "<p>😀<span hidden=\"\">secret</span>Y</p>",
+    "caret": "😀",
+    "at": 2,
+    "span": [
+     "#text",
+     "😀",
+     2,
+     "#text",
+     "Y",
+     0
+    ]
+   },
+   "chrome158": {
+    "control": "hiddenSeam",
+    "html": "<p>😀Y</p>",
+    "caret": "😀Y",
+    "at": 2,
+    "span": [
+     "#text",
+     "😀",
+     2,
+     "P",
+     "Y",
+     0
+    ]
+   }
+  },
+  {
+   "base": {
+    "control": "visibleOverride",
+    "html": "<span style=\"visibility:hidden\"><b style=\"visibility:visible\">Z</b></span>Y",
+    "caret": "",
+    "at": 1,
+    "span": [
+     "#text",
+     "😀",
+     1,
+     "#text",
+     "😀",
+     2
+    ]
+   },
+   "candidate": {
+    "control": "visibleOverride",
+    "html": "😀<span style=\"visibility:hidden\"><b style=\"visibility:visible\"></b></span>Y",
+    "caret": "",
+    "at": 0,
+    "span": [
+     "#text",
+     "Z",
+     0,
+     "#text",
+     "Z",
+     1
+    ]
+   },
+   "chrome158": {
+    "control": "visibleOverride",
+    "html": "😀Y",
+    "caret": "😀",
+    "at": 2,
+    "span": [
+     "#text",
+     "Z",
+     0,
+     "#text",
+     "Z",
+     1
+    ]
+   }
+  },
+  {
+   "base": {
+    "control": "rightAnonymous",
+    "html": "<p><br></p><b>Y<br>Z</b>",
+    "caret": "",
+    "at": 0,
+    "span": [
+     "#text",
+     "😀",
+     1,
+     "#text",
+     "😀",
+     2
+    ]
+   },
+   "candidate": {
+    "control": "rightAnonymous",
+    "html": "<p>😀<b>Y</b></p><b>Z</b>",
+    "caret": "😀",
+    "at": 2,
+    "span": [
+     "#text",
+     "😀",
+     2,
+     "#text",
+     "Y",
+     0
+    ]
+   },
+   "chrome158": {
+    "control": "rightAnonymous",
+    "html": "<p>😀<b>Y</b></p><b>Z</b>",
+    "caret": "😀",
+    "at": 2,
+    "span": [
+     "#text",
+     "😀",
+     2,
+     "B",
+     "YZ",
+     0
+    ]
+   }
+  },
+  {
+   "base": {
+    "control": "leftAnonymous",
+    "html": "<p><b>Y<br>Z</b></p>",
+    "caret": "",
+    "at": 1,
+    "span": [
+     "#text",
+     "😀",
+     1,
+     "#text",
+     "😀",
+     2
+    ]
+   },
+   "candidate": {
+    "control": "leftAnonymous",
+    "html": "😀<b>Y</b><p><b>Z</b></p>",
+    "caret": "😀",
+    "at": 2,
+    "span": [
+     "#text",
+     "😀",
+     2,
+     "#text",
+     "Y",
+     0
+    ]
+   },
+   "chrome158": {
+    "control": "leftAnonymous",
+    "html": "😀<b>Y</b><p><b>Z</b></p>",
+    "caret": "😀",
+    "at": 2,
+    "span": [
+     "#text",
+     "😀",
+     2,
+     "P",
+     "YZ",
+     0
+    ]
+   }
+  },
+  {
+   "base": {
+    "control": "styledRight",
+    "html": "<p style=\"white-space:nowrap\"><br></p><p style=\"white-space:pre\"><b>Y<br>Z</b></p>",
+    "caret": "",
+    "at": 0,
+    "span": [
+     "#text",
+     "😀",
+     1,
+     "#text",
+     "😀",
+     2
+    ]
+   },
+   "candidate": {
+    "control": "styledRight",
+    "html": "<p style=\"white-space:nowrap\">😀<span style=\"white-space: pre;\"><b>Y</b></span></p><p style=\"white-space:pre\"><b>Z</b></p>",
+    "caret": "😀",
+    "at": 2,
+    "span": [
+     "#text",
+     "😀",
+     2,
+     "#text",
+     "Y",
+     0
+    ]
+   },
+   "chrome158": {
+    "control": "styledRight",
+    "html": "<p style=\"white-space:nowrap\">😀<b style=\"white-space: pre;\">Y</b></p><p style=\"white-space:pre\"><b>Z</b></p>",
+    "caret": "😀",
+    "at": 2,
+    "span": [
+     "#text",
+     "😀",
+     2,
+     "P",
+     "YZ",
+     0
+    ]
+   }
+  }
+ ],
+ "containers": [
+  {
+   "base": {
+    "control": "nested",
+    "html": "<div><p>X</p></div><div id=\"keep\"><p>Y</p><p id=\"tail\">Z</p></div>",
+    "keep": true,
+    "tail": true,
+    "guard": true,
+    "caret": "X",
+    "offset": 1,
+    "span": [
+     "#text",
+     1,
+     "#text",
+     0
+    ]
+   },
+   "candidate": {
+    "control": "nested",
+    "html": "<div><p>XY</p></div><div id=\"keep\"><p id=\"tail\">Z</p></div>",
+    "keep": true,
+    "tail": true,
+    "guard": true,
+    "caret": "X",
+    "offset": 1,
+    "span": [
+     "#text",
+     1,
+     "#text",
+     0
+    ]
+   },
+   "chrome158": {
+    "control": "nested",
+    "html": "<div><p>XY</p></div><div id=\"keep\"><p id=\"tail\">Z</p></div>",
+    "keep": true,
+    "tail": true,
+    "guard": true,
+    "caret": "XY",
+    "offset": 1,
+    "span": [
+     "#text",
+     1,
+     "P",
+     0
+    ]
+   }
+  },
+  {
+   "base": {
+    "control": "backnested",
+    "html": "<div><p>X</p></div><div id=\"keep\"><p>Y</p><p id=\"tail\">Z</p></div>",
+    "keep": true,
+    "tail": true,
+    "guard": true,
+    "caret": "Y",
+    "offset": 0,
+    "span": [
+     "#text",
+     1,
+     "#text",
+     0
+    ]
+   },
+   "candidate": {
+    "control": "backnested",
+    "html": "<div><p>XY</p></div><div id=\"keep\"><p id=\"tail\">Z</p></div>",
+    "keep": true,
+    "tail": true,
+    "guard": true,
+    "caret": "X",
+    "offset": 1,
+    "span": [
+     "#text",
+     1,
+     "#text",
+     0
+    ]
+   },
+   "chrome158": {
+    "control": "backnested",
+    "html": "<div><p>XY</p></div><div id=\"keep\"><p id=\"tail\">Z</p></div>",
+    "keep": true,
+    "tail": true,
+    "guard": true,
+    "caret": "XY",
+    "offset": 1,
+    "span": [
+     "#text",
+     1,
+     "P",
+     0
+    ]
+   }
+  },
+  {
+   "base": {
+    "control": "lockedBR",
+    "html": "<p>X<span contenteditable=\"false\" id=\"guard\">loc<br></span></p><b>Y</b>",
+    "keep": true,
+    "tail": true,
+    "guard": false,
+    "caret": "loc",
+    "offset": 3,
+    "span": [
+     "P",
+     2,
+     "#text",
+     0
+    ]
+   },
+   "candidate": {
+    "control": "lockedBR",
+    "html": "<p>X<span contenteditable=\"false\" id=\"guard\">lock<br></span><b>Y</b></p>",
+    "keep": true,
+    "tail": true,
+    "guard": true,
+    "caret": "XlockY",
+    "offset": 2,
+    "span": [
+     "P",
+     2,
+     "#text",
+     0
+    ]
+   },
+   "chrome158": {
+    "control": "lockedBR",
+    "html": "<p>X<span contenteditable=\"false\" id=\"guard\">lock<br></span><b>Y</b></p>",
+    "keep": true,
+    "tail": true,
+    "guard": true,
+    "caret": "Y",
+    "offset": 0,
+    "span": [
+     "P",
+     2,
+     "B",
+     0
+    ]
+   }
+  },
+  {
+   "base": {
+    "control": "endwidget",
+    "html": "🇸<span contenteditable=\"false\" id=\"guard\"></span>",
+    "keep": true,
+    "tail": true,
+    "guard": true,
+    "caret": "🇸",
+    "offset": 2,
+    "span": [
+     "#text",
+     2,
+     "#text",
+     4
+    ]
+   },
+   "candidate": {
+    "control": "endwidget",
+    "html": "<span contenteditable=\"false\" id=\"guard\"></span>",
+    "keep": true,
+    "tail": true,
+    "guard": true,
+    "caret": "",
+    "offset": 0,
+    "span": [
+     "#text",
+     0,
+     "#text",
+     4
+    ]
+   },
+   "chrome158": {
+    "control": "endwidget",
+    "html": "<span contenteditable=\"false\" id=\"guard\"></span>",
+    "keep": true,
+    "tail": true,
+    "guard": true,
+    "caret": "",
+    "offset": 0,
+    "span": [
+     "#text",
+     0,
+     "#text",
+     4
+    ]
+   }
+  },
+  {
+   "base": {
+    "control": "twoLines",
+    "html": "<p>X<b>Y<br>Z</b></p>",
+    "keep": true,
+    "tail": true,
+    "guard": true,
+    "caret": "X",
+    "offset": 1,
+    "span": [
+     "#text",
+     1,
+     "#text",
+     0
+    ]
+   },
+   "candidate": {
+    "control": "twoLines",
+    "html": "<p>X<b>Y</b></p><p><b>Z</b></p>",
+    "keep": true,
+    "tail": true,
+    "guard": true,
+    "caret": "X",
+    "offset": 1,
+    "span": [
+     "#text",
+     1,
+     "#text",
+     0
+    ]
+   },
+   "chrome158": {
+    "control": "twoLines",
+    "html": "<p>X<b>Y</b></p><p><b>Z</b></p>",
+    "keep": true,
+    "tail": true,
+    "guard": true,
+    "caret": "X",
+    "offset": 1,
+    "span": [
+     "#text",
+     1,
+     "P",
+     0
+    ]
+   }
+  },
+  {
+   "base": {
+    "control": "sameFormatted",
+    "html": "<p><i style=\"color:blue\">X</i><font color=\"red\">Y</font></p>",
+    "keep": true,
+    "tail": true,
+    "guard": true,
+    "caret": "X",
+    "offset": 1,
+    "span": [
+     "#text",
+     1,
+     "#text",
+     0
+    ]
+   },
+   "candidate": {
+    "control": "sameFormatted",
+    "html": "<p><i style=\"color:blue\">X</i><font color=\"red\">Y</font></p>",
+    "keep": true,
+    "tail": true,
+    "guard": true,
+    "caret": "X",
+    "offset": 1,
+    "span": [
+     "#text",
+     1,
+     "#text",
+     0
+    ]
+   },
+   "chrome158": {
+    "control": "sameFormatted",
+    "html": "<p><i style=\"color:blue\">X</i><span style=\"color: red;\">Y</span></p>",
+    "keep": true,
+    "tail": true,
+    "guard": true,
+    "caret": "X",
+    "offset": 1,
+    "span": [
+     "#text",
+     1,
+     "P",
+     0
+    ]
+   }
+  }
+ ],
+ "sole-break": [
+  {
+   "base": {
+    "control": "lockedOnlyBR",
+    "html": "<p>Y</p>",
+    "keep": true,
+    "tail": true,
+    "guard": false,
+    "caret": "Y",
+    "offset": 0,
+    "span": [
+     "P",
+     1,
+     "#text",
+     0
+    ]
+   },
+   "candidate": {
+    "control": "lockedOnlyBR",
+    "html": "<p><br id=\"guard\" contenteditable=\"false\">Y</p>",
+    "keep": true,
+    "tail": true,
+    "guard": true,
+    "caret": "Y",
+    "offset": 1,
+    "span": [
+     "P",
+     1,
+     "#text",
+     0
+    ]
+   },
+   "chrome158": {
+    "control": "lockedOnlyBR",
+    "html": "<p><br id=\"guard\" contenteditable=\"false\">Y</p>",
+    "keep": true,
+    "tail": true,
+    "guard": true,
+    "caret": "Y",
+    "offset": 0,
+    "span": [
+     "P",
+     1,
+     "P",
+     0
+    ]
+   }
+  },
+  {
+   "base": {
+    "control": "nested",
+    "html": "<div><p>X</p></div><div id=\"keep\"><p>Y</p><p id=\"tail\">Z</p></div>",
+    "keep": true,
+    "tail": true,
+    "guard": true,
+    "caret": "X",
+    "offset": 1,
+    "span": [
+     "#text",
+     1,
+     "#text",
+     0
+    ]
+   },
+   "candidate": {
+    "control": "nested",
+    "html": "<div><p>XY</p></div><div id=\"keep\"><p id=\"tail\">Z</p></div>",
+    "keep": true,
+    "tail": true,
+    "guard": true,
+    "caret": "X",
+    "offset": 1,
+    "span": [
+     "#text",
+     1,
+     "#text",
+     0
+    ]
+   },
+   "chrome158": {
+    "control": "nested",
+    "html": "<div><p>XY</p></div><div id=\"keep\"><p id=\"tail\">Z</p></div>",
+    "keep": true,
+    "tail": true,
+    "guard": true,
+    "caret": "XY",
+    "offset": 1,
+    "span": [
+     "#text",
+     1,
+     "P",
+     0
+    ]
+   }
+  },
+  {
+   "base": {
+    "control": "backnested",
+    "html": "<div><p>X</p></div><div id=\"keep\"><p>Y</p><p id=\"tail\">Z</p></div>",
+    "keep": true,
+    "tail": true,
+    "guard": true,
+    "caret": "Y",
+    "offset": 0,
+    "span": [
+     "#text",
+     1,
+     "#text",
+     0
+    ]
+   },
+   "candidate": {
+    "control": "backnested",
+    "html": "<div><p>XY</p></div><div id=\"keep\"><p id=\"tail\">Z</p></div>",
+    "keep": true,
+    "tail": true,
+    "guard": true,
+    "caret": "X",
+    "offset": 1,
+    "span": [
+     "#text",
+     1,
+     "#text",
+     0
+    ]
+   },
+   "chrome158": {
+    "control": "backnested",
+    "html": "<div><p>XY</p></div><div id=\"keep\"><p id=\"tail\">Z</p></div>",
+    "keep": true,
+    "tail": true,
+    "guard": true,
+    "caret": "XY",
+    "offset": 1,
+    "span": [
+     "#text",
+     1,
+     "P",
+     0
+    ]
+   }
+  },
+  {
+   "base": {
+    "control": "lockedBR",
+    "html": "<p>X<span contenteditable=\"false\" id=\"guard\">loc<br></span></p><b>Y</b>",
+    "keep": true,
+    "tail": true,
+    "guard": false,
+    "caret": "loc",
+    "offset": 3,
+    "span": [
+     "P",
+     2,
+     "#text",
+     0
+    ]
+   },
+   "candidate": {
+    "control": "lockedBR",
+    "html": "<p>X<span contenteditable=\"false\" id=\"guard\">lock<br></span><b>Y</b></p>",
+    "keep": true,
+    "tail": true,
+    "guard": true,
+    "caret": "XlockY",
+    "offset": 2,
+    "span": [
+     "P",
+     2,
+     "#text",
+     0
+    ]
+   },
+   "chrome158": {
+    "control": "lockedBR",
+    "html": "<p>X<span contenteditable=\"false\" id=\"guard\">lock<br></span><b>Y</b></p>",
+    "keep": true,
+    "tail": true,
+    "guard": true,
+    "caret": "Y",
+    "offset": 0,
+    "span": [
+     "P",
+     2,
+     "B",
+     0
+    ]
+   }
+  },
+  {
+   "base": {
+    "control": "endwidget",
+    "html": "🇸<span contenteditable=\"false\" id=\"guard\"></span>",
+    "keep": true,
+    "tail": true,
+    "guard": true,
+    "caret": "🇸",
+    "offset": 2,
+    "span": [
+     "#text",
+     2,
+     "#text",
+     4
+    ]
+   },
+   "candidate": {
+    "control": "endwidget",
+    "html": "<span contenteditable=\"false\" id=\"guard\"></span>",
+    "keep": true,
+    "tail": true,
+    "guard": true,
+    "caret": "",
+    "offset": 0,
+    "span": [
+     "#text",
+     0,
+     "#text",
+     4
+    ]
+   },
+   "chrome158": {
+    "control": "endwidget",
+    "html": "<span contenteditable=\"false\" id=\"guard\"></span>",
+    "keep": true,
+    "tail": true,
+    "guard": true,
+    "caret": "",
+    "offset": 0,
+    "span": [
+     "#text",
+     0,
+     "#text",
+     4
+    ]
+   }
+  },
+  {
+   "base": {
+    "control": "twoLines",
+    "html": "<p>X<b>Y<br>Z</b></p>",
+    "keep": true,
+    "tail": true,
+    "guard": true,
+    "caret": "X",
+    "offset": 1,
+    "span": [
+     "#text",
+     1,
+     "#text",
+     0
+    ]
+   },
+   "candidate": {
+    "control": "twoLines",
+    "html": "<p>X<b>Y</b></p><p><b>Z</b></p>",
+    "keep": true,
+    "tail": true,
+    "guard": true,
+    "caret": "X",
+    "offset": 1,
+    "span": [
+     "#text",
+     1,
+     "#text",
+     0
+    ]
+   },
+   "chrome158": {
+    "control": "twoLines",
+    "html": "<p>X<b>Y</b></p><p><b>Z</b></p>",
+    "keep": true,
+    "tail": true,
+    "guard": true,
+    "caret": "X",
+    "offset": 1,
+    "span": [
+     "#text",
+     1,
+     "P",
+     0
+    ]
+   }
+  },
+  {
+   "base": {
+    "control": "sameFormatted",
+    "html": "<p><i style=\"color:blue\">X</i><font color=\"red\">Y</font></p>",
+    "keep": true,
+    "tail": true,
+    "guard": true,
+    "caret": "X",
+    "offset": 1,
+    "span": [
+     "#text",
+     1,
+     "#text",
+     0
+    ]
+   },
+   "candidate": {
+    "control": "sameFormatted",
+    "html": "<p><i style=\"color:blue\">X</i><font color=\"red\">Y</font></p>",
+    "keep": true,
+    "tail": true,
+    "guard": true,
+    "caret": "X",
+    "offset": 1,
+    "span": [
+     "#text",
+     1,
+     "#text",
+     0
+    ]
+   },
+   "chrome158": {
+    "control": "sameFormatted",
+    "html": "<p><i style=\"color:blue\">X</i><span style=\"color: red;\">Y</span></p>",
+    "keep": true,
+    "tail": true,
+    "guard": true,
+    "caret": "X",
+    "offset": 1,
+    "span": [
+     "#text",
+     1,
+     "P",
+     0
+    ]
+   }
+  }
+ ]
+}
