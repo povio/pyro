@@ -6,7 +6,7 @@
 //! local bindings. A missing local name looks outward through invoking frames
 //! before reaching the custom properties on the element.
 
-use super::{ArbitraryDeclarationValue, Substitution, SubstitutionParserContext, SubstitutionReplacementContext};
+use super::{ArbitraryDeclarationValue, ReferenceFlags, Substitution, SubstitutionParserContext, SubstitutionReplacementContext};
 use crate::Atom;
 use crate::custom_properties::{Name, VariableValue};
 use crate::derives::*;
@@ -80,7 +80,12 @@ impl Frame {
             })
             .ok()?
             .to_computed_value(cx.computed_context);
-        Some((result.to_variable_value(), tainted || result.attr_tainted))
+        let mut computed = result.to_variable_value();
+        if cx.function_dependencies.is_some() {
+            // The computed value may now be px, so retain the units consulted by this slot.
+            computed.references.flags = v.references.flags | ReferenceFlags::font_units_in(&v.css);
+        }
+        Some((computed, tainted || result.attr_tainted))
     }
 
     fn substitute(self: &Rc<Self>, source: &VariableValue, cx: &mut SubstitutionReplacementContext) -> Option<Value> {
@@ -94,17 +99,25 @@ impl Frame {
         nested.seen = cx.seen.clone();
         nested.function_frame = Some(self.clone());
         nested.function_dependencies = cx.function_dependencies.clone();
-        let v = nested.substitute_variable_value(source, None).ok().map(|v| owned(v, source));
+        let v = nested.substitute_variable_value(source, None).ok().map(|v| {
+            let (mut value, taint) = owned(v, source);
+            value.references.flags |= nested.function_units;
+            (value, taint)
+        });
         cx.consulted_attr_taint |= nested.consulted_attr_taint;
         v
     }
 
     pub(crate) fn outer(self: &Rc<Self>, name: &Name, cx: &mut SubstitutionReplacementContext) -> Option<Value> {
         let previous = std::mem::replace(&mut cx.function_frame, self.parent.clone());
+        let previous_units = std::mem::take(&mut cx.function_units);
         let value = super::var::VarFunction::resolve_custom_property(name, cx).map(|v| {
             let source = self.rule.result.as_deref().expect("only invoked functions have results");
-            owned(v, source)
+            let (mut value, taint) = owned(v, source);
+            value.references.flags |= cx.function_units;
+            (value, taint)
         });
+        cx.function_units = previous_units;
         cx.function_frame = previous;
         value
     }
@@ -179,7 +192,10 @@ pub(super) fn local_value(
             frame = f.parent.clone();
             continue;
         };
-        return Some(value.map(|(v, tainted)| Substitution::from_value(v, tainted)));
+        return Some(value.map(|(v, tainted)| {
+            cx.function_units |= v.references.flags & ReferenceFlags::NON_CUSTOM;
+            Substitution::from_value(v, tainted)
+        }));
     }
     None
 }
@@ -243,11 +259,15 @@ impl FunctionCall {
             parent,
         });
         for (index, param) in frame.rule.parameters.iter().enumerate() {
-            let supplied = self
-                .arguments
-                .get(index)
+            let previous_units = std::mem::take(&mut cx.function_units);
+            let supplied = self.arguments.get(index)
                 .and_then(|arg| cx.substitute_declaration_value(arg, source).ok())
-                .and_then(|v| frame.typed(Some(&param.name), owned(v, source), Some(&param.syntax), cx));
+                .and_then(|substitution| {
+                    let (mut value, taint) = owned(substitution, source);
+                    value.references.flags |= cx.function_units;
+                    frame.typed(Some(&param.name), (value, taint), Some(&param.syntax), cx)
+                });
+            cx.function_units = previous_units;
             let binding = match (supplied, &param.default) {
                 (Some(v), _) => Binding::Ready(Some(v)),
                 (None, Some(default)) => Binding::Pending(default.clone()),
@@ -268,6 +288,7 @@ impl FunctionCall {
             .extend(frame.rule.locals.iter().map(|(n, v)| (n.clone(), Binding::Pending(v.clone()))));
         let v = frame.substitute(&result, cx).ok_or(())?;
         let (v, tainted) = frame.typed(None, v, Some(&frame.rule.returns), cx).ok_or(())?;
+        cx.function_units |= v.references.flags & ReferenceFlags::NON_CUSTOM;
         Ok(Substitution::from_value(v, tainted))
     }
 }

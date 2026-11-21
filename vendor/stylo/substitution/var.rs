@@ -65,7 +65,10 @@ impl VarFunction {
             .and_then(|name| {
                 if inherited {
                     if let Some(frame) = context.function_frame.clone() {
-                        return frame.outer(&name.0, context).map(|(v, tainted)| Substitution::from_value(v, tainted));
+                        return frame.outer(&name.0, context).map(|(v, tainted)| {
+                            context.function_units |= v.references.flags & crate::substitution::ReferenceFlags::NON_CUSTOM;
+                            Substitution::from_value(v, tainted)
+                        });
                     }
                     let value = Self::inherited_value(&name.0, context)?;
                     if value.viewport_dependent {

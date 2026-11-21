@@ -613,3 +613,30 @@ fn first_cssom_edit_of_a_rendered_style_updates_ordinary_rules() {
     "#);
     assert_eq!(actual, "11px|23px|11px");
 }
+
+#[test]
+fn function_slots_compute_against_the_calling_elements_font_metrics() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        document.body.innerHTML = `<style>
+          @property --raw-length { syntax: "<length>"; inherits: false; initial-value: 1px }
+          @function --twice(--x <length>: 1em) returns <length> {
+            --local: var(--x); result: calc(2 * var(--local));
+          }
+          @function --line() returns <length> { result: 1lh }
+          @function --tokens() { result: 1em }
+          @function --constant(--unused <length>: 2em) returns <length> {
+            --ignored-local: 3em; result: 23px;
+          }
+          section { font-size: 9px; line-height: 12px }
+          #measure { font-size: 21px; line-height: 31px; --x: --twice(); --line: --line(); --raw-length: --tokens() }
+          #ignore { --size: --constant(); font-size: var(--size) }
+        </style><section><p id="measure"></p><p id="ignore"></p></section>`;
+        const el = document.querySelector('#measure');
+        const read = n => getComputedStyle(el).getPropertyValue(n);
+        const before = [read('--x'), read('--line'), read('--raw-length')];
+        el.style.fontSize = '33px';
+        [...before, read('--x'), getComputedStyle(document.querySelector('#ignore')).fontSize].join('|')
+    "#);
+    assert_eq!(actual, "42px|31px|21px|66px|23px");
+}

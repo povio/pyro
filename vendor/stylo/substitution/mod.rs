@@ -605,6 +605,25 @@ bitflags! {
 }
 
 impl ReferenceFlags {
+    /// Font and line-height units in an already substituted token stream. Only dimensions
+    /// matter here: strings and identifiers spelling a unit are not lengths.
+    pub(crate) fn font_units_in(css: &str) -> Self {
+        fn visit(input: &mut Parser, flags: &mut ReferenceFlags) -> Result<(), ParseError> {
+            while let Ok(token) = input.next() {
+                match token {
+                    Token::Dimension { unit, .. } => *flags |= ReferenceFlags::from_unit(unit),
+                    Token::Function(_) | Token::ParenthesisBlock | Token::SquareBracketBlock | Token::CurlyBracketBlock =>
+                        input.parse_nested_block(|i| visit(i, flags))?,
+                    _ => {},
+                }
+            }
+            Ok(())
+        }
+        let mut flags = Self::empty();
+        let _ = visit(&mut Parser::new(css), &mut flags);
+        flags
+    }
+
     fn from_unit(value: &CowRcStr) -> Self {
         // For registered properties, any reference to font-relative dimensions
         // make it dependent on font-related properties.
@@ -816,6 +835,8 @@ pub struct SubstitutionReplacementContext<'a, 'b, 'c, 't> {
     /// Number of random functions parsed during substitution of this declaration.
     pub(crate) early_random_count: i32,
     pub(crate) function_frame: Option<std::rc::Rc<function::Frame>>,
+    /// Units consumed by typed function slots on the value's active substitution path.
+    pub(crate) function_units: ReferenceFlags,
     pub(crate) function_dependencies: Option<std::rc::Rc<std::cell::RefCell<Vec<Name>>>>,
     /// The custom properties currently being resolved, for cycle detection.
     pub seen: SmallVec<[Name; 8]>,
@@ -840,6 +861,7 @@ impl<'a, 'b, 'c, 't> SubstitutionReplacementContext<'a, 'b, 'c, 't> {
             consulted_attr_taint: false,
             early_random_count: 0,
             function_frame: None,
+            function_units: ReferenceFlags::empty(),
             function_dependencies: None,
         }
     }
