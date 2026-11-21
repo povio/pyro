@@ -11,3 +11,5 @@ Matched Studio testharness, six workers, WPT `a421f2fea5eb7f91e0db399e44b0fb0779
 Gained 10 strict pages and 148 named passes without dropping any passing or observed name. Candidate-only vs stable: 7 pages / 39 names; stable-only: 4 / 14. These are not full-suite counts. All three vendor patches applied in both directions against their reconstructed upstreams.
 
 Two separate rendering probes are not part of the testharness score. The oversized-radius clamp reftest matches exactly on both binaries (not a new pass). The rounded clip against a border-radius reference improves from 1,528 differing pixels (max 255) to 204 (max 3), **still failing** the test's 100-pixel/max-1 limit. Expectations and tolerances are unchanged.
+
+Full checkpoint: LP passed 5,607 strict pages and 180,220 named subtests on 8,082 URLs, vs Chrome 6,950 / 182,963. The 10-page / 148-name gains held, with zero lost pages, passes or observed names. LP-only: 272 pages / 5,802 names; Chrome-only: 1,615 / 8,545. LP recorded 11 timeouts and one hang; Chrome had 10 and one. The 41 supplemental URLs remained unchanged at LP 27 / 577 vs Chrome 35 / 619; 39 withheld URLs are not scored.
