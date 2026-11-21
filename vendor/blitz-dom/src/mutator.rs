@@ -566,7 +566,7 @@ impl DocumentMutator<'_> {
             return;
         }
 
-        if *attr == local_name!("style") {
+        if *attr == local_name!("style") || (engine && &**attr == "inline-declarations") {
             element.flush_style_attribute(&self.doc.guard, &self.doc.url.url_extra_data());
             node.set_restyle_hint(RestyleHint::RESTYLE_STYLE_ATTRIBUTE);
             return;
@@ -822,7 +822,7 @@ impl DocumentMutator<'_> {
             return;
         }
 
-        if *attr == local_name!("style") {
+        if *attr == local_name!("style") || (engine && &**attr == "inline-declarations") {
             element.flush_style_attribute(&self.doc.guard, &self.doc.url.url_extra_data());
             node.set_restyle_hint(RestyleHint::RESTYLE_STYLE_ATTRIBUTE);
         } else if (tag, attr) == tag_and_attr!("input", "checked") {

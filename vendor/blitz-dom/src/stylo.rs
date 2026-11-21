@@ -1243,6 +1243,10 @@ impl<'a> TElement for BlitzNode<'a> {
         self.element_data().is_some_and(|data| data.name.ns == markup5ever::ns!(svg))
     }
 
+    fn style_attribute_source(&self) -> Option<&str> {
+        self.element_data()?.inline_declarations()
+    }
+
     fn style_attribute(&self) -> Option<ArcBorrow<'_, Locked<PropertyDeclarationBlock>>> {
         self.element_data()
             .expect("Not an element")
