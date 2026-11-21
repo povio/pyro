@@ -110,6 +110,23 @@ const BOX: &str = "<!doctype html><style>body{margin:0;background:#fff} #target{
     @keyframes stepped{0%{background-color:rgb(0,0,0);animation-timing-function:steps(2,jump-end)}100%{background-color:rgb(200,200,200)}}</style>\
     <div id=target></div>";
 
+#[test]
+fn a_sibling_move_recomputes_the_underlying_value_of_an_implicit_keyframe() {
+    let (mut snap, key) = page(
+        "<style>body{margin:0;background:white} #target{height:50px;background:green;width:calc(20px * sibling-index())}</style><i></i><div id=target></div>",
+    );
+    let effect = text(&[(1.0, "width:100px")], 0.5, None);
+    let mut renderer = Renderer::new();
+    let mut width = |snap: &Snapshot| {
+        let image = render(&mut renderer, snap, frame(key, vec![], vec![effect.clone()]));
+        (0..200).filter(|&x| pixel(&image, x, 10) == [0, 128, 0]).count()
+    };
+    assert_eq!(width(&snap), 70);
+    let tree = Arc::make_mut(&mut snap.live.as_mut().unwrap().tree);
+    tree.nodes.retain(|n| !matches!(&n.kind, TreeKind::Element { name, .. } if &*name.local == "i"));
+    assert_eq!(width(&snap), 60);
+}
+
 /// A CSS animation's `@keyframes` interpolate at the progress the page gives
 /// (linear here), and an empty frame puts the base value back.
 #[test]
