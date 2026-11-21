@@ -1,0 +1,9 @@
+# Buffer-backed VideoFrame round closeout
+
+Source 6788085735f975f2a4a4dd672ab3e5182e9d556d was measured against its parent 8e7144b7e7de68be3b5b345138abe2c1dcc6d232. Candidate SHA-256 is 0420567639fd536dfe7e82cf3a62802ab7ec5f4e66df33d87158069a26cadccc. Base SHA-256 is daea9cf80d257a1a0574e625ba38e58358104defbf2b7dee408fd8af667d72f8. Both used pinned JSC 0e0dd7038a7a-6f4649e395e0. The Chrome reference reuses the signed stable 158.0.8127.37 census at WPT a421f2fea5eb7f91e0db399e44b0fb0779ee1603.
+
+The 30 focused WebCodecs URLs gained 920 names and lost zero. LP passed 922 names and 18 full pages. Chrome passed 1,626 names and 20 full pages. The pass sets contain 132 LP-only names and 836 Chrome-only names. All 19 canvas guard pages remained fully passing. Both LP binaries completed with zero restarts or watchdog kills. The exported names include exact original spellings, canonical names and occurrence numbers.
+
+The topic implements buffer-backed frame copying, pixel conversion and canvas drawing. Display-P3 canvas, broader image-source construction, structured cloning/transfer and high-bit-depth/HDR formats remain incomplete. The pinned suite and saved specification differ on closed-frame color metadata and RGBX padding. The supplemental numerical checks use independent pixel values. The five-sample playback probe is exploratory.
+
+In the original measurement directory, the WPT commands were `sh run.sh base "$BASE_BINARY"` and `sh run.sh vetted "$CANDIDATE_BINARY"`. For the saved receipt comparison, unpack the four compressed LP receipts beside export.py and run `LP_CACHE=/path/to/lightningpanda-cache python3 export.py` with the pinned Chrome receipts and port normalizer available. The raw runner logs identify the WPT server configurations used for name matching. This source is a separate topic for parent integration.

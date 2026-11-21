@@ -1,0 +1,30 @@
+{
+  "guard": {
+    "urls": 19,
+    "baseFullPages": 19,
+    "basePasses": 19,
+    "vettedFullPages": 19,
+    "vettedPasses": 19,
+    "chromeFullPages": 19,
+    "chromePasses": 19,
+    "gains": 0,
+    "losses": 0,
+    "gainsChromePass": 0,
+    "candidateOnlyVsChrome": 0,
+    "chromeOnlyVsCandidate": 0
+  },
+  "focus": {
+    "urls": 30,
+    "baseFullPages": 0,
+    "basePasses": 2,
+    "vettedFullPages": 18,
+    "vettedPasses": 922,
+    "chromeFullPages": 20,
+    "chromePasses": 1626,
+    "gains": 920,
+    "losses": 0,
+    "gainsChromePass": 788,
+    "candidateOnlyVsChrome": 132,
+    "chromeOnlyVsCandidate": 836
+  }
+}
