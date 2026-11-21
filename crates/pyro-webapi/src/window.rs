@@ -680,12 +680,6 @@ pub fn css_namespace<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
             return Ok(s.boolean(pyro_dom::stylo::supports_declaration(&property, &value)));
         }
         let text = dom_string(a.get(0))?;
-        let selector = text.trim().strip_prefix("selector(").and_then(|t| t.strip_suffix(')'));
-        if let Some(selector) = selector {
-            if pyro_dom::cssom::normalize_selector(selector, &Vec::new()).is_some() {
-                return Ok(s.boolean(true));
-            }
-        }
         Ok(s.boolean(pyro_dom::stylo::supports_condition(&text)))
     })?;
     o.set_atom("supports", supports.value())?;
