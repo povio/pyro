@@ -208,6 +208,15 @@ fn an_import_rule_exposes_the_sheet_it_loaded() {
     );
 }
 
+#[test]
+fn imported_sheet_uses_the_rules_media_and_parent() {
+    let (thread, page, _) = load("<style id=s>@import '/a;b.css' screen;</style>", &[("/a;b.css", "q {}", 0)]);
+    assert_eq!(eval(&thread, page, "(() => { const parent = s.sheet, rule = parent.cssRules[0], child = rule.styleSheet;
+        if (!child) return 'missing'; const same = child.media === rule.media; child.media = 'print';
+        const media = rule.media.mediaText; parent.deleteRule(0);
+        return [same, media, child.parentStyleSheet === null].join('|'); })()"), "true|print|true");
+}
+
 /// Serves through a static loader, answering `/a.css` as if redirected to `/dir/a.css` (the
 /// response's URL).
 struct Redirected(Rc<StaticLoader>);
