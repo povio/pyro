@@ -1,0 +1,372 @@
+[
+  {
+    "case": "lockedBlock",
+    "method": "forward",
+    "matches_parent": true,
+    "matches_chrome_after": false,
+    "matches_chrome_selection": false,
+    "undo_restored": true,
+    "head_html": "<div id=\"l\">abc</div>",
+    "chrome_html": "<div id=\"l\">abc</div><pre contenteditable=\"false\" id=\"r\">def\nsecond</pre>"
+  },
+  {
+    "case": "lockedBlock",
+    "method": "range",
+    "matches_parent": true,
+    "matches_chrome_after": false,
+    "matches_chrome_selection": false,
+    "undo_restored": true,
+    "head_html": "<div id=\"l\">abc</div><pre contenteditable=\"false\" id=\"r\">def\nsecond</pre>",
+    "chrome_html": "<div id=\"l\"></div><pre contenteditable=\"false\" id=\"r\">def\nsecond</pre>"
+  },
+  {
+    "case": "lockedInline",
+    "method": "forward",
+    "matches_parent": true,
+    "matches_chrome_after": false,
+    "matches_chrome_selection": false,
+    "undo_restored": true,
+    "head_html": "<div id=\"l\">abc</div><pre><span contenteditable=\"false\" id=\"r\">LOCK</span>def\nsecond</pre>",
+    "chrome_html": "<div id=\"l\">abc<span contenteditable=\"false\" id=\"r\">LOCK</span>def</div><pre>second</pre>"
+  },
+  {
+    "case": "lockedInline",
+    "method": "range",
+    "matches_parent": true,
+    "matches_chrome_after": false,
+    "matches_chrome_selection": false,
+    "undo_restored": true,
+    "head_html": "<div id=\"l\">abc</div><pre><span contenteditable=\"false\" id=\"r\">LOCK</span>def\nsecond</pre>",
+    "chrome_html": "<div id=\"l\">abc<span contenteditable=\"false\" id=\"r\">LOCK</span>def</div><pre>second</pre>"
+  },
+  {
+    "case": "distinctHosts",
+    "method": "forward",
+    "matches_parent": true,
+    "matches_chrome_after": true,
+    "matches_chrome_selection": true,
+    "undo_restored": true
+  },
+  {
+    "case": "distinctHosts",
+    "method": "range",
+    "matches_parent": true,
+    "matches_chrome_after": false,
+    "matches_chrome_selection": false,
+    "undo_restored": true,
+    "head_html": "<div contenteditable=\"\" id=\"l\">abc</div><pre contenteditable=\"\" id=\"r\">def\nsecond</pre>",
+    "chrome_html": "<div contenteditable=\"\" id=\"l\">ab</div><pre contenteditable=\"\" id=\"r\">def\nsecond</pre>"
+  },
+  {
+    "case": "revert",
+    "method": "forward",
+    "matches_parent": false,
+    "matches_chrome_after": true,
+    "matches_chrome_selection": true,
+    "undo_restored": true
+  },
+  {
+    "case": "revert",
+    "method": "range",
+    "matches_parent": false,
+    "matches_chrome_after": true,
+    "matches_chrome_selection": true,
+    "undo_restored": true
+  },
+  {
+    "case": "inherited",
+    "method": "forward",
+    "matches_parent": false,
+    "matches_chrome_after": true,
+    "matches_chrome_selection": true,
+    "undo_restored": true
+  },
+  {
+    "case": "inherited",
+    "method": "range",
+    "matches_parent": false,
+    "matches_chrome_after": true,
+    "matches_chrome_selection": true,
+    "undo_restored": true
+  },
+  {
+    "case": "inheritedColor",
+    "method": "forward",
+    "matches_parent": false,
+    "matches_chrome_after": true,
+    "matches_chrome_selection": true,
+    "undo_restored": true,
+    "parent_style": [
+      "rgb(0, 128, 0)",
+      "700",
+      "pre"
+    ],
+    "head_style": [
+      "rgb(0, 128, 0)",
+      "700",
+      "normal"
+    ],
+    "chrome_style": [
+      "rgb(0, 128, 0)",
+      "700",
+      "normal"
+    ]
+  },
+  {
+    "case": "inheritedColor",
+    "method": "range",
+    "matches_parent": false,
+    "matches_chrome_after": true,
+    "matches_chrome_selection": true,
+    "undo_restored": true,
+    "parent_style": [
+      "rgb(0, 0, 255)",
+      "400",
+      "normal"
+    ],
+    "head_style": [
+      "rgb(0, 128, 0)",
+      "700",
+      "normal"
+    ],
+    "chrome_style": [
+      "rgb(0, 128, 0)",
+      "700",
+      "normal"
+    ]
+  },
+  {
+    "case": "cascade",
+    "method": "forward",
+    "matches_parent": false,
+    "matches_chrome_after": false,
+    "matches_chrome_selection": true,
+    "undo_restored": true,
+    "parent_style": [
+      "rgb(255, 0, 0)",
+      "400",
+      "pre"
+    ],
+    "head_style": [
+      "rgb(255, 0, 0)",
+      "400",
+      "normal"
+    ],
+    "chrome_style": [
+      "rgb(0, 0, 255)",
+      "400",
+      "normal"
+    ],
+    "head_html": "<div id=\"l\" style=\"\">abc<span style=\"color: red;\">def</span></div><pre class=\"s\" id=\"r\" style=\"color:blue\">second</pre>",
+    "chrome_html": "<div id=\"l\" style=\"\">abc<span style=\"color: blue;\">def</span></div><pre class=\"s\" id=\"r\" style=\"color:blue\">second</pre>"
+  },
+  {
+    "case": "cascade",
+    "method": "range",
+    "matches_parent": false,
+    "matches_chrome_after": false,
+    "matches_chrome_selection": true,
+    "undo_restored": true,
+    "parent_style": [
+      "rgb(0, 0, 0)",
+      "400",
+      "normal"
+    ],
+    "head_style": [
+      "rgb(255, 0, 0)",
+      "400",
+      "normal"
+    ],
+    "chrome_style": [
+      "rgb(0, 0, 255)",
+      "400",
+      "normal"
+    ],
+    "head_html": "<div id=\"l\" style=\"\">abc<span style=\"color: red;\">def</span></div><pre class=\"s\" id=\"r\" style=\"color:blue\">second</pre>",
+    "chrome_html": "<div id=\"l\" style=\"\">abc<span style=\"color: blue;\">def</span></div><pre class=\"s\" id=\"r\" style=\"color:blue\">second</pre>"
+  },
+  {
+    "case": "sourceInline",
+    "method": "forward",
+    "matches_parent": false,
+    "matches_chrome_after": true,
+    "matches_chrome_selection": true,
+    "undo_restored": true,
+    "parent_style": [
+      "rgb(128, 0, 128)",
+      "700",
+      "pre"
+    ],
+    "head_style": [
+      "rgb(128, 0, 128)",
+      "700",
+      "normal"
+    ],
+    "chrome_style": [
+      "rgb(128, 0, 128)",
+      "700",
+      "normal"
+    ]
+  },
+  {
+    "case": "sourceInline",
+    "method": "range",
+    "matches_parent": false,
+    "matches_chrome_after": true,
+    "matches_chrome_selection": true,
+    "undo_restored": true,
+    "parent_style": [
+      "rgb(0, 0, 0)",
+      "400",
+      "normal"
+    ],
+    "head_style": [
+      "rgb(128, 0, 128)",
+      "700",
+      "normal"
+    ],
+    "chrome_style": [
+      "rgb(128, 0, 128)",
+      "700",
+      "normal"
+    ]
+  },
+  {
+    "case": "sourceVar",
+    "method": "forward",
+    "matches_parent": false,
+    "matches_chrome_after": true,
+    "matches_chrome_selection": true,
+    "undo_restored": true,
+    "parent_style": [
+      "rgb(128, 0, 128)",
+      "700",
+      "pre"
+    ],
+    "head_style": [
+      "rgb(128, 0, 128)",
+      "700",
+      "normal"
+    ],
+    "chrome_style": [
+      "rgb(128, 0, 128)",
+      "700",
+      "normal"
+    ]
+  },
+  {
+    "case": "sourceVar",
+    "method": "range",
+    "matches_parent": false,
+    "matches_chrome_after": true,
+    "matches_chrome_selection": true,
+    "undo_restored": true,
+    "parent_style": [
+      "rgb(0, 0, 0)",
+      "400",
+      "normal"
+    ],
+    "head_style": [
+      "rgb(128, 0, 128)",
+      "700",
+      "normal"
+    ],
+    "chrome_style": [
+      "rgb(128, 0, 128)",
+      "700",
+      "normal"
+    ]
+  },
+  {
+    "case": "unset",
+    "method": "forward",
+    "matches_parent": false,
+    "matches_chrome_after": true,
+    "matches_chrome_selection": true,
+    "undo_restored": true,
+    "parent_style": [
+      "rgb(0, 0, 0)",
+      "400",
+      "normal"
+    ],
+    "head_style": [
+      "rgb(0, 0, 0)",
+      "400",
+      "normal"
+    ],
+    "chrome_style": [
+      "rgb(0, 0, 0)",
+      "400",
+      "normal"
+    ]
+  },
+  {
+    "case": "unset",
+    "method": "range",
+    "matches_parent": false,
+    "matches_chrome_after": true,
+    "matches_chrome_selection": true,
+    "undo_restored": true,
+    "parent_style": [
+      "rgb(0, 0, 0)",
+      "400",
+      "normal"
+    ],
+    "head_style": [
+      "rgb(0, 0, 0)",
+      "400",
+      "normal"
+    ],
+    "chrome_style": [
+      "rgb(0, 0, 0)",
+      "400",
+      "normal"
+    ]
+  },
+  {
+    "case": "revertLayer",
+    "method": "forward",
+    "matches_parent": false,
+    "matches_chrome_after": true,
+    "matches_chrome_selection": true,
+    "undo_restored": true,
+    "parent_style": [
+      "rgb(0, 0, 0)",
+      "400",
+      "pre"
+    ],
+    "head_style": [
+      "rgb(0, 0, 0)",
+      "400",
+      "normal"
+    ],
+    "chrome_style": [
+      "rgb(0, 0, 0)",
+      "400",
+      "normal"
+    ]
+  },
+  {
+    "case": "revertLayer",
+    "method": "range",
+    "matches_parent": false,
+    "matches_chrome_after": true,
+    "matches_chrome_selection": true,
+    "undo_restored": true,
+    "parent_style": [
+      "rgb(0, 0, 0)",
+      "400",
+      "normal"
+    ],
+    "head_style": [
+      "rgb(0, 0, 0)",
+      "400",
+      "normal"
+    ],
+    "chrome_style": [
+      "rgb(0, 0, 0)",
+      "400",
+      "normal"
+    ]
+  }
+]
