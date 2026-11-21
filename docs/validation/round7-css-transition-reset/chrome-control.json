@@ -1,0 +1,1 @@
+{"sample":0.25,"durations":[100000,25000,87500,100000],"negative":[25000,-2500],"positive":[25000,10000],"reset":{"firstSample":0.8,"kept":true,"resetSample":0.4,"remaining":0,"fresh":0.85}}
