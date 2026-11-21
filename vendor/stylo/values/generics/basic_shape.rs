@@ -223,6 +223,58 @@ impl<B> GenericBorderShape<B> {
     pub fn none() -> Self {
         Self::None
     }
+
+    fn component(&self, inner: bool) -> Result<(&B, BorderShapeBox), ()> {
+        use BorderShapeBox::{HalfBorderBox, ShapeBox as BoxKind};
+        let (item, default) = match self {
+            Self::None => return Err(()),
+            Self::Single(item) => (item, HalfBorderBox),
+            Self::Double(_, item) if inner => (item, BoxKind(ShapeBox::PaddingBox)),
+            Self::Double(item, _) => (item, BoxKind(ShapeBox::BorderBox)),
+        };
+        Ok((&item.shape, if item.reference == BorderShapeBox::Default { default } else { item.reference }))
+    }
+
+    fn compatible_component<'a>(&'a self, other: &'a Self, inner: bool) -> Result<(&'a B, &'a B, BorderShapeBox), ()> {
+        let (left, reference) = self.component(inner)?;
+        let (right, other_reference) = other.component(inner)?;
+        if reference != other_reference { return Err(()); }
+        Ok((left, right, reference))
+    }
+}
+
+impl<B: Animate> Animate for BorderShape<B> {
+    fn animate(&self, other: &Self, procedure: Procedure) -> Result<Self, ()> {
+        if matches!((self, other), (Self::None, Self::None)) { return Ok(Self::None); }
+        let single = matches!((self, other), (Self::Single(_), Self::Single(_)));
+        let item = |inner| {
+            let (left, right, reference) = self.compatible_component(other, inner)?;
+            let default = if single { BorderShapeBox::HalfBorderBox } else if inner {
+                BorderShapeBox::ShapeBox(ShapeBox::PaddingBox)
+            } else { BorderShapeBox::ShapeBox(ShapeBox::BorderBox) };
+            Ok(GenericBorderShapeItem {
+                shape: Box::new(left.animate(right, procedure)?),
+                reference: if reference == default { BorderShapeBox::Default } else { reference },
+            })
+        };
+        if single { Ok(Self::Single(item(false)?)) } else { Ok(Self::Double(item(false)?, item(true)?)) }
+    }
+}
+
+impl<B: ComputeSquaredDistance> ComputeSquaredDistance for BorderShape<B> {
+    fn compute_squared_distance(&self, other: &Self) -> Result<SquaredDistance, ()> {
+        if matches!((self, other), (Self::None, Self::None)) { return Ok(SquaredDistance::from_sqrt(0.0)); }
+        let distance = |inner| {
+            let (left, right, _) = self.compatible_component(other, inner)?;
+            left.compute_squared_distance(right)
+        };
+        let outer = distance(false)?;
+        if matches!((self, other), (Self::Single(_), Self::Single(_))) { Ok(outer) } else { Ok(outer + distance(true)?) }
+    }
+}
+
+impl<B> ToAnimatedZero for BorderShape<B> {
+    fn to_animated_zero(&self) -> Result<Self, ()> { Err(()) }
 }
 
 /// A value for the `shape-outside` property.

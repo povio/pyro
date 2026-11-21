@@ -1694,7 +1694,7 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
                  self.${shorthand.sub_properties[i].ident},
 diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 --- a/properties/longhands.toml	2026-11-11 19:55:57
-+++ b/properties/longhands.toml	2026-11-21 11:08:43
++++ b/properties/longhands.toml	2026-11-21 11:11:44
 @@ -129,7 +129,6 @@
  type = "ColorOrAuto"
  initial = "generics::color::ColorOrAuto::Auto"
@@ -1755,8 +1755,8 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 -engine = "gecko"
  spec = "https://drafts.csswg.org/css-break/#propdef-break-inside"
  animation_type = "discrete"
-+affects = "layout"
-+
+ affects = "layout"
+ 
 +[orphans]
 +type = "PositiveInteger"
 +initial = "From::from(2)"
@@ -1764,8 +1764,8 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +spec = "https://drafts.csswg.org/css-break/#propdef-orphans"
 +animation_type = "normal"
 +servo_restyle_damage = "repaint"
- affects = "layout"
- 
++affects = "layout"
++
 +[widows]
 +type = "PositiveInteger"
 +initial = "From::from(2)"
@@ -1807,10 +1807,12 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  spec = "https://svgwg.org/svg2-draft/masking.html#ClipRuleProperty"
  affects = "paint"
-@@ -569,6 +596,62 @@
+@@ -567,8 +594,64 @@
+ animation_type = "discrete"
+ ignored_when_colors_disabled = true
  servo_restyle_damage = "repaint"
- affects = "paint"
- 
++affects = "paint"
++
 +[column-rule-inset-cap-start]
 +type = "length::RuleInset"
 +initial = "computed::length::RuleInset::LengthPercentage(computed::LengthPercentage::zero())"
@@ -1844,8 +1846,8 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +initial = "computed::length::RuleInset::LengthPercentage(computed::LengthPercentage::zero())"
 +struct = "column"
 +spec = "https://drafts.csswg.org/css-gaps-1/#inset"
-+affects = "paint"
-+
+ affects = "paint"
+ 
 +[row-rule-inset-cap-end]
 +type = "length::RuleInset"
 +initial = "computed::length::RuleInset::LengthPercentage(computed::LengthPercentage::zero())"
@@ -1906,7 +1908,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +initial_specified_value = "specified::BorderSideWidth::medium().into()"
  spec = "https://drafts.csswg.org/css-multicol/#propdef-column-rule-width"
  affects = "layout"
-+
+ 
 +[column-rule-break]
 +type = "column::RuleBreak"
 +initial = "computed::column::RuleBreak::Normal"
@@ -1942,7 +1944,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +animation_type = "discrete"
 +spec = "https://drafts.csswg.org/css-gaps-1/#propdef-row-rule-visibility-items"
 +affects = "paint"
- 
++
 +[rule-overlap]
 +type = "column::RuleOverlap"
 +initial = "computed::column::RuleOverlap::RowOverColumn"
@@ -2488,10 +2490,12 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [text-autospace]
  type = "TextAutospace"
  initial = "computed::text::TextAutospace::NO_AUTOSPACE"
-@@ -2599,6 +2815,28 @@
+@@ -2597,6 +2813,28 @@
+ gecko_pref = "layout.css.text-autospace.enabled"
+ has_effect_on_gecko_scrollbars = false
  spec = "https://drafts.csswg.org/css-text-4/#text-autospace-property"
- affects = "layout"
- 
++affects = "layout"
++
 +# pyro: CSS Text 4 `text-spacing-trim` (fullwidth punctuation trimming), for Servo: blitz-dom
 +# passes it to parley's shaping and line breaking.
 +[text-spacing-trim]
@@ -2512,11 +2516,9 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +engine = "servo"
 +animation_type = "discrete"
 +spec = "https://drafts.csswg.org/css-text-5/#text-fit-property"
-+affects = "layout"
-+
+ affects = "layout"
+ 
  [text-autospace-size]
- type = "Number"
- initial = "0.125"
 @@ -2635,7 +2873,6 @@
  type = "TextDecorationSkipInk"
  initial = "computed::TextDecorationSkipInk::Auto"
@@ -2533,7 +2535,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  affects = "overflow"
  
  [text-underline-offset]
-@@ -3171,6 +3409,15 @@
+@@ -3171,6 +3409,14 @@
  boxed = true
  logical_group = "border-radius"
  logical = true
@@ -2543,13 +2545,12 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +type = "basic_shape::BorderShape"
 +initial = "generics::basic_shape::BorderShape::None"
 +struct = "border"
-+animation_type = "none"
 +boxed = true
 +spec = "https://drafts.csswg.org/css-borders-4/#propdef-border-shape"
  affects = "paint"
  
  [corner-top-left-shape]
-@@ -3383,9 +3630,9 @@
+@@ -3383,9 +3629,9 @@
  type = "MarginTrim"
  initial = "computed::MarginTrim::empty()"
  struct = "margin"
@@ -2560,7 +2561,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-box-4/#propdef-margin-trim"
  affects = "layout"
  
-@@ -3393,7 +3640,6 @@
+@@ -3393,7 +3639,6 @@
  type = "Length"
  initial = "computed::Length::zero()"
  struct = "margin"
@@ -2568,7 +2569,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical_group = "scroll-margin"
  gecko_ffi_name = "mScrollMargin.0"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-margin-top"
-@@ -3403,7 +3649,6 @@
+@@ -3403,7 +3648,6 @@
  type = "Length"
  initial = "computed::Length::zero()"
  struct = "margin"
@@ -2576,7 +2577,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical_group = "scroll-margin"
  gecko_ffi_name = "mScrollMargin.1"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-margin-right"
-@@ -3413,7 +3658,6 @@
+@@ -3413,7 +3657,6 @@
  type = "Length"
  initial = "computed::Length::zero()"
  struct = "margin"
@@ -2584,7 +2585,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical_group = "scroll-margin"
  gecko_ffi_name = "mScrollMargin.2"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-margin-bottom"
-@@ -3423,7 +3667,6 @@
+@@ -3423,7 +3666,6 @@
  type = "Length"
  initial = "computed::Length::zero()"
  struct = "margin"
@@ -2592,7 +2593,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical_group = "scroll-margin"
  gecko_ffi_name = "mScrollMargin.3"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-margin-left"
-@@ -3433,7 +3676,6 @@
+@@ -3433,7 +3675,6 @@
  type = "Length"
  initial = "computed::Length::zero()"
  struct = "margin"
@@ -2600,7 +2601,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical = true
  logical_group = "scroll-margin"
  gecko_ffi_name = "mScrollMargin.4"
-@@ -3444,7 +3686,6 @@
+@@ -3444,7 +3685,6 @@
  type = "Length"
  initial = "computed::Length::zero()"
  struct = "margin"
@@ -2608,7 +2609,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical = true
  logical_group = "scroll-margin"
  gecko_ffi_name = "mScrollMargin.5"
-@@ -3455,7 +3696,6 @@
+@@ -3455,7 +3695,6 @@
  type = "Length"
  initial = "computed::Length::zero()"
  struct = "margin"
@@ -2616,7 +2617,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical = true
  logical_group = "scroll-margin"
  gecko_ffi_name = "mScrollMargin.6"
-@@ -3466,7 +3706,6 @@
+@@ -3466,7 +3705,6 @@
  type = "Length"
  initial = "computed::Length::zero()"
  struct = "margin"
@@ -2624,7 +2625,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical = true
  logical_group = "scroll-margin"
  gecko_ffi_name = "mScrollMargin.7"
-@@ -3567,7 +3806,6 @@
+@@ -3567,7 +3805,6 @@
  type = "NonNegativeLengthPercentageOrAuto"
  initial = "computed::NonNegativeLengthPercentageOrAuto::auto()"
  struct = "padding"
@@ -2632,7 +2633,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical_group = "scroll-padding"
  gecko_ffi_name = "mScrollPadding.0"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-padding-top"
-@@ -3577,7 +3815,6 @@
+@@ -3577,7 +3814,6 @@
  type = "NonNegativeLengthPercentageOrAuto"
  initial = "computed::NonNegativeLengthPercentageOrAuto::auto()"
  struct = "padding"
@@ -2640,7 +2641,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical_group = "scroll-padding"
  gecko_ffi_name = "mScrollPadding.1"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-padding-right"
-@@ -3587,7 +3824,6 @@
+@@ -3587,7 +3823,6 @@
  type = "NonNegativeLengthPercentageOrAuto"
  initial = "computed::NonNegativeLengthPercentageOrAuto::auto()"
  struct = "padding"
@@ -2648,7 +2649,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical_group = "scroll-padding"
  gecko_ffi_name = "mScrollPadding.2"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-padding-bottom"
-@@ -3597,7 +3833,6 @@
+@@ -3597,7 +3832,6 @@
  type = "NonNegativeLengthPercentageOrAuto"
  initial = "computed::NonNegativeLengthPercentageOrAuto::auto()"
  struct = "padding"
@@ -2656,7 +2657,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical_group = "scroll-padding"
  gecko_ffi_name = "mScrollPadding.3"
  spec = "https://drafts.csswg.org/css-scroll-snap-1/#propdef-scroll-padding-left"
-@@ -3607,7 +3842,6 @@
+@@ -3607,7 +3841,6 @@
  type = "NonNegativeLengthPercentageOrAuto"
  initial = "computed::NonNegativeLengthPercentageOrAuto::auto()"
  struct = "padding"
@@ -2664,7 +2665,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical = true
  logical_group = "scroll-padding"
  gecko_ffi_name = "mScrollPadding.4"
-@@ -3618,7 +3852,6 @@
+@@ -3618,7 +3851,6 @@
  type = "NonNegativeLengthPercentageOrAuto"
  initial = "computed::NonNegativeLengthPercentageOrAuto::auto()"
  struct = "padding"
@@ -2672,7 +2673,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical = true
  logical_group = "scroll-padding"
  gecko_ffi_name = "mScrollPadding.5"
-@@ -3629,7 +3862,6 @@
+@@ -3629,7 +3861,6 @@
  type = "NonNegativeLengthPercentageOrAuto"
  initial = "computed::NonNegativeLengthPercentageOrAuto::auto()"
  struct = "padding"
@@ -2680,7 +2681,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical = true
  logical_group = "scroll-padding"
  gecko_ffi_name = "mScrollPadding.6"
-@@ -3640,7 +3872,6 @@
+@@ -3640,7 +3871,6 @@
  type = "NonNegativeLengthPercentageOrAuto"
  initial = "computed::NonNegativeLengthPercentageOrAuto::auto()"
  struct = "padding"
@@ -2688,7 +2689,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  logical = true
  logical_group = "scroll-padding"
  gecko_ffi_name = "mScrollPadding.7"
-@@ -3694,6 +3925,7 @@
+@@ -3694,6 +3924,7 @@
  [box-decoration-break]
  struct = "border"
  spec = "https://drafts.csswg.org/css-break/#propdef-box-decoration-break"
@@ -2696,7 +2697,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  animation_type = "discrete"
  affects = "layout"
  type = "BoxDecorationBreak"
-@@ -3730,6 +3962,27 @@
+@@ -3730,6 +3961,27 @@
  type = "TopLayer"
  initial = "computed::TopLayer::None"
  
@@ -2724,7 +2725,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [scroll-behavior]
  struct = "box"
  servo_pref = "layout.css.scroll-behavior.enabled"
-@@ -3770,13 +4023,31 @@
+@@ -3770,13 +4022,31 @@
  
  [column-fill]
  struct = "column"
@@ -2757,7 +2758,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [column-span]
  struct = "column"
  spec = "https://drafts.csswg.org/css-multicol/#propdef-column-span"
-@@ -3873,6 +4144,15 @@
+@@ -3873,6 +4143,15 @@
  type = "Visibility"
  initial = "computed::Visibility::Visible"
  
@@ -2773,7 +2774,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [direction]
  struct = "inherited_box"
  spec = "https://drafts.csswg.org/css-writing-modes/#propdef-direction"
-@@ -3901,9 +4181,9 @@
+@@ -3901,9 +4180,9 @@
  type = "TextOrientation"
  initial = "computed::TextOrientation::Mixed"
  
@@ -2784,7 +2785,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-images/#propdef-image-orientation"
  animation_type = "discrete"
  affects = "layout"
-@@ -3912,7 +4192,6 @@
+@@ -3912,7 +4191,6 @@
  
  [text-anchor]
  struct = "inherited_svg"
@@ -2792,7 +2793,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://svgwg.org/svg2-draft/text.html#TextAnchorProperty"
  animation_type = "discrete"
  affects = "layout"
-@@ -3921,7 +4200,6 @@
+@@ -3921,7 +4199,6 @@
  
  [color-interpolation]
  struct = "inherited_svg"
@@ -2800,7 +2801,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://svgwg.org/svg2-draft/painting.html#ColorInterpolationProperty"
  animation_type = "discrete"
  affects = "paint"
-@@ -3930,7 +4208,6 @@
+@@ -3930,7 +4207,6 @@
  
  [color-interpolation-filters]
  struct = "inherited_svg"
@@ -2808,7 +2809,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://svgwg.org/svg2-draft/painting.html#ColorInterpolationFiltersProperty"
  animation_type = "discrete"
  affects = "paint"
-@@ -3939,7 +4216,6 @@
+@@ -3939,7 +4215,6 @@
  
  [shape-rendering]
  struct = "inherited_svg"
@@ -2816,7 +2817,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://svgwg.org/svg2-draft/painting.html#ShapeRenderingProperty"
  animation_type = "discrete"
  affects = "paint"
-@@ -4001,6 +4277,16 @@
+@@ -4001,6 +4276,16 @@
  type = "TextSizeAdjust"
  initial = "computed::TextSizeAdjust::Auto"
  
@@ -2833,7 +2834,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [ruby-align]
  struct = "inherited_text"
  servo_pref = "layout.css.ruby.enabled"
-@@ -4093,6 +4379,17 @@
+@@ -4093,6 +4378,17 @@
  type = "BoxSizing"
  initial = "computed::BoxSizing::ContentBox"
  
@@ -2851,7 +2852,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [object-fit]
  struct = "position"
  spec = "https://drafts.csswg.org/css-images/#propdef-object-fit"
-@@ -4109,7 +4406,62 @@
+@@ -4109,7 +4405,62 @@
  affects = "paint"
  type = "MaskType"
  initial = "computed::MaskType::Luminance"
@@ -2914,7 +2915,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [mask-mode]
  struct = "svg"
  servo_pref = "layout.css.masking.enabled"
-@@ -4249,7 +4601,7 @@
+@@ -4249,7 +4600,7 @@
  
  [field-sizing]
  struct = "ui"
@@ -2923,7 +2924,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  spec = "https://drafts.csswg.org/css-ui/#field-sizing"
  animation_type = "discrete"
  affects = "layout"
-@@ -4289,7 +4641,62 @@
+@@ -4289,7 +4640,62 @@
  aliases = ["-webkit-box-orient"]
  type = "BoxOrient"
  initial = "computed::BoxOrient::Horizontal"
@@ -2986,7 +2987,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
  [-moz-box-pack]
  struct = "xul"
  engine = "gecko"
-@@ -4344,8 +4751,8 @@
+@@ -4344,8 +4750,8 @@
  type = "ScopedName"
  initial = "computed::ScopedName::none()"
  struct = "ui"
@@ -7928,8 +7929,8 @@ diff -ruN a/values/computed/ui.rs b/values/computed/ui.rs
  
 diff -ruN a/values/generics/basic_shape.rs b/values/generics/basic_shape.rs
 --- a/values/generics/basic_shape.rs	2026-11-11 19:55:57
-+++ b/values/generics/basic_shape.rs	2026-11-21 07:34:12
-@@ -134,6 +134,97 @@
++++ b/values/generics/basic_shape.rs	2026-11-21 11:11:44
+@@ -134,6 +134,149 @@
  
  pub use self::GenericClipPath as ClipPath;
  
@@ -8022,12 +8023,64 @@ diff -ruN a/values/generics/basic_shape.rs b/values/generics/basic_shape.rs
 +    pub fn none() -> Self {
 +        Self::None
 +    }
++
++    fn component(&self, inner: bool) -> Result<(&B, BorderShapeBox), ()> {
++        use BorderShapeBox::{HalfBorderBox, ShapeBox as BoxKind};
++        let (item, default) = match self {
++            Self::None => return Err(()),
++            Self::Single(item) => (item, HalfBorderBox),
++            Self::Double(_, item) if inner => (item, BoxKind(ShapeBox::PaddingBox)),
++            Self::Double(item, _) => (item, BoxKind(ShapeBox::BorderBox)),
++        };
++        Ok((&item.shape, if item.reference == BorderShapeBox::Default { default } else { item.reference }))
++    }
++
++    fn compatible_component<'a>(&'a self, other: &'a Self, inner: bool) -> Result<(&'a B, &'a B, BorderShapeBox), ()> {
++        let (left, reference) = self.component(inner)?;
++        let (right, other_reference) = other.component(inner)?;
++        if reference != other_reference { return Err(()); }
++        Ok((left, right, reference))
++    }
++}
++
++impl<B: Animate> Animate for BorderShape<B> {
++    fn animate(&self, other: &Self, procedure: Procedure) -> Result<Self, ()> {
++        if matches!((self, other), (Self::None, Self::None)) { return Ok(Self::None); }
++        let single = matches!((self, other), (Self::Single(_), Self::Single(_)));
++        let item = |inner| {
++            let (left, right, reference) = self.compatible_component(other, inner)?;
++            let default = if single { BorderShapeBox::HalfBorderBox } else if inner {
++                BorderShapeBox::ShapeBox(ShapeBox::PaddingBox)
++            } else { BorderShapeBox::ShapeBox(ShapeBox::BorderBox) };
++            Ok(GenericBorderShapeItem {
++                shape: Box::new(left.animate(right, procedure)?),
++                reference: if reference == default { BorderShapeBox::Default } else { reference },
++            })
++        };
++        if single { Ok(Self::Single(item(false)?)) } else { Ok(Self::Double(item(false)?, item(true)?)) }
++    }
++}
++
++impl<B: ComputeSquaredDistance> ComputeSquaredDistance for BorderShape<B> {
++    fn compute_squared_distance(&self, other: &Self) -> Result<SquaredDistance, ()> {
++        if matches!((self, other), (Self::None, Self::None)) { return Ok(SquaredDistance::from_sqrt(0.0)); }
++        let distance = |inner| {
++            let (left, right, _) = self.compatible_component(other, inner)?;
++            left.compute_squared_distance(right)
++        };
++        let outer = distance(false)?;
++        if matches!((self, other), (Self::Single(_), Self::Single(_))) { Ok(outer) } else { Ok(outer + distance(true)?) }
++    }
++}
++
++impl<B> ToAnimatedZero for BorderShape<B> {
++    fn to_animated_zero(&self) -> Result<Self, ()> { Err(()) }
 +}
 +
  /// A value for the `shape-outside` property.
  #[allow(missing_docs)]
  #[derive(
-@@ -204,7 +295,7 @@
+@@ -204,7 +347,7 @@
          Ellipse<Position, LengthPercentage>,
      ),
      /// Defines a polygon with pair arguments.
@@ -8036,7 +8089,7 @@ diff -ruN a/values/generics/basic_shape.rs b/values/generics/basic_shape.rs
      /// Defines a path() or shape().
      PathOrShape(
          #[animation(field_bound)]
-@@ -348,25 +439,59 @@
+@@ -348,25 +491,59 @@
      PartialEq,
      Serialize,
      SpecifiedValueInfo,
@@ -8101,7 +8154,7 @@ diff -ruN a/values/generics/basic_shape.rs b/values/generics/basic_shape.rs
  /// Coordinates for Polygon.
  #[derive(
      Animate,
-@@ -504,7 +629,23 @@
+@@ -504,7 +681,23 @@
          W: Write,
      {
          dest.write_str("inset(")?;
@@ -8126,7 +8179,7 @@ diff -ruN a/values/generics/basic_shape.rs b/values/generics/basic_shape.rs
          if !self.round.is_zero() {
              dest.write_str(" round ")?;
              self.round.to_css(dest)?;
-@@ -593,6 +734,7 @@
+@@ -593,6 +786,7 @@
              lists::by_computed_value::animate(&self.coordinates, &other.coordinates, procedure)?;
          Ok(Polygon {
              fill: self.fill,
@@ -8134,7 +8187,7 @@ diff -ruN a/values/generics/basic_shape.rs b/values/generics/basic_shape.rs
              coordinates,
          })
      }
-@@ -606,7 +748,8 @@
+@@ -606,7 +800,8 @@
          if self.fill != other.fill {
              return Err(());
          }

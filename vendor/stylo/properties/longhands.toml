@@ -3415,7 +3415,6 @@ affects = "paint"
 type = "basic_shape::BorderShape"
 initial = "generics::basic_shape::BorderShape::None"
 struct = "border"
-animation_type = "none"
 boxed = true
 spec = "https://drafts.csswg.org/css-borders-4/#propdef-border-shape"
 affects = "paint"
