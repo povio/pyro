@@ -17,3 +17,5 @@ Eight fresh browser processes ran serially in ABBA/BAAB order. Each performed on
 | Registered list read | 3.81 | 4.37 | 5.5 / 5.5 |
 
 The raw rows include per-process UTC bounds and per-sample durations. These short-run differences describe this fixture and host.
+
+From 21:37:06.869 to 21:37:09.862 UTC, whole-host occupancy averaged 23.87%, with 22.44% on the baseline arms and 25.42% on candidate arms. Registered-property QA had zero overlap. A separate paragraph QA run overlapped the probe according to its receipt timestamps. CI was idle and census was absent. [Per-arm host receipt](host.json)
