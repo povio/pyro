@@ -6815,6 +6815,21 @@ fn font_face_descriptors_share_a_live_block() {
 }
 
 #[test]
+fn font_face_rule_serializes_its_live_descriptors() {
+    let e = env("<style>@media all {@font-face {\nfont-family: 'Two  Words';\ncolor: red;\nsrc: local(Demo);\n}}</style>");
+    assert_eq!(
+        eval(&e.main, "const media = document.styleSheets[0].cssRules[0], face = media.cssRules[0];
+            const matches = () => face.cssText === '@font-face { ' + face.style.cssText + ' }';
+            const checks = [matches(), !face.cssText.includes('\\n'), !face.cssText.includes('color:'),
+                face.cssText.includes('Two  Words'), media.cssText.includes(face.cssText)];
+            face.style.fontWeight = '700'; checks.push(matches(), media.cssText.includes(face.cssText));
+            face.style.cssText = ''; checks.push(face.cssText === '@font-face { }'); checks.join('|')"),
+        "true|true|true|true|true|true|true|true"
+    );
+    e.page.dispose();
+}
+
+#[test]
 fn stylesheet_owner_node_tracks_association() {
     let e = env("<style id=s>a{}</style>");
     assert_eq!(
