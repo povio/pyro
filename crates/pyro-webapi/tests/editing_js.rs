@@ -504,6 +504,15 @@ fn deletion_at_text_edge_preserves_locked_blocks() {
 }
 
 #[test]
+fn paragraph_insertion_leaves_select_subtrees_intact() {
+    let e = env("<body><div id=ed contenteditable><div>L<select><optgroup><option>abc</option><option selected>def</option></optgroup></select>R</div></div></body>");
+    let r = &e.main;
+    eval(r, "ed.focus(); const original = ed.querySelector('select'); const option = original.firstChild.firstChild; getSelection().collapse(option.firstChild,2); document.execCommand('insertParagraph')");
+    assert_eq!(eval(r, "ed.innerHTML"), r#"<div><br></div><div>L<select><optgroup><option>abc</option><option selected="">def</option></optgroup></select>R</div>"#);
+    assert_eq!(eval(r, "[ed.querySelector('select')===original,original.firstChild.firstChild===option,original.selectedIndex,getSelection().focusNode===ed.lastChild.firstChild,getSelection().focusOffset].join()"), "true,true,1,true,0");
+}
+
+#[test]
 fn paragraph_insertion_in_a_phrasing_host_uses_the_caret_style() {
     let e = env("<body><span id=ed contenteditable style='display:block;white-space:pre'>ab</span>outside</body>");
     let r = &e.main;

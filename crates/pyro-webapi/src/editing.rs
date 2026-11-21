@@ -522,7 +522,7 @@ pub(crate) fn placeholder_if_empty(dom: &mut Dom, block: NodeId) -> Option<Point
     let has_content = dom.descendants(block).ok()?.any(|d| {
         d != block
             && (is_text(dom, d) && dom.char_length(d).unwrap_or(0) > 0
-                || (!is_text(dom, d) && (!is_container(dom, d) || editable_attr(dom, d) == Some(false))))
+                || (!is_text(dom, d) && (!is_container(dom, d) || html_select(dom, d) || editable_attr(dom, d) == Some(false))))
     });
     if has_content {
         return None;
@@ -1106,6 +1106,31 @@ fn in_text_only_element(dom: &Dom, node: NodeId) -> bool {
     })
 }
 
+fn html_select(dom: &Dom, node: NodeId) -> bool {
+    dom.element(node).is_ok_and(|el| el.is_html() && el.local_name() == &markup5ever::local_name!("select"))
+}
+
+/// A select is an atomic box in its containing editor. Option contents
+/// have no editable paragraph position. A point directly on the select
+/// maps to its outside edge; an internal option point falls back to the
+/// start of its enclosing paragraph.
+fn paragraph_point(dom: &Dom, host: NodeId, caret: Point) -> Option<Point> {
+    let select_ancestor = |mut node| loop {
+        if html_select(dom, node) { return Some(node); }
+        if node == host { return None; }
+        node = dom.parent(node).ok()??;
+    };
+    if let Some(select) = select_ancestor(caret.0) {
+        if select == host { return None; }
+        if caret.0 == select {
+            return Some((dom.parent(select).ok()??, dom.index_in_parent(select).ok()? + u32::from(caret.1 != 0)));
+        }
+        return Some((block_of(dom, select, host), 0));
+    }
+    let point = insertion_point(dom, caret);
+    if point != caret && select_ancestor(point.0).is_some() { Some(caret) } else { Some(point) }
+}
+
 /// These hosts must keep the edit inside themselves without creating a
 /// child paragraph. Existing block descendants can still split normally.
 fn cannot_contain_paragraph(dom: &Dom, host: NodeId) -> bool {
@@ -1141,7 +1166,7 @@ fn paragraph_for_split(page: &PageDom, dom: &Dom, host: NodeId, node: NodeId, co
 }
 
 fn split_block(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point) -> Point {
-    let caret = insertion_point(dom, caret);
+    let Some(caret) = paragraph_point(dom, host, caret) else { return caret };
     // Content that is text only (a `<script>` or `<style>` in the head of a designMode
     // document) gets a linefeed, as in browsers: no element goes into it.
     if in_text_only_element(dom, caret.0) {
@@ -1289,7 +1314,7 @@ fn split_block(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point) -> Poi
         let _ = dom.replace_all(new_block, Some(only_child));
     }
     placeholder_if_empty(dom, block);
-    placeholder_if_empty(dom, new_block).unwrap_or_else(|| host_start(dom, new_block))
+    placeholder_if_empty(dom, new_block).unwrap_or_else(|| paragraph_point(dom, new_block, (new_block, 0)).unwrap_or((new_block, 0)))
 }
 
 /// Caret keys inside a host: ArrowLeft/Right by one character, Home/End to
@@ -1728,7 +1753,7 @@ pub fn insert_line_break(page: &Rc<PageDom>, host: NodeId) {
 }
 
 fn preserved_break_at(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point) -> Point {
-    let point = insertion_point(dom, caret);
+    let Some(point) = paragraph_point(dom, host, caret) else { return caret };
     let at_end = whitespace::at_line_end(page, dom, host, point);
     let display = page.layout().computed_style_value(dom, host, "display");
     if !in_text_only_element(dom, point.0) && (cannot_contain_paragraph(dom, host) || display == "inline" || display.starts_with("inline-")) {
@@ -1766,7 +1791,7 @@ fn next_in_block(dom: &Dom, host: NodeId, node: NodeId) -> Option<NodeId> {
 }
 
 fn line_break_at(dom: &mut Dom, host: NodeId, caret: Point) -> Point {
-    let caret = insertion_point(dom, caret);
+    let Some(caret) = paragraph_point(dom, host, caret) else { return caret };
     let Ok(doc) = dom.node_document(host) else { return caret };
     let Ok(br) = dom.create_element(doc, "br") else { return caret };
     let Some(parent) = insert_break_node(dom, host, caret, br) else { return caret };
