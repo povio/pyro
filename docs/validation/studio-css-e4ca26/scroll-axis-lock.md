@@ -19,4 +19,6 @@ The negative-direction wheel checks failed **before** dispatch: the viewport cla
 
 ## Remaining gap ranking at the full matrix checkpoint
 
+The subsequent full scrollport-range checkpoint (`2a384504`) reached 5,597 strict pages and 180,072 named passes, gaining 2 / 4 versus axis-lock. No passing pages, passing names or observed names were lost. LP-only vs stable: 272 / 5,802; stable-only: 1,625 / 8,693. All 8,082 main URLs were present, including 11 LP timeouts and one hang; the 41 supplemental and 39 withheld were unchanged and remain separate.
+
 The exact main differences at `64833ed4` contain 1,631 Chrome-only pages and 8,759 Chrome-only names. Grouping names gives 837 across `calc-size/` (20 Chrome-only strict pages), 369 across CSS mixins (24), 331 across random-function pages (6), 242 across conditional-substitution pages (7), and 148 rounded-polygon names (10). The first four are investigation families, not proven single root causes. Overflow (99), conditional rules (93), scroll snap (92), and anchor positioning (91) led by Chrome-only page count before the axis-lock work. The 24 unresolved repeater-color names are a subset of 30 Chrome-exclusive names on the two rule-color interpolation pages. No rounding tolerance was changed.
