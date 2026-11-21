@@ -25,8 +25,10 @@ pub struct EventTargetData {
     pub key: TargetKey,
     /// The functions in this wrapper's listener array, by slot.
     listeners: ListenerFns,
-    /// Its listener list went to another owner ([`EventTargetData::hand_over`]).
-    handed_over: std::cell::Cell<bool>,
+    /// Only standalone targets own the native listener list. Window wrappers
+    /// in every world share a key owned by the document, which can transfer
+    /// it when the initial about:blank Window is reused.
+    owns_listener_list: bool,
 }
 
 /// The listener functions of a target wrapper's hidden array ([`LISTENERS`]),
@@ -72,7 +74,7 @@ impl EventTargetData {
     /// with (`Scope::wrap`), so that dispatch finds it to invoke its listeners.
     pub fn wrapper_identity(&self) -> Option<pyro_js::IdentityKey> {
         match self.key {
-            TargetKey::Other(k) if !self.page.is_window_key(self.key) => Some(self.page.other_identity(k)),
+            TargetKey::Other(k) if self.owns_listener_list => Some(self.page.other_identity(k)),
             _ => None,
         }
     }
@@ -89,23 +91,21 @@ impl EventTargetData {
     /// same key (a reused Window's): dropping this one leaves it.
     pub fn hand_over(&self, to: &EventTargetData) {
         debug_assert_eq!(self.key, to.key);
-        self.handed_over.set(true);
         *to.listeners.0.borrow_mut() = self.listeners.0.take();
     }
     /// The data of a wrapper of target `key`.
     pub(crate) fn for_key(page: Rc<PageDom>, key: TargetKey) -> EventTargetData {
-        EventTargetData { page, key, listeners: ListenerFns::default(), handed_over: std::cell::Cell::new(false) }
+        let owns_listener_list = matches!(key, TargetKey::Other(_)) && !page.is_window_key(key);
+        EventTargetData { page, key, listeners: ListenerFns::default(), owns_listener_list }
     }
 }
 
 impl Drop for EventTargetData {
     fn drop(&mut self) {
         // Non-node, non-window targets own their listener list.
-        if let TargetKey::Other(_) = self.key {
-            if !self.handed_over.get() && !self.page.is_window_key(self.key) {
-                if let Ok(mut d) = self.page.dom.try_borrow_mut() {
-                    d.forget_target(self.key);
-                }
+        if self.owns_listener_list {
+            if let Ok(mut d) = self.page.dom.try_borrow_mut() {
+                d.forget_target(self.key);
             }
         }
     }
