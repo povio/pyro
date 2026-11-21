@@ -16,3 +16,5 @@ Eight serial fresh processes ran in ABBA/BAAB order. Each process ran one warm-u
 | --- | ---: | ---: | ---: | ---: |
 | ordinary | 13.93 | 14.33 | 3.1 / 3.1 | 0 / 0 |
 | pseudo | 13.23 | 13.97 | 3.8 / 2.5 | 0 / 1536 |
+
+The 3.012-second timed window averaged 20.63% host CPU, with 22.78% on baseline arms and 18.42% on candidate arms. No compiler, CI worker, census, dedicated QA or editing probe overlapped. The wall differences are descriptive. [Per-arm host receipt](host.json)
