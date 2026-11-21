@@ -1,0 +1,33 @@
+{
+  "pageStatuses": {
+    "error": 1,
+    "complete": 22,
+    "timeout": 1
+  },
+  "pageChanges": [],
+  "gains": [
+    [
+      "referrer-policy/generic/inheritance/iframe-inheritance-about-blank.html",
+      "The fetch() API in an about:blank iframe with a custom URL referrer is fetched with a 'Referer` header that uses the outer document's URL along with its referrer policy",
+      1
+    ],
+    [
+      "referrer-policy/generic/inheritance/iframe-inheritance-about-blank.html",
+      "The value of document.referrer in an about:blank iframe is the outer document's full URL, regardless of referrer policy",
+      1
+    ],
+    [
+      "referrer-policy/generic/inheritance/iframe-inheritance-document-write.html",
+      "document.open() should not change the referrer policy of the opened document.",
+      1
+    ],
+    [
+      "referrer-policy/generic/inheritance/iframe-inheritance-history-about-srcdoc.html",
+      "New srcdoc iframe uses new policy.",
+      1
+    ]
+  ],
+  "losses": [],
+  "addedNames": 0,
+  "missingNames": 0
+}

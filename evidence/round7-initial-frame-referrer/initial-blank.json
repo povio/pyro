@@ -1,0 +1,77 @@
+{
+ "pages": [
+  {
+   "mode": "implicit",
+   "parent": "http://127.0.0.1:50289/committed?policy=origin#updated",
+   "referrer": "",
+   "custom": "about:client",
+   "foreign": "about:client",
+   "policy": "origin"
+  },
+  {
+   "mode": "explicit",
+   "parent": "http://127.0.0.1:50289/committed?policy=origin#updated",
+   "referrer": "",
+   "custom": "about:client",
+   "foreign": "about:client",
+   "policy": "origin"
+  },
+  {
+   "mode": "pending-network",
+   "parent": "http://127.0.0.1:50289/committed?policy=origin#updated",
+   "referrer": "",
+   "custom": "about:client",
+   "foreign": "about:client",
+   "policy": "origin"
+  },
+  {
+   "mode": "implicit",
+   "parent": "http://127.0.0.1:50289/committed?policy=unsafe-url#updated",
+   "referrer": "",
+   "custom": "about:client",
+   "foreign": "about:client",
+   "policy": "unsafe-url"
+  },
+  {
+   "mode": "explicit",
+   "parent": "http://127.0.0.1:50289/committed?policy=unsafe-url#updated",
+   "referrer": "",
+   "custom": "about:client",
+   "foreign": "about:client",
+   "policy": "unsafe-url"
+  },
+  {
+   "mode": "pending-network",
+   "parent": "http://127.0.0.1:50289/committed?policy=unsafe-url#updated",
+   "referrer": "",
+   "custom": "about:client",
+   "foreign": "about:client",
+   "policy": "unsafe-url"
+  },
+  {
+   "mode": "implicit",
+   "parent": "http://127.0.0.1:50289/committed?policy=no-referrer#updated",
+   "referrer": "",
+   "custom": "about:client",
+   "foreign": "about:client",
+   "policy": "no-referrer"
+  },
+  {
+   "mode": "explicit",
+   "parent": "http://127.0.0.1:50289/committed?policy=no-referrer#updated",
+   "referrer": "",
+   "custom": "about:client",
+   "foreign": "about:client",
+   "policy": "no-referrer"
+  },
+  {
+   "mode": "pending-network",
+   "parent": "http://127.0.0.1:50289/committed?policy=no-referrer#updated",
+   "referrer": "",
+   "custom": "about:client",
+   "foreign": "about:client",
+   "policy": "no-referrer"
+  }
+ ],
+ "requests": []
+}

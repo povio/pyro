@@ -1,0 +1,77 @@
+{
+ "pages": [
+  {
+   "mode": "implicit",
+   "parent": "http://127.0.0.1:55927/committed?policy=origin#updated",
+   "referrer": "http://127.0.0.1:55927/committed?policy=origin#updated",
+   "custom": "http://127.0.0.1:55927/explicit?query",
+   "foreign": "about:client",
+   "policy": "origin"
+  },
+  {
+   "mode": "explicit",
+   "parent": "http://127.0.0.1:55927/committed?policy=origin#updated",
+   "referrer": "http://127.0.0.1:55927/committed?policy=origin#updated",
+   "custom": "http://127.0.0.1:55927/explicit?query",
+   "foreign": "about:client",
+   "policy": "origin"
+  },
+  {
+   "mode": "pending-network",
+   "parent": "http://127.0.0.1:55927/committed?policy=origin#updated",
+   "referrer": "http://127.0.0.1:55927/committed?policy=origin#updated",
+   "custom": "http://127.0.0.1:55927/explicit?query",
+   "foreign": "about:client",
+   "policy": "origin"
+  },
+  {
+   "mode": "implicit",
+   "parent": "http://127.0.0.1:55927/committed?policy=unsafe-url#updated",
+   "referrer": "http://127.0.0.1:55927/committed?policy=unsafe-url#updated",
+   "custom": "http://127.0.0.1:55927/explicit?query",
+   "foreign": "about:client",
+   "policy": "unsafe-url"
+  },
+  {
+   "mode": "explicit",
+   "parent": "http://127.0.0.1:55927/committed?policy=unsafe-url#updated",
+   "referrer": "http://127.0.0.1:55927/committed?policy=unsafe-url#updated",
+   "custom": "http://127.0.0.1:55927/explicit?query",
+   "foreign": "about:client",
+   "policy": "unsafe-url"
+  },
+  {
+   "mode": "pending-network",
+   "parent": "http://127.0.0.1:55927/committed?policy=unsafe-url#updated",
+   "referrer": "http://127.0.0.1:55927/committed?policy=unsafe-url#updated",
+   "custom": "http://127.0.0.1:55927/explicit?query",
+   "foreign": "about:client",
+   "policy": "unsafe-url"
+  },
+  {
+   "mode": "implicit",
+   "parent": "http://127.0.0.1:55927/committed?policy=no-referrer#updated",
+   "referrer": "http://127.0.0.1:55927/committed?policy=no-referrer#updated",
+   "custom": "http://127.0.0.1:55927/explicit?query",
+   "foreign": "about:client",
+   "policy": "no-referrer"
+  },
+  {
+   "mode": "explicit",
+   "parent": "http://127.0.0.1:55927/committed?policy=no-referrer#updated",
+   "referrer": "http://127.0.0.1:55927/committed?policy=no-referrer#updated",
+   "custom": "http://127.0.0.1:55927/explicit?query",
+   "foreign": "about:client",
+   "policy": "no-referrer"
+  },
+  {
+   "mode": "pending-network",
+   "parent": "http://127.0.0.1:55927/committed?policy=no-referrer#updated",
+   "referrer": "http://127.0.0.1:55927/committed?policy=no-referrer#updated",
+   "custom": "http://127.0.0.1:55927/explicit?query",
+   "foreign": "about:client",
+   "policy": "no-referrer"
+  }
+ ],
+ "requests": []
+}
