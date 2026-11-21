@@ -1,0 +1,21 @@
+{
+  "reference": "chrome158",
+  "supplementalChrome": [
+    [
+      "@merged-aa0268/offscreen/chrome158-wpt.json",
+      "merged-aa0268/offscreen/chrome158-wpt.log"
+    ]
+  ],
+  "control": [
+    [
+      "merged-aa-offscreen-base",
+      "merged-aa0268/offscreen/base.log"
+    ]
+  ],
+  "candidate": [
+    [
+      "merged-aa-offscreen-reviewed",
+      "merged-aa0268/offscreen/reviewed.log"
+    ]
+  ]
+}

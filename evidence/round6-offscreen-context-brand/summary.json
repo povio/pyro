@@ -1,0 +1,3253 @@
+{
+  "urls": 401,
+  "reference": "chrome158",
+  "counts": [
+    {
+      "namedPass": 6133,
+      "full": 367,
+      "reported": 7353,
+      "complete": 401
+    },
+    {
+      "namedPass": 6309,
+      "full": 375,
+      "reported": 7353,
+      "complete": 401
+    },
+    {
+      "namedPass": 7102,
+      "full": 395,
+      "reported": 7354,
+      "complete": 401
+    }
+  ],
+  "delta": {
+    "gained": 176,
+    "lost": 0,
+    "added": 0,
+    "missing": 0,
+    "chromeOnly": 870,
+    "lpOnly": 77
+  },
+  "areas": {
+    "html": {
+      "gained": 176,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 870,
+      "lpOnly": 77
+    }
+  },
+  "losses": [],
+  "perURL": {
+    "html/canvas/element/canvas-context/2d.canvas.context.exists.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/element/canvas-context/2d.canvas.context.extraargs.cache.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/element/canvas-context/2d.canvas.context.extraargs.create.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/element/canvas-context/2d.canvas.context.invalid.args.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/element/canvas-context/2d.canvas.context.prototype.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/element/canvas-context/2d.canvas.context.shared.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/element/canvas-context/2d.canvas.context.type.exists.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/element/canvas-context/2d.canvas.context.type.extend.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/element/canvas-context/2d.canvas.context.type.prototype.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/element/canvas-context/2d.canvas.context.type.replace.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/element/canvas-context/2d.canvas.context.unique.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/2d.conformance.requirements.basics.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/2d.conformance.requirements.basics.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/2d.conformance.requirements.missingargs.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/2d.conformance.requirements.missingargs.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-context/2d.canvas.context.arguments.missing.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-context/2d.canvas.context.arguments.missing.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-context/2d.canvas.context.casesensitive.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-context/2d.canvas.context.casesensitive.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-context/2d.canvas.context.emptystring.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-context/2d.canvas.context.emptystring.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-context/2d.canvas.context.exists.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-context/2d.canvas.context.exists.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-context/2d.canvas.context.extraargs.cache.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-context/2d.canvas.context.extraargs.cache.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-context/2d.canvas.context.extraargs.create.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-context/2d.canvas.context.extraargs.create.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-context/2d.canvas.context.invalid.args.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-context/2d.canvas.context.invalid.args.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-context/2d.canvas.context.prototype.html": {
+      "gained": true,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-context/2d.canvas.context.prototype.worker.html": {
+      "gained": true,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-context/2d.canvas.context.shared.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-context/2d.canvas.context.shared.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-context/2d.canvas.context.type.exists.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-context/2d.canvas.context.type.exists.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-context/2d.canvas.context.type.extend.html": {
+      "gained": true,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-context/2d.canvas.context.type.extend.worker.html": {
+      "gained": true,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-context/2d.canvas.context.type.prototype.html": {
+      "gained": true,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-context/2d.canvas.context.type.prototype.worker.html": {
+      "gained": true,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-context/2d.canvas.context.type.replace.html": {
+      "gained": true,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-context/2d.canvas.context.type.replace.worker.html": {
+      "gained": true,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-context/2d.canvas.context.unique.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-context/2d.canvas.context.unique.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-context/2d.getContext.options.any.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-context/2d.getContext.options.any.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.initial.color.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.initial.color.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.initial.reset.2dstate.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.initial.reset.2dstate.worker.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.initial.reset.clip.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.initial.reset.clip.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.initial.reset.different.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.initial.reset.different.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.initial.reset.gradient.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.initial.reset.gradient.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.initial.reset.path.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.initial.reset.path.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.initial.reset.pattern.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.initial.reset.pattern.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.initial.reset.same.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.initial.reset.same.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.initial.reset.transform.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.initial.reset.transform.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.readonly.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.readonly.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.reference.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.reference.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.size.attributes.default.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.size.attributes.default.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.size.attributes.idl.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.size.attributes.idl.set.zero.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.size.attributes.idl.set.zero.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.size.attributes.idl.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.size.attributes.parse.decimal.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.size.attributes.parse.decimal.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.size.attributes.parse.em.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.size.attributes.parse.em.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.size.attributes.parse.empty.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.size.attributes.parse.empty.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.size.attributes.parse.exp.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.size.attributes.parse.exp.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.size.attributes.parse.hex.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.size.attributes.parse.hex.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.size.attributes.parse.junk.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.size.attributes.parse.junk.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.size.attributes.parse.minus.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.size.attributes.parse.minus.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.size.attributes.parse.octal.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.size.attributes.parse.octal.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.size.attributes.parse.onlyspace.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.size.attributes.parse.onlyspace.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.size.attributes.parse.percent.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.size.attributes.parse.percent.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.size.attributes.parse.plus.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.size.attributes.parse.plus.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.size.attributes.parse.space.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.size.attributes.parse.space.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.size.attributes.parse.trailingjunk.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.size.attributes.parse.trailingjunk.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.size.attributes.parse.whitespace.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.size.attributes.parse.whitespace.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.size.attributes.parse.zero.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.size.attributes.parse.zero.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.size.attributes.reflect.setidl.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.size.attributes.reflect.setidl.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.size.attributes.reflect.setidlzero.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.size.attributes.reflect.setidlzero.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.size.invalid.attributes.idl.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.size.invalid.attributes.idl.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.size.large.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.size.large.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.type.delete.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.type.delete.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.type.name.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/canvas-host/2d.canvas.host.type.name.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/conformance-requirements/2d.conformance.requirements.basics.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/conformance-requirements/2d.conformance.requirements.basics.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/conformance-requirements/2d.conformance.requirements.missingargs.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/conformance-requirements/2d.conformance.requirements.missingargs.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.clearRect.basic.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.clearRect.basic.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.clearRect.clip.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.clearRect.clip.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.clearRect.globalalpha.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.clearRect.globalalpha.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.clearRect.globalcomposite.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.clearRect.globalcomposite.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.clearRect.negative.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.clearRect.negative.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.clearRect.nonfinite.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.clearRect.nonfinite.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.clearRect.path.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.clearRect.path.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.clearRect.shadow.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.clearRect.shadow.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.clearRect.transform.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.clearRect.transform.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.clearRect.zero.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.clearRect.zero.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.fillRect.basic.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.fillRect.basic.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.fillRect.clip.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.fillRect.clip.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.fillRect.negative.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.fillRect.negative.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.fillRect.nonfinite.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.fillRect.nonfinite.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.fillRect.path.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.fillRect.path.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.fillRect.shadow.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.fillRect.shadow.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.fillRect.transform.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.fillRect.transform.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.fillRect.zero.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.fillRect.zero.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.strokeRect.basic.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.strokeRect.basic.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.strokeRect.clip.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.strokeRect.clip.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.strokeRect.globalalpha.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.strokeRect.globalalpha.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.strokeRect.globalcomposite.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.strokeRect.globalcomposite.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.strokeRect.negative.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.strokeRect.negative.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.strokeRect.nonfinite.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.strokeRect.nonfinite.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.strokeRect.path.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.strokeRect.path.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.strokeRect.shadow.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.strokeRect.shadow.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.strokeRect.transform.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.strokeRect.transform.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.strokeRect.zero.1.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.strokeRect.zero.1.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.strokeRect.zero.2.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.strokeRect.zero.2.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.strokeRect.zero.3.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.strokeRect.zero.3.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.strokeRect.zero.4.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.strokeRect.zero.4.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.strokeRect.zero.5.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/drawing-rectangles-to-the-canvas/2d.strokeRect.zero.5.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.create1.basic.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.create1.basic.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.create1.initial.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.create1.initial.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.create1.zero.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.create1.zero.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.create2.basic.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.create2.basic.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.create2.double.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.create2.double.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.create2.initial.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.create2.initial.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.create2.large.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.create2.large.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.create2.negative.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.create2.negative.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.create2.nonfinite.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.create2.nonfinite.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.create2.round.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.create2.round.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.create2.zero.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.create2.zero.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.createImageBitmap.p3.rgba.unorm8.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": true
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.createImageBitmap.p3.rgba.unorm8.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": true
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.createImageBitmap.srgb.rgba.float16.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.createImageBitmap.srgb.rgba.float16.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.createImageBitmap.srgb.rgba.unorm8.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.createImageBitmap.srgb.rgba.unorm8.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.get.basic.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.get.basic.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.get.clamp.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.get.clamp.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.get.double.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.get.double.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.get.invalid.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.get.invalid.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.get.length.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.get.length.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.get.nonfinite.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.get.nonfinite.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.get.nonpremul.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.get.nonpremul.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.get.order.alpha.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.get.order.alpha.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.get.order.cols.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.get.order.cols.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.get.order.rgb.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.get.order.rgb.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.get.order.rows.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.get.order.rows.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.get.range.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.get.range.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.get.rounding.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.get.rounding.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.get.source.negative.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.get.source.negative.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.get.source.outside.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.get.source.outside.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.get.source.size.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.get.source.size.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.get.unaffected.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.get.unaffected.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.get.zero.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.get.zero.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.object.clamp.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.object.clamp.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.object.nan.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.object.nan.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.object.properties.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.object.properties.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.object.readonly.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.object.readonly.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.object.round.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.object.round.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.object.set.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.object.set.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.object.string.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.object.string.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.object.undefined.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.object.undefined.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.put.alpha.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.put.alpha.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.put.basic.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.put.basic.rgba.float16.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.put.basic.rgba.float16.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.put.basic.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.put.clip.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.put.clip.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.put.created.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.put.created.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.put.cross.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.put.cross.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.put.dirty.negative.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.put.dirty.negative.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.put.dirty.outside.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.put.dirty.outside.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.put.dirty.rect1.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.put.dirty.rect1.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.put.dirty.rect2.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.put.dirty.rect2.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.put.dirty.zero.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.put.dirty.zero.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.put.modified.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.put.modified.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.put.nonfinite.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.put.nonfinite.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": true,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.put.null.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.put.null.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.put.path.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.put.path.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.put.unaffected.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.put.unaffected.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.put.unchanged.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.put.unchanged.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.put.wrongtype.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/pixel-manipulation/2d.imageData.put.wrongtype.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.basic.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.basic.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.direction.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.direction.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.fill_style.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.fill_style.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.filter.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.filter.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.font.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.font.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.font_kerning.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.font_kerning.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.font_stretch.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.font_stretch.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.font_variant_caps.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.font_variant_caps.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.global_alpha.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.global_alpha.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.global_composite_operation.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.global_composite_operation.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.image_smoothing_enabled.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.image_smoothing_enabled.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.image_smoothing_quality.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.image_smoothing_quality.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.letter_spacing.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.letter_spacing.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.line_cap.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.line_cap.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.line_dash.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.line_dash.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.line_dash_offset.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.line_dash_offset.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.line_join.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.line_join.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.line_width.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.line_width.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.miter_limit.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.miter_limit.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.shadow_blur.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.shadow_blur.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.shadow_color.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.shadow_color.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.shadow_offset_x.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.shadow_offset_x.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.shadow_offset_y.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.shadow_offset_y.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.stroke_style.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.stroke_style.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.text_align.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.text_align.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.text_baseline.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.text_baseline.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.text_rendering.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.text_rendering.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.transformation_matrix.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.transformation_matrix.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.word_spacing.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/reset/2d.reset.state.word_spacing.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/the-canvas-state/2d.state.saverestore.bitmap.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/the-canvas-state/2d.state.saverestore.bitmap.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/the-canvas-state/2d.state.saverestore.clip.2.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/the-canvas-state/2d.state.saverestore.clip.2.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/the-canvas-state/2d.state.saverestore.clip.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/the-canvas-state/2d.state.saverestore.clip.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/the-canvas-state/2d.state.saverestore.fillStyle.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "html/canvas/offscreen/the-canvas-state/2d.state.saverestore.fillStyle.worker.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "html/canvas/offscreen/the-canvas-state/2d.state.saverestore.globalAlpha.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "html/canvas/offscreen/the-canvas-state/2d.state.saverestore.globalAlpha.worker.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "html/canvas/offscreen/the-canvas-state/2d.state.saverestore.globalCompositeOperation.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "html/canvas/offscreen/the-canvas-state/2d.state.saverestore.globalCompositeOperation.worker.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "html/canvas/offscreen/the-canvas-state/2d.state.saverestore.lineCap.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "html/canvas/offscreen/the-canvas-state/2d.state.saverestore.lineCap.worker.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "html/canvas/offscreen/the-canvas-state/2d.state.saverestore.lineJoin.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "html/canvas/offscreen/the-canvas-state/2d.state.saverestore.lineJoin.worker.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "html/canvas/offscreen/the-canvas-state/2d.state.saverestore.lineWidth.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "html/canvas/offscreen/the-canvas-state/2d.state.saverestore.lineWidth.worker.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "html/canvas/offscreen/the-canvas-state/2d.state.saverestore.miterLimit.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "html/canvas/offscreen/the-canvas-state/2d.state.saverestore.miterLimit.worker.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "html/canvas/offscreen/the-canvas-state/2d.state.saverestore.path.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/the-canvas-state/2d.state.saverestore.path.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/the-canvas-state/2d.state.saverestore.shadowBlur.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "html/canvas/offscreen/the-canvas-state/2d.state.saverestore.shadowBlur.worker.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "html/canvas/offscreen/the-canvas-state/2d.state.saverestore.shadowColor.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "html/canvas/offscreen/the-canvas-state/2d.state.saverestore.shadowColor.worker.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "html/canvas/offscreen/the-canvas-state/2d.state.saverestore.shadowOffsetX.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "html/canvas/offscreen/the-canvas-state/2d.state.saverestore.shadowOffsetX.worker.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "html/canvas/offscreen/the-canvas-state/2d.state.saverestore.shadowOffsetY.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "html/canvas/offscreen/the-canvas-state/2d.state.saverestore.shadowOffsetY.worker.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "html/canvas/offscreen/the-canvas-state/2d.state.saverestore.stack.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/the-canvas-state/2d.state.saverestore.stack.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/the-canvas-state/2d.state.saverestore.stackdepth.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/the-canvas-state/2d.state.saverestore.stackdepth.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/the-canvas-state/2d.state.saverestore.strokeStyle.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "html/canvas/offscreen/the-canvas-state/2d.state.saverestore.strokeStyle.worker.html": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 0,
+      "lpOnly": 0
+    },
+    "html/canvas/offscreen/the-canvas-state/2d.state.saverestore.transformation.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/the-canvas-state/2d.state.saverestore.transformation.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/the-canvas-state/2d.state.saverestore.underflow.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/canvas/offscreen/the-canvas-state/2d.state.saverestore.underflow.worker.html": {
+      "gained": false,
+      "lost": false,
+      "added": false,
+      "missing": false,
+      "chromeOnly": false,
+      "lpOnly": false
+    },
+    "html/dom/idlharness.any.worker.html": {
+      "gained": 85,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 134,
+      "lpOnly": 3
+    },
+    "html/dom/idlharness.https.html?exclude=(Document|Window|HTML.+)": {
+      "gained": 83,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 446,
+      "lpOnly": 5
+    },
+    "html/dom/idlharness.https.html?include=(Document|Window)": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 52,
+      "lpOnly": 0
+    },
+    "html/dom/idlharness.https.html?include=HTML.+": {
+      "gained": 0,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 216,
+      "lpOnly": 67
+    }
+  }
+}

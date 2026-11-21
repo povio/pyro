@@ -1,0 +1,20 @@
+test canvas_js::canvas_interfaces_are_lazy_globals ... ok
+test canvas_js::image_data_round_trips_and_draw_image ... ok
+test canvas_js::canvas_bitmaps_are_lazy_and_reported_for_rendering ... ok
+test canvas_js::gradients_patterns_and_compositing ... ok
+test canvas_js::a_canvas_whose_control_went_offscreen_shows_its_frames ... ok
+test canvas_js::offscreen_canvas_and_image_bitmaps ... ok
+test canvas_js::canvas_encodes_png_jpeg_and_blobs ... ok
+test canvas_js::image_bitmaps_clone_and_transfer_and_offscreen_canvases_transfer ... ok
+test canvas_js::rects_paint_exact_pixels ... ok
+test canvas_js::paths_transforms_and_clips ... ok
+test canvas_js::styles_gradients_and_patterns_are_kept_like_chrome ... ok
+test canvas_js::transforms_and_geometry_interfaces ... ok
+test canvas_js::pixels_are_transparent_until_something_is_drawn ... ok
+test canvas_js::kept_image_bytes_are_counted_as_they_come_and_go ... ok
+test canvas_js::text_draws_with_real_font_metrics ... ok
+test canvas_js::geometry_rects_and_quad_bounds_are_independent_snapshots ... ok
+test canvas_js::paths_answer_hit_tests ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 619 filtered out; finished in 0.48s
+

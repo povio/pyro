@@ -1,0 +1,68 @@
+{
+  "brands": [
+    false,
+    true,
+    true,
+    false,
+    "[object CanvasRenderingContext2D]",
+    true
+  ],
+  "prototypes": [
+    false,
+    false,
+    "undefined",
+    "function",
+    false
+  ],
+  "crossBorrow": [
+    "TypeError",
+    "accepted"
+  ],
+  "copied": [
+    255,
+    0,
+    0,
+    255
+  ],
+  "transferred": [
+    255,
+    0,
+    0,
+    255
+  ],
+  "reset": [
+    0,
+    0,
+    0,
+    0
+  ],
+  "blob": [
+    "image/png",
+    [
+      255,
+      0,
+      0,
+      255
+    ]
+  ],
+  "resize": [
+    3,
+    [
+      0,
+      0,
+      0,
+      0
+    ]
+  ],
+  "worker": [
+    "function",
+    false,
+    true,
+    [
+      0,
+      255,
+      0,
+      255
+    ]
+  ]
+}
