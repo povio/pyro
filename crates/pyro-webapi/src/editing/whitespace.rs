@@ -311,6 +311,19 @@ fn has_sibling(dom: &Dom, host: NodeId, mut node: NodeId, forward: bool) -> bool
     false
 }
 
+/// Removing an inline replaced box exposes the start of the following text.
+/// At the end of its container the exposed text is instead on the left.
+pub(super) fn after_replaced_element(page: &PageDom, dom: &mut Dom, host: NodeId, (parent, index): Point) {
+    let point = if let Ok(Some(next)) = dom.child_at(parent, index) {
+        (next, 0)
+    } else if let Some(prev) = index.checked_sub(1).and_then(|i| dom.child_at(parent, i).ok().flatten()) {
+        (prev, editing::len(dom, prev))
+    } else {
+        return;
+    };
+    at(page, dom, host, point, Repair::Inserted);
+}
+
 /// Normalize only the run touching the edit, retaining UTF-16 offsets.
 pub(super) fn at(page: &PageDom, dom: &mut Dom, host: NodeId, (node, offset): Point, repair: Repair) {
     if !editing::is_text(dom, node) || editing::editing_host(dom, node) != Some(host) {
