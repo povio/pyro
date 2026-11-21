@@ -509,6 +509,7 @@ fn paragraph_insertion_in_a_phrasing_host_uses_the_caret_style() {
     let r = &e.main;
     eval(r, "ed.focus(); getSelection().collapse(ed.firstChild,1); document.execCommand('insertParagraph')");
     assert_eq!(eval(r, "ed.innerHTML"), "a\nb");
+    assert_eq!(eval(r, "[ed.childNodes.length,ed.childNodes[1].data,getSelection().focusNode===ed.lastChild,getSelection().focusOffset].join('|')"), "3|\n|true|0");
     eval(r, "ed.innerHTML='<span style=\"display:block\">ab</span>'; getSelection().collapse(ed.firstChild.firstChild,1); document.execCommand('insertParagraph')");
     assert_eq!(eval(r, "ed.innerHTML"), r#"<span style="display:block">a</span><span style="display:block">b</span>"#);
     eval(r, "ed.innerHTML='<div style=\"display:inline;white-space:normal\">ab</div>'; getSelection().collapse(ed.firstChild.firstChild,1); document.execCommand('insertText',false,'\\n')");

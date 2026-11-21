@@ -1120,7 +1120,9 @@ fn paragraph_in_constrained_host(page: &PageDom, dom: &Dom, host: NodeId, node: 
     while let Some(n) = el {
         if n == host { break; }
         let display = layout.computed_style_value(dom, n, "display");
-        if display == "block" || (is_block(dom, n) && display != "contents" && display != "inline" && !display.starts_with("inline-")) {
+        if is_container(dom, n) && (display == "block"
+            || (is_block(dom, n) && display != "contents" && display != "inline" && !display.starts_with("inline-")))
+        {
             return n;
         }
         el = dom.parent_element(n).ok().flatten();
@@ -1722,8 +1724,23 @@ pub fn insert_line_break(page: &Rc<PageDom>, host: NodeId) {
 fn preserved_break_at(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point) -> Point {
     let point = insertion_point(dom, caret);
     let at_end = whitespace::at_line_end(page, dom, host, point);
+    let display = page.layout().computed_style_value(dom, host, "display");
+    if !in_text_only_element(dom, point.0) && (cannot_contain_paragraph(dom, host) || display == "inline" || display.starts_with("inline-")) {
+        // A preserved separator is a separate text node. Keep the caret at
+        // the start of the following text or before the existing padding BR.
+        let Ok(doc) = dom.node_document(host) else { return caret };
+        let Ok(lf) = dom.create_text(doc, "\n") else { return caret };
+        let Some(parent) = insert_break_node(dom, host, point, lf) else { return caret };
+        if at_end {
+            if let Ok(padding) = dom.create_text(doc, "\n") {
+                let before = dom.next_sibling(lf).ok().flatten();
+                let _ = dom.insert_before(parent, padding, before);
+            }
+        }
+        return caret_after_break(dom, parent, lf);
+    }
     // A padding BR in these editors already supplies the final empty line.
-    let keep_padding = !is_text(dom, point.0) && (plaintext_at(dom, point.0) || cannot_contain_paragraph(dom, host));
+    let keep_padding = !is_text(dom, point.0) && plaintext_at(dom, point.0);
     let after = insert_at_point(dom, point, if at_end { "\n\n" } else { "\n" }, !keep_padding);
     if at_end {
         (after.0, after.1.saturating_sub(1))
@@ -1746,6 +1763,20 @@ fn line_break_at(dom: &mut Dom, host: NodeId, caret: Point) -> Point {
     let caret = insertion_point(dom, caret);
     let Ok(doc) = dom.node_document(host) else { return caret };
     let Ok(br) = dom.create_element(doc, "br") else { return caret };
+    let Some(parent) = insert_break_node(dom, host, caret, br) else { return caret };
+    // Nothing follows on the line inside its block: a placeholder <br> keeps
+    // the new line visible.
+    let next = next_in_block(dom, host, br);
+    if next.is_none_or(|n| is_block(dom, n)) {
+        if let Ok(extra) = dom.create_element(doc, "br") {
+            let after = dom.next_sibling(br).ok().flatten();
+            let _ = dom.insert_before(parent, extra, after);
+        }
+    }
+    caret_after_break(dom, parent, br)
+}
+
+fn insert_break_node(dom: &mut Dom, host: NodeId, caret: Point, node: NodeId) -> Option<NodeId> {
     let (parent, before) = if is_text(dom, caret.0) {
         let n = caret.0;
         let parent = dom.parent(n).ok().flatten().unwrap_or(host);
@@ -1760,19 +1791,14 @@ fn line_break_at(dom: &mut Dom, host: NodeId, caret: Point) -> Point {
     } else {
         (caret.0, dom.child_at(caret.0, caret.1).ok().flatten())
     };
-    let _ = dom.insert_before(parent, br, before);
-    // Nothing follows on the line inside its block: a placeholder <br> keeps
-    // the new line visible.
-    let next = next_in_block(dom, host, br);
-    if next.is_none_or(|n| is_block(dom, n)) {
-        if let Ok(extra) = dom.create_element(doc, "br") {
-            let after = dom.next_sibling(br).ok().flatten();
-            let _ = dom.insert_before(parent, extra, after);
-        }
-    }
-    match dom.next_sibling(br).ok().flatten() {
+    dom.insert_before(parent, node, before).ok()?;
+    Some(parent)
+}
+
+fn caret_after_break(dom: &Dom, parent: NodeId, node: NodeId) -> Point {
+    match dom.next_sibling(node).ok().flatten() {
         Some(t) if is_text(dom, t) => (t, 0),
-        _ => (parent, dom.index_in_parent(br).unwrap_or(0) + 1),
+        _ => (parent, dom.index_in_parent(node).unwrap_or(0) + 1),
     }
 }
 
