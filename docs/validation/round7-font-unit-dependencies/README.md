@@ -24,3 +24,5 @@ One serial ABBA/BAAB run used eight fresh browser processes, one excluded warm-u
 | ordinary | 3.81 | 3.81 | 4.0 / 4.5 |
 | independent | 4.98 | 4.97 | 5.0 / 4.5 |
 | fontInput | 5.36 | 5.54 | 5.0 / 5.5 |
+
+The 2.991-second run averaged 26.61% host CPU, with 26.38% on parent arms and 26.85% on candidate arms. Neither CI nor the five-page QA run overlapped. The active font-input fixture took 0.18 ms more per 512 writes and reads. Short-run process-tree CPU counters have coarse resolution. [Per-arm host receipt](host.json)
