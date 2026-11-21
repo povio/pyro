@@ -147,6 +147,32 @@ fn round_layout_unit(v: f64) -> f64 {
 /// container at an index (`::column` snap areas).
 type SnapBox = (NodeId, Option<usize>);
 
+fn snap_axes(axis: &str, mode: style::logical_geometry::WritingMode) -> (bool, bool) {
+    match axis {
+        "x" => (true, false),
+        "y" => (false, true),
+        "inline" => (mode.is_horizontal(), mode.is_vertical()),
+        "block" => (mode.is_vertical(), mode.is_horizontal()),
+        "both" => (true, true),
+        _ => (false, false),
+    }
+}
+
+fn snap_alignment(align: &str, mode: style::logical_geometry::WritingMode) -> [&str; 2] {
+    use style::logical_geometry::PhysicalSide;
+    let mut words = align.split_whitespace();
+    let block = words.next().unwrap_or("none");
+    let inline = words.next().unwrap_or(block);
+    let physical = |keyword, side| match (keyword, side) {
+        ("start", PhysicalSide::Right | PhysicalSide::Bottom) => "end",
+        ("end", PhysicalSide::Right | PhysicalSide::Bottom) => "start",
+        _ => keyword,
+    };
+    let inline = physical(inline, mode.inline_start_physical_side());
+    let block = physical(block, mode.block_start_physical_side());
+    if mode.is_vertical() { [block, inline] } else { [inline, block] }
+}
+
 /// Chromium's `SnapSizeToPixel`: the pixel-snapped size of a box `size`
 /// long starting at `location`, so adjacent snapped boxes tile.
 fn snap_size_to_pixel(size: f64, location: f64) -> f64 {
@@ -2959,12 +2985,8 @@ impl Layout {
             return unchanged;
         }
         let words: Vec<&str> = snap_type.split_whitespace().collect();
-        let (snap_x, snap_y) = match words.first().copied() {
-            Some("x") | Some("inline") => (true, false),
-            Some("y") | Some("block") => (false, true),
-            Some("both") => (true, true),
-            _ => return unchanged,
-        };
+        let mode = self.style.stylo_style(dom, styled).map_or_else(style::logical_geometry::WritingMode::horizontal_tb, |style| style.writing_mode);
+        let (snap_x, snap_y) = snap_axes(words.first().copied().unwrap_or("none"), mode);
         let mandatory = words.get(1).copied() == Some("mandatory");
         // The scroller's padding box in client coordinates and its size.
         let px = |v: &str, basis: f64| -> f64 {
@@ -3005,7 +3027,17 @@ impl Layout {
         let mut best: [Option<(f64, SnapBox)>; 2] = [None, None];
         // Every box's snap position on each axis, to break ties (below).
         let mut all: Vec<(NodeId, [Option<f64>; 2])> = Vec::new();
-        let target = [tx.map(|v| v as f64), ty.map(|v| v as f64)];
+        let ranges = if let Some(container) = scroller {
+            [Axis::Width, Axis::Height].map(|axis| {
+                let extent = self.scroll_extent(dom, container, axis).unwrap_or(i32::MAX as f64).floor();
+                if self.scroll_reversed(dom, container, axis) { (-extent, 0.0) } else { (0.0, extent) }
+            })
+        } else {
+            let (x, y) = self.viewport_scroll_range(dom);
+            [(x.0 as f64, x.1 as f64), (y.0 as f64, y.1 as f64)]
+        };
+        let reachable = |axis: usize, position: f64| position.clamp(ranges[axis].0, ranges[axis].1);
+        let target = [tx.map(|v| reachable(0, v as f64)), ty.map(|v| reachable(1, v as f64))];
         let Ok(nodes) = dom.descendants(scroller.unwrap_or(doc)) else { return unchanged };
         for id in nodes {
             if dom.element(id).is_err() || Some(id) == scroller {
@@ -3050,9 +3082,7 @@ impl Layout {
             let margin = |side: &str| px(&value(id, &format!("scroll-margin-{side}")), 0.0);
             let (top, bottom) = (r.y - origin_y - margin("top"), r.y + r.height - origin_y + margin("bottom"));
             let (left, right) = (r.x - origin_x - margin("left"), r.x + r.width - origin_x + margin("right"));
-            let mut parts = align.split_whitespace();
-            let block = parts.next().unwrap_or("none");
-            let inline = parts.next().unwrap_or(block);
+            let [align_x, align_y] = snap_alignment(&align, mode);
             let position = |a: &str, start: f64, end: f64, pad_start: f64, pad_end: f64, size: f64| match a {
                 "start" => Some(start - pad_start),
                 "end" => Some(end - (size - pad_end)),
@@ -3060,8 +3090,8 @@ impl Layout {
                 _ => None,
             };
             let candidates = [
-                snap_x.then(|| position(inline, left, right, pl, pr, width)).flatten(),
-                snap_y.then(|| position(block, top, bottom, pt, pb, height)).flatten(),
+                snap_x.then(|| position(align_x, left, right, pl, pr, width)).flatten(),
+                snap_y.then(|| position(align_y, top, bottom, pt, pb, height)).flatten(),
             ];
             // A snap area larger than the snapport on an axis can be scrolled within: any target
             // that keeps the snapport inside it is a snap position (CSS Scroll Snap 1 § 6.2.1).
@@ -3077,7 +3107,7 @@ impl Layout {
                 }
                 let (Some(c), Some(t)) = (candidates[axis], target[axis]) else { continue };
                 let c = if covering[axis] && t >= spans[axis].0 && t <= spans[axis].1 { t } else { c };
-                let c = c.max(0.0);
+                let c = reachable(axis, c);
                 mine[axis] = Some(c);
                 if best[axis].is_none_or(|(b, _)| (c - t).abs() < (b - t).abs()) {
                     best[axis] = Some((c, (id, None)));
@@ -3096,9 +3126,7 @@ impl Layout {
                 self.computed_pseudo_style_value(dom, container, &style::selector_parser::PseudoElement::Column, "scroll-snap-align")
             };
             if !align.is_empty() && align != "none" {
-                let mut parts = align.split_whitespace();
-                let block = parts.next().unwrap_or("none").to_owned();
-                let inline = parts.next().map(str::to_owned).unwrap_or_else(|| block.clone());
+                let [align_x, align_y] = snap_alignment(&align, mode);
                 let (bl, bt) = (px(&value(container, "border-left-width"), 0.0), px(&value(container, "border-top-width"), 0.0));
                 let position = |a: &str, start: f64, end: f64, pad_start: f64, pad_end: f64, size: f64| match a {
                     "start" => Some(start - pad_start),
@@ -3110,15 +3138,15 @@ impl Layout {
                 for (index, [cx, cy, cw, ch]) in columns.into_iter().enumerate() {
                     let (left, right, top, bottom) = (cx - bl, cx - bl + cw, cy - bt, cy - bt + ch);
                     let candidates = [
-                        snap_x.then(|| position(&inline, left, right, pl, pr, width)).flatten(),
-                        snap_y.then(|| position(&block, top, bottom, pt, pb, height)).flatten(),
+                        snap_x.then(|| position(align_x, left, right, pl, pr, width)).flatten(),
+                        snap_y.then(|| position(align_y, top, bottom, pt, pb, height)).flatten(),
                     ];
                     for axis in 0..2 {
                         if only.is_some_and(|o| o[axis].is_some_and(|b| b != (container, Some(index)))) {
                             continue;
                         }
                         let (Some(c), Some(t)) = (candidates[axis], target[axis]) else { continue };
-                        let c = c.max(0.0);
+                        let c = reachable(axis, c);
                         if best[axis].is_none_or(|(b, _)| (c - t).abs() < (b - t).abs()) {
                             best[axis] = Some((c, (container, Some(index))));
                         }
@@ -3139,7 +3167,7 @@ impl Layout {
         }
         let mut chosen = none;
         let mut snap = |axis: usize, t: Option<i64>, size: f64| match (t, best[axis]) {
-            (Some(t), Some((b, id))) if mandatory || only.is_some() || (b - t as f64).abs() <= size / 3.0 => {
+            (Some(_), Some((b, id))) if mandatory || only.is_some() || target[axis].is_some_and(|t| (b - t).abs() <= size / 3.0) => {
                 chosen[axis] = Some(id);
                 Some(b.round() as i64)
             }
@@ -4013,16 +4041,11 @@ impl Layout {
         offset_y: fn(f64, f64, f64, i64) -> Option<i32>,
     ) -> (fn(f64, f64, f64, i64) -> Option<i32>, fn(f64, f64, f64, i64) -> Option<i32>) {
         let snap_type = self.style.computed_value(dom, container, "scroll-snap-type").unwrap_or_default();
-        let (snap_x, snap_y) = match snap_type.split_whitespace().next() {
-            Some("x") | Some("inline") => (true, false),
-            Some("y") | Some("block") => (false, true),
-            Some("both") => (true, true),
-            _ => return (offset_x, offset_y),
-        };
+        let Some(axis) = snap_type.split_whitespace().next().filter(|axis| *axis != "none") else { return (offset_x, offset_y) };
+        let mode = self.style.stylo_style(dom, container).map_or_else(style::logical_geometry::WritingMode::horizontal_tb, |style| style.writing_mode);
+        let (snap_x, snap_y) = snap_axes(axis, mode);
         let align = self.style.computed_value(dom, el, "scroll-snap-align").unwrap_or_default();
-        let mut words = align.split_whitespace();
-        let block = words.next().unwrap_or("none").to_owned();
-        let inline = words.next().map(str::to_owned).unwrap_or_else(|| block.clone());
+        let [align_x, align_y] = snap_alignment(&align, mode);
         let pick = |keyword: &str, asked: fn(f64, f64, f64, i64) -> Option<i32>| -> fn(f64, f64, f64, i64) -> Option<i32> {
             match keyword {
                 "start" => ScrollAlign::Start.offset_fn(),
@@ -4032,8 +4055,8 @@ impl Layout {
             }
         };
         (
-            if snap_x { pick(&inline, offset_x) } else { offset_x },
-            if snap_y { pick(&block, offset_y) } else { offset_y },
+            if snap_x { pick(align_x, offset_x) } else { offset_x },
+            if snap_y { pick(align_y, offset_y) } else { offset_y },
         )
     }
 
