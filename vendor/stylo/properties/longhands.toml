@@ -4145,6 +4145,15 @@ has_effect_on_gecko_scrollbars = false
 type = "FontSmoothing"
 initial = "computed::FontSmoothing::Auto"
 
+[speak]
+struct = "inherited_box"
+engine = "servo"
+spec = "https://drafts.csswg.org/css-speech-1/#speaking-props-speak"
+animation_type = "discrete"
+affects = ""
+type = "Speak"
+initial = "computed::Speak::Auto"
+
 [visibility]
 struct = "inherited_box"
 spec = "https://drafts.csswg.org/css-box/#propdef-visibility"

@@ -1027,3 +1027,24 @@ fn typed_shorthand_and_grid_line_writes_preserve_valid_declarations() {
     "#);
     assert_eq!(actual, "true|true|1px 2px|span 2|4px|auto|3|7px");
 }
+
+#[test]
+fn speak_keywords_cascade_and_reify_as_typed_values() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        const parent = document.body.appendChild(document.createElement('div'));
+        const child = parent.appendChild(document.createElement('span'));
+        const map = child.attributeStyleMap, computed = child.computedStyleMap();
+        const values = [computed.get('speak').value];
+        parent.style.setProperty('speak', 'never');
+        values.push(computed.get('speak').value);
+        map.set('speak', new CSSKeywordValue('always'));
+        values.push(child.style.getPropertyValue('speak'), computed.get('speak').value);
+        child.style.setProperty('speak', 'invalid');
+        values.push(map.get('speak').value);
+        map.delete('speak');
+        values.push(computed.get('speak').value);
+        values.join('|')
+    "#);
+    assert_eq!(actual, "auto|never|always|always|always|never");
+}
