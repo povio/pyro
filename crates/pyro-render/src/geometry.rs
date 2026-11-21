@@ -515,10 +515,23 @@ impl Geometry {
             use style::values::computed::Overflow;
             let non_scrolling = |value| matches!(value, Overflow::Visible | Overflow::Clip);
             let wm = style.writing_mode;
-            style.clone_display().inside() != DisplayInside::Flex
-                && non_scrolling(style.clone_overflow_x()) && non_scrolling(style.clone_overflow_y())
-                && (wm.inline_start_physical_side() == PhysicalSide::Right
-                    || wm.block_start_physical_side() == PhysicalSide::Right)
+            if !non_scrolling(style.clone_overflow_x()) || !non_scrolling(style.clone_overflow_y()) {
+                return false;
+            }
+            let starts_on_right = wm.inline_start_physical_side() == PhysicalSide::Right
+                || wm.block_start_physical_side() == PhysicalSide::Right;
+            if !starts_on_right || style.clone_display().inside() != DisplayInside::Flex {
+                return starts_on_right;
+            }
+            use style::computed_values::flex_direction::T as FlexDirection;
+            use style::values::computed::FlexWrap;
+            let position = style.get_position();
+            let row = matches!(position.flex_direction, FlexDirection::Row | FlexDirection::RowReverse);
+            if row != wm.is_vertical() {
+                !matches!(position.flex_direction, FlexDirection::RowReverse | FlexDirection::ColumnReverse)
+            } else {
+                !position.flex_wrap.contains(FlexWrap::WRAP_REVERSE)
+            }
         });
         let scroll_width = if measure_width_from_right {
             client_width.max((l.size.width - l.border.right - g.1) as f64 - o.x0)

@@ -1,0 +1,15 @@
+<!doctype html><meta charset=utf-8><div id="box"><div id="item"></div></div><pre id="results"></pre>
+<script>
+const rows = [];
+for (const writingMode of ['horizontal-tb','vertical-lr','vertical-rl','sideways-lr','sideways-rl'])
+  for (const direction of ['ltr','rtl'])
+    for (const flexDirection of ['row','row-reverse','column','column-reverse'])
+      for (const flexWrap of ['nowrap','wrap','wrap-reverse'])
+        for (const overflow of ['visible','clip','hidden'])
+          for (const kind of ['fits','negative']) {
+            box.style.cssText = `display:flex;width:80px;height:80px;padding:1px 4px 8px 16px;border:solid;border-width:1px 50px 40px 4px;scrollbar-width:none;writing-mode:${writingMode};direction:${direction};flex-direction:${flexDirection};flex-wrap:${flexWrap};overflow:${overflow}`;
+            item.style.cssText = kind === 'fits' ? 'width:15px;height:24px' : 'width:300px;height:300px;margin:-100px';
+            rows.push([writingMode,direction,flexDirection,flexWrap,overflow,kind,box.scrollWidth,box.scrollHeight]);
+          }
+results.textContent = JSON.stringify(rows);
+</script>
