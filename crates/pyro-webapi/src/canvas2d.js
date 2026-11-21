@@ -311,6 +311,7 @@
   }
 
   function parseTransform(text) {
+    if (natives.worker) throw new TypeErrorC('CSS transform strings require a Window.');
     if (text === '') return { m: IDENTITY.slice(), is2D: true };
     const parsed = natives.parseTransform(text);
     if (!parsed) throw domError('SyntaxError', `Failed to parse '${text}'.`);
@@ -478,6 +479,10 @@
       s.m = parsed.m; s.is2D = parsed.is2D;
       return this;
     }
+  }
+  if (natives.worker) {
+    delete DOMMatrix.prototype.setMatrixValue;
+    delete DOMMatrixReadOnly.prototype.toString;
   }
   const SHORT_INDEX = { a: 0, b: 1, c: 4, d: 5, e: 12, f: 13 };
   for (const name of Object.keys(SHORT_INDEX)) {
