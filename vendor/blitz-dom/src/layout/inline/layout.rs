@@ -231,6 +231,17 @@ impl LayoutPassState<'_> {
         if replaced { return inputs; }
         let min = taffy::BlockItemStyle::min_size_keyword(&style);
         let max = taffy::BlockItemStyle::max_size_keyword(&style);
+        let mut cross_height = inputs.known_dimensions.height;
+        if cross_height.is_none() && (!min.width.is_auto() || !max.width.is_auto()) {
+            let padding = style.padding().resolve_or_zero(outer.parent_size.width, resolve_calc_value);
+            let border = style.border().resolve_or_zero(outer.parent_size.width, resolve_calc_value);
+            let inset = (padding + border).vertical_axis_sum();
+            let height = style.size().height.maybe_resolve(outer.parent_size.height, resolve_calc_value);
+            let lower = style.min_size().height.maybe_resolve(outer.parent_size.height, resolve_calc_value);
+            let upper = style.max_size().height.maybe_resolve(outer.parent_size.height, resolve_calc_value);
+            let adjustment = if style.box_sizing() == BoxSizing::ContentBox { inset } else { 0.0 };
+            cross_height = height.maybe_min(upper).maybe_max(lower).map(|value| (value + adjustment).max(inset));
+        }
         drop(style);
         let child = crate::taffy_node_id(node_id);
         if !min.width.is_auto() || !max.width.is_auto() {
@@ -240,6 +251,7 @@ impl LayoutPassState<'_> {
                 if keyword.is_auto() || (keyword.is_stretch() && outer.available_space.width.into_option().is_none()) { return None; }
                 let constraint = LayoutInput { sizing_mode: SizingMode::ContentSize, available_space: outer.available_space, ..measure };
                 let mut bound = inline_box_inputs(keyword, taffy::Dimension::auto(), None, margin, constraint);
+                bound.known_dimensions.height = cross_height;
                 if !keyword.is_stretch() { bound.known_dimensions.width = None; }
                 Some(bound.known_dimensions.width.unwrap_or_else(|| self.compute_child_layout(child, bound).size.width))
             };
