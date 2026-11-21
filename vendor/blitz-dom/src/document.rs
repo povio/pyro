@@ -2474,12 +2474,7 @@ impl BaseDocument {
 
         // A node slot can be reused after removal. The cascade follows the live
         // owner elements' document order, including when a sheet is replaced.
-        let root = (&self.nodes[node_id]).owner_doc().id;
-        let insertion_point = self.nodes_to_stylesheet.keys().copied()
-            .filter(|&id| id != node_id && self.nodes.get(id).is_some_and(|n| n.owner_doc().id == root))
-            .filter(|&id| self.compare_document_order(node_id, id).is_lt())
-            .min_by(|&a, &b| self.compare_document_order(a, b))
-            .and_then(|id| self.nodes_to_stylesheet.get(&id));
+        let insertion_point = self.next_document_stylesheet(node_id);
 
         if let Some(insertion_point) = insertion_point {
             self.stylist.insert_stylesheet_before(
@@ -2491,6 +2486,26 @@ impl BaseDocument {
             self.stylist
                 .append_stylesheet(stylesheet, &self.guard.read())
         }
+    }
+
+    fn next_document_stylesheet(&self, owner: NodeId) -> Option<&DocumentStyleSheet> {
+        let node = &self.nodes[owner];
+        if let Some(parent) = node.parent {
+            // When all stylesheet owners are siblings, their order is the parent's
+            // child list. Avoid constructing two ancestor chains per comparison.
+            if self.nodes_to_stylesheet.keys().all(|id| self.nodes.get(*id).is_some_and(|n| n.parent == Some(parent))) {
+                let siblings = &self.nodes[parent].children;
+                if siblings.last() == Some(&owner) { return None; }
+                let index = node.child_index()?;
+                return siblings[index + 1..].iter().find_map(|id| self.nodes_to_stylesheet.get(id));
+            }
+        }
+        let root = node.owner_doc().id;
+        self.nodes_to_stylesheet.keys().copied()
+            .filter(|&id| id != owner && self.nodes.get(id).is_some_and(|n| n.owner_doc().id == root))
+            .filter(|&id| self.compare_document_order(owner, id).is_lt())
+            .min_by(|&a, &b| self.compare_document_order(a, b))
+            .and_then(|id| self.nodes_to_stylesheet.get(&id))
     }
 
     pub fn handle_messages(&mut self) {
