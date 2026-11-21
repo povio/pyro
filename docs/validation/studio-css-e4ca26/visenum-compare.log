@@ -1,0 +1,30 @@
+visenum-main-candidate 8082 page passes 5748 named passes 181622 observed names 194657 statuses {'complete:0': 7871, 'complete:2': 104, 'timeout:None': 11, 'complete:1': 95, 'hang:None': 1}
+visenum-main-parent 8082 page passes 5745 named passes 181618 observed names 194657 statuses {'complete:0': 7871, 'complete:2': 104, 'timeout:None': 11, 'complete:1': 95, 'hang:None': 1}
+visenum-main-stable 8082 page passes 6950 named passes 182963 observed names 194912 statuses {'complete:0': 7986, 'complete:2': 62, 'complete:1': 23, 'timeout:None': 10, 'hang:None': 1}
+visenum-main-parent pages left only 3 right only 0
+visenum-main-parent passes left only 4 right only 0
+visenum-main-parent observed left only 0 right only 0
+visenum-main-stable pages left only 281 right only 1483
+visenum-main-stable passes left only 5901 right only 7242
+visenum-main-stable observed left only 260 right only 515
+Losses vs parent by URL: Counter()
+visenum-focus-candidate 56 page passes 46 named passes 1176 observed names 1218 statuses {'complete:0': 56}
+visenum-focus-parent 56 page passes 43 named passes 1172 observed names 1218 statuses {'complete:0': 56}
+visenum-focus-stable 56 page passes 53 named passes 1192 observed names 1218 statuses {'complete:0': 56}
+visenum-focus-parent pages left only 3 right only 0
+visenum-focus-parent passes left only 4 right only 0
+visenum-focus-parent observed left only 0 right only 0
+visenum-focus-stable pages left only 0 right only 7
+visenum-focus-stable passes left only 1 right only 17
+visenum-focus-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()
+visenum-supplement-candidate 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+visenum-supplement-parent 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+visenum-supplement-stable 41 page passes 35 named passes 619 observed names 874 statuses {'complete:0': 41}
+visenum-supplement-parent pages left only 0 right only 0
+visenum-supplement-parent passes left only 0 right only 0
+visenum-supplement-parent observed left only 0 right only 0
+visenum-supplement-stable pages left only 0 right only 8
+visenum-supplement-stable passes left only 0 right only 42
+visenum-supplement-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()
