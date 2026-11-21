@@ -70,7 +70,12 @@
       return parseValues(`${property}`, `${cssText}`, true, 'parseAll');
     }
   }
-  const plain = (text) => new CSSStyleValue(ILLEGAL, text);
+  const associatedProperties = new WeakMap();
+  const plain = (property, text) => {
+    const value = new CSSStyleValue(ILLEGAL, text);
+    associatedProperties.set(value, property);
+    return value;
+  };
 
   // ---------- CSSUnparsedValue / CSSVariableReferenceValue ----------
   const isUnparsedMember = (v) => typeof v === 'string' || v instanceof CSSVariableReferenceValue;
@@ -1077,6 +1082,9 @@
     'border-bottom-right-radius', 'border-image-width', 'border-image-outset', 'border-image-slice', 'border-image-repeat',
     'border-spacing', 'column-rule-width', 'vertical-align']);
   const CSS_WIDE = /^(inherit|initial|unset|revert|revert-layer|default)$/i;
+  const OPAQUE_PROPERTIES = new Set(['flex-flow', 'font', 'font-family', 'font-variant', 'gap', 'grid-gap',
+    'grid', 'grid-area', 'grid-template', 'marker', 'mask', 'offset', 'scroll-margin', 'scroll-padding',
+    'text-decoration', 'text-shadow', 'will-change']);
   const LIST_VALUED = new Set(['transition', 'transition-property', 'transition-duration', 'transition-timing-function',
     'transition-delay', 'transition-behavior', 'animation', 'animation-name', 'animation-duration', 'animation-timing-function',
     'animation-delay', 'animation-iteration-count', 'animation-direction', 'animation-fill-mode', 'animation-play-state',
@@ -1111,15 +1119,15 @@
   const reifyOne = (property, text, custom, shorthand = false) => {
     if (custom || /var\(/i.test(text)) return unparsedFrom(text);
     if (CSS_WIDE.test(text)) return new CSSKeywordValue(text.toLowerCase());
-    if (UNREIFIED.has(property)) return plain(text);
+    if (UNREIFIED.has(property)) return plain(property, text);
     // A grid line's number (with or without a name) is no single numeric value.
-    if (/^grid-(row|column)-(start|end)$/.test(property) && !/^[A-Za-z_-][A-Za-z0-9_-]*$/.test(text)) return plain(text);
-    if (/^-?[A-Za-z_][A-Za-z0-9_-]*$/.test(text)) return NAMED_COLORS.has(text.toLowerCase()) ? plain(text) : new CSSKeywordValue(text);
+    if (/^grid-(row|column)-(start|end)$/.test(property) && !/^[A-Za-z_-][A-Za-z0-9_-]*$/.test(text)) return plain(property, text);
+    if (/^-?[A-Za-z_][A-Za-z0-9_-]*$/.test(text)) return NAMED_COLORS.has(text.toLowerCase()) ? plain(property, text) : new CSSKeywordValue(text);
     if (property === 'transform') { const t = transformFrom(text); if (t) return t; }
     if (!shorthand && /^url\((?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^()'"\s]*)\)$/i.test(text)) return new CSSImageValue(ILLEGAL, text);
     const n = parseNumeric(text);
     if (n) return n;
-    return plain(text);
+    return plain(property, text);
   };
   const reify = (property, text, all) => {
     const k = kind(property);
@@ -1127,9 +1135,11 @@
     const [name, which] = k;
     if (which === 2) return [unparsedFrom(text)];
     if (CSS_WIDE.test(text) || /var\(/i.test(text)) return [reifyOne(name, text, false)];
+    if ((name === 'text-shadow' && text === 'none') || (name === 'will-change' && text === 'auto')) return [new CSSKeywordValue(text)];
+    if (OPAQUE_PROPERTIES.has(name)) return [plain(name, text)];
     // A shorthand's value of several components is not reified (a plain CSSStyleValue); one
     // component is, as a longhand's.
-    if (which === 1) return [splitSpaces(text).length > 1 ? plain(text) : reifyOne(name, text, false, true)];
+    if (which === 1) return [splitSpaces(text).length > 1 ? plain(name, text) : reifyOne(name, text, false, true)];
     const parts = LIST_VALUED.has(name) ? splitTop(text) : [text];
     const values = parts.map((t) => reifyOne(name, t, false));
     return all ? values : values.slice(0, 1);
@@ -1143,7 +1153,7 @@
       if (cssText.trim() === '') throw new TypeError(`Failed to execute '${what}' on 'CSSStyleValue': The value provided ('${cssText}') could not be parsed as a '${property}'.`);
       return [unparsedFrom(cssText.trim())];
     }
-    if (text === '') return [plain(cssText.trim())];
+    if (text === '') return [plain(k[0], cssText.trim())];
     return reify(k[0], text, all);
   }
 
@@ -1207,6 +1217,9 @@
   // against the property), or a string parsed as the property.
   const valueText = (name, which, v, what) => {
     if (v instanceof CSSStyleValue) {
+      if (associatedProperties.has(v) && associatedProperties.get(v) !== name) {
+        throw new TypeError(`Failed to execute '${what}' on 'StylePropertyMap': Value belongs to another property`);
+      }
       if (which === 2) {
         if (!(v instanceof CSSUnparsedValue)) throw new TypeError(`Failed to execute '${what}' on 'StylePropertyMap': Invalid type for property`);
         return v.toString();
