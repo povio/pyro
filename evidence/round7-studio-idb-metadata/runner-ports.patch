@@ -1,0 +1,11 @@
+--- a/bench/wpt/run.mjs
++++ b/bench/wpt/run.mjs
+@@ -116,7 +116,7 @@ for (const [sig, code] of [['SIGINT', 130], ['SIGTERM', 143], ['SIGHUP', 129]])
+ process.on('uncaughtException', (e) => { console.error(e); process.exit(1); });
+ process.on('unhandledRejection', (e) => { console.error(e); process.exit(1); });
+ if (!BASE && WPTSERVE) {
+-  wptserve = await startWptserve(WPT);
++  wptserve = await startWptserve(WPT, { ports: Object.fromEntries(['http','http2','https','https2','httpLocal','httpPublic','httpsLocal','httpsPublic','ws','wss'].map((name, index) => [name, 24820 + index])) });
+   proxy = await startProxy();
+   BASE = wptserve.base;
+   wptserve.onExit((code) => serverLost(`(wptserve) exited (${code}); log: ${wptserve.logFile}`));
