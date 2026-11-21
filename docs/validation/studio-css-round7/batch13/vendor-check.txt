@@ -1,0 +1,2 @@
+base: 8695db84 (8695db84)
+stylo: patch verified: git apply on the upstream reconstructed at 8695db84 (the base) reproduces vendor/stylo, and git apply -R gives it back
