@@ -1942,11 +1942,13 @@ diff -ruN a/properties/counted_unknown_properties.py b/properties/counted_unknow
      "-webkit-app-region",
 diff -ruN a/properties/data.py b/properties/data.py
 --- a/properties/data.py	2026-11-11 19:55:57
-+++ b/properties/data.py	2026-11-21 16:29:35
-@@ -248,6 +248,21 @@
++++ b/properties/data.py	2026-11-21 21:49:33
+@@ -246,6 +246,21 @@
+ 
+ def to_phys(name, logical, physical):
      return name.replace(logical, physical).replace("inset-", "")
- 
- 
++
++
 +PAGE_BOX_PROPERTIES = set('''
 +    direction unicode-bidi background background-color background-image background-repeat
 +    background-attachment background-position background-position-x background-position-y
@@ -1960,11 +1962,9 @@ diff -ruN a/properties/data.py b/properties/data.py
 +    text-align text-decoration text-indent text-transform white-space word-spacing visibility
 +    width min-width max-width
 +'''.split())
-+
-+
+ 
+ 
  class Property(object):
-     def __init__(
-         self,
 @@ -271,6 +286,8 @@
          self.gecko_pref = gecko_pref
          self.idl_method = idl_method(name, self.camel_case)
@@ -2047,11 +2047,12 @@ diff -ruN a/properties/data.py b/properties/data.py
                  "FlexDirection",
                  "ListStylePosition",
                  "TextWrapStyle",
-@@ -600,16 +658,25 @@
+@@ -600,16 +658,26 @@
                  "ShapeRendering",
                  "TextAnchor",
                  "ImageOrientation",
 +                "InterpolateSize",
++                "Speak",
                  "TextOrientation",
                  "BoxCollapse",
                  "Visibility",
@@ -2073,7 +2074,7 @@ diff -ruN a/properties/data.py b/properties/data.py
                  "TopLayer",
                  "FloatEdge",
                  "ImageLayerAttachment",
-@@ -670,6 +737,7 @@
+@@ -670,6 +738,7 @@
                  "OverscrollBehavior",
                  "PageOrientation",
                  "PointerEvents",
@@ -2081,7 +2082,7 @@ diff -ruN a/properties/data.py b/properties/data.py
                  "PositionTryOrder",
                  "PositionVisibility",
                  "PrintColorAdjust",
-@@ -686,6 +754,12 @@
+@@ -686,6 +755,12 @@
                  "TextAlign",
                  "TextAlignLast",
                  "TextAutospace",
@@ -2094,7 +2095,7 @@ diff -ruN a/properties/data.py b/properties/data.py
                  "TextBoxEdge",
                  "TextBoxTrim",
                  "TextDecorationLine",
-@@ -1323,8 +1397,17 @@
+@@ -1323,8 +1398,17 @@
                  "cursor",
                  "direction",
                  "hyphens",
