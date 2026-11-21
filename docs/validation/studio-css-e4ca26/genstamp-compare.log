@@ -1,0 +1,30 @@
+genstamp-main-candidate 8082 page passes 5556 named passes 178661 observed names 194540 statuses {'complete:0': 7867, 'complete:2': 105, 'timeout:None': 11, 'complete:1': 98, 'hang:None': 1}
+genstamp-main-parent 8082 page passes 5555 named passes 178660 observed names 194540 statuses {'complete:0': 7867, 'complete:2': 105, 'timeout:None': 11, 'complete:1': 98, 'hang:None': 1}
+genstamp-main-stable 8082 page passes 6950 named passes 182963 observed names 194912 statuses {'complete:0': 7986, 'complete:2': 62, 'complete:1': 23, 'timeout:None': 10, 'hang:None': 1}
+genstamp-main-parent pages left only 1 right only 0
+genstamp-main-parent passes left only 1 right only 0
+genstamp-main-parent observed left only 0 right only 0
+genstamp-main-stable pages left only 272 right only 1666
+genstamp-main-stable passes left only 5802 right only 10104
+genstamp-main-stable observed left only 309 right only 681
+Losses vs parent by URL: Counter()
+genstamp-focus-candidate 314 page passes 225 named passes 3970 observed names 4677 statuses {'complete:0': 314}
+genstamp-focus-parent 314 page passes 225 named passes 3970 observed names 4677 statuses {'complete:0': 314}
+genstamp-focus-stable 314 page passes 271 named passes 4153 observed names 4677 statuses {'complete:0': 314}
+genstamp-focus-parent pages left only 0 right only 0
+genstamp-focus-parent passes left only 0 right only 0
+genstamp-focus-parent observed left only 0 right only 0
+genstamp-focus-stable pages left only 6 right only 52
+genstamp-focus-stable passes left only 52 right only 235
+genstamp-focus-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()
+genstamp-supplement-candidate 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+genstamp-supplement-parent 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+genstamp-supplement-stable 41 page passes 35 named passes 619 observed names 874 statuses {'complete:0': 41}
+genstamp-supplement-parent pages left only 0 right only 0
+genstamp-supplement-parent passes left only 0 right only 0
+genstamp-supplement-parent observed left only 0 right only 0
+genstamp-supplement-stable pages left only 0 right only 8
+genstamp-supplement-stable passes left only 0 right only 42
+genstamp-supplement-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()
