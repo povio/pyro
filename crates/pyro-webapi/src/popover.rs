@@ -500,8 +500,11 @@ pub(crate) fn hide_showing_popover(
     page.dom.borrow_mut().set_popover_invoker(el, None);
     if fire_events {
         fire_toggle(page, el, "beforetoggle", true, false, false, source);
-        if let Some(stack) = stack {
-            // A handler showed another popover above it.
+        if !still_showing() {
+            return Ok(());
+        }
+        if let Some(stack) = stack.filter(|&stack| page.dom.borrow().popover_stack(stack).contains(&el)) {
+            // A handler may have opened another popover above this one.
             close_stack_until(page, stack, Some(el), focus_previous, false);
         }
         if !still_showing() {
