@@ -1,0 +1,12 @@
+{
+ "paired": 1091,
+ "headFull": 845,
+ "studioFull": 967,
+ "headOnlyFull": 45,
+ "studioOnlyFull": 167,
+ "headPass": 33897,
+ "studioPass": 35121,
+ "commonPass": 33128,
+ "headOnlyPass": 769,
+ "studioOnlyPass": 1993
+}

@@ -1,0 +1,359 @@
+[
+ {
+  "key": "preflight-000",
+  "scope": "non-css",
+  "count": 6,
+  "estimatedBrowserMs": 6435,
+  "sha256": "436fb3b727994b1d31eb820d5a018bdde28a5c98abc129e4ed7e4f7c9779deb6"
+ },
+ {
+  "key": "guard-history-000",
+  "scope": "non-css",
+  "count": 48,
+  "estimatedBrowserMs": 98413,
+  "sha256": "05d34a9cb2ba7bb0eae98305d3dbb093d6ca25644662f3c90c38c11463005b32"
+ },
+ {
+  "key": "guard-history-001",
+  "scope": "non-css",
+  "count": 55,
+  "estimatedBrowserMs": 98476,
+  "sha256": "43b0bc9207cec8580af6f62179cf468a5d837deaf1cf60daee334359138208b0"
+ },
+ {
+  "key": "guard-history-002",
+  "scope": "non-css",
+  "count": 55,
+  "estimatedBrowserMs": 98416,
+  "sha256": "28c4d8401e75d3514edb3d81164dc5eba416c78c4b8079bc8b9bcd80051d67bd"
+ },
+ {
+  "key": "guard-css-000",
+  "scope": "css",
+  "count": 122,
+  "estimatedBrowserMs": 122000,
+  "sha256": "102f1fd2db770b702f24398dff227f65a201db6b34bfa640d2975708b9d7faad"
+ },
+ {
+  "key": "guard-css-001",
+  "scope": "css",
+  "count": 122,
+  "estimatedBrowserMs": 122000,
+  "sha256": "bbed909cd983ee6ec3c0effe195ec3cfe5d4b932dd604d9baa17a67699fd98eb"
+ },
+ {
+  "key": "guard-css-002",
+  "scope": "css",
+  "count": 121,
+  "estimatedBrowserMs": 121000,
+  "sha256": "18214c826754d873b599a7cd9b7478570bc819df629ad082a25598a5a9a4a677"
+ },
+ {
+  "key": "guard-css-003",
+  "scope": "css",
+  "count": 121,
+  "estimatedBrowserMs": 121000,
+  "sha256": "a1eab7223381848d57613dc6484af0b4b47874a5281e5421b733d18686870ccf"
+ },
+ {
+  "key": "guard-css-004",
+  "scope": "css",
+  "count": 121,
+  "estimatedBrowserMs": 121000,
+  "sha256": "ecd6f5100be64a5bba2d0f6ce51f4edc5b3a5f25a45200e78de3bb4268253c8f"
+ },
+ {
+  "key": "guard-css-005",
+  "scope": "css",
+  "count": 121,
+  "estimatedBrowserMs": 121000,
+  "sha256": "542c06401f90368e5bf649e72b392d79d6ae942ccbfda49441d58c690c6d6c49"
+ },
+ {
+  "key": "guard-css-006",
+  "scope": "css",
+  "count": 121,
+  "estimatedBrowserMs": 121000,
+  "sha256": "e0ed1460656316ac53f6eaa9bfb6c8b550267fd0b864269216e5383c9c1c0731"
+ },
+ {
+  "key": "guard-css-007",
+  "scope": "css",
+  "count": 121,
+  "estimatedBrowserMs": 121000,
+  "sha256": "bbc1e67f382b3fc0f9552f26a59c86e41fb31566ff230110bebc8b397f9fb77d"
+ },
+ {
+  "key": "guard-css-008",
+  "scope": "css",
+  "count": 121,
+  "estimatedBrowserMs": 121000,
+  "sha256": "349df884695e0a9d1725a1659dc6dccbbd2b66331afec2953215738608cac231"
+ },
+ {
+  "key": "guard-main-000",
+  "scope": "non-css",
+  "count": 80,
+  "estimatedBrowserMs": 97756,
+  "sha256": "f68bc56692653fc934048a0ae5167051765a18dfed4b83d2344d5d5e2c098027"
+ },
+ {
+  "key": "guard-main-001",
+  "scope": "non-css",
+  "count": 82,
+  "estimatedBrowserMs": 97795,
+  "sha256": "d6327ee28d15859426e7ffab14a57b81f94c263c1db08724097a641cb0025f3b"
+ },
+ {
+  "key": "guard-main-002",
+  "scope": "non-css",
+  "count": 81,
+  "estimatedBrowserMs": 97760,
+  "sha256": "7910271e4c862ba74466956753cc6494ad9b5570bac77c3f9f0a98a52da5d9fc"
+ },
+ {
+  "key": "guard-main-003",
+  "scope": "non-css",
+  "count": 90,
+  "estimatedBrowserMs": 97805,
+  "sha256": "074ebe604e380b692429527b262d3602a6bcb5fa2ca99f8bbe5516d6fa538cec"
+ },
+ {
+  "key": "guard-main-004",
+  "scope": "non-css",
+  "count": 91,
+  "estimatedBrowserMs": 97756,
+  "sha256": "5297bcba841ab12616a14653b7ca9d73a905582315e1d62ae3c39ce0521cd2c7"
+ },
+ {
+  "key": "guard-main-005",
+  "scope": "non-css",
+  "count": 92,
+  "estimatedBrowserMs": 97797,
+  "sha256": "b21a0e30c39eddf4c83fb7c6b903691af5c7e62f8ce9275d4a0e43450c543a27"
+ },
+ {
+  "key": "guard-main-006",
+  "scope": "non-css",
+  "count": 93,
+  "estimatedBrowserMs": 97795,
+  "sha256": "28c52a846f9b1d927b11b98e9a06d3e315ab8b2a4c470e47652353a19b43f010"
+ },
+ {
+  "key": "guard-main-007",
+  "scope": "non-css",
+  "count": 93,
+  "estimatedBrowserMs": 97796,
+  "sha256": "fcfa0a6913f3052f703e6c234ea077c0187bc05547a5c978a91d51dc13212292"
+ },
+ {
+  "key": "guard-main-008",
+  "scope": "non-css",
+  "count": 93,
+  "estimatedBrowserMs": 97803,
+  "sha256": "b88cfdbbe38f7866fdee391dbe12e7c0809ef12712b1e05974fee22b3b463836"
+ },
+ {
+  "key": "guard-main-009",
+  "scope": "non-css",
+  "count": 94,
+  "estimatedBrowserMs": 97757,
+  "sha256": "1eb77aa2f29e0898e9660ed77d78322ebf211cc6a52169b41af09fe223ed4431"
+ },
+ {
+  "key": "guard-main-010",
+  "scope": "non-css",
+  "count": 95,
+  "estimatedBrowserMs": 97798,
+  "sha256": "3775893ac435d6e260f895e97d7363605c38d0454acfe62d69eb0f04998cf6bf"
+ },
+ {
+  "key": "guard-main-011",
+  "scope": "non-css",
+  "count": 95,
+  "estimatedBrowserMs": 97796,
+  "sha256": "28c97188a136b221194b9679643eb362302af3aac6686e4f51bf4e099f463d48"
+ },
+ {
+  "key": "guard-main-012",
+  "scope": "non-css",
+  "count": 95,
+  "estimatedBrowserMs": 97794,
+  "sha256": "e6327593ae3d9d8b9fded28f3593fd3d632b2dc9746ac7f9e83328212bab72f6"
+ },
+ {
+  "key": "guard-main-013",
+  "scope": "non-css",
+  "count": 94,
+  "estimatedBrowserMs": 97757,
+  "sha256": "365cda1eb7abc00194424be82ac7496792ecf62d030b780873d74fbe9b98bf76"
+ },
+ {
+  "key": "guard-main-014",
+  "scope": "non-css",
+  "count": 95,
+  "estimatedBrowserMs": 97802,
+  "sha256": "89d51905fa66e8031cc8421c46d77fa8adbd3f66f5842e670d624e2102598c48"
+ },
+ {
+  "key": "guard-main-015",
+  "scope": "non-css",
+  "count": 95,
+  "estimatedBrowserMs": 97794,
+  "sha256": "9b4525f6372cdae14b1c8069f2078bb6cf2185c528ec66468f477fcd970933ad"
+ },
+ {
+  "key": "guard-main-016",
+  "scope": "non-css",
+  "count": 95,
+  "estimatedBrowserMs": 97800,
+  "sha256": "7ec55ddb84ff5ad3bb823ef5b4affaf97cc1b8d6da421024883efabe630a2f70"
+ },
+ {
+  "key": "guard-main-017",
+  "scope": "non-css",
+  "count": 95,
+  "estimatedBrowserMs": 97799,
+  "sha256": "7dd6b989252cc7fce8f2a6b5bc16ddebea5fd7da6ec98fd1299bdefc536854ac"
+ },
+ {
+  "key": "guard-main-018",
+  "scope": "non-css",
+  "count": 94,
+  "estimatedBrowserMs": 97755,
+  "sha256": "9c7543525a7ae1f2c699228913129db00bd8b5b654ccd93f350601255e9a8c42"
+ },
+ {
+  "key": "guard-main-019",
+  "scope": "non-css",
+  "count": 95,
+  "estimatedBrowserMs": 97793,
+  "sha256": "80fd408345df911c1bb5ada8bebdc6b1efb3d83ecb03c9b5eba5c437621c33ab"
+ },
+ {
+  "key": "guard-main-020",
+  "scope": "non-css",
+  "count": 95,
+  "estimatedBrowserMs": 97792,
+  "sha256": "9f607d70bd513cc8e87f33bb87b633e1e383500886bda002425cf34c130967d0"
+ },
+ {
+  "key": "guard-main-021",
+  "scope": "non-css",
+  "count": 94,
+  "estimatedBrowserMs": 97761,
+  "sha256": "9494b2461d2484f9b7c16622c1a1135eb0a3e0b4ab8d04e23e219669c5979180"
+ },
+ {
+  "key": "guard-main-022",
+  "scope": "non-css",
+  "count": 95,
+  "estimatedBrowserMs": 97795,
+  "sha256": "3f21f61002a54e0bf736b153563106d6250869f6854e9caa076e014b7d9cf14b"
+ },
+ {
+  "key": "guard-main-023",
+  "scope": "non-css",
+  "count": 94,
+  "estimatedBrowserMs": 97760,
+  "sha256": "7862800f49468c2f09cc1cfb018de2f950c158f97f6e1a2b16b07b58ef29c21f"
+ },
+ {
+  "key": "guard-main-024",
+  "scope": "non-css",
+  "count": 94,
+  "estimatedBrowserMs": 97760,
+  "sha256": "4a41d25ab0a44d55aa6b2800979251e427bc9a9d5f366f3cbf41155d0c175f59"
+ },
+ {
+  "key": "guard-main-025",
+  "scope": "non-css",
+  "count": 95,
+  "estimatedBrowserMs": 97756,
+  "sha256": "812583db59818cfa99b274818453ea9025488917f6398aba42d30537b4aaeab8"
+ },
+ {
+  "key": "guard-main-026",
+  "scope": "non-css",
+  "count": 96,
+  "estimatedBrowserMs": 97796,
+  "sha256": "68cd7241284b98b4f55c0cb314ac5ed36d4e7ee0c8ddf1b5f29ce346750f7346"
+ },
+ {
+  "key": "guard-main-027",
+  "scope": "non-css",
+  "count": 95,
+  "estimatedBrowserMs": 97760,
+  "sha256": "34a7e48e0b04339ec9cf00abea471b5b15aa03836f780312f187e1f89274e7f1"
+ },
+ {
+  "key": "guard-main-028",
+  "scope": "non-css",
+  "count": 96,
+  "estimatedBrowserMs": 97797,
+  "sha256": "bbf2e4416b36241ea1056e5cd82774f814ac3e21ea6f499240e68d2cf31e0b50"
+ },
+ {
+  "key": "guard-main-029",
+  "scope": "non-css",
+  "count": 95,
+  "estimatedBrowserMs": 97757,
+  "sha256": "8f533ef17dff72209bb8b463cd27424d8422ed05b9de60909fd673c22b43b9b2"
+ },
+ {
+  "key": "extra-feature-000",
+  "count": 64,
+  "sha256": "162197e9642d31ce547c9171b75f9ce6c23c8d727f5848945f3fa7d73b11476d",
+  "scope": "non-css",
+  "supplement": "extra-feature"
+ },
+ {
+  "key": "extra-feature-001",
+  "count": 64,
+  "sha256": "bf427fbb9f85c7ff48d15a0be2b4c7e146b9bfc3b3aeeaf81feda0e472127b4d",
+  "scope": "non-css",
+  "supplement": "extra-feature"
+ },
+ {
+  "key": "extra-feature-002",
+  "count": 64,
+  "sha256": "542ce4cda82abab207df910ce0f40b26a8dbdd8c70124ca1ebde289168f225e3",
+  "scope": "non-css",
+  "supplement": "extra-feature"
+ },
+ {
+  "key": "extra-feature-003",
+  "count": 64,
+  "sha256": "6b4d5a2fa3988b15dbb9451d134f1f21ffd821d2c9a4a877273b709d6db6ff7a",
+  "scope": "non-css",
+  "supplement": "extra-feature"
+ },
+ {
+  "key": "extra-feature-004",
+  "count": 64,
+  "sha256": "292c1f14209ef776a4100879129b5cf109b978e2e04dc903549f98bc1da646fd",
+  "scope": "non-css",
+  "supplement": "extra-feature"
+ },
+ {
+  "key": "extra-feature-005",
+  "count": 64,
+  "sha256": "6e94af41867bf004b9b9e7d1a04f7f798b4d13a63b14e1755e30f8acd00215ac",
+  "scope": "non-css",
+  "supplement": "extra-feature"
+ },
+ {
+  "key": "extra-feature-006",
+  "count": 46,
+  "sha256": "ca7278977bf8dba909a297c1a6282d13cddc5a42f3a12f59c6d25069e72895e8",
+  "scope": "non-css",
+  "supplement": "extra-feature"
+ },
+ {
+  "key": "wasm-storage-supplement-000",
+  "count": 5,
+  "sha256": "2d5957e282370a65ede75521b68bfbb5ac359263f50685c53def992440a8ef9c",
+  "scope": "non-css",
+  "supplement": "wasm-storage-supplement"
+ }
+]

@@ -1,0 +1,35 @@
+{
+ "all": {
+  "base": {
+   "Fail": 122,
+   "Pass": 157,
+   "missing-name": 9,
+   "unobserved-page": 4
+  },
+  "head": {
+   "Fail": 141,
+   "Pass": 140,
+   "unobserved-page": 4,
+   "missing-name": 7
+  },
+  "chrome": {
+   "Pass": 190,
+   "Fail": 91,
+   "missing-name": 7,
+   "unobserved-page": 4
+  }
+ },
+ "referrer": {
+  "base": {
+   "Pass": 132,
+   "Fail": 25
+  },
+  "head": {
+   "Pass": 113,
+   "Fail": 44
+  },
+  "chrome": {
+   "Pass": 157
+  }
+ }
+}

@@ -1,0 +1,78 @@
+{
+ "note": "Two-job Google Chrome stable 158.0.8127.37 trial, --disable-gpu and separate disposable profile. Kept out of the primary four-job signed WPT profile scores.",
+ "rawSHA256": "9ad015027e31a45bb0bcfaa6717497ee02a4bdcdd24c42f7efa43a5576447950",
+ "launcherSHA256": "46904840759272d0249731b7c50109f0d8ef5fd1822a6d75c9d5584ade4e0999",
+ "logSHA256": "8b661b77321f11e252078eed3fb16680caa031499aa10f34f4a18303207315a2",
+ "rows": [
+  {
+   "url": "wasm/serialization/module/serialization-via-notifications-api.any.html",
+   "source": "wasm/serialization/module/serialization-via-notifications-api.any.js",
+   "blob": "3672192df798a13dd086fa4b86c5125ac87a6c51",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "subtests": [
+    {
+     "name": "WebAssembly.Module cloning via the Notifications API's data member: basic case",
+     "status": "Pass",
+     "msg": ""
+    },
+    {
+     "name": "WebAssembly.Module cloning via the Notifications API's data member: is interleaved correctly",
+     "status": "Pass",
+     "msg": ""
+    }
+   ],
+   "lpBasePage": [
+    "complete",
+    "OK",
+    true,
+    2,
+    2,
+    "wasm-storage-supplement-000"
+   ],
+   "lpHeadPage": [
+    "complete",
+    "OK",
+    true,
+    2,
+    2,
+    "wasm-storage-supplement-000"
+   ]
+  },
+  {
+   "url": "wasm/serialization/module/serialization-via-notifications-api.any.worker.html",
+   "source": "wasm/serialization/module/serialization-via-notifications-api.any.js",
+   "blob": "3672192df798a13dd086fa4b86c5125ac87a6c51",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "subtests": [
+    {
+     "name": "WebAssembly.Module cloning via the Notifications API's data member: basic case",
+     "status": "Pass",
+     "msg": ""
+    },
+    {
+     "name": "WebAssembly.Module cloning via the Notifications API's data member: is interleaved correctly",
+     "status": "Pass",
+     "msg": ""
+    }
+   ],
+   "lpBasePage": [
+    "complete",
+    "OK",
+    false,
+    0,
+    2,
+    "wasm-storage-supplement-000"
+   ],
+   "lpHeadPage": [
+    "complete",
+    "OK",
+    true,
+    2,
+    2,
+    "wasm-storage-supplement-000"
+   ]
+  }
+ ]
+}

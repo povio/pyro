@@ -1,0 +1,53 @@
+{
+ "base": "cbdeb11931f74c3de4417a25fb9103f1df84d54e",
+ "head": "b57c35dd45d54d6781aafcb2c8242c9ad9b26e04",
+ "baseBinarySHA256": "81d12af223643b8d5c1903fd528a36a5f2ff3040855f998d7bc5e546805b93b2",
+ "headBinarySHA256": "296b3d4f9775c92d98d3bd7aa898efc68b1a18e90e591af5a428ad8decd4e9bf",
+ "ciJSC": "0e0dd7038a7a-6f4649e395e0",
+ "ciJSCStaticArchiveSHA256": "3deb71f8e7d14daf174e35340a4ff0c1900b0e9f576503adeb5facbb1201f029",
+ "changedPaths": [
+  "Cargo.lock",
+  "crates/pyro-dom/src/dom.rs",
+  "crates/pyro-dom/src/lib.rs",
+  "crates/pyro-dom/src/svg_string_list.rs",
+  "crates/pyro-media/Cargo.toml",
+  "crates/pyro-media/src/convolution.rs",
+  "crates/pyro-media/src/lib.rs",
+  "crates/pyro-media/tests/convolution.rs",
+  "crates/pyro-webapi/Cargo.toml",
+  "crates/pyro-webapi/src/collections.rs",
+  "crates/pyro-webapi/src/crypto_subtle.rs",
+  "crates/pyro-webapi/src/editing.rs",
+  "crates/pyro-webapi/src/editing/target_range.rs",
+  "crates/pyro-webapi/src/event.rs",
+  "crates/pyro-webapi/src/html.rs",
+  "crates/pyro-webapi/src/idb.js",
+  "crates/pyro-webapi/src/indexeddb.rs",
+  "crates/pyro-webapi/src/navigator_extras.js",
+  "crates/pyro-webapi/src/navigator_extras.rs",
+  "crates/pyro-webapi/src/range.rs",
+  "crates/pyro-webapi/src/structured_clone.js",
+  "crates/pyro-webapi/src/structured_clone.rs",
+  "crates/pyro-webapi/src/subtle.js",
+  "crates/pyro-webapi/src/webaudio.js",
+  "crates/pyro-webapi/src/webaudio.rs",
+  "crates/pyro-webapi/src/worker_scope.rs",
+  "docs/webapi/MEDIA.md"
+ ],
+ "identicalLockedPackageIdentities": 538,
+ "dependencyEntriesAdded": {
+  "pyro-media": [
+   "rustfft"
+  ],
+  "pyro-webapi": [
+   "ring"
+  ]
+ },
+ "experimentalWasmiIncluded": false,
+ "originalWPTOrExpectationsChanged": false,
+ "ciJSCArtifact": {
+  "id": 14642523470,
+  "zipSHA256": "sha256:2e87380d7276eece5353d7daf12bcd3c03d3912a7ba109ef590aba58a5f60563",
+  "workflowHead": "1ce5b3e9a3df3805a0d9f3d99ffa3bfeb2eb3949"
+ }
+}

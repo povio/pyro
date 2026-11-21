@@ -1,0 +1,17 @@
+{
+  "scope": {
+    "non-CSS": {
+      "only-local": 2950,
+      "not-observed": 28877
+    },
+    "CSS": {
+      "only-Studio": 7032,
+      "not-observed": 39,
+      "both": 1091
+    }
+  },
+  "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+  "stable": "158.0.8127.37",
+  "total": 39989,
+  "namedSets": "reference-names.jsonl.gz and studio-css-names.jsonl.gz keep separate sources"
+}

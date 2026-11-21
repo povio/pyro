@@ -1,0 +1,232 @@
+{
+ "areas": {
+  "priority/FileAPI": {
+   "pages": 113,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "extra-feature/IndexedDB": {
+   "gains": 400,
+   "pages": 60,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "extra-feature/WebCryptoAPI": {
+   "gains": 1286,
+   "pages": 334,
+   "fullPageGains": 12,
+   "fullPageLosses": 0
+  },
+  "priority/compression": {
+   "pages": 66,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "priority/cookies": {
+   "pages": 1,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "priority/css": {
+   "pages": 1091,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "priority/dom": {
+   "pages": 69,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "priority/domparsing": {
+   "pages": 90,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "priority/editing": {
+   "gains": 37,
+   "pages": 710,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "priority/encoding": {
+   "pages": 54,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "priority/fetch": {
+   "losses": 3,
+   "gains": 34,
+   "pages": 23,
+   "fullPageGains": 1,
+   "fullPageLosses": 0
+  },
+  "priority/html": {
+   "losses": 1,
+   "pages": 102,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "extra-feature/input-events": {
+   "gains": 1537,
+   "losses": 5,
+   "pages": 22,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "priority/input-events": {
+   "pages": 1,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "priority/mathml": {
+   "pages": 11,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "priority/mimesniff": {
+   "pages": 2,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "priority/mixed-content": {
+   "pages": 3,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "extra-feature/notifications": {
+   "gains": 74,
+   "pages": 14,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "priority/referrer-policy": {
+   "losses": 79,
+   "gains": 53,
+   "pages": 418,
+   "fullPageGains": 6,
+   "fullPageLosses": 11
+  },
+  "priority/resource-timing": {
+   "pages": 15,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "priority/sanitizer-api": {
+   "pages": 2,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "priority/server-timing": {
+   "pages": 10,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "priority/service-workers": {
+   "pages": 1,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "priority/shadow-dom": {
+   "pages": 18,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "priority/streams": {
+   "pages": 28,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "priority/subresource-integrity": {
+   "losses": 6,
+   "gains": 6,
+   "pages": 1,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "priority/svg": {
+   "gains": 87,
+   "pages": 787,
+   "fullPageGains": 1,
+   "fullPageLosses": 0
+  },
+  "priority/timing-entrytypes-registry": {
+   "pages": 1,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "priority/uievents": {
+   "losses": 1,
+   "gains": 1,
+   "pages": 3,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "priority/urlpattern": {
+   "pages": 30,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "wasm-storage-supplement/wasm": {
+   "gains": 2,
+   "pages": 5,
+   "fullPageGains": 1,
+   "fullPageLosses": 0
+  },
+  "priority/webaudio": {
+   "gains": 395,
+   "losses": 4,
+   "pages": 346,
+   "fullPageGains": 28,
+   "fullPageLosses": 0
+  },
+  "priority/webnn": {
+   "pages": 4,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "priority/xhr": {
+   "gains": 1,
+   "pages": 41,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  }
+ },
+ "lostPassChromeStatus": {
+  "chrome-Fail": 8,
+  "chrome-Pass": 80,
+  "chrome-Not Run": 1,
+  "chrome-missing-name": 10
+ },
+ "transitions": {
+  "extra-feature/non-css": {
+   "namedStatusChanges": {
+    "Fail -> Pass": 3095,
+    "missing -> Pass": 202,
+    "Pass -> Fail": 4,
+    "Fail -> Timeout": 1,
+    "Pass -> Not Run": 1
+   },
+   "pageStatusChanges": {
+    "complete/OK -> timeout/Timeout": 1
+   }
+  },
+  "priority/non-css": {
+   "namedStatusChanges": {
+    "Fail -> Pass": 335,
+    "Pass -> Fail": 84,
+    "missing -> Pass": 279,
+    "missing -> Fail": 43,
+    "Pass -> missing": 10,
+    "Fail -> missing": 22
+   },
+   "pageStatusChanges": {
+    "timeout/None -> complete/OK": 1
+   }
+  },
+  "wasm-storage-supplement/non-css": {
+   "namedStatusChanges": {
+    "Fail -> Pass": 2
+   }
+  }
+ }
+}
