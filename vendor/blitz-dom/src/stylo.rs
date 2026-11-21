@@ -303,6 +303,67 @@ impl crate::document::BaseDocument {
         if !changed_rules.is_empty() { self.invalidate_anchor_rule_users(changed_rules); }
     }
 
+    /// Recompute font-relative values using the current transition samples, leaving the
+    /// stored after-change style in place for transition creation and retargeting.
+    pub fn sampled_font_style(
+        &self, id: NodeId, pseudo: Option<&PseudoElement>,
+        size: Option<&ComputedValues>, line_height: Option<&ComputedValues>,
+    ) -> Option<Arc<ComputedValues>> {
+        use style::computed_value_flags::ComputedValueFlags;
+        use style::context::CascadeInputs;
+        use style::properties::{FirstLineReparenting, LonghandId};
+        use style::values::computed::{LineHeight, NonNegativeLength, ToComputedValue};
+        let node = self.get_node(id)?;
+        let primary = |n: &Node| n.primary_styles().map(|s| (*s).clone()).or_else(|| self.resolve_undisplayed_style(n.id));
+        let base = match pseudo {
+            Some(p) => self.pseudo_element_style(id, p, false)?,
+            None => primary(node)?,
+        };
+        if !base.flags.contains(ComputedValueFlags::USES_FONT_OR_WM_RELATIVE_UNITS) { return None }
+        let parent_node = if pseudo.is_some() { Some(node) } else { TElement::inheritance_parent(&node) };
+        let parent = parent_node.and_then(primary);
+        let mut layout_parent_node = parent_node;
+        let mut layout_parent = parent.clone();
+        while layout_parent.as_ref().is_some_and(|s| s.is_display_contents()) {
+            layout_parent_node = layout_parent_node.and_then(|n| TElement::inheritance_parent(&n));
+            layout_parent = layout_parent_node.and_then(primary);
+        }
+
+        let _scope = LayoutThreadScope::enter();
+        let guard = self.guard.read();
+        let guards = StylesheetGuards::same(&guard);
+        let level = CascadeLevel::new(CascadeOrigin::Transitions);
+        let mut block = base.rules().self_and_ancestors().find(|r| r.cascade_level() == level)
+            .and_then(|r| r.style_source()).map(|s| s.read(&guard).clone()).unwrap_or_default();
+        if let Some(s) = size {
+            let mut context = style::values::resolved::Context {
+                style: s, for_property: style::properties::PropertyId::NonCustom(LonghandId::FontSize.into()), current_longhand: None,
+            };
+            block.push(s.computed_or_resolved_declaration(LonghandId::FontSize, Some(&mut context)), Importance::Normal);
+        }
+        if let Some(s) = line_height {
+            // Preserve unitless line-height and unzoom absolute lengths before cascading them again.
+            let value = match s.slow_clone_line_height() {
+                LineHeight::Length(l) => LineHeight::Length(NonNegativeLength::new(s.effective_zoom.unzoom(l.0.px()))),
+                value => value,
+            };
+            block.push(PropertyDeclaration::LineHeight(ToComputedValue::from_computed_value(&value)), Importance::Normal);
+        }
+        let block = Arc::new(self.guard.wrap(block));
+        let mut inputs = CascadeInputs::new_from_style(&base);
+        for path in [&mut inputs.rules, &mut inputs.visited_rules].into_iter().flatten() {
+            if let Some(new_path) = self.stylist.rule_tree().update_rule_at_level(
+                level, LayerOrder::root(), Some(block.borrow_arc()), path, &guards, &mut false,
+            ) {
+                *path = new_path;
+            }
+        }
+        Some(self.stylist.cascade_style_and_visited(
+            Some(node), pseudo, &inputs, &guards, parent.as_deref(), layout_parent.as_deref(),
+            FirstLineReparenting::No, &Default::default(), None, &mut Default::default(), &mut Default::default(),
+        ))
+    }
+
     /// A read-only cascade without a single-rule embedder stylesheet. The normal
     /// document retains that rule (Pyro uses it to suppress native animation scheduling).
     pub fn style_without_override(
