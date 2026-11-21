@@ -48,6 +48,16 @@ impl Page {
     }
 }
 
+#[test]
+fn computed_custom_names_exclude_invalid_and_unrelated_values() {
+    let page = Page::new(r#"<style>@property --count { syntax: '<integer>'; inherits: false; initial-value: 2 } #parent { --shared: 1; } #target { --cyclic: var(--cyclic); } #other { --other: 0; }</style><div id=parent><i id=target></i><i id=other></i></div>"#);
+    let target = page.find("#target");
+    let names = || page.layout.style().computed_custom_names(&page.dom.borrow(), target, &stylo::PseudoArg::Element);
+    assert_eq!(names(), ["--count", "--shared"]);
+    page.dom.borrow_mut().set_attribute(target, "style", "--local: 1").unwrap();
+    assert_eq!(names(), ["--count", "--local", "--shared"]);
+}
+
 const PAGE: &str = r#"<!doctype html><html><head><style>
   body { color: rgb(1, 2, 3); font-size: 20px }
   .box { width: 100px; margin: 1em; display: flex }

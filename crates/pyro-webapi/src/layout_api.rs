@@ -945,11 +945,14 @@ impl JsClass for ComputedStyle {
         // The longhands, as indexed properties; an element without computed
         // style (not rendered) lists nothing, as in Chrome.
         def.method("item", 1, |s, c, a| {
-            let names = computed_names(c);
-            Ok(s.string(names.get(to_u32(a.get(0))? as usize).copied().unwrap_or("")))
+            Ok(computed_item(s, c, to_u32(a.get(0))? as usize).unwrap_or_else(|| s.string("")))
         });
-        def.getter("length", |s, c| Ok(s.number(computed_names(c).len() as f64)));
-        def.indexed(|s, c, i| Ok(computed_names(c).get(i as usize).map(|name| s.string(name))));
+        def.getter("length", |s, c| {
+            let names = computed_names(c);
+            let count = if names.is_empty() { 0 } else { names.len() + computed_custom_names(c).len() };
+            Ok(s.number(count as f64))
+        });
+        def.indexed(|s, c, i| Ok(computed_item(s, c, i as usize)));
         def.indexed_iterator();
         def.getter("cssText", |s, _c| Ok(s.string("")));
         def.getter("parentRule", |s, _c| Ok(s.null()));
@@ -970,6 +973,20 @@ impl JsClass for ComputedStyle {
 }
 
 /// The property names a computed style lists.
+fn computed_custom_names(c: &ComputedData) -> Vec<String> {
+    let Some(page) = c.rendered_document() else { return Vec::new() };
+    let dom = page.dom.borrow();
+    let names = page.layout().style().computed_custom_names(&dom, c.el.id, &c.pseudo);
+    names
+}
+
+fn computed_item<'s>(scope: &Scope<'s>, computed: &ComputedData, index: usize) -> Option<Value<'s>> {
+    let names = computed_names(computed);
+    if let Some(name) = names.get(index) { return Some(scope.string(name)); }
+    if names.is_empty() { return None; }
+    computed_custom_names(computed).get(index - names.len()).map(|name| scope.string(name))
+}
+
 fn computed_names(c: &ComputedData) -> &'static [&'static str] {
     if c.pseudo == pyro_dom::stylo::PseudoArg::Invalid {
         return &[];
