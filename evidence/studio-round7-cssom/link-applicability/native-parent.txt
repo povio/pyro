@@ -1,0 +1,25 @@
+running 3 tests
+test style_text_revision::the_sheets_key_follows_the_style_text_and_connected_owners ... ok
+test style_text_revision::link_sheet_revision_tracks_whether_the_loaded_text_applies ... FAILED
+test style_text_revision::the_revision_stays_across_changes_outside_style_children ... ok
+
+failures:
+
+---- style_text_revision::link_sheet_revision_tracks_whether_the_loaded_text_applies stdout ----
+
+thread 'style_text_revision::link_sheet_revision_tracks_whether_the_loaded_text_applies' (49208754) panicked at crates/pyro-dom/tests/style_text_revision.rs:127:9:
+assertion `left != right` failed
+  left: Some(4)
+ right: Some(4)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    style_text_revision::link_sheet_revision_tracks_whether_the_loaded_text_applies
+
+test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 237 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p pyro-dom --test integration`
+real 48.97
+user 147.28
+sys 3.58
