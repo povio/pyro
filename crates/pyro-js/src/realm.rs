@@ -3389,8 +3389,8 @@ fn install_members_raw(
         }
         let g = native(name, 0, get)?;
         let st = match set {
-            // Setters keep length 0, as JSC's callback functions had.
-            Some(f) => native(name, 0, f)?.value(),
+            // Web IDL attribute setters have one argument on both installation paths.
+            Some(f) => native(name, 1, f)?.value(),
             None => undefined,
         };
         let mut args = vec![proto.value(), string(name), g.value(), st];
