@@ -1017,3 +1017,18 @@ fn shape_path(dom: &Dom, el: NodeId, tag: &str, allow_degenerate: bool, length: 
     };
     Some(path)
 }
+
+#[cfg(test)]
+mod aspect_ratio_tests {
+    use super::*;
+
+    #[test]
+    fn none_slice_maps_each_axis_independently() {
+        let mut dom = Dom::new();
+        let doc = dom.create_document(crate::DocumentKind::Html, "about:blank");
+        let svg = dom.create_element_ns(doc, Some("http://www.w3.org/2000/svg"), "svg").unwrap();
+        dom.set_attribute(svg, "viewBox", "10 20 100 100").unwrap();
+        dom.set_attribute(svg, "preserveAspectRatio", "none slice").unwrap();
+        assert_eq!(view_box_transform(&dom, svg, (300., 100.)), Some([3., 0., 0., 1., -30., -20.]));
+    }
+}
