@@ -16,6 +16,7 @@ use super::{Decoded, Decoder};
 pub(super) struct H264 {
     decoder: OpenH264,
     length_size: usize,
+    packet_mode: bool,
     parameter_sets: Vec<u8>,
     /// Annex B scratch.
     unit: Vec<u8>,
@@ -24,21 +25,29 @@ pub(super) struct H264 {
 impl H264 {
     pub(super) fn new(length_size: usize, parameter_sets: Vec<u8>) -> Option<H264> {
         let decoder = OpenH264::new().ok()?;
-        Some(H264 { decoder, length_size, parameter_sets, unit: Vec::new() })
+        Some(H264 { decoder, length_size, packet_mode: false, parameter_sets, unit: Vec::new() })
+    }
+
+    pub(super) fn packets(length_size: usize, parameter_sets: Vec<u8>) -> Option<Self> {
+        let mut decoder = Self::new(length_size, parameter_sets)?;
+        decoder.packet_mode = true;
+        Some(decoder)
     }
 
     fn take(
         &mut self,
         info: &SBufferInfo,
         dst: &[*mut u8; 3],
-        want: &mut dyn FnMut(u64) -> bool,
+        want: &mut dyn FnMut(u64, u32, u32) -> bool,
         out: &mut Vec<Decoded>,
     ) {
         if info.iBufferStatus != 1 || dst.iter().any(|p| p.is_null()) {
             return;
         }
         let tag = info.uiOutYuvTimeStamp;
-        let image = if want(tag) { convert(info, dst) } else { None };
+        // SAFETY: iBufferStatus == 1 identifies a completed system-memory picture.
+        let buf = unsafe { info.UsrData.sSystemBuffer };
+        let image = if want(tag, buf.iWidth as u32, buf.iHeight as u32) { convert(info, dst) } else { None };
         out.push(Decoded { tag, image });
     }
 
@@ -84,45 +93,46 @@ impl Decoder for H264 {
         &mut self,
         sample: &[u8],
         tag: u64,
-        want: &mut dyn FnMut(u64) -> bool,
+        want: &mut dyn FnMut(u64, u32, u32) -> bool,
         out: &mut Vec<Decoded>,
     ) -> Result<(), String> {
         self.unit.clear();
-        // A key frame carries the parameter sets, so decoding can start at
-        // any of them.
-        let mut at = 0;
-        let mut idr = false;
-        let mut nals = Vec::new();
-        while at + self.length_size <= sample.len() {
-            let len = sample[at..at + self.length_size].iter().fold(0usize, |v, &b| (v << 8) | usize::from(b));
-            at += self.length_size;
-            let Some(nal) = sample.get(at..at + len) else { break };
-            idr |= nal.first().is_some_and(|b| b & 0x1f == 5);
-            nals.push(nal);
-            at += len;
-        }
-        if idr {
-            self.unit.extend_from_slice(&self.parameter_sets);
-        }
-        for nal in nals {
-            self.unit.extend_from_slice(&[0, 0, 0, 1]);
-            self.unit.extend_from_slice(nal);
+        if self.length_size != 0 {
+            // Container samples use length-prefixed NAL units. Packet callers
+            // validate framing before this step; Player retains its existing
+            // tolerance for a partial final sample.
+            let mut at = 0;
+            let mut idr = false;
+            while at + self.length_size <= sample.len() {
+                let len = sample[at..at + self.length_size].iter().fold(0usize, |v, &b| (v << 8) | usize::from(b));
+                at += self.length_size;
+                let Some(nal) = sample.get(at..at + len) else { break };
+                idr |= nal.first().is_some_and(|b| b & 0x1f == 5);
+                self.unit.extend_from_slice(&[0, 0, 0, 1]);
+                self.unit.extend_from_slice(nal);
+                at += len;
+            }
+            if idr && !self.parameter_sets.is_empty() {
+                self.unit.splice(0..0, self.parameter_sets.iter().copied());
+            }
         }
         let mut dst = [null_mut::<u8>(); 3];
         let mut info = SBufferInfo { uiInBsTimeStamp: tag, ..Default::default() };
-        let unit = std::mem::take(&mut self.unit);
+        let unit = if self.length_size == 0 { sample } else { &self.unit };
         // SAFETY: the decoder reads `unit` and writes plane pointers and info.
         let state = unsafe {
             self.decoder.raw_api().decode_frame_no_delay(unit.as_ptr(), unit.len() as i32, dst.as_mut_ptr(), &mut info)
         };
-        self.unit = unit;
-        // Errors are concealed frames; the picture, if any, still counts.
-        let _ = state;
+        // Media elements may show a concealed picture. WebCodecs reports
+        // a bitstream decoding error instead.
+        if self.packet_mode && state & !openh264_sys2::dsFramePending != 0 {
+            return Err(format!("H.264 decode error {state}"));
+        }
         self.take(&info, &dst, want, out);
         Ok(())
     }
 
-    fn finish(&mut self, want: &mut dyn FnMut(u64) -> bool, out: &mut Vec<Decoded>) -> Result<(), String> {
+    fn finish(&mut self, want: &mut dyn FnMut(u64, u32, u32) -> bool, out: &mut Vec<Decoded>) -> Result<(), String> {
         let mut end: DECODER_OPTION = 1;
         // SAFETY: the option is an int the decoder reads.
         unsafe {

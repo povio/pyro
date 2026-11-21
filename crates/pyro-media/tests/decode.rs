@@ -174,3 +174,68 @@ fn a_version_0_ctts_with_negative_offsets_is_signed() {
         assert_eq!(frame_of(&frame.rgba[(24 * 64 + 32) * 4..]), index, "pixel of frame {index}");
     }
 }
+
+/// A complete ten-frame access-unit stream through the packet API. Tags
+/// identify input packets, even when the backend emits them in another order.
+fn check_packets(config: video::PacketConfig, samples: Vec<(Vec<u8>, usize)>) {
+    assert!(config.is_key(&samples[0].0));
+    let mut decoder = config.decoder().unwrap();
+    for _round in 0..2 {
+        let mut pictures = Vec::new();
+        for (i, (data, _)) in samples.iter().enumerate() {
+            pictures.extend(decoder.decode(data, 100 + i as u64).unwrap());
+        }
+        pictures.extend(decoder.flush().unwrap());
+        assert_eq!(pictures.len(), samples.len());
+        for (display_index, picture) in pictures.iter().enumerate() {
+            assert_eq!((picture.width, picture.height), (64, 48));
+            assert_eq!(samples[(picture.tag - 100) as usize].1, display_index);
+            assert_eq!(frame_of(&picture.rgba[(24 * 64 + 32) * 4..]), display_index);
+        }
+        assert!(decoder.flush().unwrap().is_empty());
+    }
+}
+
+#[cfg(feature = "av1")]
+#[test]
+fn packet_av1_keeps_sample_tags_and_restarts_after_flush() {
+    let data = fixture("frames-av1.mp4");
+    let track = video::demux::video_track(&data).unwrap();
+    let config = video::PacketConfig::parse("av01.0.04M.08", None).unwrap();
+    let samples = track
+        .samples
+        .iter()
+        .map(|s| (data[s.offset..s.offset + s.size].to_vec(), (s.pts * 10.).round() as usize))
+        .collect();
+    check_packets(config, samples);
+}
+
+#[cfg(feature = "h264")]
+#[test]
+fn packet_avc_and_annex_b_keep_sample_tags_and_restart_after_flush() {
+    let data = fixture("frames-h264.mp4");
+    let track = video::demux::video_track(&data).unwrap();
+    let video::Codec::H264 { length_size, parameter_sets } = track.codec else { panic!("H.264 fixture") };
+    let pos = data.windows(4).position(|p| p == b"avcC").unwrap();
+    let size = u32::from_be_bytes(data[pos - 4..pos].try_into().unwrap()) as usize;
+    let config = &data[pos + 4..pos - 4 + size];
+    let codec = format!("avc1.{:02X}{:02X}{:02X}", config[1], config[2], config[3]);
+    let mut avc = Vec::new();
+    let mut annex = Vec::new();
+    for s in track.samples {
+        let mut sample = &data[s.offset..s.offset + s.size];
+        let display = (s.pts * 10.).round() as usize;
+        avc.push((sample.to_vec(), display));
+        let mut unit = if s.key { parameter_sets.clone() } else { Vec::new() };
+        while !sample.is_empty() {
+            let (prefix, body) = sample.split_at(length_size);
+            let len = prefix.iter().fold(0usize, |v, &b| (v << 8) | b as usize);
+            unit.extend_from_slice(&[0, 0, 0, 1]);
+            unit.extend_from_slice(&body[..len]);
+            sample = &body[len..];
+        }
+        annex.push((unit, display));
+    }
+    check_packets(video::PacketConfig::parse(&codec, Some(config)).unwrap(), avc);
+    check_packets(video::PacketConfig::parse(&codec, None).unwrap(), annex);
+}

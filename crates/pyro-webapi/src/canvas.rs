@@ -80,6 +80,7 @@ where
     W::Data: WindowHost,
 {
     lazy_globals!(def, VIDEO_FRAMES, "VideoFrame", "VideoColorSpace");
+    crate::video_decoder::define(def);
 }
 
 /// Adds the lazy interface names to pyro-browser's `Window` class.

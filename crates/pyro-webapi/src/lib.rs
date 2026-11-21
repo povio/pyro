@@ -37,6 +37,7 @@ mod edit_commands;
 pub mod editing;
 mod editing_globals;
 mod encoded_chunks;
+mod video_decoder;
 pub mod encoding;
 pub mod event;
 mod event_source;

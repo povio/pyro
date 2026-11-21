@@ -29,6 +29,10 @@ fn eagain() -> i32 {
 
 impl Av1 {
     pub(super) fn new() -> Option<Av1> {
+        Self::with_area_limit(0)
+    }
+
+    pub(super) fn with_area_limit(area: u32) -> Option<Av1> {
         let mut settings = MaybeUninit::<Dav1dSettings>::uninit();
         let mut ctx: Option<Dav1dContext> = None;
         // SAFETY: dav1d_default_settings initializes every field of the
@@ -38,6 +42,9 @@ impl Av1 {
             let mut settings = settings.assume_init();
             settings.n_threads = 1;
             settings.max_frame_delay = 1;
+            if area != 0 {
+                settings.frame_size_limit = area;
+            }
             if dav1d_open(NonNull::new(&mut ctx), NonNull::new(&mut settings)).0 != 0 {
                 return None;
             }
@@ -46,7 +53,7 @@ impl Av1 {
     }
 
     /// Takes every picture ready now.
-    fn drain(&mut self, want: &mut dyn FnMut(u64) -> bool, out: &mut Vec<Decoded>) -> Result<(), String> {
+    fn drain(&mut self, want: &mut dyn FnMut(u64, u32, u32) -> bool, out: &mut Vec<Decoded>) -> Result<(), String> {
         loop {
             let mut pic = MaybeUninit::<Dav1dPicture>::zeroed();
             // SAFETY: the context is open; the picture is written by
@@ -61,7 +68,7 @@ impl Av1 {
             // SAFETY: a successful dav1d_get_picture filled the picture.
             let mut pic = unsafe { pic.assume_init() };
             let tag = pic.m.timestamp as u64;
-            let image = if want(tag) { convert(&pic) } else { None };
+            let image = if want(tag, pic.p.w as u32, pic.p.h as u32) { convert(&pic) } else { None };
             // SAFETY: the picture came from dav1d_get_picture.
             unsafe { dav1d_picture_unref(NonNull::new(&mut pic)) };
             out.push(Decoded { tag, image });
@@ -106,7 +113,7 @@ impl Decoder for Av1 {
         &mut self,
         sample: &[u8],
         tag: u64,
-        want: &mut dyn FnMut(u64) -> bool,
+        want: &mut dyn FnMut(u64, u32, u32) -> bool,
         out: &mut Vec<Decoded>,
     ) -> Result<(), String> {
         if sample.is_empty() {
@@ -145,7 +152,7 @@ impl Decoder for Av1 {
         result
     }
 
-    fn finish(&mut self, want: &mut dyn FnMut(u64) -> bool, out: &mut Vec<Decoded>) -> Result<(), String> {
+    fn finish(&mut self, want: &mut dyn FnMut(u64, u32, u32) -> bool, out: &mut Vec<Decoded>) -> Result<(), String> {
         self.drain(want, out)
     }
 }

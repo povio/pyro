@@ -264,7 +264,7 @@ fn mp4_track(file: &[u8], trak: &[u8], mdia: &[u8], movie_scale: Option<u32>) ->
 const MAX_SAMPLES: usize = 1 << 22;
 
 /// `avcC`: the NAL length size and the SPS/PPS in Annex B form.
-fn avc_config(avcc: &[u8]) -> Option<(usize, Vec<u8>)> {
+pub(super) fn avc_config(avcc: &[u8]) -> Option<(usize, Vec<u8>)> {
     let length_size = usize::from(avcc.get(4)? & 3) + 1;
     let mut sets = Vec::new();
     let mut at = 5;

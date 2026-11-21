@@ -1328,6 +1328,9 @@ fn install(s: &Scope<'_>, page: &Rc<PageDom>, global: &str) -> JsResult<()> {
     {
         page.define_properties.borrow_mut().insert(s.realm_id(), Persistent::new(s, define));
     }
+    if s.global_data::<DedicatedWorkerGlobalScope>().is_some_and(|g| !pyro_net::is_potentially_trustworthy_url(&g.url)) {
+        s.global().delete("VideoDecoder")?;
+    }
     // Before the worker's script can change the intrinsics they capture.
     crate::structured_clone::prepare_wire(s)?;
     // The global is JSC's default one, whose prototype cannot be replaced
