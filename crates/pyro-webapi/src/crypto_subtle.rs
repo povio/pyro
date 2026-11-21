@@ -18,6 +18,7 @@ use rsa::{PrivateKey as RsaPrivateKey, PublicKey as RsaPublicKey};
 use sha1::Sha1;
 use sha2::{Digest, Sha256, Sha384, Sha512};
 
+pub(crate) mod public_key;
 mod rsa;
 
 fn data_error(message: impl Into<String>) -> JsError {
@@ -784,6 +785,15 @@ fn u32_arg(v: Value<'_>) -> JsResult<u32> {
     Ok(if n.is_finite() && n > 0.0 { n.min(u32::MAX as f64) as u32 } else { 0 })
 }
 
+fn public_material(kind: &str, curve: &str, material: &[u8]) -> JsResult<Vec<u8>> {
+    match kind {
+        "EC" => on_curve!(curve, public_of(material)),
+        "RSA" => rsa_private(material)?.public().to_spki(),
+        "Ed25519" | "X25519" => okp_public_of(kind, material),
+        _ => Err(operation_error("Unsupported public key type")),
+    }
+}
+
 /// The object subtle.js receives: one function per primitive.
 pub(crate) fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
     let n = s.object();
@@ -884,15 +894,24 @@ pub(crate) fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         let exponent = bytes_arg(s, a.get(1))?;
         Ok(s.boolean(RsaPrivateKey::generation_exponent(bits, &exponent).is_ok()))
     });
-    native!("publicOf", |s, a| {
-        let (kind, curve, material) = (str_arg(a.get(0))?, str_arg(a.get(1))?, bytes_arg(s, a.get(2))?);
-        let public = match kind.as_str() {
-            "EC" => on_curve!(curve.as_str(), public_of(&material))?,
-            "RSA" => rsa_private(&material)?.public().to_spki()?,
-            _ => okp_public_of(&kind, &material)?,
-        };
-        buffer(s, &public)
+    native!("foreignKey", |s, a| crate::crypto::foreign_key(s, a.get(0)));
+    native!("rejectOnTask", |s, a| {
+        let page = crate::target::page_of(s)?;
+        let error = pyro_js::Persistent::new(s, a.get(0));
+        let realm = s.realm().downgrade();
+        let d = s.deferred()?;
+        let promise = d.promise.get(s);
+        page.post_task(Box::new(move || {
+            let Some(realm) = realm.upgrade() else { return };
+            if let Ok(scope) = realm.scope() {
+                let _ = d.reject(&scope, error.get(&scope));
+            }
+        }));
+        Ok(promise)
     });
+    native!("publicOf", |s, a| public_key::request(
+        s, str_arg(a.get(0))?, str_arg(a.get(1))?, bytes_arg(s, a.get(2))?, a.get(3)
+    ));
     native!("generateAsym", |s, a| {
         let exponent = if a.get(3).is_undefined() { Vec::new() } else { bytes_arg(s, a.get(3))? };
         generate_asym(s, &str_arg(a.get(0))?, &str_arg(a.get(1))?, u32_arg(a.get(2))?, &exponent)

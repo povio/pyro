@@ -295,6 +295,7 @@ pub fn realm_disposed(page: &PageDom, realm: RealmId) {
 /// a node keeps its wrapper while script still reaches the document.
 pub fn realm_detached(page: &PageDom, realm: RealmId) {
     page.web_tasks.cancel_realm(realm);
+    crate::crypto_subtle::public_key::cancel(page.id(), Some(realm));
     crate::fetch::cancel_realm(page, realm);
     crate::websocket::cancel_realm(realm);
     crate::xhr::cancel_realm(page, realm);

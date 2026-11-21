@@ -1178,6 +1178,7 @@ impl PageDom {
         crate::xhr::dispose(self);
         crate::resource_timing::dispose(self);
         crate::file_reader::dispose(self);
+        crate::crypto_subtle::public_key::cancel(self.id(), None);
         crate::mutation_observer::dispose(self);
         crate::intersection_observer::dispose(self);
         crate::resize_observer::dispose(self);
