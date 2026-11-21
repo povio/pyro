@@ -1402,13 +1402,14 @@ fn parse_fragment_with(
     };
     let form = fragment_form(dom, context);
     {
-        let mut sink = Sink::new(Borrowed(RefCell::new(&mut *dom)), tmp, flags, false);
         // The detached parser cannot see markers outside its output. Without
         // a PI opener in the input there can be no target, so keep the ordinary
         // parser path for fragments without processing instructions.
         let patches_enabled = matches!(mode, FragmentMode::Setter | FragmentMode::Insertion)
             && filter.is_none()
-            && html.contains("<?");
+            && html.contains("<?")
+            && !dom.is_xml_document(owner_id);
+        let mut sink = Sink::new(Borrowed(RefCell::new(&mut *dom)), tmp, flags, false);
         if patches_enabled {
             sink.patches = Some(RefCell::default());
         }
