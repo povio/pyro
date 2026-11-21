@@ -1260,6 +1260,11 @@ impl JsClass for Element {
         // Fullscreen API (`crate::fullscreen`): granted with transient activation, denied otherwise.
         crate::handlers::define_fullscreen(def);
         def.promise_method("requestFullscreen", 0, |s, n, _a| crate::fullscreen::request(s, n.page(), n.id));
+        def.method("pseudo", 1, |s, n, a| {
+            a.require(1, "Element.pseudo")?;
+            let el = crate::node::wrap_node(s, n.page(), n.id)?.value();
+            crate::pseudo_element::MODULE.helper(s, n.page(), "fromElement", &[el, a.get(0)])
+        });
         // CSS Typed OM: the element's computed values as a StylePropertyMapReadOnly.
         def.method("computedStyleMap", 0, |s, n, _a| {
             let el = crate::node::wrap_node(s, n.page(), n.id)?.value();

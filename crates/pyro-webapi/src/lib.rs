@@ -45,6 +45,7 @@ pub mod fetch;
 pub mod file;
 pub mod file_reader;
 pub mod font_loading;
+mod pseudo_element;
 pub mod typed_om;
 pub mod trusted_types;
 pub mod form_data;

@@ -1205,3 +1205,22 @@ fn registered_font_inputs_select_inherited_metrics_only_for_used_references() {
     "#);
     assert_eq!(actual, "30,30,10|30,10,30|400,10,10|5px|30px");
 }
+
+#[test]
+fn pseudo_handles_keep_identity_across_tree_and_style_changes() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        const a=document.createElement('div'), b=document.createElement('div');
+        const before=a.pseudo('::before'), marker=before.pseudo('::marker');
+        document.body.append(a); a.style.display='none'; a.remove();
+        const old=a.pseudo('::view-transition-old(foo)');
+        const group=a.pseudo('::view-transition').pseudo('::view-transition-group(foo)');
+        [before instanceof CSSPseudoElement, before===a.pseudo('::BEFORE'), before!==b.pseudo('::before'),
+         before.element===a, before.parent===a, marker.parent===before, marker.element===a,
+         marker===before.pseudo('::marker'), marker!==a.pseudo('::marker'),
+         old.parent.parent===group, old===group.pseudo('::view-transition-image-pair(foo)').pseudo('::view-transition-old(foo)'),
+         group.pseudo('::view-transition-image-pair(bar)')===null, a.pseudo('before')===null,
+         old.type,old.selectorText].join('|')
+    "#);
+    assert_eq!(actual, "true|true|true|true|true|true|true|true|true|true|true|true|true|::view-transition-old|::view-transition-old(foo)");
+}
