@@ -148,6 +148,77 @@ pub struct PiData {
     pub data: String,
 }
 
+/// Parse ProcessingInstruction pseudo-attributes for both DOM access and HTML content patching.
+pub fn parse_pi_attributes(data: &str) -> Option<Vec<(String, String)>> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    let mut rest = data.trim_start_matches(|c: char| c.is_ascii_whitespace());
+    while !rest.is_empty() {
+        let end = rest.find(|c: char| c.is_ascii_whitespace() || matches!(c, '=' | '>' | '/'))?;
+        let (name, tail) = rest.split_at(end);
+        if name.is_empty() {
+            return None;
+        }
+        let tail = tail.trim_start_matches(|c: char| c.is_ascii_whitespace()).strip_prefix('=')?;
+        let tail = tail.trim_start_matches(|c: char| c.is_ascii_whitespace());
+        let quote = tail.chars().next().filter(|c| matches!(c, '"' | '\''))?;
+        let close = tail[1..].find(quote)? + 1;
+        let value = decode_char_refs(&tail[1..close]);
+        if !out.iter().any(|(k, _)| k == name) {
+            out.push((name.to_owned(), value));
+        }
+        rest = &tail[close + 1..];
+        if !rest.is_empty() && !rest.starts_with(|c: char| c.is_ascii_whitespace()) {
+            return None;
+        }
+        rest = rest.trim_start_matches(|c: char| c.is_ascii_whitespace());
+    }
+    Some(out)
+}
+
+/// Decodes the character references an attribute serialization writes (`&amp;`, `&quot;`,
+/// `&lt;`, `&gt;`, `&nbsp;`, `&apos;`, numeric ones); others stay as written.
+fn decode_char_refs(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(i) = rest.find('&') {
+        out.push_str(&rest[..i]);
+        rest = &rest[i..];
+        let Some(semi) = rest.find(';').filter(|&j| j <= 10) else {
+            out.push('&');
+            rest = &rest[1..];
+            continue;
+        };
+        let entity = &rest[1..semi];
+        let decoded = match entity {
+            "amp" => Some('&'),
+            "quot" => Some('"'),
+            "lt" => Some('<'),
+            "gt" => Some('>'),
+            "nbsp" => Some('\u{a0}'),
+            "apos" => Some('\''),
+            _ => entity
+                .strip_prefix("#x")
+                .or_else(|| entity.strip_prefix("#X"))
+                .map(|h| u32::from_str_radix(h, 16))
+                .or_else(|| entity.strip_prefix('#').map(|d| d.parse::<u32>()))
+                .and_then(|r| r.ok())
+                .and_then(char::from_u32),
+        };
+        match decoded {
+            Some(c) => {
+                out.push(c);
+                rest = &rest[semi + 1..];
+            }
+            None => {
+                out.push('&');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 #[derive(Debug)]
 pub struct DoctypeData {
     pub name: Box<str>,
