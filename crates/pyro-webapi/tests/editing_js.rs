@@ -277,6 +277,49 @@ fn copy_handlers_set_the_data_and_cut_deletes() {
 }
 
 #[test]
+fn removing_bold_preserves_editability_boundaries() {
+    let e = env("<body><div id=ed contenteditable></div></body>");
+    for (mode, inside, expected) in [
+        ("false", "<b>e</b>", "<b>e</b>"),
+        ("false", "<span contenteditable><b>e</b></span>", "<span contenteditable=\"\">e</span>"),
+        ("plaintext-only", "<b>e</b>", "e"),
+    ] {
+        let script = format!(r#"
+            (() => {{
+                ed.innerHTML = 'abc<b>d<span contenteditable="{mode}">{inside}</span>f</b>ghi';
+                ed.focus();
+                const carrier = ed.firstElementChild, island = carrier.firstElementChild;
+                getSelection().setBaseAndExtent(carrier.lastChild, 1, carrier.firstChild, 0);
+                document.execCommand('bold');
+                return [ed.firstElementChild === island, island.innerHTML, getSelection().direction].join('|');
+            }})()
+        "#);
+        assert_eq!(eval(&e.main, &script), format!("true|{expected}|backward"));
+    }
+    let partial = r#"
+        ed.innerHTML = '<b>left<span contenteditable="false"><i contenteditable="true"><b>inner</b></i></span>right</b>';
+        ed.focus();
+        const carrier = ed.firstChild, island = carrier.firstElementChild;
+        getSelection().setBaseAndExtent(carrier.lastChild, 2, carrier.firstChild, 2);
+        document.execCommand('bold');
+        [ed.innerHTML, ed.contains(island), getSelection().direction, document.queryCommandIndeterm('bold')].join('|')
+    "#;
+    assert_eq!(eval(&e.main, partial), r#"<b>le</b>ft<span contenteditable="false"><i contenteditable="true">inner</i></span>ri<b>ght</b>|true|backward|false"#);
+
+}
+
+#[test]
+fn inline_formatting_skips_noneditable_islands() {
+    let e = env("<body><div id=ed contenteditable>ab<span id=island contenteditable=false>LOCK</span>cd</div></body>");
+    let r = &e.main;
+    eval(r, "ed.focus(); const original = island; const child = original.firstChild; const s = getSelection(); s.setBaseAndExtent(ed.lastChild,1,ed.firstChild,1);");
+    assert_eq!(eval(r, "document.execCommand('bold')"), "true");
+    assert_eq!(eval(r, "ed.innerHTML"), "a<b>b</b><span id=\"island\" contenteditable=\"false\">LOCK</span><b>c</b>d");
+    assert_eq!(eval(r, "[s.toString(),s.direction,document.queryCommandState('bold'),document.queryCommandIndeterm('bold')].join()"), "bLOCKc,backward,true,false");
+    assert_eq!(eval(r, "document.execCommand('bold'); [ed.innerHTML,original===island,original.firstChild===child].join('|')"), "ab<span id=\"island\" contenteditable=\"false\">LOCK</span>cd|true|true");
+}
+
+#[test]
 fn exec_command_formatting_and_structure() {
     let e = env("<body><div id=ed contenteditable><p id=p>one two three</p></div></body>");
     let r = &e.main;

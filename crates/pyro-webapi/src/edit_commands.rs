@@ -1301,10 +1301,21 @@ fn texts_in(dom: &Dom, scope: NodeId, start: Point, end: Point) -> Vec<NodeId> {
     .collect()
 }
 
+fn rich_node(dom: &Dom, node: NodeId) -> bool {
+    editing::is_editable(dom, node) && !editing::plaintext_at(dom, node)
+}
+
+/// A locked island is skipped, but a rich descendant can opt back into editing.
+/// The caller restricts the walk to the selection's enclosing editing host.
+fn inline_texts(dom: &Dom, host: NodeId, start: Point, end: Point) -> Vec<NodeId> {
+    let mut texts = texts_in(dom, host, start, end);
+    texts.retain(|&node| rich_node(dom, node));
+    texts
+}
+
 /// Splits the text nodes at the range's ends so that whole text nodes make
 /// it up; returns them in order.
-fn split_texts(dom: &mut Dom, scope: NodeId, start: Point, end: Point) -> Vec<NodeId> {
-    let mut texts = texts_in(dom, scope, start, end);
+fn split_texts(dom: &mut Dom, mut texts: Vec<NodeId>, start: Point, end: Point) -> Vec<NodeId> {
     if let Some(&last) = texts.last() {
         if last == end.0 && end.1 < editing::len(dom, last) {
             let _ = dom.split_text(last, end.1);
@@ -1322,12 +1333,17 @@ fn split_texts(dom: &mut Dom, scope: NodeId, start: Point, end: Point) -> Vec<No
     texts
 }
 
-fn select_texts(page: &Rc<PageDom>, texts: &[NodeId]) {
+fn select_texts(page: &Rc<PageDom>, texts: &[NodeId], reversed: bool) {
     let (Some(&first), Some(&last)) = (texts.first(), texts.last()) else {
         return;
     };
     let len = editing::len(&page.dom.borrow(), last);
-    editing::set_selection(page, (first, 0), (last, len));
+    let (start, end) = ((first, 0), (last, len));
+    if reversed {
+        editing::set_selection(page, end, start);
+    } else {
+        editing::set_selection(page, start, end);
+    }
 }
 
 // Subscript and superscript keep their elements: both set the font size
@@ -1346,7 +1362,12 @@ fn inline_css(tag: &str) -> Option<(&'static str, &'static str)> {
 /// that already has one of `carriers` around it.
 fn format_inline(page: &Rc<PageDom>, host: NodeId, tag: &str, carriers: &[&str], input_type: &str, href: Option<&str>) {
     let (start, end) = editing::host_range(page, host);
+    let reversed = start != end && editing::selection(page).is_some_and(|(anchor, _)| anchor == end);
     let collapsed = start == end;
+    let selected = inline_texts(&page.dom.borrow(), host, start, end);
+    if !collapsed && selected.is_empty() {
+        return;
+    }
     editing::apply_edit(page, host, input_type, href, None, |page| {
         let texts = {
             let mut dom = page.dom.borrow_mut();
@@ -1354,12 +1375,13 @@ fn format_inline(page: &Rc<PageDom>, host: NodeId, tag: &str, carriers: &[&str],
                 // createLink at a caret inserts the URL as the link's text.
                 let p = editing::insert_at(&mut dom, start, href.unwrap_or(""));
                 if p.0 == start.0 && p.1 > start.1 {
-                    split_texts(&mut dom, host, start, p)
+                    let inserted = inline_texts(&dom, host, start, p);
+                    split_texts(&mut dom, inserted, start, p)
                 } else {
                     vec![p.0]
                 }
             } else {
-                split_texts(&mut dom, host, start, end)
+                split_texts(&mut dom, selected, start, end)
             };
             let Ok(doc) = dom.node_document(host) else {
                 return;
@@ -1373,10 +1395,27 @@ fn format_inline(page: &Rc<PageDom>, host: NodeId, tag: &str, carriers: &[&str],
                 let Ok(Some(parent)) = dom.parent(t) else {
                     continue;
                 };
-                let prev = dom.prev_sibling(t).ok().flatten();
-                if let Some(w) = last_wrapper.filter(|&w| prev == Some(w)) {
-                    let _ = dom.append_child(w, t);
-                    continue;
+                if let Some(w) = last_wrapper.filter(|&w| dom.parent(w).ok().flatten() == Some(parent)) {
+                    // A fully selected plaintext island may inherit formatting
+                    // from an outer wrapper. Do not insert markup inside it.
+                    let mut next = dom.next_sibling(w).ok().flatten();
+                    let mut islands = Vec::new();
+                    while let Some(el) = next {
+                        if el == t || !dom.get_attribute(el, "contenteditable").ok().flatten()
+                            .is_some_and(|mode| mode.eq_ignore_ascii_case("plaintext-only"))
+                        {
+                            break;
+                        }
+                        islands.push(el);
+                        next = dom.next_sibling(el).ok().flatten();
+                    }
+                    if next == Some(t) {
+                        for island in islands {
+                            let _ = dom.append_child(w, island);
+                        }
+                        let _ = dom.append_child(w, t);
+                        continue;
+                    }
                 }
                 let style = if dom.document_data(doc).is_ok_and(|d| d.style_with_css) { inline_css(tag) } else { None };
                 let Ok(w) = dom.create_element(doc, if style.is_some() { "span" } else { tag }) else {
@@ -1394,7 +1433,7 @@ fn format_inline(page: &Rc<PageDom>, host: NodeId, tag: &str, carriers: &[&str],
             }
             texts
         };
-        select_texts(page, &texts);
+        select_texts(page, &texts, reversed);
     });
 }
 
@@ -1470,32 +1509,83 @@ fn hoist(dom: &mut Dom, node: NodeId, anc: NodeId) {
 /// removeFormat, toggling bold off).
 fn remove_inline(page: &Rc<PageDom>, host: NodeId, names: &[&str], input_type: &str) {
     let (start, end) = editing::host_range(page, host);
+    let reversed = start != end && editing::selection(page).is_some_and(|(anchor, _)| anchor == end);
     if start == end && !names.contains(&"a") {
+        return;
+    }
+    let (start, end) = if start == end {
+        let dom = page.dom.borrow();
+        let Some(a) = ancestor_named(&dom, start.0, host, &["a"]) else { return };
+        (editing::host_start(&dom, a), editing::host_end(&dom, a))
+    } else {
+        (start, end)
+    };
+    let selected = {
+        let dom = page.dom.borrow();
+        let mut texts = texts_in(&dom, host, start, end);
+        texts.retain(|&node| {
+            if !editing::is_editable(&dom, node) { return false; }
+            // Clearing formatting across a fully enclosed plaintext island
+            // can remove an existing carrier inside it. Keep the island itself.
+            let Some(island) = editing::plaintext_root(&dom, node) else { return true };
+            let (Ok(Some(parent)), Ok(index)) = (dom.parent(island), dom.index_in_parent(island)) else { return false };
+            crate::range::compare_boundary_points_dom(&dom, start, (parent, index)) <= 0
+                && crate::range::compare_boundary_points_dom(&dom, (parent, index + 1), end) <= 0
+        });
+        texts
+    };
+    if selected.is_empty() {
         return;
     }
     editing::apply_edit(page, host, input_type, None, None, |page| {
         let texts = {
             let mut dom = page.dom.borrow_mut();
-            let (start, end) = if start == end {
-                // unlink at a caret removes the whole link around it.
-                let Some(a) = ancestor_named(&dom, start.0, host, &["a"]) else { return };
-                (editing::host_start(&dom, a), editing::host_end(&dom, a))
-            } else {
-                (start, end)
-            };
-            let texts = split_texts(&mut dom, host, start, end);
+            let texts = split_texts(&mut dom, selected, start, end);
+            let (Some(&first), Some(&last)) = (texts.first(), texts.last()) else { return };
+            let first = (first, 0);
+            let last = (last, editing::len(&dom, last));
             for &t in &texts {
-                while let Some(a) = ancestor_format(&dom, t, host, names, true) {
-                    hoist(&mut dom, t, a);
-                    // A hoist that could not move the text would repeat.
-                    if ancestor_format(&dom, t, host, names, true) == Some(a) {
+                let Some(owner) = editing::plaintext_root(&dom, t).or_else(|| editing::editing_host(&dom, t)) else { continue };
+                while let Some(mut a) = ancestor_format(&dom, t, owner, names, true) {
+                    // Remove a completely selected carrier as a unit. Hoisting
+                    // only its editable text would leave a formatting wrapper
+                    // around its locked children or clone their ancestors.
+                    let begins = editing::deep_forward(&dom, (a, 0));
+                    let ends = editing::deep_backward(&dom, (a, editing::len(&dom, a)));
+                    let mut whole = crate::range::compare_boundary_points_dom(&dom, first, begins) <= 0
+                        && crate::range::compare_boundary_points_dom(&dom, ends, last) <= 0;
+                    if !whole && t == first.0 && first.0 != last.0 && dom.contains(a, last.0).unwrap_or(false)
+                        && editing::editing_host(&dom, last.0) == Some(owner)
+                    {
+                        // Isolate the whole selected middle before unwrapping
+                        // it. Hoisting the two text edges independently leaves
+                        // a styled clone around any locked node between them.
+                        let Some(parent) = dom.parent(a).ok().flatten() else { break };
+                        let mut points = [first, last];
+                        let Some(middle) = alignment::split_edge(&mut dom, parent, first.0, false, &mut points) else { break };
+                        if alignment::split_edge(&mut dom, parent, last.0, true, &mut points).is_none() { break; }
+                        a = middle;
+                        whole = true;
+                    }
+                    if whole {
+                        let Some(parent) = dom.parent(a).ok().flatten() else { break };
+                        while let Ok(Some(child)) = dom.first_child(a) {
+                            if dom.insert_before(parent, child, Some(a)).is_err() { break; }
+                        }
+                        if dom.child_count(a).ok() == Some(0) {
+                            let _ = dom.remove_child(parent, a);
+                        }
+                    } else {
+                        hoist(&mut dom, t, a);
+                    }
+                    if ancestor_format(&dom, t, owner, names, true) == Some(a) {
                         break;
                     }
                 }
             }
             texts
         };
-        select_texts(page, &texts);
+        select_texts(page, &texts, reversed);
     });
 }
 
@@ -1617,8 +1707,11 @@ fn format_state(page: &PageDom, command: &str) -> (bool, bool) {
     let mut elements: Vec<NodeId> = if start == end {
         vec![start.0]
     } else {
-        texts_in(&dom, scope, start, end)
-            .into_iter()
+        let texts = match editing::editing_host(&dom, start.0) {
+            Some(host) if editing::editing_host(&dom, end.0) == Some(host) => inline_texts(&dom, host, start, end),
+            _ => texts_in(&dom, scope, start, end),
+        };
+        texts.into_iter()
             .filter(|&t| !dom.char_data(t).unwrap_or("").trim().is_empty())
             .collect()
     };
