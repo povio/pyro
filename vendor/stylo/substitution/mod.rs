@@ -44,6 +44,8 @@ pub use self::var::VarFunction;
 pub enum SubstitutionFunctionKind {
     /// CSS variable / custom property
     Var,
+    /// Custom property on the inheritance parent
+    Inherit,
     /// Environment variable
     Env,
     /// DOM attribute
@@ -175,12 +177,20 @@ fn parse_optional_fallback(
     input: &mut Parser,
     context: &mut SubstitutionParserContext,
 ) -> Result<Option<ArbitraryDeclarationValue>, ParseError> {
+    parse_optional_fallback_with_syntax(input, context, true)
+}
+
+fn parse_optional_fallback_with_syntax(
+    input: &mut Parser,
+    context: &mut SubstitutionParserContext,
+    is_non_strict: bool,
+) -> Result<Option<ArbitraryDeclarationValue>, ParseError> {
     if input.try_parse(|input| input.expect_comma()).is_ok() {
         let (fallback, _) = ArbitraryDeclarationValue::parse_free_form(
             input,
             context,
             Delimiter::None,
-            /* is_non_strict */ true,
+            is_non_strict,
         )?;
         Ok(Some(fallback))
     } else {
@@ -317,7 +327,7 @@ fn parse_block_tokens<const IF_PRELUDE: bool>(
                     // from the outer scope.
                     function.for_each_unparsed_value(|value| {
                         let mut flags = value.references.flags;
-                        if matches!(function, SubstitutionFunction::If(_)) {
+                        if matches!(function, SubstitutionFunction::If(_) | SubstitutionFunction::Inherit(_)) {
                             // A registered property only depends on font metrics in conditions
                             // that were reached and in the selected value. The graph visits those.
                             flags.remove(ReferenceFlags::NON_CUSTOM);
@@ -474,6 +484,8 @@ pub struct ParsedArgument<'a, T: Clone> {
 pub enum SubstitutionFunction {
     /// A `var()` reference.
     Var(VarFunction),
+    /// An `inherit()` reference to a parent custom property.
+    Inherit(VarFunction),
     /// An `env()` reference.
     Env(EnvFunction),
     /// An `attr()` reference.
@@ -492,7 +504,8 @@ impl SubstitutionFunction {
     ) -> Result<Self, ParseError> {
         Ok(match kind {
             SubstitutionFunctionKind::If => Self::If(conditional::IfFunction::parse(input, context)?),
-            SubstitutionFunctionKind::Var => Self::Var(VarFunction::parse(input, context)?),
+            SubstitutionFunctionKind::Var => Self::Var(VarFunction::parse(input, context, true)?),
+            SubstitutionFunctionKind::Inherit => Self::Inherit(VarFunction::parse(input, context, false)?),
             SubstitutionFunctionKind::Env => Self::Env(EnvFunction::parse(input, context)?),
             SubstitutionFunctionKind::Attr => Self::Attr(AttrFunction::parse(input, context)?),
         })
@@ -502,7 +515,7 @@ impl SubstitutionFunction {
     #[inline]
     pub fn reference_flags(&self) -> ReferenceFlags {
         match self {
-            Self::Var(..) | Self::If(..) => ReferenceFlags::VAR,
+            Self::Var(..) | Self::If(..) | Self::Inherit(..) => ReferenceFlags::VAR,
             Self::Env(..) => ReferenceFlags::ENV,
             Self::Attr(..) => ReferenceFlags::ATTR,
         }
@@ -515,7 +528,8 @@ impl SubstitutionFunction {
     ) -> Result<Substitution<'a>, ()> {
         match self {
             Self::If(function) => function.replace(source, context),
-            Self::Var(function) => function.replace(source, context),
+            Self::Var(function) => function.replace(source, context, false),
+            Self::Inherit(function) => function.replace(source, context, true),
             Self::Env(function) => function.replace(source, context),
             Self::Attr(function) => function.replace(source, context),
         }
@@ -529,7 +543,7 @@ impl SubstitutionFunction {
     {
         match self {
             Self::If(function) => function.for_each_unparsed_value(f),
-            Self::Var(function) => function.for_each_unparsed_value(f),
+            Self::Var(function) | Self::Inherit(function) => function.for_each_unparsed_value(f),
             Self::Env(function) => function.for_each_unparsed_value(f),
             Self::Attr(function) => function.for_each_unparsed_value(f),
         }
