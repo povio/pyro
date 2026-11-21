@@ -1715,25 +1715,7 @@ fn rich_selection(page: &PageDom, host: NodeId) -> bool {
     let Some((start, end)) = editing::selection_range(page) else { return false };
     let dom = page.dom.borrow();
     [start.0, end.0].into_iter().all(|node| {
-        if editing::editing_host(&dom, node) != Some(host) {
-            return false;
-        }
-        let mut cur = Some(node);
-        while let Some(n) = cur {
-            if let Ok(Some(v)) = dom.get_attribute(n, "contenteditable") {
-                if v.eq_ignore_ascii_case("plaintext-only") {
-                    return false;
-                }
-                if v.is_empty() || v.eq_ignore_ascii_case("true") {
-                    return true;
-                }
-            }
-            if n == host {
-                break;
-            }
-            cur = dom.parent_element(n).ok().flatten();
-        }
-        true
+        editing::editing_host(&dom, node) == Some(host) && !editing::plaintext_at(&dom, node)
     })
 }
 

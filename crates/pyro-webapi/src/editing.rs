@@ -1090,6 +1090,33 @@ fn merge_blocks(page: &PageDom, dom: &mut Dom, host: NodeId, from: Point, to: Po
     Some(placeholder_if_empty(dom, first).unwrap_or(seam))
 }
 
+/// Plaintext-only editability is inherited until the nearest explicit
+/// contenteditable mode, including a rich island inside a plaintext host.
+pub(crate) fn plaintext_at(dom: &Dom, mut node: NodeId) -> bool {
+    loop {
+        if let Ok(Some(value)) = dom.get_attribute(node, "contenteditable") {
+            if value.eq_ignore_ascii_case("plaintext-only") {
+                return true;
+            }
+            if value.is_empty() || value.eq_ignore_ascii_case("true") || value.eq_ignore_ascii_case("false") {
+                return false;
+            }
+        }
+        let Ok(Some(parent)) = dom.parent_element(node) else { return false };
+        node = parent;
+    }
+}
+
+/// The unmodified Enter key inserts a line break in a plaintext editor.
+pub(crate) fn enter(page: &Rc<PageDom>, host: NodeId) {
+    let (start, _) = host_range(page, host);
+    if plaintext_at(&page.dom.borrow(), start.0) {
+        insert_line_break(page, host);
+    } else {
+        insert_paragraph(page, host);
+    }
+}
+
 /// Enter: splits the caret's block (insertParagraph).
 pub fn insert_paragraph(page: &Rc<PageDom>, host: NodeId) {
     let (start, end) = host_range(page, host);

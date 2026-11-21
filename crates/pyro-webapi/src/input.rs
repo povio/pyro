@@ -1232,7 +1232,7 @@ fn press_char(page: &Rc<PageDom>, target: NodeId, k: &KeyInput) {
         if (k.text == "\r" || k.text == "\n") && k.modifiers.shift {
             crate::editing::insert_line_break(page, host);
         } else if k.text == "\r" || k.text == "\n" {
-            crate::editing::insert_paragraph(page, host);
+            crate::editing::enter(page, host);
         } else {
             crate::editing::insert_text(page, host, &k.text);
         }
@@ -1273,7 +1273,7 @@ fn editing_key_action(page: &Rc<PageDom>, host: NodeId, k: &KeyInput) {
     match k.key.as_str() {
         "Backspace" => editing::delete(page, host, true),
         "Delete" => editing::delete(page, host, false),
-        "Enter" => editing::insert_paragraph(page, host),
+        "Enter" => editing::enter(page, host),
         "Tab" => focus_next(page, host, k.modifiers.shift),
         "a" | "A" if k.modifiers.ctrl || k.modifiers.meta => editing::select_all(page, host),
         "ArrowLeft" | "ArrowRight" | "Home" | "End" => editing::move_caret(page, host, &k.key, k.modifiers.shift),
