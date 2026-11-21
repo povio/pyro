@@ -4339,6 +4339,14 @@ impl Layout {
             }
             // A declared absolute length is the used size the renderless layout cannot derive.
             if let Some(px) = declared.filter(|v| v.ends_with("px")) {
+                if !self.style.style_overridden() && self.is_flex_item(dom, el) {
+                    if let Some(used) = self.synced_geometry_source(dom)
+                        .and_then(|source| source.resolved_style_value(crate::snapshot::render_key(el), name))
+                        .filter(|value| value.ends_with("px"))
+                    {
+                        return used;
+                    }
+                }
                 return px;
             }
             // The used size: content box, or border box under `box-sizing: border-box`.
@@ -4434,6 +4442,19 @@ fn resolved_property_name(name: &str) -> Cow<'_, str> {
 }
 
 impl Layout {
+    fn is_flex_item(&self, dom: &Dom, el: NodeId) -> bool {
+        if matches!(self.position_of(dom, el), Position::Absolute | Position::Fixed) || self.computed(dom, el).display_contents {
+            return false;
+        }
+        let mut index = dom.check(el).ok();
+        while let Some(parent) = index.and_then(|child| crate::style::flat_tree_parent_element(dom, child)) {
+            let style = self.computed(dom, dom.id_of(parent));
+            if !style.display_contents { return style.display == Display::Flex; }
+            index = Some(parent);
+        }
+        false
+    }
+
     /// getComputedStyle's resolved value where it differs from Stylo's
     /// computed one (CSSOM §resolved values, as Chromium reports them):
     /// `auto` minimum sizes outside flex and grid items, `auto` insets of

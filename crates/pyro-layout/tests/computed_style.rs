@@ -412,6 +412,18 @@ fn scroll_margin_follows_media_queries_and_restyles() {
     assert_eq!(p.value("#c", "scroll-margin-top"), "6px", "an inline change restyles");
 }
 
+#[test]
+fn flex_items_report_the_used_size_after_flexing() {
+    let page = Page::new(r#"<!doctype html><div style="display:flex;width:120px"><div style="display:contents">
+        <div id=row style="width:15px;flex:1"></div></div></div>
+        <div style="display:flex;flex-direction:column;height:100px"><div id=column style="height:20px;flex:0 0 60px;padding:5px;box-sizing:border-box"></div></div>
+        <div id=ordinary style="width:15px"></div>"#);
+    let used = |selector, name| page.layout.computed_style_value(&page.dom.borrow(), page.find(selector), name);
+    assert_eq!(used("#row", "width"), "120px");
+    assert_eq!(used("#column", "height"), "60px");
+    assert_eq!(used("#ordinary", "width"), "15px");
+}
+
 /// pyro (lane G): a subgrid's `grid-template-columns` resolves to `subgrid` with the names of each of
 /// the lines it spans (its own), which only its layout knows (css-grid-2 §7.2.6.2).
 #[test]
