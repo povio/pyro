@@ -386,6 +386,17 @@ where
             if using_cached_reset_properties {
                 LonghandIdSet::late_group_only_inherited()
             } else {
+                #[cfg(feature = "servo")]
+                if !context.builder.effective_zoom.is_one() {
+                    let medium = specified::BorderSideWidth::medium().to_computed_value(&context);
+                    context.builder.set_border_top_width(medium.clone());
+                    context.builder.set_border_right_width(medium.clone());
+                    context.builder.set_border_bottom_width(medium.clone());
+                    context.builder.set_border_left_width(medium.clone());
+                    context.builder.set_outline_width(medium.clone());
+                    context.builder.set_column_rule_width(medium.clone().into());
+                    context.builder.set_row_rule_width(medium.into());
+                }
                 LonghandIdSet::late_group()
             }
         },

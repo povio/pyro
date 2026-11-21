@@ -1089,8 +1089,26 @@ diff -ruN a/matching.rs b/matching.rs
              // This is the common case; no need to examine pseudos here.
 diff -ruN a/properties/cascade.rs b/properties/cascade.rs
 --- a/properties/cascade.rs	2026-11-11 19:55:57
-+++ b/properties/cascade.rs	2026-11-19 21:28:19
-@@ -976,7 +976,6 @@
++++ b/properties/cascade.rs	2026-11-21 08:11:13
+@@ -386,6 +386,17 @@
+             if using_cached_reset_properties {
+                 LonghandIdSet::late_group_only_inherited()
+             } else {
++                #[cfg(feature = "servo")]
++                if !context.builder.effective_zoom.is_one() {
++                    let medium = specified::BorderSideWidth::medium().to_computed_value(&context);
++                    context.builder.set_border_top_width(medium.clone());
++                    context.builder.set_border_right_width(medium.clone());
++                    context.builder.set_border_bottom_width(medium.clone());
++                    context.builder.set_border_left_width(medium.clone());
++                    context.builder.set_outline_width(medium.clone());
++                    context.builder.set_column_rule_width(medium.clone().into());
++                    context.builder.set_row_rule_width(medium.into());
++                }
+                 LonghandIdSet::late_group()
+             }
+         },
+@@ -976,7 +987,6 @@
              },
              FontSize => {
                  if self.seen.longhands.contains(LonghandId::MathDepth) {
@@ -1098,12 +1116,10 @@ diff -ruN a/properties/cascade.rs b/properties/cascade.rs
                      Self::recompute_math_font_size_if_needed(context);
                  }
                  if self.seen.longhands.contains(LonghandId::XLang)
-@@ -1504,6 +1503,43 @@
-             return;
-         }
+@@ -1506,6 +1516,43 @@
          builder.mutate_font().set_font_size(new_size);
-+    }
-+
+     }
+ 
 +    /// pyro: `font-size: math` for servo (MathML Core § 3.1.2): the parent's size scaled by the
 +    /// change of `math-depth`, by the first available font's MATH script scale-downs or else
 +    /// 0.71 a level (no `script-min-size` clamping, as Blink).
@@ -1139,15 +1155,15 @@ diff -ruN a/properties/cascade.rs b/properties/cascade.rs
 +            keyword_info: context.builder.get_font().slow_clone_font_size().keyword_info,
 +        };
 +        context.builder.mutate_font().set_font_size(size);
-     }
- 
-     /// Special handling of font-size: math (used for MathML).
-@@ -2783,5 +2819,47 @@
-             &mut self_ref,
-             &mut Default::default(),
-         );
 +    }
-+}
++
+     /// Special handling of font-size: math (used for MathML).
+     /// https://w3c.github.io/mathml-core/#the-math-script-level-property
+     /// TODO: Bug: 1548471: MathML Core also does not specify a script min size
+@@ -2785,3 +2832,45 @@
+         );
+     }
+ }
 +
 +/// pyro: the font-size scale factor for a `math-depth` change from `parent_math_depth` to
 +/// `computed_math_depth` (MathML Core § 3.1.2), the gecko cascade's algorithm, for servo.
@@ -1167,7 +1183,7 @@ diff -ruN a/properties/cascade.rs b/properties/cascade.rs
 +    let mut invert_scale_factor = false;
 +    if a == b {
 +        return s;
-     }
++    }
 +    if b < a {
 +        std::mem::swap(&mut a, &mut b);
 +        invert_scale_factor = true;
@@ -1189,7 +1205,7 @@ diff -ruN a/properties/cascade.rs b/properties/cascade.rs
 +    } else {
 +        s
 +    }
- }
++}
 diff -ruN a/properties/computed_value_flags.rs b/properties/computed_value_flags.rs
 --- a/properties/computed_value_flags.rs	2026-11-11 19:55:57
 +++ b/properties/computed_value_flags.rs	2026-11-17 00:11:39
@@ -1467,8 +1483,22 @@ diff -ruN a/properties/helpers/animated_properties.mako.rs b/properties/helpers/
          Ok(if progress < 0.5 { this.clone() } else { other.clone() })
 diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
 --- a/properties/helpers.mako.rs	2026-11-11 19:55:57
-+++ b/properties/helpers.mako.rs	2026-11-21 06:35:03
-@@ -64,7 +64,17 @@
++++ b/properties/helpers.mako.rs	2026-11-21 08:13:02
+@@ -55,6 +55,13 @@
+                     CSSWideKeyword::Initial => {
+                         % if not property.style_struct.inherited:
+                             declaration.debug_crash("Unexpected initial or unset for non-inherited property");
++                        % elif engine == "servo" and property.name in ("font-size", "stroke-width"):
++                            if context.builder.effective_zoom.is_one() {
++                                context.builder.reset_${property.ident}();
++                            } else {
++                                let value = get_initial_specified_value().to_computed_value(context);
++                                context.builder.set_${property.ident}(value);
++                            }
+                         % else:
+                             context.builder.reset_${property.ident}();
+                         % endif
+@@ -64,7 +71,17 @@
                      % endif
                      CSSWideKeyword::Inherit => {
                          % if not property.style_struct.inherited:
@@ -1486,7 +1516,7 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
                          % endif
                          % if property.is_zoom_dependent():
                              if !context.builder.effective_zoom_for_inheritance.is_one() {
-@@ -613,7 +623,13 @@
+@@ -613,7 +630,13 @@
          % if shorthand.kind == "four_sides":
          ${self.four_sides_shorthand(shorthand)}
          % endif
@@ -1501,10 +1531,15 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
          ${self.single_border_shorthand(shorthand)}
          % endif
          % if "IS_LEGACY_SHORTHAND" in shorthand.flags:
-@@ -655,6 +671,48 @@
-     }
- </%def>
- 
+@@ -650,6 +673,48 @@
+                 dest.write_char(' ')?;
+                 second.to_css(dest)?;
+             }
++            Ok(())
++        }
++    }
++</%def>
++
 +<%def name="gap_inset_shorthand(shorthand)">
 +    <% count = {"inset_single": 1, "inset_pair": 2, "inset_quad": 4}[shorthand.kind] %>
 +    type Inset = crate::values::specified::length::RuleInset;
@@ -1542,15 +1577,10 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
 +            self.${prop.ident}.to_css(dest)?;
 +            % endfor
 +            % endif
-+            Ok(())
-+        }
-+    }
-+</%def>
-+
- <%def name="four_sides_shorthand(shorthand)">
-     use crate::values::generics::rect::Rect;
- 
-@@ -692,13 +750,37 @@
+             Ok(())
+         }
+     }
+@@ -692,13 +757,37 @@
      }
  </%def>
  
@@ -1589,7 +1619,7 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
              ${shorthand.sub_properties[0].ident}: width,
              ${shorthand.sub_properties[1].ident}: style,
              ${shorthand.sub_properties[2].ident}: color,
-@@ -707,7 +789,12 @@
+@@ -707,7 +796,12 @@
  
      impl<'a> ToCss for LonghandsToSerialize<'a>  {
          fn to_css<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result where W: fmt::Write {
@@ -9443,14 +9473,24 @@ diff -ruN a/values/specified/basic_shape.rs b/values/specified/basic_shape.rs
  
 diff -ruN a/values/specified/border.rs b/values/specified/border.rs
 --- a/values/specified/border.rs	2026-11-11 19:55:57
-+++ b/values/specified/border.rs	2026-11-19 20:43:48
-@@ -292,9 +292,54 @@
-     #[inline]
-     fn from_computed_value(computed: &Au) -> Self {
-         Self(Length::from_px(computed.to_f32_px()))
-+    }
-+}
-+
++++ b/values/specified/border.rs	2026-11-21 08:11:13
+@@ -186,9 +186,9 @@
+     fn to_computed_value(&self, context: &Context) -> Self::ComputedValue {
+         match *self {
+             // https://drafts.csswg.org/css-backgrounds-3/#line-width
+-            Self::Thin => Au::from_px(1),
+-            Self::Medium => Au::from_px(3),
+-            Self::Thick => Au::from_px(5),
++            Self::Thin => Au::from_f32_px(context.builder.effective_zoom.zoom(1.0)),
++            Self::Medium => Au::from_f32_px(context.builder.effective_zoom.zoom(3.0)),
++            Self::Thick => Au::from_f32_px(context.builder.effective_zoom.zoom(5.0)),
+             Self::Length(ref length) => Au::from_f32_px(length.to_computed_value(context).px()),
+         }
+     }
+@@ -295,6 +295,51 @@
+     }
+ }
+ 
 +/// pyro: a specified value for outline-offset: a length, or `inset` (CSS UI 4: the outline is
 +/// drawn inside the border box, its offset minus its width).
 +#[derive(Clone, Debug, MallocSizeOf, PartialEq, SpecifiedValueInfo, ToCss, ToShmem, ToTyped)]
@@ -9467,9 +9507,9 @@ diff -ruN a/values/specified/border.rs b/values/specified/border.rs
 +            return Ok(OutlineOffset::Inset);
 +        }
 +        BorderSideOffset::parse(context, input).map(OutlineOffset::Length)
-     }
- }
- 
++    }
++}
++
 +impl ToComputedValue for OutlineOffset {
 +    type ComputedValue = crate::values::computed::border::OutlineOffset;
 +

@@ -55,6 +55,13 @@ pub mod ${property.ident} {
                     CSSWideKeyword::Initial => {
                         % if not property.style_struct.inherited:
                             declaration.debug_crash("Unexpected initial or unset for non-inherited property");
+                        % elif engine == "servo" and property.name in ("font-size", "stroke-width"):
+                            if context.builder.effective_zoom.is_one() {
+                                context.builder.reset_${property.ident}();
+                            } else {
+                                let value = get_initial_specified_value().to_computed_value(context);
+                                context.builder.set_${property.ident}(value);
+                            }
                         % else:
                             context.builder.reset_${property.ident}();
                         % endif

@@ -186,9 +186,9 @@ impl ToComputedValue for LineWidth {
     fn to_computed_value(&self, context: &Context) -> Self::ComputedValue {
         match *self {
             // https://drafts.csswg.org/css-backgrounds-3/#line-width
-            Self::Thin => Au::from_px(1),
-            Self::Medium => Au::from_px(3),
-            Self::Thick => Au::from_px(5),
+            Self::Thin => Au::from_f32_px(context.builder.effective_zoom.zoom(1.0)),
+            Self::Medium => Au::from_f32_px(context.builder.effective_zoom.zoom(3.0)),
+            Self::Thick => Au::from_f32_px(context.builder.effective_zoom.zoom(5.0)),
             Self::Length(ref length) => Au::from_f32_px(length.to_computed_value(context).px()),
         }
     }
