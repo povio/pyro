@@ -6711,6 +6711,26 @@ fn nested_style_rules_preserve_live_children_and_declaration_order() {
 }
 
 #[test]
+fn cssom_namespace_preserves_webidl_string_shape() {
+    let env = env("");
+    assert_eq!(eval(&env.main, r#"const tag = Object.getOwnPropertyDescriptor(CSS, Symbol.toStringTag);
+        [tag.value, tag.writable, tag.enumerable, tag.configurable, CSS.escape('-2\ud800!') === '-\\32 \ud800\\!'].join('|')"#), "CSS|false|false|true|true");
+}
+
+#[test]
+fn css_root_viewport_condition_cycle_guards_only_scrollbar_properties() {
+    let env = env(r#"<!doctype html><style>
+        @property --tracker { syntax:'<length>'; initial-value:0px; inherits:false }
+        @property --alias { syntax:'<length>'; initial-value:0px; inherits:false }
+        :root, section { --tracker:100vw; --alias:var(--tracker); overflow:if(style(--alias > 1px):scroll;else:hidden); opacity:if(style(--alias > 1px):.5;else:1) }
+        :root.absolute { --tracker:20px }
+        </style><section></section>"#);
+    assert_eq!(eval(&env.main, "const root = document.documentElement, child = document.querySelector('section');
+        [getComputedStyle(root).overflow, getComputedStyle(root).opacity, getComputedStyle(child).overflow].join('|')"), "visible|0.5|scroll");
+    assert_eq!(eval(&env.main, "root.className='absolute';getComputedStyle(root).overflow"), "scroll");
+}
+
+#[test]
 fn cssom_set_property_priority_conversion_and_removal() {
     let env = env("<style>div { color: red !important }</style>");
     assert_eq!(eval(&env.main, "const style = document.styleSheets[0].cssRules[0].style;

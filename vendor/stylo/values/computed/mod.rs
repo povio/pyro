@@ -450,6 +450,17 @@ impl<'a> Context<'a> {
         self.builder.is_root_element
     }
 
+    /// Collect viewport dependencies for one computation while retaining the element-wide flags.
+    pub(crate) fn track_viewport_use<T>(&self, compute: impl FnOnce() -> T) -> (T, bool) {
+        let flag = ComputedValueFlags::USES_VIEWPORT_UNITS;
+        let previous = self.builder.flags() & flag;
+        self.builder.remove_flags(flag);
+        let value = compute();
+        let used = self.builder.flags().contains(flag);
+        self.builder.add_flags(previous);
+        (value, used)
+    }
+
     /// Queries font metrics.
     pub fn query_font_metrics(
         &self,

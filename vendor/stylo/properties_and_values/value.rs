@@ -215,6 +215,9 @@ pub struct Value<Component> {
     /// Flag indicating whether this value is tainted by an attr().
     #[css(skip)]
     pub attr_tainted: bool,
+    /// Whether computing this value consulted a viewport-relative length.
+    #[css(skip)]
+    pub(crate) viewport_dependent: bool,
 }
 
 impl<Component: PartialEq> PartialEq for Value<Component> {
@@ -231,6 +234,7 @@ impl<Component: Animate> Animate for Value<Component> {
             v,
             url_data: self.url_data.clone(),
             attr_tainted: self.attr_tainted || other.attr_tainted,
+            viewport_dependent: self.viewport_dependent || other.viewport_dependent,
         })
     }
 }
@@ -242,6 +246,7 @@ impl<Component> Value<Component> {
             v,
             url_data,
             attr_tainted: Default::default(),
+            viewport_dependent: false,
         }
     }
 
@@ -254,6 +259,7 @@ impl<Component> Value<Component> {
             v,
             url_data,
             attr_tainted,
+            viewport_dependent: false,
         }
     }
 }
@@ -337,7 +343,9 @@ impl SpecifiedValue {
             return Err(());
         };
 
-        Ok(value.to_computed_value(context))
+        let (mut computed, used) = context.track_viewport_use(|| value.to_computed_value(context));
+        computed.viewport_dependent |= used;
+        Ok(computed)
     }
 
     /// Parse and validate a registered custom property value according to its syntax descriptor,
