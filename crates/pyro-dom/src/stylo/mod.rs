@@ -339,15 +339,8 @@ pub fn parse_pseudo_arg(text: &str) -> PseudoArg {
         .filter(|head| head.eq_ignore_ascii_case("::highlight("))
         .and_then(|_| text[12..].strip_suffix(')'))
     {
-        let name = inner.trim();
-        let ident = !name.is_empty()
-            && !name.starts_with(|c: char| c.is_ascii_digit())
-            && name.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_' || !c.is_ascii());
-        if !ident {
-            return PseudoArg::Invalid;
-        }
-        let id = style::selector_parser::highlight_name_id(&style::Atom::from(name));
-        return PseudoArg::Pseudo(PseudoElement::Highlight(id));
+        return style::selector_parser::highlight_selector(&mut cssparser::Parser::new(inner))
+            .map(PseudoArg::Pseudo).unwrap_or(PseudoArg::Invalid);
     }
     let mut parser = cssparser::Parser::new(text);
     let mut next = || parser.next_including_whitespace_and_comments().ok().cloned();
@@ -369,6 +362,10 @@ pub fn parse_pseudo_arg(text: &str) -> PseudoArg {
         "selection" if double => PseudoElement::Selection,
         "view-transition" if double => PseudoElement::ViewTransition,
         "target-text" if double => PseudoElement::TargetText,
+        "spelling-error" if double => PseudoElement::SpellingError,
+        "grammar-error" if double => PseudoElement::GrammarError,
+        "search-text" if double => PseudoElement::SearchText,
+        "checkmark" if double => PseudoElement::Checkmark,
         "marker" if double => PseudoElement::Marker,
         "placeholder" if double => PseudoElement::Placeholder,
         "backdrop" if double => PseudoElement::Backdrop,

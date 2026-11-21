@@ -131,7 +131,7 @@ impl BaseDocument {
         let node = self.nodes.get(node_id)?;
         let primary = node.primary_styles()?;
         let (key, wanted) = name.pseudo();
-        let matches = move |pe: &style::selector_parser::PseudoElement| *pe == wanted;
+        let matches = |pe: &style::selector_parser::PseudoElement| *pe == wanted || *pe == key;
         let read_guard = self.guard.read();
         let guards = StylesheetGuards::same(&read_guard);
         self.stylist.lazily_compute_pseudo_element_style::<&crate::Node>(

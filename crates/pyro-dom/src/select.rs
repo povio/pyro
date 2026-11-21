@@ -365,7 +365,11 @@ impl<'i> selectors::parser::Parser<'i> for SelParser<'_> {
                 let pseudo = style::selector_parser::transition_selector(&lower, parser).map_err(|_| invalid())?;
                 return Ok(PseudoElement(pseudo.to_css_string()[2..].to_owned()));
             }
-            "highlight" | "cue" | "cue-region"
+            "highlight" => {
+                let pseudo = style::selector_parser::highlight_selector(parser).map_err(|_| invalid())?;
+                return Ok(PseudoElement(pseudo.to_css_string()[2..].to_owned()));
+            }
+            "cue" | "cue-region"
             | "picker"
             | "scroll-button"
             | "column" => {
