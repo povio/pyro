@@ -24,90 +24,18 @@ use crate::node::NodeData;
 use crate::page::PageDom;
 use crate::util::*;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Declaration {
-    pub name: String,
-    pub value: String,
-    pub important: bool,
-}
+pub use pyro_dom::style::Declaration;
 
-/// Splits a declaration block respecting quotes, parentheses and comments.
-/// The delimiters are ASCII, so the scan runs over bytes; a segment is
-/// copied only for what it keeps.
 pub fn parse_declarations(text: &str) -> Vec<Declaration> {
-    let mut out: Vec<Declaration> = Vec::new();
-    let bytes = text.as_bytes();
-    let mut depth = 0i32;
-    let mut quote: Option<u8> = None;
-    let mut start = 0;
-    let mut i = 0;
-    while i < bytes.len() {
-        let c = bytes[i];
-        match quote {
-            Some(q) => {
-                if c == b'\\' {
-                    i += 1;
-                } else if c == q {
-                    quote = None;
-                }
-            }
-            None => match c {
-                b'"' | b'\'' => quote = Some(c),
-                b'(' => depth += 1,
-                b')' => depth -= 1,
-                b';' if depth <= 0 => {
-                    push_declaration(&mut out, &text[start..i]);
-                    start = i + 1;
-                }
-                _ => {}
-            },
+    let mut declarations: Vec<Declaration> = Vec::new();
+    for mut declaration in pyro_dom::style::parse_declarations(text) {
+        if !declaration.name.starts_with("--") {
+            declaration.name.make_ascii_lowercase();
         }
-        i += 1;
+        declarations.retain(|previous| previous.name != declaration.name);
+        declarations.push(declaration);
     }
-    push_declaration(&mut out, &text[start..]);
-    out
-}
-
-/// One `name: value [!important]` segment of [`parse_declarations`].
-fn push_declaration(out: &mut Vec<Declaration>, seg: &str) {
-    let seg = strip_comments(seg);
-    let Some((name, value)) = seg.split_once(':') else { return };
-    let name = name.trim();
-    if name.is_empty() {
-        return;
-    }
-    let name = if name.starts_with("--") { name.to_owned() } else { name.to_ascii_lowercase() };
-    let mut value = value.trim();
-    let mut important = false;
-    if value.len() >= 10 && value.is_char_boundary(value.len() - 10) {
-        let (rest, flag) = value.split_at(value.len() - 10);
-        if flag.eq_ignore_ascii_case("!important") {
-            value = rest.trim_end();
-            important = true;
-        }
-    }
-    if value.is_empty() {
-        return;
-    }
-    out.retain(|d| d.name != name);
-    out.push(Declaration { name, value: value.to_owned(), important });
-}
-
-fn strip_comments(s: &str) -> std::borrow::Cow<'_, str> {
-    if !s.contains("/*") {
-        return std::borrow::Cow::Borrowed(s);
-    }
-    let mut out = String::with_capacity(s.len());
-    let mut rest = s;
-    while let Some(i) = rest.find("/*") {
-        out.push_str(&rest[..i]);
-        match rest[i + 2..].find("*/") {
-            Some(j) => rest = &rest[i + 2 + j + 2..],
-            None => return std::borrow::Cow::Owned(out),
-        }
-    }
-    out.push_str(rest);
-    std::borrow::Cow::Owned(out)
+    declarations
 }
 
 pub fn serialize_declarations(decls: &[Declaration]) -> String {
@@ -3001,6 +2929,15 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn declaration_token_boundaries() {
+        let declarations = parse_declarations(r#"CONTENT: "\"}/*;"; /* ; ' */ --Mixed: [a;b] ! /* ; */ important; color: blue;"#);
+        assert_eq!(declarations.len(), 3);
+        assert_eq!((&*declarations[0].name, &*declarations[0].value), ("content", r#""\"}/*;""#));
+        assert_eq!((&*declarations[1].name, &*declarations[1].value, declarations[1].important), ("--Mixed", "[a;b]", true));
+        assert_eq!(declarations[2].value, "blue");
+    }
+
     #[test]
     fn declarations() {
         let d = parse_declarations("color: red; background: url(\"a;b.png\") ; --x: 1 ;display:none !important");
