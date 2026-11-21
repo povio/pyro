@@ -15,9 +15,8 @@ use std::rc::{Rc, Weak};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use pyro_dom::cssom::{normalize_relative_selector, parse_rules, CounterDescriptor, CounterRule, FeatureRule, Namespaces, PaletteRule, ParsedRule, ParseRelative, PropertyRule};
-use pyro_dom::stylo::declarations::{self, CssRuleType, DeclarationBlock};
+use pyro_dom::stylo::declarations::{self, CssRuleType, DeclarationBlock, TypedStyleValues};
 use pyro_dom::NodeId;
-use pyro_dom::stylo::declarations::TypedStyleValues;
 use pyro_js::{ClassDef, IdentityKey, JsClass, JsError, JsResult, NoParent, Object, Scope, Value};
 
 use crate::collections::NodeHold;
@@ -623,8 +622,14 @@ impl StyleData {
             let Some(changed) = block.parsed.set(name, value, important) else { return Ok(old) };
             changed
         };
-        typed.retain(|(n, _)| !declarations::overlaps(n, name));
-        if from_object { typed.push((name.to_owned(), value.to_owned())); }
+        typed.retain(|(n, _)| (from_object && n == name) || !declarations::overlaps(n, name));
+        if from_object {
+            if let Some((_, old_value)) = typed.iter_mut().find(|(n, _)| n == name) {
+                value.clone_into(old_value);
+            } else {
+                typed.push((name.to_owned(), value.to_owned()));
+            }
+        }
         if changed || typed.as_slice() != prior.as_ref().map_or(&[][..], |v| v.as_slice()) {
             self.publish_typed(&block, typed)?;
         }
@@ -639,6 +644,7 @@ impl StyleData {
     }
 
     pub(crate) fn set_typed(&self, name: &str, value: &str) -> JsResult<()> {
+        if !self.allows(name) || self.declaration_rule().is_some() { return Ok(()); }
         let (source, _, typed) = self.text_and_backing();
         self.edit_typed(&source, name, value, false, typed, true)?;
         Ok(())
