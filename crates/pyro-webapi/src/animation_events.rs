@@ -842,6 +842,7 @@ pub(crate) fn runs(page: &Rc<PageDom>) -> Vec<Run> {
         let Ok(dom) = page.dom.try_borrow() else { return Vec::new() };
         let Some(layout) = page.try_layout() else { return Vec::new() };
         let style = layout.style();
+        track_style_changes(state, &dom, style);
         style.engine_styled(&dom);
         state.stamp.get() == Some(style.observation_stamp(&dom))
     };
@@ -1323,6 +1324,7 @@ fn is_ancestor(dom: &pyro_dom::Dom, ancestor: NodeId, node: NodeId) -> bool {
 /// hundreds per frame, and a pass per start cost more than the restyle.
 #[derive(Default)]
 struct Starting {
+    changed: FxHashMap<(NodeId, Option<PseudoElement>), (StyleSnapshot, Vec<String>)>,
     timelines: Vec<Timeline>,
     /// The properties started, by element, with their index in `timelines`.
     keys: FxHashMap<(NodeId, Option<PseudoElement>), Vec<(String, usize)>>,
@@ -1351,21 +1353,25 @@ impl Starting {
     /// Replaces the running transitions of the elements and properties that
     /// start again, and starts the new ones.
     fn commit(self, state: &State, planned: &mut Vec<Planned>) {
-        if self.timelines.is_empty() {
+        if self.timelines.is_empty() && self.changed.is_empty() {
             return;
         }
         let mut running = state.transitions.borrow_mut();
+        let previous_count = running.len();
         running.retain(|known| {
             let same = self
                 .keys
                 .get(&(known.el, known.pseudo))
                 .is_some_and(|started| started.iter().any(|(name, _)| *name == known.name));
-            if same && known.live.get() && !known.ended.get() {
+            let unlisted = self.changed.get(&(known.el, known.pseudo))
+                .is_some_and(|(style, properties)| !pyro_dom::timing::lists_transition(style, properties, &known.name));
+            if (same || unlisted) && known.live.get() && !known.ended.get() {
                 known.live.set(false);
                 planned.push(cancel_event(known.el, known.pseudo, &known.name));
             }
-            !same
+            !same && !unlisted
         });
+        if running.len() == previous_count && self.timelines.is_empty() { return; }
         planned.extend(self.events);
         running.extend(self.timelines);
         state.bump();
@@ -1410,7 +1416,12 @@ fn start_transitions_of(
     // The after-change style's custom properties resolve `var()` (a pseudo-element's: the
     // element's).
     let style_of = |e: NodeId| if e == el && pseudo.is_none() { Some(now.clone()) } else { style.stylo_style(dom, e) };
-    let ElementTiming { transitions, .. } = rules.element_for(dom, el, pseudo, &style_of);
+    let ElementTiming { transitions, transition_properties, .. } = rules.element_for(dom, el, pseudo, &style_of);
+    if !state.transitions.borrow().is_empty() {
+        if let Some(properties) = transition_properties {
+            starting.changed.insert((el, pseudo), (now.clone(), properties));
+        }
+    }
     let mut started = Vec::new();
     for transition in &transitions {
         let changed =

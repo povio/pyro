@@ -907,11 +907,7 @@ impl Source {
         let t = transitions.iter().rev().find(|t| t.is_live() && t.el() == el && t.pseudo() == pseudo &&
             (t.name() == longhand || t.styles.as_ref().is_some_and(|(_, after)|
                 pyro_dom::animation::physical_property(longhand, after) == Some(t.name()))))?;
-        // (One script controls through its `CSSTransition` object follows that object: left out.)
-        if t.has_ended()
-            || state.scripted.try_borrow().ok()?.values().any(|s| s.css == Some(t.id()))
-            || state.effect_removed.try_borrow().ok()?.contains(&t.id())
-        {
+        if state.effect_removed.try_borrow().ok()?.contains(&t.id()) {
             return None;
         }
         let (before, after) = t.styles.as_ref()?;
@@ -933,12 +929,20 @@ impl Source {
         }
         // In whole frames: a transition started since the last frame is at its start, as in a
         // browser, whose timeline time moves only at frames.
-        let local = ((now - t.start_ms()) / FRAME_MS).floor().max(0.0) * FRAME_MS;
-        if local >= t.delay_ms + t.duration_ms {
-            return None;
-        }
-        let p = progress(&transition_timing(t), local, 1.0)?;
-        pyro_dom::animation::transition_value(longhand, before, after, p.progress, p.before, Some(t.easing().unwrap_or("ease")))
+        let scripted = state.scripted.try_borrow().ok()?;
+        let (sample, easing) = if let Some(effect) = scripted.values().find(|effect| effect.css == Some(t.id())) {
+            if effect.el != Some(el) || effect.pseudo != Pseudo::of(pseudo) || effect.scroll.is_some() || !effect.keyframes.frames.is_empty() {
+                return None;
+            }
+            (progress(&effect.timing, effect.current(now)?, effect.rate)?, Some(effect.easing.as_deref().unwrap_or("linear")))
+        } else {
+            let local = ((now - t.start_ms()) / FRAME_MS).floor().max(0.0) * FRAME_MS;
+            if t.has_ended() || local >= t.delay_ms + t.duration_ms {
+                return None;
+            }
+            (progress(&transition_timing(t), local, 1.0)?, Some(t.easing().unwrap_or("ease")))
+        };
+        pyro_dom::animation::transition_value(longhand, before, after, sample.progress, sample.before, easing)
     }
 }
 

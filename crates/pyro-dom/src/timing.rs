@@ -312,6 +312,7 @@ pub struct ElementTiming {
     pub animations: Vec<AnimationTiming>,
     /// Transitions whose combined duration is positive.
     pub transitions: Vec<TransitionTiming>,
+    pub transition_properties: Option<Vec<String>>,
 }
 
 /// The animation and transition rules of a document's sheets.
@@ -718,6 +719,7 @@ impl TimingRules {
         if lists.is_empty() {
             return out;
         }
+        out.transition_properties = lists.get(Longhand::TransitionProperty).cloned();
         let keyword = |longhand: Longhand, i: usize, allowed: &[&str]| {
             let v = lists.item(longhand, i);
             if allowed.contains(&v) { v } else { longhand.initial() }.to_owned()
@@ -965,6 +967,27 @@ pub fn displays_none(style: &StyleSnapshot) -> bool {
 /// transition of `property` starts for.
 pub fn changed_longhands<'a>(before: &StyleSnapshot, after: &StyleSnapshot, property: &'a str) -> Vec<&'a str> {
     changed_longhands_with(before, after, property, false)
+}
+
+pub fn lists_transition(style: &StyleSnapshot, properties: &[String], name: &str) -> bool {
+    use style::properties::PropertyDeclarationId;
+    let Some(id) = crate::stylo::property_id(name) else { return false };
+    let Err(property) = id.as_shorthand() else { return false };
+    properties.iter().any(|item| {
+        if item == "all" || item == name { return true; }
+        let Some(listed) = crate::stylo::property_id(item) else { return false };
+        match property {
+            PropertyDeclarationId::Longhand(target) => {
+                let target = target.to_physical(style.writing_mode);
+                match listed.as_shorthand() {
+                    Err(PropertyDeclarationId::Longhand(longhand)) => longhand.to_physical(style.writing_mode) == target,
+                    Ok(shorthand) => shorthand.longhands().any(|longhand| longhand.to_physical(style.writing_mode) == target),
+                    _ => false,
+                }
+            }
+            _ => false,
+        }
+    })
 }
 
 /// [`changed_longhands`]; with `allow_discrete` (`transition-behavior:
