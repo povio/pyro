@@ -308,7 +308,7 @@ impl PageDom {
     /// Determine a client referrer from the document, before the network layer
     /// applies its referrer policy. An iframe srcdoc document uses the URL
     /// of the first enclosing document that is not itself srcdoc.
-    pub(crate) fn client_referrer(&self) -> Option<pyro_net::Url> {
+    pub fn client_referrer(&self) -> Option<pyro_net::Url> {
         if self.has_opaque_origin() {
             return None;
         }
