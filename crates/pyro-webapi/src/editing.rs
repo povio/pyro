@@ -1817,11 +1817,14 @@ pub fn insert_line_break(page: &Rc<PageDom>, host: NodeId) {
         let caret = {
             let mut dom = page.dom.borrow_mut();
             let caret = if start != end { delete_range(&mut dom, host, start, end, true) } else { start };
-            if newline {
+            let split_text = is_text(&dom, caret.0) && caret.1 > 0 && caret.1 < len(&dom, caret.0);
+            let after = if newline {
                 preserved_break_at(page, &mut dom, host, caret)
             } else {
                 line_break_at(&mut dom, host, caret)
-            }
+            };
+            whitespace::after_line_break(page, &mut dom, host, after, split_text);
+            after
         };
         crate::edit_commands::inline_value::set_break_caret(page, (start, end), caret);
     });
