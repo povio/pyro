@@ -1056,6 +1056,7 @@ fn transitions_from_changes(
     }
     let rules = state.rules(dom, style);
     let mut starting = Starting::default();
+    let mut hidden = FxHashSet::default();
     for (el, pseudo, before, now) in changes {
         // The document's own tree only: the rules are the document's (a
         // document rule does not style a shadow tree's elements).
@@ -1095,6 +1096,9 @@ fn transitions_from_changes(
             keep_hidden_content(state, dom, style, &rules, el);
         } else if is_none {
             drop_hidden_content(state, dom, el);
+            if !was_none {
+                hidden.insert(el);
+            }
         }
         if was_content {
             reveal_hidden_content(state, dom, style, &rules, el, now_ms, &mut starting);
@@ -1110,6 +1114,26 @@ fn transitions_from_changes(
         }
     }
     starting.commit(state, planned);
+    if !hidden.is_empty() {
+        let mut running = state.transitions.borrow_mut();
+        let previous = running.len();
+        running.retain(|transition| {
+            if !hidden.iter().any(|&root| root == transition.el || is_ancestor(dom, root, transition.el)) {
+                return true;
+            }
+            if transition.live.replace(false) && !transition.ended.get() {
+                let local = state.scripted.borrow().values().find(|effect| effect.css_id() == Some(transition.id))
+                    .and_then(|effect| effect.current(now_ms)).unwrap_or(now_ms - transition.start_ms);
+                let mut event = cancel_event(transition.el, transition.pseudo, &transition.name);
+                event.elapsed_s = (local - transition.delay_ms).clamp(0.0, transition.duration_ms) / 1000.0;
+                planned.push(event);
+            }
+            false
+        });
+        if running.len() != previous {
+            state.bump();
+        }
+    }
 }
 
 /// Whether `el` (after-change style `now`) runs a discrete transition of `display` (or `all`).

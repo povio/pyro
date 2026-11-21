@@ -339,7 +339,7 @@ impl Scripted {
     }
 
     /// The current time at `now` (`None`: idle, gone, or no timeline time).
-    fn current(&self, now: f64) -> Option<f64> {
+    pub(crate) fn current(&self, now: f64) -> Option<f64> {
         if self.gone {
             return None;
         }
