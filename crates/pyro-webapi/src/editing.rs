@@ -1193,7 +1193,7 @@ fn split_block(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point) -> Poi
 /// the block edges; Shift extends.
 pub fn move_caret(page: &Rc<PageDom>, host: NodeId, key: &str, extend: bool) {
     let Some((anchor, focus)) = selection(page) else {
-        let p = host_start(&page.dom.borrow(), host);
+        let p = initial_caret(page, &page.dom.borrow(), host).unwrap_or((host, 0));
         set_selection(page, p, p);
         return;
     };
@@ -1668,6 +1668,50 @@ pub fn select_all(page: &Rc<PageDom>, host: NodeId) {
     set_selection(page, s, e);
 }
 
+/// Find the first visible caret position without descending into atomic or
+/// non-editable content. Empty wrappers do not supply a text position.
+fn initial_caret(page: &PageDom, dom: &Dom, host: NodeId) -> Option<Point> {
+    let layout = page.layout();
+    let mut stack = vec![(host, dom.children(host).ok()?.enumerate())];
+    while let Some((parent, children)) = stack.last_mut() {
+        let Some((index, child)) = children.next() else {
+            stack.pop();
+            continue;
+        };
+        if is_text(dom, child) {
+            let text = dom.char_data(child).ok()?;
+            if text.is_empty() || layout.computed_style_value(dom, *parent, "visibility") == "hidden" {
+                continue;
+            }
+            let mode = layout.computed_style_value(dom, *parent, "white-space-collapse");
+            let skip = text.chars().take_while(|c| match mode.as_str() {
+                "preserve" | "break-spaces" => false,
+                "preserve-breaks" => matches!(c, ' ' | '\t'),
+                _ => matches!(c, ' ' | '\t' | '\n' | '\r'),
+            }).count();
+            // All skipped characters occupy one byte and one UTF-16 unit.
+            if skip < text.len() {
+                return Some((child, skip as u32));
+            }
+        } else if dom.node_type(child).ok() == Some(NodeType::Element) {
+            if layout.computed_style_value(dom, child, "display") == "none" {
+                continue;
+            }
+            if editable_attr(dom, child) == Some(false)
+                || !is_container(dom, child)
+                || matches!(local(dom, child).as_str(), "button" | "select" | "textarea")
+            {
+                if layout.computed_style_value(dom, child, "visibility") != "hidden" {
+                    return Some((*parent, index as u32));
+                }
+            } else {
+                stack.push((child, dom.children(child).ok()?.enumerate()));
+            }
+        }
+    }
+    None
+}
+
 /// Focusing a host without the selection inside puts the caret at its start.
 pub fn caret_on_focus(page: &Rc<PageDom>, el: NodeId) {
     let host = {
@@ -1679,7 +1723,7 @@ pub fn caret_on_focus(page: &Rc<PageDom>, el: NodeId) {
     };
     let inside = selection(page).is_some_and(|(a, _)| editing_host(&page.dom.borrow(), a.0) == Some(host));
     if !inside {
-        let p = host_start(&page.dom.borrow(), host);
+        let p = initial_caret(page, &page.dom.borrow(), host).unwrap_or((host, 0));
         set_selection(page, p, p);
     }
 }
