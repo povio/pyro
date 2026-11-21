@@ -879,6 +879,11 @@ pub(crate) fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         let private = str_arg(a.get(2))? == "private";
         export_asym(s, &str_arg(a.get(0))?, &str_arg(a.get(1))?, private, &str_arg(a.get(3))?, &bytes_arg(s, a.get(4))?)
     });
+    native!("supportsRsaGeneration", |s, a| {
+        let bits = u32_arg(a.get(0))?;
+        let exponent = bytes_arg(s, a.get(1))?;
+        Ok(s.boolean(RsaPrivateKey::generation_exponent(bits, &exponent).is_ok()))
+    });
     native!("publicOf", |s, a| {
         let (kind, curve, material) = (str_arg(a.get(0))?, str_arg(a.get(1))?, bytes_arg(s, a.get(2))?);
         let public = match kind.as_str() {

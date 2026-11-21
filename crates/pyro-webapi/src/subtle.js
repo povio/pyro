@@ -16,7 +16,6 @@
   const DOMExceptionC = DOMException;
   const Uint8ArrayC = Uint8Array;
   const ArrayBufferC = ArrayBuffer;
-  const NumberC = Number;
   const apply = Reflect.apply;
   const defineProperty = Object.defineProperty;
   const ownDescriptor = Object.getOwnPropertyDescriptor;
@@ -114,7 +113,7 @@
   const toBoolean = (v) => !!v;
   const toString = (v) => `${v}`;
   const enforceRange = (v, max, what) => {
-    let n = NumberC(v);
+    let n = +v;
     if (n !== n || n === Infinity || n === -Infinity) throw new TypeErrorC(`${what} is not a finite number`);
     n = mathTrunc(n);
     if (n < 0 || n > max) throw new TypeErrorC(`${what} is outside the accepted range`);
@@ -199,6 +198,7 @@
       ...map(RSA, 'RsaHashedImportParams'), ECDSA: 'EcKeyImportParams', ECDH: 'EcKeyImportParams', Ed25519: '', X25519: '',
       [CHACHA]: '', ...map(AES, ''), HMAC: 'HmacImportParams', HKDF: '', PBKDF2: '',
     },
+    exportKey: map([...RSA, ...AES, CHACHA, 'HMAC', 'ECDSA', 'ECDH', 'Ed25519', 'X25519'], ''),
     wrapKey: { 'AES-KW': '' },
     unwrapKey: { 'AES-KW': '' },
     'get key length': { [CHACHA]: '', ...map(AES, 'AesDerivedKeyParams'), HMAC: 'HmacImportParams', HKDF: '', PBKDF2: '' },
@@ -607,7 +607,7 @@
         if (length === undefined) length = hmacBlockBits(normalized.hash.name);
         else if (length === 0) throw operation('The HMAC key length must not be zero');
         alg = { name, length, hash: normalized.hash.name };
-        bytes = view(N.random((length + 7) >> 3));
+        bytes = view(N.random(mathTrunc((length + 7) / 8)));
       } else {
         const length = normalized.length;
         if (length !== 128 && length !== 192 && length !== 256) throw operation('AES key length must be 128, 192 or 256 bits');
@@ -640,23 +640,37 @@
   }
 
   const TAG_LENGTHS = [32, 64, 96, 104, 112, 120, 128];
+  function validateCipher(n) {
+    switch (n.name) {
+      case CHACHA:
+        if (n.iv.length !== 12) throw operation('ChaCha20-Poly1305 requires a 96-bit IV');
+        if (n.tagLength !== undefined && n.tagLength !== 128) throw operation('ChaCha20-Poly1305 requires a 128-bit tag');
+        break;
+      case 'AES-CBC':
+        if (n.iv.length !== 16) throw operation('The AES-CBC iv must be 16 bytes');
+        break;
+      case 'AES-CTR':
+        if (n.counter.length !== 16) throw operation('The AES-CTR counter must be 16 bytes');
+        if (n.length === 0 || n.length > 128) throw operation('The AES-CTR length must be between 1 and 128');
+        break;
+      case 'AES-GCM':
+        if (!n.iv.length) throw operation('The AES-GCM iv must not be empty');
+        if (n.tagLength !== undefined && !has(TAG_LENGTHS, n.tagLength)) throw operation(`${n.tagLength} is not a valid AES-GCM tag length`);
+        break;
+    }
+  }
   function cryptStep(encrypt, normalized, k, bytes) {
     const name = normalized.name;
+    validateCipher(normalized);
     switch (name) {
       case CHACHA:
-        if (normalized.iv.length !== 12) throw operation('ChaCha20-Poly1305 requires a 96-bit IV');
-        if (normalized.tagLength !== undefined && normalized.tagLength !== 128) throw operation('ChaCha20-Poly1305 requires a 128-bit tag');
         return N.chacha20Poly1305(encrypt, k.material, normalized.iv, bytes, normalized.additionalData || new Uint8ArrayC(0));
       case 'AES-CBC':
-        if (normalized.iv.length !== 16) throw operation('The AES-CBC iv must be 16 bytes');
         return N.aesCbc(encrypt, k.material, normalized.iv, bytes);
       case 'AES-CTR':
-        if (normalized.counter.length !== 16) throw operation('The AES-CTR counter must be 16 bytes');
-        if (normalized.length === 0 || normalized.length > 128) throw operation('The AES-CTR length must be between 1 and 128');
         return N.aesCtr(k.material, normalized.counter, normalized.length, bytes);
       case 'AES-GCM': {
         const tagLength = normalized.tagLength === undefined ? 128 : normalized.tagLength;
-        if (!has(TAG_LENGTHS, tagLength)) throw operation(`${tagLength} is not a valid AES-GCM tag length`);
         return N.aesGcm(encrypt, k.material, normalized.iv, bytes, normalized.additionalData || new Uint8ArrayC(0), tagLength >> 3);
       }
       case 'RSA-OAEP':
@@ -686,17 +700,22 @@
     const bytes = view(buffer);
     if (length === null) return buffer;
     if (length > bytes.length * 8) throw operation('The length is larger than the derived secret');
-    const out = apply(u8Slice, bytes, [0, (length + 7) >> 3]);
+    const out = apply(u8Slice, bytes, [0, mathTrunc((length + 7) / 8)]);
     if (length % 8) out[out.length - 1] &= 0xff << (8 - (length % 8));
     return out.buffer;
   };
+  const digestBytes = {'SHA-1': 20, 'SHA-256': 32, 'SHA-384': 48, 'SHA-512': 64};
+  function validateKdf(n, length) {
+    if (length === null || length % 8 !== 0) throw operation('The length must be a multiple of 8');
+    if (n.name === 'HKDF' && length / 8 > 255 * digestBytes[n.hash.name]) throw operation('The HKDF length is too large for the hash');
+    if (n.name === 'PBKDF2' && n.iterations === 0) throw operation('The PBKDF2 iterations must not be zero');
+  }
   function deriveBitsStep(normalized, k, length) {
     const name = normalized.name;
     if (name === 'HKDF' || name === 'PBKDF2') {
-      if (length === null || length % 8 !== 0) throw operation('The length must be a multiple of 8');
-      if (name === 'HKDF') return N.hkdf(normalized.hash.name, k.material, normalized.salt, normalized.info, length >> 3);
-      if (normalized.iterations === 0) throw operation('The PBKDF2 iterations must not be zero');
-      return N.pbkdf2(normalized.hash.name, k.material, normalized.salt, normalized.iterations, length >> 3);
+      validateKdf(normalized, length);
+      if (name === 'HKDF') return N.hkdf(normalized.hash.name, k.material, normalized.salt, normalized.info, length / 8);
+      return N.pbkdf2(normalized.hash.name, k.material, normalized.salt, normalized.iterations, length / 8);
     }
     const peer = slotsOf(normalized.public);
     if (peer.type !== 'public') throw access('The public member must be a public key');
@@ -718,6 +737,62 @@
     return normalized.length;
   }
   const optionalLength = (v) => (v === undefined || v === null ? null : enforceRange(v, 0xffffffff, 'length'));
+
+  // Decide support without generating a key, encrypting bytes or guessing
+  // an unavailable key or data argument. Normalization reads the same Web IDL
+  // dictionaries as the actual operation.
+  function checkSupport(op, algorithm, length) {
+    if (!ownDescriptor(REGISTRY, op)) return false;
+    let n;
+    try {
+      n = normalize(algorithm, op);
+    } catch (e) {
+      if (op === 'wrapKey') return checkSupport('encrypt', algorithm, length);
+      if (op === 'unwrapKey') return checkSupport('decrypt', algorithm, length);
+      return false;
+    }
+    const name = n.name;
+    if (op === 'encrypt' || op === 'decrypt') validateCipher(n);
+    if (op === 'get key length') { keyLength(n); return true; }
+    if (op === 'generateKey') {
+      if (has(RSA, name)) return N.supportsRsaGeneration(n.modulusLength, n.publicExponent);
+      if (has(AES, name) || name === 'HMAC' || name === CHACHA) { keyLength(n); return true; }
+    }
+    if (op === 'generateKey' || op === 'importKey') {
+      if (name === 'ECDH' || name === 'ECDSA') return has(CURVES, n.namedCurve);
+      if (name === 'HMAC' && n.length === 0) return false;
+    }
+    if (op === 'deriveBits') {
+      if (name === 'HKDF' || name === 'PBKDF2') validateKdf(n, length);
+      else {
+        const peer = slotsOf(n.public);
+        if (peer.type !== 'public' || peer.alg.name !== name) return false;
+        const bits = name === 'X25519' ? 256 : {'P-256': 256, 'P-384': 384, 'P-521': 528}[peer.alg.namedCurve];
+        return length === null || length <= bits;
+      }
+    }
+    return true;
+  }
+  const asAlgorithm = value => isObject(value) ? value : toString(value);
+  function supports(operationName, algorithmValue, lengthOrAlgorithm) {
+    const op = toString(operationName), algorithm = asAlgorithm(algorithmValue);
+    const hasAlgorithm = lengthOrAlgorithm != null && typeof lengthOrAlgorithm !== 'number';
+    const other = hasAlgorithm ? asAlgorithm(lengthOrAlgorithm) : null;
+    let length = hasAlgorithm ? null : optionalLength(lengthOrAlgorithm);
+    try {
+      if (op === 'deriveKey' && hasAlgorithm) {
+        if (!checkSupport('importKey', other, null) || !checkSupport('get key length', other, null)) return false;
+        length = keyLength(normalize(other, 'get key length'));
+        return checkSupport('deriveBits', algorithm, length);
+      }
+      if (hasAlgorithm && op === 'unwrapKey' && !checkSupport('importKey', other, null)) return false;
+      if (hasAlgorithm && op === 'wrapKey' && !checkSupport('exportKey', other, null)) return false;
+      // "get key length" is an internal operation, never a public operation name.
+      return op !== 'get key length' && checkSupport(op, algorithm, length);
+    } catch (_) {
+      return false;
+    }
+  }
 
   // ----- SubtleCrypto methods ----------------------------------------------
 
@@ -854,6 +929,7 @@
 
   return {
     CryptoKey,
+    supports,
     // SubtleCrypto.<name>(...args) as a promise; argument errors reject it.
     call: (name, args) => run(() => methods[name](args)),
     // Structured clone: a copy of a CryptoKey of this realm, else undefined.
