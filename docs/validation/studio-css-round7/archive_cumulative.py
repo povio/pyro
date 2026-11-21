@@ -15,6 +15,9 @@ from zoneinfo import ZoneInfo
 
 root = Path(__file__).resolve().parent
 cache = Path(sys.argv.pop(1)).resolve()
+batches = [(10, 9)] if sys.argv[1:] == ['--batch10'] else [(5, 4), (7, 5), (8, 7), (9, 8)]
+assert sys.argv[1:] in ([], ['--batch10'])
+del sys.argv[1:]
 verifier = cache / 'frozen-evidence/verify.py'
 assert verifier.read_bytes() == (root / 'frozen/verify.py').read_bytes()
 verify = runpy.run_path(str(verifier))
@@ -32,7 +35,7 @@ for log in sorted(cache.glob('host-*.log')):
         instant = datetime.strptime(stamp, '%Y/%m/%d %H:%M:%S').replace(tzinfo=zone)
         samples.append((instant.timestamp(), log.name, list(map(float, load.split(', '))), round(100-float(idle), 2)))
 
-for batch, previous in [(5, 4), (7, 5), (8, 7), (9, 8)]:
+for batch, previous in batches:
     raw = cache / f'batch{batch}'
     out = root / raw.name
     out.mkdir(exist_ok=True)
@@ -43,9 +46,15 @@ for batch, previous in [(5, 4), (7, 5), (8, 7), (9, 8)]:
     assert path == str(binary) and verify['digest'](binary)['sha256'] == receipt
     source = (raw / 'source.txt').read_text().strip()
     assert subprocess.check_output(['git', 'rev-parse', source+'^{commit}'], text=True).strip() == source
+    if batch == 10:
+        assert source == 'c10efae54a7ce4c25be1d8bab090fcc34cab6e7b'
+        prior = root / 'batch9'
+        assert subprocess.check_output(['git', 'rev-parse', source+'^']) == (prior / 'source.txt').read_bytes()
+        assert verify['digest'](cache / 'batch9/candidate')['sha256'] == (prior / 'sha256.txt').read_text().split()[0]
+        shutil.copyfile(raw / 'build.log', out / 'build.log')
     timings = {}
     for cohort in ('main', 'supplement'):
-        sharded = batch == 9 and cohort == 'main'
+        sharded = batch in (9, 10) and cohort == 'main'
         reports = [raw / f'main-{index}.json' for index in range(16)] if sharded else [raw / f'{cohort}.json']
         urls = set(cohorts[cohort])
         outcomes = collect(reports, urls, cohort == 'supplement')
@@ -56,7 +65,9 @@ for batch, previous in [(5, 4), (7, 5), (8, 7), (9, 8)]:
             assert data['dirs'] == ['css'] and data['discovered'] == len(data['plan'])
             entry = {**verify['digest'](report), **{key: data[key] for key in ('wallMs','restarts','discovered','jobs')}}
             if sharded:
-                plan = raw / f'urls-{index}.json'
+                plan = cache / 'batch9' / f'urls-{index}.json'
+                if batch == 10:
+                    assert plan.read_bytes() == gzip.decompress((root / 'batch9' / (plan.name+'.gz')).read_bytes())
                 assert Counter(data['plan']) == Counter(read(plan))
                 (out / (plan.name+'.gz')).write_bytes(gzip.compress(plan.read_bytes(), mtime=0))
                 entry['planSha256'] = verify['digest'](plan)['sha256']
