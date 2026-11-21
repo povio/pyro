@@ -2702,6 +2702,7 @@ impl MallocSizeOf for ExtraStyleData {
         let mut n = 0;
         n += self.font_faces.shallow_size_of(ops);
         n += self.font_feature_values.shallow_size_of(ops);
+        n += self.functions.shallow_size_of(ops);
         n += self.font_palette_values.shallow_size_of(ops);
         n += self.counter_styles.shallow_size_of(ops);
         n += self.position_try_rules.shallow_size_of(ops);
@@ -3768,6 +3769,11 @@ pub fn replace_parent_selector_with_implicit_scope(
 }
 
 impl CascadeData {
+    pub(crate) fn function_by_name(&self, name: &Atom) -> Option<&Arc<crate::stylesheets::FunctionRule>> {
+        self.extra_data.functions.get(name)
+    }
+
+
     /// pyro: the `@counter-style` rule named `name` in this cascade data (an embedder resolving a
     /// counter style name in a shadow tree before the document's).
     pub fn counter_style(&self, name: &Atom) -> Option<&Arc<Locked<CounterStyleRule>>> {

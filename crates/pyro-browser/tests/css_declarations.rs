@@ -557,3 +557,41 @@ fn custom_functions_distinguish_typed_and_untyped_results() {
     "#);
     assert_eq!(actual, "5|calc(2 + 3)|rgb(0, 128, 0)");
 }
+
+#[test]
+fn custom_functions_default_over_the_argument_scope_and_inherit_from_callers() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        const s = document.head.appendChild(document.createElement('style'));
+        s.textContent = `
+          @function --later(--a <length>: var(--b), --b <length>: 7px) { result: var(--a) }
+          @function --optional(--a) { result: var(--a, omitted) }
+          @function --unused(--a) { result: unused }
+          @function --outer(--v) { --v: caller; result: --nested-inherit(); }
+          @function --nested-inherit() { --v: hidden; result: inherit(--v, missing); }
+          @function --wide() { --v: initial extra; result: var(--v); }
+          #call { --v: element; --a: --later(); --b: --optional(); --c: --unused();
+                  --d: --outer(); --e: --nested-inherit(); --f: --wide() }
+        `;
+        const el = document.body.appendChild(document.createElement('div')); el.id='call';
+        const cs=getComputedStyle(el);
+        ['--a','--b','--c','--d','--e','--f'].map(n=>cs.getPropertyValue(n)).join('|')
+    "#);
+    assert_eq!(actual, "7px|omitted|unused|caller|element|initial extra");
+}
+
+#[test]
+fn custom_functions_test_local_style_values_in_their_own_scope() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        const s=document.head.appendChild(document.createElement('style'));
+        s.textContent=`
+          @function --test(--arg <length>) { --x: 3px;
+            result: if(style(--arg: calc(1px + 2px)) and style(--x: 3px) and style(--x < 5px): yes; else: no) }
+          #f { --x: 20px; --result: --test(3px) }
+        `;
+        const el=document.body.appendChild(document.createElement('div')); el.id='f';
+        getComputedStyle(el).getPropertyValue('--result')
+    "#);
+    assert_eq!(actual, "yes");
+}

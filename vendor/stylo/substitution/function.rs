@@ -39,7 +39,7 @@ enum Binding {
 }
 
 pub(crate) struct Frame {
-    rule: Arc<FunctionRule>,
+    pub(crate) rule: Arc<FunctionRule>,
     scope_skip: usize,
     parent: Option<Rc<Frame>>,
     seed: u64,
@@ -99,7 +99,7 @@ impl Frame {
         v
     }
 
-    fn outer(self: &Rc<Self>, name: &Name, cx: &mut SubstitutionReplacementContext) -> Option<Value> {
+    pub(crate) fn outer(self: &Rc<Self>, name: &Name, cx: &mut SubstitutionReplacementContext) -> Option<Value> {
         let previous = std::mem::replace(&mut cx.function_frame, self.parent.clone());
         let value = super::var::VarFunction::resolve_custom_property(name, cx).map(|v| {
             let source = self.rule.result.as_deref().expect("only invoked functions have results");
@@ -107,6 +107,19 @@ impl Frame {
         });
         cx.function_frame = previous;
         value
+    }
+
+    pub(crate) fn initial(&self, name: &Name) -> Option<Value> {
+        self.parameter(name).and_then(|i| self.parameters.borrow()[i].clone())
+    }
+
+    pub(crate) fn guarded(&self, name: &Name) -> bool {
+        self.locals.borrow().iter().any(|(n, val)| n == name && matches!(val, Binding::Resolving))
+    }
+
+    pub(crate) fn query_value(&self, name: &Name, cx: &mut SubstitutionReplacementContext) -> Option<Value> {
+        let v = super::var::VarFunction::resolve_custom_property(name, cx)?;
+        Some(owned(v, self.rule.result.as_ref()?))
     }
 
     fn local(self: &Rc<Self>, index: usize, name: &Name, cx: &mut SubstitutionReplacementContext) -> Option<Value> {
@@ -130,9 +143,11 @@ impl Frame {
         self.resolving.borrow_mut().push(index);
         let value = self.substitute(&source, cx).and_then(|v| {
             let parameter = self.parameter(name);
-            match CSSWideKeyword::parse(&mut Parser::new(&v.0.css)) {
+            let keyword = CSSWideKeyword::parse(&mut Parser::new(&v.0.css));
+            match keyword {
                 Ok(CSSWideKeyword::Initial) => parameter.and_then(|i| self.parameters.borrow()[i].clone()),
-                Ok(CSSWideKeyword::Inherit) => self.outer(name, cx),
+                Ok(CSSWideKeyword::Inherit) =>
+                    self.outer(name, cx).and_then(|v| self.typed(Some(name), v, parameter.map(|i| &self.rule.parameters[i].syntax), cx)),
                 Ok(_) => None,
                 Err(_) => self.typed(Some(name), v, parameter.map(|i| &self.rule.parameters[i].syntax), cx),
             }
@@ -199,12 +214,7 @@ impl FunctionCall {
         let skip = parent.as_ref().map_or(0, |p| p.scope_skip);
         let (rule, scope_skip) = cx.computed_context.lookup_function(cx.stylist, &self.name, skip).ok_or(())?;
         let result = rule.result.clone().ok_or(())?;
-        if self.arguments.len() > rule.parameters.len()
-            || rule.parameters[self.arguments.len()..].iter().any(|p| p.default.is_none())
-        {
-            return Err(());
-        }
-
+        if self.arguments.len() > rule.parameters.len() { return Err(()); }
         let mut ancestors = parent.clone();
         let mut depth = 0;
         while let Some(f) = ancestors {
@@ -238,15 +248,20 @@ impl FunctionCall {
                 .get(index)
                 .and_then(|arg| cx.substitute_declaration_value(arg, source).ok())
                 .and_then(|v| frame.typed(Some(&param.name), owned(v, source), Some(&param.syntax), cx));
-            frame.parameters.borrow_mut()[index] = supplied.or_else(|| {
-                let v = frame.substitute(param.default.as_ref()?, cx)?;
-                match CSSWideKeyword::parse(&mut Parser::new(&v.0.css)) {
-                    Ok(CSSWideKeyword::Inherit) => frame.outer(&param.name, cx),
-                    Ok(_) => None,
-                    Err(_) => frame.typed(Some(&param.name), v, Some(&param.syntax), cx),
-                }
-            });
+            let binding = match (supplied, &param.default) {
+                (Some(v), _) => Binding::Ready(Some(v)),
+                (None, Some(default)) => Binding::Pending(default.clone()),
+                (None, None) => Binding::Ready(None),
+            };
+            frame.locals.borrow_mut().push((param.name.clone(), binding));
         }
+        // The argument rule is cascaded as a set. Every parameter shadows its
+        // outer namesake, and defaults can depend on either earlier or later parameters.
+        for (index, param) in frame.rule.parameters.iter().enumerate() {
+            let value = frame.local(index, &param.name, cx);
+            frame.parameters.borrow_mut()[index] = value;
+        }
+        frame.locals.borrow_mut().clear();
         frame
             .locals
             .borrow_mut()

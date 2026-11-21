@@ -1051,7 +1051,7 @@ diff -ruN a/device/servo.rs b/device/servo.rs
                  // Deprecated system colors (CSS Color 4) mapped to Canvas.
 diff -ruN a/dom.rs b/dom.rs
 --- a/dom.rs	2026-11-11 19:55:57
-+++ b/dom.rs	2026-11-21 18:57:31
++++ b/dom.rs	2026-11-21 19:05:18
 @@ -952,6 +952,9 @@
          display: &Display,
      ) -> euclid::default::Size2D<Option<app_units::Au>>;
@@ -1084,7 +1084,7 @@ diff -ruN a/dom.rs b/dom.rs
 +        let mut shadow = scope.get_shadow_root_for_scoped(*self);
 +        let mut depth = 0;
 +        while let Some(root) = shadow {
-+            if depth >= skip && let Some(rule) = root.style_data().and_then(|d| d.extra_data.functions.get(name)) {
++            if depth >= skip && let Some(rule) = root.style_data().and_then(|d| d.function_by_name(name)) {
 +                return Some((rule.clone(), depth));
 +            }
 +            depth += 1;
@@ -1396,7 +1396,7 @@ diff -ruN a/matching.rs b/matching.rs
              // This is the common case; no need to examine pseudos here.
 diff -ruN a/parser.rs b/parser.rs
 --- a/parser.rs	2026-11-11 19:55:57
-+++ b/parser.rs	2026-11-21 18:58:53
++++ b/parser.rs	2026-11-21 19:04:27
 @@ -13,7 +13,7 @@
  use cssparser::{Parser, SourceLocation, UnicodeRange};
  use selectors::parser::ParseRelative;
@@ -1406,17 +1406,15 @@ diff -ruN a/parser.rs b/parser.rs
  use style_traits::{OneOrMoreSeparated, ParseError, ParsingMode, Separator};
  
  /// Nesting context for parsing rules.
-@@ -67,6 +67,39 @@
-     /// Load the saved nesting context.
-     pub fn restore(&mut self, saved: Self) {
-         *self = saved;
-+    }
-+}
-+
+@@ -70,6 +70,40 @@
+     }
+ }
+ 
 +/// Positions of random functions parsed while substituting one conditional prelude.
 +/// Parsers may try the same token under different numeric grammars before one succeeds.
 +pub(crate) struct EarlyRandomIndices<'a> {
 +    stylist: &'a crate::stylist::Stylist,
++    pub(crate) function_rule: Option<&'a crate::stylesheets::FunctionRule>,
 +    start: i32,
 +    positions: RefCell<smallvec::SmallVec<[usize; 4]>>,
 +}
@@ -1429,7 +1427,7 @@ diff -ruN a/parser.rs b/parser.rs
 +
 +impl<'a> EarlyRandomIndices<'a> {
 +    pub(crate) fn new(start: i32, stylist: &'a crate::stylist::Stylist) -> Self {
-+        Self { start, stylist, positions: Default::default() }
++        Self { start, stylist, function_rule: None, positions: Default::default() }
 +    }
 +
 +    pub(crate) fn end(&self) -> i32 {
@@ -1443,10 +1441,13 @@ diff -ruN a/parser.rs b/parser.rs
 +            i
 +        });
 +        self.start + index as i32 + 1
-     }
- }
- 
-@@ -79,6 +112,8 @@
++    }
++}
++
+ /// Context for the property declaration that is currently being parsed.
+ #[derive(Debug, Default)]
+ pub struct PropertyDeclarationContext<'a> {
+@@ -79,6 +113,8 @@
      /// in the current property declaration. Used when a random() function
      /// has a `property-index-scoped` key.
      random_count: Cell<i32>,
@@ -1455,7 +1456,7 @@ diff -ruN a/parser.rs b/parser.rs
  }
  
  impl<'a> PropertyDeclarationContext<'a> {
-@@ -92,11 +127,22 @@
+@@ -92,11 +128,24 @@
          self.random_count.get()
      }
  
@@ -1463,11 +1464,13 @@ diff -ruN a/parser.rs b/parser.rs
 +        self.early_random_indices.is_some()
 +    }
 +
-+    pub(crate) fn inline_style_registration(
-+        &self,
-+        name: &crate::custom_properties::Name,
-+    ) -> Option<&crate::properties_and_values::rule::Descriptors> {
-+        Some(self.early_random_indices?.stylist.get_custom_property_registration(name))
++    pub(crate) fn inline_style_syntax(&self, name: &crate::custom_properties::Name)
++        -> Option<&crate::properties_and_values::syntax::Descriptor> {
++        let indices = self.early_random_indices?;
++        if let Some(rule) = indices.function_rule {
++            return rule.parameters.iter().find(|p| &p.name == name).map(|p| &p.syntax);
++        }
++        indices.stylist.get_custom_property_registration(name).syntax.as_ref()
 +    }
 +
      /// Claims the next index for a random() function in this declaration. The
@@ -1480,7 +1483,7 @@ diff -ruN a/parser.rs b/parser.rs
          self.random_count.set(index);
          index
      }
-@@ -193,6 +239,15 @@
+@@ -193,6 +242,15 @@
          property_id: Option<PropertyIdRef<'b>>,
          cb: impl FnOnce(&ParserContext<'b>) -> R,
      ) -> R {
@@ -1496,7 +1499,7 @@ diff -ruN a/parser.rs b/parser.rs
          cb(&ParserContext {
              stylesheet_origin: self.stylesheet_origin,
              url_data: self.url_data,
-@@ -205,11 +260,20 @@
+@@ -205,11 +263,20 @@
              attr_tainted_regions: Cow::Borrowed(&*self.attr_tainted_regions),
              property_declaration_context: PropertyDeclarationContext {
                  property_id,
@@ -4931,7 +4934,7 @@ diff -ruN a/properties_and_values/value.rs b/properties_and_values/value.rs
              value,
 diff -ruN a/queries/condition.rs b/queries/condition.rs
 --- a/queries/condition.rs	2026-11-11 19:55:57
-+++ b/queries/condition.rs	2026-11-21 18:57:52
++++ b/queries/condition.rs	2026-11-21 19:04:27
 @@ -25,6 +25,8 @@
  use crate::substitution;
  use crate::substitution::AttrTaint;
@@ -4997,12 +5000,11 @@ diff -ruN a/queries/condition.rs b/queries/condition.rs
              StyleFeatureValue::Keyword(k) => {
                  dest.write_str(": ")?;
                  k.to_css(dest)?;
-@@ -407,6 +412,13 @@
+@@ -407,6 +412,12 @@
              input.skip_whitespace();
              if let Ok(keyword) = input.try_parse(|i| CSSWideKeyword::parse(i)) {
                  StyleFeatureValue::Keyword(keyword)
-+            } else if let Some(registration) = context.property_declaration_context.inline_style_registration(&name)
-+                && let Some(syntax) = registration.syntax.as_ref().filter(|s| !s.is_universal())
++            } else if let Some(syntax) = context.property_declaration_context.inline_style_syntax(&name).filter(|s| !s.is_universal())
 +                && let Ok(value) = input.try_parse(|i| i.parse_until_before(cssparser::Delimiter::Bang,
 +                    |i| SpecifiedRegisteredValue::parse_with_context(context, i, syntax)))
 +            {
@@ -5011,10 +5013,12 @@ diff -ruN a/queries/condition.rs b/queries/condition.rs
              } else {
                  let value = custom_properties::SpecifiedValue::parse(context, input)?;
                  // `!important` is allowed (but ignored) after the value.
-@@ -419,6 +431,34 @@
+@@ -417,6 +428,34 @@
+             StyleFeatureValue::Value(None)
+         };
          Ok(Self { name, value })
-     }
- 
++    }
++
 +    fn matches_element(&self, context: &substitution::SubstitutionReplacementContext, attr_tainted: &mut bool) -> bool {
 +        let ctx = context.computed_context;
 +        let registration = context.stylist.get_custom_property_registration(&self.name);
@@ -5041,12 +5045,10 @@ diff -ruN a/queries/condition.rs b/queries/condition.rs
 +            StyleFeatureValue::Keyword(CSSWideKeyword::Unset) => current == initial,
 +            StyleFeatureValue::Keyword(_) => false,
 +        }
-+    }
-+
+     }
+ 
      // Substitute custom-property references in `value`, then re-parse and compute it,
-     // and compare against `current_value`.
-     fn substitute_and_compare(
-@@ -479,6 +519,7 @@
+@@ -479,6 +518,7 @@
              .inherited_custom_properties()
              .get(registration, &self.name);
          KleeneValue::from(match self.value {
@@ -5054,7 +5056,7 @@ diff -ruN a/queries/condition.rs b/queries/condition.rs
              StyleFeatureValue::Value(Some(ref v)) => {
                  if ctx.container_info.is_none() {
                      // If no container, custom props are guaranteed-unknown.
-@@ -675,6 +716,8 @@
+@@ -675,6 +715,8 @@
      InParens(Box<QueryCondition>),
      /// A <style> query.
      Style(StyleQuery),
@@ -5063,12 +5065,10 @@ diff -ruN a/queries/condition.rs b/queries/condition.rs
      /// A -moz-pref() query.
      MozPref(MozPrefFeature),
      /// [ <function-token> <any-value>? ) ] | [ ( <any-value>? ) ]
-@@ -707,6 +750,17 @@
-             Self::Style(ref c) => {
-                 dest.write_str("style(")?;
+@@ -709,6 +751,17 @@
                  c.to_css(dest)?;
-+                dest.write_char(')')
-+            },
+                 dest.write_char(')')
+             },
 +            Self::Anchored(ref query) => {
 +                dest.write_str("anchored(fallback")?;
 +                if let Some(value) = query {
@@ -5078,10 +5078,12 @@ diff -ruN a/queries/condition.rs b/queries/condition.rs
 +                        None => dest.write_str("none")?,
 +                    }
 +                }
-                 dest.write_char(')')
-             },
++                dest.write_char(')')
++            },
              Self::MozPref(ref c) => {
-@@ -755,6 +809,7 @@
+                 dest.write_str("-moz-pref(")?;
+                 c.to_css(dest)?;
+@@ -755,6 +808,7 @@
              | Self::Feature(..)
              | Self::GeneralEnclosed(..)
              | Self::Style(..)
@@ -5089,7 +5091,7 @@ diff -ruN a/queries/condition.rs b/queries/condition.rs
              | Self::MozPref(..) => {},
              Self::Not(ref cond) => cond.visit(visitor),
              Self::Operation(ref conds, _op) => {
-@@ -772,6 +827,7 @@
+@@ -772,6 +826,7 @@
          let mut result = FeatureFlags::empty();
          self.visit(&mut |condition| match condition {
              Self::Style(..) => result.insert(FeatureFlags::STYLE),
@@ -5097,7 +5099,7 @@ diff -ruN a/queries/condition.rs b/queries/condition.rs
              Self::Feature(f) => result.insert(f.feature_flags()),
              Self::GeneralEnclosed(_, _, flags) => result.insert(*flags),
              _ => {},
-@@ -834,6 +890,9 @@
+@@ -834,6 +889,9 @@
              Self::InParens(ref c) => c.matches(context, custom, attribute_tracker),
              Self::Not(ref c) => !c.matches(context, custom, attribute_tracker),
              Self::Style(ref c) => c.matches(context, attribute_tracker),
@@ -5107,7 +5109,7 @@ diff -ruN a/queries/condition.rs b/queries/condition.rs
              Self::MozPref(ref c) => c.matches(context),
              Self::Operation(ref conditions, op) => {
                  debug_assert!(!conditions.is_empty(), "We never create an empty op");
-@@ -962,6 +1021,16 @@
+@@ -962,6 +1020,16 @@
              },
              Token::Function(ref name) => {
                  match_ignore_ascii_case! { name,
@@ -5124,10 +5126,12 @@ diff -ruN a/queries/condition.rs b/queries/condition.rs
                      "style" if StyleQuery::enabled(feature_type) => {
                          let query = try_parse_block(context, input, start, start_location, |input| {
                              StyleQuery::parse(context, input, feature_type)
-@@ -1000,3 +1069,121 @@
+@@ -998,5 +1066,161 @@
+ 
+     fn new_operation(conditions: Box<[Self]>, operator: Operator) -> Self {
          Self::Operation(conditions, operator)
-     }
- }
++    }
++}
 +
 +/// A computed-time if() test. Its tokens have already undergone arbitrary substitution.
 +pub(crate) enum IfCondition {
@@ -5163,8 +5167,8 @@ diff -ruN a/queries/condition.rs b/queries/condition.rs
 +            Self::Media(q) => f(IfPredicate::Media(q)),
 +            Self::Supports(q) => f(IfPredicate::Supports(q)),
 +        }
-+    }
-+}
+     }
+ }
 +
 +pub(crate) enum IfPredicate<'a> {
 +    Style(&'a StyleFeature),
@@ -5189,6 +5193,44 @@ diff -ruN a/queries/condition.rs b/queries/condition.rs
 +    ) -> KleeneValue {
 +        match self {
 +            Self::Style(feature) => {
++                if let Some(frame) = cx.function_frame.clone() {
++                    return match feature {
++                        StyleFeature::Plain(p) => {
++                            if frame.guarded(&p.name) { return KleeneValue::False; }
++                            let current = frame.query_value(&p.name, cx);
++                            *attr_tainted |= current.as_ref().is_some_and(|(_, taint)| *taint);
++                            let current = current.as_ref().map(|(v, _)| v.css.as_str());
++                            match &p.value {
++                                StyleFeatureValue::Value(None) => current != frame.initial(&p.name).as_ref().map(|(v, _)| v.css.as_str()),
++                                StyleFeatureValue::Value(Some(v)) => current == Some(v.css.as_str()),
++                                StyleFeatureValue::Typed(v) => current == Some(v.as_ref().to_computed_value(cx.computed_context).to_css_string().as_str()),
++                                StyleFeatureValue::Keyword(CSSWideKeyword::Initial) => current == frame.initial(&p.name).as_ref().map(|(v, _)| v.css.as_str()),
++                                StyleFeatureValue::Keyword(CSSWideKeyword::Inherit | CSSWideKeyword::Unset) => {
++                                    let outer = frame.outer(&p.name, cx);
++                                    *attr_tainted |= outer.as_ref().is_some_and(|(_, taint)| *taint);
++                                    current == outer.as_ref().map(|(v, _)| v.css.as_str())
++                                }
++                                StyleFeatureValue::Keyword(_) => false,
++                            }.into()
++                        },
++                        StyleFeature::Range(r) => {
++                            let mut values = cx.substitution_functions.clone();
++                            let mut guarded = false;
++                            r.for_each_custom_property(&mut |name| {
++                                let reg = cx.stylist.get_custom_property_registration(&name);
++                                if frame.guarded(&name) { guarded = true; return; }
++                                if let Some((v, tainted)) = frame.query_value(&name, cx) {
++                                    let mut value = ComputedRegisteredValue::universal(Arc::new(v));
++                                    value.attr_tainted |= tainted;
++                                    values.insert_var(reg, &name, value);
++                                } else { values.remove_var(reg, &name); }
++                            });
++                            if guarded { KleeneValue::False } else {
++                                r.evaluate_with_properties(cx.computed_context, cx.attribute_tracker, &values.custom_properties, attr_tainted)
++                            }
++                        },
++                    };
++                }
 +                // Active properties still contain their specified substitutions. Other
 +                // properties queried by this predicate have been visited before this call.
 +                let mut guarded = false;
@@ -7355,7 +7397,7 @@ diff -ruN a/stylesheets/font_palette_values_rule.rs b/stylesheets/font_palette_v
              return Ok(FontPaletteBase::Index(v));
 diff -ruN a/stylesheets/function_rule.rs b/stylesheets/function_rule.rs
 --- a/stylesheets/function_rule.rs	1970-01-01 00:00:00.000000000 +0000
-+++ b/stylesheets/function_rule.rs	2026-11-21 19:00:01
++++ b/stylesheets/function_rule.rs	2026-11-21 19:05:18
 @@ -0,0 +1,184 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -7379,7 +7421,7 @@ diff -ruN a/stylesheets/function_rule.rs b/stylesheets/function_rule.rs
 +use style_traits::{CssStringWriter, ParseError, StyleParseErrorKind};
 +
 +/// A parsed function definition, including its signature and descriptors.
-+#[derive(Clone, Debug, MallocSizeOf, ToShmem)]
++#[derive(Clone, Debug, ToShmem)]
 +pub struct FunctionRule {
 +    /// The function name including its two leading dashes.
 +    pub name: Atom,
@@ -7390,7 +7432,7 @@ diff -ruN a/stylesheets/function_rule.rs b/stylesheets/function_rule.rs
 +    text: String,
 +}
 +
-+#[derive(Clone, Debug, ToShmem, MallocSizeOf)]
++#[derive(Clone, Debug, ToShmem)]
 +pub(crate) struct Parameter {
 +    pub name: Name,
 +    pub syntax: Descriptor,
@@ -7832,7 +7874,7 @@ diff -ruN a/stylesheets/supports_rule.rs b/stylesheets/supports_rule.rs
  /// supports_condition | declaration
 diff -ruN a/stylist.rs b/stylist.rs
 --- a/stylist.rs	2026-11-11 19:55:57
-+++ b/stylist.rs	2026-11-21 18:56:03
++++ b/stylist.rs	2026-11-21 19:05:18
 @@ -31,8 +31,8 @@
  use crate::parser::ParserContext;
  use crate::properties::StyleBuilder;
@@ -7858,10 +7900,12 @@ diff -ruN a/stylist.rs b/stylist.rs
      }
  
      /// Returns the number of selectors.
-@@ -1219,6 +1226,62 @@
-         doc_author_rules_apply && f(&self.cascade_data.author)
-     }
+@@ -1217,6 +1224,62 @@
+         }
  
+         doc_author_rules_apply && f(&self.cascade_data.author)
++    }
++
 +    /// pyro: whether a rule that can make `pseudo` (`::before` or `::after`, eagerly
 +    /// cascaded for `element`) generate a box matches `element`, so that the full match and
 +    /// cascade of the pseudo-element can give a style that is kept. When this is `false`, every
@@ -7916,21 +7960,13 @@ diff -ruN a/stylist.rs b/stylist.rs
 +            }
 +        }
 +        false
-+    }
-+
+     }
+ 
      /// Execute callback for all applicable style rule data.
-     pub fn for_each_cascade_data_with_scope<'a, E, F>(&'a self, element: E, mut f: F)
-     where
-@@ -1365,6 +1428,64 @@
-         Some(self.compute_pseudo_element_style_with_inputs(
-             cascade_inputs,
-             pseudo,
-+            guards,
-+            Some(originating_element_style),
-+            Some(element),
-+        ))
-+    }
-+
+@@ -1371,6 +1434,64 @@
+         ))
+     }
+ 
 +    /// pyro: the style of a node that is a pseudo-element's box (`element.implemented_pseudo_element()`,
 +    /// which reaches its originating element through `pseudo_element_originating_element()`), whose
 +    /// rules are matched against the node itself in normal mode: state pseudo-classes after the
@@ -7983,9 +8019,15 @@ diff -ruN a/stylist.rs b/stylist.rs
 +        Some(self.compute_pseudo_element_style_with_inputs(
 +            inputs,
 +            &pseudo,
-             guards,
-             Some(originating_element_style),
-             Some(element),
++            guards,
++            Some(originating_element_style),
++            Some(element),
++        ))
++    }
++
+     /// Computes a pseudo-element style lazily using the given CascadeInputs.
+     /// This can be used for truly lazy pseudo-elements or to avoid redoing
+     /// selector matching for eager pseudo-elements when we need to recompute
 @@ -1623,10 +1744,9 @@
              &mut matching_context,
          );
@@ -8000,17 +8042,17 @@ diff -ruN a/stylist.rs b/stylist.rs
          let rules = self.rule_tree.compute_rule_node(&mut declarations, guards);
  
          let mut visited_rules = None;
-@@ -1667,6 +1787,10 @@
+@@ -1665,6 +1785,10 @@
+                     visited_rules = Some(rule_node);
+                 }
              }
-         }
- 
-+        if unvisited_empty && is_probe && visited_rules.is_none() {
-+            return None;
 +        }
 +
++        if unvisited_empty && is_probe && visited_rules.is_none() {
++            return None;
+         }
+ 
          Some(CascadeInputs {
-             rules: Some(rules),
-             visited_rules,
 @@ -1686,6 +1810,12 @@
      /// Also, the device that arrives here may need to take the viewport rules
      /// into account.
@@ -8106,7 +8148,15 @@ diff -ruN a/stylist.rs b/stylist.rs
          self.font_palette_values.clear();
          self.counter_styles.clear();
          self.position_try_rules.clear();
-@@ -2645,7 +2811,7 @@
+@@ -2536,6 +2702,7 @@
+         let mut n = 0;
+         n += self.font_faces.shallow_size_of(ops);
+         n += self.font_feature_values.shallow_size_of(ops);
++        n += self.functions.shallow_size_of(ops);
+         n += self.font_palette_values.shallow_size_of(ops);
+         n += self.counter_styles.shallow_size_of(ops);
+         n += self.position_try_rules.shallow_size_of(ops);
+@@ -2645,7 +2812,7 @@
  
  fn component_needs_revalidation(c: &Component<SelectorImpl>) -> bool {
      match *c {
@@ -8115,10 +8165,11 @@ diff -ruN a/stylist.rs b/stylist.rs
          | Component::AttributeInNoNamespace { .. }
          | Component::AttributeOther(_)
          | Component::Empty
-@@ -2864,8 +3030,84 @@
+@@ -2863,6 +3030,82 @@
+     fn clear(&mut self) {
          self.element_map.clear();
          self.pseudos_map.clear();
-     }
++    }
 +}
 +
 +/// pyro: the `::before` and `::after` rules (one pseudo-element level, in
@@ -8141,8 +8192,8 @@ diff -ruN a/stylist.rs b/stylist.rs
 +struct BoxGeneratingPseudoRules {
 +    before: SelectorMap<Rule>,
 +    after: SelectorMap<Rule>,
- }
- 
++}
++
 +impl BoxGeneratingPseudoRules {
 +    /// Whether a rule with these declarations goes in the index (when it is a single-level
 +    /// `::before` or `::after` rule).
@@ -8194,27 +8245,29 @@ diff -ruN a/stylist.rs b/stylist.rs
 +    fn shrink_if_needed(&mut self) {
 +        self.before.shrink_if_needed();
 +        self.after.shrink_if_needed();
-+    }
-+}
-+
- /// The id of a given layer, a sequentially-increasing identifier.
- #[derive(Clone, Copy, Debug, Eq, MallocSizeOf, PartialEq, PartialOrd, Ord)]
- pub struct LayerId(u16);
-@@ -3360,6 +3602,10 @@
-     /// The data coming from normal style rules that apply to elements at this
+     }
+ }
+ 
+@@ -3361,6 +3604,10 @@
      /// cascade level.
      normal_rules: ElementAndPseudoRules,
-+
+ 
 +    /// pyro: the rules of `normal_rules` that can make a `::before` or `::after`
 +    /// generate a box.
 +    box_generating_pseudo_rules: BoxGeneratingPseudoRules,
- 
++
      /// The `:host` pseudo rules that are the rightmost selector (without
      /// accounting for pseudo-elements), or `:scope` rules that may match
-@@ -3522,10 +3768,17 @@
+     /// the featureless host.
+@@ -3522,10 +3769,22 @@
  }
  
  impl CascadeData {
++    pub(crate) fn function_by_name(&self, name: &Atom) -> Option<&Arc<crate::stylesheets::FunctionRule>> {
++        self.extra_data.functions.get(name)
++    }
++
++
 +    /// pyro: the `@counter-style` rule named `name` in this cascade data (an embedder resolving a
 +    /// counter style name in a shadow tree before the document's).
 +    pub fn counter_style(&self, name: &Atom) -> Option<&Arc<Locked<CounterStyleRule>>> {
@@ -8229,12 +8282,10 @@ diff -ruN a/stylist.rs b/stylist.rs
              featureless_host_rules: None,
              slotted_rules: None,
              part_rules: None,
-@@ -3730,6 +3983,25 @@
-     #[inline]
-     pub fn normal_rules(&self, pseudo_elements: &[PseudoElement]) -> Option<&SelectorMap<Rule>> {
+@@ -3732,6 +3991,25 @@
          self.normal_rules.rules(pseudo_elements)
-+    }
-+
+     }
+ 
 +    /// pyro: the rules of `normal_rules(&[pseudo])` that can make `pseudo` (`::before`
 +    /// or `::after`) generate a box. `None` for other pseudo-elements.
 +    #[inline]
@@ -8252,10 +8303,12 @@ diff -ruN a/stylist.rs b/stylist.rs
 +                .is_some_and(|m| !m.is_empty())
 +            || self.slotted_rules(pseudos).is_some_and(|m| !m.is_empty())
 +            || self.part_rules(pseudos).is_some_and(|m| !m.is_empty())
-     }
- 
++    }
++
      /// Returns the featureless pseudo rule map for a given pseudo-element.
-@@ -3850,6 +4122,7 @@
+     #[inline]
+     pub fn featureless_host_rules(
+@@ -3850,6 +4128,7 @@
  
      fn shrink_maps_if_needed(&mut self) {
          self.normal_rules.shrink_if_needed();
@@ -8263,7 +8316,7 @@ diff -ruN a/stylist.rs b/stylist.rs
          if let Some(ref mut host_rules) = self.featureless_host_rules {
              host_rules.shrink_if_needed();
          }
-@@ -3955,10 +4228,20 @@
+@@ -3955,10 +4234,20 @@
          quirks_mode: QuirksMode,
          mut collected_scope_dependencies: Option<&mut Vec<Dependency>>,
      ) -> Result<(), AllocErr> {
@@ -8285,7 +8338,7 @@ diff -ruN a/stylist.rs b/stylist.rs
              let pseudo_elements = selector.pseudo_elements();
              let inner_pseudo_element = pseudo_elements.first();
              if let Some(pseudo) = inner_pseudo_element {
-@@ -4102,6 +4385,15 @@
+@@ -4102,6 +4391,15 @@
                  // :scope may match featureless shadow host if the scope
                  // root is the shadow root.
                  // See https://github.com/w3c/csswg-drafts/issues/9025
@@ -8301,7 +8354,7 @@ diff -ruN a/stylist.rs b/stylist.rs
                  let rules = if matches_featureless_host_only {
                      self.featureless_host_rules.get_or_insert_with(Box::default)
                  } else if rule.selector.is_slotted() {
-@@ -4249,6 +4541,9 @@
+@@ -4249,6 +4547,9 @@
                      self.extra_data
                          .add_font_face(rule, containing_rule_state.layer_id);
                  },
@@ -8311,7 +8364,7 @@ diff -ruN a/stylist.rs b/stylist.rs
                  CssRule::FontFeatureValues(ref rule) => {
                      self.extra_data
                          .add_font_feature_values(rule, containing_rule_state.layer_id);
-@@ -4476,7 +4771,14 @@
+@@ -4476,7 +4777,14 @@
                                  | ImplicitScopeRoot::DocumentElement => {
                                      StylistImplicitScopeRoot::Normal(root)
                                  },
@@ -8326,7 +8379,7 @@ diff -ruN a/stylist.rs b/stylist.rs
                                  | ImplicitScopeRoot::InShadowTree(_) => {
                                      // Style data can be shared between shadow trees, so we must
                                      // query the implicit root for that specific tree.
-@@ -4708,6 +5010,7 @@
+@@ -4708,6 +5016,7 @@
                  | CssRule::LayerBlock(..)
                  | CssRule::LayerStatement(..)
                  | CssRule::FontPaletteValues(..)
@@ -8334,7 +8387,7 @@ diff -ruN a/stylist.rs b/stylist.rs
                  | CssRule::FontFeatureValues(..)
                  | CssRule::Scope(..)
                  | CssRule::StartingStyle(..)
-@@ -4817,6 +5120,7 @@
+@@ -4817,6 +5126,7 @@
      /// Clears the cascade data, but not the invalidation data.
      fn clear_cascade_data(&mut self) {
          self.normal_rules.clear();
@@ -8498,8 +8551,8 @@ diff -ruN a/substitution/attr.rs b/substitution/attr.rs
  
 diff -ruN a/substitution/conditional.rs b/substitution/conditional.rs
 --- a/substitution/conditional.rs	1970-01-01 00:00:00.000000000 +0000
-+++ b/substitution/conditional.rs	2026-11-21 17:15:53
-@@ -0,0 +1,125 @@
++++ b/substitution/conditional.rs	2026-11-21 19:04:27
+@@ -0,0 +1,126 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
 + * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
@@ -8537,7 +8590,8 @@ diff -ruN a/substitution/conditional.rs b/substitution/conditional.rs
 +        context.consulted_attr_taint |= earlier;
 +        let Ok(substituted) = substituted else { return (None, consulted) };
 +        let parser_context = context.parser_context(&source.url_data);
-+        let indices = crate::parser::EarlyRandomIndices::new(context.early_random_count, context.stylist);
++        let mut indices = crate::parser::EarlyRandomIndices::new(context.early_random_count, context.stylist);
++        indices.function_rule = context.function_frame.as_ref().map(|f| f.rule.as_ref());
 +        let parsed = parser_context.with_random_scope(context.property_id, Some(&indices), |cx| {
 +            Parser::new(&substituted.css).parse_entirely(|i| IfCondition::parse(cx, i)).ok()
 +        });
@@ -8627,8 +8681,8 @@ diff -ruN a/substitution/conditional.rs b/substitution/conditional.rs
 +}
 diff -ruN a/substitution/function.rs b/substitution/function.rs
 --- a/substitution/function.rs	1970-01-01 00:00:00.000000000 +0000
-+++ b/substitution/function.rs	2026-11-21 19:00:01
-@@ -0,0 +1,258 @@
++++ b/substitution/function.rs	2026-11-21 19:05:18
+@@ -0,0 +1,273 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
 + * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
@@ -8670,7 +8724,7 @@ diff -ruN a/substitution/function.rs b/substitution/function.rs
 +}
 +
 +pub(crate) struct Frame {
-+    rule: Arc<FunctionRule>,
++    pub(crate) rule: Arc<FunctionRule>,
 +    scope_skip: usize,
 +    parent: Option<Rc<Frame>>,
 +    seed: u64,
@@ -8730,7 +8784,7 @@ diff -ruN a/substitution/function.rs b/substitution/function.rs
 +        v
 +    }
 +
-+    fn outer(self: &Rc<Self>, name: &Name, cx: &mut SubstitutionReplacementContext) -> Option<Value> {
++    pub(crate) fn outer(self: &Rc<Self>, name: &Name, cx: &mut SubstitutionReplacementContext) -> Option<Value> {
 +        let previous = std::mem::replace(&mut cx.function_frame, self.parent.clone());
 +        let value = super::var::VarFunction::resolve_custom_property(name, cx).map(|v| {
 +            let source = self.rule.result.as_deref().expect("only invoked functions have results");
@@ -8738,6 +8792,19 @@ diff -ruN a/substitution/function.rs b/substitution/function.rs
 +        });
 +        cx.function_frame = previous;
 +        value
++    }
++
++    pub(crate) fn initial(&self, name: &Name) -> Option<Value> {
++        self.parameter(name).and_then(|i| self.parameters.borrow()[i].clone())
++    }
++
++    pub(crate) fn guarded(&self, name: &Name) -> bool {
++        self.locals.borrow().iter().any(|(n, val)| n == name && matches!(val, Binding::Resolving))
++    }
++
++    pub(crate) fn query_value(&self, name: &Name, cx: &mut SubstitutionReplacementContext) -> Option<Value> {
++        let v = super::var::VarFunction::resolve_custom_property(name, cx)?;
++        Some(owned(v, self.rule.result.as_ref()?))
 +    }
 +
 +    fn local(self: &Rc<Self>, index: usize, name: &Name, cx: &mut SubstitutionReplacementContext) -> Option<Value> {
@@ -8761,9 +8828,11 @@ diff -ruN a/substitution/function.rs b/substitution/function.rs
 +        self.resolving.borrow_mut().push(index);
 +        let value = self.substitute(&source, cx).and_then(|v| {
 +            let parameter = self.parameter(name);
-+            match CSSWideKeyword::parse(&mut Parser::new(&v.0.css)) {
++            let keyword = CSSWideKeyword::parse(&mut Parser::new(&v.0.css));
++            match keyword {
 +                Ok(CSSWideKeyword::Initial) => parameter.and_then(|i| self.parameters.borrow()[i].clone()),
-+                Ok(CSSWideKeyword::Inherit) => self.outer(name, cx),
++                Ok(CSSWideKeyword::Inherit) =>
++                    self.outer(name, cx).and_then(|v| self.typed(Some(name), v, parameter.map(|i| &self.rule.parameters[i].syntax), cx)),
 +                Ok(_) => None,
 +                Err(_) => self.typed(Some(name), v, parameter.map(|i| &self.rule.parameters[i].syntax), cx),
 +            }
@@ -8830,12 +8899,7 @@ diff -ruN a/substitution/function.rs b/substitution/function.rs
 +        let skip = parent.as_ref().map_or(0, |p| p.scope_skip);
 +        let (rule, scope_skip) = cx.computed_context.lookup_function(cx.stylist, &self.name, skip).ok_or(())?;
 +        let result = rule.result.clone().ok_or(())?;
-+        if self.arguments.len() > rule.parameters.len()
-+            || rule.parameters[self.arguments.len()..].iter().any(|p| p.default.is_none())
-+        {
-+            return Err(());
-+        }
-+
++        if self.arguments.len() > rule.parameters.len() { return Err(()); }
 +        let mut ancestors = parent.clone();
 +        let mut depth = 0;
 +        while let Some(f) = ancestors {
@@ -8869,15 +8933,20 @@ diff -ruN a/substitution/function.rs b/substitution/function.rs
 +                .get(index)
 +                .and_then(|arg| cx.substitute_declaration_value(arg, source).ok())
 +                .and_then(|v| frame.typed(Some(&param.name), owned(v, source), Some(&param.syntax), cx));
-+            frame.parameters.borrow_mut()[index] = supplied.or_else(|| {
-+                let v = frame.substitute(param.default.as_ref()?, cx)?;
-+                match CSSWideKeyword::parse(&mut Parser::new(&v.0.css)) {
-+                    Ok(CSSWideKeyword::Inherit) => frame.outer(&param.name, cx),
-+                    Ok(_) => None,
-+                    Err(_) => frame.typed(Some(&param.name), v, Some(&param.syntax), cx),
-+                }
-+            });
++            let binding = match (supplied, &param.default) {
++                (Some(v), _) => Binding::Ready(Some(v)),
++                (None, Some(default)) => Binding::Pending(default.clone()),
++                (None, None) => Binding::Ready(None),
++            };
++            frame.locals.borrow_mut().push((param.name.clone(), binding));
 +        }
++        // The argument rule is cascaded as a set. Every parameter shadows its
++        // outer namesake, and defaults can depend on either earlier or later parameters.
++        for (index, param) in frame.rule.parameters.iter().enumerate() {
++            let value = frame.local(index, &param.name, cx);
++            frame.parameters.borrow_mut()[index] = value;
++        }
++        frame.locals.borrow_mut().clear();
 +        frame
 +            .locals
 +            .borrow_mut()
@@ -9138,7 +9207,7 @@ diff -ruN a/substitution/mod.rs b/substitution/mod.rs
              if reference.start == start && reference.end == end {
 diff -ruN a/substitution/var.rs b/substitution/var.rs
 --- a/substitution/var.rs	2026-11-11 19:55:57
-+++ b/substitution/var.rs	2026-11-21 18:58:53
++++ b/substitution/var.rs	2026-11-21 19:03:09
 @@ -7,7 +7,7 @@
  
  use super::{
@@ -9169,7 +9238,7 @@ diff -ruN a/substitution/var.rs b/substitution/var.rs
          Ok(Self { name, fallback })
      }
  
-@@ -56,11 +57,22 @@
+@@ -56,11 +57,25 @@
          &'a self,
          source: &'a VariableValue,
          context: &mut SubstitutionReplacementContext<'a, '_, '_, '_>,
@@ -9181,6 +9250,9 @@ diff -ruN a/substitution/var.rs b/substitution/var.rs
 -            .and_then(|name| Self::resolve_custom_property(&name.0, context))
 +            .and_then(|name| {
 +                if inherited {
++                    if let Some(frame) = context.function_frame.clone() {
++                        return frame.outer(&name.0, context).map(|(v, tainted)| Substitution::from_value(v, tainted));
++                    }
 +                    let value = Self::inherited_value(&name.0, context)?;
 +                    if value.viewport_dependent {
 +                        context.computed_context.builder.add_flags(crate::computed_value_flags::ComputedValueFlags::USES_VIEWPORT_UNITS);
@@ -9193,7 +9265,7 @@ diff -ruN a/substitution/var.rs b/substitution/var.rs
              .ok_or(())
              .or_else(|_| {
                  context.substitute_declaration_value(self.fallback.as_ref().ok_or(())?, source)
-@@ -69,12 +81,37 @@
+@@ -69,12 +84,37 @@
          Ok(substitution)
      }
  

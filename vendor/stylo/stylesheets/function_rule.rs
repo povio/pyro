@@ -20,7 +20,7 @@ use std::fmt::{self, Write};
 use style_traits::{CssStringWriter, ParseError, StyleParseErrorKind};
 
 /// A parsed function definition, including its signature and descriptors.
-#[derive(Clone, Debug, MallocSizeOf, ToShmem)]
+#[derive(Clone, Debug, ToShmem)]
 pub struct FunctionRule {
     /// The function name including its two leading dashes.
     pub name: Atom,
@@ -31,7 +31,7 @@ pub struct FunctionRule {
     text: String,
 }
 
-#[derive(Clone, Debug, ToShmem, MallocSizeOf)]
+#[derive(Clone, Debug, ToShmem)]
 pub(crate) struct Parameter {
     pub name: Name,
     pub syntax: Descriptor,

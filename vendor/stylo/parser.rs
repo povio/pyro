@@ -74,6 +74,7 @@ impl NestingContext {
 /// Parsers may try the same token under different numeric grammars before one succeeds.
 pub(crate) struct EarlyRandomIndices<'a> {
     stylist: &'a crate::stylist::Stylist,
+    pub(crate) function_rule: Option<&'a crate::stylesheets::FunctionRule>,
     start: i32,
     positions: RefCell<smallvec::SmallVec<[usize; 4]>>,
 }
@@ -86,7 +87,7 @@ impl std::fmt::Debug for EarlyRandomIndices<'_> {
 
 impl<'a> EarlyRandomIndices<'a> {
     pub(crate) fn new(start: i32, stylist: &'a crate::stylist::Stylist) -> Self {
-        Self { start, stylist, positions: Default::default() }
+        Self { start, stylist, function_rule: None, positions: Default::default() }
     }
 
     pub(crate) fn end(&self) -> i32 {
@@ -131,11 +132,13 @@ impl<'a> PropertyDeclarationContext<'a> {
         self.early_random_indices.is_some()
     }
 
-    pub(crate) fn inline_style_registration(
-        &self,
-        name: &crate::custom_properties::Name,
-    ) -> Option<&crate::properties_and_values::rule::Descriptors> {
-        Some(self.early_random_indices?.stylist.get_custom_property_registration(name))
+    pub(crate) fn inline_style_syntax(&self, name: &crate::custom_properties::Name)
+        -> Option<&crate::properties_and_values::syntax::Descriptor> {
+        let indices = self.early_random_indices?;
+        if let Some(rule) = indices.function_rule {
+            return rule.parameters.iter().find(|p| &p.name == name).map(|p| &p.syntax);
+        }
+        indices.stylist.get_custom_property_registration(name).syntax.as_ref()
     }
 
     /// Claims the next index for a random() function in this declaration. The

@@ -1037,7 +1037,7 @@ impl<T: TElement> ElementContext for T {
         let mut shadow = scope.get_shadow_root_for_scoped(*self);
         let mut depth = 0;
         while let Some(root) = shadow {
-            if depth >= skip && let Some(rule) = root.style_data().and_then(|d| d.extra_data.functions.get(name)) {
+            if depth >= skip && let Some(rule) = root.style_data().and_then(|d| d.function_by_name(name)) {
                 return Some((rule.clone(), depth));
             }
             depth += 1;
