@@ -492,19 +492,21 @@ pub fn compute_replaced_layout(
     let is_content_keyword = |d: taffy::Dimension| d.is_sizing_keyword() && !d.is_stretch();
     let mut min_size = min_size;
     let mut max_size = max_size;
+    if min_style.width.is_stretch() { min_size.width = stretch_size.width; }
+    if max_style.width.is_stretch() { max_size.width = stretch_size.width; }
+    if min_style.height.is_stretch() { min_size.height = stretch_size.height; }
+    if max_style.height.is_stretch() { max_size.height = stretch_size.height; }
     if is_content_keyword(min_style.width)
         || is_content_keyword(max_style.width)
         || is_content_keyword(min_style.height)
         || is_content_keyword(max_style.height)
     {
-        let content_width = style_size
-            .height
+        let content_width = style_size.height.or(Some(inherent_size.height).filter(|_| min_size.height.is_some() || max_size.height.is_some()))
             .map(|h| h.maybe_clamp(min_size.height, max_size.height))
             .zip(aspect_ratio)
             .map(|(h, ratio)| h * ratio)
             .unwrap_or(inherent_size.width);
-        let content_height = style_size
-            .width
+        let content_height = style_size.width.or(Some(inherent_size.width).filter(|_| min_size.width.is_some() || max_size.width.is_some()))
             .map(|w| w.maybe_clamp(min_size.width, max_size.width))
             .zip(aspect_ratio)
             .map(|(w, ratio)| w / ratio)
@@ -569,11 +571,7 @@ pub fn compute_replaced_layout(
     if known_dimensions.width.is_some() | known_dimensions.height.is_some() {
         // Style max sizes without the available-space fallback: available space must not
         // constrain the aspect-ratio transfer of parent-resolved dimensions.
-        let style_max_size = style
-            .max_size()
-            .maybe_resolve(basis_for_max_and_preferred, &resolve_calc_value)
-            .maybe_sub(box_sizing_adjustment)
-            .maybe_max(min_size);
+        let style_max_size = max_size.maybe_max(min_size);
 
         let content_box_known_dimensions = known_dimensions.maybe_sub(pb_sum);
         let transferred = content_box_known_dimensions
@@ -590,14 +588,14 @@ pub fn compute_replaced_layout(
         return LayoutOutput::from_sizes(size + pb_sum, overflow_rect_for(size));
     }
 
-    let unclamped_size = if style_size.width.is_some() | style_size.height.is_some() {
-        apply_ratio(style_size).unwrap_or(inherent_size)
-    } else {
-        inherent_size
-    };
+    if style_size.width.is_some() || style_size.height.is_some() {
+        let preferred = style_size.maybe_clamp(min_size, max_size);
+        let size = apply_ratio(preferred).unwrap_or(inherent_size).maybe_clamp(min_size, max_size);
+        return LayoutOutput::from_sizes(size + pb_sum, overflow_rect_for(size));
+    }
 
     // Floor size at zero
-    let size = unclamped_size.map(|s| s.max(0.0));
+    let size = inherent_size.map(|s| s.max(0.0));
 
     // Violations
     let width_violation = if size.width < min_size.width.unwrap_or(0.0) {

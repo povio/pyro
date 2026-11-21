@@ -29982,7 +29982,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
  
      // Percentages are only resolved against zero in the inline axis.
      // See https://www.w3.org/TR/css-sizing-3/#replaced-percentage-min-contribution
-@@ -276,6 +484,48 @@
+@@ -276,6 +484,50 @@
          .maybe_max(min_size)
          .maybe_sub(box_sizing_adjustment);
  
@@ -29994,19 +29994,21 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
 +    let is_content_keyword = |d: taffy::Dimension| d.is_sizing_keyword() && !d.is_stretch();
 +    let mut min_size = min_size;
 +    let mut max_size = max_size;
++    if min_style.width.is_stretch() { min_size.width = stretch_size.width; }
++    if max_style.width.is_stretch() { max_size.width = stretch_size.width; }
++    if min_style.height.is_stretch() { min_size.height = stretch_size.height; }
++    if max_style.height.is_stretch() { max_size.height = stretch_size.height; }
 +    if is_content_keyword(min_style.width)
 +        || is_content_keyword(max_style.width)
 +        || is_content_keyword(min_style.height)
 +        || is_content_keyword(max_style.height)
 +    {
-+        let content_width = style_size
-+            .height
++        let content_width = style_size.height.or(Some(inherent_size.height).filter(|_| min_size.height.is_some() || max_size.height.is_some()))
 +            .map(|h| h.maybe_clamp(min_size.height, max_size.height))
 +            .zip(aspect_ratio)
 +            .map(|(h, ratio)| h * ratio)
 +            .unwrap_or(inherent_size.width);
-+        let content_height = style_size
-+            .width
++        let content_height = style_size.width.or(Some(inherent_size.width).filter(|_| min_size.width.is_some() || max_size.width.is_some()))
 +            .map(|w| w.maybe_clamp(min_size.width, max_size.width))
 +            .zip(aspect_ratio)
 +            .map(|(w, ratio)| w / ratio)
@@ -30031,7 +30033,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
      // For ContentSize mode, ignore preferred/min size styles in the axis being measured: the
      // parent layout algorithm applies them itself, and content-based measurement should return
      // the content size (the intrinsic size for replaced elements). Constraints in the opposite
-@@ -286,6 +536,13 @@
+@@ -286,6 +538,13 @@
              RequestedAxis::Horizontal => {
                  style_size.width = None;
                  min_size.width = None;
@@ -30045,7 +30047,7 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
              }
              RequestedAxis::Vertical => {
                  style_size.height = None;
-@@ -295,6 +552,18 @@
+@@ -295,22 +554,29 @@
          }
      }
  
@@ -30064,7 +30066,14 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
      // Known dimensions are the parent's current sizing inputs. Clamp them before transferring
      // an aspect ratio so provisional cross-axis sizes do not bypass replaced-element limits.
      if known_dimensions.width.is_some() | known_dimensions.height.is_some() {
-@@ -308,9 +577,8 @@
+         // Style max sizes without the available-space fallback: available space must not
+         // constrain the aspect-ratio transfer of parent-resolved dimensions.
+-        let style_max_size = style
+-            .max_size()
+-            .maybe_resolve(basis_for_max_and_preferred, &resolve_calc_value)
+-            .maybe_sub(box_sizing_adjustment)
+-            .maybe_max(min_size);
++        let style_max_size = max_size.maybe_max(min_size);
  
          let content_box_known_dimensions = known_dimensions.maybe_sub(pb_sum);
          let transferred = content_box_known_dimensions
@@ -30076,17 +30085,29 @@ diff --git a/packages/blitz-dom/src/layout/replaced.rs b/packages/blitz-dom/src/
  
          // Known axes are authoritative (already resolved by the parent); only the axis
          // derived via aspect-ratio transfer (or falling back to the intrinsic size) is
-@@ -323,9 +591,7 @@
+@@ -322,16 +588,14 @@
+         return LayoutOutput::from_sizes(size + pb_sum, overflow_rect_for(size));
      }
  
-     let unclamped_size = if style_size.width.is_some() | style_size.height.is_some() {
+-    let unclamped_size = if style_size.width.is_some() | style_size.height.is_some() {
 -        style_size
 -            .maybe_apply_aspect_ratio(aspect_ratio)
 -            .unwrap_or(inherent_size)
-+        apply_ratio(style_size).unwrap_or(inherent_size)
-     } else {
-         inherent_size
-     };
+-    } else {
+-        inherent_size
+-    };
++    if style_size.width.is_some() || style_size.height.is_some() {
++        let preferred = style_size.maybe_clamp(min_size, max_size);
++        let size = apply_ratio(preferred).unwrap_or(inherent_size).maybe_clamp(min_size, max_size);
++        return LayoutOutput::from_sizes(size + pb_sum, overflow_rect_for(size));
++    }
+ 
+     // Floor size at zero
+-    let size = unclamped_size.map(|s| s.max(0.0));
++    let size = inherent_size.map(|s| s.max(0.0));
+ 
+     // Violations
+     let width_violation = if size.width < min_size.width.unwrap_or(0.0) {
 diff --git a/packages/blitz-dom/src/layout/scroll_markers.rs b/packages/blitz-dom/src/layout/scroll_markers.rs
 new file mode 100644
 --- /dev/null
