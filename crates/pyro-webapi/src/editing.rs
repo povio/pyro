@@ -647,14 +647,18 @@ pub(crate) fn insertion_point(dom: &Dom, caret: Point) -> Point {
 }
 
 pub(crate) fn insert_at(dom: &mut Dom, caret: Point, text: &str) -> Point {
-    let (n, off) = insertion_point(dom, caret);
+    let point = insertion_point(dom, caret);
+    insert_at_point(dom, point, text)
+}
+
+fn insert_at_point(dom: &mut Dom, (n, off): Point, text: &str) -> Point {
     let units = pyro_dom::dom::utf16_len(text);
     if is_text(dom, n) {
         let _ = dom.replace_data(n, off, 0, text);
         return (n, off + units);
     }
-    let Ok(doc) = dom.node_document(n) else { return caret };
-    let Ok(t) = dom.create_text(doc, text) else { return caret };
+    let Ok(doc) = dom.node_document(n) else { return (n, off) };
+    let Ok(t) = dom.create_text(doc, text) else { return (n, off) };
     let before = dom.child_at(n, off).ok().flatten();
     // Typing into an empty block replaces its <br> placeholder, as does
     // typing on the empty last line after a line break (`a<br>[]<br>`).
@@ -673,17 +677,43 @@ pub(crate) fn insert_at(dom: &mut Dom, caret: Point, text: &str) -> Point {
 
 /// A DOM selection can be inside a void element. Place typed text at its
 /// editable parent boundary, retaining preceding inline formatting if possible.
-fn typing_point(dom: &Dom, host: NodeId, caret: Point) -> Option<Point> {
-    let Ok(element) = dom.element(caret.0) else { return Some(caret) };
+fn typing_point(page: &PageDom, dom: &Dom, host: NodeId, caret: Point) -> Option<Point> {
+    let Ok(element) = dom.element(caret.0) else { return Some(insertion_point(dom, caret)) };
     if !element.is_html() || !pyro_dom::serialize::is_void(element.local_name()) {
-        return Some(caret);
+        return Some(insertion_point(dom, caret));
     }
     if caret.0 == host {
         return None;
     }
     let parent = dom.parent(caret.0).ok()??;
     let index = dom.index_in_parent(caret.0).ok()?;
-    Some((parent, index))
+    let boundary = (parent, index);
+    let layout = page.layout();
+    if layout.computed_style_value(dom, caret.0, "display") == "block" {
+        return Some(boundary);
+    }
+
+    // Empty editable inline boxes between the caret and preceding text do
+    // not interrupt its formatting. Stop before other hosts or inline boxes
+    // that reserve space, such as inline-blocks.
+    let mut previous = dom.prev_sibling(caret.0).ok().flatten();
+    while let Some(node) = previous {
+        if editing_host(dom, node) != Some(host) {
+            break;
+        }
+        let end = editable_edge(dom, (node, len(dom, node)), false);
+        if is_text(dom, end.0) {
+            return Some(end);
+        }
+        if dom.child_count(node).ok() != Some(0) || !is_container(dom, node)
+            || dom.shadow_root(node).ok().flatten().is_some()
+            || layout.computed_style_value(dom, node, "display") != "inline"
+        {
+            break;
+        }
+        previous = dom.prev_sibling(node).ok().flatten();
+    }
+    Some(boundary)
 }
 
 /// insertText (typing, `Input.insertText`): replaces the selection.
@@ -693,7 +723,11 @@ pub fn insert_text(page: &Rc<PageDom>, host: NodeId, text: &str) {
         let caret = {
             let mut dom = page.dom.borrow_mut();
             let caret = if start != end { delete_range(&mut dom, host, start, end, false) } else { start };
-            let Some(mut caret) = typing_point(&dom, host, caret) else { return };
+            let mut caret = caret;
+            if text.starts_with('\n') && dom.element(caret.0).is_ok_and(|el| el.is_html() && pyro_dom::serialize::is_void(el.local_name())) {
+                let Some(point) = typing_point(page, &dom, host, caret) else { return };
+                caret = point;
+            }
             for (index, part) in text.split('\n').enumerate() {
                 if index != 0 {
                     // An inserted linefeed performs insertParagraph within
@@ -701,7 +735,8 @@ pub fn insert_text(page: &Rc<PageDom>, host: NodeId, text: &str) {
                     caret = split_block(page, &mut dom, host, caret);
                 }
                 if !part.is_empty() {
-                    let inserted_end = insert_at(&mut dom, caret, part);
+                    let Some(point) = typing_point(page, &dom, host, caret) else { return };
+                    let inserted_end = insert_at_point(&mut dom, point, part);
                     whitespace::inserted(page, &mut dom, host, inserted_end, part);
                     caret = crate::edit_commands::inline_value::format_typed(
                         page,
