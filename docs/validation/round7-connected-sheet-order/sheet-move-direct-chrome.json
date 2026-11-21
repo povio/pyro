@@ -1,0 +1,21 @@
+{
+  "label": "chrome",
+  "bin": "/Users/xban1x/Library/Caches/lightningpanda/round6-reference-158/census/launch-158",
+  "version": {
+    "Browser": "Chrome/158.0.8127.37",
+    "File-Path-Style": "posix",
+    "Protocol-Version": "1.3",
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/158.0.0.0 Safari/537.36",
+    "V8-Version": "15.8.62.31",
+    "WebKit-Version": "537.36 (@b8c2be851f62f6a394ec57955d7f31335d7cb6d4)",
+    "webSocketDebuggerUrl": "ws://127.0.0.1:51535/devtools/browser/5c56aef3-5443-4f3c-9cb1-3152541e75fc"
+  },
+  "fixtureSHA256": "8e102200ee49a055315ed979b656794fb87b7cac2329cba4d24e8d3824cbf81f",
+  "result": [
+    "second",
+    "first",
+    "second",
+    "first"
+  ],
+  "utc": "2026-11-21T22:01:56.147Z"
+}
