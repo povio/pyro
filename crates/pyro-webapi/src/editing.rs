@@ -891,10 +891,14 @@ pub fn delete(page: &Rc<PageDom>, host: NodeId, backward: bool) {
             } else {
                 delete_content(page, &mut dom, host, start, end, backward, (from, to))
             };
-            if let Some(repair) = repair {
-                whitespace::at(page, &mut dom, host, caret, repair);
-            }
-            caret
+            let adjacent = (start == end && from.0 == to.0 && caret == from && is_text(&dom, from.0))
+                .then(|| whitespace::after_text_deletion(page, &mut dom, host, caret)).flatten();
+            adjacent.unwrap_or_else(|| {
+                if let Some(repair) = repair {
+                    whitespace::at(page, &mut dom, host, caret, repair);
+                }
+                caret
+            })
         };
         set_selection(page, caret, caret);
     });
