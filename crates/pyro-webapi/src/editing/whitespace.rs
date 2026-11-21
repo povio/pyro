@@ -355,7 +355,7 @@ pub(super) fn at(page: &PageDom, dom: &mut Dom, host: NodeId, (node, offset): Po
         // internal space to wrap.
         Repair::Deleted => (0..count)
             .map(|i| {
-                let nonbreaking = (i % 2 == 0 && (count > 1 || first)) || (last && i + 1 == count);
+                let nonbreaking = (i % 2 == 0 && (count > 1 || first)) || (i + 1 == count && (last || right_char.is_none()));
                 if nonbreaking { '\u{a0}' } else { ' ' }
             })
             .collect(),
