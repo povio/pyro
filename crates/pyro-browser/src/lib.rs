@@ -1701,6 +1701,9 @@ impl Browser {
             } else {
                 opener_main
             };
+            if let Some(opener_host) = frames.upgrade() {
+                p.frames.cluster_group.set(opener_host.cluster_group.get());
+            }
             *p.frames.opener.borrow_mut() = Some(frames);
             *p.frames.popup.borrow_mut() = Some(ticket.clone());
             // The initial about:blank document is the opener's creation.
@@ -1712,6 +1715,7 @@ impl Browser {
                     realm.realm.set_origin(Some(origin.0.clone()));
                 }
                 if let Some(dom) = &p.main_frame.page_dom {
+                    dom.set_window_agent_cluster(p.frames.cluster_group.get(), frames::frame_origin_key(&p.main_frame));
                     dom.set_base_url(&origin.2);
                     let doc = dom.document();
                     let _ = dom.dom.borrow_mut().set_document_base_url(doc, Some(&origin.2));

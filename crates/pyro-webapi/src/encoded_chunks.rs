@@ -10,9 +10,14 @@ pub(crate) struct EncodedChunk {
     timestamp: i64,
     duration: Option<u64>,
     data: Bytes,
+    cluster: crate::page::AgentCluster,
 }
 
 impl EncodedChunk {
+    pub(crate) fn readable_in(&self, page: &crate::PageDom) -> bool {
+        self.cluster == page.agent_cluster()
+    }
+
     pub(crate) fn byte_length(&self) -> usize {
         self.data.len()
     }
@@ -48,7 +53,8 @@ fn from_init(s: &Scope<'_>, init: Value<'_>, video: bool) -> JsResult<EncodedChu
     let copy = crate::encoding::encoding_helper(s, "copyChunkInput")?.call(None, &[bytes, list])?;
     let data = crate::encoding::buffer_source_bytes(s, copy)?
         .ok_or_else(|| JsError::Type("Invalid encoded chunk data".into()))?;
-    Ok(EncodedChunk { video, key, timestamp, duration, data: Bytes::from(data) })
+    let cluster = crate::target::page_of(s)?.agent_cluster();
+    Ok(EncodedChunk { video, key, timestamp, duration, data: Bytes::from(data), cluster })
 }
 
 macro_rules! encoded_chunk {
@@ -91,9 +97,16 @@ pub(crate) fn parts(s: &Scope<'_>, value: Value<'_>) -> Option<EncodedChunk> {
     s.unwrap::<EncodedAudioChunk>(value).or_else(|| s.unwrap::<EncodedVideoChunk>(value)).map(|c| (*c).clone())
 }
 
+pub(crate) fn exposed_in(s: &Scope<'_>) -> bool {
+    !crate::worker_scope::is_worker(s) || s.global_data::<crate::worker_scope::DedicatedWorkerGlobalScope>().is_some()
+}
+
 pub(crate) fn wrap<'s>(s: &Scope<'s>, chunk: &EncodedChunk) -> JsResult<Value<'s>> {
-    if crate::worker_scope::is_worker(s) && s.global_data::<crate::worker_scope::DedicatedWorkerGlobalScope>().is_none() {
+    if !exposed_in(s) {
         return Err(JsError::dom("DataCloneError", "Encoded chunks are not exposed in this worker"));
+    }
+    if !chunk.readable_in(crate::target::page_of(s)?.as_ref()) {
+        return Err(JsError::dom("DataCloneError", "Encoded chunk belongs to another agent cluster"));
     }
     let object = if chunk.video {
         s.wrap::<EncodedVideoChunk>(chunk.clone(), None)?

@@ -75,6 +75,7 @@ pub(crate) struct WorkerStart {
     shared: Arc<Shared>,
     frame_id: Option<String>,
     origin: Option<String>,
+    creator_cluster: Option<crate::page::AgentCluster>,
     user_agent: Option<UserAgentOverride>,
     extra_headers: HeaderMap,
     cache_disabled: bool,
@@ -116,6 +117,7 @@ impl WorkerStart {
             shared,
             frame_id: page.request_context().frame_id,
             origin: s.realm().origin(),
+            creator_cluster: Some(page.agent_cluster()),
             user_agent: page.identity.borrow().value.clone(),
             extra_headers: page.extra_http_headers(),
             cache_disabled: page.cache_disabled(),
@@ -156,6 +158,7 @@ impl WorkerStart {
             shared,
             frame_id: None,
             origin: Some(origin),
+            creator_cluster: None,
             user_agent: page.identity.borrow().value.clone(),
             extra_headers: page.extra_http_headers(),
             cache_disabled: page.cache_disabled(),
@@ -553,6 +556,13 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
     let document = dom.borrow_mut().create_document(pyro_dom::DocumentKind::Html, start.url.as_str());
     dom.borrow_mut().set_document_active(document, true).map_err(|e| JsError::Type(format!("{e:?}").into()))?;
     let page = PageDom::new(dom, document);
+    // Dedicated workers, including data/blob workers and nested workers, use
+    // their creator's cluster. Shared and service workers own a distinct cluster.
+    if !start.shared_worker {
+        if let Some(cluster) = &start.creator_cluster {
+            page.inherit_agent_cluster(cluster.clone());
+        }
+    }
     page.set_context_services(Rc::new(crate::navigator_extras::ContextServices::for_worker(start.permissions.clone())));
     // The worker's time origin: `performance.now()`, `Event.timeStamp` and
     // its Resource Timing entries count from here.

@@ -14,7 +14,7 @@
 // here, undefined for anything else, DataCloneError if it is detached) and
 // mode 9 detaches the original. Mode 3 also copies an ImageBitmap.
 ((guard, fail, DOMExceptionC) => {
-    const host = (value, mode, extra) => guard(value, mode, extra);
+    const host = (value, mode, extra, attachment) => guard(value, mode, extra, attachment);
     const O = Object, A = Array, M = Map, S = Set, D = Date, R = RegExp, TE = TypeError;
     const AB = ArrayBuffer, U8 = Uint8Array, DV = DataView;
     const errors = {Error, EvalError, RangeError, ReferenceError, SyntaxError, TypeError, URIError};
@@ -62,7 +62,7 @@
     // transfers them afterwards. `streams` (internal callers) receives the
     // transferred streams' new streams, `canvases` the transferred
     // ImageBitmaps' and OffscreenCanvases' copies.
-    function clone(value, options, ports, keep, streams, canvases, forStorage = false) {
+    function clone(value, options, ports, keep, streams, canvases, forStorage = false, clusterBound) {
         const memory = new M(), buffers = [], moved = [];
         let piped, detached;
         if (keep) for (let i = 0; i < keep.length; ++i) call(mapSet, memory, [keep[i], keep[i]]);
@@ -130,7 +130,7 @@
             if (source === null || type !== 'object') return source;
             if (call(mapHas, memory, [source])) return call(mapGet, memory, [source]);
             if (!guard(source)) {
-                const copy = host(source, 0, forStorage);
+                const copy = host(source, 0, forStorage, clusterBound);
                 if (copy === undefined) fail('Proxy and host objects are not cloneable');
                 return remember(source, copy);
             }

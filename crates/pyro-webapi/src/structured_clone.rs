@@ -16,6 +16,9 @@ pub(crate) fn install(s: &Scope<'_>, page: &crate::page::PageDom, factory: pyro_
                         if args.get(2).to_bool() {
                             return Err(JsError::dom("DataCloneError", "Encoded chunks cannot be serialized for storage."));
                         }
+                        if let Some(marker) = args.get(3).as_object() {
+                            marker.set_index(0, s.boolean(true))?;
+                        }
                         return crate::encoded_chunks::wrap(s, &chunk);
                     }
                     Ok(crate::file::clone_host(s, value)?.unwrap_or_else(|| s.undefined()))
@@ -204,6 +207,26 @@ fn complete_stream_transfer<'s>(s: &Scope<'s>, value: pyro_js::Value<'s>, info: 
     done.ok_or_else(|| JsError::dom("DataCloneError", "Value is not transferable"))
 }
 
+/// Local messages normally keep the receiver-realm clone. A graph containing
+/// cluster-bound data stays serialized until delivery, since a MessagePort
+/// (and its queue) can move to a different realm before it is started.
+pub(crate) enum MessagePayload {
+    Local(Persistent, Option<Persistent>),
+    Serialized(WireMessage),
+}
+
+impl MessagePayload {
+    pub(crate) fn read(self, receiver: &Scope<'_>) -> JsResult<(Persistent, Option<Persistent>)> {
+        match self {
+            Self::Local(value, ports) => Ok((value, ports)),
+            Self::Serialized(message) => {
+                let (value, ports) = decode_with_ports(receiver, &message)?;
+                Ok((Persistent::new(receiver, value), ports.map(|p| Persistent::new(receiver, p.value()))))
+            }
+        }
+    }
+}
+
 /// [`clone_with_ports`] of a message posted from `s`'s realm into `rs`'s
 /// (a window or MessagePort of another realm). Whatever the clone throws at
 /// the poster (a getter's exception, a transfer-list TypeError, a
@@ -219,10 +242,11 @@ pub(crate) fn clone_into<'s, 'r>(
     rs: &Scope<'r>,
     value: pyro_js::Value<'s>,
     options: pyro_js::Value<'s>,
-) -> JsResult<(pyro_js::Value<'r>, pyro_js::Object<'r>)> {
-    if s.realm_id() == rs.realm_id() {
-        return clone_with_ports(rs, rs.rehome(value), rs.rehome(options));
-    }
+) -> JsResult<MessagePayload> {
+    let local = |value, ports: pyro_js::Object<'r>| {
+        let has_ports = ports.get_atom("length")?.to_number()? > 0.;
+        Ok(MessagePayload::Local(Persistent::new(rs, value), has_ports.then(|| Persistent::new(rs, ports.value()))))
+    };
     let second = |value: pyro_js::Value<'r>, options: pyro_js::Value<'r>| {
         clone_with_ports(rs, value, options).map_err(|error| match error {
             JsError::Terminated | JsError::ContextDestroyed => error,
@@ -239,10 +263,18 @@ pub(crate) fn clone_into<'s, 'r>(
     let Ok(clone) = realm_clone(s) else {
         // No clone function in the poster's realm (an internal one): clone
         // straight into the receiver, still without leaking its errors.
-        return from_source(rs.rehome(value), rs.rehome(options));
+        let (copy, ports) = from_source(rs.rehome(value), rs.rehome(options))?;
+        return local(copy, ports);
     };
     let (ports, streams, canvases) = (s.array(&[])?, s.array(&[])?, s.array(&[])?);
-    let copy = clone.call(None, &[value, options, ports.value(), s.undefined(), streams.value(), canvases.value()])?;
+    let cluster_bound = s.array(&[s.boolean(false)])?;
+    let copy = clone.call(None, &[
+        value, options, ports.value(), s.undefined(), streams.value(), canvases.value(), s.boolean(false), cluster_bound.value(),
+    ])?;
+    let must_serialize = cluster_bound.get_index(0)?.to_bool();
+    if !must_serialize && s.realm_id() == rs.realm_id() {
+        return local(rs.rehome(copy), rs.rehome_object(ports));
+    }
     // The second pass transfers what the first one made: ports, streams,
     // then ImageBitmaps and OffscreenCanvases.
     let port_count = ports.get_atom("length")?.to_number()? as u32;
@@ -255,13 +287,17 @@ pub(crate) fn clone_into<'s, 'r>(
         for i in 0..canvas_count {
             ports.set_index(port_count + stream_count + i, canvases.get_index(i)?)?;
         }
-        let o = rs.object();
-        o.set_atom("transfer", rs.rehome(ports.value()))?;
+        let o = s.object();
+        o.set_atom("transfer", ports.value())?;
         o.value()
     } else {
-        rs.undefined()
+        s.undefined()
     };
-    from_source(rs.rehome(copy), options)
+    if must_serialize {
+        return encode_message(s, copy, options).map(MessagePayload::Serialized);
+    }
+    let (copy, ports) = from_source(rs.rehome(copy), rs.rehome(options))?;
+    local(copy, ports)
 }
 
 /// `postMessage(message, transfer)` / `postMessage(message, options)` as the
@@ -553,6 +589,13 @@ pub(crate) fn decode_with_ports<'s>(
     s: &Scope<'s>,
     message: &WireMessage,
 ) -> JsResult<(pyro_js::Value<'s>, Option<pyro_js::Object<'s>>)> {
+    // Reject an incompatible recipient before claiming any transferred ports.
+    if !message.chunks.is_empty() {
+        let page = crate::target::page_of(s)?;
+        if !crate::encoded_chunks::exposed_in(s) || message.chunks.iter().any(|chunk| !chunk.readable_in(&page)) {
+            return Err(JsError::dom("DataCloneError", "Encoded chunks are not available to the receiving agent cluster"));
+        }
+    }
     let (_, decode) = wire_functions(s)?;
     let list = s.array(&[])?;
     for (i, bytes) in message.buffers.iter().enumerate() {
