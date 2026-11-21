@@ -1043,7 +1043,7 @@
     a.pendingGen++;
   }
 
-  function schedulePending(a, kind) {
+  function schedulePending(a, kind, generationTime) {
     a.pending = kind;
     const gen = ++a.pendingGen;
     let tries = 0;
@@ -1062,7 +1062,7 @@
         }
         return;
       }
-      if (kind === 'play') runPendingPlay(a); else runPendingPause(a);
+      if (kind === 'play') runPendingPlay(a, generationTime); else runPendingPause(a);
     };
     // A progress-based timeline's pending task runs after the next frame, as the timeline moves.
     // (At the start of that frame, before its callbacks that script requested later, as the
@@ -1107,8 +1107,7 @@
     });
   }
 
-  function runPendingPlay(a) {
-    const ready = timelineTime(a.timeline);
+  function runPendingPlay(a, ready = timelineTime(a.timeline)) {
     // On a progress-based timeline the start time aligns with its start (or end, playing
     // backwards): the animation's progress is the timeline's (Web Animations 2, auto-aligned
     // start time), unless script seeked it.
@@ -1809,7 +1808,7 @@
       a.startTime = null;
       a.holdTime = 0;
       a.ready = deferred();
-      schedulePending(a, 'play');
+      schedulePending(a, 'play', transition ? start : undefined);
     } else {
       a.startTime = start;
       a.holdTime = null;
