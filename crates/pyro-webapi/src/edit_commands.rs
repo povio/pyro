@@ -20,7 +20,7 @@ pub(crate) mod inline_value;
 
 use std::rc::Rc;
 
-use pyro_dom::{Dom, NodeId, NodeType};
+use pyro_dom::{forms::ControlSelection, Dom, NodeId, NodeType};
 
 use crate::editing::{self, Point};
 use crate::page::PageDom;
@@ -1907,18 +1907,6 @@ enum Caret {
     Host(Point),
 }
 
-#[derive(Clone, Copy)]
-struct ControlSelection {
-    range: (u32, u32),
-    direction: Option<bool>,
-}
-
-impl ControlSelection {
-    fn read(dom: &Dom, target: NodeId) -> Option<Self> {
-        Some(Self { range: dom.selection(target).ok()?, direction: dom.selection_direction(target).ok()? })
-    }
-}
-
 enum Saved {
     Control { value: String, selection: ControlSelection, opposite: Option<ControlSelection> },
     /// Saved anchor and focus offsets, in selection direction.
@@ -1965,7 +1953,7 @@ fn save(page: &PageDom, target: NodeId) -> Option<Saved> {
     if editing::is_text_entry_control(&dom, target) {
         return Some(Saved::Control {
             value: dom.value(target).ok()?,
-            selection: ControlSelection::read(&dom, target)?,
+            selection: dom.selection_snapshot(target).ok()?,
             opposite: None,
         });
     }
@@ -2036,7 +2024,7 @@ pub(crate) fn note_control_edited(page: &PageDom, el: NodeId) {
     if let Some(Step { saved: Saved::Control { opposite, .. }, .. }) = history.undo.last_mut().filter(|s| s.target == el) {
         // Redo restores the edit's resulting caret even if script moves the
         // selection before undo. Coalesced typing updates the same step.
-        *opposite = ControlSelection::read(&page.dom.borrow(), el);
+        *opposite = page.dom.borrow().selection_after_edit(el).ok();
     }
 }
 
