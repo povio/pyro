@@ -3672,7 +3672,7 @@ simple_class!(SvgSvgElement, "SVGSVGElement", SvgGraphicsElement, |def| {
     });
     def.method("animationsPaused", 0, |s, n, _a| Ok(s.boolean(crate::smil::paused(n.page()))));
     def.method("createSVGNumber", 0, |s, _n, _a| {
-        Ok(s.wrap::<collections::SvgNumber>(std::cell::Cell::new(0.0), None)?.value())
+        collections::number_value(s, pyro_dom::svg_point_list::NumberItem::detached(0.0))
     });
     def.method("createSVGAngle", 0, |s, _n, _a| Ok(collections::create_svg_angle(s)?.value()));
     def.method("createSVGLength", 0, |s, n, _a| {
@@ -3822,7 +3822,9 @@ simple_class!(SvgTextContentElement, "SVGTextContentElement", SvgGraphicsElement
     def.constant("LENGTHADJUST_SPACING", 1.0);
     def.constant("LENGTHADJUST_SPACINGANDGLYPHS", 2.0);
 });
-simple_class!(SvgTextPositioningElement, "SVGTextPositioningElement", SvgTextContentElement);
+simple_class!(SvgTextPositioningElement, "SVGTextPositioningElement", SvgTextContentElement, |def| {
+    def.getter("rotate", |s, n| collections::animated_number_list(s, n, "rotate"));
+});
 simple_class!(SvgTextElement, "SVGTextElement", SvgTextPositioningElement);
 simple_class!(SvgTSpanElement, "SVGTSpanElement", SvgTextPositioningElement);
 simple_class!(SvgTextPathElement, "SVGTextPathElement", SvgTextContentElement, |def| {
@@ -4105,6 +4107,7 @@ simple_class!(SvgFeBlendElement, "SVGFEBlendElement", SvgElement, |def| {
     def.getter("result", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_102)?.value()));
 });
 simple_class!(SvgFeColorMatrixElement, "SVGFEColorMatrixElement", SvgElement, |def| {
+    def.getter("values", |s, n| collections::animated_number_list(s, n, "values"));
     def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_300)?.value()));
     def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_303)?.value()));
     def.getter("width", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_306)?.value()));
@@ -4127,6 +4130,7 @@ simple_class!(SvgFeComponentTransferElement, "SVGFEComponentTransferElement", Sv
     def.getter("result", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_102)?.value()));
 });
 simple_class!(SvgComponentTransferFunctionElement, "SVGComponentTransferFunctionElement", SvgElement, |def| {
+    def.getter("tableValues", |s, n| collections::animated_number_list(s, n, "tableValues"));
     def.constant("SVG_FECOMPONENTTRANSFER_TYPE_UNKNOWN", 0.0);
     def.constant("SVG_FECOMPONENTTRANSFER_TYPE_IDENTITY", 1.0);
     def.constant("SVG_FECOMPONENTTRANSFER_TYPE_TABLE", 2.0);
@@ -4166,6 +4170,7 @@ simple_class!(SvgFeCompositeElement, "SVGFECompositeElement", SvgElement, |def| 
     def.getter("result", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedString>(s, n.page(), n.id, &FE_ATTR_102)?.value()));
 });
 simple_class!(SvgFeConvolveMatrixElement, "SVGFEConvolveMatrixElement", SvgElement, |def| {
+    def.getter("kernelMatrix", |s, n| collections::animated_number_list(s, n, "kernelMatrix"));
     def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_300)?.value()));
     def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_303)?.value()));
     def.getter("width", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_306)?.value()));
