@@ -1,0 +1,30 @@
+numericbasis-main-candidate 8082 page passes 5656 named passes 180873 observed names 194657 statuses {'complete:0': 7871, 'complete:2': 104, 'timeout:None': 11, 'complete:1': 95, 'hang:None': 1}
+numericbasis-main-parent 8082 page passes 5656 named passes 180817 observed names 194657 statuses {'complete:0': 7871, 'complete:2': 104, 'timeout:None': 11, 'complete:1': 95, 'hang:None': 1}
+numericbasis-main-stable 8082 page passes 6950 named passes 182963 observed names 194912 statuses {'complete:0': 7986, 'complete:2': 62, 'complete:1': 23, 'timeout:None': 10, 'hang:None': 1}
+numericbasis-main-parent pages left only 0 right only 0
+numericbasis-main-parent passes left only 56 right only 0
+numericbasis-main-parent observed left only 0 right only 0
+numericbasis-main-stable pages left only 275 right only 1569
+numericbasis-main-stable passes left only 5891 right only 7981
+numericbasis-main-stable observed left only 260 right only 515
+Losses vs parent by URL: Counter()
+numericbasis-focus-candidate 281 page passes 171 named passes 9436 observed names 10607 statuses {'complete:0': 278, 'complete:1': 3}
+numericbasis-focus-parent 281 page passes 171 named passes 9380 observed names 10607 statuses {'complete:0': 278, 'complete:1': 3}
+numericbasis-focus-stable 281 page passes 257 named passes 10452 observed names 10607 statuses {'complete:0': 281}
+numericbasis-focus-parent pages left only 0 right only 0
+numericbasis-focus-parent passes left only 56 right only 0
+numericbasis-focus-parent observed left only 0 right only 0
+numericbasis-focus-stable pages left only 14 right only 100
+numericbasis-focus-stable passes left only 78 right only 1094
+numericbasis-focus-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()
+numericbasis-supplement-candidate 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+numericbasis-supplement-parent 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+numericbasis-supplement-stable 41 page passes 35 named passes 619 observed names 874 statuses {'complete:0': 41}
+numericbasis-supplement-parent pages left only 0 right only 0
+numericbasis-supplement-parent passes left only 0 right only 0
+numericbasis-supplement-parent observed left only 0 right only 0
+numericbasis-supplement-stable pages left only 0 right only 8
+numericbasis-supplement-stable passes left only 0 right only 42
+numericbasis-supplement-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()
