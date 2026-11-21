@@ -168,6 +168,18 @@ fn parts_and_exported_parts() {
 }
 
 #[test]
+fn linguistic_selectors_match_the_part_not_its_host() {
+    let result = styled(
+        "<style>#host::part(label){background:red} #host::part(label):lang(fr):dir(rtl){background:green}</style>
+        <div id=host lang=en dir=ltr><template shadowrootmode=open>
+        <b id=translated part=label lang=fr dir=rtl>x</b><b id=inherited part=label>x</b></template></div>",
+        &["translated", "inherited"],
+    );
+    assert_eq!(background(&result[0].1), GREEN);
+    assert_eq!(background(&result[1].1), RED);
+}
+
+#[test]
 fn directionality_follows_the_node_tree_and_dir_auto_its_text() {
     let r = styled(
         "<style>p:dir(ltr){background:green} p:dir(rtl){background:red}</style>
