@@ -53175,7 +53175,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 diff --git a/packages/blitz-dom/src/resolved_style.rs b/packages/blitz-dom/src/resolved_style.rs
 --- a/packages/blitz-dom/src/resolved_style.rs
 +++ b/packages/blitz-dom/src/resolved_style.rs
-@@ -50,13 +50,16 @@
+@@ -50,20 +50,23 @@
      }
  }
  
@@ -53198,6 +53198,15 @@ diff --git a/packages/blitz-dom/src/resolved_style.rs b/packages/blitz-dom/src/r
  }
  
  /// Serialize a used transform matrix the way `getComputedStyle()` does
+ /// (`matrix(...)` for 2D transforms, `matrix3d(...)` otherwise).
+-fn format_matrix(m: &euclid::default::Transform3D<f64>, is_3d: bool) -> String {
++fn format_matrix(m: &euclid::default::Transform3D<f64>) -> String {
+     let c = format_matrix_component;
+-    if is_3d {
++    if !m.is_2d() {
+         format!(
+             "matrix3d({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
+             c(m.m11),
 @@ -342,6 +345,40 @@
      /// `transform-origin`, `grid-template-rows`/`columns`) resolve to *used* values, so [`resolve`](Self::resolve) should be called
      /// before this method to ensure layout is up to date.
@@ -53284,7 +53293,7 @@ diff --git a/packages/blitz-dom/src/resolved_style.rs b/packages/blitz-dom/src/r
          match property_name {
              // Shorthands of longhands that resolve to used values
              "margin" | "margin-block" | "margin-inline" | "padding" | "padding-block"
-@@ -682,10 +750,17 @@
+@@ -682,14 +750,21 @@
                      let reference_box = euclid::Rect::new(
                          euclid::Point2D::new(CSSPixelLength::new(0.0), CSSPixelLength::new(0.0)),
                          euclid::Size2D::new(
@@ -53294,6 +53303,7 @@ diff --git a/packages/blitz-dom/src/resolved_style.rs b/packages/blitz-dom/src/r
 +                            CSSPixelLength::new(layout.size.height / zoom),
                          ),
                      );
+-                    if let Ok((matrix, is_3d)) =
 +                    use resolved::ToResolvedValue;
 +                    let longhand = style::properties::LonghandId::Transform;
 +                    let transform = transform.clone().to_resolved_value(&resolved::Context {
@@ -53301,9 +53311,14 @@ diff --git a/packages/blitz-dom/src/resolved_style.rs b/packages/blitz-dom/src/r
 +                        for_property: PropertyId::NonCustom(longhand.into()),
 +                        current_longhand: Some(longhand),
 +                    });
-                     if let Ok((matrix, is_3d)) =
++                    if let Ok((matrix, _)) =
                          transform.to_transform_3d_matrix_f64(Some(&reference_box))
                      {
+-                        return format_matrix(&matrix, is_3d);
++                        return format_matrix(&matrix);
+                     }
+                 }
+             }
 diff --git a/packages/blitz-dom/src/scroll_timeline.rs b/packages/blitz-dom/src/scroll_timeline.rs
 new file mode 100644
 --- /dev/null

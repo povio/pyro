@@ -64,9 +64,9 @@ fn format_matrix_component(v: f64) -> String {
 
 /// Serialize a used transform matrix the way `getComputedStyle()` does
 /// (`matrix(...)` for 2D transforms, `matrix3d(...)` otherwise).
-fn format_matrix(m: &euclid::default::Transform3D<f64>, is_3d: bool) -> String {
+fn format_matrix(m: &euclid::default::Transform3D<f64>) -> String {
     let c = format_matrix_component;
-    if is_3d {
+    if !m.is_2d() {
         format!(
             "matrix3d({}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {})",
             c(m.m11),
@@ -761,10 +761,10 @@ impl BaseDocument {
                         for_property: PropertyId::NonCustom(longhand.into()),
                         current_longhand: Some(longhand),
                     });
-                    if let Ok((matrix, is_3d)) =
+                    if let Ok((matrix, _)) =
                         transform.to_transform_3d_matrix_f64(Some(&reference_box))
                     {
-                        return format_matrix(&matrix, is_3d);
+                        return format_matrix(&matrix);
                     }
                 }
             }
