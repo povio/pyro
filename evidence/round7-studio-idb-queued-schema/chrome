@@ -1,0 +1,3 @@
+#!/bin/sh
+spki=$(openssl x509 -in "$WPT_DIR/tools/certs/web-platform.test.pem" -pubkey -noout | openssl pkey -pubin -outform DER | openssl dgst -sha256 -binary | openssl base64 -A)
+exec '/tmp/r7-idb-eval/Google Chrome.app/Contents/MacOS/Google Chrome' --headless --disable-background-networking --no-first-run --disable-default-apps --user-data-dir=/tmp/r7-idb-queue/signed-profile --ignore-certificate-errors-spki-list="$spki" --remote-debugging-port="$5" about:blank

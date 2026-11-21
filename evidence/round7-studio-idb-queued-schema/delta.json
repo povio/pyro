@@ -1,0 +1,180 @@
+{
+  "named": {
+    "base": 314,
+    "candidate": 334,
+    "chrome": 342,
+    "gained": [
+      [
+        "IndexedDB/idbdatabase_deleteObjectStore.any.html",
+        "Attempting to access an index that was deleted as part of object store deletion and then recreated using the same object store name should throw a NotFoundError",
+        1
+      ],
+      [
+        "IndexedDB/idbdatabase_deleteObjectStore.any.html",
+        "Deleted object store's name should be removed from database's list. Attempting to use a deleted IDBObjectStore should throw an InvalidStateError",
+        1
+      ],
+      [
+        "IndexedDB/idbdatabase_deleteObjectStore.any.serviceworker.html",
+        "Attempting to access an index that was deleted as part of object store deletion and then recreated using the same object store name should throw a NotFoundError",
+        1
+      ],
+      [
+        "IndexedDB/idbdatabase_deleteObjectStore.any.serviceworker.html",
+        "Deleted object store's name should be removed from database's list. Attempting to use a deleted IDBObjectStore should throw an InvalidStateError",
+        1
+      ],
+      [
+        "IndexedDB/idbdatabase_deleteObjectStore.any.sharedworker.html",
+        "Attempting to access an index that was deleted as part of object store deletion and then recreated using the same object store name should throw a NotFoundError",
+        1
+      ],
+      [
+        "IndexedDB/idbdatabase_deleteObjectStore.any.sharedworker.html",
+        "Deleted object store's name should be removed from database's list. Attempting to use a deleted IDBObjectStore should throw an InvalidStateError",
+        1
+      ],
+      [
+        "IndexedDB/idbdatabase_deleteObjectStore.any.worker.html",
+        "Attempting to access an index that was deleted as part of object store deletion and then recreated using the same object store name should throw a NotFoundError",
+        1
+      ],
+      [
+        "IndexedDB/idbdatabase_deleteObjectStore.any.worker.html",
+        "Deleted object store's name should be removed from database's list. Attempting to use a deleted IDBObjectStore should throw an InvalidStateError",
+        1
+      ],
+      [
+        "IndexedDB/idbobjectstore_createIndex.any.html",
+        "Attempt to create an index that requires unique values on an object store already contains duplicates",
+        1
+      ],
+      [
+        "IndexedDB/idbobjectstore_createIndex.any.html",
+        "Event order when unique constraint is triggered",
+        1
+      ],
+      [
+        "IndexedDB/idbobjectstore_createIndex.any.html",
+        "Event ordering for a later deleted index",
+        1
+      ],
+      [
+        "IndexedDB/idbobjectstore_createIndex.any.serviceworker.html",
+        "Attempt to create an index that requires unique values on an object store already contains duplicates",
+        1
+      ],
+      [
+        "IndexedDB/idbobjectstore_createIndex.any.serviceworker.html",
+        "Event order when unique constraint is triggered",
+        1
+      ],
+      [
+        "IndexedDB/idbobjectstore_createIndex.any.serviceworker.html",
+        "Event ordering for a later deleted index",
+        1
+      ],
+      [
+        "IndexedDB/idbobjectstore_createIndex.any.sharedworker.html",
+        "Attempt to create an index that requires unique values on an object store already contains duplicates",
+        1
+      ],
+      [
+        "IndexedDB/idbobjectstore_createIndex.any.sharedworker.html",
+        "Event order when unique constraint is triggered",
+        1
+      ],
+      [
+        "IndexedDB/idbobjectstore_createIndex.any.sharedworker.html",
+        "Event ordering for a later deleted index",
+        1
+      ],
+      [
+        "IndexedDB/idbobjectstore_createIndex.any.worker.html",
+        "Attempt to create an index that requires unique values on an object store already contains duplicates",
+        1
+      ],
+      [
+        "IndexedDB/idbobjectstore_createIndex.any.worker.html",
+        "Event order when unique constraint is triggered",
+        1
+      ],
+      [
+        "IndexedDB/idbobjectstore_createIndex.any.worker.html",
+        "Event ordering for a later deleted index",
+        1
+      ]
+    ],
+    "lost": [],
+    "chrome_only": [
+      [
+        "IndexedDB/request-event-ordering-small-values.any.html",
+        "small values",
+        1
+      ],
+      [
+        "IndexedDB/request-event-ordering-small-values.any.serviceworker.html",
+        "small values",
+        1
+      ],
+      [
+        "IndexedDB/request-event-ordering-small-values.any.sharedworker.html",
+        "small values",
+        1
+      ],
+      [
+        "IndexedDB/request-event-ordering-small-values.any.worker.html",
+        "small values",
+        1
+      ],
+      [
+        "IndexedDB/transaction-scheduling-across-connections.any.html",
+        "Check that readwrite transactions with overlapping scopes do not run in parallel.",
+        1
+      ],
+      [
+        "IndexedDB/transaction-scheduling-across-connections.any.worker.html",
+        "Check that readwrite transactions with overlapping scopes do not run in parallel.",
+        1
+      ],
+      [
+        "IndexedDB/transaction-scheduling-rw-scopes.any.html",
+        "Check that scope restrictions on read-write transactions are enforced.",
+        1
+      ],
+      [
+        "IndexedDB/transaction-scheduling-rw-scopes.any.worker.html",
+        "Check that scope restrictions on read-write transactions are enforced.",
+        1
+      ]
+    ],
+    "candidate_only": []
+  },
+  "pages": {
+    "base": 48,
+    "candidate": 56,
+    "chrome": 64,
+    "gained": [
+      "IndexedDB/idbdatabase_deleteObjectStore.any.html",
+      "IndexedDB/idbdatabase_deleteObjectStore.any.serviceworker.html",
+      "IndexedDB/idbdatabase_deleteObjectStore.any.sharedworker.html",
+      "IndexedDB/idbdatabase_deleteObjectStore.any.worker.html",
+      "IndexedDB/idbobjectstore_createIndex.any.html",
+      "IndexedDB/idbobjectstore_createIndex.any.serviceworker.html",
+      "IndexedDB/idbobjectstore_createIndex.any.sharedworker.html",
+      "IndexedDB/idbobjectstore_createIndex.any.worker.html"
+    ],
+    "lost": [],
+    "chrome_only": [
+      "IndexedDB/request-event-ordering-small-values.any.html",
+      "IndexedDB/request-event-ordering-small-values.any.serviceworker.html",
+      "IndexedDB/request-event-ordering-small-values.any.sharedworker.html",
+      "IndexedDB/request-event-ordering-small-values.any.worker.html",
+      "IndexedDB/transaction-scheduling-across-connections.any.html",
+      "IndexedDB/transaction-scheduling-across-connections.any.worker.html",
+      "IndexedDB/transaction-scheduling-rw-scopes.any.html",
+      "IndexedDB/transaction-scheduling-rw-scopes.any.worker.html"
+    ],
+    "candidate_only": []
+  }
+}
