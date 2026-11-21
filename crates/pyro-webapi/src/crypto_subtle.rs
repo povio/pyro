@@ -807,6 +807,26 @@ pub(crate) fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
             Ok(s.boolean(hmac_verify(hash, &key, &data, &bytes_arg(s, a.get(3))?)))
         }
     });
+    native!("chacha20Poly1305", |s, a| {
+        use ring::aead::{Aad, LessSafeKey, Nonce, UnboundKey, CHACHA20_POLY1305};
+        let key = UnboundKey::new(&CHACHA20_POLY1305, &bytes_arg(s, a.get(1))?)
+            .map_err(|_| operation_error("ChaCha20-Poly1305 requires a 256-bit key"))?;
+        // Web Crypto supplies the caller's IV for each operation.
+        let nonce = Nonce::try_assume_unique_for_key(&bytes_arg(s, a.get(2))?)
+            .map_err(|_| operation_error("ChaCha20-Poly1305 requires a 96-bit IV"))?;
+        let mut bytes = bytes_arg(s, a.get(3))?;
+        let aad = Aad::from(bytes_arg(s, a.get(4))?);
+        let key = LessSafeKey::new(key);
+        if a.get(0).to_bool() {
+            key.seal_in_place_append_tag(nonce, aad, &mut bytes)
+                .map_err(|_| operation_error("ChaCha20-Poly1305 encryption failed"))?;
+            buffer(s, &bytes)
+        } else {
+            let plaintext = key.open_in_place(nonce, aad, &mut bytes)
+                .map_err(|_| operation_error("ChaCha20-Poly1305 decryption failed"))?;
+            buffer(s, plaintext)
+        }
+    });
     native!("aesCbc", |s, a| {
         let out =
             aes_cbc(a.get(0).to_bool(), &bytes_arg(s, a.get(1))?, &bytes_arg(s, a.get(2))?, &bytes_arg(s, a.get(3))?)?;
