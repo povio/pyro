@@ -1,0 +1,10 @@
+[
+  "css/css-transitions/CSSTransition-currentTime.tentative.html",
+  "css/css-transitions/CSSTransition-effect.tentative.html",
+  "css/css-transitions/KeyframeEffect-setKeyframes.tentative.html",
+  "css/css-transitions/CSSTransition-startTime.tentative.html",
+  "css/css-transitions/AnimationEffect-getComputedTiming.tentative.html",
+  "css/css-transitions/CSSTransition-finished.tentative.html",
+  "css/css-transitions/transition-zero-duration-with-delay.html",
+  "css/css-transitions/transitioncancel-001.html"
+]
