@@ -1,0 +1,30 @@
+cqstyle-main-candidate 8082 page passes 5758 named passes 181709 observed names 194657 statuses {'complete:0': 7871, 'complete:2': 104, 'timeout:None': 11, 'complete:1': 95, 'hang:None': 1}
+cqstyle-main-parent 8082 page passes 5752 named passes 181696 observed names 194657 statuses {'complete:0': 7871, 'complete:2': 104, 'timeout:None': 11, 'complete:1': 95, 'hang:None': 1}
+cqstyle-main-stable 8082 page passes 6950 named passes 182963 observed names 194912 statuses {'complete:0': 7986, 'complete:2': 62, 'complete:1': 23, 'timeout:None': 10, 'hang:None': 1}
+cqstyle-main-parent pages left only 6 right only 0
+cqstyle-main-parent passes left only 13 right only 0
+cqstyle-main-parent observed left only 0 right only 0
+cqstyle-main-stable pages left only 282 right only 1474
+cqstyle-main-stable passes left only 5902 right only 7156
+cqstyle-main-stable observed left only 260 right only 515
+Losses vs parent by URL: Counter()
+cqstyle-focus-candidate 249 page passes 141 named passes 9443 observed names 9841 statuses {'complete:0': 195, 'complete:1': 54}
+cqstyle-focus-parent 249 page passes 135 named passes 9432 observed names 9841 statuses {'complete:0': 195, 'complete:1': 54}
+cqstyle-focus-stable 249 page passes 230 named passes 9470 observed names 10067 statuses {'complete:0': 247, 'complete:2': 2}
+cqstyle-focus-parent pages left only 6 right only 0
+cqstyle-focus-parent passes left only 11 right only 0
+cqstyle-focus-parent observed left only 0 right only 0
+cqstyle-focus-stable pages left only 4 right only 93
+cqstyle-focus-stable passes left only 385 right only 412
+cqstyle-focus-stable observed left only 1 right only 227
+Losses vs parent by URL: Counter()
+cqstyle-supplement-candidate 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+cqstyle-supplement-parent 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+cqstyle-supplement-stable 41 page passes 35 named passes 619 observed names 874 statuses {'complete:0': 41}
+cqstyle-supplement-parent pages left only 0 right only 0
+cqstyle-supplement-parent passes left only 0 right only 0
+cqstyle-supplement-parent observed left only 0 right only 0
+cqstyle-supplement-stable pages left only 0 right only 8
+cqstyle-supplement-stable passes left only 0 right only 42
+cqstyle-supplement-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()
