@@ -38,10 +38,10 @@ pub(crate) struct DocSelection {
     /// selection is gone once one of them leaves the document; a range
     /// script added follows its live boundary points instead.
     origin: Option<(crate::collections::NodeHold, crate::collections::NodeHold)>,
-    /// Anchor and focus of a selection whose ends are in different trees (a
-    /// shadow tree and its host's): a range cannot span them, so the range
-    /// is collapsed at the focus and the ends are kept here.
-    cross_tree: Option<(Point, Point)>,
+    /// Separate live endpoints for shadow selections, which can span trees
+    /// and follow removal of a shadow host. The exposed Range stays in one tree.
+    composed: Option<Rc<crate::range::RangeOwner>>,
+    cross_tree: bool,
 }
 
 // ----- selection state ----------------------------------------------------------
@@ -58,7 +58,7 @@ pub fn selection(page: &PageDom) -> Option<(Point, Point)> {
     let (start, end) = (s.range.live.start(), s.range.live.end());
     let (a, f) = if s.backward { (end, start) } else { (start, end) };
     let origin = s.origin.as_ref().map(|(a, f)| (a.id, f.id));
-    let cross_tree = s.cross_tree;
+    let cross_tree = s.composed.as_ref().filter(|_| s.cross_tree).map(|r| (r.live.start(), r.live.end()));
     drop(sel);
     if origin.is_some_and(|(a, f)| !connected(page, a) || !connected(page, f)) {
         return None;
@@ -67,6 +67,21 @@ pub fn selection(page: &PageDom) -> Option<(Point, Point)> {
         return Some(points);
     }
     (connected(page, a.0) && connected(page, f.0)).then_some((a, f))
+}
+
+/// Composed snapshots follow live boundary adjustments even when a gesture
+/// selection's original node was removed and its legacy getters are empty.
+pub(crate) fn composed_points(page: &PageDom) -> Option<(Point, Point)> {
+    let selection = page.selection.borrow();
+    let sel = selection.as_ref()?;
+    let range = &sel.range.live;
+    let mut points = (range.start(), range.end());
+    if let Some(shadow) = &sel.composed {
+        if sel.cross_tree || !connected(page, points.0.0) || !connected(page, points.1.0) {
+            points = (shadow.live.start(), shadow.live.end());
+        }
+    }
+    (connected(page, points.0.0) && connected(page, points.1.0)).then_some(points)
 }
 
 /// (start, end) in document order.
@@ -89,14 +104,22 @@ pub fn set_selection(page: &Rc<PageDom>, anchor: Point, focus: Point) {
         (true, true) => (focus, anchor),
         (true, false) => (anchor, focus),
     };
-    let cross_tree = (!same_tree).then_some((anchor, focus));
+    let cross_tree = !same_tree;
+    let in_shadow = cross_tree || page.dom.borrow().root_node(anchor.0, false).ok() != Some(page.document());
+    let composed = if in_shadow {
+        let Ok(range) = crate::range::RangeOwner::new(page, anchor, focus) else { return };
+        range.live.track_shadow_host_removal();
+        Some(range)
+    } else {
+        None
+    };
     let Ok(range) = crate::range::RangeOwner::new(page, start, end) else { return };
     let origin =
         match (crate::collections::NodeHold::new(page, anchor.0), crate::collections::NodeHold::new(page, focus.0)) {
             (Ok(a), Ok(f)) => Some((a, f)),
             _ => None,
         };
-    let old = page.selection.replace(Some(DocSelection { range, backward, wrappers: Vec::new(), origin, cross_tree }));
+    let old = page.selection.replace(Some(DocSelection { range, backward, wrappers: Vec::new(), origin, composed, cross_tree }));
     drop(old);
     if changed {
         page.typing_values.take();
@@ -114,7 +137,8 @@ pub(crate) fn retarget_selection(page:&Rc<PageDom>, anchor:Point, focus:Point) {
     let Some(current)=slot.as_mut() else{return};
     if page.dom.borrow_mut().set_live_range(&current.range.live,start,end).is_err(){return;}
     current.backward=backward;
-    current.cross_tree=None;
+    current.cross_tree=false;
+    current.composed=None;
     if current.origin.is_some() {
         current.origin=crate::collections::NodeHold::new(page,anchor.0).ok()
             .zip(crate::collections::NodeHold::new(page,focus.0).ok());
@@ -135,7 +159,8 @@ pub(crate) fn set_selection_range(
         backward: false,
         wrappers: wrapper.into_iter().collect(),
         origin: None,
-        cross_tree: None,
+        cross_tree: false,
+        composed: None,
     };
     page.typing_values.take();
     let old = page.selection.replace(Some(selection));

@@ -892,7 +892,7 @@ fn composed_ranges<'s>(s: &Scope<'s>, page: &Rc<PageDom>, options: Value<'s>) ->
             }
         }
     }
-    let Some((a, b)) = crate::editing::selection(page) else { return Ok(s.array(&[])?.value()) };
+    let Some((a, b)) = crate::editing::composed_points(page) else { return Ok(s.array(&[])?.value()) };
     let (start, end) = {
         let dom = page.dom.borrow();
         let (start, end) = if composed_order(&dom, a, b)? > 0 { (b, a) } else { (a, b) };
