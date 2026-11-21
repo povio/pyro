@@ -1,0 +1,400 @@
+{
+ "start": "2026-11-21T23:32:51.655Z",
+ "end": "2026-11-21T23:32:53.662Z",
+ "preciseHost": {
+  "durationSeconds": 2.007,
+  "hostBusyPct": 40.149
+ },
+ "perArm": {
+  "geom-base-3142bdcb2": {
+   "orders": [
+    1,
+    4,
+    6,
+    7
+   ],
+   "elapsedSeconds": 0.879,
+   "weightedHostBusyPct": 39.98
+  },
+  "geometry-73b72e644": {
+   "orders": [
+    2,
+    3,
+    5,
+    8
+   ],
+   "elapsedSeconds": 1.128,
+   "weightedHostBusyPct": 40.28
+  }
+ },
+ "perProcess": [
+  {
+   "order": 1,
+   "binary": "geom-base-3142bdcb2",
+   "start": "2026-11-21T23:32:51.655Z",
+   "end": "2026-11-21T23:32:51.986Z",
+   "durationSeconds": 0.331,
+   "hostBusyPct": 41.551
+  },
+  {
+   "order": 2,
+   "binary": "geometry-73b72e644",
+   "start": "2026-11-21T23:32:51.986Z",
+   "end": "2026-11-21T23:32:52.345Z",
+   "durationSeconds": 0.359,
+   "hostBusyPct": 41.7
+  },
+  {
+   "order": 3,
+   "binary": "geometry-73b72e644",
+   "start": "2026-11-21T23:32:52.345Z",
+   "end": "2026-11-21T23:32:52.599Z",
+   "durationSeconds": 0.254,
+   "hostBusyPct": 41.7
+  },
+  {
+   "order": 4,
+   "binary": "geom-base-3142bdcb2",
+   "start": "2026-11-21T23:32:52.599Z",
+   "end": "2026-11-21T23:32:52.782Z",
+   "durationSeconds": 0.183,
+   "hostBusyPct": 39.87
+  },
+  {
+   "order": 5,
+   "binary": "geometry-73b72e644",
+   "start": "2026-11-21T23:32:52.782Z",
+   "end": "2026-11-21T23:32:53.039Z",
+   "durationSeconds": 0.257,
+   "hostBusyPct": 38.6
+  },
+  {
+   "order": 6,
+   "binary": "geom-base-3142bdcb2",
+   "start": "2026-11-21T23:32:53.039Z",
+   "end": "2026-11-21T23:32:53.217Z",
+   "durationSeconds": 0.178,
+   "hostBusyPct": 38.6
+  },
+  {
+   "order": 7,
+   "binary": "geom-base-3142bdcb2",
+   "start": "2026-11-21T23:32:53.217Z",
+   "end": "2026-11-21T23:32:53.404Z",
+   "durationSeconds": 0.187,
+   "hostBusyPct": 38.6
+  },
+  {
+   "order": 8,
+   "binary": "geometry-73b72e644",
+   "start": "2026-11-21T23:32:53.404Z",
+   "end": "2026-11-21T23:32:53.662Z",
+   "durationSeconds": 0.258,
+   "hostBusyPct": 38.6
+  }
+ ],
+ "benchmarkSHA256": "06cbd7e313bfb1e9a278cc597d3d48db17d220a0e1463d3321153aca630388ff",
+ "minOneSecondBusyPct": 38.6,
+ "maxOneSecondBusyPct": 41.7,
+ "oneSecondSamples": [
+  {
+   "start": "2026-11-21T23:32:50.670Z",
+   "end": "2026-11-21T23:32:51.672Z",
+   "cpuBusyPct": 38.8
+  },
+  {
+   "start": "2026-11-21T23:32:51.672Z",
+   "end": "2026-11-21T23:32:52.674Z",
+   "cpuBusyPct": 41.7
+  },
+  {
+   "start": "2026-11-21T23:32:52.674Z",
+   "end": "2026-11-21T23:32:53.676Z",
+   "cpuBusyPct": 38.6
+  }
+ ],
+ "hostIntervals": [
+  {
+   "at": "2026-11-21T23:33:15.858Z",
+   "elapsedMs": 30000,
+   "cpuBusyPct": 47.7,
+   "load": [
+    20.53271484375,
+    21.5673828125,
+    17.248046875
+   ],
+   "logicalCpu": 10,
+   "pressureLevel": "1",
+   "freePct": 84,
+   "swap": "total = 0.00M  used = 0.00M  free = 0.00M  (encrypted)",
+   "processes": {
+    "other": {
+     "n": 1132,
+     "pctCpu": 181.2,
+     "rssMiB": 35629
+    },
+    "ci-runner": {
+     "n": 3,
+     "pctCpu": 0,
+     "rssMiB": 103
+    },
+    "other-build": {
+     "n": 2,
+     "pctCpu": 0.1,
+     "rssMiB": 114
+    },
+    "independent-feature": {
+     "n": 1,
+     "pctCpu": 0,
+     "rssMiB": 9
+    },
+    "css-values": {
+     "n": 1,
+     "pctCpu": 99.3,
+     "rssMiB": 1052
+    }
+   }
+  }
+ ],
+ "adjacentLaneSnapshots": [
+  {
+   "at": "2026-11-21T23:32:24.098Z",
+   "ciWorkerActive": false,
+   "allocation": {
+    "effectiveAt": "2026-11-21T23:31:11.551975+00:00",
+    "hostSlots": 2,
+    "lead": 0,
+    "editing": 0,
+    "css": 0,
+    "qa": 1,
+    "diagnostics": 1,
+    "ordinary": 0,
+    "policy": "Editing 419af3bc0 primary compiler released; general independent QA 54 head-only pages + 18 direct controls active. Prior +59/-0 WPT retains new repeated ASCII-space measured-width regression separately. Incremental editing correction queued when source ready. IDB sequential private compile continues. Geometry timing still reserved, most recent 10 one-second samples 93.72% with peaks at 100%; text module exact 936e35acb build queued behind.\u2019"
+   },
+   "lanes": {
+    "lead": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "editing": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "css": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "qa": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "diagnostics": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ordinary": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "idb": {
+     "processes": [
+      {
+       "pid": 42219,
+       "state": "S",
+       "kind": "cargo",
+       "jobs": null
+      },
+      {
+       "pid": 44206,
+       "state": "R",
+       "kind": "rustc",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 100
+    },
+    "census": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ci": {
+     "processes": [
+      {
+       "pid": 14341,
+       "state": "SN",
+       "kind": "Runner.Listener",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 0
+    },
+    "unassigned": {
+     "processes": [],
+     "cpuCorePct": 0
+    }
+   }
+  },
+  {
+   "at": "2026-11-21T23:32:54.098Z",
+   "ciWorkerActive": false,
+   "allocation": {
+    "effectiveAt": "2026-11-21T23:31:11.551975+00:00",
+    "hostSlots": 2,
+    "lead": 0,
+    "editing": 0,
+    "css": 0,
+    "qa": 1,
+    "diagnostics": 1,
+    "ordinary": 0,
+    "policy": "Editing 419af3bc0 primary compiler released; general independent QA 54 head-only pages + 18 direct controls active. Prior +59/-0 WPT retains new repeated ASCII-space measured-width regression separately. Incremental editing correction queued when source ready. IDB sequential private compile continues. Geometry timing still reserved, most recent 10 one-second samples 93.72% with peaks at 100%; text module exact 936e35acb build queued behind.\u2019"
+   },
+   "lanes": {
+    "lead": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "editing": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "css": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "qa": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "diagnostics": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ordinary": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "idb": {
+     "processes": [
+      {
+       "pid": 42219,
+       "state": "S",
+       "kind": "cargo",
+       "jobs": null
+      },
+      {
+       "pid": 44206,
+       "state": "R",
+       "kind": "rustc",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 99.3
+    },
+    "census": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ci": {
+     "processes": [
+      {
+       "pid": 14341,
+       "state": "SN",
+       "kind": "Runner.Listener",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 0
+    },
+    "unassigned": {
+     "processes": [],
+     "cpuCorePct": 0
+    }
+   }
+  },
+  {
+   "at": "2026-11-21T23:33:24.166Z",
+   "ciWorkerActive": false,
+   "allocation": {
+    "effectiveAt": "2026-11-21T23:31:11.551975+00:00",
+    "hostSlots": 2,
+    "lead": 0,
+    "editing": 0,
+    "css": 0,
+    "qa": 1,
+    "diagnostics": 1,
+    "ordinary": 0,
+    "policy": "Editing 419af3bc0 primary compiler released; general independent QA 54 head-only pages + 18 direct controls active. Prior +59/-0 WPT retains new repeated ASCII-space measured-width regression separately. Incremental editing correction queued when source ready. IDB sequential private compile continues. Geometry timing still reserved, most recent 10 one-second samples 93.72% with peaks at 100%; text module exact 936e35acb build queued behind.\u2019"
+   },
+   "lanes": {
+    "lead": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "editing": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "css": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "qa": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "diagnostics": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ordinary": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "idb": {
+     "processes": [
+      {
+       "pid": 46716,
+       "state": "S",
+       "kind": "cargo",
+       "jobs": null
+      },
+      {
+       "pid": 46719,
+       "state": "R",
+       "kind": "rustc",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 824
+    },
+    "census": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ci": {
+     "processes": [
+      {
+       "pid": 14341,
+       "state": "SN",
+       "kind": "Runner.Listener",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 0
+    },
+    "unassigned": {
+     "processes": [],
+     "cpuCorePct": 0
+    }
+   }
+  }
+ ],
+ "censusAdmissions": [],
+ "qaStart": "2026-11-21T23:27:04.331729+00:00",
+ "qaEnd": "2026-11-21T23:27:04.565729+00:00",
+ "qaTimeMethod": "Head receipt modification time and runner-reported wallMs; approximate times. Receipt already complete before performance probe.",
+ "measuredCensusShardWindows": [],
+ "qaOverlapSeconds": 0,
+ "method": "Aggregate one-second percentages are weighted by exact overlap per process. 30-second host intervals include activity outside perf; process snapshots bracket the run. Hardware counters do not assign competition to a process.",
+ "separation": "Matched ordinary clone operations are separate from candidate-only geometry graph operations. The SVG/ordinary exact parent and editing correction compiler starts were issued after the timed window."
+}

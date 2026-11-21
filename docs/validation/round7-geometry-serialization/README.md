@@ -19,3 +19,5 @@ Eight fresh processes ran serially in ABBA/BAAB order. Each fixture ran one warm
 | geom-base-3142bdcb2 | ordinary | 2.40 | 3.5 |
 | geometry-73b72e644 | ordinary | 2.40 | 4.5 |
 | geometry-73b72e644 | geometry | 3.16 | 4.0 |
+
+The 2.007-second series averaged 40.15% host CPU, 39.98% on the baseline and 40.28% on the candidate. The IDB compiler was visible; external CI and dedicated QA had no overlap. [Per-arm host receipt](host.json)
