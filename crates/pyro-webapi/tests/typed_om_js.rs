@@ -134,6 +134,14 @@ fn opaque_values_preserve_property_and_list() {
 }
 
 #[test]
+fn border_image_specified_components_and_computed_tuples() {
+    let env = env("<!doctype html><div id=d style='border-image-width: 3px; border-image-repeat: round'></div>");
+    let realm = &env.main;
+    assert_eq!(eval(realm, "const specified = d.attributeStyleMap, computed = d.computedStyleMap(); [specified.get('border-image-width').unit, specified.get('border-image-repeat').value].join()"), "px,round");
+    assert_eq!(eval(realm, "[computed.get('border-image-width'), computed.getAll('border-image-repeat')[0], CSSStyleValue.parse('border-image-width', '1px 2px')].every(value => value.constructor === CSSStyleValue)"), "true");
+}
+
+#[test]
 fn attribute_style_map_reads_and_writes_the_inline_style() {
     let e = env("<!doctype html><div id=d style='width: 10px; margin-top: 2em'></div>");
     let r = &e.main;

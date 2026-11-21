@@ -1079,7 +1079,7 @@
   // Longhands whose values are several components ({1,2}, {1,4}) or whose grammar level 1 does not
   // reify (as in Chromium): always a plain CSSStyleValue.
   const UNREIFIED = new Set(['border-top-left-radius', 'border-top-right-radius', 'border-bottom-left-radius',
-    'border-bottom-right-radius', 'border-image-width', 'border-image-outset', 'border-image-slice', 'border-image-repeat',
+    'border-bottom-right-radius',
     'border-spacing', 'column-rule-width', 'vertical-align']);
   const CSS_WIDE = /^(inherit|initial|unset|revert|revert-layer|default)$/i;
   const OPAQUE_PROPERTIES = new Set(['flex-flow', 'font', 'font-family', 'font-variant', 'gap', 'grid-gap',
@@ -1129,12 +1129,14 @@
     if (n) return n;
     return plain(property, text);
   };
-  const reify = (property, text, all) => {
+  const BORDER_IMAGE_TUPLES = new Set(['border-image-width', 'border-image-outset', 'border-image-slice', 'border-image-repeat']);
+  const reify = (property, text, all, computed = false) => {
     const k = kind(property);
     if (!k) return null;
     const [name, which] = k;
     if (which === 2) return [unparsedFrom(text)];
     if (CSS_WIDE.test(text) || /var\(/i.test(text)) return [reifyOne(name, text, false)];
+    if (computed && BORDER_IMAGE_TUPLES.has(name)) return [plain(name, text)];
     if ((name === 'text-shadow' && text === 'none') || (name === 'will-change' && text === 'auto')) return [new CSSKeywordValue(text)];
     if (OPAQUE_PROPERTIES.has(name)) return [plain(name, text)];
     // A shorthand's value of several components is not reified (a plain CSSStyleValue); one
@@ -1183,7 +1185,7 @@
       const [name, which] = nameOf(property, 'get', 'StylePropertyMapReadOnly');
       const text = src.get(name);
       if (text === '') return which === 2 ? undefined : undefined;
-      const values = reify(name, text, false);
+      const values = reify(name, text, false, src.computed);
       return values ? values[0] : undefined;
     }
     getAll(property) {
@@ -1192,7 +1194,7 @@
       const [name] = nameOf(property, 'getAll', 'StylePropertyMapReadOnly');
       const text = src.get(name);
       if (text === '') return [];
-      return reify(name, text, true) || [];
+      return reify(name, text, true, src.computed) || [];
     }
     has(property) {
       const src = mapSource(this);
@@ -1203,10 +1205,10 @@
     get size() { return mapSource(this).names().length; }
     entries() {
       const src = mapSource(this);
-      return src.names().map((n) => [n, reify(n, src.get(n), true) || []])[Symbol.iterator]();
+      return src.names().map((n) => [n, reify(n, src.get(n), true, src.computed) || []])[Symbol.iterator]();
     }
     keys() { const src = mapSource(this); return src.names()[Symbol.iterator](); }
-    values() { const src = mapSource(this); return src.names().map((n) => reify(n, src.get(n), true) || [])[Symbol.iterator](); }
+    values() { const src = mapSource(this); return src.names().map((n) => reify(n, src.get(n), true, src.computed) || [])[Symbol.iterator](); }
     forEach(cb, thisArg = undefined) {
       for (const [k, v] of this.entries()) apply(cb, thisArg, [v, k, this]);
     }
@@ -1335,6 +1337,7 @@
   const computedStyleMap = (el, computedValue) => {
     const cs = () => getComputedStyle(el);
     return new StylePropertyMapReadOnly(ILLEGAL, {
+      computed: true,
       // Computed values: for the properties whose getComputedStyle value is a resolved (used) one,
       // the style engine's computed value; getComputedStyle's for the rest.
       get: (name) => (RESOLVED.test(name) ? computedValue(name) : null) ?? cs().getPropertyValue(name),
