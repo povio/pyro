@@ -189,13 +189,14 @@ impl Browser {
                         }
                     };
                     let integrity = attr("integrity").filter(|v| !pyro_webapi::sri::is_empty(v));
-                    Some((url, kind, attr("crossorigin"), integrity))
+                    let referrer_policy = crate::loader::element_referrer_policy(&dom, node);
+                    Some((url, kind, attr("crossorigin"), integrity, referrer_policy))
                 })
                 .flatten()
         };
         let current = state.preloads.entries.get(&node).cloned();
         drop(state);
-        let Some((url, kind, crossorigin, integrity)) = config else {
+        let Some((url, kind, crossorigin, integrity, referrer_policy)) = config else {
             if let Some(mut doc) = self.doc_mut(page) {
                 doc.preloads.entries.remove(&node);
             }
@@ -289,8 +290,8 @@ impl Browser {
             url,
             kind,
             page: page.page,
-            referrer: Some(frame.base_url.clone()),
-            referrer_policy: None,
+            referrer: frame.navigation_referrer(),
+            referrer_policy,
             frame_id: Some(frame.id.0.clone()),
             loader_id: Some(frame.loader_id.0.clone()),
             crossorigin,
