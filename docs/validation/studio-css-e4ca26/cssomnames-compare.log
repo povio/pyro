@@ -1,0 +1,30 @@
+cssomnames-main-candidate 8082 page passes 5803 named passes 182123 observed names 194673 statuses {'complete:0': 7871, 'complete:2': 104, 'timeout:None': 11, 'complete:1': 95, 'hang:None': 1}
+cssomnames-main-parent 8082 page passes 5798 named passes 182109 observed names 194673 statuses {'complete:0': 7871, 'complete:2': 104, 'timeout:None': 11, 'complete:1': 95, 'hang:None': 1}
+cssomnames-main-stable 8082 page passes 6950 named passes 182963 observed names 194912 statuses {'complete:0': 7986, 'complete:2': 62, 'complete:1': 23, 'timeout:None': 10, 'hang:None': 1}
+cssomnames-main-parent pages left only 5 right only 0
+cssomnames-main-parent passes left only 14 right only 0
+cssomnames-main-parent observed left only 0 right only 0
+cssomnames-main-stable pages left only 287 right only 1434
+cssomnames-main-stable passes left only 5906 right only 6746
+cssomnames-main-stable observed left only 260 right only 499
+Losses vs parent by URL: Counter()
+cssomnames-focus-candidate 487 page passes 407 named passes 7270 observed names 7464 statuses {'complete:0': 486, 'complete:1': 1}
+cssomnames-focus-parent 487 page passes 403 named passes 7262 observed names 7464 statuses {'complete:0': 486, 'complete:1': 1}
+cssomnames-focus-stable 487 page passes 427 named passes 6951 observed names 7443 statuses {'complete:0': 485, 'complete:1': 2}
+cssomnames-focus-parent pages left only 4 right only 0
+cssomnames-focus-parent passes left only 8 right only 0
+cssomnames-focus-parent observed left only 0 right only 0
+cssomnames-focus-stable pages left only 35 right only 55
+cssomnames-focus-stable passes left only 441 right only 122
+cssomnames-focus-stable observed left only 23 right only 2
+Losses vs parent by URL: Counter()
+cssomnames-supplement-candidate 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+cssomnames-supplement-parent 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+cssomnames-supplement-stable 41 page passes 35 named passes 619 observed names 874 statuses {'complete:0': 41}
+cssomnames-supplement-parent pages left only 0 right only 0
+cssomnames-supplement-parent passes left only 0 right only 0
+cssomnames-supplement-parent observed left only 0 right only 0
+cssomnames-supplement-stable pages left only 0 right only 8
+cssomnames-supplement-stable passes left only 0 right only 42
+cssomnames-supplement-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()

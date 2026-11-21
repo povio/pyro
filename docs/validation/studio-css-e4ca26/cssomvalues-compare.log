@@ -1,0 +1,30 @@
+cssomvalues-main-candidate 8082 page passes 5819 named passes 182427 observed names 194673 statuses {'complete:0': 7871, 'complete:2': 104, 'timeout:None': 11, 'complete:1': 95, 'hang:None': 1}
+cssomvalues-main-parent 8082 page passes 5798 named passes 182109 observed names 194673 statuses {'complete:0': 7871, 'complete:2': 104, 'timeout:None': 11, 'complete:1': 95, 'hang:None': 1}
+cssomvalues-main-stable 8082 page passes 6950 named passes 182963 observed names 194912 statuses {'complete:0': 7986, 'complete:2': 62, 'complete:1': 23, 'timeout:None': 10, 'hang:None': 1}
+cssomvalues-main-parent pages left only 22 right only 1
+cssomvalues-main-parent passes left only 320 right only 2
+cssomvalues-main-parent observed left only 0 right only 0
+cssomvalues-main-stable pages left only 287 right only 1418
+cssomvalues-main-stable passes left only 5920 right only 6456
+cssomvalues-main-stable observed left only 260 right only 499
+Losses vs parent by URL: Counter({'css/css-values/viewport-units-scroll-no-cycles-001.tentative.html': 1, 'css/css-values/if-cycle.html': 1})
+cssomvalues-focus-candidate 607 page passes 492 named passes 9404 observed names 9843 statuses {'complete:0': 606, 'complete:1': 1}
+cssomvalues-focus-parent 607 page passes 471 named passes 9119 observed names 9843 statuses {'complete:0': 606, 'complete:1': 1}
+cssomvalues-focus-stable 607 page passes 519 named passes 9183 observed names 9822 statuses {'complete:0': 605, 'complete:1': 2}
+cssomvalues-focus-parent pages left only 21 right only 0
+cssomvalues-focus-parent passes left only 286 right only 1
+cssomvalues-focus-parent observed left only 0 right only 0
+cssomvalues-focus-stable pages left only 41 right only 68
+cssomvalues-focus-stable passes left only 497 right only 276
+cssomvalues-focus-stable observed left only 42 right only 21
+Losses vs parent by URL: Counter({'css/css-values/if-cycle.html': 1})
+cssomvalues-supplement-candidate 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+cssomvalues-supplement-parent 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+cssomvalues-supplement-stable 41 page passes 35 named passes 619 observed names 874 statuses {'complete:0': 41}
+cssomvalues-supplement-parent pages left only 0 right only 0
+cssomvalues-supplement-parent passes left only 0 right only 0
+cssomvalues-supplement-parent observed left only 0 right only 0
+cssomvalues-supplement-stable pages left only 0 right only 8
+cssomvalues-supplement-stable passes left only 0 right only 42
+cssomvalues-supplement-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()
