@@ -1,0 +1,30 @@
+ruleclamp-main-candidate 8082 page passes 5584 named passes 179902 observed names 194540 statuses {'complete:0': 7867, 'complete:2': 105, 'timeout:None': 11, 'complete:1': 98, 'hang:None': 1}
+ruleclamp-main-parent 8082 page passes 5583 named passes 179866 observed names 194540 statuses {'complete:0': 7867, 'complete:2': 105, 'timeout:None': 11, 'complete:1': 98, 'hang:None': 1}
+ruleclamp-main-stable 8082 page passes 6950 named passes 182963 observed names 194912 statuses {'complete:0': 7986, 'complete:2': 62, 'complete:1': 23, 'timeout:None': 10, 'hang:None': 1}
+ruleclamp-main-parent pages left only 1 right only 0
+ruleclamp-main-parent passes left only 36 right only 0
+ruleclamp-main-parent observed left only 0 right only 0
+ruleclamp-main-stable pages left only 272 right only 1638
+ruleclamp-main-stable passes left only 5802 right only 8863
+ruleclamp-main-stable observed left only 309 right only 681
+Losses vs parent by URL: Counter()
+ruleclamp-focus-candidate 169 page passes 134 named passes 5638 observed names 5771 statuses {'complete:0': 169}
+ruleclamp-focus-parent 169 page passes 134 named passes 5624 observed names 5771 statuses {'complete:0': 169}
+ruleclamp-focus-stable 169 page passes 163 named passes 5764 observed names 5771 statuses {'complete:0': 169}
+ruleclamp-focus-parent pages left only 0 right only 0
+ruleclamp-focus-parent passes left only 14 right only 0
+ruleclamp-focus-parent observed left only 0 right only 0
+ruleclamp-focus-stable pages left only 0 right only 29
+ruleclamp-focus-stable passes left only 0 right only 126
+ruleclamp-focus-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()
+ruleclamp-supplement-candidate 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+ruleclamp-supplement-parent 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+ruleclamp-supplement-stable 41 page passes 35 named passes 619 observed names 874 statuses {'complete:0': 41}
+ruleclamp-supplement-parent pages left only 0 right only 0
+ruleclamp-supplement-parent passes left only 0 right only 0
+ruleclamp-supplement-parent observed left only 0 right only 0
+ruleclamp-supplement-stable pages left only 0 right only 8
+ruleclamp-supplement-stable passes left only 0 right only 42
+ruleclamp-supplement-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()
