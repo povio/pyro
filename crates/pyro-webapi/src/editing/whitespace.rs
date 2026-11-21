@@ -252,6 +252,7 @@ pub(super) enum Repair {
     Exposed,
     Deleted,
     Inserted,
+    RemovedBox,
 }
 
 /// Whether the deletion needs whitespace repair at the resulting caret.
@@ -321,7 +322,7 @@ pub(super) fn after_replaced_element(page: &PageDom, dom: &mut Dom, host: NodeId
     } else {
         return;
     };
-    at(page, dom, host, point, Repair::Inserted);
+    at(page, dom, host, point, Repair::RemovedBox);
 }
 
 /// Normalize only the run touching the edit, retaining UTF-16 offsets.
@@ -348,7 +349,10 @@ pub(super) fn at(page: &PageDom, dom: &mut Dom, host: NodeId, (node, offset): Po
     if !collapses(page, dom, node) {
         return;
     }
-    let repair = if matches!(repair, Repair::Inserted) && !wraps(page, dom, node) {
+    // A removed box exposes only one text node. Keep that boundary even
+    // when nowrap chooses the line-edge whitespace sequence.
+    let removed_box = matches!(repair, Repair::RemovedBox);
+    let repair = if matches!(repair, Repair::Inserted | Repair::RemovedBox) && !wraps(page, dom, node) {
         Repair::Exposed
     } else {
         repair
@@ -358,7 +362,7 @@ pub(super) fn at(page: &PageDom, dom: &mut Dom, host: NodeId, (node, offset): Po
     let mut parts = Vec::new();
     // Insertion rebalances only the edited text node. Adjacent formatting
     // elements retain their own whitespace and text offsets.
-    let local = matches!(repair, Repair::Inserted);
+    let local = removed_box || matches!(repair, Repair::Inserted);
     let mut first = left_char.is_none() && (local || extend(page, dom, host, node, false, &mut parts));
     parts.reverse();
     if left + right > 0 {
@@ -380,7 +384,7 @@ pub(super) fn at(page: &PageDom, dom: &mut Dom, host: NodeId, (node, offset): Po
         // Blink rebalances a visible run after editing from left to right.
         // Keep the last space visible at a line end and allow an isolated
         // internal space to wrap.
-        Repair::Deleted | Repair::Inserted => (0..count)
+        Repair::Deleted | Repair::Inserted | Repair::RemovedBox => (0..count)
             .map(|i| {
                 let nonbreaking = (i % 2 == 0 && (count > 1 || first)) || (i + 1 == count && (last || right_char.is_none()));
                 if nonbreaking { '\u{a0}' } else { ' ' }
