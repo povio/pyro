@@ -4242,7 +4242,6 @@ impl Layout {
         match name {
             "display" if self.style.has_display_none(dom, el) => return "none".into(),
             "display" => return self.style.computed_display(dom, el).unwrap_or_default(),
-            "visibility" if self.style.has_visibility_hidden_inherited(dom, el) => return "hidden".into(),
             "pointer-events" if self.style.has_pointer_events_none(dom, el) => return "none".into(),
             "text-transform" => return self.style.text_transform(dom, el).keyword().into(),
             "overflow-x" | "overflow-y" | "overflow" => {
