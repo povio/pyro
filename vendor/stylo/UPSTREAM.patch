@@ -1566,7 +1566,7 @@ diff -ruN a/parser.rs b/parser.rs
          &mut self,
 diff -ruN a/properties/cascade.rs b/properties/cascade.rs
 --- a/properties/cascade.rs	2026-11-11 19:55:57
-+++ b/properties/cascade.rs	2026-11-21 19:21:33
++++ b/properties/cascade.rs	2026-11-21 23:47:30
 @@ -386,6 +386,17 @@
              if using_cached_reset_properties {
                  LonghandIdSet::late_group_only_inherited()
@@ -1585,7 +1585,34 @@ diff -ruN a/properties/cascade.rs b/properties/cascade.rs
                  LonghandIdSet::late_group()
              }
          },
-@@ -976,7 +987,6 @@
+@@ -639,6 +650,7 @@
+ pub(crate) struct Declarations<'a> {
+     /// Whether we have any prioritary property. This is just a minor optimization.
+     has_prioritary_properties: bool,
++    has_font_inputs: bool,
+     /// A list of all the applicable longhand declarations.
+     longhand_declarations: SmallVec<[Declaration<'a>; 64]>,
+     /// The prioritary property position data.
+@@ -674,6 +686,9 @@
+         priority: CascadePriority,
+         id: LonghandId,
+     ) {
++        if matches!(decl, PropertyDeclaration::WithVariables(_)) && id.uses_parent_font_metrics() && id != LonghandId::FontSize {
++            self.has_font_inputs = true;
++        }
+         if let Some(id) = PrioritaryPropertyId::from_longhand(id) {
+             self.note_prioritary_property(id);
+         }
+@@ -721,7 +736,7 @@
+         return result;
+     };
+     let dependent_types = syntax.dependent_types();
+-    let may_reference_length = dependent_types.intersects(DependentDataTypes::LENGTH);
++    let may_reference_length = dependent_types.intersects(DependentDataTypes::LENGTH | DependentDataTypes::NUMERIC_MATH);
+     if may_reference_length {
+         result |= value.references.non_custom_references(is_root_element);
+     }
+@@ -976,7 +991,6 @@
              },
              FontSize => {
                  if self.seen.longhands.contains(LonghandId::MathDepth) {
@@ -1593,10 +1620,12 @@ diff -ruN a/properties/cascade.rs b/properties/cascade.rs
                      Self::recompute_math_font_size_if_needed(context);
                  }
                  if self.seen.longhands.contains(LonghandId::XLang)
-@@ -1506,6 +1516,43 @@
+@@ -1504,6 +1518,43 @@
+             return;
+         }
          builder.mutate_font().set_font_size(new_size);
-     }
- 
++    }
++
 +    /// pyro: `font-size: math` for servo (MathML Core § 3.1.2): the parent's size scaled by the
 +    /// change of `math-depth`, by the first available font's MATH script scale-downs or else
 +    /// 0.71 a level (no `script-min-size` clamping, as Blink).
@@ -1632,12 +1661,18 @@ diff -ruN a/properties/cascade.rs b/properties/cascade.rs
 +            keyword_info: context.builder.get_font().slow_clone_font_size().keyword_info,
 +        };
 +        context.builder.mutate_font().set_font_size(size);
-+    }
-+
+     }
+ 
      /// Special handling of font-size: math (used for MathML).
-     /// https://w3c.github.io/mathml-core/#the-math-script-level-property
-     /// TODO: Bug: 1548471: MathML Core also does not specify a script min size
-@@ -2254,6 +2301,7 @@
+@@ -2135,6 +2186,7 @@
+         /// Number of variables visited. This is used as the order index
+         /// when we visit a new unresolved variable.
+         count: usize,
++        resolving_font_input: bool,
+         /// The map from a substitution function name to its order index.
+         index_map: OrderIndexMap,
+         /// Mapping from a non-custom dependency to its order index.
+@@ -2254,6 +2306,7 @@
          lowlink: &mut usize,
          self_ref: &mut bool,
          non_custom_references: &mut ReferenceFlags,
@@ -1645,7 +1680,7 @@ diff -ruN a/properties/cascade.rs b/properties/cascade.rs
      ) {
          macro_rules! check_declaration_value_cycle {
              ($arg:expr) => {{
-@@ -2270,6 +2318,7 @@
+@@ -2270,6 +2323,7 @@
                      &mut arg_lowlink,
                      &mut arg_self_ref,
                      non_custom_references,
@@ -1653,7 +1688,7 @@ diff -ruN a/properties/cascade.rs b/properties/cascade.rs
                  );
                  *lowlink = cmp::min(*lowlink, arg_lowlink);
                  *self_ref |= arg_self_ref;
-@@ -2278,20 +2327,88 @@
+@@ -2278,20 +2332,88 @@
          }
  
          // FIXME: Maybe avoid visiting the same var twice if not needed?
@@ -1747,7 +1782,7 @@ diff -ruN a/properties/cascade.rs b/properties/cascade.rs
                                  env_fn
                                      .replace_name(source, &mut replacement_context)
                                      .value
-@@ -2313,21 +2430,20 @@
+@@ -2313,21 +2435,20 @@
                              })
                              .is_some();
                          if !present && let Some(ref fallback) = env_fn.fallback {
@@ -1774,7 +1809,7 @@ diff -ruN a/properties/cascade.rs b/properties/cascade.rs
                                      .value
                                      .map(|arg| Cow::Owned(arg.into_owned()))
                              },
-@@ -2336,7 +2452,7 @@
+@@ -2336,7 +2457,7 @@
                          };
                          let Some(arg) = arg else {
                              if let Some(ref fallback) = attr_fn.fallback {
@@ -1783,7 +1818,7 @@ diff -ruN a/properties/cascade.rs b/properties/cascade.rs
                              }
                              continue;
                          };
-@@ -2359,14 +2475,16 @@
+@@ -2359,14 +2480,16 @@
                              attr_fn.fallback.as_ref(),
                          )
                      },
@@ -1801,7 +1836,7 @@ diff -ruN a/properties/cascade.rs b/properties/cascade.rs
                                  var_fn
                                      .replace_name(source, &mut replacement_context)
                                      .value
-@@ -2377,10 +2495,21 @@
+@@ -2377,10 +2500,21 @@
                          };
                          let Some(name) = name else {
                              if let Some(ref fallback) = var_fn.fallback {
@@ -1824,7 +1859,7 @@ diff -ruN a/properties/cascade.rs b/properties/cascade.rs
                          (VarType::Custom(name.0.clone()), var_fn.fallback.as_ref())
                      },
                  };
-@@ -2420,7 +2549,7 @@
+@@ -2420,7 +2554,7 @@
                  }
  
                  if !primary_valid && let Some(fallback) = fallback {
@@ -1833,7 +1868,27 @@ diff -ruN a/properties/cascade.rs b/properties/cascade.rs
                  }
              }
          }
-@@ -2588,6 +2717,7 @@
+@@ -2485,6 +2619,7 @@
+         // of the match so we can create the corresponding nodes once we've pushed this variable.
+         let mut value_non_custom_refs = ReferenceFlags::empty();
+         let mut registered = false;
++        let mut inherited_font_basis = false;
+         let value = match var {
+             VarType::Custom(ref name) | VarType::Attr(ref name) => {
+                 let map = &context.computed_context.builder.substitution_functions;
+@@ -2506,6 +2641,11 @@
+                 let is_root = context.computed_context.is_root_element();
+                 value_non_custom_refs = find_non_custom_references(registration, value, is_root);
+                 registered = !registration.is_universal();
++                if context.resolving_font_input && let Some(syntax) = &registration.syntax {
++                    use crate::properties_and_values::syntax::data_type::DependentDataTypes as D;
++                    let types = syntax.dependent_types();
++                    inherited_font_basis = types.contains(D::NUMERIC_MATH) && !types.contains(D::LENGTH);
++                }
+                 let has_dependency = value
+                     .references
+                     .flags
+@@ -2588,11 +2728,15 @@
                  &mut lowlink,
                  &mut self_ref,
                  &mut value_non_custom_refs,
@@ -1841,7 +1896,15 @@ diff -ruN a/properties/cascade.rs b/properties/cascade.rs
              );
  
              // ... Then the non-custom properties this value depends on (font-size, line-height,
-@@ -2652,6 +2782,7 @@
+             // color-scheme), as computed by `find_non_custom_references` above.
+             let is_root = context.computed_context.is_root_element();
++            if inherited_font_basis {
++                value_non_custom_refs.remove(ReferenceFlags::FONT_UNITS | ReferenceFlags::LH_UNITS);
++            }
+             if registered && !value_non_custom_refs.is_empty() {
+                 value_non_custom_refs.for_each_non_custom(is_root, |r| {
+                     visit_link(
+@@ -2652,6 +2796,7 @@
                          &mut lowlink,
                          &mut self_ref,
                          &mut Default::default(),
@@ -1849,14 +1912,84 @@ diff -ruN a/properties/cascade.rs b/properties/cascade.rs
                      );
                  }
              }
-@@ -2782,6 +2913,49 @@
+@@ -2709,6 +2854,8 @@
+                     };
+                     // We know we're not in a loop now, perform substitution.
+                     // TODO(emilio): Merge with the cycle detection loop instead?
++                    let previous = context.computed_context.for_font_affecting_property;
++                    context.computed_context.for_font_affecting_property |= inherited_font_basis;
+                     substitute_references_if_needed_and_apply(
+                         name,
+                         kind,
+@@ -2717,6 +2864,7 @@
+                         context.computed_context,
+                         context.attribute_tracker,
+                     );
++                    context.computed_context.for_font_affecting_property = previous;
+                 }
+             },
+             VarType::NonCustom(non_custom) => {
+@@ -2729,6 +2877,7 @@
+ 
+     let mut context = Context {
+         count: 0,
++        resolving_font_input: false,
+         index_map: OrderIndexMap::default(),
+         non_custom_index_map: NonCustomReferenceMap::default(),
+         stack: SmallVec::new(),
+@@ -2747,6 +2896,44 @@
+         }
+         first = false;
+     };
++    // Resolve registered numeric inputs to winning font declarations before unrelated
++    // properties. Only actually selected substitutions inherit the font consumer's basis.
++    if decls.has_font_inputs {
++        for dependency in [SingleNonCustomReference::FontUnits, SingleNonCustomReference::LhUnits] {
++            if references_from_non_custom_properties[dependency].is_some() {
++                reset(&mut context);
++                traverse(VarType::NonCustom(dependency), references_from_non_custom_properties, &mut context);
++            }
++        }
++        let mut visited = LonghandIdSet::default();
++        let mut reverted = FxHashMap::<LonghandId, (CascadePriority, RevertKind)>::default();
++        for declaration in &decls.longhand_declarations {
++            let id = declaration.decl.id().as_longhand().unwrap();
++            let priority = declaration.priority;
++            if !id.uses_parent_font_metrics() || id == LonghandId::FontSize || visited.contains(id) ||
++                !(priority.flags() - context.computed_context.included_cascade_flags).is_empty() {
++                continue;
++            }
++            if let Some(&(previous, kind)) = reverted.get(&id) && !previous.allows_when_reverted(&priority, kind) {
++                continue;
++            }
++            if let Some(kind) = declaration.decl.get_css_wide_keyword().and_then(|k| k.revert_kind()) {
++                reverted.insert(id, (priority, kind));
++                continue;
++            }
++            visited.insert(id);
++            let PropertyDeclaration::WithVariables(v) = declaration.decl else { continue };
++            reset(&mut context);
++            context.resolving_font_input = true;
++            let value = &v.value.variable_value;
++            let property_id = PropertyIdRef::from(v.value.from_shorthand.map(NonCustomPropertyId::from).unwrap_or_else(|| id.into()));
++            let mut lowlink = usize::MAX;
++            visit_value_references(None, &value.references, value, usize::MAX, property_id,
++                references_from_non_custom_properties, &mut context, &mut lowlink, &mut false,
++                &mut ReferenceFlags::empty(), &mut 0);
++            context.resolving_font_input = false;
++        }
++    }
+     // Note that `seen` doesn't contain names inherited from our parent, but
+     // those can't have variable references (since we inherit the computed
+     // variables) so we don't want to spend cycles traversing them anyway.
+@@ -2782,6 +2969,49 @@
              &mut lowlink,
              &mut self_ref,
              &mut Default::default(),
 +            &mut 0,
          );
-+    }
-+}
+     }
+ }
 +
 +/// pyro: the font-size scale factor for a `math-depth` change from `parent_math_depth` to
 +/// `computed_math_depth` (MathML Core § 3.1.2), the gecko cascade's algorithm, for servo.
@@ -1876,7 +2009,7 @@ diff -ruN a/properties/cascade.rs b/properties/cascade.rs
 +    let mut invert_scale_factor = false;
 +    if a == b {
 +        return s;
-     }
++    }
 +    if b < a {
 +        std::mem::swap(&mut a, &mut b);
 +        invert_scale_factor = true;
@@ -1898,7 +2031,7 @@ diff -ruN a/properties/cascade.rs b/properties/cascade.rs
 +    } else {
 +        s
 +    }
- }
++}
 diff -ruN a/properties/computed_value_flags.rs b/properties/computed_value_flags.rs
 --- a/properties/computed_value_flags.rs	2026-11-11 19:55:57
 +++ b/properties/computed_value_flags.rs	2026-11-17 00:11:39
@@ -3852,8 +3985,20 @@ diff -ruN a/properties/mod.rs b/properties/mod.rs
  }
 diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
 --- a/properties/properties.mako.rs	2026-11-11 19:55:57
-+++ b/properties/properties.mako.rs	2026-11-21 09:25:31
-@@ -1557,7 +1557,8 @@
++++ b/properties/properties.mako.rs	2026-11-21 23:47:05
+@@ -809,6 +809,11 @@
+ }
+ 
+ impl LonghandId {
++    /// Whether relative font units in this longhand use the inherited metrics.
++    pub fn uses_parent_font_metrics(self) -> bool {
++        matches!(self, ${" | ".join("Self::" + p.camel_case for p in data.longhands if p.is_font_affecting())})
++    }
++
+     /// Returns an iterator over all the shorthands that include this longhand.
+     pub fn shorthands(self) -> NonCustomPropertyIterator<ShorthandId> {
+         // first generate longhand to shorthands lookup map
+@@ -1557,7 +1562,8 @@
              /// Whether this is a multicol style.
              #[cfg(feature = "servo")]
              pub fn is_multicol(&self) -> bool {
@@ -3863,7 +4008,7 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
              }
          % endif
      }
-@@ -1621,6 +1622,12 @@
+@@ -1621,6 +1627,12 @@
      /// relevant link for this element. A element's "relevant link" is the
      /// element being matched if it is a link or the nearest ancestor link.
      visited_style: Option<Arc<ComputedValues>>,
@@ -3876,16 +4021,16 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
  }
  
  /// The struct that Servo uses to represent computed values.
-@@ -1642,20 +1649,59 @@
+@@ -1642,20 +1654,59 @@
      inner: ComputedValuesInner,
  
      /// The pseudo-element that we're using.
 -    pseudo: Option<PseudoElement>,
 +    pseudo: Option<Box<PseudoElement>>,
-+}
-+
+ }
+ 
 +#[cfg(feature = "servo")]
-+impl ComputedValues {
+ impl ComputedValues {
 +    /// pyro: whether every inherited style struct and every other inherited
 +    /// input (flags, zoom, writing mode) of `self` equals `other`'s: what a
 +    /// child inherits but custom properties.
@@ -3921,9 +4066,9 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
 +    pub fn has_visited_or_attr_references(&self) -> bool {
 +        self.inner.visited_style.is_some() || self.inner.attribute_references.is_some()
 +    }
- }
- 
- impl ComputedValues {
++}
++
++impl ComputedValues {
      /// Returns the pseudo-element that this style represents.
      #[cfg(feature = "servo")]
      pub fn pseudo(&self) -> Option<PseudoElement> {
@@ -3939,7 +4084,7 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
      }
  
      /// Returns whether this style's display value is equal to contents.
-@@ -1883,16 +1929,30 @@
+@@ -1883,14 +1934,28 @@
                  writing_mode,
                  rules,
                  visited_style,
@@ -3953,8 +4098,8 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
 -            pseudo: pseudo.cloned(),
 +            pseudo: pseudo.cloned().map(Box::new),
          })
-     }
- 
++    }
++
 +    /// pyro: this style as `getComputedStyle` reports it: for a visited link and its contents,
 +    /// the visited-dependent properties unvisited (`pyro_unvisited`); `None` for any other.
 +    pub fn pyro_unvisited_view(&self) -> Option<ComputedValues> {
@@ -3966,12 +4111,10 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
 +        % endif
 +        % endfor
 +        Some(view)
-+    }
-+
+     }
+ 
      /// Get the initial computed values.
-     pub fn initial_values_with_font_override(default_font: super::style_structs::Font) -> Arc<Self> {
-         use crate::computed_value_flags::ComputedValueFlags;
-@@ -1923,6 +1983,7 @@
+@@ -1923,6 +1988,7 @@
                  writing_mode: WritingMode::empty(),
                  rules: None,
                  visited_style: None,
@@ -3979,7 +4122,7 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
                  effective_zoom: crate::values::computed::Zoom::ONE,
                  flags: ComputedValueFlags::empty(),
              },
-@@ -2013,13 +2074,14 @@
+@@ -2013,13 +2079,14 @@
                  writing_mode: self.writing_mode.clone(),
                  rules: self.rules.clone(),
                  visited_style: self.visited_style.clone(),
@@ -3995,7 +4138,7 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
          })
      }
  
-@@ -2028,6 +2090,7 @@
+@@ -2028,6 +2095,7 @@
          self.visited_style.as_deref()
      }
  
@@ -4003,7 +4146,7 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
      % for style_struct in data.active_style_structs():
          /// Clone the ${style_struct.name} struct.
          #[inline]
-@@ -2234,6 +2297,8 @@
+@@ -2234,6 +2302,8 @@
      /// for this element.  A element's "relevant link" is the element being
      /// matched if it is a link or the nearest ancestor link.
      pub visited_style: Option<Arc<ComputedValues>>,
@@ -4012,7 +4155,7 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
      % for style_struct in data.active_style_structs():
          ${style_struct.ident}: StyleStructRef<'a, style_structs::${style_struct.name}>,
      % endfor
-@@ -2271,6 +2336,7 @@
+@@ -2271,6 +2341,7 @@
              color_scheme: inherited_style.get_inherited_ui().color_scheme_bits(),
              flags: Cell::new(flags),
              visited_style: None,
@@ -4020,7 +4163,7 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
              % for style_struct in data.active_style_structs():
              % if style_struct.inherited:
              ${style_struct.ident}: StyleStructRef::Borrowed(inherited_style.get_${style_struct.name_lower}()),
-@@ -2317,12 +2383,57 @@
+@@ -2317,12 +2388,57 @@
              color_scheme: style_to_derive_from.get_inherited_ui().color_scheme_bits(),
              flags: Cell::new(style_to_derive_from.flags),
              visited_style: None,
@@ -4058,7 +4201,7 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
 +            % else:
 +            unvisited.mutate_${property.style_struct.name_lower}().copy_${property.ident}_from(mine);
 +            % endif
-         }
++        }
 +        % endif
 +        % endfor
 +        self.pyro_unvisited = Some(Arc::new(unvisited));
@@ -4072,13 +4215,13 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
 +                % endif
 +                self.${property.style_struct.ident}.mutate().copy_${property.ident}_from(v);
 +            }
-+        }
+         }
 +        % endif
 +        % endfor
      }
  
      /// Copy the reset properties from `style`.
-@@ -2550,7 +2661,8 @@
+@@ -2550,7 +2666,8 @@
  
      /// Turns this `StyleBuilder` into a proper `ComputedValues` instance.
      pub fn build(self) -> Arc<ComputedValues> {
@@ -4088,7 +4231,7 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
              self.pseudo,
              self.substitution_functions.custom_properties,
              self.attribute_references,
-@@ -2562,7 +2674,13 @@
+@@ -2562,7 +2679,13 @@
              % for style_struct in data.active_style_structs():
              self.${style_struct.ident}.build(),
              % endfor
@@ -4103,7 +4246,7 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
      }
  
      /// Get the substitution function maps if necessary.
-@@ -2769,7 +2887,8 @@
+@@ -2769,7 +2892,8 @@
  #[cfg(feature = "gecko")]
  size_of_test!(ComputedValues, 248);
  #[cfg(feature = "servo")]
@@ -4947,6 +5090,39 @@ diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
  flags = "IS_LEGACY_SHORTHAND ALLOWS_DISABLED_SUBPROPERTIES"
  sub_properties = ["line-clamp"]
  spec = "https://drafts.csswg.org/css-overflow-4/#webkit-line-clamp"
+diff -ruN a/properties_and_values/syntax/data_type.rs b/properties_and_values/syntax/data_type.rs
+--- a/properties_and_values/syntax/data_type.rs	2026-11-11 19:55:57
++++ b/properties_and_values/syntax/data_type.rs	2026-11-21 23:47:05
+@@ -18,6 +18,8 @@
+         const LENGTH = 1 << 0;
+         /// <color> values depend on color-scheme, etc..
+         const COLOR= 1 << 1;
++        /// Numeric math may consume a length without producing a length.
++        const NUMERIC_MATH = 1 << 2;
+     }
+ }
+ 
+@@ -103,16 +105,15 @@
+             | DataType::LengthPercentage
+             | DataType::TransformFunction
+             | DataType::TransformList => DependentDataTypes::LENGTH,
+-            DataType::Color => DependentDataTypes::COLOR,
++            // Typed arithmetic can cancel the length dimension while still needing font metrics.
+             DataType::Number
+             | DataType::Percentage
+-            | DataType::Image
+-            | DataType::Url
+             | DataType::Integer
+             | DataType::Angle
+             | DataType::Time
+-            | DataType::Resolution
+-            | DataType::CustomIdent
++            | DataType::Resolution => DependentDataTypes::NUMERIC_MATH,
++            DataType::Color => DependentDataTypes::COLOR,
++            DataType::Image | DataType::Url | DataType::CustomIdent
+             | DataType::String => DependentDataTypes::empty(),
+         }
+     }
 diff -ruN a/properties_and_values/value.rs b/properties_and_values/value.rs
 --- a/properties_and_values/value.rs	2026-11-11 19:55:57
 +++ b/properties_and_values/value.rs	2026-11-21 22:30:43

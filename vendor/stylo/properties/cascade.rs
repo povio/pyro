@@ -650,6 +650,7 @@ struct Declaration<'a> {
 pub(crate) struct Declarations<'a> {
     /// Whether we have any prioritary property. This is just a minor optimization.
     has_prioritary_properties: bool,
+    has_font_inputs: bool,
     /// A list of all the applicable longhand declarations.
     longhand_declarations: SmallVec<[Declaration<'a>; 64]>,
     /// The prioritary property position data.
@@ -685,6 +686,9 @@ impl<'a> Declarations<'a> {
         priority: CascadePriority,
         id: LonghandId,
     ) {
+        if matches!(decl, PropertyDeclaration::WithVariables(_)) && id.uses_parent_font_metrics() && id != LonghandId::FontSize {
+            self.has_font_inputs = true;
+        }
         if let Some(id) = PrioritaryPropertyId::from_longhand(id) {
             self.note_prioritary_property(id);
         }
@@ -732,7 +736,7 @@ fn find_non_custom_references(
         return result;
     };
     let dependent_types = syntax.dependent_types();
-    let may_reference_length = dependent_types.intersects(DependentDataTypes::LENGTH);
+    let may_reference_length = dependent_types.intersects(DependentDataTypes::LENGTH | DependentDataTypes::NUMERIC_MATH);
     if may_reference_length {
         result |= value.references.non_custom_references(is_root_element);
     }
@@ -2182,6 +2186,7 @@ fn substitute_all(
         /// Number of variables visited. This is used as the order index
         /// when we visit a new unresolved variable.
         count: usize,
+        resolving_font_input: bool,
         /// The map from a substitution function name to its order index.
         index_map: OrderIndexMap,
         /// Mapping from a non-custom dependency to its order index.
@@ -2614,6 +2619,7 @@ fn substitute_all(
         // of the match so we can create the corresponding nodes once we've pushed this variable.
         let mut value_non_custom_refs = ReferenceFlags::empty();
         let mut registered = false;
+        let mut inherited_font_basis = false;
         let value = match var {
             VarType::Custom(ref name) | VarType::Attr(ref name) => {
                 let map = &context.computed_context.builder.substitution_functions;
@@ -2635,6 +2641,11 @@ fn substitute_all(
                 let is_root = context.computed_context.is_root_element();
                 value_non_custom_refs = find_non_custom_references(registration, value, is_root);
                 registered = !registration.is_universal();
+                if context.resolving_font_input && let Some(syntax) = &registration.syntax {
+                    use crate::properties_and_values::syntax::data_type::DependentDataTypes as D;
+                    let types = syntax.dependent_types();
+                    inherited_font_basis = types.contains(D::NUMERIC_MATH) && !types.contains(D::LENGTH);
+                }
                 let has_dependency = value
                     .references
                     .flags
@@ -2723,6 +2734,9 @@ fn substitute_all(
             // ... Then the non-custom properties this value depends on (font-size, line-height,
             // color-scheme), as computed by `find_non_custom_references` above.
             let is_root = context.computed_context.is_root_element();
+            if inherited_font_basis {
+                value_non_custom_refs.remove(ReferenceFlags::FONT_UNITS | ReferenceFlags::LH_UNITS);
+            }
             if registered && !value_non_custom_refs.is_empty() {
                 value_non_custom_refs.for_each_non_custom(is_root, |r| {
                     visit_link(
@@ -2840,6 +2854,8 @@ fn substitute_all(
                     };
                     // We know we're not in a loop now, perform substitution.
                     // TODO(emilio): Merge with the cycle detection loop instead?
+                    let previous = context.computed_context.for_font_affecting_property;
+                    context.computed_context.for_font_affecting_property |= inherited_font_basis;
                     substitute_references_if_needed_and_apply(
                         name,
                         kind,
@@ -2848,6 +2864,7 @@ fn substitute_all(
                         context.computed_context,
                         context.attribute_tracker,
                     );
+                    context.computed_context.for_font_affecting_property = previous;
                 }
             },
             VarType::NonCustom(non_custom) => {
@@ -2860,6 +2877,7 @@ fn substitute_all(
 
     let mut context = Context {
         count: 0,
+        resolving_font_input: false,
         index_map: OrderIndexMap::default(),
         non_custom_index_map: NonCustomReferenceMap::default(),
         stack: SmallVec::new(),
@@ -2878,6 +2896,44 @@ fn substitute_all(
         }
         first = false;
     };
+    // Resolve registered numeric inputs to winning font declarations before unrelated
+    // properties. Only actually selected substitutions inherit the font consumer's basis.
+    if decls.has_font_inputs {
+        for dependency in [SingleNonCustomReference::FontUnits, SingleNonCustomReference::LhUnits] {
+            if references_from_non_custom_properties[dependency].is_some() {
+                reset(&mut context);
+                traverse(VarType::NonCustom(dependency), references_from_non_custom_properties, &mut context);
+            }
+        }
+        let mut visited = LonghandIdSet::default();
+        let mut reverted = FxHashMap::<LonghandId, (CascadePriority, RevertKind)>::default();
+        for declaration in &decls.longhand_declarations {
+            let id = declaration.decl.id().as_longhand().unwrap();
+            let priority = declaration.priority;
+            if !id.uses_parent_font_metrics() || id == LonghandId::FontSize || visited.contains(id) ||
+                !(priority.flags() - context.computed_context.included_cascade_flags).is_empty() {
+                continue;
+            }
+            if let Some(&(previous, kind)) = reverted.get(&id) && !previous.allows_when_reverted(&priority, kind) {
+                continue;
+            }
+            if let Some(kind) = declaration.decl.get_css_wide_keyword().and_then(|k| k.revert_kind()) {
+                reverted.insert(id, (priority, kind));
+                continue;
+            }
+            visited.insert(id);
+            let PropertyDeclaration::WithVariables(v) = declaration.decl else { continue };
+            reset(&mut context);
+            context.resolving_font_input = true;
+            let value = &v.value.variable_value;
+            let property_id = PropertyIdRef::from(v.value.from_shorthand.map(NonCustomPropertyId::from).unwrap_or_else(|| id.into()));
+            let mut lowlink = usize::MAX;
+            visit_value_references(None, &value.references, value, usize::MAX, property_id,
+                references_from_non_custom_properties, &mut context, &mut lowlink, &mut false,
+                &mut ReferenceFlags::empty(), &mut 0);
+            context.resolving_font_input = false;
+        }
+    }
     // Note that `seen` doesn't contain names inherited from our parent, but
     // those can't have variable references (since we inherit the computed
     // variables) so we don't want to spend cycles traversing them anyway.

@@ -809,6 +809,11 @@ impl LogicalMappingData {
 }
 
 impl LonghandId {
+    /// Whether relative font units in this longhand use the inherited metrics.
+    pub fn uses_parent_font_metrics(self) -> bool {
+        matches!(self, ${" | ".join("Self::" + p.camel_case for p in data.longhands if p.is_font_affecting())})
+    }
+
     /// Returns an iterator over all the shorthands that include this longhand.
     pub fn shorthands(self) -> NonCustomPropertyIterator<ShorthandId> {
         // first generate longhand to shorthands lookup map

@@ -1163,3 +1163,45 @@ fn connected_stylesheet_moves_follow_document_order() {
     "#);
     assert_eq!(actual, "second|first|second|first");
 }
+
+#[test]
+fn registered_numeric_font_units_follow_the_computing_element() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        CSS.registerProperty({name:'--scale',syntax:'<number>',inherits:true,initialValue:'1'});
+        const parent=document.body.appendChild(document.createElement('section'));
+        const child=parent.appendChild(document.createElement('div'));
+        parent.style.cssText='font-size:30px;--scale:calc(1em / 1px)';
+        child.style.cssText='font-size:10px;--raw:1em;margin-left:var(--raw)';
+        const cs=getComputedStyle(child);
+        const values=[cs.getPropertyValue('--scale'),cs.marginLeft];
+        child.style.setProperty('--scale','calc(1em / 1px)');
+        values.push(cs.getPropertyValue('--scale'));
+        child.style.fontSize='12px';
+        values.push(cs.getPropertyValue('--scale'),cs.marginLeft);
+        values.join('|')
+    "#);
+    assert_eq!(actual, "30|10px|10|12|12px");
+}
+
+#[test]
+fn registered_font_inputs_select_inherited_metrics_only_for_used_references() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        for (const name of ['--weight','--other']) CSS.registerProperty({name,syntax:'<number>',inherits:false,initialValue:'1'});
+        const p=document.body.appendChild(document.createElement('div')), c=p.appendChild(document.createElement('div'));
+        p.style.fontSize='30px';
+        c.style.cssText='font-size:10px;--weight:calc(1em / 1px);--other:calc(1em / 1px);--alias:var(--weight);font-weight:var(--alias,var(--other))';
+        const s=getComputedStyle(c), read=()=>[s.fontWeight,s.getPropertyValue('--weight'),s.getPropertyValue('--other')].join(',');
+        const values=[read()];
+        c.style.fontWeight='var(--missing,var(--other))';
+        values.push(read());
+        c.style.fontWeight='400';
+        values.push(read());
+        CSS.registerProperty({name:'--length',syntax:'<length>',inherits:false,initialValue:'5px'});
+        c.style.cssText='--length:2em;font-size:var(--length)';
+        values.push(s.getPropertyValue('--length'),s.fontSize);
+        values.join('|')
+    "#);
+    assert_eq!(actual, "30,30,10|30,10,30|400,10,10|5px|30px");
+}
