@@ -761,50 +761,6 @@ pub fn insert_text(page: &Rc<PageDom>, host: NodeId, text: &str) {
     });
 }
 
-/// `document.execCommand(command, showUI, value)`. Only `insertText` is
-/// supported: it types `value` into the focused text control or the
-/// contenteditable host of the focused element (else of the selection), with
-/// `beforeinput`/`input` and no `textInput` (Chromium fires none for
-/// execCommand, and uievents/textInput/api.html expects none). Returns
-/// whether the command was handled.
-pub(crate) fn exec_command(page: &Rc<PageDom>, command: &str, value: &str) -> bool {
-    if !command.eq_ignore_ascii_case("inserttext") {
-        return false;
-    }
-    let doc = page.document();
-    let focused = page.dom.borrow().focused(doc).ok().flatten();
-    // The focused element's host or text control comes first; otherwise the
-    // document selection may still sit in a host (focus on a checkbox does
-    // not clear it, as in Chromium).
-    let (host, control) = {
-        let dom = page.dom.borrow();
-        match focused {
-            Some(f) if is_text_entry_control(&dom, f) => (None, Some(f)),
-            Some(f) if editing_host(&dom, f).is_some() => (editing_host(&dom, f), None),
-            _ => (selection_range(page).and_then(|(start, _)| editing_host(&dom, start.0)), None),
-        }
-    };
-    if let Some(host) = host {
-        insert_text(page, host, value);
-        return true;
-    }
-    let Some(control) = control else { return false };
-    if !input_event(page, control, "beforeinput", "insertText", Some(value), true)
-        || page.document() != doc
-        || !connected(page, control)
-    {
-        return true;
-    }
-    crate::edit_commands::record_control_edit(page, control, "insertText");
-    let changed = page.dom.borrow_mut().insert_text(control, value).unwrap_or(false);
-    crate::edit_commands::note_control_edited(page, control);
-    if changed {
-        queue_control_selectionchange(page, control);
-        input_event(page, control, "input", "insertText", Some(value), false);
-    }
-    true
-}
-
 /// A textarea or an input whose type takes typed text.
 pub(crate) fn is_text_entry_control(dom: &Dom, el: NodeId) -> bool {
     use pyro_dom::forms::InputType;

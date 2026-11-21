@@ -580,8 +580,18 @@ fn apply_control_replace(
     changed
 }
 
+/// Keyboard editing dispatches cancelable beforeinput. Scripted control
+/// commands run their default action directly and still dispatch input.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EditSource {
+    User,
+    Script,
+}
+
 /// Deletes the selection, else from the caret to the `gran` boundary.
-pub(crate) fn control_delete(page: &Rc<PageDom>, el: NodeId, forward: bool, gran: Gran, input_type: Option<&str>) {
+pub(crate) fn control_delete(
+    page: &Rc<PageDom>, el: NodeId, forward: bool, gran: Gran, input_type: Option<&str>, source: EditSource,
+) {
     let range = {
         let dom = page.dom.borrow();
         let Some((units, multiline)) = control_text(&dom, el) else { return };
@@ -594,7 +604,10 @@ pub(crate) fn control_delete(page: &Rc<PageDom>, el: NodeId, forward: bool, gran
         }
     };
     let input_type = input_type.unwrap_or_else(|| deletion_input_type(forward, gran));
-    control_replace(page, el, Some(range), "", input_type, None);
+    match source {
+        EditSource::User => control_replace(page, el, Some(range), "", input_type, None),
+        EditSource::Script => apply_control_replace(page, el, Some(range), "", input_type, None),
+    };
 }
 
 /// Inserts `text` at a text control's selection (paste, insertText).
@@ -830,7 +843,7 @@ fn run_op(page: &Rc<PageDom>, el: NodeId, op: Op) {
             }
         }
         (Op::Delete(f, g), Target::Host(h)) => host_delete(page, h, f, g),
-        (Op::Delete(f, g), Target::Control(c)) => control_delete(page, c, f, g, None),
+        (Op::Delete(f, g), Target::Control(c)) => control_delete(page, c, f, g, None, EditSource::User),
         (Op::Delete(..), Target::Document) => {}
         (Op::SelectAll, Target::Host(h)) => editing::select_all(page, h),
         (Op::SelectAll, Target::Control(c)) => control_select_all(page, c),
@@ -838,22 +851,22 @@ fn run_op(page: &Rc<PageDom>, el: NodeId, op: Op) {
         (Op::LineBreak, Target::Host(h)) => editing::insert_line_break(page, h),
         (Op::LineBreak, _) => {}
         (Op::Copy, _) => {
-            crate::clipboard::run(page, Action::Copy);
+            crate::clipboard::run(page, Action::Copy, EditSource::User);
         }
         (Op::Cut, _) => {
-            crate::clipboard::run(page, Action::Cut);
+            crate::clipboard::run(page, Action::Cut, EditSource::User);
         }
         (Op::Paste, _) => {
-            crate::clipboard::run(page, Action::Paste);
+            crate::clipboard::run(page, Action::Paste, EditSource::User);
         }
         (Op::PastePlain, _) => {
-            crate::clipboard::run(page, Action::PastePlain);
+            crate::clipboard::run(page, Action::PastePlain, EditSource::User);
         }
         (Op::Undo, _) => {
-            undo(page, true);
+            undo(page, true, EditSource::User);
         }
         (Op::Redo, _) => {
-            undo(page, false);
+            undo(page, false, EditSource::User);
         }
     }
 }
@@ -1122,11 +1135,10 @@ pub(crate) fn exec_command(page: &Rc<PageDom>, doc: NodeId, command: &str, value
         "defaultparagraphseparator" => {
             return page.dom.borrow_mut().set_paragraph_separator(doc, value).unwrap_or(false)
         }
-        "inserttext" => return editing::exec_command(page, "insertText", value),
-        "copy" => return crate::clipboard::run(page, Action::Copy),
-        "cut" => return crate::clipboard::run(page, Action::Cut),
-        "undo" => return undo(page, true),
-        "redo" => return undo(page, false),
+        "copy" => return crate::clipboard::run(page, Action::Copy, EditSource::Script),
+        "cut" => return crate::clipboard::run(page, Action::Cut, EditSource::Script),
+        "undo" => return undo(page, true, EditSource::Script),
+        "redo" => return undo(page, false, EditSource::Script),
         "selectall" => {
             let target = command_target(page);
             // Editing "the selectAll command": `selectstart` (bubbling, cancelable) at the editing
@@ -1157,6 +1169,10 @@ pub(crate) fn exec_command(page: &Rc<PageDom>, doc: NodeId, command: &str, value
     let target = command_target(page);
     if let Some(Target::Control(c)) = target {
         return match cmd.as_str() {
+            "inserttext" => {
+                apply_control_replace(page, c, None, value, "insertText", Some(value));
+                true
+            }
             "inserthtml" => {
                 if !page.dom.borrow().is_mutable_text(c).unwrap_or(false) {
                     return false;
@@ -1168,18 +1184,18 @@ pub(crate) fn exec_command(page: &Rc<PageDom>, doc: NodeId, command: &str, value
                 true
             }
             "delete" => {
-                control_delete(page, c, false, Gran::Character, None);
+                control_delete(page, c, false, Gran::Character, None, EditSource::Script);
                 true
             }
             "forwarddelete" => {
-                control_delete(page, c, true, Gran::Character, None);
+                control_delete(page, c, true, Gran::Character, None, EditSource::Script);
                 true
             }
             "insertlinebreak" | "insertparagraph" => {
                 let textarea = editing::local(&page.dom.borrow(), c) == "textarea";
                 if textarea {
                     let ty = if cmd == "insertlinebreak" { "insertLineBreak" } else { "insertParagraph" };
-                    control_replace(page, c, None, "\n", ty, None);
+                    apply_control_replace(page, c, None, "\n", ty, None);
                 }
                 textarea
             }
@@ -1202,6 +1218,7 @@ pub(crate) fn exec_command(page: &Rc<PageDom>, doc: NodeId, command: &str, value
         return true;
     }
     match cmd.as_str() {
+        "inserttext" => editing::insert_text(page, host, value),
         "delete" => editing::delete(page, host, true),
         "forwarddelete" => editing::delete(page, host, false),
         "insertparagraph" => editing::insert_paragraph(page, host),
@@ -1947,7 +1964,7 @@ fn restore(page: &Rc<PageDom>, target: NodeId, saved: Saved) {
 /// Undo (`backward`) or redo the last step: `beforeinput` historyUndo /
 /// historyRedo (cancelable), the restore, then `input`. Returns whether a
 /// step was there.
-pub(crate) fn undo(page: &Rc<PageDom>, backward: bool) -> bool {
+fn undo(page: &Rc<PageDom>, backward: bool, source: EditSource) -> bool {
     let step = {
         let mut h = page.undo.borrow_mut();
         h.typing = None;
@@ -1963,7 +1980,8 @@ pub(crate) fn undo(page: &Rc<PageDom>, backward: bool) -> bool {
     }
     let input_type = if backward { "historyUndo" } else { "historyRedo" };
     let doc = page.document();
-    if !editing::input_event(page, step.target, "beforeinput", input_type, None, true)
+    let beforeinput = source == EditSource::User || matches!(&step.saved, Saved::Host { .. });
+    if beforeinput && !editing::input_event(page, step.target, "beforeinput", input_type, None, true)
         || page.document() != doc
         || !editing::connected(page, step.target)
     {
