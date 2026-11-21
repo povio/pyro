@@ -1,0 +1,30 @@
+pagebox-main-candidate 8082 page passes 5655 named passes 180811 observed names 194657 statuses {'complete:0': 7871, 'complete:2': 104, 'timeout:None': 11, 'complete:1': 95, 'hang:None': 1}
+pagebox-main-parent 8082 page passes 5652 named passes 180763 observed names 194657 statuses {'complete:0': 7871, 'complete:2': 104, 'timeout:None': 11, 'complete:1': 95, 'hang:None': 1}
+pagebox-main-stable 8082 page passes 6950 named passes 182963 observed names 194912 statuses {'complete:0': 7986, 'complete:2': 62, 'complete:1': 23, 'timeout:None': 10, 'hang:None': 1}
+pagebox-main-parent pages left only 3 right only 0
+pagebox-main-parent passes left only 48 right only 0
+pagebox-main-parent observed left only 0 right only 0
+pagebox-main-stable pages left only 275 right only 1570
+pagebox-main-stable passes left only 5891 right only 8043
+pagebox-main-stable observed left only 260 right only 515
+Losses vs parent by URL: Counter()
+pagebox-focus-candidate 346 page passes 248 named passes 5082 observed names 5376 statuses {'complete:0': 346}
+pagebox-focus-parent 346 page passes 245 named passes 5038 observed names 5376 statuses {'complete:0': 346}
+pagebox-focus-stable 346 page passes 303 named passes 5215 observed names 5377 statuses {'complete:0': 346}
+pagebox-focus-parent pages left only 3 right only 0
+pagebox-focus-parent passes left only 44 right only 0
+pagebox-focus-parent observed left only 0 right only 0
+pagebox-focus-stable pages left only 15 right only 70
+pagebox-focus-stable passes left only 117 right only 250
+pagebox-focus-stable observed left only 15 right only 16
+Losses vs parent by URL: Counter()
+pagebox-supplement-candidate 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+pagebox-supplement-parent 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+pagebox-supplement-stable 41 page passes 35 named passes 619 observed names 874 statuses {'complete:0': 41}
+pagebox-supplement-parent pages left only 0 right only 0
+pagebox-supplement-parent passes left only 0 right only 0
+pagebox-supplement-parent observed left only 0 right only 0
+pagebox-supplement-stable pages left only 0 right only 8
+pagebox-supplement-stable passes left only 0 right only 42
+pagebox-supplement-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()
