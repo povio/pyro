@@ -1114,16 +1114,26 @@ fn cannot_contain_paragraph(dom: &Dom, host: NodeId) -> bool {
         || matches!(tag.as_str(), "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "p" | "dt")
 }
 
-fn paragraph_in_constrained_host(page: &PageDom, dom: &Dom, host: NodeId, node: NodeId) -> NodeId {
+/// A semantic block host can split a descendant rendered as a paragraph,
+/// including a block-styled span. A phrasing host such as span can instead
+/// break the line inside that span without cloning it.
+fn paragraph_for_split(page: &PageDom, dom: &Dom, host: NodeId, node: NodeId, constrained: bool) -> NodeId {
     let layout = page.layout();
+    let block_host = is_block(dom, host) || local(dom, host) == "body";
     let mut el = if is_text(dom, node) { dom.parent_element(node).ok().flatten() } else { Some(node) };
     while let Some(n) = el {
         if n == host { break; }
-        let display = layout.computed_style_value(dom, n, "display");
-        if is_container(dom, n) && (display == "block"
-            || (is_block(dom, n) && display != "contents" && display != "inline" && !display.starts_with("inline-")))
-        {
+        let semantic_block = is_block(dom, n);
+        if !constrained && semantic_block {
             return n;
+        }
+        if (block_host || semantic_block) && is_container(dom, n)
+            && !matches!(local(dom, n).as_str(), "button" | "select" | "textarea" | "object")
+        {
+            let display = layout.computed_style_value(dom, n, "display");
+            if display == "block" || (semantic_block && display != "contents" && display != "inline" && !display.starts_with("inline-")) {
+                return n;
+            }
         }
         el = dom.parent_element(n).ok().flatten();
     }
@@ -1150,11 +1160,7 @@ fn split_block(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point) -> Poi
         ancestor = dom.parent(node).ok().flatten();
     }
     let constrained = cannot_contain_paragraph(dom, host);
-    let mut block = if constrained {
-        paragraph_in_constrained_host(page, dom, host, caret.0)
-    } else {
-        block_of(dom, caret.0, host)
-    };
+    let mut block = paragraph_for_split(page, dom, host, caret.0, constrained);
     let mut caret = caret;
     let display = page.layout().computed_style_value(dom, block, "display");
     let inline_box = display == "inline" || display.starts_with("inline-");
