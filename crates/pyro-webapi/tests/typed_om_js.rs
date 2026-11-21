@@ -113,6 +113,17 @@ fn values_parse_reify_and_serialize() {
 }
 
 #[test]
+fn border_width_is_not_a_typed_border_shorthand() {
+    let env = env("<!doctype html><div id=d></div>");
+    let realm = &env.main;
+    assert_eq!(eval(realm, "const map = document.getElementById('d').attributeStyleMap; map.set('border-inline-end-width', CSS.px(2)); String(map.get('border-inline-end-width'))"), "2px");
+    for name in ["border", "border-left", "border-block", "border-inline-end"] {
+        assert_eq!(eval(realm, &format!("try {{ map.set('{name}', CSS.px(2)) }} catch (error) {{ error.name }}")), "TypeError", "{name}");
+    }
+    assert_eq!(eval(realm, "map.set('border-inline-end', '2px solid'); String(map.get('border-inline-end-width'))"), "2px");
+}
+
+#[test]
 fn attribute_style_map_reads_and_writes_the_inline_style() {
     let e = env("<!doctype html><div id=d style='width: 10px; margin-top: 2em'></div>");
     let r = &e.main;

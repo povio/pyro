@@ -1224,6 +1224,9 @@
       }
       // A shorthand takes a typed value only where it stands for the whole shorthand (one component).
       if (typed && which === 1) {
+        if (v instanceof CSSNumericValue && /^border(?:-(?:top|right|bottom|left|(?:block|inline)(?:-(?:start|end))?))?$/.test(name)) {
+          throw new TypeError(`Failed to execute '${what}' on 'StylePropertyMap': Invalid type for property`);
+        }
         const normalized = parse(name, text);
         if (normalized === null || splitSpaces(normalized).length > 1) throw new TypeError(`Failed to execute '${what}' on 'StylePropertyMap': Invalid type for property`);
         return text;
