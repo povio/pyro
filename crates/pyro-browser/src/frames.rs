@@ -1871,7 +1871,7 @@ impl Browser {
                         url,
                         reason: NavigationReason::InitialFrameNavigation,
                         cdp_request_id: None,
-                        referrer: Some(parent.url),
+                        referrer: parent.navigation_referrer(),
                         referrer_policy,
                     },
                     HistoryHandling::Replace,

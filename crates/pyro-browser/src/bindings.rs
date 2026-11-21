@@ -425,7 +425,7 @@ impl PageHooks for Hooks {
                             NavigationReason::Anchor
                         },
                         cdp_request_id: None,
-                        referrer: b.doc(page).map(|p| p.main_frame.url.clone()),
+                        referrer: b.doc(page).and_then(|p| p.main_frame.navigation_referrer()),
                         // The link's own policy, else that of the document that navigates
                         // (not of the frame a `target` names).
                         referrer_policy: request.referrer_policy.or_else(|| {
