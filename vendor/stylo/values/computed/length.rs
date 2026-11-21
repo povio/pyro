@@ -513,15 +513,15 @@ impl Size {
                 | (Self::MinContent, Self::CalcSizeMinContent(_))
                 | (Self::MaxContent, Self::CalcSizeMaxContent(_))
                 | (Self::FitContent, Self::CalcSizeFitContent(_)) => Some(identity.clone()),
-                (Self::LengthPercentage(value) | Self::CalcSizeAny(value), _) if !value.0.has_percentage() => Some(value.clone()),
+                (Self::LengthPercentage(value) | Self::CalcSizeAny(value), _) => Some(value.clone()),
                 _ => None,
             }
         };
         match (self, other) {
             (Self::CalcSizePercentage(from), Self::CalcSizePercentage(to) | Self::LengthPercentage(to)) |
             (Self::LengthPercentage(from), Self::CalcSizePercentage(to)) => Ok(Self::CalcSizePercentage(from.animate(to, procedure)?)),
-            (Self::CalcSizeAny(from), Self::CalcSizePercentage(to)) if !from.0.has_percentage() => Ok(Self::CalcSizePercentage(from.animate(to, procedure)?)),
-            (Self::CalcSizePercentage(from), Self::CalcSizeAny(to)) if !to.0.has_percentage() => Ok(Self::CalcSizePercentage(from.animate(to, procedure)?)),
+            (Self::CalcSizeAny(from), Self::CalcSizePercentage(to)) |
+            (Self::CalcSizePercentage(from), Self::CalcSizeAny(to)) => Ok(Self::CalcSizePercentage(from.animate(to, procedure)?)),
             (Self::Auto, Self::Auto) => Ok(Self::Auto),
             (Self::CalcSizeAny(from), Self::CalcSizeAny(to) | Self::LengthPercentage(to)) |
             (Self::LengthPercentage(from), Self::CalcSizeAny(to)) => Ok(Self::CalcSizeAny(from.animate(to, procedure)?)),

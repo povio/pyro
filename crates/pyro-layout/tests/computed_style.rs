@@ -460,6 +460,18 @@ fn intrinsic_size_and_container_percentage_are_independent() {
 }
 
 #[test]
+fn percentage_endpoint_interpolates_with_intrinsic_size() {
+    use style::values::animated::{Animate, Procedure};
+    use style::values::computed::{length::CSSPixelLength, Size};
+
+    let page = Page::new(r#"<div id=start style="height:calc-size(auto, size * 2)"></div><div id=end style="height:50%"></div>"#);
+    let height = |selector| page.layout.style().stylo_style(&page.dom.borrow(), page.find(selector)).unwrap().get_position().height.clone();
+    let Size::CalcSizeAuto(sample) = height("#start").animate(&height("#end"), Procedure::Interpolate { progress: 0.75 }).unwrap() else { panic!("lost intrinsic basis") };
+    assert_eq!(sample.0.resolve_size(CSSPixelLength::new(100.0), CSSPixelLength::new(300.0)).px(), 162.5);
+    assert_eq!(sample.0.resolve_size(CSSPixelLength::new(100.0), CSSPixelLength::new(0.0)).px(), 50.0);
+}
+
+#[test]
 fn flex_basis_calculation_uses_the_items_box_sizing() {
     let page = Page::new(r#"<!doctype html><div style="display:flex;width:240px">
         <div id=content style="width:40px;padding:5px;flex:0 0 calc-size(auto,size * 2)"></div>
