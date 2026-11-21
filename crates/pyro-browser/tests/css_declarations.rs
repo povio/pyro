@@ -1048,3 +1048,26 @@ fn speak_keywords_cascade_and_reify_as_typed_values() {
     "#);
     assert_eq!(actual, "auto|never|always|always|always|never");
 }
+
+#[test]
+fn transition_effect_exposes_independent_computed_endpoints() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        const el = document.body.appendChild(document.createElement('div'));
+        el.style.cssText = 'width: 12px; --end: 45px';
+        getComputedStyle(el).width;
+        el.style.transition = 'width 100s ease-in';
+        el.style.width = 'var(--end)';
+        const effect = el.getAnimations()[0].effect;
+        const copy = new KeyframeEffect(effect);
+        const first = effect.getKeyframes();
+        first[0].width = '99px';
+        effect.target = null;
+        const frames = effect.getKeyframes();
+        effect.setKeyframes([{opacity: '0'}, {opacity: '1'}]);
+        [frames.length, frames[0].width, frames[0].computedOffset, frames[1].width,
+         frames[1].computedOffset, frames[1].easing, frames[1].composite,
+         copy.getKeyframes()[1].width, effect.getKeyframes()[1].opacity].join('|')
+    "#);
+    assert_eq!(actual, "2|12px|0|45px|1|linear|auto|45px|1");
+}

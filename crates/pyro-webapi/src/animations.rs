@@ -117,6 +117,23 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         Ok(s.number(page.timeline_now_ms()))
     })?;
     natives.set_atom("now", now.value())?;
+    // Capture the native endpoints once when constructing the transition's script object.
+    // The object can outlive its run or lose its target.
+    let endpoints = s.function("transitionFrames", |s, _, args| {
+        let page = page_of(s)?;
+        let id = args.get(0).to_number()? as u64;
+        let mut frames = Vec::new();
+        if let Some(keyframes) = page.animation_events.transition_frames(id) {
+            for frame in &keyframes.frames {
+                let block = pyro_dom::stylo::declarations::DeclarationBlock::parse(&frame.declarations);
+                if let Some(property) = block.item(0) {
+                    frames.push(s.array(&[s.number(frame.offset), s.string(&property), s.string(&block.value(&property))])?.value());
+                }
+            }
+        }
+        Ok(s.array(&frames)?.value())
+    })?;
+    natives.set_atom("transitionFrames", endpoints.value())?;
     let observed = std::cell::Cell::new(None);
     let flush = s.function("flushPlayback", move |s, _this, _a| {
         let page = page_of(s)?;
