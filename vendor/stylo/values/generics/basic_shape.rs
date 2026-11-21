@@ -595,7 +595,23 @@ where
         W: Write,
     {
         dest.write_str("inset(")?;
-        self.rect.to_css(dest)?;
+        let sides = [&self.rect.0, &self.rect.1, &self.rect.2, &self.rect.3]
+            .map(|side| side.to_css_string());
+        let count = if sides[3] != sides[1] {
+            4
+        } else if sides[2] != sides[0] {
+            3
+        } else if sides[1] != sides[0] {
+            2
+        } else {
+            1
+        };
+        for (index, side) in sides[..count].iter().enumerate() {
+            if index != 0 {
+                dest.write_char(' ')?;
+            }
+            dest.write_str(side)?;
+        }
         if !self.round.is_zero() {
             dest.write_str(" round ")?;
             self.round.to_css(dest)?;

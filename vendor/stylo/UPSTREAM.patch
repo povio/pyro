@@ -7409,7 +7409,7 @@ diff -ruN a/values/computed/ui.rs b/values/computed/ui.rs
  
 diff -ruN a/values/generics/basic_shape.rs b/values/generics/basic_shape.rs
 --- a/values/generics/basic_shape.rs	2026-11-11 19:55:57
-+++ b/values/generics/basic_shape.rs	2026-11-16 16:33:29
++++ b/values/generics/basic_shape.rs	2026-11-21 01:41:20
 @@ -134,6 +134,97 @@
  
  pub use self::GenericClipPath as ClipPath;
@@ -7508,6 +7508,31 @@ diff -ruN a/values/generics/basic_shape.rs b/values/generics/basic_shape.rs
  /// A value for the `shape-outside` property.
  #[allow(missing_docs)]
  #[derive(
+@@ -504,7 +595,23 @@
+         W: Write,
+     {
+         dest.write_str("inset(")?;
+-        self.rect.to_css(dest)?;
++        let sides = [&self.rect.0, &self.rect.1, &self.rect.2, &self.rect.3]
++            .map(|side| side.to_css_string());
++        let count = if sides[3] != sides[1] {
++            4
++        } else if sides[2] != sides[0] {
++            3
++        } else if sides[1] != sides[0] {
++            2
++        } else {
++            1
++        };
++        for (index, side) in sides[..count].iter().enumerate() {
++            if index != 0 {
++                dest.write_char(' ')?;
++            }
++            dest.write_str(side)?;
++        }
+         if !self.round.is_zero() {
+             dest.write_str(" round ")?;
+             self.round.to_css(dest)?;
 diff -ruN a/values/generics/calc.rs b/values/generics/calc.rs
 --- a/values/generics/calc.rs	2026-11-11 19:55:57
 +++ b/values/generics/calc.rs	2026-11-20 20:06:02
