@@ -1385,6 +1385,130 @@ pub fn dataset<'s>(s: &Scope<'s>, page: &PageDom, id: NodeId) -> JsResult<Object
     s.wrap::<DomStringMap>(StringMapData { el: NodeHold::new(&page, id)? }, Some(key))
 }
 
+// ----- SVGStringList -----------------------------------------------------------
+
+use pyro_dom::svg_string_list::StringListAttribute;
+
+pub struct StringListData {
+    el: NodeHold,
+    kind: StringListAttribute,
+}
+
+impl StringListData {
+    fn with_items<R>(&self, f: impl FnOnce(&[String]) -> R) -> JsResult<R> {
+        let mut dom = self.el.page.dom.borrow_mut();
+        Ok(f(dom.svg_string_list(self.el.id, self.kind).js()?))
+    }
+
+    fn edit<R>(&self, f: impl FnOnce(&mut Vec<String>) -> JsResult<R>) -> JsResult<R> {
+        let mut dom = self.el.page.dom.borrow_mut();
+        let mut items = dom.svg_string_list(self.el.id, self.kind).js()?.to_vec();
+        let result = f(&mut items)?;
+        dom.set_svg_string_list(self.el.id, self.kind, items).js()?;
+        Ok(result)
+    }
+
+    fn replace(&self, index: usize, value: String) -> JsResult<()> {
+        self.edit(|items| {
+            *items.get_mut(index).ok_or_else(string_list_index_error)? = value;
+            Ok(())
+        })
+    }
+}
+
+/// Web IDL unsigned long conversion uses modulo after truncation, even for
+/// doubles outside Rust's signed integer range. NaN and infinities map to zero.
+fn string_list_index(value: Value<'_>) -> JsResult<usize> {
+    Ok(value.to_number()?.trunc().rem_euclid(4_294_967_296.0) as u32 as usize)
+}
+
+fn string_list_index_error() -> JsError {
+    JsError::dom("IndexSizeError", "The index is outside the SVG string list.")
+}
+
+pub struct SvgStringList;
+impl JsClass for SvgStringList {
+    const NAME: &'static str = "SVGStringList";
+    type Data = StringListData;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        for name in ["length", "numberOfItems"] {
+            def.getter(name, |s, l| l.with_items(|v| s.number(v.len() as f64)));
+        }
+        def.legacy_platform_object();
+        def.indexed(|s, l, i| l.with_items(|v| v.get(i as usize).map(|item| s.string(item))));
+        def.indexed_iterator();
+        def.named_setter(|_, l, name, value| {
+            let Some(i) = name.parse::<u32>().ok().filter(|i| *i != u32::MAX && i.to_string() == name) else {
+                return Ok(false);
+            };
+            l.replace(i as usize, dom_string(value)?)?;
+            Ok(true)
+        });
+        def.method("clear", 0, |s, l, _| {
+            l.el.page.dom.borrow_mut().set_svg_string_list(l.el.id, l.kind, Vec::new()).js()?;
+            Ok(s.undefined())
+        });
+        def.method("getItem", 1, |s, l, a| {
+            a.require(1, "SVGStringList.getItem")?;
+            let i = string_list_index(a.get(0))?;
+            l.with_items(|v| v.get(i).map(|item| s.string(item)))?.ok_or_else(string_list_index_error)
+        });
+        def.method("initialize", 1, |s, l, a| {
+            a.require(1, "SVGStringList.initialize")?;
+            let value = dom_string(a.get(0))?;
+            let result = s.string(&value);
+            l.el.page.dom.borrow_mut().set_svg_string_list(l.el.id, l.kind, vec![value]).js()?;
+            Ok(result)
+        });
+        def.method("appendItem", 1, |s, l, a| {
+            a.require(1, "SVGStringList.appendItem")?;
+            let value = dom_string(a.get(0))?;
+            let result = s.string(&value);
+            l.edit(|items| { items.push(value); Ok(()) })?;
+            Ok(result)
+        });
+        def.method("insertItemBefore", 2, |s, l, a| {
+            a.require(2, "SVGStringList.insertItemBefore")?;
+            let value = dom_string(a.get(0))?;
+            let i = string_list_index(a.get(1))?;
+            let result = s.string(&value);
+            l.edit(|items| { items.insert(i.min(items.len()), value); Ok(()) })?;
+            Ok(result)
+        });
+        def.method("replaceItem", 2, |s, l, a| {
+            a.require(2, "SVGStringList.replaceItem")?;
+            let value = dom_string(a.get(0))?;
+            let i = string_list_index(a.get(1))?;
+            let result = s.string(&value);
+            l.replace(i, value)?;
+            Ok(result)
+        });
+        def.method("removeItem", 1, |s, l, a| {
+            a.require(1, "SVGStringList.removeItem")?;
+            let i = string_list_index(a.get(0))?;
+            let value = l.edit(|items| {
+                if i >= items.len() { return Err(string_list_index_error()); }
+                Ok(items.remove(i))
+            })?;
+            Ok(s.string(&value))
+        });
+    }
+}
+
+pub fn svg_string_list<'s>(s: &Scope<'s>, n: &NodeData, kind: StringListAttribute) -> JsResult<Value<'s>> {
+    let slot = match kind {
+        StringListAttribute::RequiredExtensions => 440,
+        StringListAttribute::SystemLanguage => 441,
+    };
+    let key = coll_identity(n.page(), slot, n.id);
+    if let Some(obj) = s.lookup_identity(key) {
+        return Ok(obj.value());
+    }
+    let el = NodeHold::new(n.page(), n.id)?;
+    Ok(s.wrap::<SvgStringList>(StringListData { el, kind }, Some(key))?.value())
+}
+
 // ----- SVGAnimatedEnumeration ---------------------------------------------------
 
 /// An SVG element's enumerated attribute (`clipPathUnits`, `spreadMethod`, ...):
@@ -2359,6 +2483,7 @@ pub fn animated_transform_list<'s>(s: &Scope<'s>, page: &PageDom, id: NodeId, at
 }
 
 pub(crate) fn register(engine: &pyro_js::Engine) {
+    engine.register::<SvgStringList>();
     engine.register::<SvgAnimatedTransformList>();
     engine.register::<SvgTransformList>();
     engine.register::<SvgTransform>();
