@@ -2900,6 +2900,8 @@ fn determine_used_cross_size(
         for child in line.items.iter_mut() {
             // A cross size of `stretch` stretches to the flex line like align-self: stretch
             // (but regardless of the alignment style)
+            let stretch = (line_cross_size - child.margin.cross_axis_sum(constants.dir))
+                .max((child.padding + child.border).cross_axis_sum(constants.dir));
             child.target_size.set_cross(
                 constants.dir,
                 if child.is_stretched(constants.dir) {
@@ -2956,7 +2958,14 @@ fn determine_used_cross_size(
                     fit.maybe_clamp(child.min_size.width, child.max_size.width)
                         .max(child.hypothetical_inner_size.cross(constants.dir))
                 } else {
-                    child.hypothetical_inner_size.cross(constants.dir)
+                    let hypothetical = child.hypothetical_inner_size.cross(constants.dir);
+                    if child.min_size_keyword.cross(constants.dir).is_stretch() {
+                        hypothetical.max(stretch)
+                    } else if child.max_size_keyword.cross(constants.dir).is_stretch() {
+                        hypothetical.min(stretch).maybe_max(child.min_size.cross(constants.dir))
+                    } else {
+                        hypothetical
+                    }
                 },
             );
 
