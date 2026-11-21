@@ -1050,6 +1050,10 @@
     let tries = 0;
     const attempt = () => {
       if (a.pendingGen !== gen || a.pending !== kind) return;
+      if (a.cssOwner && a.css === CSS_ANIMATION) {
+        native.flushPlayback();
+        if (a.pendingGen !== gen || a.pending !== kind) return;
+      }
       // (On a progress-based timeline the task runs at the frame: the timeline takes its scroll
       // position first.)
       if (progressBased(a)) pushScroll();
@@ -1546,11 +1550,11 @@
       if (previous !== null) seekTo(a, previous);
       else updateFinished(a, false, false);
     }
-    get playState() { return playStateOf(brand(animations, this, 'an Animation')); }
+    get playState() { return playStateOf(playbackState(this)); }
     get replaceState() { return brand(animations, this, 'an Animation').replaceState; }
-    get pending() { return brand(animations, this, 'an Animation').pending !== null; }
-    get ready() { return brand(animations, this, 'an Animation').ready.promise; }
-    get finished() { return brand(animations, this, 'an Animation').finished.promise; }
+    get pending() { return playbackState(this).pending !== null; }
+    get ready() { return playbackState(this).ready.promise; }
+    get finished() { return playbackState(this).finished.promise; }
     get overallProgress() {
       const a = brand(animations, this, 'an Animation');
       const ct = currentTimeOf(a);
@@ -1560,8 +1564,8 @@
       if (end === Infinity) return 0;
       return Math.min(Math.max(ct / end, 0), 1);
     }
-    play() { play(override(scripted(brand(animations, this, 'an Animation')), 'playState'), true); }
-    pause() { pause(override(scripted(brand(animations, this, 'an Animation')), 'playState')); }
+    play() { const a = scripted(playbackState(this)); play(a, true); override(a, 'playState'); }
+    pause() { const a = scripted(playbackState(this)); pause(a); override(a, 'playState'); }
     finish() {
       const a = scripted(brand(animations, this, 'an Animation'));
       const rate = effectiveRate(a);
@@ -1696,6 +1700,11 @@
   // state after.
   const CSS_TRANSITION = 0, CSS_ANIMATION = 1;
   const cssRuns = new Map();
+  function playbackState(object) {
+    const a = brand(animations, object, 'an Animation');
+    if (a.cssOwner && a.css === CSS_ANIMATION) native.flushPlayback();
+    return a;
+  }
   class CSSAnimation extends Animation {
     constructor() { throw illegal(); }
     get animationName() { return brand(animations, this, 'a CSSAnimation').cssName; }
@@ -1779,6 +1788,7 @@
     a.cssName = name;
     a.cssId = id;
     a.cssOwner = id == null ? null : target;
+    a.cssPaused = held !== null;
     a.cssPseudoOrder = pseudo === '::marker' ? 1 : pseudo === '::before' ? 2 : pseudo === '::after' ? 3 : 0;
     a.cssTimelineKey = scrollDriven ? JSON.stringify(timelineText) : null;
     if (trigger !== null && trigger !== undefined && !scrollDriven) {
@@ -1978,7 +1988,7 @@
       if (gone) {
         gone.cssOwner = null;
         triggered.delete(gone);
-        if (gone.css === CSS_TRANSITION && playStateOf(gone) !== 'finished') cancel(gone);
+        if (gone.css === CSS_ANIMATION || playStateOf(gone) !== 'finished') cancel(gone);
       }
     }
   }
@@ -2096,6 +2106,16 @@
     // `animation-play-state`: the engine's run times one CSS controls alone; script's (or a
     // progress-based one) is paused or played.
     if (ov.has('playState')) return;
+    if (a.cssOwner && !a.scrollDriven && !a.trigger) {
+      const paused = held !== null;
+      if (a.cssPaused !== paused) {
+        a.cssPaused = paused;
+        if (playStateOf(a) !== 'idle') {
+          if (paused) pause(a); else play(a, false);
+        }
+      }
+      return;
+    }
     if (!a.scripted && !a.scrollDriven) return cssFollowPlayState(a, run);
     const state = playStateOf(a);
     if (held !== null) {
