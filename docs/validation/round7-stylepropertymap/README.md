@@ -17,3 +17,5 @@ The performance script uses eight fresh browser processes in ABBA/BAAB order. Ea
 | declaredIteration | 70.16 | 69.38 | -1.1% | 81.5 / 83.5 |
 
 These are descriptive medians from 20 measured samples per arm per fixture. The typed-write wall difference was not accompanied by a change in mean CPU; iteration mean CPU rose by 2 ms. Host occupancy and other workloads affect the timings.
+
+The eight timed processes ran from 20:35:13.192 to 20:35:20.056 UTC. One-second samples weighted by process duration measured 44.39% host CPU overall, 41.96% during baseline processes and 46.97% during candidate processes. CI was active. Census, StylePropertyMap QA and popover QA had zero overlap. [Per-process host measurements](host.json)
