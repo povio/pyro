@@ -627,6 +627,7 @@ class Longhand(Property):
                 "BackfaceVisibility",
                 "Isolation",
                 "ViewTransitionScope",
+                "ScrollAxisLock",
                 "ScrollBehavior",
                 "ScrollMarkerGroup",
                 "ScrollTargetGroup",

@@ -69,7 +69,7 @@ pub use self::box_::{
     ContainIntrinsicSize, ContainerName, ContainerType, ContentVisibility, DirectionProperty,
     Display, DominantBaseline, Float, ImageOrientation, InterpolateSize, Isolation, LineClamp, MarginTrim, Orient, ViewTransitionScope,
     Overflow, OverflowAnchor, OverflowClipMargin, OverscrollBehavior, Perspective,
-    PositionProperty, Resize, ScrollBehavior, ScrollMarkerGroup, ScrollTargetGroup, ScrollSnapAlign, ScrollSnapAxis, ScrollSnapStop,
+    PositionProperty, Resize, ScrollAxisLock, ScrollBehavior, ScrollMarkerGroup, ScrollTargetGroup, ScrollSnapAlign, ScrollSnapAxis, ScrollSnapStop,
     ScrollSnapStrictness, ScrollSnapType, ScrollbarGutter, ScrollbarInset, TextOrientation,
     TopLayer, TouchAction, Visibility, WillChange, WritingModeProperty, Zoom,
 };

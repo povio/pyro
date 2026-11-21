@@ -3978,6 +3978,15 @@ affects = "layout"
 type = "TopLayer"
 initial = "computed::TopLayer::None"
 
+[scroll-axis-lock]
+struct = "box"
+engine = "servo"
+spec = "https://drafts.csswg.org/css-overflow-5/#scroll-axis-locking"
+animation_type = "discrete"
+affects = ""
+type = "ScrollAxisLock"
+initial = "computed::ScrollAxisLock::Auto"
+
 [scroll-behavior]
 struct = "box"
 servo_pref = "layout.css.scroll-behavior.enabled"
