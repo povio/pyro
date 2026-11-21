@@ -1106,6 +1106,28 @@ fn in_text_only_element(dom: &Dom, node: NodeId) -> bool {
     })
 }
 
+/// These hosts must keep the edit inside themselves without creating a
+/// child paragraph. Existing block descendants can still split normally.
+fn cannot_contain_paragraph(dom: &Dom, host: NodeId) -> bool {
+    let tag = local(dom, host);
+    (!is_block(dom, host) && tag != "body")
+        || matches!(tag.as_str(), "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "p" | "dt")
+}
+
+fn paragraph_in_constrained_host(page: &PageDom, dom: &Dom, host: NodeId, node: NodeId) -> NodeId {
+    let layout = page.layout();
+    let mut el = if is_text(dom, node) { dom.parent_element(node).ok().flatten() } else { Some(node) };
+    while let Some(n) = el {
+        if n == host { break; }
+        let display = layout.computed_style_value(dom, n, "display");
+        if display == "block" || (is_block(dom, n) && display != "contents" && display != "inline" && !display.starts_with("inline-")) {
+            return n;
+        }
+        el = dom.parent_element(n).ok().flatten();
+    }
+    host
+}
+
 fn split_block(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point) -> Point {
     let caret = insertion_point(dom, caret);
     // Content that is text only (a `<script>` or `<style>` in the head of a designMode
@@ -1125,24 +1147,22 @@ fn split_block(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point) -> Poi
         if node == host || is_block(dom, node) { break; }
         ancestor = dom.parent(node).ok().flatten();
     }
-    let mut block = block_of(dom, caret.0, host);
+    let constrained = cannot_contain_paragraph(dom, host);
+    let mut block = if constrained {
+        paragraph_in_constrained_host(page, dom, host, caret.0)
+    } else {
+        block_of(dom, caret.0, host)
+    };
     let mut caret = caret;
     let display = page.layout().computed_style_value(dom, block, "display");
     let inline_box = display == "inline" || display.starts_with("inline-");
     if block == host {
-        if inline_box {
+        if inline_box || constrained {
             return if crate::edit_commands::newlines_significant_in(page, dom, caret.0) {
                 preserved_break_at(page, dom, host, caret)
             } else {
                 line_break_at(dom, host, caret)
             };
-        }
-        // An inline editing host, heading, term or paragraph can't acquire
-        // child paragraphs. Its surrounding block may lie outside this host.
-        if !is_block(dom, host) && local(dom, host) != "body"
-            || matches!(local(dom, host).as_str(), "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "p" | "dt")
-        {
-            return line_break_at(dom, host, caret);
         }
         // Make the anonymous paragraph containing the caret explicit before
         // splitting it. Neighbouring block elements remain outside it.
@@ -1702,8 +1722,8 @@ pub fn insert_line_break(page: &Rc<PageDom>, host: NodeId) {
 fn preserved_break_at(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point) -> Point {
     let point = insertion_point(dom, caret);
     let at_end = whitespace::at_line_end(page, dom, host, point);
-    // A padding BR in a plaintext editor already supplies the final empty line.
-    let keep_padding = !is_text(dom, point.0) && plaintext_at(dom, point.0);
+    // A padding BR in these editors already supplies the final empty line.
+    let keep_padding = !is_text(dom, point.0) && (plaintext_at(dom, point.0) || cannot_contain_paragraph(dom, host));
     let after = insert_at_point(dom, point, if at_end { "\n\n" } else { "\n" }, !keep_padding);
     if at_end {
         (after.0, after.1.saturating_sub(1))
