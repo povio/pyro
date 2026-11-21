@@ -9547,7 +9547,7 @@ diff -ruN a/values/computed/length_percentage.rs b/values/computed/length_percen
      #[inline]
 diff -ruN a/values/computed/mod.rs b/values/computed/mod.rs
 --- a/values/computed/mod.rs	2026-11-11 19:55:57
-+++ b/values/computed/mod.rs	2026-11-21 17:04:59
++++ b/values/computed/mod.rs	2026-11-21 20:59:51
 @@ -60,23 +60,23 @@
  pub use self::basic_shape::FillRule;
  pub use self::border::{
@@ -9607,16 +9607,16 @@ diff -ruN a/values/computed/mod.rs b/values/computed/mod.rs
      ScrollbarColor, ScrollbarWidth, UserFocus, UserSelect, WindowDragging, WindowShadow,
  };
  pub use super::specified::TextTransform;
-@@ -231,6 +234,9 @@
-     /// False if we are computed a value for an inherited property or not computing for a property
+@@ -232,6 +235,9 @@
      /// at all (e.g. in a media query evaluation).
      pub for_non_inherited_property: bool,
-+
+ 
 +    /// Whether font-relative units in the current specified value use the parent's metrics.
 +    pub for_font_affecting_property: bool,
- 
++
      /// The conditions to cache a rule node on the rule cache.
      ///
+     /// FIXME(emilio): Drop the refcell.
 @@ -282,6 +288,7 @@
              for_smil_animation: false,
              container_info: None,
@@ -9657,10 +9657,12 @@ diff -ruN a/values/computed/mod.rs b/values/computed/mod.rs
              rule_cache_conditions: RefCell::new(rule_cache_conditions),
              scope: CascadeLevel::same_tree_author_normal(),
              included_cascade_flags: RuleCascadeFlags::empty(),
-@@ -439,6 +450,17 @@
+@@ -437,6 +448,17 @@
+     /// Whether the style is for the root element.
+     pub fn is_root_element(&self) -> bool {
          self.builder.is_root_element
-     }
- 
++    }
++
 +    /// Collect viewport dependencies for one computation while retaining the element-wide flags.
 +    pub(crate) fn track_viewport_use<T>(&self, compute: impl FnOnce() -> T) -> (T, bool) {
 +        let flag = ComputedValueFlags::USES_VIEWPORT_UNITS;
@@ -9670,11 +9672,28 @@ diff -ruN a/values/computed/mod.rs b/values/computed/mod.rs
 +        let used = self.builder.flags().contains(flag);
 +        self.builder.add_flags(previous);
 +        (value, used)
-+    }
-+
+     }
+ 
      /// Queries font metrics.
-     pub fn query_font_metrics(
-         &self,
+@@ -900,6 +922,18 @@
+                 AngleOrPercentage::Percentage(percentage.to_computed_value(context))
+             },
+             specified::AngleOrPercentage::Angle(angle) => {
++                AngleOrPercentage::Angle(angle.to_computed_value(context))
++            },
++            specified::AngleOrPercentage::Calc(calc) => {
++                use specified::calc::{CalcNode, Leaf};
++                let node = calc.node.map_leaves(|leaf| match leaf {
++                    Leaf::Percentage(p) => Leaf::Angle(specified::NoCalcAngle::from_degrees(p.get() * 360.0)),
++                    other => other.clone(),
++                });
++                let angle = specified::Angle::new_calc(Box::new(specified::calc::CalcNumeric {
++                    node,
++                    clamping_mode: calc.clamping_mode,
++                }));
+                 AngleOrPercentage::Angle(angle.to_computed_value(context))
+             },
+         }
 diff -ruN a/values/computed/position.rs b/values/computed/position.rs
 --- a/values/computed/position.rs	2026-11-11 19:55:57
 +++ b/values/computed/position.rs	2026-11-17 14:08:59
@@ -12283,7 +12302,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +}
 diff -ruN a/values/specified/calc.rs b/values/specified/calc.rs
 --- a/values/specified/calc.rs	2026-11-11 19:55:57
-+++ b/values/specified/calc.rs	2026-11-21 17:10:09
++++ b/values/specified/calc.rs	2026-11-21 20:54:52
 @@ -305,6 +305,9 @@
          const ANCHOR = 1 << 0;
          /// `anchor-size()` function.
@@ -12340,19 +12359,19 @@ diff -ruN a/values/specified/calc.rs b/values/specified/calc.rs
              Leaf::Number(one) => *one = NoCalcNumber::new(op(one.value())),
              Leaf::ColorComponent(..) | Leaf::TreeCountingFunction(..) | Leaf::RandomKey(..) => {
                  return Err(());
-@@ -970,6 +974,12 @@
+@@ -969,6 +973,12 @@
+             Token::Function(name) => {
                  let function = CalcNode::math_function(context, name)?;
                  CalcNode::parse(context, input, function, flags)
-             },
++            },
 +            Token::Ident(ident)
 +                if flags.additional_functions.intersects(AdditionalFunctions::CALC_SIZE)
 +                    && ident.eq_ignore_ascii_case("size") =>
 +            {
 +                Ok(CalcNode::Leaf(Leaf::Percentage(CalcPercentageLeaf { size_basis: true, ..CalcPercentageLeaf::new(1.0, Optional::Some(NumericBaseType::Length)) })))
-+            },
+             },
              Token::Ident(ident) => {
                  let leaf = match_ignore_ascii_case! { &**ident,
-                     "e" => Leaf::Number(NoCalcNumber::new(std::f32::consts::E)),
 @@ -1248,7 +1258,10 @@
                      })
                  },
@@ -12374,14 +12393,10 @@ diff -ruN a/values/specified/calc.rs b/values/specified/calc.rs
  
                      let key = match input.try_parse(|input| RandomKey::parse(context, input)) {
                          Ok(key) => {
-@@ -1627,6 +1640,23 @@
-             ..Default::default()
-         };
-         Self::parse(context, input, function, flags)?
-+            .into_length_or_percentage(clamping_mode)
-+            .map_err(|()| ParseError::custom(StyleParseErrorKind::UnspecifiedError))
-+    }
-+
+@@ -1631,6 +1644,23 @@
+             .map_err(|()| ParseError::custom(StyleParseErrorKind::UnspecifiedError))
+     }
+ 
 +    /// pyro: the calculation of a `calc-size()`, its `size` keyword as `100%`.
 +    pub fn parse_calc_size_calculation(
 +        context: &ParserContext,
@@ -12395,34 +12410,30 @@ diff -ruN a/values/specified/calc.rs b/values/specified/calc.rs
 +            ..Default::default()
 +        };
 +        Self::parse_argument(context, input, flags)?
-             .into_length_or_percentage(clamping_mode)
-             .map_err(|()| ParseError::custom(StyleParseErrorKind::UnspecifiedError))
-     }
-@@ -1703,6 +1733,30 @@
++            .into_length_or_percentage(clamping_mode)
++            .map_err(|()| ParseError::custom(StyleParseErrorKind::UnspecifiedError))
++    }
++
+     /// Convenience parsing function for percentages.
+     pub fn parse_percentage(
+         context: &ParserContext,
+@@ -1703,6 +1733,22 @@
          .map_err(|()| ParseError::custom(StyleParseErrorKind::UnspecifiedError))
      }
  
-+    /// pyro: a math function of angles and percentages where a percentage is that fraction of a
-+    /// full turn (a conic gradient's stop positions, CSS Images 4: `calc(0deg + 100%)` is
-+    /// 360deg), as an angle: each percentage becomes the angle it stands for (WPT css-images
-+    /// `conic-gradient-calc-angle-percentage`; a mixed value dropped the whole background).
++    /// A conic gradient stop calculation, preserving percentages in the specified value.
 +    pub fn parse_angle_percentage_of_turn(
 +        context: &ParserContext,
 +        input: &mut Parser,
 +        function: MathFunction,
 +    ) -> Result<CalcNumeric, ParseError> {
-+        let mut node = Self::parse(
++        Self::parse(
 +            context,
 +            input,
 +            function,
 +            CalcParseFlags::new(PercentageContext::allowed_with_hint(NumericBaseType::Angle)),
-+        )?;
-+        node.visit_depth_first(|n| {
-+            if let CalcNode::Leaf(Leaf::Percentage(p)) = n {
-+                *n = CalcNode::Leaf(Leaf::Angle(NoCalcAngle::from_degrees(p.value.get() * 360.0)));
-+            }
-+        });
-+        node.into_angle(AllowedNumericType::All)
++        )?
++            .into_angle(AllowedNumericType::All)
 +            .map_err(|()| ParseError::custom(StyleParseErrorKind::UnspecifiedError))
 +    }
 +
@@ -13437,7 +13448,7 @@ diff -ruN a/values/specified/list.rs b/values/specified/list.rs
              .try_parse(|input| input.expect_ident_matching("none"))
 diff -ruN a/values/specified/mod.rs b/values/specified/mod.rs
 --- a/values/specified/mod.rs	2026-11-11 19:55:57
-+++ b/values/specified/mod.rs	2026-11-21 07:18:12
++++ b/values/specified/mod.rs	2026-11-21 20:54:52
 @@ -39,16 +39,16 @@
  pub use self::basic_shape::FillRule;
  pub use self::border::{
@@ -13498,26 +13509,29 @@ diff -ruN a/values/specified/mod.rs b/values/specified/mod.rs
      ScrollbarColor, ScrollbarWidth, UserFocus, UserSelect, WindowDragging, WindowShadow,
  };
  pub use super::generics::grid::GridTemplateComponent as GenericGridTemplateComponent;
-@@ -201,6 +204,19 @@
+@@ -190,6 +193,7 @@
+ pub enum AngleOrPercentage {
+     Percentage(Percentage),
+     Angle(Angle),
++    Calc(Box<calc::CalcNumeric>),
+ }
+ 
+ impl AngleOrPercentage {
+@@ -201,8 +205,12 @@
          if let Ok(per) = input.try_parse(|i| Percentage::parse(context, i)) {
              return Ok(AngleOrPercentage::Percentage(per));
          }
-+        // pyro: a math function mixing angles and percentages, a percentage being that fraction
-+        // of a full turn (the only use of this type is a conic gradient's stops).
-+        if let Ok(angle) = input.try_parse(|i| -> Result<Angle, ParseError> {
-+            let name = match i.next()? {
-+                Token::Function(name) => name.clone(),
-+                _ => return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError)),
-+            };
-+            let function = calc::CalcNode::math_function(context, &name)?;
-+            calc::CalcNode::parse_angle_percentage_of_turn(context, i, function)
-+                .map(|calc| Angle::new_calc(Box::new(calc)))
-+        }) {
-+            return Ok(AngleOrPercentage::Angle(angle));
+-
+-        Angle::parse_internal(context, input, allow_unitless_zero).map(AngleOrPercentage::Angle)
++        if let Ok(angle) = input.try_parse(|i| Angle::parse_internal(context, i, allow_unitless_zero)) {
++            return Ok(Self::Angle(angle));
 +        }
- 
-         Angle::parse_internal(context, input, allow_unitless_zero).map(AngleOrPercentage::Angle)
++        let function = calc::CalcNode::math_function(context, input.expect_function()?)?;
++        calc::CalcNode::parse_angle_percentage_of_turn(context, input, function)
++            .map(|calc| Self::Calc(Box::new(calc)))
      }
+ 
+     /// Allow unitless angles, used for conic-gradients as specified by the spec.
 diff -ruN a/values/specified/number.rs b/values/specified/number.rs
 --- a/values/specified/number.rs	2026-11-11 19:55:57
 +++ b/values/specified/number.rs	2026-11-16 15:05:29
