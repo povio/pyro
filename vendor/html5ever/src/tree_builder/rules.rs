@@ -299,6 +299,11 @@ where
                             self.unexpected(&tag);
                         } else {
                             self.generate_implied_end_tags(thorough_implied_end);
+                            if let Some(close) = self.close_patch {
+                                let template = self.open_elems.borrow().iter().rev()
+                                    .find(|n| self.html_elem_named(n, local_name!("template"))).cloned();
+                                if let Some(template) = template { close(&self.sink, &template); }
+                            }
                             self.expect_to_close(local_name!("template"));
                             self.clear_active_formatting_to_marker();
                             self.template_modes.borrow_mut().pop();

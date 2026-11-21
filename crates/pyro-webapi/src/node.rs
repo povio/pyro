@@ -1007,77 +1007,7 @@ impl JsClass for ProcessingInstruction {
 /// attributes at all. A repeated name keeps its first value.
 fn pi_attributes(n: &NodeData) -> JsResult<Vec<(String, String)>> {
     let data = n.page().dom.borrow().char_data(n.id).js()?.to_owned();
-    Ok(parse_pi_attributes(&data).unwrap_or_default())
-}
-
-fn parse_pi_attributes(data: &str) -> Option<Vec<(String, String)>> {
-    let mut out: Vec<(String, String)> = Vec::new();
-    let mut rest = data.trim_start_matches(|c: char| c.is_ascii_whitespace());
-    while !rest.is_empty() {
-        let end = rest.find(|c: char| c.is_ascii_whitespace() || matches!(c, '=' | '>' | '/'))?;
-        let (name, tail) = rest.split_at(end);
-        if name.is_empty() {
-            return None;
-        }
-        let tail = tail.trim_start_matches(|c: char| c.is_ascii_whitespace()).strip_prefix('=')?;
-        let tail = tail.trim_start_matches(|c: char| c.is_ascii_whitespace());
-        let quote = tail.chars().next().filter(|c| matches!(c, '"' | '\''))?;
-        let close = tail[1..].find(quote)? + 1;
-        let value = decode_char_refs(&tail[1..close]);
-        if !out.iter().any(|(k, _)| k == name) {
-            out.push((name.to_owned(), value));
-        }
-        rest = &tail[close + 1..];
-        if !rest.is_empty() && !rest.starts_with(|c: char| c.is_ascii_whitespace()) {
-            return None;
-        }
-        rest = rest.trim_start_matches(|c: char| c.is_ascii_whitespace());
-    }
-    Some(out)
-}
-
-/// Decodes the character references an attribute serialization writes (`&amp;`, `&quot;`,
-/// `&lt;`, `&gt;`, `&nbsp;`, `&apos;`, numeric ones); others stay as written.
-fn decode_char_refs(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut rest = s;
-    while let Some(i) = rest.find('&') {
-        out.push_str(&rest[..i]);
-        rest = &rest[i..];
-        let Some(semi) = rest.find(';').filter(|&j| j <= 10) else {
-            out.push('&');
-            rest = &rest[1..];
-            continue;
-        };
-        let entity = &rest[1..semi];
-        let decoded = match entity {
-            "amp" => Some('&'),
-            "quot" => Some('"'),
-            "lt" => Some('<'),
-            "gt" => Some('>'),
-            "nbsp" => Some('\u{a0}'),
-            "apos" => Some('\''),
-            _ => entity
-                .strip_prefix("#x")
-                .or_else(|| entity.strip_prefix("#X"))
-                .map(|h| u32::from_str_radix(h, 16))
-                .or_else(|| entity.strip_prefix('#').map(|d| d.parse::<u32>()))
-                .and_then(|r| r.ok())
-                .and_then(char::from_u32),
-        };
-        match decoded {
-            Some(c) => {
-                out.push(c);
-                rest = &rest[semi + 1..];
-            }
-            None => {
-                out.push('&');
-                rest = &rest[1..];
-            }
-        }
-    }
-    out.push_str(rest);
-    out
+    Ok(pyro_dom::node::parse_pi_attributes(&data).unwrap_or_default())
 }
 
 /// A name `setAttribute`/`toggleAttribute` accept (DOM "valid attribute local name"): not empty,
@@ -1297,7 +1227,7 @@ impl JsClass for ShadowRoot {
                 let html = crate::trusted_types::compliant_string(s, n.page(), crate::trusted_types::Kind::Html, v, "ShadowRoot innerHTML", true)?;
                 let mut dom = n.page().dom.borrow_mut();
                 let host = dom.fragment_host(n.id).js()?.ok_or(JsError::Type("detached shadow root".into()))?;
-                let frag = pyro_dom::parse::parse_fragment(&mut dom, host, &html).js()?;
+                let frag = pyro_dom::parse::parse_setter_fragment(&mut dom, host, &html).js()?;
                 dom.replace_all(n.id, Some(frag)).js()
             },
         );
@@ -1645,7 +1575,7 @@ impl JsClass for Element {
                     let doc = dom.node_document(n.id).js()?;
                     dom.create_element(doc, "body").js()?
                 };
-                let frag = pyro_dom::parse::parse_fragment(&mut dom, ctx, &html).js()?;
+                let frag = pyro_dom::parse::parse_setter_fragment(&mut dom, ctx, &html).js()?;
                 dom.replace_child(parent, frag, n.id).js()?;
                 Ok(())
             },
