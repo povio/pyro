@@ -7028,6 +7028,62 @@ diff -ruN a/values/animated/mod.rs b/values/animated/mod.rs
  trivial_to_animated_value!(crate::values::generics::color::ColorMixFlags);
  // Note: This implementation is for ToAnimatedValue of ShapeSource.
  //
+diff -ruN a/values/animated/transform.rs b/values/animated/transform.rs
+--- a/values/animated/transform.rs	2026-11-11 19:55:57
++++ b/values/animated/transform.rs	2026-11-21 07:05:12
+@@ -21,7 +21,7 @@
+ use crate::values::computed::{Length, LengthPercentage};
+ use crate::values::computed::{Number, Percentage};
+ use crate::values::distance::{ComputeSquaredDistance, SquaredDistance};
+-use crate::values::generics::transform::{self, Transform, TransformOperation};
++use crate::values::generics::transform::{self, ToMatrix, Transform, TransformOperation};
+ use crate::values::generics::transform::{Rotate, Scale, Translate};
+ use std::cmp;
+ use std::ops::Add;
+@@ -1167,11 +1167,19 @@
+                 };
+                 Ok(TransformOperation::Perspective(used_value))
+             },
+-            _ if self.is_translate() && other.is_translate() => self
+-                .to_translate_3d()
+-                .animate(&other.to_translate_3d(), procedure),
++            _ if self.is_translate() && other.is_translate() => {
++                let result = self.to_translate_3d().animate(&other.to_translate_3d(), procedure)?;
++                match result {
++                    Self::Translate3D(x, y, _) if !self.is_3d() && !other.is_3d() => Ok(Self::Translate(x, y)),
++                    _ => Ok(result),
++                }
++            },
+             _ if self.is_scale() && other.is_scale() => {
+-                self.to_scale_3d().animate(&other.to_scale_3d(), procedure)
++                let result = self.to_scale_3d().animate(&other.to_scale_3d(), procedure)?;
++                match result {
++                    Self::Scale3D(x, y, _) if !self.is_3d() && !other.is_3d() => Ok(Self::Scale(x, y)),
++                    _ => Ok(result),
++                }
+             },
+             _ if self.is_rotate() && other.is_rotate() => self
+                 .to_rotate_3d()
+@@ -1189,11 +1197,14 @@
+         right: &[Self],
+         procedure: Procedure,
+     ) -> Result<Self, ()> {
+-        let (left, _left_3d) = Transform::components_to_transform_3d_matrix(left, None)?;
+-        let (right, _right_3d) = Transform::components_to_transform_3d_matrix(right, None)?;
+-        Ok(Self::Matrix3D(
+-            Matrix3D::from(left).animate(&Matrix3D::from(right), procedure)?,
+-        ))
++        let (left, left_3d) = Transform::components_to_transform_3d_matrix(left, None)?;
++        let (right, right_3d) = Transform::components_to_transform_3d_matrix(right, None)?;
++        let matrix = Matrix3D::from(left).animate(&Matrix3D::from(right), procedure)?;
++        if left_3d || right_3d {
++            Ok(Self::Matrix3D(matrix))
++        } else {
++            Ok(Self::Matrix(matrix.into_2d()?))
++        }
+     }
+ 
+     fn animate_mismatched_transforms(
 diff -ruN a/values/computed/basic_shape.rs b/values/computed/basic_shape.rs
 --- a/values/computed/basic_shape.rs	2026-11-11 19:55:57
 +++ b/values/computed/basic_shape.rs	2026-11-16 16:33:29
