@@ -295,7 +295,7 @@ pub enum GenericBasicShape<Angle, AxisPosition, Position, LengthPercentage, Basi
         Ellipse<Position, LengthPercentage>,
     ),
     /// Defines a polygon with pair arguments.
-    Polygon(GenericPolygon<LengthPercentage>),
+    Polygon(#[animation(field_bound)] #[css(field_bound)] GenericPolygon<LengthPercentage>),
     /// Defines a path() or shape().
     PathOrShape(
         #[animation(field_bound)]
@@ -439,24 +439,58 @@ pub use self::GenericShapeRadius as ShapeRadius;
     PartialEq,
     Serialize,
     SpecifiedValueInfo,
-    ToAnimatedValue,
     ToComputedValue,
-    ToCss,
     ToResolvedValue,
     ToShmem,
 )]
-#[css(comma, function = "polygon")]
 #[repr(C)]
 pub struct GenericPolygon<LengthPercentage> {
     /// The filling rule for a polygon.
-    #[css(skip_if = "is_default")]
     pub fill: FillRule,
+    /// The corner rounding radius, zero for sharp corners.
+    pub round: NonNegative<LengthPercentage>,
     /// A collection of (x, y) coordinates to draw the polygon.
-    #[css(iterable)]
     pub coordinates: crate::OwnedSlice<PolygonCoord<LengthPercentage>>,
 }
 
+impl<L: ToCss + Zero> ToCss for GenericPolygon<L> {
+    fn to_css<W: Write>(&self, dest: &mut CssWriter<W>) -> fmt::Result {
+        dest.write_str("polygon(")?;
+        if !is_default(&self.fill) {
+            self.fill.to_css(dest)?;
+            dest.write_str(if self.round.0.is_zero() { ", " } else { " " })?;
+        }
+        if !self.round.0.is_zero() {
+            dest.write_str("round ")?;
+            self.round.0.to_css(dest)?;
+            dest.write_str(", ")?;
+        }
+        for (index, coordinate) in self.coordinates.iter().enumerate() {
+            if index != 0 { dest.write_str(", ")?; }
+            coordinate.to_css(dest)?;
+        }
+        dest.write_char(')')
+    }
+}
+
 pub use self::GenericPolygon as Polygon;
+
+impl<L> crate::values::animated::ToAnimatedValue for GenericPolygon<L>
+where
+    L: crate::values::animated::ToAnimatedValue + crate::values::generics::ClampToNonNegative,
+{
+    type AnimatedValue = GenericPolygon<L::AnimatedValue>;
+
+    fn to_animated_value(self, context: &crate::values::animated::Context) -> Self::AnimatedValue {
+        GenericPolygon { fill: self.fill, round: self.round.to_animated_value(context),
+            coordinates: self.coordinates.to_animated_value(context) }
+    }
+
+    fn from_animated_value(value: Self::AnimatedValue) -> Self {
+        Self { fill: value.fill, round: NonNegative::from_animated_value(value.round),
+            coordinates: crate::OwnedSlice::from_animated_value(value.coordinates) }
+    }
+}
 
 /// Coordinates for Polygon.
 #[derive(
@@ -700,6 +734,7 @@ where
             lists::by_computed_value::animate(&self.coordinates, &other.coordinates, procedure)?;
         Ok(Polygon {
             fill: self.fill,
+            round: NonNegative(self.round.0.animate(&other.round.0, procedure)?),
             coordinates,
         })
     }
@@ -713,7 +748,8 @@ where
         if self.fill != other.fill {
             return Err(());
         }
-        lists::by_computed_value::squared_distance(&self.coordinates, &other.coordinates)
+        Ok(lists::by_computed_value::squared_distance(&self.coordinates, &other.coordinates)? +
+            self.round.0.compute_squared_distance(&other.round.0)?)
     }
 }
 

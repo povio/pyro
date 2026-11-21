@@ -363,16 +363,8 @@ impl ElementCx<'_, '_> {
                 ElementClip::shape(oval(center, rx, ry), Fill::NonZero)
             }
             GenericBasicShape::Polygon(polygon) => {
-                let mut path = BezPath::new();
-                for (i, coord) in polygon.coordinates.iter().enumerate() {
-                    let point = Point::new(ox + resolve_lp(&coord.0, w), oy + resolve_lp(&coord.1, h));
-                    if i == 0 {
-                        path.move_to(point);
-                    } else {
-                        path.line_to(point);
-                    }
-                }
-                path.close_path();
+                let path = blitz_dom::shape_path::polygon_path(polygon.coordinates.iter().map(|coord|
+                    Point::new(ox + resolve_lp(&coord.0, w), oy + resolve_lp(&coord.1, h))), resolve_lp(&polygon.round.0, 0.0));
                 ElementClip::shape(path, fill_rule(polygon.fill))
             }
             GenericBasicShape::Rect(inset_rect) => {

@@ -7649,7 +7649,7 @@ diff -ruN a/values/computed/ui.rs b/values/computed/ui.rs
  
 diff -ruN a/values/generics/basic_shape.rs b/values/generics/basic_shape.rs
 --- a/values/generics/basic_shape.rs	2026-11-11 19:55:57
-+++ b/values/generics/basic_shape.rs	2026-11-21 01:41:20
++++ b/values/generics/basic_shape.rs	2026-11-21 07:34:12
 @@ -134,6 +134,97 @@
  
  pub use self::GenericClipPath as ClipPath;
@@ -7748,7 +7748,81 @@ diff -ruN a/values/generics/basic_shape.rs b/values/generics/basic_shape.rs
  /// A value for the `shape-outside` property.
  #[allow(missing_docs)]
  #[derive(
-@@ -504,7 +595,23 @@
+@@ -204,7 +295,7 @@
+         Ellipse<Position, LengthPercentage>,
+     ),
+     /// Defines a polygon with pair arguments.
+-    Polygon(GenericPolygon<LengthPercentage>),
++    Polygon(#[animation(field_bound)] #[css(field_bound)] GenericPolygon<LengthPercentage>),
+     /// Defines a path() or shape().
+     PathOrShape(
+         #[animation(field_bound)]
+@@ -348,25 +439,59 @@
+     PartialEq,
+     Serialize,
+     SpecifiedValueInfo,
+-    ToAnimatedValue,
+     ToComputedValue,
+-    ToCss,
+     ToResolvedValue,
+     ToShmem,
+ )]
+-#[css(comma, function = "polygon")]
+ #[repr(C)]
+ pub struct GenericPolygon<LengthPercentage> {
+     /// The filling rule for a polygon.
+-    #[css(skip_if = "is_default")]
+     pub fill: FillRule,
++    /// The corner rounding radius, zero for sharp corners.
++    pub round: NonNegative<LengthPercentage>,
+     /// A collection of (x, y) coordinates to draw the polygon.
+-    #[css(iterable)]
+     pub coordinates: crate::OwnedSlice<PolygonCoord<LengthPercentage>>,
++}
++
++impl<L: ToCss + Zero> ToCss for GenericPolygon<L> {
++    fn to_css<W: Write>(&self, dest: &mut CssWriter<W>) -> fmt::Result {
++        dest.write_str("polygon(")?;
++        if !is_default(&self.fill) {
++            self.fill.to_css(dest)?;
++            dest.write_str(if self.round.0.is_zero() { ", " } else { " " })?;
++        }
++        if !self.round.0.is_zero() {
++            dest.write_str("round ")?;
++            self.round.0.to_css(dest)?;
++            dest.write_str(", ")?;
++        }
++        for (index, coordinate) in self.coordinates.iter().enumerate() {
++            if index != 0 { dest.write_str(", ")?; }
++            coordinate.to_css(dest)?;
++        }
++        dest.write_char(')')
++    }
+ }
+ 
+ pub use self::GenericPolygon as Polygon;
+ 
++impl<L> crate::values::animated::ToAnimatedValue for GenericPolygon<L>
++where
++    L: crate::values::animated::ToAnimatedValue + crate::values::generics::ClampToNonNegative,
++{
++    type AnimatedValue = GenericPolygon<L::AnimatedValue>;
++
++    fn to_animated_value(self, context: &crate::values::animated::Context) -> Self::AnimatedValue {
++        GenericPolygon { fill: self.fill, round: self.round.to_animated_value(context),
++            coordinates: self.coordinates.to_animated_value(context) }
++    }
++
++    fn from_animated_value(value: Self::AnimatedValue) -> Self {
++        Self { fill: value.fill, round: NonNegative::from_animated_value(value.round),
++            coordinates: crate::OwnedSlice::from_animated_value(value.coordinates) }
++    }
++}
++
+ /// Coordinates for Polygon.
+ #[derive(
+     Animate,
+@@ -504,7 +629,23 @@
          W: Write,
      {
          dest.write_str("inset(")?;
@@ -7773,6 +7847,24 @@ diff -ruN a/values/generics/basic_shape.rs b/values/generics/basic_shape.rs
          if !self.round.is_zero() {
              dest.write_str(" round ")?;
              self.round.to_css(dest)?;
+@@ -593,6 +734,7 @@
+             lists::by_computed_value::animate(&self.coordinates, &other.coordinates, procedure)?;
+         Ok(Polygon {
+             fill: self.fill,
++            round: NonNegative(self.round.0.animate(&other.round.0, procedure)?),
+             coordinates,
+         })
+     }
+@@ -606,7 +748,8 @@
+         if self.fill != other.fill {
+             return Err(());
+         }
+-        lists::by_computed_value::squared_distance(&self.coordinates, &other.coordinates)
++        Ok(lists::by_computed_value::squared_distance(&self.coordinates, &other.coordinates)? +
++            self.round.0.compute_squared_distance(&other.round.0)?)
+     }
+ }
+ 
 diff -ruN a/values/generics/calc.rs b/values/generics/calc.rs
 --- a/values/generics/calc.rs	2026-11-11 19:55:57
 +++ b/values/generics/calc.rs	2026-11-20 20:06:02
@@ -9070,7 +9162,7 @@ diff -ruN a/values/specified/background.rs b/values/specified/background.rs
  }
 diff -ruN a/values/specified/basic_shape.rs b/values/specified/basic_shape.rs
 --- a/values/specified/basic_shape.rs	2026-11-11 19:55:57
-+++ b/values/specified/basic_shape.rs	2026-11-18 21:54:57
++++ b/values/specified/basic_shape.rs	2026-11-21 07:37:08
 @@ -37,9 +37,55 @@
  /// A specified `clip-path` value.
  pub type ClipPath = generic::GenericClipPath<BasicShape, SpecifiedUrl>;
@@ -9144,6 +9236,53 @@ diff -ruN a/values/specified/basic_shape.rs b/values/specified/basic_shape.rs
 +            Self::POLYGON.bits() |
 +            Self::PATH.bits() |
 +            Self::SHAPE.bits();
+     }
+ }
+ 
+@@ -324,7 +373,7 @@
+                         .map(BasicShape::Ellipse)
+                 },
+                 "polygon" if flags.contains(AllowedBasicShapes::POLYGON) => {
+-                    Polygon::parse_function_arguments(context, i, shape_type)
++                    Polygon::parse_function_arguments(context, i)
+                         .map(BasicShape::Polygon)
+                 },
+                 "path" if flags.contains(AllowedBasicShapes::PATH) => {
+@@ -479,7 +528,7 @@
+ impl Parse for Polygon {
+     fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
+         input.expect_function_matching("polygon")?;
+-        input.parse_nested_block(|i| Self::parse_function_arguments(context, i, ShapeType::Filled))
++        input.parse_nested_block(|i| Self::parse_function_arguments(context, i))
+     }
+ }
+ 
+@@ -488,9 +537,17 @@
+     fn parse_function_arguments(
+         context: &ParserContext,
+         input: &mut Parser,
+-        shape_type: ShapeType,
+     ) -> Result<Self, ParseError> {
+-        let fill = parse_fill_rule(input, shape_type, true /* has comma */);
++        let fill = input.try_parse(FillRule::parse).ok();
++        let round = if input.try_parse(|i| i.expect_ident_matching("round")).is_ok() {
++            let radius = crate::values::specified::NonNegativeLength::parse(context, input)?;
++            Some(crate::values::generics::NonNegative(radius.0.into()))
++        } else {
++            None
++        };
++        if fill.is_some() || round.is_some() {
++            input.expect_comma()?;
++        }
+         let coordinates = input
+             .parse_comma_separated(|i| {
+                 Ok(PolygonCoord(
+@@ -500,7 +557,7 @@
+             })?
+             .into();
+ 
+-        Ok(Polygon { fill, coordinates })
++        Ok(Polygon { fill: fill.unwrap_or_default(), round: round.unwrap_or_else(NonNegativeLengthPercentage::zero), coordinates })
      }
  }
  

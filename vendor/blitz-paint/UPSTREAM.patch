@@ -20440,7 +20440,7 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
      /// Compute the rectangle (in scaled pixels, relative to the border box origin) described by
      /// the CSS 2 `clip` property, if it applies. `clip` only applies to absolutely positioned
      /// elements; `auto` components resolve to the corresponding border box edge.
-@@ -41,435 +149,1594 @@
+@@ -41,435 +149,1586 @@
          Some(Rect::new(x0, y0, x1.max(x0), y1.max(y0)))
      }
  
@@ -20718,7 +20718,7 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +                ElementClip::shape(oval(center, rx, ry), Fill::NonZero)
              }
              GenericBasicShape::Polygon(polygon) => {
-                 let mut path = BezPath::new();
+-                let mut path = BezPath::new();
 -                let _fill = &polygon.fill;
 -                let coords = &polygon.coordinates;
 -
@@ -20729,19 +20729,17 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 -                for (i, coord) in coords.iter().enumerate() {
 -                    let x = ox + resolve_lp(&coord.0, w);
 -                    let y = oy + resolve_lp(&coord.1, h);
-+                for (i, coord) in polygon.coordinates.iter().enumerate() {
-+                    let point = Point::new(ox + resolve_lp(&coord.0, w), oy + resolve_lp(&coord.1, h));
-                     if i == 0 {
+-                    if i == 0 {
 -                        path.move_to(Point::new(x, y));
-+                        path.move_to(point);
-                     } else {
+-                    } else {
 -                        path.line_to(Point::new(x, y));
-+                        path.line_to(point);
-                     }
-                 }
-                 path.close_path();
+-                    }
+-                }
+-                path.close_path();
 -
 -                Some(path)
++                let path = blitz_dom::shape_path::polygon_path(polygon.coordinates.iter().map(|coord|
++                    Point::new(ox + resolve_lp(&coord.0, w), oy + resolve_lp(&coord.1, h))), resolve_lp(&polygon.round.0, 0.0));
 +                ElementClip::shape(path, fill_rule(polygon.fill))
              }
              GenericBasicShape::Rect(inset_rect) => {
@@ -21292,37 +21290,7 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 -                cur = p;
 +            if done.contains(&element) || path.len() > 64 {
 +                return path.len() > 64;
-             }
--            GenericShapeCommand::Arc {
--                point,
--                radii,
--                arc_sweep,
--                arc_size,
--                rotate,
--            } => {
--                // SVG arc commands are complex; approximate as a line for now
--                let p = resolve_endpoint(point, cur, &resolve_x, &resolve_y);
--                let svg_arc = SvgArc {
--                    from: cur,
--                    to: p,
--                    radii: Vec2 {
--                        x: resolve_x(&radii.rx),
--                        y: resolve_y(radii.ry.as_ref().unwrap_or(&radii.rx)),
--                    },
--                    x_rotation: resolve_angle(rotate),
--                    large_arc: match arc_size {
--                        ArcSize::Large => true,
--                        ArcSize::Small => false,
--                    },
--                    // TODO: check mapping is correct
--                    sweep: match arc_sweep {
--                        ArcSweep::Ccw => true,
--                        ArcSweep::Cw => false,
--                    },
--                };
--                let arc = kurbo::Arc::from_svg_arc(&svg_arc)?;
--                for el in arc.append_iter(0.1) {
--                    bez.push(el);
++            }
 +            path.push(element);
 +            let mut targets = Vec::new();
 +            references(dom, element, &mut targets);
@@ -21435,7 +21403,37 @@ diff --git a/packages/blitz-paint/src/render/clip_path.rs b/packages/blitz-paint
 +                PathSegment::QuadTo(p1, p2) => out.quad_to(point(p1), point(p2)),
 +                PathSegment::CubicTo(p1, p2, p3) => out.curve_to(point(p1), point(p2), point(p3)),
 +                PathSegment::Close => out.close_path(),
-+            }
+             }
+-            GenericShapeCommand::Arc {
+-                point,
+-                radii,
+-                arc_sweep,
+-                arc_size,
+-                rotate,
+-            } => {
+-                // SVG arc commands are complex; approximate as a line for now
+-                let p = resolve_endpoint(point, cur, &resolve_x, &resolve_y);
+-                let svg_arc = SvgArc {
+-                    from: cur,
+-                    to: p,
+-                    radii: Vec2 {
+-                        x: resolve_x(&radii.rx),
+-                        y: resolve_y(radii.ry.as_ref().unwrap_or(&radii.rx)),
+-                    },
+-                    x_rotation: resolve_angle(rotate),
+-                    large_arc: match arc_size {
+-                        ArcSize::Large => true,
+-                        ArcSize::Small => false,
+-                    },
+-                    // TODO: check mapping is correct
+-                    sweep: match arc_sweep {
+-                        ArcSweep::Ccw => true,
+-                        ArcSweep::Cw => false,
+-                    },
+-                };
+-                let arc = kurbo::Arc::from_svg_arc(&svg_arc)?;
+-                for el in arc.append_iter(0.1) {
+-                    bez.push(el);
 +        }
 +        out
 +    }

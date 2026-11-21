@@ -166,17 +166,8 @@ fn area(
                     crate::stylo_to_kurbo::rounded_rect_path(rect, radii)
                 }
                 GenericBasicShape::Polygon(poly) => {
-                    let mut path = BezPath::new();
-                    for (i, c) in poly.coordinates.iter().enumerate() {
-                        let p = Point::new(r.x0 + lp(&c.0, w), r.y0 + lp(&c.1, h));
-                        if i == 0 {
-                            path.move_to(p);
-                        } else {
-                            path.line_to(p);
-                        }
-                    }
-                    path.close_path();
-                    path
+                    crate::shape_path::polygon_path(poly.coordinates.iter().map(|coord|
+                        Point::new(r.x0 + lp(&coord.0, w), r.y0 + lp(&coord.1, h))), lp(&poly.round.0, 0.0))
                 }
                 GenericBasicShape::PathOrShape(GenericPathOrShapeFunction::Path(path)) => {
                     // `path()`: SVG path data in CSS px from the reference box's origin.

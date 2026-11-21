@@ -31770,7 +31770,7 @@ diff --git a/packages/blitz-dom/src/layout/shape_outside.rs b/packages/blitz-dom
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/shape_outside.rs
-@@ -0,0 +1,1040 @@
+@@ -0,0 +1,1031 @@
 +//! pyro: a float's float area from `shape-outside` (CSS Shapes 1 § 3), as rows of its margin box
 +//! with the shape's horizontal extent in each, for Taffy's float context
 +//! (`BlockContext::place_shaped_floated_box`): line boxes beside the float wrap around the shape.
@@ -31939,17 +31939,8 @@ new file mode 100644
 +                    crate::stylo_to_kurbo::rounded_rect_path(rect, radii)
 +                }
 +                GenericBasicShape::Polygon(poly) => {
-+                    let mut path = BezPath::new();
-+                    for (i, c) in poly.coordinates.iter().enumerate() {
-+                        let p = Point::new(r.x0 + lp(&c.0, w), r.y0 + lp(&c.1, h));
-+                        if i == 0 {
-+                            path.move_to(p);
-+                        } else {
-+                            path.line_to(p);
-+                        }
-+                    }
-+                    path.close_path();
-+                    path
++                    crate::shape_path::polygon_path(poly.coordinates.iter().map(|coord|
++                        Point::new(r.x0 + lp(&coord.0, w), r.y0 + lp(&coord.1, h))), lp(&poly.round.0, 0.0))
 +                }
 +                GenericBasicShape::PathOrShape(GenericPathOrShapeFunction::Path(path)) => {
 +                    // `path()`: SVG path data in CSS px from the reference box's origin.
@@ -46335,7 +46326,7 @@ diff --git a/packages/blitz-dom/src/node/svg_css.rs b/packages/blitz-dom/src/nod
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/node/svg_css.rs
-@@ -0,0 +1,2940 @@
+@@ -0,0 +1,2937 @@
 +//! pyro: an inline `<svg>` subtree as a standalone SVG document for usvg, with
 +//! the page's CSS applied.
 +//!
@@ -49183,15 +49174,12 @@ new file mode 100644
 +            if polygon.coordinates.is_empty() {
 +                return None;
 +            }
-+            let points: Vec<String> = polygon
-+                .coordinates
-+                .iter()
-+                .map(|point| format!("{},{}", num(ox + lp(&point.0, w)), num(oy + lp(&point.1, h))))
-+                .collect();
++            let path = crate::shape_path::polygon_path(polygon.coordinates.iter().map(|coord|
++                kurbo::Point::new(ox + lp(&coord.0, w), oy + lp(&coord.1, h))), lp(&polygon.round.0, 0.0));
 +            let evenodd = matches!(polygon.fill, style::values::generics::basic_shape::FillRule::Evenodd);
 +            format!(
-+                "<polygon points=\"{}\"{} />",
-+                points.join(" "),
++                "<path d=\"{}\"{} />",
++                path.to_svg(),
 +                if evenodd { " clip-rule=\"evenodd\"" } else { "" }
 +            )
 +        }
@@ -54291,7 +54279,7 @@ diff --git a/packages/blitz-dom/src/shape_path.rs b/packages/blitz-dom/src/shape
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/shape_path.rs
-@@ -0,0 +1,210 @@
+@@ -0,0 +1,240 @@
 +//! pyro: SVG path data (`path()`) and `shape()` commands as kurbo paths, shared by `clip-path`
 +//! (blitz-paint) and `shape-outside` (float layout). Moved from blitz-paint `render/clip_path.rs`.
 +
@@ -54302,6 +54290,36 @@ new file mode 100644
 +use style::values::generics::position::GenericPosition;
 +
 +pub type GenericPathCommand<Angle, N> = GenericShapeCommand<Angle, N, GenericPosition<N, N>, N>;
++
++pub fn polygon_path(points: impl Iterator<Item = Point>, radius: f64) -> BezPath {
++    let mut path = BezPath::new();
++    if radius <= 0.0 {
++        for (index, point) in points.enumerate() {
++            if index == 0 { path.move_to(point); } else { path.line_to(point); }
++        }
++    } else {
++        let points: Vec<_> = points.collect();
++        for (index, &vertex) in points.iter().enumerate() {
++            let incoming = vertex - points[(index + points.len() - 1) % points.len()];
++            let outgoing = points[(index + 1) % points.len()] - vertex;
++            let limit = incoming.hypot().min(outgoing.hypot()) * 0.5;
++            let turn = incoming.cross(outgoing).atan2(incoming.dot(outgoing));
++            let tangent = (turn.abs() * 0.5).tan();
++            let distance = (radius * tangent).min(limit);
++            let arc = if distance > 0.0 && incoming.cross(outgoing) != 0.0 {
++                let from = vertex - incoming.normalize() * distance;
++                let to = vertex + outgoing.normalize() * distance;
++                kurbo::Arc::from_svg_arc(&SvgArc { from, to, radii: Vec2::splat(distance / tangent),
++                    x_rotation: 0.0, large_arc: false, sweep: turn > 0.0 }).map(|arc| (from, arc))
++            } else { None };
++            let start = arc.as_ref().map_or(vertex, |(from, _)| *from);
++            if index == 0 { path.move_to(start); } else { path.line_to(start); }
++            if let Some((_, arc)) = arc { path.extend(arc.append_iter(0.01)); }
++        }
++    }
++    path.close_path();
++    path
++}
 +
 +/// Convert an SVG path() or a shape() to a kurbo BezPath.
 +/// The returned path is in the path's own coordinate system (origin at 0,0).
@@ -57837,7 +57855,7 @@ diff --git a/packages/blitz-dom/src/stylo_to_kurbo.rs b/packages/blitz-dom/src/s
      });
  
      let mut resolved = Affine::IDENTITY;
-@@ -115,15 +157,967 @@
+@@ -115,15 +157,962 @@
          resolved *= Affine::scale_non_uniform(scale_transform.x, scale_transform.y)
      }
  
@@ -58238,13 +58256,8 @@ diff --git a/packages/blitz-dom/src/stylo_to_kurbo.rs b/packages/blitz-dom/src/s
 +            rounded_rect_path(rect, [r(&round.top_left), r(&round.top_right), r(&round.bottom_right), r(&round.bottom_left)])
 +        }
 +        GenericBasicShape::Polygon(poly) => {
-+            let mut path = kurbo::BezPath::new();
-+            for (i, c) in poly.coordinates.iter().enumerate() {
-+                let p = kurbo::Point::new(area.x0 + lp(&c.0, w), area.y0 + lp(&c.1, h));
-+                if i == 0 { path.move_to(p) } else { path.line_to(p) }
-+            }
-+            path.close_path();
-+            path
++            crate::shape_path::polygon_path(poly.coordinates.iter().map(|coord|
++                kurbo::Point::new(area.x0 + lp(&coord.0, w), area.y0 + lp(&coord.1, h))), lp(&poly.round.0, 0.0))
 +        }
 +        GenericBasicShape::PathOrShape(GenericPathOrShapeFunction::Shape(shape)) => {
 +            let agnostic = w.hypot(h) / std::f64::consts::SQRT_2;
