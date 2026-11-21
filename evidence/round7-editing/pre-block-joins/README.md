@@ -10,7 +10,7 @@ Across 206 testdriver pages, the exact parent passed 8,972/10,691 named assertio
 | Forward Delete | 4 → 52/52 | 4 → 52/52 | 4 → 50/50 |
 | Selected boundary | 6 → 46/46 | 6 → 46/46 | 6 → 44/44 |
 
-The parent passed 39/426 across these nine variants. The candidate and signed Chrome each passed 426/426.
+The parent passed 39/426 across these nine variants. The candidate and signed Chrome each passed 426/426. Independent QA reran just the nine URLs on the final binary from 20:03:15 to 20:03:17 UTC on November 21. All nine completed with zero restarts and the same 426 names, order and outcomes as signed Chrome. The independent named receipt is included. An earlier attempt using a runner that ignored the selector was excluded.
 
 ## Source formatting and undo
 
