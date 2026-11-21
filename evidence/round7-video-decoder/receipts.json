@@ -1,0 +1,236 @@
+{
+  "base/base.json": {
+    "sha256": "fc32ce6eb804820d8a18e2a149f96aaba83b8bbfb9baa93d7e63b934a0721ef5",
+    "jobs": 2,
+    "restarts": 0,
+    "watchdog": 0
+  },
+  "final/final.json": {
+    "sha256": "cec7389781a1f525440c08c5046a34cc2a7c5aec3b0d88fff28e3b959e709db6",
+    "jobs": 2,
+    "restarts": 0,
+    "watchdog": 0
+  },
+  "chrome/ordinary-238.json": {
+    "sha256": "bf02d7ecf40de16fe09349c06e2d6e02117f03beae4622b457d2237ce66ecf9e",
+    "jobs": 4,
+    "restarts": 0,
+    "watchdog": 0
+  },
+  "chrome/ordinary-202.json": {
+    "sha256": "99efad48d42a10b1b4987cec6fa8046f260d7e7adeb88ee2fa563e3d72160c02",
+    "jobs": 4,
+    "restarts": 0,
+    "watchdog": 0
+  },
+  "chrome/ordinary-193.json": {
+    "sha256": "9e9a5106cca4489832bbfce232140110027389ae675cd02507d9a1de466b5e77",
+    "jobs": 4,
+    "restarts": 0,
+    "watchdog": 0
+  },
+  "chrome/ordinary-019.json": {
+    "sha256": "a9e7f45b44c16d46cf84f91d5c4cd5035da3a348ba9403d87dbd9e0d12ffb247",
+    "jobs": 4,
+    "restarts": 0,
+    "watchdog": 0
+  },
+  "chrome/ordinary-126.json": {
+    "sha256": "b3a389e2ca55d305881ed846a3b5002b050f08b15f53afc3028c1b597fbc3b1d",
+    "jobs": 4,
+    "restarts": 0,
+    "watchdog": 0
+  },
+  "chrome/ordinary-188.json": {
+    "sha256": "3b4f4b3dadb8436348e74ff4b3fc23f602229fa1b385fec96ce091fcef298395",
+    "jobs": 4,
+    "restarts": 0,
+    "watchdog": 0
+  },
+  "chrome/ordinary-249.json": {
+    "sha256": "091c4698867064aeff8cc7fe4e43261a0379b63d00f39f992db8742eac24ed82",
+    "jobs": 4,
+    "restarts": 0,
+    "watchdog": 0
+  },
+  "chrome/ordinary-228.json": {
+    "sha256": "9bce7ed6b06f7ccb46fb8d797ec52cbbec23f2a483c6c00a65e9a1260f692d5d",
+    "jobs": 4,
+    "restarts": 0,
+    "watchdog": 0
+  },
+  "chrome/ordinary-253.json": {
+    "sha256": "b24002b0f6eee057c41026f77d28bf3b6047f91c021305bc6154cddfd0451c3c",
+    "jobs": 4,
+    "restarts": 0,
+    "watchdog": 0
+  },
+  "chrome/ordinary-205.json": {
+    "sha256": "b3a257aeea301db8464a0e51982846f72c0882ca8e400c941292a813336ec67b",
+    "jobs": 4,
+    "restarts": 0,
+    "watchdog": 0
+  },
+  "chrome/ordinary-141.json": {
+    "sha256": "d25cbb0b64bd344532405daa60f618bbc20ffa15f19872e7232c28c1a98a1a61",
+    "jobs": 4,
+    "restarts": 0,
+    "watchdog": 0
+  },
+  "chrome/ordinary-264.json": {
+    "sha256": "3efca3b6d8fe74fde99988eccbaf60f9aa42eef2c47360a353514c3dec8389a5",
+    "jobs": 4,
+    "restarts": 0,
+    "watchdog": 0
+  },
+  "chrome/ordinary-066.json": {
+    "sha256": "00bac4f264d1309f2b44c58d27f71345ad3ed445b5d6b20e939ad97431fdbc91",
+    "jobs": 4,
+    "restarts": 0,
+    "watchdog": 0
+  },
+  "chrome/ordinary-178.json": {
+    "sha256": "895d2d1147cab6dec45d85c56ee8cd0e9a67981ec7c72f3542d0ef682712f8aa",
+    "jobs": 4,
+    "restarts": 1,
+    "watchdog": 0
+  },
+  "chrome/ordinary-206.json": {
+    "sha256": "b75629a2832331e27153cb3a4e9e12e6fe56dc463642a8a350f3f234f7d01b0f",
+    "jobs": 4,
+    "restarts": 0,
+    "watchdog": 0
+  },
+  "chrome/ordinary-139.json": {
+    "sha256": "352e0b40b291d66603bd1047647c2d16a588664198969896038fa0f5f3f993ea",
+    "jobs": 4,
+    "restarts": 0,
+    "watchdog": 0
+  },
+  "chrome/ordinary-050.json": {
+    "sha256": "24f73d4376c47c8edaba7441499fec59358926abb7c68e3c1f9e8f7727e0fabd",
+    "jobs": 4,
+    "restarts": 0,
+    "watchdog": 0
+  },
+  "chrome/ordinary-115.json": {
+    "sha256": "61353a3d9da5e5d8e67560647335086ff9388caaae26272bfb425439a61138ea",
+    "jobs": 4,
+    "restarts": 0,
+    "watchdog": 0
+  },
+  "chrome/ordinary-046.json": {
+    "sha256": "d6969743b07bb74f33b540b78bd8c1337cd77505b997e6ef8ddef744b3faf9da",
+    "jobs": 4,
+    "restarts": 0,
+    "watchdog": 0
+  },
+  "chrome/ordinary-010.json": {
+    "sha256": "d2d9c4292afdcac5ff7998debe54bea19854f6009ebe301c13017afcb11ee1dc",
+    "jobs": 4,
+    "restarts": 0,
+    "watchdog": 0
+  },
+  "chrome/ordinary-285.json": {
+    "sha256": "0ff640544a44f5f329871ad84eb169b3663651a14d90754489376f85b8056ddf",
+    "jobs": 4,
+    "restarts": 0,
+    "watchdog": 0
+  },
+  "chrome/ordinary-051.json": {
+    "sha256": "b6b5d9ca66d17f246edc89824394d06d11c3d35825bb81fc704b2641083d4cbc",
+    "jobs": 4,
+    "restarts": 0,
+    "watchdog": 0
+  },
+  "chrome/ordinary-138.json": {
+    "sha256": "6fb7f82b722defedfaddacd3505e15d198781ca176a8b713f68e3ef85b389251",
+    "jobs": 4,
+    "restarts": 0,
+    "watchdog": 0
+  },
+  "chrome/ordinary-084.json": {
+    "sha256": "f8c58c7bfbf1c8073302fecc2eac3978a7b11c91423309e8c595ed7e70ee9922",
+    "jobs": 4,
+    "restarts": 0,
+    "watchdog": 0
+  },
+  "chrome/ordinary-196.json": {
+    "sha256": "c57808fccedd8f9546ae8899157254576441a25a77b3df29bbc4290604fd6277",
+    "jobs": 4,
+    "restarts": 0,
+    "watchdog": 0
+  },
+  "chrome/ordinary-159.json": {
+    "sha256": "84d8b06313aabe82a557f183716dfa17dd28a4183a69afbadbb4f46cc0d5e00b",
+    "jobs": 4,
+    "restarts": 0,
+    "watchdog": 0
+  },
+  "chrome/ordinary-266.json": {
+    "sha256": "84507b92bf25100f80ad494542361c1dff6240e8545c8e40c4311131eeb686b5",
+    "jobs": 4,
+    "restarts": 0,
+    "watchdog": 0
+  },
+  "chrome/ordinary-026.json": {
+    "sha256": "51b6b33c6181273b38c7e9d46e8ff0ffaa8cbea99b2d892f25fd315a85c075a7",
+    "jobs": 4,
+    "restarts": 0,
+    "watchdog": 0
+  },
+  "chrome/ordinary-088.json": {
+    "sha256": "971b976a4c1086985547353d13876a2aa371c7d1af927567efb4cd4fcb022903",
+    "jobs": 4,
+    "restarts": 0,
+    "watchdog": 0
+  },
+  "chrome/ordinary-001.json": {
+    "sha256": "08728a1fb69c28d7f8573e149d8e130a098e545554b8a7275dbc133a4d53907d",
+    "jobs": 4,
+    "restarts": 0,
+    "watchdog": 0
+  },
+  "chrome/ordinary-017.json": {
+    "sha256": "7642748aa34d04ea399a6d00291e3b1dcd084c222a9c7fc9a9c9da1146e8e887",
+    "jobs": 4,
+    "restarts": 0,
+    "watchdog": 0
+  },
+  "chrome/ordinary-277.json": {
+    "sha256": "d9bf7a3cc30cc1a720adee4fc0f55fb8c9b6afeb7de0be6c0efd2736627764c9",
+    "jobs": 4,
+    "restarts": 0,
+    "watchdog": 0
+  },
+  "chrome/ordinary-260.json": {
+    "sha256": "d6e85401331c5e084922558277a64a4a03fbcc2dca3d08cd8822df42059cc319",
+    "jobs": 4,
+    "restarts": 0,
+    "watchdog": 0
+  },
+  "chrome/ordinary-237.json": {
+    "sha256": "58569016bf1a450358cadad3ee8ee9f2818bb1de09fd5c3aae0ed97d7231e1f5",
+    "jobs": 4,
+    "restarts": 0,
+    "watchdog": 0
+  },
+  "chrome/ordinary-145.json": {
+    "sha256": "7936434316e929fb8cf495a2b6895f218367c778673f1f99ec8822f04f269a8a",
+    "jobs": 4,
+    "restarts": 0,
+    "watchdog": 0
+  },
+  "chrome/ordinary-201.json": {
+    "sha256": "ea95719b3594054a793f4654df37c07ff34e01ebd3ff7d7852268fb47319c9c0",
+    "jobs": 4,
+    "restarts": 0,
+    "watchdog": 0
+  },
+  "chrome/ordinary-190.json": {
+    "sha256": "c7a4f3b11f9c0614f24db6bf2b4e9119bdfc4a8d6bd2a4224f1e41de6f055b24",
+    "jobs": 4,
+    "restarts": 0,
+    "watchdog": 0
+  }
+}
