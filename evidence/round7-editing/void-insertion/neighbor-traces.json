@@ -1,0 +1,534 @@
+{
+  "base": [
+    {
+      "style": "display:none",
+      "before": "<span style=\"display: none;\">original</span><img>",
+      "start": {
+        "inHost": true,
+        "path": [
+          [
+            "IMG",
+            1
+          ]
+        ],
+        "offset": 0
+      },
+      "ret": true,
+      "after": "<span style=\"display: none;\">original</span><img>",
+      "neighborConnected": true,
+      "neighborText": "original",
+      "imgChildren": 1,
+      "anchor": {
+        "inHost": true,
+        "path": [
+          [
+            "IMG",
+            1
+          ],
+          [
+            "#text",
+            0
+          ]
+        ],
+        "offset": 1
+      },
+      "focus": {
+        "inHost": true,
+        "path": [
+          [
+            "IMG",
+            1
+          ],
+          [
+            "#text",
+            0
+          ]
+        ],
+        "offset": 1
+      }
+    },
+    {
+      "style": "visibility:hidden",
+      "before": "<span style=\"visibility: hidden;\">original</span><img>",
+      "start": {
+        "inHost": true,
+        "path": [
+          [
+            "IMG",
+            1
+          ]
+        ],
+        "offset": 0
+      },
+      "ret": true,
+      "after": "<span style=\"visibility: hidden;\">original</span><img>",
+      "neighborConnected": true,
+      "neighborText": "original",
+      "imgChildren": 1,
+      "anchor": {
+        "inHost": true,
+        "path": [
+          [
+            "IMG",
+            1
+          ],
+          [
+            "#text",
+            0
+          ]
+        ],
+        "offset": 1
+      },
+      "focus": {
+        "inHost": true,
+        "path": [
+          [
+            "IMG",
+            1
+          ],
+          [
+            "#text",
+            0
+          ]
+        ],
+        "offset": 1
+      }
+    },
+    {
+      "style": "display:inline-block",
+      "before": "<span style=\"display: inline-block;\">original</span><img>",
+      "start": {
+        "inHost": true,
+        "path": [
+          [
+            "IMG",
+            1
+          ]
+        ],
+        "offset": 0
+      },
+      "ret": true,
+      "after": "<span style=\"display: inline-block;\">original</span><img>",
+      "neighborConnected": true,
+      "neighborText": "original",
+      "imgChildren": 1,
+      "anchor": {
+        "inHost": true,
+        "path": [
+          [
+            "IMG",
+            1
+          ],
+          [
+            "#text",
+            0
+          ]
+        ],
+        "offset": 1
+      },
+      "focus": {
+        "inHost": true,
+        "path": [
+          [
+            "IMG",
+            1
+          ],
+          [
+            "#text",
+            0
+          ]
+        ],
+        "offset": 1
+      }
+    }
+  ],
+  "first": [
+    {
+      "style": "display:none",
+      "before": "<span style=\"display: none;\">original</span><img>",
+      "start": {
+        "inHost": true,
+        "path": [
+          [
+            "IMG",
+            1
+          ]
+        ],
+        "offset": 0
+      },
+      "ret": true,
+      "after": "<span style=\"display: none;\">originalX</span><img>",
+      "neighborConnected": true,
+      "neighborText": "originalX",
+      "imgChildren": 0,
+      "anchor": {
+        "inHost": true,
+        "path": [
+          [
+            "SPAN",
+            0
+          ],
+          [
+            "#text",
+            0
+          ]
+        ],
+        "offset": 9
+      },
+      "focus": {
+        "inHost": true,
+        "path": [
+          [
+            "SPAN",
+            0
+          ],
+          [
+            "#text",
+            0
+          ]
+        ],
+        "offset": 9
+      }
+    },
+    {
+      "style": "visibility:hidden",
+      "before": "<span style=\"visibility: hidden;\">original</span><img>",
+      "start": {
+        "inHost": true,
+        "path": [
+          [
+            "IMG",
+            1
+          ]
+        ],
+        "offset": 0
+      },
+      "ret": true,
+      "after": "<span style=\"visibility: hidden;\">originalX</span><img>",
+      "neighborConnected": true,
+      "neighborText": "originalX",
+      "imgChildren": 0,
+      "anchor": {
+        "inHost": true,
+        "path": [
+          [
+            "SPAN",
+            0
+          ],
+          [
+            "#text",
+            0
+          ]
+        ],
+        "offset": 9
+      },
+      "focus": {
+        "inHost": true,
+        "path": [
+          [
+            "SPAN",
+            0
+          ],
+          [
+            "#text",
+            0
+          ]
+        ],
+        "offset": 9
+      }
+    },
+    {
+      "style": "display:inline-block",
+      "before": "<span style=\"display: inline-block;\">original</span><img>",
+      "start": {
+        "inHost": true,
+        "path": [
+          [
+            "IMG",
+            1
+          ]
+        ],
+        "offset": 0
+      },
+      "ret": true,
+      "after": "<span style=\"display: inline-block;\">originalX</span><img>",
+      "neighborConnected": true,
+      "neighborText": "originalX",
+      "imgChildren": 0,
+      "anchor": {
+        "inHost": true,
+        "path": [
+          [
+            "SPAN",
+            0
+          ],
+          [
+            "#text",
+            0
+          ]
+        ],
+        "offset": 9
+      },
+      "focus": {
+        "inHost": true,
+        "path": [
+          [
+            "SPAN",
+            0
+          ],
+          [
+            "#text",
+            0
+          ]
+        ],
+        "offset": 9
+      }
+    }
+  ],
+  "head": [
+    {
+      "style": "display:none",
+      "before": "<span style=\"display: none;\">original</span><img>",
+      "start": {
+        "inHost": true,
+        "path": [
+          [
+            "IMG",
+            1
+          ]
+        ],
+        "offset": 0
+      },
+      "ret": true,
+      "after": "<span style=\"display: none;\">original</span>X<img>",
+      "neighborConnected": true,
+      "neighborText": "original",
+      "imgChildren": 0,
+      "anchor": {
+        "inHost": true,
+        "path": [
+          [
+            "#text",
+            1
+          ]
+        ],
+        "offset": 1
+      },
+      "focus": {
+        "inHost": true,
+        "path": [
+          [
+            "#text",
+            1
+          ]
+        ],
+        "offset": 1
+      }
+    },
+    {
+      "style": "visibility:hidden",
+      "before": "<span style=\"visibility: hidden;\">original</span><img>",
+      "start": {
+        "inHost": true,
+        "path": [
+          [
+            "IMG",
+            1
+          ]
+        ],
+        "offset": 0
+      },
+      "ret": true,
+      "after": "<span style=\"visibility: hidden;\">original</span>X<img>",
+      "neighborConnected": true,
+      "neighborText": "original",
+      "imgChildren": 0,
+      "anchor": {
+        "inHost": true,
+        "path": [
+          [
+            "#text",
+            1
+          ]
+        ],
+        "offset": 1
+      },
+      "focus": {
+        "inHost": true,
+        "path": [
+          [
+            "#text",
+            1
+          ]
+        ],
+        "offset": 1
+      }
+    },
+    {
+      "style": "display:inline-block",
+      "before": "<span style=\"display: inline-block;\">original</span><img>",
+      "start": {
+        "inHost": true,
+        "path": [
+          [
+            "IMG",
+            1
+          ]
+        ],
+        "offset": 0
+      },
+      "ret": true,
+      "after": "<span style=\"display: inline-block;\">original</span>X<img>",
+      "neighborConnected": true,
+      "neighborText": "original",
+      "imgChildren": 0,
+      "anchor": {
+        "inHost": true,
+        "path": [
+          [
+            "#text",
+            1
+          ]
+        ],
+        "offset": 1
+      },
+      "focus": {
+        "inHost": true,
+        "path": [
+          [
+            "#text",
+            1
+          ]
+        ],
+        "offset": 1
+      }
+    }
+  ],
+  "chrome": [
+    {
+      "style": "display:none",
+      "before": "<span style=\"display: none;\">original</span><img>",
+      "start": {
+        "inHost": true,
+        "path": [
+          [
+            "IMG",
+            1
+          ]
+        ],
+        "offset": 0
+      },
+      "ret": true,
+      "after": "X<span style=\"display: none;\">original</span><img>",
+      "neighborConnected": true,
+      "neighborText": "original",
+      "imgChildren": 0,
+      "anchor": {
+        "inHost": true,
+        "path": [
+          [
+            "#text",
+            0
+          ]
+        ],
+        "offset": 1
+      },
+      "focus": {
+        "inHost": true,
+        "path": [
+          [
+            "#text",
+            0
+          ]
+        ],
+        "offset": 1
+      }
+    },
+    {
+      "style": "visibility:hidden",
+      "before": "<span style=\"visibility: hidden;\">original</span><img>",
+      "start": {
+        "inHost": true,
+        "path": [
+          [
+            "IMG",
+            1
+          ]
+        ],
+        "offset": 0
+      },
+      "ret": true,
+      "after": "X<span style=\"visibility: hidden;\"></span><img>",
+      "neighborConnected": true,
+      "neighborText": "",
+      "imgChildren": 0,
+      "anchor": {
+        "inHost": true,
+        "path": [
+          [
+            "#text",
+            0
+          ]
+        ],
+        "offset": 1
+      },
+      "focus": {
+        "inHost": true,
+        "path": [
+          [
+            "#text",
+            0
+          ]
+        ],
+        "offset": 1
+      }
+    },
+    {
+      "style": "display:inline-block",
+      "before": "<span style=\"display: inline-block;\">original</span><img>",
+      "start": {
+        "inHost": true,
+        "path": [
+          [
+            "IMG",
+            1
+          ]
+        ],
+        "offset": 0
+      },
+      "ret": true,
+      "after": "<span style=\"display: inline-block;\">originalX</span><img>",
+      "neighborConnected": true,
+      "neighborText": "originalX",
+      "imgChildren": 0,
+      "anchor": {
+        "inHost": true,
+        "path": [
+          [
+            "SPAN",
+            0
+          ],
+          [
+            "#text",
+            0
+          ]
+        ],
+        "offset": 9
+      },
+      "focus": {
+        "inHost": true,
+        "path": [
+          [
+            "SPAN",
+            0
+          ],
+          [
+            "#text",
+            0
+          ]
+        ],
+        "offset": 9
+      }
+    }
+  ]
+}
