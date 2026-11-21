@@ -1,0 +1,260 @@
+{
+  "previous": [
+    {
+      "dest": "input",
+      "state": "readOnly",
+      "before": {
+        "value": "abcd",
+        "start": 1,
+        "end": 3,
+        "undo": false,
+        "focused": true
+      },
+      "enabled": true,
+      "executed": true,
+      "after": {
+        "value": "abcd",
+        "start": 1,
+        "end": 3,
+        "undo": true,
+        "focused": true
+      },
+      "events": []
+    },
+    {
+      "dest": "input",
+      "state": "disabled",
+      "before": {
+        "value": "abcd",
+        "start": 1,
+        "end": 3,
+        "undo": true,
+        "focused": false
+      },
+      "enabled": false,
+      "executed": false,
+      "after": {
+        "value": "abcd",
+        "start": 1,
+        "end": 3,
+        "undo": true,
+        "focused": false
+      },
+      "events": []
+    },
+    {
+      "dest": "textarea",
+      "state": "readOnly",
+      "before": {
+        "value": "abcd",
+        "start": 1,
+        "end": 3,
+        "undo": true,
+        "focused": true
+      },
+      "enabled": true,
+      "executed": true,
+      "after": {
+        "value": "abcd",
+        "start": 1,
+        "end": 3,
+        "undo": true,
+        "focused": true
+      },
+      "events": []
+    },
+    {
+      "dest": "textarea",
+      "state": "disabled",
+      "before": {
+        "value": "abcd",
+        "start": 1,
+        "end": 3,
+        "undo": true,
+        "focused": false
+      },
+      "enabled": false,
+      "executed": false,
+      "after": {
+        "value": "abcd",
+        "start": 1,
+        "end": 3,
+        "undo": true,
+        "focused": false
+      },
+      "events": []
+    }
+  ],
+  "candidate": [
+    {
+      "dest": "input",
+      "state": "readOnly",
+      "before": {
+        "value": "abcd",
+        "start": 1,
+        "end": 3,
+        "undo": false,
+        "focused": true
+      },
+      "enabled": false,
+      "executed": false,
+      "after": {
+        "value": "abcd",
+        "start": 1,
+        "end": 3,
+        "undo": false,
+        "focused": true
+      },
+      "events": []
+    },
+    {
+      "dest": "input",
+      "state": "disabled",
+      "before": {
+        "value": "abcd",
+        "start": 1,
+        "end": 3,
+        "undo": false,
+        "focused": false
+      },
+      "enabled": false,
+      "executed": false,
+      "after": {
+        "value": "abcd",
+        "start": 1,
+        "end": 3,
+        "undo": false,
+        "focused": false
+      },
+      "events": []
+    },
+    {
+      "dest": "textarea",
+      "state": "readOnly",
+      "before": {
+        "value": "abcd",
+        "start": 1,
+        "end": 3,
+        "undo": false,
+        "focused": true
+      },
+      "enabled": false,
+      "executed": false,
+      "after": {
+        "value": "abcd",
+        "start": 1,
+        "end": 3,
+        "undo": false,
+        "focused": true
+      },
+      "events": []
+    },
+    {
+      "dest": "textarea",
+      "state": "disabled",
+      "before": {
+        "value": "abcd",
+        "start": 1,
+        "end": 3,
+        "undo": false,
+        "focused": false
+      },
+      "enabled": false,
+      "executed": false,
+      "after": {
+        "value": "abcd",
+        "start": 1,
+        "end": 3,
+        "undo": false,
+        "focused": false
+      },
+      "events": []
+    }
+  ],
+  "signedChrome158": [
+    {
+      "dest": "input",
+      "state": "readOnly",
+      "before": {
+        "value": "abcd",
+        "start": 1,
+        "end": 3,
+        "undo": false,
+        "focused": true
+      },
+      "enabled": false,
+      "executed": false,
+      "after": {
+        "value": "abcd",
+        "start": 1,
+        "end": 3,
+        "undo": false,
+        "focused": true
+      },
+      "events": []
+    },
+    {
+      "dest": "input",
+      "state": "disabled",
+      "before": {
+        "value": "abcd",
+        "start": 1,
+        "end": 3,
+        "undo": false,
+        "focused": true
+      },
+      "enabled": false,
+      "executed": false,
+      "after": {
+        "value": "abcd",
+        "start": 1,
+        "end": 3,
+        "undo": false,
+        "focused": true
+      },
+      "events": []
+    },
+    {
+      "dest": "textarea",
+      "state": "readOnly",
+      "before": {
+        "value": "abcd",
+        "start": 1,
+        "end": 3,
+        "undo": false,
+        "focused": true
+      },
+      "enabled": false,
+      "executed": false,
+      "after": {
+        "value": "abcd",
+        "start": 1,
+        "end": 3,
+        "undo": false,
+        "focused": true
+      },
+      "events": []
+    },
+    {
+      "dest": "textarea",
+      "state": "disabled",
+      "before": {
+        "value": "abcd",
+        "start": 1,
+        "end": 3,
+        "undo": false,
+        "focused": true
+      },
+      "enabled": false,
+      "executed": false,
+      "after": {
+        "value": "abcd",
+        "start": 1,
+        "end": 3,
+        "undo": false,
+        "focused": true
+      },
+      "events": []
+    }
+  ]
+}
