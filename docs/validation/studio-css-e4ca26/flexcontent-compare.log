@@ -1,0 +1,30 @@
+flexcontent-main-candidate 8082 page passes 5792 named passes 182015 observed names 194673 statuses {'complete:0': 7871, 'complete:2': 104, 'timeout:None': 11, 'complete:1': 95, 'hang:None': 1}
+flexcontent-main-parent 8082 page passes 5792 named passes 182008 observed names 194673 statuses {'complete:0': 7871, 'complete:2': 104, 'timeout:None': 11, 'complete:1': 95, 'hang:None': 1}
+flexcontent-main-stable 8082 page passes 6950 named passes 182963 observed names 194912 statuses {'complete:0': 7986, 'complete:2': 62, 'complete:1': 23, 'timeout:None': 10, 'hang:None': 1}
+flexcontent-main-parent pages left only 0 right only 0
+flexcontent-main-parent passes left only 7 right only 0
+flexcontent-main-parent observed left only 0 right only 0
+flexcontent-main-stable pages left only 287 right only 1445
+flexcontent-main-stable passes left only 5906 right only 6854
+flexcontent-main-stable observed left only 260 right only 499
+Losses vs parent by URL: Counter()
+flexcontent-focus-candidate 418 page passes 328 named passes 8015 observed names 9025 statuses {'complete:0': 418}
+flexcontent-focus-parent 418 page passes 328 named passes 8008 observed names 9025 statuses {'complete:0': 418}
+flexcontent-focus-stable 418 page passes 409 named passes 8981 observed names 9025 statuses {'complete:0': 418}
+flexcontent-focus-parent pages left only 0 right only 0
+flexcontent-focus-parent passes left only 7 right only 0
+flexcontent-focus-parent observed left only 0 right only 0
+flexcontent-focus-stable pages left only 1 right only 82
+flexcontent-focus-stable passes left only 23 right only 989
+flexcontent-focus-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()
+flexcontent-supplement-candidate 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+flexcontent-supplement-parent 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+flexcontent-supplement-stable 41 page passes 35 named passes 619 observed names 874 statuses {'complete:0': 41}
+flexcontent-supplement-parent pages left only 0 right only 0
+flexcontent-supplement-parent passes left only 0 right only 0
+flexcontent-supplement-parent observed left only 0 right only 0
+flexcontent-supplement-stable pages left only 0 right only 8
+flexcontent-supplement-stable passes left only 0 right only 42
+flexcontent-supplement-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()
