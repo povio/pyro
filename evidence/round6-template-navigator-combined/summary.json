@@ -1,0 +1,32 @@
+{
+  "before": {
+    "pages": 85,
+    "full": 37,
+    "passes": 874
+  },
+  "single": {
+    "pages": 85,
+    "full": 41,
+    "passes": 1195
+  },
+  "after": {
+    "pages": 85,
+    "full": 41,
+    "passes": 1195
+  },
+  "chrome": {
+    "pages": 85,
+    "full": 73,
+    "passes": 1581
+  },
+  "singleToStackGain": 0,
+  "singleToStackLoss": 0,
+  "gained": 321,
+  "lost": 0,
+  "chromeOnly": 391,
+  "lpOnly": 5,
+  "gainedChrome": 321,
+  "singleStackPageChanges": [],
+  "literalChromeOnly": 393,
+  "literalLpOnly": 7
+}

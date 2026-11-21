@@ -1,0 +1,20 @@
+{
+  "base": "8e7144b7e7de68be3b5b345138abe2c1dcc6d232",
+  "candidate": "bab023c81acab5a6286118c21a70932e9c20d1f7",
+  "baseBinary": "daea9cf80d257a1a0574e625ba38e58358104defbf2b7dee408fd8af667d72f8",
+  "candidateBinary": "c9b6f4769eb58e4a25602e28a25359fda82ef54a51c5eff6afc69a4124d198e6",
+  "componentRuntime": {
+    "focusAndGuard": {
+      "commit": "054ffa4c43fa84bdd609b0a02cac2ccb1bb04760",
+      "binary": "26b68bbb2315c5940ec0f6dd902ff573060fbd07800cc99a1e9df31e91f590a0"
+    },
+    "navigator": {
+      "commit": "b58b00b07f20042205406ecd76123efcc997d744",
+      "binary": "14f96af64b1fe577d09bf79cdc30e649e9572ffce4461d3c7c2cb8c5599cd995"
+    }
+  },
+  "jsc": "0e0dd7038a7a-6f4649e395e0",
+  "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+  "chrome": "Google Chrome Stable 158.0.8127.37",
+  "referencePublication": "ee24e07f6b15b399d6e8e2157c763809341b6e44"
+}

@@ -1,0 +1,3232 @@
+{
+  "html/semantics/scripting-1/the-template-element/template-for/template-for-append-text-and-element.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "6586d81c7fe22adc2c93b75f55a793f5b5ac53a6",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "6586d81c7fe22adc2c93b75f55a793f5b5ac53a6",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "6586d81c7fe22adc2c93b75f55a793f5b5ac53a6",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "6586d81c7fe22adc2c93b75f55a793f5b5ac53a6",
+      "window"
+    ]
+  },
+  "html/semantics/scripting-1/the-template-element/template-for/template-for-append-element.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "1b431363c5201e1e72048b37b09d9a238e2a4d48",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "1b431363c5201e1e72048b37b09d9a238e2a4d48",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "1b431363c5201e1e72048b37b09d9a238e2a4d48",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "1b431363c5201e1e72048b37b09d9a238e2a4d48",
+      "window"
+    ]
+  },
+  "html/semantics/scripting-1/the-template-element/template-for/template-for-case-sensitive.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "55ebe0d5f00881a8015579f15d2e74b89b30a56e",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "55ebe0d5f00881a8015579f15d2e74b89b30a56e",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "55ebe0d5f00881a8015579f15d2e74b89b30a56e",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "55ebe0d5f00881a8015579f15d2e74b89b30a56e",
+      "window"
+    ]
+  },
+  "html/semantics/scripting-1/the-template-element/template-for/template-for-append-to-head.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "7263916aa7a4ad44e502ad682fc712a545b0ae73",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "7263916aa7a4ad44e502ad682fc712a545b0ae73",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "7263916aa7a4ad44e502ad682fc712a545b0ae73",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "7263916aa7a4ad44e502ad682fc712a545b0ae73",
+      "window"
+    ]
+  },
+  "html/semantics/scripting-1/the-template-element/template-for/template-for-empty-hash.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "701a751eb2168e8bd67611e55ea43f1ff0147a06",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "701a751eb2168e8bd67611e55ea43f1ff0147a06",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "701a751eb2168e8bd67611e55ea43f1ff0147a06",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "701a751eb2168e8bd67611e55ea43f1ff0147a06",
+      "window"
+    ]
+  },
+  "html/semantics/scripting-1/the-template-element/template-for/template-for-gradual-append.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "6bbb81552d230f0805cead377e5cf92aa52255d0",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "6bbb81552d230f0805cead377e5cf92aa52255d0",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "6bbb81552d230f0805cead377e5cf92aa52255d0",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "6bbb81552d230f0805cead377e5cf92aa52255d0",
+      "window"
+    ]
+  },
+  "html/semantics/scripting-1/the-template-element/template-for/template-for-foster-parenting.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      0,
+      6,
+      "3317892d87900e754e8a140352e8454c6943829f",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      false,
+      2,
+      6,
+      "3317892d87900e754e8a140352e8454c6943829f",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      false,
+      2,
+      6,
+      "3317892d87900e754e8a140352e8454c6943829f",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      6,
+      6,
+      "3317892d87900e754e8a140352e8454c6943829f",
+      "window"
+    ]
+  },
+  "html/semantics/scripting-1/the-template-element/template-for/template-for-innerHTML-ambiguous.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "e47927bc56dfc8d836a2c4988f3dbde7ec00bed7",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "e47927bc56dfc8d836a2c4988f3dbde7ec00bed7",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "e47927bc56dfc8d836a2c4988f3dbde7ec00bed7",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "e47927bc56dfc8d836a2c4988f3dbde7ec00bed7",
+      "window"
+    ]
+  },
+  "html/semantics/scripting-1/the-template-element/template-for/template-for-html-setters.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      18,
+      28,
+      "a64999ea8b97aeb91856cd013162359a13738e8b",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      false,
+      21,
+      28,
+      "a64999ea8b97aeb91856cd013162359a13738e8b",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      false,
+      21,
+      28,
+      "a64999ea8b97aeb91856cd013162359a13738e8b",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      28,
+      28,
+      "a64999ea8b97aeb91856cd013162359a13738e8b",
+      "window"
+    ]
+  },
+  "html/semantics/scripting-1/the-template-element/template-for/template-for-innerHTML-outside.html": {
+    "before": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "f606a7f4743bcbdacfdc9a8543074ded0e73fbc3",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "f606a7f4743bcbdacfdc9a8543074ded0e73fbc3",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "f606a7f4743bcbdacfdc9a8543074ded0e73fbc3",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "f606a7f4743bcbdacfdc9a8543074ded0e73fbc3",
+      "window"
+    ]
+  },
+  "html/semantics/scripting-1/the-template-element/template-for/template-for-invalid.html": {
+    "before": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "8cef28c578c348b1b24c10c881324dea553ef585",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "8cef28c578c348b1b24c10c881324dea553ef585",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "8cef28c578c348b1b24c10c881324dea553ef585",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "8cef28c578c348b1b24c10c881324dea553ef585",
+      "window"
+    ]
+  },
+  "html/semantics/scripting-1/the-template-element/template-for/template-for-innerHTML-within.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "9544fb3ade34db45a1e87f5933e1c1c44398af59",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "9544fb3ade34db45a1e87f5933e1c1c44398af59",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "9544fb3ade34db45a1e87f5933e1c1c44398af59",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "9544fb3ade34db45a1e87f5933e1c1c44398af59",
+      "window"
+    ]
+  },
+  "html/semantics/scripting-1/the-template-element/template-for/template-for-multiple.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "1079f8a38a809b2b366aa7c5eb4baeb57dac5a66",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "1079f8a38a809b2b366aa7c5eb4baeb57dac5a66",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "1079f8a38a809b2b366aa7c5eb4baeb57dac5a66",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "1079f8a38a809b2b366aa7c5eb4baeb57dac5a66",
+      "window"
+    ]
+  },
+  "html/semantics/scripting-1/the-template-element/template-for/template-for-nested-patch.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      0,
+      3,
+      "c2ad306ab431c3e5da5eb2cc664b8d7cf774cab6",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      false,
+      1,
+      3,
+      "c2ad306ab431c3e5da5eb2cc664b8d7cf774cab6",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      false,
+      1,
+      3,
+      "c2ad306ab431c3e5da5eb2cc664b8d7cf774cab6",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      3,
+      3,
+      "c2ad306ab431c3e5da5eb2cc664b8d7cf774cab6",
+      "window"
+    ]
+  },
+  "html/semantics/scripting-1/the-template-element/template-for/template-for-only-html-001.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "df08477c8ef65a844502c3032804a0e251b04284",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "df08477c8ef65a844502c3032804a0e251b04284",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "df08477c8ef65a844502c3032804a0e251b04284",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "df08477c8ef65a844502c3032804a0e251b04284",
+      "window"
+    ]
+  },
+  "html/semantics/scripting-1/the-template-element/template-for/template-for-parsing-only.html": {
+    "before": [
+      "complete",
+      "OK",
+      true,
+      4,
+      4,
+      "cc4773b3fa30cdd92844bd4be860911d4ae5042c",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      true,
+      4,
+      4,
+      "cc4773b3fa30cdd92844bd4be860911d4ae5042c",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      true,
+      4,
+      4,
+      "cc4773b3fa30cdd92844bd4be860911d4ae5042c",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      4,
+      4,
+      "cc4773b3fa30cdd92844bd4be860911d4ae5042c",
+      "window"
+    ]
+  },
+  "html/semantics/scripting-1/the-template-element/template-for/template-for-prepend-element.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "ea236dc6db93dcc41bde6a366e7b2edd014bdfbe",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "ea236dc6db93dcc41bde6a366e7b2edd014bdfbe",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "ea236dc6db93dcc41bde6a366e7b2edd014bdfbe",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "ea236dc6db93dcc41bde6a366e7b2edd014bdfbe",
+      "window"
+    ]
+  },
+  "html/semantics/scripting-1/the-template-element/template-for/template-for-prepend-text.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "e699b5f81ef88779015c7f9173ca250c857b6676",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "e699b5f81ef88779015c7f9173ca250c857b6676",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "e699b5f81ef88779015c7f9173ca250c857b6676",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "e699b5f81ef88779015c7f9173ca250c857b6676",
+      "window"
+    ]
+  },
+  "html/semantics/scripting-1/the-template-element/template-for/template-for-multiple-cases.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      36,
+      414,
+      "eed34e36d600ba3ee7558ee857629cbfbe2f35ae",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      false,
+      100,
+      414,
+      "eed34e36d600ba3ee7558ee857629cbfbe2f35ae",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      false,
+      100,
+      414,
+      "eed34e36d600ba3ee7558ee857629cbfbe2f35ae",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      false,
+      396,
+      414,
+      "eed34e36d600ba3ee7558ee857629cbfbe2f35ae",
+      "window"
+    ]
+  },
+  "html/semantics/scripting-1/the-template-element/template-for/template-for-replace-children-with-element.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "31b8fe02da539be984163050c0c5f0c4ed172aee",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "31b8fe02da539be984163050c0c5f0c4ed172aee",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "31b8fe02da539be984163050c0c5f0c4ed172aee",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "31b8fe02da539be984163050c0c5f0c4ed172aee",
+      "window"
+    ]
+  },
+  "html/semantics/scripting-1/the-template-element/template-for/template-for-replace.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      0,
+      3,
+      "fdc98e808f28aac0f64cf2e5b6f5e41063d7824c",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      false,
+      0,
+      3,
+      "fdc98e808f28aac0f64cf2e5b6f5e41063d7824c",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      false,
+      0,
+      3,
+      "fdc98e808f28aac0f64cf2e5b6f5e41063d7824c",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      3,
+      3,
+      "fdc98e808f28aac0f64cf2e5b6f5e41063d7824c",
+      "window"
+    ]
+  },
+  "html/semantics/scripting-1/the-template-element/template-for/template-for-replace-children-with-text.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "eff2eb12adc4b312fd8adaafeac8a5bee0368e66",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "eff2eb12adc4b312fd8adaafeac8a5bee0368e66",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "eff2eb12adc4b312fd8adaafeac8a5bee0368e66",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "eff2eb12adc4b312fd8adaafeac8a5bee0368e66",
+      "window"
+    ]
+  },
+  "html/semantics/scripting-1/the-template-element/template-for/template-for-reverse.html": {
+    "before": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "880f3e27497fc20703de015a7533a94ebb1412a7",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "880f3e27497fc20703de015a7533a94ebb1412a7",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "880f3e27497fc20703de015a7533a94ebb1412a7",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "880f3e27497fc20703de015a7533a94ebb1412a7",
+      "window"
+    ]
+  },
+  "html/semantics/scripting-1/the-template-element/template-for/template-for-shadow-nested.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "b783ca4f81024f5c567b135b3570974beb231cb5",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "b783ca4f81024f5c567b135b3570974beb231cb5",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "b783ca4f81024f5c567b135b3570974beb231cb5",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "b783ca4f81024f5c567b135b3570974beb231cb5",
+      "window"
+    ]
+  },
+  "html/semantics/scripting-1/the-template-element/template-for/template-for-shadow-root.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      0,
+      2,
+      "eb346f1e1bfe71ce80bfad004d2c6cdaed9b6e17",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      false,
+      0,
+      2,
+      "eb346f1e1bfe71ce80bfad004d2c6cdaed9b6e17",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      false,
+      0,
+      2,
+      "eb346f1e1bfe71ce80bfad004d2c6cdaed9b6e17",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      2,
+      2,
+      "eb346f1e1bfe71ce80bfad004d2c6cdaed9b6e17",
+      "window"
+    ]
+  },
+  "html/semantics/scripting-1/the-template-element/template-for/template-for-style-in-head.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "704fb0a758974e4912161ac9bd850dbe02049d2b",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "704fb0a758974e4912161ac9bd850dbe02049d2b",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "704fb0a758974e4912161ac9bd850dbe02049d2b",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "704fb0a758974e4912161ac9bd850dbe02049d2b",
+      "window"
+    ]
+  },
+  "html/semantics/scripting-1/the-template-element/template-for/template-for-style.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "d493b8b93cc58de3eb30fdad940e1e7076182529",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "d493b8b93cc58de3eb30fdad940e1e7076182529",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "d493b8b93cc58de3eb30fdad940e1e7076182529",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "d493b8b93cc58de3eb30fdad940e1e7076182529",
+      "window"
+    ]
+  },
+  "html/semantics/scripting-1/the-template-element/template-for/template-for-superseded-by-shadowrootmode.html": {
+    "before": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "991039204c0951d03e5824c67803c3dc7b4c7987",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "991039204c0951d03e5824c67803c3dc7b4c7987",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "991039204c0951d03e5824c67803c3dc7b4c7987",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "991039204c0951d03e5824c67803c3dc7b4c7987",
+      "window"
+    ]
+  },
+  "html/semantics/scripting-1/the-template-element/template-for/template-for-shadow.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "8017e97918796c26ff0fee4dc055f5abbeb5c942",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "8017e97918796c26ff0fee4dc055f5abbeb5c942",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "8017e97918796c26ff0fee4dc055f5abbeb5c942",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "8017e97918796c26ff0fee4dc055f5abbeb5c942",
+      "window"
+    ]
+  },
+  "html/semantics/scripting-1/the-template-element/template-for/template-for-supersedes-invalid-shadowrootmode.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "d14fe436301bdd9db8e662583830efb8d21ab628",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "d14fe436301bdd9db8e662583830efb8d21ab628",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "d14fe436301bdd9db8e662583830efb8d21ab628",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "d14fe436301bdd9db8e662583830efb8d21ab628",
+      "window"
+    ]
+  },
+  "html/semantics/scripting-1/the-template-element/template-for/template-for-title.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "148c3ffaa5fcc4a681800b7bd123e48630b6a3f2",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "148c3ffaa5fcc4a681800b7bd123e48630b6a3f2",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "148c3ffaa5fcc4a681800b7bd123e48630b6a3f2",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "148c3ffaa5fcc4a681800b7bd123e48630b6a3f2",
+      "window"
+    ]
+  },
+  "html/semantics/scripting-1/the-template-element/template-for/template-for-unclosed-content.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      0,
+      10,
+      "70fd19515fc65fc6f55738d697212d212a6f87e6",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      false,
+      4,
+      10,
+      "70fd19515fc65fc6f55738d697212d212a6f87e6",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      false,
+      4,
+      10,
+      "70fd19515fc65fc6f55738d697212d212a6f87e6",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      10,
+      10,
+      "70fd19515fc65fc6f55738d697212d212a6f87e6",
+      "window"
+    ]
+  },
+  "dom/nodes/ProcessingInstruction-escapes-1.xhtml": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "d629a8464b7e171862b0d6989fb72215e0e45833",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "d629a8464b7e171862b0d6989fb72215e0e45833",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "d629a8464b7e171862b0d6989fb72215e0e45833",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "d629a8464b7e171862b0d6989fb72215e0e45833",
+      "window"
+    ]
+  },
+  "dom/nodes/ProcessingInstruction-in-doctype.xhtml": {
+    "before": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "c35e710f9cc81217e6fdddf4ea5b9ee3b5160d3a",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "c35e710f9cc81217e6fdddf4ea5b9ee3b5160d3a",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "c35e710f9cc81217e6fdddf4ea5b9ee3b5160d3a",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "c35e710f9cc81217e6fdddf4ea5b9ee3b5160d3a",
+      "window"
+    ]
+  },
+  "dom/nodes/ProcessingInstruction-literal-1.xhtml": {
+    "before": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "4eaf86cbdcea2df23fee6a802679affb548713e1",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "4eaf86cbdcea2df23fee6a802679affb548713e1",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "4eaf86cbdcea2df23fee6a802679affb548713e1",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "4eaf86cbdcea2df23fee6a802679affb548713e1",
+      "window"
+    ]
+  },
+  "dom/nodes/ProcessingInstruction-literal-2.xhtml": {
+    "before": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "d878c697c077dea69480eaf8b38f0fd038af2ece",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "d878c697c077dea69480eaf8b38f0fd038af2ece",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "d878c697c077dea69480eaf8b38f0fd038af2ece",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "d878c697c077dea69480eaf8b38f0fd038af2ece",
+      "window"
+    ]
+  },
+  "domparsing/DOMParser-parseFromString-encoding.html": {
+    "before": [
+      "complete",
+      "OK",
+      true,
+      4,
+      4,
+      "0dd4468cf248640c9c002185e6071db14c505fdd",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      true,
+      4,
+      4,
+      "0dd4468cf248640c9c002185e6071db14c505fdd",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      true,
+      4,
+      4,
+      "0dd4468cf248640c9c002185e6071db14c505fdd",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      4,
+      4,
+      "0dd4468cf248640c9c002185e6071db14c505fdd",
+      "window"
+    ]
+  },
+  "dom/nodes/processing-instruction-attributes.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      130,
+      140,
+      "2535d8584e3b73756298120fd206ba375ff2a1a8",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      false,
+      130,
+      140,
+      "2535d8584e3b73756298120fd206ba375ff2a1a8",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      false,
+      130,
+      140,
+      "2535d8584e3b73756298120fd206ba375ff2a1a8",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      140,
+      140,
+      "2535d8584e3b73756298120fd206ba375ff2a1a8",
+      "window"
+    ]
+  },
+  "domparsing/DOMParser-parseFromString-html.html": {
+    "before": [
+      "complete",
+      "OK",
+      true,
+      10,
+      10,
+      "86e516d6180acb4bd614e91067df625765d28352",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      true,
+      10,
+      10,
+      "86e516d6180acb4bd614e91067df625765d28352",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      true,
+      10,
+      10,
+      "86e516d6180acb4bd614e91067df625765d28352",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      10,
+      10,
+      "86e516d6180acb4bd614e91067df625765d28352",
+      "window"
+    ]
+  },
+  "domparsing/DOMParser-parseFromString-stylesheets.html": {
+    "before": [
+      "complete",
+      "OK",
+      true,
+      6,
+      6,
+      "e30926af6764f4341b695c6244b39e2d66eaca21",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      true,
+      6,
+      6,
+      "e30926af6764f4341b695c6244b39e2d66eaca21",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      true,
+      6,
+      6,
+      "e30926af6764f4341b695c6244b39e2d66eaca21",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      6,
+      6,
+      "e30926af6764f4341b695c6244b39e2d66eaca21",
+      "window"
+    ]
+  },
+  "domparsing/DOMParser-parseFromString-url-base-about.window.html": {
+    "before": [
+      "complete",
+      "OK",
+      true,
+      2,
+      2,
+      "6618b59e0b2bc601f0d5acbecd78ac967085da0a",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      true,
+      2,
+      2,
+      "6618b59e0b2bc601f0d5acbecd78ac967085da0a",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      true,
+      2,
+      2,
+      "6618b59e0b2bc601f0d5acbecd78ac967085da0a",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      2,
+      2,
+      "6618b59e0b2bc601f0d5acbecd78ac967085da0a",
+      "window"
+    ]
+  },
+  "domparsing/DOMParser-parseFromString-url-base-pushstate.html": {
+    "before": [
+      "complete",
+      "OK",
+      true,
+      45,
+      45,
+      "57f4d4367ba1ec825c79304d7160bed2d0319640",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      true,
+      45,
+      45,
+      "57f4d4367ba1ec825c79304d7160bed2d0319640",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      true,
+      45,
+      45,
+      "57f4d4367ba1ec825c79304d7160bed2d0319640",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      45,
+      45,
+      "57f4d4367ba1ec825c79304d7160bed2d0319640",
+      "window"
+    ]
+  },
+  "domparsing/DOMParser-parseFromString-url-base.html": {
+    "before": [
+      "complete",
+      "OK",
+      true,
+      45,
+      45,
+      "0258e71351851b8006486b77d41f5a893b47f154",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      true,
+      45,
+      45,
+      "0258e71351851b8006486b77d41f5a893b47f154",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      true,
+      45,
+      45,
+      "0258e71351851b8006486b77d41f5a893b47f154",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      45,
+      45,
+      "0258e71351851b8006486b77d41f5a893b47f154",
+      "window"
+    ]
+  },
+  "domparsing/DOMParser-parseFromString-url-moretests.html": {
+    "before": [
+      "complete",
+      "OK",
+      true,
+      31,
+      31,
+      "e7599f306e99edd5f3c61b0490c33606fb5e1565",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      true,
+      31,
+      31,
+      "e7599f306e99edd5f3c61b0490c33606fb5e1565",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      true,
+      31,
+      31,
+      "e7599f306e99edd5f3c61b0490c33606fb5e1565",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      31,
+      31,
+      "e7599f306e99edd5f3c61b0490c33606fb5e1565",
+      "window"
+    ]
+  },
+  "domparsing/DOMParser-parseFromString-url-pushstate.html": {
+    "before": [
+      "complete",
+      "OK",
+      true,
+      45,
+      45,
+      "75456e948d5780083b7e7205536d146756e43025",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      true,
+      45,
+      45,
+      "75456e948d5780083b7e7205536d146756e43025",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      true,
+      45,
+      45,
+      "75456e948d5780083b7e7205536d146756e43025",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      45,
+      45,
+      "75456e948d5780083b7e7205536d146756e43025",
+      "window"
+    ]
+  },
+  "domparsing/DOMParser-parseFromString-url.html": {
+    "before": [
+      "complete",
+      "OK",
+      true,
+      45,
+      45,
+      "492d9c89d056c5e0bce45c9c5610f2b4fb4032a0",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      true,
+      45,
+      45,
+      "492d9c89d056c5e0bce45c9c5610f2b4fb4032a0",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      true,
+      45,
+      45,
+      "492d9c89d056c5e0bce45c9c5610f2b4fb4032a0",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      45,
+      45,
+      "492d9c89d056c5e0bce45c9c5610f2b4fb4032a0",
+      "window"
+    ]
+  },
+  "domparsing/DOMParser-parseFromString-xml-CDATA.html": {
+    "before": [
+      "complete",
+      "OK",
+      true,
+      8,
+      8,
+      "1e3b000e25200f30a55f90112bd9b492d9e4dec6",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      true,
+      8,
+      8,
+      "1e3b000e25200f30a55f90112bd9b492d9e4dec6",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      true,
+      8,
+      8,
+      "1e3b000e25200f30a55f90112bd9b492d9e4dec6",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      8,
+      8,
+      "1e3b000e25200f30a55f90112bd9b492d9e4dec6",
+      "window"
+    ]
+  },
+  "domparsing/DOMParser-parseFromString-xml-doctype.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      2,
+      3,
+      "cd655acf930e7bb638eb38adf8d93c3d8d1c1c17",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      false,
+      2,
+      3,
+      "cd655acf930e7bb638eb38adf8d93c3d8d1c1c17",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      false,
+      2,
+      3,
+      "cd655acf930e7bb638eb38adf8d93c3d8d1c1c17",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      3,
+      3,
+      "cd655acf930e7bb638eb38adf8d93c3d8d1c1c17",
+      "window"
+    ]
+  },
+  "domparsing/DOMParser-parseFromString-xml-empty-nodes.html": {
+    "before": [
+      "complete",
+      "OK",
+      true,
+      8,
+      8,
+      "6e9e35eb30782bca308fb7535f76686d92b2305e",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      true,
+      8,
+      8,
+      "6e9e35eb30782bca308fb7535f76686d92b2305e",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      true,
+      8,
+      8,
+      "6e9e35eb30782bca308fb7535f76686d92b2305e",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      8,
+      8,
+      "6e9e35eb30782bca308fb7535f76686d92b2305e",
+      "window"
+    ]
+  },
+  "domparsing/DOMParser-parseFromString-xml-internal-subset.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "26b5fa99f17568bbb9fd831f274e6c1f8d8b98f1",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "26b5fa99f17568bbb9fd831f274e6c1f8d8b98f1",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      false,
+      0,
+      1,
+      "26b5fa99f17568bbb9fd831f274e6c1f8d8b98f1",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "26b5fa99f17568bbb9fd831f274e6c1f8d8b98f1",
+      "window"
+    ]
+  },
+  "domparsing/DOMParser-parseFromString-xml-parsererror.html": {
+    "before": [
+      "complete",
+      "OK",
+      true,
+      23,
+      23,
+      "f57125f6ea4e2f2d0dd98cb73d889267e914341b",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      true,
+      23,
+      23,
+      "f57125f6ea4e2f2d0dd98cb73d889267e914341b",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      true,
+      23,
+      23,
+      "f57125f6ea4e2f2d0dd98cb73d889267e914341b",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      23,
+      23,
+      "f57125f6ea4e2f2d0dd98cb73d889267e914341b",
+      "window"
+    ]
+  },
+  "domparsing/DOMParser-parseFromString-xml-scripting-support-disabled.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      11,
+      13,
+      "22138a87d499c77b47836abec8de40744f1e8bf0",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      false,
+      11,
+      13,
+      "22138a87d499c77b47836abec8de40744f1e8bf0",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      false,
+      11,
+      13,
+      "22138a87d499c77b47836abec8de40744f1e8bf0",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      13,
+      13,
+      "22138a87d499c77b47836abec8de40744f1e8bf0",
+      "window"
+    ]
+  },
+  "domparsing/DOMParser-parseFromString-xml.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      12,
+      20,
+      "b07bb3d87c823bd7cc4c1bcc751eaca3a18b53cb",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      false,
+      12,
+      20,
+      "b07bb3d87c823bd7cc4c1bcc751eaca3a18b53cb",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      false,
+      12,
+      20,
+      "b07bb3d87c823bd7cc4c1bcc751eaca3a18b53cb",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      false,
+      8,
+      20,
+      "b07bb3d87c823bd7cc4c1bcc751eaca3a18b53cb",
+      "window"
+    ]
+  },
+  "domparsing/createContextualFragment.html": {
+    "before": [
+      "complete",
+      "OK",
+      true,
+      35,
+      35,
+      "170c0c464d90fb1918f684c867a1f9fcb3cb4fee",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      true,
+      35,
+      35,
+      "170c0c464d90fb1918f684c867a1f9fcb3cb4fee",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      true,
+      35,
+      35,
+      "170c0c464d90fb1918f684c867a1f9fcb3cb4fee",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      35,
+      35,
+      "170c0c464d90fb1918f684c867a1f9fcb3cb4fee",
+      "window"
+    ]
+  },
+  "domparsing/insert_adjacent_html.html": {
+    "before": [
+      "complete",
+      "OK",
+      true,
+      31,
+      31,
+      "b58852f70874bfa11d2ed55b627e86d9dd302f63",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      true,
+      31,
+      31,
+      "b58852f70874bfa11d2ed55b627e86d9dd302f63",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      true,
+      31,
+      31,
+      "b58852f70874bfa11d2ed55b627e86d9dd302f63",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      31,
+      31,
+      "b58852f70874bfa11d2ed55b627e86d9dd302f63",
+      "window"
+    ]
+  },
+  "domparsing/insert_adjacent_html-xhtml.xhtml": {
+    "before": [
+      "complete",
+      "OK",
+      true,
+      30,
+      30,
+      "f02f425c47d4346e984dee82ee4a74fa35afa522",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      true,
+      30,
+      30,
+      "f02f425c47d4346e984dee82ee4a74fa35afa522",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      true,
+      30,
+      30,
+      "f02f425c47d4346e984dee82ee4a74fa35afa522",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      30,
+      30,
+      "f02f425c47d4346e984dee82ee4a74fa35afa522",
+      "window"
+    ]
+  },
+  "html/semantics/scripting-1/the-template-element/template-element/node-document-changes.html": {
+    "before": [
+      "complete",
+      "OK",
+      true,
+      6,
+      6,
+      "0c60c10738d8eaba9687e6ab0fabeea91aee9a87",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      true,
+      6,
+      6,
+      "0c60c10738d8eaba9687e6ab0fabeea91aee9a87",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      true,
+      6,
+      6,
+      "0c60c10738d8eaba9687e6ab0fabeea91aee9a87",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      6,
+      6,
+      "0c60c10738d8eaba9687e6ab0fabeea91aee9a87",
+      "window"
+    ]
+  },
+  "html/semantics/scripting-1/the-template-element/template-element/content-attribute.html": {
+    "before": [
+      "complete",
+      "OK",
+      true,
+      7,
+      7,
+      "b4c11b841f15c76d145d8e890c7c3d5d231cf2f7",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      true,
+      7,
+      7,
+      "b4c11b841f15c76d145d8e890c7c3d5d231cf2f7",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      true,
+      7,
+      7,
+      "b4c11b841f15c76d145d8e890c7c3d5d231cf2f7",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      7,
+      7,
+      "b4c11b841f15c76d145d8e890c7c3d5d231cf2f7",
+      "window"
+    ]
+  },
+  "html/semantics/scripting-1/the-template-element/template-element/template-content-hierarcy.html": {
+    "before": [
+      "complete",
+      "OK",
+      true,
+      3,
+      3,
+      "6326ee859deed18beb69b9b40b2a994858617585",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      true,
+      3,
+      3,
+      "6326ee859deed18beb69b9b40b2a994858617585",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      true,
+      3,
+      3,
+      "6326ee859deed18beb69b9b40b2a994858617585",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      3,
+      3,
+      "6326ee859deed18beb69b9b40b2a994858617585",
+      "window"
+    ]
+  },
+  "html/semantics/scripting-1/the-template-element/template-element/template-as-a-descendant.html": {
+    "before": [
+      "complete",
+      "OK",
+      true,
+      12,
+      12,
+      "caa1beab47ae8005c951c91d2308dff19c836048",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      true,
+      12,
+      12,
+      "caa1beab47ae8005c951c91d2308dff19c836048",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      true,
+      12,
+      12,
+      "caa1beab47ae8005c951c91d2308dff19c836048",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      12,
+      12,
+      "caa1beab47ae8005c951c91d2308dff19c836048",
+      "window"
+    ]
+  },
+  "html/semantics/scripting-1/the-template-element/template-element/template-content.html": {
+    "before": [
+      "complete",
+      "OK",
+      true,
+      216,
+      216,
+      "b9e790daf81ad91522fbce3d35a3758bd6b0f52c",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      true,
+      216,
+      216,
+      "b9e790daf81ad91522fbce3d35a3758bd6b0f52c",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      true,
+      216,
+      216,
+      "b9e790daf81ad91522fbce3d35a3758bd6b0f52c",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      216,
+      216,
+      "b9e790daf81ad91522fbce3d35a3758bd6b0f52c",
+      "window"
+    ]
+  },
+  "html/semantics/scripting-1/the-template-element/template-element/template-content-node-document.html": {
+    "before": [
+      "complete",
+      "OK",
+      true,
+      3,
+      3,
+      "da76c6b04f7338f0eb42613f47e37c3747fc7a3a",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      true,
+      3,
+      3,
+      "da76c6b04f7338f0eb42613f47e37c3747fc7a3a",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      true,
+      3,
+      3,
+      "da76c6b04f7338f0eb42613f47e37c3747fc7a3a",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      3,
+      3,
+      "da76c6b04f7338f0eb42613f47e37c3747fc7a3a",
+      "window"
+    ]
+  },
+  "html/semantics/scripting-1/the-template-element/template-element/template-descendant-body.html": {
+    "before": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "70028c5ecdbb31ac6852c0957251891dba9de47f",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "70028c5ecdbb31ac6852c0957251891dba9de47f",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "70028c5ecdbb31ac6852c0957251891dba9de47f",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "70028c5ecdbb31ac6852c0957251891dba9de47f",
+      "window"
+    ]
+  },
+  "html/semantics/scripting-1/the-template-element/template-element/template-descendant-frameset.html": {
+    "before": [
+      "complete",
+      "OK",
+      true,
+      3,
+      3,
+      "ce20a7413ef436e0279a2b711965ac6baf1f9d05",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      true,
+      3,
+      3,
+      "ce20a7413ef436e0279a2b711965ac6baf1f9d05",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      true,
+      3,
+      3,
+      "ce20a7413ef436e0279a2b711965ac6baf1f9d05",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      3,
+      3,
+      "ce20a7413ef436e0279a2b711965ac6baf1f9d05",
+      "window"
+    ]
+  },
+  "html/semantics/scripting-1/the-template-element/template-element/template-descendant-head.html": {
+    "before": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "611ec50bb40dc731d45e99aab0a06ff14b4213cc",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "611ec50bb40dc731d45e99aab0a06ff14b4213cc",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "611ec50bb40dc731d45e99aab0a06ff14b4213cc",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "611ec50bb40dc731d45e99aab0a06ff14b4213cc",
+      "window"
+    ]
+  },
+  "html/webappapis/system-state-and-capabilities/the-navigator-object/protocol-handler-path.https.html": {
+    "before": [
+      "error",
+      "Error",
+      false,
+      0,
+      0,
+      "a86e79e42eb6e25301df206ebb101ce5a2632c9f",
+      "window"
+    ],
+    "single": [
+      "error",
+      "Error",
+      false,
+      0,
+      0,
+      "a86e79e42eb6e25301df206ebb101ce5a2632c9f",
+      "window"
+    ],
+    "after": [
+      "error",
+      "Error",
+      false,
+      0,
+      0,
+      "a86e79e42eb6e25301df206ebb101ce5a2632c9f",
+      "window"
+    ],
+    "chrome": [
+      "error",
+      "Error",
+      false,
+      0,
+      0,
+      "a86e79e42eb6e25301df206ebb101ce5a2632c9f",
+      "window"
+    ]
+  },
+  "html/webappapis/system-state-and-capabilities/the-navigator-object/protocol-handler-query-nosw.https.html": {
+    "before": [
+      "error",
+      "Error",
+      false,
+      0,
+      0,
+      "97f67e94eceb09959e704b6fc30d17a23a55f41d",
+      "window"
+    ],
+    "single": [
+      "error",
+      "Error",
+      false,
+      0,
+      0,
+      "97f67e94eceb09959e704b6fc30d17a23a55f41d",
+      "window"
+    ],
+    "after": [
+      "error",
+      "Error",
+      false,
+      0,
+      0,
+      "97f67e94eceb09959e704b6fc30d17a23a55f41d",
+      "window"
+    ],
+    "chrome": [
+      "error",
+      "Error",
+      false,
+      0,
+      0,
+      "97f67e94eceb09959e704b6fc30d17a23a55f41d",
+      "window"
+    ]
+  },
+  "html/webappapis/system-state-and-capabilities/the-navigator-object/protocol-handler-fragment.https.html": {
+    "before": [
+      "error",
+      "Error",
+      false,
+      0,
+      0,
+      "1eaefaa45f7373ecd0c0c4287ad2a300108c113c",
+      "window"
+    ],
+    "single": [
+      "error",
+      "Error",
+      false,
+      0,
+      0,
+      "1eaefaa45f7373ecd0c0c4287ad2a300108c113c",
+      "window"
+    ],
+    "after": [
+      "error",
+      "Error",
+      false,
+      0,
+      0,
+      "1eaefaa45f7373ecd0c0c4287ad2a300108c113c",
+      "window"
+    ],
+    "chrome": [
+      "error",
+      "Error",
+      false,
+      0,
+      0,
+      "1eaefaa45f7373ecd0c0c4287ad2a300108c113c",
+      "window"
+    ]
+  },
+  "html/webappapis/system-state-and-capabilities/the-navigator-object/protocol-handler-fragment-nosw.https.html": {
+    "before": [
+      "error",
+      "Error",
+      false,
+      0,
+      0,
+      "61b9722ec29a09bf30ef29c3ee71260bf155931c",
+      "window"
+    ],
+    "single": [
+      "error",
+      "Error",
+      false,
+      0,
+      0,
+      "61b9722ec29a09bf30ef29c3ee71260bf155931c",
+      "window"
+    ],
+    "after": [
+      "error",
+      "Error",
+      false,
+      0,
+      0,
+      "61b9722ec29a09bf30ef29c3ee71260bf155931c",
+      "window"
+    ],
+    "chrome": [
+      "error",
+      "Error",
+      false,
+      0,
+      0,
+      "61b9722ec29a09bf30ef29c3ee71260bf155931c",
+      "window"
+    ]
+  },
+  "html/webappapis/system-state-and-capabilities/the-navigator-object/protocol-handler-query.https.html": {
+    "before": [
+      "error",
+      "Error",
+      false,
+      0,
+      0,
+      "8c7b2e1cfddefc13212be75d0ff79ba415bda019",
+      "window"
+    ],
+    "single": [
+      "error",
+      "Error",
+      false,
+      0,
+      0,
+      "8c7b2e1cfddefc13212be75d0ff79ba415bda019",
+      "window"
+    ],
+    "after": [
+      "error",
+      "Error",
+      false,
+      0,
+      0,
+      "8c7b2e1cfddefc13212be75d0ff79ba415bda019",
+      "window"
+    ],
+    "chrome": [
+      "error",
+      "Error",
+      false,
+      0,
+      0,
+      "8c7b2e1cfddefc13212be75d0ff79ba415bda019",
+      "window"
+    ]
+  },
+  "html/webappapis/system-state-and-capabilities/the-navigator-object/navigator-indexed.html": {
+    "before": [
+      "complete",
+      "OK",
+      true,
+      4,
+      4,
+      "a971fe9d1c41f28417d58892ebbf484df469e71f",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      true,
+      4,
+      4,
+      "a971fe9d1c41f28417d58892ebbf484df469e71f",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      true,
+      4,
+      4,
+      "a971fe9d1c41f28417d58892ebbf484df469e71f",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      4,
+      4,
+      "a971fe9d1c41f28417d58892ebbf484df469e71f",
+      "window"
+    ]
+  },
+  "html/webappapis/system-state-and-capabilities/the-navigator-object/historical.https.window.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      4,
+      5,
+      "f6b9db078e0ecf94955330c15def280c0ca30c4e",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      true,
+      5,
+      5,
+      "f6b9db078e0ecf94955330c15def280c0ca30c4e",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      true,
+      5,
+      5,
+      "f6b9db078e0ecf94955330c15def280c0ca30c4e",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      5,
+      5,
+      "f6b9db078e0ecf94955330c15def280c0ca30c4e",
+      "window"
+    ]
+  },
+  "html/webappapis/system-state-and-capabilities/the-navigator-object/clientinformation.window.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      1,
+      2,
+      "197a3b13e93faf59f30becc455c45c2d574bd8f8",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      false,
+      1,
+      2,
+      "197a3b13e93faf59f30becc455c45c2d574bd8f8",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      false,
+      1,
+      2,
+      "197a3b13e93faf59f30becc455c45c2d574bd8f8",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      2,
+      2,
+      "197a3b13e93faf59f30becc455c45c2d574bd8f8",
+      "window"
+    ]
+  },
+  "html/webappapis/system-state-and-capabilities/the-navigator-object/navigator-window-controls-overlay.tentative.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      0,
+      7,
+      "9cff8d316340cdb29edb48405bf5441ab72a4cf1",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      false,
+      0,
+      7,
+      "9cff8d316340cdb29edb48405bf5441ab72a4cf1",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      false,
+      0,
+      7,
+      "9cff8d316340cdb29edb48405bf5441ab72a4cf1",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      7,
+      7,
+      "9cff8d316340cdb29edb48405bf5441ab72a4cf1",
+      "window"
+    ]
+  },
+  "html/webappapis/system-state-and-capabilities/the-navigator-object/navigator.any.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      8,
+      12,
+      "07bccb788052e7ce2cb722558e416b5c017ed9f0",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      false,
+      8,
+      12,
+      "07bccb788052e7ce2cb722558e416b5c017ed9f0",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      false,
+      8,
+      12,
+      "07bccb788052e7ce2cb722558e416b5c017ed9f0",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      false,
+      11,
+      12,
+      "07bccb788052e7ce2cb722558e416b5c017ed9f0",
+      "window"
+    ]
+  },
+  "html/webappapis/system-state-and-capabilities/the-navigator-object/navigator_user_agent.https.tentative.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      0,
+      2,
+      "3fbe3eaa62bd7e42b0c2cae0a6242bf319bf70fa",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      false,
+      0,
+      2,
+      "3fbe3eaa62bd7e42b0c2cae0a6242bf319bf70fa",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      false,
+      0,
+      2,
+      "3fbe3eaa62bd7e42b0c2cae0a6242bf319bf70fa",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      2,
+      2,
+      "3fbe3eaa62bd7e42b0c2cae0a6242bf319bf70fa",
+      "window"
+    ]
+  },
+  "html/webappapis/system-state-and-capabilities/the-navigator-object/navigator.any.worker.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      7,
+      12,
+      "07bccb788052e7ce2cb722558e416b5c017ed9f0",
+      "dedicatedworker"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      false,
+      7,
+      12,
+      "07bccb788052e7ce2cb722558e416b5c017ed9f0",
+      "dedicatedworker"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      false,
+      7,
+      12,
+      "07bccb788052e7ce2cb722558e416b5c017ed9f0",
+      "dedicatedworker"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      false,
+      11,
+      12,
+      "07bccb788052e7ce2cb722558e416b5c017ed9f0",
+      "dedicatedworker"
+    ]
+  },
+  "html/webappapis/system-state-and-capabilities/the-navigator-object/navigator_user_agent.tentative.html": {
+    "before": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "dd4c531070c8a21328a14709fd0357c6fba15001",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "dd4c531070c8a21328a14709fd0357c6fba15001",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "dd4c531070c8a21328a14709fd0357c6fba15001",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "dd4c531070c8a21328a14709fd0357c6fba15001",
+      "window"
+    ]
+  },
+  "html/webappapis/system-state-and-capabilities/the-navigator-object/navigatorcookies-cookieenabled-true.html": {
+    "before": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "fc7f49d143d687b1aa47cc2a52fdf1a2f35d0fb7",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "fc7f49d143d687b1aa47cc2a52fdf1a2f35d0fb7",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "fc7f49d143d687b1aa47cc2a52fdf1a2f35d0fb7",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "fc7f49d143d687b1aa47cc2a52fdf1a2f35d0fb7",
+      "window"
+    ]
+  },
+  "html/webappapis/system-state-and-capabilities/the-navigator-object/navigatorlanguage.html": {
+    "before": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "d56df8a3d857504ebeff29d87339893a8ce78a51",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "d56df8a3d857504ebeff29d87339893a8ce78a51",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "d56df8a3d857504ebeff29d87339893a8ce78a51",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "d56df8a3d857504ebeff29d87339893a8ce78a51",
+      "window"
+    ]
+  },
+  "html/webappapis/system-state-and-capabilities/the-navigator-object/plugins-and-mimetypes.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      1,
+      3,
+      "af0501580121f4a5ddc1216cb519052a930dda53",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      false,
+      1,
+      3,
+      "af0501580121f4a5ddc1216cb519052a930dda53",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      false,
+      1,
+      3,
+      "af0501580121f4a5ddc1216cb519052a930dda53",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      3,
+      3,
+      "af0501580121f4a5ddc1216cb519052a930dda53",
+      "window"
+    ]
+  },
+  "html/webappapis/system-state-and-capabilities/the-navigator-object/protocol.tentative.https.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      0,
+      18,
+      "0120aaa12ff87482e3dd116e71fec66e6aeca7db",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      false,
+      0,
+      18,
+      "0120aaa12ff87482e3dd116e71fec66e6aeca7db",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      false,
+      0,
+      18,
+      "0120aaa12ff87482e3dd116e71fec66e6aeca7db",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      18,
+      18,
+      "0120aaa12ff87482e3dd116e71fec66e6aeca7db",
+      "window"
+    ]
+  },
+  "html/webappapis/system-state-and-capabilities/the-navigator-object/protocol.https.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      0,
+      244,
+      "add78d2fd47ade772cadea38d5ecbfd2e51ef9b4",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      true,
+      244,
+      244,
+      "add78d2fd47ade772cadea38d5ecbfd2e51ef9b4",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      true,
+      244,
+      244,
+      "add78d2fd47ade772cadea38d5ecbfd2e51ef9b4",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      244,
+      244,
+      "add78d2fd47ade772cadea38d5ecbfd2e51ef9b4",
+      "window"
+    ]
+  },
+  "html/webappapis/system-state-and-capabilities/the-navigator-object/secure_context.html": {
+    "before": [
+      "complete",
+      "OK",
+      true,
+      2,
+      2,
+      "685f5d19d7cae0cae1fd7b199dc8f3c9e9bbb636",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      true,
+      2,
+      2,
+      "685f5d19d7cae0cae1fd7b199dc8f3c9e9bbb636",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      true,
+      2,
+      2,
+      "685f5d19d7cae0cae1fd7b199dc8f3c9e9bbb636",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      2,
+      2,
+      "685f5d19d7cae0cae1fd7b199dc8f3c9e9bbb636",
+      "window"
+    ]
+  },
+  "html/webappapis/system-state-and-capabilities/the-navigator-object/per-global.window.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      4,
+      8,
+      "016aef8c4e6ad75d419c55f56d56bf344e8ac734",
+      "window"
+    ],
+    "single": [
+      "complete",
+      "OK",
+      false,
+      4,
+      8,
+      "016aef8c4e6ad75d419c55f56d56bf344e8ac734",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      false,
+      4,
+      8,
+      "016aef8c4e6ad75d419c55f56d56bf344e8ac734",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      false,
+      6,
+      8,
+      "016aef8c4e6ad75d419c55f56d56bf344e8ac734",
+      "window"
+    ]
+  }
+}
