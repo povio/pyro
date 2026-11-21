@@ -1,0 +1,25 @@
+{
+  "label": "head",
+  "bin": "/Users/xban1x/Library/Caches/lightningpanda/round7-css-values/pseudo-head-277154f9b",
+  "version": {
+    "Browser": "Chrome/124.0.6367.29",
+    "Protocol-Version": "1.3",
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "V8-Version": "",
+    "WebKit-Version": "",
+    "webSocketDebuggerUrl": "ws://127.0.0.1:54623/"
+  },
+  "fixtureSHA256": "254b4cf92bf6acb88c2aba15ab11ee1df16333003f4781728c74a4294c850f95",
+  "result": {
+    "supported": true,
+    "attached": true,
+    "distinct": true,
+    "owner": true,
+    "parent": true,
+    "afterStyleRemoval": true,
+    "afterReparent": true,
+    "detached": true,
+    "reattached": true
+  },
+  "utc": "2026-11-21T23:05:11.296Z"
+}
