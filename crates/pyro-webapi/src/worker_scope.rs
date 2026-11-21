@@ -1279,7 +1279,7 @@ fn register(engine: &Engine, service: bool, shared_worker: bool) -> pyro_js::Cla
     engine.register::<WorkerLocation>();
     engine.register::<WorkerNavigator>();
     crate::performance::register_for_worker(engine);
-    crate::canvas::register(engine);
+    crate::canvas::register_worker(engine);
     engine.register::<WorkerGlobalScope>();
     if service {
         return engine.register::<ServiceWorkerGlobalScope>();
