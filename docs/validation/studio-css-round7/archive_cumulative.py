@@ -15,8 +15,7 @@ from zoneinfo import ZoneInfo
 
 root = Path(__file__).resolve().parent
 cache = Path(sys.argv.pop(1)).resolve()
-batches = [(10, 9)] if sys.argv[1:] == ['--batch10'] else [(5, 4), (7, 5), (8, 7), (9, 8)]
-assert sys.argv[1:] in ([], ['--batch10'])
+batches = {(): [(5, 4), (7, 5), (8, 7), (9, 8)], ('--batch10',): [(10, 9)], ('--batch11',): [(11, 10)]}[tuple(sys.argv[1:])]
 del sys.argv[1:]
 verifier = cache / 'frozen-evidence/verify.py'
 assert verifier.read_bytes() == (root / 'frozen/verify.py').read_bytes()
@@ -46,15 +45,15 @@ for batch, previous in batches:
     assert path == str(binary) and verify['digest'](binary)['sha256'] == receipt
     source = (raw / 'source.txt').read_text().strip()
     assert subprocess.check_output(['git', 'rev-parse', source+'^{commit}'], text=True).strip() == source
-    if batch == 10:
-        assert source == 'c10efae54a7ce4c25be1d8bab090fcc34cab6e7b'
-        prior = root / 'batch9'
-        assert subprocess.check_output(['git', 'rev-parse', source+'^']) == (prior / 'source.txt').read_bytes()
-        assert verify['digest'](cache / 'batch9/candidate')['sha256'] == (prior / 'sha256.txt').read_text().split()[0]
+    if batch in (10, 11):
+        assert source == {10: 'c10efae54a7ce4c25be1d8bab090fcc34cab6e7b', 11: '1ee620d451c093a2ddce8766172970ed0ce8275b'}[batch]
+        prior = root / f'batch{previous}'
+        assert subprocess.check_output(['git', 'rev-parse', source+('^' if batch == 10 else '^^')]) == (prior / 'source.txt').read_bytes()
+        assert verify['digest'](cache / prior.name / 'candidate')['sha256'] == (prior / 'sha256.txt').read_text().split()[0]
         shutil.copyfile(raw / 'build.log', out / 'build.log')
     timings = {}
     for cohort in ('main', 'supplement'):
-        sharded = batch in (9, 10) and cohort == 'main'
+        sharded = batch in (9, 10, 11) and cohort == 'main'
         reports = [raw / f'main-{index}.json' for index in range(16)] if sharded else [raw / f'{cohort}.json']
         urls = set(cohorts[cohort])
         outcomes = collect(reports, urls, cohort == 'supplement')
@@ -66,7 +65,7 @@ for batch, previous in batches:
             entry = {**verify['digest'](report), **{key: data[key] for key in ('wallMs','restarts','discovered','jobs')}}
             if sharded:
                 plan = cache / 'batch9' / f'urls-{index}.json'
-                if batch == 10:
+                if batch in (10, 11):
                     assert plan.read_bytes() == gzip.decompress((root / 'batch9' / (plan.name+'.gz')).read_bytes())
                 assert Counter(data['plan']) == Counter(read(plan))
                 (out / (plan.name+'.gz')).write_bytes(gzip.compress(plan.read_bytes(), mtime=0))
@@ -86,6 +85,15 @@ for batch, previous in batches:
             else:
                 reference = read(root / label / f'outcomes-{cohort}.json.gz')
             assert reference.keys() == outcomes.keys()
+            if batch == 11 and label != 'batch1':
+                if label == 'frozen':
+                    originals = [cache / 'frozen-evidence' / f'frozen-{cohort}.json']
+                elif label == 'chrome':
+                    original_dir = cache.parent / 'css-th-e4ca26'
+                    originals = [original_dir / f'strict-chrome-{i}.json' for i in range(16)] if sharded else [original_dir / 'supplement-chrome-cert.json']
+                else:
+                    originals = [cache / label / report.name for report in reports]
+                assert reference == collect(originals, urls, cohort == 'supplement')
             other = sets(reference)
             delta = {}
             for key in candidate.keys() | other.keys():
