@@ -277,6 +277,17 @@ fn copy_handlers_set_the_data_and_cut_deletes() {
 }
 
 #[test]
+fn inline_formatting_skips_noneditable_islands() {
+    let e = env("<body><div id=ed contenteditable>ab<span id=island contenteditable=false>LOCK</span>cd</div></body>");
+    let r = &e.main;
+    eval(r, "ed.focus(); const original = island; const child = original.firstChild; const s = getSelection(); s.setBaseAndExtent(ed.lastChild,1,ed.firstChild,1);");
+    assert_eq!(eval(r, "document.execCommand('bold')"), "true");
+    assert_eq!(eval(r, "ed.innerHTML"), "a<b>b</b><span id=\"island\" contenteditable=\"false\">LOCK</span><b>c</b>d");
+    assert_eq!(eval(r, "[s.toString(),s.direction,document.queryCommandState('bold'),document.queryCommandIndeterm('bold')].join()"), "bLOCKc,backward,true,false");
+    assert_eq!(eval(r, "document.execCommand('bold'); [ed.innerHTML,original===island,original.firstChild===child].join('|')"), "ab<span id=\"island\" contenteditable=\"false\">LOCK</span>cd|true|true");
+}
+
+#[test]
 fn exec_command_formatting_and_structure() {
     let e = env("<body><div id=ed contenteditable><p id=p>one two three</p></div></body>");
     let r = &e.main;

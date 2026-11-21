@@ -1301,10 +1301,21 @@ fn texts_in(dom: &Dom, scope: NodeId, start: Point, end: Point) -> Vec<NodeId> {
     .collect()
 }
 
+fn rich_node_in_host(dom: &Dom, host: NodeId, node: NodeId) -> bool {
+    editing::editing_host(dom, node) == Some(host) && !editing::plaintext_at(dom, node)
+}
+
+/// Rich inline commands affect only text owned by this editing host. A
+/// nested host inside a locked island has its own editing context.
+fn inline_texts(dom: &Dom, host: NodeId, start: Point, end: Point) -> Vec<NodeId> {
+    let mut texts = texts_in(dom, host, start, end);
+    texts.retain(|&node| rich_node_in_host(dom, host, node));
+    texts
+}
+
 /// Splits the text nodes at the range's ends so that whole text nodes make
 /// it up; returns them in order.
-fn split_texts(dom: &mut Dom, scope: NodeId, start: Point, end: Point) -> Vec<NodeId> {
-    let mut texts = texts_in(dom, scope, start, end);
+fn split_texts(dom: &mut Dom, mut texts: Vec<NodeId>, start: Point, end: Point) -> Vec<NodeId> {
     if let Some(&last) = texts.last() {
         if last == end.0 && end.1 < editing::len(dom, last) {
             let _ = dom.split_text(last, end.1);
@@ -1322,12 +1333,17 @@ fn split_texts(dom: &mut Dom, scope: NodeId, start: Point, end: Point) -> Vec<No
     texts
 }
 
-fn select_texts(page: &Rc<PageDom>, texts: &[NodeId]) {
+fn select_texts(page: &Rc<PageDom>, texts: &[NodeId], reversed: bool) {
     let (Some(&first), Some(&last)) = (texts.first(), texts.last()) else {
         return;
     };
     let len = editing::len(&page.dom.borrow(), last);
-    editing::set_selection(page, (first, 0), (last, len));
+    let (start, end) = ((first, 0), (last, len));
+    if reversed {
+        editing::set_selection(page, end, start);
+    } else {
+        editing::set_selection(page, start, end);
+    }
 }
 
 // Subscript and superscript keep their elements: both set the font size
@@ -1346,7 +1362,12 @@ fn inline_css(tag: &str) -> Option<(&'static str, &'static str)> {
 /// that already has one of `carriers` around it.
 fn format_inline(page: &Rc<PageDom>, host: NodeId, tag: &str, carriers: &[&str], input_type: &str, href: Option<&str>) {
     let (start, end) = editing::host_range(page, host);
+    let reversed = start != end && editing::selection(page).is_some_and(|(anchor, _)| anchor == end);
     let collapsed = start == end;
+    let selected = inline_texts(&page.dom.borrow(), host, start, end);
+    if !collapsed && selected.is_empty() {
+        return;
+    }
     editing::apply_edit(page, host, input_type, href, None, |page| {
         let texts = {
             let mut dom = page.dom.borrow_mut();
@@ -1354,12 +1375,13 @@ fn format_inline(page: &Rc<PageDom>, host: NodeId, tag: &str, carriers: &[&str],
                 // createLink at a caret inserts the URL as the link's text.
                 let p = editing::insert_at(&mut dom, start, href.unwrap_or(""));
                 if p.0 == start.0 && p.1 > start.1 {
-                    split_texts(&mut dom, host, start, p)
+                    let inserted = inline_texts(&dom, host, start, p);
+                    split_texts(&mut dom, inserted, start, p)
                 } else {
                     vec![p.0]
                 }
             } else {
-                split_texts(&mut dom, host, start, end)
+                split_texts(&mut dom, selected, start, end)
             };
             let Ok(doc) = dom.node_document(host) else {
                 return;
@@ -1394,7 +1416,7 @@ fn format_inline(page: &Rc<PageDom>, host: NodeId, tag: &str, carriers: &[&str],
             }
             texts
         };
-        select_texts(page, &texts);
+        select_texts(page, &texts, reversed);
     });
 }
 
@@ -1470,20 +1492,25 @@ fn hoist(dom: &mut Dom, node: NodeId, anc: NodeId) {
 /// removeFormat, toggling bold off).
 fn remove_inline(page: &Rc<PageDom>, host: NodeId, names: &[&str], input_type: &str) {
     let (start, end) = editing::host_range(page, host);
+    let reversed = start != end && editing::selection(page).is_some_and(|(anchor, _)| anchor == end);
     if start == end && !names.contains(&"a") {
+        return;
+    }
+    let (start, end) = if start == end {
+        let dom = page.dom.borrow();
+        let Some(a) = ancestor_named(&dom, start.0, host, &["a"]) else { return };
+        (editing::host_start(&dom, a), editing::host_end(&dom, a))
+    } else {
+        (start, end)
+    };
+    let selected = inline_texts(&page.dom.borrow(), host, start, end);
+    if selected.is_empty() {
         return;
     }
     editing::apply_edit(page, host, input_type, None, None, |page| {
         let texts = {
             let mut dom = page.dom.borrow_mut();
-            let (start, end) = if start == end {
-                // unlink at a caret removes the whole link around it.
-                let Some(a) = ancestor_named(&dom, start.0, host, &["a"]) else { return };
-                (editing::host_start(&dom, a), editing::host_end(&dom, a))
-            } else {
-                (start, end)
-            };
-            let texts = split_texts(&mut dom, host, start, end);
+            let texts = split_texts(&mut dom, selected, start, end);
             for &t in &texts {
                 while let Some(a) = ancestor_format(&dom, t, host, names, true) {
                     hoist(&mut dom, t, a);
@@ -1495,7 +1522,7 @@ fn remove_inline(page: &Rc<PageDom>, host: NodeId, names: &[&str], input_type: &
             }
             texts
         };
-        select_texts(page, &texts);
+        select_texts(page, &texts, reversed);
     });
 }
 
@@ -1617,8 +1644,11 @@ fn format_state(page: &PageDom, command: &str) -> (bool, bool) {
     let mut elements: Vec<NodeId> = if start == end {
         vec![start.0]
     } else {
-        texts_in(&dom, scope, start, end)
-            .into_iter()
+        let texts = match editing::editing_host(&dom, start.0) {
+            Some(host) if editing::editing_host(&dom, end.0) == Some(host) => inline_texts(&dom, host, start, end),
+            _ => texts_in(&dom, scope, start, end),
+        };
+        texts.into_iter()
             .filter(|&t| !dom.char_data(t).unwrap_or("").trim().is_empty())
             .collect()
     };
