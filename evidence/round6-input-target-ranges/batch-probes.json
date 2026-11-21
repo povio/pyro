@@ -1,0 +1,310 @@
+{
+  "pages": [
+    {
+      "mode": "back",
+      "a": "acdef",
+      "b": "xyz",
+      "events": [
+        [
+          "beforeinput",
+          "deleteContentBackward",
+          [
+            {
+              "isStatic": true,
+              "start": [
+                "#text",
+                "abcdef",
+                1
+              ],
+              "end": [
+                "#text",
+                "abcdef",
+                2
+              ]
+            }
+          ]
+        ],
+        [
+          "input",
+          "deleteContentBackward",
+          []
+        ]
+      ],
+      "after": 0
+    },
+    {
+      "mode": "forward",
+      "a": "abdef",
+      "b": "xyz",
+      "events": [
+        [
+          "beforeinput",
+          "deleteContentForward",
+          [
+            {
+              "isStatic": true,
+              "start": [
+                "#text",
+                "abcdef",
+                2
+              ],
+              "end": [
+                "#text",
+                "abcdef",
+                3
+              ]
+            }
+          ]
+        ],
+        [
+          "input",
+          "deleteContentForward",
+          []
+        ]
+      ],
+      "after": 0
+    },
+    {
+      "mode": "cancel",
+      "a": "abcdef",
+      "b": "xyz",
+      "events": [
+        [
+          "beforeinput",
+          "deleteContentBackward",
+          [
+            {
+              "isStatic": true,
+              "start": [
+                "#text",
+                "abcdef",
+                1
+              ],
+              "end": [
+                "#text",
+                "abcdef",
+                2
+              ]
+            }
+          ]
+        ]
+      ],
+      "after": 0
+    },
+    {
+      "mode": "move",
+      "a": "abcef",
+      "b": "xyz",
+      "events": [
+        [
+          "beforeinput",
+          "deleteContentBackward",
+          [
+            {
+              "isStatic": true,
+              "start": [
+                "#text",
+                "abcdef",
+                1
+              ],
+              "end": [
+                "#text",
+                "abcdef",
+                2
+              ]
+            }
+          ]
+        ],
+        [
+          "input",
+          "deleteContentBackward",
+          []
+        ]
+      ],
+      "after": 0
+    },
+    {
+      "mode": "clear",
+      "a": "abcdef",
+      "b": "xyz",
+      "events": [
+        [
+          "beforeinput",
+          "deleteContentForward",
+          [
+            {
+              "isStatic": true,
+              "start": [
+                "#text",
+                "abcdef",
+                2
+              ],
+              "end": [
+                "#text",
+                "abcdef",
+                3
+              ]
+            }
+          ]
+        ]
+      ],
+      "after": 0
+    },
+    {
+      "mode": "other",
+      "a": "abcdef",
+      "b": "xz",
+      "events": [
+        [
+          "beforeinput",
+          "deleteContentForward",
+          [
+            {
+              "isStatic": true,
+              "start": [
+                "#text",
+                "abcdef",
+                2
+              ],
+              "end": [
+                "#text",
+                "abcdef",
+                3
+              ]
+            }
+          ]
+        ]
+      ],
+      "after": 0
+    },
+    {
+      "mode": "image",
+      "a": "ab",
+      "b": "xyz",
+      "events": [
+        [
+          "beforeinput",
+          "deleteContentForward",
+          [
+            {
+              "isStatic": true,
+              "start": [
+                "DIV",
+                "a<img>b",
+                1
+              ],
+              "end": [
+                "DIV",
+                "a<img>b",
+                2
+              ]
+            }
+          ]
+        ],
+        [
+          "input",
+          "deleteContentForward",
+          []
+        ]
+      ],
+      "after": 0
+    },
+    {
+      "mode": "br",
+      "a": "ab",
+      "b": "xyz",
+      "events": [
+        [
+          "beforeinput",
+          "deleteContentForward",
+          [
+            {
+              "isStatic": true,
+              "start": [
+                "DIV",
+                "a<br>b",
+                1
+              ],
+              "end": [
+                "DIV",
+                "a<br>b",
+                2
+              ]
+            }
+          ]
+        ],
+        [
+          "input",
+          "deleteContentForward",
+          []
+        ]
+      ],
+      "after": 0
+    },
+    {
+      "mode": "dl",
+      "a": "<dl><dt>firstsecond</dt></dl>",
+      "b": "xyz",
+      "events": [
+        [
+          "beforeinput",
+          "deleteContentBackward",
+          [
+            {
+              "isStatic": true,
+              "start": [
+                "#text",
+                "first",
+                5
+              ],
+              "end": [
+                "#text",
+                "second",
+                0
+              ]
+            }
+          ]
+        ],
+        [
+          "input",
+          "deleteContentBackward",
+          []
+        ]
+      ],
+      "after": 0
+    },
+    {
+      "mode": "emoji",
+      "a": "ab",
+      "b": "xyz",
+      "events": [
+        [
+          "beforeinput",
+          "deleteContentBackward",
+          [
+            {
+              "isStatic": true,
+              "start": [
+                "#text",
+                "a🌟b",
+                1
+              ],
+              "end": [
+                "#text",
+                "a🌟b",
+                3
+              ]
+            }
+          ]
+        ],
+        [
+          "input",
+          "deleteContentBackward",
+          []
+        ]
+      ],
+      "after": 0
+    }
+  ],
+  "requests": []
+}

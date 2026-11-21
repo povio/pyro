@@ -1,0 +1,37 @@
+{
+  "pages": 23,
+  "counts": {
+    "full-0": 1,
+    "full-1": 1,
+    "full-2": 6,
+    "named-0": 787,
+    "named-1": 2319,
+    "named-2": 2476,
+    "new": 0,
+    "missing": 0,
+    "gained": 1537,
+    "lost": 5
+  },
+  "gains": {
+    "input-events-get-target-ranges-backspace.tentative.html": 46,
+    "input-events-get-target-ranges-deleting-in-list-items.tentative.html?Backspace,ol": 127,
+    "input-events-get-target-ranges-deleting-in-list-items.tentative.html?Backspace,ul": 127,
+    "input-events-get-target-ranges-deleting-in-list-items.tentative.html?Delete,ol": 129,
+    "input-events-get-target-ranges-deleting-in-list-items.tentative.html?Delete,ul": 129,
+    "input-events-get-target-ranges-during-and-after-dispatch.tentative.html": 2,
+    "input-events-get-target-ranges-forwarddelete.tentative.html": 56,
+    "input-events-get-target-ranges-joining-dl-element-and-another-list.tentative.html?Backspace": 104,
+    "input-events-get-target-ranges-joining-dl-element-and-another-list.tentative.html?Delete": 120,
+    "input-events-get-target-ranges-joining-dl-elements.tentative.html?Backspace": 317,
+    "input-events-get-target-ranges-joining-dl-elements.tentative.html?Delete": 317,
+    "input-events-get-target-ranges-non-collapsed-selection.tentative.html?Backspace": 21,
+    "input-events-get-target-ranges-non-collapsed-selection.tentative.html?Delete": 21,
+    "input-events-get-target-ranges-non-collapsed-selection.tentative.html?TypingA": 21
+  },
+  "losses": {
+    "input-events/input-events-get-target-ranges-during-and-after-dispatch.tentative.html": 1,
+    "input-events/input-events-get-target-ranges-forwarddelete.tentative.html": 1,
+    "input-events/input-events-get-target-ranges.html": 1,
+    "input-events/input-events-typing.html": 2
+  }
+}

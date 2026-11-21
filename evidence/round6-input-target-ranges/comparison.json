@@ -1,0 +1,65 @@
+{
+  "counts": {
+    "chromeOnly": 495,
+    "originalChromeOnly": 1773,
+    "lpOnly": 338,
+    "baseOnly": 84,
+    "gainsOtherChrome": 259,
+    "gainsAlsoPassChrome": 1278
+  },
+  "losses": [
+    {
+      "url": "input-events/input-events-get-target-ranges-during-and-after-dispatch.tentative.html",
+      "name": "Check consistency of getTargetRanges() result between during propagation and after propagation",
+      "occurrence": 1,
+      "control": "Pass",
+      "candidate": "Fail",
+      "chrome158": "Fail"
+    },
+    {
+      "url": "input-events/input-events-get-target-ranges-forwarddelete.tentative.html",
+      "name": "Delete at \"<table><caption>{}<br></caption><tr><td>cell</td></tr></table>\" - comparing innerHTML",
+      "occurrence": 1,
+      "control": "Pass",
+      "candidate": "Fail",
+      "chrome158": "Fail"
+    },
+    {
+      "url": "input-events/input-events-get-target-ranges.html",
+      "name": "Textarea should have empty target range.",
+      "occurrence": 1,
+      "control": "Pass",
+      "candidate": "Not Run",
+      "chrome158": "Not Run"
+    },
+    {
+      "url": "input-events/input-events-typing.html",
+      "name": "It triggers beforeinput and input events on typing BACK_SPACE with no pre-existing content",
+      "occurrence": 1,
+      "control": "Pass",
+      "candidate": "Fail",
+      "chrome158": "Fail"
+    },
+    {
+      "url": "input-events/input-events-typing.html",
+      "name": "It triggers beforeinput and input events on typing DELETE with no pre-existing content",
+      "occurrence": 1,
+      "control": "Pass",
+      "candidate": "Fail",
+      "chrome158": "Fail"
+    }
+  ],
+  "pageStatusCounts": [
+    {
+      "complete": 23
+    },
+    {
+      "complete": 22,
+      "timeout": 1
+    },
+    {
+      "complete": 22,
+      "timeout": 1
+    }
+  ]
+}

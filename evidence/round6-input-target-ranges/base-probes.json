@@ -1,0 +1,180 @@
+{
+  "pages": [
+    {
+      "mode": "back",
+      "a": "acdef",
+      "b": "xyz",
+      "events": [
+        [
+          "beforeinput",
+          "deleteContentBackward",
+          []
+        ],
+        [
+          "input",
+          "deleteContentBackward",
+          []
+        ]
+      ],
+      "after": 0
+    },
+    {
+      "mode": "forward",
+      "a": "abdef",
+      "b": "xyz",
+      "events": [
+        [
+          "beforeinput",
+          "deleteContentForward",
+          []
+        ],
+        [
+          "input",
+          "deleteContentForward",
+          []
+        ]
+      ],
+      "after": 0
+    },
+    {
+      "mode": "cancel",
+      "a": "abcdef",
+      "b": "xyz",
+      "events": [
+        [
+          "beforeinput",
+          "deleteContentBackward",
+          []
+        ]
+      ],
+      "after": 0
+    },
+    {
+      "mode": "move",
+      "a": "acdef",
+      "b": "xyz",
+      "events": [
+        [
+          "beforeinput",
+          "deleteContentBackward",
+          []
+        ],
+        [
+          "input",
+          "deleteContentBackward",
+          []
+        ]
+      ],
+      "after": 0
+    },
+    {
+      "mode": "clear",
+      "a": "abdef",
+      "b": "xyz",
+      "events": [
+        [
+          "beforeinput",
+          "deleteContentForward",
+          []
+        ],
+        [
+          "input",
+          "deleteContentForward",
+          []
+        ]
+      ],
+      "after": 0
+    },
+    {
+      "mode": "other",
+      "a": "abdef",
+      "b": "xyz",
+      "events": [
+        [
+          "beforeinput",
+          "deleteContentForward",
+          []
+        ],
+        [
+          "input",
+          "deleteContentForward",
+          []
+        ]
+      ],
+      "after": 0
+    },
+    {
+      "mode": "image",
+      "a": "a<img>",
+      "b": "xyz",
+      "events": [
+        [
+          "beforeinput",
+          "deleteContentForward",
+          []
+        ],
+        [
+          "input",
+          "deleteContentForward",
+          []
+        ]
+      ],
+      "after": 0
+    },
+    {
+      "mode": "br",
+      "a": "a<br>",
+      "b": "xyz",
+      "events": [
+        [
+          "beforeinput",
+          "deleteContentForward",
+          []
+        ],
+        [
+          "input",
+          "deleteContentForward",
+          []
+        ]
+      ],
+      "after": 0
+    },
+    {
+      "mode": "dl",
+      "a": "<dl><dt>first</dt></dl><dl><dd>second</dd></dl>",
+      "b": "xyz",
+      "events": [
+        [
+          "beforeinput",
+          "deleteContentBackward",
+          []
+        ],
+        [
+          "input",
+          "deleteContentBackward",
+          []
+        ]
+      ],
+      "after": 0
+    },
+    {
+      "mode": "emoji",
+      "a": "ab",
+      "b": "xyz",
+      "events": [
+        [
+          "beforeinput",
+          "deleteContentBackward",
+          []
+        ],
+        [
+          "input",
+          "deleteContentBackward",
+          []
+        ]
+      ],
+      "after": 0
+    }
+  ],
+  "requests": []
+}

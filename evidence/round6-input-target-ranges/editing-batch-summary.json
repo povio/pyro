@@ -1,0 +1,26 @@
+{
+  "pages": 710,
+  "counts": {
+    "full-0": 211,
+    "full-1": 211,
+    "named-0": 103803,
+    "named-1": 103840,
+    "new": 0,
+    "missing": 0,
+    "gained": 37
+  },
+  "gains": {
+    "delete-without-unwrapping-first-line-of-child-block.html?method=DeleteKey&lineBreak=preformat": 4,
+    "delete.html": 4,
+    "delete.html?1-1000": 3,
+    "delete.html?6001-7000": 2,
+    "delete.html?7001-last": 8,
+    "forwarddelete.html?1-1000": 3,
+    "forwarddelete.html?1001-2000": 1,
+    "forwarddelete.html?5001-6000": 2,
+    "forwarddelete.html?7001-last": 8,
+    "delete-img.tentative.html": 1,
+    "forwarddelete-img.tentative.html": 1
+  },
+  "losses": {}
+}
