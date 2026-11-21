@@ -156,10 +156,9 @@ fn bounds(dom: &Dom, style: &StyleEngine, el: NodeId, depth: u8) -> Option<Bound
         }
         "polyline" | "polygon" => {
             let points = dom.get_attribute(el, "points").ok().flatten()?;
-            let nums = numbers(points);
             let mut b: Option<Bounds> = None;
-            for p in nums.as_chunks::<2>().0 {
-                b = Some(Bounds::union(b, Bounds::point(p[0], p[1])));
+            for (x, y) in crate::svg_point_list::parse_points(points) {
+                b = Some(Bounds::union(b, Bounds::point(f64::from(x), f64::from(y))));
             }
             b
         }
@@ -1014,7 +1013,7 @@ fn shape_path(dom: &Dom, el: NodeId, tag: &str, allow_degenerate: bool, length: 
         "line" => Line::new((v("x1"), v("y1")), (v("x2"), v("y2"))).to_path(0.01),
         "path" => parse_shape_path(dom.get_attribute(el, "d").ok()??),
         "polygon" | "polyline" => {
-            let mut coords = svgtypes::PointsParser::from(dom.get_attribute(el, "points").ok()??);
+            let mut coords = crate::svg_point_list::parse_points(dom.get_attribute(el, "points").ok()??).map(|(x, y)| (f64::from(x), f64::from(y)));
             let start = coords.next()?;
             let mut path = BezPath::new();
             path.move_to(start);
