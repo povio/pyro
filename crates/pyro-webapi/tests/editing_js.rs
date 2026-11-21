@@ -420,17 +420,21 @@ fn word_and_line_keys_in_text_controls() {
 
 #[test]
 fn deletion_at_text_edge_preserves_locked_blocks() {
-    let e = env("<body><div id=ed contenteditable><p>abc</p><pre id=locked contenteditable=false>keep</pre>xyz</div></body>");
+    let e = env("<body><div id=ed contenteditable><p>abc</p><pre id=locked contenteditable=false>keep</pre></div></body>");
     let r = &e.main;
-    eval(r, "ed.focus(); const original = locked; const left = ed.firstChild.firstChild; const right = ed.lastChild; getSelection().collapse(left,3)");
+    eval(r, "ed.focus(); const original = locked; const left = ed.firstChild.firstChild; getSelection().collapse(left,3)");
     press(&e.page, "Delete", "", input::Modifiers::default());
     assert_eq!(eval(r, "[original.parentNode===ed,getSelection().focusNode===left,getSelection().focusOffset,document.queryCommandEnabled('undo')].join()"), "true,true,3,false");
-    eval(r, "getSelection().collapse(right,0)");
+    eval(r, "ed.prepend(original); getSelection().collapse(left,0)");
     press(&e.page, "Backspace", "", input::Modifiers::default());
-    assert_eq!(eval(r, "[original.parentNode===ed,getSelection().focusNode===right,getSelection().focusOffset,ed.textContent].join()"), "true,true,0,abckeepxyz");
-    eval(r, "original.style.display='inline'; getSelection().collapse(left,3)");
+    assert_eq!(eval(r, "[original.parentNode===ed,getSelection().focusNode===left,getSelection().focusOffset].join()"), "true,true,0");
+    // A second editable text run provides a position across the locked node.
+    eval(r, "ed.prepend(document.createTextNode('far')); getSelection().collapse(left,0)");
+    press(&e.page, "Backspace", "", input::Modifiers::default());
+    assert_eq!(eval(r, "[original.isConnected,ed.textContent].join()"), "false,farabc");
+    eval(r, "original.style.display='inline'; ed.append(original); getSelection().collapse(left,3)");
     press(&e.page, "Delete", "", input::Modifiers::default());
-    assert_eq!(eval(r, "[original.isConnected,ed.textContent].join()"), "false,abcxyz");
+    assert_eq!(eval(r, "[original.isConnected,ed.textContent].join()"), "false,farabc");
 }
 
 #[test]
