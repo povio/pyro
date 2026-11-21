@@ -1909,6 +1909,7 @@ enum Caret {
 
 enum Saved {
     Control { value: String, selection: (u32, u32) },
+    /// Saved anchor and focus offsets, in selection direction.
     Host { html: String, selection: Option<(u32, u32)> },
 }
 
@@ -1954,15 +1955,15 @@ fn save(page: &PageDom, target: NodeId) -> Option<Saved> {
     }
     let html = dom.inner_html(target).ok()?;
     drop(dom);
-    let selection = editing::selection_range(page).and_then(|(s, e)| {
+    let selection = editing::selection(page).and_then(|(anchor, focus)| {
         let dom = page.dom.borrow();
         let inside =
-            editing::editing_host(&dom, s.0) == Some(target) && editing::editing_host(&dom, e.0) == Some(target);
+            editing::editing_host(&dom, anchor.0) == Some(target) && editing::editing_host(&dom, focus.0) == Some(target);
         drop(dom);
         inside.then(|| {
             let flat = Flat::build(page, target);
             let dom = page.dom.borrow();
-            (flat.pos_of(&dom, s), flat.pos_of(&dom, e))
+            (flat.pos_of(&dom, anchor), flat.pos_of(&dom, focus))
         })
     });
     Some(Saved::Host { html, selection })
@@ -2044,12 +2045,18 @@ fn restore(page: &Rc<PageDom>, target: NodeId, saved: Saved) {
                 return;
             }
             let flat = Flat::build(page, target);
-            let points = selection.and_then(|(s, e)| Some((flat.point_at(s, true)?, flat.point_at(e, false)?)));
-            let (s, e) = points.unwrap_or_else(|| {
+            let points = selection.and_then(|(anchor, focus)| {
+                // Range starts prefer the following text at a node boundary,
+                // ends the preceding text. Equal offsets restore one caret.
+                let a = flat.point_at(anchor, anchor < focus)?;
+                let f = if anchor == focus { a } else { flat.point_at(focus, focus < anchor)? };
+                Some((a, f))
+            });
+            let (anchor, focus) = points.unwrap_or_else(|| {
                 let p = editing::host_start(&page.dom.borrow(), target);
                 (p, p)
             });
-            editing::set_selection(page, s, e);
+            editing::set_selection(page, anchor, focus);
         }
     }
 }
