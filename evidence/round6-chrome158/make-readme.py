@@ -23,7 +23,7 @@ if f.exists():
 f=p/'cbdeb-comparison.json'
 if f.exists():
  c=json.loads(f.read_text())
- rows+=['## Latest LP comparison','',
+ rows+=['## Frozen cbdeb1193 LP comparison','',
 'The independently run LP cbdeb11931f74c3de4417a25fb9103f1df84d54e uses identical selections, manifest, viewport, server and driver. Only common complete shard receipts contribute to these paired totals. The cbdeb page and name sets are provided separately from the earlier fadc observations.','',
 '| Scope | Paired URLs | LP / Chrome named passes | LP-only / Chrome-only | LP / Chrome fully passing |','|---|---:|---:|---:|---:|']
  for scope,v in c['scopes'].items():rows.append(f'| {scope} | {v.get("paired",0):,} | {v.get("lpPass",0):,} / {v.get("chromePass",0):,} | {v.get("lpOnly",0):,} / {v.get("chromeOnly",0):,} | {v.get("lpFull",0):,} / {v.get("chromeFull",0):,} |')

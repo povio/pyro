@@ -3,6 +3,7 @@ from pathlib import Path
 import collections,gzip,hashlib,json,os,sqlite3,sys,zlib
 d=Path(__file__).resolve().parent;p=d.parents[1];m=p/'round6-noncss-measure/manifest-runs';lp=m/'census-cbdeb1193';base=p/'round6-noncss-measure/merged-aa0268/batch/readback/evidence'
 sys.path.insert(0,str(m/'census-902fe811f'));from wpt_ports import canonical_name,index,config,endpoint_map
+from port_receipt import snapshot_config
 stage=sys.argv[1];out=Path(sys.argv[2]).resolve();out.mkdir(parents=True,exist_ok=True)
 assert stage in ('history','priority','final','interim')
 G=lambda f:json.loads(f.read_bytes());sha=lambda f:hashlib.sha256(f.read_bytes()).hexdigest();dump=lambda v:json.dumps(v,separators=(',',':'),ensure_ascii=True)
@@ -19,7 +20,7 @@ assert all(t['key'] in done for t in required),(stage,'incomplete receipt set')
 ident=G(d/'reference-identity.json');assert sha(d/'launch-158')==ident['profileSHA256']
 official={r['url']:r for r in stream(d/'plans/official-inventory.jsonl.gz')};eligible={u for u,r in official.items() if r['eligible']}
 target={u for t in required for u in G(d/'selections'/(t['key']+'.json'))};assert target<=eligible and len(target)==sum(t['count'] for t in required)
-configs={};sources=[];state=collections.defaultdict(collections.Counter)
+configs={};sources=[];nativeEvents=[];state=collections.defaultdict(collections.Counter)
 (obdir:=out/'receipts').mkdir(exist_ok=True)
 receipts={};indexByURL={}
 for t in required:
@@ -29,9 +30,13 @@ for t in required:
  records=list((d/'launch-records'/k).glob('*.json'));assert records
  for f in records:
   launch=G(f);assert launch['mode']=='wpt-stable' and launch['exe']==str(d.parent/'Google Chrome.app/Contents/MacOS/Google Chrome')
- log=d/'raw'/(k+'.log');mapping,proof=config(str(log));assert 'error' not in proof
+ log=d/'raw'/(k+'.log');mapping,proof=snapshot_config(log,d/'verified-ports/chrome'/(k+'.json'));assert 'error' not in proof
  h=proof['sha256'];configs[h]=proof['ports']
  receipts[k]={'rawSHA256':done[k]['receiptSHA256'],'selectionSHA256':t['sha256'],'logSHA256':sha(log),'configurationSHA256':h,'jobs':4,'restarts':doc['restarts'],'watchdogKills':doc['watchdogKills'],'launchCount':len(records)}
+ if doc['restarts'] or doc['watchdogKills']:
+  marked=[{'url':r['url'],'status':r['status'],'error':r.get('error')} for r in doc['results'] if r['status'] in ('crash','hang','panic') or r.get('error')=='Browser connection lost; observation withheld without replay.']
+  hangCount=sum(r['status']=='hang' for r in doc['results'])
+  nativeEvents.append({'key':k,'receiptSHA256':done[k]['receiptSHA256'],'restarts':doc['restarts'],'watchdogKills':doc['watchdogKills'],'explicitRows':marked,'unassignedNativeExitPossible':doc['restarts']!=hangCount or bool(doc['watchdogKills']),'rawNamesPreserved':True,'retried':False})
  # Keep every raw subtest/status/error and all runner options. Replace private installation path with a portable executable identity.
  doc['bin']='official-google-chrome-stable-158.0.8127.37';doc['runnerProvenance']=dict(driver='playwright-core 1.65.1',runnerSHA256=ident['noNativeReplayRunnerSHA256'],profileSHA256=ident['profileSHA256'],browserSHA256=ident['executableSHA256'],frameworkSHA256=ident['frameworkSHA256'],rawOriginalSHA256=done[k]['receiptSHA256'])
  with (obdir/(k+'.json.gz')).open('wb') as buf,gzip.GzipFile(filename='',mode='wb',fileobj=buf,compresslevel=3,mtime=0) as f:f.write(dump(doc).encode())
@@ -52,7 +57,7 @@ with gzip.open(out/'official-pages.jsonl.gz','wt',compresslevel=4) as pages,gzip
   sc=state[o['scope']];sc.update(fullyPassing=int(pg[2]),named=pg[3],namedPass=pg[4]);sc['page_'+pg[0]]+=1
   for (name,i),(result,original) in ns.items():print(dump([u,name,i,result,original]),file=names)
 save('coverage.json',dict(stage=stage,official=len(official),selected=len(eligible),observed=len(indexByURL),completeShards=len(required),scope=state,totals=G(d/'plans/summary.json')))
-save('receipt-provenance.json',receipts);save('server-port-maps.json',configs);save('reference-identity.json',ident);save('live-cdp-version.json',G(d/'live-cdp-version.json'))
+save('process-events.json',nativeEvents);save('receipt-provenance.json',receipts);save('server-port-maps.json',configs);save('reference-identity.json',ident);save('live-cdp-version.json',G(d/'live-cdp-version.json'))
 # Each frozen candidate cohort is reported separately; duplicated measurements of a URL retain their original identity.
 if stage in ('history','priority','final'):
  headPages={};headNames=collections.defaultdict(dict);groups=collections.defaultdict(set)

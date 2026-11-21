@@ -2,19 +2,19 @@
  "head": "cbdeb11931f74c3de4417a25fb9103f1df84d54e",
  "binarySHA256": "81d12af223643b8d5c1903fd528a36a5f2ff3040855f998d7bc5e546805b93b2",
  "reference": "Chrome stable 158.0.8127.37",
- "stage": "priority",
+ "stage": "final",
  "scopes": {
   "non-css": {
-   "paired": 2950,
-   "lpFull": 1535,
-   "chromeFull": 2408,
-   "lpPass": 185374,
-   "chromePass": 193011,
-   "lpOnly": 4951,
-   "chromeOnly": 12588,
-   "both": 180423,
-   "missingLpName": 1534,
-   "missingChromeName": 1143
+   "paired": 30359,
+   "lpFull": 15274,
+   "chromeFull": 24533,
+   "lpPass": 1683159,
+   "chromePass": 1755476,
+   "lpOnly": 11679,
+   "chromeOnly": 83996,
+   "both": 1671480,
+   "missingLpName": 16394,
+   "missingChromeName": 3315
   },
   "css": {
    "paired": 1091,

@@ -1,10 +1,10 @@
-# Chrome 158.0.8127.37 WPT reference — priority receipt
+# Chrome 158.0.8127.37 WPT reference — final receipt
 
-This priority snapshot records 4,041 distinct observations out of 31,450 selections on this Mac. All 39,989 upstream testharness URL variants are retained. The designated shared non-CSS selection is 30,359 of 31,827; the local CSS guard is 1,091 of 8,162. Remaining CSS execution belongs to the separate CSS lane. All count differences refer to local measured results on pinned WPT a421f2fea5eb7f91e0db399e44b0fb0779ee1603.
+This final snapshot records 31,450 distinct observations out of 31,450 selections on this Mac. All 39,989 upstream testharness URL variants are retained. The designated shared non-CSS selection is 30,359 of 31,827; the local CSS guard is 1,091 of 8,162. Remaining CSS execution belongs to the separate CSS lane. All count differences refer to local measured results on pinned WPT a421f2fea5eb7f91e0db399e44b0fb0779ee1603.
 
 | Scope | Observed URLs | Fully passing pages | Named results | Named passes | Awaiting in this snapshot | Explicitly withheld |
 |---|---:|---:|---:|---:|---:|
-| non-CSS | 2,950 | 2,408 | 205,553 | 193,011 | 27,409 | 1,468 |
+| non-CSS | 30,359 | 24,533 | 1,802,666 | 1,755,476 | 0 | 1,468 |
 | CSS | 1,091 | 966 | 36,966 | 35,121 | 0 | 7,071 |
 
 ## Reference identity
@@ -32,13 +32,13 @@ LP fadcbb56e data is reused verbatim from its completed same-pin evidence; Chrom
 
 For the 292 fixed prior loss occurrences the observed Chrome158 dispositions are {'Pass': 190, 'Fail': 91, 'missing-name': 7, 'unobserved-page': 4}. The 157 fixed referrer-policy occurrences are {'Pass': 157}. Unobserved URL and missing-on-observed-page are distinct.
 
-## Latest LP comparison
+## Frozen cbdeb1193 LP comparison
 
 The independently run LP cbdeb11931f74c3de4417a25fb9103f1df84d54e uses identical selections, manifest, viewport, server and driver. Only common complete shard receipts contribute to these paired totals. The cbdeb page and name sets are provided separately from the earlier fadc observations.
 
 | Scope | Paired URLs | LP / Chrome named passes | LP-only / Chrome-only | LP / Chrome fully passing |
 |---|---:|---:|---:|---:|
-| non-css | 2,950 | 185,374 / 193,011 | 4,951 / 12,588 | 1,535 / 2,408 |
+| non-css | 30,359 | 1,683,159 / 1,755,476 | 11,679 / 83,996 | 15,274 / 24,533 |
 | css | 1,091 | 33,897 / 35,121 | 767 / 1,991 | 845 / 966 |
 
 ## Cross-machine CSS compatibility
@@ -47,7 +47,7 @@ The Studio main and 41-URL WPT-certificate supplement also used official stable 
 
 On those 1,091 shared URLs the two machines each recorded 35,121 passes. The intersection contains 35,117 named passes; 4 are exclusive to Studio and 4 to this Mac. Studio fully passed 967 of the overlapping URLs and this Mac fully passed 966. All 41 supplemental URLs matched on named and strict-page pass sets.
 
-Studio's original 8,082-URL run used headless CDP in disposable profiles and 16 disjoint shards, with extensions/background component extensions disabled in four shards following a driver attachment failure. Its separate service-worker supplement used the WPT leaf SPKI. The original recorded configuration does not establish that Studio used this Mac's popup preference, per-feature WebNN setting, native GPU choice, exact Playwright version, concurrency or complete normalized-port mapping. There were no experimental web-platform flags. The paired difference is observational and does not assign a cause to the profile differences. [Studio main reference](https://github.com/povio/pyro/tree/fd629a078f697139cf140adbb2a315e90037bb25/docs/validation/studio-css-e4ca26) · [Studio supplemental reference](https://github.com/povio/pyro/tree/8e84143126a3335af41906350060477c69751616/docs/validation/studio-css-e4ca26/color-gap-controls.md)
+Studio's original 8,082-URL run used headless CDP in disposable profiles and 16 disjoint shards, with extensions/background component extensions disabled in four shards following a driver attachment failure. Its separate service-worker supplement used the WPT leaf SPKI. The Studio's tracked artifacts establish the reported version and pin; they do not include a signed bundle or executable SHA for independent readback. Their recorded configuration does not establish that Studio used this Mac's popup preference, per-feature WebNN setting, native GPU choice, exact Playwright version, concurrency or complete normalized-port mapping. There were no experimental web-platform flags. The paired difference is observational and does not assign a cause to the profile differences. [Studio main reference](https://github.com/povio/pyro/tree/fd629a078f697139cf140adbb2a315e90037bb25/docs/validation/studio-css-e4ca26) · [Studio supplemental reference](https://github.com/povio/pyro/tree/8e84143126a3335af41906350060477c69751616/docs/validation/studio-css-e4ca26/color-gap-controls.md)
 
 cross-machine-inventory.jsonl.gz enumerates all 39,989 variants with separate local and Studio slots. studio-css-pages.jsonl.gz and studio-css-names.jsonl.gz preserve actual Studio harness status, raw named result, one-based occurrence and the parallel MacBook observation when present. Studio file hashes, source commits and exact missing rows are in studio-compatibility.json.
 
@@ -56,3 +56,9 @@ cross-machine-inventory.jsonl.gz enumerates all 39,989 variants with separate lo
 Run python3 verify.py in this evidence directory to verify checksums, archived page records, occurrence identities, name/pass totals and paired comparisons without a browser. official-pages.jsonl.gz preserves all URLs as source, blob, environment, scope, guard membership, status, omission reasons, shard and page summary. reference-names.jsonl.gz stores URL, canonical subtest name, one-based occurrence, raw status and original name. A fully passing page requires a complete runner status, OK harness, at least one subtest and every named outcome passing.
 
 The compressed receipts preserve the structured input plan, all raw statuses/names/messages and the rest of the runner metadata. Their original installation path is replaced by a portable artifact label. Original raw SHA-256s, launch counts, exact runner hash and the producing server configurations are retained. Names containing encoded WPT ports are mapped only through that originating server. No original Chrome 157 receipt was changed. The stable acceptance binary version matches the requested cross-machine reference. OS, GPU backend, timeouts, visibility and driver/harness setup may differ from other machines; an identical version alone does not guarantee identical observations.
+
+A separately reviewed five-URL module-serialization storage addendum had 12/12 named passes and 5/5 strict pages on b57c35dd4 and exact Chrome 158.0.8127.37, compared with 10/12 and 4/5 on cbdeb1193. These five URLs were disjoint from the frozen 30,359 non-CSS selections. Their full observations are in storage-only-addendum.json and storage-only-addendum-receipts.json.gz. No main selection or baseline result was changed.
+
+A second disjoint seven-URL reflection-only addendum contributed 16/16 named passes and 7/7 strict pages on aa0268, cbdeb and Chrome158. All twelve addendum URLs are disjoint from the core plan and each other. reflection-only-addendum.json and its compressed receipts preserve all results. The core reference denominator stays fixed.
+
+For the earlier 292 canonical loss occurrences, frozen cbdeb1193 LP dispositions are {'Fail': 122, 'Pass': 157, 'missing-name': 9, 'unobserved-page': 4} versus {'Pass': 190, 'Fail': 91, 'missing-name': 7, 'unobserved-page': 4} for this Chrome 158. In the 157 referrer-policy subset, these are {'Pass': 132, 'Fail': 25} and {'Pass': 157}. historical-cbdeb-292.json preserves the individual keys and missing reasons.

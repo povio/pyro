@@ -98,4 +98,15 @@ if (d/'cross-machine-inventory.jsonl.gz').exists():
   if not (studio[u] and schema[u][4]):continue
   ap=a=='Pass';bp=b=='Pass';names.update(commonPass=int(ap and bp),onlyStudioPass=int(ap and not bp),onlyLocalPass=int(bp and not ap),studioPass=int(ap),localPass=int(bp))
  for k,v in names.items():assert sc[k]==v,(k,sc[k],v)
+addons=set()
+for prefix in ('storage-only-addendum','reflection-only-addendum'):
+ if not (d/(prefix+'.json')).exists():continue
+ result=G(d/(prefix+'.json'));urls=set(result['urls']);assert not urls&addons and not (urls&observed)
+ assert all(schema[u][4] is None for u in urls);addons.update(urls)
+ with gzip.open(d/(prefix+'-receipts.json.gz'),'rt') as f:original=json.load(f)
+ for label,doc in original.items():
+  assert {r['url'] for r in doc['results']}==urls and doc['jobs']==4 and doc['restarts']==doc['watchdogKills']==0
+  actual=collections.Counter(t['status'] for r in doc['results'] for t in r['subtests'])
+  assert actual==collections.Counter(result['counts'][label])
+if coverage['stage']=='final':assert len(addons)==12
 print('Verified',len(observed),'Chrome 158 page observations against original named outcomes in',len(provenance),'receipts;',len(schema),'unique official variants.')

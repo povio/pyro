@@ -1,0 +1,34 @@
+{
+  "all": {
+    "cbdeb": {
+      "Fail": 122,
+      "Pass": 157,
+      "missing-name": 9,
+      "unobserved-page": 4
+    },
+    "fadc": {
+      "Fail": 124,
+      "Pass": 156,
+      "missing-name": 12
+    },
+    "chrome158": {
+      "Pass": 190,
+      "Fail": 91,
+      "missing-name": 7,
+      "unobserved-page": 4
+    }
+  },
+  "referrer": {
+    "cbdeb": {
+      "Pass": 132,
+      "Fail": 25
+    },
+    "fadc": {
+      "Pass": 130,
+      "Fail": 27
+    },
+    "chrome158": {
+      "Pass": 157
+    }
+  }
+}

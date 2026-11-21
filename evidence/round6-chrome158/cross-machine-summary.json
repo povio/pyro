@@ -1,8 +1,8 @@
 {
   "scope": {
     "non-CSS": {
-      "only-local": 2950,
-      "not-observed": 28877
+      "only-local": 30359,
+      "not-observed": 1468
     },
     "CSS": {
       "only-Studio": 7032,

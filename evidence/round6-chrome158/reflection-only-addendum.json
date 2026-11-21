@@ -1,0 +1,532 @@
+{
+  "priorReview": {
+    "wasm/jsapi/memory/toString.any.html": {
+      "base": {
+        "shard": "wasm-003.json",
+        "passes": 2,
+        "receipt_sha256": "3e2cd7f6f9348612314b8149e19167b09827226950cfa9c0001508fbc7d5c379"
+      },
+      "combined": {
+        "shard": "wasm-003.json",
+        "passes": 2,
+        "receipt_sha256": "bd1275277b64ae1bae11bb500580bf4d3351fe865b9b1fdd87ff33b40ba48712"
+      },
+      "chrome": {
+        "shard": "wasm-003.json",
+        "passes": 2,
+        "receipt_sha256": "54e181c54c1206f3f091276044f7632a0ba63f68ec02325b4b63a752a29c2407"
+      },
+      "source": "wasm/jsapi/memory/toString.any.js",
+      "blob": "f4059f7657722759ce4fc950c4850916d102deda",
+      "environment": "window",
+      "previous_withheld": [
+        [
+          "902fe811f inventory",
+          "Wasm runtime withheld"
+        ]
+      ]
+    },
+    "wasm/jsapi/memory/toString.any.worker.html": {
+      "base": {
+        "shard": "wasm-003.json",
+        "passes": 2,
+        "receipt_sha256": "3e2cd7f6f9348612314b8149e19167b09827226950cfa9c0001508fbc7d5c379"
+      },
+      "combined": {
+        "shard": "wasm-003.json",
+        "passes": 2,
+        "receipt_sha256": "bd1275277b64ae1bae11bb500580bf4d3351fe865b9b1fdd87ff33b40ba48712"
+      },
+      "chrome": {
+        "shard": "wasm-003.json",
+        "passes": 2,
+        "receipt_sha256": "54e181c54c1206f3f091276044f7632a0ba63f68ec02325b4b63a752a29c2407"
+      },
+      "source": "wasm/jsapi/memory/toString.any.js",
+      "blob": "f4059f7657722759ce4fc950c4850916d102deda",
+      "environment": "dedicatedworker",
+      "previous_withheld": [
+        [
+          "902fe811f inventory",
+          "Wasm runtime withheld"
+        ]
+      ]
+    },
+    "wasm/jsapi/table/toString.any.html": {
+      "base": {
+        "shard": "wasm-003.json",
+        "passes": 2,
+        "receipt_sha256": "3e2cd7f6f9348612314b8149e19167b09827226950cfa9c0001508fbc7d5c379"
+      },
+      "combined": {
+        "shard": "wasm-003.json",
+        "passes": 2,
+        "receipt_sha256": "bd1275277b64ae1bae11bb500580bf4d3351fe865b9b1fdd87ff33b40ba48712"
+      },
+      "chrome": {
+        "shard": "wasm-003.json",
+        "passes": 2,
+        "receipt_sha256": "54e181c54c1206f3f091276044f7632a0ba63f68ec02325b4b63a752a29c2407"
+      },
+      "source": "wasm/jsapi/table/toString.any.js",
+      "blob": "8a09f2832c1d64594182fae4651bc9b07a508d4e",
+      "environment": "window",
+      "previous_withheld": [
+        [
+          "902fe811f inventory",
+          "Wasm runtime withheld"
+        ]
+      ]
+    },
+    "wasm/jsapi/table/length.any.worker.html": {
+      "base": {
+        "shard": "wasm-003.json",
+        "passes": 4,
+        "receipt_sha256": "3e2cd7f6f9348612314b8149e19167b09827226950cfa9c0001508fbc7d5c379"
+      },
+      "combined": {
+        "shard": "wasm-003.json",
+        "passes": 4,
+        "receipt_sha256": "bd1275277b64ae1bae11bb500580bf4d3351fe865b9b1fdd87ff33b40ba48712"
+      },
+      "chrome": {
+        "shard": "wasm-003.json",
+        "passes": 4,
+        "receipt_sha256": "54e181c54c1206f3f091276044f7632a0ba63f68ec02325b4b63a752a29c2407"
+      },
+      "source": "wasm/jsapi/table/length.any.js",
+      "blob": "a9ef095ded44581d44dece59577577fa6fe2541a",
+      "environment": "dedicatedworker",
+      "previous_withheld": [
+        [
+          "902fe811f inventory",
+          "Wasm runtime withheld"
+        ]
+      ]
+    },
+    "wasm/jsapi/table/toString.any.worker.html": {
+      "base": {
+        "shard": "wasm-003.json",
+        "passes": 2,
+        "receipt_sha256": "3e2cd7f6f9348612314b8149e19167b09827226950cfa9c0001508fbc7d5c379"
+      },
+      "combined": {
+        "shard": "wasm-003.json",
+        "passes": 2,
+        "receipt_sha256": "bd1275277b64ae1bae11bb500580bf4d3351fe865b9b1fdd87ff33b40ba48712"
+      },
+      "chrome": {
+        "shard": "wasm-003.json",
+        "passes": 2,
+        "receipt_sha256": "54e181c54c1206f3f091276044f7632a0ba63f68ec02325b4b63a752a29c2407"
+      },
+      "source": "wasm/jsapi/table/toString.any.js",
+      "blob": "8a09f2832c1d64594182fae4651bc9b07a508d4e",
+      "environment": "dedicatedworker",
+      "previous_withheld": [
+        [
+          "902fe811f inventory",
+          "Wasm runtime withheld"
+        ]
+      ]
+    },
+    "wasm/jsapi/tag/toString.tentative.any.html": {
+      "base": {
+        "shard": "wasm-003.json",
+        "passes": 2,
+        "receipt_sha256": "3e2cd7f6f9348612314b8149e19167b09827226950cfa9c0001508fbc7d5c379"
+      },
+      "combined": {
+        "shard": "wasm-003.json",
+        "passes": 2,
+        "receipt_sha256": "bd1275277b64ae1bae11bb500580bf4d3351fe865b9b1fdd87ff33b40ba48712"
+      },
+      "chrome": {
+        "shard": "wasm-003.json",
+        "passes": 2,
+        "receipt_sha256": "54e181c54c1206f3f091276044f7632a0ba63f68ec02325b4b63a752a29c2407"
+      },
+      "source": "wasm/jsapi/tag/toString.tentative.any.js",
+      "blob": "ad9a4ba152f4f82e93e3c5b04a94163312d5fb84",
+      "environment": "window",
+      "previous_withheld": [
+        [
+          "902fe811f inventory",
+          "Wasm runtime withheld"
+        ]
+      ]
+    },
+    "wasm/jsapi/tag/toString.tentative.any.worker.html": {
+      "base": {
+        "shard": "wasm-003.json",
+        "passes": 2,
+        "receipt_sha256": "3e2cd7f6f9348612314b8149e19167b09827226950cfa9c0001508fbc7d5c379"
+      },
+      "combined": {
+        "shard": "wasm-003.json",
+        "passes": 2,
+        "receipt_sha256": "bd1275277b64ae1bae11bb500580bf4d3351fe865b9b1fdd87ff33b40ba48712"
+      },
+      "chrome": {
+        "shard": "wasm-003.json",
+        "passes": 2,
+        "receipt_sha256": "54e181c54c1206f3f091276044f7632a0ba63f68ec02325b4b63a752a29c2407"
+      },
+      "source": "wasm/jsapi/tag/toString.tentative.any.js",
+      "blob": "ad9a4ba152f4f82e93e3c5b04a94163312d5fb84",
+      "environment": "dedicatedworker",
+      "previous_withheld": [
+        [
+          "902fe811f inventory",
+          "Wasm runtime withheld"
+        ]
+      ]
+    }
+  },
+  "kind": "separate reflection-only addendum; excluded from the original shared selections and totals",
+  "versions": {
+    "cbdeb": "cbdeb11931f74c3de4417a25fb9103f1df84d54e",
+    "aa0268": "aa0268b479a6b463da16910b4b743cf38901d962",
+    "chrome158": "158.0.8127.37"
+  },
+  "urls": [
+    "wasm/jsapi/memory/toString.any.html",
+    "wasm/jsapi/memory/toString.any.worker.html",
+    "wasm/jsapi/table/length.any.worker.html",
+    "wasm/jsapi/table/toString.any.html",
+    "wasm/jsapi/table/toString.any.worker.html",
+    "wasm/jsapi/tag/toString.tentative.any.html",
+    "wasm/jsapi/tag/toString.tentative.any.worker.html"
+  ],
+  "inputProvenance": {
+    "cbdeb": {
+      "artifact": "round6-noncss-measure/merged-aa0268/wasm-storage-alignment/metadata-cbdeb.json",
+      "sha256": "c98661a35886148b3f8456afae58c4b1e98bf599bcc559ee72db4427b687c650",
+      "jobs": 4,
+      "restarts": 0,
+      "watchdogKills": 0,
+      "source": "separately reviewed ordinary reflection controls"
+    },
+    "aa0268": {
+      "artifact": "round6-wasm-reflection/aa0268.json",
+      "sha256": "e690fa6b891cd98a1fa3bf4c572a0f00e7b60382fc59cdf02cf6f823b2048574",
+      "jobs": 4,
+      "restarts": 0,
+      "watchdogKills": 0,
+      "source": "separately reviewed ordinary reflection controls"
+    },
+    "chrome158": {
+      "artifact": "round6-wasm-reflection/chrome158.json",
+      "sha256": "ad41cbfed396aef0f930c546e632c333c56c0e144a0e0219ff182dbfe198df5e",
+      "jobs": 4,
+      "restarts": 0,
+      "watchdogKills": 0,
+      "source": "separately reviewed ordinary reflection controls"
+    }
+  },
+  "binarySHA256": {
+    "cbdeb": "81d12af223643b8d5c1903fd528a36a5f2ff3040855f998d7bc5e546805b93b2",
+    "aa0268": "9623217e05de0c6866256ce4f855edabf2ca810eb0d6a3ae51a93fd5ba50f7a8",
+    "chrome158": "b87bcebb575e53b0f29a4eeeb6480ec9c9bc3537690cacd52d6c67c2c3e3908e"
+  },
+  "selectedInMainInventory": 0,
+  "pages": {
+    "wasm/jsapi/memory/toString.any.html": {
+      "cbdeb": [
+        "complete",
+        "OK",
+        true
+      ],
+      "aa0268": [
+        "complete",
+        "OK",
+        true
+      ],
+      "chrome158": [
+        "complete",
+        "OK",
+        true
+      ]
+    },
+    "wasm/jsapi/table/toString.any.html": {
+      "cbdeb": [
+        "complete",
+        "OK",
+        true
+      ],
+      "aa0268": [
+        "complete",
+        "OK",
+        true
+      ],
+      "chrome158": [
+        "complete",
+        "OK",
+        true
+      ]
+    },
+    "wasm/jsapi/memory/toString.any.worker.html": {
+      "cbdeb": [
+        "complete",
+        "OK",
+        true
+      ],
+      "aa0268": [
+        "complete",
+        "OK",
+        true
+      ],
+      "chrome158": [
+        "complete",
+        "OK",
+        true
+      ]
+    },
+    "wasm/jsapi/table/length.any.worker.html": {
+      "cbdeb": [
+        "complete",
+        "OK",
+        true
+      ],
+      "aa0268": [
+        "complete",
+        "OK",
+        true
+      ],
+      "chrome158": [
+        "complete",
+        "OK",
+        true
+      ]
+    },
+    "wasm/jsapi/tag/toString.tentative.any.html": {
+      "cbdeb": [
+        "complete",
+        "OK",
+        true
+      ],
+      "aa0268": [
+        "complete",
+        "OK",
+        true
+      ],
+      "chrome158": [
+        "complete",
+        "OK",
+        true
+      ]
+    },
+    "wasm/jsapi/table/toString.any.worker.html": {
+      "cbdeb": [
+        "complete",
+        "OK",
+        true
+      ],
+      "aa0268": [
+        "complete",
+        "OK",
+        true
+      ],
+      "chrome158": [
+        "complete",
+        "OK",
+        true
+      ]
+    },
+    "wasm/jsapi/tag/toString.tentative.any.worker.html": {
+      "cbdeb": [
+        "complete",
+        "OK",
+        true
+      ],
+      "aa0268": [
+        "complete",
+        "OK",
+        true
+      ],
+      "chrome158": [
+        "complete",
+        "OK",
+        true
+      ]
+    }
+  },
+  "named": [
+    [
+      "wasm/jsapi/memory/toString.any.html",
+      "@@toStringTag exists on the prototype with the appropriate descriptor",
+      1,
+      {
+        "cbdeb": "Pass",
+        "aa0268": "Pass",
+        "chrome158": "Pass"
+      }
+    ],
+    [
+      "wasm/jsapi/memory/toString.any.html",
+      "Object.prototype.toString on an Memory",
+      1,
+      {
+        "cbdeb": "Pass",
+        "aa0268": "Pass",
+        "chrome158": "Pass"
+      }
+    ],
+    [
+      "wasm/jsapi/memory/toString.any.worker.html",
+      "@@toStringTag exists on the prototype with the appropriate descriptor",
+      1,
+      {
+        "cbdeb": "Pass",
+        "aa0268": "Pass",
+        "chrome158": "Pass"
+      }
+    ],
+    [
+      "wasm/jsapi/memory/toString.any.worker.html",
+      "Object.prototype.toString on an Memory",
+      1,
+      {
+        "cbdeb": "Pass",
+        "aa0268": "Pass",
+        "chrome158": "Pass"
+      }
+    ],
+    [
+      "wasm/jsapi/table/length.any.worker.html",
+      "Branding",
+      1,
+      {
+        "cbdeb": "Pass",
+        "aa0268": "Pass",
+        "chrome158": "Pass"
+      }
+    ],
+    [
+      "wasm/jsapi/table/length.any.worker.html",
+      "Setting (sloppy mode)",
+      1,
+      {
+        "cbdeb": "Pass",
+        "aa0268": "Pass",
+        "chrome158": "Pass"
+      }
+    ],
+    [
+      "wasm/jsapi/table/length.any.worker.html",
+      "Setting (strict mode)",
+      1,
+      {
+        "cbdeb": "Pass",
+        "aa0268": "Pass",
+        "chrome158": "Pass"
+      }
+    ],
+    [
+      "wasm/jsapi/table/length.any.worker.html",
+      "Stray argument",
+      1,
+      {
+        "cbdeb": "Pass",
+        "aa0268": "Pass",
+        "chrome158": "Pass"
+      }
+    ],
+    [
+      "wasm/jsapi/table/toString.any.html",
+      "@@toStringTag exists on the prototype with the appropriate descriptor",
+      1,
+      {
+        "cbdeb": "Pass",
+        "aa0268": "Pass",
+        "chrome158": "Pass"
+      }
+    ],
+    [
+      "wasm/jsapi/table/toString.any.html",
+      "Object.prototype.toString on an Table",
+      1,
+      {
+        "cbdeb": "Pass",
+        "aa0268": "Pass",
+        "chrome158": "Pass"
+      }
+    ],
+    [
+      "wasm/jsapi/table/toString.any.worker.html",
+      "@@toStringTag exists on the prototype with the appropriate descriptor",
+      1,
+      {
+        "cbdeb": "Pass",
+        "aa0268": "Pass",
+        "chrome158": "Pass"
+      }
+    ],
+    [
+      "wasm/jsapi/table/toString.any.worker.html",
+      "Object.prototype.toString on an Table",
+      1,
+      {
+        "cbdeb": "Pass",
+        "aa0268": "Pass",
+        "chrome158": "Pass"
+      }
+    ],
+    [
+      "wasm/jsapi/tag/toString.tentative.any.html",
+      "@@toStringTag exists on the prototype with the appropriate descriptor",
+      1,
+      {
+        "cbdeb": "Pass",
+        "aa0268": "Pass",
+        "chrome158": "Pass"
+      }
+    ],
+    [
+      "wasm/jsapi/tag/toString.tentative.any.html",
+      "Object.prototype.toString on a Tag",
+      1,
+      {
+        "cbdeb": "Pass",
+        "aa0268": "Pass",
+        "chrome158": "Pass"
+      }
+    ],
+    [
+      "wasm/jsapi/tag/toString.tentative.any.worker.html",
+      "@@toStringTag exists on the prototype with the appropriate descriptor",
+      1,
+      {
+        "cbdeb": "Pass",
+        "aa0268": "Pass",
+        "chrome158": "Pass"
+      }
+    ],
+    [
+      "wasm/jsapi/tag/toString.tentative.any.worker.html",
+      "Object.prototype.toString on a Tag",
+      1,
+      {
+        "cbdeb": "Pass",
+        "aa0268": "Pass",
+        "chrome158": "Pass"
+      }
+    ]
+  ],
+  "counts": {
+    "cbdeb": {
+      "Pass": 16
+    },
+    "aa0268": {
+      "Pass": 16
+    },
+    "chrome158": {
+      "Pass": 16
+    }
+  },
+  "strict": {
+    "cbdeb": 7,
+    "aa0268": 7,
+    "chrome158": 7
+  }
+}

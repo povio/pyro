@@ -1,0 +1,39 @@
+{
+  "source": {
+    "main": {
+      "commit": "fd629a078f697139cf140adbb2a315e90037bb25",
+      "path": "bench/wpt/run.mjs",
+      "blob": "f27f8ffbd393f8d73983bc974cc1112c3debf60d",
+      "sha256": "280ab8a3fa09995442a59b8a26f07caf12b40d102244bf649382757d499100d2",
+      "method": "baseFor: suffix .https. or .serviceworker. => https, other => http; .www. => www.web-platform.test"
+    },
+    "supplement": {
+      "commit": "8e84143126a3335af41906350060477c69751616",
+      "path": "bench/wpt/run.mjs",
+      "blob": "3b7f9a2c61baedd58a265a948a46914a33b9b997",
+      "sha256": "231b3b54d61f2dda371bf59a9a52a8d1db41f7bf147749b0d6a0900c44a81467",
+      "method": "baseFor: suffix .https. or .serviceworker. => https, other => http; .www. => www.web-platform.test"
+    }
+  },
+  "counts": {
+    "main": {
+      "http": 8062,
+      "https": 20
+    },
+    "supplement": {
+      "http": 30,
+      "https": 11
+    }
+  },
+  "schema": [
+    "url",
+    "source",
+    "gitBlob",
+    "manifestEnvironment",
+    "StudioCohort",
+    "schemeDerivedFromRunner",
+    "hostDerivedFromRunner",
+    "verbatimProtocolField"
+  ],
+  "note": "Both archived controls used wptserve. Route fields are derived from the exact runner source at each data commit; neither original compact outcomes nor the supplemental raw records retained per-page negotiated protocol, session port, or ALPN."
+}

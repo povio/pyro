@@ -1,20 +1,20 @@
 {
-  "stage": "priority",
+  "stage": "final",
   "official": 39989,
   "selected": 31450,
-  "observed": 4041,
-  "completeShards": 43,
+  "observed": 31450,
+  "completeShards": 329,
   "scope": {
     "non-CSS": {
-      "observed": 2950,
-      "fullyPassing": 2408,
-      "named": 205553,
-      "namedPass": 193011,
-      "page_complete": 2926,
-      "awaiting this reference": 27409,
+      "observed": 30359,
+      "fullyPassing": 24533,
+      "named": 1802666,
+      "namedPass": 1755476,
+      "page_complete": 29112,
       "explicitly withheld": 1468,
-      "page_error": 7,
-      "page_timeout": 17
+      "page_error": 350,
+      "page_timeout": 896,
+      "page_hang": 1
     },
     "CSS": {
       "explicitly withheld": 7071,

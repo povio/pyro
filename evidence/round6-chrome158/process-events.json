@@ -1,0 +1,18 @@
+[
+  {
+    "key": "ordinary-178",
+    "receiptSHA256": "895d2d1147cab6dec45d85c56ee8cd0e9a67981ec7c72f3542d0ef682712f8aa",
+    "restarts": 1,
+    "watchdogKills": 0,
+    "explicitRows": [
+      {
+        "url": "websockets/back-forward-cache-with-open-websocket-connection-and-close-it-in-pagehide.window.html",
+        "status": "hang",
+        "error": null
+      }
+    ],
+    "unassignedNativeExitPossible": false,
+    "rawNamesPreserved": true,
+    "retried": false
+  }
+]

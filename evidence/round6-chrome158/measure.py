@@ -5,7 +5,9 @@ assert (p.parent/'version.txt').read_text().strip()=='Google Chrome 158.0.8127.3
 tasks=load(p/'plans/tasks.json')
 def append(name,data):
  with (root/name).open('a') as f:f.write(json.dumps(data)+'\n')
+max_new=int(os.environ.get('REFERENCE_MAX_NEW_SHARDS','0')); launched=0
 for task in tasks:
+ if max_new and launched>=max_new:break
  key=task['key']
  if scope=='priority' and key.startswith('ordinary'):continue
  if scope=='ordinary' and not key.startswith('ordinary'):continue
@@ -18,6 +20,7 @@ for task in tasks:
   if out.exists() or failed.exists():continue
   if (p/'PAUSE_NEW').exists():break
   assert sha(sel)==task['sha256']; expected=set(load(sel));assert len(expected)==task['count']
+  launched+=1
   with tempfile.TemporaryDirectory(prefix='round6-158-') as profile, (root/(key+'.log')).open('x') as log:
    cmd=['bun','bench/wpt/run-no-native-retry.mjs','--kind','testharness','--wpt',str(cache/'wptci/wpt-full'),'--server','wptserve','--testdriver','--http2','--generated-globals',str(cache/'round6-inventory/MANIFEST-pinned.json'),'--manifest-inventory','--measure-reviewed-skips','--dirs',task['scope'],'--jobs','4','--tests',str(sel),'--bin','chrome158='+str(p/'launch-158'),'--out',str(out)]
    start=time.time()

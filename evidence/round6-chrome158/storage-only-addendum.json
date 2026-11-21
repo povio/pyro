@@ -1,0 +1,273 @@
+{
+  "kind": "separate storage-only addendum; excluded from the original shared selections and totals",
+  "versions": {
+    "cbdeb": "cbdeb11931f74c3de4417a25fb9103f1df84d54e",
+    "b57": "b57c35dd45d54d6781aafcb2c8242c9ad9b26e04",
+    "chrome158": "158.0.8127.37"
+  },
+  "urls": [
+    "wasm/serialization/module/serialization-via-history.html",
+    "wasm/serialization/module/serialization-via-idb.any.html",
+    "wasm/serialization/module/serialization-via-idb.any.worker.html",
+    "wasm/serialization/module/serialization-via-notifications-api.any.html",
+    "wasm/serialization/module/serialization-via-notifications-api.any.worker.html"
+  ],
+  "inputProvenance": {
+    "cbdeb": {
+      "artifact": "accepted158/baseline-extra/wasm-storage-supplement-000.json",
+      "sha256": "09379b7984c80277469361ef20234fa5e2d19afc8c3ff45203dce797b8523fb5",
+      "jobs": 4,
+      "restarts": 0,
+      "watchdogKills": 0,
+      "source": "separately reviewed module serialization/storage controls"
+    },
+    "b57": {
+      "artifact": "accepted158/raw/wasm-storage-supplement-000.json",
+      "sha256": "fbc76344091e7993400d293125bca29c40431d803192135fa43721c61ba2e231",
+      "jobs": 4,
+      "restarts": 0,
+      "watchdogKills": 0,
+      "source": "separately reviewed module serialization/storage controls"
+    },
+    "chrome158": {
+      "artifact": "wasm-storage-alignment/chrome158.json",
+      "sha256": "0fd996c9e4abf86ecb8605f734d2a8286ed3bdd713fb6e843675e01d55220fb5",
+      "jobs": 4,
+      "restarts": 0,
+      "watchdogKills": 0,
+      "source": "separately reviewed module serialization/storage controls"
+    }
+  },
+  "binarySHA256": {
+    "cbdeb": "81d12af223643b8d5c1903fd528a36a5f2ff3040855f998d7bc5e546805b93b2",
+    "b57": "296b3d4f9775c92d98d3bd7aa898efc68b1a18e90e591af5a428ad8decd4e9bf",
+    "chrome158": "b87bcebb575e53b0f29a4eeeb6480ec9c9bc3537690cacd52d6c67c2c3e3908e"
+  },
+  "selectedInMainInventory": 0,
+  "pages": {
+    "wasm/serialization/module/serialization-via-notifications-api.any.html": {
+      "cbdeb": [
+        "complete",
+        "OK",
+        true
+      ],
+      "b57": [
+        "complete",
+        "OK",
+        true
+      ],
+      "chrome158": [
+        "complete",
+        "OK",
+        true
+      ]
+    },
+    "wasm/serialization/module/serialization-via-history.html": {
+      "cbdeb": [
+        "complete",
+        "OK",
+        true
+      ],
+      "b57": [
+        "complete",
+        "OK",
+        true
+      ],
+      "chrome158": [
+        "complete",
+        "OK",
+        true
+      ]
+    },
+    "wasm/serialization/module/serialization-via-idb.any.html": {
+      "cbdeb": [
+        "complete",
+        "OK",
+        true
+      ],
+      "b57": [
+        "complete",
+        "OK",
+        true
+      ],
+      "chrome158": [
+        "complete",
+        "OK",
+        true
+      ]
+    },
+    "wasm/serialization/module/serialization-via-idb.any.worker.html": {
+      "cbdeb": [
+        "complete",
+        "OK",
+        true
+      ],
+      "b57": [
+        "complete",
+        "OK",
+        true
+      ],
+      "chrome158": [
+        "complete",
+        "OK",
+        true
+      ]
+    },
+    "wasm/serialization/module/serialization-via-notifications-api.any.worker.html": {
+      "cbdeb": [
+        "complete",
+        "OK",
+        false
+      ],
+      "b57": [
+        "complete",
+        "OK",
+        true
+      ],
+      "chrome158": [
+        "complete",
+        "OK",
+        true
+      ]
+    }
+  },
+  "named": [
+    [
+      "wasm/serialization/module/serialization-via-history.html",
+      "history.pushState(): is interleaved correctly",
+      1,
+      {
+        "cbdeb": "Pass",
+        "b57": "Pass",
+        "chrome158": "Pass"
+      }
+    ],
+    [
+      "wasm/serialization/module/serialization-via-history.html",
+      "history.pushState(): simple case",
+      1,
+      {
+        "cbdeb": "Pass",
+        "b57": "Pass",
+        "chrome158": "Pass"
+      }
+    ],
+    [
+      "wasm/serialization/module/serialization-via-history.html",
+      "history.replaceState(): is interleaved correctly",
+      1,
+      {
+        "cbdeb": "Pass",
+        "b57": "Pass",
+        "chrome158": "Pass"
+      }
+    ],
+    [
+      "wasm/serialization/module/serialization-via-history.html",
+      "history.replaceState(): simple case",
+      1,
+      {
+        "cbdeb": "Pass",
+        "b57": "Pass",
+        "chrome158": "Pass"
+      }
+    ],
+    [
+      "wasm/serialization/module/serialization-via-idb.any.html",
+      "WebAssembly.Module cloning via IndexedDB: basic case",
+      1,
+      {
+        "cbdeb": "Pass",
+        "b57": "Pass",
+        "chrome158": "Pass"
+      }
+    ],
+    [
+      "wasm/serialization/module/serialization-via-idb.any.html",
+      "WebAssembly.Module cloning via the IndexedDB: is interleaved correctly",
+      1,
+      {
+        "cbdeb": "Pass",
+        "b57": "Pass",
+        "chrome158": "Pass"
+      }
+    ],
+    [
+      "wasm/serialization/module/serialization-via-idb.any.worker.html",
+      "WebAssembly.Module cloning via IndexedDB: basic case",
+      1,
+      {
+        "cbdeb": "Pass",
+        "b57": "Pass",
+        "chrome158": "Pass"
+      }
+    ],
+    [
+      "wasm/serialization/module/serialization-via-idb.any.worker.html",
+      "WebAssembly.Module cloning via the IndexedDB: is interleaved correctly",
+      1,
+      {
+        "cbdeb": "Pass",
+        "b57": "Pass",
+        "chrome158": "Pass"
+      }
+    ],
+    [
+      "wasm/serialization/module/serialization-via-notifications-api.any.html",
+      "WebAssembly.Module cloning via the Notifications API's data member: basic case",
+      1,
+      {
+        "cbdeb": "Pass",
+        "b57": "Pass",
+        "chrome158": "Pass"
+      }
+    ],
+    [
+      "wasm/serialization/module/serialization-via-notifications-api.any.html",
+      "WebAssembly.Module cloning via the Notifications API's data member: is interleaved correctly",
+      1,
+      {
+        "cbdeb": "Pass",
+        "b57": "Pass",
+        "chrome158": "Pass"
+      }
+    ],
+    [
+      "wasm/serialization/module/serialization-via-notifications-api.any.worker.html",
+      "WebAssembly.Module cloning via the Notifications API's data member: basic case",
+      1,
+      {
+        "cbdeb": "Fail",
+        "b57": "Pass",
+        "chrome158": "Pass"
+      }
+    ],
+    [
+      "wasm/serialization/module/serialization-via-notifications-api.any.worker.html",
+      "WebAssembly.Module cloning via the Notifications API's data member: is interleaved correctly",
+      1,
+      {
+        "cbdeb": "Fail",
+        "b57": "Pass",
+        "chrome158": "Pass"
+      }
+    ]
+  ],
+  "counts": {
+    "cbdeb": {
+      "Pass": 10,
+      "Fail": 2
+    },
+    "b57": {
+      "Pass": 12
+    },
+    "chrome158": {
+      "Pass": 12
+    }
+  },
+  "strict": {
+    "cbdeb": 4,
+    "b57": 5,
+    "chrome158": 5
+  }
+}
