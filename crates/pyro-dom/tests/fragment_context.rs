@@ -99,3 +99,12 @@ fn range_editing_and_external_fragment_templates_keep_their_contents() {
         .unwrap();
     assert!(dom.query_selector(context, &parse_selectors("template[src]").unwrap()).unwrap().is_some());
 }
+
+#[test]
+fn xml_document_setter_preserves_inline_template_markers() {
+    let mut dom = Dom::new();
+    let doc = dom.create_document(DocumentKind::Xml, "about:blank");
+    let context = dom.create_element_ns(doc, Some("http://www.w3.org/1999/xhtml"), "div").unwrap();
+    set_inner_html(&mut dom, context, "<p><?marker name='a'></p><template for='a'>xml</template>").unwrap();
+    assert!(dom.query_selector(context, &parse_selectors("template[for]").unwrap()).unwrap().is_some());
+}
