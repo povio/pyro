@@ -187,6 +187,7 @@ impl JsClass for SubtleCrypto {
                 def.method($m, $length, |s, _d, a| subtle_call(s, $m, a));
             )*};
         }
+        def.promise_method("getPublicKey", 2, |s, _d, a| subtle_call(s, "getPublicKey", a));
         operations!(
             "encrypt": 3,
             "decrypt": 3,
@@ -291,6 +292,23 @@ pub(crate) fn serialize_key<'s>(s: &Scope<'s>, value: Value<'s>) -> JsResult<Opt
     };
     let parts = module.get_atom("serializeKey")?.as_object().ok_or_else(unavailable)?.call(None, &[value])?;
     Ok((!parts.is_undefined()).then_some(parts))
+}
+
+/// Resolve a genuine same-origin sibling key through its realm's private
+/// brand and the normal CryptoKey serialization, preserving extractability.
+pub(crate) fn foreign_key<'s>(s: &Scope<'s>, value: Value<'s>) -> JsResult<Value<'s>> {
+    let page = crate::target::page_of(s)?;
+    let held = Persistent::new(s, value);
+    for realm in page.sibling_realms(s) {
+        let Ok(owner) = realm.scope() else { continue };
+        let Ok(other) = crate::target::page_of(&owner) else { continue };
+        if other.is_disposed() || other.origin_key() != page.origin_key() { continue; }
+        let Some(parts) = serialize_key(&owner, held.get(&owner))? else { continue };
+        let parts = Persistent::new(&owner, parts);
+        let local = crate::structured_clone::clone_value(s, parts.get(s), s.undefined())?;
+        return deserialize_key(s, local);
+    }
+    Ok(s.undefined())
 }
 
 /// The CryptoKey, in this realm, of parts made by [`serialize_key`]

@@ -175,6 +175,7 @@
   const CHACHA = 'ChaCha20-Poly1305';
   const AES = ['AES-CTR', 'AES-CBC', 'AES-GCM', 'AES-KW'];
   const RSA = ['RSASSA-PKCS1-v1_5', 'RSA-PSS', 'RSA-OAEP'];
+  const ASYMMETRIC = [...RSA, 'ECDSA', 'ECDH', 'Ed25519', 'X25519'];
   const SHA = ['SHA-1', 'SHA-256', 'SHA-384', 'SHA-512'];
   const map = (names, type) => {
     const out = {};
@@ -198,7 +199,7 @@
       ...map(RSA, 'RsaHashedImportParams'), ECDSA: 'EcKeyImportParams', ECDH: 'EcKeyImportParams', Ed25519: '', X25519: '',
       [CHACHA]: '', ...map(AES, ''), HMAC: 'HmacImportParams', HKDF: '', PBKDF2: '',
     },
-    exportKey: map([...RSA, ...AES, CHACHA, 'HMAC', 'ECDSA', 'ECDH', 'Ed25519', 'X25519'], ''),
+    exportKey: map([...ASYMMETRIC, ...AES, CHACHA, 'HMAC'], ''),
     wrapKey: { 'AES-KW': '' },
     unwrapKey: { 'AES-KW': '' },
     'get key length': { [CHACHA]: '', ...map(AES, 'AesDerivedKeyParams'), HMAC: 'HmacImportParams', HKDF: '', PBKDF2: '' },
@@ -272,10 +273,12 @@
           if (!isView(value) || apply(typedTag, value, []) !== 'Uint8Array') throw new TypeErrorC(`${what} is not of type 'Uint8Array'`);
           out[member] = apply(u8Slice, value, []);
           break;
-        case KEY:
-          if (slotsOf(value) === undefined) throw new TypeErrorC(`${what} is not of type 'CryptoKey'`);
-          out[member] = value;
+        case KEY: {
+          const key = localKey(value);
+          if (key === undefined) throw new TypeErrorC(`${what} is not of type 'CryptoKey'`);
+          out[member] = key;
           break;
+        }
       }
     }
     if (hashes) for (let i = 0; i < hashes.length; i++) out[hashes[i]] = normalize(out[hashes[i]], 'digest');
@@ -348,8 +351,12 @@
       algorithm: algorithmObject(alg), usagesObject: [...ordered],
     });
   };
+  const localKey = value => {
+    if (slotsOf(value) !== undefined) return value;
+    return isObject(value) ? N.foreignKey(value) : undefined;
+  };
   const keyArg = (v, what) => {
-    const k = slotsOf(v);
+    const k = slotsOf(localKey(v));
     if (k === undefined) throw new TypeErrorC(`${what} is not of type 'CryptoKey'`);
     return k;
   };
@@ -742,6 +749,7 @@
   // an unavailable key or data argument. Normalization reads the same Web IDL
   // dictionaries as the actual operation.
   function checkSupport(op, algorithm, length) {
+    if (op === 'getPublicKey') return has(ASYMMETRIC, normalize(algorithm, 'exportKey').name);
     if (!ownDescriptor(REGISTRY, op)) return false;
     let n;
     try {
@@ -797,6 +805,18 @@
   // ----- SubtleCrypto methods ----------------------------------------------
 
   const methods = {
+    getPublicKey(args) {
+      required(args, 2, 'getPublicKey');
+      const k = keyArg(args[0], 'parameter 1'), usages = keyUsages(args[1]);
+      const name = k.alg.name;
+      if (!has(ASYMMETRIC, name)) throw notSupported(`${name} does not support deriving a public key`);
+      if (k.type !== 'private') return N.rejectOnTask(access('A private key is required'));
+      try { checkUsages(usages, pairUsages(name).public); }
+      catch (error) { return N.rejectOnTask(error); }
+      const algorithm = k.alg;
+      return N.publicOf(asymKind(name), algorithm.namedCurve || '', k.material, material =>
+        makeKey('public', true, algorithm, usages, view(material)));
+    },
     encrypt(args) {
       required(args, 3, 'encrypt');
       const [algorithm, keyValue, dataValue] = args;
