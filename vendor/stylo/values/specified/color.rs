@@ -1258,7 +1258,7 @@ pub enum DynamicRangeLimit {
 
 impl Parse for DynamicRangeLimit {
     fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
-        if let Ok(level) = input.try_parse(|i| DynamicRangeLevel::parse(context, i)) {
+        if let Ok(level) = input.try_parse(DynamicRangeLevel::parse) {
             return Ok(Self::Level(level));
         }
         input.expect_function_matching("dynamic-range-limit-mix")?;

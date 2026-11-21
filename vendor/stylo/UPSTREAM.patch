@@ -13763,7 +13763,7 @@ diff -ruN a/values/specified/calc.rs b/values/specified/calc.rs
          context: &ParserContext,
 diff -ruN a/values/specified/color.rs b/values/specified/color.rs
 --- a/values/specified/color.rs	2026-11-11 19:55:57
-+++ b/values/specified/color.rs	2026-11-21 20:44:20
++++ b/values/specified/color.rs	2026-11-21 20:48:05
 @@ -841,6 +841,11 @@
                  ) {
                      $color.components.0 = normalize($color.components.0);
@@ -13849,7 +13849,7 @@ diff -ruN a/values/specified/color.rs b/values/specified/color.rs
 +
 +impl Parse for DynamicRangeLimit {
 +    fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
-+        if let Ok(level) = input.try_parse(|i| DynamicRangeLevel::parse(context, i)) {
++        if let Ok(level) = input.try_parse(DynamicRangeLevel::parse) {
 +            return Ok(Self::Level(level));
 +        }
 +        input.expect_function_matching("dynamic-range-limit-mix")?;
