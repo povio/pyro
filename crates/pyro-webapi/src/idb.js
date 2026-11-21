@@ -657,8 +657,7 @@
       if (!m) throw fail('NotFoundError', 'The specified object store was not found.');
       N.deleteStore(c.name, name);
       c.meta.delete(name);
-      m.deleted = true;
-      for (const im of m.indexes.values()) im.deleted = true;
+      markStoreDeleted(m);
     }
     transaction(storeNames, mode = undefined, options = undefined) {
       if (!arguments.length) throw new TE("Failed to execute 'transaction' on 'IDBDatabase': 1 argument required.");
@@ -901,17 +900,17 @@
       }
       c.meta.set(name, m);
     }
-    for (const m of x.created) {
-      if (!x.snapshot.stores.some(([s]) => s === m)) {
-        m.deleted = true;
-        for (const im of m.indexes.values()) im.deleted = true;
-      }
-    }
+    for (const store of x.created) markStoreDeleted(store);
     for (const im of x.createdIndexes || []) im.deleted = true;
     c.closePending = true;
   }
 
   // ---- Object stores ----
+  function markStoreDeleted(store) {
+    store.deleted = true;
+    for (const index of store.indexes.values()) index.deleted = true;
+    store.indexes.clear();
+  }
   let storeOf;
   function storeHandle(x, m) {
     let h = x.handles.get(m);
