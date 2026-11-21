@@ -177,7 +177,8 @@ fn a_version_0_ctts_with_negative_offsets_is_signed() {
 
 /// A complete ten-frame access-unit stream through the packet API. Tags
 /// identify input packets, even when the backend emits them in another order.
-fn check_packets(config: video::PacketConfig, samples: Vec<(Vec<u8>, usize)>) {
+fn check_packets(config: video::PacketConfig, samples: Vec<(Vec<u8>, usize)>, file: &[u8]) {
+    let mut player = Player::open(Bytes::copy_from_slice(file)).unwrap();
     assert!(config.is_key(&samples[0].0));
     let mut decoder = config.decoder().unwrap();
     for _round in 0..2 {
@@ -190,7 +191,19 @@ fn check_packets(config: video::PacketConfig, samples: Vec<(Vec<u8>, usize)>) {
         for (display_index, picture) in pictures.iter().enumerate() {
             assert_eq!((picture.width, picture.height), (64, 48));
             assert_eq!(samples[(picture.tag - 100) as usize].1, display_index);
-            assert_eq!(frame_of(&picture.rgba[(24 * 64 + 32) * 4..]), display_index);
+            // Player retains video-signal code values. Packet output normalizes
+            // that RGB to sRGB, so compare in the target transfer domain.
+            let origin = (24 * 64 + 32) * 4;
+            let reference = player.frame_at(display_index as f64 / 10.).unwrap();
+            assert_eq!(frame_of(&reference.rgba[origin..]), display_index);
+            for channel in 0..3 {
+                let signal = f64::from(reference.rgba[origin + channel]) / 255.;
+                let linear = if signal < 0.081 { signal / 4.5 } else { ((signal + 0.099) / 1.099).powf(1. / 0.45) };
+                let srgb = if linear <= 0.0031308 { 12.92 * linear } else { 1.055 * linear.powf(1. / 2.4) - 0.055 };
+                // Player already rounded to 8-bit; the packet conversion
+                // applies the curve before that rounding.
+                assert!(picture.rgba[origin + channel].abs_diff((255. * srgb).round() as u8) <= 2);
+            }
         }
         assert!(decoder.flush().unwrap().is_empty());
     }
@@ -207,7 +220,7 @@ fn packet_av1_keeps_sample_tags_and_restarts_after_flush() {
         .iter()
         .map(|s| (data[s.offset..s.offset + s.size].to_vec(), (s.pts * 10.).round() as usize))
         .collect();
-    check_packets(config, samples);
+    check_packets(config, samples, &data);
 }
 
 #[cfg(feature = "h264")]
@@ -236,6 +249,29 @@ fn packet_avc_and_annex_b_keep_sample_tags_and_restart_after_flush() {
         }
         annex.push((unit, display));
     }
-    check_packets(video::PacketConfig::parse(&codec, Some(config)).unwrap(), avc);
-    check_packets(video::PacketConfig::parse(&codec, None).unwrap(), annex);
+    check_packets(video::PacketConfig::parse(&codec, Some(config)).unwrap(), avc, &data);
+    check_packets(video::PacketConfig::parse(&codec, None).unwrap(), annex, &data);
+}
+
+#[test]
+#[cfg(feature = "av1")]
+fn packet_av1_capability_matches_supported_sdr_colorimetry() {
+    use video::PacketConfig;
+    for codec in [
+        "av01.0.04M.08",
+        "av01.0.04M.08.0.110.01.01.01.0", // limited BT.709
+        "av01.0.08M.10.0.110.01.13.01.1", // full-range sRGB
+        "av01.0.04M.08.0.110.01.01.06.0", // BT.601 matrix, BT.709 primaries
+    ] {
+        assert!(PacketConfig::parse(codec, None).is_some(), "{codec}");
+    }
+    for codec in [
+        "av01.0.08M.10.0.110.09.16.09.0", // BT.2020 / PQ
+        "av01.0.08M.10.0.110.09.18.09.0", // BT.2020 / HLG
+        "av01.0.08M.10.0.110.09.01.09.0", // wide-gamut SDR
+        "av01.0.08M.10.0.110.01.08.01.0", // linear transfer
+        "av01.0.08M.10.0.110.01.01.14.0", // ICtCp matrix
+    ] {
+        assert!(PacketConfig::parse(codec, None).is_none(), "{codec}");
+    }
 }

@@ -6,8 +6,8 @@ use std::ptr::null_mut;
 
 use openh264::decoder::Decoder as OpenH264;
 use openh264_sys2::{
-    videoFormatI420, SBufferInfo, DECODER_OPTION, DECODER_OPTION_END_OF_STREAM,
-    DECODER_OPTION_NUM_OF_FRAMES_REMAINING_IN_BUFFER,
+    DECODER_OPTION, DECODER_OPTION_END_OF_STREAM, DECODER_OPTION_NUM_OF_FRAMES_REMAINING_IN_BUFFER, SBufferInfo,
+    videoFormatI420,
 };
 
 use super::yuv::{self, Matrix, Picture, Plane};
@@ -47,7 +47,8 @@ impl H264 {
         let tag = info.uiOutYuvTimeStamp;
         // SAFETY: iBufferStatus == 1 identifies a completed system-memory picture.
         let buf = unsafe { info.UsrData.sSystemBuffer };
-        let image = if want(tag, buf.iWidth as u32, buf.iHeight as u32) { convert(info, dst) } else { None };
+        let image =
+            if want(tag, buf.iWidth as u32, buf.iHeight as u32) { convert(info, dst, self.packet_mode) } else { None };
         out.push(Decoded { tag, image });
     }
 
@@ -61,7 +62,7 @@ impl H264 {
     }
 }
 
-fn convert(info: &SBufferInfo, dst: &[*mut u8; 3]) -> Option<(u32, u32, Vec<u8>)> {
+fn convert(info: &SBufferInfo, dst: &[*mut u8; 3], packet_output: bool) -> Option<(u32, u32, Vec<u8>)> {
     // SAFETY: a ready buffer describes its system-memory planes.
     let buf = unsafe { info.UsrData.sSystemBuffer };
     if buf.iFormat != videoFormatI420 {
@@ -85,7 +86,10 @@ fn convert(info: &SBufferInfo, dst: &[*mut u8; 3]) -> Option<(u32, u32, Vec<u8>)
         full_range: false,
         matrix: Matrix::untagged(h as u32),
     };
-    Some((w as u32, h as u32, yuv::to_rgba(&picture)))
+    // OpenH264's I420 output here exposes no frame VUI. Infer limited
+    // range, BT.601 for SD / BT.709 for HD, and a BT.709 video transfer.
+    let transfer = if packet_output { yuv::OutputTransfer::Bt709ToSrgb } else { yuv::OutputTransfer::Preserve };
+    Some((w as u32, h as u32, yuv::to_rgba(&picture, transfer)))
 }
 
 impl Decoder for H264 {

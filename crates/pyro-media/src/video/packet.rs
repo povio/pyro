@@ -13,8 +13,16 @@ pub struct PacketConfig(Format);
 
 #[derive(Clone, Debug)]
 enum Format {
-    Av1,
+    Av1(Option<Av1Color>),
     Avc { length_size: usize, parameter_sets: Vec<u8> },
+}
+
+/// Explicit SDR codec parameters used when the AV1 sequence leaves a
+/// transfer or matrix unspecified. A signaled bitstream value takes precedence.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Av1Color {
+    pub srgb_transfer: bool,
+    pub bt709_matrix: bool,
 }
 
 pub struct PacketFrame {
@@ -38,7 +46,7 @@ fn decimal(field: &str, digits: usize) -> Option<u8> {
 
 // AV1 codec parameter syntax. This bounded path supports Main profile
 // 8- and 10-bit streams, including monochrome and subsampled 4:2:0.
-fn av1_codec(codec: &str) -> Option<()> {
+fn av1_codec(codec: &str) -> Option<Format> {
     let mut fields = codec.strip_prefix("av01.")?.split('.');
     if fields.next()? != "0" {
         return None;
@@ -55,18 +63,33 @@ fn av1_codec(codec: &str) -> Option<()> {
     if !matches!(fields.next()?, "08" | "10") {
         return None;
     }
-    if let Some(mono) = fields.next() {
+    let color = if let Some(mono) = fields.next() {
         if !matches!(mono, "0" | "1") || !matches!(fields.next()?, "110" | "111" | "112") {
             return None;
         }
-        decimal(fields.next()?, 2)?;
-        decimal(fields.next()?, 2)?;
-        decimal(fields.next()?, 2)?;
+        // The packet output is sRGB. Only advertise declared primaries
+        // matching sRGB, transfer curves we convert, and supported matrices.
+        if fields.next()? != "01" {
+            return None;
+        }
+        let srgb_transfer = match fields.next()? {
+            "01" => false,
+            "13" => true,
+            _ => return None,
+        };
+        let bt709_matrix = match fields.next()? {
+            "01" => true,
+            "05" | "06" => false,
+            _ => return None,
+        };
         if !matches!(fields.next()?, "0" | "1") || fields.next().is_some() {
             return None;
         }
-    }
-    Some(())
+        Some(Av1Color { srgb_transfer, bt709_matrix })
+    } else {
+        None
+    };
+    Some(Format::Av1(color))
 }
 
 impl PacketConfig {
@@ -74,8 +97,8 @@ impl PacketConfig {
     /// unit or H.264 access unit. Without an AVC description, chunks use
     /// Annex B start codes. AV1 carries its sequence header in the stream.
     pub fn parse(codec: &str, description: Option<&[u8]>) -> Option<Self> {
-        if super::AV1 && av1_codec(codec).is_some() {
-            return Some(Self(Format::Av1));
+        if codec.starts_with("av01.") {
+            return av1_codec(codec).filter(|_| super::AV1).map(Self);
         }
         let hex = codec.strip_prefix("avc1.").or_else(|| codec.strip_prefix("avc3."))?;
         if !super::H264 || hex.len() != 6 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
@@ -105,7 +128,7 @@ impl PacketConfig {
     fn backend(&self) -> Option<Box<dyn Decoder>> {
         match &self.0 {
             #[cfg(feature = "av1")]
-            Format::Av1 => Some(Box::new(super::av1::Av1::with_area_limit(MAX_PICTURE_PIXELS)?)),
+            Format::Av1(color) => Some(Box::new(super::av1::Av1::open(Some(MAX_PICTURE_PIXELS), *color)?)),
             #[cfg(feature = "h264")]
             Format::Avc { length_size, parameter_sets } => {
                 Some(Box::new(super::h264::H264::packets(*length_size, parameter_sets.clone())?))
@@ -129,7 +152,7 @@ impl PacketConfig {
             return None;
         }
         match &self.0 {
-            Format::Av1 => av1_unit(data),
+            Format::Av1(_) => av1_unit(data),
             Format::Avc { length_size, parameter_sets } => {
                 let mut first_vcl_is_key = None;
                 let mut sps = !parameter_sets.is_empty();
@@ -273,7 +296,7 @@ fn collect(
     )?;
     out.into_iter()
         .map(|frame| {
-            let (width, height, rgba) = frame.image.ok_or("Video picture exceeds this decoder's output limits")?;
+            let (width, height, rgba) = frame.image.ok_or("Unsupported video picture or output size")?;
             Ok(PacketFrame { tag: frame.tag, width, height, rgba })
         })
         .collect()
