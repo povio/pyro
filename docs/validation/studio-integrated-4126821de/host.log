@@ -1,0 +1,165 @@
+2026-11-21T19:07:24Z
+CPU usage: 51.47% user, 2.24% sys, 46.27% idle 
+PhysMem: 35G used (3779M wired, 1598M compressor), 657M unused.
+System-wide memory free percentage: 84%
+pressure_level=1 CI_workers=
+2026-11-21T19:07:35Z
+CPU usage: 49.82% user, 1.54% sys, 48.62% idle 
+PhysMem: 34G used (3439M wired, 1598M compressor), 1497M unused.
+System-wide memory free percentage: 85%
+pressure_level=1 CI_workers=
+2026-11-21T19:07:46Z
+CPU usage: 50.24% user, 1.54% sys, 48.20% idle 
+PhysMem: 33G used (3429M wired, 1598M compressor), 2624M unused.
+System-wide memory free percentage: 85%
+pressure_level=1 CI_workers=
+2026-11-21T19:07:56Z
+CPU usage: 18.90% user, 7.79% sys, 73.29% idle 
+PhysMem: 31G used (3440M wired, 1598M compressor), 4254M unused.
+System-wide memory free percentage: 85%
+pressure_level=1 CI_workers=
+2026-11-21T19:08:07Z
+CPU usage: 1.27% user, 2.70% sys, 96.2% idle 
+PhysMem: 32G used (3453M wired, 1598M compressor), 3236M unused.
+System-wide memory free percentage: 85%
+pressure_level=1 CI_workers=
+2026-11-21T19:08:17Z
+CPU usage: 12.99% user, 3.73% sys, 83.26% idle 
+PhysMem: 34G used (3478M wired, 1598M compressor), 1430M unused.
+System-wide memory free percentage: 85%
+pressure_level=1 CI_workers=
+2026-11-21T19:08:28Z
+CPU usage: 71.7% user, 6.15% sys, 22.76% idle 
+PhysMem: 35G used (3492M wired, 1598M compressor), 166M unused.
+System-wide memory free percentage: 85%
+pressure_level=1 CI_workers=
+2026-11-21T19:08:38Z
+CPU usage: 45.21% user, 17.67% sys, 37.10% idle 
+PhysMem: 35G used (3575M wired, 1722M compressor), 475M unused.
+System-wide memory free percentage: 85%
+pressure_level=1 CI_workers=
+2026-11-21T19:08:49Z
+CPU usage: 7.50% user, 26.93% sys, 65.55% idle 
+PhysMem: 35G used (3592M wired, 1727M compressor), 451M unused.
+System-wide memory free percentage: 85%
+pressure_level=1 CI_workers=
+2026-11-21T19:09:00Z
+CPU usage: 20.65% user, 11.39% sys, 67.94% idle 
+PhysMem: 35G used (3959M wired, 2153M compressor), 155M unused.
+System-wide memory free percentage: 82%
+pressure_level=1 CI_workers=
+2026-11-21T19:09:10Z
+CPU usage: 13.90% user, 6.1% sys, 80.7% idle 
+PhysMem: 34G used (3630M wired, 2284M compressor), 1342M unused.
+System-wide memory free percentage: 83%
+pressure_level=1 CI_workers=
+2026-11-21T19:09:21Z
+CPU usage: 28.92% user, 22.76% sys, 48.30% idle 
+PhysMem: 35G used (3649M wired, 2797M compressor), 165M unused.
+System-wide memory free percentage: 81%
+pressure_level=1 CI_workers=
+2026-11-21T19:09:31Z
+CPU usage: 17.91% user, 5.72% sys, 76.36% idle 
+PhysMem: 35G used (3691M wired, 3513M compressor), 230M unused.
+System-wide memory free percentage: 79%
+pressure_level=1 CI_workers=
+2026-11-21T19:09:42Z
+CPU usage: 28.1% user, 11.35% sys, 60.63% idle 
+PhysMem: 33G used (3689M wired, 3224M compressor), 2875M unused.
+System-wide memory free percentage: 80%
+pressure_level=1 CI_workers=
+2026-11-21T19:09:53Z
+CPU usage: 22.12% user, 6.27% sys, 71.60% idle 
+PhysMem: 33G used (3686M wired, 3203M compressor), 2335M unused.
+System-wide memory free percentage: 80%
+pressure_level=1 CI_workers=
+2026-11-21T19:10:03Z
+CPU usage: 57.85% user, 25.88% sys, 16.25% idle 
+PhysMem: 35G used (3662M wired, 3281M compressor), 143M unused.
+System-wide memory free percentage: 80%
+pressure_level=1 CI_workers=
+2026-11-21T19:10:14Z
+CPU usage: 7.10% user, 1.21% sys, 91.67% idle 
+PhysMem: 30G used (3595M wired, 2402M compressor), 5685M unused.
+System-wide memory free percentage: 83%
+pressure_level=1 CI_workers=
+2026-11-21T19:10:25Z
+CPU usage: 5.30% user, 4.6% sys, 90.63% idle 
+PhysMem: 30G used (3890M wired, 2322M compressor), 5204M unused.
+System-wide memory free percentage: 82%
+pressure_level=1 CI_workers=
+2026-11-21T19:10:35Z
+CPU usage: 5.91% user, 4.57% sys, 89.50% idle 
+PhysMem: 31G used (3562M wired, 2321M compressor), 4903M unused.
+System-wide memory free percentage: 83%
+pressure_level=1 CI_workers=
+2026-11-21T19:10:46Z
+CPU usage: 7.55% user, 3.97% sys, 88.46% idle 
+PhysMem: 31G used (3553M wired, 2320M compressor), 4871M unused.
+System-wide memory free percentage: 83%
+pressure_level=1 CI_workers=
+2026-11-21T19:10:56Z
+CPU usage: 9.56% user, 4.70% sys, 85.72% idle 
+PhysMem: 28G used (3524M wired, 2312M compressor), 7661M unused.
+System-wide memory free percentage: 83%
+pressure_level=1 CI_workers=
+2026-11-21T19:11:07Z
+CPU usage: 1.98% user, 1.45% sys, 96.55% idle 
+PhysMem: 28G used (3492M wired, 2311M compressor), 7809M unused.
+System-wide memory free percentage: 83%
+pressure_level=1 CI_workers=
+2026-11-21T19:11:17Z
+CPU usage: 4.84% user, 1.76% sys, 93.38% idle 
+PhysMem: 29G used (3487M wired, 2310M compressor), 6398M unused.
+System-wide memory free percentage: 83%
+pressure_level=1 CI_workers=
+2026-11-21T19:11:28Z
+CPU usage: 7.72% user, 4.69% sys, 87.58% idle 
+PhysMem: 26G used (3483M wired, 2305M compressor), 9365M unused.
+System-wide memory free percentage: 83%
+pressure_level=1 CI_workers=
+2026-11-21T19:11:38Z
+CPU usage: 2.30% user, 3.58% sys, 94.11% idle 
+PhysMem: 26G used (3463M wired, 2304M compressor), 9675M unused.
+System-wide memory free percentage: 83%
+pressure_level=1 CI_workers=
+2026-11-21T19:11:49Z
+CPU usage: 68.31% user, 5.42% sys, 26.25% idle 
+PhysMem: 32G used (3465M wired, 2304M compressor), 3951M unused.
+System-wide memory free percentage: 83%
+pressure_level=1 CI_workers=
+2026-11-21T19:12:00Z
+CPU usage: 18.7% user, 6.58% sys, 75.33% idle 
+PhysMem: 32G used (3499M wired, 2300M compressor), 3988M unused.
+System-wide memory free percentage: 83%
+pressure_level=1 CI_workers=
+2026-11-21T19:12:10Z
+CPU usage: 41.24% user, 10.74% sys, 48.1% idle 
+PhysMem: 35G used (3580M wired, 2297M compressor), 616M unused.
+System-wide memory free percentage: 83%
+pressure_level=1 CI_workers=
+2026-11-21T19:12:21Z
+CPU usage: 31.16% user, 6.9% sys, 62.73% idle 
+PhysMem: 35G used (3584M wired, 2293M compressor), 488M unused.
+System-wide memory free percentage: 83%
+pressure_level=1 CI_workers=
+2026-11-21T19:12:31Z
+CPU usage: 22.36% user, 3.24% sys, 74.39% idle 
+PhysMem: 35G used (3566M wired, 2293M compressor), 599M unused.
+System-wide memory free percentage: 83%
+pressure_level=1 CI_workers=
+2026-11-21T19:12:42Z
+CPU usage: 26.4% user, 4.23% sys, 69.72% idle 
+PhysMem: 35G used (3566M wired, 2291M compressor), 490M unused.
+System-wide memory free percentage: 83%
+pressure_level=1 CI_workers=
+2026-11-21T19:12:52Z
+CPU usage: 29.97% user, 6.50% sys, 63.51% idle 
+PhysMem: 35G used (3562M wired, 2291M compressor), 414M unused.
+System-wide memory free percentage: 83%
+pressure_level=1 CI_workers=
+2026-11-21T19:13:03Z
+CPU usage: 5.12% user, 2.71% sys, 92.15% idle 
+PhysMem: 33G used (3540M wired, 2291M compressor), 2043M unused.
+System-wide memory free percentage: 83%
+pressure_level=1 CI_workers=
