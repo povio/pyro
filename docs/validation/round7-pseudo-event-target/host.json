@@ -1,0 +1,343 @@
+{
+ "start": "2026-11-21T23:18:10.105Z",
+ "end": "2026-11-21T23:18:13.117Z",
+ "preciseHost": {
+  "durationSeconds": 3.012,
+  "hostBusyPct": 20.629
+ },
+ "perArm": {
+  "pseudo-dispatch-bc0cba7f5": {
+   "orders": [
+    1,
+    4,
+    6,
+    7
+   ],
+   "elapsedSeconds": 1.524,
+   "weightedHostBusyPct": 22.78
+  },
+  "pseudo-dispatch-5f856d7ba": {
+   "orders": [
+    2,
+    3,
+    5,
+    8
+   ],
+   "elapsedSeconds": 1.487,
+   "weightedHostBusyPct": 18.42
+  }
+ },
+ "perProcess": [
+  {
+   "order": 1,
+   "binary": "pseudo-dispatch-bc0cba7f5",
+   "start": "2026-11-21T23:18:10.105Z",
+   "end": "2026-11-21T23:18:10.559Z",
+   "durationSeconds": 0.454,
+   "hostBusyPct": 33.9
+  },
+  {
+   "order": 2,
+   "binary": "pseudo-dispatch-5f856d7ba",
+   "start": "2026-11-21T23:18:10.559Z",
+   "end": "2026-11-21T23:18:10.943Z",
+   "durationSeconds": 0.384,
+   "hostBusyPct": 24.518
+  },
+  {
+   "order": 3,
+   "binary": "pseudo-dispatch-5f856d7ba",
+   "start": "2026-11-21T23:18:10.943Z",
+   "end": "2026-11-21T23:18:11.312Z",
+   "durationSeconds": 0.369,
+   "hostBusyPct": 20.8
+  },
+  {
+   "order": 4,
+   "binary": "pseudo-dispatch-bc0cba7f5",
+   "start": "2026-11-21T23:18:11.313Z",
+   "end": "2026-11-21T23:18:11.669Z",
+   "durationSeconds": 0.356,
+   "hostBusyPct": 20.8
+  },
+  {
+   "order": 5,
+   "binary": "pseudo-dispatch-5f856d7ba",
+   "start": "2026-11-21T23:18:11.669Z",
+   "end": "2026-11-21T23:18:12.040Z",
+   "durationSeconds": 0.371,
+   "hostBusyPct": 17.509
+  },
+  {
+   "order": 6,
+   "binary": "pseudo-dispatch-bc0cba7f5",
+   "start": "2026-11-21T23:18:12.040Z",
+   "end": "2026-11-21T23:18:12.399Z",
+   "durationSeconds": 0.359,
+   "hostBusyPct": 17.5
+  },
+  {
+   "order": 7,
+   "binary": "pseudo-dispatch-bc0cba7f5",
+   "start": "2026-11-21T23:18:12.399Z",
+   "end": "2026-11-21T23:18:12.754Z",
+   "durationSeconds": 0.355,
+   "hostBusyPct": 15.883
+  },
+  {
+   "order": 8,
+   "binary": "pseudo-dispatch-5f856d7ba",
+   "start": "2026-11-21T23:18:12.754Z",
+   "end": "2026-11-21T23:18:13.117Z",
+   "durationSeconds": 0.363,
+   "hostBusyPct": 10.5
+  }
+ ],
+ "benchmarkSHA256": "d0012f97f2c1173e06e51993c6336598012d3e34c52f74c6d1be82277daff13e",
+ "minOneSecondBusyPct": 10.5,
+ "maxOneSecondBusyPct": 33.9,
+ "oneSecondSamples": [
+  {
+   "start": "2026-11-21T23:18:09.666Z",
+   "end": "2026-11-21T23:18:10.668Z",
+   "cpuBusyPct": 33.9
+  },
+  {
+   "start": "2026-11-21T23:18:10.668Z",
+   "end": "2026-11-21T23:18:11.670Z",
+   "cpuBusyPct": 20.8
+  },
+  {
+   "start": "2026-11-21T23:18:11.670Z",
+   "end": "2026-11-21T23:18:12.672Z",
+   "cpuBusyPct": 17.5
+  },
+  {
+   "start": "2026-11-21T23:18:12.672Z",
+   "end": "2026-11-21T23:18:13.674Z",
+   "cpuBusyPct": 10.5
+  }
+ ],
+ "hostIntervals": [
+  {
+   "at": "2026-11-21T23:18:15.776Z",
+   "elapsedMs": 30003,
+   "cpuBusyPct": 15.6,
+   "load": [
+    4.9794921875,
+    10.3916015625,
+    13.44580078125
+   ],
+   "logicalCpu": 10,
+   "pressureLevel": "1",
+   "freePct": 84,
+   "swap": "total = 0.00M  used = 0.00M  free = 0.00M  (encrypted)",
+   "processes": {
+    "other": {
+     "n": 1128,
+     "pctCpu": 126.2,
+     "rssMiB": 35423
+    },
+    "ci-runner": {
+     "n": 3,
+     "pctCpu": 0,
+     "rssMiB": 103
+    }
+   }
+  }
+ ],
+ "adjacentLaneSnapshots": [
+  {
+   "at": "2026-11-21T23:17:40.817Z",
+   "ciWorkerActive": false,
+   "allocation": {
+    "effectiveAt": "2026-11-21T23:16:38.800185+00:00",
+    "hostSlots": 4,
+    "lead": 0,
+    "editing": 1,
+    "css": 1,
+    "qa": 2,
+    "diagnostics": 0,
+    "ordinary": 0,
+    "policy": "51.1% busy, 84% free, no CI Worker: dedicated 5a2597e7 direct START for 5f856d7ba verified executable 9ff85f7f\u2026 three frozen testdriver URLs and direct dispatch probes. General QA separate SVG. CSS native retains existing slot; no duplicate runtime."
+   },
+   "lanes": {
+    "lead": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "editing": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "css": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "qa": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "diagnostics": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ordinary": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "census": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ci": {
+     "processes": [
+      {
+       "pid": 14341,
+       "state": "SN",
+       "kind": "Runner.Listener",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 0
+    },
+    "unassigned": {
+     "processes": [],
+     "cpuCorePct": 0
+    }
+   }
+  },
+  {
+   "at": "2026-11-21T23:18:10.841Z",
+   "ciWorkerActive": false,
+   "allocation": {
+    "effectiveAt": "2026-11-21T23:16:38.800185+00:00",
+    "hostSlots": 4,
+    "lead": 0,
+    "editing": 1,
+    "css": 1,
+    "qa": 2,
+    "diagnostics": 0,
+    "ordinary": 0,
+    "policy": "51.1% busy, 84% free, no CI Worker: dedicated 5a2597e7 direct START for 5f856d7ba verified executable 9ff85f7f\u2026 three frozen testdriver URLs and direct dispatch probes. General QA separate SVG. CSS native retains existing slot; no duplicate runtime."
+   },
+   "lanes": {
+    "lead": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "editing": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "css": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "qa": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "diagnostics": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ordinary": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "census": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ci": {
+     "processes": [
+      {
+       "pid": 14341,
+       "state": "SN",
+       "kind": "Runner.Listener",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 0
+    },
+    "unassigned": {
+     "processes": [],
+     "cpuCorePct": 0
+    }
+   }
+  },
+  {
+   "at": "2026-11-21T23:18:40.842Z",
+   "ciWorkerActive": false,
+   "allocation": {
+    "effectiveAt": "2026-11-21T23:18:33.017805+00:00",
+    "hostSlots": 1,
+    "lead": 0,
+    "editing": 0,
+    "css": 1,
+    "qa": 0,
+    "diagnostics": 0,
+    "ordinary": 0,
+    "policy": "General SVG QA and CSS dispatch QA complete, six shadow gains and all five direct records match signed Chrome, mutation failure and scroll-marker timeout remain explicit. CSS 5f856d7ba perf direct START on 21.8%, idle CI, 1s ticks active. Editing 4d25d1211 serial reference probe waits until end of perf; evidence-only 24-file difference from e8d39ab42 verified. Published prior SVG batch and tests complete."
+   },
+   "lanes": {
+    "lead": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "editing": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "css": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "qa": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "diagnostics": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ordinary": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "census": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ci": {
+     "processes": [
+      {
+       "pid": 14341,
+       "state": "SN",
+       "kind": "Runner.Listener",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 0
+    },
+    "unassigned": {
+     "processes": [],
+     "cpuCorePct": 0
+    }
+   }
+  }
+ ],
+ "censusAdmissions": [],
+ "qaStart": "2026-11-21T23:16:39.128801+00:00",
+ "qaEnd": "2026-11-21T23:16:49.760801+00:00",
+ "qaTimeMethod": "Head receipt modification time and runner-reported wallMs; approximate times. Receipt already complete before performance probe.",
+ "measuredCensusShardWindows": [],
+ "qaOverlapSeconds": 0,
+ "method": "Aggregate one-second percentages are weighted by exact overlap per process. 30-second host intervals include activity outside perf; process snapshots bracket the run. Hardware counters do not assign competition to a process.",
+ "lastDirectCandidateAndChromeOutputsUTC": {
+  "pseudo-dispatch-controls-head.json": "2026-11-21T23:16:50.871083+00:00",
+  "pseudo-dispatch-controls-chrome.json": "2026-11-21T23:16:52.384485+00:00"
+ },
+ "editingProbeAdmission": "Editing had to wait for all eight timed arms, then received START after 23:18:13.117Z."
+}
