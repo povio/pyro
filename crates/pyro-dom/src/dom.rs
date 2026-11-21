@@ -916,6 +916,7 @@ impl Dom {
             DocumentKind::Xml => "application/xml",
         };
         let data = DocumentData {
+            preferred_sheet_name: None,
             raster_budget: Default::default(),
             kind,
             quirks: QuirksMode::NoQuirks,
@@ -3455,6 +3456,9 @@ impl Dom {
         let old_for = (plain && name.local == local_name!("for") && el.is_html() && el.name.local == local_name!("label"))
             .then(|| el.attr_local(&local_name!("for")).map(Box::<str>::from));
         let r = f(el);
+        if plain && name.local == local_name!("disabled") && el.is_html() && el.name.local == local_name!("link") {
+            el.link_explicitly_enabled = el.attr_local(&name.local).is_none();
+        }
         debug_assert!(el.derived_in_step());
         let base = plain && name.local == local_name!("href") && el.is_html() && el.name.local == local_name!("base");
         if plain && &*name.local == "points" && !self.svg_points.is_empty() {
@@ -3475,7 +3479,59 @@ impl Dom {
             let doc = self.n(i).owner_doc;
             self.html_base_changed(doc);
         }
+        if plain && matches!(&*name.local, "title" | "type") && self.n(i).in_document_tree() {
+            self.note_preferred_style(i);
+        }
         r
+    }
+
+    pub(crate) fn note_preferred_style(&mut self, idx: u32) {
+        let node = self.n(idx);
+        let Some(element) = node.element() else { return };
+        if !element.is_html() || element.name.local != local_name!("style")
+            || element.attr("type").is_some_and(|kind| !kind.is_empty() && !kind.eq_ignore_ascii_case("text/css"))
+        {
+            return;
+        }
+        self.note_preferred_sheet_name(idx);
+    }
+
+    pub fn note_preferred_link_sheet(&mut self, link: NodeId) {
+        let Ok(idx) = self.check(link) else { return };
+        let node = self.n(idx);
+        let Some(element) = node.element() else { return };
+        if !node.in_document_tree() || !element.is_html() || element.name.local != local_name!("link")
+            || element.link_explicitly_enabled || element.attr("disabled").is_some()
+            || element.attr("rel").is_none_or(|rel| rel.split_ascii_whitespace().any(|token| token.eq_ignore_ascii_case("alternate")))
+        {
+            return;
+        }
+        self.note_preferred_sheet_name(idx);
+    }
+
+    fn note_preferred_sheet_name(&mut self, idx: u32) {
+        let node = self.n(idx);
+        let doc = node.owner_doc;
+        if self.doc_data(doc).preferred_sheet_name.is_none() {
+            let title = node.element().and_then(|el| el.attr("title")).filter(|title| !title.is_empty()).map(Into::into);
+            self.doc_data_mut(doc).preferred_sheet_name = title;
+        }
+    }
+
+    pub(crate) fn sheet_outside_preferred_set(&self, owner: NodeId) -> bool {
+        let Ok(node) = self.node(owner) else { return false };
+        let Some(element) = node.element() else { return false };
+        if !element.is_html() || !matches!(&*element.name.local, "style" | "link")
+            || !node.in_document_tree() || element.link_explicitly_enabled {
+            return false;
+        }
+        let title = element.attr("title").filter(|title| !title.is_empty());
+        let preferred = self.doc_data(node.owner_doc).preferred_sheet_name.as_deref();
+        if element.name.local == local_name!("link") && element.attr("rel").is_some_and(|rel|
+            rel.split_ascii_whitespace().any(|token| token.eq_ignore_ascii_case("alternate"))) {
+            return title.is_none() || title != preferred;
+        }
+        title.is_some() && preferred.is_some() && title != preferred
     }
 
     pub(crate) fn change_attr(&mut self, i: u32, k: usize, value: &str) {

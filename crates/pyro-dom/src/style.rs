@@ -1617,11 +1617,13 @@ impl StyleEngine {
     /// Text the loader or CSSOM gave `owner`'s sheet; `None` for a
     /// `<style>` element read from the DOM, or no sheet.
     pub fn sheet_text(&self, dom: &Dom, owner: NodeId) -> Option<&str> {
-        self.sheets.iter().find(|s| s.owner == owner).and_then(|s| match &s.source {
-            // pyro: and a link that applies nothing now (its `disabled` attribute, its `rel`).
-            _ if Self::is_off(s, dom) || link_not_stylesheet(dom, owner) => Some(""),
-            _ => s.supplied_text(dom),
-        })
+        match self.sheets.iter().find(|sheet| sheet.owner == owner) {
+            Some(sheet) if Self::inactive(sheet, dom) => Some(""),
+            Some(sheet) => sheet.supplied_text(dom),
+            None if dom.element(owner).is_ok_and(|el| el.name.local == local_name!("style"))
+                && dom.sheet_outside_preferred_set(owner) => Some(""),
+            None => None,
+        }
     }
 
     /// pyro: the text the loader or CSSOM gave `owner`'s sheet, disabled or not (a disabled sheet
@@ -1642,6 +1644,10 @@ impl StyleEngine {
     /// another style block generation of the owner is not this one's).
     fn is_off(sheet: &Sheet, dom: &Dom) -> bool {
         sheet.disabled && dom.style_sheet_generation(sheet.owner) == sheet.disabled_at
+    }
+
+    fn inactive(sheet: &Sheet, dom: &Dom) -> bool {
+        Self::is_off(sheet, dom) || link_not_stylesheet(dom, sheet.owner) || dom.sheet_outside_preferred_set(sheet.owner)
     }
 
     /// Sets `CSSStyleSheet.disabled` of the sheet of `owner`: a disabled sheet applies nothing.
@@ -1676,7 +1682,7 @@ impl StyleEngine {
     /// script-font sheet).
     pub fn for_each_author_sheet_owned(&self, dom: &Dom, f: &mut dyn FnMut(Option<NodeId>, &str)) {
         for sheet in &self.sheets {
-            if Self::is_off(sheet, dom) || !dom.is_alive(sheet.owner) || !dom.is_connected(sheet.owner).unwrap_or(false) || link_not_stylesheet(dom, sheet.owner) {
+            if !dom.is_connected(sheet.owner).unwrap_or(false) || Self::inactive(sheet, dom) {
                 continue;
             }
             match sheet.supplied_text(dom) {
@@ -1701,7 +1707,7 @@ impl StyleEngine {
     /// document or a shadow root).
     pub fn for_each_scoped_author_sheet(&self, dom: &Dom, f: &mut dyn FnMut(NodeId, &str)) {
         for sheet in &self.sheets {
-            if Self::is_off(sheet, dom) || !dom.is_alive(sheet.owner) || !dom.is_connected(sheet.owner).unwrap_or(false) || link_not_stylesheet(dom, sheet.owner) {
+            if !dom.is_connected(sheet.owner).unwrap_or(false) || Self::inactive(sheet, dom) {
                 continue;
             }
             let Ok(owner) = dom.check(sheet.owner) else { continue };
@@ -1788,6 +1794,7 @@ impl StyleEngine {
             // (A link whose `rel` lost `stylesheet` applies nothing, as one that left the document.)
             let on = dom.is_alive(sheet.owner)
                 && dom.is_connected(sheet.owner).unwrap_or(false)
+                && !dom.sheet_outside_preferred_set(sheet.owner)
                 && !(matches!(sheet.source, SheetSource::Text(_)) && link_not_stylesheet(dom, sheet.owner));
             if i < 64 {
                 connected |= u64::from(on) << i;
@@ -1834,7 +1841,7 @@ impl StyleEngine {
     pub fn sheet_revision(&self, dom: &Dom, owner: NodeId) -> Option<u64> {
         let sheet = self.sheets.iter().find(|s| s.owner == owner)?;
         // A disabled sheet's text is empty: its own identity, its revision of the toggle.
-        if Self::is_off(sheet, dom) {
+        if Self::inactive(sheet, dom) {
             return Some((sheet.revision << 2) | 2);
         }
         Some(match sheet.supplied_text(dom) {
@@ -2106,6 +2113,7 @@ impl StyleEngine {
         let unregistered: Vec<(NodeId, u64)> = if dom.has_resource_events() {
             self.unregistered_style_elements(dom)
                 .into_iter()
+                .filter(|owner| !dom.sheet_outside_preferred_set(*owner))
                 .map(|n| (n, dom.style_element_text_revision(n).unwrap_or_default()))
                 .collect()
         } else {

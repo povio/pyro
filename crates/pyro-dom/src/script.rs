@@ -419,8 +419,7 @@ impl Dom {
         }
     }
 
-    /// How many times the `<style>` `node`'s children changed (its CSS style sheet object is
-    /// replaced each time).
+    /// Generation of a stylesheet owner's current CSS style sheet object.
     pub fn style_sheet_generation(&self, node: NodeId) -> u32 {
         self.resources.sheet_generations.get(&node).copied().unwrap_or(0)
     }
@@ -464,7 +463,9 @@ impl Dom {
             return;
         }
         let ev = ResourceEvent { node: self.id_of(idx), kind, reason };
-        if kind == ResourceKind::StyleText && reason == ResourceReason::ChildrenChanged {
+        if matches!((kind, reason), (ResourceKind::StyleText | ResourceKind::Stylesheet, ResourceReason::Connected)
+            | (ResourceKind::StyleText, ResourceReason::ChildrenChanged))
+        {
             let generation = self.resources.sheet_generations.entry(ev.node).or_default();
             *generation = generation.wrapping_add(1);
         }

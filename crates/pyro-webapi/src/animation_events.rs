@@ -568,47 +568,54 @@ fn update(page: &Rc<PageDom>, defer: bool) {
             Err(_) => FxHashSet::default(),
         };
         let mut animations = state.animations.borrow_mut();
-        let before = animations.len();
-        animations.retain(|known| {
-            let keep = wanted.iter().any(|(el, pseudo, a)| {
-                *el == known.el && *pseudo == known.pseudo && known.timing.as_ref().is_some_and(|t| t.same_run(a))
-            });
-            if !keep {
-                known.live.set(false);
-                if !known.ended.get() && dom.is_alive(known.el) && dom.is_connected(known.el).unwrap_or(false) {
-                    planned.push(Planned {
-                        el: known.el,
-                        pseudo: pseudo_name(known.pseudo),
-                        ty: "animationcancel",
-                        transition: false,
-                        name: known.name.clone(),
-                        elapsed_s: 0.0,
-                        after: Duration::ZERO,
-                        live: Rc::new(Cell::new(true)),
-                        ends: None,
-                        epoch: None,
-                        step: None,
-                    });
-                }
+        let mut previous: Vec<_> = animations.drain(..).map(Some).collect();
+        let mut occurrences = FxHashMap::default();
+        for (index, run) in previous.iter().flatten().enumerate() {
+            occurrences.entry((run.el, run.pseudo, run.name.clone())).or_insert_with(Vec::new).push(index);
+        }
+        let matches: Vec<_> = wanted
+            .into_iter()
+            .rev()
+            .map(|(el, pseudo, animation)| {
+                let known = occurrences
+                    .get_mut(&(el, pseudo, animation.name.clone()))
+                    .and_then(Vec::pop)
+                    .and_then(|index| previous[index].take());
+                (el, pseudo, animation, known)
+            })
+            .collect();
+        let mut changed = false;
+        for known in previous.into_iter().flatten() {
+            changed = true;
+            known.live.set(false);
+            if !known.ended.get() && dom.is_alive(known.el) && dom.is_connected(known.el).unwrap_or(false) {
+                planned.push(Planned {
+                    el: known.el,
+                    pseudo: pseudo_name(known.pseudo),
+                    ty: "animationcancel",
+                    transition: false,
+                    name: known.name.clone(),
+                    elapsed_s: 0.0,
+                    after: Duration::ZERO,
+                    live: Rc::new(Cell::new(true)),
+                    ends: None,
+                    epoch: None,
+                    step: None,
+                });
             }
-            keep
-        });
-        let mut changed = animations.len() != before;
+        }
         // pyro: a run script controls changed: its object takes the CSS properties script did not
         // override (`animations.js` `cssFollow`), in a task.
         let mut scripted_changed = false;
         let mut any_trigger = false;
         // (Each known run is one wanted animation's: two of one name are two runs.)
-        let mut claimed: FxHashSet<u64> = FxHashSet::default();
-        for (el, pseudo, animation) in wanted {
-            if let Some(known) = animations.iter_mut().find(|known| {
-                !claimed.contains(&known.id)
-                    && known.el == el
-                    && known.pseudo == pseudo
-                    && known.timing.as_ref().is_some_and(|t| t.same_run(&animation))
-            })
-            {
-                claimed.insert(known.id);
+        for (el, pseudo, animation, known) in matches.into_iter().rev() {
+            if let Some(mut known) = known {
+                let timing = known.timing.as_mut().unwrap();
+                if timing.index != animation.index {
+                    timing.index = animation.index;
+                    changed = true;
+                }
                 // pyro: new times change the run, which goes on from its start (CSS Animations 1
                 // § 3), its events planned again.
                 if !known.timing.as_ref().unwrap().same_times(&animation) {
@@ -632,7 +639,7 @@ fn update(page: &Rc<PageDom>, defer: bool) {
                             known.ended.set(false);
                         }
                         let (local, held) = (known.local_ms(now_ms), known.paused_at.is_some());
-                        plan_animation(known, local, 1.0, held, &mut planned);
+                        plan_animation(&mut known, local, 1.0, held, &mut planned);
                     }
                 }
                 // A change of how it plays: paused holds its local time,
@@ -666,9 +673,10 @@ fn update(page: &Rc<PageDom>, defer: bool) {
                     scripted_changed |= scripted_ids.contains(&known.id);
                     if replan && !scripted_ids.contains(&known.id) {
                         let (local, held) = (known.local_ms(now_ms), known.paused_at.is_some());
-                        plan_animation(known, local, 1.0, held, &mut planned);
+                        plan_animation(&mut known, local, 1.0, held, &mut planned);
                     }
                 }
+                animations.push(known);
                 continue;
             }
             changed = true;
@@ -1048,6 +1056,7 @@ fn transitions_from_changes(
     }
     let rules = state.rules(dom, style);
     let mut starting = Starting::default();
+    let mut hidden = FxHashSet::default();
     for (el, pseudo, before, now) in changes {
         // The document's own tree only: the rules are the document's (a
         // document rule does not style a shadow tree's elements).
@@ -1087,6 +1096,9 @@ fn transitions_from_changes(
             keep_hidden_content(state, dom, style, &rules, el);
         } else if is_none {
             drop_hidden_content(state, dom, el);
+            if !was_none {
+                hidden.insert(el);
+            }
         }
         if was_content {
             reveal_hidden_content(state, dom, style, &rules, el, now_ms, &mut starting);
@@ -1102,6 +1114,26 @@ fn transitions_from_changes(
         }
     }
     starting.commit(state, planned);
+    if !hidden.is_empty() {
+        let mut running = state.transitions.borrow_mut();
+        let previous = running.len();
+        running.retain(|transition| {
+            if !hidden.iter().any(|&root| root == transition.el || is_ancestor(dom, root, transition.el)) {
+                return true;
+            }
+            if transition.live.replace(false) && !transition.ended.get() {
+                let local = state.scripted.borrow().values().find(|effect| effect.css_id() == Some(transition.id))
+                    .and_then(|effect| effect.current(now_ms)).unwrap_or(now_ms - transition.start_ms);
+                let mut event = cancel_event(transition.el, transition.pseudo, &transition.name);
+                event.elapsed_s = (local - transition.delay_ms).clamp(0.0, transition.duration_ms) / 1000.0;
+                planned.push(event);
+            }
+            false
+        });
+        if running.len() != previous {
+            state.bump();
+        }
+    }
 }
 
 /// Whether `el` (after-change style `now`) runs a discrete transition of `display` (or `all`).

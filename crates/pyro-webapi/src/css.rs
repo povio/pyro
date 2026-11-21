@@ -298,17 +298,7 @@ impl StyleData {
     fn font_block(&self, text: &str) -> Option<pyro_dom::font_face::DescriptorBlock> {
         let StyleSource::Rule { owner, node } = &self.source else { return None };
         if !matches!(node.kind, RuleKind::Other { rule_type: 5, .. }) { return None; }
-        let base = match owner {
-            SheetOwner::Node(hold, _) => {
-                let dom = hold.page.dom.borrow();
-                let base = dom.document_base_url(hold.page.document()).unwrap_or("about:blank");
-                hold.page.layout().style().sheet_base_url(&dom, hold.id, base).unwrap_or_else(|| base.to_owned())
-            }
-            SheetOwner::Constructed(sheet) => sheet.import.as_ref().map(|import| import.href.clone()).or_else(|| {
-                Some(sheet.page.upgrade()?.dom.borrow().document_data(sheet.document).ok()?.url.to_string())
-            }).unwrap_or_else(|| "about:blank".into()),
-        };
-        Some(pyro_dom::font_face::DescriptorBlock::parse(text, &base))
+        Some(owner.font_descriptors(text))
     }
 
     fn names(&self) -> Vec<String> {
@@ -758,9 +748,15 @@ impl RuleNode {
         }
     }
 
-    fn css_text(&self) -> String {
+    fn css_text(&self, owner: &SheetOwner) -> String {
         match &self.kind {
             RuleKind::ViewTransition { text, .. } => text.clone(),
+            RuleKind::Other { rule_type: 5, text } => {
+                let text = text.borrow();
+                let body = split_block(&text).map_or("", |(_, body)| body);
+                let descriptors = owner.font_descriptors(body).css_text();
+                if descriptors.is_empty() { "@font-face { }".into() } else { format!("@font-face {{ {descriptors} }}") }
+            }
             RuleKind::Other { rule_type: 8, text } => {
                 let text = text.borrow();
                 let Some((head, body)) = split_block(&text) else { return String::new() };
@@ -778,7 +774,7 @@ impl RuleNode {
                 if !list.rules.borrow().is_empty() {
                     let mut lines = Vec::new();
                     if !decls.is_empty() { lines.push(decls); }
-                    lines.extend(list.rules.borrow().iter().map(|rule| rule.css_text()).filter(|text| !text.is_empty()));
+                    lines.extend(list.rules.borrow().iter().map(|rule| rule.css_text(owner)).filter(|text| !text.is_empty()));
                     format!("{} {{\n  {}\n}}", selector.borrow(), lines.join("\n  "))
                 } else if decls.is_empty() {
                     format!("{} {{ }}", selector.borrow())
@@ -794,7 +790,7 @@ impl RuleNode {
                     format!("@{name} {prelude} {{\n")
                 };
                 for rule in list.rules.borrow().iter() {
-                    let text = rule.css_text();
+                    let text = rule.css_text(owner);
                     if text.is_empty() { continue; }
                     out.push_str("  ");
                     out.push_str(&text);
@@ -1160,7 +1156,7 @@ fn define_rule<C: JsClass<Data = RuleData>>(def: &mut ClassDef<C>) {
         }))
     });
     // Setting a rule's cssText does nothing (CSSOM).
-    def.accessor("cssText", |s, r| Ok(s.string(&r.node()?.css_text())), |_s, _r, _v| Ok(()));
+    def.accessor("cssText", |s, r| Ok(s.string(&r.node()?.css_text(&r.owner))), |_s, _r, _v| Ok(()));
     def.getter("parentRule", |s, r| match r.node()?.parent.borrow().upgrade() {
         Some(parent) => Ok(rule_wrapper(s, &parent, &r.owner)?.value()),
         None => Ok(s.null()),
@@ -2141,6 +2137,19 @@ pub enum SheetOwner {
 }
 
 impl SheetOwner {
+    fn font_descriptors(&self, text: &str) -> pyro_dom::font_face::DescriptorBlock {
+        let base = match self {
+            SheetOwner::Node(hold, _) => {
+                let dom = hold.page.dom.borrow();
+                let base = dom.document_base_url(hold.page.document()).unwrap_or("about:blank");
+                hold.page.layout().style().sheet_base_url(&dom, hold.id, base).unwrap_or_else(|| base.to_owned())
+            }
+            SheetOwner::Constructed(sheet) => sheet.import.as_ref().map(|import| import.href.clone()).or_else(|| {
+                Some(sheet.page.upgrade()?.dom.borrow().document_data(sheet.document).ok()?.url.to_string())
+            }).unwrap_or_else(|| "about:blank".into()),
+        };
+        pyro_dom::font_face::DescriptorBlock::parse(text, &base)
+    }
     /// Another reference to the same sheet.
     fn hold(&self) -> JsResult<SheetOwner> {
         Ok(match self {
@@ -2491,11 +2500,14 @@ fn apply_sheet_disabled(page: &PageDom, node: NodeId, disabled: bool) {
 /// pyro: `disabled` of `node`'s current sheet object (`HTMLStyleElement.disabled`): the same cell
 /// as its wrappers' `disabled`.
 pub(crate) fn current_sheet_disabled(page: &PageDom, node: NodeId) -> bool {
-    sheet_flag(page, node, SheetGeneration::now(page, node)).get()
+    page.dom.borrow().is_connected(node).unwrap_or(false) && sheet_flag(page, node, SheetGeneration::now(page, node)).get()
 }
 
 /// pyro: sets `disabled` of `node`'s current sheet object (`HTMLStyleElement.disabled`).
 pub(crate) fn set_current_sheet_disabled(page: &PageDom, node: NodeId, disabled: bool) {
+    if !page.dom.borrow().is_connected(node).unwrap_or(false) {
+        return;
+    }
     sheet_flag(page, node, SheetGeneration::now(page, node)).set(disabled);
     apply_sheet_disabled(page, node, disabled);
 }
@@ -2551,8 +2563,10 @@ impl JsClass for StyleSheet {
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
         def.getter("ownerNode", |s, sh| match &sh.owner {
-            SheetOwner::Node(h, _) => Ok(crate::node::wrap_node(s, &h.page, h.id)?.value()),
-            SheetOwner::Constructed(_) => Ok(s.null()),
+            SheetOwner::Node(h, _) if sh.owner.is_current() && h.page.dom.borrow().is_connected(h.id).js()? => {
+                Ok(crate::node::wrap_node(s, &h.page, h.id)?.value())
+            }
+            _ => Ok(s.null()),
         });
         def.getter("parentStyleSheet", |s, sh| match &sh.owner {
             SheetOwner::Constructed(c) => match &c.import {

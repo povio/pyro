@@ -343,8 +343,38 @@ pub fn compute_flexbox_layout(
     });
 
     // The size of the container should be floored by the padding and border
-    let styled_based_known_dimensions =
+    let mut styled_based_known_dimensions =
         known_dimensions.or(min_max_definite_size.or(clamped_style_size).maybe_max(padding_border_sum));
+
+    debug_log!("FLEX:", dbg:style.flex_direction());
+    let height_from_ratio = aspect_ratio.is_some() && style.size().height.is_auto();
+    drop(style);
+    if let Some(preferred) = styled_based_known_dimensions.height.filter(|_| {
+        inputs.sizing_mode == SizingMode::InherentSize && known_dimensions.height.is_none() && !height_from_ratio
+    }) {
+        let bounds = tree.get_flexbox_child_style(node);
+        let content = |keyword: Dimension| {
+            matches!(keyword.tag(), crate::CompactLength::MIN_CONTENT_TAG | crate::CompactLength::MAX_CONTENT_TAG)
+        };
+        let minimum = content(bounds.min_size_keyword().height);
+        let maximum = content(bounds.max_size_keyword().height);
+        drop(bounds);
+        if minimum || maximum {
+            let intrinsic = tree.measure_child_size(
+                node,
+                Size { width: styled_based_known_dimensions.width, height: None },
+                parent_size,
+                Size { height: AvailableSpace::MaxContent, ..inputs.available_space },
+                SizingMode::ContentSize,
+                AbsoluteAxis::Vertical,
+                inputs.vertical_margins_are_collapsible,
+            );
+            styled_based_known_dimensions.height = Some(preferred
+                .maybe_min(maximum.then_some(intrinsic))
+                .maybe_max(minimum.then_some(intrinsic))
+                .maybe_max(min_size.height));
+        }
+    }
 
     // pyro: a container whose width is not known yet (it shrinks to fit) resolves its items'
     // percentage padding and margins against zero while it finds its width, then lays them out
@@ -365,7 +395,6 @@ pub fn compute_flexbox_layout(
                         .any(|m| m.into_raw().uses_percentage()))
         })
     {
-        drop(style);
         let width = compute_flexbox_layout(
             tree,
             node,
@@ -402,9 +431,6 @@ pub fn compute_flexbox_layout(
             return LayoutOutput::from_outer_size(Size { width, height });
         }
     }
-
-    debug_log!("FLEX:", dbg:style.flex_direction());
-    drop(style);
 
     // Normalize the definiteness flags: they only apply to dimensions which were passed in as known
     // by the parent. Dimensions resolved from the node's own style are always definite.

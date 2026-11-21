@@ -38,6 +38,7 @@
   const isConnected = getter(Node.prototype, 'isConnected');
   const getRootNode = Node.prototype.getRootNode;
   const contains = Node.prototype.contains;
+  const comparePosition = Node.prototype.compareDocumentPosition;
   const htmlInlineStyle = getter(HTMLElement.prototype, 'style');
   const SVGElement_ = typeof SVGElement === 'function' ? SVGElement : null;
   const svgInlineStyle = SVGElement_ !== null ? getter(SVGElement_.prototype, 'style') : null;
@@ -1049,6 +1050,10 @@
     let tries = 0;
     const attempt = () => {
       if (a.pendingGen !== gen || a.pending !== kind) return;
+      if (a.cssOwner && a.css === CSS_ANIMATION) {
+        native.flushPlayback();
+        if (a.pendingGen !== gen || a.pending !== kind) return;
+      }
       // (On a progress-based timeline the task runs at the frame: the timeline takes its scroll
       // position first.)
       if (progressBased(a)) pushScroll();
@@ -1545,11 +1550,11 @@
       if (previous !== null) seekTo(a, previous);
       else updateFinished(a, false, false);
     }
-    get playState() { return playStateOf(brand(animations, this, 'an Animation')); }
+    get playState() { return playStateOf(playbackState(this)); }
     get replaceState() { return brand(animations, this, 'an Animation').replaceState; }
-    get pending() { return brand(animations, this, 'an Animation').pending !== null; }
-    get ready() { return brand(animations, this, 'an Animation').ready.promise; }
-    get finished() { return brand(animations, this, 'an Animation').finished.promise; }
+    get pending() { return playbackState(this).pending !== null; }
+    get ready() { return playbackState(this).ready.promise; }
+    get finished() { return playbackState(this).finished.promise; }
     get overallProgress() {
       const a = brand(animations, this, 'an Animation');
       const ct = currentTimeOf(a);
@@ -1559,8 +1564,8 @@
       if (end === Infinity) return 0;
       return Math.min(Math.max(ct / end, 0), 1);
     }
-    play() { play(override(scripted(brand(animations, this, 'an Animation')), 'playState'), true); }
-    pause() { pause(override(scripted(brand(animations, this, 'an Animation')), 'playState')); }
+    play() { const a = scripted(playbackState(this)); play(a, true); override(a, 'playState'); }
+    pause() { const a = scripted(playbackState(this)); pause(a); override(a, 'playState'); }
     finish() {
       const a = scripted(brand(animations, this, 'an Animation'));
       const rate = effectiveRate(a);
@@ -1695,6 +1700,11 @@
   // state after.
   const CSS_TRANSITION = 0, CSS_ANIMATION = 1;
   const cssRuns = new Map();
+  function playbackState(object) {
+    const a = brand(animations, object, 'an Animation');
+    if (a.cssOwner) native.flushPlayback();
+    return a;
+  }
   class CSSAnimation extends Animation {
     constructor() { throw illegal(); }
     get animationName() { return brand(animations, this, 'a CSSAnimation').cssName; }
@@ -1777,6 +1787,9 @@
     a.css = transition ? CSS_TRANSITION : CSS_ANIMATION;
     a.cssName = name;
     a.cssId = id;
+    a.cssOwner = id == null ? null : target;
+    a.cssPaused = held !== null;
+    a.cssPseudoOrder = pseudo === '::marker' ? 1 : pseudo === '::before' ? 2 : pseudo === '::after' ? 3 : 0;
     a.cssTimelineKey = scrollDriven ? JSON.stringify(timelineText) : null;
     if (trigger !== null && trigger !== undefined && !scrollDriven) {
       armTrigger(a, trigger, held);
@@ -1808,7 +1821,7 @@
       a.startTime = null;
       a.holdTime = 0;
       a.ready = deferred();
-      schedulePending(a, 'play', transition ? start : undefined);
+      schedulePending(a, 'play', id == null ? undefined : start);
     } else {
       a.startTime = start;
       a.holdTime = null;
@@ -1951,15 +1964,20 @@
   // (canceled) leave the list.
   function cssSync(runs) {
     const seen = new Set();
-    for (const run of runs) {
+    for (const [index, run] of runs.entries()) {
       seen.add(run[0]);
       const known = cssRuns.get(run[0]);
       if (known !== undefined) {
+        animations.get(known).cssListOrder = index;
         cssFollow(known, run);
         continue;
       }
       // One run that cannot be made is left out; the others are listed.
-      try { cssRuns.set(run[0], cssRun(run)); } catch {}
+      try {
+        const object = cssRun(run);
+        animations.get(object).cssListOrder = index;
+        cssRuns.set(run[0], object);
+      } catch {}
     }
     for (const [id, object] of cssRuns) {
       if (seen.has(id)) continue;
@@ -1968,8 +1986,9 @@
       // (A run the style dropped no longer waits for its trigger.)
       const gone = animations.get(object);
       if (gone) {
+        gone.cssOwner = null;
         triggered.delete(gone);
-        if (gone.css === CSS_TRANSITION && playStateOf(gone) !== 'finished') cancel(gone);
+        if (gone.css === CSS_ANIMATION || playStateOf(gone) !== 'finished') cancel(gone);
       }
     }
   }
@@ -2087,6 +2106,16 @@
     // `animation-play-state`: the engine's run times one CSS controls alone; script's (or a
     // progress-based one) is paused or played.
     if (ov.has('playState')) return;
+    if (a.cssOwner && !a.scrollDriven && !a.trigger) {
+      const paused = held !== null;
+      if (a.cssPaused !== paused) {
+        a.cssPaused = paused;
+        if (playStateOf(a) !== 'idle') {
+          if (paused) pause(a); else play(a, false);
+        }
+      }
+      return;
+    }
     if (!a.scripted && !a.scrollDriven) return cssFollowPlayState(a, run);
     const state = playStateOf(a);
     if (held !== null) {
@@ -2173,7 +2202,7 @@
     return animation;
   }
 
-  // In composite order: the order the animations were made.
+  // In composite order.
   function relevant(filter) {
     const out = [];
     for (const o of [...live]) {
@@ -2186,8 +2215,17 @@
       if (target && filter(target, a)) out.push(a);
     }
     // CSS transitions, then CSS animations, then script animations.
-    const rank = a => (a.css === undefined ? 2 : a.css);
-    out.sort((x, y) => rank(x) - rank(y) || x.seq - y.seq);
+    const rank = a => a.cssOwner ? a.css : a.viewRun ? 1.5 : 2;
+    out.sort((x, y) => {
+      const type = rank(x) - rank(y);
+      if (type || !x.cssOwner) return type || x.seq - y.seq;
+      if (x.cssOwner !== y.cssOwner) {
+        const pos = apply(comparePosition, x.cssOwner, [y.cssOwner]);
+        return pos & 1 ? x.seq - y.seq : pos & 4 ? -1 : 1;
+      }
+      return x.cssPseudoOrder - y.cssPseudoOrder ||
+        (x.css === CSS_ANIMATION ? x.cssListOrder - y.cssListOrder : x.seq - y.seq);
+    });
     return out.map(a => a.self);
   }
 

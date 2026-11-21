@@ -115,6 +115,57 @@ fn a_streaming_chunk_that_splits_a_style_body_moves_the_revision() {
 }
 
 #[test]
+fn alternate_link_enabling_belongs_to_the_original_element() {
+    let (dom, document) = doc("<link id=s title=alt rel='ALTERNATE StyleSheet' href='s.css'>");
+    let link = find(&dom.borrow(), document, "#s");
+    let mut style = StyleEngine::new(document);
+    style.set_sheet_text(link, "a{}");
+    assert!(!dom.borrow_mut().remove_attribute(link, "disabled").unwrap());
+    assert_eq!(style.sheet_text(&dom.borrow(), link), Some(""));
+    dom.borrow_mut().set_attribute(link, "disabled", "").unwrap();
+    dom.borrow_mut().remove_attribute(link, "disabled").unwrap();
+    assert_eq!(style.sheet_text(&dom.borrow(), link), Some("a{}"));
+    let copy = dom.borrow_mut().clone_node(link, false, None).unwrap();
+    let head = dom.borrow().parent(link).unwrap().unwrap();
+    dom.borrow_mut().append_child(head, copy).unwrap();
+    style.set_sheet_text(copy, "a{}");
+    assert_eq!(style.sheet_text(&dom.borrow(), copy), Some(""));
+    assert_eq!(style.sheet_own_text(copy), Some("a{}"));
+}
+
+#[test]
+fn preferred_sheet_name_survives_removal_of_its_first_owner() {
+    let (dom, document) = doc("<style title=A>a{}</style><style title=B>b{}</style><style title=A>c{}</style>");
+    let first = find(&dom.borrow(), document, "style");
+    let head = dom.borrow().parent(first).unwrap().unwrap();
+    dom.borrow_mut().remove_child(head, first).unwrap();
+    let mut style = StyleEngine::new(document);
+    style.discover_style_elements(&dom.borrow());
+    let mut texts = Vec::new();
+    style.for_each_author_sheet(&dom.borrow(), &mut |text| texts.push(text.to_owned()));
+    assert_eq!(texts, ["c{}"]);
+}
+
+#[test]
+fn link_sheet_revision_tracks_whether_the_loaded_text_applies() {
+    let (dom, document) = doc("<link id=sheet rel=stylesheet href='sheet.css'>");
+    let link = find(&dom.borrow(), document, "#sheet");
+    let mut style = StyleEngine::new(document);
+    style.set_sheet_text(link, "p{}");
+    let enabled = style.sheet_revision(&dom.borrow(), link);
+    for (attribute, value) in [("disabled", ""), ("rel", "icon")] {
+        dom.borrow_mut().set_attribute(link, attribute, value).unwrap();
+        assert_eq!(style.sheet_text(&dom.borrow(), link), Some(""));
+        assert_ne!(style.sheet_revision(&dom.borrow(), link), enabled);
+        assert_eq!(style.sheet_own_text(link), Some("p{}"));
+        dom.borrow_mut().remove_attribute(link, attribute).unwrap();
+        dom.borrow_mut().set_attribute(link, "rel", "stylesheet").unwrap();
+        assert_eq!(style.sheet_text(&dom.borrow(), link), Some("p{}"));
+        assert_eq!(style.sheet_revision(&dom.borrow(), link), enabled);
+    }
+}
+
+#[test]
 fn the_sheets_key_follows_the_style_text_and_connected_owners() {
     let (dom, d) = doc("<head><style id=s>p{}</style></head><body id=b></body>");
     let s = find(&dom.borrow(), d, "#s");

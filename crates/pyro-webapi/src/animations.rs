@@ -117,6 +117,17 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         Ok(s.number(page.timeline_now_ms()))
     })?;
     natives.set_atom("now", now.value())?;
+    let observed = std::cell::Cell::new(None);
+    let flush = s.function("flushPlayback", move |s, _this, _a| {
+        let page = page_of(s)?;
+        crate::animation_events::before_render(&page);
+        let generation = page.animation_events.generation.get();
+        if observed.replace(Some(generation)) != Some(generation) {
+            with_css_runs(s, &page)?;
+        }
+        Ok(s.undefined())
+    })?;
+    natives.set_atom("flushPlayback", flush.value())?;
     // `fn` as a task of the page's event loop, `ms` from now.
     let schedule = s.function("schedule", |s, _this, a| {
         let ms = a.get(0).to_number()?;

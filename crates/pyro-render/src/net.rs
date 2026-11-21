@@ -210,15 +210,11 @@ impl NetProvider for Provider {
         // (A frame document's own sheets come with the snapshot too.)
         let plain = blitz_traits::net::FetchOptions { client: None, ..options.clone() }.is_default();
         self.outstanding.fetch_add(1, Ordering::AcqRel);
-        // A data: URL holds its body: neither the sheets nor the cache (keyed
-        // by the whole, possibly megabytes long, URL) can hold it for less.
         let inline = url.starts_with("data:");
         let fetcher = fetcher.unwrap();
         let cacheable = !inline && !(options.destination == blitz_traits::net::Destination::Image && fetcher.manages_image_bodies());
-        let cached = || self.cache.lock().ok().and_then(|c| c.get(&key).cloned());
-        let ready: Option<(Bytes, Meta)> = if !cacheable {
-            None
-        } else if !plain {
+        let cached = || cacheable.then(|| self.cache.lock().ok()?.get(&key).cloned()).flatten();
+        let ready: Option<(Bytes, Meta)> = if !plain {
             cached()
         } else {
             // A sheet's text is decoded already: as UTF-8 behind a byte order

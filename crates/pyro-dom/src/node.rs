@@ -54,6 +54,7 @@ pub enum DocumentKind {
 
 #[derive(Debug)]
 pub struct DocumentData {
+    pub(crate) preferred_sheet_name: Option<Box<str>>,
     pub raster_budget: pyro_raster::PageRasters,
     pub kind: DocumentKind,
     pub quirks: QuirksMode,
@@ -343,6 +344,7 @@ pub type Atom = style::Atom;
 
 #[derive(Debug)]
 pub struct ElementData {
+    pub(crate) link_explicitly_enabled: bool,
     pub name: QualName,
     /// Read freely; written only through the methods that keep `id` and
     /// `classes` in step (`set_attrs`, `push_attr`, `remove_attr`,
@@ -394,6 +396,7 @@ pub mod element_flags {
 impl ElementData {
     pub fn new(name: QualName) -> Self {
         ElementData {
+            link_explicitly_enabled: false,
             name,
             attrs: Vec::new(),
             id: None,
