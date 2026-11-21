@@ -1,0 +1,14 @@
+[
+  "css/css-color/parsing/color-computed-powerless.html",
+  "css/css-color/parsing/color-computed-none.html",
+  "css/css-color/parsing/color-computed-color-mix-function.html",
+  "css/css-color/parsing/color-computed-hsl.html",
+  "css/css-color/parsing/color-computed-hwb.html",
+  "css/css-color/parsing/color-computed-relative-color.html",
+  "css/css-color/parsing/color-computed-rgb.html",
+  "css/css-color/parsing/color-computed-lab.html",
+  "css/css-color/parsing/color-valid-color-mix-function.html",
+  "css/css-color/parsing/color-valid-relative-color.html",
+  "css/css-color/parsing/color-valid-hsl.html",
+  "css/css-color/parsing/color-valid-hwb.html"
+]

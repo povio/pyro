@@ -1,0 +1,12 @@
+warning: `pyro-webapi` (test "integration") generated 1 warning
+    Finished `wptiter` profile [optimized + debuginfo] target(s) in 8.27s
+     Running tests/integration.rs (/Users/xban1x/Library/Caches/lightningpanda/studio-r7/color-serialization/target/wptiter/build/pyro-webapi/0c743dbf58a21391/out/integration-0c743dbf58a21391)
+
+running 1 test
+test svg_animated_enumeration_js::missing_polar_colors_across_declaration_paths ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 658 filtered out; finished in 0.08s
+
+real 9.17
+user 15.10
+sys 1.45
