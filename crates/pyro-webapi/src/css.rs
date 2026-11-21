@@ -41,7 +41,11 @@ pub fn parse_declarations(text: &str) -> Vec<Declaration> {
 pub fn serialize_declarations(decls: &[Declaration]) -> String {
     decls
         .iter()
-        .map(|d| format!("{}: {}{};", d.name, d.value, if d.important { " !important" } else { "" }))
+        .map(|d| {
+            let mut name = String::with_capacity(d.name.len());
+            cssparser::serialize_identifier(&d.name, &mut name).unwrap();
+            format!("{name}: {}{};", d.value, if d.important { " !important" } else { "" })
+        })
         .collect::<Vec<_>>()
         .join(" ")
 }
@@ -2936,6 +2940,9 @@ mod tests {
         assert_eq!((&*declarations[0].name, &*declarations[0].value), ("content", r#""\"}/*;""#));
         assert_eq!((&*declarations[1].name, &*declarations[1].value, declarations[1].important), ("--Mixed", "[a;b]", true));
         assert_eq!(declarations[2].value, "blue");
+        let escaped = parse_declarations(r"--a\,b: value;");
+        assert_eq!(escaped[0].name, "--a,b");
+        assert_eq!(parse_declarations(&serialize_declarations(&escaped)), escaped);
     }
 
     #[test]
