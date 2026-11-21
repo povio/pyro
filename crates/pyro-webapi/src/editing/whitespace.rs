@@ -230,9 +230,14 @@ fn deletes_visible_space(
     if loses_width {
         return true;
     }
+    wraps(page, dom, node)
+}
+
+fn wraps(page: &PageDom, dom: &Dom, node: NodeId) -> bool {
     let Some(el) = dom.parent_element(node).ok().flatten() else {
         return false;
     };
+    let layout = page.layout();
     match layout.computed_style_value(dom, el, "text-wrap-mode").as_str() {
         "wrap" => true,
         "" => !layout
@@ -330,6 +335,11 @@ pub(super) fn at(page: &PageDom, dom: &mut Dom, host: NodeId, (node, offset): Po
     if !collapses(page, dom, node) {
         return;
     }
+    let repair = if matches!(repair, Repair::Inserted) && !wraps(page, dom, node) {
+        Repair::Exposed
+    } else {
+        repair
+    };
     let left_char = text[..byte].chars().rev().nth(left as usize);
     let right_char = text[byte..].chars().nth(right as usize);
     let mut parts = Vec::new();
@@ -378,15 +388,13 @@ pub(super) fn inserted(page: &PageDom, dom: &mut Dom, host: NodeId, end: Point, 
     let mut offset = start;
     let mut in_space = false;
     for c in text.chars() {
-        if space(c) && !in_space {
+        if offset == start || (space(c) && !in_space) {
             at(page, dom, host, (end.0, offset), Repair::Inserted);
-        } else if offset == start && !space(c) {
-            at(page, dom, host, (end.0, offset), Repair::Exposed);
         }
         in_space = space(c);
         offset += c.len_utf16() as u32;
     }
     if !in_space {
-        at(page, dom, host, end, Repair::Exposed);
+        at(page, dom, host, end, Repair::Inserted);
     }
 }
