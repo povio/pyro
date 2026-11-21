@@ -1,12 +1,10 @@
 diff -ruN a/color/color_function.rs b/color/color_function.rs
 --- a/color/color_function.rs	2026-11-11 19:55:57
-+++ b/color/color_function.rs	2026-11-19 08:23:17
-@@ -99,6 +99,104 @@
-     /// Return true if the color function has an origin color specified.
-     pub fn has_origin_color(&self) -> bool {
++++ b/color/color_function.rs	2026-11-21 21:11:19
+@@ -101,6 +101,104 @@
          self.origin_color().is_some()
-+    }
-+
+     }
+ 
 +    /// pyro: whether a component of the function is a `calc()`.
 +    pub fn has_calc_component(&self) -> bool {
 +        fn calc<T>(component: &ColorComponent<T>) -> bool {
@@ -103,15 +101,15 @@ diff -ruN a/color/color_function.rs b/color/color_function.rs
 +            },
 +            Self::Alpha(..) => {},
 +        }
-     }
- 
++    }
++
      /// Try to compute the color function to a computed color.
-@@ -199,8 +297,23 @@
+     ///
+     /// If the origin color (if any) is absolute, the function is resolved to an
+@@ -199,8 +297,33 @@
          // Builds a variant where the origin is converted to `$space` (the
          // function's color space) before its channels are read.
          macro_rules! convert {
--            ($variant:ident, $space:expr, $c0:expr, $c1:expr, $c2:expr, $alpha:expr) => {{
--                let converted = abs_origin.map(|o| o.to_color_space($space));
 +            ($variant:ident, $space:expr, $c0:expr, $c1:expr, $c2:expr, $alpha:expr, legacy_hue) => {{
 +                // pyro: the hue a legacy sRGB origin (`rgb()`, a hex color or a keyword) has
 +                // when it is achromatic reads as 0 rather than missing. pyro's CSSOM keeps inline
@@ -129,15 +127,6 @@ diff -ruN a/color/color_function.rs b/color/color_function.rs
 +                    }
 +                    c
 +                });
-                 ColorFunction::$variant(
-                     Optional::from(origin),
-                     $c0.to_computed_value(context, converted.as_ref())?,
-@@ -209,6 +322,16 @@
-                     $alpha.to_computed_value(context, converted.as_ref())?,
-                 )
-             }};
-+            ($variant:ident, $space:expr, $c0:expr, $c1:expr, $c2:expr, $alpha:expr) => {{
-+                let converted = abs_origin.map(|o| o.convert_with_missing($space));
 +                ColorFunction::$variant(
 +                    Optional::from(origin),
 +                    $c0.to_computed_value(context, converted.as_ref())?,
@@ -146,9 +135,12 @@ diff -ruN a/color/color_function.rs b/color/color_function.rs
 +                    $alpha.to_computed_value(context, converted.as_ref())?,
 +                )
 +            }};
-         }
- 
-         Ok(match self {
+             ($variant:ident, $space:expr, $c0:expr, $c1:expr, $c2:expr, $alpha:expr) => {{
+-                let converted = abs_origin.map(|o| o.to_color_space($space));
++                let converted = abs_origin.map(|o| o.convert_with_missing($space));
+                 ColorFunction::$variant(
+                     Optional::from(origin),
+                     $c0.to_computed_value(context, converted.as_ref())?,
 @@ -216,7 +339,7 @@
                  // rgb(..) channels are in the [0..255] range, so map the origin's
                  // components accordingly.
@@ -180,6 +172,27 @@ diff -ruN a/color/color_function.rs b/color/color_function.rs
                      // Drop the legacy flag so the origin is read as a `color()`.
                      result.flags.set(ColorFlags::IS_LEGACY_SRGB, false);
                      result
+@@ -343,18 +466,12 @@
+                     h.resolve()?.map(|angle| normalize_hue(angle.degrees())),
+                     s.resolve()?.map(|s| {
+                         if use_rgb_sytax {
+-                            s.to_number(SATURATION_RANGE).clamp(0.0, SATURATION_RANGE)
++                            s.to_number(SATURATION_RANGE).max(0.0)
+                         } else {
+                             s.to_number(SATURATION_RANGE)
+                         }
+                     }),
+-                    l.resolve()?.map(|l| {
+-                        if use_rgb_sytax {
+-                            l.to_number(LIGHTNESS_RANGE).clamp(0.0, LIGHTNESS_RANGE)
+-                        } else {
+-                            l.to_number(LIGHTNESS_RANGE)
+-                        }
+-                    }),
++                    l.resolve()?.map(|l| l.to_number(LIGHTNESS_RANGE)),
+                     alpha!(alpha),
+                 );
+ 
 diff -ruN a/color/component.rs b/color/component.rs
 --- a/color/component.rs	2026-11-11 19:55:57
 +++ b/color/component.rs	2026-11-18 23:58:11
@@ -479,7 +492,7 @@ diff -ruN a/color/mix.rs b/color/mix.rs
  fn interpolate_premultiplied_component(
 diff -ruN a/color/mod.rs b/color/mod.rs
 --- a/color/mod.rs	2026-11-11 19:55:57
-+++ b/color/mod.rs	2026-11-21 07:44:37
++++ b/color/mod.rs	2026-11-21 21:11:19
 @@ -636,11 +636,17 @@
              ($c:expr) => {{ crate::values::normalize($c.unwrap_or(0.0)) }};
          }
@@ -499,8 +512,12 @@ diff -ruN a/color/mod.rs b/color/mod.rs
  
          let result = match (self.color_space, color_space) {
              // We have simplified conversions that do not need to convert to XYZ
-@@ -652,7 +658,7 @@
+@@ -650,9 +656,11 @@
+             (Srgb, Hwb) => convert::rgb_to_hwb(&components),
+             (Hsl, Srgb) => convert::hsl_to_rgb(&components),
              (Hwb, Srgb) => convert::hwb_to_rgb(&components),
++            (Hsl, Hwb) => convert::rgb_to_hwb(&convert::hsl_to_rgb(&components)),
++            (Hwb, Hsl) => convert::rgb_to_hsl(&convert::hwb_to_rgb(&components)),
              (Lab, Lch) | (Oklab, Oklch) => convert::orthogonal_to_polar(
                  &components,
 -                convert::epsilon_for_range(0.0, if color_space == Lch { 100.0 } else { 1.0 }),

@@ -656,6 +656,8 @@ impl AbsoluteColor {
             (Srgb, Hwb) => convert::rgb_to_hwb(&components),
             (Hsl, Srgb) => convert::hsl_to_rgb(&components),
             (Hwb, Srgb) => convert::hwb_to_rgb(&components),
+            (Hsl, Hwb) => convert::rgb_to_hwb(&convert::hsl_to_rgb(&components)),
+            (Hwb, Hsl) => convert::rgb_to_hsl(&convert::hwb_to_rgb(&components)),
             (Lab, Lch) | (Oklab, Oklch) => convert::orthogonal_to_polar(
                 &components,
                 if color_space == Lch { convert::LCH_CHROMA_EPSILON } else { convert::OKLCH_CHROMA_EPSILON },
