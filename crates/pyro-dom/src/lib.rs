@@ -48,6 +48,7 @@ mod slots;
 pub mod snapshot;
 pub mod style;
 pub mod stylo;
+pub mod svg_aspect_ratio;
 pub mod svg_geometry;
 pub mod svg_string_list;
 pub mod svg_point_list;

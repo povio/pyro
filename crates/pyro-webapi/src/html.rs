@@ -733,6 +733,8 @@ pub enum ElClass {
     SvgTextPath,
     SvgA,
     SvgRoot,
+    SvgSymbol,
+    SvgView,
     SvgClipPath,
     SvgMask,
     SvgPattern,
@@ -782,6 +784,8 @@ pub fn class_for(dom: &Dom, id: NodeId) -> ElClass {
     if e.namespace() == &markup5ever::ns!(svg) {
         return match &*e.name.local {
             "svg" => ElClass::SvgRoot,
+            "symbol" => ElClass::SvgSymbol,
+            "view" => ElClass::SvgView,
             "a" => ElClass::SvgA,
             // SVGGraphicsElement interfaces (SVG 2).
             "stop" => ElClass::SvgStop,
@@ -1009,6 +1013,8 @@ pub fn wrap_element<'s>(s: &Scope<'s>, class: ElClass, d: NodeData, k: Option<Id
         SvgTextPath => s.wrap::<SvgTextPathElement>(d, k),
         SvgA => s.wrap::<SvgAElement>(d, k),
         SvgRoot => s.wrap::<SvgSvgElement>(d, k),
+        SvgSymbol => s.wrap::<SvgSymbolElement>(d, k),
+        SvgView => s.wrap::<SvgViewElement>(d, k),
         SvgClipPath => s.wrap::<SvgClipPathElement>(d, k),
         SvgMask => s.wrap::<SvgMaskElement>(d, k),
         SvgPattern => s.wrap::<SvgPatternElement>(d, k),
@@ -1139,6 +1145,8 @@ pub fn interface_name(class: ElClass) -> &'static str {
         SvgTextPath => SvgTextPathElement::NAME,
         SvgA => SvgAElement::NAME,
         SvgRoot => SvgSvgElement::NAME,
+        SvgSymbol => SvgSymbolElement::NAME,
+        SvgView => SvgViewElement::NAME,
         SvgClipPath => SvgClipPathElement::NAME,
         SvgMask => SvgMaskElement::NAME,
         SvgPattern => SvgPatternElement::NAME,
@@ -1286,6 +1294,8 @@ pub(crate) fn wrap_new_html_element<'s>(
         SvgTextPath => crate::node::wrap_new_node::<SvgTextPathElement>(s, page, el, new_target),
         SvgA => crate::node::wrap_new_node::<SvgAElement>(s, page, el, new_target),
         SvgRoot => crate::node::wrap_new_node::<SvgSvgElement>(s, page, el, new_target),
+        SvgSymbol => crate::node::wrap_new_node::<SvgSymbolElement>(s, page, el, new_target),
+        SvgView => crate::node::wrap_new_node::<SvgViewElement>(s, page, el, new_target),
         SvgClipPath => crate::node::wrap_new_node::<SvgClipPathElement>(s, page, el, new_target),
         SvgMask => crate::node::wrap_new_node::<SvgMaskElement>(s, page, el, new_target),
         SvgPattern => crate::node::wrap_new_node::<SvgPatternElement>(s, page, el, new_target),
@@ -3626,7 +3636,14 @@ simple_class!(SvgGraphicsElement, "SVGGraphicsElement", SvgElement, |def| {
         crate::canvas::rect_value(s, page, false, pyro_dom::svg_geometry::bbox(&dom, layout.style(), n.id))
     });
 });
+fn svg_aspect_ratio<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
+    def.getter("preserveAspectRatio", |s, n| collections::animated_aspect(s, n));
+}
+
+simple_class!(SvgSymbolElement, "SVGSymbolElement", SvgGraphicsElement, svg_aspect_ratio);
+simple_class!(SvgViewElement, "SVGViewElement", SvgElement, svg_aspect_ratio);
 simple_class!(SvgSvgElement, "SVGSVGElement", SvgGraphicsElement, |def| {
+    svg_aspect_ratio(def);
     def.method("createSVGPoint", 0, |s, _, _| collections::detached_point(s, 0.0, 0.0));
     def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_324)?.value()));
     def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_327)?.value()));
@@ -3763,6 +3780,7 @@ simple_class!(SvgStopElement, "SVGStopElement", SvgElement, |def| {
 static LEN_411: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: "textLength", initial: "0", dir: collections::SvgLengthDir::Other, slot: 411 };
 static LEN_414: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: "startOffset", initial: "0", dir: collections::SvgLengthDir::Other, slot: 414 };
 simple_class!(SvgImageElement, "SVGImageElement", SvgGraphicsElement, |def| {
+    svg_aspect_ratio(def);
     svg_href(def);
     def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_324)?.value()));
     def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_327)?.value()));
@@ -3904,6 +3922,7 @@ simple_class!(SvgMaskElement, "SVGMaskElement", SvgElement, |def| {
     svg_enum!(def, "maskContentUnits", MASK_CONTENT_UNITS);
 });
 simple_class!(SvgPatternElement, "SVGPatternElement", SvgElement, |def| {
+    svg_aspect_ratio(def);
     svg_href(def);
     def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_324)?.value()));
     def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_327)?.value()));
@@ -3947,6 +3966,7 @@ simple_class!(SvgFilterElement, "SVGFilterElement", SvgElement, |def| {
     svg_enum!(def, "primitiveUnits", PRIMITIVE_UNITS);
 });
 simple_class!(SvgMarkerElement, "SVGMarkerElement", SvgElement, |def| {
+    svg_aspect_ratio(def);
     def.getter("refX", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_366)?.value()));
     def.getter("refY", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_369)?.value()));
     def.getter("markerWidth", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_372)?.value()));
@@ -3983,8 +4003,7 @@ simple_class!(SvgMarkerElement, "SVGMarkerElement", SvgElement, |def| {
 
 // SVG filter primitives (Filter Effects 1): their attributes as SVGAnimatedEnumeration, -String,
 // -Number, -Integer and -Boolean values (`collections`), following the specification's IDL.
-// Not implemented yet: the number lists (`values`, `tableValues`, `kernelMatrix`) and feImage's
-// `preserveAspectRatio`.
+// The number lists (`values`, `tableValues`, `kernelMatrix`) are not yet implemented.
 static FE_BLEND_MODE: collections::SvgEnum =
     collections::SvgEnum { attr: "mode", keywords: &["normal", "multiply", "screen", "darken", "lighten", "overlay", "color-dodge", "color-burn", "hard-light", "soft-light", "difference", "exclusion", "hue", "saturation", "color", "luminosity"], initial: 1, slot: 40 };
 static FE_COLOR_MATRIX_TYPE: collections::SvgEnum =
@@ -4269,6 +4288,7 @@ simple_class!(SvgFeGaussianBlurElement, "SVGFEGaussianBlurElement", SvgElement, 
     });
 });
 simple_class!(SvgFeImageElement, "SVGFEImageElement", SvgElement, |def| {
+    svg_aspect_ratio(def);
     def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_300)?.value()));
     def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_303)?.value()));
     def.getter("width", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_306)?.value()));
@@ -4914,6 +4934,8 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<MathMlElement>();
     engine.register::<SvgGraphicsElement>();
     engine.register::<SvgSvgElement>();
+    engine.register::<SvgSymbolElement>();
+    engine.register::<SvgViewElement>();
     engine.register::<SvgAElement>();
     engine.register::<SvgClipPathElement>();
     engine.register::<SvgMaskElement>();
