@@ -759,6 +759,9 @@ impl FrameHost {
         self.emit(PageEvent::FrameChildFrameCreated { parent: ancestor.id, frame_id: fid.clone() });
         let result = (|| {
             let dom = bindings::create(self, key, "about:blank", &lid)?;
+            if let Some(creator) = &ancestor.page_dom {
+                dom.inherit_initial_referrer(creator);
+            }
             // The initial empty Document is already complete, including during
             // the interval before a non-blank src commits.
             dom.set_ready_state(dom.document(), "complete");

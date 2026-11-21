@@ -78,10 +78,10 @@ pub(crate) fn parse_referrer(page: &crate::page::PageDom, referrer: &str) -> Res
         .base_url(base.as_ref())
         .parse(referrer)
         .map_err(|_| format!("Invalid referrer '{referrer}'"))?;
-    let document = dom.document_data(page.document()).ok().and_then(|d| pyro_net::Url::parse(&d.url).ok());
+    drop(dom);
     Ok(
         if (parsed.scheme() == "about" && parsed.path() == "client")
-            || document.is_none_or(|d| d.origin() != parsed.origin())
+            || page.origin_key() != parsed.origin().ascii_serialization()
         {
             "client".into()
         } else {
