@@ -504,6 +504,32 @@ fn deletion_at_text_edge_preserves_locked_blocks() {
 }
 
 #[test]
+fn paragraph_insertion_leaves_select_subtrees_intact() {
+    let e = env("<body><div id=ed contenteditable><div>L<select><optgroup><option>abc</option><option selected>def</option></optgroup></select>R</div></div></body>");
+    let r = &e.main;
+    eval(r, "ed.focus(); const original = ed.querySelector('select'); const option = original.firstChild.firstChild; getSelection().collapse(option.firstChild,2); document.execCommand('insertParagraph')");
+    assert_eq!(eval(r, "ed.innerHTML"), r#"<div><br></div><div>L<select><optgroup><option>abc</option><option selected="">def</option></optgroup></select>R</div>"#);
+    assert_eq!(eval(r, "[ed.querySelector('select')===original,original.firstChild.firstChild===option,original.selectedIndex,getSelection().focusNode===ed.lastChild.firstChild,getSelection().focusOffset].join()"), "true,true,1,true,0");
+}
+
+#[test]
+fn paragraph_insertion_in_a_phrasing_host_uses_the_caret_style() {
+    let e = env("<body><span id=ed contenteditable style='display:block;white-space:pre'>ab</span>outside</body>");
+    let r = &e.main;
+    eval(r, "ed.focus(); getSelection().collapse(ed.firstChild,1); document.execCommand('insertParagraph')");
+    assert_eq!(eval(r, "ed.innerHTML"), "a\nb");
+    assert_eq!(eval(r, "[ed.childNodes.length,ed.childNodes[1].data,getSelection().focusNode===ed.lastChild,getSelection().focusOffset].join('|')"), "3|\n|true|0");
+    eval(r, "ed.innerHTML='<span style=\"display:block\">ab</span>'; getSelection().collapse(ed.firstChild.firstChild,1); document.execCommand('insertParagraph')");
+    assert_eq!(eval(r, "ed.innerHTML"), "<span style=\"display:block\">a\nb</span>");
+    eval(r, "const blockHost=document.createElement('div'); document.body.append(blockHost); blockHost.contentEditable='true'; blockHost.innerHTML='<span style=\"display:block\">ab</span>'; blockHost.focus(); getSelection().collapse(blockHost.firstChild.firstChild,1); document.execCommand('insertParagraph')");
+    assert_eq!(eval(r, "blockHost.innerHTML"), r#"<span style="display:block">a</span><span style="display:block">b</span>"#);
+    eval(r, "ed.focus()");
+    eval(r, "ed.innerHTML='<div style=\"display:inline;white-space:normal\">ab</div>'; getSelection().collapse(ed.firstChild.firstChild,1); document.execCommand('insertText',false,'\\n')");
+    assert_eq!(eval(r, "ed.innerHTML"), r#"<div style="display:inline;white-space:normal">a<br>b</div>"#);
+    assert_eq!(eval(r, "ed.nextSibling.data"), "outside");
+}
+
+#[test]
 fn contenteditable_line_breaks_arrows_and_words() {
     let e = env("<body><div id=ed contenteditable><p>hello world</p></div></body>");
     let r = &e.main;

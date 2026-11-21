@@ -522,7 +522,7 @@ pub(crate) fn placeholder_if_empty(dom: &mut Dom, block: NodeId) -> Option<Point
     let has_content = dom.descendants(block).ok()?.any(|d| {
         d != block
             && (is_text(dom, d) && dom.char_length(d).unwrap_or(0) > 0
-                || (!is_text(dom, d) && (!is_container(dom, d) || editable_attr(dom, d) == Some(false))))
+                || (!is_text(dom, d) && (!is_container(dom, d) || html_select(dom, d) || editable_attr(dom, d) == Some(false))))
     });
     if has_content {
         return None;
@@ -1106,8 +1106,67 @@ fn in_text_only_element(dom: &Dom, node: NodeId) -> bool {
     })
 }
 
+fn html_select(dom: &Dom, node: NodeId) -> bool {
+    dom.element(node).is_ok_and(|el| el.is_html() && el.local_name() == &markup5ever::local_name!("select"))
+}
+
+/// A select is an atomic box in its containing editor. Option contents
+/// have no editable paragraph position. A point directly on the select
+/// maps to its outside edge; an internal option point falls back to the
+/// start of its enclosing paragraph.
+fn paragraph_point(dom: &Dom, host: NodeId, caret: Point) -> Option<Point> {
+    let select_ancestor = |mut node| loop {
+        if html_select(dom, node) { return Some(node); }
+        if node == host { return None; }
+        node = dom.parent(node).ok()??;
+    };
+    if let Some(select) = select_ancestor(caret.0) {
+        if select == host { return None; }
+        if caret.0 == select {
+            return Some((dom.parent(select).ok()??, dom.index_in_parent(select).ok()? + u32::from(caret.1 != 0)));
+        }
+        return Some((block_of(dom, select, host), 0));
+    }
+    let point = insertion_point(dom, caret);
+    if point != caret && select_ancestor(point.0).is_some() { Some(caret) } else { Some(point) }
+}
+
+/// These hosts must keep the edit inside themselves without creating a
+/// child paragraph. Existing block descendants can still split normally.
+fn cannot_contain_paragraph(dom: &Dom, host: NodeId) -> bool {
+    let tag = local(dom, host);
+    (!is_block(dom, host) && tag != "body")
+        || matches!(tag.as_str(), "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "p" | "dt")
+}
+
+/// A semantic block host can split a descendant rendered as a paragraph,
+/// including a block-styled span. A phrasing host such as span can instead
+/// break the line inside that span without cloning it.
+fn paragraph_for_split(page: &PageDom, dom: &Dom, host: NodeId, node: NodeId, constrained: bool) -> NodeId {
+    let layout = page.layout();
+    let block_host = is_block(dom, host) || local(dom, host) == "body";
+    let mut el = if is_text(dom, node) { dom.parent_element(node).ok().flatten() } else { Some(node) };
+    while let Some(n) = el {
+        if n == host { break; }
+        let semantic_block = is_block(dom, n);
+        if !constrained && semantic_block {
+            return n;
+        }
+        if (block_host || semantic_block) && is_container(dom, n)
+            && !matches!(local(dom, n).as_str(), "button" | "select" | "textarea" | "object")
+        {
+            let display = layout.computed_style_value(dom, n, "display");
+            if display == "block" || (semantic_block && display != "contents" && display != "inline" && !display.starts_with("inline-")) {
+                return n;
+            }
+        }
+        el = dom.parent_element(n).ok().flatten();
+    }
+    host
+}
+
 fn split_block(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point) -> Point {
-    let caret = insertion_point(dom, caret);
+    let Some(caret) = paragraph_point(dom, host, caret) else { return caret };
     // Content that is text only (a `<script>` or `<style>` in the head of a designMode
     // document) gets a linefeed, as in browsers: no element goes into it.
     if in_text_only_element(dom, caret.0) {
@@ -1125,24 +1184,18 @@ fn split_block(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point) -> Poi
         if node == host || is_block(dom, node) { break; }
         ancestor = dom.parent(node).ok().flatten();
     }
-    let mut block = block_of(dom, caret.0, host);
+    let constrained = cannot_contain_paragraph(dom, host);
+    let mut block = paragraph_for_split(page, dom, host, caret.0, constrained);
     let mut caret = caret;
     let display = page.layout().computed_style_value(dom, block, "display");
     let inline_box = display == "inline" || display.starts_with("inline-");
     if block == host {
-        if inline_box {
+        if inline_box || constrained {
             return if crate::edit_commands::newlines_significant_in(page, dom, caret.0) {
                 preserved_break_at(page, dom, host, caret)
             } else {
                 line_break_at(dom, host, caret)
             };
-        }
-        // An inline editing host, heading, term or paragraph can't acquire
-        // child paragraphs. Its surrounding block may lie outside this host.
-        if !is_block(dom, host) && local(dom, host) != "body"
-            || matches!(local(dom, host).as_str(), "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "p" | "dt")
-        {
-            return line_break_at(dom, host, caret);
         }
         // Make the anonymous paragraph containing the caret explicit before
         // splitting it. Neighbouring block elements remain outside it.
@@ -1261,7 +1314,7 @@ fn split_block(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point) -> Poi
         let _ = dom.replace_all(new_block, Some(only_child));
     }
     placeholder_if_empty(dom, block);
-    placeholder_if_empty(dom, new_block).unwrap_or_else(|| host_start(dom, new_block))
+    placeholder_if_empty(dom, new_block).unwrap_or_else(|| paragraph_point(dom, new_block, (new_block, 0)).unwrap_or((new_block, 0)))
 }
 
 /// Caret keys inside a host: ArrowLeft/Right by one character, Home/End to
@@ -1700,9 +1753,24 @@ pub fn insert_line_break(page: &Rc<PageDom>, host: NodeId) {
 }
 
 fn preserved_break_at(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point) -> Point {
-    let point = insertion_point(dom, caret);
+    let Some(point) = paragraph_point(dom, host, caret) else { return caret };
     let at_end = whitespace::at_line_end(page, dom, host, point);
-    // A padding BR in a plaintext editor already supplies the final empty line.
+    let display = page.layout().computed_style_value(dom, host, "display");
+    if !in_text_only_element(dom, point.0) && (cannot_contain_paragraph(dom, host) || display == "inline" || display.starts_with("inline-")) {
+        // A preserved separator is a separate text node. Keep the caret at
+        // the start of the following text or before the existing padding BR.
+        let Ok(doc) = dom.node_document(host) else { return caret };
+        let Ok(lf) = dom.create_text(doc, "\n") else { return caret };
+        let Some(parent) = insert_break_node(dom, host, point, lf) else { return caret };
+        if at_end {
+            if let Ok(padding) = dom.create_text(doc, "\n") {
+                let before = dom.next_sibling(lf).ok().flatten();
+                let _ = dom.insert_before(parent, padding, before);
+            }
+        }
+        return caret_after_break(dom, parent, lf);
+    }
+    // A padding BR in these editors already supplies the final empty line.
     let keep_padding = !is_text(dom, point.0) && plaintext_at(dom, point.0);
     let after = insert_at_point(dom, point, if at_end { "\n\n" } else { "\n" }, !keep_padding);
     if at_end {
@@ -1723,9 +1791,23 @@ fn next_in_block(dom: &Dom, host: NodeId, node: NodeId) -> Option<NodeId> {
 }
 
 fn line_break_at(dom: &mut Dom, host: NodeId, caret: Point) -> Point {
-    let caret = insertion_point(dom, caret);
+    let Some(caret) = paragraph_point(dom, host, caret) else { return caret };
     let Ok(doc) = dom.node_document(host) else { return caret };
     let Ok(br) = dom.create_element(doc, "br") else { return caret };
+    let Some(parent) = insert_break_node(dom, host, caret, br) else { return caret };
+    // Nothing follows on the line inside its block: a placeholder <br> keeps
+    // the new line visible.
+    let next = next_in_block(dom, host, br);
+    if next.is_none_or(|n| is_block(dom, n)) {
+        if let Ok(extra) = dom.create_element(doc, "br") {
+            let after = dom.next_sibling(br).ok().flatten();
+            let _ = dom.insert_before(parent, extra, after);
+        }
+    }
+    caret_after_break(dom, parent, br)
+}
+
+fn insert_break_node(dom: &mut Dom, host: NodeId, caret: Point, node: NodeId) -> Option<NodeId> {
     let (parent, before) = if is_text(dom, caret.0) {
         let n = caret.0;
         let parent = dom.parent(n).ok().flatten().unwrap_or(host);
@@ -1740,19 +1822,14 @@ fn line_break_at(dom: &mut Dom, host: NodeId, caret: Point) -> Point {
     } else {
         (caret.0, dom.child_at(caret.0, caret.1).ok().flatten())
     };
-    let _ = dom.insert_before(parent, br, before);
-    // Nothing follows on the line inside its block: a placeholder <br> keeps
-    // the new line visible.
-    let next = next_in_block(dom, host, br);
-    if next.is_none_or(|n| is_block(dom, n)) {
-        if let Ok(extra) = dom.create_element(doc, "br") {
-            let after = dom.next_sibling(br).ok().flatten();
-            let _ = dom.insert_before(parent, extra, after);
-        }
-    }
-    match dom.next_sibling(br).ok().flatten() {
+    dom.insert_before(parent, node, before).ok()?;
+    Some(parent)
+}
+
+fn caret_after_break(dom: &Dom, parent: NodeId, node: NodeId) -> Point {
+    match dom.next_sibling(node).ok().flatten() {
         Some(t) if is_text(dom, t) => (t, 0),
-        _ => (parent, dom.index_in_parent(br).unwrap_or(0) + 1),
+        _ => (parent, dom.index_in_parent(node).unwrap_or(0) + 1),
     }
 }
 
