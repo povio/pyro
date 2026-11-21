@@ -1022,6 +1022,22 @@ impl StyleEngine {
         })
     }
 
+    pub fn computed_custom_names(&self, dom: &Dom, el: NodeId, pseudo: &crate::stylo::PseudoArg) -> Vec<String> {
+        use crate::stylo::PseudoArg;
+        let computed = match pseudo {
+            PseudoArg::Element => self.stylo_style(dom, el),
+            PseudoArg::Pseudo(pseudo) => self.stylo_pseudo_style(dom, el, pseudo, false),
+            PseudoArg::Invalid => None,
+        };
+        let Some(computed) = computed else { return Vec::new() };
+        let properties = computed.custom_properties();
+        let mut names: Vec<_> = properties.inherited.iter().chain(properties.non_inherited.iter())
+            .filter(|(_, value)| value.is_some()).map(|(name, _)| format!("--{name}")).collect();
+        names.sort_unstable();
+        names.dedup();
+        names
+    }
+
     /// Whether the layout engine records the elements whose computed style a
     /// restyle replaces, for [`Self::take_style_changes`] (told to the engine
     /// before every sync).

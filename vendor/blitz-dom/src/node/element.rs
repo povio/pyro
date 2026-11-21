@@ -210,7 +210,7 @@ pub struct ElementData {
 #[derive(Debug, Clone)]
 pub struct LayoutData {
     pub cache: Cache,
-    pub(crate) calc_size_inputs: [Option<(Option<f32>, f32, Option<f32>)>; 2],
+    pub(crate) calc_size_inputs: [Option<(Option<f32>, Option<f32>, f32, Option<f32>)>; 2],
     pub unrounded_layout: Layout,
     pub final_layout: Layout,
     pub(crate) scrollbar_size_limit: Option<taffy::Size<f32>>,

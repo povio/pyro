@@ -149,6 +149,10 @@ impl LengthPercentage {
         Self::new_percent(Percentage::hundred())
     }
 
+    pub(crate) fn size_identity() -> Self {
+        Self::new_calc(CalcNode::Leaf(ComputedLeaf::Percentage(CalcPercentageLeaf { size_basis: true, ..CalcPercentageLeaf::new(1.0, Optional::Some(NumericBaseType::Length)) })), AllowedNumericType::All)
+    }
+
     fn to_calc_node(&self) -> CalcNode {
         match self.unpack() {
             Unpacked::Length(l) => CalcNode::Leaf(ComputedLeaf::Length(l)),
@@ -162,7 +166,7 @@ impl LengthPercentage {
     pub(crate) fn substitute_size(&self, basis: &Self) -> Self {
         let mut result = self.to_calc_node();
         result.visit_depth_first(|node| {
-            if let CalcNode::Leaf(ComputedLeaf::Percentage(factor)) = node {
+            if let CalcNode::Leaf(ComputedLeaf::Percentage(factor)) = node && factor.size_basis {
                 let mut scale = CalcNode::Leaf(ComputedLeaf::Number(factor.get()));
                 let mut replacement = basis.to_calc_node();
                 if !replacement.try_product_in_place(&mut scale) {
@@ -249,6 +253,9 @@ impl LengthPercentage {
     pub fn new_calc(mut node: CalcNode, clamping_mode: AllowedNumericType) -> Self {
         node.simplify_and_sort();
 
+        if matches!(&node, CalcNode::Leaf(ComputedLeaf::Percentage(p)) if p.size_basis) {
+            return Self::new_calc_unchecked(Box::new(CalcLengthPercentage { clamping_mode, node }));
+        }
         match node {
             CalcNode::Leaf(l) => match l {
                 ComputedLeaf::Length(l) => {
@@ -332,10 +339,15 @@ impl LengthPercentage {
     /// Resolves the percentage.
     #[inline]
     pub fn resolve(&self, basis: Length) -> Length {
+        self.resolve_size(basis, basis)
+    }
+
+    /// Resolves size and percentages against independent references.
+    pub fn resolve_size(&self, size: Length, basis: Length) -> Length {
         match self.unpack() {
             Unpacked::Length(l) => l,
             Unpacked::Percentage(p) => (basis * p.0).normalized(),
-            Unpacked::Calc(c) => c.resolve(basis),
+            Unpacked::Calc(c) => c.resolve_size(size, basis),
         }
     }
 
@@ -680,12 +692,17 @@ impl CalcLengthPercentage {
     /// Resolves the percentage.
     #[inline]
     pub fn resolve(&self, basis: Length) -> Length {
+        self.resolve_size(basis, basis)
+    }
+
+    /// Resolves size and percentages against independent references.
+    pub fn resolve_size(&self, size: Length, basis: Length) -> Length {
         // unwrap() is fine because the conversion below is infallible.
         if let ComputedLeaf::Length(px) = self
             .node
             .resolve_map(|leaf| {
                 Ok(if let ComputedLeaf::Percentage(p) = leaf {
-                    ComputedLeaf::Length(Length::new(basis.px() * p.get()))
+                    ComputedLeaf::Length(Length::new((if p.size_basis { size } else { basis }).px() * p.get()))
                 } else {
                     leaf.clone()
                 })
@@ -857,7 +874,7 @@ impl specified::CalcLengthPercentage {
 
         let node = self.0.node.map_leaves(|leaf| match *leaf {
             Leaf::Percentage(p) => {
-                ComputedLeaf::Percentage(CalcPercentageLeaf::new(p.get(), p.hint))
+                ComputedLeaf::Percentage(p)
             },
             Leaf::Length(l) => ComputedLeaf::Length({
                 let result =

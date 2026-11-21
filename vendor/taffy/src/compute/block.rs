@@ -1144,7 +1144,7 @@ fn compute_inner(
             Some(height) if min_height_is_content => {
                 // pyro: `min-height: calc-size(auto, ...)` is its calculation of the content height
                 let content = match calc_size_min_height {
-                    Some(function) => function.apply(intrinsic_outer_height, |val, basis| tree.calc(val, basis)),
+                    Some(function) => function.apply(intrinsic_outer_height, parent_size.height, |val, size, percent| tree.resolve_size_calculation(val, size, percent)),
                     None => intrinsic_outer_height,
                 };
                 height.max(content.maybe_min(max_size.height))
@@ -1772,7 +1772,7 @@ fn ratio_min_content_width(
     );
     // pyro: `min-width: calc-size(auto, ...)` is its calculation of it.
     let width = match item.calc_size_min_width {
-        Some(function) => function.apply(width, |val, basis| tree.calc(val, basis)),
+        Some(function) => function.apply(width, parent_size.width, |val, size, percent| tree.resolve_size_calculation(val, size, percent)),
         None => width,
     };
     width.maybe_min(item.max_size.width)

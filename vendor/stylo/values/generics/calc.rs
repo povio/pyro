@@ -499,6 +499,11 @@ pub enum CalcType {
 )]
 #[repr(C)]
 pub struct CalcPercentageLeaf {
+    /// Whether the coefficient multiplies the calc-size basis rather than the percentage basis.
+    #[css(skip)]
+    #[animation(constant)]
+    #[serde(default)]
+    pub size_basis: bool,
     /// The percentage value.
     pub value: NoCalcPercentage,
     /// The base type the percentage resolves against, or None if there is
@@ -512,9 +517,14 @@ impl CalcPercentageLeaf {
     /// Builds a percentage leaf with the given percent hint.
     pub fn new(value: f32, hint: Optional<NumericBaseType>) -> Self {
         Self {
+            size_basis: false,
             value: NoCalcPercentage::new(value),
             hint,
         }
+    }
+
+    pub(crate) fn scaled(self, value: f32) -> Self {
+        Self { value: NoCalcPercentage::new(value), ..self }
     }
 
     /// Returns the percentage value as a float.
@@ -575,7 +585,7 @@ pub trait CalcNodeLeaf: Clone + Sized + PartialEq + ToCss + ToTyped + fmt::Debug
     fn unitless_value(&self) -> Option<f32>;
 
     /// Returns the value and percent hint if this leaf is a percentage.
-    fn as_percentage(&self) -> Option<(f32, Optional<NumericBaseType>)>;
+    fn size_coefficient(&self) -> Option<f32>;
 
     /// Returns the canonical value of this leaf in the type's canonical unit,
     /// if there is enough information to determine its numeric value.
@@ -2594,7 +2604,7 @@ impl<L: CalcNodeLeaf> CalcNode<L> {
         W: Write,
     {
         let write_leaf = |leaf: &L, dest: &mut CssWriter<W>, nested: bool| {
-            if SIZE && let Some((factor, _)) = leaf.as_percentage() {
+            if SIZE && let Some(factor) = leaf.size_coefficient() {
                 if factor == 1.0 { return dest.write_str("size"); }
                 if nested { dest.write_char('(')?; }
                 crate::values::serialize_number(factor, dest)?;

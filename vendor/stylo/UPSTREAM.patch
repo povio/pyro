@@ -8545,6 +8545,55 @@ diff -ruN a/values/computed/box.rs b/values/computed/box.rs
  
  /// A computed value for the `-moz-scrollbar-inset-block` / `-inline` properties.
  pub type ScrollbarInset = GenericScrollbarInset<NonNegativeLength>;
+diff -ruN a/values/computed/calc.rs b/values/computed/calc.rs
+--- a/values/computed/calc.rs	2026-11-11 19:55:57
++++ b/values/computed/calc.rs	2026-11-21 16:00:02
+@@ -107,9 +107,9 @@
+         }
+     }
+ 
+-    fn as_percentage(&self) -> Option<(f32, Optional<NumericBaseType>)> {
++    fn size_coefficient(&self) -> Option<f32> {
+         match *self {
+-            Self::Percentage(p) => Some((p.get(), p.hint)),
++            Self::Percentage(p) if p.size_basis => Some(p.get()),
+             _ => None,
+         }
+     }
+@@ -202,7 +202,8 @@
+                 *one += *other;
+             },
+             (&mut Percentage(ref mut one), Percentage(other)) => {
+-                *one = CalcPercentageLeaf::new(one.get() + other.get(), one.combined_hint(other));
++                if one.size_basis != other.size_basis { return Err(()); }
++                *one = one.scaled(one.get() + other.get());
+             },
+             (&mut Number(ref mut one), Number(other)) => {
+                 *one += *other;
+@@ -264,10 +265,10 @@
+         }
+         Ok(match (self, other) {
+             (Length(one), Length(other)) => Length(super::Length::new(op(one.px(), other.px()))),
+-            (Percentage(one), Percentage(other)) => Self::Percentage(CalcPercentageLeaf::new(
+-                op(one.get(), other.get()),
+-                one.combined_hint(other),
+-            )),
++            (Percentage(one), Percentage(other)) => Self::Percentage({
++                if one.size_basis != other.size_basis { return Err(()); }
++                one.scaled(op(one.get(), other.get()))
++            }),
+             (&Number(one), &Number(other)) => Self::Number(op(one, other)),
+             (Angle(one), Angle(other)) => Self::Angle(super::Angle::from_degrees(op(
+                 one.degrees(),
+@@ -296,7 +297,7 @@
+                 *value = Length::new(op(value.px()));
+             },
+             Self::Percentage(p) => {
+-                *p = CalcPercentageLeaf::new(op(p.get()), p.hint);
++                *p = p.scaled(op(p.get()));
+             },
+             Self::Number(value) => {
+                 *value = op(*value);
 diff -ruN a/values/computed/color.rs b/values/computed/color.rs
 --- a/values/computed/color.rs	2026-11-11 19:55:57
 +++ b/values/computed/color.rs	2026-11-19 20:50:37
@@ -8636,7 +8685,7 @@ diff -ruN a/values/computed/image.rs b/values/computed/image.rs
      }
 diff -ruN a/values/computed/length.rs b/values/computed/length.rs
 --- a/values/computed/length.rs	2026-11-11 19:55:57
-+++ b/values/computed/length.rs	2026-11-21 15:41:34
++++ b/values/computed/length.rs	2026-11-21 16:13:36
 @@ -453,6 +453,8 @@
  pub type NonNegativeLengthPercentageOrNormal =
      GenericLengthPercentageOrNormal<NonNegativeLengthPercentage>;
@@ -8686,7 +8735,7 @@ diff -ruN a/values/computed/length.rs b/values/computed/length.rs
 +        if matches!(self, Self::CalcSizeBasis(_)) || matches!(other, Self::CalcSizeBasis(_)) {
 +            return self.prepared_size().animate_size(other.prepared_size(), procedure, allow_keywords);
 +        }
-+        let identity = NonNegative(LengthPercentage::new_percent(Percentage(1.0)));
++        let identity = NonNegative(LengthPercentage::size_identity());
 +        let calculation = |value: &Self, basis: &Self| -> Option<NonNegativeLengthPercentage> {
 +            match (value, basis) {
 +                (Self::CalcSizeAuto(value), Self::CalcSizeAuto(_))
@@ -8700,15 +8749,15 @@ diff -ruN a/values/computed/length.rs b/values/computed/length.rs
 +                | (Self::MinContent, Self::CalcSizeMinContent(_))
 +                | (Self::MaxContent, Self::CalcSizeMaxContent(_))
 +                | (Self::FitContent, Self::CalcSizeFitContent(_)) => Some(identity.clone()),
-+                (Self::LengthPercentage(value) | Self::CalcSizeAny(value), _) if !value.0.has_percentage() => Some(value.clone()),
++                (Self::LengthPercentage(value) | Self::CalcSizeAny(value), _) => Some(value.clone()),
 +                _ => None,
 +            }
 +        };
 +        match (self, other) {
 +            (Self::CalcSizePercentage(from), Self::CalcSizePercentage(to) | Self::LengthPercentage(to)) |
 +            (Self::LengthPercentage(from), Self::CalcSizePercentage(to)) => Ok(Self::CalcSizePercentage(from.animate(to, procedure)?)),
-+            (Self::CalcSizeAny(from), Self::CalcSizePercentage(to)) if !from.0.has_percentage() => Ok(Self::CalcSizePercentage(from.animate(to, procedure)?)),
-+            (Self::CalcSizePercentage(from), Self::CalcSizeAny(to)) if !to.0.has_percentage() => Ok(Self::CalcSizePercentage(from.animate(to, procedure)?)),
++            (Self::CalcSizeAny(from), Self::CalcSizePercentage(to)) |
++            (Self::CalcSizePercentage(from), Self::CalcSizeAny(to)) => Ok(Self::CalcSizePercentage(from.animate(to, procedure)?)),
 +            (Self::Auto, Self::Auto) => Ok(Self::Auto),
 +            (Self::CalcSizeAny(from), Self::CalcSizeAny(to) | Self::LengthPercentage(to)) |
 +            (Self::LengthPercentage(from), Self::CalcSizeAny(to)) => Ok(Self::CalcSizeAny(from.animate(to, procedure)?)),
@@ -8774,15 +8823,26 @@ diff -ruN a/values/computed/length.rs b/values/computed/length.rs
          }
 diff -ruN a/values/computed/length_percentage.rs b/values/computed/length_percentage.rs
 --- a/values/computed/length_percentage.rs	2026-11-11 19:55:57
-+++ b/values/computed/length_percentage.rs	2026-11-20 23:24:22
-@@ -159,6 +159,21 @@
++++ b/values/computed/length_percentage.rs	2026-11-21 16:00:02
+@@ -149,6 +149,10 @@
+         Self::new_percent(Percentage::hundred())
+     }
+ 
++    pub(crate) fn size_identity() -> Self {
++        Self::new_calc(CalcNode::Leaf(ComputedLeaf::Percentage(CalcPercentageLeaf { size_basis: true, ..CalcPercentageLeaf::new(1.0, Optional::Some(NumericBaseType::Length)) })), AllowedNumericType::All)
++    }
++
+     fn to_calc_node(&self) -> CalcNode {
+         match self.unpack() {
+             Unpacked::Length(l) => CalcNode::Leaf(ComputedLeaf::Length(l)),
+@@ -159,6 +163,21 @@
          }
      }
  
 +    pub(crate) fn substitute_size(&self, basis: &Self) -> Self {
 +        let mut result = self.to_calc_node();
 +        result.visit_depth_first(|node| {
-+            if let CalcNode::Leaf(ComputedLeaf::Percentage(factor)) = node {
++            if let CalcNode::Leaf(ComputedLeaf::Percentage(factor)) = node && factor.size_basis {
 +                let mut scale = CalcNode::Leaf(ComputedLeaf::Number(factor.get()));
 +                let mut replacement = basis.to_calc_node();
 +                if !replacement.try_product_in_place(&mut scale) {
@@ -8797,7 +8857,34 @@ diff -ruN a/values/computed/length_percentage.rs b/values/computed/length_percen
      fn map_lengths(&self, mut map_fn: impl FnMut(Length) -> Length) -> Self {
          match self.unpack() {
              Unpacked::Length(l) => Self::new_length(map_fn(l)),
-@@ -640,6 +655,28 @@
+@@ -234,6 +253,9 @@
+     pub fn new_calc(mut node: CalcNode, clamping_mode: AllowedNumericType) -> Self {
+         node.simplify_and_sort();
+ 
++        if matches!(&node, CalcNode::Leaf(ComputedLeaf::Percentage(p)) if p.size_basis) {
++            return Self::new_calc_unchecked(Box::new(CalcLengthPercentage { clamping_mode, node }));
++        }
+         match node {
+             CalcNode::Leaf(l) => match l {
+                 ComputedLeaf::Length(l) => {
+@@ -317,10 +339,15 @@
+     /// Resolves the percentage.
+     #[inline]
+     pub fn resolve(&self, basis: Length) -> Length {
++        self.resolve_size(basis, basis)
++    }
++
++    /// Resolves size and percentages against independent references.
++    pub fn resolve_size(&self, size: Length, basis: Length) -> Length {
+         match self.unpack() {
+             Unpacked::Length(l) => l,
+             Unpacked::Percentage(p) => (basis * p.0).normalized(),
+-            Unpacked::Calc(c) => c.resolve(basis),
++            Unpacked::Calc(c) => c.resolve_size(size, basis),
+         }
+     }
+ 
+@@ -640,15 +667,42 @@
  }
  
  impl CalcLengthPercentage {
@@ -8826,7 +8913,31 @@ diff -ruN a/values/computed/length_percentage.rs b/values/computed/length_percen
      /// Resolves the percentage.
      #[inline]
      pub fn resolve(&self, basis: Length) -> Length {
-@@ -988,8 +1025,23 @@
++        self.resolve_size(basis, basis)
++    }
++
++    /// Resolves size and percentages against independent references.
++    pub fn resolve_size(&self, size: Length, basis: Length) -> Length {
+         // unwrap() is fine because the conversion below is infallible.
+         if let ComputedLeaf::Length(px) = self
+             .node
+             .resolve_map(|leaf| {
+                 Ok(if let ComputedLeaf::Percentage(p) = leaf {
+-                    ComputedLeaf::Length(Length::new(basis.px() * p.get()))
++                    ComputedLeaf::Length(Length::new((if p.size_basis { size } else { basis }).px() * p.get()))
+                 } else {
+                     leaf.clone()
+                 })
+@@ -820,7 +874,7 @@
+ 
+         let node = self.0.node.map_leaves(|leaf| match *leaf {
+             Leaf::Percentage(p) => {
+-                ComputedLeaf::Percentage(CalcPercentageLeaf::new(p.get(), p.hint))
++                ComputedLeaf::Percentage(p)
+             },
+             Leaf::Length(l) => ComputedLeaf::Length({
+                 let result =
+@@ -988,8 +1042,23 @@
                  }
  
                  let (l, r) = procedure.weights();
@@ -8852,7 +8963,7 @@ diff -ruN a/values/computed/length_percentage.rs b/values/computed/length_percen
  
                  Self::new_calc(
                      CalcNode::Sum(vec![one, other].into()),
-@@ -1003,6 +1055,12 @@
+@@ -1003,6 +1072,12 @@
  /// A wrapper of LengthPercentage, whose value must be >= 0.
  pub type NonNegativeLengthPercentage = NonNegative<LengthPercentage>;
  
@@ -9360,11 +9471,12 @@ diff -ruN a/values/generics/basic_shape.rs b/values/generics/basic_shape.rs
  
 diff -ruN a/values/generics/calc.rs b/values/generics/calc.rs
 --- a/values/generics/calc.rs	2026-11-11 19:55:57
-+++ b/values/generics/calc.rs	2026-11-21 16:11:37
-@@ -27,6 +27,30 @@
++++ b/values/generics/calc.rs	2026-11-21 16:16:41
+@@ -26,6 +26,30 @@
+ use style_traits::{CssWriter, ToCss};
  
  use thin_vec::ThinVec;
- 
++
 +// CSS Values 4 specifies the exceptional results before ordinary exponentiation.
 +fn css_pow(base: f32, exponent: f32) -> f32 {
 +    if base.is_nan() || exponent.is_nan() || (base.abs() == 1.0 && exponent.is_infinite()) {
@@ -9388,11 +9500,46 @@ diff -ruN a/values/generics/calc.rs b/values/generics/calc.rs
 +    }
 +    value.log(base)
 +}
-+
+ 
  /// Whether we're a `min` or `max` function.
  #[derive(
-     Clone,
-@@ -1404,7 +1428,7 @@
+@@ -475,6 +499,11 @@
+ )]
+ #[repr(C)]
+ pub struct CalcPercentageLeaf {
++    /// Whether the coefficient multiplies the calc-size basis rather than the percentage basis.
++    #[css(skip)]
++    #[animation(constant)]
++    #[serde(default)]
++    pub size_basis: bool,
+     /// The percentage value.
+     pub value: NoCalcPercentage,
+     /// The base type the percentage resolves against, or None if there is
+@@ -488,9 +517,14 @@
+     /// Builds a percentage leaf with the given percent hint.
+     pub fn new(value: f32, hint: Optional<NumericBaseType>) -> Self {
+         Self {
++            size_basis: false,
+             value: NoCalcPercentage::new(value),
+             hint,
+         }
++    }
++
++    pub(crate) fn scaled(self, value: f32) -> Self {
++        Self { value: NoCalcPercentage::new(value), ..self }
+     }
+ 
+     /// Returns the percentage value as a float.
+@@ -551,7 +585,7 @@
+     fn unitless_value(&self) -> Option<f32>;
+ 
+     /// Returns the value and percent hint if this leaf is a percentage.
+-    fn as_percentage(&self) -> Option<(f32, Optional<NumericBaseType>)>;
++    fn size_coefficient(&self) -> Option<f32>;
+ 
+     /// Returns the canonical value of this leaf in the type's canonical unit,
+     /// if there is enough information to determine its numeric value.
+@@ -1404,7 +1438,7 @@
                  // TODO(emilio): Seems like at least a few of these
                  // special-cases could be removed if we do the math in a
                  // particular order.
@@ -9401,7 +9548,7 @@ diff -ruN a/values/generics/calc.rs b/values/generics/calc.rs
                      value = f32::NAN;
                  } else if value.is_infinite() {
                      if step.is_infinite() {
-@@ -1534,7 +1558,7 @@
+@@ -1534,7 +1568,7 @@
                  if !a_ty.is_number() || !b_ty.is_number() {
                      return Err(());
                  }
@@ -9410,7 +9557,7 @@ diff -ruN a/values/generics/calc.rs b/values/generics/calc.rs
              },
              Self::Sqrt(c) => {
                  let (value, ty) = c.resolve_internal(leaf_to_output_fn)?;
-@@ -1566,7 +1590,7 @@
+@@ -1566,7 +1600,7 @@
                          if !b_ty.is_number() {
                              return Err(());
                          }
@@ -9419,7 +9566,7 @@ diff -ruN a/values/generics/calc.rs b/values/generics/calc.rs
                      },
                      Optional::None => a.ln(),
                  };
-@@ -1923,7 +1947,10 @@
+@@ -1923,7 +1957,10 @@
                  ref mut value,
                  ref mut step,
              } => {
@@ -9431,7 +9578,7 @@ diff -ruN a/values/generics/calc.rs b/values/generics/calc.rs
                      value_or_stop!(value.coerce_to_value(f32::NAN));
                      replace_self_with!(&mut **value);
                      return SimplificationResult::Simplified;
-@@ -2333,7 +2360,7 @@
+@@ -2333,7 +2370,7 @@
                  if let (CalcNode::Leaf(la), CalcNode::Leaf(lb)) = (&**a, &**b)
                      && let (Some(a_val), Some(b_val)) = (la.as_number(), lb.as_number())
                  {
@@ -9440,7 +9587,7 @@ diff -ruN a/values/generics/calc.rs b/values/generics/calc.rs
                      replace_self_with!(&mut result);
                      return SimplificationResult::Simplified;
                  }
-@@ -2369,7 +2396,7 @@
+@@ -2369,7 +2406,7 @@
                      let folded = match b {
                          &mut Optional::Some(ref b) => {
                              if let CalcNode::Leaf(ref lb) = **b {
@@ -9449,7 +9596,7 @@ diff -ruN a/values/generics/calc.rs b/values/generics/calc.rs
                              } else {
                                  None
                              }
-@@ -2554,10 +2581,29 @@
+@@ -2554,10 +2591,29 @@
          res
      }
  
@@ -9467,7 +9614,7 @@ diff -ruN a/values/generics/calc.rs b/values/generics/calc.rs
          W: Write,
      {
 +        let write_leaf = |leaf: &L, dest: &mut CssWriter<W>, nested: bool| {
-+            if SIZE && let Some((factor, _)) = leaf.as_percentage() {
++            if SIZE && let Some(factor) = leaf.size_coefficient() {
 +                if factor == 1.0 { return dest.write_str("size"); }
 +                if nested { dest.write_char('(')?; }
 +                crate::values::serialize_number(factor, dest)?;
@@ -9480,7 +9627,7 @@ diff -ruN a/values/generics/calc.rs b/values/generics/calc.rs
          let write_closing_paren = match self {
              Self::MinMax(_, op) => {
                  dest.write_str(match op {
-@@ -2703,11 +2749,11 @@
+@@ -2703,11 +2759,11 @@
                          dest.write_str(", ")?;
                      }
                      first = false;
@@ -9494,7 +9641,7 @@ diff -ruN a/values/generics/calc.rs b/values/generics/calc.rs
              },
              Self::Sum(ref children) => {
                  let mut first = true;
-@@ -2721,24 +2767,24 @@
+@@ -2721,24 +2777,24 @@
                                      // We can unwrap here, because we already
                                      // checked if the value inside is negative.
                                      negated.map(std::ops::Neg::neg).unwrap();
@@ -9524,7 +9671,7 @@ diff -ruN a/values/generics/calc.rs b/values/generics/calc.rs
                      }
                  }
              },
-@@ -2749,16 +2795,16 @@
+@@ -2749,16 +2805,16 @@
                          match child {
                              Self::Invert(n) => {
                                  dest.write_str(" / ")?;
@@ -9544,7 +9691,7 @@ diff -ruN a/values/generics/calc.rs b/values/generics/calc.rs
                      }
                  }
              },
-@@ -2767,58 +2813,58 @@
+@@ -2767,58 +2823,58 @@
                  ref center,
                  ref max,
              } => {
@@ -9619,7 +9766,7 @@ diff -ruN a/values/generics/calc.rs b/values/generics/calc.rs
              },
              Self::Progress {
                  clamping_mode,
-@@ -2830,28 +2876,28 @@
+@@ -2830,28 +2886,28 @@
                      clamping_mode.to_css(dest)?;
                      dest.write_char(' ')?;
                  }
@@ -11549,7 +11696,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +}
 diff -ruN a/values/specified/calc.rs b/values/specified/calc.rs
 --- a/values/specified/calc.rs	2026-11-11 19:55:57
-+++ b/values/specified/calc.rs	2026-11-21 10:27:21
++++ b/values/specified/calc.rs	2026-11-21 16:00:02
 @@ -305,6 +305,9 @@
          const ANCHOR = 1 << 0;
          /// `anchor-size()` function.
@@ -11560,19 +11707,53 @@ diff -ruN a/values/specified/calc.rs b/values/specified/calc.rs
      }
  }
  
-@@ -927,6 +930,11 @@
-                 if let Ok(t) = NoCalcResolution::parse_dimension(value, unit) {
-                     return Ok(CalcNode::Leaf(Leaf::Resolution(t)));
-                 }
-+                Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError))
-+            },
-+            &Token::Percentage { .. }
-+                if flags.additional_functions.intersects(AdditionalFunctions::CALC_SIZE) =>
-+            {
-                 Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError))
+@@ -464,9 +467,9 @@
+         }
+     }
+ 
+-    fn as_percentage(&self) -> Option<(f32, Optional<NumericBaseType>)> {
++    fn size_coefficient(&self) -> Option<f32> {
+         match *self {
+-            Self::Percentage(p) => Some((p.get(), p.hint)),
++            Self::Percentage(p) if p.size_basis => Some(p.get()),
+             _ => None,
+         }
+     }
+@@ -618,7 +621,8 @@
+                 *one = NoCalcNumber::new(one.value() + other.value());
              },
-             &Token::Percentage { unit_value, .. } => {
-@@ -970,6 +978,15 @@
+             (&mut Percentage(ref mut one), Percentage(other)) => {
+-                *one = CalcPercentageLeaf::new(one.get() + other.get(), one.combined_hint(other));
++                if one.size_basis != other.size_basis { return Err(()); }
++                *one = one.scaled(one.get() + other.get());
+             },
+             (&mut Angle(ref mut one), Angle(other)) => {
+                 *one = NoCalcAngle::from_degrees(one.degrees() + other.degrees());
+@@ -708,10 +712,10 @@
+                 one.value(),
+                 other.value(),
+             )))),
+-            (Percentage(one), Percentage(other)) => Ok(Leaf::Percentage(CalcPercentageLeaf::new(
+-                op(one.get(), other.get()),
+-                one.combined_hint(other),
+-            ))),
++            (Percentage(one), Percentage(other)) => Ok(Leaf::Percentage({
++                if one.size_basis != other.size_basis { return Err(()); }
++                one.scaled(op(one.get(), other.get()))
++            })),
+             (Angle(one), Angle(other)) => Ok(Leaf::Angle(NoCalcAngle::from_degrees(op(
+                 one.degrees(),
+                 other.degrees(),
+@@ -752,7 +756,7 @@
+             Leaf::Angle(one) => *one = NoCalcAngle::from_degrees(op(one.degrees())),
+             Leaf::Time(one) => *one = NoCalcTime::from_seconds(op(one.seconds())),
+             Leaf::Resolution(one) => *one = NoCalcResolution::from_dppx(op(one.dppx())),
+-            Leaf::Percentage(one) => *one = CalcPercentageLeaf::new(op(one.get()), one.hint),
++            Leaf::Percentage(one) => *one = one.scaled(op(one.get())),
+             Leaf::Number(one) => *one = NoCalcNumber::new(op(one.value())),
+             Leaf::ColorComponent(..) | Leaf::TreeCountingFunction(..) | Leaf::RandomKey(..) => {
+                 return Err(());
+@@ -970,6 +974,12 @@
                  let function = CalcNode::math_function(context, name)?;
                  CalcNode::parse(context, input, function, flags)
              },
@@ -11580,15 +11761,12 @@ diff -ruN a/values/specified/calc.rs b/values/specified/calc.rs
 +                if flags.additional_functions.intersects(AdditionalFunctions::CALC_SIZE)
 +                    && ident.eq_ignore_ascii_case("size") =>
 +            {
-+                Ok(CalcNode::Leaf(Leaf::Percentage(CalcPercentageLeaf::new(
-+                    1.0,
-+                    Optional::Some(NumericBaseType::Length),
-+                ))))
++                Ok(CalcNode::Leaf(Leaf::Percentage(CalcPercentageLeaf { size_basis: true, ..CalcPercentageLeaf::new(1.0, Optional::Some(NumericBaseType::Length)) })))
 +            },
              Token::Ident(ident) => {
                  let leaf = match_ignore_ascii_case! { &**ident,
                      "e" => Leaf::Number(NoCalcNumber::new(std::f32::consts::E)),
-@@ -1248,7 +1265,10 @@
+@@ -1248,7 +1258,10 @@
                      })
                  },
                  MathFunction::Random => {
@@ -11600,10 +11778,14 @@ diff -ruN a/values/specified/calc.rs b/values/specified/calc.rs
                          return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
                      }
  
-@@ -1631,6 +1651,23 @@
-             .map_err(|()| ParseError::custom(StyleParseErrorKind::UnspecifiedError))
-     }
- 
+@@ -1627,6 +1640,23 @@
+             ..Default::default()
+         };
+         Self::parse(context, input, function, flags)?
++            .into_length_or_percentage(clamping_mode)
++            .map_err(|()| ParseError::custom(StyleParseErrorKind::UnspecifiedError))
++    }
++
 +    /// pyro: the calculation of a `calc-size()`, its `size` keyword as `100%`.
 +    pub fn parse_calc_size_calculation(
 +        context: &ParserContext,
@@ -11617,14 +11799,10 @@ diff -ruN a/values/specified/calc.rs b/values/specified/calc.rs
 +            ..Default::default()
 +        };
 +        Self::parse_argument(context, input, flags)?
-+            .into_length_or_percentage(clamping_mode)
-+            .map_err(|()| ParseError::custom(StyleParseErrorKind::UnspecifiedError))
-+    }
-+
-     /// Convenience parsing function for percentages.
-     pub fn parse_percentage(
-         context: &ParserContext,
-@@ -1703,6 +1740,30 @@
+             .into_length_or_percentage(clamping_mode)
+             .map_err(|()| ParseError::custom(StyleParseErrorKind::UnspecifiedError))
+     }
+@@ -1703,6 +1733,30 @@
          .map_err(|()| ParseError::custom(StyleParseErrorKind::UnspecifiedError))
      }
  

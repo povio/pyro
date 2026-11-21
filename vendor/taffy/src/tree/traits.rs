@@ -196,6 +196,11 @@ pub trait LayoutPartialTree: TraversePartialTree {
         0.0
     }
 
+    /// Resolve a calc-size expression with independent size and percentage bases.
+    fn resolve_size_calculation(&self, val: *const (), size: f32, _percent: f32) -> f32 {
+        self.resolve_calc_value(val, size)
+    }
+
     /// Set the node's unrounded layout
     fn set_unrounded_layout(&mut self, node_id: NodeId, layout: &Layout);
 

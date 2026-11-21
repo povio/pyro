@@ -20836,9 +20836,9 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +            };
 +            self.dispatch_child_layout(node_id, probe, None).size
 +        });
-+        let apply = |function: &LengthPercentage, size: f32, inset: f32| -> f32 {
++        let apply = |function: &LengthPercentage, size: f32, inset: f32, percent: Option<f32>| -> f32 {
 +            let basis = (size - inset).max(0.0);
-+            function.resolve(CSSPixelLength::new(basis)).px().max(0.0) + inset
++            function.resolve_size(CSSPixelLength::new(basis), CSSPixelLength::new(percent.unwrap_or_default())).px().max(0.0) + inset
 +        };
 +        let previous = |axis, known, has_function: bool| {
 +            if !has_function { return None; }
@@ -20860,7 +20860,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +        if let Some(function) = &functions.width {
 +            let size = inputs.known_dimensions.width.or(measured.map(|size| size.width)).unwrap_or(0.0);
 +            width_basis = Some(size);
-+            let mut width = apply(function, size, box_inset.width);
++            let mut width = apply(function, size, box_inset.width, inputs.parent_size.width);
 +            // A size measured in definite space is the box's fit-content size: the space between
 +            // the calculation of its min-content and max-content sizes (as Blink), not the
 +            // calculation of the fit-content size of its basis.
@@ -20881,11 +20881,11 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +                let max_content = content(AvailableSpace::MaxContent).max(min_content);
 +                if measuring_flex_width {
 +                    let fit = space.clamp(min_content, max_content);
-+                    width = apply(function, fit, box_inset.width);
++                    width = apply(function, fit, box_inset.width, inputs.parent_size.width);
 +                    width_basis = Some(fit);
 +                } else {
-+                    let minimum = apply(function, min_content, box_inset.width);
-+                    width = space.clamp(minimum, apply(function, max_content, box_inset.width).max(minimum));
++                    let minimum = apply(function, min_content, box_inset.width, inputs.parent_size.width);
++                    width = space.clamp(minimum, apply(function, max_content, box_inset.width, inputs.parent_size.width).max(minimum));
 +                    width_basis = None;
 +                }
 +            }
@@ -20898,7 +20898,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +        if let Some(function) = &functions.height {
 +            let size = inputs.known_dimensions.height.or(measured.map(|size| size.height)).unwrap_or(0.0);
 +            height_basis = Some(size);
-+            let height = apply(function, size, box_inset.height).maybe_min(max.height).maybe_max(min.height);
++            let height = apply(function, size, box_inset.height, inputs.parent_size.height).maybe_min(max.height).maybe_max(min.height);
 +            if inputs.known_dimensions.height.is_none() {
 +                self.calc_size_results.push((node_id, 1, height.max(padding_border.height), height_basis));
 +                if column_flex {
@@ -20908,14 +20908,14 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +            inputs.known_dimensions.height = Some(height.max(padding_border.height));
 +        }
 +        if inputs.run_mode == RunMode::PerformLayout {
-+            let limits = |intrinsic: Option<f32>, numeric: Option<Option<f32>>, inset: f32, padding: f32, minimum: Option<f32>, maximum: Option<f32>| {
++            let limits = |percent, intrinsic: Option<f32>, numeric: Option<Option<f32>>, inset: f32, padding: f32, minimum: Option<f32>, maximum: Option<f32>| {
 +                numeric.or_else(|| intrinsic.map(|size| Some((size - inset).max(0.0)))).map(|basis| {
-+                    (basis, (minimum.unwrap_or(0.0).max(padding) - inset).max(0.0), maximum.map(|value| value - inset))
++                    (basis, percent, (minimum.unwrap_or(0.0).max(padding) - inset).max(0.0), maximum.map(|value| value - inset))
 +                })
 +            };
 +            self.nodes[dom_node_id(node_id)].layout_data_mut().calc_size_inputs = [
-+                limits(width_basis, numeric_width, box_inset.width, padding_border.width, min.width, max.width),
-+                limits(height_basis, numeric_height, box_inset.height, padding_border.height, min.height, max.height),
++                limits(inputs.parent_size.width, width_basis, numeric_width, box_inset.width, padding_border.width, min.width, max.width),
++                limits(inputs.parent_size.height, height_basis, numeric_height, box_inset.height, padding_border.height, min.height, max.height),
 +            ];
 +        }
 +        inputs
@@ -22793,7 +22793,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  impl TraversePartialTree for LayoutPassState<'_> {
      type ChildIter<'a>
          = RefCellChildIter<'a>
-@@ -667,7 +2448,16 @@
+@@ -667,7 +2448,21 @@
      }
  
      fn set_unrounded_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -22808,10 +22808,15 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +                *unrounded = *layout;
 +                if let Some(height) = border_height { unrounded.size.height = height; }
 +            });
++    }
++
++    fn resolve_size_calculation(&self, calc_ptr: *const (), size: f32, percent: f32) -> f32 {
++        let calc = unsafe { &*(calc_ptr as *const CalcLengthPercentage) };
++        calc.resolve_size(CSSPixelLength::new(size), CSSPixelLength::new(percent)).px()
      }
  
      fn resolve_calc_value(&self, calc_ptr: *const (), parent_size: f32) -> f32 {
-@@ -675,11 +2465,32 @@
+@@ -675,11 +2470,32 @@
      }
  
      #[inline(always)]
@@ -22844,7 +22849,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          compute_cached_layout(self, node_id, inputs, |tree, node_id, inputs| {
              tree.compute_child_layout_internal(node_id, inputs, None)
          })
-@@ -693,22 +2504,355 @@
+@@ -693,22 +2509,355 @@
          Self: 'a;
  
      fn get_oof_item_style(&self, node_id: NodeId) -> Self::OofItemStyle<'_> {
@@ -23203,7 +23208,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn add_hoisted_children(&mut self, node_id: NodeId, hoisted: &[NodeId]) {
-@@ -718,9 +2862,24 @@
+@@ -718,9 +2867,24 @@
              .borrow_mut()
              .extend(hoisted.iter().copied().map(dom_node_id));
          for &hoisted_id in hoisted {
@@ -23228,7 +23233,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          }
      }
  
-@@ -732,6 +2891,148 @@
+@@ -732,6 +2896,148 @@
      }
  }
  
@@ -23377,7 +23382,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  impl taffy::CacheTree for LayoutPassState<'_> {
      #[inline]
      fn cache_get(
-@@ -739,10 +3040,12 @@
+@@ -739,10 +3045,12 @@
          node_id: NodeId,
          inputs: &taffy::LayoutInput,
      ) -> Option<taffy::LayoutOutput> {
@@ -23394,7 +23399,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -752,9 +3055,11 @@
+@@ -752,9 +3060,11 @@
          inputs: &taffy::LayoutInput,
          layout_output: taffy::LayoutOutput,
      ) {
@@ -23409,7 +23414,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -782,16 +3087,236 @@
+@@ -782,16 +3092,236 @@
          self.child_layout_style(self.node_from_id(child_node_id))
      }
  
@@ -23650,7 +23655,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  }
  
-@@ -844,6 +3369,30 @@
+@@ -844,6 +3374,30 @@
              element.detailed_layout_info = DetailedLayoutInfo::Grid(Box::new(detailed_grid_info));
          }
      }
@@ -23681,7 +23686,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  impl RoundTree for LayoutPassState<'_> {
-@@ -852,7 +3401,19 @@
+@@ -852,7 +3406,19 @@
      }
  
      fn set_final_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -23702,7 +23707,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn is_out_of_flow(&self, node_id: NodeId) -> bool {
-@@ -868,6 +3429,30 @@
+@@ -868,6 +3434,30 @@
      fn get_hoisted_child_id(&self, node_id: NodeId, index: usize) -> NodeId {
          taffy_node_id(self.node_from_id(node_id).hoisted_children.borrow()[index])
      }
@@ -23733,7 +23738,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  pub(crate) struct TaffyDebugTree<'doc>(pub(crate) &'doc BaseDocument);
-@@ -972,3 +3557,212 @@
+@@ -972,3 +3562,212 @@
          })
      }
  }
@@ -42593,7 +42598,7 @@ diff --git a/packages/blitz-dom/src/node/element.rs b/packages/blitz-dom/src/nod
  #[derive(Debug, Clone)]
  pub struct LayoutData {
      pub cache: Cache,
-+    pub(crate) calc_size_inputs: [Option<(Option<f32>, f32, Option<f32>)>; 2],
++    pub(crate) calc_size_inputs: [Option<(Option<f32>, Option<f32>, f32, Option<f32>)>; 2],
      pub unrounded_layout: Layout,
      pub final_layout: Layout,
 +    pub(crate) scrollbar_size_limit: Option<taffy::Size<f32>>,
@@ -53349,7 +53354,7 @@ diff --git a/packages/blitz-dom/src/resolved_style.rs b/packages/blitz-dom/src/r
 +        use style::values::computed::Size;
 +        let node = self.get_node(node_id)?;
 +        let live = node.primary_styles()?;
-+        let (basis, min, max) = node.layout_data().calc_size_inputs[usize::from(!width)]?;
++        let (basis, percent, min, max) = node.layout_data().calc_size_inputs[usize::from(!width)]?;
 +        if !live.writing_mode.is_horizontal() { return None; }
 +        let (live, sampled) = (live.get_position(), sampled.get_position());
 +        let sizes = if width { (&live.width, &sampled.width) } else { (&live.height, &sampled.height) };
@@ -53363,7 +53368,7 @@ diff --git a/packages/blitz-dom/src/resolved_style.rs b/packages/blitz-dom/src/r
 +            _ => return None,
 +        };
 +        let reference = if calculation.0.has_percentage() { basis? } else { 0.0 };
-+        Some(calculation.0.resolve(CSSPixelLength::new(reference)).px().min(max.unwrap_or(f32::INFINITY)).max(min))
++        Some(calculation.0.resolve_size(CSSPixelLength::new(reference), CSSPixelLength::new(percent.unwrap_or_default())).px().min(max.unwrap_or(f32::INFINITY)).max(min))
 +    }
 +
 +    fn resolved_style_value_with_style(
