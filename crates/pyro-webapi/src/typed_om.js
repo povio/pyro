@@ -1260,6 +1260,12 @@
       }
       const text = v.toString();
       const typed = !(v instanceof CSSUnparsedValue) && v.constructor !== CSSStyleValue && !(v instanceof CSSKeywordValue && CSS_WIDE.test(v.value));
+      // A numeric object cannot stand for an opaque shorthand or a CSS grid line.
+      // A CSSStyleValue parsed for the property can still carry its complete grammar.
+      if (v instanceof CSSNumericValue && ((which === 1 && OPAQUE_PROPERTIES.has(name)) ||
+          /^grid-(row|column)-(start|end)$/.test(name))) {
+        throw new TypeError(`Failed to execute '${what}' on 'StylePropertyMap': Invalid type for property`);
+      }
       // A number is no length: unitless 0 parses as one, so a property that takes numbers must take 1.
       if (isUnit(v) && v.unit === 'number' && v.value === 0 && parse(name, '1') === null) {
         throw new TypeError(`Failed to execute '${what}' on 'StylePropertyMap': Invalid type for property`);
