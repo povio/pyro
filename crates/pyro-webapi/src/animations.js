@@ -869,6 +869,44 @@
     return c;
   }
 
+  function keyframeMember(property) {
+    if (property.startsWith('--')) return property;
+    if (property === 'offset') return 'cssOffset';
+    if (property === 'float') return 'cssFloat';
+    return property.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+  }
+
+  function exposedFrames(st) {
+    if (!st.cssFrameSource) return st.cssFrames ?? st.frames;
+    const { target, name, easing } = st.cssFrameSource;
+    const steps = native.animationFrames(target, name);
+    if (!steps) return st.cssFrames ?? [];
+    const frames = [];
+    const underlying = new Map();
+    for (const [offset, timing, composition, properties] of steps) {
+      const frameEasing = timing ?? easing, composite = composition ?? 'auto';
+      let frame = frames.find(f => f.offset === offset && f.easing === frameEasing && f.composite === composite);
+      if (!frame) {
+        frame = { offset, easing: frameEasing, composite };
+        frames.push(frame);
+      }
+      for (const [property, value, base] of properties) {
+        const member = keyframeMember(property);
+        frame[member] = value;
+        underlying.set(member, base);
+      }
+    }
+    for (const offset of [0, 1]) {
+      const missing = [...underlying].filter(([key]) => !frames.some(f => f.offset === offset && Object.hasOwn(f, key)));
+      if (missing.length) {
+        const neutral = { offset, easing, composite: 'replace', ...Object.fromEntries(missing) };
+        if (offset === 0) frames.unshift(neutral);
+        else frames.push(neutral);
+      }
+    }
+    return st.cssFrames = processKeyframes(frames);
+  }
+
   class KeyframeEffect extends AnimationEffect {
     constructor(target, keyframes, options) {
       const self = Reflect.construct(Object, [], new.target);
@@ -876,7 +914,7 @@
       if (arguments.length === 1 && effects.has(target) && effects.get(target).keyframe) {
         const src = effects.get(target);
         st = {
-          keyframe: true, target: src.target, pseudo: src.pseudo, frames: src.cssFrames ?? src.frames, composite: src.composite,
+          keyframe: true, target: src.target, pseudo: src.pseudo, frames: exposedFrames(src), composite: src.composite,
           iterationComposite: src.iterationComposite, timing: { ...src.timing }, animation: null,
         };
       } else {
@@ -932,7 +970,7 @@
     }
     getKeyframes() {
       const st = brand(effects, this, 'a KeyframeEffect');
-      return (st.cssFrames ?? st.frames).map(f => {
+      return exposedFrames(st).map(f => {
         const out = { offset: f.offset, computedOffset: f.computed, easing: f.easing.text, composite: f.composite };
         for (const [key, { value }] of f.values) out[key] = value;
         return out;
@@ -942,6 +980,7 @@
       const st = brand(effects, this, 'a KeyframeEffect');
       st.frames = processKeyframes(keyframes);
       st.cssFrames = null;
+      st.cssFrameSource = null;
       effectChanged(st);
     }
   }
@@ -1768,7 +1807,7 @@
     }
     return null;
   }
-  function cssRun([id, target, transition, name, start, delay, duration, iterations, direction, fill, easing, held, pseudo, timelineText, trigger]) {
+  function cssRun([id, target, transition, name, start, delay, duration, iterations, direction, fill, easing, held, pseudo, timelineText, trigger, keyframeEasing]) {
     // The engine hands over computed easings; one it could not compute is
     // the initial `ease`, as an easing invalid at computed-value time is.
     let parsed;
@@ -1780,10 +1819,10 @@
     if (scrollDriven && timing.duration === 0) timing.duration = 'auto';
     const [timelineValue, rangeStartText, rangeEndText] = scrollDriven ? timelineText : [null, 'normal', 'normal'];
     const effect = new KeyframeEffect(target, null, timing);
+    if (!transition && id != null && !pseudo) effects.get(effect).cssFrameSource = { target, name, easing: keyframeEasing };
     if (transition && id != null) {
       const frames = native.transitionFrames(id).map(([offset, property, value]) => {
-        const member = property.startsWith('--') ? property : property === 'offset' ? 'cssOffset' :
-          property === 'float' ? 'cssFloat' : property.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+        const member = keyframeMember(property);
         return { offset, [member]: value };
       });
       effects.get(effect).cssFrames = processKeyframes(frames);

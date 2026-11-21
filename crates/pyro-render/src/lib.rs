@@ -2188,6 +2188,11 @@ impl Renderer {
         }
     }
 
+    pub fn css_animation_frames(&self, page: u64, key: u64, name: &str) -> Option<Vec<pyro_dom::animation::CssKeyframeStep>> {
+        let mirror = self.mirrors.get(&page)?;
+        mirror.doc.css_animation_frames(mirror.node(key)?, name)
+    }
+
     /// The element or pseudo's timing properties with the renderer's suppression rule omitted.
     pub fn element_timing_style(
         &self, page: u64, key: u64, pseudo: Option<&style::selector_parser::PseudoElement>,

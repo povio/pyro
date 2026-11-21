@@ -119,6 +119,27 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
     natives.set_atom("now", now.value())?;
     // Capture the native endpoints once when constructing the transition's script object.
     // The object can outlive its run or lose its target.
+    let animation_frames = s.function("animationFrames", |s, _, args| {
+        let page = page_of(s)?;
+        let Some(el) = crate::node::opt_node_arg(s, args.get(0), "animationFrames")? else { return Ok(s.null()) };
+        let name = args.get(1).to_string()?;
+        let dom = page.dom.borrow();
+        let layout = page.layout();
+        let Some(steps) = layout.synced_geometry_source(&dom).and_then(|g| g.css_animation_frames(pyro_dom::snapshot::render_key(el), &name)) else {
+            return Ok(s.null());
+        };
+        let mut frames = Vec::with_capacity(steps.len());
+        for (offset, easing, composite, values) in steps {
+            let mut properties = Vec::with_capacity(values.len());
+            for (name, value, underlying) in values {
+                properties.push(s.array(&[s.string(&name), s.string(&value), s.string(&underlying)])?.value());
+            }
+            frames.push(s.array(&[s.number(offset), easing.as_deref().map_or_else(|| s.null(), |v| s.string(v)),
+                composite.as_deref().map_or_else(|| s.null(), |v| s.string(v)), s.array(&properties)?.value()])?.value());
+        }
+        Ok(s.array(&frames)?.value())
+    })?;
+    natives.set_atom("animationFrames", animation_frames.value())?;
     let endpoints = s.function("transitionFrames", |s, _, args| {
         let page = page_of(s)?;
         let id = args.get(0).to_number()? as u64;
@@ -405,6 +426,7 @@ fn with_css_runs<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Option<Objec
                         .value(),
                     None => s.null(),
                 },
+                s.string(&run.keyframe_easing),
             ])?
             .value(),
         );
