@@ -1145,6 +1145,11 @@ pub(crate) fn exec_command(page: &Rc<PageDom>, doc: NodeId, command: &str, value
     let target = command_target(page);
     if let Some(Target::Control(c)) = target {
         return match cmd.as_str() {
+            "inserthtml" => {
+                let Ok(text) = Dom::plaintext_from_html(value) else { return false };
+                control_replace(page, c, None, &text, "insertText", Some(&text));
+                true
+            }
             "delete" => {
                 control_delete(page, c, false, Gran::Character, None);
                 true
@@ -1734,6 +1739,7 @@ pub(crate) fn query_enabled(page: &PageDom, doc: NodeId, command: &str) -> bool 
     };
     match cmd.as_str() {
         "selectall" | "stylewithcss" | "usecss" | "defaultparagraphseparator" => true,
+        "inserthtml" => matches!(command_target(page), Some(Target::Host(_) | Target::Control(_))),
         "copy" => has_range(),
         "cut" => command_target(page).is_some() && has_range(),
         "undo" => !page.undo.borrow().undo.is_empty(),
