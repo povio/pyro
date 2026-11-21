@@ -1,0 +1,408 @@
+{
+ "start": "2026-11-21T21:56:44.281Z",
+ "end": "2026-11-21T21:57:00.139Z",
+ "preciseHost": {
+  "durationSeconds": 15.858,
+  "hostBusyPct": 28.582
+ },
+ "perArm": {
+  "sheet-order-base": {
+   "orders": [
+    1,
+    4,
+    6,
+    7
+   ],
+   "elapsedSeconds": 7.385,
+   "weightedHostBusyPct": 30.45
+  },
+  "sheet-order-fe6f3d382": {
+   "orders": [
+    2,
+    3,
+    5,
+    8
+   ],
+   "elapsedSeconds": 8.472,
+   "weightedHostBusyPct": 26.95
+  }
+ },
+ "perProcess": [
+  {
+   "order": 1,
+   "binary": "sheet-order-base",
+   "start": "2026-11-21T21:56:44.281Z",
+   "end": "2026-11-21T21:56:46.310Z",
+   "durationSeconds": 2.029,
+   "hostBusyPct": 58.821
+  },
+  {
+   "order": 2,
+   "binary": "sheet-order-fe6f3d382",
+   "start": "2026-11-21T21:56:46.310Z",
+   "end": "2026-11-21T21:56:49.379Z",
+   "durationSeconds": 3.069,
+   "hostBusyPct": 35.598
+  },
+  {
+   "order": 3,
+   "binary": "sheet-order-fe6f3d382",
+   "start": "2026-11-21T21:56:49.380Z",
+   "end": "2026-11-21T21:56:51.140Z",
+   "durationSeconds": 1.76,
+   "hostBusyPct": 24.86
+  },
+  {
+   "order": 4,
+   "binary": "sheet-order-base",
+   "start": "2026-11-21T21:56:51.140Z",
+   "end": "2026-11-21T21:56:52.894Z",
+   "durationSeconds": 1.754,
+   "hostBusyPct": 19.046
+  },
+  {
+   "order": 5,
+   "binary": "sheet-order-fe6f3d382",
+   "start": "2026-11-21T21:56:52.894Z",
+   "end": "2026-11-21T21:56:54.762Z",
+   "durationSeconds": 1.868,
+   "hostBusyPct": 23.991
+  },
+  {
+   "order": 6,
+   "binary": "sheet-order-base",
+   "start": "2026-11-21T21:56:54.762Z",
+   "end": "2026-11-21T21:56:56.613Z",
+   "durationSeconds": 1.851,
+   "hostBusyPct": 22.392
+  },
+  {
+   "order": 7,
+   "binary": "sheet-order-base",
+   "start": "2026-11-21T21:56:56.613Z",
+   "end": "2026-11-21T21:56:58.364Z",
+   "durationSeconds": 1.751,
+   "hostBusyPct": 17.535
+  },
+  {
+   "order": 8,
+   "binary": "sheet-order-fe6f3d382",
+   "start": "2026-11-21T21:56:58.364Z",
+   "end": "2026-11-21T21:57:00.139Z",
+   "durationSeconds": 1.775,
+   "hostBusyPct": 17.178
+  }
+ ],
+ "benchmarkSHA256": "604e0e535ea473551ad2d7557f92f3690a9cfdff0013bc6b20e8d1cf847ec9d9",
+ "minOneSecondBusyPct": 14,
+ "maxOneSecondBusyPct": 61,
+ "oneSecondSamples": [
+  {
+   "start": "2026-11-21T21:56:43.386Z",
+   "end": "2026-11-21T21:56:44.389Z",
+   "cpuBusyPct": 31.2
+  },
+  {
+   "start": "2026-11-21T21:56:44.389Z",
+   "end": "2026-11-21T21:56:45.391Z",
+   "cpuBusyPct": 59.8
+  },
+  {
+   "start": "2026-11-21T21:56:45.391Z",
+   "end": "2026-11-21T21:56:46.394Z",
+   "cpuBusyPct": 61
+  },
+  {
+   "start": "2026-11-21T21:56:46.394Z",
+   "end": "2026-11-21T21:56:47.396Z",
+   "cpuBusyPct": 36.7
+  },
+  {
+   "start": "2026-11-21T21:56:47.396Z",
+   "end": "2026-11-21T21:56:48.397Z",
+   "cpuBusyPct": 35.6
+  },
+  {
+   "start": "2026-11-21T21:56:48.397Z",
+   "end": "2026-11-21T21:56:49.400Z",
+   "cpuBusyPct": 32.3
+  },
+  {
+   "start": "2026-11-21T21:56:49.400Z",
+   "end": "2026-11-21T21:56:50.402Z",
+   "cpuBusyPct": 31.9
+  },
+  {
+   "start": "2026-11-21T21:56:50.402Z",
+   "end": "2026-11-21T21:56:51.403Z",
+   "cpuBusyPct": 15.1
+  },
+  {
+   "start": "2026-11-21T21:56:51.403Z",
+   "end": "2026-11-21T21:56:52.406Z",
+   "cpuBusyPct": 14.8
+  },
+  {
+   "start": "2026-11-21T21:56:52.406Z",
+   "end": "2026-11-21T21:56:53.406Z",
+   "cpuBusyPct": 29.9
+  },
+  {
+   "start": "2026-11-21T21:56:53.406Z",
+   "end": "2026-11-21T21:56:54.407Z",
+   "cpuBusyPct": 22.1
+  },
+  {
+   "start": "2026-11-21T21:56:54.407Z",
+   "end": "2026-11-21T21:56:55.408Z",
+   "cpuBusyPct": 20.8
+  },
+  {
+   "start": "2026-11-21T21:56:55.408Z",
+   "end": "2026-11-21T21:56:56.410Z",
+   "cpuBusyPct": 23.6
+  },
+  {
+   "start": "2026-11-21T21:56:56.410Z",
+   "end": "2026-11-21T21:56:57.413Z",
+   "cpuBusyPct": 21.5
+  },
+  {
+   "start": "2026-11-21T21:56:57.413Z",
+   "end": "2026-11-21T21:56:58.414Z",
+   "cpuBusyPct": 14.2
+  },
+  {
+   "start": "2026-11-21T21:56:58.414Z",
+   "end": "2026-11-21T21:56:59.417Z",
+   "cpuBusyPct": 14
+  },
+  {
+   "start": "2026-11-21T21:56:59.417Z",
+   "end": "2026-11-21T21:57:00.419Z",
+   "cpuBusyPct": 21.8
+  }
+ ],
+ "hostIntervals": [
+  {
+   "at": "2026-11-21T21:57:07.324Z",
+   "elapsedMs": 30002,
+   "cpuBusyPct": 22.9,
+   "load": [
+    6.5859375,
+    8.70361328125,
+    14.109375
+   ],
+   "logicalCpu": 10,
+   "pressureLevel": "1",
+   "freePct": 85,
+   "swap": "total = 0.00M  used = 0.00M  free = 0.00M  (encrypted)",
+   "processes": {
+    "other": {
+     "n": 1112,
+     "pctCpu": 40.1,
+     "rssMiB": 33972
+    },
+    "ci-runner": {
+     "n": 4,
+     "pctCpu": 0,
+     "rssMiB": 115
+    }
+   }
+  }
+ ],
+ "adjacentLaneSnapshots": [
+  {
+   "at": "2026-11-21T21:56:15.710Z",
+   "ciWorkerActive": false,
+   "allocation": {
+    "effectiveAt": "2026-11-21T21:54:22.099588+00:00",
+    "hostSlots": null,
+    "lead": 0,
+    "editing": 0,
+    "css": 0,
+    "qa": 1,
+    "diagnostics": 0,
+    "censusShards": 0,
+    "policy": "Sheet-order performance completed and released with 26.91% matched whole-host load. Lead final 9983f74bf verified SHA 9c1e8088\u2026; immutable 42/42 all-complete implementation receipt with zero restarts/watchdog kills, independent QA owns one serial head-only worker; 14 held URLs excluded."
+   },
+   "lanes": {
+    "lead": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "editing": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "css": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "qa": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "diagnostics": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "census": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ci": {
+     "processes": [
+      {
+       "pid": 14341,
+       "state": "SN",
+       "kind": "Runner.Listener",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 0
+    },
+    "unassigned": {
+     "processes": [],
+     "cpuCorePct": 0
+    }
+   }
+  },
+  {
+   "at": "2026-11-21T21:56:45.728Z",
+   "ciWorkerActive": false,
+   "allocation": {
+    "effectiveAt": "2026-11-21T21:56:45.490674+00:00",
+    "hostSlots": null,
+    "lead": 0,
+    "editing": 0,
+    "css": 1,
+    "qa": 0,
+    "diagnostics": 0,
+    "censusShards": 0,
+    "policy": "VideoDecoder 9983f74bf final 42-page independent QA/native/valid film checks complete, release lead/QA. CSS fe6f3d382 compiler released; direct START one sheet-order ABBA/BAAB matched to initial 4/32/128 workload with separate one-second UTC logger. Last full CPU 21.2%, CI listener idle and no compiler."
+   },
+   "lanes": {
+    "lead": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "editing": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "css": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "qa": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "diagnostics": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "census": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ci": {
+     "processes": [
+      {
+       "pid": 14341,
+       "state": "SN",
+       "kind": "Runner.Listener",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 0
+    },
+    "unassigned": {
+     "processes": [],
+     "cpuCorePct": 0
+    }
+   }
+  },
+  {
+   "at": "2026-11-21T21:57:15.721Z",
+   "ciWorkerActive": false,
+   "allocation": {
+    "effectiveAt": "2026-11-21T21:56:45.490674+00:00",
+    "hostSlots": null,
+    "lead": 0,
+    "editing": 0,
+    "css": 1,
+    "qa": 0,
+    "diagnostics": 0,
+    "censusShards": 0,
+    "policy": "VideoDecoder 9983f74bf final 42-page independent QA/native/valid film checks complete, release lead/QA. CSS fe6f3d382 compiler released; direct START one sheet-order ABBA/BAAB matched to initial 4/32/128 workload with separate one-second UTC logger. Last full CPU 21.2%, CI listener idle and no compiler."
+   },
+   "lanes": {
+    "lead": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "editing": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "css": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "qa": {
+     "processes": [
+      {
+       "pid": 61574,
+       "state": "S",
+       "kind": "wpt-runner",
+       "jobs": "1"
+      },
+      {
+       "pid": 61577,
+       "state": "Ss",
+       "kind": "Python",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 89.6
+    },
+    "diagnostics": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "census": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ci": {
+     "processes": [
+      {
+       "pid": 14341,
+       "state": "SN",
+       "kind": "Runner.Listener",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 0
+    },
+    "unassigned": {
+     "processes": [],
+     "cpuCorePct": 0
+    }
+   }
+  }
+ ],
+ "censusAdmissions": [],
+ "qaStart": "2026-11-21T21:50:21.294900+00:00",
+ "qaEnd": "2026-11-21T21:51:08.945900+00:00",
+ "qaTimeMethod": "Head receipt modification time and runner-reported wallMs; approximate times. Receipt already complete before performance probe.",
+ "measuredCensusShardWindows": [],
+ "qaOverlapSeconds": 0,
+ "method": "Aggregate one-second percentages are weighted by exact overlap per process. 30-second host intervals include activity outside perf; process snapshots bracket the run. Hardware counters do not assign competition to a process.",
+ "qaAdmissionAfterProbe": {
+  "releaseTimeSeen": "2026-11-21T21:57:00.139Z",
+  "observation": "Distinct dedicated CSS fe6f3d382 head-only QA and editing 459fad29d compile received direct START only after the eighth arm ended. Neither overlapped this measurement."
+ }
+}
