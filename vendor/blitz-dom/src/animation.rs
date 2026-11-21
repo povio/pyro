@@ -429,7 +429,7 @@ impl BaseDocument {
             }
             let block = keyframe_block(specified, &base);
             let ids: Vec<_> = block.normal_declaration_iter().map(|d| d.id().to_owned()).collect();
-            if ids.is_empty() { continue; }
+            if ids.is_empty() && easing.is_none() && composite.is_none() { continue; }
             let locked = ServoArc::new(self.guard.wrap(block));
             let rules = tree.update_rule_at_level(CascadeLevel::new(CascadeOrigin::Animations), LayerOrder::root(),
                 Some(locked.borrow_arc()), &base_rules, &shared.guards, &mut false).unwrap_or_else(|| base_rules.clone());

@@ -896,12 +896,18 @@
         underlying.set(member, base);
       }
     }
+    if (!underlying.size) return st.cssFrames = [];
     for (const offset of [0, 1]) {
       const missing = [...underlying].filter(([key]) => !frames.some(f => f.offset === offset && Object.hasOwn(f, key)));
       if (missing.length) {
-        const neutral = { offset, easing, composite: 'replace', ...Object.fromEntries(missing) };
-        if (offset === 0) frames.unshift(neutral);
-        else frames.push(neutral);
+        const endpoint = frames.find(f => f.offset === offset && f.easing === easing &&
+          (f.composite === 'auto' || f.composite === 'replace'));
+        if (endpoint) Object.assign(endpoint, Object.fromEntries(missing));
+        else {
+          const neutral = { offset, easing, composite: 'replace', ...Object.fromEntries(missing) };
+          const index = frames.findIndex(f => f.offset > offset);
+          frames.splice(index < 0 ? frames.length : index, 0, neutral);
+        }
       }
     }
     return st.cssFrames = processKeyframes(frames);
@@ -972,7 +978,13 @@
       const st = brand(effects, this, 'a KeyframeEffect');
       return exposedFrames(st).map(f => {
         const out = { offset: f.offset, computedOffset: f.computed, easing: f.easing.text, composite: f.composite };
-        for (const [key, { value }] of f.values) out[key] = value;
+        for (const [key, { prop, value }] of f.values) {
+          if (st.cssFrames) out[key] = value;
+          else {
+            const serialized = native.keyframeValue(prop, value);
+            if (serialized !== null) out[key] = serialized;
+          }
+        }
         return out;
       });
     }
