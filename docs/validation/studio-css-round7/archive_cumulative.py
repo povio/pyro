@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo
 
 root = Path(__file__).resolve().parent
 cache = Path(sys.argv.pop(1)).resolve()
-batches = {(): [(5, 4), (7, 5), (8, 7), (9, 8)], ('--batch10',): [(10, 9)], ('--batch11',): [(11, 10)], ('--batch12',): [(12, 11)], ('--batch13',): [(13, 12)], ('--batch14',): [(14, 13)]}[tuple(sys.argv[1:])]
+batches = {(): [(5, 4), (7, 5), (8, 7), (9, 8)], ('--batch10',): [(10, 9)], ('--batch11',): [(11, 10)], ('--batch12',): [(12, 11)], ('--batch13',): [(13, 12)], ('--batch14',): [(14, 13)], ('--batch16',): [(16, 14)]}[tuple(sys.argv[1:])]
 del sys.argv[1:]
 verifier = cache / 'frozen-evidence/verify.py'
 assert verifier.read_bytes() == (root / 'frozen/verify.py').read_bytes()
@@ -46,7 +46,7 @@ for batch, previous in batches:
     source = (raw / 'source.txt').read_text().strip()
     assert subprocess.check_output(['git', 'rev-parse', source+'^{commit}'], text=True).strip() == source
     if batch >= 10:
-        assert source == {10: 'c10efae54a7ce4c25be1d8bab090fcc34cab6e7b', 11: '1ee620d451c093a2ddce8766172970ed0ce8275b', 12: '8695db84513be44b2aedc700e3e042ee9354b2b4', 13: '0f4857a4dfd126e96ed9431ec115644c49630d16', 14: '8627d988ed60b15992282350b5c17d97cb39d9e7'}[batch]
+        assert source == {10: 'c10efae54a7ce4c25be1d8bab090fcc34cab6e7b', 11: '1ee620d451c093a2ddce8766172970ed0ce8275b', 12: '8695db84513be44b2aedc700e3e042ee9354b2b4', 13: '0f4857a4dfd126e96ed9431ec115644c49630d16', 14: '8627d988ed60b15992282350b5c17d97cb39d9e7', 16: '55bca2409fdf6ac3695558827066ea4f8f3f639e'}[batch]
         prior = root / f'batch{previous}'
         assert subprocess.check_output(['git', 'rev-parse', source+('^' if batch in (10, 13, 14) else '^^')]) == (prior / 'source.txt').read_bytes()
         assert verify['digest'](cache / prior.name / 'candidate')['sha256'] == (prior / 'sha256.txt').read_text().split()[0]
@@ -60,6 +60,8 @@ for batch, previous in batches:
         summary = {'urls': len(urls), 'reports': {}}
         for index, report in enumerate(reports):
             data = read(report)
+            if batch == 16:
+                assert data['plan'] == read(cache / prior.name / report.name)['plan']
             assert data['bin'] == str(binary) and data['jobs'] == 2 and not data['reuseContext']
             assert data['dirs'] == ['css'] and data['discovered'] == len(data['plan'])
             entry = {**verify['digest'](report), **{key: data[key] for key in ('wallMs','restarts','discovered','jobs')}}
@@ -125,5 +127,18 @@ for batch, previous in batches:
                     first = matched
                 assert matched == first
         shutil.copytree(repeats, out / repeats.name, dirs_exist_ok=True)
+    if batch == 16:
+        repeats = out / 'matched-repeats'
+        urls = set(read(repeats / 'urls.json'))
+        full = {label: read(root / f'batch{label}/outcomes-main.json.gz') for label in (14, 16)}
+        assert len(urls) == 9 and urls == {url for url in full[14] if full[14][url][:2] != full[16][url][:2]}
+        matched = {}
+        for label in ('14a', '16a', '16b', '14b'):
+            report = repeats / (label + '.json')
+            data = read(report)
+            assert data['bin'] == str(cache / ('batch'+label[:2]) / 'candidate') and data['jobs'] == 2
+            assert not data['reuseContext'] and data['restarts'] == data['watchdogKills'] == 0
+            matched[label] = collect([report], urls, False)
+            assert matched[label] == {url:full[14][url] for url in urls}
     paths = sorted(path for path in out.rglob('*') if path.is_file() and path.name != 'SHA256SUMS')
     (out / 'SHA256SUMS').write_text(''.join(f'{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.relative_to(out)}\n' for path in paths))

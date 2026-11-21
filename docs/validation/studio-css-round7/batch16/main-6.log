@@ -1,0 +1,9 @@
+wptserve on http://web-platform.test:58330 (log /var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-xzdHpy/serve.log)
+batch16: 100/509 (4 s)
+batch16: css/css-font-loading/fontface-invalid-arraybuffer.html: connections fail (ports exhausted?); waiting for them to drain
+batch16: 200/509 (12 s)
+batch16: 300/509 (17 s)
+batch16: 400/509 (19 s)
+batch16: 424/509 (51 s)
+batch16: 500/509 (62 s)
+batch16: done 509 pages in 65.2 s (CPU: browser 8.4 s, runner 6.8 s, server 0.0 s), restarts 0, event loop lag p50 1 ms p99 3 ms

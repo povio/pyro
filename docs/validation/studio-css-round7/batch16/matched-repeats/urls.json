@@ -1,0 +1,11 @@
+[
+  "css/css-animations/animation-play-state-005.tentative.html",
+  "css/css-backgrounds/parsing/box-shadow-valid.html",
+  "css/css-conditional/container-queries/pseudo-elements-004.html",
+  "css/css-grid/layout-algorithm/baseline-alignment-affects-intrinsic-size-005.html",
+  "css/css-grid/layout-algorithm/grid-item-margin-auto-columns-rows-vertical-lr-002.html",
+  "css/css-logical/logicalprops-with-variables-revert.html",
+  "css/css-mixins/private/private-shared-stylesheet.tentative.html",
+  "css/css-scroll-snap/snap-events/scrollsnapchange/scrollsnapchange-scroll-snap-type-change.html",
+  "css/css-variables/variable-reference-variable.html"
+]

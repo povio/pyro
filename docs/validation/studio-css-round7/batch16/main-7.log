@@ -1,0 +1,8 @@
+wptserve on http://web-platform.test:58333 (log /var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-RvzcHR/serve.log)
+batch16: css/css-borders/border-shape/border-shape-overflow-clip-margin-hit-test.html: connections fail (ports exhausted?); waiting for them to drain
+batch16: 100/510 (11 s)
+batch16: 200/510 (39 s)
+batch16: 300/510 (46 s)
+batch16: 400/510 (49 s)
+batch16: 500/510 (72 s)
+batch16: done 510 pages in 71.7 s (CPU: browser 8.9 s, runner 6.9 s, server 0.0 s), restarts 0, event loop lag p50 1 ms p99 3 ms

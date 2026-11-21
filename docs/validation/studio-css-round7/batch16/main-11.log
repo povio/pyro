@@ -1,0 +1,9 @@
+wptserve on http://web-platform.test:58407 (log /var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-vx8B2d/serve.log)
+batch16: 100/514 (3 s)
+batch16: css/css-grid/subgrid/subgrid-baseline-007.html: connections fail (ports exhausted?); waiting for them to drain
+batch16: 200/514 (13 s)
+batch16: 277/514 (44 s)
+batch16: 300/514 (45 s)
+batch16: 400/514 (47 s)
+batch16: 500/514 (62 s)
+batch16: done 514 pages in 66.3 s (CPU: browser 10.7 s, runner 7.2 s, server 0.0 s), restarts 0, event loop lag p50 1 ms p99 3 ms

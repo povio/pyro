@@ -1,0 +1,9 @@
+wptserve on http://web-platform.test:58336 (log /var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-Ot1lGs/serve.log)
+batch16: 100/507 (3 s)
+batch16: 200/507 (5 s)
+batch16: css/css-mixins/functions/local-var-substitution.html: connections fail (ports exhausted?); waiting for them to drain
+batch16: 280/507 (42 s)
+batch16: 300/507 (42 s)
+batch16: 400/507 (62 s)
+batch16: 500/507 (64 s)
+batch16: done 507 pages in 64.1 s (CPU: browser 9.1 s, runner 6.7 s, server 0.0 s), restarts 0, event loop lag p50 1 ms p99 3 ms
