@@ -1,0 +1,10 @@
+<!doctype html><title>Pinned ordinary ML-KEM known-answer vectors</title>
+<script src="/resources/testharness.js"></script><script src="/resources/testharnessreport.js"></script>
+<script src="upstream-helpers.js"></script><script src="upstream-ml-kem-vectors.js"></script><script>
+for(const name of ['ML-KEM-512','ML-KEM-768','ML-KEM-1024'])promise_test(async()=>{
+ const {privateSeed,sampleCiphertext,expectedSharedSecret}=ml_kem_vectors[name];
+ const key=await crypto.subtle.importKey('raw-seed',privateSeed,name,false,['decapsulateBits']);
+ const observed=new Uint8Array(await crypto.subtle.decapsulateBits(name,key,sampleCiphertext));
+ assert_true(observed.length===expectedSharedSecret.length&&observed.every((v,i)=>v===expectedSharedSecret[i]));
+}, name+' normal published ciphertext agrees with the upstream expected secret');
+</script>

@@ -1,0 +1,6 @@
+{"algorithm":"ML-KEM-512","pkcs8Format":"seed-priv","bytes":1730,"adapter":"unsupported"}
+{"algorithm":"ML-KEM-768","pkcs8Format":"seed-priv","bytes":2498,"adapter":"unsupported"}
+{"algorithm":"ML-KEM-1024","pkcs8Format":"seed-priv","bytes":3266,"adapter":"unsupported"}
+{"algorithm":"ML-KEM-512","pkcs8Format":"priv-only","bytes":1660,"adapter":"unsupported"}
+{"algorithm":"ML-KEM-768","pkcs8Format":"priv-only","bytes":2428,"adapter":"unsupported"}
+{"algorithm":"ML-KEM-1024","pkcs8Format":"priv-only","bytes":3196,"adapter":"unsupported"}

@@ -1,0 +1,46 @@
+<!doctype html><title>Ordinary provider-backed ML-KEM operations</title>
+<script src="/resources/testharness.js"></script><script src="/resources/testharnessreport.js"></script>
+<script>
+const variants=[[512,800,768,822],[768,1184,1088,1206],[1024,1568,1568,1590]];
+function same(a,b){const x=new Uint8Array(a),y=new Uint8Array(b);return x.length===y.length&&x.every((v,i)=>v===y[i]);}
+for(const [level,pkLen,ctLen,spkiLen] of variants){
+ const name='ML-KEM-'+level;
+ promise_test(async t=>{
+   const p=await crypto.subtle.generateKey(name,false,['encapsulateBits','decapsulateBits']);
+   assert_equals(p.privateKey.extractable,false);assert_equals(p.publicKey.extractable,true);
+   let first=await crypto.subtle.encapsulateBits(name,p.publicKey);
+   assert_equals(first.sharedKey.byteLength,32);assert_equals(first.ciphertext.byteLength,ctLen);
+   assert_true(same(first.sharedKey,await crypto.subtle.decapsulateBits(name,p.privateKey,first.ciphertext)));
+   await promise_rejects_dom(t,'InvalidAccessError',crypto.subtle.exportKey('raw-seed',p.privateKey));
+ },name+' nonextractable private-key bit agreement and usage');
+ promise_test(async t=>{
+   const p=await crypto.subtle.generateKey(name,true,['encapsulateBits','decapsulateBits']);
+   for(const [pubFmt,privFmt,pubBytes,privBytes] of [['raw-public','raw-seed',pkLen,64],['spki','pkcs8',spkiLen,86]]){
+     const pub=await crypto.subtle.exportKey(pubFmt,p.publicKey);const priv=await crypto.subtle.exportKey(privFmt,p.privateKey);
+     assert_equals(pub.byteLength,pubBytes);assert_equals(priv.byteLength,privBytes);
+     const pi=await crypto.subtle.importKey(pubFmt,pub,name,true,['encapsulateBits']);
+     const si=await crypto.subtle.importKey(privFmt,priv,name,true,['decapsulateBits']);
+     assert_true(same(pub,await crypto.subtle.exportKey(pubFmt,pi)));
+     assert_true(same(priv,await crypto.subtle.exportKey(privFmt,si)));
+     const box=await crypto.subtle.encapsulateBits(name,pi);
+     assert_true(same(box.sharedKey,await crypto.subtle.decapsulateBits(name,si,box.ciphertext)));
+   }
+ },name+' raw seed, public, SPKI and seed-only PKCS8 re-import and agreement');
+ promise_test(async()=>{
+   const p=await crypto.subtle.generateKey(name,false,['encapsulateKey','decapsulateKey']);
+   const box=await crypto.subtle.encapsulateKey(name,p.publicKey,'AES-GCM',false,['encrypt']);
+   const recover=await crypto.subtle.decapsulateKey(name,p.privateKey,box.ciphertext,'AES-GCM',false,['decrypt']);
+   const gcm={name:'AES-GCM',iv:crypto.getRandomValues(new Uint8Array(12))};
+   const msg=new Uint8Array([1,2,3]);const encrypted=await crypto.subtle.encrypt(gcm,box.sharedKey,msg);
+   assert_true(same(msg,await crypto.subtle.decrypt(gcm,recover,encrypted)));
+ },name+' encapsulateKey derives ordinary AES-GCM keys for a message round trip');
+ promise_test(async t=>{
+   const p=await crypto.subtle.generateKey(name,false,['encapsulateBits','decapsulateBits']);
+   const box=await crypto.subtle.encapsulateBits(name,structuredClone(p.publicKey));
+   const w=new Worker('worker.js');t.add_cleanup(()=>w.terminate());
+   const done=new Promise((resolve,reject)=>{w.onmessage=e=>resolve(e.data);w.onerror=reject;});
+   w.postMessage({algorithm:name,key:p.privateKey,ciphertext:box.ciphertext,shared:new Uint8Array(box.sharedKey)});
+   const got=await done;assert_true(got.match,got.error);assert_false(got.extractable);assert_equals(got.kind,'private');
+ },name+' cloned keys remain usable across worker realms with the same extractability');
+}
+</script>

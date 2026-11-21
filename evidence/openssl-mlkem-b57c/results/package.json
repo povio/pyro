@@ -1,0 +1,25 @@
+{
+  "production": {
+    "wptiterBytes": 135433664,
+    "sha256": "296b3d4f9775c92d98d3bd7aa898efc68b1a18e90e591af5a428ad8decd4e9bf",
+    "strippedBytes": 98026640,
+    "strippedGzip6Bytes": 38505758
+  },
+  "featureOff": {
+    "wptiterBytes": 135408400,
+    "sha256": "f01b8479a0d0dc8f24efc5426e611e233202fab1d70a28a507b8ee006df6c0fd",
+    "strippedBytes": 98026576,
+    "strippedGzip6Bytes": 38504174
+  },
+  "featureOn": {
+    "wptiterBytes": 135433888,
+    "sha256": "ebc58c2cd76bdb81bbaaaeeea0638c10aedea5d9be285983578a139ab05c627f",
+    "strippedBytes": 98046464,
+    "strippedGzip6Bytes": 38509924
+  },
+  "externalLibcrypto": {
+    "dylibBytes": 4846032,
+    "sha256": "34bc039f5c725691e757ef42d26f1709830b18046c3ad6d93985153c83d0bbbc",
+    "gzip6Bytes": 2296761
+  }
+}

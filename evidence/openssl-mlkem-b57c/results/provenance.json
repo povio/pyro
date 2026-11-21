@@ -1,0 +1,24 @@
+{
+  "base": "b57c35dd45d54d6781aafcb2c8242c9ad9b26e04",
+  "source": "f1a3e2aa115cadb02c570502a11b45fcfbeb817d",
+  "sourceSHA256": {
+    "Cargo.lock": "45bcffff969630f3098459567785a7a3e7274adfec8433dc81aaf2b2d45b2526",
+    "crates/pyro-webapi/Cargo.toml": "9af7b6d6dd64836eb156afdfc7e6ebf89b1c5975390c6613b5986723bde4058a",
+    "crates/pyro-webapi/build.rs": "ee67b651412e2afb86a820918e330b762624665c936324f8f036ca8f9ed1bbca",
+    "crates/pyro-webapi/src/crypto.rs": "d435cf2dbefb17ad1a78afb5074d70ba3c91dd420e0dc96411f6cf4d19a7f29a",
+    "crates/pyro-webapi/src/crypto_subtle.rs": "e7ff79f23139a675614375b2e84830741dfad433e4c211badd381100dc93bf82",
+    "crates/pyro-webapi/src/crypto_subtle/mlkem.rs": "51cf09efe5da6ba77ec1ce45721dd76626ec95bb723a34880845f1d0cd5f856a",
+    "crates/pyro-webapi/src/crypto_subtle/mlkem_bridge.c": "4d955a9e0b9a1d5087de094cd943c09b666bc5994aa92273be7ed86821d11c2a",
+    "crates/pyro-webapi/src/secure_context.rs": "91c48c44cb3e1d0bdc32455528022e852bc4e097ce733f7eb37293f5970b6e48",
+    "crates/pyro-webapi/src/subtle.js": "3622d407c6fcf3719bf0f18e4dd4a786a85b4b74020ff8d02ad2308e68bd5515",
+    "crates/pyro-webapi/src/worker_scope.rs": "a639c9099efa0b7c87177d9666fdd3cdc2597857860f8c273ce6dc8d554741ad"
+  },
+  "WPT": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+  "jscKey": "0e0dd7038a7a-6f4649e395e0",
+  "binHashes": "package.json",
+  "os": "macOS 27.2.1 arm64",
+  "opensslRuntime": "Homebrew OpenSSL 3.6.3, default provider restricted to an isolated OSSL_LIB_CTX",
+  "opensslInstallName": "/opt/homebrew/opt/openssl@3/lib/libcrypto.3.dylib",
+  "opensslMinMacOS": "26.0",
+  "browserMinMacOSBuildSetting": "14.0"
+}
