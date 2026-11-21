@@ -4158,7 +4158,7 @@ impl Layout {
             return String::new();
         }
         let Some(style) = self.style.stylo_pseudo_style(dom, el, pseudo, false) else { return String::new() };
-        let name = if name.starts_with("--") { Cow::Borrowed(name) } else { lowercase(name) };
+        let name = resolved_property_name(name);
         // The animation and transition properties of a `::before`/`::after`, from the page's own
         // timing cascade (the engine's has them all `none`), as the element's are.
         let timing_pseudo = match pseudo {
@@ -4215,7 +4215,7 @@ impl Layout {
             return String::new();
         }
         let custom = name.starts_with("--");
-        let name = if custom { Cow::Borrowed(name) } else { lowercase(name) };
+        let name = resolved_property_name(name);
         let name: &str = &name;
         // pyro: a running CSS transition's value now (the layout engine samples none), serialized
         // as this function serializes the after-change style with that value in it
@@ -4397,9 +4397,15 @@ fn without_identity_transforms(value: &str) -> Option<String> {
     (!kept.is_empty() && kept.len() < items.len()).then(|| kept.join(" "))
 }
 
-/// A property name ASCII-lowercased, borrowed when it is lowercase already
-/// (the names the bindings pass are).
-fn lowercase(name: &str) -> Cow<'_, str> {
+fn resolved_property_name(name: &str) -> Cow<'_, str> {
+    if name.starts_with("--") {
+        return Cow::Borrowed(name);
+    }
+    if name.starts_with('-') {
+        if let Some(style::properties::PropertyId::NonCustom(property)) = crate::stylo::property_id(name) {
+            return Cow::Borrowed(property.unaliased().name());
+        }
+    }
     if name.bytes().any(|b| b.is_ascii_uppercase()) {
         Cow::Owned(name.to_ascii_lowercase())
     } else {
