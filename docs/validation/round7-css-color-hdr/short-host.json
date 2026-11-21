@@ -1,0 +1,570 @@
+{
+ "start": "2026-11-21T19:55:11.984Z",
+ "end": "2026-11-21T19:55:16.813Z",
+ "preciseHost": {
+  "durationSeconds": 4.829,
+  "hostBusyPct": 99.588
+ },
+ "perArm": {
+  "ordinary-base": {
+   "orders": [
+    1,
+    4,
+    6,
+    7
+   ],
+   "elapsedSeconds": 1.983,
+   "weightedHostBusyPct": 99.57
+  },
+  "hdr-fixed": {
+   "orders": [
+    2,
+    3,
+    5,
+    8
+   ],
+   "elapsedSeconds": 2.843,
+   "weightedHostBusyPct": 99.6
+  }
+ },
+ "perProcess": [
+  {
+   "order": 1,
+   "binary": "ordinary-base",
+   "start": "2026-11-21T19:55:11.984Z",
+   "end": "2026-11-21T19:55:12.919Z",
+   "durationSeconds": 0.935,
+   "hostBusyPct": 100.0
+  },
+  {
+   "order": 2,
+   "binary": "hdr-fixed",
+   "start": "2026-11-21T19:55:12.919Z",
+   "end": "2026-11-21T19:55:14.550Z",
+   "durationSeconds": 1.631,
+   "hostBusyPct": 100.0
+  },
+  {
+   "order": 3,
+   "binary": "hdr-fixed",
+   "start": "2026-11-21T19:55:14.551Z",
+   "end": "2026-11-21T19:55:15.034Z",
+   "durationSeconds": 0.483,
+   "hostBusyPct": 99.367
+  },
+  {
+   "order": 4,
+   "binary": "ordinary-base",
+   "start": "2026-11-21T19:55:15.034Z",
+   "end": "2026-11-21T19:55:15.355Z",
+   "durationSeconds": 0.321,
+   "hostBusyPct": 98.9
+  },
+  {
+   "order": 5,
+   "binary": "hdr-fixed",
+   "start": "2026-11-21T19:55:15.356Z",
+   "end": "2026-11-21T19:55:15.772Z",
+   "durationSeconds": 0.416,
+   "hostBusyPct": 98.914
+  },
+  {
+   "order": 6,
+   "binary": "ordinary-base",
+   "start": "2026-11-21T19:55:15.773Z",
+   "end": "2026-11-21T19:55:16.119Z",
+   "durationSeconds": 0.346,
+   "hostBusyPct": 99.3
+  },
+  {
+   "order": 7,
+   "binary": "ordinary-base",
+   "start": "2026-11-21T19:55:16.119Z",
+   "end": "2026-11-21T19:55:16.500Z",
+   "durationSeconds": 0.381,
+   "hostBusyPct": 99.3
+  },
+  {
+   "order": 8,
+   "binary": "hdr-fixed",
+   "start": "2026-11-21T19:55:16.500Z",
+   "end": "2026-11-21T19:55:16.813Z",
+   "durationSeconds": 0.313,
+   "hostBusyPct": 98.826
+  }
+ ],
+ "benchmarkSHA256": "68676beceee1712a0ea980cfc47d46f923ef4e059b4f68d54c3e85de68a4572f",
+ "minOneSecondBusyPct": 96.6,
+ "maxOneSecondBusyPct": 100,
+ "oneSecondSamples": [
+  {
+   "start": "2026-11-21T19:55:11.753Z",
+   "end": "2026-11-21T19:55:12.755Z",
+   "cpuBusyPct": 100
+  },
+  {
+   "start": "2026-11-21T19:55:12.755Z",
+   "end": "2026-11-21T19:55:13.755Z",
+   "cpuBusyPct": 100
+  },
+  {
+   "start": "2026-11-21T19:55:13.755Z",
+   "end": "2026-11-21T19:55:14.756Z",
+   "cpuBusyPct": 100
+  },
+  {
+   "start": "2026-11-21T19:55:14.756Z",
+   "end": "2026-11-21T19:55:15.757Z",
+   "cpuBusyPct": 98.9
+  },
+  {
+   "start": "2026-11-21T19:55:15.757Z",
+   "end": "2026-11-21T19:55:16.758Z",
+   "cpuBusyPct": 99.3
+  },
+  {
+   "start": "2026-11-21T19:55:16.758Z",
+   "end": "2026-11-21T19:55:17.760Z",
+   "cpuBusyPct": 96.6
+  }
+ ],
+ "hostIntervals": [
+  {
+   "at": "2026-11-21T19:55:36.789Z",
+   "elapsedMs": 30001,
+   "cpuBusyPct": 67.8,
+   "load": [
+    35.7060546875,
+    37.9912109375,
+    37.4638671875
+   ],
+   "logicalCpu": 10,
+   "pressureLevel": "1",
+   "freePct": 82,
+   "swap": "total = 0.00M  used = 0.00M  free = 0.00M  (encrypted)",
+   "processes": {
+    "other": {
+     "n": 1104,
+     "pctCpu": 115.4,
+     "rssMiB": 34254
+    },
+    "ci-runner": {
+     "n": 23,
+     "pctCpu": 69.4,
+     "rssMiB": 2011
+    },
+    "other-wpt": {
+     "n": 51,
+     "pctCpu": 12.8,
+     "rssMiB": 3047
+    },
+    "non-css": {
+     "n": 3,
+     "pctCpu": 18,
+     "rssMiB": 577
+    }
+   }
+  }
+ ],
+ "adjacentLaneSnapshots": [
+  {
+   "at": "2026-11-21T19:54:53.955Z",
+   "ciWorkerActive": true,
+   "allocation": {
+    "effectiveAt": "2026-11-21T19:52:38.996812+00:00",
+    "hostSlots": null,
+    "lead": 0,
+    "editing": 0,
+    "css": 1,
+    "qa": 0,
+    "diagnostics": 0,
+    "censusShards": 1,
+    "policy": "Supplemental revised pre-block d9398ba8f checks completed and the directly transferred worker has released. Release temporary priority cap; census ramp depends on actual 30s load and active feature work."
+   },
+   "lanes": {
+    "lead": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "editing": {
+     "processes": [
+      {
+       "pid": 89619,
+       "state": "S",
+       "kind": "cargo",
+       "jobs": null
+      },
+      {
+       "pid": 89623,
+       "state": "R",
+       "kind": "rustc",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 78.9
+    },
+    "css": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "qa": {
+     "processes": [
+      {
+       "pid": 88322,
+       "state": "Ss",
+       "kind": "pyro",
+       "jobs": null
+      },
+      {
+       "pid": 88798,
+       "state": "Ss",
+       "kind": "pyro",
+       "jobs": null
+      },
+      {
+       "pid": 88799,
+       "state": "Ss",
+       "kind": "pyro",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 21
+    },
+    "diagnostics": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "census": {
+     "processes": [
+      {
+       "pid": 88267,
+       "state": "S",
+       "kind": "wpt-runner",
+       "jobs": "4"
+      },
+      {
+       "pid": 88287,
+       "state": "Ss",
+       "kind": "Python",
+       "jobs": null
+      },
+      {
+       "pid": 88691,
+       "state": "S",
+       "kind": "wpt-runner",
+       "jobs": "4"
+      },
+      {
+       "pid": 88692,
+       "state": "S",
+       "kind": "wpt-runner",
+       "jobs": "4"
+      },
+      {
+       "pid": 88704,
+       "state": "Ss",
+       "kind": "Python",
+       "jobs": null
+      },
+      {
+       "pid": 88705,
+       "state": "Ss",
+       "kind": "Python",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 11
+    },
+    "ci": {
+     "processes": [
+      {
+       "pid": 14341,
+       "state": "RN",
+       "kind": "Runner.Listener",
+       "jobs": null
+      },
+      {
+       "pid": 23415,
+       "state": "RN",
+       "kind": "Runner.Worker",
+       "jobs": null
+      },
+      {
+       "pid": 29815,
+       "state": "SN",
+       "kind": "bun",
+       "jobs": "16"
+      },
+      {
+       "pid": 77267,
+       "state": "RN",
+       "kind": "wpt-runner",
+       "jobs": "16"
+      },
+      {
+       "pid": 79161,
+       "state": "SNs",
+       "kind": "Python",
+       "jobs": null
+      },
+      {
+       "pid": 87446,
+       "state": "RNs",
+       "kind": "pyro",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 75.6
+    },
+    "unassigned": {
+     "processes": [],
+     "cpuCorePct": 0
+    }
+   }
+  },
+  {
+   "at": "2026-11-21T19:55:23.945Z",
+   "ciWorkerActive": true,
+   "allocation": {
+    "effectiveAt": "2026-11-21T19:55:17.096961+00:00",
+    "hostSlots": null,
+    "lead": 0,
+    "editing": 0,
+    "css": 1,
+    "qa": 0,
+    "diagnostics": 0,
+    "censusShards": 3,
+    "policy": "CSS HDR native compiler released. At 35.2%, allocate one serial c8a59563d versus b8cf9e715 performance/pixel browser after confirming 1s tick sampling. Pixel probe is outside timing boundaries. Census uses measured available CPU."
+   },
+   "lanes": {
+    "lead": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "editing": {
+     "processes": [
+      {
+       "pid": 89619,
+       "state": "S",
+       "kind": "cargo",
+       "jobs": null
+      },
+      {
+       "pid": 89623,
+       "state": "R",
+       "kind": "rustc",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 99.1
+    },
+    "css": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "qa": {
+     "processes": [
+      {
+       "pid": 88799,
+       "state": "Ss",
+       "kind": "pyro",
+       "jobs": null
+      },
+      {
+       "pid": 90368,
+       "state": "Ss",
+       "kind": "pyro",
+       "jobs": null
+      },
+      {
+       "pid": 90663,
+       "state": "Ss",
+       "kind": "pyro",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 0.8
+    },
+    "diagnostics": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "census": {
+     "processes": [
+      {
+       "pid": 88691,
+       "state": "S",
+       "kind": "wpt-runner",
+       "jobs": "4"
+      },
+      {
+       "pid": 88704,
+       "state": "Ss",
+       "kind": "Python",
+       "jobs": null
+      },
+      {
+       "pid": 90251,
+       "state": "S",
+       "kind": "wpt-runner",
+       "jobs": "4"
+      },
+      {
+       "pid": 90268,
+       "state": "Ss",
+       "kind": "Python",
+       "jobs": null
+      },
+      {
+       "pid": 90312,
+       "state": "S",
+       "kind": "wpt-runner",
+       "jobs": "4"
+      },
+      {
+       "pid": 90374,
+       "state": "Ss",
+       "kind": "Python",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 0
+    },
+    "ci": {
+     "processes": [
+      {
+       "pid": 14341,
+       "state": "SN",
+       "kind": "Runner.Listener",
+       "jobs": null
+      },
+      {
+       "pid": 23415,
+       "state": "RN",
+       "kind": "Runner.Worker",
+       "jobs": null
+      },
+      {
+       "pid": 29815,
+       "state": "SN",
+       "kind": "bun",
+       "jobs": "16"
+      },
+      {
+       "pid": 77267,
+       "state": "RN",
+       "kind": "wpt-runner",
+       "jobs": "16"
+      },
+      {
+       "pid": 79161,
+       "state": "SNs",
+       "kind": "Python",
+       "jobs": null
+      },
+      {
+       "pid": 87446,
+       "state": "RNs",
+       "kind": "pyro",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 70.8
+    },
+    "unassigned": {
+     "processes": [],
+     "cpuCorePct": 0
+    }
+   }
+  }
+ ],
+ "censusAdmissions": [
+  {
+   "at": "2026-11-21T19:55:06.955510+00:00",
+   "sampleAt": "2026-11-21T19:55:06.788Z",
+   "cpuBusyPct": 68.9,
+   "recentCpu": [
+    35.2,
+    31.2,
+    68.9
+   ],
+   "pressureLevel": "1",
+   "memoryFreePct": 82,
+   "ciWorkerActive": true,
+   "activeOtherCompilerLanes": 1,
+   "claims": 3,
+   "slotsBefore": 3,
+   "slotsAfter": 3,
+   "maximum": 16,
+   "completedShards": 178,
+   "completedURLs": 16774,
+   "planShards": 320,
+   "changedAt": "2026-11-21T19:54:36.907113+00:00",
+   "reason": "hold"
+  },
+  {
+   "at": "2026-11-21T19:55:36.911068+00:00",
+   "sampleAt": "2026-11-21T19:55:36.789Z",
+   "cpuBusyPct": 67.8,
+   "recentCpu": [
+    31.2,
+    68.9,
+    67.8
+   ],
+   "pressureLevel": "1",
+   "memoryFreePct": 82,
+   "ciWorkerActive": true,
+   "activeOtherCompilerLanes": 1,
+   "claims": 3,
+   "slotsBefore": 3,
+   "slotsAfter": 3,
+   "maximum": 3,
+   "completedShards": 182,
+   "completedURLs": 17158,
+   "planShards": 320,
+   "changedAt": "2026-11-21T19:54:36.907113+00:00",
+   "reason": "hold"
+  }
+ ],
+ "qaStart": "2026-11-21T19:45:41.128454+00:00",
+ "qaEnd": "2026-11-21T19:45:41.834455+00:00",
+ "qaTimeMethod": "Head receipt modification time and runner-reported wallMs; approximate times. Receipt already complete before performance probe.",
+ "measuredCensusShardWindows": [
+  {
+   "key": "ordinary-145",
+   "overlapSeconds": 4.829,
+   "method": "Local raw log creation through completed receipt modification, or presently active claim."
+  },
+  {
+   "key": "ordinary-146",
+   "overlapSeconds": 0.7291,
+   "method": "Local raw log creation through completed receipt modification, or presently active claim."
+  },
+  {
+   "key": "ordinary-147",
+   "overlapSeconds": 4.829,
+   "method": "Local raw log creation through completed receipt modification, or presently active claim."
+  },
+  {
+   "key": "ordinary-148",
+   "overlapSeconds": 4.0624,
+   "method": "Local raw log creation through completed receipt modification, or presently active claim."
+  }
+ ],
+ "qaOverlapSeconds": 0,
+ "method": "Aggregate one-second percentages are weighted by exact overlap per process. 30-second host intervals include activity outside perf; process snapshots bracket the run. Hardware counters do not assign competition to a process.",
+ "pixelRunsOutsideTiming": [
+  {
+   "binary": "ordinary-base",
+   "start": "2026-11-21T19:55:17.129Z",
+   "end": "2026-11-21T19:55:17.355Z"
+  },
+  {
+   "binary": "hdr-fixed",
+   "start": "2026-11-21T19:55:17.356Z",
+   "end": "2026-11-21T19:55:17.506Z"
+  }
+ ],
+ "pixelRawSHA256": "e238fa7856adf6396a70258acea69bbb375bd4b2dd79c4dcc95073063e033000",
+ "otherRuntimeNotes": "The subsequently authorized f9f88ea05 supplemental head-only controls had not been admitted at the end of this performance window. The earlier HDR Chrome158 QA reference wall-time estimate is shown separately."
+}
