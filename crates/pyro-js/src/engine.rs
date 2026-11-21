@@ -1778,6 +1778,15 @@ pub fn configure_process() {
                 PROCESS_DEFAULTS.lock().unwrap_or_else(|e| e.into_inner()).push(name);
             }
         }
+        // The pinned typed loader identifies text imports separately from
+        // JavaScript. Enable JSC's import-attribute parser for that type.
+        // The untyped system loader cannot make this distinction.
+        if unsafe { sys::modules::pyro_jsc_typed_modules_available() } == 1
+            && std::env::var_os("JSC_useImportText").is_none()
+        {
+            std::env::set_var("JSC_useImportText", "true");
+            PROCESS_DEFAULTS.lock().unwrap_or_else(|e| e.into_inner()).push("JSC_useImportText");
+        }
         // Freed pages leave the resident set (patched JSC): macOS keeps
         // `madvise`d pages resident until it needs them, so a process that
         // closed a page kept reporting its memory as in use.

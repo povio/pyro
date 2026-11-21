@@ -18,6 +18,8 @@ pub fn mime_error(ty: ModuleType, mime: &str, url: &str) -> Option<String> {
         ModuleType::JavaScript => (pyro_net::is_javascript_mime(mime), "a JavaScript"),
         ModuleType::Json => (pyro_net::is_json_mime(mime), "a JSON"),
         ModuleType::Css => (mime == "text/css", "a CSS"),
+        // HTML creates a text module from any successful response MIME.
+        ModuleType::Text => return None,
         ModuleType::Unsupported => (false, "a supported"),
     };
     if ok {
@@ -73,6 +75,7 @@ pub fn complete(scope: &Scope<'_>, request: ModuleRequest, text: &str) -> JsResu
     match request.module_type() {
         ModuleType::JavaScript => request.resolve(scope, text),
         ModuleType::Json => request.resolve_json(scope, text),
+        ModuleType::Text => request.resolve_text(scope, text),
         ModuleType::Css => match crate::css::module_sheet(scope, text) {
             Ok(sheet) => request.resolve_object(scope, sheet),
             Err(e) => request.reject(scope, &e),
@@ -95,6 +98,7 @@ mod tests {
         assert_eq!(mime_error(ModuleType::Json, "application/json", url), None);
         assert_eq!(mime_error(ModuleType::Json, "application/manifest+json", url), None);
         assert_eq!(mime_error(ModuleType::Css, "text/css", url), None);
+        assert_eq!(mime_error(ModuleType::Text, "application/octet-stream", url), None);
         for (ty, mime) in [
             (ModuleType::JavaScript, ""),
             (ModuleType::JavaScript, "application/json"),

@@ -1586,6 +1586,7 @@ fn default_accept(d: Destination) -> &'static str {
         }
         Destination::Style => "text/css,*/*;q=0.1",
         Destination::Json => "application/json,*/*;q=0.5",
+        Destination::Text => "text/plain,*/*;q=0.5",
         Destination::Image => "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
         Destination::EventSource => "text/event-stream",
         _ => "*/*",
@@ -2744,7 +2745,7 @@ impl Io {
             return Err(NetError::UnsupportedScheme("file".into()));
         }
         if req.mode == RequestMode::Cors
-            && matches!(req.destination, Destination::Script | Destination::Style | Destination::Json)
+            && matches!(req.destination, Destination::Script | Destination::Style | Destination::Json | Destination::Text)
         {
             return Err(NetError::Cors("Cross origin requests are not supported for the file: scheme".into()));
         }

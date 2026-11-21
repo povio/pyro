@@ -366,6 +366,7 @@ impl ResourceLoader for NetLoader {
             ResourceKind::ModuleScript => match request.module {
                 Some(ModuleType::Css) => pyro_net::Destination::Style,
                 Some(ModuleType::Json) => pyro_net::Destination::Json,
+                Some(ModuleType::Text) => pyro_net::Destination::Text,
                 _ => pyro_net::Destination::Script,
             },
             ResourceKind::Stylesheet => pyro_net::Destination::Style,
