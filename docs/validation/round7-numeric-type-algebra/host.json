@@ -1,0 +1,364 @@
+{
+ "start": "2026-11-21T23:53:38.858Z",
+ "end": "2026-11-21T23:53:41.568Z",
+ "preciseHost": {
+  "durationSeconds": 2.71,
+  "hostBusyPct": 42.022
+ },
+ "perArm": {
+  "numeric-type-base-e05d64f5d": {
+   "orders": [
+    1,
+    4,
+    6,
+    7
+   ],
+   "elapsedSeconds": 1.375,
+   "weightedHostBusyPct": 42.02
+  },
+  "numeric-type-cd02ceb1b": {
+   "orders": [
+    2,
+    3,
+    5,
+    8
+   ],
+   "elapsedSeconds": 1.334,
+   "weightedHostBusyPct": 42.02
+  }
+ },
+ "perProcess": [
+  {
+   "order": 1,
+   "binary": "numeric-type-base-e05d64f5d",
+   "start": "2026-11-21T23:53:38.858Z",
+   "end": "2026-11-21T23:53:39.249Z",
+   "durationSeconds": 0.391,
+   "hostBusyPct": 43.5
+  },
+  {
+   "order": 2,
+   "binary": "numeric-type-cd02ceb1b",
+   "start": "2026-11-21T23:53:39.250Z",
+   "end": "2026-11-21T23:53:39.595Z",
+   "durationSeconds": 0.345,
+   "hostBusyPct": 43.5
+  },
+  {
+   "order": 3,
+   "binary": "numeric-type-cd02ceb1b",
+   "start": "2026-11-21T23:53:39.595Z",
+   "end": "2026-11-21T23:53:39.924Z",
+   "durationSeconds": 0.329,
+   "hostBusyPct": 41.534
+  },
+  {
+   "order": 4,
+   "binary": "numeric-type-base-e05d64f5d",
+   "start": "2026-11-21T23:53:39.924Z",
+   "end": "2026-11-21T23:53:40.256Z",
+   "durationSeconds": 0.332,
+   "hostBusyPct": 39.1
+  },
+  {
+   "order": 5,
+   "binary": "numeric-type-cd02ceb1b",
+   "start": "2026-11-21T23:53:40.256Z",
+   "end": "2026-11-21T23:53:40.594Z",
+   "durationSeconds": 0.338,
+   "hostBusyPct": 39.1
+  },
+  {
+   "order": 6,
+   "binary": "numeric-type-base-e05d64f5d",
+   "start": "2026-11-21T23:53:40.594Z",
+   "end": "2026-11-21T23:53:40.921Z",
+   "durationSeconds": 0.327,
+   "hostBusyPct": 41.258
+  },
+  {
+   "order": 7,
+   "binary": "numeric-type-base-e05d64f5d",
+   "start": "2026-11-21T23:53:40.921Z",
+   "end": "2026-11-21T23:53:41.246Z",
+   "durationSeconds": 0.325,
+   "hostBusyPct": 44.0
+  },
+  {
+   "order": 8,
+   "binary": "numeric-type-cd02ceb1b",
+   "start": "2026-11-21T23:53:41.246Z",
+   "end": "2026-11-21T23:53:41.568Z",
+   "durationSeconds": 0.322,
+   "hostBusyPct": 44.0
+  }
+ ],
+ "benchmarkSHA256": "45ca18eafd6ac30ed75f5439cd374bc5250890c3761eb73da35c121e9cb77cd6",
+ "minOneSecondBusyPct": 39.1,
+ "maxOneSecondBusyPct": 44,
+ "oneSecondSamples": [
+  {
+   "start": "2026-11-21T23:53:38.775Z",
+   "end": "2026-11-21T23:53:39.777Z",
+   "cpuBusyPct": 43.5
+  },
+  {
+   "start": "2026-11-21T23:53:39.777Z",
+   "end": "2026-11-21T23:53:40.777Z",
+   "cpuBusyPct": 39.1
+  },
+  {
+   "start": "2026-11-21T23:53:40.777Z",
+   "end": "2026-11-21T23:53:41.779Z",
+   "cpuBusyPct": 44
+  }
+ ],
+ "hostIntervals": [
+  {
+   "at": "2026-11-21T23:53:45.960Z",
+   "elapsedMs": 30001,
+   "cpuBusyPct": 74,
+   "load": [
+    18.3408203125,
+    26.59521484375,
+    24.72216796875
+   ],
+   "logicalCpu": 10,
+   "pressureLevel": "1",
+   "freePct": 84,
+   "swap": "total = 0.00M  used = 0.00M  free = 0.00M  (encrypted)",
+   "processes": {
+    "other": {
+     "n": 1130,
+     "pctCpu": 15.2,
+     "rssMiB": 35400
+    },
+    "independent-feature": {
+     "n": 2,
+     "pctCpu": 0,
+     "rssMiB": 19
+    },
+    "css-values": {
+     "n": 2,
+     "pctCpu": 542.1,
+     "rssMiB": 3834
+    },
+    "other-build": {
+     "n": 2,
+     "pctCpu": 0,
+     "rssMiB": 115
+    },
+    "ci-runner": {
+     "n": 3,
+     "pctCpu": 0,
+     "rssMiB": 104
+    },
+    "non-css": {
+     "n": 4,
+     "pctCpu": 0,
+     "rssMiB": 121
+    }
+   }
+  }
+ ],
+ "adjacentLaneSnapshots": [
+  {
+   "at": "2026-11-21T23:53:26.897Z",
+   "ciWorkerActive": false,
+   "allocation": {
+    "effectiveAt": "2026-11-21T23:50:44.976934+00:00",
+    "hostSlots": 2,
+    "lead": 0,
+    "editing": 0,
+    "css": 1,
+    "qa": 0,
+    "diagnostics": 0,
+    "ordinary": 1,
+    "policy": "All IDB keypath jobs released. Direct START ordinary SVGNumberList exact 97864f1fa base and CSS numeric-type cd02ceb1b compile/native under separate single private jobs; no active prior Cargo. Exact CSS e05d64f5d executable rehashed bb4f97d1\u20265da8. Editing 70d90bd5d guard exposed post-delete host-removal regression; next source not frozen, no extra compile yet."
+   },
+   "lanes": {
+    "lead": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "editing": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "css": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "qa": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "diagnostics": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ordinary": {
+     "processes": [
+      {
+       "pid": 8043,
+       "state": "R",
+       "kind": "rustc",
+       "jobs": null
+      },
+      {
+       "pid": 98632,
+       "state": "S",
+       "kind": "cargo",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 100
+    },
+    "idb": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "census": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ci": {
+     "processes": [
+      {
+       "pid": 14341,
+       "state": "SN",
+       "kind": "Runner.Listener",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 0
+    },
+    "unassigned": {
+     "processes": [],
+     "cpuCorePct": 0
+    }
+   }
+  },
+  {
+   "at": "2026-11-21T23:53:56.994Z",
+   "ciWorkerActive": false,
+   "allocation": {
+    "effectiveAt": "2026-11-21T23:50:44.976934+00:00",
+    "hostSlots": 2,
+    "lead": 0,
+    "editing": 0,
+    "css": 1,
+    "qa": 0,
+    "diagnostics": 0,
+    "ordinary": 1,
+    "policy": "All IDB keypath jobs released. Direct START ordinary SVGNumberList exact 97864f1fa base and CSS numeric-type cd02ceb1b compile/native under separate single private jobs; no active prior Cargo. Exact CSS e05d64f5d executable rehashed bb4f97d1\u20265da8. Editing 70d90bd5d guard exposed post-delete host-removal regression; next source not frozen, no extra compile yet."
+   },
+   "lanes": {
+    "lead": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "editing": {
+     "processes": [
+      {
+       "pid": 9444,
+       "state": "S",
+       "kind": "cargo",
+       "jobs": null
+      },
+      {
+       "pid": 9448,
+       "state": "R",
+       "kind": "rustc",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 522.8
+    },
+    "css": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "qa": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "diagnostics": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ordinary": {
+     "processes": [
+      {
+       "pid": 10338,
+       "state": "R",
+       "kind": "rustc",
+       "jobs": null
+      },
+      {
+       "pid": 98632,
+       "state": "S",
+       "kind": "cargo",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 71.2
+    },
+    "idb": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "census": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ci": {
+     "processes": [
+      {
+       "pid": 14341,
+       "state": "RN",
+       "kind": "Runner.Listener",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 0
+    },
+    "unassigned": {
+     "processes": [],
+     "cpuCorePct": 0
+    }
+   }
+  }
+ ],
+ "censusAdmissions": [],
+ "qaStart": "2026-11-21T23:51:53.908261+00:00",
+ "qaEnd": "2026-11-21T23:51:54.255261+00:00",
+ "qaTimeMethod": "Head receipt modification time and runner-reported wallMs; approximate times. Receipt already complete before performance probe.",
+ "measuredCensusShardWindows": [],
+ "qaOverlapSeconds": 0,
+ "method": "Aggregate one-second percentages are weighted by exact overlap per process. 30-second host intervals include activity outside perf; process snapshots bracket the run. Hardware counters do not assign competition to a process.",
+ "buildReceiptOverlaps": [
+  {
+   "log": "round7-editing/selection-delete/revision2/pyro-build.log",
+   "start": "2026-11-21T23:53:36.292Z",
+   "end": "2026-11-21T23:54:15.275Z",
+   "overlapSeconds": 2.71,
+   "sha256": "444bee3a9c6da60ca0cb8ef2aac00ee32716b23b6a9e930e1458a3ad99829e55"
+  },
+  {
+   "log": "round7-svg-number-list/base-build.log",
+   "start": "2026-11-21T23:50:05.651Z",
+   "end": "2026-11-21T23:54:27.205Z",
+   "overlapSeconds": 2.71,
+   "sha256": "254bed90eae0d45ca99fb488dbf81f4510e3644cf6ff92f31410fd4d88ef8dde"
+  },
+  {
+   "log": "round7-svg-number-list/candidate-build.log",
+   "start": "2026-11-21T23:54:49.417Z",
+   "end": "2026-11-21T23:55:30.368Z",
+   "overlapSeconds": 0,
+   "sha256": "9704df59e255fbd7454dfae76016c34d07ef77ba57167ce4057dcd55ca00ae40"
+  }
+ ],
+ "buildOverlapMethod": "Measured local raw build log creation through final line; overlap is wall-clock occupancy rather than attribution of aggregate CPU consumption."
+}

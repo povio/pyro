@@ -15,3 +15,5 @@ Eight fresh serial processes ran in ABBA/BAAB order. Each fixture used one warm-
 | unitSum | 0.753 | 0.671 | 2.5 / 2.5 |
 | mixedType | 1.526 | 1.656 | 4.5 / 3.5 |
 | nestedProduct | 2.871 | 2.677 | 4.0 / 4.5 |
+
+Host occupancy averaged 42.02% over 2.710 seconds, with 42.02% during baseline arms and 42.02% during candidate arms. These short-run timings are descriptive. [Per-arm host receipt](host.json)
