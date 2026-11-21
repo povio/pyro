@@ -973,19 +973,19 @@
   function storeRecord(h, value, key, noOverwrite) {
     const m = h.m, x = h.x, name = x.conn.name;
     if (key === undefined) {
-      const n = N.nextKey(name, m.backingName, x.id);
+      const n = N.nextKey(name, m.backingName);
       if (n < 0) throw fail('ConstraintError', 'The key generator has reached its maximum value.');
       key = numberKey(n);
       if (m.keyPath !== null) inject(value, m.keyPath, n);
-    } else if (m.ai && key[0] === '1') {
-      N.bumpKey(name, m.backingName, x.id, decodeKey(key));
     }
     const idx = [];
     for (const im of m.backingIndexes) idx.push([im.backingName, indexKeys(im, value)]);
     const code = N.put(name, m.backingName, x.id, key, value, idx, noOverwrite);
     if (code === 1) throw fail('ConstraintError', 'Key already exists in the object store.');
     if (code === 2) throw fail('ConstraintError', 'Unable to add key to index: at least one key does not satisfy the uniqueness requirements.');
-    return decodeKey(key);
+    const primaryKey = decodeKey(key);
+    if (m.ai && key[0] === '1') N.bumpKey(name, m.backingName, x.id, primaryKey);
+    return primaryKey;
   }
   function addOrPut(store, args, noOverwrite, what) {
     if (!args.length) throw new TE(`Failed to execute '${what}' on 'IDBObjectStore': 1 argument required.`);
