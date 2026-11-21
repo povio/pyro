@@ -1,0 +1,22 @@
+running 3 tests
+test css_declarations::typed_computed_widths_and_line_height_read_the_cascaded_values ... FAILED
+test css_declarations::typed_maps_reify_shorthands_background_layers_and_column_rule_values ... ok
+test css_declarations::typed_numeric_writes_preserve_units_and_math_until_replaced ... ok
+
+failures:
+
+---- css_declarations::typed_computed_widths_and_line_height_read_the_cascaded_values stdout ----
+
+thread 'css_declarations::typed_computed_widths_and_line_height_read_the_cascaded_values' (28728695) panicked at crates/pyro-browser/tests/css_declarations.rs:961:5:
+assertion `left == right` failed
+  left: "0px|5|5|40px|1.25|number"
+ right: "0px|5|5|20px|1.25|number"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    css_declarations::typed_computed_widths_and_line_height_read_the_cascaded_values
+
+test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 526 filtered out; finished in 0.28s
+
+error: test failed, to rerun pass `-p pyro-browser --test integration`
