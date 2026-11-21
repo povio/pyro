@@ -1095,11 +1095,13 @@ fn merge_blocks(page: &PageDom, dom: &mut Dom, host: NodeId, from: Point, to: Po
         && editable_edge(dom, (second, 0), true) == editable_edge(dom, to, true)
     {
         dom.remove_node(first).ok()?;
+        whitespace::after_join(page, dom, host, to);
         return Some(to);
     }
     // An empty following paragraph contributes no line content.
     if placeholder_block(dom, second) || dom.child_count(second).ok() == Some(0) {
         dom.remove_node(second).ok()?;
+        whitespace::after_join(page, dom, host, from);
         return Some(from);
     }
     let last = dom
@@ -1159,6 +1161,7 @@ fn merge_blocks(page: &PageDom, dom: &mut Dom, host: NodeId, from: Point, to: Po
     }
     let seam =
         if dom.contains(first, from.0).ok()? && from.1 <= len(dom, from.0) { from } else { (first, len(dom, first)) };
+    whitespace::after_join(page, dom, host, seam);
     Some(placeholder_if_empty(dom, first).unwrap_or(seam))
 }
 

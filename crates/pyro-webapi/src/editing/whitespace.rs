@@ -253,6 +253,7 @@ pub(super) enum Repair {
     Deleted,
     Inserted,
     RemovedBox,
+    Joined,
 }
 
 /// Whether the deletion needs whitespace repair at the resulting caret.
@@ -418,6 +419,13 @@ pub(super) fn after_text_deletion(page: &PageDom, dom: &mut Dom, host: NodeId, (
     Some(caret)
 }
 
+/// A paragraph join can expose a single visible run spanning both blocks.
+pub(super) fn after_join(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point) {
+    let left = editing::editable_edge(dom, caret, false);
+    let point = if editing::is_text(dom, left.0) { left } else { editing::editable_edge(dom, caret, true) };
+    at(page, dom, host, point, Repair::Joined);
+}
+
 /// Normalize only the run touching the edit, retaining UTF-16 offsets.
 pub(super) fn at(page: &PageDom, dom: &mut Dom, host: NodeId, (node, offset): Point, repair: Repair) {
     if !editing::is_text(dom, node) || editing::editing_host(dom, node) != Some(host) {
@@ -472,14 +480,24 @@ pub(super) fn at(page: &PageDom, dom: &mut Dom, host: NodeId, (node, offset): Po
         last |= right_char == Some('\n');
     }
     let count = parts.iter().map(|p| p.2 as usize).sum();
+    if matches!(repair, Repair::Joined) {
+        // Ordinary spaces at an old line edge may already have collapsed.
+        // Only rewrite a nonbreaking run whose original width is known.
+        if count < 2 || parts.iter().any(|&(n, start, count)| {
+            !dom.substring_data(n, start, count).is_ok_and(|s| s.chars().all(|c| c == '\u{a0}'))
+        }) {
+            return;
+        }
+    }
+    let local_end = right_char.is_none() && !matches!(repair, Repair::Joined);
     let sequence = match repair {
         Repair::Exposed => canonical(count, first, last),
         // Blink rebalances a visible run after editing from left to right.
         // Keep the last space visible at a line end and allow an isolated
         // internal space to wrap.
-        Repair::Deleted | Repair::Inserted | Repair::RemovedBox => (0..count)
+        Repair::Deleted | Repair::Inserted | Repair::RemovedBox | Repair::Joined => (0..count)
             .map(|i| {
-                let nonbreaking = (i % 2 == 0 && (count > 1 || first)) || (i + 1 == count && (last || right_char.is_none()));
+                let nonbreaking = (i % 2 == 0 && (count > 1 || first)) || (i + 1 == count && (last || local_end));
                 if nonbreaking { '\u{a0}' } else { ' ' }
             })
             .collect(),
