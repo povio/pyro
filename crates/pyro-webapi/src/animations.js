@@ -1967,7 +1967,10 @@
       live.delete(object);
       // (A run the style dropped no longer waits for its trigger.)
       const gone = animations.get(object);
-      if (gone) triggered.delete(gone);
+      if (gone) {
+        triggered.delete(gone);
+        if (gone.css === CSS_TRANSITION && playStateOf(gone) !== 'finished') cancel(gone);
+      }
     }
   }
 

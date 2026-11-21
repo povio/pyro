@@ -1423,14 +1423,17 @@ fn start_transitions_of(
         }
     }
     let mut started = Vec::new();
-    for transition in &transitions {
+    for transition in transitions.iter().rev() {
+        let custom = if transition.property == "all" {
+            pyro_dom::timing::changed_custom_properties(before, now, transition.allow_discrete)
+        } else { Vec::new() };
         let changed =
             pyro_dom::timing::changed_longhands_with(before, now, &transition.property, transition.allow_discrete);
-        for longhand in changed {
-            if started.contains(&longhand) {
+        for longhand in changed.into_iter().chain(custom.iter().map(String::as_str)) {
+            if started.iter().any(|name| name == longhand) {
                 continue;
             }
-            started.push(longhand);
+            started.push(longhand.to_owned());
             // A property a CSS or script animation drives does not
             // transition: its value changes with the animation's.
             if crate::animation_frame::animates(state, rules, el, pseudo, longhand) {

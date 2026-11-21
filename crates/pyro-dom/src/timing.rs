@@ -969,6 +969,20 @@ pub fn changed_longhands<'a>(before: &StyleSnapshot, after: &StyleSnapshot, prop
     changed_longhands_with(before, after, property, false)
 }
 
+pub fn changed_custom_properties(before: &StyleSnapshot, after: &StyleSnapshot, allow_discrete: bool) -> Vec<String> {
+    let old = before.custom_properties();
+    let new = after.custom_properties();
+    if old == new { return Vec::new(); }
+    let mut names = FxHashSet::default();
+    for (name, _) in old.inherited.iter().chain(old.non_inherited.iter()).chain(new.inherited.iter()).chain(new.non_inherited.iter()) {
+        names.insert(name);
+    }
+    let mut changed: Vec<_> = names.into_iter().map(|name| format!("--{name}"))
+        .filter(|name| !changed_longhands_with(before, after, name, allow_discrete).is_empty()).collect();
+    changed.sort_unstable();
+    changed
+}
+
 pub fn lists_transition(style: &StyleSnapshot, properties: &[String], name: &str) -> bool {
     use style::properties::PropertyDeclarationId;
     let Some(id) = crate::stylo::property_id(name) else { return false };
