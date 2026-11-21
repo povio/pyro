@@ -143,6 +143,7 @@ pub fn install(fetcher: Arc<dyn Fetcher>) {
 /// from its network ([`GeometrySource::set_subresource_loader`]), so what it
 /// is laid out with loads the way its own sub-resource requests go.
 pub fn install_with(fetchers: FetcherFactory) {
+    pyro_dom::picture::set_media_font_provider(Some(pyro_render::media_font_metrics));
     // pyro: before a page's scripts draw on a canvas (an SVG image, a `filter`).
     pyro_render::register_hooks();
     if profile::on() {
@@ -171,6 +172,7 @@ pub fn install_with(fetchers: FetcherFactory) {
 /// page's rendering state (the next `install` and the next layout make them
 /// again). The fetcher, which reaches the old client's network, goes too.
 pub fn release_thread() {
+    pyro_dom::picture::set_media_font_provider(None);
     pyro_dom::layout::set_geometry_source_factory(None);
     let renderer = RENDERER.with(|r| r.try_borrow_mut().ok().and_then(|mut r| r.take()));
     drop(renderer);

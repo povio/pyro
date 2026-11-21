@@ -5945,7 +5945,18 @@ diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/fon
              .map(stylo_to_parley::query_font_family)
              .chain(fallback.map(parley::fontique::QueryFamily::Generic)),
      );
-@@ -48,12 +49,198 @@
+@@ -41,6 +42,10 @@
+     pub(crate) font_ctx: Arc<Mutex<FontContext>>,
+ }
+ 
++pub fn font_metrics_provider(font_ctx: Arc<Mutex<FontContext>>) -> Box<dyn FontMetricsProvider> {
++    Box::new(BlitzFontMetricsProvider { font_ctx })
++}
++
+ impl core::fmt::Debug for BlitzFontMetricsProvider {
+     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+         write!(f, "BlitzFontMetricsProvider")
+@@ -48,12 +53,198 @@
  }
  
  impl FontMetricsProvider for BlitzFontMetricsProvider {
@@ -6145,7 +6156,7 @@ diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/fon
      ) -> FontMetrics {
          use parley::fontique::{Query, QueryFont, QueryStatus};
          use skrifa::instance::{LocationRef, Size};
-@@ -70,6 +257,9 @@
+@@ -70,6 +261,9 @@
          // query.set_fallbacks(fontique::FallbackKey::new(fb_script, fb_language.as_ref()));
  
          let variations = stylo_to_parley::font_variations(font_styles, font_size.px());
@@ -6155,7 +6166,7 @@ diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/fon
          // let features = self.rcx.features(style.font_features).unwrap_or(&[]);
  
          // fn name_of(font_ref: &skrifa::FontRef) -> String {
-@@ -87,6 +277,10 @@
+@@ -87,6 +281,10 @@
              query.matches_with(|q_font: &QueryFont| {
                  use skrifa::MetadataProvider;
  
@@ -6166,7 +6177,7 @@ diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/fon
                  let Ok(font_ref) = skrifa::FontRef::from_index(q_font.blob.as_ref(), q_font.index)
                  else {
                      return QueryStatus::Continue;
-@@ -111,8 +305,11 @@
+@@ -111,8 +309,11 @@
              ch: char,
              font_size: f32,
              variations: &[FontVariation],
@@ -6178,7 +6189,7 @@ diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/fon
              let font_ref = skrifa::FontRef::from_index(font.blob.as_ref(), font.index).ok()?;
              let location = font_ref.axes().location(
                  variations
-@@ -134,10 +331,14 @@
+@@ -134,10 +335,14 @@
          fn metrics_of(
              query: &mut Query,
              ch: char,
@@ -6194,7 +6205,7 @@ diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/fon
              let font_ref = skrifa::FontRef::from_index(font.blob.as_ref(), font.index).ok()?;
              let location = font_ref.axes().location(
                  variations
-@@ -145,14 +346,61 @@
+@@ -145,14 +350,61 @@
                      .map(|v| (skrifa::Tag::from_be_bytes(v.tag.to_bytes()), v.value)),
              );
              let location_ref = LocationRef::from(&location);
@@ -6261,7 +6272,7 @@ diff --git a/packages/blitz-dom/src/font_metrics.rs b/packages/blitz-dom/src/fon
                  .unwrap_or((0.0, None, None));
  
          FontMetrics {
-@@ -165,15 +413,4 @@
+@@ -165,15 +417,4 @@
              script_script_percent_scale_down: None,
          }
      }
@@ -39587,9 +39598,11 @@ diff --git a/packages/blitz-dom/src/lib.rs b/packages/blitz-dom/src/lib.rs
  
  /// The nodes themsleves, and their data.
  pub mod node;
-@@ -46,21 +49,48 @@
+@@ -45,22 +48,50 @@
+ mod debug;
  mod events;
  mod font_metrics;
++pub use font_metrics::font_metrics_provider;
  mod form;
 +mod has_invalidation;
 +pub use has_invalidation::PYRO_STATE_NS;
@@ -39636,7 +39649,7 @@ diff --git a/packages/blitz-dom/src/lib.rs b/packages/blitz-dom/src/lib.rs
  mod stylo_device;
  mod stylo_to_cursor_icon;
  mod stylo_to_kurbo;
-@@ -76,7 +106,7 @@
+@@ -76,7 +107,7 @@
      css_property_is_supported, parse_transform_matrix, resolved_style_property_names,
  };
  pub use stylo_taffy::CopyStyleGetters;
@@ -39645,7 +39658,7 @@ diff --git a/packages/blitz-dom/src/lib.rs b/packages/blitz-dom/src/lib.rs
  
  pub mod net;
  pub mod util;
-@@ -84,7 +114,7 @@
+@@ -84,7 +115,7 @@
  #[cfg(feature = "accessibility")]
  mod accessibility;
  
@@ -39654,7 +39667,7 @@ diff --git a/packages/blitz-dom/src/lib.rs b/packages/blitz-dom/src/lib.rs
  pub use crate::layout::replaced::IntrinsicSizes;
  pub use crate::layout::text_transform::{full_size_kana, full_width};
  #[cfg(feature = "custom-widget")]
-@@ -93,10 +123,18 @@
+@@ -93,10 +124,18 @@
  pub use blitz_traits::node_id::NodeId;
  // Re-export taffy: it is part of blitz-dom's public API (e.g. `Node::style`,
  // `Node::final_layout`)

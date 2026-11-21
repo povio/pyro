@@ -261,7 +261,17 @@ fn divides_by_zero(entry: &str) -> bool {
     false
 }
 
-/// Font metrics for a sizes attribute's font-relative units: none known, so Stylo's fallbacks.
+type MediaFontMetrics = Box<dyn style::device::servo::FontMetricsProvider>;
+
+thread_local! {
+    static MEDIA_FONTS: std::cell::Cell<Option<fn() -> MediaFontMetrics>> = const { std::cell::Cell::new(None) };
+}
+
+pub fn set_media_font_provider(provider: Option<fn() -> MediaFontMetrics>) {
+    MEDIA_FONTS.set(provider);
+}
+
+/// Fallback metrics for embedders without a font provider.
 #[derive(Debug)]
 struct NoFontMetrics;
 impl style::device::servo::FontMetricsProvider for NoFontMetrics {
@@ -298,7 +308,7 @@ pub(crate) fn sizes_device(viewport: &Viewport) -> style::device::Device {
     if viewport.hover { pointer |= PointerCapabilities::HOVER; }
     style::device::Device::new(
         ComputedValues::initial_values_with_font_override(Font::initial_values()),
-        Box::new(NoFontMetrics),
+        MEDIA_FONTS.get().map_or_else(|| Box::new(NoFontMetrics) as MediaFontMetrics, |make| make()),
         "Submit".into(),
         style::device::servo::MediaData {
             media_type: if viewport.print { style::media_queries::MediaType::print() } else { style::media_queries::MediaType::screen() },

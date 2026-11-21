@@ -719,6 +719,13 @@ pub fn fork_safe_fonts() -> bool {
 
 /// The process's fonts (`pyro_canvas::fonts`, shared with canvas text), with
 /// Blitz's list bullet font added once: every [`Renderer`] works on a clone.
+pub fn media_font_metrics() -> Box<dyn style::device::servo::FontMetricsProvider> {
+    thread_local! {
+        static MEDIA_FONTS: Arc<std::sync::Mutex<FontContext>> = Arc::new(std::sync::Mutex::new(process_fonts()));
+    }
+    MEDIA_FONTS.with(|fonts| blitz_dom::font_metrics_provider(fonts.clone()))
+}
+
 fn process_fonts() -> FontContext {
     static BULLET: std::sync::Once = std::sync::Once::new();
     BULLET.call_once(|| pyro_canvas::fonts::register_fonts(Blob::new(Arc::new(blitz_dom::BULLET_FONT) as _)));

@@ -42,6 +42,10 @@ pub(crate) struct BlitzFontMetricsProvider {
     pub(crate) font_ctx: Arc<Mutex<FontContext>>,
 }
 
+pub fn font_metrics_provider(font_ctx: Arc<Mutex<FontContext>>) -> Box<dyn FontMetricsProvider> {
+    Box::new(BlitzFontMetricsProvider { font_ctx })
+}
+
 impl core::fmt::Debug for BlitzFontMetricsProvider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "BlitzFontMetricsProvider")

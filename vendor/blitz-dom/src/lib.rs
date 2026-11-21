@@ -48,6 +48,7 @@ mod cssom;
 mod debug;
 mod events;
 mod font_metrics;
+pub use font_metrics::font_metrics_provider;
 mod form;
 mod has_invalidation;
 pub use has_invalidation::PYRO_STATE_NS;

@@ -3939,7 +3939,7 @@ diff -ruN a/rule_cache.rs b/rule_cache.rs
              .entry(rules)
 diff -ruN a/servo/media_features.rs b/servo/media_features.rs
 --- a/servo/media_features.rs	2026-11-11 19:55:57
-+++ b/servo/media_features.rs	2026-11-21 01:28:04
++++ b/servo/media_features.rs	2026-11-21 01:37:49
 @@ -7,8 +7,12 @@
  use crate::derives::*;
  use crate::queries::feature::{AllowsRanges, Evaluator, FeatureFlags, QueryFeatureDescription};
@@ -4004,7 +4004,7 @@ diff -ruN a/servo/media_features.rs b/servo/media_features.rs
 +fn eval_color_gamut(_: &Context, query_value: Option<ColorGamut>) -> bool {
 +    match query_value {
 +        Some(v) => v <= ColorGamut::Srgb,
-+        None => false,
++        None => true,
 +    }
 +}
 +
@@ -4020,7 +4020,7 @@ diff -ruN a/servo/media_features.rs b/servo/media_features.rs
 +fn eval_dynamic_range(_: &Context, query_value: Option<DynamicRange>) -> bool {
 +    match query_value {
 +        Some(v) => v <= DynamicRange::Standard,
-+        None => false,
++        None => true,
 +    }
 +}
 +

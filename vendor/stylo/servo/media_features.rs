@@ -208,7 +208,7 @@ enum ColorGamut {
 fn eval_color_gamut(_: &Context, query_value: Option<ColorGamut>) -> bool {
     match query_value {
         Some(v) => v <= ColorGamut::Srgb,
-        None => false,
+        None => true,
     }
 }
 
@@ -224,7 +224,7 @@ enum DynamicRange {
 fn eval_dynamic_range(_: &Context, query_value: Option<DynamicRange>) -> bool {
     match query_value {
         Some(v) => v <= DynamicRange::Standard,
-        None => false,
+        None => true,
     }
 }
 
