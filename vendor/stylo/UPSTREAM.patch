@@ -5921,7 +5921,7 @@ diff -ruN a/servo/restyle_damage.rs b/servo/restyle_damage.rs
          !self.transform.0.is_empty()
 diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 --- a/servo/selector_parser.rs	2026-11-11 19:55:57
-+++ b/servo/selector_parser.rs	2026-11-21 01:58:20
++++ b/servo/selector_parser.rs	2026-11-21 19:35:15
 @@ -24,7 +24,6 @@
  use selectors::attr::{AttrSelectorOperation, CaseSensitivity, NamespaceConstraint};
  use selectors::parser::SelectorParseErrorKind;
@@ -6571,11 +6571,23 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              "user-invalid" => NonTSPseudoClass::UserInvalid,
              "user-valid" => NonTSPseudoClass::UserValid,
              "valid" => NonTSPseudoClass::Valid,
-@@ -697,6 +1107,27 @@
+@@ -687,15 +1097,36 @@
+         &self,
+         name: &str,
+         parser: &mut CssParser<'i>,
+-        after_part: bool,
++        _after_part: bool,
+     ) -> Result<NonTSPseudoClass, ParseError> {
+         let pseudo_class = match_ignore_ascii_case! { &name,
+-            "lang" if !after_part => {
++            "lang" => {
+                 NonTSPseudoClass::Lang(parser.expect_ident_or_string()?.as_ref().into())
+             },
+             "state" => {
                  let result = AtomIdent::from(parser.expect_ident()?.as_ref());
                  NonTSPseudoClass::CustomState(CustomState(result))
-             },
-+            "dir" if !after_part => {
++            },
++            "dir" => {
 +                NonTSPseudoClass::Dir(parser.expect_ident()?.to_ascii_lowercase().into())
 +            },
 +            "has-slotted" => {
@@ -6595,10 +6607,9 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +                    return Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent));
 +                }
 +                NonTSPseudoClass::HasSlotted(Some(HasSlottedArgument(list)))
-+            },
+             },
              _ => return Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent)),
          };
- 
 @@ -714,8 +1145,26 @@
              "first-letter" => FirstLetter,
              "first-line" if crate::pref!("layout.css.first-line.enabled") => FirstLine,

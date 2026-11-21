@@ -8,6 +8,8 @@ crate (`diff -ruN`).
 
 ## The change
 
+- Accept `:lang()` and `:dir()` on exposed shadow parts, so rules can match the part element's own language and directionality.
+
 - Container-relative lengths, including those inside math functions, are invalid in computationally independent typed initial values. Ordinary declarations can still use them; viewport units keep their existing behavior.
 
 - Servo exposes the `page` property and the `size` and `page-orientation` descriptors through the style system. The latter two remain restricted to `@page`. This does not implement named-page pagination or rotated print output.
