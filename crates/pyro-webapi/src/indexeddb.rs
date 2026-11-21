@@ -646,7 +646,7 @@ impl JsClass for IdbFactory {
     type Data = FactoryData;
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
-        def.method("databases", 0, |s, data, _| {
+        def.promise_method("databases", 0, |s, data, _| {
             let promise = s.deferred()?;
             match data.origin() {
                 Ok(origin) => {
@@ -762,12 +762,44 @@ fn global<'s>(s: &Scope<'s>, page: &Rc<PageDom>, name: &str) -> JsResult<Value<'
     Ok(value)
 }
 
+/// Per-object host state for IDB event-handler accessors. Keeping it on the
+/// EventTarget lets a borrowed same-origin accessor reach the owner's state.
+fn binding_natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
+    let natives = s.object();
+    let state = s.function("handlerState", |s, _, args| {
+        const KEY: &str = "lpIDBEventHandlers";
+        let Some(object) = args.get(0).as_object() else { return Ok(s.undefined()) };
+        if !args.get(1).is_undefined() {
+            s.set_hidden(object, KEY, args.get(1))?;
+            return Ok(s.undefined());
+        }
+        Ok(s.get_hidden(object, KEY)?.unwrap_or(s.undefined()))
+    })?;
+    natives.set_atom("handlerState", state.value())?;
+    let set = s.function("setHandler", |s, _, args| {
+        let target = s.unwrap::<crate::target::EventTarget>(args.get(0)).ok_or_else(unavailable)?;
+        let name = args.get(1).to_string()?;
+        let ty = ["success", "error", "blocked", "upgradeneeded", "abort", "close", "versionchange", "complete"]
+            .into_iter().find(|&value| value == name).ok_or_else(unavailable)?;
+        crate::target::set_event_handler(s, &target, ty, args.get(2))?;
+        Ok(s.undefined())
+    })?;
+    natives.set_atom("setHandler", set.value())?;
+    let cancel = s.function("cancelEvent", |s, _, args| {
+        let event = s.unwrap::<crate::event::Event>(args.get(0)).ok_or_else(unavailable)?;
+        event.state.borrow_mut().prevent_default();
+        Ok(s.undefined())
+    })?;
+    natives.set_atom("cancelEvent", cancel.value())?;
+    Ok(natives)
+}
+
 /// Interfaces only, for a realm with an opaque origin (no storage, no tasks).
 fn opaque_module<'s>(s: &Scope<'s>, factory: Object<'s>) -> JsResult<Object<'s>> {
     if let Some(module) = s.get_hidden(factory, MODULE)?.and_then(|v| v.as_object()) {
         return Ok(module);
     }
-    let natives = s.object();
+    let natives = binding_natives(s)?;
     let make = s.eval(include_str!("idb.js"), Some("pyro://internal/idb.js"), 1)?;
     let module = make.as_object().ok_or_else(unavailable)?.call(None, &[natives.value()])?;
     s.set_hidden(factory, MODULE, module)?;
@@ -864,7 +896,7 @@ fn natives<'s>(
     handle: u64,
 ) -> JsResult<Object<'s>> {
     let ctx = Rc::new(Ctx { namespace, origin, handle, page: Rc::downgrade(page) });
-    let natives = s.object();
+    let natives = binding_natives(s)?;
     // One task of idb.js's queue.
     add(s, &natives, &ctx, "post", |s, ctx, _a| {
         if let Some(page) = ctx.page.upgrade() {
