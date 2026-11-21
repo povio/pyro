@@ -1,0 +1,81 @@
+{
+  "restoredCalcSize": [
+    [
+      "css/css-values/calc-size/animation/calc-size-interpolation-expansion.html",
+      "value at progress 0.75 in animation of \"width\" from \"calc-size(80px, size)\" to \"calc-size(calc-size(10px, (2 * size)), size + 20px)\""
+    ],
+    [
+      "css/css-values/calc-size/animation/calc-size-interpolation-expansion.html",
+      "value at progress 0.75 in animation of \"width\" from \"calc-size(80px, size)\" to \"calc-size(calc-size(any, 20px), size + 20px)\""
+    ],
+    [
+      "css/css-values/calc-size/animation/calc-size-interpolation-expansion.html",
+      "value at progress 0.75 in animation of \"width\" from \"calc-size(any, 20px)\" to \"calc-size(calc-size(fit-content, 40px), size)\""
+    ],
+    [
+      "css/css-values/calc-size/animation/calc-size-interpolation-expansion.html",
+      "value at progress 0.75 in animation of \"width\" from \"calc-size(calc-size(any, 30px), 20px)\" to \"calc-size(calc-size(fit-content, 40px), size)\""
+    ]
+  ],
+  "focusedTransitionGains": [
+    [
+      "css/css-transitions/CSSTransition-canceling.tentative.html",
+      "An after-change style value can't be interpolated"
+    ],
+    [
+      "css/css-transitions/CSSTransition-canceling.tentative.html",
+      "Setting zero combined duration"
+    ],
+    [
+      "css/css-transitions/CSSTransition-currentTime.tentative.html",
+      "Transition reversing behavior respects currentTime and uses the transition's current position."
+    ],
+    [
+      "css/css-transitions/CSSTransition-effect.tentative.html",
+      "A transition with a replaced effect still exhibits the regular transition reversing behavior"
+    ],
+    [
+      "css/css-transitions/retargetted-transition-with-box-sizing.html",
+      "Retargeting transitions on box size relative transitions should work."
+    ]
+  ],
+  "originalBatch16Statuses": {
+    "css/css-animations/animation-play-state-005.tentative.html": [
+      "timeout",
+      null
+    ],
+    "css/css-backgrounds/parsing/box-shadow-valid.html": [
+      "timeout",
+      null
+    ],
+    "css/css-conditional/container-queries/pseudo-elements-004.html": [
+      "timeout",
+      null
+    ],
+    "css/css-grid/layout-algorithm/baseline-alignment-affects-intrinsic-size-005.html": [
+      "complete",
+      1
+    ],
+    "css/css-grid/layout-algorithm/grid-item-margin-auto-columns-rows-vertical-lr-002.html": [
+      "timeout",
+      null
+    ],
+    "css/css-logical/logicalprops-with-variables-revert.html": [
+      "timeout",
+      null
+    ],
+    "css/css-mixins/private/private-shared-stylesheet.tentative.html": [
+      "timeout",
+      null
+    ],
+    "css/css-scroll-snap/snap-events/scrollsnapchange/scrollsnapchange-scroll-snap-type-change.html": [
+      "timeout",
+      null
+    ],
+    "css/css-variables/variable-reference-variable.html": [
+      "timeout",
+      null
+    ]
+  },
+  "flexWidthGainsVs17": []
+}
