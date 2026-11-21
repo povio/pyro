@@ -375,6 +375,7 @@ fn install_page<'s>(scope: &Scope<'s>, page: Rc<PageDom>) -> JsResult<Object<'s>
     intersection_observer::install(scope, &page, helpers.get_atom("intersection")?)?;
     encoding::install(scope, helpers.get_atom("encoding")?)?;
     headers::install(scope, helpers.get_atom("headers")?)?;
+    scope.after_populate::<css::CssFontFeatureValuesMap>(helpers.get_atom("fontFeatureMap")?.as_object().expect("font feature map hook"))?;
     url_search_params::install(scope, helpers.get_atom("urlSearchParams")?)?;
     form_data::install(scope, helpers.get_atom("formData")?)?;
     fetch::install(scope)?;

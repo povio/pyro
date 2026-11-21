@@ -492,3 +492,27 @@ fn inherit_reads_the_parent_and_only_resolves_a_selected_fallback() {
     "#);
     assert_eq!(values, "7:parent child|11:updated child|A//C|2");
 }
+
+#[test]
+fn font_feature_value_maps_read_and_update_the_owning_rule() {
+    let (_t, root) = page();
+    let result = eval(&root, r#"
+        const sheet = new CSSStyleSheet();
+        sheet.replaceSync('@font-feature-values Demo { @swash { a: 4; a: sibling-index() } @styleset { b: 2 3; a: 1; b: 8 9 } }');
+        const rule = sheet.cssRules[0], map = rule.styleset;
+        const initial = [...map].map(([key, value]) => key + ':' + value.join(',')).join('/');
+        const copy = map.get('b');
+        copy[0] = 99;
+        map.set('a', new Set([5, 7]));
+        map.delete('b');
+        map.set('b', 6);
+        rule.fontFamily = 'Other Family';
+        const visits = [];
+        map.forEach((value, key, self) => visits.push(key + ':' + value.join(',') + ':' + (self === map)));
+        let limits = '';
+        try { rule.swash.set('bad', [1, 2]); } catch (e) { limits = e.name; }
+        [initial, visits.join('/'), map === rule.styleset, rule.swash.get('a')[0],
+         limits, rule.cssText.includes('@styleset { a: 5 7; b: 6; }'), rule.fontFamily].join('|')
+    "#);
+    assert_eq!(result, "b:8,9/a:1|a:5,7:true/b:6:true|true|4|InvalidAccessError|true|Other Family");
+}
