@@ -1602,6 +1602,8 @@ fn determine_flex_base_size(
             // suggestion); the min and max cross sizes bound it through the ratio.
             let specified_main_size = match content_ratio_item && child.size_style.main(dir).is_auto() {
                 true => None,
+                false if child.size_style.main(dir).is_stretch() => percent_resolution_main_size
+                    .map(|size| (size - child.margin.main_axis_sum(dir)).max(padding_border_sum)),
                 false => child.size.main(dir),
             };
             let clamped_min_content_size = min_content_main_size
