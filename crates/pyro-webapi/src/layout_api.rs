@@ -718,18 +718,37 @@ pub struct ComputedData {
 }
 
 impl ComputedData {
+    fn rendered_document(&self) -> Option<Rc<PageDom>> {
+        let home = &self.el.page;
+        let document = home.dom.borrow().owner_document(self.el.id).ok().flatten()?;
+        let page = if home.document() == document {
+            home.clone()
+        } else {
+            home.hooks()?.frame_tree().into_iter().find(|other| {
+                other.document() == document && Rc::ptr_eq(&other.dom, &home.dom)
+            })?
+        };
+        let mut frame = page.clone();
+        while frame.is_nested_frame() {
+            let crate::page::FrameContainer::Frame(parent, owner) = frame.container() else { return None };
+            parent.layout().client_rect(&parent.dom.borrow(), owner)?;
+            frame = parent;
+        }
+        Some(page)
+    }
+
     /// The computed value of `name` for the element or its pseudo-element.
     fn value(&self, name: &str) -> String {
         use pyro_dom::stylo::PseudoArg;
-        let page = &self.el.page;
+        let Some(page) = self.rendered_document() else { return String::new() };
         match &self.pseudo {
             PseudoArg::Element => {
-                crate::animation_events::observe(page, self.el.id);
+                crate::animation_events::observe(&page, self.el.id);
                 page.layout().computed_style_value(&page.dom.borrow(), self.el.id, name)
             }
             PseudoArg::Pseudo(pseudo) => {
                 // A style flush too: the pseudo-element's transitions start at it.
-                crate::animation_events::observe(page, self.el.id);
+                crate::animation_events::observe(&page, self.el.id);
                 page.layout().computed_pseudo_style_value(&page.dom.borrow(), self.el.id, pseudo, name)
             }
             PseudoArg::Invalid => String::new(),
@@ -955,7 +974,7 @@ fn computed_names(c: &ComputedData) -> &'static [&'static str] {
     if c.pseudo == pyro_dom::stylo::PseudoArg::Invalid {
         return &[];
     }
-    let page = &c.el.page;
+    let Some(page) = c.rendered_document() else { return &[] };
     let dom = page.dom.borrow();
     if page.layout().computed_style_value(&dom, c.el.id, "display").is_empty() {
         return &[];

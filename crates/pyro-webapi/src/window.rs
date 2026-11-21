@@ -228,9 +228,10 @@ where
             s.wrap::<VisualViewport>(ViewportTargetData::new(w.page(), ViewportTarget::VisualViewport), Some(key))
         })
     });
-    def.method("getComputedStyle", 1, |s, w, a| {
-        let el = crate::node::node_arg(s, a.get(0), "Window.getComputedStyle")?;
-        Ok(crate::layout_api::get_computed_style(s, w.page(), el, a.get(1))?.value())
+    def.method("getComputedStyle", 1, |s, _, a| {
+        let element = s.unwrap::<crate::node::Element>(a.get(0))
+            .ok_or_else(|| JsError::Type("Window.getComputedStyle requires an Element".into()))?;
+        Ok(crate::layout_api::get_computed_style(s, element.page(), element.id, a.get(1))?.value())
     });
     def.method("matchMedia", 1, |s, w, a| {
         let q = arg_string(&a, 0, "Window.matchMedia")?;
