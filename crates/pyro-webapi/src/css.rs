@@ -1112,6 +1112,10 @@ pub struct RuleData {
 }
 
 impl RuleData {
+    fn media_owner(&self) -> JsResult<MediaOwner> {
+        Ok(MediaOwner::Rule(RuleData { owner: self.owner.hold()?, rule_node: self.node()?.clone() }))
+    }
+
     /// pyro: the rule, through its sheet object's one accessor (`SheetOwner::access`): a rule of a
     /// sheet object whose response is not origin-clean gives a SecurityError; one of a detached
     /// object is its own, frozen content (never its node's newer rules).
@@ -1400,8 +1404,16 @@ fn rule_prelude(r: &RuleData) -> String {
     let text = rule_text(r);
     let body = text.trim_start_matches('@');
     let body = body.find(|c: char| c.is_ascii_whitespace() || c == '{' || c == ';' || c == '(').map_or("", |i| &body[i..]);
-    let end = body.find(['{', ';']).unwrap_or(body.len());
-    body[..end].trim().to_owned()
+    let mut parser = cssparser::Parser::new(body);
+    loop {
+        match parser.next_including_whitespace_and_comments() {
+            Ok(cssparser::Token::CurlyBracketBlock | cssparser::Token::Semicolon) => {
+                return body[..parser.position().byte_index() - 1].trim().to_owned();
+            }
+            Err(_) => return body.trim().to_owned(),
+            _ => {}
+        }
+    }
 }
 
 /// A rule interface with no members of its own.
@@ -1435,19 +1447,17 @@ rule_class!(CssConditionRule, "CSSConditionRule", CssGroupRule, |def| {
 fn define_rule_media<C: JsClass<Data = RuleData>>(def: &mut ClassDef<C>) {
     def.accessor(
         "media",
-        |s, r| {
-            let key = IdentityKey(r.node()?.identity.0 | (1 << 53), r.node()?.identity.1);
-            if let Some(o) = s.lookup_identity(key) {
-                return Ok(o.value());
-            }
-            let data = RuleData { owner: r.owner.hold()?, rule_node: r.node()?.clone() };
-            Ok(s.wrap::<MediaList>(MediaOwner::Rule(data), Some(key))?.value())
-        },
-        |_s, r, v| {
-            let data = RuleData { owner: r.owner.hold()?, rule_node: r.node()?.clone() };
-            MediaList::set(&MediaOwner::Rule(data), &dom_string(v)?)
-        },
+        rule_media_list,
+        |_s, r, v| MediaList::set(&r.media_owner()?, &dom_string(v)?),
     );
+}
+fn rule_media_list<'s>(s: &Scope<'s>, rule: &RuleData) -> JsResult<Value<'s>> {
+    let node = rule.node()?;
+    let key = IdentityKey(node.identity.0 | (1 << 53), node.identity.1);
+    if let Some(object) = s.lookup_identity(key) {
+        return Ok(object.value());
+    }
+    Ok(s.wrap::<MediaList>(rule.media_owner()?, Some(key))?.value())
 }
 rule_class!(CssMediaRule, "CSSMediaRule", CssConditionRule, |def| define_rule_media(def));
 rule_class!(CssSupportsRule, "CSSSupportsRule", CssConditionRule);
@@ -2464,8 +2474,8 @@ impl JsClass for StyleSheet {
         });
         def.getter("parentStyleSheet", |s, sh| match &sh.owner {
             SheetOwner::Constructed(c) => match &c.import {
-                Some(i) => Ok(i.rule.owner.wrapper(s)?.value()),
-                None => Ok(s.null()),
+                Some(i) if is_attached(&*i.rule.owner.rules()?, i.rule.node()?) => Ok(i.rule.owner.wrapper(s)?.value()),
+                _ => Ok(s.null()),
             },
             SheetOwner::Node(..) => Ok(s.null()),
         });
@@ -2485,14 +2495,24 @@ impl JsClass for StyleSheet {
                     // pyro: one media list per sheet object (its generation in the key, as the
                     // sheet's own): a replaced sheet's list is not the new sheet's.
                     SheetOwner::Node(h, generation) => sheet_object_key(&h.page, h.id, *generation, 25),
-                    SheetOwner::Constructed(c) => IdentityKey((1 << 56) | (1 << 53), c.id),
+                    SheetOwner::Constructed(c) => match &c.import {
+                        Some(import) => return rule_media_list(s, &import.rule),
+                        None => IdentityKey((1 << 56) | (1 << 53), c.id),
+                    },
                 };
                 if let Some(o) = s.lookup_identity(key) {
                     return Ok(o.value());
                 }
                 Ok(s.wrap::<MediaList>(MediaOwner::Sheet(sh.owner.hold()?), Some(key))?.value())
             },
-            |_s, sh, v| MediaList::set(&MediaOwner::Sheet(sh.owner.hold()?), &dom_string(v)?),
+            |_s, sh, v| {
+                if let SheetOwner::Constructed(c) = &sh.owner {
+                    if let Some(import) = &c.import {
+                        return MediaList::set(&import.rule.media_owner()?, &dom_string(v)?);
+                    }
+                }
+                MediaList::set(&MediaOwner::Sheet(sh.owner.hold()?), &dom_string(v)?)
+            },
         );
         def.getter("href", |s, sh| match &sh.owner {
             SheetOwner::Node(h, _) => {
