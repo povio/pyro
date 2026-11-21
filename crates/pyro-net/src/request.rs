@@ -25,6 +25,8 @@ pub enum Destination {
     Style,
     /// A JSON module script (`import ... with { type: "json" }`).
     Json,
+    /// A text module script (`import ... with { type: "text" }`).
+    Text,
     Image,
     /// An `<audio>` element's resource.
     Audio,
@@ -46,7 +48,7 @@ impl Destination {
         match self {
             Destination::Document | Destination::Iframe => "Document",
             // A JSON module script is still a script resource.
-            Destination::Script | Destination::Json => "Script",
+            Destination::Script | Destination::Json | Destination::Text => "Script",
             Destination::Style => "Stylesheet",
             Destination::Image => "Image",
             Destination::Audio | Destination::Video => "Media",

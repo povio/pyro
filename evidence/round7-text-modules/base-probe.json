@@ -1,0 +1,66 @@
+{
+ "rows": [
+  [
+   "static value preserves UTF-8 data, CRLF, quotes, NUL and U+2028",
+   false,
+   "TypeError",
+   "Import attribute type \"text\" is not valid"
+  ],
+  [
+   "dynamic text is an inert default-only module",
+   false,
+   "TypeError",
+   "Import attribute type \"text\" is not valid"
+  ],
+  [
+   "repeated text import shares module identity",
+   false,
+   "TypeError",
+   "Import attribute type \"text\" is not valid"
+  ],
+  [
+   "ordinary JS at same URL has its own type cache",
+   false,
+   "TypeError",
+   "Failed to fetch dynamically imported module: http://127.0.0.1:54269/same (Failed to load module script http://127.0.0.1:54269/same: Expected a JavaScript module script but the server responded with a MIME type of \"text/html\". Strict MIME type checking is enforced for module scripts per HTML spec.)"
+  ],
+  [
+   "text remains immutable after JS import",
+   false,
+   "TypeError",
+   "Import attribute type \"text\" is not valid"
+  ],
+  [
+   "UTF-16 BOM never switches text-module decoding",
+   false,
+   "TypeError",
+   "Import attribute type \"text\" is not valid"
+  ],
+  [
+   "ordinary JS import retains MIME validation",
+   true
+  ]
+ ],
+ "received": [
+  {
+   "path": "/page",
+   "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+   "dest": "document"
+  },
+  {
+   "path": "/root.mjs",
+   "accept": "*/*",
+   "dest": "script"
+  },
+  {
+   "path": "/same",
+   "accept": "*/*",
+   "dest": "script"
+  },
+  {
+   "path": "/plain",
+   "accept": "*/*",
+   "dest": "script"
+  }
+ ]
+}

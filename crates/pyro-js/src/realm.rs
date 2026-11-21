@@ -153,6 +153,8 @@ pub enum ModuleType {
     /// `with { type: "css" }`: resolve with [`ModuleRequest::resolve_object`]
     /// (a `CSSStyleSheet`).
     Css,
+    /// `with { type: "text" }`: a module whose only export is the decoded string.
+    Text,
     /// A type JavaScriptCore parses but HTML does not allow here
     /// (`"webassembly"`): reject it with a TypeError.
     Unsupported,
@@ -164,6 +166,7 @@ impl ModuleType {
             sys::modules::MODULE_TYPE_JAVASCRIPT => ModuleType::JavaScript,
             sys::modules::MODULE_TYPE_JSON => ModuleType::Json,
             sys::modules::MODULE_TYPE_CSS => ModuleType::Css,
+            sys::modules::MODULE_TYPE_TEXT => ModuleType::Text,
             _ => ModuleType::Unsupported,
         }
     }
@@ -269,6 +272,18 @@ impl ModuleRequest {
     /// fails the import with a SyntaxError.
     pub fn resolve_json(self, scope: &Scope<'_>, text: &str) -> JsResult<()> {
         self.resolve_source(scope, text, sys::modules::MODULE_TYPE_JSON)
+    }
+
+    /// Supplies a text module through the pinned JSC typed resolver. Its
+    /// module map already keys the entry by (URL, Text), but its C API
+    /// accepts only JavaScript and JSON source providers. Encode the data
+    /// as one quoted string literal in a module with only a default export.
+    pub fn resolve_text(self, scope: &Scope<'_>, text: &str) -> JsResult<()> {
+        let mut source = b"export default ".to_vec();
+        serde_json::to_writer(&mut source, text).expect("encoding a string into a Vec is infallible");
+        source.push(b';');
+        let module = std::str::from_utf8(&source).expect("serialized JSON is UTF-8");
+        self.resolve_source(scope, module, sys::modules::MODULE_TYPE_JAVASCRIPT)
     }
 
     /// Provides the `default` export of a [`ModuleType::Css`] request (the

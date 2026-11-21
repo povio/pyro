@@ -768,6 +768,7 @@ impl pyro_js::ModuleFetcher for WorkerModuleFetcher {
                         // (CSS modules were rejected above).
                         let destination = match request.module_type() {
                             pyro_js::ModuleType::Json => Destination::Json,
+                            pyro_js::ModuleType::Text => Destination::Text,
                             _ => Destination::Script,
                         };
                         fetch_script(&page, &net, &shared, &origin, parsed, destination, RequestMode::Cors, false)

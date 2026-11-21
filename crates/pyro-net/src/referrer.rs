@@ -246,6 +246,7 @@ pub fn fetch_dest(destination: Destination) -> &'static str {
         Destination::Script => "script",
         Destination::Style => "style",
         Destination::Json => "json",
+        Destination::Text => "text",
         Destination::Image => "image",
         Destination::Font => "font",
         Destination::Audio => "audio",

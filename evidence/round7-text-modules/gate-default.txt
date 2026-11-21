@@ -1,0 +1,2 @@
+{"executions":0,"failure":"TypeError: Import attribute type \"text\" is not valid"}
+text_fetches=0 js_fetches=0

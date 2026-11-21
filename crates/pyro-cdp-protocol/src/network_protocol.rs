@@ -519,7 +519,7 @@ pub fn fetch_resource_type(destination: pyro_net::Destination) -> ResourceType {
     use pyro_net::Destination as D;
     match destination {
         D::Document | D::Iframe => ResourceType::Document,
-        D::Script | D::Json => ResourceType::Script,
+        D::Script | D::Json | D::Text => ResourceType::Script,
         D::Style => ResourceType::Stylesheet,
         D::Image => ResourceType::Image,
         D::Audio | D::Video => ResourceType::Media,
