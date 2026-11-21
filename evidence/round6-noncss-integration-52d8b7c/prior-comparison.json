@@ -1,0 +1,72 @@
+{
+ "priority/non-css": {
+  "baseFullPageGains": 7,
+  "baseFullPageLosses": 8,
+  "headFullPageGains": 11,
+  "headFullPageLosses": 11,
+  "baseNamedGains": 68,
+  "baseNamedLosses": 67,
+  "headNamedGains": 68,
+  "headNamedLosses": 69
+ },
+ "extra-feature/non-css": {
+  "baseFullPageGains": 0,
+  "baseFullPageLosses": 0,
+  "headFullPageGains": 0,
+  "headFullPageLosses": 0,
+  "baseNamedGains": 0,
+  "baseNamedLosses": 0,
+  "headNamedGains": 0,
+  "headNamedLosses": 0
+ },
+ "priority/css": {
+  "baseFullPageGains": 0,
+  "baseFullPageLosses": 0,
+  "headFullPageGains": 0,
+  "headFullPageLosses": 0,
+  "baseNamedGains": 0,
+  "baseNamedLosses": 1,
+  "headNamedGains": 0,
+  "headNamedLosses": 0
+ },
+ "upstream-css/css": {
+  "baseFullPageGains": 0,
+  "baseFullPageLosses": 0,
+  "headFullPageGains": 0,
+  "headFullPageLosses": 0,
+  "baseNamedGains": 6,
+  "baseNamedLosses": 0,
+  "headNamedGains": 6,
+  "headNamedLosses": 0
+ },
+ "additional-noncss/non-css": {
+  "baseFullPageGains": 0,
+  "baseFullPageLosses": 0,
+  "headFullPageGains": 0,
+  "headFullPageLosses": 0,
+  "baseNamedGains": 0,
+  "baseNamedLosses": 0,
+  "headNamedGains": 0,
+  "headNamedLosses": 0
+ },
+ "wasm-metadata/non-css": {
+  "baseFullPageGains": 0,
+  "baseFullPageLosses": 0,
+  "headFullPageGains": 0,
+  "headFullPageLosses": 0,
+  "baseNamedGains": 0,
+  "baseNamedLosses": 0,
+  "headNamedGains": 0,
+  "headNamedLosses": 0
+ },
+ "wasm-storage-supplement/non-css": {
+  "baseFullPageGains": 0,
+  "baseFullPageLosses": 0,
+  "headFullPageGains": 0,
+  "headFullPageLosses": 0,
+  "baseNamedGains": 0,
+  "baseNamedLosses": 0,
+  "headNamedGains": 0,
+  "headNamedLosses": 0
+ }
+}

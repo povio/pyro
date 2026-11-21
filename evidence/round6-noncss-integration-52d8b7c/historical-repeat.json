@@ -1,0 +1,25 @@
+{
+ "rows": {
+  "paired": 288,
+  "unmatched": 4
+ },
+ "transitions": {
+  "base": {
+   "Fail => Fail": 105,
+   "Pass => Pass": 136,
+   "Pass => Fail": 22,
+   "Pass => missing-name": 3,
+   "missing-name => missing-name": 7,
+   "Fail => Pass": 15
+  },
+  "head": {
+   "Fail => Fail": 109,
+   "Pass => Pass": 130,
+   "Pass => missing-name": 1,
+   "missing-name => missing-name": 7,
+   "missing-name => Pass": 1,
+   "Pass => Fail": 29,
+   "Fail => Pass": 11
+  }
+ }
+}

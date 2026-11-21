@@ -1,0 +1,29 @@
+{
+ "previousOnly": {
+  "total": 66,
+  "byDirectory": {
+   "referrer-policy": 54,
+   "subresource-integrity": 6,
+   "webaudio": 4,
+   "fetch": 1,
+   "html": 1
+  }
+ },
+ "repeated": {
+  "total": 20,
+  "byDirectory": {
+   "referrer-policy": 8,
+   "input-events": 5,
+   "webaudio": 7
+  }
+ },
+ "currentOnly": {
+  "total": 60,
+  "byDirectory": {
+   "referrer-policy": 51,
+   "subresource-integrity": 6,
+   "html": 2,
+   "FileAPI": 1
+  }
+ }
+}

@@ -1,0 +1,394 @@
+[
+ {
+  "scope": "non-css",
+  "cohort": "priority",
+  "directory": "editing",
+  "planned": 710,
+  "paired": 710,
+  "chromeOnlyFull": 246,
+  "headOnlyFull": 32,
+  "chromeOnlyName": 6349,
+  "headOnlyName": 2238
+ },
+ {
+  "scope": "non-css",
+  "cohort": "extra-feature",
+  "directory": "WebCryptoAPI",
+  "planned": 334,
+  "paired": 334,
+  "chromeOnlyFull": 19,
+  "headOnlyFull": 68,
+  "headOnlyName": 3052,
+  "chromeOnlyName": 4525
+ },
+ {
+  "scope": "non-css",
+  "cohort": "priority",
+  "directory": "svg",
+  "planned": 787,
+  "paired": 787,
+  "chromeOnlyFull": 373,
+  "headOnlyFull": 17,
+  "chromeOnlyName": 1799,
+  "headOnlyName": 92
+ },
+ {
+  "scope": "css",
+  "cohort": "priority",
+  "directory": "css",
+  "planned": 1091,
+  "paired": 1091,
+  "chromeOnlyFull": 164,
+  "headOnlyFull": 47,
+  "chromeOnlyName": 1772,
+  "headOnlyName": 807
+ },
+ {
+  "scope": "non-css",
+  "cohort": "priority",
+  "directory": "webaudio",
+  "planned": 346,
+  "paired": 346,
+  "chromeOnlyFull": 171,
+  "headOnlyFull": 8,
+  "chromeOnlyName": 1578,
+  "headOnlyName": 358
+ },
+ {
+  "scope": "non-css",
+  "cohort": "priority",
+  "directory": "domparsing",
+  "planned": 90,
+  "paired": 90,
+  "chromeOnlyFull": 42,
+  "headOnlyFull": 1,
+  "chromeOnlyName": 1282,
+  "headOnlyName": 8
+ },
+ {
+  "scope": "non-css",
+  "cohort": "additional-noncss",
+  "directory": "html",
+  "planned": 401,
+  "paired": 401,
+  "chromeOnlyFull": 22,
+  "headOnlyFull": 2,
+  "chromeOnlyName": 862,
+  "headOnlyName": 77
+ },
+ {
+  "scope": "non-css",
+  "cohort": "extra-feature",
+  "directory": "input-events",
+  "planned": 22,
+  "paired": 22,
+  "chromeOnlyFull": 5,
+  "headOnlyFull": 0,
+  "chromeOnlyName": 442,
+  "headOnlyName": 312
+ },
+ {
+  "scope": "non-css",
+  "cohort": "priority",
+  "directory": "shadow-dom",
+  "planned": 18,
+  "paired": 18,
+  "chromeOnlyFull": 5,
+  "headOnlyFull": 0,
+  "chromeOnlyName": 193,
+  "headOnlyName": 675
+ },
+ {
+  "scope": "non-css",
+  "cohort": "priority",
+  "directory": "streams",
+  "planned": 28,
+  "paired": 28,
+  "chromeOnlyFull": 12,
+  "headOnlyFull": 0,
+  "chromeOnlyName": 164
+ },
+ {
+  "scope": "non-css",
+  "cohort": "priority",
+  "directory": "fetch",
+  "planned": 23,
+  "paired": 23,
+  "chromeOnlyFull": 8,
+  "headOnlyFull": 0,
+  "headOnlyName": 4,
+  "chromeOnlyName": 120
+ },
+ {
+  "scope": "non-css",
+  "cohort": "extra-feature",
+  "directory": "notifications",
+  "planned": 14,
+  "paired": 14,
+  "chromeOnlyFull": 0,
+  "headOnlyFull": 2,
+  "headOnlyName": 7,
+  "chromeOnlyName": 99
+ },
+ {
+  "scope": "non-css",
+  "cohort": "priority",
+  "directory": "FileAPI",
+  "planned": 113,
+  "paired": 113,
+  "chromeOnlyFull": 27,
+  "headOnlyFull": 2,
+  "chromeOnlyName": 91,
+  "headOnlyName": 9
+ },
+ {
+  "scope": "non-css",
+  "cohort": "priority",
+  "directory": "referrer-policy",
+  "planned": 418,
+  "paired": 418,
+  "chromeOnlyFull": 29,
+  "headOnlyFull": 0,
+  "chromeOnlyName": 82
+ },
+ {
+  "scope": "non-css",
+  "cohort": "priority",
+  "directory": "resource-timing",
+  "planned": 15,
+  "paired": 15,
+  "chromeOnlyFull": 3,
+  "headOnlyFull": 0,
+  "chromeOnlyName": 71
+ },
+ {
+  "scope": "non-css",
+  "cohort": "priority",
+  "directory": "html",
+  "planned": 102,
+  "paired": 102,
+  "chromeOnlyFull": 20,
+  "headOnlyFull": 5,
+  "chromeOnlyName": 64,
+  "headOnlyName": 31
+ },
+ {
+  "scope": "non-css",
+  "cohort": "priority",
+  "directory": "webnn",
+  "planned": 4,
+  "paired": 4,
+  "chromeOnlyFull": 3,
+  "headOnlyFull": 0,
+  "chromeOnlyName": 57
+ },
+ {
+  "scope": "non-css",
+  "cohort": "extra-feature",
+  "directory": "IndexedDB",
+  "planned": 60,
+  "paired": 60,
+  "chromeOnlyFull": 16,
+  "headOnlyFull": 0,
+  "chromeOnlyName": 55
+ },
+ {
+  "scope": "non-css",
+  "cohort": "priority",
+  "directory": "input-events",
+  "planned": 1,
+  "paired": 1,
+  "chromeOnlyFull": 0,
+  "headOnlyFull": 0,
+  "headOnlyName": 35,
+  "chromeOnlyName": 42
+ },
+ {
+  "scope": "non-css",
+  "cohort": "priority",
+  "directory": "sanitizer-api",
+  "planned": 2,
+  "paired": 2,
+  "chromeOnlyFull": 2,
+  "headOnlyFull": 0,
+  "chromeOnlyName": 30
+ },
+ {
+  "scope": "non-css",
+  "cohort": "priority",
+  "directory": "server-timing",
+  "planned": 10,
+  "paired": 10,
+  "chromeOnlyFull": 2,
+  "headOnlyFull": 0,
+  "chromeOnlyName": 22
+ },
+ {
+  "scope": "non-css",
+  "cohort": "priority",
+  "directory": "xhr",
+  "planned": 41,
+  "paired": 41,
+  "chromeOnlyFull": 1,
+  "headOnlyFull": 0,
+  "chromeOnlyName": 21,
+  "headOnlyName": 52
+ },
+ {
+  "scope": "non-css",
+  "cohort": "priority",
+  "directory": "compression",
+  "planned": 66,
+  "paired": 66,
+  "chromeOnlyFull": 1,
+  "headOnlyFull": 28,
+  "chromeOnlyName": 14,
+  "headOnlyName": 160
+ },
+ {
+  "scope": "non-css",
+  "cohort": "priority",
+  "directory": "service-workers",
+  "planned": 1,
+  "paired": 1,
+  "chromeOnlyFull": 1,
+  "headOnlyFull": 0,
+  "chromeOnlyName": 14
+ },
+ {
+  "scope": "non-css",
+  "cohort": "priority",
+  "directory": "subresource-integrity",
+  "planned": 1,
+  "paired": 1,
+  "chromeOnlyFull": 1,
+  "headOnlyFull": 0,
+  "chromeOnlyName": 12,
+  "headOnlyName": 6
+ },
+ {
+  "scope": "non-css",
+  "cohort": "additional-noncss",
+  "directory": "referrer-policy",
+  "planned": 5,
+  "paired": 5,
+  "chromeOnlyFull": 2,
+  "headOnlyFull": 0,
+  "chromeOnlyName": 4
+ },
+ {
+  "scope": "non-css",
+  "cohort": "priority",
+  "directory": "encoding",
+  "planned": 54,
+  "paired": 54,
+  "chromeOnlyFull": 2,
+  "headOnlyFull": 12,
+  "headOnlyName": 238,
+  "chromeOnlyName": 4
+ },
+ {
+  "scope": "non-css",
+  "cohort": "priority",
+  "directory": "mixed-content",
+  "planned": 3,
+  "paired": 3,
+  "chromeOnlyFull": 2,
+  "headOnlyFull": 0,
+  "chromeOnlyName": 4
+ },
+ {
+  "scope": "non-css",
+  "cohort": "priority",
+  "directory": "uievents",
+  "planned": 3,
+  "paired": 3,
+  "chromeOnlyFull": 0,
+  "headOnlyFull": 0,
+  "headOnlyName": 6,
+  "chromeOnlyName": 3
+ },
+ {
+  "scope": "non-css",
+  "cohort": "priority",
+  "directory": "cookies",
+  "planned": 1,
+  "paired": 1,
+  "chromeOnlyFull": 1,
+  "headOnlyFull": 0,
+  "chromeOnlyName": 1
+ },
+ {
+  "scope": "non-css",
+  "cohort": "priority",
+  "directory": "timing-entrytypes-registry",
+  "planned": 1,
+  "paired": 1,
+  "chromeOnlyFull": 0,
+  "headOnlyFull": 0,
+  "chromeOnlyName": 1
+ },
+ {
+  "scope": "css",
+  "cohort": "upstream-css",
+  "directory": "css",
+  "planned": 40,
+  "unpairedChrome": 40
+ },
+ {
+  "scope": "non-css",
+  "cohort": "priority",
+  "directory": "dom",
+  "planned": 69,
+  "paired": 69,
+  "chromeOnlyFull": 0,
+  "headOnlyFull": 0
+ },
+ {
+  "scope": "non-css",
+  "cohort": "priority",
+  "directory": "mathml",
+  "planned": 11,
+  "paired": 11,
+  "chromeOnlyFull": 0,
+  "headOnlyFull": 7,
+  "headOnlyName": 14
+ },
+ {
+  "scope": "non-css",
+  "cohort": "priority",
+  "directory": "mimesniff",
+  "planned": 2,
+  "paired": 2,
+  "chromeOnlyFull": 0,
+  "headOnlyFull": 0,
+  "headOnlyName": 1164
+ },
+ {
+  "scope": "non-css",
+  "cohort": "priority",
+  "directory": "urlpattern",
+  "planned": 30,
+  "paired": 30,
+  "chromeOnlyFull": 0,
+  "headOnlyFull": 0
+ },
+ {
+  "scope": "non-css",
+  "cohort": "wasm-metadata",
+  "directory": "wasm",
+  "planned": 7,
+  "paired": 7,
+  "chromeOnlyFull": 0,
+  "headOnlyFull": 0
+ },
+ {
+  "scope": "non-css",
+  "cohort": "wasm-storage-supplement",
+  "directory": "wasm",
+  "planned": 5,
+  "paired": 5,
+  "chromeOnlyFull": 0,
+  "headOnlyFull": 0
+ }
+]
