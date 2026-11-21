@@ -567,10 +567,10 @@ fn apply_control_replace(
     record_control_edit(page, el, input_type);
     let changed = {
         let mut dom = page.dom.borrow_mut();
-        if let Some((a, b)) = range {
-            let _ = dom.set_selection_range(el, a, b);
-        }
-        dom.insert_text(el, text).unwrap_or(false)
+        match range {
+            Some(range) => dom.replace_text_in_range(el, range, text),
+            None => dom.insert_text(el, text),
+        }.unwrap_or(false)
     };
     note_control_edited(page, el);
     if changed {
@@ -1907,8 +1907,20 @@ enum Caret {
     Host(Point),
 }
 
+#[derive(Clone, Copy)]
+struct ControlSelection {
+    range: (u32, u32),
+    direction: Option<bool>,
+}
+
+impl ControlSelection {
+    fn read(dom: &Dom, target: NodeId) -> Option<Self> {
+        Some(Self { range: dom.selection(target).ok()?, direction: dom.selection_direction(target).ok()? })
+    }
+}
+
 enum Saved {
-    Control { value: String, selection: (u32, u32) },
+    Control { value: String, selection: ControlSelection, opposite: Option<ControlSelection> },
     /// Saved anchor and focus offsets, in selection direction.
     Host { html: String, selection: Option<(u32, u32)> },
 }
@@ -1951,7 +1963,11 @@ impl UndoHistory {
 fn save(page: &PageDom, target: NodeId) -> Option<Saved> {
     let dom = page.dom.borrow();
     if editing::is_text_entry_control(&dom, target) {
-        return Some(Saved::Control { value: dom.value(target).ok()?, selection: dom.selection(target).ok()? });
+        return Some(Saved::Control {
+            value: dom.value(target).ok()?,
+            selection: ControlSelection::read(&dom, target)?,
+            opposite: None,
+        });
     }
     let html = dom.inner_html(target).ok()?;
     drop(dom);
@@ -2015,6 +2031,13 @@ pub(crate) fn record_control_edit(page: &PageDom, el: NodeId, input_type: &str) 
 /// After that edit.
 pub(crate) fn note_control_edited(page: &PageDom, el: NodeId) {
     note(page, el, true);
+    let mut history = page.undo.borrow_mut();
+    if history.replaying { return; }
+    if let Some(Step { saved: Saved::Control { opposite, .. }, .. }) = history.undo.last_mut().filter(|s| s.target == el) {
+        // Redo restores the edit's resulting caret even if script moves the
+        // selection before undo. Coalesced typing updates the same step.
+        *opposite = ControlSelection::read(&page.dom.borrow(), el);
+    }
 }
 
 /// Before an editing host's content changes by an edit.
@@ -2029,13 +2052,14 @@ pub(crate) fn note_host_edited(page: &PageDom, host: NodeId) {
 
 fn restore(page: &Rc<PageDom>, target: NodeId, saved: Saved) {
     match saved {
-        Saved::Control { value, selection } => {
+        Saved::Control { value, selection, .. } => {
             {
                 let mut dom = page.dom.borrow_mut();
                 let len = dom.value(target).map(|v| pyro_dom::dom::utf16_len(&v)).unwrap_or(0);
                 let _ = dom.set_selection_range(target, 0, len);
                 let _ = dom.insert_text(target, &value);
-                let _ = dom.set_selection_range(target, selection.0, selection.1);
+                let _ = dom.set_selection_range(target, selection.range.0, selection.range.1);
+                let _ = dom.set_selection_direction(target, selection.direction);
             }
             editing::queue_control_selectionchange(page, target);
         }
@@ -2093,7 +2117,13 @@ fn undo(page: &Rc<PageDom>, backward: bool, source: EditSource) -> bool {
         }
         return true;
     }
-    let current = save(page, step.target);
+    let mut current = save(page, step.target);
+    if let (Saved::Control { selection, opposite: Some(other), .. },
+        Some(Saved::Control { selection: inverse, opposite, .. })) = (&step.saved, &mut current)
+    {
+        *inverse = *other;
+        *opposite = Some(*selection);
+    }
     page.undo.borrow_mut().replaying = true;
     restore(page, step.target, step.saved);
     {

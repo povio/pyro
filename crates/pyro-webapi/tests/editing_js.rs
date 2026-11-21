@@ -387,6 +387,15 @@ fn exec_command_formatting_and_structure() {
 }
 
 #[test]
+fn control_history_remembers_both_selections_across_an_intervening_move() {
+    let e = env("<body><textarea id=t>abcdef</textarea></body>");
+    let r = &e.main;
+    eval(r, "t.focus(); t.setSelectionRange(1,4,'backward'); document.execCommand('insertText',false,'Z'); t.setSelectionRange(0,1,'forward')");
+    assert_eq!(eval(r, "document.execCommand('undo'); [t.value,t.selectionStart,t.selectionEnd,t.selectionDirection].join()"), "abcdef,1,4,backward");
+    assert_eq!(eval(r, "document.execCommand('redo'); [t.value,t.selectionStart,t.selectionEnd,t.selectionDirection].join()"), "aZef,2,2,forward");
+}
+
+#[test]
 fn undo_restores_anchor_focus_and_text_boundary_affinity() {
     let e = env("<body><div id=ed contenteditable>a😀<i>bc</i>def</div></body>");
     let r = &e.main;

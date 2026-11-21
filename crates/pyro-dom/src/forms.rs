@@ -1080,6 +1080,15 @@ impl Dom {
         Ok(())
     }
 
+    /// Use a computed deletion span without changing the direction of the
+    /// user's original selection before replacing it.
+    pub fn replace_text_in_range(&mut self, id: NodeId, range: (u32, u32), text: &str) -> DomResult<bool> {
+        let direction = self.selection_direction(id)?;
+        self.set_selection_range(id, range.0, range.1)?;
+        self.set_selection_direction(id, direction)?;
+        self.insert_text(id, text)
+    }
+
     /// Replaces the current selection with `text` (typing, Input.insertText,
     /// or deletion with empty text). Returns true if the value changed.
     pub fn insert_text(&mut self, id: NodeId, text: &str) -> DomResult<bool> {
@@ -1124,11 +1133,13 @@ impl Dom {
         let (a, b) = utf16_range(&value, s, e - s)?;
         value.replace_range(a..b, &text);
         let caret = s + utf16_len(&text);
+        let directional = self.selection_direction(id)?.is_some();
         let c = self.control_state_mut(id)?;
         c.value = Some(value);
         c.dirty_value = true;
         c.user_edited = true;
         c.selection = (caret, caret);
+        c.selection_direction = directional.then_some((false, c.selection));
         c.selection_set = true;
         Ok(true)
     }
@@ -1188,7 +1199,7 @@ impl Dom {
             // Snap to the start of the code point ending at the caret.
             let (a, _) = utf16_range(&v, s - 1, 0)?;
             let start = utf16_len(&v[..a]);
-            self.set_selection_range(id, start, s)?;
+            return self.replace_text_in_range(id, (start, s), "");
         }
         self.insert_text(id, "")
     }
@@ -1203,7 +1214,7 @@ impl Dom {
             }
             let (a, _) = utf16_range(&v, s, 0)?;
             let ch = v[a..].chars().next().map_or(1, |c| c.len_utf16() as u32);
-            self.set_selection_range(id, s, s + ch)?;
+            return self.replace_text_in_range(id, (s, s + ch), "");
         }
         self.insert_text(id, "")
     }
