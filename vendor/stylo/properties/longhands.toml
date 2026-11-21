@@ -913,6 +913,15 @@ spec = "https://drafts.csswg.org/css-display/#propdef-display"
 servo_restyle_damage = "rebuild_box"
 affects = "layout"
 
+[dynamic-range-limit]
+type = "color::DynamicRangeLimit"
+initial = "computed::color::DynamicRangeLimit::no_limit()"
+struct = "inherited_box"
+engine = "servo"
+spec = "https://drafts.csswg.org/css-color-hdr/#the-dynamic-range-limit-property"
+affects = "paint"
+servo_restyle_damage = "repaint"
+
 [fill]
 type = "SVGPaint"
 initial = "crate::values::computed::SVGPaint::BLACK"

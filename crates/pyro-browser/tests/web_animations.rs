@@ -1234,3 +1234,37 @@ fn a_pseudo_element_transitions_with_its_pseudo_element_in_the_events() {
     let width: f64 = eval(&root, "parseFloat(getComputedStyle(a, '::before').width)").parse().unwrap();
     assert!((100.0..200.0).contains(&width), "under way: {width}");
 }
+
+#[test]
+fn dynamic_range_limit_interpolates_the_three_weights_on_sdr() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        const name = 'dynamic-range-limit';
+        const box = document.body.appendChild(document.createElement('div'));
+        const read = () => getComputedStyle(box).getPropertyValue(name);
+        const start = 'dynamic-range-limit-mix(constrained 90%, standard 10%)';
+        const end = 'dynamic-range-limit-mix(no-limit 10%, standard 90%)';
+        box.style.setProperty(name, start);
+        const first = read();
+        box.style.transition = name + ' 100s steps(2, jump-end) -50s';
+        box.style.setProperty(name, end);
+        const middle = read();
+        const running = box.getAnimations().some(a => a instanceof CSSTransition && a.transitionProperty === name);
+        box.style.transition = 'none';
+        const last = read();
+        const animation = box.animate([{dynamicRangeLimit: 'no-limit'}, {dynamicRangeLimit: 'standard'}],
+                                      {duration: 1000, fill: 'both'});
+        animation.pause();
+        animation.currentTime = 250;
+        const quarter = read();
+        animation.cancel();
+        [first, middle, running, last, quarter, read()].join('|')
+    "#);
+    assert_eq!(actual, concat!(
+        "dynamic-range-limit-mix(standard 10%, constrained 90%)|",
+        "dynamic-range-limit-mix(standard 50%, constrained 45%, no-limit 5%)|true|",
+        "dynamic-range-limit-mix(standard 90%, no-limit 10%)|",
+        "dynamic-range-limit-mix(standard 25%, no-limit 75%)|",
+        "dynamic-range-limit-mix(standard 90%, no-limit 10%)"
+    ));
+}

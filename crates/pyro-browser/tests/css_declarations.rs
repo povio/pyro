@@ -861,3 +861,61 @@ fn assigned_nodes_count_all_light_tree_siblings_across_slot_changes() {
     "#);
     assert_eq!(result, "3/4|4/5|4/5|3/4");
 }
+
+#[test]
+fn dynamic_range_limit_mixes_recompute_in_sheets_and_inherit_on_sdr() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        const name = 'dynamic-range-limit';
+        const mix = (...entries) => 'dynamic-range-limit-mix(' + entries.join(', ') + ')';
+        const sheet = new CSSStyleSheet();
+        sheet.replaceSync('#host { font-size: 20px }');
+        document.adoptedStyleSheets = [sheet];
+        document.body.innerHTML = '<div id="host"><span></span></div>';
+        const host = document.querySelector('#host'), child = host.firstChild;
+        const rule = sheet.cssRules[0].style;
+        const read = el => getComputedStyle(el).getPropertyValue(name);
+        const out = [read(child), matchMedia('(dynamic-range: standard)').matches,
+                     matchMedia('(dynamic-range: high)').matches];
+        rule.setProperty(name, mix('no-limit 20%', mix('standard calc(25% * sign(1em - 15px))', 'constrained 25%') + ' 80%'));
+        out.push(read(host), read(child));
+        host.style.fontSize = '15px';
+        out.push(read(child));
+        child.style.dynamicRangeLimit = 'standard';
+        child.style.dynamicRangeLimit = mix('standard 101%', 'constrained 1%');
+        out.push(child.style.getPropertyValue(name), read(child));
+        child.style.removeProperty(name);
+        rule.setProperty(name, 'no-limit');
+        out.push(read(child));
+        out.join('|')
+    "#);
+    assert_eq!(actual, concat!(
+        "no-limit|true|false|dynamic-range-limit-mix(standard 40%, constrained 40%, no-limit 20%)|",
+        "dynamic-range-limit-mix(standard 40%, constrained 40%, no-limit 20%)|",
+        "dynamic-range-limit-mix(constrained 80%, no-limit 20%)|standard|standard|no-limit"
+    ));
+}
+
+#[test]
+fn dynamic_range_limit_accepts_either_term_order_and_zero_weight_mixes() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        const name = 'dynamic-range-limit';
+        const values = [
+            'dynamic-range-limit-mix(20% no-limit, 80% standard)',
+            'dynamic-range-limit-mix(5% constrained)',
+            'dynamic-range-limit-mix(standard 0%, constrained 0%)'
+        ];
+        const el = document.body.appendChild(document.createElement('i'));
+        document.body.style.setProperty(name, 'standard');
+        const out = [];
+        for (const value of values) {
+            el.style.setProperty(name, value);
+            out.push(CSS.supports(name, value), getComputedStyle(el).getPropertyValue(name));
+        }
+        out.join('|')
+    "#);
+    // CSS Color HDR §§3.2–3.3: a zero-weight mix computes to the initial value,
+    // including when the element would inherit another limit.
+    assert_eq!(actual, "true|dynamic-range-limit-mix(standard 80%, no-limit 20%)|true|constrained|true|no-limit");
+}
