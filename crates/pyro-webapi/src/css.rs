@@ -1603,6 +1603,15 @@ fn rule_style<'s, C: JsClass<Data = StyleData>>(s: &Scope<'s>, r: &RuleData) -> 
     Ok(s.wrap::<C>(StyleData { source }, Some(key))?.value())
 }
 
+macro_rules! descriptor_accessors {
+    ($def:ident, $(($idl:literal, $css:literal)),* $(,)?) => {$(
+        $def.accessor($idl, |s, st| Ok(s.string(&st.get($css))), |_s, st, v| st.set($css, &dom_string(v)?, false));
+        if $idl != $css {
+            $def.accessor($css, |s, st| Ok(s.string(&st.get($css))), |_s, st, v| st.set($css, &dom_string(v)?, false));
+        }
+    )*};
+}
+
 /// `CSSPageDescriptors`: the declarations of a `@page` rule.
 pub struct CssPageDescriptors;
 impl JsClass for CssPageDescriptors {
@@ -1610,16 +1619,7 @@ impl JsClass for CssPageDescriptors {
     type Data = StyleData;
     type Parent = CssStyleDeclaration;
     fn define(def: &mut ClassDef<Self>) {
-        // The page descriptors, by their IDL and dashed names.
-        macro_rules! descriptors {
-            ($(($idl:literal, $css:literal)),* $(,)?) => {$(
-                def.accessor($idl, |s, st| Ok(s.string(&st.get($css))), |_s, st, v| st.set($css, &dom_string(v)?, false));
-                if $idl != $css {
-                    def.accessor($css, |s, st| Ok(s.string(&st.get($css))), |_s, st, v| st.set($css, &dom_string(v)?, false));
-                }
-            )*};
-        }
-        descriptors!(
+        descriptor_accessors!(def,
             ("margin", "margin"),
             ("marginTop", "margin-top"),
             ("marginRight", "margin-right"),
@@ -1844,7 +1844,23 @@ impl JsClass for CssPositionTryDescriptors {
     const NAME: &'static str = "CSSPositionTryDescriptors";
     type Data = StyleData;
     type Parent = CssStyleDeclaration;
-    fn define(_: &mut ClassDef<Self>) {}
+    fn define(def: &mut ClassDef<Self>) {
+        descriptor_accessors!(def,
+            ("margin", "margin"), ("marginTop", "margin-top"), ("marginRight", "margin-right"),
+            ("marginBottom", "margin-bottom"), ("marginLeft", "margin-left"),
+            ("marginBlock", "margin-block"), ("marginBlockStart", "margin-block-start"), ("marginBlockEnd", "margin-block-end"),
+            ("marginInline", "margin-inline"), ("marginInlineStart", "margin-inline-start"), ("marginInlineEnd", "margin-inline-end"),
+            ("inset", "inset"), ("top", "top"), ("right", "right"), ("bottom", "bottom"), ("left", "left"),
+            ("insetBlock", "inset-block"), ("insetBlockStart", "inset-block-start"), ("insetBlockEnd", "inset-block-end"),
+            ("insetInline", "inset-inline"), ("insetInlineStart", "inset-inline-start"), ("insetInlineEnd", "inset-inline-end"),
+            ("width", "width"), ("minWidth", "min-width"), ("maxWidth", "max-width"),
+            ("height", "height"), ("minHeight", "min-height"), ("maxHeight", "max-height"),
+            ("blockSize", "block-size"), ("minBlockSize", "min-block-size"), ("maxBlockSize", "max-block-size"),
+            ("inlineSize", "inline-size"), ("minInlineSize", "min-inline-size"), ("maxInlineSize", "max-inline-size"),
+            ("placeSelf", "place-self"), ("alignSelf", "align-self"), ("justifySelf", "justify-self"),
+            ("positionAnchor", "position-anchor"), ("positionArea", "position-area"),
+        );
+    }
 }
 rule_class!(CssViewTransitionRule, "CSSViewTransitionRule", CssRule, |def| {
     def.getter("navigation", |s, rule| match &rule.node()?.kind {

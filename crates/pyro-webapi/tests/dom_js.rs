@@ -6640,6 +6640,18 @@ fn image_data_structured_clones() {
 }
 
 #[test]
+fn position_try_prototype_accessors_share_the_declaration_block() {
+    let env = env("<style>@position-try --fallback { inset-inline-start: 2px }</style>");
+    assert_eq!(eval(&env.main, "const style = document.styleSheets[0].cssRules[0].style;
+        const proto = CSSPositionTryDescriptors.prototype;
+        const dashed = Object.getOwnPropertyDescriptor(proto, 'inset-inline-start');
+        const camel = Object.getOwnPropertyDescriptor(proto, 'insetInlineStart');
+        dashed.set.call(style, '4px'); camel.set.call(style, 'invalid');
+        [camel.get.call(style), style.getPropertyValue('inset-inline-start'), Object.hasOwn(proto, 'color')].join('|')"), "4px|4px|false");
+    env.page.dispose();
+}
+
+#[test]
 fn page_descriptor_edits_use_page_grammar() {
     let env = env("<style>@page { size: A4; page-orientation: rotate-right; @top-left { content: 'x' } }</style>");
     let realm = &env.main;
