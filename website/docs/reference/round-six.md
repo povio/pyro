@@ -21,7 +21,13 @@ On 58 production-control URLs, the combined build gained 59 named passes and los
 
 ## Release candidate
 
-The release tag for this checkpoint is **v0.0.50-rc.4**. Its GitHub Actions workflow reports the platform builds, package checks and npm publication status. Published candidates are available under the npm `next` tag. [RC source](https://github.com/povio/pyro/tree/v0.0.50-rc.4) · [Release workflow](https://github.com/povio/pyro/actions/runs/44925119822) · [npm versions](https://www.npmjs.com/package/@povio/pyro?activeTab=versions)
+**Pyro 0.0.50-rc.4 is available on npm.**
+
+```sh
+npm install --save-dev --save-exact @povio/pyro@0.0.50-rc.4
+```
+
+Download standalone browser binaries from the GitHub prerelease. [npm package](https://www.npmjs.com/package/@povio/pyro/v/0.0.50-rc.4) · [GitHub prerelease](https://github.com/povio/pyro/releases/tag/v0.0.50-rc.4) · [Build and smoke checks](https://github.com/povio/pyro/actions/runs/44925119822)
 
 The WPT dashboard tracks whole-suite runs on the main branch. [Whole-suite dashboard](/status/wpt.html)
 
