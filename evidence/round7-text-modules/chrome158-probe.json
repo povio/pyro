@@ -1,0 +1,69 @@
+{
+ "rows": [
+  [
+   "static value preserves UTF-8 data, CRLF, quotes, NUL and U+2028",
+   true
+  ],
+  [
+   "dynamic text is an inert default-only module",
+   true
+  ],
+  [
+   "repeated text import shares module identity",
+   true
+  ],
+  [
+   "ordinary JS at same URL has its own type cache",
+   true
+  ],
+  [
+   "text remains immutable after JS import",
+   true
+  ],
+  [
+   "UTF-16 BOM never switches text-module decoding",
+   true
+  ],
+  [
+   "ordinary JS import retains MIME validation",
+   true
+  ]
+ ],
+ "received": [
+  {
+   "path": "/page",
+   "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/jxl,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+   "dest": "document"
+  },
+  {
+   "path": "/favicon.ico",
+   "accept": "image/jxl,image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+   "dest": "image"
+  },
+  {
+   "path": "/root.mjs",
+   "accept": "*/*",
+   "dest": "script"
+  },
+  {
+   "path": "/same",
+   "accept": "text/plain,*/*;q=0.5",
+   "dest": "text"
+  },
+  {
+   "path": "/same",
+   "accept": "*/*",
+   "dest": "script"
+  },
+  {
+   "path": "/bytes",
+   "accept": "text/plain,*/*;q=0.5",
+   "dest": "text"
+  },
+  {
+   "path": "/plain",
+   "accept": "*/*",
+   "dest": "script"
+  }
+ ]
+}
