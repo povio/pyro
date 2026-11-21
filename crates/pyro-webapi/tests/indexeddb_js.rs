@@ -246,6 +246,51 @@ fn key_paths_generators_and_constraints() {
 }
 
 #[test]
+fn failed_unique_writes_preserve_the_generator() {
+    let env = Env::new();
+    let doc = env.doc("http://idb.test/");
+    doc.eval(HELPERS);
+    let got = env.run(
+        &doc,
+        r#"
+        const db = await openDb('failed-writes', 1, db => {
+          db.createObjectStore('rows', {autoIncrement: true}).createIndex('tag', 'tag', {unique: true});
+        });
+        const tx = db.transaction('rows', 'readwrite');
+        const rows = tx.objectStore('rows');
+        const canceled = request => new Promise(resolve => {
+          request.onerror = event => { event.preventDefault(); resolve(request.error.name); };
+          request.onsuccess = () => resolve('unexpected success');
+        });
+        await req(rows.add({tag: 'original'}));
+        const generatedError = await canceled(rows.add({tag: 'original'}));
+        const afterGenerated = await req(rows.add({tag: 'second'}));
+        const explicitError = await canceled(rows.put({tag: 'original'}, 2 ** 53));
+        const afterExplicit = await req(rows.add({tag: 'third'}));
+        const explicit = await req(rows.put({tag: 'explicit'}, 10.5));
+        const advanced = await req(rows.add({tag: 'advanced'}));
+        await done(tx);
+        const aborted = db.transaction('rows', 'readwrite');
+        const abortResult = done(aborted).catch(error => error.name);
+        const tentative = aborted.objectStore('rows');
+        await req(tentative.put({tag: 'temporary'}, 100));
+        tentative.add({tag: 'original'});
+        const abortError = await abortResult;
+        db.close();
+        const reopened = await openDb('failed-writes', 1);
+        const nextTx = reopened.transaction('rows', 'readwrite');
+        const nextRows = nextTx.objectStore('rows');
+        const count = await req(nextRows.count());
+        const rolledBack = await req(nextRows.get(100)) === undefined;
+        const next = await req(nextRows.add({tag: 'reopened'}));
+        out = [generatedError, afterGenerated, explicitError, afterExplicit, explicit, advanced,
+               abortError, count, rolledBack, next, await done(nextTx)].join('|');
+        "#,
+    );
+    assert_eq!(got, "ConstraintError|2|ConstraintError|3|10.5|11|ConstraintError|5|true|12|complete");
+}
+
+#[test]
 fn key_generator_exhausts_after_2_pow_53() {
     let env = Env::new();
     let d = env.doc("http://idb.test/");

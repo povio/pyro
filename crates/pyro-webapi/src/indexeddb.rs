@@ -1237,21 +1237,19 @@ fn natives<'s>(
         })?;
         Ok(s.boolean(ok))
     })?;
-    // The key generator's next key and step, or -1 when exhausted.
+    // Read the candidate key; only a successful write advances the generator.
     add(s, &natives, &ctx, "nextKey", |s, ctx, a| {
-        let (name, store, tx) = (a.get(0).to_string()?, a.get(1).to_string()?, a.get(2).to_number()? as u64);
+        let (name, store) = (a.get(0).to_string()?, a.get(1).to_string()?);
         let key = ctx.db(&name, |db| {
             let current = db.store(&store)?.current;
             if current > MAX_GENERATED {
                 return Ok(-1.0);
             }
-            db.log(tx, || Undo::Generator { store: store.clone(), old: current });
-            db.store(&store)?.current = after(current);
             Ok(current)
         })?;
         Ok(s.number(key))
     })?;
-    // "Possibly update the key generator" for an explicit number key.
+    // "Possibly update the key generator" after storing a numeric key.
     add(s, &natives, &ctx, "bumpKey", |s, ctx, a| {
         let (name, store, tx) = (a.get(0).to_string()?, a.get(1).to_string()?, a.get(2).to_number()? as u64);
         let key = a.get(3).to_number()?;
