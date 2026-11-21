@@ -73,6 +73,7 @@ impl BaseDocument {
             html_parser_provider: Some(self.html_parser_provider.clone()),
             font_ctx: Some(self.font_ctx.lock().unwrap().clone()),
             media_type: Some(self.media_type.clone()),
+            media_environment: self.media_environment,
             style_threading: self.style_threading,
             incremental: Some(self.incremental_layout),
             abort_signal: Some(abort_signal),

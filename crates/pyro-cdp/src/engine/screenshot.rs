@@ -596,6 +596,7 @@ impl EngineHost {
             device_scale_factor: s.device_scale_factor,
             dark: s.dark,
             print: s.print,
+            media_environment: pyro_render::media_environment(&page.viewport()),
             input: pyro_render::InputCapabilities {
                 pointer: match page.viewport().pointer {
                     pyro_dom::media::Pointer::None => pyro_render::Pointer::None,

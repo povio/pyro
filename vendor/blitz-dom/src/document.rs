@@ -378,6 +378,7 @@ pub struct BaseDocument {
     pub(crate) viewport: Viewport,
     /// CSS media type used to evaluate `@media` rules.
     pub(crate) media_type: MediaType,
+    pub(crate) media_environment: crate::MediaEnvironment,
     /// External `<use href>` targets, by href as written: the local id that
     /// replaces it and the definition (SVG source with that id). Added to
     /// each `<svg>` that refers to them when it is rendered.
@@ -862,7 +863,7 @@ impl BaseDocument {
 
         let viewport = config.viewport.unwrap_or_default();
         let media_type = config.media_type.unwrap_or_else(MediaType::screen);
-        let device = make_device(&viewport, None, media_type.clone(), font_ctx.clone());
+        let device = make_device(&viewport, None, media_type.clone(), config.media_environment, font_ctx.clone());
         let stylist = Stylist::new(device, QuirksMode::NoQuirks);
         let snapshots = SnapshotMap::new();
         let mut nodes = Box::new(NodeTree::new(config.raster_budget.clone()));
@@ -910,6 +911,7 @@ impl BaseDocument {
             nodes_to_id,
             viewport,
             media_type,
+            media_environment: config.media_environment,
             svg_sprites: HashMap::new(),
             svg_images: Default::default(),
             pending_device_changes: DeviceChanges::empty(),
@@ -3935,6 +3937,13 @@ impl BaseDocument {
         self.queue_device_changes(DeviceChanges::MEDIA_TYPE);
     }
 
+    pub fn set_media_environment(&mut self, environment: crate::MediaEnvironment) {
+        if self.media_environment != environment {
+            self.media_environment = environment;
+            self.queue_device_changes(DeviceChanges::MEDIA_TYPE);
+        }
+    }
+
     pub fn viewport(&self) -> &Viewport {
         &self.viewport
     }
@@ -4142,7 +4151,7 @@ impl BaseDocument {
             return;
         }
 
-        let mut device = make_device(&self.viewport, self.layout_size, self.media_type.clone(), self.font_ctx.clone());
+        let mut device = make_device(&self.viewport, self.layout_size, self.media_type.clone(), self.media_environment, self.font_ctx.clone());
         device.set_page_color_scheme(self.page_color_scheme);
         device.set_viewport_unit_inset(self.viewport_unit_inset);
         self.set_stylist_device(device);
@@ -5903,6 +5912,7 @@ impl BaseDocument {
                     base_url: None,
                     font_ctx: Some(self.font_ctx.lock().unwrap().clone()),
                     media_type: Some(self.media_type.clone()),
+                    media_environment: self.media_environment,
                     subdocument_depth: self.subdocument_depth + 1,
                     raster_budget: self.raster_budget.clone(),
                     xml_document: true,
@@ -5924,6 +5934,7 @@ impl BaseDocument {
             let mut doc = entry.document.inner_mut();
             if current {
                 doc.set_viewport(viewport);
+                doc.set_media_environment(self.media_environment);
             }
             doc.resolve(0.0);
             doc.ensure_paint_tree();

@@ -46,6 +46,14 @@ use anyrender_vello_cpu::VelloCpuImageRenderer;
 use blitz_dom::{DocumentConfig, StyleThreading};
 use blitz_traits::shell::{ColorScheme, Viewport as BlitzViewport};
 pub use blitz_traits::shell::{InputCapabilities, Pointer};
+pub use blitz_dom::MediaEnvironment;
+
+pub fn media_environment(viewport: &pyro_dom::media::Viewport) -> MediaEnvironment {
+    MediaEnvironment {
+        screen: Some((viewport.screen_width.unwrap_or(viewport.width), viewport.screen_height.unwrap_or(viewport.height))),
+        reduced_motion: viewport.reduced_motion,
+    }
+}
 use kurbo::{Affine, Rect};
 use parley::fontique::Blob;
 use parley::FontContext;
@@ -207,6 +215,7 @@ pub struct Snapshot {
     pub dark: bool,
     /// Primary pointer precision and hover support for interaction media queries.
     pub input: InputCapabilities,
+    pub media_environment: MediaEnvironment,
     /// `print` media (CDP `Emulation.setEmulatedMedia`): `@media print`
     /// rules apply instead of `screen` ones.
     pub print: bool,
@@ -1188,6 +1197,7 @@ impl Renderer {
             base_url: Some(snap.base_url.clone()),
             net_provider: Some(provider),
             viewport: Some(viewport_of(snap)),
+            media_environment: snap.media_environment,
             font_ctx: Some(self.font_ctx.clone()),
             style_threading: StyleThreading::Sequential,
             media_type: Some(media_type(snap.print)),
@@ -1228,6 +1238,7 @@ impl Renderer {
                 m.bridge.retarget(snap, fetcher.clone());
                 if m.viewport != key {
                     m.doc.set_viewport(viewport_of(snap));
+                    m.doc.set_media_environment(snap.media_environment);
                     m.doc.set_media_type(media_type(snap.print));
                     m.viewport = key;
                 }
@@ -3833,8 +3844,10 @@ fn viewport_of(snap: &Snapshot) -> BlitzViewport {
     viewport
 }
 
-fn viewport_key(snap: &Snapshot) -> (u32, u32, u64, bool, bool, InputCapabilities) {
-    (snap.width, snap.height, snap.device_scale_factor.to_bits(), snap.dark, snap.print, snap.input)
+pub type ViewportKey = (u32, u32, u64, bool, bool, InputCapabilities, MediaEnvironment);
+
+fn viewport_key(snap: &Snapshot) -> ViewportKey {
+    (snap.width, snap.height, snap.device_scale_factor.to_bits(), snap.dark, snap.print, snap.input, snap.media_environment)
 }
 
 fn media_type(print: bool) -> style::media_queries::MediaType {

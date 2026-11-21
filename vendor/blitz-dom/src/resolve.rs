@@ -369,6 +369,7 @@ impl BaseDocument {
                 .map(|frame| frame.scroll)
                 .filter(|&(x, y)| x.is_finite() && y.is_finite() && (x, y) != (0.0, 0.0));
             if let Some(mut sub_doc) = node.subdoc_mut().map(|doc| doc.inner_mut()) {
+                sub_doc.set_media_environment(self.media_environment);
                 if sub_doc.frame_no_scrollbars != no_scrollbars {
                     sub_doc.frame_no_scrollbars = no_scrollbars;
                     sub_doc.last_layout_space = None;
@@ -380,6 +381,7 @@ impl BaseDocument {
                 sub_viewport.hidpi_scale = self.viewport.hidpi_scale;
                 sub_viewport.zoom = self.viewport.zoom;
                 sub_viewport.color_scheme = self.viewport.color_scheme;
+                sub_viewport.input = self.viewport.input;
 
                 let viewport_scale = self.viewport.scale();
                 sub_viewport.window_size =

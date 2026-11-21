@@ -1098,6 +1098,8 @@ fn frame_viewport_source(
         }
         let (width, height) = layout.content_size(&dom, owner)?;
         let mut viewport = layout.viewport().clone();
+        viewport.screen_width.get_or_insert(viewport.width);
+        viewport.screen_height.get_or_insert(viewport.height);
         viewport.width = width.round() as u32;
         viewport.height = height.round() as u32;
         viewport.mobile = false;

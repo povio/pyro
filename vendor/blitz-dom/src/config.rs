@@ -183,8 +183,15 @@ pub fn engine_field(nonce: &str, name: &markup5ever::QualName) -> Option<String>
     same_secret(given, nonce).then(|| format!("data-pyro-{field}"))
 }
 
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+pub struct MediaEnvironment {
+    pub screen: Option<(u32, u32)>,
+    pub reduced_motion: bool,
+}
+
 /// Options used when constructing a [`BaseDocument`](crate::BaseDocument)
 pub struct DocumentConfig {
+    pub media_environment: MediaEnvironment,
     /// The initial `Viewport`
     pub viewport: Option<Viewport>,
     /// The base url which relative URLs are resolved against
@@ -259,6 +266,7 @@ impl Default for DocumentConfig {
     fn default() -> Self {
         Self {
             viewport: None,
+            media_environment: Default::default(),
             base_url: None,
             frame_client: None,
             frames: FrameTable::default(),

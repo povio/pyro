@@ -179,7 +179,7 @@ pub fn release_thread() {
 /// The Blitz document of one page document.
 /// DOM version, style generation, viewport (width, height, device pixel
 /// ratio bits, dark) and style invalidations.
-type SyncedAt = (u64, u64, (u32, u32, u64, bool, bool, pyro_render::InputCapabilities), u64);
+type SyncedAt = (u64, u64, pyro_render::ViewportKey, u64);
 
 /// A document's base URL as given, and parsed once when it is set: links
 /// resolve against the parsed form on every sync, while the snapshot keeps
@@ -491,6 +491,7 @@ impl BlitzGeometry {
                 hover: v.hover,
             },
             scroll_x: 0.0,
+            media_environment: pyro_render::media_environment(v),
             scroll_y: 0.0,
             // pyro: one document's: a navigation's next document reuses none of its responses.
             resource_scope: format!("geometry-{}-{}", self.page, self.resource_document()),
@@ -585,6 +586,7 @@ impl BlitzGeometry {
                 },
                 hover: v.hover,
             },
+            pyro_render::media_environment(v),
         );
         let now = (dom.version(), style.observation_stamp(dom).1, viewport, style.invalidations());
         let last = self.synced.replace(Some(now));
