@@ -968,8 +968,8 @@ impl GeometrySource for BlitzGeometry {
         RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.resolved_transform_value(self.page, key, property, style))
     }
 
-    fn has_author_white_space(&self, key: u64) -> bool {
-        RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.has_author_white_space(self.page, key)).unwrap_or(false)
+    fn authored_editing_style(&self, key: u64, properties: &[&str], white_space: &str) -> Vec<(&'static str, String)> {
+        RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.authored_editing_style(self.page, key, properties, white_space)).unwrap_or_default()
     }
 
     fn svg_geometry_properties(&self, key: u64) -> Vec<(&'static str, String)> {

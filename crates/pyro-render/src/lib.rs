@@ -2060,24 +2060,51 @@ impl Renderer {
         Some(m.doc.resolved_transform_value(id, property, style))
     }
 
-    /// Editing carries authored whitespace formatting across a paragraph
-    /// join, while a pre element's UA defaults stay with the element.
-    pub fn has_author_white_space(&self, page: u64, key: u64) -> Option<bool> {
-        use style::properties::{LonghandId, PropertyDeclarationId};
+    /// Transfer the source block's authored text formatting, omitting UA
+    /// defaults such as preformatted whitespace and monospace on a pre.
+    pub fn authored_editing_style(
+        &self, page: u64, key: u64, properties: &[&str], white_space: &str,
+    ) -> Option<Vec<(&'static str, String)>> {
+        use style::properties::{LonghandId, PropertyDeclaration, PropertyDeclarationId};
         use style::rule_tree::CascadeOrigin;
         let mirror = self.mirrors.get(&page)?;
         let computed = self.element_style(page, key)?;
         let guard = mirror.doc.guard().read();
-        let authored = computed.rules.as_ref()?.self_and_ancestors().any(|rule| {
+        let mut result = Vec::new();
+        let mut whitespace_parts = [None, None];
+        for rule in computed.rules.as_ref()?.self_and_ancestors() {
             let level = rule.cascade_level();
-            level.origin() == CascadeOrigin::Author && rule.style_source().is_some_and(|source| {
-                source.read(&guard).declaration_importance_iter().any(|(decl, importance)| {
-                    importance.important() == level.is_important() && matches!(decl.id(),
-                        PropertyDeclarationId::Longhand(LonghandId::WhiteSpaceCollapse | LonghandId::TextWrapMode))
-                })
-            })
-        });
-        Some(authored)
+            if level.origin() != CascadeOrigin::Author { continue; }
+            let Some(source) = rule.style_source() else { continue };
+            for (decl, importance) in source.read(&guard).declaration_importance_iter() {
+                if importance.important() != level.is_important() { continue; }
+                let PropertyDeclarationId::Longhand(id) = decl.id() else { continue };
+                let part = match id {
+                    LonghandId::WhiteSpaceCollapse => Some(0),
+                    LonghandId::TextWrapMode => Some(1),
+                    _ => None,
+                };
+                if let Some(part) = part {
+                    whitespace_parts[part].get_or_insert_with(|| match decl {
+                        PropertyDeclaration::CSSWideKeyword(wide) => Some(wide.keyword.to_str()),
+                        _ => None,
+                    });
+                } else if properties.contains(&id.name()) && !result.iter().any(|(name, _)| *name == id.name()) {
+                    let mut value = String::new();
+                    decl.to_css(&mut value).ok()?;
+                    result.push((id.name(), value));
+                }
+            }
+        }
+        let whitespace = match whitespace_parts {
+            [None, None] => None,
+            [Some(Some(a)), Some(Some(b))] if a == b => Some(a),
+            _ => Some(white_space),
+        };
+        if let Some(value) = whitespace {
+            result.push(("white-space", value.to_owned()));
+        }
+        Some(result)
     }
 
     pub fn svg_geometry_properties(&self, page: u64, key: u64) -> Option<Vec<(&'static str, String)>> {

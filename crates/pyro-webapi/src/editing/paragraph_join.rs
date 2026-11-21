@@ -280,15 +280,24 @@ pub(super) fn at_boundary(
     {
         return None;
     }
-    let carry_white_space = source_style != dest_style && (!pre_join || layout
-        .synced_geometry_source(dom)
-        .is_some_and(|engine| engine.has_author_white_space(pyro_dom::snapshot::render_key(source))));
+    let mut carried = if pre_join {
+        layout.synced_geometry_source(dom)
+            .map(|engine| engine.authored_editing_style(pyro_dom::snapshot::render_key(source), TEXT_STYLE, &source_style))
+            .unwrap_or_default()
+    } else {
+        vec![("white-space", source_style)]
+    };
+    carried.retain(|(name, value)| {
+        if *name == "white-space" { *value != dest_style }
+        else { *value != layout.computed_style_value(dom, destination, name) }
+    });
     let line = first_line(page, dom, source, host)?;
     let (fragment, styled) = extract_styled_line(page, dom, host, source, line, source != right)?;
     if len(dom, fragment) > 0 {
-        let content = if carry_white_space {
+        let content = if !carried.is_empty() {
             let span = dom.create_element(dom.node_document(right).ok()?, "span").ok()?;
-            dom.set_attribute(span, "style", &format!("white-space: {source_style};")).ok()?;
+            let style = carried.iter().map(|(name, value)| format!("{name}: {value};")).collect::<Vec<_>>().join(" ");
+            dom.set_attribute(span, "style", &style).ok()?;
             dom.append_child(span, fragment).ok()?;
             span
         } else {
