@@ -6236,7 +6236,7 @@ fn inline_media_conditions_update_when_the_device_changes() {
     let mut snap = page.snapshot(1, page.tree());
     for (width, expected) in [(80, [255, 0, 0]), (120, [0, 0, 255]), (90, [255, 0, 0])] {
         snap.width = width;
-        let (image, _) = renderer.render(&snap, Area::Viewport, Backend::Cpu, &fetcher()).unwrap();
+        let image = renderer.render(&snap, Area::Viewport, Backend::Cpu, &fetcher()).unwrap().0;
         assert_eq!(&image.data[..3], &expected, "viewport {width}");
     }
 }
