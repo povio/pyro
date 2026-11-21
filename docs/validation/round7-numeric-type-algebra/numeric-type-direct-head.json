@@ -1,0 +1,39 @@
+{
+  "version": "124.0.6367.29",
+  "results": {
+    "mixed": {
+      "length": 2,
+      "percentHint": "length",
+      "time": -1
+    },
+    "cancelOne": {
+      "length": 1,
+      "percentHint": "length"
+    },
+    "cancelAll": {
+      "percentHint": "length"
+    },
+    "inverseMixed": {
+      "length": -1,
+      "percentHint": "length",
+      "time": 1
+    },
+    "hintedPercent": {
+      "length": 2,
+      "percentHint": "length"
+    },
+    "conflictingProduct": {
+      "error": "TypeError"
+    },
+    "conflictingDivision": {
+      "error": "TypeError"
+    },
+    "conflictingClamp": {
+      "error": "TypeError"
+    },
+    "squaredPlusPercent": {
+      "error": "TypeError"
+    },
+    "plainCancellation": {}
+  }
+}
