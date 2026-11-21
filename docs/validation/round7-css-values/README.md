@@ -18,3 +18,11 @@ The current CSS Mixins editor's draft adds all parameter declarations to the arg
 * Frozen executable SHA-256 is `058c0ac124f412b2e91960d7ed5ebfb343341e90149fa38cf5004a2c6687dc09`. The tested candidate binary SHA-256 is `f0c3c22e5783c69b660267043e45ff4e9c8f0036efd1ed7084f0b945c988de08`.
 * Seven native browser tests passed on `710592674`. The renderer media invalidation test passed on `06913c789`, which changes only that test’s tuple destructuring. The compressed named WPT reports retain their original executable and source provenance.
 * Runs used WPT `a421f2fea5eb7f91e0db399e44b0fb0779ee1603`, JSC `0e0dd7038a7a-6f4649e395e0`, wptserve on isolated ports, the pinned manifest, one browser worker and the explicit URL list. QA ran no omitted security or native-fault selectors.
+
+## Font-relative values in functions
+
+At `67c00db3e633bfb17e94560624f1026f15ae39fd`, typed parameters, defaults, locals and results record font dependencies from the values the invocation consumes. CSS font-relative units then resolve against the calling element after its font size is computed. Unused bindings introduce no dependency. The targeted native font and line-height guard passed.
+
+Independent QA ran the same 27 URLs on that exact candidate. Compared with `710592674`, all five remaining assertions on `function-relative-units.html` gained a pass and no assertions lost a pass. Against `305840f45`, the cumulative result is **135 gains, two pinned losses, 786/831 named passes, and 15/27 fully passing pages**. Both later-parameter losses are still individually recorded. No names went missing and no page changed harness status.
+
+The candidate binary’s SHA-256 is `8490f4cd11c467e0106ecfb1cff1baa00c4fce779ecb9c9e5b534b2339ad8453`. A single-job warm build took 69 seconds. The native guard build took 16 seconds and test execution took 0.07 seconds. From initial frozen-base selection to this tranche’s independent validation took about 34 minutes, including host-capacity holds. [Matched before/after results](font-metrics/differential.json) · [Increment since the preceding candidate](font-metrics/incremental.json)

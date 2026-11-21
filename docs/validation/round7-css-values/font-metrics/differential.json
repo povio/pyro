@@ -1,0 +1,738 @@
+{
+  "pages": 27,
+  "names": 831,
+  "old": 653,
+  "new": 786,
+  "gained": [
+    [
+      "css/css-fonts/font-feature-values-map-live.html",
+      "The second stylesheet should not be affected by modifications in the first",
+      1
+    ],
+    [
+      "css/css-fonts/font-feature-values-map-live.html",
+      "Two retreived maps for CSSFontFeatureValuesRule.annotation should reflect the same values",
+      1
+    ],
+    [
+      "css/css-fonts/font-feature-values-map-order.html",
+      "All map iteration APIs preserve first name positions with the final parsed values",
+      1
+    ],
+    [
+      "css/css-fonts/font-feature-values-map-order.html",
+      "Character-variant blocks populate the characterVariant map in first name order",
+      1
+    ],
+    [
+      "css/css-fonts/font-feature-values-map-order.html",
+      "Invalid parsed declarations neither reserve positions nor overwrite map entries",
+      1
+    ],
+    [
+      "css/css-fonts/font-feature-values-map-order.html",
+      "Parsed names are case-sensitive and escaped spellings update the same map entry",
+      1
+    ],
+    [
+      "css/css-fonts/font-feature-values-map-order.html",
+      "Repeated feature blocks merge without moving existing map entries",
+      1
+    ],
+    [
+      "css/css-fonts/font-feature-values-map-order.html",
+      "Updating a parsed map entry preserves its position while deletion and reinsertion append it",
+      1
+    ],
+    [
+      "css/css-mixins/function-definition-scope.html",
+      "A local resolves a dashed-function in the definition scope",
+      1
+    ],
+    [
+      "css/css-mixins/function-definition-scope.html",
+      "Parameter default resolves a dashed-function in the definition scope",
+      1
+    ],
+    [
+      "css/css-mixins/function-definition-scope.html",
+      "result resolves a dashed-function in the definition scope",
+      1
+    ],
+    [
+      "css/css-mixins/function-parameter-scoping.html",
+      "Default referencing an earlier parameter",
+      1
+    ],
+    [
+      "css/css-mixins/function-property-context.html",
+      "em in argument uses the property calling context",
+      1
+    ],
+    [
+      "css/css-mixins/function-property-context.html",
+      "em in default uses the property calling context",
+      1
+    ],
+    [
+      "css/css-mixins/function-property-context.html",
+      "em in local uses the property calling context",
+      1
+    ],
+    [
+      "css/css-mixins/function-property-context.html",
+      "em in result uses the property calling context",
+      1
+    ],
+    [
+      "css/css-mixins/function-relative-units.html",
+      "em in a typed parameter",
+      1
+    ],
+    [
+      "css/css-mixins/function-relative-units.html",
+      "em in a typed parameter default",
+      1
+    ],
+    [
+      "css/css-mixins/function-relative-units.html",
+      "em in a typed parameter of a nested function",
+      1
+    ],
+    [
+      "css/css-mixins/function-relative-units.html",
+      "em in a typed parameter, untyped return",
+      1
+    ],
+    [
+      "css/css-mixins/function-relative-units.html",
+      "em in a typed result",
+      1
+    ],
+    [
+      "css/css-mixins/function-relative-units.html",
+      "em in an untyped local substituted into a typed result",
+      1
+    ],
+    [
+      "css/css-mixins/function-relative-units.html",
+      "em in an untyped parameter",
+      1
+    ],
+    [
+      "css/css-mixins/function-relative-units.html",
+      "em in an untyped result",
+      1
+    ],
+    [
+      "css/css-mixins/function-relative-units.html",
+      "em within calc() in a typed parameter",
+      1
+    ],
+    [
+      "css/css-mixins/function-relative-units.html",
+      "em within calc() in a typed result",
+      1
+    ],
+    [
+      "css/css-mixins/function-relative-units.html",
+      "rem in a typed parameter",
+      1
+    ],
+    [
+      "css/css-mixins/functions/local-if-substitution.html",
+      "A name the function does not declare keeps the registration",
+      1
+    ],
+    [
+      "css/css-mixins/functions/local-if-substitution.html",
+      "CSS-wide keywords are interpreted locally (guaranteed-invalid, initial)",
+      1
+    ],
+    [
+      "css/css-mixins/functions/local-if-substitution.html",
+      "CSS-wide keywords are interpreted locally (guaranteed-invalid, unset)",
+      1
+    ],
+    [
+      "css/css-mixins/functions/local-if-substitution.html",
+      "CSS-wide keywords are interpreted locally (inherit)",
+      1
+    ],
+    [
+      "css/css-mixins/functions/local-if-substitution.html",
+      "CSS-wide keywords are interpreted locally (initial)",
+      1
+    ],
+    [
+      "css/css-mixins/functions/local-if-substitution.html",
+      "CSS-wide keywords are interpreted locally (revert)",
+      1
+    ],
+    [
+      "css/css-mixins/functions/local-if-substitution.html",
+      "CSS-wide keywords are interpreted locally (revert-layer)",
+      1
+    ],
+    [
+      "css/css-mixins/functions/local-if-substitution.html",
+      "Local shadows a registered custom property in if() condition",
+      1
+    ],
+    [
+      "css/css-mixins/functions/local-if-substitution.html",
+      "Local shadows a registered custom property left at its initial value",
+      1
+    ],
+    [
+      "css/css-mixins/functions/local-if-substitution.html",
+      "Parameter shadows a registered custom property in if() condition",
+      1
+    ],
+    [
+      "css/css-mixins/functions/local-if-substitution.html",
+      "dashed function in if() declaration value",
+      1
+    ],
+    [
+      "css/css-mixins/functions/local-if-substitution.html",
+      "dashed function with argument in if() declaration value",
+      1
+    ],
+    [
+      "css/css-mixins/functions/local-if-substitution.html",
+      "if() cycle in condition specified value through local",
+      1
+    ],
+    [
+      "css/css-mixins/functions/local-if-substitution.html",
+      "if() cycle through function",
+      1
+    ],
+    [
+      "css/css-mixins/functions/local-if-substitution.html",
+      "if() cycle through local",
+      1
+    ],
+    [
+      "css/css-mixins/functions/local-if-substitution.html",
+      "if() no cycle in overridden local",
+      1
+    ],
+    [
+      "css/css-mixins/functions/local-if-substitution.html",
+      "var() in if() condition's custom property value substitutes locally",
+      1
+    ],
+    [
+      "css/css-mixins/functions/local-if-substitution.html",
+      "var() in if() condition's custom property value substitutes locally, argument",
+      1
+    ],
+    [
+      "css/css-mixins/functions/local-if-substitution.html",
+      "var() in if() condition's specified value substitutes locally",
+      1
+    ],
+    [
+      "css/css-mixins/functions/local-if-substitution.html",
+      "var() in if() condition's specified value substitutes locally, argument",
+      1
+    ],
+    [
+      "css/css-mixins/functions/local-if-substitution.html",
+      "var() in if() declaration value substitutes locally",
+      1
+    ],
+    [
+      "css/css-mixins/functions/local-if-substitution.html",
+      "var() in if() declaration value substitutes locally, argument",
+      1
+    ],
+    [
+      "css/css-mixins/functions/local-inherit-substitution.html",
+      "inherit() referring to cycle in parent frame",
+      1
+    ],
+    [
+      "css/css-mixins/functions/local-inherit-substitution.html",
+      "inherit() referring to guaranteed-invalid in parent frame",
+      1
+    ],
+    [
+      "css/css-mixins/functions/local-inherit-substitution.html",
+      "inherit() referring to typed value in parent frame",
+      1
+    ],
+    [
+      "css/css-mixins/functions/local-inherit-substitution.html",
+      "inherit() refers to parent stack frame (element)",
+      1
+    ],
+    [
+      "css/css-mixins/functions/local-inherit-substitution.html",
+      "inherit() refers to parent stack frame (other function call)",
+      1
+    ],
+    [
+      "css/css-values/if-media-invalidation.html",
+      "CSS Values and Units Test: if() media() condition invalidation",
+      1
+    ],
+    [
+      "css/css-values/inherit-function-basic.html",
+      "inherit() can be used within if()",
+      1
+    ],
+    [
+      "css/css-values/inherit-function-basic.html",
+      "inherit() on value set on ancestor",
+      1
+    ],
+    [
+      "css/css-values/inherit-function-basic.html",
+      "inherit() on value set on parent",
+      1
+    ],
+    [
+      "css/css-values/inherit-function-basic.html",
+      "inherit(), accumulating font-size",
+      1
+    ],
+    [
+      "css/css-values/inherit-function-basic.html",
+      "inherit(), accumulating values",
+      1
+    ],
+    [
+      "css/css-values/inherit-function-basic.html",
+      "inherit(), no value set on parent",
+      1
+    ],
+    [
+      "css/css-values/inherit-function-invalidation.html",
+      "inherit() invalidates when values changes on parent element, inherited",
+      1
+    ],
+    [
+      "css/css-values/inherit-function-invalidation.html",
+      "inherit() invalidates when values changes on parent element, inherited, deeper",
+      1
+    ],
+    [
+      "css/css-values/inherit-function-invalidation.html",
+      "inherit() invalidates when values changes on parent element, non-inherited",
+      1
+    ],
+    [
+      "css/css-values/inherit-function-parsing.html",
+      "e.style['left'] = \"calc(inherit(--x) + 1px)\" should set the property value",
+      1
+    ],
+    [
+      "css/css-values/inherit-function-parsing.html",
+      "e.style['left'] = \"inherit(--x , )\" should set the property value",
+      1
+    ],
+    [
+      "css/css-values/inherit-function-parsing.html",
+      "e.style['left'] = \"inherit(--x)\" should set the property value",
+      1
+    ],
+    [
+      "css/css-values/inherit-function-parsing.html",
+      "e.style['left'] = \"inherit(--x, )\" should set the property value",
+      1
+    ],
+    [
+      "css/css-values/inherit-function-parsing.html",
+      "e.style['left'] = \"inherit(--x, foo)\" should set the property value",
+      1
+    ],
+    [
+      "css/css-values/inherit-function-parsing.html",
+      "e.style['left'] = \"inherit(--x,)\" should set the property value",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(e-s) in typed arg and set in body, same function at different indexes",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(e-s) in typed arg and set in body, same function in different properties",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(e-s) in typed arg and set in body, same function on different elements",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(e-s) in typed arg defaults, same function at different indexes",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(e-s) in typed arg defaults, same function in different properties",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(e-s) in typed arg defaults, same function on different elements",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(e-s) in typed result, different functions at different indexes",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(e-s) in typed result, different functions in different properties",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(e-s) in typed result, different functions on different elements",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(e-s) in typed result, same function at different indexes",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(e-s) in typed result, same function in different properties",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(e-s) in typed result, same function on different elements",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(e-s) in untyped arg defaults, same function at different indexes",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(e-s) in untyped arg defaults, same function in different properties",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(e-s) in untyped arg defaults, same function on different elements",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(e-s) in untyped result, different functions at different indexes",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(e-s) in untyped result, different functions in different properties",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(e-s) in untyped result, different functions on different elements",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(e-s) in untyped result, same function at different indexes",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(e-s) in untyped result, same function in different properties",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(e-s) in untyped result, same function on different elements",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(p-i-s) in multiple untyped locals, substituted into untyped result",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(p-i-s) in typed arg and set in body, different function at different indexes",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(p-i-s) in typed arg and set in body, different function in different properties",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(p-i-s) in typed arg and set in body, different function on different elements",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(p-i-s) in typed arg and set in body, same function at different indexes",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(p-i-s) in typed arg and set in body, same function in different properties",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(p-i-s) in typed arg and set in body, same function on different elements",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(p-i-s) in typed arg default, different function at different indexes",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(p-i-s) in typed arg default, different function in different properties",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(p-i-s) in typed arg default, different function on different elements",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(p-i-s) in typed arg default, same function at different indexes",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(p-i-s) in typed arg default, same function in different properties",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(p-i-s) in typed arg default, same function on different elements",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(p-i-s) in typed result, different function at different indexes",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(p-i-s) in typed result, different function in different properties",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(p-i-s) in typed result, different function on different elements",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(p-i-s) in typed result, same function at different indexes",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(p-i-s) in typed result, same function in different properties",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(p-i-s) in typed result, same function on different elements",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(p-i-s) in untyped local, different functions at different indexes",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(p-i-s) in untyped local, different functions in different properties",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(p-i-s) in untyped local, different functions on different elements",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(p-i-s) in untyped local, same function at different indexes",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(p-i-s) in untyped local, same function in different properties",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(p-i-s) in untyped local, same function on different elements",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(p-i-s) in untyped local, substituted multiple times into typed result",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(p-i-s) in untyped result, different functions at different indexes",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(p-i-s) in untyped result, different functions in different properties",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(p-i-s) in untyped result, different functions on different elements",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(p-i-s) in untyped result, same function at different indexes",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(p-i-s) in untyped result, same function in different properties",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(p-i-s) in untyped result, same function on different elements",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(p-i-s) substituted into  typed result, different function at different indexes",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(p-i-s) substituted into  typed result, different function in different properties",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(p-i-s) substituted into  typed result, different function on different elements",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(p-i-s) substituted into  typed result, same function at different indexes",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(p-i-s) substituted into  typed result, same function in different properties",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(p-i-s) substituted into typed result, same function on different elements",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(p-s) in multiple untyped locals, substituted into untyped result",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(p-s) in typed arg defaults, substituted into untyped result",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(p-s) in untyped arg defaults, substituted into typed result",
+      1
+    ],
+    [
+      "css/css-values/random-in-custom-function.tentative.html",
+      "random(p-s) in untyped local, substituted multiple times into typed result",
+      1
+    ],
+    [
+      "css/css-values/tree-counting/sibling-function-descriptors.tentative.html",
+      "sibling-count() should not be allowed in @font-feature-values descriptors",
+      1
+    ],
+    [
+      "css/css-values/tree-counting/sibling-function-descriptors.tentative.html",
+      "sibling-index() should not be allowed in @font-feature-values descriptors",
+      1
+    ]
+  ],
+  "lost": [
+    [
+      "css/css-mixins/function-parameter-scoping.html",
+      "Default referencing a later parameter does not see the calling element",
+      1
+    ],
+    [
+      "css/css-mixins/function-parameter-scoping.html",
+      "Default referencing a later parameter is guaranteed-invalid",
+      1
+    ]
+  ],
+  "parentPassingPages": [
+    "css/css-values/if-conditionals.html",
+    "css/css-values/if-style-invalidation.html",
+    "css/css-values/minmax-angle-serialize.html",
+    "css/css-values/random-in-if.tentative.html"
+  ],
+  "candidatePassingPages": [
+    "css/css-fonts/font-feature-values-map-live.html",
+    "css/css-fonts/font-feature-values-map-order.html",
+    "css/css-mixins/function-definition-scope.html",
+    "css/css-mixins/function-property-context.html",
+    "css/css-mixins/function-relative-units.html",
+    "css/css-mixins/functions/local-inherit-substitution.html",
+    "css/css-values/if-conditionals.html",
+    "css/css-values/if-media-invalidation.html",
+    "css/css-values/if-style-invalidation.html",
+    "css/css-values/inherit-function-basic.html",
+    "css/css-values/inherit-function-invalidation.html",
+    "css/css-values/inherit-function-parsing.html",
+    "css/css-values/minmax-angle-serialize.html",
+    "css/css-values/random-in-custom-function.tentative.html",
+    "css/css-values/random-in-if.tentative.html"
+  ],
+  "gainedPages": [
+    "css/css-fonts/font-feature-values-map-live.html",
+    "css/css-fonts/font-feature-values-map-order.html",
+    "css/css-mixins/function-definition-scope.html",
+    "css/css-mixins/function-property-context.html",
+    "css/css-mixins/function-relative-units.html",
+    "css/css-mixins/functions/local-inherit-substitution.html",
+    "css/css-values/if-media-invalidation.html",
+    "css/css-values/inherit-function-basic.html",
+    "css/css-values/inherit-function-invalidation.html",
+    "css/css-values/inherit-function-parsing.html",
+    "css/css-values/random-in-custom-function.tentative.html"
+  ],
+  "lostPages": [],
+  "statusChanges": {},
+  "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+  "wallMs": [
+    606,
+    1222
+  ]
+}
