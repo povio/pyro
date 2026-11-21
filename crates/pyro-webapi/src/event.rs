@@ -103,6 +103,7 @@ pub struct EventFields {
     pub button: i16,
     pub buttons: u16,
     pub related_target: Option<TargetKey>,
+    pub(crate) pseudo_hit: Option<(TargetKey, pyro_dom::geometry::GeneratedHit)>,
     pub key: String,
     pub code: String,
     pub location: u32,
@@ -1126,10 +1127,17 @@ impl JsClass for UiEvent {
             e.refresh_wrappers();
             Ok(s.undefined())
         });
-        // https://w3c.github.io/uievents/#dom-uievent-pseudotarget: the
-        // pseudo-element the event targets. Hit testing never resolves to a
-        // pseudo-element here, so every UI event reports none.
-        def.getter("pseudoTarget", |s, _e| Ok(s.null()));
+        def.getter("pseudoTarget", |s, e| {
+            let Some((owner, hit)) = e.fields.borrow().pseudo_hit else { return Ok(s.null()) };
+            let state = e.state.borrow();
+            if !state.is_trusted || !state.dispatching || state.current_target.is_none() || state.target != Some(owner) {
+                return Ok(s.null());
+            }
+            drop(state);
+            let element = target_value(s, &e.page, Some(owner))?;
+            let (kind, marker) = hit.selectors();
+            crate::pseudo_element::MODULE.helper(s, &e.page, "fromHit", &[element, s.string(kind), s.boolean(marker)])
+        });
         def.getter("which", |s, e| {
             let f = e.fields.borrow();
             Ok(s.number(match e.iface {

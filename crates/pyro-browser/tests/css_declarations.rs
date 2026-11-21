@@ -1224,3 +1224,21 @@ fn pseudo_handles_keep_identity_across_tree_and_style_changes() {
     "#);
     assert_eq!(actual, "true|true|true|true|true|true|true|true|true|true|true|true|true|::view-transition-old|::view-transition-old(foo)");
 }
+
+#[test]
+fn synthetic_events_do_not_acquire_generated_hit_targets() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        const outer = document.body.appendChild(document.createElement('div'));
+        const shadow = outer.attachShadow({mode:'closed'});
+        const inner = shadow.appendChild(document.createElement('span'));
+        const result = [];
+        inner.addEventListener('click', e=>result.push(e.target===inner, e.pseudoTarget===null));
+        outer.addEventListener('click', e=>result.push(e.target===outer, e.pseudoTarget===null));
+        const event = new MouseEvent('click', {bubbles:true,composed:true});
+        inner.dispatchEvent(event);
+        result.push(event.pseudoTarget===null);
+        result.join('|')
+    "#);
+    assert_eq!(actual, "true|true|true|true|true");
+}

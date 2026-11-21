@@ -71,5 +71,9 @@
     Object.defineProperty(CSSPseudoElement.prototype,key,{enumerable:true});
   Object.defineProperty(CSSPseudoElement.prototype,Symbol.toStringTag,{value:'CSSPseudoElement',configurable:true});
   Object.defineProperty(CSSPseudoElement,'length',{value:0});
-  return {CSSPseudoElement,fromElement};
+  function fromHit(element, type, nestedMarker) {
+    const object = handle(element, element, type, null);
+    return nestedMarker ? handle(element, object, '::marker', null) : object;
+  }
+  return {CSSPseudoElement,fromElement,fromHit};
 })

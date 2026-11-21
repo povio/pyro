@@ -2188,6 +2188,39 @@ impl Renderer {
         }
     }
 
+    /// Identify an existing generated hit, only within the nominated DOM owner.
+    pub fn generated_hit(&mut self, page: u64, owner: u64, x: f64, y: f64) -> Option<pyro_dom::geometry::GeneratedHit> {
+        use pyro_dom::geometry::GeneratedHit::*;
+        let mirror = self.mirrors.get_mut(&page)?;
+        let owner = mirror.node(owner)?;
+        let origin = mirror.doc.get_node(owner)?;
+        let (before, after) = (origin.before(), origin.after());
+        if before.is_none() && after.is_none() && !origin.element_data().is_some_and(|e| e.marker_style.is_some() || e.marker_combined_box.is_some()) {
+            return None;
+        }
+        let scroll = mirror.doc.viewport_scroll();
+        let hit = mirror.doc.hit((x + scroll.x) as f32, (y + scroll.y) as f32)?;
+        let mut id = hit.node_id;
+        let mut marker = false;
+        while id != owner {
+            // Never attribute a hit from another DOM element to this owner.
+            if mirror.key_of(id).is_some() { return None; }
+            let node = mirror.doc.get_node(id)?;
+            let parent = node.parent?;
+            let ancestor = mirror.doc.get_node(parent)?;
+            if ancestor.element_data().is_some_and(|e| e.marker_style == Some(id) || e.marker_combined_box == Some(id)) {
+                marker = true;
+            }
+            if parent == owner {
+                if before == Some(id) { return Some(if marker { BeforeMarker } else { Before }); }
+                if after == Some(id) { return Some(if marker { AfterMarker } else { After }); }
+                return marker.then_some(Marker);
+            }
+            id = parent;
+        }
+        None
+    }
+
     pub fn css_animation_frames(&self, page: u64, key: u64, name: &str) -> Option<Vec<pyro_dom::animation::CssKeyframeStep>> {
         let mirror = self.mirrors.get(&page)?;
         mirror.doc.css_animation_frames(mirror.node(key)?, name)
