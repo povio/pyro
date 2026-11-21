@@ -51,6 +51,7 @@ where
         "ConstantSourceNode",
         "GainNode",
         "DelayNode",
+        "ConvolverNode",
         "StereoPannerNode",
         "PannerNode",
         "AudioListener",
@@ -77,6 +78,27 @@ type Decoded = Result<(u32, Vec<Vec<f32>>), String>;
 
 fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
     let natives = s.object();
+    natives.set_atom(
+        "foreignImpulseInfo",
+        s.function("foreignImpulseInfo", |s, _, a| {
+            let value = a.get(0);
+            let Some(owner) = value.as_object().and_then(|o| s.object_realm(o)) else { return Ok(s.undefined()) };
+            if owner.id() == s.realm_id() || owner.is_disposed() {
+                return Ok(s.undefined());
+            }
+            let scope = owner.scope()?;
+            let page = crate::target::page_of(&scope)?;
+            let Some(module) = MODULE.existing(&scope, &page)? else { return Ok(s.undefined()) };
+            let info = module
+                .get_atom("localImpulseInfo")?
+                .as_object()
+                .expect("private Web Audio module")
+                .call(None, &[value])?;
+            Ok(Persistent::new(&scope, info).get(s))
+        })?
+        .value(),
+    )?;
+    natives.set_atom("makeConvolver", s.function("makeConvolver", make_convolver)?.value())?;
     let decode = s.function("decode", |s, _this, a| {
         let page = crate::target::page_of(s)?;
         let bytes = crate::encoding::buffer_source_bytes(s, a.get(0))?.unwrap_or_default();
@@ -139,6 +161,48 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
     })?;
     natives.set_atom("clearTimer", clear.value())?;
     Ok(natives)
+}
+
+/// Copy a binding-owned Float32Array before doing any more JS work.
+fn samples(s: &Scope<'_>, value: Value<'_>) -> JsResult<Vec<f32>> {
+    let bytes = crate::encoding::buffer_source_bytes(s, value)?
+        .ok_or_else(|| JsError::Type("Expected convolution samples".into()))?;
+    Ok(bytes.chunks_exact(4).map(|b| f32::from_ne_bytes([b[0], b[1], b[2], b[3]])).collect())
+}
+
+fn make_convolver<'s>(s: &Scope<'s>, _this: Value<'s>, args: pyro_js::Args<'s>) -> JsResult<Value<'s>> {
+    use pyro_media::convolution::{Convolver, QUANTUM};
+    let channels = args.get(0).as_object().ok_or_else(|| JsError::Type("Expected impulse channels".into()))?;
+    let count = channels.get_atom("length")?.to_number()? as u32;
+    if !matches!(count, 1 | 2 | 4) {
+        return Err(JsError::Type("Invalid impulse channel count".into()));
+    }
+    let mut ir = Vec::with_capacity(count as usize);
+    for ch in 0..count {
+        ir.push(samples(s, channels.get_index(ch)?)?);
+    }
+    let rate = args.get(1).to_number()?;
+    let engine =
+        Convolver::new(&ir, rate, args.get(2).to_bool()).ok_or_else(|| JsError::Type("Invalid impulse data".into()))?;
+    if let Some(report) = sys::spi::get().report_extra_memory_cost {
+        // SAFETY: this is the live calling context on its owning thread.
+        unsafe {
+            report(s.ctx(), engine.heap_bytes());
+        }
+    }
+    let engine = RefCell::new(engine);
+    Ok(s.function("renderConvolution", move |s, _, args| {
+        let read = |v| -> JsResult<[f32; QUANTUM]> {
+            samples(s, v)?.try_into().map_err(|_| JsError::Type("Invalid render quantum".into()))
+        };
+        let left = read(args.get(0))?;
+        let right = if args.get(1).is_undefined() { None } else { Some(read(args.get(1))?) };
+        let mut out = [[0.0; QUANTUM]; 2];
+        let count = engine.borrow_mut().render(&left, right.as_ref(), args.get(2).to_bool(), &mut out);
+        let values = out[..count].iter().map(|ch| float32_array(s, ch)).collect::<JsResult<Vec<_>>>()?;
+        Ok(s.array(&values)?.value())
+    })?
+    .value())
 }
 
 fn decode(bytes: &[u8], rate: u32) -> Decoded {

@@ -2924,6 +2924,7 @@ dependencies = [
  "openh264-sys2",
  "opus-pure",
  "rav1d",
+ "rustfft",
  "symphonia",
 ]
 
