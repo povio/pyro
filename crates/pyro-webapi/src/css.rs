@@ -438,7 +438,7 @@ impl StyleData {
                         *rule.borrow_mut() =
                             if text.trim().is_empty() { format!("{head} {{ }}") } else { format!("{head} {{ {} }}", text.trim()) };
                         // A margin rule lives in its `@page` rule's text.
-                        if let Some(page) = node.parent.upgrade().filter(|p| is_page(p)) {
+                        if let Some(page) = node.parent.borrow().upgrade().filter(|p| is_page(p)) {
                             write_page(&*owner.rules()?, &page, None);
                         }
                     }
@@ -734,7 +734,7 @@ enum RuleKind {
 struct RuleNode {
     identity: IdentityKey,
     kind: RuleKind,
-    parent: Weak<RuleNode>,
+    parent: RefCell<Weak<RuleNode>>,
 }
 
 impl RuleNode {
@@ -764,7 +764,7 @@ impl RuleNode {
                 }
                 ParsedRule::Other { rule_type, text } => RuleKind::Other { rule_type, text: RefCell::new(text) },
             };
-            RuleNode { identity, kind, parent }
+            RuleNode { identity, kind, parent: RefCell::new(parent) }
         })
     }
 
@@ -785,6 +785,12 @@ impl RuleNode {
 
     fn css_text(&self) -> String {
         match &self.kind {
+            RuleKind::Other { rule_type: 8, text } => {
+                let text = text.borrow();
+                let Some((head, body)) = split_block(&text) else { return String::new() };
+                let decls = Block::parse(body).css_text();
+                if decls.is_empty() { format!("{head} {{ }}") } else { format!("{head} {{ {decls} }}") }
+            }
             RuleKind::Declarations(text) => DeclarationBlock::parse(&text.borrow()).css_text(),
             RuleKind::Palette(rule) => rule.text.clone(),
             RuleKind::Property(rule) => rule.text.clone(),
@@ -890,7 +896,7 @@ fn insert_into(
     let mut scoped = namespaces.clone();
     // CSSOM "parse a CSS rule": one rule, and nothing after it but whitespace.
     let invalid = || JsError::dom("SyntaxError", format!("Failed to parse the rule '{rule}'."));
-    let in_scope = std::iter::successors(parent.upgrade(), |p| p.parent.upgrade()).any(|p| matches!(&p.kind, RuleKind::Group { bounds: Some(_), .. }));
+    let in_scope = std::iter::successors(parent.upgrade(), |p| p.parent.borrow().upgrade()).any(|p| matches!(&p.kind, RuleKind::Group { bounds: Some(_), .. }));
     let mut parsed = vec![pyro_dom::cssom::parse_one_rule_in_scope(rule, &mut scoped, in_scope).map_err(|_| invalid())?];
     // CSSOM "insert a CSS rule": past the end is an IndexSizeError; @import and
     // @namespace only belong at the top of a sheet.
@@ -939,7 +945,7 @@ fn delete_from(list: &RuleList, index: usize) -> JsResult<()> {
     if index >= rules.len() {
         return Err(JsError::dom("IndexSizeError", "The index provided is outside the rule list."));
     }
-    rules.remove(index);
+    *rules.remove(index).parent.borrow_mut() = Weak::new();
     list.replace(rules);
     Ok(())
 }
@@ -1014,6 +1020,8 @@ fn rule_wrapper<'s>(s: &Scope<'s>, rule: &Rc<RuleNode>, owner: &SheetOwner) -> J
         RuleKind::Property(_) => s.wrap::<CssPropertyRule>(data, key),
         RuleKind::Palette(_) => s.wrap::<CssFontPaletteValuesRule>(data, key),
         RuleKind::Style { .. } => s.wrap::<CssStyleRule>(data, key),
+        RuleKind::Other { rule_type: 8, .. } => s.wrap::<CssKeyframeRule>(data, key),
+        RuleKind::Group { name, .. } if matches!(name.as_str(), "keyframes" | "-webkit-keyframes") => s.wrap::<CssKeyframesRule>(data, key),
         RuleKind::Group { name, .. } if name == "media" => s.wrap::<CssMediaRule>(data, key),
         RuleKind::Group { name, .. } if name == "supports" => s.wrap::<CssSupportsRule>(data, key),
         RuleKind::Group { name, .. } if name == "layer" => s.wrap::<CssLayerBlockRule>(data, key),
@@ -1028,7 +1036,6 @@ fn rule_wrapper<'s>(s: &Scope<'s>, rule: &Rc<RuleNode>, owner: &SheetOwner) -> J
                 "import" => s.wrap::<CssImportRule>(data, key),
                 "font-face" => s.wrap::<CssFontFaceRule>(data, key),
                 "page" => s.wrap::<CssPageRule>(data, key),
-                "keyframes" | "-webkit-keyframes" => s.wrap::<CssKeyframesRule>(data, key),
                 "namespace" => s.wrap::<CssNamespaceRule>(data, key),
                 "font-feature-values" => s.wrap::<CssFontFeatureValuesRule>(data, key),
                 "layer" if text.trim_end().ends_with(';') => s.wrap::<CssLayerStatementRule>(data, key),
@@ -1128,6 +1135,7 @@ fn define_rule<C: JsClass<Data = RuleData>>(def: &mut ClassDef<C>) {
     def.getter("type", |s, r| {
         Ok(s.number(match &r.node()?.kind {
             RuleKind::Style { .. } => 1.0,
+            RuleKind::Group { name, .. } if matches!(name.as_str(), "keyframes" | "-webkit-keyframes") => 7.0,
             RuleKind::Group { name, .. } if name == "media" => 4.0,
             RuleKind::Group { name, .. } if name == "supports" => 12.0,
             RuleKind::Group { .. } | RuleKind::Property(_) | RuleKind::Palette(_) | RuleKind::Declarations(_) => 0.0,
@@ -1136,14 +1144,14 @@ fn define_rule<C: JsClass<Data = RuleData>>(def: &mut ClassDef<C>) {
     });
     // Setting a rule's cssText does nothing (CSSOM).
     def.accessor("cssText", |s, r| Ok(s.string(&r.node()?.css_text())), |_s, _r, _v| Ok(()));
-    def.getter("parentRule", |s, r| match r.node()?.parent.upgrade() {
+    def.getter("parentRule", |s, r| match r.node()?.parent.borrow().upgrade() {
         Some(parent) => Ok(rule_wrapper(s, &parent, &r.owner)?.value()),
         None => Ok(s.null()),
     });
     // Null once the rule (or the rule holding it) was removed from its sheet.
     def.getter("parentStyleSheet", |s, r| {
         let mut top = r.node()?.clone();
-        while let Some(parent) = top.parent.upgrade() {
+        while let Some(parent) = { let parent = top.parent.borrow().upgrade(); parent } {
             top = parent;
         }
         let attached = r.owner.rules()?.list.rules.borrow().iter().any(|n| Rc::ptr_eq(n, &top));
@@ -1637,15 +1645,68 @@ rule_class!(CssPageRule, "CSSPageRule", CssGroupRule, |def| {
         },
     );
 });
+rule_class!(CssKeyframeRule, "CSSKeyframeRule", CssRule, |def| {
+    def.accessor("keyText", |s, r| Ok(s.string(split_block(&rule_text(r)).map_or("", |(head, _)| head))), |_s, r, value| {
+        let selector = pyro_dom::cssom::keyframe_selector(&dom_string(value)?).ok_or_else(|| JsError::dom("SyntaxError", "Invalid keyframe selector"))?;
+        if let RuleKind::Other { text, .. } = &r.node()?.kind {
+            let body = split_block(&text.borrow()).map(|(_, body)| body.to_owned()).unwrap_or_default();
+            *text.borrow_mut() = format!("{selector} {{{body}}}");
+            r.owner.commit(&*r.owner.rules()?);
+        }
+        Ok(())
+    });
+    def.accessor("style", rule_style::<CssStyleProperties>, |_s, r, value| {
+        let source = StyleSource::Rule { owner: r.owner.hold()?, node: r.node()?.clone() };
+        StyleData { source }.set_css_text(&dom_string(value)?)
+    });
+});
+
 rule_class!(CssKeyframesRule, "CSSKeyframesRule", CssRule, |def| {
-    def.getter("name", |s, r| {
-        let text = rule_text(r);
+    fn group(rule: &RuleData) -> JsResult<(&RefCell<String>, &RuleList)> {
+        let RuleKind::Group { condition, list, .. } = &rule.node()?.kind else { unreachable!() };
+        Ok((condition, list))
+    }
+    fn find(list: &RuleList, key: &str) -> Option<usize> {
+        let selector = pyro_dom::cssom::keyframe_selector(key)?;
+        list.rules.borrow().iter().rposition(|child| matches!(&child.kind, RuleKind::Other { text, .. } if split_block(&text.borrow()).is_some_and(|(head, _)| head == selector)))
+    }
+    def.accessor("name", |s, r| {
+        let text = group(r)?.0.borrow();
         let mut parser = cssparser::Parser::new(&text);
-        let name = match parser.next() {
-            Ok(cssparser::Token::AtKeyword(_)) => parser.expect_ident_or_string().ok().map(|name| name.as_ref()),
-            _ => None,
-        };
-        Ok(s.string(name.unwrap_or_default()))
+        Ok(s.string(parser.expect_ident_or_string().ok().map_or("", |name| name.as_ref())))
+    }, |_s, r, value| {
+        *group(r)?.0.borrow_mut() = pyro_dom::cssom::serialize_keyframes_name(&dom_string(value)?);
+        r.owner.commit(&*r.owner.rules()?);
+        Ok(())
+    });
+    def.getter("cssRules", |s, r| rule_list(s, r.node()?.identity, &r.owner, Some(r.node()?.clone())));
+    def.getter("length", |s, r| Ok(s.number(group(r)?.1.rules.borrow().len() as f64)));
+    def.indexed(|s, r, index| group(r)?.1.rules.borrow().get(index as usize).map(|child| rule_wrapper(s, child, &r.owner).map(|obj| obj.value())).transpose());
+    def.method("appendRule", 1, |s, r, args| {
+        if let Some(parsed) = pyro_dom::cssom::parse_one_keyframe(&arg_string(&args, 0, "CSSKeyframesRule.appendRule")?) {
+            let list = group(r)?.1;
+            let mut children = list.rules.borrow().clone();
+            children.push(RuleNode::new(parsed, Rc::downgrade(r.node()?)));
+            list.replace(children);
+            r.owner.commit(&*r.owner.rules()?);
+        }
+        Ok(s.undefined())
+    });
+    def.method("findRule", 1, |s, r, args| {
+        let list = group(r)?.1;
+        let selector = arg_string(&args, 0, "CSSKeyframesRule.findRule")?;
+        match find(list, &selector) {
+            Some(index) => Ok(rule_wrapper(s, &list.rules.borrow()[index], &r.owner)?.value()),
+            None => Ok(s.null()),
+        }
+    });
+    def.method("deleteRule", 1, |s, r, args| {
+        let list = group(r)?.1;
+        if let Some(index) = find(list, &arg_string(&args, 0, "CSSKeyframesRule.deleteRule")?) {
+            delete_from(list, index)?;
+            r.owner.commit(&*r.owner.rules()?);
+        }
+        Ok(s.undefined())
     });
 });
 rule_class!(CssNamespaceRule, "CSSNamespaceRule", CssRule, |def| {
@@ -2926,6 +2987,7 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<CssPageDescriptors>();
     engine.register::<CssMarginRule>();
     engine.register::<CssKeyframesRule>();
+    engine.register::<CssKeyframeRule>();
     engine.register::<CssNamespaceRule>();
     engine.register::<CssFontFeatureValuesRule>();
     engine.register::<CssLayerBlockRule>();

@@ -173,6 +173,30 @@ fn raw_block(n: &mut Parser<'_>) -> String {
     n.slice_from(start).to_owned()
 }
 
+pub fn keyframe_selector(text: &str) -> Option<String> {
+    use style::stylesheets::keyframes_rule::KeyframeSelectors;
+    use style_traits::ToCss;
+    Parser::new(text).parse_entirely(KeyframeSelectors::parse).ok().map(|selectors| selectors.to_css_string())
+}
+
+fn read_keyframe(parser: &mut Parser<'_>) -> Option<ParsedRule> {
+    let (head, body) = parse_prelude_and_block(parser, parser.position(), raw_block);
+    Some(ParsedRule::Other { rule_type: 8, text: format!("{} {{{}}}", keyframe_selector(&head)?, body?) })
+}
+
+pub fn parse_one_keyframe(text: &str) -> Option<ParsedRule> {
+    let mut parser = Parser::new(text);
+    let rule = read_keyframe(&mut parser)?;
+    parser.expect_exhausted().ok()?;
+    Some(rule)
+}
+
+pub fn serialize_keyframes_name(name: &str) -> String {
+    use style_traits::ToCss;
+    if name.is_empty() { return "\"\"".into(); }
+    style::values::KeyframesName::from_ident(name).to_css_string()
+}
+
 fn parse_style_rule(
     p: &mut Parser<'_>,
     start: cssparser::SourcePosition,
@@ -439,7 +463,12 @@ fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces, sc
             style::context::QuirksMode::NoQuirks, Default::default(), None, None, Default::default(),
         );
         let name = Parser::new(&prelude).parse_entirely(|input| KeyframesName::parse(&context, input)).ok()?;
-        return Some(ParsedRule::Other { rule_type: 7, text: format!("@{lower} {} {{{block}}}", name.to_css_string()) });
+        let mut parser = Parser::new(&block);
+        let mut rules = Vec::new();
+        while !parser.is_exhausted() {
+            rules.extend(read_keyframe(&mut parser));
+        }
+        return Some(ParsedRule::Group { name: lower, condition: name.to_css_string(), rules });
     }
     if lower == "position-try" {
         let mut parser = Parser::new(&prelude);
