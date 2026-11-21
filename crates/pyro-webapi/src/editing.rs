@@ -95,6 +95,23 @@ pub(crate) fn composed_points(page: &PageDom) -> Option<(Point, Point)> {
     (connected(page, points.0.0) && connected(page, points.1.0)).then_some(points)
 }
 
+/// Keep a collapsed shadow caret available to composed snapshots after its
+/// host is removed. The live Range held by script remains in its own tree.
+pub(crate) fn track_composed_caret(page: &Rc<PageDom>) {
+    let mut slot = page.selection.borrow_mut();
+    let Some(sel) = slot.as_mut() else { return };
+    let caret = sel.range.live.start();
+    if sel.composed.is_some() || sel.range.live.end() != caret
+        || page.dom.borrow().root_node(caret.0, false).ok() == Some(page.document())
+    {
+        return;
+    }
+    if let Ok(composed) = crate::range::RangeOwner::new(page, caret, caret) {
+        composed.live.track_shadow_host_removal();
+        sel.composed = Some(composed);
+    }
+}
+
 /// (start, end) in document order.
 pub fn selection_range(page: &PageDom) -> Option<(Point, Point)> {
     let (a, f) = selection(page)?;
