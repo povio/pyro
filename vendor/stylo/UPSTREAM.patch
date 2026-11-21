@@ -7951,6 +7951,20 @@ diff -ruN a/values/computed/ui.rs b/values/computed/ui.rs
      ScrollbarWidth, UserFocus, UserSelect, WindowDragging, WindowShadow,
  };
  
+diff -ruN a/values/generics/background.rs b/values/generics/background.rs
+--- a/values/generics/background.rs	2026-11-11 19:55:57
++++ b/values/generics/background.rs	2026-11-21 11:39:56
+@@ -37,10 +37,8 @@
+         height: GenericLengthPercentageOrAuto<LengthPercent>,
+     },
+     /// `cover`
+-    #[animation(error)]
+     Cover,
+     /// `contain`
+-    #[animation(error)]
+     Contain,
+ }
+ 
 diff -ruN a/values/generics/basic_shape.rs b/values/generics/basic_shape.rs
 --- a/values/generics/basic_shape.rs	2026-11-11 19:55:57
 +++ b/values/generics/basic_shape.rs	2026-11-21 11:15:00
