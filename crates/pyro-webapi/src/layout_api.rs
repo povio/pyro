@@ -983,18 +983,18 @@ pub fn get_computed_style<'s>(
 /// `change` only on the lists it flipped.
 pub struct MediaQueryEntry {
     pub(crate) target: pyro_dom::events::TargetKey,
-    pub(crate) query: String,
+    pub(crate) query: Rc<pyro_dom::cssom::MediaQueryList>,
+    pub(crate) media: String,
     pub(crate) last: std::cell::Cell<bool>,
 }
 
 /// `MediaQueryList`: an EventTarget whose `change` fires when the embedder's
-/// viewport or media emulation flips `matches`. `matchMedia` returns one
-/// object per realm and query text, kept alive with the realm (as a Window
-/// [SameObject]) so a listener added without keeping a reference still runs,
-/// as in Chromium, where a list with listeners is not collected.
+/// viewport or media emulation flips `matches`. Each call creates a fresh
+/// object, kept alive while it has change listeners.
 pub struct MqlData {
     target: crate::target::EventTargetData,
-    query: String,
+    query: Rc<pyro_dom::cssom::MediaQueryList>,
+    media: String,
 }
 
 impl Drop for MqlData {
@@ -1013,8 +1013,8 @@ impl JsClass for MediaQueryList {
     type Parent = crate::target::EventTarget;
     fn define(def: &mut ClassDef<Self>) {
         def.upcast(|d: &MqlData| &d.target);
-        def.getter("media", |s, m| Ok(s.string(&m.query)));
-        def.getter("matches", |s, m| Ok(s.boolean(m.target.page.layout().style().match_media(&m.query))));
+        def.getter("media", |s, m| Ok(s.string(&m.media)));
+        def.getter("matches", |s, m| Ok(s.boolean(m.target.page.layout().style().matches_media_list(&m.query))));
         // Legacy aliases of addEventListener/removeEventListener('change').
         def.method("addListener", 1, |s, m, a| mql_listener(s, m, "addEventListener", a.get(0)));
         def.method("removeListener", 1, |s, m, a| mql_listener(s, m, "removeEventListener", a.get(0)));
@@ -1036,39 +1036,30 @@ fn mql_listener<'s>(s: &Scope<'s>, m: &MqlData, method: &str, listener: Value<'s
     Ok(s.undefined())
 }
 
-fn media_query_identity(page: &PageDom, query: &str) -> pyro_js::IdentityKey {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = rustc_hash::FxHasher::default();
-    query.hash(&mut hasher);
-    pyro_js::IdentityKey(page.id() | (1 << 54), hasher.finish())
-}
-
 /// `window.matchMedia(query)`.
 pub fn match_media<'s>(s: &Scope<'s>, page: &Rc<PageDom>, query: String) -> JsResult<Object<'s>> {
-    let key = media_query_identity(page, &query);
-    let value = crate::window::same_object(s, page, key, || {
-        let target = crate::target::EventTargetData::new(page);
-        let last = page.layout().style().match_media(&query);
-        page.media_queries.borrow_mut().push(MediaQueryEntry {
-            target: target.key,
-            query: query.clone(),
-            last: std::cell::Cell::new(last),
-        });
-        s.wrap::<MediaQueryList>(MqlData { target, query: query.clone() }, Some(key))
-    })?;
-    Ok(value.as_object().expect("a MediaQueryList wrapper"))
+    let target = crate::target::EventTargetData::new(page);
+    let key = target.wrapper_identity();
+    let query = Rc::new(pyro_dom::cssom::MediaQueryList::parse(&query));
+    let media = query.media();
+    let last = page.layout().style().matches_media_list(&query);
+    page.media_queries.borrow_mut().push(MediaQueryEntry {
+        target: target.key,
+        query: query.clone(),
+        media: media.clone(),
+        last: std::cell::Cell::new(last),
+    });
+    s.wrap::<MediaQueryList>(MqlData { target, query, media }, key)
 }
 
-/// This realm's `MediaQueryList` owning target `key`, if it is one.
-pub(crate) fn media_query_object<'s>(
-    s: &Scope<'s>,
-    page: &PageDom,
-    key: pyro_dom::events::TargetKey,
-) -> Option<Object<'s>> {
-    let query = page.media_queries.borrow().iter().find(|e| e.target == key).map(|e| e.query.clone())?;
-    let object = s.lookup_identity(media_query_identity(page, &query))?;
-    let owns = s.unwrap::<MediaQueryList>(object.value()).map(|d| d.target.key);
-    (owns == Some(key)).then_some(object)
+pub(crate) fn sync_media_listener(s: &Scope<'_>, object: Object<'_>) {
+    let Some(list) = s.unwrap::<MediaQueryList>(object.value()) else { return };
+    let target = &list.target;
+    if target.page.dom.borrow().has_listener_for(target.key, "change") {
+        crate::target::pin_target(s, &target.page, target.key, object);
+    } else {
+        crate::target::unpin_target(s, &target.page, target.key);
+    }
 }
 
 pub(crate) fn register(engine: &pyro_js::Engine) {

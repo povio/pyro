@@ -100,6 +100,7 @@ pub(crate) fn make_device(
                 ColorScheme::Dark => PrefersColorScheme::Dark,
             },
             primary_pointer_capabilities: pointer,
+            prefers_reduced_motion: false,
             all_pointer_capabilities: pointer,
         },
     )

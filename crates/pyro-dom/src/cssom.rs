@@ -925,10 +925,14 @@ mod tests {
 /// by the style engine, so keywords lowercase, whitespace collapses and an
 /// invalid query becomes `not all`.
 pub fn serialize_media_list(text: &str) -> String {
-    use style::stylesheets::{CssRuleType, Origin, UrlExtraData};
     use style_traits::ToCss;
+    parse_media_list(text).to_css_string()
+}
+
+fn parse_media_list(text: &str) -> style::media_queries::MediaList {
+    use style::stylesheets::{CssRuleType, Origin, UrlExtraData};
     crate::stylo::enable_features();
-    let Ok(url) = url::Url::parse("about:blank") else { return String::new() };
+    let url = url::Url::parse("about:blank").expect("static URL");
     let url = UrlExtraData(style::servo_arc::Arc::new(url));
     let mut context = style::parser::ParserContext::new(
         Origin::Author,
@@ -942,7 +946,24 @@ pub fn serialize_media_list(text: &str) -> String {
         Default::default(),
     );
     let mut parser = Parser::new(text);
-    style::media_queries::MediaList::parse(&mut context, &mut parser).to_css_string()
+    style::media_queries::MediaList::parse(&mut context, &mut parser)
+}
+
+pub struct MediaQueryList(style::media_queries::MediaList);
+
+impl MediaQueryList {
+    pub fn parse(text: &str) -> Self {
+        Self(parse_media_list(text))
+    }
+
+    pub fn media(&self) -> String {
+        use style_traits::ToCss;
+        self.0.to_css_string()
+    }
+
+    pub(crate) fn matches(&self, device: &style::device::Device) -> bool {
+        self.0.evaluate(device, style::context::QuirksMode::NoQuirks, &mut style::stylesheets::CustomMediaEvaluator::none())
+    }
 }
 
 #[cfg(test)]

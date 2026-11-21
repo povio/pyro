@@ -57452,7 +57452,7 @@ diff --git a/packages/blitz-dom/src/stylo_device.rs b/packages/blitz-dom/src/sty
 +++ b/packages/blitz-dom/src/stylo_device.rs
 @@ -7,7 +7,7 @@
  use std::sync::{Arc, Mutex};
-
+ 
  use bitflags::bitflags;
 -use blitz_traits::shell::{ColorScheme, Viewport};
 +use blitz_traits::shell::{ColorScheme, Pointer, Viewport};
@@ -57467,7 +57467,7 @@ diff --git a/packages/blitz-dom/src/stylo_device.rs b/packages/blitz-dom/src/sty
 +        const INPUT = 0b0001_0000;
      }
  }
-
+ 
 @@ -57,23 +59,36 @@
          if old.color_scheme != new.color_scheme {
              changes |= Self::COLOR_SCHEME;
@@ -57490,7 +57490,7 @@ diff --git a/packages/blitz-dom/src/stylo_device.rs b/packages/blitz-dom/src/sty
      let viewport_size = euclid::Size2D::new(width, height);
      let device_size = euclid::Size2D::new(width, height) * viewport.scale();
      let device_pixel_ratio = euclid::Scale::new(viewport.scale());
-
+ 
 +    let mut pointer = match viewport.input.pointer {
 +        Pointer::None => PointerCapabilities::empty(),
 +        Pointer::Fine => PointerCapabilities::FINE,
@@ -57506,13 +57506,14 @@ diff --git a/packages/blitz-dom/src/stylo_device.rs b/packages/blitz-dom/src/sty
          MediaData {
              media_type,
              viewport_size,
-@@ -84,8 +99,8 @@
+@@ -84,8 +99,9 @@
                  ColorScheme::Light => PrefersColorScheme::Light,
                  ColorScheme::Dark => PrefersColorScheme::Dark,
              },
 -            primary_pointer_capabilities: PointerCapabilities::default(),
 -            all_pointer_capabilities: PointerCapabilities::default(),
 +            primary_pointer_capabilities: pointer,
++            prefers_reduced_motion: false,
 +            all_pointer_capabilities: pointer,
          },
      )

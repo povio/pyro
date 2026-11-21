@@ -830,6 +830,7 @@ struct Stamp {
 pub struct StyleEngine {
     doc: NodeId,
     viewport: Viewport,
+    media_device: std::cell::OnceCell<style::device::Device>,
     sheets: Vec<Sheet>,
     /// pyro: the URL of the response each `<link>`'s sheet text came from (after redirects):
     /// its URLs resolve against it, in the renderer too ([`StyleEngine::sheet_url`]).
@@ -939,6 +940,7 @@ impl StyleEngine {
         StyleEngine {
             doc,
             viewport,
+            media_device: Default::default(),
             sheets: Vec::new(),
             popover_open: FxHashSet::default(),
             sheet_urls: rustc_hash::FxHashMap::default(),
@@ -1479,12 +1481,16 @@ impl StyleEngine {
     /// next query (CDP `Emulation.setDeviceMetricsOverride`).
     pub fn set_viewport(&mut self, viewport: Viewport) {
         if viewport != self.viewport {
+            self.media_device.take();
             self.viewport = viewport;
             self.invalidate();
         }
     }
 
-    /// `window.matchMedia(query).matches`.
+    pub fn matches_media_list(&self, list: &crate::cssom::MediaQueryList) -> bool {
+        list.matches(self.media_device.get_or_init(|| crate::picture::sizes_device(&self.viewport)))
+    }
+
     pub fn match_media(&self, query: &str) -> bool {
         media::matches(query, &self.viewport)
     }

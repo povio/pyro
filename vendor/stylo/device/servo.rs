@@ -122,6 +122,8 @@ pub struct MediaData {
     /// Whether the user prefers light mode or dark mode
     #[ignore_malloc_size_of = "Pure stack type"]
     pub prefers_color_scheme: PrefersColorScheme,
+    /// Whether motion reduction is requested by the emulated device.
+    pub prefers_reduced_motion: bool,
     /// The capabilities of the primary pointer input
     #[ignore_malloc_size_of = "Pure stack type"]
     pub primary_pointer_capabilities: PointerCapabilities,

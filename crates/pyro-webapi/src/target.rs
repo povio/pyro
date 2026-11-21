@@ -192,9 +192,7 @@ pub(crate) fn target_object<'s>(s: &Scope<'s>, page: &PageDom, key: TargetKey) -
             Some(o) => Ok(Some(o)),
             // `visualViewport` / `screen.orientation` keep a per-window
             // identity ([SameObject]); this realm's wrapper must own `key`.
-            // `MediaQueryList`s are kept per realm and query text.
             None => Ok(crate::window::viewport_target_object(s, page, key)
-                .or_else(|| crate::layout_api::media_query_object(s, page, key))
                 .or_else(|| sibling_window(s, page, key))),
         },
     }
@@ -395,6 +393,7 @@ fn add_listener<'s>(s: &Scope<'s>, t: &EventTargetData, obj: Object<'s>, a: Args
     if added {
         maybe_pin(s, &t.page, t.key, obj);
         if &*ty == "prioritychange" { crate::task_signal::sync_listener(s, obj)?; }
+        if &*ty == "change" { crate::layout_api::sync_media_listener(s, obj); }
         if let Some(sig) = signal {
             if let Some(sd) = s.unwrap::<crate::abort::AbortSignal>(sig.value()) {
                 let registration = t.page.dom.borrow().listener_registration(t.key, &ty, handle, opts.capture);
@@ -431,6 +430,7 @@ fn remove_listener<'s>(s: &Scope<'s>, t: &EventTargetData, obj: Object<'s>, a: A
         }
     }
     if &*ty == "prioritychange" { crate::task_signal::sync_listener(s, obj)?; }
+    if &*ty == "change" { crate::layout_api::sync_media_listener(s, obj); }
     Ok(())
 }
 
@@ -581,6 +581,7 @@ pub(crate) fn release_listener_slots(page: &PageDom, released: Vec<(TargetKey, L
         let Ok(s) = realm.scope() else { continue };
         let Ok(Some(obj)) = target_object(&s, page, key) else { continue };
         if matches!(key, TargetKey::Other(_)) { let _ = crate::task_signal::sync_listener(&s, obj); }
+        if matches!(key, TargetKey::Other(_)) { crate::layout_api::sync_media_listener(&s, obj); }
         if in_use { continue; }
         if let Ok(Some(arr)) = listener_array(&s, obj, false) {
             let _ = set_listener_slot(&s, obj, arr, handle.0 as u32 & !HANDLER_SLOT, s.undefined());
@@ -962,6 +963,7 @@ pub(crate) fn set_event_handler(
             }
             handler_set(s, object, &slot_key, s.undefined())?;
             if ty == "prioritychange" { crate::task_signal::sync_listener(s, object)?; }
+            if ty == "change" { crate::layout_api::sync_media_listener(s, object); }
         }
         return Ok(());
     }
@@ -1053,6 +1055,7 @@ pub(crate) fn set_event_handler(
     );
     maybe_pin(s, &target.page, target.key, object);
     if ty == "prioritychange" { crate::task_signal::sync_listener(s, object)?; }
+    if ty == "change" { crate::layout_api::sync_media_listener(s, object); }
     Ok(())
 }
 

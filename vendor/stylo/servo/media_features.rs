@@ -243,6 +243,10 @@ fn eval_prefers_reduced(_: &Context, query_value: Option<NoPreferenceOrReduce>) 
     }
 }
 
+fn eval_prefers_reduced_motion(context: &Context, value: Option<NoPreferenceOrReduce>) -> bool {
+    context.device().media_data().prefers_reduced_motion == (value != Some(NoPreferenceOrReduce::NoPreference))
+}
+
 #[derive(Clone, Copy, Debug, FromPrimitive, Parse, PartialEq, ToCss)]
 #[repr(u8)]
 enum PrefersContrast {
@@ -348,6 +352,8 @@ enum DisplayMode {
     Standalone,
     Fullscreen,
     PictureInPicture,
+    WindowControlsOverlay,
+    Unframed,
 }
 
 /// https://w3c.github.io/manifest/#the-display-mode-media-feature
@@ -374,8 +380,61 @@ fn eval_scripting(_: &Context, query_value: Option<Scripting>) -> bool {
     }
 }
 
+#[derive(Clone, Copy, Debug, FromPrimitive, Parse, ToCss)]
+#[repr(u8)]
+enum NavigationControls {
+    None,
+    BackButton,
+}
+
+fn eval_navigation_controls(_: &Context, value: Option<NavigationControls>) -> bool {
+    matches!(value, Some(NavigationControls::None))
+}
+
+#[derive(Clone, Copy, Debug, FromPrimitive, Parse, ToCss)]
+#[repr(u8)]
+enum DisplayState {
+    Normal,
+    Minimized,
+    Maximized,
+    Fullscreen,
+}
+
+fn eval_display_state(_: &Context, value: Option<DisplayState>) -> bool {
+    matches!(value, None | Some(DisplayState::Normal))
+}
+
+#[derive(Clone, Copy, Debug, FromPrimitive, Parse, ToCss)]
+#[repr(u8)]
+enum Resizable {
+    True,
+    False,
+}
+
+fn eval_resizable(_: &Context, value: Option<Resizable>) -> bool {
+    matches!(value, None | Some(Resizable::True))
+}
+
 /// A list with all the media features that Servo supports.
-pub static MEDIA_FEATURES: LazyLock<[QueryFeatureDescription; 35]> = LazyLock::new(|| [
+pub static MEDIA_FEATURES: LazyLock<[QueryFeatureDescription; 38]> = LazyLock::new(|| [
+    feature!(
+        Atom::from("navigation-controls"),
+        AllowsRanges::No,
+        keyword_evaluator!(eval_navigation_controls, NavigationControls),
+        FeatureFlags::empty(),
+    ),
+    feature!(
+        Atom::from("display-state"),
+        AllowsRanges::No,
+        keyword_evaluator!(eval_display_state, DisplayState),
+        FeatureFlags::empty(),
+    ),
+    feature!(
+        Atom::from("resizable"),
+        AllowsRanges::No,
+        keyword_evaluator!(eval_resizable, Resizable),
+        FeatureFlags::empty(),
+    ),
     feature!(
         atom!("width"),
         AllowsRanges::Yes,
@@ -523,7 +582,7 @@ pub static MEDIA_FEATURES: LazyLock<[QueryFeatureDescription; 35]> = LazyLock::n
     feature!(
         Atom::from("prefers-reduced-motion"),
         AllowsRanges::No,
-        keyword_evaluator!(eval_prefers_reduced, NoPreferenceOrReduce),
+        keyword_evaluator!(eval_prefers_reduced_motion, NoPreferenceOrReduce),
         FeatureFlags::empty(),
     ),
     feature!(

@@ -154,7 +154,7 @@ pub struct PageDom {
     /// (registered by their wrappers, removed when those are collected), for
     /// the embedder's resize and orientation change events.
     pub(crate) viewport_targets: RefCell<Vec<(crate::window::ViewportTarget, TargetKey)>>,
-    /// Live `MediaQueryList` targets (one per realm and query text) with the
+    /// Live `MediaQueryList` targets with the
     /// last `matches` each reported, for the embedder's `change` events.
     pub(crate) media_queries: RefCell<Vec<crate::layout_api::MediaQueryEntry>>,
     /// Each realm's original `structuredClone` (MessagePort cloning).
@@ -1945,9 +1945,9 @@ impl PageDom {
         let layout = self.layout();
         let mut out = Vec::new();
         for entry in self.media_queries.borrow().iter() {
-            let now = layout.style().match_media(&entry.query);
+            let now = layout.style().matches_media_list(&entry.query);
             if entry.last.replace(now) != now {
-                out.push((entry.target, entry.query.clone(), now));
+                out.push((entry.target, entry.media.clone(), now));
             }
         }
         out

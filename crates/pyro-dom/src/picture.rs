@@ -284,27 +284,35 @@ impl style::device::servo::FontMetricsProvider for NoFontMetrics {
 }
 
 /// A Stylo device for `viewport`'s media conditions and viewport units.
-fn sizes_device(viewport: &Viewport) -> style::device::Device {
+pub(crate) fn sizes_device(viewport: &Viewport) -> style::device::Device {
+    use style::servo::media_features::PointerCapabilities;
     use style::properties::ComputedValues;
     use style::properties::style_structs::Font;
     let size = euclid::Size2D::new(viewport.width as f32, viewport.height as f32);
     let scale = viewport.device_scale_factor as f32;
+    let mut pointer = match viewport.pointer {
+        crate::media::Pointer::None => PointerCapabilities::empty(),
+        crate::media::Pointer::Fine => PointerCapabilities::FINE,
+        crate::media::Pointer::Coarse => PointerCapabilities::COARSE,
+    };
+    if viewport.hover { pointer |= PointerCapabilities::HOVER; }
     style::device::Device::new(
         ComputedValues::initial_values_with_font_override(Font::initial_values()),
         Box::new(NoFontMetrics),
         "Submit".into(),
         style::device::servo::MediaData {
-            media_type: style::media_queries::MediaType::screen(),
+            media_type: if viewport.print { style::media_queries::MediaType::print() } else { style::media_queries::MediaType::screen() },
             viewport_size: size,
-            device_size: euclid::Size2D::new(size.width * scale, size.height * scale),
+            device_size: euclid::Size2D::new(viewport.screen_width.unwrap_or(viewport.width) as f32 * scale, viewport.screen_height.unwrap_or(viewport.height) as f32 * scale),
             device_pixel_ratio: euclid::Scale::new(scale),
             quirks_mode: style::context::QuirksMode::NoQuirks,
             prefers_color_scheme: match viewport.color_scheme {
                 crate::media::ColorScheme::Dark => style::queries::values::PrefersColorScheme::Dark,
                 _ => style::queries::values::PrefersColorScheme::Light,
             },
-            primary_pointer_capabilities: Default::default(),
-            all_pointer_capabilities: Default::default(),
+            prefers_reduced_motion: viewport.reduced_motion,
+            primary_pointer_capabilities: pointer,
+            all_pointer_capabilities: pointer,
         },
     )
 }

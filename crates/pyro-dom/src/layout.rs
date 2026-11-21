@@ -861,6 +861,8 @@ impl Layout {
         }
         let mobile = MobileViewport::new(self.meta.as_ref(), self.device.width, self.device.height);
         let mut layout = self.device.clone();
+        layout.screen_width.get_or_insert(self.device.width);
+        layout.screen_height.get_or_insert(self.device.height);
         (layout.width, layout.height) = mobile.layout_size();
         if self.mobile.is_none() || (layout.width, layout.height) != (self.viewport().width, self.viewport().height) {
             // Laid out again at another width: until then, as wide as the layout viewport.

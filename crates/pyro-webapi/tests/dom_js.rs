@@ -442,6 +442,10 @@ fn style_layout_and_media() {
     let e = env("<html><head><style>.hidden{display:none} @media (min-width: 37.5rem){ .wide{visibility: hidden} }</style></head><body><div id=v>visible</div><div id=h class=hidden>x</div><p id=w class=wide>w</p></body></html>");
     let r = &e.main;
     assert_eq!(eval(r, "matchMedia('(min-width: 37.5rem)').matches"), "true");
+    assert_eq!(eval(r, "matchMedia(' SCREEN ').media"), "screen");
+    assert_eq!(eval(r, "matchMedia('screen') === matchMedia('screen')"), "false");
+    assert_eq!(eval(r, "matchMedia('not (unknown-media-feature)').matches"), "false");
+    assert_eq!(eval(r, "matchMedia('not (navigation-controls: back-button)').matches"), "true");
     assert_eq!(eval(r, "getComputedStyle(document.getElementById('h')).display"), "none");
     assert_eq!(eval(r, "getComputedStyle(document.getElementById('w')).getPropertyValue('visibility')"), "hidden");
     assert_eq!(
