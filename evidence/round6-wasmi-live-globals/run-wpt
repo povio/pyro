@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+q=$HOME/Library/Caches/lightningpanda/round6-wasmi-globals; r=$HOME/Library/Caches/lightningpanda/round6-reference-158/census
+export WPT_CHROME_STATE_DIR="$q/chrome-state"
+cd "$r/runner"
+exec bun bench/wpt/run-no-native-retry.mjs --kind testharness --wpt "$r/../../wptci/wpt-full" --server wptserve --testdriver --http2 --generated-globals "$r/../../round6-inventory/MANIFEST-pinned.json" --manifest-inventory --measure-reviewed-skips --dirs non-css --jobs 4 --tests "$q/wpt-safe.urls.json" --bin "$1=$2" --out "$q/wpt-$1.json"

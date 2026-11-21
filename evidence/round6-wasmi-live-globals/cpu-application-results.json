@@ -1,0 +1,1102 @@
+[
+  {
+    "lab": "previous",
+    "round": 0,
+    "startupMs": 1229.335583,
+    "load": [
+      161.41357421875,
+      126.65673828125,
+      108.66845703125
+    ],
+    "measured": {
+      "direct": [
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 886.5048828125,
+          "wallUsPerBlock": 6941.40625,
+          "callbacks": 0
+        },
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 817.2001953125,
+          "wallUsPerBlock": 6232.031249999998,
+          "callbacks": 0
+        },
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 828.431640625,
+          "wallUsPerBlock": 4710.156250000001,
+          "callbacks": 0
+        }
+      ],
+      "viaHost": [
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 932.0803984375,
+          "wallUsPerBlock": 8373.437500000002,
+          "callbacks": 128
+        },
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 891.5188828125,
+          "wallUsPerBlock": 8086.718750000003,
+          "callbacks": 128
+        },
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 827.30240625,
+          "wallUsPerBlock": 6438.281249999995,
+          "callbacks": 128
+        }
+      ]
+    }
+  },
+  {
+    "lab": "agent",
+    "round": 0,
+    "startupMs": 377.886708,
+    "load": [
+      165.46533203125,
+      128.6875,
+      109.60009765625
+    ],
+    "measured": {
+      "direct": [
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 882.504234375,
+          "wallUsPerBlock": 6972.656250000001,
+          "callbacks": 0
+        },
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 832.625328125,
+          "wallUsPerBlock": 5086.718750000001,
+          "callbacks": 0
+        },
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 862.1845703125,
+          "wallUsPerBlock": 7194.531250000001,
+          "callbacks": 0
+        }
+      ],
+      "viaHost": [
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 880.8483046875,
+          "wallUsPerBlock": 7430.468750000003,
+          "callbacks": 128
+        },
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 884.083984375,
+          "wallUsPerBlock": 6914.0625,
+          "callbacks": 128
+        },
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 897.9485703125,
+          "wallUsPerBlock": 7405.468749999997,
+          "callbacks": 128
+        }
+      ],
+      "liveGlobal": [
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 861.1363984375,
+          "wallUsPerBlock": 5036.7187500000055,
+          "callbacks": 128
+        },
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 822.8610078125,
+          "wallUsPerBlock": 3850.7812499999973,
+          "callbacks": 128
+        },
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 840.1380234375,
+          "wallUsPerBlock": 6355.46875,
+          "callbacks": 128
+        }
+      ]
+    }
+  },
+  {
+    "lab": "chrome158",
+    "round": 0,
+    "startupMs": 4655.1731249999975,
+    "load": [
+      171.2451171875,
+      131.1474609375,
+      110.6962890625
+    ],
+    "measured": {
+      "direct": [
+        {
+          "stable": true,
+          "pids": 9,
+          "cpuUsPerBlock": 141.720703125,
+          "wallUsPerBlock": 114.06250018626451,
+          "callbacks": 0
+        },
+        {
+          "stable": true,
+          "pids": 9,
+          "cpuUsPerBlock": 128.7581328125,
+          "wallUsPerBlock": 114.06249995343387,
+          "callbacks": 0
+        },
+        {
+          "stable": true,
+          "pids": 9,
+          "cpuUsPerBlock": 122.02734375,
+          "wallUsPerBlock": 114.84375013969839,
+          "callbacks": 0
+        }
+      ],
+      "viaHost": [
+        {
+          "stable": true,
+          "pids": 9,
+          "cpuUsPerBlock": 130.60709375,
+          "wallUsPerBlock": 115.62500009313226,
+          "callbacks": 128
+        },
+        {
+          "stable": true,
+          "pids": 9,
+          "cpuUsPerBlock": 121.4700546875,
+          "wallUsPerBlock": 116.40625004656613,
+          "callbacks": 128
+        },
+        {
+          "stable": true,
+          "pids": 9,
+          "cpuUsPerBlock": 232.069328125,
+          "wallUsPerBlock": 114.84374990686774,
+          "callbacks": 128
+        }
+      ],
+      "liveGlobal": [
+        {
+          "stable": true,
+          "pids": 9,
+          "cpuUsPerBlock": 124.930015625,
+          "wallUsPerBlock": 118.74999990686774,
+          "callbacks": 128
+        },
+        {
+          "stable": true,
+          "pids": 9,
+          "cpuUsPerBlock": 124.1966171875,
+          "wallUsPerBlock": 114.84375013969839,
+          "callbacks": 128
+        },
+        {
+          "stable": true,
+          "pids": 9,
+          "cpuUsPerBlock": 121.8131484375,
+          "wallUsPerBlock": 117.1875,
+          "callbacks": 128
+        }
+      ]
+    }
+  },
+  {
+    "lab": "agent",
+    "round": 1,
+    "startupMs": 265.08491700000013,
+    "load": [
+      165.29931640625,
+      130.580078125,
+      110.61572265625
+    ],
+    "measured": {
+      "viaHost": [
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 830.2353515625,
+          "wallUsPerBlock": 5293.75,
+          "callbacks": 128
+        },
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 835.310875,
+          "wallUsPerBlock": 4546.093749999999,
+          "callbacks": 128
+        },
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 900.2408828125,
+          "wallUsPerBlock": 6408.593750000002,
+          "callbacks": 128
+        }
+      ],
+      "liveGlobal": [
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 921.768234375,
+          "wallUsPerBlock": 5730.46875,
+          "callbacks": 128
+        },
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 875.888671875,
+          "wallUsPerBlock": 5228.124999999998,
+          "callbacks": 128
+        },
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 815.7678984375,
+          "wallUsPerBlock": 4585.9375,
+          "callbacks": 128
+        }
+      ],
+      "direct": [
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 816.4485625,
+          "wallUsPerBlock": 4157.812499999998,
+          "callbacks": 0
+        },
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 824.6650390625,
+          "wallUsPerBlock": 5927.3437500000055,
+          "callbacks": 0
+        },
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 848.4091796875,
+          "wallUsPerBlock": 5507.8125,
+          "callbacks": 0
+        }
+      ]
+    }
+  },
+  {
+    "lab": "chrome158",
+    "round": 1,
+    "startupMs": 3432.900041000001,
+    "load": [
+      165.11474609375,
+      131.1181640625,
+      110.92236328125
+    ],
+    "measured": {
+      "viaHost": [
+        {
+          "stable": true,
+          "pids": 9,
+          "cpuUsPerBlock": 158.05109375,
+          "wallUsPerBlock": 115.62500009313226,
+          "callbacks": 128
+        },
+        {
+          "stable": true,
+          "pids": 9,
+          "cpuUsPerBlock": 128.829421875,
+          "wallUsPerBlock": 114.06249995343387,
+          "callbacks": 128
+        },
+        {
+          "stable": true,
+          "pids": 9,
+          "cpuUsPerBlock": 131.657875,
+          "wallUsPerBlock": 116.40625004656613,
+          "callbacks": 128
+        }
+      ],
+      "liveGlobal": [
+        {
+          "stable": true,
+          "pids": 9,
+          "cpuUsPerBlock": 122.1468046875,
+          "wallUsPerBlock": 114.84375013969839,
+          "callbacks": 128
+        },
+        {
+          "stable": true,
+          "pids": 9,
+          "cpuUsPerBlock": 125.9622421875,
+          "wallUsPerBlock": 115.62500009313226,
+          "callbacks": 128
+        },
+        {
+          "stable": true,
+          "pids": 9,
+          "cpuUsPerBlock": 126.691734375,
+          "wallUsPerBlock": 117.1875,
+          "callbacks": 128
+        }
+      ],
+      "direct": [
+        {
+          "stable": true,
+          "pids": 9,
+          "cpuUsPerBlock": 131.760734375,
+          "wallUsPerBlock": 116.40624981373549,
+          "callbacks": 0
+        },
+        {
+          "stable": true,
+          "pids": 9,
+          "cpuUsPerBlock": 144.806,
+          "wallUsPerBlock": 115.62500009313226,
+          "callbacks": 0
+        },
+        {
+          "stable": true,
+          "pids": 9,
+          "cpuUsPerBlock": 121.2197265625,
+          "wallUsPerBlock": 114.84374990686774,
+          "callbacks": 0
+        }
+      ]
+    }
+  },
+  {
+    "lab": "previous",
+    "round": 1,
+    "startupMs": 349.01758299999346,
+    "load": [
+      161.341796875,
+      130.89990234375,
+      110.96337890625
+    ],
+    "measured": {
+      "viaHost": [
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 849.2014921875,
+          "wallUsPerBlock": 4437.5,
+          "callbacks": 128
+        },
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 833.998703125,
+          "wallUsPerBlock": 4473.4375,
+          "callbacks": 128
+        },
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 844.7220078125,
+          "wallUsPerBlock": 2960.937499999998,
+          "callbacks": 128
+        }
+      ],
+      "direct": [
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 817.7272109375,
+          "wallUsPerBlock": 3395.312499999999,
+          "callbacks": 0
+        },
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 838.4518203125,
+          "wallUsPerBlock": 4640.625,
+          "callbacks": 0
+        },
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 897.794265625,
+          "wallUsPerBlock": 5131.250000000002,
+          "callbacks": 0
+        }
+      ]
+    }
+  },
+  {
+    "lab": "chrome158",
+    "round": 2,
+    "startupMs": 2734.1134170000005,
+    "load": [
+      154.82763671875,
+      130.0546875,
+      110.78173828125
+    ],
+    "measured": {
+      "liveGlobal": [
+        {
+          "stable": true,
+          "pids": 9,
+          "cpuUsPerBlock": 132.9684296875,
+          "wallUsPerBlock": 116.40625004656613,
+          "callbacks": 128
+        },
+        {
+          "stable": true,
+          "pids": 9,
+          "cpuUsPerBlock": 129.2666015625,
+          "wallUsPerBlock": 116.40624981373549,
+          "callbacks": 128
+        },
+        {
+          "stable": true,
+          "pids": 9,
+          "cpuUsPerBlock": 136.2350234375,
+          "wallUsPerBlock": 116.40625004656613,
+          "callbacks": 128
+        }
+      ],
+      "direct": [
+        {
+          "stable": true,
+          "pids": 9,
+          "cpuUsPerBlock": 120.7848203125,
+          "wallUsPerBlock": 114.06249995343387,
+          "callbacks": 0
+        },
+        {
+          "stable": true,
+          "pids": 9,
+          "cpuUsPerBlock": 120.9117890625,
+          "wallUsPerBlock": 115.62500009313226,
+          "callbacks": 0
+        },
+        {
+          "stable": true,
+          "pids": 9,
+          "cpuUsPerBlock": 146.949875,
+          "wallUsPerBlock": 114.06250018626451,
+          "callbacks": 0
+        }
+      ],
+      "viaHost": [
+        {
+          "stable": true,
+          "pids": 9,
+          "cpuUsPerBlock": 125.4641953125,
+          "wallUsPerBlock": 118.74999990686774,
+          "callbacks": 128
+        },
+        {
+          "stable": true,
+          "pids": 9,
+          "cpuUsPerBlock": 131.8359375,
+          "wallUsPerBlock": 114.84374990686774,
+          "callbacks": 128
+        },
+        {
+          "stable": true,
+          "pids": 9,
+          "cpuUsPerBlock": 125.1529921875,
+          "wallUsPerBlock": 114.84375013969839,
+          "callbacks": 128
+        }
+      ]
+    }
+  },
+  {
+    "lab": "previous",
+    "round": 2,
+    "startupMs": 134.26308399999834,
+    "load": [
+      150.03662109375,
+      129.47265625,
+      110.68896484375
+    ],
+    "measured": {
+      "direct": [
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 845.4147109375,
+          "wallUsPerBlock": 2697.6562499999995,
+          "callbacks": 0
+        },
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 830.927734375,
+          "wallUsPerBlock": 2442.9687499999995,
+          "callbacks": 0
+        },
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 823.1780625,
+          "wallUsPerBlock": 3170.3124999999995,
+          "callbacks": 0
+        }
+      ],
+      "viaHost": [
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 813.8492890625,
+          "wallUsPerBlock": 2788.281249999999,
+          "callbacks": 128
+        },
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 832.7138671875,
+          "wallUsPerBlock": 1874.2187500000007,
+          "callbacks": 128
+        },
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 814.6735,
+          "wallUsPerBlock": 2051.562499999999,
+          "callbacks": 128
+        }
+      ]
+    }
+  },
+  {
+    "lab": "agent",
+    "round": 2,
+    "startupMs": 201.68150000000605,
+    "load": [
+      147.470703125,
+      129.28173828125,
+      110.7314453125
+    ],
+    "measured": {
+      "liveGlobal": [
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 860.2369765625,
+          "wallUsPerBlock": 1692.1875,
+          "callbacks": 128
+        },
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 840.6748046875,
+          "wallUsPerBlock": 1092.1875000000005,
+          "callbacks": 128
+        },
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 890.7734375,
+          "wallUsPerBlock": 1072.6562499999995,
+          "callbacks": 128
+        }
+      ],
+      "direct": [
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 827.24675,
+          "wallUsPerBlock": 1242.1875,
+          "callbacks": 0
+        },
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 834.550125,
+          "wallUsPerBlock": 1510.9374999999989,
+          "callbacks": 0
+        },
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 812.677734375,
+          "wallUsPerBlock": 1149.2187499999993,
+          "callbacks": 0
+        }
+      ],
+      "viaHost": [
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 863.8987578125,
+          "wallUsPerBlock": 4514.062499999998,
+          "callbacks": 128
+        },
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 849.594078125,
+          "wallUsPerBlock": 3647.656250000001,
+          "callbacks": 128
+        },
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 840.0696640625,
+          "wallUsPerBlock": 2841.4062500000023,
+          "callbacks": 128
+        }
+      ]
+    }
+  },
+  {
+    "lab": "previous",
+    "round": 3,
+    "startupMs": 122.315042000002,
+    "load": [
+      147.470703125,
+      129.28173828125,
+      110.7314453125
+    ],
+    "measured": {
+      "viaHost": [
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 876.1077421875,
+          "wallUsPerBlock": 2824.21875,
+          "callbacks": 128
+        },
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 825.3600234375,
+          "wallUsPerBlock": 1665.6249999999995,
+          "callbacks": 128
+        },
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 833.3001328125,
+          "wallUsPerBlock": 2714.062500000001,
+          "callbacks": 128
+        }
+      ],
+      "direct": [
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 831.483078125,
+          "wallUsPerBlock": 2244.5312500000014,
+          "callbacks": 0
+        },
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 837.3922578125,
+          "wallUsPerBlock": 2375.781249999999,
+          "callbacks": 0
+        },
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 826.42025,
+          "wallUsPerBlock": 1714.84375,
+          "callbacks": 0
+        }
+      ]
+    }
+  },
+  {
+    "lab": "agent",
+    "round": 3,
+    "startupMs": 125.47945900000195,
+    "load": [
+      140.4375,
+      128.39453125,
+      110.63427734375
+    ],
+    "measured": {
+      "direct": [
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 848.69075,
+          "wallUsPerBlock": 3270.3124999999995,
+          "callbacks": 0
+        },
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 877.2685546875,
+          "wallUsPerBlock": 2728.1249999999995,
+          "callbacks": 0
+        },
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 852.5621796875,
+          "wallUsPerBlock": 2763.2812500000005,
+          "callbacks": 0
+        }
+      ],
+      "viaHost": [
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 925.7096328125,
+          "wallUsPerBlock": 5402.34375,
+          "callbacks": 128
+        },
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 857.5169296875,
+          "wallUsPerBlock": 4078.125,
+          "callbacks": 128
+        },
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 847.0514375,
+          "wallUsPerBlock": 5863.28125,
+          "callbacks": 128
+        }
+      ],
+      "liveGlobal": [
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 835.61490625,
+          "wallUsPerBlock": 4260.937500000005,
+          "callbacks": 128
+        },
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 862.8834609375,
+          "wallUsPerBlock": 4973.437499999995,
+          "callbacks": 128
+        },
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 857.2102890625,
+          "wallUsPerBlock": 5201.562500000002,
+          "callbacks": 128
+        }
+      ]
+    }
+  },
+  {
+    "lab": "chrome158",
+    "round": 3,
+    "startupMs": 1971.3775000000023,
+    "load": [
+      140.4375,
+      128.39453125,
+      110.63427734375
+    ],
+    "measured": {
+      "direct": [
+        {
+          "stable": true,
+          "pids": 9,
+          "cpuUsPerBlock": 137.101890625,
+          "wallUsPerBlock": 115.62500009313226,
+          "callbacks": 0
+        },
+        {
+          "stable": true,
+          "pids": 9,
+          "cpuUsPerBlock": 128.4970703125,
+          "wallUsPerBlock": 115.62499986030161,
+          "callbacks": 0
+        },
+        {
+          "stable": true,
+          "pids": 9,
+          "cpuUsPerBlock": 126.319671875,
+          "wallUsPerBlock": 116.40625004656613,
+          "callbacks": 0
+        }
+      ],
+      "viaHost": [
+        {
+          "stable": true,
+          "pids": 9,
+          "cpuUsPerBlock": 122.7412109375,
+          "wallUsPerBlock": 115.62500009313226,
+          "callbacks": 128
+        },
+        {
+          "stable": true,
+          "pids": 9,
+          "cpuUsPerBlock": 126.46353125,
+          "wallUsPerBlock": 114.84375013969839,
+          "callbacks": 128
+        },
+        {
+          "stable": true,
+          "pids": 9,
+          "cpuUsPerBlock": 141.0810625,
+          "wallUsPerBlock": 117.1875,
+          "callbacks": 128
+        }
+      ],
+      "liveGlobal": [
+        {
+          "stable": true,
+          "pids": 9,
+          "cpuUsPerBlock": 129.4593046875,
+          "wallUsPerBlock": 118.75000013969839,
+          "callbacks": 128
+        },
+        {
+          "stable": true,
+          "pids": 9,
+          "cpuUsPerBlock": 124.52440625,
+          "wallUsPerBlock": 114.84374990686774,
+          "callbacks": 128
+        },
+        {
+          "stable": true,
+          "pids": 9,
+          "cpuUsPerBlock": 124.6875,
+          "wallUsPerBlock": 118.75000013969839,
+          "callbacks": 128
+        }
+      ]
+    }
+  },
+  {
+    "lab": "agent",
+    "round": 4,
+    "startupMs": 142.6362919999956,
+    "load": [
+      131.85302734375,
+      126.94921875,
+      110.32861328125
+    ],
+    "measured": {
+      "viaHost": [
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 882.8450546875,
+          "wallUsPerBlock": 5075.78125,
+          "callbacks": 128
+        },
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 880.8994140625,
+          "wallUsPerBlock": 7254.687499999999,
+          "callbacks": 128
+        },
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 895.5341796875,
+          "wallUsPerBlock": 5410.937499999999,
+          "callbacks": 128
+        }
+      ],
+      "liveGlobal": [
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 843.8619765625,
+          "wallUsPerBlock": 4019.53125,
+          "callbacks": 128
+        },
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 864.052734375,
+          "wallUsPerBlock": 4163.281250000001,
+          "callbacks": 128
+        },
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 910.6624375,
+          "wallUsPerBlock": 4634.374999999998,
+          "callbacks": 128
+        }
+      ],
+      "direct": [
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 860.484703125,
+          "wallUsPerBlock": 4460.9375,
+          "callbacks": 0
+        },
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 869.172203125,
+          "wallUsPerBlock": 4567.968749999998,
+          "callbacks": 0
+        },
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 836.1500625,
+          "wallUsPerBlock": 3986.7187499999945,
+          "callbacks": 0
+        }
+      ]
+    }
+  },
+  {
+    "lab": "chrome158",
+    "round": 4,
+    "startupMs": 2475.1799170000013,
+    "load": [
+      130.02294921875,
+      126.65087890625,
+      110.32080078125
+    ],
+    "measured": {
+      "viaHost": [
+        {
+          "stable": true,
+          "pids": 9,
+          "cpuUsPerBlock": 136.803703125,
+          "wallUsPerBlock": 115.62500009313226,
+          "callbacks": 128
+        },
+        {
+          "stable": true,
+          "pids": 9,
+          "cpuUsPerBlock": 127.578453125,
+          "wallUsPerBlock": 118.74999990686774,
+          "callbacks": 128
+        },
+        {
+          "stable": true,
+          "pids": 9,
+          "cpuUsPerBlock": 143.550453125,
+          "wallUsPerBlock": 117.1875,
+          "callbacks": 128
+        }
+      ],
+      "liveGlobal": [
+        {
+          "stable": true,
+          "pids": 9,
+          "cpuUsPerBlock": 122.12565625,
+          "wallUsPerBlock": 115.62500009313226,
+          "callbacks": 128
+        },
+        {
+          "stable": true,
+          "pids": 9,
+          "cpuUsPerBlock": 122.532875,
+          "wallUsPerBlock": 115.62500009313226,
+          "callbacks": 128
+        },
+        {
+          "stable": true,
+          "pids": 9,
+          "cpuUsPerBlock": 156.7216875,
+          "wallUsPerBlock": 116.40625004656613,
+          "callbacks": 128
+        }
+      ],
+      "direct": [
+        {
+          "stable": true,
+          "pids": 9,
+          "cpuUsPerBlock": 122.0468671875,
+          "wallUsPerBlock": 115.62499986030161,
+          "callbacks": 0
+        },
+        {
+          "stable": true,
+          "pids": 9,
+          "cpuUsPerBlock": 128.631515625,
+          "wallUsPerBlock": 115.62499986030161,
+          "callbacks": 0
+        },
+        {
+          "stable": true,
+          "pids": 9,
+          "cpuUsPerBlock": 121.3561171875,
+          "wallUsPerBlock": 115.62499986030161,
+          "callbacks": 0
+        }
+      ]
+    }
+  },
+  {
+    "lab": "previous",
+    "round": 4,
+    "startupMs": 129.98154199999408,
+    "load": [
+      124.89599609375,
+      125.6435546875,
+      110.06103515625
+    ],
+    "measured": {
+      "direct": [
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 815.1484375,
+          "wallUsPerBlock": 4299.218750000001,
+          "callbacks": 0
+        },
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 805.6236953125,
+          "wallUsPerBlock": 3911.7187500000005,
+          "callbacks": 0
+        },
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 862.9182890625,
+          "wallUsPerBlock": 4700.781249999998,
+          "callbacks": 0
+        }
+      ],
+      "viaHost": [
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 830.105140625,
+          "wallUsPerBlock": 3380.4687499999986,
+          "callbacks": 128
+        },
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 855.412109375,
+          "wallUsPerBlock": 6140.624999999996,
+          "callbacks": 128
+        },
+        {
+          "stable": true,
+          "pids": 1,
+          "cpuUsPerBlock": 903.131515625,
+          "wallUsPerBlock": 5869.531250000002,
+          "callbacks": 128
+        }
+      ]
+    }
+  }
+]

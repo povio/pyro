@@ -1,0 +1,589 @@
+{
+  "probe": {
+    "pages": 3,
+    "scores": {
+      "previousPass": 0,
+      "previousReported": 25,
+      "previousFull": 0,
+      "previousPage_complete": 3,
+      "agentPass": 25,
+      "agentReported": 25,
+      "agentFull": 3,
+      "agentPage_complete": 3,
+      "chrome158Pass": 21,
+      "chrome158Reported": 25,
+      "chrome158Full": 1,
+      "chrome158Page_complete": 3,
+      "gain": 25,
+      "loss": 0,
+      "missing": 0,
+      "newNames": 0,
+      "chromeOnly": 0,
+      "agentOnly": 4
+    },
+    "perURL": {
+      "probe/crossrealm.html": {
+        "previousPass": 0,
+        "previousReported": 1,
+        "previousFull": 0,
+        "previousPage_complete": 1,
+        "agentPass": 1,
+        "agentReported": 1,
+        "agentFull": 1,
+        "agentPage_complete": 1,
+        "chrome158Pass": 1,
+        "chrome158Reported": 1,
+        "chrome158Full": 1,
+        "chrome158Page_complete": 1,
+        "gain": 1,
+        "loss": 0,
+        "missing": 0,
+        "newNames": 0,
+        "chromeOnly": 0,
+        "agentOnly": 0
+      },
+      "probe/window.html": {
+        "previousPass": 0,
+        "previousReported": 12,
+        "previousFull": 0,
+        "previousPage_complete": 1,
+        "agentPass": 12,
+        "agentReported": 12,
+        "agentFull": 1,
+        "agentPage_complete": 1,
+        "chrome158Pass": 10,
+        "chrome158Reported": 12,
+        "chrome158Full": 0,
+        "chrome158Page_complete": 1,
+        "gain": 12,
+        "loss": 0,
+        "missing": 0,
+        "newNames": 0,
+        "chromeOnly": 0,
+        "agentOnly": 2
+      },
+      "probe/worker.html": {
+        "previousPass": 0,
+        "previousReported": 12,
+        "previousFull": 0,
+        "previousPage_complete": 1,
+        "agentPass": 12,
+        "agentReported": 12,
+        "agentFull": 1,
+        "agentPage_complete": 1,
+        "chrome158Pass": 10,
+        "chrome158Reported": 12,
+        "chrome158Full": 0,
+        "chrome158Page_complete": 1,
+        "gain": 12,
+        "loss": 0,
+        "missing": 0,
+        "newNames": 0,
+        "chromeOnly": 0,
+        "agentOnly": 2
+      }
+    },
+    "restarts": {
+      "previous": 0,
+      "agent": 0,
+      "chrome158": 0
+    },
+    "watchdogKills": {
+      "previous": 0,
+      "agent": 0,
+      "chrome158": 0
+    }
+  },
+  "wpt": {
+    "pages": 13,
+    "scores": {
+      "previousPass": 23,
+      "previousReported": 54,
+      "previousFull": 1,
+      "previousPage_complete": 13,
+      "agentPass": 25,
+      "agentReported": 54,
+      "agentFull": 1,
+      "agentPage_complete": 13,
+      "chrome158Pass": 54,
+      "chrome158Reported": 54,
+      "chrome158Full": 13,
+      "chrome158Page_complete": 13,
+      "gain": 2,
+      "loss": 0,
+      "missing": 0,
+      "newNames": 0,
+      "chromeOnly": 29,
+      "agentOnly": 0
+    },
+    "perURL": {
+      "wasm/jsapi/memory/toString.any.html": {
+        "previousPass": 0,
+        "previousReported": 2,
+        "previousFull": 0,
+        "previousPage_complete": 1,
+        "agentPass": 0,
+        "agentReported": 2,
+        "agentFull": 0,
+        "agentPage_complete": 1,
+        "chrome158Pass": 2,
+        "chrome158Reported": 2,
+        "chrome158Full": 1,
+        "chrome158Page_complete": 1,
+        "gain": 0,
+        "loss": 0,
+        "missing": 0,
+        "newNames": 0,
+        "chromeOnly": 2,
+        "agentOnly": 0
+      },
+      "wasm/jsapi/memory/toString.any.worker.html": {
+        "previousPass": 0,
+        "previousReported": 2,
+        "previousFull": 0,
+        "previousPage_complete": 1,
+        "agentPass": 0,
+        "agentReported": 2,
+        "agentFull": 0,
+        "agentPage_complete": 1,
+        "chrome158Pass": 2,
+        "chrome158Reported": 2,
+        "chrome158Full": 1,
+        "chrome158Page_complete": 1,
+        "gain": 0,
+        "loss": 0,
+        "missing": 0,
+        "newNames": 0,
+        "chromeOnly": 2,
+        "agentOnly": 0
+      },
+      "wasm/jsapi/module/exports.any.html": {
+        "previousPass": 10,
+        "previousReported": 11,
+        "previousFull": 0,
+        "previousPage_complete": 1,
+        "agentPass": 10,
+        "agentReported": 11,
+        "agentFull": 0,
+        "agentPage_complete": 1,
+        "chrome158Pass": 11,
+        "chrome158Reported": 11,
+        "chrome158Full": 1,
+        "chrome158Page_complete": 1,
+        "gain": 0,
+        "loss": 0,
+        "missing": 0,
+        "newNames": 0,
+        "chromeOnly": 1,
+        "agentOnly": 0
+      },
+      "wasm/jsapi/module/imports.any.html": {
+        "previousPass": 7,
+        "previousReported": 11,
+        "previousFull": 0,
+        "previousPage_complete": 1,
+        "agentPass": 7,
+        "agentReported": 11,
+        "agentFull": 0,
+        "agentPage_complete": 1,
+        "chrome158Pass": 11,
+        "chrome158Reported": 11,
+        "chrome158Full": 1,
+        "chrome158Page_complete": 1,
+        "gain": 0,
+        "loss": 0,
+        "missing": 0,
+        "newNames": 0,
+        "chromeOnly": 4,
+        "agentOnly": 0
+      },
+      "wasm/jsapi/module/toString.any.html": {
+        "previousPass": 2,
+        "previousReported": 2,
+        "previousFull": 1,
+        "previousPage_complete": 1,
+        "agentPass": 2,
+        "agentReported": 2,
+        "agentFull": 1,
+        "agentPage_complete": 1,
+        "chrome158Pass": 2,
+        "chrome158Reported": 2,
+        "chrome158Full": 1,
+        "chrome158Page_complete": 1,
+        "gain": 0,
+        "loss": 0,
+        "missing": 0,
+        "newNames": 0,
+        "chromeOnly": 0,
+        "agentOnly": 0
+      },
+      "wasm/jsapi/prototypes.any.html": {
+        "previousPass": 2,
+        "previousReported": 5,
+        "previousFull": 0,
+        "previousPage_complete": 1,
+        "agentPass": 3,
+        "agentReported": 5,
+        "agentFull": 0,
+        "agentPage_complete": 1,
+        "chrome158Pass": 5,
+        "chrome158Reported": 5,
+        "chrome158Full": 1,
+        "chrome158Page_complete": 1,
+        "gain": 1,
+        "loss": 0,
+        "missing": 0,
+        "newNames": 0,
+        "chromeOnly": 2,
+        "agentOnly": 0
+      },
+      "wasm/jsapi/prototypes.any.worker.html": {
+        "previousPass": 2,
+        "previousReported": 5,
+        "previousFull": 0,
+        "previousPage_complete": 1,
+        "agentPass": 3,
+        "agentReported": 5,
+        "agentFull": 0,
+        "agentPage_complete": 1,
+        "chrome158Pass": 5,
+        "chrome158Reported": 5,
+        "chrome158Full": 1,
+        "chrome158Page_complete": 1,
+        "gain": 1,
+        "loss": 0,
+        "missing": 0,
+        "newNames": 0,
+        "chromeOnly": 2,
+        "agentOnly": 0
+      },
+      "wasm/jsapi/table/length.any.html": {
+        "previousPass": 0,
+        "previousReported": 4,
+        "previousFull": 0,
+        "previousPage_complete": 1,
+        "agentPass": 0,
+        "agentReported": 4,
+        "agentFull": 0,
+        "agentPage_complete": 1,
+        "chrome158Pass": 4,
+        "chrome158Reported": 4,
+        "chrome158Full": 1,
+        "chrome158Page_complete": 1,
+        "gain": 0,
+        "loss": 0,
+        "missing": 0,
+        "newNames": 0,
+        "chromeOnly": 4,
+        "agentOnly": 0
+      },
+      "wasm/jsapi/table/length.any.worker.html": {
+        "previousPass": 0,
+        "previousReported": 4,
+        "previousFull": 0,
+        "previousPage_complete": 1,
+        "agentPass": 0,
+        "agentReported": 4,
+        "agentFull": 0,
+        "agentPage_complete": 1,
+        "chrome158Pass": 4,
+        "chrome158Reported": 4,
+        "chrome158Full": 1,
+        "chrome158Page_complete": 1,
+        "gain": 0,
+        "loss": 0,
+        "missing": 0,
+        "newNames": 0,
+        "chromeOnly": 4,
+        "agentOnly": 0
+      },
+      "wasm/jsapi/table/toString.any.html": {
+        "previousPass": 0,
+        "previousReported": 2,
+        "previousFull": 0,
+        "previousPage_complete": 1,
+        "agentPass": 0,
+        "agentReported": 2,
+        "agentFull": 0,
+        "agentPage_complete": 1,
+        "chrome158Pass": 2,
+        "chrome158Reported": 2,
+        "chrome158Full": 1,
+        "chrome158Page_complete": 1,
+        "gain": 0,
+        "loss": 0,
+        "missing": 0,
+        "newNames": 0,
+        "chromeOnly": 2,
+        "agentOnly": 0
+      },
+      "wasm/jsapi/table/toString.any.worker.html": {
+        "previousPass": 0,
+        "previousReported": 2,
+        "previousFull": 0,
+        "previousPage_complete": 1,
+        "agentPass": 0,
+        "agentReported": 2,
+        "agentFull": 0,
+        "agentPage_complete": 1,
+        "chrome158Pass": 2,
+        "chrome158Reported": 2,
+        "chrome158Full": 1,
+        "chrome158Page_complete": 1,
+        "gain": 0,
+        "loss": 0,
+        "missing": 0,
+        "newNames": 0,
+        "chromeOnly": 2,
+        "agentOnly": 0
+      },
+      "wasm/jsapi/tag/toString.tentative.any.html": {
+        "previousPass": 0,
+        "previousReported": 2,
+        "previousFull": 0,
+        "previousPage_complete": 1,
+        "agentPass": 0,
+        "agentReported": 2,
+        "agentFull": 0,
+        "agentPage_complete": 1,
+        "chrome158Pass": 2,
+        "chrome158Reported": 2,
+        "chrome158Full": 1,
+        "chrome158Page_complete": 1,
+        "gain": 0,
+        "loss": 0,
+        "missing": 0,
+        "newNames": 0,
+        "chromeOnly": 2,
+        "agentOnly": 0
+      },
+      "wasm/jsapi/tag/toString.tentative.any.worker.html": {
+        "previousPass": 0,
+        "previousReported": 2,
+        "previousFull": 0,
+        "previousPage_complete": 1,
+        "agentPass": 0,
+        "agentReported": 2,
+        "agentFull": 0,
+        "agentPage_complete": 1,
+        "chrome158Pass": 2,
+        "chrome158Reported": 2,
+        "chrome158Full": 1,
+        "chrome158Page_complete": 1,
+        "gain": 0,
+        "loss": 0,
+        "missing": 0,
+        "newNames": 0,
+        "chromeOnly": 2,
+        "agentOnly": 0
+      }
+    },
+    "restarts": {
+      "previous": 0,
+      "agent": 0,
+      "chrome158": 0
+    },
+    "watchdogKills": {
+      "previous": 0,
+      "agent": 0,
+      "chrome158": 0
+    }
+  },
+  "application": {
+    "agent": {
+      "startupMs": {
+        "median": 118.9732499999991,
+        "p10": 113.20217520000006,
+        "p90": 145.25085819999987,
+        "samples": [
+          155.4233750000003,
+          129.99208299999918,
+          110.05704200000037,
+          118.9732499999991,
+          117.91987499999959
+        ]
+      },
+      "load1": {
+        "median": 128.2998046875,
+        "p10": 125.78671875,
+        "p90": 131.87802734375,
+        "samples": [
+          133.16455078125,
+          129.9482421875,
+          128.2998046875,
+          128.2998046875,
+          124.111328125
+        ]
+      },
+      "directUsPerBlock": {
+        "median": 2387.499999999999,
+        "p10": 1431.25,
+        "p90": 4912.499999999998,
+        "samples": [
+          5418.749999999995,
+          4153.125000000003,
+          2387.499999999999,
+          1750.0,
+          1218.75
+        ]
+      },
+      "viaHostUsPerBlock": {
+        "median": 1821.8749999999986,
+        "p10": 1310.6250000000014,
+        "p90": 7110.624999999999,
+        "samples": [
+          6859.375,
+          7278.124999999999,
+          1821.8749999999986,
+          1165.625000000002,
+          1528.1250000000002
+        ]
+      },
+      "liveGlobalUsPerBlock": {
+        "median": 2003.1250000000007,
+        "p10": 1128.1249999999993,
+        "p90": 4189.3750000000055,
+        "samples": [
+          3643.7500000000114,
+          4553.125000000002,
+          2003.1250000000007,
+          934.3749999999993,
+          1418.7499999999993
+        ]
+      },
+      "callbackCountsPerProcess": [
+        448,
+        448,
+        448,
+        448,
+        448
+      ]
+    },
+    "chrome158": {
+      "startupMs": {
+        "median": 1592.5268340000002,
+        "p10": 1401.8015002,
+        "p90": 2537.1774585999997,
+        "samples": [
+          2601.256624999999,
+          2441.058709000001,
+          1592.5268340000002,
+          1491.1888749999998,
+          1342.2099170000001
+        ]
+      },
+      "load1": {
+        "median": 131.6337890625,
+        "p10": 124.111328125,
+        "p90": 132.55224609375,
+        "samples": [
+          133.16455078125,
+          131.6337890625,
+          131.6337890625,
+          124.111328125,
+          124.111328125
+        ]
+      },
+      "directUsPerBlock": {
+        "median": 112.50000074505806,
+        "p10": 112.50000018626451,
+        "p90": 115.62499962747097,
+        "samples": [
+          112.50000074505806,
+          112.49999981373549,
+          112.50000074505806,
+          115.62499962747097,
+          115.62499962747097
+        ]
+      },
+      "viaHostUsPerBlock": {
+        "median": 115.62499962747097,
+        "p10": 113.75000029802322,
+        "p90": 115.62499962747097,
+        "samples": [
+          112.50000074505806,
+          115.62499962747097,
+          115.62499962747097,
+          115.62499962747097,
+          115.62499962747097
+        ]
+      },
+      "liveGlobalUsPerBlock": {
+        "median": 115.62499962747097,
+        "p10": 115.62499962747097,
+        "p90": 115.62500055879354,
+        "samples": [
+          115.62499962747097,
+          115.62499962747097,
+          115.62500055879354,
+          115.62500055879354,
+          115.62499962747097
+        ]
+      },
+      "callbackCountsPerProcess": [
+        448,
+        448,
+        448,
+        448,
+        448
+      ]
+    },
+    "previous": {
+      "startupMs": {
+        "median": 123.8294590000005,
+        "p10": 121.11224959999818,
+        "p90": 227.32570000000067,
+        "samples": [
+          291.07849999999985,
+          123.8294590000005,
+          131.69650000000183,
+          119.33516599999712,
+          123.77787499999977
+        ]
+      },
+      "load1": {
+        "median": 131.6337890625,
+        "p10": 125.78671875,
+        "p90": 134.80693359375,
+        "samples": [
+          136.92236328125,
+          131.6337890625,
+          131.6337890625,
+          128.2998046875,
+          124.111328125
+        ]
+      },
+      "directUsPerBlock": {
+        "median": 2040.625,
+        "p10": 884.3749999999999,
+        "p90": 3674.374999999999,
+        "samples": [
+          3978.1249999999986,
+          3218.75,
+          2040.625,
+          949.9999999999993,
+          840.6250000000002
+        ]
+      },
+      "viaHostUsPerBlock": {
+        "median": 1193.7500000000014,
+        "p10": 854.3749999999966,
+        "p90": 2483.749999999999,
+        "samples": [
+          771.8749999999943,
+          2493.7499999999986,
+          2468.75,
+          978.1249999999999,
+          1193.7500000000014
+        ]
+      },
+      "callbackCountsPerProcess": [
+        224,
+        224,
+        224,
+        224,
+        224
+      ]
+    }
+  }
+}

@@ -1,0 +1,11 @@
+<!doctype html><title>Same agent Global across two realms</title>
+<script src="/resources/testharness.js"></script><script src="/resources/testharnessreport.js"></script><script src="modules.js"></script>
+<body><script>
+test(t=>{
+ const frame=document.body.appendChild(document.createElement('iframe'));
+ t.add_cleanup(()=>frame.remove());
+ const g=new frame.contentWindow.WebAssembly.Global({value:'i32',mutable:true},7);
+ const instance=new WebAssembly.Instance(new WebAssembly.Module(bytes.alias),{h:{g,hook:x=>x}});
+ assert_equals(instance.exports.inc(),8);assert_equals(g.value,8);
+},'Same-origin child realm Global can be imported in the parent realm');
+</script></body>

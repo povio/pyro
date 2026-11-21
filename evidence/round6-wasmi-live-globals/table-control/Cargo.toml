@@ -1,0 +1,6 @@
+[package]
+name="ordinary-wasmi-table-host"
+version="0.1.0"
+edition="2021"
+[dependencies]
+wasmi={version="=2.0.2",default-features=false,features=["stable","std","validate","memory64","simd","auto-dispatch"]}

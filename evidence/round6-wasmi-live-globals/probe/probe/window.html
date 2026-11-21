@@ -1,0 +1,4 @@
+<!doctype html><title>Numeric Global interoperability</title>
+<script src="/resources/testharness.js"></script><script src="/resources/testharnessreport.js"></script>
+<script src="modules.js"></script><script src="checks.js"></script>
+<script>contract((name,f)=>test(f,name),assert_true,assert_equals);asyncContract((name,f)=>promise_test(f,name),assert_equals);</script>

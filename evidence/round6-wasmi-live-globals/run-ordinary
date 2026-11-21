@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+q=$HOME/Library/Caches/lightningpanda/round6-wasmi-globals; r=$HOME/Library/Caches/lightningpanda/round6-reference-158/census
+export WPT_CHROME_STATE_DIR="$q/chrome-state"
+cd "$r/runner"
+exec bun bench/wpt/run-no-native-retry.mjs --kind testharness --wpt "$q/probe" --dirs probe --jobs 1 --bin "$1=$2" --out "$q/probe-$1.json"

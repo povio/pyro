@@ -1,0 +1,14 @@
+<!doctype html><title>Experimental shared-arena budget</title>
+<script src="/resources/testharness.js"></script><script src="/resources/testharnessreport.js"></script>
+<script>
+// One existing scalar cell, no memory/table/function/start in the module.
+test(()=>{
+ const g=new WebAssembly.Global({value:"i32",mutable:true},7);
+ const module=new WebAssembly.Module(Uint8Array.of(0,97,115,109,1,0,0,0,2,8,1,1,104,1,103,3,127,1));
+ for(let i=0;i<256;i++)new WebAssembly.Instance(module,{h:{g}});
+ assert_throws_js(RangeError,()=>new WebAssembly.Instance(module,{h:{g}}));
+ assert_equals(g.value,7);g.value=8;assert_equals(g.value,8);
+ const empty=new WebAssembly.Module(Uint8Array.of(0,97,115,109,1,0,0,0));
+ assert_true(new WebAssembly.Instance(empty) instanceof WebAssembly.Instance);
+},'Shared arena stops at its declared 256 link admissions while independent instances remain usable');
+</script>
