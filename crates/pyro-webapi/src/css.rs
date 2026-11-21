@@ -614,11 +614,11 @@ impl StyleData {
         }
         let (text, known) = self.text_and_backing();
         let may_need_backing = declarations::may_need_signed_zero_backing(value);
-        if let Some(signed) = known
-            && !may_need_backing && text.len() <= 8192 && !unparsed(name)
-            && self.replace_independent(&text, signed, name, value, important)?
-        {
-            return Ok(());
+        if let Some(signed) = known {
+            if !may_need_backing && text.len() <= 8192 && !unparsed(name)
+                && self.replace_independent(&text, signed, name, value, important)? {
+                return Ok(());
+            }
         }
         let mut incoming = None;
         let mut signed = Self::signed_block(&text, known);
