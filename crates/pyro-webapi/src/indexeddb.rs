@@ -16,8 +16,7 @@
 //! are dispatched natively, so microtasks run after every listener while the
 //! transaction is still active, as in browsers.
 //!
-//! Limits (explicit): Blob/File values are not cloneable (DataCloneError);
-//! transactions are deactivated in the task after the one that created them,
+//! Transactions are deactivated in the task after the one that created them,
 //! not after that task's microtask checkpoint.
 use crate::page::{PageDom, RemotePoster};
 use crate::structured_clone::{decode_message, encode_message, WireMessage};
@@ -906,6 +905,16 @@ fn natives<'s>(
         Ok(s.undefined())
     })?;
     add(s, &natives, &ctx, "nextId", |s, _ctx, _a| Ok(s.number(next_id() as f64)))?;
+    add(s, &natives, &ctx, "blobKeyPath", |s, _ctx, a| {
+        let Some(blob) = s.unwrap::<crate::file::Blob>(a.get(0)) else { return Ok(s.undefined()) };
+        Ok(match a.get(1).to_string()?.as_str() {
+            "size" => s.number(blob.bytes.len() as f64),
+            "type" => s.string(&blob.mime),
+            "name" => blob.file.as_ref().map_or_else(|| s.undefined(), |(name, _)| s.string(name)),
+            "lastModified" => blob.file.as_ref().map_or_else(|| s.undefined(), |(_, time)| s.number(*time)),
+            _ => s.undefined(),
+        })
+    })?;
     add(s, &natives, &ctx, "clone", |s, _ctx, a| crate::structured_clone::clone_for_storage(s, a.get(0)))?;
     // DOM "get the parent" of a request (its transaction) or transaction (its connection).
     add(s, &natives, &ctx, "setParent", |s, ctx, a| {
