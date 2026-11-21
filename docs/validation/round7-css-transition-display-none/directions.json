@@ -1,0 +1,183 @@
+{
+  "parent": {
+    "strict": {
+      "gain": [
+        "css/css-transitions/transitioncancel-001.html"
+      ],
+      "loss": []
+    },
+    "named": {
+      "gain": [
+        [
+          "css/css-transitions/CSSTransition-canceling.tentative.html",
+          "Changing style to another interpolable value cancels the original transition"
+        ],
+        [
+          "css/css-transitions/CSSTransition-canceling.tentative.html",
+          "Removing a property from transition-property cancels transitions on that property"
+        ],
+        [
+          "css/css-transitions/CSSTransition-canceling.tentative.html",
+          "Reversing a running transition cancels the original transition"
+        ],
+        [
+          "css/css-transitions/CSSTransition-canceling.tentative.html",
+          "Setting display:none cancels transitions on a child element"
+        ],
+        [
+          "css/css-transitions/CSSTransition-canceling.tentative.html",
+          "Setting display:none on an element cancels its transitions"
+        ],
+        [
+          "css/css-transitions/event-dispatch.tentative.html",
+          "Active -> Idle, no delay (display: none)"
+        ],
+        [
+          "css/css-transitions/event-dispatch.tentative.html",
+          "Active -> Idle, with negative delay (display: none)"
+        ],
+        [
+          "css/css-transitions/event-dispatch.tentative.html",
+          "Active -> Idle, with positive delay (display: none)"
+        ],
+        [
+          "css/css-transitions/event-dispatch.tentative.html",
+          "Before -> Idle (display: none)"
+        ],
+        [
+          "css/css-transitions/event-dispatch.tentative.html",
+          "Call Animation.cancel after canceling transition."
+        ],
+        [
+          "css/css-transitions/event-dispatch.tentative.html",
+          "Call Animation.cancel after restarting transition immediately"
+        ],
+        [
+          "css/css-transitions/transitioncancel-001.html",
+          "transitioncancel should be fired if the element is made display:none during the transition"
+        ]
+      ],
+      "loss": []
+    }
+  },
+  "chrome": {
+    "strict": {
+      "gain": [
+        "css/css-animations/Element-getAnimations-dynamic-changes.tentative.html"
+      ],
+      "loss": [
+        "css/css-animations/CSSAnimation-canceling.tentative.html",
+        "css/css-animations/display-none-dont-cancel.tentative.html",
+        "css/css-animations/display-none-prevents-starting-in-subtree.html",
+        "css/css-transitions/CSSTransition-canceling.tentative.html",
+        "css/css-transitions/CSSTransition-ready.tentative.html"
+      ]
+    },
+    "named": {
+      "gain": [
+        [
+          "css/css-animations/Element-getAnimations-dynamic-changes.tentative.html",
+          "Animation state is preserved when interleaving animations in list"
+        ],
+        [
+          "css/css-animations/Element-getAnimations-dynamic-changes.tentative.html",
+          "Animations are removed from the start of the list while preserving the state of existing Animations"
+        ],
+        [
+          "css/css-animations/Element-getAnimations-dynamic-changes.tentative.html",
+          "Only the startTimes of existing animations are preserved"
+        ]
+      ],
+      "loss": [
+        [
+          "css/css-animations/CSSAnimation-canceling.tentative.html",
+          "Setting display:none on an ancestor element cancels animations on descendants"
+        ],
+        [
+          "css/css-animations/CSSAnimation-canceling.tentative.html",
+          "Setting display:none on an element cancel its animations"
+        ],
+        [
+          "css/css-animations/display-none-dont-cancel.tentative.html",
+          "A CSS variable of display:none animating to display:inline should be inline for the whole animation."
+        ],
+        [
+          "css/css-animations/display-none-dont-cancel.tentative.html",
+          "Animating from display:none to display:none should not cancel the animation."
+        ],
+        [
+          "css/css-animations/display-none-dont-cancel.tentative.html",
+          "Animating from display:none to display:none with an intermediate variable should not cancel the animation."
+        ],
+        [
+          "css/css-animations/display-none-dont-cancel.tentative.html",
+          "display:none animating to display:inline should be inline for the whole animation."
+        ],
+        [
+          "css/css-animations/display-none-prevents-starting-in-subtree.html",
+          "Elements in a \"display: none\" tree cannot start CSS Animations."
+        ],
+        [
+          "css/css-transitions/CSSTransition-canceling.tentative.html",
+          "An after-change style value can't be interpolated"
+        ],
+        [
+          "css/css-transitions/CSSTransition-canceling.tentative.html",
+          "Setting zero combined duration"
+        ],
+        [
+          "css/css-transitions/CSSTransition-ready.tentative.html",
+          "ready promise is rejected when a transition is canceled by changing the transition property to something not interpolable"
+        ],
+        [
+          "css/css-transitions/CSSTransition-ready.tentative.html",
+          "ready promise is rejected when a transition is canceled by updating transition-property"
+        ],
+        [
+          "css/css-transitions/event-dispatch.tentative.html",
+          "Active -> Before"
+        ],
+        [
+          "css/css-transitions/event-dispatch.tentative.html",
+          "Active -> Idle, no delay (Animation.timeline = null)"
+        ],
+        [
+          "css/css-transitions/event-dispatch.tentative.html",
+          "Active -> Idle, with positive delay (Animation.timeline = null)"
+        ],
+        [
+          "css/css-transitions/event-dispatch.tentative.html",
+          "After -> Active"
+        ],
+        [
+          "css/css-transitions/event-dispatch.tentative.html",
+          "After -> Before"
+        ],
+        [
+          "css/css-transitions/event-dispatch.tentative.html",
+          "Before -> Idle (Animation.timeline = null)"
+        ],
+        [
+          "css/css-transitions/event-dispatch.tentative.html",
+          "Calculating the interval start and end time with negative start delay."
+        ],
+        [
+          "css/css-transitions/event-dispatch.tentative.html",
+          "Cancel the transition after clearing the target effect"
+        ],
+        [
+          "css/css-transitions/event-dispatch.tentative.html",
+          "Restart transition after canceling transition immediately"
+        ],
+        [
+          "css/css-transitions/event-dispatch.tentative.html",
+          "Set null target effect after canceling the transition"
+        ],
+        [
+          "css/css-transitions/event-dispatch.tentative.html",
+          "Set timeline and play transition after clear the timeline"
+        ]
+      ]
+    }
+  }
+}
