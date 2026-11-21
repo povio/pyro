@@ -1216,9 +1216,8 @@ impl Layout {
 
     /// An element metric as script reads it, pixel-snapped to whole pixels
     /// like Chromium (Gap 36: `scrollWidth > clientWidth` must not come from
-    /// a fractional width). Offsets round; sizes snap at the box's offset
-    /// (client and scroll sizes at its padding edge) so that equal
-    /// fractional sizes snap alike.
+    /// a fractional width). Offsets and offset dimensions round independently;
+    /// client and scroll sizes snap at the padding edge.
     pub fn metric(&self, dom: &Dom, el: NodeId, metric: Metric) -> f64 {
         let raw = match metric {
             Metric::ScrollWidth => self.scroll_width(dom, el),
@@ -1235,9 +1234,7 @@ impl Layout {
         }
         let border = |side: usize| self.layout_box(dom, el).map_or(0.0, |b| b.border[side]);
         match metric {
-            Metric::OffsetTop | Metric::OffsetLeft => round_layout_unit(raw),
-            Metric::OffsetWidth => snap_size_to_pixel(raw, self.offset_left(dom, el)),
-            Metric::OffsetHeight => snap_size_to_pixel(raw, self.offset_top(dom, el)),
+            Metric::OffsetTop | Metric::OffsetLeft | Metric::OffsetWidth | Metric::OffsetHeight => round_layout_unit(raw),
             Metric::ScrollWidth | Metric::ClientWidth => {
                 snap_size_to_pixel(raw, self.offset_left(dom, el) + border(LEFT))
             }
