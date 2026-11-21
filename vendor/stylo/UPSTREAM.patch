@@ -7929,11 +7929,12 @@ diff -ruN a/values/computed/ui.rs b/values/computed/ui.rs
  
 diff -ruN a/values/generics/basic_shape.rs b/values/generics/basic_shape.rs
 --- a/values/generics/basic_shape.rs	2026-11-11 19:55:57
-+++ b/values/generics/basic_shape.rs	2026-11-21 11:11:44
-@@ -134,6 +134,149 @@
++++ b/values/generics/basic_shape.rs	2026-11-21 11:15:00
+@@ -133,7 +133,191 @@
+ }
  
  pub use self::GenericClipPath as ClipPath;
- 
++
 +/// pyro: the reference box of a `border-shape` shape (CSS Borders 4): a `<geometry-box>`, or
 +/// `half-border-box` (the border box less half of each border width). `Default` when none is
 +/// given: `half-border-box` for a single shape; the border box for the outer of two, the padding
@@ -8003,7 +8004,6 @@ diff -ruN a/values/generics/basic_shape.rs b/values/generics/basic_shape.rs
 +    ToAnimatedValue,
 +    ToComputedValue,
 +    ToCss,
-+    ToResolvedValue,
 +    ToShmem,
 +    ToTyped,
 +)]
@@ -8017,13 +8017,55 @@ diff -ruN a/values/generics/basic_shape.rs b/values/generics/basic_shape.rs
 +
 +pub use self::GenericBorderShape as BorderShape;
 +
++impl<Shape> crate::values::resolved::ToResolvedValue for BorderShape<Shape>
++where
++    Shape: crate::values::resolved::ToResolvedValue,
++    Shape::ResolvedValue: PartialEq,
++{
++    type ResolvedValue = BorderShape<Shape::ResolvedValue>;
++
++    fn to_resolved_value(self, context: &crate::values::resolved::Context) -> Self::ResolvedValue {
++        let single = |mut item: GenericBorderShapeItem<Shape::ResolvedValue>| {
++            if item.reference == BorderShapeBox::HalfBorderBox { item.reference = BorderShapeBox::Default; }
++            BorderShape::Single(item)
++        };
++        match self {
++            Self::None => BorderShape::None,
++            Self::Single(item) => single(item.to_resolved_value(context)),
++            Self::Double(outer, inner) => {
++                let mut outer = outer.to_resolved_value(context);
++                let mut inner = inner.to_resolved_value(context);
++                let border = BorderShapeBox::ShapeBox(ShapeBox::BorderBox);
++                let padding = BorderShapeBox::ShapeBox(ShapeBox::PaddingBox);
++                if outer.reference == BorderShapeBox::Default { outer.reference = border; }
++                if inner.reference == BorderShapeBox::Default { inner.reference = padding; }
++                if outer == inner { return single(outer); }
++                if outer.reference == border { outer.reference = BorderShapeBox::Default; }
++                if inner.reference == padding { inner.reference = BorderShapeBox::Default; }
++                BorderShape::Double(outer, inner)
++            },
++        }
++    }
++
++    fn from_resolved_value(resolved: Self::ResolvedValue) -> Self {
++        use crate::values::resolved::ToResolvedValue;
++        match resolved {
++            BorderShape::None => Self::None,
++            BorderShape::Single(item) => Self::Single(ToResolvedValue::from_resolved_value(item)),
++            BorderShape::Double(outer, inner) => Self::Double(
++                ToResolvedValue::from_resolved_value(outer), ToResolvedValue::from_resolved_value(inner),
++            ),
++        }
++    }
++}
++
 +impl<B> GenericBorderShape<B> {
 +    /// `none`.
 +    #[inline]
 +    pub fn none() -> Self {
 +        Self::None
 +    }
-+
+ 
 +    fn component(&self, inner: bool) -> Result<(&B, BorderShapeBox), ()> {
 +        use BorderShapeBox::{HalfBorderBox, ShapeBox as BoxKind};
 +        let (item, default) = match self {
@@ -8080,7 +8122,7 @@ diff -ruN a/values/generics/basic_shape.rs b/values/generics/basic_shape.rs
  /// A value for the `shape-outside` property.
  #[allow(missing_docs)]
  #[derive(
-@@ -204,7 +347,7 @@
+@@ -204,7 +388,7 @@
          Ellipse<Position, LengthPercentage>,
      ),
      /// Defines a polygon with pair arguments.
@@ -8089,7 +8131,7 @@ diff -ruN a/values/generics/basic_shape.rs b/values/generics/basic_shape.rs
      /// Defines a path() or shape().
      PathOrShape(
          #[animation(field_bound)]
-@@ -348,25 +491,59 @@
+@@ -348,25 +532,59 @@
      PartialEq,
      Serialize,
      SpecifiedValueInfo,
@@ -8110,8 +8152,8 @@ diff -ruN a/values/generics/basic_shape.rs b/values/generics/basic_shape.rs
      /// A collection of (x, y) coordinates to draw the polygon.
 -    #[css(iterable)]
      pub coordinates: crate::OwnedSlice<PolygonCoord<LengthPercentage>>,
-+}
-+
+ }
+ 
 +impl<L: ToCss + Zero> ToCss for GenericPolygon<L> {
 +    fn to_css<W: Write>(&self, dest: &mut CssWriter<W>) -> fmt::Result {
 +        dest.write_str("polygon(")?;
@@ -8130,10 +8172,10 @@ diff -ruN a/values/generics/basic_shape.rs b/values/generics/basic_shape.rs
 +        }
 +        dest.write_char(')')
 +    }
- }
- 
++}
++
  pub use self::GenericPolygon as Polygon;
- 
++
 +impl<L> crate::values::animated::ToAnimatedValue for GenericPolygon<L>
 +where
 +    L: crate::values::animated::ToAnimatedValue + crate::values::generics::ClampToNonNegative,
@@ -8144,7 +8186,7 @@ diff -ruN a/values/generics/basic_shape.rs b/values/generics/basic_shape.rs
 +        GenericPolygon { fill: self.fill, round: self.round.to_animated_value(context),
 +            coordinates: self.coordinates.to_animated_value(context) }
 +    }
-+
+ 
 +    fn from_animated_value(value: Self::AnimatedValue) -> Self {
 +        Self { fill: value.fill, round: NonNegative::from_animated_value(value.round),
 +            coordinates: crate::OwnedSlice::from_animated_value(value.coordinates) }
@@ -8154,7 +8196,7 @@ diff -ruN a/values/generics/basic_shape.rs b/values/generics/basic_shape.rs
  /// Coordinates for Polygon.
  #[derive(
      Animate,
-@@ -504,7 +681,23 @@
+@@ -504,7 +722,23 @@
          W: Write,
      {
          dest.write_str("inset(")?;
@@ -8179,7 +8221,7 @@ diff -ruN a/values/generics/basic_shape.rs b/values/generics/basic_shape.rs
          if !self.round.is_zero() {
              dest.write_str(" round ")?;
              self.round.to_css(dest)?;
-@@ -593,6 +786,7 @@
+@@ -593,6 +827,7 @@
              lists::by_computed_value::animate(&self.coordinates, &other.coordinates, procedure)?;
          Ok(Polygon {
              fill: self.fill,
@@ -8187,7 +8229,7 @@ diff -ruN a/values/generics/basic_shape.rs b/values/generics/basic_shape.rs
              coordinates,
          })
      }
-@@ -606,7 +800,8 @@
+@@ -606,7 +841,8 @@
          if self.fill != other.fill {
              return Err(());
          }

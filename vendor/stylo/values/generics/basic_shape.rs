@@ -203,7 +203,6 @@ pub struct GenericBorderShapeItem<BasicShape> {
     ToAnimatedValue,
     ToComputedValue,
     ToCss,
-    ToResolvedValue,
     ToShmem,
     ToTyped,
 )]
@@ -216,6 +215,48 @@ pub enum GenericBorderShape<BasicShape> {
 }
 
 pub use self::GenericBorderShape as BorderShape;
+
+impl<Shape> crate::values::resolved::ToResolvedValue for BorderShape<Shape>
+where
+    Shape: crate::values::resolved::ToResolvedValue,
+    Shape::ResolvedValue: PartialEq,
+{
+    type ResolvedValue = BorderShape<Shape::ResolvedValue>;
+
+    fn to_resolved_value(self, context: &crate::values::resolved::Context) -> Self::ResolvedValue {
+        let single = |mut item: GenericBorderShapeItem<Shape::ResolvedValue>| {
+            if item.reference == BorderShapeBox::HalfBorderBox { item.reference = BorderShapeBox::Default; }
+            BorderShape::Single(item)
+        };
+        match self {
+            Self::None => BorderShape::None,
+            Self::Single(item) => single(item.to_resolved_value(context)),
+            Self::Double(outer, inner) => {
+                let mut outer = outer.to_resolved_value(context);
+                let mut inner = inner.to_resolved_value(context);
+                let border = BorderShapeBox::ShapeBox(ShapeBox::BorderBox);
+                let padding = BorderShapeBox::ShapeBox(ShapeBox::PaddingBox);
+                if outer.reference == BorderShapeBox::Default { outer.reference = border; }
+                if inner.reference == BorderShapeBox::Default { inner.reference = padding; }
+                if outer == inner { return single(outer); }
+                if outer.reference == border { outer.reference = BorderShapeBox::Default; }
+                if inner.reference == padding { inner.reference = BorderShapeBox::Default; }
+                BorderShape::Double(outer, inner)
+            },
+        }
+    }
+
+    fn from_resolved_value(resolved: Self::ResolvedValue) -> Self {
+        use crate::values::resolved::ToResolvedValue;
+        match resolved {
+            BorderShape::None => Self::None,
+            BorderShape::Single(item) => Self::Single(ToResolvedValue::from_resolved_value(item)),
+            BorderShape::Double(outer, inner) => Self::Double(
+                ToResolvedValue::from_resolved_value(outer), ToResolvedValue::from_resolved_value(inner),
+            ),
+        }
+    }
+}
 
 impl<B> GenericBorderShape<B> {
     /// `none`.
