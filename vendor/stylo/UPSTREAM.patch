@@ -2929,11 +2929,14 @@ diff -ruN a/properties/properties.mako.rs b/properties/properties.mako.rs
  size_of_test!(Option<Arc<ComputedValues>>, 8);
 diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
 --- a/properties/shorthands.rs	2026-11-11 19:55:57
-+++ b/properties/shorthands.rs	2026-11-20 22:43:16
-@@ -268,7 +268,153 @@
-         }
-     }
- }
++++ b/properties/shorthands.rs	2026-11-21 01:47:18
+@@ -265,8 +265,154 @@
+                 self.corner_bottom_left_shape,
+             )
+             .to_css(dest)
++        }
++    }
++}
 +
 +/// pyro: `mask-border` (css-masking-1 §8.6): `border-image`'s grammar plus `<'mask-border-mode'>`.
 +pub mod mask_border {
@@ -3013,7 +3016,7 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
 +                continue;
 +            }
 +            break;
-+        }
+         }
 +        if !any {
 +            return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
 +        }
@@ -3025,8 +3028,8 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
 +           mask_border_source: source,
 +           mask_border_width: width,
 +        })
-+    }
- 
+     }
++
 +    impl<'a> ToCss for LonghandsToSerialize<'a> {
 +        fn to_css<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result
 +        where
@@ -3079,11 +3082,9 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
 +            Ok(())
 +        }
 +    }
-+}
-+
- pub mod border_image {
-     pub use crate::properties::generated::shorthands::border_image::*;
+ }
  
+ pub mod border_image {
 @@ -542,7 +688,6 @@
      }
  }
@@ -3204,7 +3205,20 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
  pub mod column_rule {
      pub use crate::properties::generated::shorthands::column_rule::*;
  
-@@ -1000,7 +1164,7 @@
+@@ -843,6 +1007,12 @@
+             column_rule_color: unwrap_or_initial!(column_rule_color),
+         })
+     }
++
++    impl ToCss for LonghandsToSerialize<'_> {
++        fn to_css<W: Write>(&self, dest: &mut CssWriter<W>) -> fmt::Result {
++            serialize_directional_border(dest, self.column_rule_width, self.column_rule_style, self.column_rule_color)
++        }
++    }
+ }
+ 
+ pub mod text_wrap {
+@@ -1000,7 +1170,7 @@
      }
  }
  
@@ -3213,7 +3227,7 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
  pub mod _webkit_text_stroke {
      pub use crate::properties::generated::shorthands::_webkit_text_stroke::*;
  
-@@ -1178,7 +1342,6 @@
+@@ -1178,7 +1348,6 @@
      }
  }
  
@@ -3221,7 +3235,7 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
  pub mod marker {
      pub use crate::properties::generated::shorthands::marker::*;
  
-@@ -1653,7 +1816,7 @@
+@@ -1653,7 +1822,7 @@
      }
  }
  
@@ -3230,7 +3244,7 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
  pub mod scroll_timeline {
      pub use crate::properties::generated::shorthands::scroll_timeline::*;
  
-@@ -1710,7 +1873,7 @@
+@@ -1710,7 +1879,7 @@
      }
  }
  
@@ -3239,7 +3253,7 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
  pub mod view_timeline {
      pub use crate::properties::generated::shorthands::view_timeline::*;
  
-@@ -1797,7 +1960,7 @@
+@@ -1797,7 +1966,7 @@
      }
  }
  
@@ -3248,7 +3262,7 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
  pub mod animation_range {
      pub use crate::properties::generated::shorthands::animation_range::*;
  
-@@ -2092,7 +2255,13 @@
+@@ -2092,7 +2261,13 @@
              return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
          }
          Ok(expanded! {
@@ -3263,7 +3277,7 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
              outline_style: unwrap_or_initial!(outline_style, style),
              outline_width: unwrap_or_initial!(outline_width, width),
          })
-@@ -2103,15 +2272,17 @@
+@@ -2103,15 +2278,17 @@
          where
              W: fmt::Write,
          {
@@ -3285,7 +3299,7 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
              }
              if !writer.has_written() {
                  self.outline_style.to_css(dest)?;
-@@ -2455,7 +2626,7 @@
+@@ -2455,7 +2632,7 @@
          let mut variant_caps = None;
          let mut weight = None;
          let mut width = None;
@@ -3294,7 +3308,7 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
              return Ok(Longhands {
                  font_family: font_family::SpecifiedValue::system_font(sys),
                  font_size: font_size::SpecifiedValue::system_font(sys),
-@@ -2555,12 +2726,6 @@
+@@ -2555,12 +2732,6 @@
          where
              W: fmt::Write,
          {
@@ -3307,20 +3321,20 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
              #[cfg(feature = "gecko")]
              if self.font_optical_sizing != &font_optical_sizing::get_initial_specified_value() {
                  return Ok(());
-@@ -2633,6 +2798,12 @@
-             }
-             if self.font_feature_settings != &font_feature_settings::get_initial_specified_value() {
+@@ -2635,6 +2806,12 @@
                  return Ok(());
-+            }
-+
+             }
+ 
 +            match self.check_system() {
 +                CheckSystemResult::AllSystem(sys) if self.font_variant_caps == &font_variant_caps::get_initial_specified_value() => return sys.to_css(dest),
 +                CheckSystemResult::AllSystem(_) | CheckSystemResult::SomeSystem => return Ok(()),
 +                CheckSystemResult::None => {},
-             }
- 
++            }
++
              let font_width = match self.font_width {
-@@ -2700,7 +2871,7 @@
+                 FontWidth::Keyword(kw) => *kw,
+                 FontWidth::Width(percentage) => {
+@@ -2700,7 +2877,7 @@
                  ($v:expr) => {
                      match $v.get_system() {
                          Some(s) => {
@@ -3329,7 +3343,7 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
                              sys = Some(s);
                          },
                          None => {
-@@ -3399,8 +3570,9 @@
+@@ -3399,8 +3576,9 @@
                      dest.write_str(", ")?;
                  }
  
@@ -3341,7 +3355,7 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
                  let has_timing_function = !self.animation_timing_function.0[i].is_ease();
                  let has_delay = !self.animation_delay.0[i].is_zero();
                  let has_iteration_count = !self.animation_iteration_count.0[i].is_one();
-@@ -3455,6 +3627,10 @@
+@@ -3455,6 +3633,10 @@
      pub use crate::properties::generated::shorthands::mask::*;
  
      use super::*;
@@ -3352,7 +3366,7 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
      use crate::parser::Parse;
      use crate::properties::longhands::{
          mask_clip, mask_composite, mask_mode, mask_origin, mask_position_x, mask_position_y,
-@@ -3581,6 +3757,12 @@
+@@ -3581,6 +3763,12 @@
             mask_origin: mask_origin::SpecifiedValue(mask_origin.into()),
             mask_clip: mask_clip::SpecifiedValue(mask_clip.into()),
             mask_composite: mask_composite::SpecifiedValue(mask_composite.into()),
@@ -3365,7 +3379,7 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
          })
      }
  
-@@ -3594,6 +3776,15 @@
+@@ -3594,6 +3782,15 @@
              use style_traits::values::SequenceWriter;
  
              let len = self.mask_image.0.len();
@@ -3381,7 +3395,7 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
              if len == 0 {
                  return Ok(());
              }
-@@ -3680,20 +3871,10 @@
+@@ -3680,20 +3877,10 @@
  
                  if has_repeat {
                      writer.item(repeat)?;
@@ -3406,7 +3420,7 @@ diff -ruN a/properties/shorthands.rs b/properties/shorthands.rs
                  if has_clip && *clip != From::from(*origin) {
 diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
 --- a/properties/shorthands.toml	2026-11-11 19:55:57
-+++ b/properties/shorthands.toml	2026-11-20 22:43:16
++++ b/properties/shorthands.toml	2026-11-21 01:47:18
 @@ -1,3 +1,78 @@
 +[column-rule-inset]
 +sub_properties = ["column-rule-inset-cap-start", "column-rule-inset-cap-end", "column-rule-inset-junction-start", "column-rule-inset-junction-end"]
@@ -3624,7 +3638,7 @@ diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
  spec = "https://drafts.fxtf.org/css-masking/#propdef-mask"
  extra_prefixes = ["webkit"]
  servo_pref = "layout.css.masking.enabled"
-@@ -471,16 +539,58 @@
+@@ -471,16 +539,57 @@
  spec = "https://drafts.csswg.org/css-ui/#propdef-outline"
  
  [columns]
@@ -3638,7 +3652,7 @@ diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
 -engine = "gecko"
  sub_properties = ["column-rule-width", "column-rule-style", "column-rule-color"]
  spec = "https://drafts.csswg.org/css-multicol/#propdef-column-rule"
- derive_serialize = true
+-derive_serialize = true
  
 +[row-rule]
 +sub_properties = ["row-rule-width", "row-rule-style", "row-rule-color"]
@@ -3685,7 +3699,7 @@ diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
  [text-decoration]
  sub_properties = ["text-decoration-color", "text-decoration-line", "text-decoration-style", "text-decoration-thickness"]
  spec = "https://drafts.csswg.org/css-text-decor/#propdef-text-decoration"
-@@ -550,13 +660,11 @@
+@@ -550,13 +659,11 @@
  derive_value_info = false
  
  [-webkit-text-stroke]

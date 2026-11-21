@@ -1007,6 +1007,12 @@ pub mod column_rule {
             column_rule_color: unwrap_or_initial!(column_rule_color),
         })
     }
+
+    impl ToCss for LonghandsToSerialize<'_> {
+        fn to_css<W: Write>(&self, dest: &mut CssWriter<W>) -> fmt::Result {
+            serialize_directional_border(dest, self.column_rule_width, self.column_rule_style, self.column_rule_color)
+        }
+    }
 }
 
 pub mod text_wrap {

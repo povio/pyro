@@ -547,7 +547,6 @@ servo_pref = "layout.css.columns.enabled"
 [column-rule]
 sub_properties = ["column-rule-width", "column-rule-style", "column-rule-color"]
 spec = "https://drafts.csswg.org/css-multicol/#propdef-column-rule"
-derive_serialize = true
 
 [row-rule]
 sub_properties = ["row-rule-width", "row-rule-style", "row-rule-color"]
