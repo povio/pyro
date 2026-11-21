@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo
 
 root = Path(__file__).resolve().parent
 cache = Path(sys.argv.pop(1)).resolve()
-batches = {(): [(5, 4), (7, 5), (8, 7), (9, 8)], ('--batch10',): [(10, 9)], ('--batch11',): [(11, 10)], ('--batch12',): [(12, 11)], ('--batch13',): [(13, 12)], ('--batch14',): [(14, 13)]}[tuple(sys.argv[1:])]
+batches = {(): [(5, 4), (7, 5), (8, 7), (9, 8)], **{(f'--batch{number}',): [(number, number-1)] for number in range(10, 16)}}[tuple(sys.argv[1:])]
 del sys.argv[1:]
 verifier = cache / 'frozen-evidence/verify.py'
 assert verifier.read_bytes() == (root / 'frozen/verify.py').read_bytes()
@@ -46,9 +46,9 @@ for batch, previous in batches:
     source = (raw / 'source.txt').read_text().strip()
     assert subprocess.check_output(['git', 'rev-parse', source+'^{commit}'], text=True).strip() == source
     if batch >= 10:
-        assert source == {10: 'c10efae54a7ce4c25be1d8bab090fcc34cab6e7b', 11: '1ee620d451c093a2ddce8766172970ed0ce8275b', 12: '8695db84513be44b2aedc700e3e042ee9354b2b4', 13: '0f4857a4dfd126e96ed9431ec115644c49630d16', 14: '8627d988ed60b15992282350b5c17d97cb39d9e7'}[batch]
+        assert source == {10: 'c10efae54a7ce4c25be1d8bab090fcc34cab6e7b', 11: '1ee620d451c093a2ddce8766172970ed0ce8275b', 12: '8695db84513be44b2aedc700e3e042ee9354b2b4', 13: '0f4857a4dfd126e96ed9431ec115644c49630d16', 14: '8627d988ed60b15992282350b5c17d97cb39d9e7', 15: 'ce79ed2cf2f71d8c9b8b38846470a0515a7c0df3'}[batch]
         prior = root / f'batch{previous}'
-        assert subprocess.check_output(['git', 'rev-parse', source+('^' if batch in (10, 13, 14) else '^^')]) == (prior / 'source.txt').read_bytes()
+        assert subprocess.check_output(['git', 'rev-parse', source+('^' if batch in (10, 13, 14, 15) else '^^')]) == (prior / 'source.txt').read_bytes()
         assert verify['digest'](cache / prior.name / 'candidate')['sha256'] == (prior / 'sha256.txt').read_text().split()[0]
         shutil.copyfile(raw / 'build.log', out / 'build.log')
     timings = {}
@@ -60,6 +60,8 @@ for batch, previous in batches:
         summary = {'urls': len(urls), 'reports': {}}
         for index, report in enumerate(reports):
             data = read(report)
+            if batch == 15:
+                assert data['plan'] == read(cache / prior.name / report.name)['plan']
             assert data['bin'] == str(binary) and data['jobs'] == 2 and not data['reuseContext']
             assert data['dirs'] == ['css'] and data['discovered'] == len(data['plan'])
             entry = {**verify['digest'](report), **{key: data[key] for key in ('wallMs','restarts','discovered','jobs')}}
@@ -110,6 +112,20 @@ for batch, previous in batches:
     busy = [sample[-1] for sample in during]
     save(out / 'timing.json', dict(logBirthReportMtimeWallMs=timings, elapsedSeconds=end-start, hostSamples=during,
                                    busyPercent=dict(min=min(busy), median=statistics.median(busy), mean=statistics.mean(busy), max=max(busy))))
+    if batch == 15:
+        repeat_dir, = raw.glob('reversal-repeats.*')
+        repeat_urls = read(repeat_dir / 'urls.json')
+        assert len(repeat_urls) == len(set(repeat_urls)) == 4 and set(repeat_urls) <= set(cohorts['main'])
+        for number in (14, 15):
+            expected = read(root / f'batch{number}/outcomes-main.json.gz')
+            for suffix in ('a', 'b'):
+                report = repeat_dir / f'{number}{suffix}.json'
+                data = read(report)
+                assert data['bin'] == str(cache / f'batch{number}/candidate') and data['jobs'] == 2
+                assert not data['reuseContext'] and data['restarts'] == data['watchdogKills'] == 0
+                assert collect([report], set(repeat_urls), False) == {url: expected[url] for url in repeat_urls}
+        shutil.copytree(repeat_dir, out / 'matched-repeats', dirs_exist_ok=True)
+        runpy.run_path(str(root / 'map_batch15.py'))
     if batch == 7:
         repeats = raw / 'navigation-repeats'
         urls = set(read(repeats / 'urls.json'))
