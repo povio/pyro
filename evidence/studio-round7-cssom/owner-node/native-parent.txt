@@ -1,0 +1,25 @@
+running 3 tests
+test dom_js::stylesheet_owner_node_tracks_association ... FAILED
+test dom_js::font_face_descriptors_share_a_live_block ... ok
+test dom_js::cssom_interface_shapes_and_import_parts ... ok
+
+failures:
+
+---- dom_js::stylesheet_owner_node_tracks_association stdout ----
+
+thread 'dom_js::stylesheet_owner_node_tracks_association' (49068287) panicked at crates/pyro-webapi/tests/dom_js.rs:6820:5:
+assertion `left == right` failed
+  left: "true|true|false|true|false|false|false|true"
+ right: "true|true|true|true|true|true|true|true"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    dom_js::stylesheet_owner_node_tracks_association
+
+test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 651 filtered out; finished in 0.03s
+
+error: test failed, to rerun pass `-p pyro-webapi --test integration`
+real 44.76
+user 158.64
+sys 2.86
