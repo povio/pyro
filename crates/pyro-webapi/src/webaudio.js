@@ -700,6 +700,118 @@
   }
   webidl(GainNode, 'GainNode');
 
+  function shapeSample(curve, sample) {
+    const last = curve.length - 1;
+    if (sample <= -1) return curve[0];
+    if (sample >= 1) return curve[last];
+    const index = (sample + 1) * (last * 0.5);
+    const lower = floor(index), fraction = index - lower;
+    return (1 - fraction) * curve[lower] + fraction * curve[min(lower + 1, last)];
+  }
+
+  const shapingKernels = new Map();
+  function shapingKernel(factor) {
+    if (shapingKernels.has(factor)) return shapingKernels.get(factor);
+    const radius = 32 * factor;
+    const taps = Array.from({length: 2 * radius + 1}, (_, index) => {
+      const distance = (index - radius) / factor;
+      const phase = PI * index / radius;
+      const window = 0.42 - 0.5 * cos(phase) + 0.08 * cos(2 * phase);
+      return window * (distance === 0 ? 1 : sin(PI * distance) / (PI * distance)) / factor;
+    });
+    const sum = taps.reduce((total, tap) => total + tap, 0);
+    const normalized = taps.map(tap => tap / sum);
+    shapingKernels.set(factor, normalized);
+    return normalized;
+  }
+
+  function oversampleChannel(samples, curve, factor, history) {
+    const taps = shapingKernel(factor);
+    const past = history.input, shaped = history.shaped;
+    for (let frame = 0; frame < samples.length; frame++) {
+      past[history.write] = samples[frame];
+      for (let phase = 0; phase < factor; phase++) {
+        let interpolated = 0, read = history.write;
+        for (let tap = phase; tap < taps.length; tap += factor) {
+          interpolated += past[read] * taps[tap];
+          if (--read < 0) read = past.length - 1;
+        }
+        shaped[history.highWrite] = shapeSample(curve, factor * interpolated);
+        if (phase === 0) {
+          let filtered = 0, highRead = history.highWrite;
+          for (let tap = 0; tap < taps.length; tap++) {
+            filtered += taps[tap] * shaped[highRead];
+            if (--highRead < 0) highRead = shaped.length - 1;
+          }
+          samples[frame] = filtered;
+        }
+        history.highWrite = (history.highWrite + 1) % shaped.length;
+      }
+      history.write = (history.write + 1) % past.length;
+    }
+  }
+
+  const waveShapers = new WeakMap();
+  function shaperOf(self) {
+    const state = waveShapers.get(self);
+    if (!state) throw invocation();
+    return state;
+  }
+  function assignShaperCurve(state, curve) {
+    if (curve != null && !(curve instanceof F32)) throw new TypeErrorC('Expected a Float32Array.');
+    if (curve != null && (state.assigned || curve.length < 2)) {
+      throw new DE('Cannot assign this shaping curve.', 'InvalidStateError');
+    }
+    if (curve != null) state.assigned = true;
+    state.curve = curve == null ? null : new F32(curve);
+    state.history = [];
+  }
+  const oversamplingModes = ['none', '2x', '4x'];
+  class WaveShaperNode extends AudioNode {
+    constructor(context, options) {
+      contextArg(context, 'WaveShaperNode');
+      const inherited = readNodeOptions(options, 'WaveShaperNode');
+      const supplied = options?.curve;
+      const curve = supplied === undefined ? null : F32.from([...supplied], value => finite(fround(value), 'construct', 'WaveShaperNode'));
+      const setting = options?.oversample, mode = setting === undefined ? 'none' : `${setting}`;
+      if (!oversamplingModes.includes(mode)) throw new TypeErrorC('Invalid OverSampleType.');
+      super(secret, context, {});
+      applyNodeOptions(this, inherited);
+      const state = {curve: null, assigned: false, mode, history: []};
+      waveShapers.set(this, state);
+      if (curve !== null) assignShaperCurve(state, curve);
+      const node = nodeOf(this);
+      node.process = (frame, quantum) => {
+        const bus = input(node, quantum, frame) ?? Array.from({length: node.mode === 'explicit' ? node.channelCount : 1}, () => new F32(QUANTUM));
+        if (!state.curve) return bus;
+        state.history.length = bus.length;
+        for (let channel = 0; channel < bus.length; channel++) {
+          const samples = bus[channel];
+          if (state.mode === 'none') {
+            for (let index = 0; index < samples.length; index++) samples[index] = shapeSample(state.curve, samples[index]);
+          } else {
+            const factor = state.mode === '2x' ? 2 : 4;
+            const length = shapingKernel(factor).length;
+            const history = state.history[channel] ??= {input: new F32(ceil(length / factor)), shaped: new F32(length), write: 0, highWrite: 0};
+            oversampleChannel(samples, state.curve, factor, history);
+          }
+        }
+        return bus;
+      };
+    }
+    get curve() { const curve = shaperOf(this).curve; return curve === null ? null : new F32(curve); }
+    set curve(value) { assignShaperCurve(shaperOf(this), value); }
+    get oversample() { return shaperOf(this).mode; }
+    set oversample(value) {
+      const state = shaperOf(this), mode = `${value}`;
+      if (oversamplingModes.includes(mode) && mode !== state.mode) {
+        state.mode = mode;
+        state.history = [];
+      }
+    }
+  }
+  webidl(WaveShaperNode, 'WaveShaperNode');
+
   const analysers = new WeakMap();
   function analyserOf(self) {
     const state = analysers.get(self);
@@ -1782,6 +1894,7 @@
     createBufferSource() { return new AudioBufferSourceNode(this); }
     createConvolver() { return new ConvolverNode(this); }
     createGain() { return new GainNode(this); }
+    createWaveShaper() { return new WaveShaperNode(this); }
     createAnalyser() { return new AnalyserNode(this); }
     createDelay(maxDelayTime = 1) { return new DelayNode(this, {maxDelayTime}); }
     createPanner() { return new PannerNode(this); }
@@ -2099,6 +2212,6 @@
   return {
     localImpulseInfo, BaseAudioContext, AudioContext, OfflineAudioContext, AudioBuffer, AudioParam, AudioNode,
     AudioDestinationNode, AudioScheduledSourceNode, AudioBufferSourceNode, OscillatorNode,
-    ConstantSourceNode, GainNode, AnalyserNode, DelayNode, ConvolverNode, AudioListener, PannerNode, StereoPannerNode, BiquadFilterNode, IIRFilterNode, ChannelMergerNode, ChannelSplitterNode, OfflineAudioCompletionEvent,
+    ConstantSourceNode, GainNode, WaveShaperNode, AnalyserNode, DelayNode, ConvolverNode, AudioListener, PannerNode, StereoPannerNode, BiquadFilterNode, IIRFilterNode, ChannelMergerNode, ChannelSplitterNode, OfflineAudioCompletionEvent,
   };
 })
