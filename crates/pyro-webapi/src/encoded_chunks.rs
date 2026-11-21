@@ -33,7 +33,7 @@ fn from_init(s: &Scope<'_>, init: Value<'_>, video: bool) -> JsResult<EncodedChu
     // after the remaining getters/iterator have run, before detaching anything.
     let view = crate::encoding::encoding_helper(s, "fixedByteView")?;
     let data = init.get_atom("data")?;
-    view.call(None, &[data])?;
+    view.call(None, &[data, s.boolean(true)])?;
     let duration = init.get_atom("duration")?;
     let duration = if duration.is_undefined() { None } else { Some(integer(duration, 0.)? as u64) };
     let timestamp = integer(init.get_atom("timestamp")?, -9_007_199_254_740_991.)? as i64;
@@ -44,7 +44,7 @@ fn from_init(s: &Scope<'_>, init: Value<'_>, video: bool) -> JsResult<EncodedChu
         "delta" => false,
         _ => return Err(JsError::Type("Encoded chunk type must be key or delta".into())),
     };
-    let bytes = view.call(None, &[data])?;
+    let bytes = view.call(None, &[data, s.boolean(true)])?;
     let copy = crate::encoding::encoding_helper(s, "copyChunkInput")?.call(None, &[bytes, list])?;
     let data = crate::encoding::buffer_source_bytes(s, copy)?
         .ok_or_else(|| JsError::Type("Invalid encoded chunk data".into()))?;

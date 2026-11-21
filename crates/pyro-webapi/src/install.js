@@ -266,24 +266,26 @@
   // WebCodecs uses fixed BufferSources, including shared buffers and views.
   // Use brand-checking intrinsic getters so an overridden buffer or byteLength
   // property cannot change the range copied.
-  const fixedByteView = value => {
-    let buffer = value, offset = 0, length;
-    if (isView(value)) {
-      const typed = apply(viewName, value, []) !== undefined;
-      buffer = apply(typed ? viewBuffer : dataViewBuffer, value, []);
-      offset = apply(typed ? viewOffset : dataViewOffset, value, []);
-      length = apply(typed ? viewLength : dataViewLength, value, []);
-    }
-    let shared = false;
-    try { apply(bufferLength, buffer, []); }
+  const fixedByteView = (value, source = false) => {
+    let buffer = value;
+    const view = isView(value);
+    const typed = view && apply(viewName, value, []) !== undefined;
+    if (view) buffer = apply(typed ? viewBuffer : dataViewBuffer, value, []);
+    let shared = false, length;
+    try { length = apply(bufferLength, buffer, []); }
     catch (error) {
       if (!sharedLength) throw error;
-      apply(sharedLength, buffer, []);
+      length = apply(sharedLength, buffer, []);
       shared = true;
     }
     const variable = shared ? growable : resizable;
     if (variable && apply(variable, buffer, [])) throw new TypeError_('Expected a fixed-length buffer');
-    return new Uint8Array_(buffer, offset, length);
+    // Reading the bytes held by a detached input produces the empty byte
+    // sequence. A copy destination must remain writable.
+    if (source && length === 0) return new Uint8Array_(0);
+    if (!view) return new Uint8Array_(buffer);
+    const offset = apply(typed ? viewOffset : dataViewOffset, value, []);
+    return new Uint8Array_(buffer, offset, apply(typed ? viewLength : dataViewLength, value, []));
   };
   const transferBuffer = ArrayBuffer.prototype.transfer, byteSet = Uint8Array_.prototype.set;
   const Set_ = Set, setAdd = Set.prototype.add, setHas = Set.prototype.has;
@@ -291,8 +293,11 @@
   const chunkTransferList = value => {
     const out = [];
     if (value !== undefined) {
+      if (value === null || (typeof value !== 'object' && typeof value !== 'function'))
+        throw new TypeError_('Chunk transfer list must be a sequence');
       for (const entry of value) {
         apply(bufferLength, entry, []);
+        if (resizable && apply(resizable, entry, [])) throw new TypeError_('Expected a fixed-length transfer buffer');
         append(out, entry);
       }
     }

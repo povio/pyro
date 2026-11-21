@@ -7847,3 +7847,43 @@ fn a_resnap_follows_the_column_it_snapped_to() {
     assert_eq!(eval(&e.main, "s.style.width='200px';String(s.scrollLeft)"), "400");
     e.page.dispose();
 }
+
+#[test]
+fn encoded_chunks_snapshot_views_and_validate_transfers_before_detaching() {
+    let e = env("");
+    for class in ["EncodedAudioChunk", "EncodedVideoChunk"] {
+        let script = r#"(() => {
+            const C = globalThis[CLASS];
+            const buffer = new Uint8Array([0, 11, 22, 33]).buffer;
+            const config = { type: 'key', timestamp: -7, data: new DataView(buffer, 1, 2) };
+            let duplicate;
+            try { new C({...config, transfer: [buffer, buffer]}); } catch (ex) { duplicate = ex.name; }
+            const retained = buffer.byteLength;
+            const chunk = new C({...config, transfer: [buffer]});
+            const bytes = new Uint8Array(4).fill(9);
+            chunk.copyTo(new DataView(bytes.buffer, 1, 2));
+            return [duplicate, retained, buffer.byteLength, chunk.byteLength, chunk.timestamp,
+                    chunk.duration === null, bytes.join(',')].join('|');
+        })()"#;
+        assert_eq!(eval(&e.main, &script.replace("CLASS", &format!("'{class}'"))), "DataCloneError|4|0|2|-7|true|9,11,22,9");
+    }
+}
+
+#[test]
+fn encoded_chunks_clone_internal_slots_and_reject_storage() {
+    let e = env("");
+    for class in ["EncodedAudioChunk", "EncodedVideoChunk"] {
+        let script = format!("globalThis.chunk = new {class}({{type:'delta', timestamp:22, duration:5, data:new Uint8Array([3,8])}})");
+        eval(&e.main, &script);
+        assert_eq!(eval(&e.main, r#"(() => {
+            Object.defineProperty(chunk, 'type', {get(){throw Error('public accessor read')}});
+            const value = structuredClone({a:chunk,b:[chunk]});
+            const out = new Uint8Array(2);
+            value.a.copyTo(out);
+            return [value.a === value.b[0], value.a !== chunk, value.a.type, value.a.timestamp, value.a.duration, ...out].join(',');
+        })()"#), "true,true,delta,22,5,3,8");
+        let scope = e.main.scope().unwrap();
+        let graph = scope.eval("({nested:[chunk]})", None, 1).unwrap();
+        assert!(matches!(serialize_for_storage(&scope, graph), Err(pyro_js::JsError::Dom(ex)) if ex.name == "DataCloneError"));
+    }
+}
