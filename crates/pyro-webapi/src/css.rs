@@ -279,11 +279,7 @@ fn css_property(name: &str) -> bool {
 /// (`background-color`, as Chrome also exposes). Methods and attributes on
 /// the prototype win because the named hook does not override builtins.
 fn named_property(name: &str) -> Option<String> {
-    // The webkit-cased attributes (`WebkitTransform`) as the lowercase ones.
-    if let Some(rest) = name.strip_prefix("Webkit").filter(|r| r.starts_with(|c: char| c.is_ascii_uppercase())) {
-        return named_property(&format!("webkit{rest}"));
-    }
-    if !name.chars().next().is_some_and(|c| c.is_ascii_lowercase() || c == '-') {
+    if name.is_empty() {
         return None;
     }
     let css = if name.contains('-') {

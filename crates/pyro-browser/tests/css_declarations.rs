@@ -76,6 +76,13 @@ fn named_access_knows_real_properties_only() {
         ),
         "true,false,false,string,true,true"
     );
+    assert_eq!(
+        eval(&root, "const style = document.createElement('div').style;
+             style.MozAnimationDuration = '2s';
+             [style.animationDuration, style.getPropertyValue('-moz-animation-duration'),
+              'mozAnimationDuration' in style, 'AnimationDuration' in style].join('|')"),
+        "2s|2s|false|false"
+    );
     // A name that is no property is an ordinary expando.
     assert_eq!(
         eval(&root, "const e = document.createElement('div'); e.style.foo = 'x'; [e.style.foo, e.getAttribute('style')].join('|')"),
