@@ -160,7 +160,12 @@ pub(crate) fn queue_selectionchange(page: &Rc<PageDom>) {
 /// A text control's selectionchange bubbles from the control, even if
 /// several controls changed during the same task.
 pub(crate) fn queue_control_selectionchange(page: &Rc<PageDom>, control: NodeId) {
-    queue_selectionchange_at(page, Some(control));
+    // Chromium reports changes inside a shadow tree on the document.
+    let in_shadow = {
+        let dom = page.dom.borrow();
+        dom.shadow_root_count() != 0 && dom.root_node(control, false).and_then(|root| dom.is_shadow_root(root)).unwrap_or(false)
+    };
+    queue_selectionchange_at(page, (!in_shadow).then_some(control));
 }
 
 fn queue_selectionchange_at(page: &Rc<PageDom>, target: Option<NodeId>) {
