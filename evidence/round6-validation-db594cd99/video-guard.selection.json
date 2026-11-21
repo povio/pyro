@@ -1,0 +1,21 @@
+[
+ "html/canvas/element/drawing-images-to-the-canvas/2d.drawImage.3arg.html",
+ "html/canvas/element/drawing-images-to-the-canvas/2d.drawImage.9arg.basic.html",
+ "html/canvas/element/drawing-images-to-the-canvas/2d.drawImage.alpha.html",
+ "html/canvas/element/drawing-images-to-the-canvas/2d.drawImage.canvas.html",
+ "html/canvas/element/drawing-images-to-the-canvas/2d.drawImage.transform.html",
+ "html/canvas/element/drawing-images-to-the-canvas/2d.drawImage.wrongtype.html",
+ "html/canvas/element/drawing-images-to-the-canvas/2d.drawImage.wrongtype.paragraph.html",
+ "html/canvas/offscreen/drawing-images-to-the-canvas/2d.drawImage.3arg.html",
+ "html/canvas/offscreen/drawing-images-to-the-canvas/2d.drawImage.3arg.worker.html",
+ "html/canvas/offscreen/drawing-images-to-the-canvas/2d.drawImage.9arg.basic.html",
+ "html/canvas/offscreen/drawing-images-to-the-canvas/2d.drawImage.9arg.basic.worker.html",
+ "html/canvas/offscreen/drawing-images-to-the-canvas/2d.drawImage.alpha.html",
+ "html/canvas/offscreen/drawing-images-to-the-canvas/2d.drawImage.alpha.worker.html",
+ "html/canvas/offscreen/drawing-images-to-the-canvas/2d.drawImage.canvas.html",
+ "html/canvas/offscreen/drawing-images-to-the-canvas/2d.drawImage.canvas.worker.html",
+ "html/canvas/offscreen/drawing-images-to-the-canvas/2d.drawImage.transform.html",
+ "html/canvas/offscreen/drawing-images-to-the-canvas/2d.drawImage.transform.worker.html",
+ "html/canvas/offscreen/drawing-images-to-the-canvas/2d.drawImage.wrongtype.html",
+ "html/canvas/offscreen/drawing-images-to-the-canvas/2d.drawImage.wrongtype.worker.html"
+]

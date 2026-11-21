@@ -1,0 +1,236 @@
+{
+ "focus-00": {
+  "count": 32,
+  "jobs": 2,
+  "old": 172,
+  "new": 172,
+  "gains": 0,
+  "losses": 0,
+  "nameDifferences": 0,
+  "oldFull": 7,
+  "newFull": 7,
+  "fullGains": [],
+  "fullLosses": [],
+  "restarts": 0,
+  "watchdog": 0,
+  "statuses": {
+   "complete": 32
+  },
+  "referenceHash": "ff044f0864743a2d0423d22c3b359380d28f240087804019c5df1deaccc1525e",
+  "receiptHash": "5efbaaf501e8db60938d7cf4aa9a67a9abdae70f5c66d4f7a2bd038100f8d244"
+ },
+ "guard-00": {
+  "count": 33,
+  "jobs": 2,
+  "old": 779,
+  "new": 779,
+  "gains": 0,
+  "losses": 0,
+  "nameDifferences": 0,
+  "oldFull": 27,
+  "newFull": 27,
+  "fullGains": [],
+  "fullLosses": [],
+  "restarts": 0,
+  "watchdog": 0,
+  "statuses": {
+   "complete": 33
+  },
+  "referenceHash": "cb3a7e683781e47e07212b195a8084e528faece60ad22a4cae1929c5edbf674b",
+  "receiptHash": "5d52b4abb1d24b784d0ef0270bf8f400e095e5ed957e38d2dad8126b168e0d2d"
+ },
+ "navigator-00": {
+  "count": 20,
+  "jobs": 4,
+  "old": 279,
+  "new": 279,
+  "gains": 0,
+  "losses": 0,
+  "nameDifferences": 0,
+  "oldFull": 7,
+  "newFull": 7,
+  "fullGains": [],
+  "fullLosses": [],
+  "restarts": 0,
+  "watchdog": 0,
+  "statuses": {
+   "error": 5,
+   "complete": 15
+  },
+  "referenceHash": "1d0a0ab2f8f1ae274087f1431cf659955bb7aabd657630a77f14827183c7e957",
+  "receiptHash": "ba634640a643ca652ebd898fcdd6ee6863307e1d8addc1624d16e78d13e67619"
+ },
+ "production-00": {
+  "count": 58,
+  "jobs": 2,
+  "old": 9188,
+  "new": 9178,
+  "gains": 54,
+  "losses": 64,
+  "nameDifferences": 30,
+  "oldFull": 14,
+  "newFull": 12,
+  "fullGains": [
+   "referrer-policy/gen/iframe.meta/default/iframe-tag.http.html",
+   "referrer-policy/gen/iframe.meta/unset/iframe-tag.http.html"
+  ],
+  "fullLosses": [
+   "referrer-policy/gen/iframe.meta/no-referrer/iframe-tag.http.html",
+   "referrer-policy/gen/srcdoc-inherit.meta/origin/iframe-tag.http.html",
+   "referrer-policy/gen/srcdoc.meta/always/iframe-tag.http.html",
+   "referrer-policy/gen/srcdoc.meta/origin/iframe-tag.http.html"
+  ],
+  "restarts": 0,
+  "watchdog": 0,
+  "statuses": {
+   "complete": 56,
+   "timeout": 2
+  },
+  "referenceHash": "4546960a0703a04c84616bca2aff125882fbd4c1ac6136f7e71f63014904e69f",
+  "receiptHash": "34038bb8d549b6ccae6a3dd0703dcad28089a95c171fd954f692574dc78da157"
+ },
+ "css-00": {
+  "count": 80,
+  "jobs": 2,
+  "old": 297,
+  "new": 298,
+  "gains": 1,
+  "losses": 0,
+  "nameDifferences": 0,
+  "oldFull": 69,
+  "newFull": 70,
+  "fullGains": [
+   "css/css-animations/transition-ready-time-offscreen.html"
+  ],
+  "fullLosses": [],
+  "restarts": 0,
+  "watchdog": 0,
+  "statuses": {
+   "complete": 80
+  },
+  "referenceHash": "2fc7fc89ed7a99093c64cfb0f79713a35b31e4c22a2e7eb4644c0db4ed312295",
+  "receiptHash": "04ba6a0a9979a9a8fe17b829131f56019b71f48a37ef70342b95a8985e0ed6dc"
+ },
+ "css-01": {
+  "count": 80,
+  "jobs": 2,
+  "old": 535,
+  "new": 535,
+  "gains": 0,
+  "losses": 0,
+  "nameDifferences": 0,
+  "oldFull": 48,
+  "newFull": 48,
+  "fullGains": [],
+  "fullLosses": [],
+  "restarts": 0,
+  "watchdog": 0,
+  "statuses": {
+   "complete": 80
+  },
+  "referenceHash": "38e7478848a477cd4c847d0e54bcc562f945b1ba3d7129b25453f525d0d9524e",
+  "receiptHash": "869850bd7d7dad28b1194f4e9e34d8bd8bd01f64898a2146940f18b54a6ab81c"
+ },
+ "css-02": {
+  "count": 80,
+  "jobs": 2,
+  "old": 1621,
+  "new": 1621,
+  "gains": 0,
+  "losses": 0,
+  "nameDifferences": 0,
+  "oldFull": 52,
+  "newFull": 52,
+  "fullGains": [],
+  "fullLosses": [],
+  "restarts": 0,
+  "watchdog": 0,
+  "statuses": {
+   "complete": 80
+  },
+  "referenceHash": "bec16d12a91fe54e8087609d46062e6fa84681972539f4f3e069ad6969c17536",
+  "receiptHash": "d527bbd49d0910531a4fee908d84c0bdcc1273d75a66cf60ce2c656787b7abbd"
+ },
+ "css-03": {
+  "count": 75,
+  "jobs": 2,
+  "old": 1513,
+  "new": 1514,
+  "gains": 1,
+  "losses": 0,
+  "nameDifferences": 0,
+  "oldFull": 55,
+  "newFull": 56,
+  "fullGains": [
+   "css/css-transitions/CSSTransition-startTime.tentative.html"
+  ],
+  "fullLosses": [],
+  "restarts": 0,
+  "watchdog": 0,
+  "statuses": {
+   "complete": 75
+  },
+  "referenceHash": "6db1d333f23c87a4a7859087ca356be2c13d712218ea60be65152b9ef0c5e762",
+  "receiptHash": "66e49c30ae232a2600b163b8ff909dee0f57be6e256cd3e32c5283b318d8cfb1"
+ },
+ "video-focus": {
+  "count": 30,
+  "jobs": 4,
+  "old": 922,
+  "new": 922,
+  "gains": 0,
+  "losses": 0,
+  "nameDifferences": 0,
+  "oldFull": 18,
+  "newFull": 18,
+  "fullGains": [],
+  "fullLosses": [],
+  "restarts": 0,
+  "watchdog": 0,
+  "statuses": {
+   "complete": 30
+  },
+  "referenceHash": "bc86abd0612cbf3817f5c6836e146976ad4e9f7f294b1bca8f2e4fe6832e9afc",
+  "receiptHash": "42ec771b82cbadccef3a2713af7f431261fe070f6f7712b540f240c600297946"
+ },
+ "video-guard": {
+  "count": 19,
+  "jobs": 4,
+  "old": 19,
+  "new": 19,
+  "gains": 0,
+  "losses": 0,
+  "nameDifferences": 0,
+  "oldFull": 19,
+  "newFull": 19,
+  "fullGains": [],
+  "fullLosses": [],
+  "restarts": 0,
+  "watchdog": 0,
+  "statuses": {
+   "complete": 19
+  },
+  "referenceHash": "bd9b957fc5d94fce7aa1c72cee0b64d9acbf7fb24de7365ee22c4da2d2db95d6",
+  "receiptHash": "8d12f72db364f92ffa3b709f37f043b3834ca83d6dcfc90c8382d3a395459b1f"
+ },
+ "css-values": {
+  "count": 227,
+  "jobs": 1,
+  "old": 4537,
+  "new": 4538,
+  "gains": 1,
+  "losses": 0,
+  "nameDifferences": 0,
+  "oldFull": 171,
+  "newFull": 171,
+  "fullGains": [],
+  "fullLosses": [],
+  "restarts": 0,
+  "watchdog": 0,
+  "statuses": {
+   "complete": 227
+  },
+  "referenceHash": "e41d2480640f50539c13f57bb05c20a4a9f5b12a702230f850ca3121b365c6f0",
+  "receiptHash": "326bcf33437fcfd43d3b5a4bb2f1ae89cecd8adb8a46c9e656db0866fab565d9"
+ }
+}

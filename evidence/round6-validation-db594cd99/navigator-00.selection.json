@@ -1,0 +1,22 @@
+[
+ "html/webappapis/system-state-and-capabilities/the-navigator-object/protocol-handler-fragment-nosw.https.html",
+ "html/webappapis/system-state-and-capabilities/the-navigator-object/protocol-handler-fragment.https.html",
+ "html/webappapis/system-state-and-capabilities/the-navigator-object/protocol-handler-path.https.html",
+ "html/webappapis/system-state-and-capabilities/the-navigator-object/protocol-handler-query-nosw.https.html",
+ "html/webappapis/system-state-and-capabilities/the-navigator-object/protocol-handler-query.https.html",
+ "html/webappapis/system-state-and-capabilities/the-navigator-object/clientinformation.window.html",
+ "html/webappapis/system-state-and-capabilities/the-navigator-object/historical.https.window.html",
+ "html/webappapis/system-state-and-capabilities/the-navigator-object/navigator-indexed.html",
+ "html/webappapis/system-state-and-capabilities/the-navigator-object/navigator-window-controls-overlay.tentative.html",
+ "html/webappapis/system-state-and-capabilities/the-navigator-object/navigator.any.html",
+ "html/webappapis/system-state-and-capabilities/the-navigator-object/navigator.any.worker.html",
+ "html/webappapis/system-state-and-capabilities/the-navigator-object/navigator_user_agent.https.tentative.html",
+ "html/webappapis/system-state-and-capabilities/the-navigator-object/navigator_user_agent.tentative.html",
+ "html/webappapis/system-state-and-capabilities/the-navigator-object/navigatorcookies-cookieenabled-true.html",
+ "html/webappapis/system-state-and-capabilities/the-navigator-object/navigatorlanguage.html",
+ "html/webappapis/system-state-and-capabilities/the-navigator-object/per-global.window.html",
+ "html/webappapis/system-state-and-capabilities/the-navigator-object/plugins-and-mimetypes.html",
+ "html/webappapis/system-state-and-capabilities/the-navigator-object/protocol.https.html",
+ "html/webappapis/system-state-and-capabilities/the-navigator-object/protocol.tentative.https.html",
+ "html/webappapis/system-state-and-capabilities/the-navigator-object/secure_context.html"
+]
