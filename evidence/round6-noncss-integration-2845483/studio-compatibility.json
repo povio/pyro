@@ -1,0 +1,123 @@
+{
+  "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+  "version": "158.0.8127.37",
+  "studioSources": {
+    "main": {
+      "gitCommit": "fd629a078f697139cf140adbb2a315e90037bb25",
+      "gitPath": "docs/validation/studio-css-e4ca26/outcomes-stable.json.gz",
+      "gitBlob": "8f51ddbfad5b177acd9066966a5d3fc6a817172a",
+      "sha256": "4049009812e28c840e1cda0d20132ca919f263ba68cdd336da09ed7080163107"
+    },
+    "supplement": {
+      "gitCommit": "8e84143126a3335af41906350060477c69751616",
+      "gitPath": "docs/validation/studio-css-e4ca26/chrome-wpt-cert-supplement.json.gz",
+      "gitBlob": "441d659650ac25a5b69727fb68c0071a75c6d422",
+      "sha256": "3b48fbdbb8038f7e7e3c8cd7c5dc9dfccd91c7bfbaa4b8b27febda6349e90fa6"
+    },
+    "coverage": {
+      "gitCommit": "fd629a078f697139cf140adbb2a315e90037bb25",
+      "gitPath": "docs/validation/studio-css-e4ca26/coverage.json.gz",
+      "gitBlob": "3e943bc7767d7ec76e4052b8dc9afdbb49bc5d7a",
+      "sha256": "72c1ac0e4ffff23ff0dae5d5a9db9fb3fa87e3c12aef273fb5ce67e58a580c7f"
+    },
+    "mainReadme": {
+      "gitCommit": "fd629a078f697139cf140adbb2a315e90037bb25",
+      "gitPath": "docs/validation/studio-css-e4ca26/README.md",
+      "gitBlob": "7b25e360f6b87b9273c20c132662e076bfde3473",
+      "sha256": "e84302d86e5595a198c4df1ceb87798810b4febd8ff846377914870d20851a1e"
+    },
+    "supplementReadme": {
+      "gitCommit": "8e84143126a3335af41906350060477c69751616",
+      "gitPath": "docs/validation/studio-css-e4ca26/color-gap-controls.md",
+      "gitBlob": "5bab88cd6bb9a5549b54eacaf3e559a55f3c5614",
+      "sha256": "17977ab2021eff8e6cfc1fbd8f9274ed3f9b3239db59fd78c1b2a9eb7f974ebb"
+    }
+  },
+  "studioInventory": 8162,
+  "studioRecorded": {
+    "observed": 8123,
+    "full": 6985,
+    "named": 195786,
+    "namedPass": 183582
+  },
+  "studioOnly": 7032,
+  "missingBoth": 39,
+  "crossMachineCoverage": {
+    "studio-only": 7032,
+    "neither": 39,
+    "both": 1091
+  },
+  "paired": {
+    "matched": 1091,
+    "studioNamed": 36965,
+    "localNamed": 36966,
+    "studioPass": 35121,
+    "localPass": 35121,
+    "commonPass": 35117,
+    "onlyStudioPass": 4,
+    "onlyLocalPass": 4,
+    "studioFull": 967,
+    "localFull": 966,
+    "bothFull": 966,
+    "onlyStudioFull": 1,
+    "onlyLocalFull": 0,
+    "namesMissingLocal": 5,
+    "namesMissingStudio": 6
+  },
+  "byStudioCohort": {
+    "original 8082": {
+      "matched": 1050,
+      "studioNamed": 36091,
+      "localNamed": 36092,
+      "studioPass": 34502,
+      "localPass": 34502,
+      "commonPass": 34498,
+      "onlyStudioPass": 4,
+      "onlyLocalPass": 4,
+      "studioFull": 932,
+      "localFull": 931,
+      "bothFull": 931,
+      "onlyStudioFull": 1,
+      "onlyLocalFull": 0,
+      "namesMissingLocal": 5,
+      "namesMissingStudio": 6
+    },
+    "certified 41": {
+      "matched": 41,
+      "studioNamed": 874,
+      "localNamed": 874,
+      "studioPass": 619,
+      "localPass": 619,
+      "commonPass": 619,
+      "onlyStudioPass": 0,
+      "onlyLocalPass": 0,
+      "studioFull": 35,
+      "localFull": 35,
+      "bothFull": 35,
+      "onlyStudioFull": 0,
+      "onlyLocalFull": 0,
+      "namesMissingLocal": 0,
+      "namesMissingStudio": 0
+    }
+  },
+  "strictPageDifferences": [
+    [
+      "css/css-pseudo/text-selection.html",
+      true,
+      false
+    ]
+  ],
+  "namedDifferencesLargest": [
+    [
+      "css/css-fonts/test_font_feature_values_parsing.html",
+      2,
+      4
+    ],
+    [
+      "css/css-pseudo/text-selection.html",
+      2,
+      0
+    ]
+  ],
+  "originalDriverSettings": "Studio: headless CDP/disposable profile, 16 original Chrome shards; 4 used disabled extensions/component background pages. Supplemental 41 used the WPT leaf SPKI. Exact browser flags, per-shard concurrency, Playwright version and raw server port configurations are not fully specified by those receipts. Local: Playwright 1.65.1, isolated WPT stable preset, SPKI, native GPU, H2, 4 jobs. Use original subtest names and one-based occurrences across machines; do not infer an absent server port mapping."
+}

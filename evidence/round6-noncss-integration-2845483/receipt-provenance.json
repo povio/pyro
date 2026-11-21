@@ -1,0 +1,3422 @@
+{
+ "base/preflight-000": {
+  "sha256": "98e0f523ff33d2ae8bb81645a1fea6b907717b9bfa64d81c41454ba4b2ee863b",
+  "logSHA256": "e8ee810c119df2ce174ea2b497f4b478e3c9c0be958898412a6f78e2bbbd3a9e",
+  "serverConfigSHA256": "22374de8315c964565a8a1fb3e48d03532372306f1cc80ba9bb71a6a452b8c59",
+  "reported": 6,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/preflight-000": {
+  "sha256": "015f2a7be21a85cdb621dfd55c7ed772009760c19ff22005a1f1d42989c5b2a4",
+  "logSHA256": "71ffb6e3223b2d5684051fe19ab07494d6eeeedd8995122d95a163bd43958e8e",
+  "serverConfigSHA256": "9d466b4a164c5ce54341464ffcd217f066697b3b506afdafbe319dbed809c794",
+  "reported": 6,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/guard-history-000": {
+  "sha256": "0591d980bafc6d199637f0b928ba6f3130ec2c3c99bf33107f1b7e0817b5d347",
+  "logSHA256": "0830c842734bf38cad2b57a26e51d3e3a6c4097c535a520905d50851cf9d5c87",
+  "serverConfigSHA256": "df15073dbf1e2e577b9e38a418f14801c00262630c086f62c5aa8aa7df16e06f",
+  "reported": 48,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/guard-history-000": {
+  "sha256": "fdb5a5163c9985f4b01a792943b738ae1244f1f7fe1923c67808cc932f86f171",
+  "logSHA256": "e158778f181ba37946bcf27f331ddb3b343171dc53bf047d6d55f0ecd47dc149",
+  "serverConfigSHA256": "8722b9b4308f3cb1e35165d0131e6632b8097ac03ac8f58d9a349ad30fd63655",
+  "reported": 48,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/guard-history-001": {
+  "sha256": "57d0f6e73f6189a76e42da5a845eecc85314c86aede5e0a22c1a85395ddc062b",
+  "logSHA256": "5954dba3ef64a6d0af96abf11a5fc2facbe2a56adf5b6c12e1abc390ed772d47",
+  "serverConfigSHA256": "334f96ec86bf476b64fce4e95cc45d5d428f7f309ea7ef4fcd977d8177652967",
+  "reported": 55,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/guard-history-001": {
+  "sha256": "f4aaebfeea59fb91563ad22b39a4868c1479ed146c3088ecc53bec25125009c3",
+  "logSHA256": "83b2a1bf0b8f0b460bc2625c2104e360223b1e5d4f8b1ce9fa05807935b3f863",
+  "serverConfigSHA256": "2cfeb01e1ac4166be90ae1e636fb368605310b60f8df5b442cbc9be4995d5610",
+  "reported": 55,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/guard-history-002": {
+  "sha256": "c8401c9b23b3a17f39e058835ee9ae3318db3754c838cc3fe3519cf823cf1720",
+  "logSHA256": "a4ae9c8f5b541c61537cf27a6d635a4aca0ab2ac822e0697bb8a80c9a72e6e64",
+  "serverConfigSHA256": "517d7f5905be646a7e67e771b50f944246f389ed6b43027e17d1045a5cb546a5",
+  "reported": 55,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/guard-history-002": {
+  "sha256": "57f029fba6e782174ddc0e1e314e4cfb6317f7820caf4ddd0d76e709643a5755",
+  "logSHA256": "b53e5501ab363cbe7a7a262e532442eb21cdcfc00212b92ad584bbe63a3a0835",
+  "serverConfigSHA256": "8571a3baab3f89ffaa588ca15e8017ff0e11efc9fcb542fdb3faab9bf1b39822",
+  "reported": 55,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/guard-css-000": {
+  "sha256": "ed6d78e54d2549a7c26006ba1d01e6ff0e88268c9cc1e4b3ec583c18174ac6c1",
+  "logSHA256": "bc7462f0466f3f5f714f46f0ff368c865420bbb378b7b1522dc61f899789cbab",
+  "serverConfigSHA256": "6fa6cdf4b52c5e247eb7ea377630014071312c6935426094546d546fe5e11abf",
+  "reported": 122,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/guard-css-000": {
+  "sha256": "4744dfb93ebf64b4a6233671487106d9048f6b74a4d8fb8222403c888cbc7e82",
+  "logSHA256": "a97b342c816b7fd0a12c8591d2018897fdf88cb6e5201f9c8ebf9d05b58956b1",
+  "serverConfigSHA256": "533aaefbdd5c0de710bd26c73547e112b6e5af304012fcdee51514381f984f8e",
+  "reported": 122,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/guard-css-001": {
+  "sha256": "411c585d5e8b3cfd30153446429f214ec5c67cdfdb37859baeed1199c412bdf8",
+  "logSHA256": "404f7087e8ac753789af22ef7e9f64ffe17297595130636f9b844573e84405ac",
+  "serverConfigSHA256": "4e1be2a7ef8fc1d39032a8dc12314df1b3843626af98958e5e49f868d163cdcd",
+  "reported": 122,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/guard-css-001": {
+  "sha256": "dac4b2b8dcb3c25e9fe999aac2de566fb728ee711f887ce211b8573149365dd3",
+  "logSHA256": "c40e289d107dddb3176c3546309b60e921219eefffa78ff08695b0c4749947bb",
+  "serverConfigSHA256": "0661f9d993b48f128e92281afc9d0bb93dae50b3cb70ce00c04e5520f1f81935",
+  "reported": 122,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/guard-css-002": {
+  "sha256": "188ebe732ff3a55b508c9112d7bc7bd85b88824da9e0afd6fcd00d0d1eddce32",
+  "logSHA256": "fbf3a336b36bc211c4014a76e3b389ec225a18172ee79a9e212ced66b86ef507",
+  "serverConfigSHA256": "dd22d75afd58eae4d4b34b62d5228b225d6bd4cb77ebbab71c95f91604cacbd0",
+  "reported": 121,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/guard-css-002": {
+  "sha256": "eaf0f8dfd3c21c85b26e6b92df88c0c8ac1f90ad59fe461d409702e821102951",
+  "logSHA256": "9c6c1f8101158a02c3a9c27456c5938abd18e7e90b6d45a6565de785e5868a66",
+  "serverConfigSHA256": "8e34e01d0ed17371c6ec2dd2dde182b7a8f625b8fe0583e5e10e6faffb3d8f41",
+  "reported": 121,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/guard-css-003": {
+  "sha256": "efe64c7d2fb1c1f710ca3cc6cfb3fd89d87df9aff9084ff77a14851c6bc30a31",
+  "logSHA256": "0ba033bf58f797bdd07ce5256f8388039fce8daecd238919af63b539c1c0ba27",
+  "serverConfigSHA256": "3c1d975ae3ac503a1000c31aea490cb386bc168304fef4855228a1539c9c2f74",
+  "reported": 121,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/guard-css-003": {
+  "sha256": "ffc2b7e5ae07e9489874300cb5d488a8e8d6ffb3ca70b28581030a725624d68d",
+  "logSHA256": "e391edb4b4ff8842aa83a0e5d3569f2aa307a0f3e9d7414ce3b30193b9ba4249",
+  "serverConfigSHA256": "00d4ac5b2ffbf79134a37d60c1730790cb419da048c052b3c194f1d9acc9abc1",
+  "reported": 121,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/guard-css-004": {
+  "sha256": "ba5ef740572a03eed7b30324e828d2c24e6954c96e109a19e5f154458afbaeda",
+  "logSHA256": "977650506935e137f63457a7a59286867cfaad2b386360bc2914a75194116a91",
+  "serverConfigSHA256": "ccfd45299bf53280a94238449316b49b9041d9428a98d9ae057cd1d950d67d59",
+  "reported": 121,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/guard-css-004": {
+  "sha256": "368294c7696e2324e6328d354a2d4e143e343b351458256cfd4c6488ec02819c",
+  "logSHA256": "bb1a756fef8e6080738a4b01ed302c146e281128d9ca0ff5e1d44b7ed8633f97",
+  "serverConfigSHA256": "d5c33a0d79d362a079fd630cd6bd76740e6df2a28648a4a032ecf19536dfbd69",
+  "reported": 121,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/guard-css-005": {
+  "sha256": "f46582351b270f7eaf8e8bd946bb307c333ad6a4fd40bc26ba4c41ab0d60c2cf",
+  "logSHA256": "614f6742a7a973a8e74c17e084e300738739c1aa879c7e179f92d88bd6e45b53",
+  "serverConfigSHA256": "1fd745596803ea8787c0644eeeac5b7d9fb0305b99b3affc18921d5a9714861a",
+  "reported": 121,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/guard-css-005": {
+  "sha256": "310eb8c0105d0038fbd7900c869760f459008d955a9572f867c28f5d792d630e",
+  "logSHA256": "31fb766135541eaac260beca3a0c9f23adabc703af4a7414540ab797e6d0b591",
+  "serverConfigSHA256": "c573792a168ed346ed1b5e66a284ed25f3482c37c2296db7aefadc7c4d6783d3",
+  "reported": 121,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/guard-css-006": {
+  "sha256": "a133206914aa2175f220277bea2ef692bfc5e8981dfa82e3a136dfe632e0c5cb",
+  "logSHA256": "7bcc510b838081c5308b4b005eec833b530f6b2b93e099eac07ebae6069befe3",
+  "serverConfigSHA256": "f7bac65e5ba14d2932766ed96e4d215711bde384a076b97dada040adca9d4f07",
+  "reported": 121,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/guard-css-006": {
+  "sha256": "278dc0dafd6c204cfc9d2a8ab7591c2af803fb9ed9465be4794d729c0a1614d0",
+  "logSHA256": "d40e9f4bd0cf3e85b0a63056a07374e2456a672a31989288e89cb0955e2f5db7",
+  "serverConfigSHA256": "d72f1560d4ed832e719b5cf3b63e660a57da4664e70f4b089d25f64d430f351b",
+  "reported": 121,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/guard-css-007": {
+  "sha256": "a2f2633e83473fd483215e909aaf3e9e2614065f0db1707a02b527da3241c0a4",
+  "logSHA256": "08728bc739e82ed3923d1cb199f89efd4ba160c14d6e7e54caebe6a452d5b585",
+  "serverConfigSHA256": "6d53a8e9cfb2fea4cf120140b1af9b7f293e18b791208f3a1da9fd1dc6e02f40",
+  "reported": 121,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/guard-css-007": {
+  "sha256": "086abae2515dae2ffd7499fc321f9b98c43e448542d795d5c29932c3fb15e725",
+  "logSHA256": "c814e410cbef2d90839688cccea610e2d936857658cdf6eabd1efb68f16dc65c",
+  "serverConfigSHA256": "7a2a782d6159bbea100e9597220a4848a7f83c1909ec87d8953b6a97b96e1eb4",
+  "reported": 121,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/guard-css-008": {
+  "sha256": "c265f94c17161d09798c9dcbb8dd3005bda9d8e6995a4f597895f325d707628f",
+  "logSHA256": "a31823e5e06ec8f1a42dfbce1dfa8e784736c717f02188aad03aae0bf85e049b",
+  "serverConfigSHA256": "d27d6620a592b4b3b21e5f5b0b9e13b7cb95c5b2f792f3050b2fa2a1f0e62a81",
+  "reported": 121,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/guard-css-008": {
+  "sha256": "e5ac132e4a55b1197d36488d5861ca3d2bb602f084a7341db3e0504bd528b47f",
+  "logSHA256": "d3ba8fc22f2e999281fc063c90e58c3a407d843b92bb2d9aba9eaf0e14256d12",
+  "serverConfigSHA256": "48e6666c751cad3bba7be544afbc19741867d6b6b021d25ec88371b97275998f",
+  "reported": 121,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/guard-main-000": {
+  "sha256": "b006a0aaa63982ef387dc3f4a475e83a9804cb5f4891a4e6cb57a25acdd9160c",
+  "logSHA256": "84d96018d64b2e63f90453b9707ff6496a98ad3443f14df8f877b712b61108ca",
+  "serverConfigSHA256": "9848445641d5031cb15d599e682c352d592b2eadd1d37f9658e5fde10577ef1b",
+  "reported": 80,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/guard-main-000": {
+  "sha256": "46074da948386b5f5202c3f3e031118e93b4a45f6084c811c5ec222ceff7722d",
+  "logSHA256": "0326e3d81e75913a247eac3655bbd831de472337b0f951fb92cf6f36f02903bf",
+  "serverConfigSHA256": "b6cc832deec9e8e98cef8bac857321de2d3df698adda4b94419b5f13cce344b5",
+  "reported": 80,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/guard-main-001": {
+  "sha256": "08bc36744feeff487516f19de5fe7720aa5f2c6175feb112400b696ec7c7a94e",
+  "logSHA256": "045fe66a0bd1690c4cf752bfc82a015bde4a593d1e157b84bdae10e3f7eb3d43",
+  "serverConfigSHA256": "49a3e65f14106c68450a5e512b1b5b75d9effe1883074e59dd2010565557e8c5",
+  "reported": 82,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/guard-main-001": {
+  "sha256": "ce085542b738d9727d5bdf5f0d6659f17e246f14c22ac53c00b059bd02ebf712",
+  "logSHA256": "d289568646a6b0949ebffef0b994ed5a0522afeb6d514fde9332fa01534f2771",
+  "serverConfigSHA256": "7e6984dcc6e7ee377d999c6b3e7124f2b67cea9db711da21d2b58913af450f28",
+  "reported": 82,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/guard-main-002": {
+  "sha256": "ff9db9bd12e47fc92fabcd9b7896613272a1c315a654a85bedf015af20868631",
+  "logSHA256": "27f37e07d2894116d9dca1d2a7e1eeb3c8f44630aa15b7ee354d266b48f265c5",
+  "serverConfigSHA256": "e77edd5e3f697c3ee8d02a8363dd07a2c30f2b6d7b0da0ba822b69c160f4198b",
+  "reported": 81,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/guard-main-002": {
+  "sha256": "d8ab42839ff9d6f030ec6122b0d720f899d647a7559e8a2acaf42c250afea15a",
+  "logSHA256": "d735bd386fab333a625d6fb11b7665cdfd162e3240d4c830d61a330ef8e18793",
+  "serverConfigSHA256": "8bad7e06b23706967141d781a2d18015b95fab270527ad2f56f9a9330888a027",
+  "reported": 81,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/guard-main-003": {
+  "sha256": "b6ab8bb662077d38146546d03d0378fdcb63962cab1b9657faed0cdb52aa4a5f",
+  "logSHA256": "3543050dad7e429cdd73df42c0e52af12da3369cbaecbb2e8818f7a686377b3e",
+  "serverConfigSHA256": "be9da210e2faf6da12d80a1f91399a687501f6aaeeeebefd28f86dc5941ca050",
+  "reported": 90,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/guard-main-003": {
+  "sha256": "d08b444cbe7f2ae869c482b8207adb41f4f58df225d0d0a288ebd539e5588a8c",
+  "logSHA256": "debbff2c0032fd3ead0676c4bc9e6bfbcbc4050c48489498f6c4cf64efd73799",
+  "serverConfigSHA256": "8b3ffd942e5a7d49cd74206a8e5463092edca11fe55542284e52d0607cb67b94",
+  "reported": 90,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/guard-main-004": {
+  "sha256": "a2bcc1abb6149ba409dedd33e4fa7ef43a7738242c7ca88f947ba84234e7e217",
+  "logSHA256": "85fac68ab69cce56a0679c02ea7301689dc7ad9a74258b05298290b460e4d7c9",
+  "serverConfigSHA256": "b92ee77bd06c1dc243602f1e12644d3a38df2c1173eb5b2919f719cac423d91a",
+  "reported": 91,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/guard-main-004": {
+  "sha256": "00c17b4f397e306a59e35d23c55cdec8275f57b60b113a3462c6ddd01edbdd4d",
+  "logSHA256": "6d531d0c238e55c7f4ff0a95e623927d60fb24ba2a8cb92d990ccf65b8dd0b08",
+  "serverConfigSHA256": "69644104e085b09147059fbe1621e924e8994cdde25c9f48c2ce055a372e6952",
+  "reported": 91,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/guard-main-005": {
+  "sha256": "bda7105d8c2a723051afd1dbc3e22b99980293df662dd8b3946ada53364e17a2",
+  "logSHA256": "7276c4524da60b57e7f9b897d468ea9ea0baaa5a9ea34bbbf29a51dc75e11771",
+  "serverConfigSHA256": "ae571062b96c88d41fed732843a23b96d86c618ebf87a6338e00e3ac7ce25bd3",
+  "reported": 92,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/guard-main-005": {
+  "sha256": "0d0e197186300a8daa7779443ae8beecc32ccb6323f9ef009ad7233c931f5f29",
+  "logSHA256": "a28c25317f518eb250937e318cb7a1210d8250948c7a213a2297c29731cf4b88",
+  "serverConfigSHA256": "3f7ea10aff5306bfb068e24918acb9ce2e6ebd4534f1fd13a23079ce64b3bcc3",
+  "reported": 92,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/guard-main-006": {
+  "sha256": "d0d41a75434165b6ddbeecee125afb62dd70d498da16983af0fb4c551f7e5d2b",
+  "logSHA256": "b311901c55403c8273569e162f87a327f83f08d39a9c695773abfe7d0d4e5a0b",
+  "serverConfigSHA256": "4bb9274d46d740840744719d49b1844d5db3e9821c14d347eba7001d22809bba",
+  "reported": 93,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/guard-main-006": {
+  "sha256": "87e6895f0b2c178d2807f99ba498e9b104244a3c03ef800b868dee5da3916ff6",
+  "logSHA256": "5c83b5ab00a4b3e02fb62aef257558a9c6adf69a0f59996c46e0cec53e37f59d",
+  "serverConfigSHA256": "083f6f79e313a8a72216fbdd4a1a43663499310221ae4123c520825ed2ac2f71",
+  "reported": 93,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/guard-main-007": {
+  "sha256": "6977d7eb330473f47c2b7f65af0352c2ed15691450be55110cf251b9a9201361",
+  "logSHA256": "99ef9f651a59ee86e6c4b6d0270e8fbfe9285556a2b202985ded713cb09caccc",
+  "serverConfigSHA256": "f9bee1ac0d75f0cd9d9099b56722c51335ee320f7ea057d1cd291c9b45e67534",
+  "reported": 93,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/guard-main-007": {
+  "sha256": "14d216ad9cfcc73a2ad8b781740043bc4fefac45cafbca5eed12f631ec7d4c32",
+  "logSHA256": "c1f41bd5970d20001bd399fddd5fa9b122655587d501d20498cc83d1be86e508",
+  "serverConfigSHA256": "14c0563923d650582394a7e03847e91cd954c4e9159f01b640e6eada2a7f36ef",
+  "reported": 93,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/guard-main-008": {
+  "sha256": "f3f193e1498777a65ea2a523819614537d3ea26655288f07fb47f0bbe0185915",
+  "logSHA256": "994ab7dffcfe30c57584c1207dc0892d267a7ee2d436282d703fabd025592c91",
+  "serverConfigSHA256": "c8d041efe0cebde85b05beac9edd58f56dddef3efdbc862ffdbb93eb31ae79fa",
+  "reported": 93,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/guard-main-008": {
+  "sha256": "b37a31a3980409a8a2b975722a47ae6b05fae2e7a2b4c228930a392eaa8b3ff3",
+  "logSHA256": "b4f48122f46373bdcaa646e794b81dd3e25107e2fd4314bdaf72e2821f6ce5f1",
+  "serverConfigSHA256": "80c4960683d62f5f569b2f32a569eb6f82e58b1771a980026803cb180eac1492",
+  "reported": 93,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/guard-main-009": {
+  "sha256": "fbf4e1e2266867e43cd2b82c2364bea051fceaf3af3a06dfd08d3161a1799343",
+  "logSHA256": "6f739aa9c44817af0e6899b5a51c23b0652bddd1bd9801c88960613ffc532893",
+  "serverConfigSHA256": "ebcef09719d61fec97b400ce90daaf54d6a1e6efd5cd1eb6dbf4b2b4b680d1ae",
+  "reported": 94,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/guard-main-009": {
+  "sha256": "6d2d24f3500d669775e3239a0057736ae4ebd89cb1b15af19517b5fd345ed122",
+  "logSHA256": "e852a39a5cc082edb2bafe7c5cab28955f3ada631f3493c49246def900dd941b",
+  "serverConfigSHA256": "2ce20bfed8627655f4eaf424398349c683bd3f3c61604e7a647124ee01f817f8",
+  "reported": 94,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/guard-main-010": {
+  "sha256": "7e40eb59500574c637e486267a635d27e152f886677275416e62dd67da48d9e5",
+  "logSHA256": "7cd6889dd70abd246d4bcf10558ac22053d130a063ee88d5a698aed08e27311c",
+  "serverConfigSHA256": "6220679b7737dffb9240fbc41da2b139c3a58f6fc206995069a2cd7f970b9976",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/guard-main-010": {
+  "sha256": "6c2d0da46ff4893ec88c4dcdc109f7a44ed42c03144ef3f84809ab395f5a5396",
+  "logSHA256": "93c42fc822df6df32c8f343f7c8cf96ab6b5c23d127d17dd5cc12140fd6de432",
+  "serverConfigSHA256": "167bd0b175b3e9f333e045fe22c692feeb40a5bd5ee97952452d08c6324dd24b",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/guard-main-011": {
+  "sha256": "b826ab504aa1a1e3dce660028d687ab07bae180b5fc817da026fb82fc6cb8b23",
+  "logSHA256": "cd9dcb3b879a296d00bfe77402c1681e479e9eef31d881536d11186d97f4a1a1",
+  "serverConfigSHA256": "cfa3717f700047be146a103f16f969533edba2f3a0f696ca69f1a214103cafb9",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/guard-main-011": {
+  "sha256": "8889fe9ff19aa390ce8d85b20a116217fd15592f7985edeb24b1d5483585d4fb",
+  "logSHA256": "62dc386b15341ab95e93cf9df9dfbc18c1161983ad6c211433f9b6168ae14dd9",
+  "serverConfigSHA256": "2557de52698ba454409871d917d481e918af520da88b6d72ba7563d41cebe2b5",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/guard-main-012": {
+  "sha256": "faa196287b264e3af630b36be7ed3f484581abb36eaf74cbb0e9777609ba729c",
+  "logSHA256": "552eaedf34627196a21263c6843af51592ac607d20f9f9d10b10ba8b9e67fecf",
+  "serverConfigSHA256": "685d05f3422d4dfadf8a99609812de458660011f5c6b9f34e4be7905f8cf3e77",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/guard-main-012": {
+  "sha256": "45650b20401b21e5ecaa80d8febc9957f0f9af8d4a6c1be55859e9d8592573d0",
+  "logSHA256": "06f722ea9d2a163636effa54dfe1c5e0db5eb76264db160048c8b327b0e909e2",
+  "serverConfigSHA256": "2044098595b5400626a94b018028f50212e58496077b29a4280e0e2da61bed9d",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/guard-main-013": {
+  "sha256": "a37f5a4b190797bef6dba434c6ac686e92b0a9cc2b66a0bbe62dd2c49353df2f",
+  "logSHA256": "b895776bcea695124293378298f8871fa98cf5eff53eedea944f0384a278bc9b",
+  "serverConfigSHA256": "8e0ffea799253a70a0476ba083379a8d3aff2a5dd972256cd6c507b3b2e58407",
+  "reported": 94,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/guard-main-013": {
+  "sha256": "ac732d9e9475d835f541d90cdb087a403a059f927c48012f3bfbe931e3bed025",
+  "logSHA256": "ca1bdbfaee001b71a8e9ad817f611ed6b0e3f99a979a3e49f543f4eca0e0df4b",
+  "serverConfigSHA256": "49f610b5e89b083fd5e37f8e7da5c9cc5d8f8f9d753d04ce3b63efac77f8e1a7",
+  "reported": 94,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/guard-main-014": {
+  "sha256": "bd2d368bdc10d05d062843ae53f3ba62a069299b25bc95507a26f0a702127647",
+  "logSHA256": "b7e21cbdd6fcd1d35c83fee6bb6ed058d9fc78ba4b2a3b37c498e983a337fe68",
+  "serverConfigSHA256": "c8716901788077f008000b2ce767817c97b6892e4b12e9ad08d0574affb42ea2",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/guard-main-014": {
+  "sha256": "e20b35649cf977e22350d01a0fa8226374981e80755fd607226b71d7c0bece7a",
+  "logSHA256": "88fbfc6bc33159f67f21e9a96fecc8538a0060641217878e47b0d79b5a80ddae",
+  "serverConfigSHA256": "9273013b9cdadb198e529a1f155f4ab4e33b1a1a13b113eba4598b46bd7c33d6",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/guard-main-015": {
+  "sha256": "cea2a56b968703bddc3cf07bd4558bd2d9413afe339f13d0f608aa9e56f788d1",
+  "logSHA256": "4acffda81bebf5b67c2f316603f813ddfde367953a54c0144c542283d79152d6",
+  "serverConfigSHA256": "9e654640f111e455ceb87ea9bc346c3307d276f4572ac15c2d59d0d856dd734d",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/guard-main-015": {
+  "sha256": "922b6e833cce5f495cba355b465f9f502b1a6b62c28c05feebc417b67bee1ddf",
+  "logSHA256": "2ad4a89e92cadb24a0bd2c1b0e493ae8e89701b43c5c6aef37ae9830f2b565ed",
+  "serverConfigSHA256": "08ebb8df6b7559719426058fc6aee27af99e3604a2052cef43d7a756ad7310fc",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/guard-main-016": {
+  "sha256": "01ebf8fb733f5b69d7fa4c362bb529e3076a8b58a51d5c88525d87a8f9deb754",
+  "logSHA256": "34cbe97643c437a14f305a7c57fca9ca001ac11900a5607e79a2c8f13ef442ce",
+  "serverConfigSHA256": "0349b4882d3b2cf6c4ebf44478b1f8b49ca278f86664996ab58750b0682dfc87",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/guard-main-016": {
+  "sha256": "6f6e842abd37900f217a985be6b5e7ada23233f8d4632f53dbce7f3f5d804c9e",
+  "logSHA256": "c048dd4d056ba614a7b685007ca6dbfec6a6bbe4d2cca1bfdce8f33a83b9f49d",
+  "serverConfigSHA256": "5b806442ae144b5f0f89232211c56ebba1a19d96548913e47a46e8d06cda2c1e",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/guard-main-017": {
+  "sha256": "88c9ff119fd92fc3c1542dd8c6307dbb5829959b22ffec269c1bc06c247e606c",
+  "logSHA256": "dec6fb4206ec2e8fc0736c9bad6af9a782722571bc27b8a3a3528b2d2f776fe2",
+  "serverConfigSHA256": "c27b17e1b62492e250542d65cb556dd9d1cc3858f7f4ae76e8db62fa588c9324",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/guard-main-017": {
+  "sha256": "ead1b0454564937e43da4c8f5203e7d659a98d43f81f267b7cc69fadf9d0fb24",
+  "logSHA256": "4a375e35108166d04bf5365312afd444f080e22993365fcd211457f704ac8b14",
+  "serverConfigSHA256": "ef723b6f16dee86f8142e33c80ccffda5e257645ba251defa996d3d8a2cade7f",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/guard-main-018": {
+  "sha256": "738528d90bcd29b70935850e10c674b384402dde04ff3f536d846028444ca0dc",
+  "logSHA256": "7695dc1f0a05fb83176ba5dfe339b3e2ab19820b6d03e21663f484b96703053b",
+  "serverConfigSHA256": "18027c854c98d055074e2af65914fd3d0048e1288e7eba3dbd2c42a477699999",
+  "reported": 94,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/guard-main-018": {
+  "sha256": "d27a975cdc1f5a6efc28791a9a5fab4b71ec634111de021c3356b1238d25ef5f",
+  "logSHA256": "c399ca03302f4be82bee926f46cdb24bedb723c70603b91c3306cd32c875ceec",
+  "serverConfigSHA256": "5fbe1707e7bb9c2f3fd930e490d9963d5efe30b08a2cc2d3c1d29b5659e89c13",
+  "reported": 94,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/guard-main-019": {
+  "sha256": "78c8313524d13b3bd687effdc776da8c00f37deabbe7ef8c2747077ae77d2ee3",
+  "logSHA256": "8da7a652d780a41acb459a4db65a0ff5f569a3f935fa650aea1f81aa1369600f",
+  "serverConfigSHA256": "de55acf63e021c779ed5803297a2fb059e5fee76cf822face90758fa7d5cfea9",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/guard-main-019": {
+  "sha256": "9863f76330bcc6d30373a1359347e393e7b8b2e8b1f5b4c29aea1bdcb018b3bc",
+  "logSHA256": "e93942a5276efc9419b1dfd863e37ee24e790e67781d38e4676b1fb7aa134ec8",
+  "serverConfigSHA256": "04eedf7b8bcc127f6f3c5771e8298c50c6582bec2846c3a80c73428c61890ea7",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/guard-main-020": {
+  "sha256": "f97df4574a51fdbc4696ac131afdc800df8ee68c8da998983910bfcbbe07f1d6",
+  "logSHA256": "5d7cd4802eed521a1a73347a80f1ca4f9e8e8b7584e43617ce810ddcf96ad556",
+  "serverConfigSHA256": "adee516218c956658ce91943a76f65fe38f92eeeaa0f28d655fe00ad35399b21",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/guard-main-020": {
+  "sha256": "05984a53fb770beafc24a4fdd0b343e6e9a7543b8003db9b24f93b3e45667aa6",
+  "logSHA256": "833b1211b44dd6368ee6bb44a08ecd7d8655727fe0850b2149f4f2c372d19874",
+  "serverConfigSHA256": "ed20ea327add0168f2074fce32ca0b18094b97c0a9c44a5a30d806efa0cf932b",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/guard-main-021": {
+  "sha256": "be599f7819a8d7d5fadbe10e8283214d29c74d690e360d01a5f8a801b2d475b2",
+  "logSHA256": "7d03a0cc96b935d0a23a9ba6c4de4fc07b6760b461a30b1e9f5d35488fd66d68",
+  "serverConfigSHA256": "0abe0119070c3af27ce498dc9e16e6bec88aad6396b2d5b171915afe3739d3e4",
+  "reported": 94,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/guard-main-021": {
+  "sha256": "e2dce619be8b66c3324f509b627d0a1ffe093b41c91f97756b56e9279dfc5af0",
+  "logSHA256": "ef6a9eb42f8d80eba1b17a88cd96128119a628dad1ff7b6fd164c673f4146d3a",
+  "serverConfigSHA256": "09bd467413b0a659daf76a38a6d0cc0d6e311f9767529004621586132d75fe3a",
+  "reported": 94,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/guard-main-022": {
+  "sha256": "de6a3277e5665a3dbbf58168b7f97442958ee138e6c135b6103ab9a02bece9b5",
+  "logSHA256": "40615a896bf4f55c03b0c6feea525b54d74468356032b00b5954b3ebdb0518bb",
+  "serverConfigSHA256": "ca082ab57a7ac713277b007faccef0adbee3197dfcb0f781177622c356b3f285",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/guard-main-022": {
+  "sha256": "1df499c92c8343eeaae25ab338aa98281412530a6e7940d6d451fe1974baa02a",
+  "logSHA256": "ae0bf7ed2e2cf1bd17f76e9679a0cd5431e9d73e3e019d56a4f04d15282f6567",
+  "serverConfigSHA256": "b2c93367afe41e1e59441cca86a67d10ff60409d6cc489bc1d6f3dd46c0afaac",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/guard-main-023": {
+  "sha256": "ce30c3f251d7d195ead1175e934e9ba0251f2e00fb295e3b22227620e9277eab",
+  "logSHA256": "826c6d635de30eba59a89733a207ba877f5fcc62de0175f38908e063d46184ce",
+  "serverConfigSHA256": "4bee9bd4a9fbe47500d58269a15af63a0a9765b286adea60c732361c88d11c24",
+  "reported": 94,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/guard-main-023": {
+  "sha256": "0edc739200cb62fb99f3c1876f53b07c5661d4a16aeb35eadfd6d0da7bf3e867",
+  "logSHA256": "98b3fdcecb24812f430aa8f67975fdf401fa0498fb10dd7a7750a058075d3dcf",
+  "serverConfigSHA256": "926456b1e74514fbf3fa340a2d5a9b725a340326b36ed51487b6d5cd7a1a50f2",
+  "reported": 94,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/guard-main-024": {
+  "sha256": "b68fce15564cc400ce373ca9e7fb1cfe25acc7c19a8fa93ff39f777b44e9a10a",
+  "logSHA256": "cbe9e3043544a023ea8e2c4f6e0e5135255c1875fce42fc6dedca6f96d7400a5",
+  "serverConfigSHA256": "770970e4890a3cd9897645a2c8e80f472a298d6b9045afb71bc31b7531fdbf61",
+  "reported": 94,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/guard-main-024": {
+  "sha256": "e00fb14fd809abd1315de237a195e97bcca29daa1b13ba9234aff18da4d284c2",
+  "logSHA256": "2ec1e1a77a8d9465d9e743eb81f732f6cb7037d0fa426450712f36e20cdd9a0e",
+  "serverConfigSHA256": "11d603a2b20bffb7be5d38bacfc187f3921916e14263e1c3109f45a235c9c7d8",
+  "reported": 94,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/guard-main-025": {
+  "sha256": "d67c286cccc769600583f1f5384533412b0cac314eed0c8c92a488d49c6ca223",
+  "logSHA256": "a01997caca7740719c0c02eeb7edbc3221136aa0a38600c4f382df5abed58aa8",
+  "serverConfigSHA256": "3afa12474488e6f530c5b565134aee3ce2225f10e407608e4b6c8fe33a99637c",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/guard-main-025": {
+  "sha256": "cb49b69df0a9c6b3cceeed0b27c414d350d72b364b7af963c863ba5405f36a6f",
+  "logSHA256": "61db3e43d76c7e8214d297c783c6e8ffdc4ee122de7cd0f88de10a797383e0d4",
+  "serverConfigSHA256": "533985baa122f7638c407ac371c83a8d9d8978e3a9c90266ee1443a2894d7cf8",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/guard-main-026": {
+  "sha256": "8a97aadcfd9d986264abbe9c8317215ca1dde129553593a0ccaba5b0b39023b8",
+  "logSHA256": "f930b313804b30078daaf5b6e5b7337d90fd8808c1866b748d6d829d5ecb7d3c",
+  "serverConfigSHA256": "be238b77199990f02ce95296fb75f845448148c9e867202ed132f405e7348dfe",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/guard-main-026": {
+  "sha256": "d326038d7ec2ed08fe2a00a0e351009c0e8e14eadc38a2162b8e0c5112ccd18a",
+  "logSHA256": "52d749eb27f4949d8bbd5d46dfd5b9d7d6eb5647dde4aa5424f1f60aa29f8938",
+  "serverConfigSHA256": "627fbc55661a8ff9a08d652b0c102f1064bcc9f6d3ad032bd541808f182733fb",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/guard-main-027": {
+  "sha256": "69ca70df65ee72513fee8dedcc79a92fbb48c53b1c6fe84b2b57941e0341406e",
+  "logSHA256": "d870a0e0588f7ade43a00f110ebd3946a497b3d75317aa5b8e59114473997174",
+  "serverConfigSHA256": "c590e4a754346ebaa2503ef59ac6dfe382ffeff0beb8db13bd5a448276e8dcce",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/guard-main-027": {
+  "sha256": "ade2f837144967ff2967e35a789bb9a50f6fea9df05f5f4291256f465253b357",
+  "logSHA256": "3f55a603d0f640b75c24848eae0e0042431fd56b48a0d7c519eda1e68ae1bef6",
+  "serverConfigSHA256": "884614437e0d83068ee5ec2a104adac14af45906eaf4784052493ca618d06f70",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/guard-main-028": {
+  "sha256": "1c0e993969a04dda4e98b1d5ea687812a420eb84bcefa8ad8ff1e77348714d21",
+  "logSHA256": "5ab157861a74ec7aac538b7dbfa33a263d2bb2002dfe7f62954c3a12c921057e",
+  "serverConfigSHA256": "c57c6c6152438ec5747ac34ce1ec0b1119c8d189ad146f60a235f52e5ed3f49f",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/guard-main-028": {
+  "sha256": "f11deceb988d31cfe94c46bd6e083ceba725d8c5d6ec850b9475e804fa9e9d5f",
+  "logSHA256": "2a92bc7ddf4a41695535f95fd5361d22dd4632481173e33382f21ee3bd3f3d72",
+  "serverConfigSHA256": "9b7605d67b27cdfab346a5b48d5d431dea8f07eaa50fde3439b9a5277a65c4de",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/guard-main-029": {
+  "sha256": "d0002433140d72c993edc867b7b003b61bfadcb2989d899f1a05c8320bbbf926",
+  "logSHA256": "32c82a9a6bc1f87ee03f7c949f0ec0bd87d31f8aa93627ac32971e6d858e3c2f",
+  "serverConfigSHA256": "51bf2a5dbf6195c583c0200f022083ac93b561afda70e57f122d81757fbe2df2",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/guard-main-029": {
+  "sha256": "5692215d452a742a0595e25293b5372b9837ed7ad1cf005bafbe4c810933ecec",
+  "logSHA256": "dc5c9e58f35ce2ad9ab3dcd37976831a2180f89948efb12575589e8aba3092fe",
+  "serverConfigSHA256": "51e6c684615a1cc4d6728ae8cfbfcc9705a99412d470e7f33842b9ea29aa268b",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/extra-feature-000": {
+  "sha256": "96c21c77f23ac15197d736e3a1841d3d2060ffe63165a01e03d009d7bbd3b1bc",
+  "logSHA256": "042bd18f70a9e1885ee9c26211727967770d03c325f23f8e3e77b26712965b9c",
+  "serverConfigSHA256": "a54d9fa7c0e50ef72b2b32654c9bb99be39728a98ed24e608434109c8046a710",
+  "reported": 64,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/extra-feature-000": {
+  "sha256": "dea9b9bc04f953a14ac43296a820d6c43ccac865c21563807760c31d55548629",
+  "logSHA256": "086c21a5bb86116a781a863c90a46dbc8adb87953023ffd18dfad59a984440d6",
+  "serverConfigSHA256": "c6fbaac326059d967e5a5bbf7ac7c419682a91794afc2bac27ba4d176ea81784",
+  "reported": 64,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/extra-feature-001": {
+  "sha256": "0d502864a4588694b9d74e6a9dfb1384d26452265b448b4c37bb8c91c99ec4f7",
+  "logSHA256": "7ea249e667bfe05d2586cccd4f77dd885dcf57134e98b7274f674153b870af14",
+  "serverConfigSHA256": "893c248fdad1658728aad4ea3825bbf17082bfa91cd0e1592dffcca79bd6db7e",
+  "reported": 64,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/extra-feature-001": {
+  "sha256": "3ddbbe9a954b9d7d3c5a9db087437da936f4943b4deed67d50748ffc7e1141a1",
+  "logSHA256": "e68b18a406a5d3a02ff1d9481ba9899cebd2968a11d96f3bc015d92ff9def5fb",
+  "serverConfigSHA256": "7f6300036407c2c010f688f0820b2f0844b1270bb370b5d7dc43d212054ec4d8",
+  "reported": 64,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/extra-feature-002": {
+  "sha256": "5cba2ee59235d7f4b8cfdf914f3ffac3517d6ffb6dd7061649402bfc0fc6571d",
+  "logSHA256": "e291c333e8417d88eb3c0ed5b4011813f8d103cdadad565c108771521f635088",
+  "serverConfigSHA256": "fad9b427bf8f1db7b5954c05bbb66c5761ec5ef5cd7f39787eb4e81f5eadcd82",
+  "reported": 64,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/extra-feature-002": {
+  "sha256": "0c6d64d98629fc8e16eacd481d01ac3301605fe8358f14502029b49169c4bd61",
+  "logSHA256": "18775110f2db561f6f747d7bd0fe45e290561a44e0faa9786782889efc443818",
+  "serverConfigSHA256": "37c4581d7fb920f6c8b37c0b1c4ffc7b0ec8abd13be9943eb672673e4a2eea4a",
+  "reported": 64,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/extra-feature-003": {
+  "sha256": "0a4aa288cf0b945b43802cc737d76ac9fd3d91f9e857bad91e7afd86014ea787",
+  "logSHA256": "f2f92877f8fecd8e402e277693c5f3c6d79812b41e9d44aff4bc49b6ac1fb40a",
+  "serverConfigSHA256": "3b053415286d269c6d7c4576d6c9f568863edd9c4890644c039b98d3cecd2b9d",
+  "reported": 64,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/extra-feature-003": {
+  "sha256": "6e93d68ffb1cf0f18c5a6e36adbf2cc6fcf666aa45da8b4bf2b5e8e9adea2781",
+  "logSHA256": "61fca93b21d5ac4fc08ddc862411ddf19c0a826617a61d78cd52d85e17348732",
+  "serverConfigSHA256": "81d7b1703320fd0cc8b2ffb97a6ffccc752e78dbee28a334adb9bcc0b676ad95",
+  "reported": 64,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/extra-feature-004": {
+  "sha256": "962e1bfb01b45ad840614d25ca6646d0b2492d2ed7e3be3d6dccd56de3e9c997",
+  "logSHA256": "5c189ceb27782dfc423715ab56325b326859d62343d1d7a77de48f854e007433",
+  "serverConfigSHA256": "7de536a74657b4f1c98662e4537c531ca8902951180f9b596ce149a6f8fd65de",
+  "reported": 64,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/extra-feature-004": {
+  "sha256": "f3a62edf5d7f4a8f57dd0c3207fab8bc5aec0ac0b05aed6ab5b3ab373287e05f",
+  "logSHA256": "79ea32f653c3691e246bd33efdedaaa510bb94ed6617a5817002e96cd1ae8968",
+  "serverConfigSHA256": "a550dd364d51d60e78361c19c5beaccf2d99e6cff33312266ee6c9792e1a7c97",
+  "reported": 64,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/extra-feature-005": {
+  "sha256": "0a495864a60769edaac4523eba931efc465edc6c5c02c41b951bb85c181cafc4",
+  "logSHA256": "8059dc22ffa8f2fe53e63cbdc9fa888a6503a18b6881bd8e2069582350a8c28a",
+  "serverConfigSHA256": "3b9bdf5da878204eb8790d9bf95aa217b44b6087fde37acedc54a88a072cbc1b",
+  "reported": 64,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/extra-feature-005": {
+  "sha256": "ddfcb679791b01759d842283a88198cb9b5cebb48aea53b59bb2504961d6dbb5",
+  "logSHA256": "09600afe78d8a4991057668093588c5c2e4fd078d241f309da2c1fa035b4cf96",
+  "serverConfigSHA256": "3aa5b83a1f736d8bc9b440f652299deb2985b71922f8fe0419312d5a382452c2",
+  "reported": 64,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/extra-feature-006": {
+  "sha256": "abc032e4173597771aecb61723ba21af071e618d28ee19cc16a4580da25b48f0",
+  "logSHA256": "c26c8c4fd211304131893a83f8d8ac15a9c686ad45f3b6c9d7a1fd4835f752a4",
+  "serverConfigSHA256": "7836cb2be54d7ca16cc531ef4f8aba3505f10e21c6424f95fe839208ed5066c1",
+  "reported": 46,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/extra-feature-006": {
+  "sha256": "20b799065c9d8a6937a4fd62c076ee5228ade8bd52034491411204874e84ca91",
+  "logSHA256": "96708b471582dbc44e7b827d3807ddbd3d6fe71b68caa0374730409b5ebaea43",
+  "serverConfigSHA256": "aec2f97d10a3115f5bcd08bc0af00bf7a6da73e8f6f285b2e797743fee823b9b",
+  "reported": 46,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/wasm-storage-supplement-000": {
+  "sha256": "ba589a19c00ff434ed4ecd2f445c29130c7a56a413c4ea4c9ff08be79da34709",
+  "logSHA256": "50c67f27421075485ed8364339690aa956d4795dcf28e8d9427656962449b59a",
+  "serverConfigSHA256": "277268bf91607889ba18e0a8cc140292acbfce04c02b096be9f32c8b3e5b041c",
+  "reported": 5,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/wasm-storage-supplement-000": {
+  "sha256": "cfe5aad3fe4e33ecb802f7e0bbaf257602a2e7348ae21e89457d93b008a8b139",
+  "logSHA256": "f241ccc3a379e9bbb29ad0025bc895b834aef6529d5a6fc1b06cec0d1ffc4e09",
+  "serverConfigSHA256": "abff72536cedb9b8e82fb3cc06e20fc01521c44b0c0dc7cbc2d0cd6597d1cb42",
+  "reported": 5,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/wave2-noncss-000": {
+  "sha256": "079c9d8189abc5c3c63398b4a411c66d82261c7d4905ab0e26b6285bcd493d89",
+  "logSHA256": "0bfb5dfc8995a6a6b8564483008f518b1b9b95dce2ae31ce58255f581df2b695",
+  "serverConfigSHA256": "b4f7c419d07d2183547920ac7d65a6550f6436dd963a140f2658faba9fd649db",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/wave2-noncss-000": {
+  "sha256": "2f8aa9fa63de0e533867ca2b1968c27a54ea18b1add4f76c67ea0668f166c843",
+  "logSHA256": "423c01595106c33c4d863d7028ef22236bb2c4fc999cc74468574eeddb2a78dc",
+  "serverConfigSHA256": "4dd690bdf2414eb3ec7e9ecfb360420f8edb3e9023fc846fba6bed0e916a5f09",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/wave2-noncss-001": {
+  "sha256": "f00b03f156ef9e01a2e5cbe700b5ff2df3c3ab3bab85af5b390b648adca0213b",
+  "logSHA256": "dec029500f2c7aec5b06578655ea8708a7b5306bd6f7da1fd625cfcab03897cf",
+  "serverConfigSHA256": "5e44b6024310ca4b0421538b2c6987d93abb0fb93fa845629189e2f524ae563c",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/wave2-noncss-001": {
+  "sha256": "b24461a20f165f9566ce119f63d013cef2e813129b9239d0ff9fc55093360ce8",
+  "logSHA256": "f1a48d3e2053940fc7c04afb8b6130008c869e1c8163c2f3a4d46aba9843e8d7",
+  "serverConfigSHA256": "531f920cffc3db5d22916e0a0210cb4df81ad07f00a8b947e999043ae7110b0a",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/wave2-noncss-002": {
+  "sha256": "026b6086533ffba6aa0aa07d2988c2929b1ccba4a050405ac7fc1cae65d176be",
+  "logSHA256": "38ca221e9008432b7cf0dd825ee4114e217cd2448e68da2c1617e23756e28a3c",
+  "serverConfigSHA256": "7a59a5dea1c2ff62fa1440475817a341a59ea4b7bc89b10382dba77c4aa2b270",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/wave2-noncss-002": {
+  "sha256": "a3cb112eb36008494cdabb9e026cc1d4f69d70fae564ef669ca4a6166175b448",
+  "logSHA256": "d0fba86f42ba3b6601570008bac85f63fa8a7dbd4fef0f6c4804fceb23736402",
+  "serverConfigSHA256": "0318b54a04276b7106cb19e4b31afe4fa4016ba8d8c01af274d1349ccce8a270",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/wave2-noncss-003": {
+  "sha256": "b785d62be294358ae97ae8009d01e84b7b8275be8f27eb27f6f474bd4333bd1c",
+  "logSHA256": "a35093945de084b82db5b8805be9944721f8821b5638c5b7f3916ada611f3be9",
+  "serverConfigSHA256": "a7945eacfe94f892707a59ca1c34d34b08cccfe44eb7c1e7ff8d80aa580519e4",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/wave2-noncss-003": {
+  "sha256": "e6b0bca3d6b7519b0ce78c18c52ffeaf99da332693f14bcc21ab9bb9d1e760d1",
+  "logSHA256": "bbd24726be9cbdfd973744bfd700086218babac779854715bccf9b361eb9cf5d",
+  "serverConfigSHA256": "c0727b1df1a8655d61895c10ad36a6c15afaf0cb3a4590de554fa034df7475e5",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/wave2-noncss-004": {
+  "sha256": "1c00b2362d338e99a7a23ab972bc50736086325230f598579185ebf85bf35039",
+  "logSHA256": "3d8668ba1d9fcd127c18fa7086223d7cf3e4b940d0854ef4a7a115d8484cc526",
+  "serverConfigSHA256": "05592ccbc4d2e982028b6176c2a70cf36c4b9d43a8ca76059331fc201dd7e2f2",
+  "reported": 22,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/wave2-noncss-004": {
+  "sha256": "e4cbbf9fd5bd5b72a0f6d4a1f61a659702eba9f17c84ea495507172f40114f90",
+  "logSHA256": "553ae466db6968b794b29c2b397cb22f9cc706bc4f7a014ebb32c1e4b6c4f7c5",
+  "serverConfigSHA256": "51459487267e6f0094a8e59fd1ce475590caefad2d75c57e1c3bb0e8f9d34755",
+  "reported": 22,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/wasm-metadata-000": {
+  "sha256": "90c34b8285a09abb53598c04ee38867470becba53ebfde9809fb24c235986711",
+  "logSHA256": "8bb6263002dee310adac9b35a783b8dc94147bf671c632589bc407fda0bfa0bd",
+  "serverConfigSHA256": "79cb084854b17210d4cd3a38ade3bf5a255abd8c913a6640256f18df3a527677",
+  "reported": 7,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/wasm-metadata-000": {
+  "sha256": "a7f9c5cec5c920714c6d62ec1f875efced53d35392092b3a40d79c47f7c484da",
+  "logSHA256": "737cc9e01323002bb5d34b97996fd7fadced3f888f19def2fab0f59bd39bf1ab",
+  "serverConfigSHA256": "81e602a91a6eca182342b9fabf1e76b7902ad615720df974382fce40178e3ad7",
+  "reported": 7,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "base/upstream-css-000": {
+  "sha256": "bd6b37999f5d352651898191dc5c76585203eafb39e8525d48562da0b9e7ce93",
+  "logSHA256": "486aa63ba74226e4b69917583577791b0bc7962488ff6fa2e0fd442bbe3b810a",
+  "serverConfigSHA256": "86d154fb94b60d1990e0039dde5e01f3c2d850218457a864ba160fb20cfe89fc",
+  "reported": 40,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "head/upstream-css-000": {
+  "sha256": "77f4c5ff0c9f1d60b6f4d121e0357a1609211e7ca4da0d9aefd31695331fe1af",
+  "logSHA256": "1d6986c3e319caf008a9b25f226c2d0316560df1b3d609d42e31cde7e0b82beb",
+  "serverConfigSHA256": "a83c6d59f32400625f2475a3fb1994138a59234fe8d9faed07f395f4561cf8c6",
+  "reported": 40,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "measured-LP"
+ },
+ "chrome/preflight-000": {
+  "sha256": "46e44f6ab0dc2f83252efec42840f909749d108b27a65296d00c85922840c683",
+  "logSHA256": "d80d75b4c3aa941912a0285fa0df7fbba3c0e5009c905f46c614b853ae7bd380",
+  "serverConfigSHA256": "c34655454f3e04483364a5cd3753e90e9431c072b397a46b703685c0901e78ef",
+  "reported": 6,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/guard-history-000": {
+  "sha256": "406fe56363d80d688b76f4a7f24437ea92d34df582ae1eb1cc5311f8b816a162",
+  "logSHA256": "34bb6cdb5e53acb868c0f7aee27742c3fd74894cb901e97f47cbb7540eb3ed97",
+  "serverConfigSHA256": "3756afdb67705eb21c53745af225c8d0dbefbc3a9e2c12b69c8faa23462a4f85",
+  "reported": 48,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/guard-history-001": {
+  "sha256": "a709394a98c160c3de115d750ea5bbc665fd717a7d3ccb90bb05b36d937a7c73",
+  "logSHA256": "bb3b63ead2d9a09bca9980e2400074ed40918053d26053cb3a3e27379e86dc27",
+  "serverConfigSHA256": "1e30a01904c0d7355b2be96d8a387c8225272bc54149675252e9e5a9fa0ec383",
+  "reported": 55,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/guard-history-002": {
+  "sha256": "f20a45c916637308bb30f9fcd6a3d2a69b850b300214fea29f545337cfce9157",
+  "logSHA256": "d9774c88e5256d6e5d707298eaf174e1df274b2d4fc7a8838c0ae9bf3a694bd6",
+  "serverConfigSHA256": "baf047bbaa8544fdde16b5d6d63bd35db61f4cee17a455afd1d72025aa869bbf",
+  "reported": 55,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/guard-css-000": {
+  "sha256": "4be8467085903d95988e46b0a581f99d27d5feb4a430d8411e5e99a85c782ccc",
+  "logSHA256": "cf1cfb65f36b57cbe8a2b4cf039285cac9909f8aabcb898f24dc606a746974eb",
+  "serverConfigSHA256": "75da599f26d0ab8d31e64afaab60e7ee26a571b194a1074eb7b74cbf7b35e257",
+  "reported": 122,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/guard-css-001": {
+  "sha256": "29d048fd3b88243ba607afff1710d660d23967f04a75655efa6b76e4b2e92532",
+  "logSHA256": "adcedb73ee4c1b99c210a760aff8fedee099a2f07b65c8cda9c221bc79d8814a",
+  "serverConfigSHA256": "bed12d76d306b1b778779c5b3a2a8663c802c89f045e9b774b5cc88054365d23",
+  "reported": 122,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/guard-css-002": {
+  "sha256": "78ca00541c94b09fed3d8ed6dcd485825a1f932abf8a39860175f0706e2b3167",
+  "logSHA256": "b09ffd71945f491c9a302bb7fafa467c0276b45f0eb6d11f35b2ba0cdcf7563d",
+  "serverConfigSHA256": "49cab59e8e3960f90bc3b5751cb0c915dec7d57abeed854a6d04973ff063c180",
+  "reported": 121,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/guard-css-003": {
+  "sha256": "08788a1a58df8c41492145338ac91290fbc02f2fd3f3716cf8841497ede54bfe",
+  "logSHA256": "d90e2f6f6f995e2e43ed1863486c1e4f50abceeb521ea4e1aaeb26af2a75d3bf",
+  "serverConfigSHA256": "c717ece2d29e1818d5869e26f7c6d29bb056ce619ee7a7149e6fcf70b56aef9e",
+  "reported": 121,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/guard-css-004": {
+  "sha256": "4f2961bf4f0728c469ddff563ff4ed889588c567615ceb2a28b58ac6e1cdbd0f",
+  "logSHA256": "1d9810a0140ed66549bbfb274f0fc82a6ae594c9edf7d46125d67063159206fa",
+  "serverConfigSHA256": "202ca0e0f61f59f804aa7c83f10a0fdf41318f1a3ce01796d9de9c4a0e142aa7",
+  "reported": 121,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/guard-css-005": {
+  "sha256": "5db779a9ae62ea8afef2c6eb8eca1f7b62196a47ee395b59754b79afdddfd9a5",
+  "logSHA256": "6e795ca0559a979bb1c902d541c347bcd020049a333eb76551fdf79ce408e8f9",
+  "serverConfigSHA256": "d9e535aa268ca0af6347b4f4d94beb8fe413bc4d26e9c1ced271120aaa1b2ca2",
+  "reported": 121,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/guard-css-006": {
+  "sha256": "6c8c92000be074429aa38a83b7bb6eeca2f5655f1741232156ad9f5d6a7bdcdb",
+  "logSHA256": "ae24d25274580572713def84523da0980105af80d47be6f9d478fdf8b1f0eaa4",
+  "serverConfigSHA256": "27362d03f5e4ffdfc64f056e41cdfd0126d591bee25e445ec553c49eb4c4c6f2",
+  "reported": 121,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/guard-css-007": {
+  "sha256": "70953075a91a455da65e991b7124e7904309c01f5d20f25751f2c94a0e82e40e",
+  "logSHA256": "8cadcef08d19fe1e1cd49a638d4e93ecb177079924749cfcb6cd1fdef17c548a",
+  "serverConfigSHA256": "b2f55944570b94340e59b94ba76efaadcefa28cbb2f3b375cf2fa90975573d17",
+  "reported": 121,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/guard-css-008": {
+  "sha256": "dffe3f9524d855ef27e2c28efa9b24d6b0fa2391b361e8a5cb16c9479f18de5d",
+  "logSHA256": "a758e00df11185c86e96eaad6677f41cace709cb5d4bc65d5bf1daca379936b0",
+  "serverConfigSHA256": "f0781c3b6d7000f2743e3af63368462f313837e4a28e8c11ad1dc1cc2f95f272",
+  "reported": 121,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/guard-main-000": {
+  "sha256": "3226b0ac2d042a95c28920ab0ec489574a9025ebecfd26610c5700a54904b87b",
+  "logSHA256": "5c6bddcb30126e20371e6cc6ed86d8c6c572fb61b045ceb7856100dccb8d5602",
+  "serverConfigSHA256": "7eef825611791706cce5c5fecf0eff1dc398341a52962d8b80bfbc79adf54c19",
+  "reported": 80,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/guard-main-001": {
+  "sha256": "155bde17e6588d8db7c5c9245ebc2384a00493763da1b683cf978513e90c82ab",
+  "logSHA256": "23535946e11bb558d8eddbb05d5fabbd35d516c81e8d00bb013029d474efbb4e",
+  "serverConfigSHA256": "ae15f81eedc0a2eb9689a6b5129cddbb36ec2cabff5ee8cab88a2584b678cf7f",
+  "reported": 82,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/guard-main-002": {
+  "sha256": "0073071781a512506283bade02be64b4792269383d7c43a168192ce7c35d64a9",
+  "logSHA256": "972da0ee57b31d9449ae34835acaf99353cd219ea1deaf4fb86735912afd2fff",
+  "serverConfigSHA256": "38d302fdc42d907858882b0d0012891f7cc4a3ce222c62ed532fa45f451b68ee",
+  "reported": 81,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/guard-main-003": {
+  "sha256": "57a3b3e55ad934b0710145012833b1cf50e9c709dbabdff3c15ce2ed57980327",
+  "logSHA256": "1c9e74f90c596de66c139ccd70b144b6de8a25bdcd32693ead279fb66a07e9ed",
+  "serverConfigSHA256": "595bfb654d24d7f472d7121e049c95e636d450b8a9fcf356c859db5608129ec4",
+  "reported": 90,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/guard-main-004": {
+  "sha256": "e24b33a657f83ef43ba54917b782f0a06129a706514c026e5c46dd2d689012ce",
+  "logSHA256": "1583fac7feae3720b45bf39afff7f8ef810f56aa4f0e7fbdab338e49011372f8",
+  "serverConfigSHA256": "38065e8ae9f4e6072dd3f3458618b3bf650f0cfb3888e0bb1b142fe61140b570",
+  "reported": 91,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/guard-main-005": {
+  "sha256": "b34a92c18f1c3ef5e0c832d52cec0969acec1b5d910ebf958df9728f9634d9a1",
+  "logSHA256": "6084bdf110e5a488c46f0084bb70149ec3896dafc672253a900c27096174983c",
+  "serverConfigSHA256": "bba128978045ad60617157da722a8cbb02479657e3d4641bcf0a299e7567c4b5",
+  "reported": 92,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/guard-main-006": {
+  "sha256": "9e2f8f362bb94bafd3de514bc3f3b7a0c5c1e61e0cd3411e84e5ac0baef9d1a3",
+  "logSHA256": "ebe9570f2cddbacb4624c80a41316d76041f54bd2fac74618c8d0c83af86c31b",
+  "serverConfigSHA256": "8aa88cd6ebef1bde1550237e618c55c9ccf06f16825fe5ac0414d1ee4cf1b197",
+  "reported": 93,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/guard-main-007": {
+  "sha256": "56f5c6cc281df2fb4c77dc499d176ae95229af98a993bac27c89d208655c543d",
+  "logSHA256": "8df3ea66c0e88d5d6280fd046bb5bc87ee8188321eab14bf59b483abae7be259",
+  "serverConfigSHA256": "a61d7c1ee9622a772b2b307a95b40ee412fbc51de5df573294041aae5ee3026e",
+  "reported": 93,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/guard-main-008": {
+  "sha256": "dae4badbf0cdea00d3432831172adfe6ffbeb5e99979a320f07ce24974c86a07",
+  "logSHA256": "c7ad4510b02eb9138c968cd28a41c70eafb8f591ab1dd7578b4ecf0f7e5d78ea",
+  "serverConfigSHA256": "d34f7c1f9e6a4dabb25539fc6fcc20cae0ab3d3c5d4dec573e7d13aa35332533",
+  "reported": 93,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/guard-main-009": {
+  "sha256": "3de62da0077752116c3e16c5ecd89b81706c497f5c65d7ab9660414a7ca2a198",
+  "logSHA256": "a36dff7f9fdc43cbb6d75eb88e07c67137085d1447253ad14f053679b2c66c01",
+  "serverConfigSHA256": "24cc93b23f5e18addcb8ee4197aa5f30fcdac12e03aa620c7331d3c761075265",
+  "reported": 94,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/guard-main-010": {
+  "sha256": "2b58192140d0b38abf7ab3a3bd0d9463fa28adcdb7293722d4bc44394c844800",
+  "logSHA256": "adcea1aca9a848eb07aa413a1d39ab8cb506b525958986701ec0172ebd63dc9f",
+  "serverConfigSHA256": "3af0dcbf88a6c6b1f3d82bd30f724b4f69f5fddca8899a6a30028f6796e6f66d",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/guard-main-011": {
+  "sha256": "7ae861e0884b46904ea3c5c3cf18932e559fa8b98d9331f2944dc245ffde7a33",
+  "logSHA256": "95415427add8116b9f873ce5eb330989906acc1e6345267f864c513047513a51",
+  "serverConfigSHA256": "3762a90e9de184b8ffa585457ebbc874ba9668903a8fd614dfa25be1eb230e2b",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/guard-main-012": {
+  "sha256": "d4604f479d429568c4439308e03facd03b731945ca9481d0ba06a966dfc26457",
+  "logSHA256": "bde6e840e5a2d026cf1d97976dd1fefa6ed8ae61d510dbf762b5ca26cda2eb21",
+  "serverConfigSHA256": "acce7c49b78a962605876294eaaf074112b14da2b9cf8d01e02952018d1540a8",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/guard-main-013": {
+  "sha256": "f93981e367578835746ef8bc98ce163a6ff3d16f2ecbe2fb086fd831f6952c88",
+  "logSHA256": "b050def5e959c8bb189da5a9f4679d7f821ad023f4fc0f07611e01297329b435",
+  "serverConfigSHA256": "93bb5650d8602f3726a2e54d8c1901a570ce0292d6165f7fdb9889f40b185bcf",
+  "reported": 94,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/guard-main-014": {
+  "sha256": "45a42a7ff634b19f80557ec441e63d75af1a624f5dcebf82df6daa13094f7220",
+  "logSHA256": "954a49205beb8a2e0f9276c3acabea22bbb37535b2d82b373fbd04e87b349f43",
+  "serverConfigSHA256": "cccedf06d940b93e89b291d28e53a050ce13084557501618457d3fed10f0151e",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/guard-main-015": {
+  "sha256": "36231a2591a3c403e2aa275a84a7a051aa5d3463faeae256bb5d872b2167fefd",
+  "logSHA256": "0bf2727562d1748a19344a49e53f8fbc39d0cf51acf858d8a4c5611615708533",
+  "serverConfigSHA256": "d7691c79be95d25eb3e1af6a3b873435b4b3e8d6463a0d08ef4d832444de1858",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/guard-main-016": {
+  "sha256": "feadcf881a3dca45b279a9bc18aaf7acefc155fd4441d3dc027d2336d01c8e8d",
+  "logSHA256": "d2f15fb8dc51a90efbd08325aeb64accfa051ea24e262fd741d6492cd2092b75",
+  "serverConfigSHA256": "60be2eeafc53accc568487a75c2fbce71d1b52034091ff4c3d9313ee531b512a",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/guard-main-017": {
+  "sha256": "fbdcff7820e5408ea665a2706616506271c8a45953066cc0dd57f763626e7b5a",
+  "logSHA256": "c8904a4f018d89e2693e5e4687cb841efc4b2ed497fb62d6a5cbc64927f4fc64",
+  "serverConfigSHA256": "446d79c3ff1567bde3c988e27ed4c828b8c6074b80384736b948303e9b6988cf",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/guard-main-018": {
+  "sha256": "10b521e564d6be504d4be0fd184e7aa9a910625bb0382acd5a3da036df08aaf5",
+  "logSHA256": "4bb906b5dd80309fd83370faa6e01bafd044e460938610264686c44cc1dd881b",
+  "serverConfigSHA256": "b514a11f3cfce87b39ab5ea23a336b91c33ce510e4f9add6e577e844954a3e7a",
+  "reported": 94,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/guard-main-019": {
+  "sha256": "4940c67aa8d13405793d836b8b2cdf85d649c5e1f1caa599b2ae43b9e046e0c2",
+  "logSHA256": "8d93d865f9a10353704bd7e7d6fc1fcb8e96eb532d46c419f260ed8195262199",
+  "serverConfigSHA256": "5b550be93044377fcffaef098d5adab6bc5393bc706b532dabf05d1d90c8d3a1",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/guard-main-020": {
+  "sha256": "ccfae8893f265e7335cc46abb1292695c85673bd5f2b18cb28702cae38f219bf",
+  "logSHA256": "0299ae80212a2120eed81264e454fee9debb7191d0bfa4176c70f89c4a72908a",
+  "serverConfigSHA256": "2e4dea30b67b8792ff80f0ae0a4408f45e2532af665ebf73b5879fd2a1ee172f",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/guard-main-021": {
+  "sha256": "ab648e2de5378692dea2a720e627562ad1e20706362ed49f2f6ccc4217bb1082",
+  "logSHA256": "5c7dd797bfec60e3e6ede7172bb643fe5bffb025be2cf8125568dea6adaa8e4a",
+  "serverConfigSHA256": "65a01ba8367534d26a2fce44e30e7a4cbec14b562ff4bb338b5e73f40f8443f8",
+  "reported": 94,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/guard-main-022": {
+  "sha256": "459bfbb040a616784698043370e2fe6c9bb2256c088d6e6bf8b91f31f56d9dfb",
+  "logSHA256": "d1bdd085f58c0b688efe7a6fa0ba866dcca9167a1693de922d95e7e781df1056",
+  "serverConfigSHA256": "d81975ba61990d2b0513e66a1b16bcbccb6eedce6508eccace0c532798e1a22d",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/guard-main-023": {
+  "sha256": "f4b741f8e9ee17a7075f01f57de4f1f40f6235145fde9484357f2d9431228c61",
+  "logSHA256": "6595def3d40e72c68df67d9adf6c58ecc52421b6da40360faf9732e308ae4640",
+  "serverConfigSHA256": "1d768594c986c7b9778fe62c051ee7eff9158ef402dd94d8a88f43b2caa7ab26",
+  "reported": 94,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/guard-main-024": {
+  "sha256": "05444e56a404290bd7a1d5fd0e6c45f98283d8cc1a8ec30c627fe396d9368a85",
+  "logSHA256": "8fb5e12120bc856b1521bc187dc9c1349ce4c08845d613a9742ed3135f9563a5",
+  "serverConfigSHA256": "c1c598319f33b2a7d55a203cee75d3f39d1c06b97f13a11291724a3413bf3d42",
+  "reported": 94,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/guard-main-025": {
+  "sha256": "815d247f1ac38e359cf0aacc91ea6e9044f6426f2ad0ca4653d3fd287bd8b2e7",
+  "logSHA256": "02230bbfe3ba06a6706b28f44bfbbe16e5adc369594d883b88dc4ccd0c3d4d52",
+  "serverConfigSHA256": "a635c82c1355b11d1bd6ddc4423ba273a1a31dd468d897177eba83192db8a277",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/guard-main-026": {
+  "sha256": "5f831c2705f3e1b1f5288a49aaf3e951c28cf8ac9098615d74367f9317fe7bda",
+  "logSHA256": "51550ee9d54bdc5459aac8fe7a19d14cc24e0f2d31394b476fe6ace90faf9366",
+  "serverConfigSHA256": "0922aaadad509b9a3bf21dd95f6eab8188a0820168e081f941ae85487b660848",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/guard-main-027": {
+  "sha256": "ee99634dcc9a8cc8f7950a6f4cb9e928f4007a5091f218e95dcb8437b7e23c48",
+  "logSHA256": "d52ecf09b01635ba1d9b6938d2dd7eb646c3ef271a8a2cdd2b4526c2645c334b",
+  "serverConfigSHA256": "31593a5fe2763ae71395556d3d07cd2b5f289cd06aef3f22134039da48792825",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/guard-main-028": {
+  "sha256": "74e2aa71abf5b45ac4fc7e1f4ae2d55cdb3c9987af724027ed18289b0f6898a3",
+  "logSHA256": "22b6f9954d251d192e3b0f48f07fd49bbb759f08ea8fc523dec2e8c0b11d2268",
+  "serverConfigSHA256": "cc88e90bf166abf332332a75653db1b4cf46f3a78d7fd921db1eddabc2d7cef6",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/guard-main-029": {
+  "sha256": "d6bdadd934a8a8b49d8908c0c7c5c5b7f65cef74f1d4c880493dab11d71409ee",
+  "logSHA256": "a69ba7b63234ec4156363998d8319f7abcf94e302b22fd5a92d16b8b687715a8",
+  "serverConfigSHA256": "019e45cedc259ebf9cd78b95010cc2f7f6119a1f2a3e10299a556c8f0338f706",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-000": {
+  "sha256": "174ac47b7dd1a1e52e0c573277ea495a39218a373521cc06b293cdcb4c0f7ee6",
+  "logSHA256": "a54046591686e3137da6b7cf1f7af012576bc80e9d2665b48779eff1bbfbdafe",
+  "serverConfigSHA256": "ae41b14fa8f337315b21289a9a4e48c729770650c10086f56fbc6773d9a66746",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-001": {
+  "sha256": "08728a1fb69c28d7f8573e149d8e130a098e545554b8a7275dbc133a4d53907d",
+  "logSHA256": "7d596089ec06e2fe635e8705c3959bf9d8e28a3008c773bc62eda03d1fb5370e",
+  "serverConfigSHA256": "a350846f4592f3d945f21f1133bfc6df87a6720fe6a08835e7860705e9eef983",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-002": {
+  "sha256": "f9ac2d647a4b9a4898a3d3229528fd189be36cb98d29731de2efe7e26598920f",
+  "logSHA256": "f009920d83398718a896662731ed1586e1a5095db3dd64df5d8b5adabf31221e",
+  "serverConfigSHA256": "a9740321cb8224207bcb218611b7c5511157c768ac75ca636ec8a0c717ab70dc",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-003": {
+  "sha256": "8435968763de17e9c7eaf20037649f3004b2810c65dc74f844df53d646b9d896",
+  "logSHA256": "6a2637902a59fc72473346a5371d0fb512a00a6b128577191cb463723c172757",
+  "serverConfigSHA256": "0a2c4612132092f9bc33fdff808b52e9903956d1927ad9d43187491df29ba9f2",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-004": {
+  "sha256": "bccfb039b65cf13f966f7f3798700d5d4cf06ccf60720cfdcd56fc08859729a5",
+  "logSHA256": "354f2ac963eec73ebe7a25ac13084b0608f7c07cb8adbed7cd3f28944cbc0a28",
+  "serverConfigSHA256": "3e504708e83382616b4e2c7de4cfda227a9d6167c284808aa97c622c297f4d6b",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-005": {
+  "sha256": "c476eacc010939e77db14c1a48c576103f54f4a306325b107058112ef4cea1c3",
+  "logSHA256": "46f07b73d7fa2c1379e8eda9145e5333f40111793e4df2396246e0c7ecd330f8",
+  "serverConfigSHA256": "f85eb0260b8c8550529325f1619620bec055a7fb9ba0a75f4c95c5aa48e1166d",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-006": {
+  "sha256": "4c7d1ff1c0d537ed5150bbcd5dc55bd00b77a17cef5aa2f84b368489d3ac29f9",
+  "logSHA256": "c3104b127d2aa9d474d1d362bc7b45619466c07fe892203016ae1851059018ed",
+  "serverConfigSHA256": "00517f388fd233ab2665bd3f916168c8b900098a28aede9904723b00c17291fb",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-007": {
+  "sha256": "3f07937a51e40998b3cb6bd815b525d12587e475906082ccdc6976ee24286c6f",
+  "logSHA256": "e1c0970beeb142bde65a672312534f6681f4a74787bafad65e0d4f9fc982cea9",
+  "serverConfigSHA256": "d2469e7c67cce1cc2dbb17bf451aa0e4069e9f117d364b0855494f2d77835d9c",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-008": {
+  "sha256": "93ba1dae531250b815269eb133b1fc98c1f834c14ac77a50adacdbc33ce88066",
+  "logSHA256": "8481c2838cff8c1454afa1f9dc125828ba5076eb3f591b75a004b68da6c5491f",
+  "serverConfigSHA256": "4cf627be46f9476f418f774bd2a83c7fadaacaf1e570ed5831f5c5e46232a5f1",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-009": {
+  "sha256": "60c3239c6dce9af0e6846ea94f683b4ef3ab3e2326d13e186c34c2594f959019",
+  "logSHA256": "734ae425180af93c6638260372a391e6abdbaa8f609043a3088b40c30c0158ac",
+  "serverConfigSHA256": "970be98b82ad2a13884ab6ad1b819e0db1e822ccdaaf1732adbb95e44f6e9c07",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-010": {
+  "sha256": "d2d9c4292afdcac5ff7998debe54bea19854f6009ebe301c13017afcb11ee1dc",
+  "logSHA256": "033f8b81ef0dbdb543e2146ff22a3f1195b23c19c304180e694433c83be50f4d",
+  "serverConfigSHA256": "b2bf4402faee564126bfa52338bc851c26fc4e2ca93580b749e48a15930d775e",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-011": {
+  "sha256": "42100606ba96a2eeb950f3b3408540e4f689fd449263dcd53e635fa701fc0a08",
+  "logSHA256": "6ed688e7117c1ce502df2c0522f0fc483f216467f62f5e4aec3e6a2130a599ae",
+  "serverConfigSHA256": "3a9644bba924453dbf881a19c8c342a116998650857bb06e7defee7cebf513f6",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-012": {
+  "sha256": "345b8df5cc4b15a4436cf49f464f98deb51b5003decc7bba522b3d6ec8c41a2d",
+  "logSHA256": "2f20fc4c10ebf1c0256d3b782097b972b2474b66ccdc09568e58008faa7b1d3e",
+  "serverConfigSHA256": "9cc9ac2d28734842627d69077079700659e2a151388bd0675d4dc70b1f70ccf6",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-013": {
+  "sha256": "35c1542e532a3162cd84f93a1a9af7a906ba4ee05c96ba0eaacb55756ce56a41",
+  "logSHA256": "3463ae73eaec6ccc1876c46612a8530ce5e6cc369d6132fa0d8ebe9a4c5f0664",
+  "serverConfigSHA256": "0d09e3815b68af7c2a37c6c0fef9d0ff1c8e4e7cc0a18a286e721171b4f32f02",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-014": {
+  "sha256": "3f67b925e27535b2639d1ef7aa5ce38a55aa2b8bdb3a167b8ff51961c3655795",
+  "logSHA256": "5bab7a104a17417f3986fd4a77f6adca74217eac8c691940dfb4ffe4f678fc57",
+  "serverConfigSHA256": "cdd5c01ac2a86f295cca8081474d7d97c974db765c41e9dfd5979f7bec05af48",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-015": {
+  "sha256": "1502c7049369ed647d5530811848b5ecaec1c36a178a34c70cae1ac3a9865366",
+  "logSHA256": "314846155ea6114b0138098b15923ff09980096625d68011252a3587f364a582",
+  "serverConfigSHA256": "81cceda4dafbda053a247780fa7405da790ac8dc361913dc9b6906327049c71a",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-016": {
+  "sha256": "99eb5fd3f039e76ee2f35904218981a54acde5a5d08ddc16b67ea9c191b8e67d",
+  "logSHA256": "6eb687cf050f2eeaa857b5f376c05cd11c0d76359753599b5d4b9801d7b8680f",
+  "serverConfigSHA256": "ec48d8099e7e456a3f35cabe38de4a7abcf5eb761664b6c03554c23925bc0dbd",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-017": {
+  "sha256": "7642748aa34d04ea399a6d00291e3b1dcd084c222a9c7fc9a9c9da1146e8e887",
+  "logSHA256": "8b0ffc1de48debb7b8ca916ec7b61379d275b9e41670fd44ab5c6bbe82e3ca4a",
+  "serverConfigSHA256": "7b5a294b5e9cd86e54f61482c2552758a362116f863d804a3940ed4f8d8aff7b",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-018": {
+  "sha256": "3e314ea40b634970a282e6ecb7b510207856ba23a862b8dbf2bb32fc2f61bdce",
+  "logSHA256": "eec46f37f001f47593f21d083231f773c07409421541d3f0ae4fcbded6774385",
+  "serverConfigSHA256": "50106e1153344f00ad622d9fe07998da1f44a247b0b980e675425e78ff84249f",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-019": {
+  "sha256": "a9e7f45b44c16d46cf84f91d5c4cd5035da3a348ba9403d87dbd9e0d12ffb247",
+  "logSHA256": "903e4bb96c10e82d09a9e2b62a22f5a1dc2da2d24cdaa8b9195ba2f62efb091a",
+  "serverConfigSHA256": "9cf5f4bdf267e00ffa9754fb7b9e51201df90f14696c7837b8a5cf910bbd0f4d",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-020": {
+  "sha256": "15a317648154240a59767318d369caf92ca54a9b658e87bf55af4e95a613f64f",
+  "logSHA256": "c3d9e5033d77b49bef496997ae5bf49ced02ee0e97114dbe1f2c0e62cc5186b5",
+  "serverConfigSHA256": "65adfab06f35b8efd0f9a536d6f6f0ad1f8050a05fc6a66d586c86637cbb67cc",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-021": {
+  "sha256": "f0b7c30555c4bf38ee4c7ef8fc695c05edb197c5c306ab3d945f24761e55f52e",
+  "logSHA256": "5e30aea00430f7b362b6cf7c04060e6cb6c1b7f738c3c92c46c37df601a0b5d1",
+  "serverConfigSHA256": "6a1a2e331d35741deec91cc573e021b30f8898ce866c69effba6965d5402248e",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-022": {
+  "sha256": "63a29009ff9ac2be5ac95b16750e90cd00fb6b6b1f34058c7e82a35bb541ff8f",
+  "logSHA256": "dbe1c34df5067467a4012a906eed53918992c625d920ee2c9c2e2c5eb6ea44b0",
+  "serverConfigSHA256": "213eb7e135c3b499d25797603dcf6a3a56780ac349972fe385dd6c8890b25570",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-023": {
+  "sha256": "5dfe75de2dd7d38429e59b983979cc7e0600a352ab8746c9b3f772ae6cecaf67",
+  "logSHA256": "6335dfcc42336baf6c74ede9a8776492a384cd6c4c9ac37ee7b9fc3b111c211d",
+  "serverConfigSHA256": "efe956bb706e9ba524e3adf72afa77c33f3c17b37dbc838af0599d6cc9b66537",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-024": {
+  "sha256": "00e08a810308341f076195e7f6723da98b3c4ce09998574045e2708f09c6aa06",
+  "logSHA256": "a2f7e0e800880c06e87a4b5c40b959f0c8de35882d98e1f0861fbdb8d3ae86a6",
+  "serverConfigSHA256": "6edfb79ff97776c09ebc55e4df080ae4019d047347129c38bc98bcb103f90f9c",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-025": {
+  "sha256": "efdb6756caddb274b1ef27e900f5b07d2d8c578737cb20e582e02f9e951a9492",
+  "logSHA256": "0b55de1f30e527690efd5847f463bbd0a086eb4145d9c7fcb4a70e8e80597b8b",
+  "serverConfigSHA256": "23046b9dd912fa61c7c57f0666f57c123df69a785a43aa711d16c31a34a59b85",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-026": {
+  "sha256": "51b6b33c6181273b38c7e9d46e8ff0ffaa8cbea99b2d892f25fd315a85c075a7",
+  "logSHA256": "efc193bdae52ee6241f95fc8dbdc3c7f0577b9b6bb21fba24dc277d859380019",
+  "serverConfigSHA256": "d25221c03a559efe6d600717992cc0242602169fd8f2a068af7863fd9b0a57b0",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-027": {
+  "sha256": "6602016bfd49e3abb76ab0dc524d2aca43e5d683cbed30e8e846b3a5324a7b06",
+  "logSHA256": "081680c16f13966ca02ad990b240e7406b8a143a56482273ae8599cc9baacac3",
+  "serverConfigSHA256": "8e3b1f6dcd691b842f3586a8427e9da609525c727af7d979ffd9461b8405a415",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-028": {
+  "sha256": "56a85cd5b0953c84a625a3100551d5846a1116b3d0c106ddf4e0deeb9dea3141",
+  "logSHA256": "36c78214839eb04a6a7be100fb024e5783262c2b28b37ef917b3a6b679a2df8b",
+  "serverConfigSHA256": "9ce043a516bd900aa726ae1058a0cb176bab0eea39eb3c649959937c86082b2d",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-029": {
+  "sha256": "a58099ebafd3f5f50baf647307a654ee3637f6e803dc1f6beb9286c1cbf11a13",
+  "logSHA256": "c4c8ae3388a29724b84bb252a4ad64e3970561469887f4aff86f5e3c92467e60",
+  "serverConfigSHA256": "24a041052a25a3ed06bbf5873c6f41d5515185daab258ff203abd48fc7752c6f",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-030": {
+  "sha256": "fca5263b7e35d104e2cc84c909c7d2f88c758683e15de9f198908e6db9030e41",
+  "logSHA256": "341276fa6659f94d3d97a4b1822aaaf3a3baf93db53ad19b8448ccf9bd1db557",
+  "serverConfigSHA256": "92b800ca2eb40ee2fd982c3b552305a3b391cdbb9cc0ff384e72558594e71822",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-031": {
+  "sha256": "e08638b3ea1b072599d467d4e80c114dd2a32e6cd0ef228ef297f32b89d51414",
+  "logSHA256": "07c291e361f58c771314608d28acafe0b457d54fe3ef3f2217ac8a0ef552c4eb",
+  "serverConfigSHA256": "dc02ac43251d3bc4bb74f0e246e9de1d1c450a39fb2643037348c97e736e51e1",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-032": {
+  "sha256": "be5c633e9b96a3a68381f9cf51a489d9cfdf22fc5a822d1ead0c05db94a00498",
+  "logSHA256": "3b1b7afbefe85aabe24e644fbe5fca75813b3d65ae0ae10824e26192305e7dc3",
+  "serverConfigSHA256": "ac52fcf52e511450ecd8d9ea0f2c087a34220951f44126f62f66ba0f7023e978",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-033": {
+  "sha256": "61333203a0ab69334394ee2204c06aad8cba706d87aa661735f69db60dd051ad",
+  "logSHA256": "27c0a274ba38a5827ab028b205f8767105562415cc16b60f1a69be62a7196aa5",
+  "serverConfigSHA256": "a731a7fb3fd9b74b116a877eae7720614851e5c74d30527e3da926f3be601014",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-034": {
+  "sha256": "fb8a180910c4112321217941da38d8906bd419ed6fd1b3f7b042b67734aad71e",
+  "logSHA256": "19dbb6cefe4fe05909e9748214e75740d91d57745e23393584d7a108dca1b3af",
+  "serverConfigSHA256": "916913d932624f27b7f4c63652f0f6cb7c62ca535da2062dcff1a873658d223a",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-035": {
+  "sha256": "d95db0f51903f375d741638fd078ce29392d9c5e38efec9f4bb807126e7af756",
+  "logSHA256": "c41d83a1d7c88063c8b5c27b5287d5a003786eeeb8e1ace890a9b129fbcdeacd",
+  "serverConfigSHA256": "1b8f5d4dc9c7b926ac84fb73f956a9111604997f4ae87b3b129f6d01ba08f72a",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-036": {
+  "sha256": "b42d92720b3edaea70acfc4e5a525deff8bcb2420530b1b7e39d59786641e8af",
+  "logSHA256": "7cdc2ae1d444efff3cdba638acf64122b2c2bd9927212236aa3e6ac2dee1ee0a",
+  "serverConfigSHA256": "ab6f61ac7a03779403e1598c49f2c89b00fd6d09df32c32071c8f55679b953c5",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-037": {
+  "sha256": "f170d0a2ce332c2fbe548abce4dc5fb7095cbcfbb1080e52d14eb8dd3ad4eaf3",
+  "logSHA256": "75653816997218de4161a7f1244a4c825845c710c051f1802bbdf3db87c25e38",
+  "serverConfigSHA256": "771fd73bff5479b98b2dbdb61dc6f02408e5f4098af4b9376afd0e1abc91365f",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-038": {
+  "sha256": "a4cae64430d00f6536080c408ffa4b4b28c0dfb9d37139aece38542eea623548",
+  "logSHA256": "126608343057b37d724db4d66d89be8fd821026c92f173d04fd9af2588d4f81d",
+  "serverConfigSHA256": "37cc178bc1d6d3c2153ec8845f6da1b122109f6214c04e245745179d66a82bc7",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-039": {
+  "sha256": "d72cd6746df8bc2143e60cb5a506df3a3556ca7f0b1cda3eca003ad478d3c00c",
+  "logSHA256": "3fa58bba751e7540c1313c584825da39bb0e56f4d85a16c4633c39352e98a0dc",
+  "serverConfigSHA256": "5080faca44142b7923fec123ca9e941dfd9056f938248bc113c288078b11ff61",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-040": {
+  "sha256": "827b4bfae78c8704c6ef7969a37f5bd14d7cef2354e26d9441cb79d833457912",
+  "logSHA256": "93440d04ae9a10f78ea2852216f2656ff49e070ee47a1115f86ea60b44c61027",
+  "serverConfigSHA256": "a7e0297da095d2eaeed350cc3d69e7c69da38d9b50f4f97eac5cc2ae3fd0fabf",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-041": {
+  "sha256": "713d574c69bd4b70dd1c46cb822095bb6307ee6f1275f3a5bac8205464b90936",
+  "logSHA256": "e241496e7efedac41d69ba6d03f29b0240c35d10c13fb360be84cba400230cc9",
+  "serverConfigSHA256": "a3f14b0aec146c62d409c9cd1f9823a40bb3e1baab5c0a94ba9e6fb8bc721e29",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-042": {
+  "sha256": "fdc438ea28c5eed7185e2c2fff8280fa9a69ce0b8004c69904e0e1bfc69ce56a",
+  "logSHA256": "6c2e2b364690323f90239ae8e13106853a4717d67918e43d89ea7ca53b3869ae",
+  "serverConfigSHA256": "873e38a77bad6f5ab9e55fe6c1a3296524b96f09bc900633b06dbdec33ec1a93",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-043": {
+  "sha256": "d0ae086a7779e8bf08c02560265ad3f77a7f11b07c975621e7195bcb95842f2d",
+  "logSHA256": "a76ad471803f1febb8c24d696017b9c938c89021b2a19ace98b1968580c2b004",
+  "serverConfigSHA256": "ffc2ff1385148bd2a6d6fe912dd4d591310dfa217966d28038281abad2826e90",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-044": {
+  "sha256": "7bcf84fe69458d6ca35dcc887f09ce2c4724887656d339046d95d69bda21ef81",
+  "logSHA256": "ab930955eafce92c817d7ba62d39a7eb09f52b11da118d09653d5ac112b1f706",
+  "serverConfigSHA256": "ade7e0e170d13a0682f211828c723f4182aca1e4da37278b8a6c55d766fd3db9",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-045": {
+  "sha256": "c57edf9d2738f337e8bf85c80f2ba40255f61029ca6a0b2c7ef36d9e9a708963",
+  "logSHA256": "aabf3d94b32bdfda8f94275b5e550c1daab5d910b0e96d8d698ec076581bef74",
+  "serverConfigSHA256": "48a807dc9c8aace10d456d247f6145f0a4c7239e8208643d5a92a2adaef404d2",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-046": {
+  "sha256": "d6969743b07bb74f33b540b78bd8c1337cd77505b997e6ef8ddef744b3faf9da",
+  "logSHA256": "b217cc074eec6cafb33794cdffeca4049905dcd33ff2100694138d9b3c3d10ee",
+  "serverConfigSHA256": "e348e61648c34461c24c0f0ef79a20fb162c0ded78f14e539c704f86b6e3bdf0",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-047": {
+  "sha256": "8b2044380491e9312ee3eb73edfc91b06134b2f1fd0e00746ddf55d1688b8f2e",
+  "logSHA256": "369cafdd79d06eac6e08ae04b9cbf316244de62023e4cf81dac5c022f91a9499",
+  "serverConfigSHA256": "3c45725202a79f36af5ea222afccdd3a96830a4225cfe09da51035944e1f65ed",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-049": {
+  "sha256": "619499af698329ad20e456999d61b736b8442b80ae0d49ab0320b5ae9e07d9da",
+  "logSHA256": "fe8c3cd9011cbe8a83312d69bf740b11661a85c4c5c7d80b2b9e034d676c1fc5",
+  "serverConfigSHA256": "df154b8e0cd346ac840a5e37db82da5cc6d0f0ea62d6d62b27562cd52596b359",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-050": {
+  "sha256": "24f73d4376c47c8edaba7441499fec59358926abb7c68e3c1f9e8f7727e0fabd",
+  "logSHA256": "c1d7b4e7d5e02882d29de38ee927206301f677198b22f832a4fa593737f88ef4",
+  "serverConfigSHA256": "ead87b5dc56e034f814c356454fb3c2c4a5a8fcbb466b2a915cff7c142d20df2",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-051": {
+  "sha256": "b6b5d9ca66d17f246edc89824394d06d11c3d35825bb81fc704b2641083d4cbc",
+  "logSHA256": "60c447d952dab960c0276aaa57caa3068c7c0ccabca21fc73683104ebffa6ca4",
+  "serverConfigSHA256": "f24a30b4d3ade81a48915a5f137eb652346fc83490bb20c501b0b434ede79f10",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-052": {
+  "sha256": "d80bb4337784600e6c4cef0c791a06a3a0a912660e153a39ff894e16f9eed7ef",
+  "logSHA256": "db4bbcf32a078fb4dc5b12b6776136d9865aac583f6113100b31a8b1eb00b841",
+  "serverConfigSHA256": "2016e3fde20a790922567b920f4116eea28b82ff9002ed5c7f34b43ef7e940f1",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-053": {
+  "sha256": "527480f7729cf1c11d31f861718bf2df0b9230558dc5e38b30733f9f465badc6",
+  "logSHA256": "0ae1ae14fd9875cfc5d73807acaa73534d50f42e1a59e42ce9d518f677f0288d",
+  "serverConfigSHA256": "d47a41c1dc0b6e5d6a7c5217979278520a543b437814c5b7ccc2351004d4fb1c",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-054": {
+  "sha256": "34c315a79a98267ddc6f96160283e07fa46339573b12be3fa9715abc62e3e98d",
+  "logSHA256": "18dc8c4837ecfa0e4869c6a149a3f724d558cd189565a8d4dd6fe8e0c3f7a341",
+  "serverConfigSHA256": "7a57bddf7c47d2ccc5cd756d7d495bb00738884c91578fafea487eaaaf52d7fe",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-055": {
+  "sha256": "7a5571beeb159212700b2380ced45c51021397658c10182ddce8e0dd71245b9a",
+  "logSHA256": "d71f4c37afff69c31b63632cf53f7c3dff6c25f76c1d10f685d3e0d965053079",
+  "serverConfigSHA256": "c59154eb7b2c76fe97347e87aa10c2a569f2e5e75a528d146b28abb0824a9295",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-056": {
+  "sha256": "9648eb3fc689e88d1b8e913627e8d17941901832d86fea3e424960c699d00ded",
+  "logSHA256": "76c5b83aa88765c6337730f7e27524f0cec192d383e435ead1e43a630926ec8a",
+  "serverConfigSHA256": "b9694f9f98a64984237bb8a2f7e4522a36f01fb7640dd4019d3b6101a91251a4",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-057": {
+  "sha256": "7faf8b267297c3a7df6dfc2d863df648186da16fda17f866a1904c22133e7034",
+  "logSHA256": "890df81577ad2deaaa4b73a838344e74cae4eae89da7b65d22302c603cf91086",
+  "serverConfigSHA256": "dba8fbe759bbc8fe6c72ecaba7c47941ad92954a76aa5b89ac1a63170f8d1f21",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-058": {
+  "sha256": "380023731c1421fe190f80c348c80cbd19edb43b1201cbe8005c8ac5baf07187",
+  "logSHA256": "a68be41538c7d11edf5ca36fa6e51ea9d53cb71a81e6e1eca8a745a1b453c2a7",
+  "serverConfigSHA256": "d94b90d7152bd827374185b3f3d5d939526fd070d3dc1bf609778f46242c39bd",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-059": {
+  "sha256": "fbe3e702435ef69369e4bd4c4a46b8bcae72bac4e98f9c35fe0225b22635005a",
+  "logSHA256": "5bad23fd9d1d29ce4bfb05ce39db8b2656402f7be5a3af4dc2551f9222c15303",
+  "serverConfigSHA256": "a0841b99ee5f1c9a978d96d9c802e1b010df3a0b30441cb5b503710a335eea39",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-060": {
+  "sha256": "825b57f3836b517ad10de0c23736212eea73a77cd713cadf25fb7439f9bf3121",
+  "logSHA256": "412066bcca63ba045ef7fcd4e7bc0288bce159cd05c701ccf134825d64d5cd22",
+  "serverConfigSHA256": "ff76acfce074fb7a8d6113a7c240133eac846de2f1c3f49f554e174240ff7afd",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-061": {
+  "sha256": "bfa561fdd1b10889bb38b229396622cd853dfec20078ef904fc7898fe172ed22",
+  "logSHA256": "bd771e4d5b44ed75eb334171b5a6c2ec3701282bbe96c6f42f56f387a85d46c9",
+  "serverConfigSHA256": "48f9bb566d797b1aeb93b8d51ae109c088e11062e5204b3af9af9f5a43d6f82d",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-062": {
+  "sha256": "d13bca08d2fb23e409a8aad24183f61c9c61541598653491ca6d182245e87d11",
+  "logSHA256": "e918769aeb24f0cfad85d1c44601141f23769ba73f0a5b656b472c194c1b16d0",
+  "serverConfigSHA256": "3ecb06f6d5c094ab1e57d1b584137cbd3109504c03b15b97d6d7ee955c65443f",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-063": {
+  "sha256": "6ead7f375f9716781886751744d882fa7239789ebf0819769226d68c61ddfbd4",
+  "logSHA256": "8b26246d9a24005e33e8c518174ca6ff60646f047edde4179049c9ff7c2eb8d1",
+  "serverConfigSHA256": "84f4e3bfc424e7abe337355da106cdddfc652893b4d2b6ba81df830ca2cbdb5f",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-064": {
+  "sha256": "3bf867143f1ce62ee13d76b73e8bde6207f71f8af2670ee34d6133e8c92df57c",
+  "logSHA256": "53a2126bbd08d5667d8b7fb1b58fa5bc765cbe5cb242a411724d12333ce1db2b",
+  "serverConfigSHA256": "a2731f475dc47874995ee8a5d1d559b3b9f0d34f59791a85524ba35999a57977",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-065": {
+  "sha256": "2a5e6deb39be863592104c172348a8bb3f26ffab1b5977d4d9c169f735695bdb",
+  "logSHA256": "2d5473888e1098e180f7cdccf7c6dc968b018cc24060573f2696989956fa75f9",
+  "serverConfigSHA256": "f9c0e89c47c2d2a43fac7b02808d12bd76a3f4bf0ce1c94a7de795f1df67c040",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-066": {
+  "sha256": "00bac4f264d1309f2b44c58d27f71345ad3ed445b5d6b20e939ad97431fdbc91",
+  "logSHA256": "1a98bfb3f9daad0b8b2daffbc61ce6eb040f1832de71dd7136ffa5829e48c66a",
+  "serverConfigSHA256": "017416b5b772c09a0ecc34c70b8c178703f5f03ed59ea4a3f8ad3d6d5de1f513",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-067": {
+  "sha256": "f2ca7888a9813eb592d540c99e007f0d4b02dc74c4f6d6bf894de012dc1ec3ad",
+  "logSHA256": "7bbb016a9fe106846abc53780450f4ce01f1127cbf755e0ba00951c30bc459ca",
+  "serverConfigSHA256": "2ff2e15a550869c57efd4c17a2d3d41caa0e1f77f7fe364ab83ec6a2d4b9589f",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-068": {
+  "sha256": "bad4267c6824f12c41f3b5e983947457b6350dd8dcfcf6f5e173b2d6c5b8607a",
+  "logSHA256": "6e84f10f1b729da7b301f9e62637b790a158bc897c87cbd59067ec998ac7621e",
+  "serverConfigSHA256": "f02703d1be1d13ced1e0752a9710260beeb888a44d9ac5ddd8722c7553d917b9",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-069": {
+  "sha256": "7c8d60bd0028038a69d420e1b011fabc139cf5ee3b93338910c9f6408ccaa0dd",
+  "logSHA256": "438659dcd3849f78d1bd77c6c694fe2eb50185c62c538c5c8d0489fd33b3a8da",
+  "serverConfigSHA256": "12142316ad9607371d628f31ca89f7a0adaf2c2b755bff71fc44beaa6ec6b68f",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-070": {
+  "sha256": "99372d26de809e2441d8e0ba2cde2870dd1b5f101d4e66c2d28de8fdc2f20e42",
+  "logSHA256": "67c0eff469d4de85916df4cb307bc5dcb227e9347f8e9960ddf884b2e1854738",
+  "serverConfigSHA256": "ecf5a764798325faab683c8e8aaef199ed3a194d6e2f0d639e309eaeb2cbfb2c",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-071": {
+  "sha256": "8af55482763233c3a0db4812e2cc07af6d6bd3c5f355999737c1af91f09c44bd",
+  "logSHA256": "e558a762315191f092810b8599234f4266781a3a51b199f815970d515c1a42f7",
+  "serverConfigSHA256": "01b37097f5b80f4c89d90d36dee1fc6919df60a5ddeaec3de1839cbab7e57489",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-072": {
+  "sha256": "f36d602c8f6aa5dba284824fc6a1028aa467e07b3329da943ce20df17a4f7a41",
+  "logSHA256": "22b7cd32876c1f887c9f42bff89fc53aaaa239fc79c00a8c67149bd0f145deae",
+  "serverConfigSHA256": "ee7741e66859deb9befb4687ecd8428ade3bdced4fb462945f7f307f9b295c8d",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-073": {
+  "sha256": "e13f354e6d2be89b90ce2e62f1798ec87fa7c309dd5c0debe6d35ac4234b3ead",
+  "logSHA256": "5de00e885fc16083f067a62a99dff4abceb17023476d8d9000995bf552ac31c7",
+  "serverConfigSHA256": "550bd9388b6e573859f50dba78e6df4defe8d6b0cdb2530cc763933105cb992d",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-074": {
+  "sha256": "a73c0a6e3dec35eeb6bcb7b6321ac086d61e393e5931c866ce734e5245c354ff",
+  "logSHA256": "8415dc9e252167fc80ee98dfbec1e3ff9a7ac8116cf7944d0232a0bdfbf0619c",
+  "serverConfigSHA256": "a5f83f842066e363cb304397068bacefba82ebb229b2ea6a309432c2bab1b38c",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-075": {
+  "sha256": "a78d2014aacb34e030cacc9524334053395fe05e3d75759839f40b81ef1c2e1f",
+  "logSHA256": "03ab27d35e9ba4c6a870c5087344891b03c97743dd174d6c24be65f564e2bb4a",
+  "serverConfigSHA256": "e7cd1bb91a1c1be44ca7680b5a27d95a0c0f76b07a7dbd2b21d73221d06513d0",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-076": {
+  "sha256": "0c4f0af70450e1fcfb6fae3c834e68d96a61a5e148da9afd23e52f1ad345d16e",
+  "logSHA256": "88c9409574c489154be8f1898f63b132244615cb8e3f381190fcb15cbdd18589",
+  "serverConfigSHA256": "53b20e3d264e3e03457ac90261ea6487de42fc2994423593625588bd34e300d6",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-077": {
+  "sha256": "c507a666d7b0f8f6347962248966e59bb8d6651514832751ef93437f1c253a72",
+  "logSHA256": "b1e529d2cdee18a368d80118fca156e76bbb36a481adc41d79ae42dd4c7b173a",
+  "serverConfigSHA256": "b41f830449f0de5504f3cd4cbc6298c5cf09517011bc92e8b7b15d28c19c721d",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-078": {
+  "sha256": "93799ec52b3fd07be4bed451e5fb13427931d05566f71b84765d4a246f6ab8e3",
+  "logSHA256": "6fda5044ab76aeb17eff68519b229266f90c69b3363fb178f64ea9270a35cfb1",
+  "serverConfigSHA256": "e35eb67c0619635e42d7aacdec5f5bed00dff3a38acd42c6c4c9c8823e1222fb",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-079": {
+  "sha256": "1c701941f5659964150bf2d36ae0e71acd5f294a4f2b283242a1f8adcc81b72f",
+  "logSHA256": "44484503bc6592986ac48fa3e88baa30b697346d41c2cd6a4f3b02abb906aa38",
+  "serverConfigSHA256": "93aad5d94755bdac212e3e247ed4472ee03df2545a00f6a8642778cbbfa98036",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-080": {
+  "sha256": "6a843eb7794e54bf3ebd3ad5c3abefbef57ea34d8da25450ae23bbc73fda6403",
+  "logSHA256": "6b9703245de09bcb074fcf2e8f624256dec8dab26db57f6bbadb0f6eaa865e04",
+  "serverConfigSHA256": "754e5f5efa5c45abe9ddd26ab7a9ef3bfec14520329154ca47c0e6d1862870e9",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-081": {
+  "sha256": "7f2efa9aeb46542e5ac53d84bf873745f6ef1b6fb3ae974169a02dc1a2a6210b",
+  "logSHA256": "244adbc06cde5812a58b92fe29f937449a4186137c9c9d1f58d5b9b2650eaab7",
+  "serverConfigSHA256": "72e0fc58d47a364ad68112fb56cbf816ec9ac434b169c542c2ab00bd48277609",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-082": {
+  "sha256": "e6776e2d4134704de8d5e24b23093cd1860c8f2d72d976ad20893ad4acd29fe7",
+  "logSHA256": "75338bfc6cfc86bbdd92871f20c60bae70028862a339e27d96068c5513084f7a",
+  "serverConfigSHA256": "0af0eae5e5ee6a3446954b9e18347c5ff6ae3c071b8f08ae4f534745b2034710",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-084": {
+  "sha256": "f8c58c7bfbf1c8073302fecc2eac3978a7b11c91423309e8c595ed7e70ee9922",
+  "logSHA256": "878080ee2604cc179dabc6448b770854b053fd991043fb5c4f78ac6ff547bea4",
+  "serverConfigSHA256": "706cd40bb7684fd5d47dff61fb2c5a1d08630d643629639032f9dceba3168d26",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-085": {
+  "sha256": "a2aa5078697f3946414508f8cabd5d2456e4f9cac2e789a95e8d0dbf61f0251b",
+  "logSHA256": "4888b85b99bdd118d16e8d6f834fe9e84f78409ca77bb97f7ff9611c183b91b8",
+  "serverConfigSHA256": "6fbc1cf416f4f1f3ef78fea88bc0f1825a6e287a0bf7fa6f19fe65ab892bc51c",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-086": {
+  "sha256": "51cec6ea77821c402fef76077f28921e481e4f7da1e9d0a6972e7d4bd079345e",
+  "logSHA256": "5e58d53887dd3eba65b83afd84ca0d0e38de1e5d83bdca8f83c8641ee5a1199c",
+  "serverConfigSHA256": "ed8e5f050f6a0654dbd607dbb222f76770178a47b3a6e4266385e646fabd5fd8",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-087": {
+  "sha256": "9f5b5f824cdb80a95a2b0cbc011d427c76f1f5d2f110d8ecc5569dbb887bb552",
+  "logSHA256": "f1f81fd6ad365d94ea615eeab0064569f92dc8543616041e672c5a361f33f586",
+  "serverConfigSHA256": "cb7cba6611c587ac4fda7f5c3536559c2a34821413f2384fe659438c432736d6",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-088": {
+  "sha256": "971b976a4c1086985547353d13876a2aa371c7d1af927567efb4cd4fcb022903",
+  "logSHA256": "6550a5b19abe5c7fad6e7cadb297fbf474f9b4790d3f681aaf2930721e90bdec",
+  "serverConfigSHA256": "a4e9b6c4f2574d3f4c17ff873fe9b179c9239cabde9b43b85f7d34f97ad0b09a",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-089": {
+  "sha256": "c92a3f89863900432c286c4fad58a67f31d827714e75e0099866bc10c264930c",
+  "logSHA256": "aa113ccd15b0b623fae65ac0e75d1f2bcce2fcc0522c85af889b420137c64d4a",
+  "serverConfigSHA256": "80cbd2cf82434e4345020b3d6342f0028da081e7e4bc2be1668caa638aaad0e3",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-090": {
+  "sha256": "b3c322d1981c01a9f1fe1c21c2899b6e0110bc87a8990fec2fa63f9a7fb1d1be",
+  "logSHA256": "452e64a3149dae5855576269b3a82ef01a5851fd7075e8de1164c8ff11da0d69",
+  "serverConfigSHA256": "afb8a2adc1a851eb9e3b5acbe55f76ffd4a2fc56d16532377820c7a808671a93",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-091": {
+  "sha256": "930be5e10e6e88ebe8e93afb14a866abf5fe49e14a6742386519b6ac96a2f49b",
+  "logSHA256": "95eed0e6fa93bb8ce912c11bf11e115062c007291270f3ac8db571072f601186",
+  "serverConfigSHA256": "4cba8fbb9d5dd4fdc2d8f20e20e73fe10a6aafdc7240954d9e3a3cf95b7c76e6",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-092": {
+  "sha256": "6278428faa1fb16531a1893338c079a6263adb3b7488ddf82d669c5af569c48a",
+  "logSHA256": "28e6a49c8985d8ce31f2da197d5f6c648590c3e7791422f0b0f47c99bde91875",
+  "serverConfigSHA256": "201fd94d379dace4be1a28e7ec672744f49687be9113615e480f2669ad34bf1f",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-093": {
+  "sha256": "ba1d5c06f8729f8a96768565326cfc4b0061bd22fe1d73ab0f851a0e0d1f050b",
+  "logSHA256": "3ba75c6a7906d7499789620784daf5d9d788c8389a7340004ee6c80bab6398bd",
+  "serverConfigSHA256": "99583c812dbe58ef781c09613e5d493b00df7ba684d51c996674e43cc0deda4f",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-094": {
+  "sha256": "cafc23be9c5b4158d619310feec3778ab5d8800e3d5a9b69a4a0c423d4c0eded",
+  "logSHA256": "5a3f04fca592ebcbbc1e309fc4838883416d8a516ce0a365f90399f4a8cb106c",
+  "serverConfigSHA256": "9dbab369de29921f516c806d60abcfc3cd6a4e3bad27a4bc62c111a02a4b6f11",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-095": {
+  "sha256": "e88f14ea60dae8935438c6c6b609bb76fdb1b9c227f04d6b701b42d126f75ee2",
+  "logSHA256": "7705e2cd17fd8c61d541dc8fe0ef28df76889f3d1fdca407a553a7b72e54736c",
+  "serverConfigSHA256": "011dd871d4ea13a304e866332451218856cbcf36d9f9ee248862a4954d6ce815",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-096": {
+  "sha256": "e5c4a108827d3d2c542d1208b730ebd8ea720bdbb8327fdd5256e2f9e9c3d40b",
+  "logSHA256": "b2e62fd2af96c99eafb083bd5110bc83abb197c21f4e4e56ef169b5740f7192d",
+  "serverConfigSHA256": "03289500d42e92b59d8e16f69a383556857c303edcb51fee54cdbffd1a73f4e8",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-097": {
+  "sha256": "b2715ffd40c32b85809c83df7d2795d93ed3398e54a3f1c4456f47e08598f73b",
+  "logSHA256": "7403af01ca8d237d70cc16d3b0f5d79d9a55b00467a6e498cdd2ca92a7f66493",
+  "serverConfigSHA256": "4e6fa77cd4a26436345a7d1fa7d4d912b43f91a615818143bf6919d2057d296d",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-098": {
+  "sha256": "1eff29a8d2ac86e4c86e7127d8dcb0b350b967effd4cbb85a0d5bf774b5ceb99",
+  "logSHA256": "7ceb5e0aecb62fa18a2990e2b482d7c2bdbe76797565e192220ef912fdb7f2ed",
+  "serverConfigSHA256": "22951f6e454f74597c43cec296d1a2756b3404fb059fc3d06322651e5e9cad50",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-099": {
+  "sha256": "5629ed7b2221bdefc1a333560e77692765e5a56f608c8a96cbafe337df80e509",
+  "logSHA256": "364c527b6745693b0dbc7e4c13bbd0b272dd9f56b5bfc7b4adffaa20c8b3cf22",
+  "serverConfigSHA256": "9338899b82b5e0e54efc4d53ad7cf2986e92ba6b0c8ca6c2c21e93b6e280031e",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-100": {
+  "sha256": "50325a46d152d50a3b1a21dd57a3d81a16d230caddb18aff6a9e27c0bf9a9f7c",
+  "logSHA256": "74e04fe0383d856d0b079f07451710e88386adaff78ee7c8e910096d4b264e4c",
+  "serverConfigSHA256": "f5f39831ecfd4eb580112c20e464b6bc820164e9e8d4f95d77763c9eb27cda09",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-101": {
+  "sha256": "76a7494538d627754f530311b8821f323deca1421c45cba930e978a44a0af297",
+  "logSHA256": "e084580d4b254fbe5a92d7bc42b15a93e442a52f1429b340882f529f66e14987",
+  "serverConfigSHA256": "ce733215d2d0d0cb94365ac0af33796c4015df3e012abd3e3eacce814b818a3c",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-102": {
+  "sha256": "79a87515e3be3950ef4f2c3139a6e40446ce015e984fc03009372640de414e84",
+  "logSHA256": "855452825bf988ba3496b22bdf6488eea0adc47590b17a5cd3a0f42934fe4465",
+  "serverConfigSHA256": "cf5d9dc6e44418fc80df4bd0234952b07bef84e613d0746bced74ac1cf53a5ac",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-103": {
+  "sha256": "b4657762b24584ff1217fc126b36e89d2893e679e829835fc30f2da56b9be5f1",
+  "logSHA256": "9e6b1ccf57aa943c8b29bdf2d7072a7c52021456523607a2c15e40b2f53374bd",
+  "serverConfigSHA256": "20352d50a95e1750c6b29febe6fa6fdbecd5315b34f63ac8f95cfa59f926363f",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-104": {
+  "sha256": "1442e8f5dbf139928922327801e782fc57015115e481a75a580e20568206c6b6",
+  "logSHA256": "6de361191c19029fc0d8e82d4d076a37adeefa8681145ea172fb7ab57fa5347c",
+  "serverConfigSHA256": "38889e0f90ed79679282497ec8955b369ca72cb716c820035cd6f05c85317653",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-105": {
+  "sha256": "0c782252ab4d1539f5629aeab98c38c6a782d0b0e6a0be014a4ea2ebf5b3f4e3",
+  "logSHA256": "90e82bdb9460770464629a6e76702b7487880ab3dd037166a7e136ba2f67de20",
+  "serverConfigSHA256": "24ad588aa1a5432dc9670274f0b0f10833c854371741e0fee8b297b1a6e8b811",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-106": {
+  "sha256": "1eaa76e385b37140db19638c48b067b9ffa382d9559b422e451687a45b49d3f0",
+  "logSHA256": "eec8891cb345b1e6b6d343f6f7691a0b7817072f4058e743c3c9e8ba26ebf0c3",
+  "serverConfigSHA256": "4c2eda7d9fd9d1c577b777e0f3ff04e695ca892a858e8c063dea2c73a30cd938",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-107": {
+  "sha256": "246759cb33d9e219af104e5ff0b9190e05bba5285d1156cfa4cf59e6af643b10",
+  "logSHA256": "b4680e23cff1951d89da08550999946dfaf8a94bbe08bd21110e055991f22fd1",
+  "serverConfigSHA256": "5265a3011bf86ae0f4dce9c6d13defacc1fb7af7f1dd630af1cef5062974bfce",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-108": {
+  "sha256": "98bb3c685dadb1838d152d40c562b3211019ba4864a27787fa1c0bb0c160408f",
+  "logSHA256": "168d1943b394abfc0af97121aa23419cc981144868849ec913319b071f08030c",
+  "serverConfigSHA256": "844225930113f075b38e73ba347d2e39ff42e1f71e4ecfe48d8701c17c924cd0",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-109": {
+  "sha256": "3536422f76fd1a5d0410911987c5ec9cdf15f8a929d2c29a24a15721e52c2597",
+  "logSHA256": "4e14896ed0f183c1c2add6694d067878320c0c95ca7b1cc922ffd648a94acdfc",
+  "serverConfigSHA256": "6845933f8743f84c527e47ef52de38a7cc8a6776b51114b31ca16ac4684fc83d",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-110": {
+  "sha256": "4f4385399de9b9b210a07e81bb4929ad579c19623074d7b5cc9974902b53b5c1",
+  "logSHA256": "8b38a500eaad03c2825291222c505feb194e226e510218422348e5afa372b085",
+  "serverConfigSHA256": "ed7d8668ea74d19fc50e5e9227fa627caa98fef57593f790cf4012b4be5a948a",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-111": {
+  "sha256": "725f06821c1c331aa805db993c2206be71e811bb05d71dfad8a90947f6991757",
+  "logSHA256": "0e0d8bad8b6a81121ec3ed59010837d17b86734b31390fc3072f01fc7e39d1ca",
+  "serverConfigSHA256": "dd54fa42f23f8860b890092c4a8bb3f5a968f42656f5b7420371fe954dc2f172",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-112": {
+  "sha256": "e195ced5c0c70d8cc477fd39216b4a97607b85a839b36d82a527f36bfae2671a",
+  "logSHA256": "18d7c5696524a187f3c494339da4354e5a7fb5e953b6dd60065d2d8219e8146d",
+  "serverConfigSHA256": "f6f3b4aff38cc8b5eec7df7fbce2179b788cac17b98b18883b5d373e0680c877",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-113": {
+  "sha256": "39b6397e8d21010b8c5d22f888410b997d096db401f22d300d506231d33e8caa",
+  "logSHA256": "4a93fe92e5101cb506c6fb77dad471be7dce21d866c3c86e67b38b1df4a845fc",
+  "serverConfigSHA256": "36a437d334a2c28a35db093d4bfef6149129bf800c168e7f69a27eb35463670b",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-114": {
+  "sha256": "68c6af7b20deee93dac9905a82b35cd397d39e9a7018fe3e1a3f0dcbd098c52e",
+  "logSHA256": "ba388d84cf2adf9db891ac7a5a590ba0930863ec86ae04c49174e8a2443bc0b0",
+  "serverConfigSHA256": "f5aa0489593ccc711091230c6ceb199ce0f9fceb9f5de7130bb2e15d5ab4c7e0",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-115": {
+  "sha256": "61353a3d9da5e5d8e67560647335086ff9388caaae26272bfb425439a61138ea",
+  "logSHA256": "44fac189d09ec8a234bfedc040ce619fffe673f29e906381c5a12bc6b3d8b4be",
+  "serverConfigSHA256": "4b320da95ace374f3c85ed37c7b0351a12b5b9b49dc88c4eebd418e25607522b",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-116": {
+  "sha256": "c1bda5273e880401f1bbff8d98fdb97fcebee6c28c9410aae913664f0f0b7a8b",
+  "logSHA256": "f03ec2d239cc573cbbd21d1469e016b454a6797851f349a0d3d549ce5794f907",
+  "serverConfigSHA256": "cb218039b14f554b74e3379ee96472843a07b5ffd849c32ac4f7e77b6ecbf4cb",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-117": {
+  "sha256": "d7c9cc31937d12c846a242b48d65cf73973daaf4c5b22ab3609d4237de2c090b",
+  "logSHA256": "354e5d5f53c8ea09f8ae05d8dbec4b0bde133c1c9ec4b67b86501d14d882ad0b",
+  "serverConfigSHA256": "3cf1910c9bc3588c14812e2c16469aef91eb549c21b6071d6f04cd2c9c57c2f1",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-118": {
+  "sha256": "63242cd333745a56010bff4d8b844691f1b8ff7d2d16b346c37f2283455de583",
+  "logSHA256": "1e9825e2ea9fa8bb390ed9ea9a1198ed12ae17e0600162feb20f5da8dba28029",
+  "serverConfigSHA256": "7f9ead45aa4aa5724c49f6dc74399178e7152025899cb66eac36ff6d18bac3a6",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-119": {
+  "sha256": "0ea802fecabe38b5c1625e9b4f93cb07fd988e5c6cb2f66c084359e7c95c4e9d",
+  "logSHA256": "0de6a62da1027c5b7d022002ffcc4cfd9b1827b03e3c46e231345be1e4caf95a",
+  "serverConfigSHA256": "a839aeb349e60bfb1a37053ee1278530ed53d884a539a5d4b7abe01906f66020",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-120": {
+  "sha256": "9589fd8e639b86d6848a4c33a377984d2d4d1636472fb8404e127c09b9300cae",
+  "logSHA256": "b05bc3caae481956f633e369930540340d68d7b2ddef065355afa91b00868a70",
+  "serverConfigSHA256": "a5bb20cc0ac6c6615185701d9eed603fc851151ec873bc95b831731742e2f7be",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-122": {
+  "sha256": "d9239020b4d4b94a3cc3b0e2adc72773a03c8cbeb3d2a993490d813d06bbfecb",
+  "logSHA256": "c5f57fc3d7cdc0ca050fdd578c5d80c999147f592eceda13ca908b774eebbc56",
+  "serverConfigSHA256": "445662cc8b8de41dcb0369ff0237b175e791fa250685c9126ee8190a2f42f208",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-123": {
+  "sha256": "1f7a0b446b4bb24668e7595089f819cb33f26b79cdd98be8b6f577cf061831ef",
+  "logSHA256": "96b3107522a029bcbb32708297c8097aefa35316d5956a1cf6021cefb1baf03f",
+  "serverConfigSHA256": "6854a68d43597c18ec9ca6cc72b089725146f01f7ffc06a5a590a0f4cdb15f64",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-124": {
+  "sha256": "4d4646a07e5ec31e6fe37c4032431b837867e349f1a6fe5653ae215bc7037ac3",
+  "logSHA256": "80131f549a68bdd0033e9d469ead9053a852da01c43dca1bed20930db5359b77",
+  "serverConfigSHA256": "0027f64a23817b0ab48da0523f6333a2a79df066f499729fd6d74c8222893bbf",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-125": {
+  "sha256": "f209df5ff3d4d0cfd13a57208d5bd726e3e14b34685aec7029b602a6a5f6bc0c",
+  "logSHA256": "288877fa2cadff90ae741adc58d18547a482b9c4d9efbc23742828f38428acf4",
+  "serverConfigSHA256": "1c88aadcb058e98c543e8e39a67bd5505dab562ffa2f1bff10347d53e9516b03",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-126": {
+  "sha256": "b3a389e2ca55d305881ed846a3b5002b050f08b15f53afc3028c1b597fbc3b1d",
+  "logSHA256": "4390fce49c990d0076845c27c47bc93b228b0bd017e1930c03ad55dd03c482c6",
+  "serverConfigSHA256": "ae69d5c1d0b94960d5d66a0c40b04a174bc65180e604f4dde63ddfc55c596a90",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-127": {
+  "sha256": "9e5d7de2072f8bd5d22edd6644c33ad93f19304ea6e953041782c8f8cd49e121",
+  "logSHA256": "2ec700d200c9bbaa85cb6402154c0b0adfa166a14f146cddcc681eb35a1822f9",
+  "serverConfigSHA256": "0a7788d450bd2b285ed7746e3a508088baf6b60c78818bc55fa92cf452974ebc",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-128": {
+  "sha256": "eb4f7be9e168e65820e6fbb40fcc5e32d2fc0f9f5c5f54ac3c489bb8d3daf49a",
+  "logSHA256": "637daa49a9f4f76d4506bc4627d4fd579adfd53a0018ed27ceaf4dd126237487",
+  "serverConfigSHA256": "8a027f76078dd0605d1370469c38a71dacde1fd99fedd79494b077bb31329d45",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-129": {
+  "sha256": "833369ec3307930cf790bf0dc38bce41e4b4c8351fa21dd4f5a84cfbe2380d66",
+  "logSHA256": "9f178b3e616176bd793d87cf3527beebb9f7620970119b90d2d33f2cc35baa09",
+  "serverConfigSHA256": "14c06a49ed7ce92a8f7a6d26312f0ca15a7f79824e684b42c78f2a9b4865ad2d",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-130": {
+  "sha256": "2efe1c95491097b948fd642ed9fbf650a58bf58b04ba18912bb8bcceb6d0a17d",
+  "logSHA256": "e3fa98fd43e097513b8e6ba173474c101b99ce088edbdd45c3695c6a9b92ede5",
+  "serverConfigSHA256": "d3ee8ace01e70becb8321004222816a01c158fa484c21c1f0fd869d7b14eeec6",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-132": {
+  "sha256": "935ec30d93ee32a128c759c7cada7f4983f0a81577803745dec16c0bd959fe41",
+  "logSHA256": "ca4374116e9d77123d2a5c7b0331055506feffcb777d08e240c4f3d8876ef7f7",
+  "serverConfigSHA256": "8ee3612e3b5cea8bae9b9ee18adee828370ea35c81d568c1fb82940ef63043a6",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-133": {
+  "sha256": "0088db4d87a64c7b12e63ce1d952746c4f93f5fe37bcb296de426403f3aab0cb",
+  "logSHA256": "cc69f65ae9aa5bf4c2d64e7f5f4061c82dc29e5d945fc6c042d423ce92de117c",
+  "serverConfigSHA256": "b2da06251f7889c5c5f69185d01c8355378948ece693c9b73f698627f81e6389",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-134": {
+  "sha256": "0969ac26008ae1dfdbd374af75ed30644e3a85dc96a4ff283b71cab4e563420e",
+  "logSHA256": "2ca6fdec5bee8658b14d38660369aa6cd30b802aa1e26efb5204dd8350c5abe4",
+  "serverConfigSHA256": "cafde1b1ffab885c2f5263e78305032d46e7bd04fa3e189f9a5c961691a24013",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-135": {
+  "sha256": "dbc7f241bc8f3995c75d046c86ecb50b409330849b7a7dea8f9930e386ee41f0",
+  "logSHA256": "8367e0a5573ae7d513c85062440e7ab2bfa5a6035104c140bd5b93266d25f737",
+  "serverConfigSHA256": "8f8cd5e8528f20960d4e6318eb5ef2c7c284c75ba3ada7a828478205718752bd",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-136": {
+  "sha256": "d876124339662bcc69a16a8ea6f6d6b1c3a29d4c5f5c90262e285cb3fef946ba",
+  "logSHA256": "3b0d4e255533a6367c343c5ca914f381bf98b9d6749130917066eca4f209e483",
+  "serverConfigSHA256": "6cbb06c6f839691e84e21bb25fd7b912a80d0bdd7b64164a53b63260fe74dc46",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-137": {
+  "sha256": "f32867a9b1da3df2a5ec74b1eda0d14ac533460453e2ca56d42466b3d01ce94c",
+  "logSHA256": "502c6086705355817eeb54bc298fcc6fa80c6265bed24c68c1126d37230e9ea1",
+  "serverConfigSHA256": "38b22e804953c3e18ebb69e147bcd64b8965f1033d51a43515b89546b6a33d2f",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-138": {
+  "sha256": "6fb7f82b722defedfaddacd3505e15d198781ca176a8b713f68e3ef85b389251",
+  "logSHA256": "7be5488761fa43342bd83b8b8eeb07ad7168e663fdd694bfd8d779f9064bffa1",
+  "serverConfigSHA256": "4cfa7d78fef06782059c3355477f8e5c5bbd1502435c5d8a987fbea405a7def3",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-139": {
+  "sha256": "352e0b40b291d66603bd1047647c2d16a588664198969896038fa0f5f3f993ea",
+  "logSHA256": "f6634ccefd3184904ce7d9ee46b44f7341d054be36ed02e08ebca5840a2f6ea4",
+  "serverConfigSHA256": "0106a7e4d4acf26d3723912646829c3c638333d038505ded2bfb8f5760e2909d",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-140": {
+  "sha256": "566cd994fb06f616bef8d0fa323adfbb61432673bad0711f4df62f4908a6dd60",
+  "logSHA256": "d3ec55bfb73533ad62ed56c0699a05fe4ad4c3ca68bac26e1dedeb29c438e3d6",
+  "serverConfigSHA256": "fdb886b0d2faa14c07450c3db23b4159e10527df7e63059ba4964ab6f494390c",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-141": {
+  "sha256": "d25cbb0b64bd344532405daa60f618bbc20ffa15f19872e7232c28c1a98a1a61",
+  "logSHA256": "2af4c0d8078f72ef46e564bc52c67df508b8aba4a462e58fcf6ac2bb4a551156",
+  "serverConfigSHA256": "5e3d555ceca95ada33132c2ed97fb9d27b3c5e7a2747bfb485276bfe344f6d8e",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-142": {
+  "sha256": "cb06f26619dae79c8bdc40f351eb4cb2b690d03202041d5d20716e2fad4f63ee",
+  "logSHA256": "a2c2372652219f02b519a4b7118e1bde4a98ff396a94b97f9810fa773196deff",
+  "serverConfigSHA256": "4d4b9e2a9575dd35a38504eb9a0a1d142e68b78cf9a384e2f7a670903b1bd225",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-143": {
+  "sha256": "0fe4df09dcb786dcfb9d8933c10d3226ca46f324a3decb1ddcc0101ea9e84a9c",
+  "logSHA256": "f06c305fe924c1a63d3ec25afee98c8603217102fd08bd5443a7ad87438b4213",
+  "serverConfigSHA256": "d6bf37d19a5c80c9a4a4bc43e0c54b019fd04cf98528eae0640fabdd63127efd",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-144": {
+  "sha256": "ed145b16ba7c656bd479bb08661c0f97e287dd900c155f35175c0277e773e042",
+  "logSHA256": "afa1f5bb828d6139812f2a3416dea7d7fd005b5358850b03487f33eb9abf26e1",
+  "serverConfigSHA256": "52e0d8a0603161383598a4c531a7ad13ece43ab48fb75ee845d11d59abd00745",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-145": {
+  "sha256": "7936434316e929fb8cf495a2b6895f218367c778673f1f99ec8822f04f269a8a",
+  "logSHA256": "6c4c04eefcece2c706f4b63e889e70937e58630cddf565a9f1772daf790e1d05",
+  "serverConfigSHA256": "f6434394e321b5142950728baf5c12f3bf8faa9b96693b9f3c3721c37cca0baa",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-146": {
+  "sha256": "b78f48b589ad6637434371cef5ed7482be7a2bfacf76b730d0b1b0b12e527978",
+  "logSHA256": "a03b42096ccf1d3e5367ff4f79050da5c79882767d189819440451c6adec823d",
+  "serverConfigSHA256": "ac52bf5484a1da25da35491f4bcd22eefa27a55c26578c8582f420570e084b74",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-147": {
+  "sha256": "7263f5342434d78e4d6a1d7361f97769994be28fdd7aef1b8d0336f757cd5a9a",
+  "logSHA256": "6d37ae3ae4ecab3b6bdf5205f501ef16b9e94ad9e70cbf1cb0a198c525fcefac",
+  "serverConfigSHA256": "f9f37af1eb26056e0ddea02f0f0f5afce17da462f2ddf7b96b419616263fac90",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-148": {
+  "sha256": "a0dd824fa2555b58ea10c3c5b9e271b655447c1628069a6db50812a37d3b84b2",
+  "logSHA256": "4d8ad7b660173894f502dbfa368d9e4dce5e1fbcb8715315cfb8f8c28da98e51",
+  "serverConfigSHA256": "0d0bb03b1da4c7189248bb6d3da47413e0985a90dfdb5ff28d041b7c05117fab",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-149": {
+  "sha256": "37c377d939399140284ecd1e81aea376e0227a41deac37c1b47aa3185ab8334c",
+  "logSHA256": "736216d6216c5806e873bd5c34c8d39d8310c4386209518a524a1f2ee71fba09",
+  "serverConfigSHA256": "b174f978ade4b780d4d0c8c3b3f1840913b7e2486df04de8fe6e7f461cfb91ee",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-150": {
+  "sha256": "492d2386bca1c665a8ca96e5fd9d19dedcbfe5ce26b8e271b4d3c1d54dbba4ac",
+  "logSHA256": "011af280f14dd69f2de331175f39b15958c106fc3f498bc77e0abc9361d607de",
+  "serverConfigSHA256": "959c8d3ba5840f62f13abeef7520855bd934219b15d6dd81cd227934ffa76cac",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-151": {
+  "sha256": "656ea5867254eea4947e7652b90040d2d4097c7f957fb18fb801698bc29e1e93",
+  "logSHA256": "0ee04ef95b79579a96bb21981728f8f0007b6c29622cf152f071bfd0f13d2ec1",
+  "serverConfigSHA256": "fb52a7c58d185d586828ba54789d8d431a96da0595e9947046fb98f5b4415f1d",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-152": {
+  "sha256": "993b9f80943c5aaddf16b7add0c7d76a7093b4d234678abc6b6aa84a8d2e0278",
+  "logSHA256": "a07bf5c6308dec4968dd5b62f09a39932dff794036b4f976ac39ce4ce5876e94",
+  "serverConfigSHA256": "7223348ee87108030e15d58dcf3ff5437fecf6864fbebd70c08d05b72708c06f",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-153": {
+  "sha256": "24a20f790fa6b6ef57253c8d119936084306d9cff0b07eb877dae2d4978dbce5",
+  "logSHA256": "2f46ed350dfab90bb7c768c403ed57b2e544c3f53858f428d29a6fbeadfaf5fa",
+  "serverConfigSHA256": "dce8b0b0c06f98a7f2390a98831f686f5f0642cc5304866ec1efce040719df88",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-154": {
+  "sha256": "0dd94278525d1faf912668511f2cca0716a06a9c3a4c62757a7bfb642d49b338",
+  "logSHA256": "42eec3e294b3c2177d0c51a55ad8d8a29f57119eeaf27cf2838d758bce156ced",
+  "serverConfigSHA256": "bdba084da49c1806f00a9bd7d7adea61f829f24e01a5f928581d9d2362cce61b",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-156": {
+  "sha256": "18b2db41a0454066bdf6b893aade54405de84b1cebb6aa66c186b08f98fceb53",
+  "logSHA256": "d77fda6b854e3d2ce9966a029bd4a6283e2a7460437c5871ec809e050ccfb681",
+  "serverConfigSHA256": "8b5b14edefeca4ae7f85f3a2f9390b71601b7e035534539a1bd0c8f42fd75c0d",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-157": {
+  "sha256": "010199e601f41e0816fd367140a03698b8c8da7a7e02d2a1fdd4af8e4180c17b",
+  "logSHA256": "11c3a1ecae7bdde4458855cf023bbfd5c8aafa16a3b33cb05f175f7d4b03eb15",
+  "serverConfigSHA256": "4f66397b27879399afea4ad7f495895fd38ca32a058675f1b4b40589eae3b6f1",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-158": {
+  "sha256": "b86bbd4af4c0011a6ed733a8754b24dcfbd38353018847b2bbbe15ce919aad13",
+  "logSHA256": "0f8a278f0371764fd652977c554c79288c5b2dbdb52f4f5de708b97737a716ef",
+  "serverConfigSHA256": "568feab007900aae09aeb592f3800814ecbe5dedd649b10c2925ceda2f2c2f8e",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-159": {
+  "sha256": "84d8b06313aabe82a557f183716dfa17dd28a4183a69afbadbb4f46cc0d5e00b",
+  "logSHA256": "61aad16f63366b72fba1c15b009c1af8db8a3e9d2a879c528793a574813d3a3a",
+  "serverConfigSHA256": "53cb8604103348cba352d9a3222c0822cf4433a3219525377a9faee5f9b02446",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-160": {
+  "sha256": "665c88a378b33e4ce2b5a0a644ca6ccda0c47410799a56b612372c6707c4faf3",
+  "logSHA256": "451a23159e7fe419c7ce6eab0307d4c60e6319b1c395c0da6149c9ab3d08212a",
+  "serverConfigSHA256": "6d6ac3bf9d286507050abb0922fb195203dc36ebd51995c03dbc771c3b94e3da",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-161": {
+  "sha256": "50491d18317f71e223bd76108af17b360c2906b9ac3904619d4190f12ae7ca15",
+  "logSHA256": "5c1c795caa63de316f4f44a8adb2ebab612112bbc0974347f1d9efca2c626210",
+  "serverConfigSHA256": "e35dc5e0c7c58c2574b13087f8551bdbed923dae85b5a3f694571ac774dc833f",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-162": {
+  "sha256": "218ea1381190832989ffaebe019f3596398233d1206c40d0b57d40210df9f489",
+  "logSHA256": "b8a0f829b2ce4a016f2f7ba013f0975cd46b45bf1114553484fbb209c09ad47a",
+  "serverConfigSHA256": "51b634a9b4acb40aa388eb4832d26ec2f44bf674ff87f02a0adc9e8079e5b036",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-163": {
+  "sha256": "176a557a4128dd3374fd4653336d942d370296bb8732ed38a0e013b05e49bd91",
+  "logSHA256": "cf10b765dab5d42d19fee953a6e376767234e51e5387012251fad7b5091d4d6d",
+  "serverConfigSHA256": "d77caee86ccdd6c226d76eb27c4892976561be40545f29ac178b56588539ef1f",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-164": {
+  "sha256": "68a16a423c1427f4821e88b0a3f50484b24f44c32ba89b501d7554201d4ae3cf",
+  "logSHA256": "6866370baf9eb33deafa1ec96d98ac6b62e59637c091cdba725d040c70d10084",
+  "serverConfigSHA256": "66611a4c64b4960bffe557730d972b2e1bdc952b39dbc82de8f23946a26c3eaa",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-165": {
+  "sha256": "fd1342145c04873d20e6c816dcfe79770823582bf87addf21182879148e30e2a",
+  "logSHA256": "a5c0f69bf42362faed1ae7e140eb1d5e7c9f43286c4e868bf18b1a2b7dc5d71c",
+  "serverConfigSHA256": "85552a3d1a1dfbce664be56568212425f081d9083f5040308d5975155f3434d3",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-166": {
+  "sha256": "31e6c03f6f1127ed6dff7f6830546d7585a945a0041962172747159ef99d028e",
+  "logSHA256": "b67d4e2da8ce7c9d4acda37a00c70e80b2e2adc4a973045bc18a012916583f1b",
+  "serverConfigSHA256": "3d37731b655897f4d039f2ddee32ac6972ff036bd65f2aa0f0018fc5ceedf580",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-167": {
+  "sha256": "3db5abaa82f8db0049d15addea3ceab9c11158debac831076c3f9adbd100171e",
+  "logSHA256": "d45f2b092c3004cb745f2542e0aaf75a2069a9f7eae189e57284e2a6a8b83fe9",
+  "serverConfigSHA256": "97781a2bc422ebdc959afab1949548fb2c05634a1bbea294c6501adc8c3c93b7",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-168": {
+  "sha256": "c42bd1e85cc92c10ef0210eb36189d44b9c93e96e6716fa07495791b907cbb16",
+  "logSHA256": "a4e9109985c96d6a40fd1d437d2867ba1619d04c4298b46434f50f492ed4321c",
+  "serverConfigSHA256": "07026b5dd41a71c005d946c699af9ff6526b381edb72dd9a963ed453ac16669c",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-169": {
+  "sha256": "e9032411f150561700ad158df09f61c46f0f1916ee66f5397eaa699184263f6c",
+  "logSHA256": "6dbcb65ac8f0a3f292e60db364d6b01a1d6d4d3261df44a3696f3008aa6ce331",
+  "serverConfigSHA256": "df049deed220156d065afa07b822c5d7f0c653f0bd19a1c77cff88ab55a6ba10",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-170": {
+  "sha256": "dc09579c509a60f69b0cbac2f56ff660acdf6ddb37f7ebff96062d8458e4c9c8",
+  "logSHA256": "09f2d4b1f3beb51edca673d7b5ba6dda189566b71c8e4a1ce566e56d8eac9547",
+  "serverConfigSHA256": "b7b453d5888320ec271370fd5ffa1334fd26580366cf6e279007a285cfba26d5",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-171": {
+  "sha256": "e013a32a6d3dbd1ce4d7a84eed9a11276f4c98fa32843c3e07469d9753562d26",
+  "logSHA256": "508c5f11ed59bcfa9945bd962226c9ce8911aacb9dc82bbdc8b633488582979a",
+  "serverConfigSHA256": "b560cbc6133e2e5d750cd06e04a9ed1bc4cafd8afb92ceb9cc5738b8cbf5d6f8",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-172": {
+  "sha256": "7b35e1a626142cb37a57de34295cb730a0344dce136c1c97c39725860b7e548b",
+  "logSHA256": "ada6d9ac1b09d43d23764d52255f2a131d4fa64143998d84d2042d8c0a17b6a4",
+  "serverConfigSHA256": "7e2c9f64e4755e053284dd47c5091ca0b2b870b92e8fc324ec21df0b3ffc425a",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-173": {
+  "sha256": "26dce722d2a440395969d17eb3b113eb13bd747ac90ea7776e529d5c258a71a1",
+  "logSHA256": "361e3830329db81b8676b12c5a5729f2cc994185326b673affb2878d6fc37088",
+  "serverConfigSHA256": "be603d29180300fb2c6a07d8ca7ecce22cbbf684704f2a305fa9319059852226",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-174": {
+  "sha256": "7f80f1ae809ca10d7c70e1aff757181ea17f40dc71a266ac7ab3df495915175d",
+  "logSHA256": "a11022c9f8bbdc2d392b77b6c300cbd6e539b5a2ba9cf282a2e8a4d18918383d",
+  "serverConfigSHA256": "8d576e35565851c27f48071d50fc9f17c59abb85c744d6a089be38d3df06a975",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-175": {
+  "sha256": "0034a6873e7e40765dbfb1c75f880b888709de72c5afcd79c43e2a6d597baed6",
+  "logSHA256": "e35ba5c6956cf7b6ca3cdcc936ec07e1b7cc0a09ac656317d13b3c7c06b414b8",
+  "serverConfigSHA256": "f80935d629750950079f5fd47432c7a6ee0ad8d01c5bb8877450aede8183e304",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-176": {
+  "sha256": "9ce3a45608a98348e2a7e5d01b0d6b39641aec18011a74c02ce4b66ecee3d9a5",
+  "logSHA256": "d49549238ce401cca5e14f521194160338386427f249183aceb41af996001eb9",
+  "serverConfigSHA256": "a75fde7cac27bed06b4d0cd0d0efd32c79cc7bed8d9ff77cb3426d631d8d1816",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-177": {
+  "sha256": "71e972fc6781d9499b009187d63091cf526b05d79ed1be2c64a197ed931e14da",
+  "logSHA256": "c939f471f7d407913d36b36081052d2a96d2f195e549f533a09aea909c804369",
+  "serverConfigSHA256": "0a148c26f872cc789a38658e084a99c6b9e298ddec744ec2282b135b1ed63e24",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-178": {
+  "sha256": "895d2d1147cab6dec45d85c56ee8cd0e9a67981ec7c72f3542d0ef682712f8aa",
+  "logSHA256": "2a9e763c00b7b22d289ada54fe162669e3cb124f2cbc66717d689ec1f1e6575f",
+  "serverConfigSHA256": "1bc8b48e5e90f32b9cc8ee4ff30ba097552bf7c4110f5ba74f3404d842ffac58",
+  "reported": 96,
+  "restarts": 1,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-179": {
+  "sha256": "d52a249106e8838c6cc472e12e425d5b8a74b8ba838b32f95402fd692e221120",
+  "logSHA256": "c9ef3c3322c16f40d62a81b8c51838d9df3375350f27b21ec1f096dbfa3b0d15",
+  "serverConfigSHA256": "d7d5d762b761bd26c17af9faf7afe455c0d3367404ad50a7d47360e2abb428ff",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-180": {
+  "sha256": "f1782fb99319b8338a0a5371c45d3058e1fc98f1a344c52200ef500dbb5aaeed",
+  "logSHA256": "9c2c697a2e340b6bc0a13c2ef1f65ea276451ec2ef2c6fa09700b7af2798f8bb",
+  "serverConfigSHA256": "99b53dd1e6b6f63626993973ac00cb0d823e1f33624211a8247776ccfae11c28",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-181": {
+  "sha256": "f9ca097e026404b74d9fd4d4635d0afe5c8285f5d96f691a568796ccf3db4903",
+  "logSHA256": "93903a90a5b7bb249510ca879908aef34b1e2fc21fc52f1429100380455542a2",
+  "serverConfigSHA256": "c18032e70dc7391ee66f686b0ea27e060c7fda78b27dccae4542e2158fa5298d",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-182": {
+  "sha256": "c03f9ad3b8a16d4e6eacafe47977f1cd361140d480d9af53f0519f30f13a8644",
+  "logSHA256": "8244aa9cdf0cba354124c7dd967404c77fd61604a02eb0bb306f34a2a911dd23",
+  "serverConfigSHA256": "e7896371f0e20a9009489801be8dc08afdab2eb0cadbe6afe8f6afdf008b558f",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-183": {
+  "sha256": "c2a7714f5d9e90862bcaea299080ceb0929f1efc7b532835f0c61bf5ad19d97a",
+  "logSHA256": "74452badf645a45c98d335d57241095f86579c3498a1eec1549bdd4b65d304f6",
+  "serverConfigSHA256": "f367677a66f7e45871e4437159e6881e907d52ebf52f4918e9d6c8f428d5fcda",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-184": {
+  "sha256": "771810d99089c920de964a262fbbb446673d30aacb211e916d40e2007d97389f",
+  "logSHA256": "859bb8cb7542fcd7f9715677b290732ad2b1c983b836fb7b2042bd32c1738746",
+  "serverConfigSHA256": "7afb5fa9c120ba2a0eca4bd17b803063ffbec23d41dc6d16f824ab17b4bf9915",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-185": {
+  "sha256": "79e09e0680c923dc5dbd4ccd2dcb1ea20165583ffae722843f3531422736d659",
+  "logSHA256": "9bd9fb0867333cbe87a10057404ecfaa0baa4e379c8488c3c863fe62c669427d",
+  "serverConfigSHA256": "c32659e949c6959d9665f0cc666e30039764b77b7a83ec6ccaf3b08d38688e00",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-186": {
+  "sha256": "052387462ba9773b0158b62bbef582d1392ed02d590fe56a0847feef07fa9dcd",
+  "logSHA256": "323117e4414253c72e5063fdb17e619aeae78dfbcecf972acc1bcdb6196ade73",
+  "serverConfigSHA256": "166b849d2651cfae8c45e6b22895f91e2231486cdb1553de9e784a51349796ba",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-187": {
+  "sha256": "eeb5434e5bdde8a92e2adc0a30ad8795e911f91b45cbeb7d1f1f2592064ba592",
+  "logSHA256": "2cc3a58d3998dc0bd093ba84ce25dcceebb66ee7a3bc2cba73b5c893d7261456",
+  "serverConfigSHA256": "8664add0353f437cb53c359555e2ae1ffbd57e19d82b50907131cf68e3be5405",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-188": {
+  "sha256": "3b4f4b3dadb8436348e74ff4b3fc23f602229fa1b385fec96ce091fcef298395",
+  "logSHA256": "3f22353c98b7437c9a607b2950df6625755759651870eeff77b7ad06c336fed1",
+  "serverConfigSHA256": "7e0204a6116fa0baa01793bdab40b5950b7c75650494d7ff517284d94d12a041",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-190": {
+  "sha256": "c7a4f3b11f9c0614f24db6bf2b4e9119bdfc4a8d6bd2a4224f1e41de6f055b24",
+  "logSHA256": "abd0e7e7246442a5a78fa0c90c61185f36405ab0a1294a45c80a8ed1b5fb217d",
+  "serverConfigSHA256": "b4b421bbae3b5aa45bfaecd87942255da5224472a46b929af6e771dee969c1d0",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-192": {
+  "sha256": "e0467fb34484628234f92b548f68eed69adb1e671ca35372056663ccf3f7d50e",
+  "logSHA256": "cf094bc08ee43ef546b0d6222beb2d41ec9ef000e9135033c118d73294a4fa7e",
+  "serverConfigSHA256": "f07b0c4da3f4e950050cd35811633fedc8c7b9a64df8c5d10ef3edeede89fdd6",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-193": {
+  "sha256": "9e9a5106cca4489832bbfce232140110027389ae675cd02507d9a1de466b5e77",
+  "logSHA256": "18987dde0b3312ab44835b846107e3d731bbd1b05deff4e96df76b55a3c373bb",
+  "serverConfigSHA256": "fd7dc96f0696fb9b52401be111e262ec0e116f86e4ef3c02013bad4cc9cd2b48",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-194": {
+  "sha256": "c609d35d910746c660dd0a90767910b2f0586b35a0ba96cb0b69306f5a8a5c01",
+  "logSHA256": "ba0564c8077c9e72e7b2ac996591600fca3b79bc674924432e6d8430fb89bbed",
+  "serverConfigSHA256": "a5c3552e5acc1ff882bae0f245d3743a439b5e45c2c3ef85391499597a64ef70",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-196": {
+  "sha256": "c57808fccedd8f9546ae8899157254576441a25a77b3df29bbc4290604fd6277",
+  "logSHA256": "be5ff8d5d8ddf39c65b5ac81b5cd2b7e825ef0a679a2e5ab825ebcea045b5665",
+  "serverConfigSHA256": "00d564a74184e7564ce929ede8f6709596db76fa97d537450d392d8e38e223b0",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-197": {
+  "sha256": "85f57228fe2c4b4a86a74d12b346489b31b25802789138f16ec80b0402a6710c",
+  "logSHA256": "b9aa59f953c1df3430c229d7f22386e4bee3499d8e4281e61c6903ee873b1057",
+  "serverConfigSHA256": "7c1a390708325edcdd1bf549377e31dd2b77ebbb3f37e1e84c75f5aa930e03c0",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-198": {
+  "sha256": "7c25e8c0c031bb2c3a534f6fbf470d2afc697203c9fd0755a18dd1adc546e6cc",
+  "logSHA256": "fc7f5a6326bf4e79d31d2e7b82f50fad6e68f69efd52b4e0591d6747edf669a1",
+  "serverConfigSHA256": "801a30b992fb00b88f760ad9a14c97fd07cee1058571509d50313c47728b50ca",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-199": {
+  "sha256": "8342424539697089fb4757a6c8fe7a4f45c7cafc33470cd35d1173ffbf2d75f2",
+  "logSHA256": "33a584e2d43029c92af5ace3ca838cb0443dae24f46cada36bdde203a910b6b7",
+  "serverConfigSHA256": "2f93d49315b3dbd2b0adcac7b8bb85ed6958a2ab7afd241454881d406a6d0da2",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-200": {
+  "sha256": "1eb0eb02b84c9d1380578e97c2c1d1397e61a1de9cee6e5da38c604943a1d6c7",
+  "logSHA256": "5d4181b896aa591f329c0067976c0680e4cd981f0d93e7d9e0a6e18f5bf6d30b",
+  "serverConfigSHA256": "7b3858351465028e6107b3980298b34ef3ef239e80e1235288fb7060025e04bc",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-201": {
+  "sha256": "ea95719b3594054a793f4654df37c07ff34e01ebd3ff7d7852268fb47319c9c0",
+  "logSHA256": "ccc77e616f8b97a44ef13fc228bdf6ed0a32a5878e7aa351d7d851bf2bddce0c",
+  "serverConfigSHA256": "047dfac88ef50df725a59815293e172b6b495acc325bc34a68e6d950792f1d06",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-202": {
+  "sha256": "99efad48d42a10b1b4987cec6fa8046f260d7e7adeb88ee2fa563e3d72160c02",
+  "logSHA256": "b9f0732e8feec96fb95ed1f180ced2af873bc92b5ec170e1ede42e8312854f79",
+  "serverConfigSHA256": "eb687b9b15276c619ac35321e0f95cf3d9173edc4f9bf17d928202828e82f6f8",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-203": {
+  "sha256": "47cdd7c758abb1d58d6eb06bc1ba162c1856ec7112ef67bbeb9d28e3f626f143",
+  "logSHA256": "b056ca41ff4872b0093e1abe0fe54f720289b4fe00ada8a282b3cefb3eb9f66e",
+  "serverConfigSHA256": "4b6a55dc79b2b7945a119eb6237e0b135091a7e11bda60a0f22d9b9048448802",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-204": {
+  "sha256": "982a20fbd2316abaec46e90094a790b72872db11e2ec7aef5821caef843e294d",
+  "logSHA256": "f05409bd70e67778a1c80d8a94e6bbd1928e774df462d68703867cc70d3597e3",
+  "serverConfigSHA256": "fe474e2204f034f00976b623812b4f3230a25d4eb7b850bfa4441e8ee0b81888",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-205": {
+  "sha256": "b3a257aeea301db8464a0e51982846f72c0882ca8e400c941292a813336ec67b",
+  "logSHA256": "6e23544ce592ee2442ec87929781fa2454635a5ef2695c93e664c647f6023624",
+  "serverConfigSHA256": "d2370f80fc5d5fdf00ed66bc251ea1b2a7da283473c2a55bda71b667d7f21585",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-206": {
+  "sha256": "b75629a2832331e27153cb3a4e9e12e6fe56dc463642a8a350f3f234f7d01b0f",
+  "logSHA256": "90f348553ba0cd2c3024e3d77b8ce6709ec39dc79dd1aede8ceb048212cbc29e",
+  "serverConfigSHA256": "601db035d991657f9f4f17bfa71fb484be970d103ee4d9e449f8b59bb3f064e4",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-207": {
+  "sha256": "006d63eea45ef97f7cd5e63e3948fba960abde6257b9ef18324003b3bf328d01",
+  "logSHA256": "3322cae8b0fe8ac080bbacfd75a4cebb24777f40ae31ec72e5a7c87533ead6ed",
+  "serverConfigSHA256": "6af86e29b87c972972417b273eb3d409d6819f62a3d3a612776ad221dbe745b6",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-209": {
+  "sha256": "3c13076d223775ea455629e9cff53fb6bb278d6930a0b2ce92cfb701dc4fe1d3",
+  "logSHA256": "47fa1a9eb13bef2182699a8d90679550d62bf6ddf4536585b94acfa903734cdb",
+  "serverConfigSHA256": "2c9b7949a333ef353a262b716580e8d08160292114bfc7e2984193c7cc8db7fa",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-211": {
+  "sha256": "06e585aa8ae70aeaf630c3abe28a5986759110e479eb8d740e0dcb1d57a9db72",
+  "logSHA256": "4a78bebf9124c919da13848b979cd91eaaaa6aeec15d6f5b637d97d732af7d60",
+  "serverConfigSHA256": "e16289e7a0b440ea2e2b8fbdf937e003049f5d84a18f8c17040a9df15823ae7c",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-212": {
+  "sha256": "d27bab7be09af9f5cfcc70bb9469e574136d07d6bf3c31cb81b4c60088ba57b9",
+  "logSHA256": "50a8f66f00aa45dc36e0821dc9b2d4781d3e0b2af7832990665972e743b0ee96",
+  "serverConfigSHA256": "76210cedd030f09196711cab1b627b3f878dc7ebe8479976b4e30fcb76ec3a30",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-213": {
+  "sha256": "a23b3390d7ba2db55d2568f188be8e8a1d5d42e5c71d22265af44ec6d92a4056",
+  "logSHA256": "34e5018d023fb83620a174240c0cc51d3dd94c3f627d49c523c17f27270bba3c",
+  "serverConfigSHA256": "c314d8bb30f46fcdc822f5dbd1f47f7f89d2f6d926b011322a340a9b73bbcf28",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-214": {
+  "sha256": "4f1e4899c602828042dc68bba8b75c5912eb066966fce10345e20eb78d0f8615",
+  "logSHA256": "59e13ef9c48db51a61b05a3ac74399347756092ceae2a222b8c6fb3987fbd62d",
+  "serverConfigSHA256": "716787d81491815915a0e54bf31f31a1fae02ff7d6e0b540f029906e98beaa0a",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-215": {
+  "sha256": "820824562030ae46cec8c05f4d9cd8d730493e7e2daa011c850db53d31b4a6fc",
+  "logSHA256": "961f42169b508f0839dde75f142fe6a8797290d2dc15e7ced8d508d5ace6f18a",
+  "serverConfigSHA256": "4388c7d350eeca4e88cdf408c784eec5f9340044ad8bd71a6233995738b2f994",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-216": {
+  "sha256": "ac0510618069ef015b99aefc9d259acc766917f602c7bdd23fbe1b38f508a74f",
+  "logSHA256": "fd47745b80888cdf8af075c2ebaa67f75e4a7374538bb5ec41d6fbc323bce019",
+  "serverConfigSHA256": "dc2617890e00e1fa4a240efd7db8dbc9789290d5a3be619214ee0678426ad3cf",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-217": {
+  "sha256": "dbd180f47d4f92dbd51456d1d8f110d7d66f0110cbe220be1c6f88f31473af7c",
+  "logSHA256": "5674da17b3b0e10f9e8eb29e9c341cbb28699fa9c41fc0d81450b20e727f74ff",
+  "serverConfigSHA256": "9a405e70509bae95fb388b9a8122794e380210e7ef693390b5030367b6e86a1e",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-218": {
+  "sha256": "0764ceddfd1868da43414a84440134542c1dccfe9a7350aa36d61f7b0188c0a3",
+  "logSHA256": "6990d1409b17c0d704e96385017b6f16ccd6c886127801778b78074e03694135",
+  "serverConfigSHA256": "c133e53486f881986f39f70b6b4b988452737acade7d7bb217fd00c73ae151f5",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-219": {
+  "sha256": "3088e5722588921314011838225b7cff349eeb6069d674346d2c6020246878ef",
+  "logSHA256": "f65e017f36013f837229ff2f002766e147bdb3aa11dd5757c135e992ec6f900f",
+  "serverConfigSHA256": "db8eb65096ec38723b1f80e78753039ec650779ec8bb92c5ec2eecf831e8ddb8",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-220": {
+  "sha256": "4e1be9257e2359b309aeaa9443a44e55634258de814454258c998db51fc6e586",
+  "logSHA256": "1bac2b0e4d36d61bfa57b5466065a6b14cfdf11e66727321bb39563f0220ce21",
+  "serverConfigSHA256": "7b115d28fb076748c56280147f1544c5ac1e528b18c7bef62aaf9f4a4ae02483",
+  "reported": 95,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/ordinary-221": {
+  "sha256": "321a578cc7534b0ee1e669863ac2875f33be4a2f11c972e0f5a176618c464e5e",
+  "logSHA256": "4854d6d2ea780a23c21e04637e92d51180d4f4ff74b8e26f210fb93b133cab62",
+  "serverConfigSHA256": "8cd3fcceba3b2d9eba851d1876ab72152e5e5d8298ca5858b60b79bd029847f5",
+  "reported": 96,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "signed-census"
+ },
+ "chrome/standalone-idb": {
+  "sha256": "78681eeb5974e2c3f34444e0ad857e767ee9f9657a24ee389e33c09cd5880fc8",
+  "logSHA256": "bb0d8b18233b2af9fcda044a359772925d73ebe75e51dbc804b435e1643688d4",
+  "serverConfigSHA256": "e40eb48c3d203d1252e537c01c4feb0ef3b182f3048ff38133b306de88397370",
+  "reported": 60,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "same-profile-standalone"
+ },
+ "chrome/standalone-input": {
+  "sha256": "b9faf0ebfa2f57ca2cd510b6937a2efe8e9b6e7e64bb7eabb2744d0727df4205",
+  "logSHA256": "77b006a41f69b1dc174b50e27c1f73f749905ba28772ada9746b0ec802aa954f",
+  "serverConfigSHA256": "d982e58c6e080e951ad9dff4ab12ba8ff7e5813e4ae6e94d8c23872817034395",
+  "reported": 23,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "same-profile-standalone"
+ },
+ "chrome/standalone-crypto": {
+  "sha256": "a233beda17adc8a469b31613dec8ff493ff868afca725eb6bb7cc74ff0b1dc69",
+  "logSHA256": "fbf8bf5e0660662de48c35f8c7dfe171a24d727f7948e5f57e502d91f743ae3b",
+  "serverConfigSHA256": "68cf47c86d45cd20cf15ac004c5e570e2536436c4a5e5e5c2e37f853b9440f11",
+  "reported": 10,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "same-profile-standalone"
+ },
+ "chrome/standalone-metadata": {
+  "sha256": "ad41cbfed396aef0f930c546e632c333c56c0e144a0e0219ff182dbfe198df5e",
+  "logSHA256": "4c5d2c8b940db48d3075c5fd9f7b5be83446529ee1acd7246e7b2257bfeadf9c",
+  "serverConfigSHA256": "7d4a69ad4833737ab58d546cbcfdd38e7412823a7cdbf886a888d372f20008aa",
+  "reported": 7,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "same-profile-standalone"
+ },
+ "chrome/standalone-storage": {
+  "sha256": "0fd996c9e4abf86ecb8605f734d2a8286ed3bdd713fb6e843675e01d55220fb5",
+  "logSHA256": "7b47e352b72ffa13382c322372ce966199354fb82e9d41b60201ea839e9d8139",
+  "serverConfigSHA256": "532fbb0d1363b1884c4781bed67293c66fa1b6128ef30902d75675dbf8e3e558",
+  "reported": 5,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "same-profile-standalone"
+ },
+ "chrome/standalone-public-key": {
+  "sha256": "00a6afcde2cd5502116f76924f21350c5d5f41ceba3542889b2c0d294840cb93",
+  "logSHA256": "432eb418bfd849a96916404c74d18ffd0390526ae90079a92125d8da0d261a06",
+  "serverConfigSHA256": "eb4599cc98dc33f8ce98c984821ee7e735968495ae0cb6a69c7579aa32bcc35f",
+  "reported": 2,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "same-profile-standalone"
+ },
+ "chrome/standalone-crypto-support": {
+  "sha256": "ba7f77efe289e431a48d78b9d6f95defe0bf051411b3a9b1b384df543993d157",
+  "logSHA256": "32e96a6e1946527e6fc3c05bc54d1daa9ebf77380e1357e236f95f19a7485905",
+  "serverConfigSHA256": "f47103a3b098aaf391e24f6699208a25f38d81e3dd2d563144dd9f7426b7e5d4",
+  "reported": 4,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "same-profile-standalone"
+ },
+ "chrome/standalone-offscreen": {
+  "sha256": "dc27c1b02db18cf29c9f6e1fc55d73f83c454ad741ae91d301c03c33eaa80b2c",
+  "logSHA256": "35450744e181db6277dd5d023335d7f3b52ab1df8775561754656a8a4a7ae95a",
+  "serverConfigSHA256": "c83e4329b170d449b9a48be596e8fe054d29cbc78be0cd70af851329fb51796f",
+  "reported": 401,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "same-profile-standalone"
+ },
+ "chrome/standalone-editing": {
+  "sha256": "3495f0a6bd0fdcdc0312dbabcd7c33b1d18f88b993dc204d98e46fbc4a2d621c",
+  "logSHA256": "c5807be9a134e9b5a2acc673cec45aa123b926b78d7a90fbb679fe8fe5fc970d",
+  "serverConfigSHA256": "0e26ff8ecf4bd59e57c1a18310f4702e2dbb98b345cffb893b3614ddeda57e94",
+  "reported": 710,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "source": "same-profile-standalone"
+ }
+}

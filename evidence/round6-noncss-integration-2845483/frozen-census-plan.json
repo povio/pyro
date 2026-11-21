@@ -1,0 +1,70 @@
+{
+ "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+ "manifestSHA256": "34a67512a84d43630f7adbecebd4378df5f410446591015cc6a20a3034e02819",
+ "nonCSS": 31827,
+ "previousReviewedSelected": 30513,
+ "CSS": 8162,
+ "sharedNonCSS": 30359,
+ "localCSSGuard": 1091,
+ "selectedPriority": 4035,
+ "wasmControlCandidates": [
+  "wasm/jsapi/constructor/toStringTag.any.html",
+  "wasm/jsapi/constructor/validate.any.html",
+  "wasm/jsapi/global/valueOf.any.html",
+  "wasm/jsapi/instance/exports.any.html",
+  "wasm/jsapi/instance/toString.any.html",
+  "wasm/jsapi/module/exports.any.html",
+  "wasm/jsapi/module/imports.any.html",
+  "wasm/jsapi/module/toString.any.html",
+  "wasm/jsapi/table/length.any.html"
+ ],
+ "eligibleWasmControls": [
+  "wasm/jsapi/module/exports.any.html",
+  "wasm/jsapi/module/imports.any.html",
+  "wasm/jsapi/module/toString.any.html",
+  "wasm/jsapi/table/length.any.html"
+ ],
+ "withheldOldNonCSS": 158,
+ "driversAreInfrastructure": 11,
+ "reasons": {
+  "902fe811f inventory": 1305,
+  "prior local native event": 62,
+  "native termination not attributable to one URL": 382,
+  "public Chrome stable": 14,
+  "public Chrome canary": 8,
+  "checked-in LP full/testharness/html.json": 6,
+  "checked-in LP baseline-linux.json": 3,
+  "separate CSS execution lane": 7071,
+  "checked-in LP full/testharness/css.json": 1,
+  "checked-in LP baseline.json": 1,
+  "CSS manifest inventory": 28
+ },
+ "ambiguousNativeReceipts": [
+  {
+   "receipt": "base/wasm-002.json",
+   "restarts": 11,
+   "guardedHangCount": 0,
+   "watchdogKills": 0,
+   "possiblyAffectedUrls": 126
+  },
+  {
+   "receipt": "chromeWpt/html-035.json",
+   "restarts": 31,
+   "guardedHangCount": 29,
+   "watchdogKills": 0,
+   "possiblyAffectedUrls": 128
+  },
+  {
+   "receipt": "combined/wasm-002.json",
+   "restarts": 14,
+   "guardedHangCount": 0,
+   "watchdogKills": 0,
+   "possiblyAffectedUrls": 128
+  }
+ ],
+ "selectionSHA256": {
+  "shared-noncss.urls.json": "d4562b827f06b581616abda5fc6e979261b6c7c8ae1e62e409ee45c2738b345c",
+  "css-guard.urls.json": "f1832184fbebaddf2ba37ea2099752bed6958b319abaa68eef77a5afa2f3aedb",
+  "priority.urls.json": "adb439cdf639ebc38ce46bd894d6ab768f66c0d5ad43b08790eabd40515b8ab2"
+ }
+}

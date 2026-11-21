@@ -1,0 +1,56 @@
+{
+ "counts": {
+  "paired": 152,
+  "priorFull": 52,
+  "headFull": 52,
+  "priorPass": 10882,
+  "headPass": 10882,
+  "fullGains": 0,
+  "fullLosses": 0,
+  "namedGains": 0,
+  "namedLosses": 0,
+  "common": 10882,
+  "newNames": 0,
+  "missingNames": 0
+ },
+ "prior": "6c6045cfe4d1fb637ad7ab49dbab2fff02958026",
+ "replay": "4bf8195b4d87ad340501bb564ed2cea29b06d75f",
+ "priorBinarySHA256": "f2773b61a9b0e3418de093fbdb924ddcbcf96f9f6e17d3eb60e3cc0085266c0e",
+ "priorReceiptSHA256": "c813b097fdde413bff71d66aafff1c416107a0f5bf0e42b6d1812f194aab8471",
+ "priorLogSHA256": "4b0e533f82e71abcab4aa985c86d6b48566823b25edd84c96b3912eaf6723af4",
+ "priorConfigSHA256": "a8f5b8799a5c71702bb5fe58562adf60d2189f9fe1d5bba8a6fb845c374a0363",
+ "priorPorts": {
+  "http": [
+   55369,
+   55370
+  ],
+  "https": [
+   55371,
+   55372
+  ],
+  "http-local": [
+   55373
+  ],
+  "http-public": [
+   55374
+  ],
+  "https-local": [
+   55375
+  ],
+  "https-public": [
+   55376
+  ],
+  "ws": [
+   55377
+  ],
+  "wss": [
+   55378
+  ],
+  "h2": [
+   55379
+  ],
+  "webtransport-h3": [],
+  "dns": []
+ },
+ "selectionSHA256": "5121fcfefccc9cad73f463c0abf2825b31c32a6cff4c53b6bfd2e40f6d693817"
+}

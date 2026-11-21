@@ -1,0 +1,262 @@
+{
+ "areas": {
+  "priority/FileAPI": {
+   "pages": 113,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "extra-feature/IndexedDB": {
+   "gains": 400,
+   "pages": 60,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "extra-feature/WebCryptoAPI": {
+   "gains": 1906,
+   "pages": 334,
+   "fullPageGains": 14,
+   "fullPageLosses": 0
+  },
+  "priority/compression": {
+   "pages": 66,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "priority/cookies": {
+   "pages": 1,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "priority/css": {
+   "pages": 1091,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "upstream-css/css": {
+   "pages": 40,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "priority/dom": {
+   "pages": 69,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "priority/domparsing": {
+   "pages": 90,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "priority/editing": {
+   "gains": 1853,
+   "pages": 710,
+   "fullPageGains": 60,
+   "fullPageLosses": 0
+  },
+  "priority/encoding": {
+   "pages": 54,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "priority/fetch": {
+   "losses": 1,
+   "pages": 23,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "priority/html": {
+   "losses": 1,
+   "gains": 1,
+   "pages": 102,
+   "fullPageGains": 0,
+   "fullPageLosses": 1
+  },
+  "additional-noncss/html": {
+   "gains": 184,
+   "pages": 401,
+   "fullPageGains": 8,
+   "fullPageLosses": 0
+  },
+  "extra-feature/input-events": {
+   "gains": 1557,
+   "losses": 5,
+   "pages": 22,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "priority/input-events": {
+   "pages": 1,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "priority/mathml": {
+   "pages": 11,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "priority/mimesniff": {
+   "gains": 1546,
+   "pages": 2,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "priority/mixed-content": {
+   "pages": 3,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "extra-feature/notifications": {
+   "gains": 74,
+   "pages": 14,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "priority/referrer-policy": {
+   "gains": 133,
+   "losses": 62,
+   "pages": 418,
+   "fullPageGains": 84,
+   "fullPageLosses": 12
+  },
+  "additional-noncss/referrer-policy": {
+   "pages": 5,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "priority/resource-timing": {
+   "pages": 15,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "priority/sanitizer-api": {
+   "pages": 2,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "priority/server-timing": {
+   "pages": 10,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "priority/service-workers": {
+   "pages": 1,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "priority/shadow-dom": {
+   "pages": 18,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "priority/streams": {
+   "pages": 28,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "priority/subresource-integrity": {
+   "losses": 6,
+   "gains": 6,
+   "pages": 1,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "priority/svg": {
+   "gains": 170,
+   "pages": 787,
+   "fullPageGains": 5,
+   "fullPageLosses": 0
+  },
+  "priority/timing-entrytypes-registry": {
+   "pages": 1,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "priority/uievents": {
+   "pages": 3,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "priority/urlpattern": {
+   "pages": 30,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "wasm-metadata/wasm": {
+   "pages": 7,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "wasm-storage-supplement/wasm": {
+   "gains": 2,
+   "pages": 5,
+   "fullPageGains": 1,
+   "fullPageLosses": 0
+  },
+  "priority/webaudio": {
+   "gains": 1335,
+   "losses": 11,
+   "pages": 346,
+   "fullPageGains": 47,
+   "fullPageLosses": 0
+  },
+  "priority/webnn": {
+   "pages": 4,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  },
+  "priority/xhr": {
+   "gains": 1,
+   "pages": 41,
+   "fullPageGains": 0,
+   "fullPageLosses": 0
+  }
+ },
+ "lostPassChromeStatus": {
+  "chrome-Fail": 5,
+  "chrome-Pass": 67,
+  "chrome-Not Run": 1,
+  "chrome-missing-name": 13
+ },
+ "transitions": {
+  "extra-feature/non-css": {
+   "namedStatusChanges": {
+    "Fail -> Pass": 3735,
+    "missing -> Pass": 202,
+    "Pass -> Fail": 4,
+    "Fail -> Timeout": 1,
+    "Pass -> Not Run": 1
+   },
+   "pageStatusChanges": {
+    "complete/OK -> timeout/Timeout": 1
+   }
+  },
+  "priority/non-css": {
+   "namedStatusChanges": {
+    "Fail -> Pass": 4022,
+    "Pass -> Fail": 63,
+    "missing -> Fail": 15,
+    "Pass -> missing": 14,
+    "Fail -> missing": 36,
+    "missing -> Pass": 1023,
+    "Pass -> Timeout": 1,
+    "Pass -> Not Run": 3,
+    "Fail -> Not Run": 1
+   },
+   "pageStatusChanges": {
+    "complete/OK -> timeout/None": 1,
+    "complete/OK -> error/Error": 1,
+    "error/Error -> complete/OK": 1
+   }
+  },
+  "additional-noncss/non-css": {
+   "namedStatusChanges": {
+    "Fail -> Pass": 184
+   }
+  },
+  "wasm-storage-supplement/non-css": {
+   "namedStatusChanges": {
+    "Fail -> Pass": 2
+   }
+  }
+ }
+}
