@@ -2394,11 +2394,14 @@ fn apply_sheet_disabled(page: &PageDom, node: NodeId, disabled: bool) {
 /// pyro: `disabled` of `node`'s current sheet object (`HTMLStyleElement.disabled`): the same cell
 /// as its wrappers' `disabled`.
 pub(crate) fn current_sheet_disabled(page: &PageDom, node: NodeId) -> bool {
-    sheet_flag(page, node, SheetGeneration::now(page, node)).get()
+    page.dom.borrow().is_connected(node).unwrap_or(false) && sheet_flag(page, node, SheetGeneration::now(page, node)).get()
 }
 
 /// pyro: sets `disabled` of `node`'s current sheet object (`HTMLStyleElement.disabled`).
 pub(crate) fn set_current_sheet_disabled(page: &PageDom, node: NodeId, disabled: bool) {
+    if !page.dom.borrow().is_connected(node).unwrap_or(false) {
+        return;
+    }
     sheet_flag(page, node, SheetGeneration::now(page, node)).set(disabled);
     apply_sheet_disabled(page, node, disabled);
 }
