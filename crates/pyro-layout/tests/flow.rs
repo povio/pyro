@@ -1221,6 +1221,21 @@ fn flex_column_aligns_orthogonal_first_baselines() {
 }
 
 #[test]
+fn flex_column_groups_opposing_first_and_last_baselines() {
+    for (wrap, first, last) in [("nowrap", 120.0, 105.0), ("wrap-reverse", 15.0, 0.0)] {
+        let html = format!(
+            "<!doctype html><style>body{{margin:0}}main{{display:flex;flex-flow:column {wrap};width:200px;\
+             height:200px}}#first{{writing-mode:vertical-rl;align-self:first baseline;font:20px/20px monospace;\
+             margin-right:20px;padding-right:20px}}#last{{writing-mode:vertical-lr;align-self:last baseline;\
+             font:30px/30px monospace}}</style><main><div id=first>x<br>x</div><div id=last>x<br>x</div></main>"
+        );
+        let layout = page(&html);
+        assert_eq!(layout.metrics("first")[0], first, "{wrap}");
+        assert_eq!(layout.metrics("last")[0], last, "{wrap}");
+    }
+}
+
+#[test]
 fn flex_compressible_mixed_percentage_keeps_length() {
     for (direction, writing_mode, metric) in [("row", "horizontal-tb", 2), ("column", "vertical-lr", 3)] {
         for kind in ["text", "range"] {
