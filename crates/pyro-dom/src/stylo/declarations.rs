@@ -23,6 +23,11 @@ pub(crate) fn parse_block(text: &str) -> PropertyDeclarationBlock {
 pub struct DeclarationBlock(PropertyDeclarationBlock);
 
 impl DeclarationBlock {
+    pub fn page(text: &str) -> Self {
+        super::enable_features();
+        Self(style::properties::parse_style_attribute(text, &url_data(), None, QuirksMode::NoQuirks, CssRuleType::Page))
+    }
+
     pub fn position_try(text: &str) -> Self {
         super::enable_features();
         Self(style::properties::parse_style_attribute(text, &url_data(), None, QuirksMode::NoQuirks, CssRuleType::PositionTry))
@@ -30,6 +35,10 @@ impl DeclarationBlock {
 
     pub fn position_try_allows(name: &str) -> bool {
         property_id(name).is_some_and(|id| id.allowed_in_rule(CssRuleType::PositionTry.into()))
+    }
+
+    pub fn page_allows(name: &str) -> bool {
+        property_id(name).is_some_and(|id| id.allowed_in_rule(CssRuleType::Page.into()))
     }
 
     /// The declarations of `text` (a `style` attribute or a rule's block);
@@ -89,7 +98,16 @@ impl DeclarationBlock {
     /// `None`: `name` is no property or `value` is invalid for it, and the
     /// block is unchanged; else whether the block changed.
     pub fn set(&mut self, name: &str, value: &str, important: bool) -> Option<bool> {
+        self.set_in_rule(name, value, important, CssRuleType::Style)
+    }
+
+    pub fn set_page(&mut self, name: &str, value: &str, important: bool) -> Option<bool> {
+        self.set_in_rule(name, value, important, CssRuleType::Page)
+    }
+
+    fn set_in_rule(&mut self, name: &str, value: &str, important: bool, rule: CssRuleType) -> Option<bool> {
         let id = property_id(name)?;
+        if !id.allowed_in_rule(rule.into()) { return None; }
         super::enable_features();
         let mut source = SourcePropertyDeclaration::default();
         let url = url_data();
@@ -102,7 +120,7 @@ impl DeclarationBlock {
             None,
             ParsingMode::DEFAULT,
             QuirksMode::NoQuirks,
-            CssRuleType::Style,
+            rule,
         )
         .ok()?;
         let importance = if important { Importance::Important } else { Importance::Normal };

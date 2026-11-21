@@ -6608,6 +6608,15 @@ fn image_data_structured_clones() {
     e.page.dispose();
 }
 
+#[test]
+fn page_descriptor_edits_use_page_grammar() {
+    let env = env("<style>@page { size: A4; page-orientation: rotate-right; @top-left { content: 'x' } }</style>");
+    let realm = &env.main;
+    assert_eq!(eval(realm, "const page = document.styleSheets[0].cssRules[0], declarations = page.style; [declarations.size, declarations.pageOrientation, declarations.cssFloat].join('|')"), "a4|rotate-right|");
+    assert_eq!(eval(realm, "declarations.cssText = 'size: letter landscape !important'; declarations.size = 'invalid-paper'; [declarations.size, declarations.getPropertyPriority('size'), declarations.removeProperty('size'), page.cssRules.length].join('|')"), "letter landscape|important|letter landscape|1");
+    assert_eq!(eval(realm, "getComputedStyle(document.documentElement).getPropertyValue('page-orientation')"), "");
+}
+
 /// `@page` rules expose their declarations as CSSPageDescriptors and their
 /// margin rules as CSSMarginRules, edits write back into the page rule, and
 /// a removed rule has no parent sheet (css/cssom/idlharness.html,

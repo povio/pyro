@@ -4219,6 +4219,7 @@ impl Layout {
         let custom = name.starts_with("--");
         let name = resolved_property_name(name);
         let name: &str = &name;
+        if matches!(name, "page-orientation" | "size") { return String::new(); }
         // pyro: a running CSS transition's value now (the layout engine samples none), serialized
         // as this function serializes the after-change style with that value in it
         if !custom && !self.style.style_overridden() {

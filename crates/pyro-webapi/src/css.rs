@@ -351,6 +351,10 @@ enum StyleSource {
 }
 
 impl StyleData {
+    fn is_page_rule(&self) -> bool {
+        matches!(&self.source, StyleSource::Rule { node, .. } if is_page(node))
+    }
+
     fn is_font_face(&self) -> bool {
         matches!(&self.source, StyleSource::Rule { node, .. } if matches!(node.kind, RuleKind::Other { rule_type: 5, .. }))
     }
@@ -373,11 +377,13 @@ impl StyleData {
 
     fn names(&self) -> Vec<String> {
         let text = self.text();
+        if self.is_page_rule() { return DeclarationBlock::page(&text).names(); }
         self.font_block(&text).map_or_else(|| Block::parse(&text).names(), |block| block.names())
     }
 
     fn css_text(&self) -> String {
         let text = self.text();
+        if self.is_page_rule() { return DeclarationBlock::page(&text).css_text(); }
         self.font_block(&text).map_or_else(|| Block::parse(&text).css_text(), |block| block.css_text())
     }
     fn is_position_try(&self) -> bool {
@@ -385,6 +391,7 @@ impl StyleData {
     }
 
     fn allows(&self, name: &str) -> bool {
+        if self.is_page_rule() { return DeclarationBlock::page_allows(name); }
         if self.is_font_face() { return pyro_dom::font_face::DescriptorBlock::supports(name); }
         !self.is_position_try() || DeclarationBlock::position_try_allows(name)
     }
@@ -456,6 +463,7 @@ impl StyleData {
     /// answer are parsed.
     fn get(&self, name: &str) -> String {
         let text = self.text();
+        if self.is_page_rule() { return DeclarationBlock::page(&text).value(name); }
         if let Some(block) = self.font_block(&text) { return block.get(name); }
         if text.is_empty() {
             return String::new();
@@ -468,6 +476,7 @@ impl StyleData {
     /// `getPropertyPriority(name) == "important"`.
     fn important(&self, name: &str) -> bool {
         let text = self.text();
+        if self.is_page_rule() { return DeclarationBlock::page(&text).important(name); }
         if self.is_font_face() { return false; }
         if unparsed(name) {
             return parse_declarations(&text).iter().any(|d| d.name == name && d.important);
@@ -490,6 +499,11 @@ impl StyleData {
             return Ok(());
         }
         let value = value.trim();
+        if self.is_page_rule() && !value.is_empty() {
+            let mut block = DeclarationBlock::page(&self.text());
+            if block.set_page(name, value, important) == Some(true) { self.write_raw(block.css_text())?; }
+            return Ok(());
+        }
         if self.is_font_face() {
             let text = self.text();
             if let Some(mut block) = self.font_block(&text) {
@@ -545,6 +559,12 @@ impl StyleData {
     /// `removeProperty(name)`: the value it had.
     fn remove(&self, name: &str) -> JsResult<String> {
         let text = self.text();
+        if self.is_page_rule() {
+            let mut block = DeclarationBlock::page(&text);
+            let old = block.value(name);
+            if block.remove(name) { self.write_raw(block.css_text())?; }
+            return Ok(old);
+        }
         if let Some(mut block) = self.font_block(&text) {
             let old = block.get(name);
             if block.update(name, "") { self.write_raw(block.css_text())?; }
@@ -578,6 +598,7 @@ impl StyleData {
     }
     /// `cssText = text`: the block parsed from `text`, serialized.
     fn set_css_text(&self, text: &str) -> JsResult<()> {
+        if self.is_page_rule() { return self.write_raw(DeclarationBlock::page(text).css_text()); }
         if let Some(block) = self.font_block(text) { return self.write_raw(block.css_text()); }
         if self.is_position_try() {
             return self.write_raw(DeclarationBlock::position_try(text).css_text());
