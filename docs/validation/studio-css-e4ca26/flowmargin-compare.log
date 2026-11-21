@@ -1,0 +1,30 @@
+flowmargin-main-candidate 8082 page passes 5534 named passes 178360 observed names 194540 statuses {'complete:0': 7867, 'complete:2': 105, 'timeout:None': 11, 'complete:1': 98, 'hang:None': 1}
+flowmargin-main-parent 8082 page passes 5531 named passes 178214 observed names 194540 statuses {'complete:0': 7866, 'complete:2': 106, 'timeout:None': 11, 'complete:1': 98, 'hang:None': 1}
+flowmargin-main-stable 8082 page passes 6950 named passes 182963 observed names 194912 statuses {'complete:0': 7986, 'complete:2': 62, 'complete:1': 23, 'timeout:None': 10, 'hang:None': 1}
+flowmargin-main-parent pages left only 3 right only 0
+flowmargin-main-parent passes left only 146 right only 0
+flowmargin-main-parent observed left only 0 right only 0
+flowmargin-main-stable pages left only 264 right only 1680
+flowmargin-main-stable passes left only 5732 right only 10335
+flowmargin-main-stable observed left only 309 right only 681
+Losses vs parent by URL: Counter()
+flowmargin-focus-candidate 18 page passes 14 named passes 1623 observed names 1633 statuses {'complete:0': 18}
+flowmargin-focus-parent 18 page passes 13 named passes 1479 observed names 1633 statuses {'complete:0': 18}
+flowmargin-focus-stable 18 page passes 17 named passes 1630 observed names 1633 statuses {'complete:0': 18}
+flowmargin-focus-parent pages left only 1 right only 0
+flowmargin-focus-parent passes left only 144 right only 0
+flowmargin-focus-parent observed left only 0 right only 0
+flowmargin-focus-stable pages left only 0 right only 3
+flowmargin-focus-stable passes left only 0 right only 7
+flowmargin-focus-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()
+flowmargin-supplement-candidate 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+flowmargin-supplement-parent 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+flowmargin-supplement-stable 41 page passes 35 named passes 619 observed names 874 statuses {'complete:0': 41}
+flowmargin-supplement-parent pages left only 0 right only 0
+flowmargin-supplement-parent passes left only 0 right only 0
+flowmargin-supplement-parent observed left only 0 right only 0
+flowmargin-supplement-stable pages left only 0 right only 8
+flowmargin-supplement-stable passes left only 0 right only 42
+flowmargin-supplement-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()
