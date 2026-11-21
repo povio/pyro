@@ -177,6 +177,13 @@
             if (chunk !== undefined) return '["Q",' + chunk + ']';
             const kind = call(objectTag, source);
             switch (kind) {
+                case '[object DOMPoint]': case '[object DOMPointReadOnly]':
+                case '[object DOMRect]': case '[object DOMRectReadOnly]':
+                case '[object DOMMatrix]': case '[object DOMMatrixReadOnly]': case '[object DOMQuad]': {
+                    const parts = host(source, 15);
+                    if (!parts) fail('Invalid geometry value');
+                    return '["G",' + stringify(parts[0]) + ',' + node(parts[1]) + ']';
+                }
                 case '[object ImageData]': {
                     const parts = host(source, 13);
                     if (parts == null) fail('Invalid ImageData');
@@ -322,6 +329,7 @@
                     if (typeof stack === 'string') hide(error, 'stack', stack);
                     return error;
                 }
+                case 'G': return remember(id, host(tree[1], 16, node(tree[2])));
                 case 'F': return remember(id, host(tree, 1));
                 case 'C': return remember(id, host(tree[1], 10));
                 case 'Q': return remember(id, host(tree[1], 12));

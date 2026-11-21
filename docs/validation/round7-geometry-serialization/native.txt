@@ -1,0 +1,6 @@
+running 2 tests
+test messaging::geometry_serialization_preserves_quad_point_aliases_and_mutability ... ok
+test messaging::history_state_is_structured_cloned ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 539 filtered out; finished in 0.13s
+
