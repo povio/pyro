@@ -17,4 +17,5 @@
 //!   docs/webapi/MEDIA.md).
 
 pub mod audio;
+pub mod convolution;
 pub mod video;

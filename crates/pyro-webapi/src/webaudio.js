@@ -461,7 +461,14 @@
     if (n.busy) return silentBus();
     n.busy = true;
     try {
+      const track = ctxOf(n.ctx).trackConvolverActivity;
+      if (track) n.activeInput = false;
       n.out = n.process(f0, q);
+      if (track) {
+        // A scheduled source can be active even when it outputs zero. A
+        // processor may also be emitting its own tail after its inputs end.
+        n.active = n.activeInput || n.processingFrame === f0 || n.out.some(ch => ch.some(v => v !== 0));
+      }
     } finally {
       n.busy = false;
     }
@@ -474,6 +481,7 @@
     const sources = n.numberOfInputs > 1 ? n.inputs.filter(s => s.input === port) : n.inputs;
     if (!sources.length) return null;
     const buses = sources.map((s) => pull(s.node, q, f0, s.output));
+    if (ctxOf(n.ctx).trackConvolverActivity && sources.some(s => s.node.q === q && s.node.active)) n.activeInput = true;
     let channels = 0;
     for (const b of buses) channels = max(channels, b.length);
     if (n.mode === 'clamped-max') channels = min(channels, n.channelCount);
@@ -1020,6 +1028,86 @@
   }
   webidl(DelayNode, 'DelayNode');
 
+  // ---- Convolver -------------------------------------------------------------
+  const WeakConvolver = WeakRef;
+  function convolverOf(self) {
+    const n = nodeOf(self);
+    if (n.convolve === undefined) throw invocation();
+    return n;
+  }
+  // Buffer acquisition runs in the AudioBuffer's own realm so its refreshed
+  // channel views have that realm's intrinsic Float32Array prototype.
+  function localImpulseInfo(buffer) {
+    const b = buffers.get(buffer);
+    if (!b) return undefined;
+    return {rate: b.rate, length: b.length, count: b.data.length, acquire() {
+      if (b.data.some(ch => apply(arrayLength, ch, []) !== b.length)) return null;
+      b.data = b.data.map(ch => {
+        const backing = apply(arrayBufferOf, ch, []);
+        const next = transferOf ? apply(transferOf, backing, []) : structuredCloneC(backing, {transfer: [backing]});
+        return new F32(next);
+      });
+      return b.data;
+    }};
+  }
+  function impulseInfo(buffer) {
+    if (buffer == null) return null;
+    const info = localImpulseInfo(buffer) || natives.foreignImpulseInfo(buffer);
+    if (!info) throw new TypeErrorC('Expected an AudioBuffer');
+    return info;
+  }
+  function setImpulse(n, buffer, info) {
+    if (!info) {
+      n.convolve = n.impulse = null;
+      n.tail = 0;
+      return;
+    }
+    if (![1, 2, 4].includes(info.count) || info.rate !== ctxOf(n.ctx).rate) {
+      throw new DE('The impulse response requires 1, 2 or 4 channels and the context sample rate.', 'NotSupportedError');
+    }
+    const data = info.acquire();
+    n.convolve = data ? natives.makeConvolver(data, info.rate, n.normalize) : null;
+    n.impulse = buffer;
+    n.impulseLength = info.length;
+    n.tail = 0;
+  }
+  class ConvolverNode extends AudioNode {
+    constructor(context, options = undefined) {
+      contextArg(context, 'ConvolverNode');
+      const inherited = readNodeOptions(options, 'ConvolverNode');
+      const source = options?.buffer;
+      const info = impulseInfo(source);
+      const normalize = !options?.disableNormalization;
+      super(secret, context, {
+        mode: 'clamped-max', disallowMaxMode: true, normalize,
+        impulse: null, convolve: null, tail: 0, impulseLength: 0,
+        checkCount(count) {
+          if (count !== 1 && count !== 2) throw new DE('Convolver input requires 1 or 2 channels.', 'NotSupportedError');
+          this.channelCount = count;
+        },
+      });
+      const n = nodeOf(this);
+      applyNodeOptions(this, inherited);
+      const c = ctxOf(context);
+      c.trackConvolverActivity = true;
+      (c.convolverNodes ??= new Set()).add(new WeakConvolver(n));
+      if (source != null) setImpulse(n, source, info);
+      n.process = (f0, q) => {
+        if (!n.convolve) return silentBus();
+        const bus = input(n, q, f0);
+        if (!n.activeInput && n.tail === 0) return silentBus();
+        n.processingFrame = f0;
+        n.tail = n.activeInput ? n.impulseLength - 1 : max(0, n.tail - QUANTUM);
+        return n.convolve(bus ? bus[0] : new F32(QUANTUM), bus?.[1], n.interp === 'speakers');
+      };
+    }
+    get normalize() { return convolverOf(this).normalize; }
+    set normalize(value) { convolverOf(this).normalize = !!value; }
+    get buffer() { return convolverOf(this).impulse; }
+    set buffer(value) { setImpulse(convolverOf(this), value, impulseInfo(value)); }
+  }
+  webidl(ConvolverNode, 'ConvolverNode');
+
   // ---- Recursive filters -----------------------------------------------------
   const F64 = Float64Array;
   const typedArrayPrototype = Object.getPrototypeOf(F32.prototype);
@@ -1344,6 +1432,7 @@
     const last = min(f0 + QUANTUM, stopAt);
     if (stopAt <= f0) { end(n); return null; }
     if (first >= f0 + QUANTUM || first >= last) return null;
+    n.processingFrame = f0;
     return [first - f0, last - f0, stopAt <= f0 + QUANTUM];
   }
 
@@ -1582,6 +1671,7 @@
       return makeBuffer(rate, data);
     }
     createBufferSource() { return new AudioBufferSourceNode(this); }
+    createConvolver() { return new ConvolverNode(this); }
     createGain() { return new GainNode(this); }
     createDelay(maxDelayTime = 1) { return new DelayNode(this, {maxDelayTime}); }
     createPanner() { return new PannerNode(this); }
@@ -1846,6 +1936,12 @@
       for (let ch = 0; ch < c.channels; ch++) c.output[ch].set(count === QUANTUM ? bus[ch] : bus[ch].subarray(0, count), f0);
       // Started sources nothing pulled still play (and end) on time.
       for (const n of c.sources) if (n.q !== q) pull(n, q, f0);
+      // Preserve a fed convolver's history even while its output is disconnected.
+      if (c.convolverNodes) for (const ref of c.convolverNodes) {
+        const n = ref.deref();
+        if (!n) c.convolverNodes.delete(ref);
+        else if (n.convolve && n.q !== q && (n.inputs.length || n.tail)) pull(n, q, f0);
+      }
       // A fed delay keeps the signal it will output even while downstream is
       // disconnected. A weak registration does not keep an unused node alive.
       if (c.delayNodes) for (const ref of c.delayNodes) {
@@ -1886,8 +1982,8 @@
   webidl(OfflineAudioCompletionEvent, 'OfflineAudioCompletionEvent');
 
   return {
-    BaseAudioContext, AudioContext, OfflineAudioContext, AudioBuffer, AudioParam, AudioNode,
+    localImpulseInfo, BaseAudioContext, AudioContext, OfflineAudioContext, AudioBuffer, AudioParam, AudioNode,
     AudioDestinationNode, AudioScheduledSourceNode, AudioBufferSourceNode, OscillatorNode,
-    ConstantSourceNode, GainNode, DelayNode, AudioListener, PannerNode, StereoPannerNode, BiquadFilterNode, IIRFilterNode, ChannelMergerNode, ChannelSplitterNode, OfflineAudioCompletionEvent,
+    ConstantSourceNode, GainNode, DelayNode, ConvolverNode, AudioListener, PannerNode, StereoPannerNode, BiquadFilterNode, IIRFilterNode, ChannelMergerNode, ChannelSplitterNode, OfflineAudioCompletionEvent,
   };
 })

@@ -258,6 +258,11 @@ first use of any of `BaseAudioContext`, `AudioContext`,
   Both compute magnitude and phase responses and retain separate filter
   history for each rendered channel across quanta. `ChannelMergerNode`
   mixes each input to mono and places it in the corresponding output channel.
+- `ConvolverNode` snapshots a mono, stereo, or four-channel impulse response
+  at the context's sample rate. Offline rendering combines a direct first
+  block with FFT overlap-add partitions, preserving zero algorithmic latency
+  and the response tail. The optional RMS normalization is calculated when
+  the buffer is assigned.
 - `OfflineAudioContext(channels, length, rate)` or `({ numberOfChannels,
   length, sampleRate })`: `startRendering()` renders in a task (state
   `running`, then `closed`), resolves with the `AudioBuffer` and fires
@@ -291,7 +296,7 @@ first use of any of `BaseAudioContext`, `AudioContext`,
   `captureStream` are missing.
 - Web Audio has only the nodes above: no `AnalyserNode`,
   `DelayNode`, `DynamicsCompressorNode`,
-  `ConvolverNode`, `PannerNode`/`AudioListener`, `StereoPannerNode`,
+  `PannerNode`/`AudioListener`, `StereoPannerNode`,
   `WaveShaperNode`, `ChannelSplitterNode`,
   `PeriodicWave` or `AudioWorklet`. Audio fingerprinting
   scripts that use a compressor fail where Chrome succeeds.
