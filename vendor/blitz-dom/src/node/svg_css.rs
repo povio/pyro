@@ -1190,7 +1190,7 @@ impl Writer<'_> {
                 continue;
             }
             if attr.name.ns == ns!() && local == "style" && is_svg {
-                style_attr = data.inline_declarations();
+                style_attr = Some(attr.value.as_str());
                 continue;
             }
             if attr.name.ns == ns!() && rewrites.iter().any(|r| r.name == local) {

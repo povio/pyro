@@ -623,12 +623,8 @@ impl<'a, C: CxSource<'a>> TElement for SNode<'a, C> {
     fn is_svg_element(&self) -> bool {
         self.element().name.ns == ns!(svg)
     }
-    fn style_attribute_source(&self) -> Option<&str> {
-        let e = self.element();
-        e.semantic_inline_style().or_else(|| e.attr_local(&local_name!("style")))
-    }
     fn style_attribute(&self) -> Option<ArcBorrow<'_, Locked<PropertyDeclarationBlock>>> {
-        let text = self.style_attribute_source()?;
+        let text = self.element().attr_local(&local_name!("style"))?;
         let (cx, i) = (self.cx(), self.i());
         // SAFETY: styling is sequential, and only this element's own style
         // computation reads its parsed style attribute.

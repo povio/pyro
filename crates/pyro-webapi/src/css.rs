@@ -264,9 +264,7 @@ impl Block {
         names
     }
     fn css_text(&self) -> String {
-        self.with_kept(self.parsed.css_text())
-    }
-    fn with_kept(&self, parsed: String) -> String {
+        let parsed = self.parsed.css_text();
         let kept = serialize_declarations(&self.kept);
         match (parsed.is_empty(), kept.is_empty()) {
             (_, true) => parsed,
@@ -338,9 +336,7 @@ impl StyleData {
     fn text(&self) -> String {
         match &self.source {
             StyleSource::Inline(el) => {
-                let dom = el.page.dom.borrow();
-                dom.element(el.id).ok().and_then(|e| e.semantic_inline_style().or_else(|| e.attr("style")))
-                    .unwrap_or("").to_owned()
+                el.page.dom.borrow().get_attribute(el.id, "style").ok().flatten().unwrap_or("").to_owned()
             }
             // pyro: (through the sheet object's accessor: nothing of a sheet not origin-clean.)
             StyleSource::Rule { owner, .. } if owner.access().is_err() => String::new(),
@@ -358,9 +354,7 @@ impl StyleData {
     }
     /// Serializes `block` back into the attribute or the rule.
     fn write(&self, block: &Block) -> JsResult<()> {
-        let canonical = block.css_text();
-        let semantic = block.parsed.css_for_reparse().map(|css| block.with_kept(css)).unwrap_or_else(|| canonical.clone());
-        self.write_semantic(canonical, semantic)
+        self.write_raw(block.css_text())
     }
     /// Writes `text` unless it is what the block already holds (`before`):
     /// an unchanged block is no attribute mutation.
@@ -369,16 +363,6 @@ impl StyleData {
             return Ok(());
         }
         self.write_raw(text)
-    }
-    /// Rule blocks are the renderer's input. CSSOM reads serialize that input canonically.
-    fn write_semantic(&self, canonical: String, semantic: String) -> JsResult<()> {
-        match &self.source {
-            StyleSource::Inline(el) => el.page.dom.borrow_mut().set_cssom_inline_style(el.id, canonical, semantic).js(),
-            StyleSource::Rule { node, .. } => match &node.kind {
-                RuleKind::Style { .. } | RuleKind::Declarations(_) => self.write_raw(semantic),
-                _ => self.write_raw(canonical),
-            },
-        }
     }
     fn write_raw(&self, text: String) -> JsResult<()> {
         match &self.source {
@@ -442,19 +426,6 @@ impl StyleData {
         decls.retain(|d| css_property(&d.name));
         decls
     }
-    // A scalar can be written with a negative sign or produced by a calculation.
-    // Ordinary keywords and positive literals need no extra parse.
-    fn might_have_signed_zero(text: &str) -> bool {
-        text.contains('(') || text.contains("-0") || text.contains("-.") ||
-            text.contains("e-") || text.contains("E-")
-    }
-
-    fn signed_block(text: &str) -> Option<Block> {
-        if !Self::might_have_signed_zero(text) { return None }
-        let block = Block::parse(text);
-        block.parsed.css_for_reparse().is_some().then_some(block)
-    }
-
     /// `setProperty(name, value, priority)`: an empty value removes the
     /// property; an invalid one, or a name that is no property, changes
     /// nothing. When no other declaration sets a longhand of `name`, the new
@@ -485,24 +456,6 @@ impl StyleData {
             return Ok(());
         }
         let text = self.text();
-        let signed = Self::signed_block(&text).or_else(|| {
-            if unparsed(name) || !Self::might_have_signed_zero(value) { return None }
-            let mut incoming = DeclarationBlock::parse("");
-            incoming.set(name, value, important)?;
-            incoming.css_for_reparse().map(|_| Block::parse(&text))
-        });
-        if let Some(mut block) = signed {
-            if unparsed(name) {
-                match block.kept.iter_mut().find(|d| d.name == name) {
-                    Some(d) if d.value == value && d.important == important => return Ok(()),
-                    Some(d) => { d.value = value.into(); d.important = important; }
-                    None => block.kept.push(Declaration { name: name.into(), value: value.into(), important }),
-                }
-            } else if block.parsed.set(name, value, important) != Some(true) {
-                return Ok(());
-            }
-            return self.write(&block);
-        }
         if unparsed(name) {
             let mut decls = Self::written(&text);
             match decls.iter_mut().find(|d| d.name == name) {
@@ -556,18 +509,6 @@ impl StyleData {
         }
         if !text.contains(':') {
             return Ok(String::new());
-        }
-        if let Some(mut block) = Self::signed_block(&text) {
-            let old = if unparsed(name) {
-                let Some(i) = block.kept.iter().position(|d| d.name == name) else { return Ok(String::new()) };
-                block.kept.remove(i).value
-            } else {
-                let old = block.parsed.value(name);
-                if !block.parsed.remove(name) { return Ok(old); }
-                old
-            };
-            self.write(&block)?;
-            return Ok(old);
         }
         let mut decls = Self::written(&text);
         if unparsed(name) {

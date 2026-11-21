@@ -74,22 +74,7 @@ where
                 return true;
             }
             let guard = shared_context.guards.author;
-            let (a, b) = (a.read_with(guard), b.read_with(guard));
-            if a != b {
-                return false;
-            }
-            // CSSOM value equality treats signed zeros as equal. Inside math,
-            // equal-looking blocks can nevertheless compute different values.
-            // Identical source and simple non-functional values stay on the fast path.
-            if let (Some(left), Some(right)) = (target.style_attribute_source(), candidate.style_attribute_source()) {
-                if left != right && (left.contains('(') || right.contains('(')) {
-                    return match (a.css_for_reparse(), b.css_for_reparse()) {
-                        (Ok(x), Ok(y)) => x == y,
-                        _ => false,
-                    };
-                }
-            }
-            true
+            *a.read_with(guard) == *b.read_with(guard)
         },
     }
 }

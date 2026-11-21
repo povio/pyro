@@ -585,7 +585,7 @@ impl TimingRules {
             return out;
         }
         let inline: Vec<Declared> =
-            match dom.element(el).ok().and_then(|e| e.semantic_inline_style().or_else(|| e.attr_local(&markup5ever::local_name!("style")))) {
+            match dom.element(el).ok().and_then(|e| e.attr_local(&markup5ever::local_name!("style"))) {
                 Some(style) if pseudo.is_none() && mentions(style) => declarations(style),
                 _ => Vec::new(),
             };

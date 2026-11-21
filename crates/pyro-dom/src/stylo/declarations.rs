@@ -153,12 +153,6 @@ impl DeclarationBlock {
         }
     }
 
-    /// An alternate representation only when CSSOM shorthand or number serialization
-    /// would lose a negative zero in the parsed longhands.
-    pub fn css_for_reparse(&self) -> Option<String> {
-        self.0.css_for_reparse().ok().flatten()
-    }
-
     /// The block serialized (`cssText`), shorthands where the longhands
     /// make one.
     pub fn css_text(&self) -> String {

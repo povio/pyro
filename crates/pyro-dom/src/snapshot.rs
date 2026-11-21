@@ -732,15 +732,6 @@ impl Dom {
                     // written after it, without any that would collide (`ENGINE_ATTRIBUTES`).
                     let page_end = attrs.len();
                     let plain = |local: &str| Cow::Owned(QualName::new(None, ns!(), local.into()));
-                    // Keep the reflected attribute available to CSS attribute selectors.
-                    // Only the declaration parser consumes this private snapshot value.
-                    if let Some(style) = e.semantic_inline_style() {
-                        attrs.push(RAttr {
-                            name: Cow::Owned(QualName::new(None, STATE_NS.into(), "inline-declarations".into())),
-                            value: Cow::Borrowed(style),
-                            valueless: false,
-                        });
-                    }
                     if let Some(href) = href {
                         attrs.push(RAttr { name: plain("href"), value: Cow::Owned(href), valueless: false });
                         attrs.push(RAttr { name: plain(SHEET_ATTRIBUTE), value: Cow::Owned(self.sheet_key(id)), valueless: false });
