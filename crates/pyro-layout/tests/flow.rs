@@ -1236,6 +1236,22 @@ fn flex_column_groups_opposing_first_and_last_baselines() {
 }
 
 #[test]
+fn flex_column_synthesizes_parallel_item_baseline() {
+    for mode in ["vertical-rl", "vertical-lr"] {
+        let html = format!(
+            "<!doctype html><style>body{{margin:0}}main{{display:flex;flex-direction:column;writing-mode:{mode};\
+             align-items:last baseline;height:100px;width:200px;line-height:0}}main>div{{flex:none}}\
+             span{{display:inline-block;width:1em;height:1em}}#anchor{{writing-mode:horizontal-tb;font-size:20px;\
+             margin-bottom:20px;padding-bottom:20px}}#item{{font-size:10px}}</style><main>\
+             <div id=anchor><span></span><br><span></span></div><div id=item><span></span><br><span></span></div></main>"
+        );
+        let layout = page(&html);
+        assert_eq!(layout.metrics("anchor")[1], 20.0, "{mode}");
+        assert_eq!(layout.metrics("item")[1], 55.0, "{mode}");
+    }
+}
+
+#[test]
 fn flex_compressible_mixed_percentage_keeps_length() {
     for (direction, writing_mode, metric) in [("row", "horizontal-tb", 2), ("column", "vertical-lr", 3)] {
         for kind in ["text", "range"] {
