@@ -1,0 +1,29 @@
+{
+ "namedLosses": 106,
+ "urls": 21,
+ "newStatus": {
+  "missing": 80,
+  "Fail": 24,
+  "Timeout": 2
+ },
+ "chromeStatus": {
+  "Pass": 86,
+  "missing": 6,
+  "Fail": 14
+ },
+ "observedGroups": {
+  "page-timeout-no-loss-name": 50,
+  "live-signature-in-name": 6,
+  "source-image-decode-rejection": 4,
+  "moved-script-event-assertion": 4,
+  "plaintext-formatting-assertion": 13,
+  "proxy-connection-failed": 18,
+  "cdp-local-address-unavailable": 2,
+  "response-status-assertion": 1,
+  "timeline-clock-assertion": 1,
+  "blocked-vs-upgraded-assertion": 1,
+  "fixture-fetch-502": 4,
+  "pixel-value-assertion": 1,
+  "resource-count-assertion": 1
+ }
+}

@@ -1,0 +1,743 @@
+{
+ "editing/plaintext-only/nested-with-contenteditable-true.html": {
+  "round7": {
+   "receipt": "guard-main-006",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": false,
+   "passing": 24,
+   "reported": 56,
+   "elapsedMs": 63,
+   "error": null,
+   "diagnosticSubtests": []
+  },
+  "chrome": {
+   "receipt": "chrome/guard-main-006",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": false,
+   "passing": 20,
+   "reported": 56,
+   "elapsedMs": 1400,
+   "error": null,
+   "diagnosticSubtests": []
+  },
+  "previous": {
+   "receipt": "guard/guard-main-006",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": false,
+   "passing": 24,
+   "reported": 56,
+   "elapsedMs": 130,
+   "error": null,
+   "diagnosticSubtests": []
+  }
+ },
+ "editing/plaintext-only/plaintext-only-in-designMode.html": {
+  "round7": {
+   "receipt": "guard-main-004",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": false,
+   "passing": 2,
+   "reported": 3,
+   "elapsedMs": 78,
+   "error": null,
+   "diagnosticSubtests": []
+  },
+  "chrome": {
+   "receipt": "chrome/guard-main-004",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": false,
+   "passing": 1,
+   "reported": 3,
+   "elapsedMs": 97,
+   "error": null,
+   "diagnosticSubtests": []
+  },
+  "previous": {
+   "receipt": "guard/guard-main-004",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": true,
+   "passing": 3,
+   "reported": 3,
+   "elapsedMs": 26,
+   "error": null,
+   "diagnosticSubtests": []
+  }
+ },
+ "fetch/api/basic/response-null-body.any.worker.html": {
+  "round7": {
+   "receipt": "ordinary-018",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": false,
+   "passing": 7,
+   "reported": 11,
+   "elapsedMs": 33,
+   "error": null,
+   "diagnosticSubtests": []
+  },
+  "chrome": {
+   "receipt": "chrome/ordinary-018",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": false,
+   "passing": 1,
+   "reported": 11,
+   "elapsedMs": 958,
+   "error": null,
+   "diagnosticSubtests": []
+  },
+  "previous": {
+   "receipt": "remaining/ordinary-018",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": false,
+   "passing": 6,
+   "reported": 11,
+   "elapsedMs": 118,
+   "error": null,
+   "diagnosticSubtests": []
+  }
+ },
+ "fetch/metadata/generated/window-location.sub.html": {
+  "round7": {
+   "receipt": "ordinary-266",
+   "status": "timeout",
+   "harnessStatus": null,
+   "fullyPassing": false,
+   "passing": 21,
+   "reported": 21,
+   "elapsedMs": 45008,
+   "error": null,
+   "diagnosticSubtests": []
+  },
+  "chrome": {
+   "receipt": "chrome/ordinary-266",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": true,
+   "passing": 72,
+   "reported": 72,
+   "elapsedMs": 8403,
+   "error": null,
+   "diagnosticSubtests": []
+  },
+  "previous": {
+   "receipt": "remaining/ordinary-266",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": false,
+   "passing": 70,
+   "reported": 72,
+   "elapsedMs": 769,
+   "error": null,
+   "diagnosticSubtests": []
+  }
+ },
+ "html/browsers/browsing-the-web/navigating-across-documents/form-submit-and-window-stop.html": {
+  "round7": {
+   "receipt": "guard-history-000",
+   "status": "timeout",
+   "harnessStatus": null,
+   "fullyPassing": false,
+   "passing": 0,
+   "reported": 0,
+   "elapsedMs": 15021,
+   "error": null,
+   "diagnosticSubtests": []
+  },
+  "chrome": {
+   "receipt": "chrome/guard-history-000",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": true,
+   "passing": 1,
+   "reported": 1,
+   "elapsedMs": 154,
+   "error": null,
+   "diagnosticSubtests": []
+  },
+  "previous": {
+   "receipt": "guard/guard-history-000",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": true,
+   "passing": 1,
+   "reported": 1,
+   "elapsedMs": 11511,
+   "error": null,
+   "diagnosticSubtests": []
+  }
+ },
+ "html/canvas/element/manual/imagebitmap/createImageBitmap-origin.sub.html": {
+  "round7": {
+   "receipt": "guard-history-001",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": false,
+   "passing": 15,
+   "reported": 27,
+   "elapsedMs": 170,
+   "error": null,
+   "diagnosticSubtests": []
+  },
+  "chrome": {
+   "receipt": "chrome/guard-history-001",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": true,
+   "passing": 27,
+   "reported": 27,
+   "elapsedMs": 1042,
+   "error": null,
+   "diagnosticSubtests": []
+  },
+  "previous": {
+   "receipt": "guard/guard-history-001",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": false,
+   "passing": 16,
+   "reported": 27,
+   "elapsedMs": 169,
+   "error": null,
+   "diagnosticSubtests": []
+  }
+ },
+ "html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage-ImageBitmap-cloned.html": {
+  "round7": {
+   "receipt": "ordinary-126",
+   "status": "error",
+   "harnessStatus": "Error",
+   "fullyPassing": false,
+   "passing": 95,
+   "reported": 208,
+   "elapsedMs": 10016,
+   "error": "Unhandled rejection: The source image could not be decoded.",
+   "diagnosticSubtests": []
+  },
+  "chrome": {
+   "receipt": "chrome/ordinary-126",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": false,
+   "passing": 192,
+   "reported": 208,
+   "elapsedMs": 460,
+   "error": null,
+   "diagnosticSubtests": []
+  },
+  "previous": {
+   "receipt": "remaining/ordinary-126",
+   "status": "error",
+   "harnessStatus": "Error",
+   "fullyPassing": false,
+   "passing": 95,
+   "reported": 208,
+   "elapsedMs": 10028,
+   "error": "Unhandled rejection: The source image could not be decoded.",
+   "diagnosticSubtests": []
+  }
+ },
+ "html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage-ImageBitmap-image.html": {
+  "round7": {
+   "receipt": "ordinary-229",
+   "status": "error",
+   "harnessStatus": "Error",
+   "fullyPassing": false,
+   "passing": 95,
+   "reported": 208,
+   "elapsedMs": 10017,
+   "error": "Unhandled rejection: The source image could not be decoded.",
+   "diagnosticSubtests": []
+  },
+  "chrome": {
+   "receipt": "chrome/ordinary-229",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": false,
+   "passing": 192,
+   "reported": 208,
+   "elapsedMs": 290,
+   "error": null,
+   "diagnosticSubtests": []
+  },
+  "previous": {
+   "receipt": "remaining/ordinary-229",
+   "status": "error",
+   "harnessStatus": "Error",
+   "fullyPassing": false,
+   "passing": 95,
+   "reported": 208,
+   "elapsedMs": 10022,
+   "error": "Unhandled rejection: The source image could not be decoded.",
+   "diagnosticSubtests": []
+  }
+ },
+ "html/canvas/element/manual/wide-gamut-canvas/canvas-display-p3-drawImage.https.html": {
+  "round7": {
+   "receipt": "ordinary-178",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": false,
+   "passing": 103,
+   "reported": 240,
+   "elapsedMs": 76,
+   "error": null,
+   "diagnosticSubtests": []
+  },
+  "chrome": {
+   "receipt": "chrome/ordinary-178",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": false,
+   "passing": 224,
+   "reported": 240,
+   "elapsedMs": 364,
+   "error": null,
+   "diagnosticSubtests": []
+  },
+  "previous": {
+   "receipt": "remaining/ordinary-178",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": false,
+   "passing": 103,
+   "reported": 240,
+   "elapsedMs": 48,
+   "error": null,
+   "diagnosticSubtests": []
+  }
+ },
+ "html/semantics/scripting-1/the-script-element/moving-between-documents/after-prepare-iframe-fetch-error-external-classic.html": {
+  "round7": {
+   "receipt": "guard-history-001",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": false,
+   "passing": 4,
+   "reported": 5,
+   "elapsedMs": 7086,
+   "error": null,
+   "diagnosticSubtests": []
+  },
+  "chrome": {
+   "receipt": "chrome/guard-history-001",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": true,
+   "passing": 5,
+   "reported": 5,
+   "elapsedMs": 6130,
+   "error": null,
+   "diagnosticSubtests": []
+  },
+  "previous": {
+   "receipt": "guard/guard-history-001",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": true,
+   "passing": 5,
+   "reported": 5,
+   "elapsedMs": 7101,
+   "error": null,
+   "diagnosticSubtests": []
+  }
+ },
+ "html/semantics/scripting-1/the-script-element/moving-between-documents/move-back-iframe-fetch-error-external-classic.html": {
+  "round7": {
+   "receipt": "ordinary-114",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": false,
+   "passing": 4,
+   "reported": 5,
+   "elapsedMs": 7106,
+   "error": null,
+   "diagnosticSubtests": []
+  },
+  "chrome": {
+   "receipt": "chrome/ordinary-114",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": true,
+   "passing": 5,
+   "reported": 5,
+   "elapsedMs": 6604,
+   "error": null,
+   "diagnosticSubtests": []
+  },
+  "previous": {
+   "receipt": "remaining/ordinary-114",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": true,
+   "passing": 5,
+   "reported": 5,
+   "elapsedMs": 7028,
+   "error": null,
+   "diagnosticSubtests": []
+  }
+ },
+ "html/semantics/scripting-1/the-script-element/moving-between-documents/move-back-iframe-parse-error-external-classic.html": {
+  "round7": {
+   "receipt": "ordinary-149",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": false,
+   "passing": 4,
+   "reported": 5,
+   "elapsedMs": 7035,
+   "error": null,
+   "diagnosticSubtests": []
+  },
+  "chrome": {
+   "receipt": "chrome/ordinary-149",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": true,
+   "passing": 5,
+   "reported": 5,
+   "elapsedMs": 6894,
+   "error": null,
+   "diagnosticSubtests": []
+  },
+  "previous": {
+   "receipt": "remaining/ordinary-149",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": true,
+   "passing": 5,
+   "reported": 5,
+   "elapsedMs": 7034,
+   "error": null,
+   "diagnosticSubtests": []
+  }
+ },
+ "html/semantics/scripting-1/the-script-element/moving-between-documents/move-back-iframe-success-external-classic.html": {
+  "round7": {
+   "receipt": "ordinary-135",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": false,
+   "passing": 3,
+   "reported": 5,
+   "elapsedMs": 7114,
+   "error": null,
+   "diagnosticSubtests": []
+  },
+  "chrome": {
+   "receipt": "chrome/ordinary-135",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": true,
+   "passing": 5,
+   "reported": 5,
+   "elapsedMs": 7270,
+   "error": null,
+   "diagnosticSubtests": []
+  },
+  "previous": {
+   "receipt": "remaining/ordinary-135",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": false,
+   "passing": 4,
+   "reported": 5,
+   "elapsedMs": 7045,
+   "error": null,
+   "diagnosticSubtests": []
+  }
+ },
+ "html/syntax/parsing/html5lib_write.html?file=isindex": {
+  "round7": {
+   "receipt": "ordinary-148",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": false,
+   "passing": 0,
+   "reported": 1,
+   "elapsedMs": 107,
+   "error": null,
+   "diagnosticSubtests": [
+    {
+     "name": "html5lib-runner: load isindex.dat",
+     "status": "Fail",
+     "msg": "fetch isindex.dat: 502"
+    }
+   ]
+  },
+  "chrome": {
+   "receipt": "chrome/ordinary-148",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": true,
+   "passing": 4,
+   "reported": 4,
+   "elapsedMs": 110,
+   "error": null,
+   "diagnosticSubtests": []
+  },
+  "previous": {
+   "receipt": "remaining/ordinary-148",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": true,
+   "passing": 4,
+   "reported": 4,
+   "elapsedMs": 31,
+   "error": null,
+   "diagnosticSubtests": []
+  }
+ },
+ "mixed-content/gen/srcdoc-inherit.meta/unset/worklet-paint.https.html": {
+  "round7": {
+   "receipt": "ordinary-143",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": false,
+   "passing": 6,
+   "reported": 8,
+   "elapsedMs": 193,
+   "error": null,
+   "diagnosticSubtests": []
+  },
+  "chrome": {
+   "receipt": "chrome/ordinary-143",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": true,
+   "passing": 8,
+   "reported": 8,
+   "elapsedMs": 744,
+   "error": null,
+   "diagnosticSubtests": []
+  },
+  "previous": {
+   "receipt": "remaining/ordinary-143",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": false,
+   "passing": 7,
+   "reported": 8,
+   "elapsedMs": 10044,
+   "error": null,
+   "diagnosticSubtests": []
+  }
+ },
+ "preload/preload-xhr.html": {
+  "round7": {
+   "receipt": "ordinary-199",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": false,
+   "passing": 0,
+   "reported": 2,
+   "elapsedMs": 17,
+   "error": null,
+   "diagnosticSubtests": []
+  },
+  "chrome": {
+   "receipt": "chrome/ordinary-199",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": true,
+   "passing": 2,
+   "reported": 2,
+   "elapsedMs": 28,
+   "error": null,
+   "diagnosticSubtests": []
+  },
+  "previous": {
+   "receipt": "remaining/ordinary-199",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": false,
+   "passing": 1,
+   "reported": 2,
+   "elapsedMs": 14,
+   "error": null,
+   "diagnosticSubtests": []
+  }
+ },
+ "subresource-integrity/signatures/tentative/authority.https.window.html": {
+  "round7": {
+   "receipt": "guard-history-000",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": false,
+   "passing": 6,
+   "reported": 12,
+   "elapsedMs": 38,
+   "error": null,
+   "diagnosticSubtests": []
+  },
+  "chrome": {
+   "receipt": "chrome/guard-history-000",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": true,
+   "passing": 12,
+   "reported": 12,
+   "elapsedMs": 362,
+   "error": null,
+   "diagnosticSubtests": []
+  },
+  "previous": {
+   "receipt": "guard/guard-history-000",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": false,
+   "passing": 6,
+   "reported": 12,
+   "elapsedMs": 136,
+   "error": null,
+   "diagnosticSubtests": []
+  }
+ },
+ "user-timing/measure_navigation_timing.html": {
+  "round7": {
+   "receipt": "ordinary-014",
+   "status": "error",
+   "harnessStatus": null,
+   "fullyPassing": false,
+   "passing": 0,
+   "reported": 0,
+   "elapsedMs": null,
+   "error": "goto: net::ERR_PROXY_CONNECTION_FAILED at http://web-platform.test:59232/user-timing/measure_navigation_timing.html",
+   "diagnosticSubtests": []
+  },
+  "chrome": {
+   "receipt": "chrome/ordinary-014",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": true,
+   "passing": 17,
+   "reported": 17,
+   "elapsedMs": 1206,
+   "error": null,
+   "diagnosticSubtests": []
+  },
+  "previous": {
+   "receipt": "remaining/ordinary-014",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": true,
+   "passing": 17,
+   "reported": 17,
+   "elapsedMs": 221,
+   "error": null,
+   "diagnosticSubtests": []
+  }
+ },
+ "web-animations/timing-model/timelines/document-timelines.html": {
+  "round7": {
+   "receipt": "ordinary-072",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": false,
+   "passing": 2,
+   "reported": 3,
+   "elapsedMs": 19,
+   "error": null,
+   "diagnosticSubtests": []
+  },
+  "chrome": {
+   "receipt": "chrome/ordinary-072",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": true,
+   "passing": 3,
+   "reported": 3,
+   "elapsedMs": 353,
+   "error": null,
+   "diagnosticSubtests": []
+  },
+  "previous": {
+   "receipt": "remaining/ordinary-072",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": true,
+   "passing": 3,
+   "reported": 3,
+   "elapsedMs": 15,
+   "error": null,
+   "diagnosticSubtests": []
+  }
+ },
+ "websockets/constructor/016.html?wss": {
+  "round7": {
+   "receipt": "ordinary-014",
+   "status": "error",
+   "harnessStatus": null,
+   "fullyPassing": false,
+   "passing": 0,
+   "reported": 0,
+   "elapsedMs": null,
+   "error": "goto: net::ERR_PROXY_CONNECTION_FAILED at http://web-platform.test:59232/websockets/constructor/016.html?wss",
+   "diagnosticSubtests": []
+  },
+  "chrome": {
+   "receipt": "chrome/ordinary-014",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": true,
+   "passing": 1,
+   "reported": 1,
+   "elapsedMs": 1489,
+   "error": null,
+   "diagnosticSubtests": []
+  },
+  "previous": {
+   "receipt": "remaining/ordinary-014",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": true,
+   "passing": 1,
+   "reported": 1,
+   "elapsedMs": 16,
+   "error": null,
+   "diagnosticSubtests": []
+  }
+ },
+ "xhr/abort-progress-events.any.worker.html": {
+  "round7": {
+   "receipt": "ordinary-014",
+   "status": "error",
+   "harnessStatus": null,
+   "fullyPassing": false,
+   "passing": 0,
+   "reported": 0,
+   "elapsedMs": null,
+   "error": "connectOverCDP: connect EADDRNOTAVAIL 127.0.0.1:59492",
+   "diagnosticSubtests": []
+  },
+  "chrome": {
+   "receipt": "chrome/ordinary-014",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": true,
+   "passing": 2,
+   "reported": 2,
+   "elapsedMs": 408,
+   "error": null,
+   "diagnosticSubtests": []
+  },
+  "previous": {
+   "receipt": "remaining/ordinary-014",
+   "status": "complete",
+   "harnessStatus": "OK",
+   "fullyPassing": true,
+   "passing": 2,
+   "reported": 2,
+   "elapsedMs": 223,
+   "error": null,
+   "diagnosticSubtests": []
+  }
+ }
+}

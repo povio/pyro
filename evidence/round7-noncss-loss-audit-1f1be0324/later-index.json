@@ -1,0 +1,5437 @@
+{
+ "cutoffUTC": "2026-11-21T20:31:50.367682+00:00",
+ "scannedRoots": [
+  "round7-*"
+ ],
+ "scanned": {
+  "round7-css-values/base.json": {
+   "rows": 18,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-css-values/hdr-base.json": {
+   "rows": 4,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-css-values/numeric-base.json": {
+   "rows": 17,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-css-values/spm-base.json": {
+   "rows": 43,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-css-values/tree-base.json": {
+   "rows": 25,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/base.json": {
+   "rows": 5,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/chrome.json": {
+   "rows": 5,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/head.json": {
+   "rows": 5,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/formatting-events/base.json": {
+   "rows": 33,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/formatting-events/chrome.json": {
+   "rows": 33,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/formatting-events/head.json": {
+   "rows": 33,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/formatting-events/enter/base.json": {
+   "rows": 27,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/formatting-events/enter/chrome.json": {
+   "rows": 27,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/formatting-events/enter/head.json": {
+   "rows": 27,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/formatting-events/controls/base.json": {
+   "rows": 27,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/formatting-events/controls/chrome.json": {
+   "rows": 27,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/formatting-events/controls/head.json": {
+   "rows": 27,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/formatting-events/guards/base.json": {
+   "rows": 54,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/formatting-events/guards/head.json": {
+   "rows": 54,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/plaintext-enter/base.json": {
+   "rows": 27,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/plaintext-enter/chrome.json": {
+   "rows": 27,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/plaintext-enter/head.json": {
+   "rows": 27,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/plaintext-enter/verified/base.json": {
+   "rows": 27,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/plaintext-enter/verified/chrome.json": {
+   "rows": 27,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/plaintext-enter/verified/head.json": {
+   "rows": 27,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/plaintext-enter/verified/revision2/base.json": {
+   "rows": 27,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/plaintext-enter/verified/revision2/chrome.json": {
+   "rows": 27,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/plaintext-enter/verified/revision2/head.json": {
+   "rows": 27,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/plaintext-enter/verified/revision2/guards/head.json": {
+   "rows": 54,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/locked-block/base.json": {
+   "rows": 31,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/locked-block/chrome.json": {
+   "rows": 31,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/locked-block/head.json": {
+   "rows": 31,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/locked-block/revision2/base.json": {
+   "rows": 31,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/locked-block/revision2/chrome.json": {
+   "rows": 31,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/locked-block/revision2/head.json": {
+   "rows": 31,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/locked-block/revision2/guards/base.json": {
+   "rows": 54,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/locked-block/revision2/guards/head.json": {
+   "rows": 54,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/locked-block/guards/base.json": {
+   "rows": 54,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/locked-block/guards/head.json": {
+   "rows": 54,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/pre-block-joins/base.json": {
+   "rows": 206,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/pre-block-joins/chrome.json": {
+   "rows": 206,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/pre-block-joins/head.json": {
+   "rows": 206,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/pre-block-joins/revision2/base.json": {
+   "rows": 206,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/pre-block-joins/revision2/chrome.json": {
+   "rows": 206,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/pre-block-joins/revision2/head.json": {
+   "rows": 206,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/pre-block-joins/revision2/guards/base.json": {
+   "rows": 54,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/pre-block-joins/revision2/guards/head.json": {
+   "rows": 54,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/pre-block-joins/revision3/base.json": {
+   "rows": 206,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/pre-block-joins/revision3/chrome.json": {
+   "rows": 206,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/pre-block-joins/revision3/head.json": {
+   "rows": 206,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/pre-block-joins/revision3/guards/base.json": {
+   "rows": 54,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/pre-block-joins/revision3/guards/head.json": {
+   "rows": 54,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/pre-block-joins/guards/base.json": {
+   "rows": 54,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/pre-block-joins/guards/head.json": {
+   "rows": 54,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/void/base.json": {
+   "rows": 11,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/void/chrome.json": {
+   "rows": 11,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/void/head.json": {
+   "rows": 11,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/void/revision2/base.json": {
+   "rows": 11,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/void/revision2/chrome.json": {
+   "rows": 11,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/void/revision2/head.json": {
+   "rows": 11,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/void/revision2/probes/base.json": {
+   "rows": 1,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": null
+   }
+  },
+  "round7-editing/void/revision2/probes/chrome.json": {
+   "rows": 1,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": null
+   }
+  },
+  "round7-editing/void/revision2/probes/first.json": {
+   "rows": 1,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": null
+   }
+  },
+  "round7-editing/void/revision2/probes/head.json": {
+   "rows": 1,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": null
+   }
+  },
+  "round7-editing/void/revision2/guards/base.json": {
+   "rows": 43,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/void/revision2/guards/chrome.json": {
+   "rows": 43,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/void/revision2/guards/head.json": {
+   "rows": 43,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/whitespace/base.json": {
+   "rows": 26,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/whitespace/chrome.json": {
+   "rows": 26,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/whitespace/head.json": {
+   "rows": 26,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/whitespace/revision2/base.json": {
+   "rows": 26,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/whitespace/revision2/chrome.json": {
+   "rows": 26,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/whitespace/revision2/guards.json": {
+   "rows": 2,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": null
+   }
+  },
+  "round7-editing/whitespace/revision2/head.json": {
+   "rows": 26,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/insertion/base.json": {
+   "rows": 26,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/insertion/chrome.json": {
+   "rows": 26,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/insertion/head.json": {
+   "rows": 26,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/insertion/revision2/base.json": {
+   "rows": 26,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/insertion/revision2/chrome.json": {
+   "rows": 26,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/insertion/revision2/head.json": {
+   "rows": 26,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/insertion/revision2/typing/base.json": {
+   "rows": 3,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/insertion/revision2/typing/chrome.json": {
+   "rows": 3,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/insertion/revision2/typing/head.json": {
+   "rows": 3,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/insertion/typing/base.json": {
+   "rows": 3,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/insertion/typing/chrome.json": {
+   "rows": 3,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/insertion/typing/head.json": {
+   "rows": 3,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/plaintext-html/base.json": {
+   "rows": 15,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/plaintext-html/chrome.json": {
+   "rows": 15,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/plaintext-html/head.json": {
+   "rows": 15,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/plaintext-html/revision2/base.json": {
+   "rows": 15,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/plaintext-html/revision2/chrome.json": {
+   "rows": 15,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/plaintext-html/revision2/head.json": {
+   "rows": 15,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/plaintext-html/revision2/guards/base.json": {
+   "rows": 54,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/plaintext-html/revision2/guards/head.json": {
+   "rows": 54,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/plaintext-html/final/base.json": {
+   "rows": 15,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/plaintext-html/final/chrome.json": {
+   "rows": 15,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/plaintext-html/final/head.json": {
+   "rows": 15,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/plaintext-html/final/guards/base.json": {
+   "rows": 54,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/plaintext-html/final/guards/head.json": {
+   "rows": 54,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/selection/base.json": {
+   "rows": 10,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/selection/chrome.json": {
+   "rows": 10,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/selection/head.json": {
+   "rows": 10,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/selection/nested.json": {
+   "rows": 1,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": null
+   }
+  },
+  "round7-editing/composed/base.json": {
+   "rows": 11,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/composed/chrome.json": {
+   "rows": 11,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/composed/head.json": {
+   "rows": 11,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/composed/revision2/base.json": {
+   "rows": 11,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/composed/revision2/head.json": {
+   "rows": 11,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/composed/revision2/ordinary/base.json": {
+   "rows": 13,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/composed/revision2/ordinary/head.json": {
+   "rows": 13,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/control-commands/base.json": {
+   "rows": 27,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/control-commands/chrome.json": {
+   "rows": 27,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/control-commands/head.json": {
+   "rows": 27,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/control-commands/enter/base.json": {
+   "rows": 27,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/control-commands/enter/chrome.json": {
+   "rows": 27,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/control-commands/enter/head.json": {
+   "rows": 27,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/control-commands/guards/base.json": {
+   "rows": 54,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/control-commands/guards/head.json": {
+   "rows": 54,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/formatting-islands/base.json": {
+   "rows": 44,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/formatting-islands/chrome.json": {
+   "rows": 44,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/formatting-islands/head.json": {
+   "rows": 44,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/formatting-islands/revision2/base.json": {
+   "rows": 44,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/formatting-islands/revision2/chrome.json": {
+   "rows": 44,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/formatting-islands/revision2/enter/base.json": {
+   "rows": 27,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/formatting-islands/revision2/enter/chrome.json": {
+   "rows": 27,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/formatting-islands/revision2/controls/base.json": {
+   "rows": 27,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/formatting-islands/revision2/controls/chrome.json": {
+   "rows": 27,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/formatting-islands/revision2/guards/base.json": {
+   "rows": 54,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/formatting-islands/enter/base.json": {
+   "rows": 27,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/formatting-islands/enter/chrome.json": {
+   "rows": 27,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/formatting-islands/enter/head.json": {
+   "rows": 27,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/formatting-islands/controls/base.json": {
+   "rows": 27,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/formatting-islands/controls/chrome.json": {
+   "rows": 27,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/formatting-islands/controls/head.json": {
+   "rows": 27,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/formatting-islands/guards/base.json": {
+   "rows": 54,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/formatting-islands/guards/head.json": {
+   "rows": 54,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/initial-caret/base.json": {
+   "rows": 2,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/initial-caret/chrome.json": {
+   "rows": 2,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/initial-caret/head.json": {
+   "rows": 2,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/initial-caret/revision2/base.json": {
+   "rows": 2,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/initial-caret/revision2/chrome.json": {
+   "rows": 2,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/initial-caret/revision2/head.json": {
+   "rows": 2,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-editing/initial-caret/revision2/guards/head.json": {
+   "rows": 29,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-local/reference-correction/signed158-static.json": {
+   "rows": 47,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-local/reference-correction/signed158.json": {
+   "rows": 47,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-local/pointer-dispatch/parent-wpt.json": {
+   "rows": 16,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-local/referrer-message-trace/diagnostic-1.json": {
+   "rows": 4,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-local/ordinary-next/base.json": {
+   "rows": 92,
+   "overlap": 0,
+   "profile": {
+    "jobs": 2,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-local/window-target-ownership/candidate-wpt.json": {
+   "rows": 16,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-local/window-target-ownership/parent-wpt.json": {
+   "rows": 16,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-local/referrer/base.json": {
+   "rows": 28,
+   "overlap": 0,
+   "profile": {
+    "jobs": 2,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-local/referrer/candidate.json": {
+   "rows": 28,
+   "overlap": 0,
+   "profile": {
+    "jobs": 2,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-local/referrer/inherit-base.json": {
+   "rows": 24,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-local/referrer/inherit-head.json": {
+   "rows": 24,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-local/referrer/qa-inherit-wpt.json": {
+   "rows": 24,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-local/referrer/qa-wpt.json": {
+   "rows": 28,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-qa/base-controls.json": {
+   "rows": 1,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": null
+   }
+  },
+  "round7-qa/base-nested-with-contenteditable-true.json": {
+   "rows": 0,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-qa/base-styling-commands.json": {
+   "rows": 2,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-qa/caret-chrome-controls.json": {
+   "rows": 1,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": null
+   }
+  },
+  "round7-qa/caret-head-controls.json": {
+   "rows": 1,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": null
+   }
+  },
+  "round7-qa/caret-head.json": {
+   "rows": 2,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-qa/caret-parent-controls.json": {
+   "rows": 1,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": null
+   }
+  },
+  "round7-qa/caret-parent.json": {
+   "rows": 2,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-qa/caret-revision2-controls.json": {
+   "rows": 1,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": null
+   }
+  },
+  "round7-qa/caret-revision2.json": {
+   "rows": 2,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-qa/command-head.json": {
+   "rows": 27,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-qa/composed-base-controls.json": {
+   "rows": 1,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": null
+   }
+  },
+  "round7-qa/composed-chrome-controls.json": {
+   "rows": 1,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": null
+   }
+  },
+  "round7-qa/composed-head-controls.json": {
+   "rows": 1,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": null
+   }
+  },
+  "round7-qa/composed-head.json": {
+   "rows": 11,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-qa/composed-r2-chrome-controls.json": {
+   "rows": 2,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": null
+   }
+  },
+  "round7-qa/composed-r2-revision2-controls.json": {
+   "rows": 2,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": null
+   }
+  },
+  "round7-qa/composed-revision2.json": {
+   "rows": 11,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-qa/css-base.json": {
+   "rows": 27,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-qa/css-function2.json": {
+   "rows": 27,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-qa/css-function3.json": {
+   "rows": 27,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-qa/css-function4.json": {
+   "rows": 27,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-qa/enter-head.json": {
+   "rows": 27,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-qa/enter-r2-head.json": {
+   "rows": 27,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-qa/format-head.json": {
+   "rows": 33,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-qa/hdr-chrome158.json": {
+   "rows": 4,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-qa/hdr-head.json": {
+   "rows": 4,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-qa/head-controls.json": {
+   "rows": 1,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": null
+   }
+  },
+  "round7-qa/head-styling.json": {
+   "rows": 2,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-qa/html-final-head.json": {
+   "rows": 15,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-qa/html-head.json": {
+   "rows": 15,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-qa/html-r2-head.json": {
+   "rows": 15,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-qa/inherit-exact-head.json": {
+   "rows": 5,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-qa/insert-candidate-controls.json": {
+   "rows": 4,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": null
+   }
+  },
+  "round7-qa/insert-candidate.json": {
+   "rows": 29,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-qa/insert-parent-controls.json": {
+   "rows": 4,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": null
+   }
+  },
+  "round7-qa/insert-parent.json": {
+   "rows": 29,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-qa/insert-plain-base.json": {
+   "rows": 4,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-qa/insert-plain-revision2.json": {
+   "rows": 4,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-qa/insert-revision2-controls.json": {
+   "rows": 4,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": null
+   }
+  },
+  "round7-qa/insert-revision2.json": {
+   "rows": 29,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-qa/island-head.json": {
+   "rows": 44,
+   "overlap": 1,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-qa/locked-head.json": {
+   "rows": 31,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-qa/locked-r2.json": {
+   "rows": 2,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-qa/numeric-ad8661118.json": {
+   "rows": 17,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-qa/prejoin-head.json": {
+   "rows": 206,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-qa/revision3-invalid-runner.json": {
+   "rows": 272,
+   "overlap": 0,
+   "profile": {
+    "jobs": null,
+    "server": null,
+    "wpt": null
+   }
+  },
+  "round7-qa/revision3-nine-head.json": {
+   "rows": 9,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-qa/selection-head-controls.json": {
+   "rows": 2,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": null
+   }
+  },
+  "round7-qa/selection-head.json": {
+   "rows": 7,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-qa/selection-parent-controls.json": {
+   "rows": 2,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": null
+   }
+  },
+  "round7-qa/selection-parent.json": {
+   "rows": 7,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-qa/spm-7c3c83537-head.json": {
+   "rows": 43,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-qa/void-base-controls.json": {
+   "rows": 1,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": null
+   }
+  },
+  "round7-qa/void-chrome-controls.json": {
+   "rows": 1,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": null
+   }
+  },
+  "round7-qa/void-head-controls.json": {
+   "rows": 1,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": null
+   }
+  },
+  "round7-qa/void-head.json": {
+   "rows": 11,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-qa/void-r2-chrome-controls.json": {
+   "rows": 2,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": null
+   }
+  },
+  "round7-qa/void-r2-first-controls.json": {
+   "rows": 2,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": null
+   }
+  },
+  "round7-qa/void-r2-head-controls.json": {
+   "rows": 2,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": null
+   }
+  },
+  "round7-qa/void-r2-head.json": {
+   "rows": 11,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-qa/whitespace-base.json": {
+   "rows": 26,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-qa/whitespace-head.json": {
+   "rows": 26,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-qa/ws-controls-base.json": {
+   "rows": 3,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": null
+   }
+  },
+  "round7-qa/ws-controls-head.json": {
+   "rows": 3,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "static",
+    "wpt": null
+   }
+  },
+  "round7-qa/numeric-168067d79/head.json": {
+   "rows": 17,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-qa/tree-3ba6dd338/head.json": {
+   "rows": 25,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-qa/numeric-eb0eeb580/head.json": {
+   "rows": 17,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-qa/combined-1f1be0324/base-css.json": {
+   "rows": 7,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-qa/combined-1f1be0324/base-edit.json": {
+   "rows": 25,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-qa/combined-1f1be0324/base-guards.json": {
+   "rows": 16,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-qa/combined-1f1be0324/chrome-css.json": {
+   "rows": 7,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-qa/combined-1f1be0324/head-css.json": {
+   "rows": 7,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-qa/combined-1f1be0324/head-edit.json": {
+   "rows": 25,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-qa/combined-1f1be0324/head-guards.json": {
+   "rows": 16,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  },
+  "round7-qa/tree-4c55e49fb/head.json": {
+   "rows": 25,
+   "overlap": 0,
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+   }
+  }
+ },
+ "excluded": {
+  "chrome-other-profile": [
+   "round7-editing/formatting-events/chrome.json",
+   "round7-editing/formatting-events/enter/chrome.json",
+   "round7-editing/formatting-events/controls/chrome.json",
+   "round7-editing/plaintext-enter/chrome.json",
+   "round7-editing/plaintext-enter/verified/chrome.json",
+   "round7-editing/plaintext-enter/verified/revision2/chrome.json",
+   "round7-editing/plaintext-html/chrome.json",
+   "round7-editing/plaintext-html/revision2/chrome.json",
+   "round7-editing/plaintext-html/final/chrome.json",
+   "round7-editing/control-commands/chrome.json",
+   "round7-editing/control-commands/enter/chrome.json",
+   "round7-editing/formatting-islands/chrome.json",
+   "round7-editing/formatting-islands/revision2/chrome.json",
+   "round7-editing/formatting-islands/revision2/enter/chrome.json",
+   "round7-editing/formatting-islands/revision2/controls/chrome.json",
+   "round7-editing/formatting-islands/enter/chrome.json",
+   "round7-editing/formatting-islands/controls/chrome.json"
+  ],
+  "source-predates-census-head": [
+   "round7-editing/plaintext-enter/base.json",
+   "round7-editing/plaintext-enter/verified/base.json",
+   "round7-editing/plaintext-enter/verified/revision2/base.json"
+  ],
+  "withdrawn-misattributed-binary": [
+   "round7-editing/plaintext-enter/head.json",
+   "round7-qa/enter-head.json"
+  ]
+ },
+ "sourceIdentities": {
+  "round7-editing/control-commands/pyro": {
+   "source": "bacb54f825cd2795346e9247890ec52116c11181",
+   "tree": "2c0feaea25ed09abf92436b5e7a2b1bd57ff14f1",
+   "buildReceipt": "21cec6fd8b49aa3df9d71169e78b3ae4507728b234a1a6b7443cc6cbd28cf214",
+   "binarySHA256": "c96794446f9b11c5673235847531785df9d9b6edea48739c994645b5e851c29d",
+   "sourceTime": "2026-11-21T20:29:07+01:00",
+   "sourceEpoch": 1795289347,
+   "containsExactRound7": true,
+   "publishedTips": [
+    "8e20f43ba89e9e9dbb26bdbf3b3bed03aa810357 origin/testharness/round7",
+    "0736e531e4c91a1387dce3100e877bd32e42a400 origin/testharness/round7-control-commands",
+    "414563597957aaadd59bc319dd4f726d7559a73a origin/testharness/round7-formatting-events",
+    "42d6555933da09c6570452d0f1029ba5a46bf834 origin/testharness/round7-locked-block-boundaries",
+    "bfd3b7b0eaacd7337a778caa46f6274963a32d28 origin/testharness/round7-pre-block-joins",
+    "ce951bbf67ef37e5e78509aa13c9ffeda042273d origin/topic/round7-conic-gradient-stops",
+    "b45f7b410928b778272794a98e277e4d3062f4c9 origin/topic/round7-css-color-hdr",
+    "cb87ba371320af134406ebd945bb92d080430204 origin/topic/round7-flex-scrollwidth",
+    "51c28acd3747cb28fa65a5ead6f158ccf76ca813 origin/topic/round7-overflow-geometry",
+    "1c879c43caf7f704f93aaa42c754f93108ed35ca origin/topic/round7-studio-table-part-boxes"
+   ]
+  },
+  "round7-editing/formatting-events/pyro": {
+   "source": "514c4c941deff6766b49574c2ceb1e4765b47031",
+   "tree": "18327178b3a5d2e882d612330aa36d43b6ac4d83",
+   "buildReceipt": "bbbe3a9a4b98428e5270182c01e5773b9e62442ce2f0b0faabee80df4063690c",
+   "binarySHA256": "3c0381690b2fb09551fea252372cc037d84763380850b5faf93f043eaef3957b",
+   "sourceTime": "2026-11-21T20:34:41+01:00",
+   "sourceEpoch": 1795289681,
+   "containsExactRound7": true,
+   "publishedTips": [
+    "8e20f43ba89e9e9dbb26bdbf3b3bed03aa810357 origin/testharness/round7",
+    "414563597957aaadd59bc319dd4f726d7559a73a origin/testharness/round7-formatting-events",
+    "42d6555933da09c6570452d0f1029ba5a46bf834 origin/testharness/round7-locked-block-boundaries",
+    "bfd3b7b0eaacd7337a778caa46f6274963a32d28 origin/testharness/round7-pre-block-joins",
+    "ce951bbf67ef37e5e78509aa13c9ffeda042273d origin/topic/round7-conic-gradient-stops",
+    "cb87ba371320af134406ebd945bb92d080430204 origin/topic/round7-flex-scrollwidth",
+    "51c28acd3747cb28fa65a5ead6f158ccf76ca813 origin/topic/round7-overflow-geometry"
+   ]
+  },
+  "round7-editing/void/revision2/pyro": {
+   "source": "f23c31dde8e07f386c7b80ce197cc6d8129a7001",
+   "tree": "05d406778a0168c52d755d7100250036c3b35546",
+   "buildReceipt": "62ef9695899e3c6d9bd2fa348354f07f78e0e9862d73ddfc685676915dbcbf70",
+   "binarySHA256": "c5132ef675c396c8cd07fa31055e0f3b4919702e6917d1ac26fc3bc305a342e2",
+   "sourceTime": "2026-11-21T19:50:47+01:00",
+   "sourceEpoch": 1795287047,
+   "containsExactRound7": false,
+   "publishedTips": [
+    "8e20f43ba89e9e9dbb26bdbf3b3bed03aa810357 origin/testharness/round7",
+    "0736e531e4c91a1387dce3100e877bd32e42a400 origin/testharness/round7-control-commands",
+    "73d019038675ed3dc4c3bbd34bbc3406a0c7dae8 origin/testharness/round7-editing-void",
+    "414563597957aaadd59bc319dd4f726d7559a73a origin/testharness/round7-formatting-events",
+    "42d6555933da09c6570452d0f1029ba5a46bf834 origin/testharness/round7-locked-block-boundaries",
+    "54127e5c782853ce9389c53cfea32ae8a4fc14dd origin/testharness/round7-plaintext-enter",
+    "58753bff9f1e04ea84bda7525caced14697f8ec3 origin/testharness/round7-plaintext-html",
+    "bfd3b7b0eaacd7337a778caa46f6274963a32d28 origin/testharness/round7-pre-block-joins",
+    "ce951bbf67ef37e5e78509aa13c9ffeda042273d origin/topic/round7-conic-gradient-stops",
+    "b45f7b410928b778272794a98e277e4d3062f4c9 origin/topic/round7-css-color-hdr",
+    "ab4ba6eab37500a4eb16fd7a77afda0b954cb49b origin/topic/round7-css-values-slotted-dom",
+    "4c55e49fb377c8f3a098e7f1983883be259493ea origin/topic/round7-css-values-tree-counting",
+    "bc5a3b48317fc881647b8ea677e0bcbc61b9988a origin/topic/round7-dashed-functions",
+    "cb87ba371320af134406ebd945bb92d080430204 origin/topic/round7-flex-scrollwidth",
+    "51c28acd3747cb28fa65a5ead6f158ccf76ca813 origin/topic/round7-overflow-geometry",
+    "1c879c43caf7f704f93aaa42c754f93108ed35ca origin/topic/round7-studio-table-part-boxes"
+   ]
+  },
+  "round7-editing/plaintext-enter/pyro": {
+   "source": "e1a29d48323032c7c4cc243fd7510073c5c420fd",
+   "tree": "7fb1c1ac9d0f6c37e9c05334edbe11224efeef58",
+   "buildReceipt": "2f5ade2e599dd2ebc218ebb5a82fc63b03017250c08b6a55b120e16cf04724a2",
+   "binarySHA256": "543a7b85e3ecd8b99400d8c0c6861ff4756621b106d86407ca9d9098ca9b0d4d",
+   "sourceTime": "2026-11-21T19:57:25+01:00",
+   "sourceEpoch": 1795287445,
+   "containsExactRound7": true,
+   "publishedTips": [
+    "8e20f43ba89e9e9dbb26bdbf3b3bed03aa810357 origin/testharness/round7",
+    "0736e531e4c91a1387dce3100e877bd32e42a400 origin/testharness/round7-control-commands",
+    "414563597957aaadd59bc319dd4f726d7559a73a origin/testharness/round7-formatting-events",
+    "42d6555933da09c6570452d0f1029ba5a46bf834 origin/testharness/round7-locked-block-boundaries",
+    "54127e5c782853ce9389c53cfea32ae8a4fc14dd origin/testharness/round7-plaintext-enter",
+    "58753bff9f1e04ea84bda7525caced14697f8ec3 origin/testharness/round7-plaintext-html",
+    "bfd3b7b0eaacd7337a778caa46f6274963a32d28 origin/testharness/round7-pre-block-joins",
+    "ce951bbf67ef37e5e78509aa13c9ffeda042273d origin/topic/round7-conic-gradient-stops",
+    "b45f7b410928b778272794a98e277e4d3062f4c9 origin/topic/round7-css-color-hdr",
+    "ab4ba6eab37500a4eb16fd7a77afda0b954cb49b origin/topic/round7-css-values-slotted-dom",
+    "4c55e49fb377c8f3a098e7f1983883be259493ea origin/topic/round7-css-values-tree-counting",
+    "bc5a3b48317fc881647b8ea677e0bcbc61b9988a origin/topic/round7-dashed-functions",
+    "cb87ba371320af134406ebd945bb92d080430204 origin/topic/round7-flex-scrollwidth",
+    "51c28acd3747cb28fa65a5ead6f158ccf76ca813 origin/topic/round7-overflow-geometry",
+    "1c879c43caf7f704f93aaa42c754f93108ed35ca origin/topic/round7-studio-table-part-boxes"
+   ],
+   "withdrawn": "Known misattributed cached binary identical to frozen 1f1be0324; correct e1a29d483 rebuild c299b0878af728385ff3d37509fe9512170cdf579cc9e335443f1a2cbc2df2bd kept separately."
+  },
+  "round7-editing/plaintext-enter/verified/pyro": {
+   "source": "e1a29d48323032c7c4cc243fd7510073c5c420fd",
+   "tree": "7fb1c1ac9d0f6c37e9c05334edbe11224efeef58",
+   "buildReceipt": "af455ea819f35808b697713574b15c66525ace167e88282c66612813c39f3c52",
+   "binarySHA256": "c299b0878af728385ff3d37509fe9512170cdf579cc9e335443f1a2cbc2df2bd",
+   "sourceTime": "2026-11-21T19:57:25+01:00",
+   "sourceEpoch": 1795287445,
+   "containsExactRound7": true,
+   "publishedTips": [
+    "8e20f43ba89e9e9dbb26bdbf3b3bed03aa810357 origin/testharness/round7",
+    "0736e531e4c91a1387dce3100e877bd32e42a400 origin/testharness/round7-control-commands",
+    "414563597957aaadd59bc319dd4f726d7559a73a origin/testharness/round7-formatting-events",
+    "42d6555933da09c6570452d0f1029ba5a46bf834 origin/testharness/round7-locked-block-boundaries",
+    "54127e5c782853ce9389c53cfea32ae8a4fc14dd origin/testharness/round7-plaintext-enter",
+    "58753bff9f1e04ea84bda7525caced14697f8ec3 origin/testharness/round7-plaintext-html",
+    "bfd3b7b0eaacd7337a778caa46f6274963a32d28 origin/testharness/round7-pre-block-joins",
+    "ce951bbf67ef37e5e78509aa13c9ffeda042273d origin/topic/round7-conic-gradient-stops",
+    "b45f7b410928b778272794a98e277e4d3062f4c9 origin/topic/round7-css-color-hdr",
+    "ab4ba6eab37500a4eb16fd7a77afda0b954cb49b origin/topic/round7-css-values-slotted-dom",
+    "4c55e49fb377c8f3a098e7f1983883be259493ea origin/topic/round7-css-values-tree-counting",
+    "bc5a3b48317fc881647b8ea677e0bcbc61b9988a origin/topic/round7-dashed-functions",
+    "cb87ba371320af134406ebd945bb92d080430204 origin/topic/round7-flex-scrollwidth",
+    "51c28acd3747cb28fa65a5ead6f158ccf76ca813 origin/topic/round7-overflow-geometry",
+    "1c879c43caf7f704f93aaa42c754f93108ed35ca origin/topic/round7-studio-table-part-boxes"
+   ]
+  },
+  "round7-editing/plaintext-enter/verified/revision2/pyro": {
+   "source": "7b418ec9ee3626394e6a7e2f11a33806b4ffe75c",
+   "tree": "c2b3cc246de14518171508041f135384be881567",
+   "buildReceipt": "57c4258c5e44024310642f7819702c1731715cc54fe0d3ae2b435f982b81f630",
+   "binarySHA256": "8b263637e2e15017385f81743ecb148210b045b8d481b0855b45bd6c57602f33",
+   "sourceTime": "2026-11-21T20:04:47+01:00",
+   "sourceEpoch": 1795287887,
+   "containsExactRound7": true,
+   "publishedTips": [
+    "8e20f43ba89e9e9dbb26bdbf3b3bed03aa810357 origin/testharness/round7",
+    "0736e531e4c91a1387dce3100e877bd32e42a400 origin/testharness/round7-control-commands",
+    "414563597957aaadd59bc319dd4f726d7559a73a origin/testharness/round7-formatting-events",
+    "42d6555933da09c6570452d0f1029ba5a46bf834 origin/testharness/round7-locked-block-boundaries",
+    "54127e5c782853ce9389c53cfea32ae8a4fc14dd origin/testharness/round7-plaintext-enter",
+    "58753bff9f1e04ea84bda7525caced14697f8ec3 origin/testharness/round7-plaintext-html",
+    "bfd3b7b0eaacd7337a778caa46f6274963a32d28 origin/testharness/round7-pre-block-joins",
+    "ce951bbf67ef37e5e78509aa13c9ffeda042273d origin/topic/round7-conic-gradient-stops",
+    "b45f7b410928b778272794a98e277e4d3062f4c9 origin/topic/round7-css-color-hdr",
+    "ab4ba6eab37500a4eb16fd7a77afda0b954cb49b origin/topic/round7-css-values-slotted-dom",
+    "4c55e49fb377c8f3a098e7f1983883be259493ea origin/topic/round7-css-values-tree-counting",
+    "bc5a3b48317fc881647b8ea677e0bcbc61b9988a origin/topic/round7-dashed-functions",
+    "cb87ba371320af134406ebd945bb92d080430204 origin/topic/round7-flex-scrollwidth",
+    "51c28acd3747cb28fa65a5ead6f158ccf76ca813 origin/topic/round7-overflow-geometry",
+    "1c879c43caf7f704f93aaa42c754f93108ed35ca origin/topic/round7-studio-table-part-boxes"
+   ]
+  },
+  "round7-editing/plaintext-html/base": {
+   "source": "59916483290abb28e78387cb22e9d79dad2f53b9",
+   "tree": "5189928d99c637090800900e26662236adda5599",
+   "buildReceipt": "5c419a27cdd645d3b6932eeaafd043476e4fa08bceb4d8e4ecc205f2db4c79ff",
+   "binarySHA256": "6d40cd31fa7926a287b81ddd83c69eaf743372057a01ef8a73e0b644ffcb45b8",
+   "sourceTime": "2026-11-21T20:08:30+01:00",
+   "sourceEpoch": 1795288110,
+   "containsExactRound7": true,
+   "publishedTips": [
+    "8e20f43ba89e9e9dbb26bdbf3b3bed03aa810357 origin/testharness/round7",
+    "0736e531e4c91a1387dce3100e877bd32e42a400 origin/testharness/round7-control-commands",
+    "414563597957aaadd59bc319dd4f726d7559a73a origin/testharness/round7-formatting-events",
+    "42d6555933da09c6570452d0f1029ba5a46bf834 origin/testharness/round7-locked-block-boundaries",
+    "58753bff9f1e04ea84bda7525caced14697f8ec3 origin/testharness/round7-plaintext-html",
+    "bfd3b7b0eaacd7337a778caa46f6274963a32d28 origin/testharness/round7-pre-block-joins",
+    "ce951bbf67ef37e5e78509aa13c9ffeda042273d origin/topic/round7-conic-gradient-stops",
+    "b45f7b410928b778272794a98e277e4d3062f4c9 origin/topic/round7-css-color-hdr",
+    "ab4ba6eab37500a4eb16fd7a77afda0b954cb49b origin/topic/round7-css-values-slotted-dom",
+    "4c55e49fb377c8f3a098e7f1983883be259493ea origin/topic/round7-css-values-tree-counting",
+    "bc5a3b48317fc881647b8ea677e0bcbc61b9988a origin/topic/round7-dashed-functions",
+    "cb87ba371320af134406ebd945bb92d080430204 origin/topic/round7-flex-scrollwidth",
+    "51c28acd3747cb28fa65a5ead6f158ccf76ca813 origin/topic/round7-overflow-geometry",
+    "1c879c43caf7f704f93aaa42c754f93108ed35ca origin/topic/round7-studio-table-part-boxes"
+   ]
+  },
+  "round7-editing/plaintext-html/pyro": {
+   "source": "c960b82f124b9adf2f248be27dad863e481bfc54",
+   "tree": "0fbef875606b102046e0cc76b43f9c4d0ada44c4",
+   "buildReceipt": "e122c257bb1907d54ac51ec0bc6bfea327a26ef8a2425b546aa47210d00504a0",
+   "binarySHA256": "3891b68ef3bb7e728694f566add81595d7b58f696e519af76c300751f299abfe",
+   "sourceTime": "2026-11-21T20:13:34+01:00",
+   "sourceEpoch": 1795288414,
+   "containsExactRound7": true,
+   "publishedTips": [
+    "8e20f43ba89e9e9dbb26bdbf3b3bed03aa810357 origin/testharness/round7",
+    "0736e531e4c91a1387dce3100e877bd32e42a400 origin/testharness/round7-control-commands",
+    "414563597957aaadd59bc319dd4f726d7559a73a origin/testharness/round7-formatting-events",
+    "42d6555933da09c6570452d0f1029ba5a46bf834 origin/testharness/round7-locked-block-boundaries",
+    "58753bff9f1e04ea84bda7525caced14697f8ec3 origin/testharness/round7-plaintext-html",
+    "bfd3b7b0eaacd7337a778caa46f6274963a32d28 origin/testharness/round7-pre-block-joins",
+    "ce951bbf67ef37e5e78509aa13c9ffeda042273d origin/topic/round7-conic-gradient-stops",
+    "b45f7b410928b778272794a98e277e4d3062f4c9 origin/topic/round7-css-color-hdr",
+    "bc5a3b48317fc881647b8ea677e0bcbc61b9988a origin/topic/round7-dashed-functions",
+    "cb87ba371320af134406ebd945bb92d080430204 origin/topic/round7-flex-scrollwidth",
+    "51c28acd3747cb28fa65a5ead6f158ccf76ca813 origin/topic/round7-overflow-geometry",
+    "1c879c43caf7f704f93aaa42c754f93108ed35ca origin/topic/round7-studio-table-part-boxes"
+   ]
+  },
+  "round7-editing/plaintext-html/revision2/pyro": {
+   "source": "a0eb23c9405c806c805ccb893f0097501eaff2c2",
+   "tree": "7ef5d331008faa03bbca29931ab1c85496f015f3",
+   "buildReceipt": "f6c4dfd36a52b5baeef68b25a5ee6520aa9ef3293ac2b1a64fcd4fd06db084e0",
+   "binarySHA256": "568b4a797d5b3e4cb533af47daffa38b49e6de017cf0c12b54ae85cc3a7155c5",
+   "sourceTime": "2026-11-21T20:18:04+01:00",
+   "sourceEpoch": 1795288684,
+   "containsExactRound7": true,
+   "publishedTips": [
+    "8e20f43ba89e9e9dbb26bdbf3b3bed03aa810357 origin/testharness/round7",
+    "0736e531e4c91a1387dce3100e877bd32e42a400 origin/testharness/round7-control-commands",
+    "414563597957aaadd59bc319dd4f726d7559a73a origin/testharness/round7-formatting-events",
+    "42d6555933da09c6570452d0f1029ba5a46bf834 origin/testharness/round7-locked-block-boundaries",
+    "58753bff9f1e04ea84bda7525caced14697f8ec3 origin/testharness/round7-plaintext-html",
+    "bfd3b7b0eaacd7337a778caa46f6274963a32d28 origin/testharness/round7-pre-block-joins",
+    "ce951bbf67ef37e5e78509aa13c9ffeda042273d origin/topic/round7-conic-gradient-stops",
+    "b45f7b410928b778272794a98e277e4d3062f4c9 origin/topic/round7-css-color-hdr",
+    "bc5a3b48317fc881647b8ea677e0bcbc61b9988a origin/topic/round7-dashed-functions",
+    "cb87ba371320af134406ebd945bb92d080430204 origin/topic/round7-flex-scrollwidth",
+    "51c28acd3747cb28fa65a5ead6f158ccf76ca813 origin/topic/round7-overflow-geometry",
+    "1c879c43caf7f704f93aaa42c754f93108ed35ca origin/topic/round7-studio-table-part-boxes"
+   ]
+  },
+  "round7-editing/plaintext-html/final/pyro": {
+   "source": "fff149719e170b4b2a5ef23e838fadfb87d686d5",
+   "tree": "a2825c713d3be997aa4869eeff9bbcfe8c01ceb5",
+   "buildReceipt": "022f8fd6311f9df6fba2ecbe873fa0ee9438bd06a23e30aa63f1decb60e2e71e",
+   "binarySHA256": "c3675f12f59508d7d48e42644bcc588871dcc2de3a86e5964933f490838efa22",
+   "sourceTime": "2026-11-21T20:21:01+01:00",
+   "sourceEpoch": 1795288861,
+   "containsExactRound7": true,
+   "publishedTips": [
+    "8e20f43ba89e9e9dbb26bdbf3b3bed03aa810357 origin/testharness/round7",
+    "0736e531e4c91a1387dce3100e877bd32e42a400 origin/testharness/round7-control-commands",
+    "414563597957aaadd59bc319dd4f726d7559a73a origin/testharness/round7-formatting-events",
+    "42d6555933da09c6570452d0f1029ba5a46bf834 origin/testharness/round7-locked-block-boundaries",
+    "58753bff9f1e04ea84bda7525caced14697f8ec3 origin/testharness/round7-plaintext-html",
+    "bfd3b7b0eaacd7337a778caa46f6274963a32d28 origin/testharness/round7-pre-block-joins",
+    "ce951bbf67ef37e5e78509aa13c9ffeda042273d origin/topic/round7-conic-gradient-stops",
+    "b45f7b410928b778272794a98e277e4d3062f4c9 origin/topic/round7-css-color-hdr",
+    "cb87ba371320af134406ebd945bb92d080430204 origin/topic/round7-flex-scrollwidth",
+    "51c28acd3747cb28fa65a5ead6f158ccf76ca813 origin/topic/round7-overflow-geometry",
+    "1c879c43caf7f704f93aaa42c754f93108ed35ca origin/topic/round7-studio-table-part-boxes"
+   ]
+  },
+  "round7-editing/control-commands/base": {
+   "source": "2cefb3273eb8e528ab550dfe89f994a2c9a38c2c",
+   "tree": "871ceaddea053d0c6a9653521c19f4bfb8dc68f4",
+   "buildReceipt": "81eb8c5f91460e2edf9a2a9033c0557e87b8c69f38672e62b2391a6a2b79db74",
+   "binarySHA256": "48217aa33e7b40d9e8a442b14ffbaa7e145fe0bd05a5241990a8444610445f7b",
+   "sourceTime": "2026-11-21T20:24:28+01:00",
+   "sourceEpoch": 1795289068,
+   "containsExactRound7": true,
+   "publishedTips": [
+    "8e20f43ba89e9e9dbb26bdbf3b3bed03aa810357 origin/testharness/round7",
+    "0736e531e4c91a1387dce3100e877bd32e42a400 origin/testharness/round7-control-commands",
+    "414563597957aaadd59bc319dd4f726d7559a73a origin/testharness/round7-formatting-events",
+    "42d6555933da09c6570452d0f1029ba5a46bf834 origin/testharness/round7-locked-block-boundaries",
+    "bfd3b7b0eaacd7337a778caa46f6274963a32d28 origin/testharness/round7-pre-block-joins",
+    "ce951bbf67ef37e5e78509aa13c9ffeda042273d origin/topic/round7-conic-gradient-stops",
+    "b45f7b410928b778272794a98e277e4d3062f4c9 origin/topic/round7-css-color-hdr",
+    "cb87ba371320af134406ebd945bb92d080430204 origin/topic/round7-flex-scrollwidth",
+    "51c28acd3747cb28fa65a5ead6f158ccf76ca813 origin/topic/round7-overflow-geometry",
+    "1c879c43caf7f704f93aaa42c754f93108ed35ca origin/topic/round7-studio-table-part-boxes"
+   ]
+  },
+  "round7-editing/formatting-islands/base": {
+   "source": "8e47c7148ea89dc8646c7e0b5efe48e4bb97aab5",
+   "tree": "667201a7d1e74ca042f12208e205a7500f342566",
+   "buildReceipt": "02782c754996d608ee0f9d7f222ec561ce1e0e8388599065cd84f738a0f8728e",
+   "binarySHA256": "88fd20729b7843c85f3f78dd55017800bffa7761218190d56ba9ed7fd1873cf7",
+   "sourceTime": "2026-11-21T21:20:00+01:00",
+   "sourceEpoch": 1795292400,
+   "containsExactRound7": true,
+   "publishedTips": [
+    "8e20f43ba89e9e9dbb26bdbf3b3bed03aa810357 origin/testharness/round7"
+   ]
+  },
+  "round7-editing/formatting-islands/pyro": {
+   "source": "965372c978bde3e0279f659a9e26eb35d30f6460",
+   "tree": "41e2afb5364db92178536036735ff26da7d179c0",
+   "buildReceipt": "d28eb8c726ec91211a04ed6a2d57ccd92d9619f1271ac816b14837575703da3c",
+   "binarySHA256": "4ef65d3b3e2dc8e82181a50f5c9f400a0cda8ff0f9c6e6a2c4f8b5b4cd313848",
+   "sourceTime": "2026-11-21T21:24:54+01:00",
+   "sourceEpoch": 1795292694,
+   "containsExactRound7": true,
+   "publishedTips": []
+  }
+ },
+ "matchedReceipts": {
+  "round7-editing/formatting-events/base.json": {
+   "sha256": "22541d7e8a622a2e9ad768ef979b7c4ebc82f8c998637665ca3b83e5e356c29f",
+   "identity": "round7-editing/control-commands/pyro",
+   "origin": "feature lane",
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "http2": null,
+    "testdriver": true,
+    "manifestInventory": null,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "reuseContext": false
+   },
+   "matchingOccurrences": 12,
+   "observations": [
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ]
+   ]
+  },
+  "round7-editing/formatting-events/head.json": {
+   "sha256": "c559046fbc3657db51dfbcd6b371d67e265aa53d845998df464ecc303966ebbf",
+   "identity": "round7-editing/formatting-events/pyro",
+   "origin": "feature lane",
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "http2": null,
+    "testdriver": true,
+    "manifestInventory": null,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "reuseContext": false
+   },
+   "matchingOccurrences": 12,
+   "observations": [
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ]
+   ]
+  },
+  "round7-editing/formatting-events/enter/base.json": {
+   "sha256": "267222b37288679704da1ac21602295ea1cabdb8cfb71df022b9cf8efb3c7873",
+   "identity": "round7-editing/control-commands/pyro",
+   "origin": "feature lane",
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "http2": null,
+    "testdriver": true,
+    "manifestInventory": null,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "reuseContext": false
+   },
+   "matchingOccurrences": 12,
+   "observations": [
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ]
+   ]
+  },
+  "round7-editing/formatting-events/enter/head.json": {
+   "sha256": "ecc16ebaab61b356bd55974bcde1e7830edd416c17ef0164856a7e603907590d",
+   "identity": "round7-editing/formatting-events/pyro",
+   "origin": "feature lane",
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "http2": null,
+    "testdriver": true,
+    "manifestInventory": null,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "reuseContext": false
+   },
+   "matchingOccurrences": 12,
+   "observations": [
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ]
+   ]
+  },
+  "round7-editing/formatting-events/controls/base.json": {
+   "sha256": "84b929b921ea523fcc3f76b242977771a93216fc19448f32456e8d4a8e90a248",
+   "identity": "round7-editing/control-commands/pyro",
+   "origin": "feature lane",
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "http2": null,
+    "testdriver": true,
+    "manifestInventory": null,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "reuseContext": false
+   },
+   "matchingOccurrences": 12,
+   "observations": [
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ]
+   ]
+  },
+  "round7-editing/formatting-events/controls/head.json": {
+   "sha256": "2729629d56e0c2cb78a7c125d0f86a86a209cc939049b091f3bfa38b1835984a",
+   "identity": "round7-editing/formatting-events/pyro",
+   "origin": "feature lane",
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "http2": null,
+    "testdriver": true,
+    "manifestInventory": null,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "reuseContext": false
+   },
+   "matchingOccurrences": 12,
+   "observations": [
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ]
+   ]
+  },
+  "round7-editing/plaintext-enter/verified/head.json": {
+   "sha256": "57dceb1e40889f63d85eca59b27a88759af28ffa6837eb7065cc156e59aae19f",
+   "identity": "round7-editing/plaintext-enter/verified/pyro",
+   "origin": "feature lane",
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "http2": null,
+    "testdriver": true,
+    "manifestInventory": null,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "reuseContext": false
+   },
+   "matchingOccurrences": 12,
+   "observations": [
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ]
+   ]
+  },
+  "round7-editing/plaintext-enter/verified/revision2/head.json": {
+   "sha256": "2873f9086425881cf6f1688d60c4d586803aa676642539046a094cbcc289b121",
+   "identity": "round7-editing/plaintext-enter/verified/revision2/pyro",
+   "origin": "feature lane",
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "http2": null,
+    "testdriver": true,
+    "manifestInventory": null,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "reuseContext": false
+   },
+   "matchingOccurrences": 12,
+   "observations": [
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ]
+   ]
+  },
+  "round7-editing/plaintext-html/base.json": {
+   "sha256": "bb798b1ad53fdca326533b1cd0b6133654250bd116c54c6d531b6ac3fc8a9f1e",
+   "identity": "round7-editing/plaintext-html/base",
+   "origin": "feature lane",
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "http2": null,
+    "testdriver": true,
+    "manifestInventory": null,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "reuseContext": false
+   },
+   "matchingOccurrences": 12,
+   "observations": [
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ]
+   ]
+  },
+  "round7-editing/plaintext-html/head.json": {
+   "sha256": "7a1ea2b9b104d259445f436718230c84d2c4897a2231f79103f0c49c5be7a089",
+   "identity": "round7-editing/plaintext-html/pyro",
+   "origin": "feature lane",
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "http2": null,
+    "testdriver": true,
+    "manifestInventory": null,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "reuseContext": false
+   },
+   "matchingOccurrences": 12,
+   "observations": [
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ]
+   ]
+  },
+  "round7-editing/plaintext-html/revision2/base.json": {
+   "sha256": "bb798b1ad53fdca326533b1cd0b6133654250bd116c54c6d531b6ac3fc8a9f1e",
+   "identity": "round7-editing/plaintext-html/base",
+   "origin": "feature lane",
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "http2": null,
+    "testdriver": true,
+    "manifestInventory": null,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "reuseContext": false
+   },
+   "matchingOccurrences": 12,
+   "observations": [
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ]
+   ]
+  },
+  "round7-editing/plaintext-html/revision2/head.json": {
+   "sha256": "b1edc9419812bb184e059e95a4f439b7fc3ebca0508e081e88eae271ded7f04d",
+   "identity": "round7-editing/plaintext-html/revision2/pyro",
+   "origin": "feature lane",
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "http2": null,
+    "testdriver": true,
+    "manifestInventory": null,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "reuseContext": false
+   },
+   "matchingOccurrences": 12,
+   "observations": [
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ]
+   ]
+  },
+  "round7-editing/plaintext-html/final/base.json": {
+   "sha256": "bb798b1ad53fdca326533b1cd0b6133654250bd116c54c6d531b6ac3fc8a9f1e",
+   "identity": "round7-editing/plaintext-html/base",
+   "origin": "feature lane",
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "http2": null,
+    "testdriver": true,
+    "manifestInventory": null,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "reuseContext": false
+   },
+   "matchingOccurrences": 12,
+   "observations": [
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ]
+   ]
+  },
+  "round7-editing/plaintext-html/final/head.json": {
+   "sha256": "b38773f158de80e611ac3a8fd14c62ce0229e545802ae6b5658a24029fc35ce8",
+   "identity": "round7-editing/plaintext-html/final/pyro",
+   "origin": "feature lane",
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "http2": null,
+    "testdriver": true,
+    "manifestInventory": null,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "reuseContext": false
+   },
+   "matchingOccurrences": 12,
+   "observations": [
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ]
+   ]
+  },
+  "round7-editing/control-commands/base.json": {
+   "sha256": "84ab299b3b3286960b57a652c19511a89d02436eaeb747402700d798d1d04597",
+   "identity": "round7-editing/control-commands/base",
+   "origin": "feature lane",
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "http2": null,
+    "testdriver": true,
+    "manifestInventory": null,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "reuseContext": false
+   },
+   "matchingOccurrences": 12,
+   "observations": [
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ]
+   ]
+  },
+  "round7-editing/control-commands/head.json": {
+   "sha256": "84b929b921ea523fcc3f76b242977771a93216fc19448f32456e8d4a8e90a248",
+   "identity": "round7-editing/control-commands/pyro",
+   "origin": "feature lane",
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "http2": null,
+    "testdriver": true,
+    "manifestInventory": null,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "reuseContext": false
+   },
+   "matchingOccurrences": 12,
+   "observations": [
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ]
+   ]
+  },
+  "round7-editing/control-commands/enter/base.json": {
+   "sha256": "b44ed6a418ce49c1d9fdfff919ed24cfadcf96b48c3c90901eab420416756387",
+   "identity": "round7-editing/control-commands/base",
+   "origin": "feature lane",
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "http2": null,
+    "testdriver": true,
+    "manifestInventory": null,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "reuseContext": false
+   },
+   "matchingOccurrences": 12,
+   "observations": [
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ]
+   ]
+  },
+  "round7-editing/control-commands/enter/head.json": {
+   "sha256": "267222b37288679704da1ac21602295ea1cabdb8cfb71df022b9cf8efb3c7873",
+   "identity": "round7-editing/control-commands/pyro",
+   "origin": "feature lane",
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "http2": null,
+    "testdriver": true,
+    "manifestInventory": null,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "reuseContext": false
+   },
+   "matchingOccurrences": 12,
+   "observations": [
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ]
+   ]
+  },
+  "round7-editing/formatting-islands/base.json": {
+   "sha256": "9570527c46b48cb18f381dececb98b432f8c0555f6b71c988daf5c7667c94dbb",
+   "identity": "round7-editing/formatting-islands/base",
+   "origin": "feature lane",
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "http2": null,
+    "testdriver": true,
+    "manifestInventory": null,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "reuseContext": false
+   },
+   "matchingOccurrences": 12,
+   "observations": [
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ]
+   ]
+  },
+  "round7-editing/formatting-islands/head.json": {
+   "sha256": "67d6ad5c66c4d3f06efdb1583a1cfdb892a5576e58501912cff1cf806d45cc70",
+   "identity": "round7-editing/formatting-islands/pyro",
+   "origin": "feature lane",
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "http2": null,
+    "testdriver": true,
+    "manifestInventory": null,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "reuseContext": false
+   },
+   "matchingOccurrences": 12,
+   "observations": [
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ]
+   ]
+  },
+  "round7-editing/formatting-islands/revision2/base.json": {
+   "sha256": "9570527c46b48cb18f381dececb98b432f8c0555f6b71c988daf5c7667c94dbb",
+   "identity": "round7-editing/formatting-islands/base",
+   "origin": "feature lane",
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "http2": null,
+    "testdriver": true,
+    "manifestInventory": null,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "reuseContext": false
+   },
+   "matchingOccurrences": 12,
+   "observations": [
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ]
+   ]
+  },
+  "round7-editing/formatting-islands/revision2/enter/base.json": {
+   "sha256": "e81d7fee31d3f00b8fbecf595de5466048180b13ae76474f14617eeef5836fec",
+   "identity": "round7-editing/formatting-islands/base",
+   "origin": "feature lane",
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "http2": null,
+    "testdriver": true,
+    "manifestInventory": null,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "reuseContext": false
+   },
+   "matchingOccurrences": 12,
+   "observations": [
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ]
+   ]
+  },
+  "round7-editing/formatting-islands/revision2/controls/base.json": {
+   "sha256": "e86c11407c6cb9f04634a66fc8f44bff9743b65be12853114ad80b70dc24a717",
+   "identity": "round7-editing/formatting-islands/base",
+   "origin": "feature lane",
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "http2": null,
+    "testdriver": true,
+    "manifestInventory": null,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "reuseContext": false
+   },
+   "matchingOccurrences": 12,
+   "observations": [
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ]
+   ]
+  },
+  "round7-editing/formatting-islands/enter/base.json": {
+   "sha256": "e81d7fee31d3f00b8fbecf595de5466048180b13ae76474f14617eeef5836fec",
+   "identity": "round7-editing/formatting-islands/base",
+   "origin": "feature lane",
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "http2": null,
+    "testdriver": true,
+    "manifestInventory": null,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "reuseContext": false
+   },
+   "matchingOccurrences": 12,
+   "observations": [
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ]
+   ]
+  },
+  "round7-editing/formatting-islands/enter/head.json": {
+   "sha256": "ad394d16ba518d08cb195d31a96b5846257d641c9a079210b7d72ae024a4ee7a",
+   "identity": "round7-editing/formatting-islands/pyro",
+   "origin": "feature lane",
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "http2": null,
+    "testdriver": true,
+    "manifestInventory": null,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "reuseContext": false
+   },
+   "matchingOccurrences": 12,
+   "observations": [
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ]
+   ]
+  },
+  "round7-editing/formatting-islands/controls/base.json": {
+   "sha256": "e86c11407c6cb9f04634a66fc8f44bff9743b65be12853114ad80b70dc24a717",
+   "identity": "round7-editing/formatting-islands/base",
+   "origin": "feature lane",
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "http2": null,
+    "testdriver": true,
+    "manifestInventory": null,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "reuseContext": false
+   },
+   "matchingOccurrences": 12,
+   "observations": [
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ]
+   ]
+  },
+  "round7-editing/formatting-islands/controls/head.json": {
+   "sha256": "de7fdfcf9aa2ea03456e5cc2bb060a65093c5e1c78a06e48c38a5a6b3bf475a6",
+   "identity": "round7-editing/formatting-islands/pyro",
+   "origin": "feature lane",
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "http2": null,
+    "testdriver": true,
+    "manifestInventory": null,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "reuseContext": false
+   },
+   "matchingOccurrences": 12,
+   "observations": [
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ]
+   ]
+  },
+  "round7-qa/command-head.json": {
+   "sha256": "39dc2eb8324c4c4a4f115697755bcc2f3e864c966c2f32eb47366585b388e0ed",
+   "identity": "round7-editing/control-commands/pyro",
+   "origin": "independent QA",
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "http2": null,
+    "testdriver": true,
+    "manifestInventory": null,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "reuseContext": false
+   },
+   "matchingOccurrences": 12,
+   "observations": [
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ]
+   ]
+  },
+  "round7-qa/enter-r2-head.json": {
+   "sha256": "01b6145aa75a66d606a516520a2abdbe88d0a3de37aadd78530ed173ec09b810",
+   "identity": "round7-editing/plaintext-enter/verified/revision2/pyro",
+   "origin": "independent QA",
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "http2": null,
+    "testdriver": true,
+    "manifestInventory": null,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "reuseContext": false
+   },
+   "matchingOccurrences": 12,
+   "observations": [
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ]
+   ]
+  },
+  "round7-qa/format-head.json": {
+   "sha256": "5e6b7646e08e372f1cd345f618d508a9c09a603877cd08288100c79a31a39e7d",
+   "identity": "round7-editing/formatting-events/pyro",
+   "origin": "independent QA",
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "http2": null,
+    "testdriver": true,
+    "manifestInventory": null,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "reuseContext": false
+   },
+   "matchingOccurrences": 12,
+   "observations": [
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ]
+   ]
+  },
+  "round7-qa/html-final-head.json": {
+   "sha256": "10edf14c30a5b58da77fe2e465b4ffdd0e407d1a9b85a218f8d0478b796f104d",
+   "identity": "round7-editing/plaintext-html/final/pyro",
+   "origin": "independent QA",
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "http2": null,
+    "testdriver": true,
+    "manifestInventory": null,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "reuseContext": false
+   },
+   "matchingOccurrences": 12,
+   "observations": [
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ]
+   ]
+  },
+  "round7-qa/html-head.json": {
+   "sha256": "8314db2fb1fa645e7875c9dea50b6d0e2ff7f311b3d98c3bfd9b4a904111f378",
+   "identity": "round7-editing/plaintext-html/pyro",
+   "origin": "independent QA",
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "http2": null,
+    "testdriver": true,
+    "manifestInventory": null,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "reuseContext": false
+   },
+   "matchingOccurrences": 12,
+   "observations": [
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ]
+   ]
+  },
+  "round7-qa/html-r2-head.json": {
+   "sha256": "e6b15bfb5f6262457d13b0fe80c242b8a4a59196f27288f555ca2f2420536936",
+   "identity": "round7-editing/plaintext-html/revision2/pyro",
+   "origin": "independent QA",
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "http2": null,
+    "testdriver": true,
+    "manifestInventory": null,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "reuseContext": false
+   },
+   "matchingOccurrences": 12,
+   "observations": [
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ]
+   ]
+  },
+  "round7-qa/island-head.json": {
+   "sha256": "21be1a7abadfade16335a5dc08a66ae5745a75567dd4665f2066b4d12c7d5b76",
+   "identity": "round7-editing/formatting-islands/pyro",
+   "origin": "independent QA",
+   "profile": {
+    "jobs": 1,
+    "server": "wptserve",
+    "http2": null,
+    "testdriver": true,
+    "manifestInventory": null,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "reuseContext": false
+   },
+   "matchingOccurrences": 12,
+   "observations": [
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "contenteditable=\"plaintext-only\" in contenteditable=\"true\" should support style edit (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling start boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ],
+    [
+     "editing/plaintext-only/nested-with-contenteditable-true.html",
+     "styling end boundary of contenteditable=\"plaintext-only\" in contenteditable=\"true\" should apply the style to entire the range (explicitly setting focus to the nested one)",
+     1,
+     "Fail"
+    ]
+   ]
+  }
+ }
+}

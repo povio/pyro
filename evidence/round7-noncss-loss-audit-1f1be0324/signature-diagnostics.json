@@ -1,0 +1,272 @@
+{
+ "source": "subresource-integrity/signatures/tentative/authority.https.window.js",
+ "blob": "9f05359d43222250c9392bdf1598a8a33724ac97",
+ "ranges": [
+  [
+   3,
+   8
+  ],
+  [
+   33,
+   43
+  ],
+  [
+   63,
+   85
+  ]
+ ],
+ "rows": [
+  {
+   "original": "`<script>`: Valid signature (signature=:KOg7PNdU+do3dRN96cPCkN15sZNJ5sgopA6vJkIk4o8sQivYjse+yVgXdeAJCIvvOfd6/zelwBeBZ4Li5Mi3AQ==:), matching integrity check: loads with live signature.",
+   "structuralGroup": "`<script>`: Valid signature (signature=:[runtime signature]:), matching integrity check: loads with live signature.",
+   "matches": {
+    "round7": [
+     {
+      "name": "`<script>`: Valid signature (signature=:qqBQSBLHunp+VdqCml+GWNyXv4u4j+SvkV20BTKvuTIX+eO8OPLM1FV4f/KBsPg95kipUknavuI6DNsQ3i8kAA==:), matching integrity check: loads with live signature.",
+      "status": "Pass",
+      "msg": ""
+     },
+     {
+      "name": "`<script>`: Valid signature (signature=:lXFPBLr/DNgdxV3xqbP5zEjW7yT9aZFK22DyOU0Bb3zDQ02SqHb9qomI5umxr2KyohuyiTX9uiYfoxaH1jAiCA==:), matching integrity check: loads with live signature.",
+      "status": "Pass",
+      "msg": ""
+     }
+    ],
+    "chrome": [
+     {
+      "name": "`<script>`: Valid signature (signature=:uBCfOuPUaB7xm+aLGQdXjh50DTs5alBYXtKsdMENyflR0kbbtIXcaWRhiykB1lbo969UNhOy7cHATWRKqWhcCQ==:), matching integrity check: loads with live signature.",
+      "status": "Pass",
+      "msg": ""
+     },
+     {
+      "name": "`<script>`: Valid signature (signature=:8GkjOA7esYIFqnxm14ikg6Su+Z03Zp2quKSgX1fhPNEswT9sJ4FRM2UJr+R3X3JP1O7kLTAFfbIYU9BBXgNcBQ==:), matching integrity check: loads with live signature.",
+      "status": "Pass",
+      "msg": ""
+     }
+    ],
+    "previous": [
+     {
+      "name": "`<script>`: Valid signature (signature=:KOg7PNdU+do3dRN96cPCkN15sZNJ5sgopA6vJkIk4o8sQivYjse+yVgXdeAJCIvvOfd6/zelwBeBZ4Li5Mi3AQ==:), matching integrity check: loads with live signature.",
+      "status": "Pass",
+      "msg": ""
+     },
+     {
+      "name": "`<script>`: Valid signature (signature=:Uy6hna997P1QdCYdY/unjjUcjN0TB2tNIiNa/ZXTJrWK1TtmS13hFj/Ztfjtp5G0POuN3p0pXe7PJxYotH49DQ==:), matching integrity check: loads with live signature.",
+      "status": "Pass",
+      "msg": ""
+     }
+    ]
+   }
+  },
+  {
+   "original": "`<script>`: Valid signature (signature=:KOg7PNdU+do3dRN96cPCkN15sZNJ5sgopA6vJkIk4o8sQivYjse+yVgXdeAJCIvvOfd6/zelwBeBZ4Li5Mi3AQ==:), no integrity check: loads with live signature.",
+   "structuralGroup": "`<script>`: Valid signature (signature=:[runtime signature]:), no integrity check: loads with live signature.",
+   "matches": {
+    "round7": [
+     {
+      "name": "`<script>`: Valid signature (signature=:qqBQSBLHunp+VdqCml+GWNyXv4u4j+SvkV20BTKvuTIX+eO8OPLM1FV4f/KBsPg95kipUknavuI6DNsQ3i8kAA==:), no integrity check: loads with live signature.",
+      "status": "Pass",
+      "msg": ""
+     },
+     {
+      "name": "`<script>`: Valid signature (signature=:lXFPBLr/DNgdxV3xqbP5zEjW7yT9aZFK22DyOU0Bb3zDQ02SqHb9qomI5umxr2KyohuyiTX9uiYfoxaH1jAiCA==:), no integrity check: loads with live signature.",
+      "status": "Pass",
+      "msg": ""
+     }
+    ],
+    "chrome": [
+     {
+      "name": "`<script>`: Valid signature (signature=:uBCfOuPUaB7xm+aLGQdXjh50DTs5alBYXtKsdMENyflR0kbbtIXcaWRhiykB1lbo969UNhOy7cHATWRKqWhcCQ==:), no integrity check: loads with live signature.",
+      "status": "Pass",
+      "msg": ""
+     },
+     {
+      "name": "`<script>`: Valid signature (signature=:8GkjOA7esYIFqnxm14ikg6Su+Z03Zp2quKSgX1fhPNEswT9sJ4FRM2UJr+R3X3JP1O7kLTAFfbIYU9BBXgNcBQ==:), no integrity check: loads with live signature.",
+      "status": "Pass",
+      "msg": ""
+     }
+    ],
+    "previous": [
+     {
+      "name": "`<script>`: Valid signature (signature=:KOg7PNdU+do3dRN96cPCkN15sZNJ5sgopA6vJkIk4o8sQivYjse+yVgXdeAJCIvvOfd6/zelwBeBZ4Li5Mi3AQ==:), no integrity check: loads with live signature.",
+      "status": "Pass",
+      "msg": ""
+     },
+     {
+      "name": "`<script>`: Valid signature (signature=:Uy6hna997P1QdCYdY/unjjUcjN0TB2tNIiNa/ZXTJrWK1TtmS13hFj/Ztfjtp5G0POuN3p0pXe7PJxYotH49DQ==:), no integrity check: loads with live signature.",
+      "status": "Pass",
+      "msg": ""
+     }
+    ]
+   }
+  },
+  {
+   "original": "`<script>`: Valid signature (signature=:Uy6hna997P1QdCYdY/unjjUcjN0TB2tNIiNa/ZXTJrWK1TtmS13hFj/Ztfjtp5G0POuN3p0pXe7PJxYotH49DQ==:), matching integrity check: loads with live signature.",
+   "structuralGroup": "`<script>`: Valid signature (signature=:[runtime signature]:), matching integrity check: loads with live signature.",
+   "matches": {
+    "round7": [
+     {
+      "name": "`<script>`: Valid signature (signature=:qqBQSBLHunp+VdqCml+GWNyXv4u4j+SvkV20BTKvuTIX+eO8OPLM1FV4f/KBsPg95kipUknavuI6DNsQ3i8kAA==:), matching integrity check: loads with live signature.",
+      "status": "Pass",
+      "msg": ""
+     },
+     {
+      "name": "`<script>`: Valid signature (signature=:lXFPBLr/DNgdxV3xqbP5zEjW7yT9aZFK22DyOU0Bb3zDQ02SqHb9qomI5umxr2KyohuyiTX9uiYfoxaH1jAiCA==:), matching integrity check: loads with live signature.",
+      "status": "Pass",
+      "msg": ""
+     }
+    ],
+    "chrome": [
+     {
+      "name": "`<script>`: Valid signature (signature=:uBCfOuPUaB7xm+aLGQdXjh50DTs5alBYXtKsdMENyflR0kbbtIXcaWRhiykB1lbo969UNhOy7cHATWRKqWhcCQ==:), matching integrity check: loads with live signature.",
+      "status": "Pass",
+      "msg": ""
+     },
+     {
+      "name": "`<script>`: Valid signature (signature=:8GkjOA7esYIFqnxm14ikg6Su+Z03Zp2quKSgX1fhPNEswT9sJ4FRM2UJr+R3X3JP1O7kLTAFfbIYU9BBXgNcBQ==:), matching integrity check: loads with live signature.",
+      "status": "Pass",
+      "msg": ""
+     }
+    ],
+    "previous": [
+     {
+      "name": "`<script>`: Valid signature (signature=:KOg7PNdU+do3dRN96cPCkN15sZNJ5sgopA6vJkIk4o8sQivYjse+yVgXdeAJCIvvOfd6/zelwBeBZ4Li5Mi3AQ==:), matching integrity check: loads with live signature.",
+      "status": "Pass",
+      "msg": ""
+     },
+     {
+      "name": "`<script>`: Valid signature (signature=:Uy6hna997P1QdCYdY/unjjUcjN0TB2tNIiNa/ZXTJrWK1TtmS13hFj/Ztfjtp5G0POuN3p0pXe7PJxYotH49DQ==:), matching integrity check: loads with live signature.",
+      "status": "Pass",
+      "msg": ""
+     }
+    ]
+   }
+  },
+  {
+   "original": "`<script>`: Valid signature (signature=:Uy6hna997P1QdCYdY/unjjUcjN0TB2tNIiNa/ZXTJrWK1TtmS13hFj/Ztfjtp5G0POuN3p0pXe7PJxYotH49DQ==:), no integrity check: loads with live signature.",
+   "structuralGroup": "`<script>`: Valid signature (signature=:[runtime signature]:), no integrity check: loads with live signature.",
+   "matches": {
+    "round7": [
+     {
+      "name": "`<script>`: Valid signature (signature=:qqBQSBLHunp+VdqCml+GWNyXv4u4j+SvkV20BTKvuTIX+eO8OPLM1FV4f/KBsPg95kipUknavuI6DNsQ3i8kAA==:), no integrity check: loads with live signature.",
+      "status": "Pass",
+      "msg": ""
+     },
+     {
+      "name": "`<script>`: Valid signature (signature=:lXFPBLr/DNgdxV3xqbP5zEjW7yT9aZFK22DyOU0Bb3zDQ02SqHb9qomI5umxr2KyohuyiTX9uiYfoxaH1jAiCA==:), no integrity check: loads with live signature.",
+      "status": "Pass",
+      "msg": ""
+     }
+    ],
+    "chrome": [
+     {
+      "name": "`<script>`: Valid signature (signature=:uBCfOuPUaB7xm+aLGQdXjh50DTs5alBYXtKsdMENyflR0kbbtIXcaWRhiykB1lbo969UNhOy7cHATWRKqWhcCQ==:), no integrity check: loads with live signature.",
+      "status": "Pass",
+      "msg": ""
+     },
+     {
+      "name": "`<script>`: Valid signature (signature=:8GkjOA7esYIFqnxm14ikg6Su+Z03Zp2quKSgX1fhPNEswT9sJ4FRM2UJr+R3X3JP1O7kLTAFfbIYU9BBXgNcBQ==:), no integrity check: loads with live signature.",
+      "status": "Pass",
+      "msg": ""
+     }
+    ],
+    "previous": [
+     {
+      "name": "`<script>`: Valid signature (signature=:KOg7PNdU+do3dRN96cPCkN15sZNJ5sgopA6vJkIk4o8sQivYjse+yVgXdeAJCIvvOfd6/zelwBeBZ4Li5Mi3AQ==:), no integrity check: loads with live signature.",
+      "status": "Pass",
+      "msg": ""
+     },
+     {
+      "name": "`<script>`: Valid signature (signature=:Uy6hna997P1QdCYdY/unjjUcjN0TB2tNIiNa/ZXTJrWK1TtmS13hFj/Ztfjtp5G0POuN3p0pXe7PJxYotH49DQ==:), no integrity check: loads with live signature.",
+      "status": "Pass",
+      "msg": ""
+     }
+    ]
+   }
+  },
+  {
+   "original": "`fetch()`: Valid signature (signature=:KOg7PNdU+do3dRN96cPCkN15sZNJ5sgopA6vJkIk4o8sQivYjse+yVgXdeAJCIvvOfd6/zelwBeBZ4Li5Mi3AQ==:), no integrity check: loads.",
+   "structuralGroup": "`fetch()`: Valid signature (signature=:[runtime signature]:), no integrity check: loads.",
+   "matches": {
+    "round7": [
+     {
+      "name": "`fetch()`: Valid signature (signature=:qqBQSBLHunp+VdqCml+GWNyXv4u4j+SvkV20BTKvuTIX+eO8OPLM1FV4f/KBsPg95kipUknavuI6DNsQ3i8kAA==:), no integrity check: loads.",
+      "status": "Pass",
+      "msg": ""
+     },
+     {
+      "name": "`fetch()`: Valid signature (signature=:lXFPBLr/DNgdxV3xqbP5zEjW7yT9aZFK22DyOU0Bb3zDQ02SqHb9qomI5umxr2KyohuyiTX9uiYfoxaH1jAiCA==:), no integrity check: loads.",
+      "status": "Pass",
+      "msg": ""
+     }
+    ],
+    "chrome": [
+     {
+      "name": "`fetch()`: Valid signature (signature=:uBCfOuPUaB7xm+aLGQdXjh50DTs5alBYXtKsdMENyflR0kbbtIXcaWRhiykB1lbo969UNhOy7cHATWRKqWhcCQ==:), no integrity check: loads.",
+      "status": "Pass",
+      "msg": ""
+     },
+     {
+      "name": "`fetch()`: Valid signature (signature=:8GkjOA7esYIFqnxm14ikg6Su+Z03Zp2quKSgX1fhPNEswT9sJ4FRM2UJr+R3X3JP1O7kLTAFfbIYU9BBXgNcBQ==:), no integrity check: loads.",
+      "status": "Pass",
+      "msg": ""
+     }
+    ],
+    "previous": [
+     {
+      "name": "`fetch()`: Valid signature (signature=:KOg7PNdU+do3dRN96cPCkN15sZNJ5sgopA6vJkIk4o8sQivYjse+yVgXdeAJCIvvOfd6/zelwBeBZ4Li5Mi3AQ==:), no integrity check: loads.",
+      "status": "Pass",
+      "msg": ""
+     },
+     {
+      "name": "`fetch()`: Valid signature (signature=:Uy6hna997P1QdCYdY/unjjUcjN0TB2tNIiNa/ZXTJrWK1TtmS13hFj/Ztfjtp5G0POuN3p0pXe7PJxYotH49DQ==:), no integrity check: loads.",
+      "status": "Pass",
+      "msg": ""
+     }
+    ]
+   }
+  },
+  {
+   "original": "`fetch()`: Valid signature (signature=:Uy6hna997P1QdCYdY/unjjUcjN0TB2tNIiNa/ZXTJrWK1TtmS13hFj/Ztfjtp5G0POuN3p0pXe7PJxYotH49DQ==:), no integrity check: loads.",
+   "structuralGroup": "`fetch()`: Valid signature (signature=:[runtime signature]:), no integrity check: loads.",
+   "matches": {
+    "round7": [
+     {
+      "name": "`fetch()`: Valid signature (signature=:qqBQSBLHunp+VdqCml+GWNyXv4u4j+SvkV20BTKvuTIX+eO8OPLM1FV4f/KBsPg95kipUknavuI6DNsQ3i8kAA==:), no integrity check: loads.",
+      "status": "Pass",
+      "msg": ""
+     },
+     {
+      "name": "`fetch()`: Valid signature (signature=:lXFPBLr/DNgdxV3xqbP5zEjW7yT9aZFK22DyOU0Bb3zDQ02SqHb9qomI5umxr2KyohuyiTX9uiYfoxaH1jAiCA==:), no integrity check: loads.",
+      "status": "Pass",
+      "msg": ""
+     }
+    ],
+    "chrome": [
+     {
+      "name": "`fetch()`: Valid signature (signature=:uBCfOuPUaB7xm+aLGQdXjh50DTs5alBYXtKsdMENyflR0kbbtIXcaWRhiykB1lbo969UNhOy7cHATWRKqWhcCQ==:), no integrity check: loads.",
+      "status": "Pass",
+      "msg": ""
+     },
+     {
+      "name": "`fetch()`: Valid signature (signature=:8GkjOA7esYIFqnxm14ikg6Su+Z03Zp2quKSgX1fhPNEswT9sJ4FRM2UJr+R3X3JP1O7kLTAFfbIYU9BBXgNcBQ==:), no integrity check: loads.",
+      "status": "Pass",
+      "msg": ""
+     }
+    ],
+    "previous": [
+     {
+      "name": "`fetch()`: Valid signature (signature=:KOg7PNdU+do3dRN96cPCkN15sZNJ5sgopA6vJkIk4o8sQivYjse+yVgXdeAJCIvvOfd6/zelwBeBZ4Li5Mi3AQ==:), no integrity check: loads.",
+      "status": "Pass",
+      "msg": ""
+     },
+     {
+      "name": "`fetch()`: Valid signature (signature=:Uy6hna997P1QdCYdY/unjjUcjN0TB2tNIiNa/ZXTJrWK1TtmS13hFj/Ztfjtp5G0POuN3p0pXe7PJxYotH49DQ==:), no integrity check: loads.",
+      "status": "Pass",
+      "msg": ""
+     }
+    ]
+   }
+  }
+ ]
+}

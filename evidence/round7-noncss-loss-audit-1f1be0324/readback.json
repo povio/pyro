@@ -1,0 +1,97 @@
+{
+ "pageTransitions": [
+  {
+   "new": [
+    "timeout",
+    null
+   ],
+   "old": [
+    "complete",
+    "OK"
+   ],
+   "count": 50
+  },
+  {
+   "new": [
+    "complete",
+    "OK"
+   ],
+   "old": [
+    "complete",
+    "OK"
+   ],
+   "count": 34
+  },
+  {
+   "new": [
+    "error",
+    null
+   ],
+   "old": [
+    "complete",
+    "OK"
+   ],
+   "count": 20
+  },
+  {
+   "new": [
+    "error",
+    "Error"
+   ],
+   "old": [
+    "error",
+    "Error"
+   ],
+   "count": 2
+  }
+ ],
+ "chromeByObservedGroup": {
+  "page-timeout-no-loss-name": {
+   "Pass": 50
+  },
+  "live-signature-in-name": {
+   "missing": 6
+  },
+  "source-image-decode-rejection": {
+   "Pass": 4
+  },
+  "moved-script-event-assertion": {
+   "Pass": 4
+  },
+  "plaintext-formatting-assertion": {
+   "Fail": 13
+  },
+  "proxy-connection-failed": {
+   "Pass": 18
+  },
+  "cdp-local-address-unavailable": {
+   "Pass": 2
+  },
+  "response-status-assertion": {
+   "Fail": 1
+  },
+  "timeline-clock-assertion": {
+   "Pass": 1
+  },
+  "blocked-vs-upgraded-assertion": {
+   "Pass": 1
+  },
+  "fixture-fetch-502": {
+   "Pass": 4
+  },
+  "pixel-value-assertion": {
+   "Pass": 1
+  },
+  "resource-count-assertion": {
+   "Pass": 1
+  }
+ },
+ "laterSources": 11,
+ "laterReceipts": 34,
+ "laterIndependentQA": 7,
+ "laterDistinctOccurrences": 12,
+ "laterOccurrenceObservations": {
+  "Fail": 408
+ },
+ "withoutLaterObservation": 94
+}
