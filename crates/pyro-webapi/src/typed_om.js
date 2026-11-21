@@ -283,6 +283,11 @@
     to(unit) {
       const u = unitName(unit);
       if (u === null) throw new DE("Failed to execute 'to' on 'CSSNumericValue': Invalid unit for conversion", 'SyntaxError');
+      if (isUnit(this)) {
+        const result = convert(this, u);
+        if (result) return result;
+        throw new TypeError("Failed to execute 'to' on 'CSSNumericValue': Cannot convert to the given unit");
+      }
       const sum = sumValues(this);
       if (!sum || sum.length !== 1) throw new TypeError("Failed to execute 'to' on 'CSSNumericValue': Cannot convert to the given unit");
       const r = convert(sum[0], u);
@@ -318,7 +323,7 @@
     }
     static parse(cssText) {
       if (arguments.length < 1) throw new TypeError("Failed to execute 'parse' on 'CSSNumericValue': 1 argument required, but only 0 present.");
-      const v = parseNumeric(`${cssText}`.trim());
+      const v = parseNumeric(`${cssText}`.trim(), true);
       if (!v) throw new DE("Failed to execute 'parse' on 'CSSNumericValue': Invalid math expression", 'SyntaxError');
       return v;
     }
@@ -481,52 +486,80 @@
     return mathTypes.get(v) || null;
   };
 
-  // A value as a sum of unit values with at most one non-number unit each (`toSum`, `to`), or null.
-  const sumValues = (v) => {
+  // Sum-value terms keep powers of canonical units until the entire expression is
+  // reduced: a reciprocal or squared unit need not itself fit in CSSUnitValue.
+  const unitKey = units => Object.keys(units).sort().map(unit => unit + ':' + units[unit]).join(',');
+  function accumulate(terms, value, units) {
+    const key = unitKey(units), existing = terms.get(key);
+    if (existing) existing.value += value;
+    else terms.set(key, { value, units });
+  }
+  function sumTerms(v) {
     if (isUnit(v)) {
-      const info = v.unit === 'number' || v.unit === 'percent' ? null : unitInfo(v.unit);
-      if (info && info.f !== null) return [new CSSUnitValue(v.value * info.f, info.canonical)];
-      return [new CSSUnitValue(v.value, v.unit)];
+      const info = unitInfo(v.unit);
+      const absolute = info && info.f !== null;
+      const unit = absolute ? info.canonical : v.unit;
+      return [{ value: absolute ? v.value * info.f : v.value, units: unit === 'number' ? {} : { [unit]: 1 } }];
+    }
+    if (v instanceof CSSMathInvert || v instanceof CSSMathNegate) {
+      const terms = sumTerms(v.value);
+      if (!terms) return null;
+      if (v instanceof CSSMathNegate) return terms.map(t => ({value: -t.value, units: t.units}));
+      if (terms.length !== 1 || terms[0].value === 0) return null;
+      const term = terms[0], units = {};
+      for (const [unit, power] of Object.entries(term.units)) units[unit] = -power;
+      return [{ value: 1 / term.value, units }];
     }
     if (v instanceof CSSMathSum) {
-      const out = [];
-      for (const x of v.values) {
-        const s = sumValues(x);
-        if (!s) return null;
-        for (const item of s) {
-          const same = out.find((o) => o.unit === item.unit);
-          if (same) out[out.indexOf(same)] = new CSSUnitValue(same.value + item.value, item.unit);
-          else out.push(item);
-        }
+      const sum = new Map();
+      for (const item of v.values) {
+        const terms = sumTerms(item);
+        if (!terms) return null;
+        for (const term of terms) accumulate(sum, term.value, term.units);
       }
-      return out;
+      return [...sum.values()];
     }
-    if (v instanceof CSSMathNegate) { const s = sumValues(v.value); return s && s.map((x) => new CSSUnitValue(-x.value, x.unit)); }
     if (v instanceof CSSMathProduct) {
-      let acc = [new CSSUnitValue(1, 'number')];
-      for (const x of v.values) {
-        const s = sumValues(x);
-        if (!s) return null;
-        const next = [];
-        for (const a of acc) for (const b of s) {
-          if (a.unit !== 'number' && b.unit !== 'number') return null;
-          next.push(new CSSUnitValue(a.value * b.value, a.unit === 'number' ? b.unit : a.unit));
+      let product = [{value: 1, units: {}}];
+      for (const item of v.values) {
+        const terms = sumTerms(item);
+        if (!terms) return null;
+        const next = new Map();
+        for (const a of product) for (const b of terms) {
+          const units = {...a.units};
+          for (const [unit, power] of Object.entries(b.units)) {
+            units[unit] = (units[unit] || 0) + power;
+            if (!units[unit]) delete units[unit];
+          }
+          accumulate(next, a.value * b.value, units);
         }
-        acc = next;
+        product = [...next.values()];
       }
-      return acc;
+      return product;
     }
-    if (v instanceof CSSMathInvert) {
-      const s = sumValues(v.value);
-      if (!s || s.length !== 1 || s[0].unit !== 'number') return null;
-      return [new CSSUnitValue(1 / s[0].value, 'number')];
-    }
-    if (v instanceof CSSMathMin || v instanceof CSSMathMax) {
-      const all = [...v.values].map(sumValues);
-      if (all.some((s) => !s || s.length !== 1) || all.some((s) => s[0].unit !== all[0][0].unit)) return null;
-      return [new CSSUnitValue(Math[v instanceof CSSMathMin ? 'min' : 'max'](...all.map((s) => s[0].value)), all[0][0].unit)];
+    if (v instanceof CSSMathMin || v instanceof CSSMathMax || v instanceof CSSMathClamp) {
+      const items = v instanceof CSSMathClamp ? [v.lower, v.value, v.upper] : [...v.values];
+      const terms = items.map(sumTerms);
+      if (terms.some(list => !list || list.length !== 1)) return null;
+      const units = terms[0][0].units, key = unitKey(units);
+      if (terms.some(list => unitKey(list[0].units) !== key)) return null;
+      const numbers = terms.map(list => list[0].value);
+      const value = v instanceof CSSMathClamp ? Math.max(numbers[0], Math.min(numbers[1], numbers[2])) :
+        (v instanceof CSSMathMin ? Math.min(...numbers) : Math.max(...numbers));
+      return [{value, units}];
     }
     return null;
+  }
+  const sumValues = v => {
+    const terms = sumTerms(v);
+    if (!terms) return null;
+    const values = [];
+    for (const {value, units} of terms) {
+      const keys = Object.keys(units);
+      if (keys.length > 1 || (keys.length === 1 && units[keys[0]] !== 1) || !Number.isFinite(value)) return null;
+      values.push(new CSSUnitValue(value, keys[0] ?? 'number'));
+    }
+    return values;
   };
   const convert = (v, unit) => {
     if (v.unit === unit) return new CSSUnitValue(v.value, unit);
@@ -1007,7 +1040,7 @@
 
   // ---------- Parsing numeric text (dimensions and math functions) ----------
   const NUM = /^([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)(%|[a-zA-Z]+)?/;
-  const parseNumeric = (text) => {
+  const parseNumeric = (text, simplifyParsedSums = false) => {
     const p = { s: text, i: 0 };
     const ws = () => { while (p.i < p.s.length && /\s/.test(p.s[p.i])) p.i++; };
     const term = () => {
@@ -1055,6 +1088,29 @@
         p.i++;
         const t = product();
         items.push(op === '+' ? t : new CSSMathNegate(t));
+      }
+      if (simplifyParsedSums && items.length > 1) {
+        // Combine compatible numeric leaves while retaining the order and
+        // structure of unresolved terms (and their authored math operators).
+        const combined = [], indices = new Map();
+        for (const item of items) {
+          const leaf = item instanceof CSSMathNegate ? item.value : item;
+          if (!isUnit(leaf)) { combined.push(item); continue; }
+          const info = unitInfo(leaf.unit);
+          const canonical = info && info.f !== null ? info.canonical : leaf.unit;
+          const index = indices.get(canonical);
+          if (index === undefined) {
+            indices.set(canonical, combined.length);
+            combined.push(item);
+          } else {
+            const previous = combined[index];
+            const prior = previous instanceof CSSMathNegate ? previous.value : previous;
+            const unit = prior.unit === leaf.unit ? leaf.unit : canonical;
+            const a = convert(prior, unit).value, b = convert(leaf, unit).value;
+            combined[index] = new CSSUnitValue((prior === previous ? a : -a) + (leaf === item ? b : -b), unit);
+          }
+        }
+        return combined.length === 1 ? combined[0] : new CSSMathSum(...combined);
       }
       return items.length === 1 ? items[0] : new CSSMathSum(...items);
     };
