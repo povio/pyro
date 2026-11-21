@@ -2114,8 +2114,9 @@ fn selection_state(n: &NodeData) -> Option<(u32, u32, Option<bool>)> {
 /// HTML "set the selection range": when the start, end or direction changed,
 /// queue an element task that fires `select` (bubbling, not cancelable).
 /// Setting the same range again fires nothing.
-fn queue_select_if_changed(n: &NodeData, before: Option<(u32, u32, Option<bool>)>) {
+fn queue_selection_events_if_changed(n: &NodeData, before: Option<(u32, u32, Option<bool>)>) {
     if selection_state(n) != before {
+        crate::editing::queue_control_selectionchange(n.page(), n.id);
         crate::input::queue_simple(n.page(), n.id, "select", true, false);
     }
 }
@@ -2142,8 +2143,7 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
                 dom.set_selection_range(n.id, st, e.max(st)).js()?;
                 dom.set_selection_direction(n.id, direction).js()?;
             }
-            crate::editing::queue_control_selectionchange(n.page(), n.id);
-            queue_select_if_changed(n, before);
+            queue_selection_events_if_changed(n, before);
             Ok(())
         },
     );
@@ -2168,8 +2168,7 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
                 dom.set_selection_range(n.id, st, end).js()?;
                 dom.set_selection_direction(n.id, direction).js()?;
             }
-            crate::editing::queue_control_selectionchange(n.page(), n.id);
-            queue_select_if_changed(n, before);
+            queue_selection_events_if_changed(n, before);
             Ok(())
         },
     );
@@ -2192,7 +2191,7 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
             let direction = selection_direction(&dom_string(v)?);
             let before = selection_state(n);
             n.page().dom.borrow_mut().set_selection_direction(n.id, direction).js()?;
-            queue_select_if_changed(n, before);
+            queue_selection_events_if_changed(n, before);
             Ok(())
         },
     );
@@ -2209,8 +2208,7 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
             dom.set_selection_range(n.id, arg0, arg1).js()?;
             dom.set_selection_direction(n.id, direction).js()?;
         }
-        crate::editing::queue_control_selectionchange(n.page(), n.id);
-        queue_select_if_changed(n, before);
+        queue_selection_events_if_changed(n, before);
         Ok(s.undefined())
     });
     def.method("select", 0, |s, n, _a| {
@@ -2233,8 +2231,7 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
                 let mut dom = page.dom.borrow_mut();
                 dom.set_selection_range(n.id, 0, len).js()?;
             }
-            crate::editing::queue_control_selectionchange(n.page(), n.id);
-            queue_select_if_changed(n, before);
+            queue_selection_events_if_changed(n, before);
         }
         Ok(s.undefined())
     });
@@ -2277,8 +2274,7 @@ fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
         }
         let before = selection_state(n);
         n.page().dom.borrow_mut().set_range_text(n.id, &text, start, end, mode).js()?;
-        crate::editing::queue_control_selectionchange(n.page(), n.id);
-        queue_select_if_changed(n, before);
+        queue_selection_events_if_changed(n, before);
         Ok(s.undefined())
     });
 }

@@ -157,29 +157,29 @@ pub(crate) fn queue_selectionchange(page: &Rc<PageDom>) {
     queue_selectionchange_at(page, None);
 }
 
-/// A text control's own selection changed (focus, caret moves, select(),
-/// typing): Chromium fires `selectionchange` on the control itself (not
-/// bubbling), so document capture listeners see it with the input as target.
+/// A text control's selectionchange bubbles from the control, even if
+/// several controls changed during the same task.
 pub(crate) fn queue_control_selectionchange(page: &Rc<PageDom>, control: NodeId) {
-    queue_selectionchange_at(page, Some(control));
+    // Chromium reports changes inside a shadow tree on the document.
+    let in_shadow = {
+        let dom = page.dom.borrow();
+        dom.shadow_root_count() != 0 && dom.root_node(control, false).and_then(|root| dom.is_shadow_root(root)).unwrap_or(false)
+    };
+    queue_selectionchange_at(page, (!in_shadow).then_some(control));
 }
 
 fn queue_selectionchange_at(page: &Rc<PageDom>, target: Option<NodeId>) {
-    if page.selectionchange_pending.replace(true) {
+    let doc = page.document();
+    let at = target.unwrap_or(doc);
+    if !page.selectionchange_pending.borrow_mut().insert(at) {
         return;
     }
     let p = page.clone();
-    let doc = page.document();
     page.post_task(Box::new(move || {
-        p.selectionchange_pending.set(false);
-        if p.is_disposed() || p.document() != doc {
-            return;
+        p.selectionchange_pending.borrow_mut().remove(&at);
+        if !p.is_disposed() && p.document() == doc {
+            crate::input::fire_simple(&p, at, "selectionchange", target.is_some(), false);
         }
-        let at = match target {
-            Some(t) if p.dom.borrow().is_connected(t).unwrap_or(false) => t,
-            _ => doc,
-        };
-        crate::input::fire_simple(&p, at, "selectionchange", false, false);
     }));
 }
 

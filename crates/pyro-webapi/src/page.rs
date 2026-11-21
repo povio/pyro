@@ -312,7 +312,7 @@ pub struct PageDom {
     pub(crate) text_drag: Cell<Option<crate::input::TextDrag>>,
     /// The document selection (`crate::editing`), shared by every world.
     pub(crate) selection: RefCell<Option<crate::editing::DocSelection>>,
-    pub(crate) selectionchange_pending: Cell<bool>,
+    pub(crate) selectionchange_pending: RefCell<FxHashSet<NodeId>>,
     /// The custom highlights (`CSS.highlights`, `crate::highlights`), in registration order.
     pub(crate) highlights: RefCell<Vec<crate::highlights::CustomHighlight>>,
     /// The ranges of the last fragment navigation's text directives (`::target-text`).
@@ -946,7 +946,7 @@ impl PageDom {
             text_drag: Cell::new(None),
             drag: RefCell::new(None),
             selection: RefCell::new(None),
-            selectionchange_pending: Cell::new(false),
+            selectionchange_pending: RefCell::new(FxHashSet::default()),
             highlights: RefCell::new(Vec::new()),
             target_text: RefCell::new(Vec::new()),
             undo: RefCell::new(Default::default()),
