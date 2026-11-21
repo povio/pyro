@@ -1,0 +1,30 @@
+axislock-main-candidate 8082 page passes 5595 named passes 180068 observed names 194541 statuses {'complete:0': 7867, 'complete:2': 105, 'timeout:None': 11, 'complete:1': 98, 'hang:None': 1}
+axislock-main-parent 8082 page passes 5591 named passes 180009 observed names 194540 statuses {'complete:0': 7867, 'complete:2': 105, 'timeout:None': 11, 'complete:1': 98, 'hang:None': 1}
+axislock-main-stable 8082 page passes 6950 named passes 182963 observed names 194912 statuses {'complete:0': 7986, 'complete:2': 62, 'complete:1': 23, 'timeout:None': 10, 'hang:None': 1}
+axislock-main-parent pages left only 4 right only 0
+axislock-main-parent passes left only 59 right only 0
+axislock-main-parent observed left only 1 right only 0
+axislock-main-stable pages left only 272 right only 1627
+axislock-main-stable passes left only 5802 right only 8697
+axislock-main-stable observed left only 309 right only 680
+Losses vs parent by URL: Counter()
+axislock-focus-candidate 239 page passes 120 named passes 1420 observed names 1761 statuses {'complete:0': 230, 'complete:2': 8, 'complete:1': 1}
+axislock-focus-parent 239 page passes 116 named passes 1361 observed names 1760 statuses {'complete:0': 230, 'complete:2': 8, 'complete:1': 1}
+axislock-focus-stable 239 page passes 216 named passes 1696 observed names 1790 statuses {'complete:0': 234, 'complete:2': 5}
+axislock-focus-parent pages left only 4 right only 0
+axislock-focus-parent passes left only 59 right only 0
+axislock-focus-parent observed left only 1 right only 0
+axislock-focus-stable pages left only 3 right only 99
+axislock-focus-stable passes left only 52 right only 328
+axislock-focus-stable observed left only 29 right only 58
+Losses vs parent by URL: Counter()
+axislock-supplement-candidate 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+axislock-supplement-parent 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+axislock-supplement-stable 41 page passes 35 named passes 619 observed names 874 statuses {'complete:0': 41}
+axislock-supplement-parent pages left only 0 right only 0
+axislock-supplement-parent passes left only 0 right only 0
+axislock-supplement-parent observed left only 0 right only 0
+axislock-supplement-stable pages left only 0 right only 8
+axislock-supplement-stable passes left only 0 right only 42
+axislock-supplement-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()
