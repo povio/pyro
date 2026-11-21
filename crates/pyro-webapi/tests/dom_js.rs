@@ -6498,6 +6498,16 @@ fn css_keyframes_names_are_css_tokens() {
     e.page.dispose();
 }
 
+#[test]
+fn view_transition_descriptors_retain_their_frozen_types() {
+    let e = env(r"<style>@view-transition { navigation: auto; types: a\ b c c; types: invalid, list }</style>");
+    assert_eq!(eval(&e.main, "const rule = document.styleSheets[0].cssRules[0];
+        const types = rule.types; document.styleSheets[0].deleteRule(0);
+        [rule.navigation, types === rule.types, Object.isFrozen(types), types.join('|')].join('|')"),
+        "auto|true|true|a b|c|c");
+    e.page.dispose();
+}
+
 /// Rules wrap as their CSSOM interfaces (all CSSRule subclasses), `cssRules`
 /// is a live CSSRuleList, and `media` of `@media`/`@import` is a MediaList
 /// serialized by the style engine (css/cssom CSSRule-type, MediaList-parsing).

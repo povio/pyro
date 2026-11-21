@@ -445,7 +445,7 @@ impl StyleData {
                             write_page(&*owner.rules()?, &page, None);
                         }
                     }
-                    RuleKind::Group { .. } | RuleKind::Property(_) | RuleKind::Palette(_) => return Ok(()),
+                    RuleKind::Group { .. } | RuleKind::Property(_) | RuleKind::Palette(_) | RuleKind::ViewTransition { .. } => return Ok(()),
                 }
                 owner.commit(&*owner.rules()?);
                 Ok(())
@@ -740,6 +740,7 @@ impl RuleList {
 }
 
 enum RuleKind {
+    ViewTransition { navigation: String, types: Vec<String>, text: String },
     Declarations(RefCell<String>),
     Property(PropertyRule),
     Palette(PaletteRule),
@@ -760,6 +761,7 @@ impl RuleNode {
         let identity = IdentityKey(1 << 56, NEXT_RULE.fetch_add(1, Ordering::Relaxed));
         Rc::new_cyclic(|me| {
             let kind = match parsed {
+                ParsedRule::ViewTransition { navigation, types, text } => RuleKind::ViewTransition { navigation, types, text },
                 ParsedRule::Declarations(text) => RuleKind::Declarations(RefCell::new(text)),
                 ParsedRule::Scope { start, end, rules } => {
                     let mut parts = Vec::new();
@@ -788,6 +790,7 @@ impl RuleNode {
     /// The text given to the style engine: blocks stay as written.
     fn source_text(&self) -> String {
         match &self.kind {
+            RuleKind::ViewTransition { text, .. } => text.clone(),
             RuleKind::Declarations(text) => text.borrow().clone(),
             RuleKind::Palette(rule) => rule.text.clone(),
             RuleKind::Property(rule) => rule.text.clone(),
@@ -802,6 +805,7 @@ impl RuleNode {
 
     fn css_text(&self) -> String {
         match &self.kind {
+            RuleKind::ViewTransition { text, .. } => text.clone(),
             RuleKind::Other { rule_type: 8, text } => {
                 let text = text.borrow();
                 let Some((head, body)) = split_block(&text) else { return String::new() };
@@ -1036,6 +1040,7 @@ fn rule_wrapper<'s>(s: &Scope<'s>, rule: &Rc<RuleNode>, owner: &SheetOwner) -> J
         RuleKind::Declarations(_) => s.wrap::<CssNestedDeclarations>(data, key),
         RuleKind::Property(_) => s.wrap::<CssPropertyRule>(data, key),
         RuleKind::Palette(_) => s.wrap::<CssFontPaletteValuesRule>(data, key),
+        RuleKind::ViewTransition { .. } => s.wrap::<CssViewTransitionRule>(data, key),
         RuleKind::Style { .. } => s.wrap::<CssStyleRule>(data, key),
         RuleKind::Other { rule_type: 8, .. } => s.wrap::<CssKeyframeRule>(data, key),
         RuleKind::Group { name, .. } if matches!(name.as_str(), "keyframes" | "-webkit-keyframes") => s.wrap::<CssKeyframesRule>(data, key),
@@ -1059,7 +1064,6 @@ fn rule_wrapper<'s>(s: &Scope<'s>, rule: &Rc<RuleNode>, owner: &SheetOwner) -> J
                 "layer" => s.wrap::<CssLayerBlockRule>(data, key),
                 "starting-style" => s.wrap::<CssStartingStyleRule>(data, key),
                 "position-try" => s.wrap::<CssPositionTryRule>(data, key),
-                "view-transition" => s.wrap::<CssViewTransitionRule>(data, key),
                 _ => s.wrap::<CssRule>(data, key),
             }
         }
@@ -1155,7 +1159,7 @@ fn define_rule<C: JsClass<Data = RuleData>>(def: &mut ClassDef<C>) {
             RuleKind::Group { name, .. } if matches!(name.as_str(), "keyframes" | "-webkit-keyframes") => 7.0,
             RuleKind::Group { name, .. } if name == "media" => 4.0,
             RuleKind::Group { name, .. } if name == "supports" => 12.0,
-            RuleKind::Group { .. } | RuleKind::Property(_) | RuleKind::Palette(_) | RuleKind::Declarations(_) => 0.0,
+            RuleKind::Group { .. } | RuleKind::Property(_) | RuleKind::Palette(_) | RuleKind::Declarations(_) | RuleKind::ViewTransition { .. } => 0.0,
             RuleKind::Other { rule_type, .. } => f64::from(*rule_type),
         }))
     });
@@ -1821,7 +1825,19 @@ impl JsClass for CssPositionTryDescriptors {
     type Parent = CssStyleDeclaration;
     fn define(_: &mut ClassDef<Self>) {}
 }
-rule_class!(CssViewTransitionRule, "CSSViewTransitionRule", CssRule);
+rule_class!(CssViewTransitionRule, "CSSViewTransitionRule", CssRule, |def| {
+    def.getter("navigation", |s, rule| match &rule.node()?.kind {
+        RuleKind::ViewTransition { navigation, .. } => Ok(s.string(navigation)),
+        _ => unreachable!(),
+    });
+    def.getter_this("types", |s, rule, this| {
+        let RuleKind::ViewTransition { types, .. } = &rule.node()?.kind else { unreachable!() };
+        if let Some(array) = s.get_hidden(this, "viewTransitionTypes")? { return Ok(array); }
+        let array = s.frozen_array(&types.iter().map(|name| s.string(name)).collect::<Vec<_>>())?;
+        s.set_hidden(this, "viewTransitionTypes", array)?;
+        Ok(array)
+    });
+});
 
 /// `CSSRule.type` of `@import`.
 const IMPORT_RULE: u16 = 3;
@@ -2348,7 +2364,7 @@ impl MediaList {
                         let media = if text.is_empty() { String::new() } else { format!(" {text}") };
                         *rule.borrow_mut() = format!("@import {head}{media};");
                     }
-                    RuleKind::Style { .. } | RuleKind::Property(_) | RuleKind::Palette(_) | RuleKind::Declarations(_) => return Ok(()),
+                    RuleKind::Style { .. } | RuleKind::Property(_) | RuleKind::Palette(_) | RuleKind::Declarations(_) | RuleKind::ViewTransition { .. } => return Ok(()),
                 }
                 r.owner.commit(&*r.owner.rules()?);
                 return Ok(());

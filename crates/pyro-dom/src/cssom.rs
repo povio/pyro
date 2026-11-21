@@ -28,6 +28,7 @@ pub struct PaletteRule {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParsedRule {
+    ViewTransition { navigation: String, types: Vec<String>, text: String },
     Palette(PaletteRule),
     Declarations(String),
     Scope { start: Option<String>, end: Option<String>, rules: Vec<ParsedRule> },
@@ -357,6 +358,27 @@ fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces, sc
         return Some(ParsedRule::Group { name: lower, condition, rules: rules? });
     }
     let (prelude, block) = parse_prelude_and_block(p, start, raw_block);
+    if lower == "view-transition" {
+        use style::shared_lock::{SharedRwLock, ToCssWithGuard};
+        use style::stylesheets::{CssRuleType, Origin, ViewTransitionRule};
+        use style_traits::ToCss as StyleToCss;
+
+        Parser::new(&prelude).expect_exhausted().ok()?;
+        let url = crate::stylo::url_data();
+        let context = style::parser::ParserContext::new(
+            Origin::Author, &url, Some(CssRuleType::ViewTransition), style_traits::ParsingMode::DEFAULT,
+            style::context::QuirksMode::NoQuirks, Default::default(), None, None, Default::default(),
+        );
+        let block = block?;
+        let mut input = Parser::new(&block);
+        let location = input.current_source_location();
+        let rule = ViewTransitionRule::parse(&context, &mut input, location);
+        return Some(ParsedRule::ViewTransition {
+            navigation: rule.descriptors.navigation.to_css_string(),
+            types: rule.descriptors.types.iter().flat_map(|types| types.iter()).map(|ident| ident.0.to_string()).collect(),
+            text: rule.to_css_string(&SharedRwLock::new().read()),
+        });
+    }
     if lower == "font-palette-values" {
         use style::shared_lock::{SharedRwLock, ToCssWithGuard};
         use style::stylesheets::{CssRuleType, FontPaletteValuesRule, Origin};
@@ -493,8 +515,7 @@ fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces, sc
         "page" => 6,
         "namespace" => 10,
         "counter-style" => 11,
-        "starting-style"
-        | "view-transition" => 0,
+        "starting-style" => 0,
         _ => return None,
     };
     if lower == "namespace" {
@@ -520,7 +541,7 @@ fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces, sc
         // An empty descriptor block serializes as `{ }`.
         Some(block)
             if block.trim().is_empty()
-                && matches!(lower.as_str(), "page" | "font-face" | "counter-style" | "font-palette-values" | "position-try" | "view-transition") =>
+                && matches!(lower.as_str(), "page" | "font-face" | "counter-style" | "font-palette-values" | "position-try") =>
         {
             format!("{head} {{ }}")
         }
@@ -895,7 +916,7 @@ mod tests {
             rules,
             [
                 ParsedRule::Other { rule_type: 0, text: "@position-try --opt { }".into() },
-                ParsedRule::Other { rule_type: 0, text: "@view-transition { navigation: auto }".into() },
+                ParsedRule::ViewTransition { navigation: "auto".into(), types: vec![], text: "@view-transition { navigation: auto; }".into() },
             ]
         );
     }
