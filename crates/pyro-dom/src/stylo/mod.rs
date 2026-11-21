@@ -291,6 +291,21 @@ pub fn supports_declaration(property: &str, value: &str) -> bool {
     .is_ok()
 }
 
+/// Parse a DOMMatrix transform list without an element or a reference box.
+pub fn matrix_from_css_text(text: &str) -> Option<([f64; 16], bool)> {
+    use style::parser::{Parse, ParserContext};
+    use style::values::specified::transform::Transform;
+    ensure_parse_prefs();
+    let url = url_data();
+    let context = ParserContext::new(
+        style::stylesheets::Origin::Author, &url, None, style_traits::ParsingMode::DEFAULT,
+        QuirksMode::NoQuirks, Default::default(), None, None, Default::default(),
+    );
+    let transform = cssparser::Parser::new(text).parse_entirely(|input| Transform::parse(&context, input)).ok()?;
+    let (matrix, has_3d) = transform.to_transform_3d_matrix_f64(None).ok()?;
+    Some((matrix.to_array(), !has_3d))
+}
+
 /// `CSS.supports(conditionText)`: `text` parsed as a `<supports-condition>`,
 /// else as one declaration in parentheses, and evaluated as `@supports`
 /// would be (declarations, `selector()`, `not` / `and` / `or`; unknown

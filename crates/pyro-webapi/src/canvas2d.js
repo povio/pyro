@@ -310,60 +310,11 @@
     return fixup(init, false).m;
   }
 
-  // CSS <transform-list> (absolute lengths and angles only).
-  const LENGTH = { px: 1, cm: 96 / 2.54, mm: 96 / 25.4, q: 96 / 101.6, in: 96, pt: 4 / 3, pc: 16 };
-  const ANGLE = { deg: 1, rad: 180 / MathC.PI, grad: 0.9, turn: 360 };
   function parseTransform(text) {
-    const syntax = () => domError('SyntaxError', `Failed to parse '${text}'.`);
-    const source = String(text).trim();
-    if (source === '' || source.toLowerCase() === 'none') return { m: IDENTITY.slice(), is2D: true };
-    const fn = /^([a-zA-Z0-9]+)\(([^()]*)\)\s*/;
-    let rest = source, m = IDENTITY.slice(), is2D = true;
-    while (rest.length) {
-      const match = fn.exec(rest);
-      if (!match) throw syntax();
-      rest = rest.slice(match[0].length);
-      const name = match[1].toLowerCase();
-      const args = match[2].trim() === '' ? [] : match[2].split(',').map((a) => a.trim());
-      const value = (arg, kind) => {
-        const unit = /^([+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?)([a-z%]*)$/i.exec(arg);
-        if (!unit) throw syntax();
-        const n = +unit[1], u = unit[2].toLowerCase();
-        if (kind === 'number') { if (u) throw syntax(); return n; }
-        if (kind === 'length') { if (u === '' && n === 0) return 0; if (!(u in LENGTH)) throw syntax(); return n * LENGTH[u]; }
-        if (u === '' && n === 0) return 0;
-        if (!(u in ANGLE)) throw syntax();
-        return n * ANGLE[u];
-      };
-      const need = (min, max) => { if (args.length < min || args.length > max) throw syntax(); };
-      let t, flat = true;
-      switch (name) {
-        case 'matrix': need(6, 6); t = from2D(...args.map((a) => value(a, 'number'))); break;
-        case 'matrix3d': need(16, 16); t = args.map((a) => value(a, 'number')); flat = false; break;
-        case 'translate': need(1, 2); t = translation(value(args[0], 'length'), args[1] ? value(args[1], 'length') : 0, 0); break;
-        case 'translatex': need(1, 1); t = translation(value(args[0], 'length'), 0, 0); break;
-        case 'translatey': need(1, 1); t = translation(0, value(args[0], 'length'), 0); break;
-        case 'translatez': need(1, 1); t = translation(0, 0, value(args[0], 'length')); flat = false; break;
-        case 'translate3d': need(3, 3); t = translation(value(args[0], 'length'), value(args[1], 'length'), value(args[2], 'length')); flat = false; break;
-        case 'scale': { need(1, 2); const x = value(args[0], 'number'); t = scaling(x, args[1] ? value(args[1], 'number') : x, 1); break; }
-        case 'scalex': need(1, 1); t = scaling(value(args[0], 'number'), 1, 1); break;
-        case 'scaley': need(1, 1); t = scaling(1, value(args[0], 'number'), 1); break;
-        case 'scalez': need(1, 1); t = scaling(1, 1, value(args[0], 'number')); flat = false; break;
-        case 'scale3d': need(3, 3); t = scaling(value(args[0], 'number'), value(args[1], 'number'), value(args[2], 'number')); flat = false; break;
-        case 'rotate': case 'rotatez': need(1, 1); t = axisRotation(0, 0, 1, value(args[0], 'angle')); flat = name === 'rotate'; break;
-        case 'rotatex': need(1, 1); t = axisRotation(1, 0, 0, value(args[0], 'angle')); flat = false; break;
-        case 'rotatey': need(1, 1); t = axisRotation(0, 1, 0, value(args[0], 'angle')); flat = false; break;
-        case 'rotate3d': need(4, 4); t = axisRotation(value(args[0], 'number'), value(args[1], 'number'), value(args[2], 'number'), value(args[3], 'angle')); flat = false; break;
-        case 'skew': { need(1, 2); const ax = value(args[0], 'angle'), ay = args[1] ? value(args[1], 'angle') : 0; t = from2D(1, MathC.tan(ay * RAD), MathC.tan(ax * RAD), 1, 0, 0); break; }
-        case 'skewx': need(1, 1); t = from2D(1, 0, MathC.tan(value(args[0], 'angle') * RAD), 1, 0, 0); break;
-        case 'skewy': need(1, 1); t = from2D(1, MathC.tan(value(args[0], 'angle') * RAD), 0, 1, 0, 0); break;
-        case 'perspective': { need(1, 1); const d = value(args[0], 'length'); t = IDENTITY.slice(); if (d !== 0) t[11] = -1 / d; flat = false; break; }
-        default: throw syntax();
-      }
-      if (!flat) is2D = false;
-      m = multiply(m, t);
-    }
-    return { m, is2D };
+    if (text === '') return { m: IDENTITY.slice(), is2D: true };
+    const parsed = natives.parseTransform(text);
+    if (!parsed) throw domError('SyntaxError', `Failed to parse '${text}'.`);
+    return { m: parsed[0], is2D: parsed[1] };
   }
   function initToState(init) {
     if (init === undefined) return { m: IDENTITY.slice(), is2D: true };

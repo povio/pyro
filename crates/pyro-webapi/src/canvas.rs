@@ -151,6 +151,11 @@ pub(crate) fn rect_list<'s>(s: &Scope<'s>, page: &Rc<PageDom>, rects: &[Value<'s
 
 fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
     let natives = s.object();
+    let transform = s.function("parseTransform", |s, _, a| {
+        let Some((matrix, is_2d)) = pyro_dom::stylo::matrix_from_css_text(&dom_string(a.get(0))?) else { return Ok(s.null()) };
+        Ok(s.array(&[s.array(&matrix.map(|v| s.number(v)))?.value(), s.boolean(is_2d)])?.value())
+    })?;
+    natives.set_atom("parseTransform", transform.value())?;
     let parse = s.function("parseColor", |s, _this, a| {
         Ok(match canvas_color(&dom_string(a.get(0))?) {
             Some(c) => s.string(&c),
