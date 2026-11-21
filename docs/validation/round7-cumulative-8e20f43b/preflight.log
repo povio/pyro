@@ -1,0 +1,43 @@
+Sat Nov 21 20:28:20 UTC 2026
+21:28  up 3 days,  1:05, 3 users, load averages: 5.66 6.78 6.95
+hw.memsize: 38654705664
+hw.ncpu: 18
+Mach Virtual Memory Statistics: (page size of 16384 bytes)
+Pages free:                                   278007.
+Pages active:                                 785769.
+Pages inactive:                               782733.
+Pages speculative:                              5171.
+Pages throttled:                                   0.
+Pages wired down:                             259885.
+Pages purgeable:                                7136.
+"Translation faults":                    19993618817.
+Pages copy-on-write:                       424290130.
+Pages zero filled:                       14151948553.
+Pages reactivated:                         319546140.
+Pages purged:                               17106888.
+File-backed pages:                            660808.
+Anonymous pages:                              912865.
+Pages stored in compressor:                   477177.
+Pages occupied by compressor:                 208818.
+Decompressions:                            293032917.
+Compressions:                              477132256.
+Pageins:                                   421571183.
+Pageouts:                                      81772.
+Swapins:                                    11073380.
+Swapouts:                                   26562148.
+Pages tagged:                                 167387.
+Pages tagged resident:                        135235.
+Pages tagged compressed:                       32152.
+Pages tag-storage:                             73728.
+Pages tag-storage holding tags:                 8508.
+Pages tag-storage free:                         1243.
+Pages tag-storage non-tag pageable:            63719.
+Pages tag-storage non-tag wired:                   8.
+Bytes of compressed tags:                    5334912.
+Tagged compressions:                         2656996.
+Tagged decompressions:                       2494949.
+8e20f43ba89e9e9dbb26bdbf3b3bed03aa810357
+33d87f63e4892577a46650ced6aff785572292f9
+a421f2fea5eb7f91e0db399e44b0fb0779ee1603
+158.0.8127.37
+cdd57b33b09f8b2e7d7648d63dc88fbd1f1d444ecd08eea91fe67db192773c0b  /Users/xban1x/Library/Caches/lightningpanda/jsc/0e0dd7038a7a-6f4649e395e0/lib/libJavaScriptCore.a

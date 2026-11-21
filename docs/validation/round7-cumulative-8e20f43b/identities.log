@@ -1,0 +1,18 @@
+main.json OK
+outcomes-chrome-main.json.gz OK
+outcomes-chrome-supplement.json.gz OK
+outcomes-frozen-main.json.gz OK
+outcomes-frozen-supplement.json.gz OK
+supplement.json OK
+withheld.json OK
+a04d264c815c317ba1ffa89d388144ec639ec0e4a1a114a2ba524ad4bdd130c8  /Applications/Google Chrome.app/Contents/Frameworks/Google Chrome Framework.framework/Versions/Current/Google Chrome Framework
+c7ec5388a3140a90784a06446adedc9089f3d25a79598ad64d2dec99839649b5  /Users/xban1x/Library/Caches/lightningpanda/studio-r7/integrated-8e20f43b/prior-immutable/outcomes-main.json.gz
+c4f4271614e3945f086c01e7909f16447a718f88f179c195d6cf2284c35c5708  /Users/xban1x/Library/Caches/lightningpanda/studio-r7/integrated-8e20f43b/prior-immutable/outcomes-supplement.json.gz
+8e20f43ba89e9e9dbb26bdbf3b3bed03aa810357
+33d87f63e4892577a46650ced6aff785572292f9
+7efc9828957ae18dbd8c8c7df59cba3c59524633
+cb87ba371320af134406ebd945bb92d080430204
+a8cf461e607fb596ac76babc391ed598cab7a675
+7c4f42242ae76c2d5555f420c268b44cfa7c9266
+e090242d6c73f7f9e9bded0b045f3489fb35f0bd
+a8cf461e607fb596ac76babc391ed598cab7a675	refs/heads/t3/css-validation-combined-e090242d
