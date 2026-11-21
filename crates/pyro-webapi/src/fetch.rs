@@ -279,6 +279,13 @@ impl PageDom {
         *self.referrer.referrer.borrow_mut() = value.unwrap_or_default();
         self.set_referrer_policy_header(header);
     }
+    /// An initial about:blank document takes its creator's URL verbatim and
+    /// snapshots the creator's referrer policy before any script can access it.
+    pub fn inherit_initial_referrer(&self, creator: &PageDom) {
+        *self.referrer.referrer.borrow_mut() = creator.document_url();
+        self.set_referrer_policy_header(Some(creator.referrer_policy()));
+    }
+
     /// Sets `document.referrer` to the `Referer` the navigation request's
     /// last hop sent (empty: none) and the document response's
     /// `Referrer-Policy` header.
