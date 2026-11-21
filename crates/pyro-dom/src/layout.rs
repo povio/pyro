@@ -1048,14 +1048,17 @@ impl Layout {
         if (self.html_local(dom, idx) == Some("body")) != self.is_quirks(dom) {
             return None;
         }
-        let v = self.viewport();
-        // pyro: less the viewport's shown classic scrollbars.
-        let (bar_width, bar_height) =
-            self.synced_geometry_source(dom).map_or((0.0, 0.0), |s| s.viewport_scrollbar_sizes());
+        let viewport = self.viewport();
+        let (width, height) = self.without_scrollbars(dom, (viewport.width, viewport.height));
         Some(match axis {
-            Axis::Width => (v.width as f64 - bar_width).max(0.0),
-            Axis::Height => (v.height as f64 - bar_height).max(0.0),
+            Axis::Width => width,
+            Axis::Height => height,
         })
+    }
+
+    fn without_scrollbars(&self, dom: &Dom, (width, height): (u32, u32)) -> (f64, f64) {
+        let (bar_width, bar_height) = self.synced_geometry_source(dom).map_or((0.0, 0.0), |s| s.viewport_scrollbar_sizes());
+        ((width as f64 - bar_width).max(0.0), (height as f64 - bar_height).max(0.0))
     }
 
     /// Element.zig:1671-1675.
@@ -2037,10 +2040,8 @@ impl Layout {
     /// viewport-sized.
     pub fn document_scroll_size(&self, dom: &Dom) -> (f64, f64) {
         let (w, h) = self.document_extent(dom);
-        let (vw, vh) = self.window_size();
-        // pyro: less the viewport's shown classic scrollbars (Chrome).
-        let (bw, bh) = self.synced_geometry_source(dom).map_or((0.0, 0.0), |s| s.viewport_scrollbar_sizes());
-        (w.max(vw as f64 - bw), h.max(vh as f64 - bh))
+        let (vw, vh) = self.without_scrollbars(dom, self.window_size());
+        (w.max(vw), h.max(vh))
     }
 
     // ----- hit testing -------------------------------------------------------
@@ -2716,10 +2717,11 @@ impl Layout {
 
     /// pyro: the viewport's scroll range on each axis ([`Self::viewport_x_reversed`]).
     fn viewport_scroll_range(&self, dom: &Dom) -> ((i32, i32), (i32, i32)) {
-        let (w, h) = self.document_scroll_size(dom);
+        let (w, h) = self.document_extent(dom);
+        let (vw, vh) = self.without_scrollbars(dom, self.window_size());
         // (Saturated: an extent past i32::MAX px stays a valid range, min <= max.)
-        let limit = |size: f64, visible: u32| scroll_limit(size, visible).min(i32::MAX as u32) as i32;
-        let (mx, my) = (limit(w, self.inner_width()), limit(h, self.inner_height()));
+        let limit = |size: f64, visible: f64| (round_layout_unit(size) - round_layout_unit(visible)).clamp(0.0, i32::MAX as f64) as i32;
+        let (mx, my) = (limit(w, vw), limit(h, vh));
         let x = if self.viewport_x_reversed(dom) { (-mx, 0) } else { (0, mx) };
         (x, (0, my))
     }
@@ -4666,13 +4668,6 @@ fn focus_scroll_offset(start: f64, size: f64, viewport: f64, current: i64) -> Op
         return None;
     }
     Some((current as f64 + start + size / 2.0 - viewport / 2.0).round().clamp(i32::MIN as f64, i32::MAX as f64) as i32)
-}
-
-/// Window.zig:848-851. The document's pixel-snapped size (what `scrollHeight`
-/// reads) less the viewport, as Chromium clamps: a document whose overflow
-/// ends a layout unit short of a pixel still scrolls to that pixel.
-fn scroll_limit(size: f64, visible: u32) -> u32 {
-    (round_layout_unit(size) - visible as f64).clamp(0.0, u32::MAX as f64) as u32
 }
 
 /// frame/user_input.zig:612-615.
