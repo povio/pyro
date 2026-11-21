@@ -1,0 +1,10 @@
+{
+  "base": "8e7144b7e7de68be3b5b345138abe2c1dcc6d232",
+  "candidate": "b58b00b07f20042205406ecd76123efcc997d744",
+  "baseBinary": "daea9cf80d257a1a0574e625ba38e58358104defbf2b7dee408fd8af667d72f8",
+  "candidateBinary": "14f96af64b1fe577d09bf79cdc30e649e9572ffce4461d3c7c2cb8c5599cd995",
+  "jsc": "0e0dd7038a7a-6f4649e395e0",
+  "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+  "chrome": "Google Chrome Stable 158.0.8127.37",
+  "referencePublication": "ee24e07f6b15b399d6e8e2157c763809341b6e44"
+}

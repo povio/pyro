@@ -1,0 +1,582 @@
+{
+  "html/webappapis/system-state-and-capabilities/the-navigator-object/protocol-handler-path.https.html": {
+    "before": [
+      "error",
+      "Error",
+      false,
+      0,
+      0,
+      "a86e79e42eb6e25301df206ebb101ce5a2632c9f",
+      "window"
+    ],
+    "after": [
+      "error",
+      "Error",
+      false,
+      0,
+      0,
+      "a86e79e42eb6e25301df206ebb101ce5a2632c9f",
+      "window"
+    ],
+    "chrome": [
+      "error",
+      "Error",
+      false,
+      0,
+      0,
+      "a86e79e42eb6e25301df206ebb101ce5a2632c9f",
+      "window"
+    ]
+  },
+  "html/webappapis/system-state-and-capabilities/the-navigator-object/protocol-handler-query-nosw.https.html": {
+    "before": [
+      "error",
+      "Error",
+      false,
+      0,
+      0,
+      "97f67e94eceb09959e704b6fc30d17a23a55f41d",
+      "window"
+    ],
+    "after": [
+      "error",
+      "Error",
+      false,
+      0,
+      0,
+      "97f67e94eceb09959e704b6fc30d17a23a55f41d",
+      "window"
+    ],
+    "chrome": [
+      "error",
+      "Error",
+      false,
+      0,
+      0,
+      "97f67e94eceb09959e704b6fc30d17a23a55f41d",
+      "window"
+    ]
+  },
+  "html/webappapis/system-state-and-capabilities/the-navigator-object/protocol-handler-fragment.https.html": {
+    "before": [
+      "error",
+      "Error",
+      false,
+      0,
+      0,
+      "1eaefaa45f7373ecd0c0c4287ad2a300108c113c",
+      "window"
+    ],
+    "after": [
+      "error",
+      "Error",
+      false,
+      0,
+      0,
+      "1eaefaa45f7373ecd0c0c4287ad2a300108c113c",
+      "window"
+    ],
+    "chrome": [
+      "error",
+      "Error",
+      false,
+      0,
+      0,
+      "1eaefaa45f7373ecd0c0c4287ad2a300108c113c",
+      "window"
+    ]
+  },
+  "html/webappapis/system-state-and-capabilities/the-navigator-object/protocol-handler-fragment-nosw.https.html": {
+    "before": [
+      "error",
+      "Error",
+      false,
+      0,
+      0,
+      "61b9722ec29a09bf30ef29c3ee71260bf155931c",
+      "window"
+    ],
+    "after": [
+      "error",
+      "Error",
+      false,
+      0,
+      0,
+      "61b9722ec29a09bf30ef29c3ee71260bf155931c",
+      "window"
+    ],
+    "chrome": [
+      "error",
+      "Error",
+      false,
+      0,
+      0,
+      "61b9722ec29a09bf30ef29c3ee71260bf155931c",
+      "window"
+    ]
+  },
+  "html/webappapis/system-state-and-capabilities/the-navigator-object/protocol-handler-query.https.html": {
+    "before": [
+      "error",
+      "Error",
+      false,
+      0,
+      0,
+      "8c7b2e1cfddefc13212be75d0ff79ba415bda019",
+      "window"
+    ],
+    "after": [
+      "error",
+      "Error",
+      false,
+      0,
+      0,
+      "8c7b2e1cfddefc13212be75d0ff79ba415bda019",
+      "window"
+    ],
+    "chrome": [
+      "error",
+      "Error",
+      false,
+      0,
+      0,
+      "8c7b2e1cfddefc13212be75d0ff79ba415bda019",
+      "window"
+    ]
+  },
+  "html/webappapis/system-state-and-capabilities/the-navigator-object/navigator-indexed.html": {
+    "before": [
+      "complete",
+      "OK",
+      true,
+      4,
+      4,
+      "a971fe9d1c41f28417d58892ebbf484df469e71f",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      true,
+      4,
+      4,
+      "a971fe9d1c41f28417d58892ebbf484df469e71f",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      4,
+      4,
+      "a971fe9d1c41f28417d58892ebbf484df469e71f",
+      "window"
+    ]
+  },
+  "html/webappapis/system-state-and-capabilities/the-navigator-object/historical.https.window.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      4,
+      5,
+      "f6b9db078e0ecf94955330c15def280c0ca30c4e",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      true,
+      5,
+      5,
+      "f6b9db078e0ecf94955330c15def280c0ca30c4e",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      5,
+      5,
+      "f6b9db078e0ecf94955330c15def280c0ca30c4e",
+      "window"
+    ]
+  },
+  "html/webappapis/system-state-and-capabilities/the-navigator-object/clientinformation.window.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      1,
+      2,
+      "197a3b13e93faf59f30becc455c45c2d574bd8f8",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      false,
+      1,
+      2,
+      "197a3b13e93faf59f30becc455c45c2d574bd8f8",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      2,
+      2,
+      "197a3b13e93faf59f30becc455c45c2d574bd8f8",
+      "window"
+    ]
+  },
+  "html/webappapis/system-state-and-capabilities/the-navigator-object/navigator-window-controls-overlay.tentative.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      0,
+      7,
+      "9cff8d316340cdb29edb48405bf5441ab72a4cf1",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      false,
+      0,
+      7,
+      "9cff8d316340cdb29edb48405bf5441ab72a4cf1",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      7,
+      7,
+      "9cff8d316340cdb29edb48405bf5441ab72a4cf1",
+      "window"
+    ]
+  },
+  "html/webappapis/system-state-and-capabilities/the-navigator-object/navigator.any.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      8,
+      12,
+      "07bccb788052e7ce2cb722558e416b5c017ed9f0",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      false,
+      8,
+      12,
+      "07bccb788052e7ce2cb722558e416b5c017ed9f0",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      false,
+      11,
+      12,
+      "07bccb788052e7ce2cb722558e416b5c017ed9f0",
+      "window"
+    ]
+  },
+  "html/webappapis/system-state-and-capabilities/the-navigator-object/navigator_user_agent.https.tentative.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      0,
+      2,
+      "3fbe3eaa62bd7e42b0c2cae0a6242bf319bf70fa",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      false,
+      0,
+      2,
+      "3fbe3eaa62bd7e42b0c2cae0a6242bf319bf70fa",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      2,
+      2,
+      "3fbe3eaa62bd7e42b0c2cae0a6242bf319bf70fa",
+      "window"
+    ]
+  },
+  "html/webappapis/system-state-and-capabilities/the-navigator-object/navigator.any.worker.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      7,
+      12,
+      "07bccb788052e7ce2cb722558e416b5c017ed9f0",
+      "dedicatedworker"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      false,
+      7,
+      12,
+      "07bccb788052e7ce2cb722558e416b5c017ed9f0",
+      "dedicatedworker"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      false,
+      11,
+      12,
+      "07bccb788052e7ce2cb722558e416b5c017ed9f0",
+      "dedicatedworker"
+    ]
+  },
+  "html/webappapis/system-state-and-capabilities/the-navigator-object/navigator_user_agent.tentative.html": {
+    "before": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "dd4c531070c8a21328a14709fd0357c6fba15001",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "dd4c531070c8a21328a14709fd0357c6fba15001",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "dd4c531070c8a21328a14709fd0357c6fba15001",
+      "window"
+    ]
+  },
+  "html/webappapis/system-state-and-capabilities/the-navigator-object/navigatorcookies-cookieenabled-true.html": {
+    "before": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "fc7f49d143d687b1aa47cc2a52fdf1a2f35d0fb7",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "fc7f49d143d687b1aa47cc2a52fdf1a2f35d0fb7",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "fc7f49d143d687b1aa47cc2a52fdf1a2f35d0fb7",
+      "window"
+    ]
+  },
+  "html/webappapis/system-state-and-capabilities/the-navigator-object/navigatorlanguage.html": {
+    "before": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "d56df8a3d857504ebeff29d87339893a8ce78a51",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "d56df8a3d857504ebeff29d87339893a8ce78a51",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      1,
+      1,
+      "d56df8a3d857504ebeff29d87339893a8ce78a51",
+      "window"
+    ]
+  },
+  "html/webappapis/system-state-and-capabilities/the-navigator-object/plugins-and-mimetypes.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      1,
+      3,
+      "af0501580121f4a5ddc1216cb519052a930dda53",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      false,
+      1,
+      3,
+      "af0501580121f4a5ddc1216cb519052a930dda53",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      3,
+      3,
+      "af0501580121f4a5ddc1216cb519052a930dda53",
+      "window"
+    ]
+  },
+  "html/webappapis/system-state-and-capabilities/the-navigator-object/protocol.tentative.https.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      0,
+      18,
+      "0120aaa12ff87482e3dd116e71fec66e6aeca7db",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      false,
+      0,
+      18,
+      "0120aaa12ff87482e3dd116e71fec66e6aeca7db",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      18,
+      18,
+      "0120aaa12ff87482e3dd116e71fec66e6aeca7db",
+      "window"
+    ]
+  },
+  "html/webappapis/system-state-and-capabilities/the-navigator-object/protocol.https.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      0,
+      244,
+      "add78d2fd47ade772cadea38d5ecbfd2e51ef9b4",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      true,
+      244,
+      244,
+      "add78d2fd47ade772cadea38d5ecbfd2e51ef9b4",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      244,
+      244,
+      "add78d2fd47ade772cadea38d5ecbfd2e51ef9b4",
+      "window"
+    ]
+  },
+  "html/webappapis/system-state-and-capabilities/the-navigator-object/secure_context.html": {
+    "before": [
+      "complete",
+      "OK",
+      true,
+      2,
+      2,
+      "685f5d19d7cae0cae1fd7b199dc8f3c9e9bbb636",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      true,
+      2,
+      2,
+      "685f5d19d7cae0cae1fd7b199dc8f3c9e9bbb636",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      true,
+      2,
+      2,
+      "685f5d19d7cae0cae1fd7b199dc8f3c9e9bbb636",
+      "window"
+    ]
+  },
+  "html/webappapis/system-state-and-capabilities/the-navigator-object/per-global.window.html": {
+    "before": [
+      "complete",
+      "OK",
+      false,
+      4,
+      8,
+      "016aef8c4e6ad75d419c55f56d56bf344e8ac734",
+      "window"
+    ],
+    "after": [
+      "complete",
+      "OK",
+      false,
+      4,
+      8,
+      "016aef8c4e6ad75d419c55f56d56bf344e8ac734",
+      "window"
+    ],
+    "chrome": [
+      "complete",
+      "OK",
+      false,
+      6,
+      8,
+      "016aef8c4e6ad75d419c55f56d56bf344e8ac734",
+      "window"
+    ]
+  }
+}

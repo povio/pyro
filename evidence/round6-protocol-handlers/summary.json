@@ -1,0 +1,24 @@
+{
+  "before": {
+    "pages": 20,
+    "full": 5,
+    "passes": 34
+  },
+  "after": {
+    "pages": 20,
+    "full": 7,
+    "passes": 279
+  },
+  "chrome": {
+    "pages": 20,
+    "full": 12,
+    "passes": 318
+  },
+  "gained": 245,
+  "lost": 0,
+  "chromeOnly": 39,
+  "lpOnly": 0,
+  "gainedChrome": 245,
+  "literalChromeOnly": 41,
+  "literalLpOnly": 2
+}
