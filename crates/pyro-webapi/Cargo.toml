@@ -57,6 +57,8 @@ percent-encoding = "2.3.2"
 pkcs1 = { version = "0.7.5", features = ["alloc", "pkcs8"] }
 pkcs8 = { version = "0.10", features = ["alloc"] }
 rand_core = { version = "0.6", features = ["getrandom"] }
+# The RFC 8439 implementation is already linked through rustls in pyro-net.
+ring = { version = "0.17.14", default-features = false, features = ["alloc"] }
 rustc-hash = "2"
 sha1 = { version = "0.10", features = ["oid"] }
 sha2 = { version = "0.10", features = ["oid"] }

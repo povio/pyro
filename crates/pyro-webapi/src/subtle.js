@@ -120,7 +120,7 @@
     if (n < 0 || n > max) throw new TypeErrorC(`${what} is outside the accepted range`);
     return n + 0;
   };
-  const FORMATS = ['raw', 'spki', 'pkcs8', 'jwk'];
+  const FORMATS = ['raw', 'raw-secret', 'raw-public', 'raw-private', 'raw-seed', 'spki', 'pkcs8', 'jwk'];
   const USAGES = ['encrypt', 'decrypt', 'sign', 'verify', 'deriveKey', 'deriveBits', 'wrapKey', 'unwrapKey'];
   // These are valid KeyUsage enum values even when the selected algorithm
   // cannot use them. Its own usage checks run after WebIDL conversion.
@@ -173,6 +173,7 @@
 
   // ----- Algorithm normalization -----------------------------------------
 
+  const CHACHA = 'ChaCha20-Poly1305';
   const AES = ['AES-CTR', 'AES-CBC', 'AES-GCM', 'AES-KW'];
   const RSA = ['RSASSA-PKCS1-v1_5', 'RSA-PSS', 'RSA-OAEP'];
   const SHA = ['SHA-1', 'SHA-256', 'SHA-384', 'SHA-512'];
@@ -181,7 +182,7 @@
     for (const name of names) out[name] = type;
     return out;
   };
-  const cipher = { 'RSA-OAEP': 'RsaOaepParams', 'AES-CTR': 'AesCtrParams', 'AES-CBC': 'AesCbcParams', 'AES-GCM': 'AesGcmParams' };
+  const cipher = { [CHACHA]: 'AeadParams', 'RSA-OAEP': 'RsaOaepParams', 'AES-CTR': 'AesCtrParams', 'AES-CBC': 'AesCbcParams', 'AES-GCM': 'AesGcmParams' };
   const signer = { 'RSASSA-PKCS1-v1_5': '', 'RSA-PSS': 'RsaPssParams', ECDSA: 'EcdsaParams', Ed25519: '', HMAC: '' };
   const REGISTRY = {
     encrypt: cipher,
@@ -191,20 +192,21 @@
     digest: map(SHA, ''),
     generateKey: {
       ...map(RSA, 'RsaHashedKeyGenParams'), ECDSA: 'EcKeyGenParams', ECDH: 'EcKeyGenParams', Ed25519: '', X25519: '',
-      ...map(AES, 'AesKeyGenParams'), HMAC: 'HmacKeyGenParams',
+      [CHACHA]: '', ...map(AES, 'AesKeyGenParams'), HMAC: 'HmacKeyGenParams',
     },
     deriveBits: { ECDH: 'EcdhKeyDeriveParams', X25519: 'EcdhKeyDeriveParams', HKDF: 'HkdfParams', PBKDF2: 'Pbkdf2Params' },
     importKey: {
       ...map(RSA, 'RsaHashedImportParams'), ECDSA: 'EcKeyImportParams', ECDH: 'EcKeyImportParams', Ed25519: '', X25519: '',
-      ...map(AES, ''), HMAC: 'HmacImportParams', HKDF: '', PBKDF2: '',
+      [CHACHA]: '', ...map(AES, ''), HMAC: 'HmacImportParams', HKDF: '', PBKDF2: '',
     },
     wrapKey: { 'AES-KW': '' },
     unwrapKey: { 'AES-KW': '' },
-    'get key length': { ...map(AES, 'AesDerivedKeyParams'), HMAC: 'HmacImportParams', HKDF: '', PBKDF2: '' },
+    'get key length': { [CHACHA]: '', ...map(AES, 'AesDerivedKeyParams'), HMAC: 'HmacImportParams', HKDF: '', PBKDF2: '' },
   };
   const BS = 1, BS_OPT = 2, HASH = 3, ULONG = 4, ULONG_OPT = 5, USHORT = 6, OCTET = 7, OCTET_OPT = 8, STRING = 9, BIGINT = 10, KEY = 11;
   // Members of each dictionary, inherited ones first, then in lexicographic order.
   const DICTIONARIES = {
+    AeadParams: [['additionalData', BS_OPT], ['iv', BS], ['tagLength', OCTET_OPT]],
     AesCbcParams: [['iv', BS]],
     AesCtrParams: [['counter', BS], ['length', OCTET]],
     AesGcmParams: [['additionalData', BS_OPT], ['iv', BS], ['tagLength', OCTET_OPT]],
@@ -375,6 +377,7 @@
     return SIGN_KEY;
   };
   const SECRET_USAGES = {
+    [CHACHA]: ['encrypt', 'decrypt', 'wrapKey', 'unwrapKey'],
     'AES-CTR': ['encrypt', 'decrypt', 'wrapKey', 'unwrapKey'],
     'AES-CBC': ['encrypt', 'decrypt', 'wrapKey', 'unwrapKey'],
     'AES-GCM': ['encrypt', 'decrypt', 'wrapKey', 'unwrapKey'],
@@ -435,14 +438,17 @@
       return makeKey('secret', false, { name }, usages, copy(keyData.buffer));
     }
     let bytes;
-    if (format === 'raw') {
+    if (format === (name === CHACHA ? 'raw-secret' : 'raw')) {
       bytes = copy(keyData.buffer);
     } else if (format === 'jwk') {
       const jwk = keyData.jwk;
       if (jwk.kty !== 'oct') throw data("The JWK 'kty' member must be 'oct'");
       if (jwk.k === undefined) throw data("The JWK 'k' member is missing");
       bytes = b64urlDecode(jwk.k);
-      if (name === 'HMAC') {
+      if (name === CHACHA) {
+        if (bytes.length !== 32) throw data('ChaCha20-Poly1305 keys must be 256 bits');
+        if (jwk.alg !== undefined && jwk.alg !== 'C20P') throw data("The JWK 'alg' member must be 'C20P'");
+      } else if (name === 'HMAC') {
         if (jwk.alg !== undefined && jwk.alg !== `HS${JWK_HASH[normalized.hash.name]}`) throw data("The JWK 'alg' member does not match the hash");
       } else {
         const bits = bytes.length * 8;
@@ -452,6 +458,10 @@
       jwkCommon(jwk, usages, extractable, name === 'HMAC' ? 'sig' : 'enc');
     } else {
       throw notSupported(`${name} keys cannot be imported as '${format}'`);
+    }
+    if (name === CHACHA) {
+      if (bytes.length !== 32) throw data('ChaCha20-Poly1305 keys must be 256 bits');
+      return makeKey('secret', extractable, {name}, usages, bytes);
     }
     if (name === 'HMAC') {
       const bits = bytes.length * 8;
@@ -504,6 +514,7 @@
     if (format === 'jwk') {
       input = asymJwk(keyData.jwk, normalized, extractable, usages);
     } else {
+      if (format !== 'raw' && format !== 'pkcs8' && format !== 'spki') throw notSupported(`${name} keys cannot be imported as '${format}'`);
       if (format === 'raw' && kind === 'RSA') throw notSupported('RSA keys cannot be imported as raw');
       checkUsages(usages, format === 'pkcs8' ? allowed.private : allowed.public);
       input = copy(keyData.buffer);
@@ -520,11 +531,19 @@
     return makeKey(type, extractable, alg, usages, view(result[1]));
   }
 
+  // Modern Web Crypto names raw formats by key type. Classic symmetric
+  // and asymmetric algorithms retain raw as an alias for their existing format.
+  function resolveKeyFormat(format, name) {
+    if (format === 'raw-secret' && name !== CHACHA && SECRET_USAGES[name]) return 'raw';
+    if (format === 'raw-public' && !SECRET_USAGES[name]) return 'raw';
+    return format;
+  }
   function importKeyStep(format, keyData, normalized, extractable, usages) {
     const name = normalized.name;
     if (format === 'jwk' ? keyData.jwk === undefined : keyData.buffer === undefined) {
       throw new TypeErrorC(format === 'jwk' ? 'Key data must be a JsonWebKey for the jwk format' : 'Key data must be a BufferSource for this format');
     }
+    format = resolveKeyFormat(format, name);
     const key = SECRET_USAGES[name] ? importSecret(format, keyData, normalized, extractable, usages) : importAsym(format, keyData, normalized, extractable, usages);
     const k = slotsOf(key);
     if ((k.type === 'secret' || k.type === 'private') && k.usages.length === 0) throw syntax('Usages cannot be empty when creating a key.');
@@ -535,13 +554,18 @@
     const name = k.alg.name;
     if (name === 'HKDF' || name === 'PBKDF2') throw notSupported(`${name} keys cannot be exported`);
     if (!k.extractable) throw access('The key is not extractable');
+    format = resolveKeyFormat(format, name);
     if (k.type === 'secret') {
-      if (format === 'raw') return copyOut(k.material);
+      if (format === (name === CHACHA ? 'raw-secret' : 'raw')) return copyOut(k.material);
       if (format !== 'jwk') throw notSupported(`${name} keys cannot be exported as '${format}'`);
-      const alg = name === 'HMAC' ? `HS${JWK_HASH[k.alg.hash]}` : `A${k.material.length * 8}${name.slice(4)}`;
+      let alg;
+      if (name === CHACHA) alg = 'C20P';
+      else if (name === 'HMAC') alg = `HS${JWK_HASH[k.alg.hash]}`;
+      else alg = `A${k.material.length * 8}${name.slice(4)}`;
       return { alg, ext: k.extractable, k: b64urlEncode(k.material), key_ops: [...k.usages], kty: 'oct' };
     }
     const kind = asymKind(name);
+    if (format !== 'raw' && format !== 'pkcs8' && format !== 'spki' && format !== 'jwk') throw notSupported(`${name} keys cannot be exported as '${format}'`);
     if (format === 'raw' && kind === 'RSA') throw notSupported('RSA keys cannot be exported as raw');
     if ((format === 'spki' || format === 'raw') && k.type !== 'public') throw access(`Only public keys can be exported as '${format}'`);
     if (format === 'pkcs8' && k.type !== 'private') throw access("Only private keys can be exported as 'pkcs8'");
@@ -575,7 +599,10 @@
     if (SECRET_USAGES[name]) {
       checkUsages(usages, SECRET_USAGES[name]);
       let alg, bytes;
-      if (name === 'HMAC') {
+      if (name === CHACHA) {
+        alg = {name};
+        bytes = view(N.random(32));
+      } else if (name === 'HMAC') {
         let length = normalized.length;
         if (length === undefined) length = hmacBlockBits(normalized.hash.name);
         else if (length === 0) throw operation('The HMAC key length must not be zero');
@@ -616,6 +643,10 @@
   function cryptStep(encrypt, normalized, k, bytes) {
     const name = normalized.name;
     switch (name) {
+      case CHACHA:
+        if (normalized.iv.length !== 12) throw operation('ChaCha20-Poly1305 requires a 96-bit IV');
+        if (normalized.tagLength !== undefined && normalized.tagLength !== 128) throw operation('ChaCha20-Poly1305 requires a 128-bit tag');
+        return N.chacha20Poly1305(encrypt, k.material, normalized.iv, bytes, normalized.additionalData || new Uint8ArrayC(0));
       case 'AES-CBC':
         if (normalized.iv.length !== 16) throw operation('The AES-CBC iv must be 16 bytes');
         return N.aesCbc(encrypt, k.material, normalized.iv, bytes);
@@ -676,6 +707,7 @@
   }
   function keyLength(normalized) {
     const name = normalized.name;
+    if (name === CHACHA) return 256;
     if (name === 'HKDF' || name === 'PBKDF2') return null;
     if (name === 'HMAC') {
       if (normalized.length === undefined) return hmacBlockBits(normalized.hash.name);
@@ -751,7 +783,7 @@
       checkKey(k, normalized, 'deriveKey');
       const length = keyLength(lengthAlgorithm);
       const secret = deriveBitsStep(normalized, k, length);
-      return importKeyStep('raw', { buffer: [secret, 0, apply(abLength, secret, [])] }, importAlgorithm, extractable, usages);
+      return importKeyStep('raw-secret', { buffer: [secret, 0, apply(abLength, secret, [])] }, importAlgorithm, extractable, usages);
     },
     deriveBits(args) {
       required(args, 2, 'deriveBits');
