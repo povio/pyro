@@ -4233,9 +4233,8 @@ impl Layout {
                 None => {}
             }
         }
-        let name = if matches!(name, "inline-size" | "block-size") {
-            let horizontal = self.style.stylo_style(dom, el).is_none_or(|style| style.writing_mode.is_horizontal());
-            if (name == "inline-size") == horizontal { "width" } else { "height" }
+        let name = if matches!(name, "inline-size" | "block-size" | "min-inline-size" | "min-block-size" | "max-inline-size" | "max-block-size") {
+            self.style.stylo_style(dom, el).and_then(|style| crate::animation::physical_property(name, &style)).unwrap_or(name)
         } else {
             name
         };
