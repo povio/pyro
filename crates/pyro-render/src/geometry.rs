@@ -510,7 +510,17 @@ impl Geometry {
             g.map_or(0.0, |g| g.top),
             g.map_or(0.0, |g| g.bottom),
         );
-        let scroll_width = if reversed.x {
+        let measure_width_from_right = reversed.x || node.primary_styles().is_some_and(|style| {
+            use style::logical_geometry::PhysicalSide;
+            use style::values::computed::Overflow;
+            let non_scrolling = |value| matches!(value, Overflow::Visible | Overflow::Clip);
+            let wm = style.writing_mode;
+            style.clone_display().inside() != DisplayInside::Flex
+                && non_scrolling(style.clone_overflow_x()) && non_scrolling(style.clone_overflow_y())
+                && (wm.inline_start_physical_side() == PhysicalSide::Right
+                    || wm.block_start_physical_side() == PhysicalSide::Right)
+        });
+        let scroll_width = if measure_width_from_right {
             client_width.max((l.size.width - l.border.right - g.1) as f64 - o.x0)
         } else {
             client_width.max(o.x1 - (l.border.left + g.0) as f64)
