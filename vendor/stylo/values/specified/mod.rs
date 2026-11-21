@@ -193,6 +193,7 @@ pub mod url;
 pub enum AngleOrPercentage {
     Percentage(Percentage),
     Angle(Angle),
+    Calc(Box<calc::CalcNumeric>),
 }
 
 impl AngleOrPercentage {
@@ -204,21 +205,12 @@ impl AngleOrPercentage {
         if let Ok(per) = input.try_parse(|i| Percentage::parse(context, i)) {
             return Ok(AngleOrPercentage::Percentage(per));
         }
-        // pyro: a math function mixing angles and percentages, a percentage being that fraction
-        // of a full turn (the only use of this type is a conic gradient's stops).
-        if let Ok(angle) = input.try_parse(|i| -> Result<Angle, ParseError> {
-            let name = match i.next()? {
-                Token::Function(name) => name.clone(),
-                _ => return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError)),
-            };
-            let function = calc::CalcNode::math_function(context, &name)?;
-            calc::CalcNode::parse_angle_percentage_of_turn(context, i, function)
-                .map(|calc| Angle::new_calc(Box::new(calc)))
-        }) {
-            return Ok(AngleOrPercentage::Angle(angle));
+        if let Ok(angle) = input.try_parse(|i| Angle::parse_internal(context, i, allow_unitless_zero)) {
+            return Ok(Self::Angle(angle));
         }
-
-        Angle::parse_internal(context, input, allow_unitless_zero).map(AngleOrPercentage::Angle)
+        let function = calc::CalcNode::math_function(context, input.expect_function()?)?;
+        calc::CalcNode::parse_angle_percentage_of_turn(context, input, function)
+            .map(|calc| Self::Calc(Box::new(calc)))
     }
 
     /// Allow unitless angles, used for conic-gradients as specified by the spec.

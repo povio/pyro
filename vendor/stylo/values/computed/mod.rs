@@ -930,6 +930,18 @@ impl ToComputedValue for specified::AngleOrPercentage {
             specified::AngleOrPercentage::Angle(angle) => {
                 AngleOrPercentage::Angle(angle.to_computed_value(context))
             },
+            specified::AngleOrPercentage::Calc(calc) => {
+                use specified::calc::{CalcNode, Leaf};
+                let node = calc.node.map_leaves(|leaf| match leaf {
+                    Leaf::Percentage(p) => Leaf::Angle(specified::NoCalcAngle::from_degrees(p.get() * 360.0)),
+                    other => other.clone(),
+                });
+                let angle = specified::Angle::new_calc(Box::new(specified::calc::CalcNumeric {
+                    node,
+                    clamping_mode: calc.clamping_mode,
+                }));
+                AngleOrPercentage::Angle(angle.to_computed_value(context))
+            },
         }
     }
     #[inline]
