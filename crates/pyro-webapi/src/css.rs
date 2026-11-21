@@ -2207,25 +2207,7 @@ fn detached_model() -> Rc<SheetModel> {
     })
 }
 
-/// The media queries of a media list's text (split at top-level commas).
-fn media_queries(text: &str) -> Vec<String> {
-    let mut out = Vec::new();
-    let (mut depth, mut start) = (0i32, 0);
-    for (i, c) in text.char_indices() {
-        match c {
-            '(' => depth += 1,
-            ')' => depth -= 1,
-            ',' if depth <= 0 => {
-                out.push(text[start..i].split_ascii_whitespace().collect::<Vec<_>>().join(" "));
-                start = i + 1;
-            }
-            _ => {}
-        }
-    }
-    out.push(text[start..].split_ascii_whitespace().collect::<Vec<_>>().join(" "));
-    out.retain(|q| !q.is_empty());
-    out
-}
+use pyro_dom::cssom::media_queries;
 
 /// A media list's text as `mediaText` serializes it.
 fn media_text(text: &str) -> String {
@@ -2381,19 +2363,21 @@ impl JsClass for MediaList {
         });
         def.indexed(|s, sh, i| Ok(media_queries(&MediaList::text(sh)).get(i as usize).map(|q| s.string(q))));
         def.method("appendMedium", 1, |s, sh, a| {
-            let medium = media_text(&arg_string(&a, 0, "MediaList.appendMedium")?);
+            let parsed = media_queries(&arg_string(&a, 0, "MediaList.appendMedium")?);
+            let [medium] = parsed.as_slice() else { return Ok(s.undefined()) };
             let mut queries = media_queries(&MediaList::text(sh));
-            if !medium.is_empty() && !queries.contains(&medium) {
-                queries.push(medium);
+            if !queries.contains(medium) {
+                queries.push(medium.clone());
                 MediaList::set(sh, &queries.join(", "))?;
             }
             Ok(s.undefined())
         });
         def.method("deleteMedium", 1, |s, sh, a| {
-            let medium = media_text(&arg_string(&a, 0, "MediaList.deleteMedium")?);
+            let parsed = media_queries(&arg_string(&a, 0, "MediaList.deleteMedium")?);
+            let [medium] = parsed.as_slice() else { return Ok(s.undefined()) };
             let mut queries = media_queries(&MediaList::text(sh));
             let before = queries.len();
-            queries.retain(|q| *q != medium);
+            queries.retain(|q| q != medium);
             if queries.len() == before {
                 return Err(JsError::dom("NotFoundError", "Failed to delete the medium: not in the list."));
             }

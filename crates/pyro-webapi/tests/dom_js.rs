@@ -6576,6 +6576,11 @@ fn css_rule_interfaces_rule_lists_and_rule_media() {
         ),
         "not print, not all|not print, not all|@import url(\"x.css\") layer(L) tv;|named:first"
     );
+    assert_eq!(eval(&e.main, "const media = rs[3].media; media.mediaText = 'screen, print, screen';
+        media.appendMedium('SCREEN'); media.deleteMedium('screen, print'); media.appendMedium('tv, all');
+        const before = media.mediaText; media.deleteMedium('SCREEN');
+        let missing; try { media.deleteMedium('all'); } catch (err) { missing = err.name; }
+        [before, media.length, media[0], missing].join('|')"), "screen, print, screen|1|print|NotFoundError");
     e.page.dispose();
 }
 

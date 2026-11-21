@@ -1102,6 +1102,11 @@ pub fn serialize_media_list(text: &str) -> String {
     parse_media_list(text).to_css_string()
 }
 
+pub fn media_queries(text: &str) -> Vec<String> {
+    use style_traits::ToCss;
+    parse_media_list(text).media_queries.iter().map(ToCss::to_css_string).collect()
+}
+
 fn parse_media_list(text: &str) -> style::media_queries::MediaList {
     use style::stylesheets::{CssRuleType, Origin, UrlExtraData};
     crate::stylo::enable_features();
