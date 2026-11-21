@@ -6676,6 +6676,14 @@ fn nested_style_rules_preserve_live_children_and_declaration_order() {
 }
 
 #[test]
+fn style_block_replacement_supersedes_cssom_without_another_sheet_read() {
+    let env = env("<style id=source>.target { z-index: 1 }</style><div class=target></div>");
+    assert_eq!(eval(&env.main, "const elem = document.querySelector('.target'), source = document.querySelector('style');
+        const style = source.sheet.cssRules[0].style; style.zIndex = '2'; const edited = getComputedStyle(elem).zIndex;
+        source.textContent = '.target { z-index: 3 }'; [edited, getComputedStyle(elem).zIndex].join('|')"), "2|3");
+}
+
+#[test]
 fn page_descriptor_edits_use_page_grammar() {
     let env = env("<style>@page { size: A4; page-orientation: rotate-right; @top-left { content: 'x' } }</style>");
     let realm = &env.main;

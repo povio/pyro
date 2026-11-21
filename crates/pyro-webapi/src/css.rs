@@ -923,9 +923,13 @@ fn sheet_model(page: &PageDom, owner: NodeId) -> Rc<SheetModel> {
 /// A CSSOM edit: the style engine reads the rules' text from now on.
 fn commit_edit(page: &PageDom, owner: NodeId, model: &SheetModel) {
     let text = model.list.rules.borrow().iter().map(|r| r.source_text()).collect::<Vec<_>>().join("\n");
-    page.set_stylesheet_text(owner, &text);
     model.edited.set(true);
-    if !page.dom.borrow().element(owner).is_ok_and(|e| *e.local_name() == *"style") {
+    let dom = page.dom.borrow();
+    if dom.element(owner).is_ok_and(|e| *e.local_name() == *"style") {
+        let generation = dom.style_sheet_generation(owner);
+        page.set_edited_style_element(owner, text, generation);
+    } else {
+        page.set_stylesheet_text(owner, &text);
         *model.source.borrow_mut() = text;
     }
 }

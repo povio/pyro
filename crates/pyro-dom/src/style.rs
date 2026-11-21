@@ -803,6 +803,7 @@ pub enum SheetSource {
     StyleElement,
     /// Text supplied by the loader (`<link rel=stylesheet>`, CSSOM edits).
     Text(String),
+    EditedStyleElement { text: String, generation: u32 },
 }
 
 struct Sheet {
@@ -819,6 +820,16 @@ struct Sheet {
     /// at: it is that sheet object's, so an updated `<style>` block (a new sheet object) is enabled
     /// at once, without waiting for anything to clear it ([`StyleEngine::is_off`]).
     disabled_at: u32,
+}
+
+impl Sheet {
+    fn supplied_text(&self, dom: &Dom) -> Option<&str> {
+        match &self.source {
+            SheetSource::Text(text) => Some(text),
+            SheetSource::EditedStyleElement { text, generation } if *generation == dom.style_sheet_generation(self.owner) => Some(text),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -1592,8 +1603,7 @@ impl StyleEngine {
         self.sheets.iter().find(|s| s.owner == owner).and_then(|s| match &s.source {
             // pyro: and a link that applies nothing now (its `disabled` attribute, its `rel`).
             _ if Self::is_off(s, dom) || link_not_stylesheet(dom, owner) => Some(""),
-            SheetSource::Text(t) => Some(t.as_str()),
-            SheetSource::StyleElement => None,
+            _ => s.supplied_text(dom),
         })
     }
 
@@ -1601,7 +1611,7 @@ impl StyleEngine {
     /// keeps its rules; it only applies nothing, which [`Self::sheet_text`] says): the CSSOM's.
     pub fn sheet_own_text(&self, owner: NodeId) -> Option<&str> {
         self.sheets.iter().find(|s| s.owner == owner).and_then(|s| match &s.source {
-            SheetSource::Text(t) => Some(t.as_str()),
+            SheetSource::Text(t) | SheetSource::EditedStyleElement { text: t, .. } => Some(t.as_str()),
             SheetSource::StyleElement => None,
         })
     }
@@ -1652,9 +1662,9 @@ impl StyleEngine {
             if Self::is_off(sheet, dom) || !dom.is_alive(sheet.owner) || !dom.is_connected(sheet.owner).unwrap_or(false) || link_not_stylesheet(dom, sheet.owner) {
                 continue;
             }
-            match &sheet.source {
-                SheetSource::Text(text) => f(Some(sheet.owner), text),
-                SheetSource::StyleElement => f(Some(sheet.owner), &dom.child_text_content(sheet.owner)),
+            match sheet.supplied_text(dom) {
+                Some(text) => f(Some(sheet.owner), text),
+                None => f(Some(sheet.owner), &dom.child_text_content(sheet.owner)),
             }
         }
         if let Some(text) = &self.script_fonts {
@@ -1679,9 +1689,9 @@ impl StyleEngine {
             }
             let Ok(owner) = dom.check(sheet.owner) else { continue };
             let scope = dom.id_of(dom.root_idx(owner));
-            match &sheet.source {
-                SheetSource::Text(text) => f(scope, text),
-                SheetSource::StyleElement => f(scope, &dom.child_text_content(sheet.owner)),
+            match sheet.supplied_text(dom) {
+                Some(text) => f(scope, text),
+                None => f(scope, &dom.child_text_content(sheet.owner)),
             }
         }
         if let Some(text) = &self.script_fonts {
@@ -1810,9 +1820,9 @@ impl StyleEngine {
         if Self::is_off(sheet, dom) {
             return Some((sheet.revision << 2) | 2);
         }
-        Some(match &sheet.source {
-            SheetSource::Text(_) => sheet.revision << 2,
-            SheetSource::StyleElement => (dom.style_element_text_revision(owner).unwrap_or_default() << 2) | 1,
+        Some(match sheet.supplied_text(dom) {
+            Some(_) => sheet.revision << 2,
+            None => (dom.style_element_text_revision(owner).unwrap_or_default() << 2) | 1,
         })
     }
 

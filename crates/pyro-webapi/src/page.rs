@@ -1851,6 +1851,10 @@ impl PageDom {
     pub fn set_stylesheet_text(&self, link: NodeId, text: &str) {
         self.layout.borrow_mut().style_mut().set_sheet_text(link, text);
     }
+    pub(crate) fn set_edited_style_element(&self, owner: NodeId, text: String, generation: u32) {
+        self.layout.borrow_mut().style_mut().add_sheet(owner, pyro_dom::style::SheetSource::EditedStyleElement { text, generation });
+    }
+
     /// pyro: reserves `link`'s cascade slot for the response it now loads (empty, of no URL yet).
     pub fn reserve_stylesheet(&self, link: NodeId) {
         let mut layout = self.layout.borrow_mut();
