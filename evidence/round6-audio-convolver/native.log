@@ -1,0 +1,9 @@
+cargo test --release --offline -p pyro-media --no-default-features --test convolution
+
+running 3 tests
+test stereo_matrix_and_normalization ... ok
+test mono_tail_obeys_the_current_layout_when_a_stereo_input_arrives ... ok
+test partitioned_output_matches_linear_convolution_through_the_tail ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
