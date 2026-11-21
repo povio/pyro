@@ -69,6 +69,17 @@ pub fn selection(page: &PageDom) -> Option<(Point, Point)> {
     (connected(page, a.0) && connected(page, f.0)).then_some((a, f))
 }
 
+/// Legacy Selection endpoint getters expose the single-tree live range.
+pub(crate) fn legacy_endpoints(page: &PageDom) -> Option<(Point, Point)> {
+    let points = selection(page)?;
+    let state = page.selection.borrow();
+    let selection = state.as_ref()?;
+    if selection.cross_tree {
+        return Some((selection.range.live.start(), selection.range.live.end()));
+    }
+    Some(points)
+}
+
 /// Composed snapshots follow live boundary adjustments even when a gesture
 /// selection's original node was removed and its legacy getters are empty.
 pub(crate) fn composed_points(page: &PageDom) -> Option<(Point, Point)> {
@@ -98,9 +109,14 @@ pub fn set_selection(page: &Rc<PageDom>, anchor: Point, focus: Point) {
         let dom = page.dom.borrow();
         dom.root_node(anchor.0, false).ok() == dom.root_node(focus.0, false).ok()
     };
-    let backward = same_tree && compare(page, anchor, focus) > 0;
+    let backward = if same_tree {
+        compare(page, anchor, focus) > 0
+    } else {
+        crate::range::composed_order(&page.dom.borrow(), anchor, focus).is_ok_and(|order| order > 0)
+    };
     let (start, end) = match (same_tree, backward) {
-        (false, _) => (focus, focus),
+        (false, true) => (anchor, anchor),
+        (false, false) => (focus, focus),
         (true, true) => (focus, anchor),
         (true, false) => (anchor, focus),
     };

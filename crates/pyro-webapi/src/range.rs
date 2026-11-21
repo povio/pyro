@@ -826,7 +826,7 @@ fn point_arg(
 
 // Boundary points in a common tree can use the ordinary Range comparison.
 // Across trees, each shadow subtree comes before the light children of its host.
-fn composed_order(dom: &Dom, a: Point, b: Point) -> JsResult<i8> {
+pub(crate) fn composed_order(dom: &Dom, a: Point, b: Point) -> JsResult<i8> {
     let a_root = dom.root_node(a.0, false).js()?;
     let b_root = dom.root_node(b.0, false).js()?;
     if a_root == b_root {
@@ -926,16 +926,16 @@ impl JsClass for Selection {
                 Some(_) => "Range",
             }))
         });
-        def.getter("isCollapsed", |s, sel| Ok(s.boolean(editing::selection(&sel.page).is_none_or(|(a, f)| a == f))));
-        def.getter("anchorNode", |s, sel| node_or_null(s, &sel.page, editing::selection(&sel.page).map(|(a, _)| a.0)));
-        def.getter("anchorOffset", |s, sel| Ok(s.number(editing::selection(&sel.page).map_or(0, |(a, _)| a.1) as f64)));
-        def.getter("focusNode", |s, sel| node_or_null(s, &sel.page, editing::selection(&sel.page).map(|(_, f)| f.0)));
-        def.getter("focusOffset", |s, sel| Ok(s.number(editing::selection(&sel.page).map_or(0, |(_, f)| f.1) as f64)));
+        def.getter("isCollapsed", |s, sel| Ok(s.boolean(editing::legacy_endpoints(&sel.page).is_none_or(|(a, f)| a == f))));
+        def.getter("anchorNode", |s, sel| node_or_null(s, &sel.page, editing::legacy_endpoints(&sel.page).map(|(a, _)| a.0)));
+        def.getter("anchorOffset", |s, sel| Ok(s.number(editing::legacy_endpoints(&sel.page).map_or(0, |(a, _)| a.1) as f64)));
+        def.getter("focusNode", |s, sel| node_or_null(s, &sel.page, editing::legacy_endpoints(&sel.page).map(|(_, f)| f.0)));
+        def.getter("focusOffset", |s, sel| Ok(s.number(editing::legacy_endpoints(&sel.page).map_or(0, |(_, f)| f.1) as f64)));
         def.getter("direction", |s, sel| {
             Ok(s.string(match editing::selection(&sel.page) {
                 None => "none",
                 Some((a, f)) if a == f => "none",
-                Some((a, f)) if editing::compare(&sel.page, a, f) <= 0 => "forward",
+                Some((a, f)) if composed_order(&sel.page.dom.borrow(), a, f)? <= 0 => "forward",
                 Some(_) => "backward",
             }))
         });
@@ -1055,7 +1055,11 @@ impl JsClass for Selection {
                 return Err(JsError::dom("InvalidStateError", "There is no selection to extend."));
             };
             let focus = point_arg(s, &sel.page, a.get(0), a.get(1), "Selection.extend")?;
-            editing::set_selection(&sel.page, anchor, focus);
+            let same_root = {
+                let dom = sel.page.dom.borrow();
+                dom.root_node(anchor.0, false).js()? == dom.root_node(focus.0, false).js()?
+            };
+            editing::set_selection(&sel.page, if same_root { anchor } else { focus }, focus);
             Ok(s.undefined())
         });
         def.pure_method("containsNode", 1, |s, sel, a| {
