@@ -210,6 +210,11 @@ pub(super) fn at_boundary(
         if layout.computed_style_value(dom, right_el, "visibility") != "visible" {
             return Some(visible_seam);
         }
+        if layout.computed_style_value(dom, left, "white-space")
+            == layout.computed_style_value(dom, right_el, "white-space")
+        {
+            return None;
+        }
         return join_anonymous_right(page, dom, host, left, right, visible_seam);
     }
     if !at_edge {
@@ -272,31 +277,7 @@ pub(super) fn at_boundary(
         return None;
     }
     let line = first_line(page, dom, source, host)?;
-    // Moving out of the nested block can also change inherited typography
-    // or break a contextual selector on an inline descendant. Capture only
-    // the prefix traversed by the extraction.
-    let mut styles = Vec::new();
-    if source != right {
-        let stop = match line {
-            LineEnd::Break(n) => Some((n, false)),
-            LineEnd::Newline(n, off) => Some((n, off > 0)),
-            LineEnd::Boundary((p, i)) => dom.child_at(p, i).ok()?.map(|n| (n, false)),
-        };
-        for n in dom.descendants(source).ok()?.skip(1) {
-            if stop == Some((n, false)) {
-                break;
-            }
-            if editing_host(dom, n) != Some(host) {
-                return None;
-            }
-            styles.push(text_style(page, dom, n)?);
-            if stop == Some((n, true)) {
-                break;
-            }
-        }
-    }
-    let fragment = extract_line(dom, source, (source, 0), line)?;
-    let moved = if styles.is_empty() { Vec::new() } else { dom.descendants(fragment).ok()?.skip(1).collect() };
+    let (fragment, styled) = extract_styled_line(page, dom, host, source, line, source != right)?;
     if len(dom, fragment) > 0 {
         let content = if source_style != dest_style {
             let span = dom.create_element(dom.node_document(right).ok()?, "span").ok()?;
@@ -308,7 +289,7 @@ pub(super) fn at_boundary(
         };
         dom.insert_before(destination, content, (!left_block).then_some(right)).ok()?;
     }
-    for (node, values) in moved.into_iter().zip(styles) {
+    for (node, values) in styled {
         preserve_style(page, dom, node, &values)?;
     }
     for separator in separators {
@@ -409,7 +390,7 @@ fn preserve_style(page: &PageDom, dom: &mut Dom, node: NodeId, source: &[String]
 /// Preflight the affected subtree and record its text styling in preorder
 /// before changing the DOM. Range extraction moves fully contained nodes
 /// and clones only partially contained formatting ancestors.
-fn join_anonymous_right(
+pub(super) fn join_anonymous_right(
     page: &PageDom,
     dom: &mut Dom,
     host: NodeId,
@@ -418,12 +399,6 @@ fn join_anonymous_right(
     seam: Point,
 ) -> Option<Point> {
     let start = (host, dom.index_in_parent(right).ok()?);
-    let left_style = page.layout().computed_style_value(dom, left, "white-space");
-    let right_element = if is_text(dom, right) { host } else { right };
-    let right_style = page.layout().computed_style_value(dom, right_element, "white-space");
-    if right_style.is_empty() || left_style == right_style {
-        return None;
-    }
     let mut node = right;
     let mut styles = Vec::new();
     let end = 'siblings: loop {
@@ -466,6 +441,65 @@ fn join_anonymous_right(
     dom.append_child(left, fragment).ok()?;
     for (child, values) in moved.into_iter().zip(styles) {
         preserve_style(page, dom, child, &values)?;
+    }
+    Some(seam)
+}
+
+/// Snapshot formatting on the inclusive preorder prefix which Range
+/// extraction will move or clone out of the source paragraph.
+fn extract_styled_line(
+    page: &PageDom,
+    dom: &mut Dom,
+    host: NodeId,
+    source: NodeId,
+    line: LineEnd,
+    keep_style: bool,
+) -> Option<(NodeId, Vec<(NodeId, Vec<String>)>)> {
+    if !keep_style {
+        return Some((extract_line(dom, source, (source, 0), line)?, Vec::new()));
+    }
+    let mut styles = Vec::new();
+    let stop = match line {
+        LineEnd::Break(n) => Some((n, false)),
+        LineEnd::Newline(n, i) => Some((n, i != 0)),
+        LineEnd::Boundary((p, i)) => dom.child_at(p, i).ok()?.map(|n| (n, false)),
+    };
+    for n in dom.descendants(source).ok()?.skip(1) {
+        if stop == Some((n, false)) {
+            break;
+        }
+        if editing_host(dom, n) != Some(host) {
+            return None;
+        }
+        styles.push(text_style(page, dom, n)?);
+        if stop == Some((n, true)) {
+            break;
+        }
+    }
+    let fragment = extract_line(dom, source, (source, 0), line)?;
+    let moved: Vec<_> = dom.descendants(fragment).ok()?.skip(1).collect();
+    Some((fragment, moved.into_iter().zip(styles).collect()))
+}
+
+/// Move the first rendered line of the planned source paragraph without
+/// reparenting or discarding its surrounding containers and following lines.
+pub(super) fn join_first_line(
+    page: &PageDom,
+    dom: &mut Dom,
+    host: NodeId,
+    source: NodeId,
+    destination: NodeId,
+    before: Option<NodeId>,
+    seam: Point,
+) -> Option<Point> {
+    let line = first_line(page, dom, source, host)?;
+    let (fragment, styled) = extract_styled_line(page, dom, host, source, line, true)?;
+    dom.insert_before(destination, fragment, before).ok()?;
+    for (n, values) in styled {
+        preserve_style(page, dom, n, &values)?;
+    }
+    if len(dom, source) == 0 {
+        dom.remove_node(source).ok()?;
     }
     Some(seam)
 }
