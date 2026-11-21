@@ -158,7 +158,7 @@ fn snap_axes(axis: &str, mode: style::logical_geometry::WritingMode) -> (bool, b
     }
 }
 
-fn snap_alignment(align: &str, mode: style::logical_geometry::WritingMode) -> [&str; 2] {
+fn snap_alignment(align: &str, mode: style::logical_geometry::WritingMode) -> [&'static str; 2] {
     use style::logical_geometry::PhysicalSide;
     let mut words = align.split_whitespace();
     let block = words.next().unwrap_or("none");
@@ -166,7 +166,10 @@ fn snap_alignment(align: &str, mode: style::logical_geometry::WritingMode) -> [&
     let physical = |keyword, side| match (keyword, side) {
         ("start", PhysicalSide::Right | PhysicalSide::Bottom) => "end",
         ("end", PhysicalSide::Right | PhysicalSide::Bottom) => "start",
-        _ => keyword,
+        ("start", _) => "start",
+        ("end", _) => "end",
+        ("center", _) => "center",
+        _ => "none",
     };
     let inline = physical(inline, mode.inline_start_physical_side());
     let block = physical(block, mode.block_start_physical_side());
@@ -3038,6 +3041,7 @@ impl Layout {
         };
         let reachable = |axis: usize, position: f64| position.clamp(ranges[axis].0, ranges[axis].1);
         let target = [tx.map(|v| reachable(0, v as f64)), ty.map(|v| reachable(1, v as f64))];
+        let mut areas = Vec::new();
         let Ok(nodes) = dom.descendants(scroller.unwrap_or(doc)) else { return unchanged };
         for id in nodes {
             if dom.element(id).is_err() || Some(id) == scroller {
@@ -3100,13 +3104,43 @@ impl Layout {
                 snap_y && bottom - top > height - pt - pb,
             ];
             let spans = [(left - pl, right - (width - pr)), (top - pt, bottom - (height - pb))];
+            areas.push((id, candidates, covering, spans, [(left, right), (top, bottom)], [align_x, align_y]));
+        }
+        for &(id, candidates, covering, spans, bounds, align) in &areas {
             let mut mine = [None, None];
             for axis in 0..2 {
                 if only.is_some_and(|o| o[axis].is_some_and(|b| b != (id, None))) {
                     continue;
                 }
-                let (Some(c), Some(t)) = (candidates[axis], target[axis]) else { continue };
-                let c = if covering[axis] && t >= spans[axis].0 && t <= spans[axis].1 { t } else { c };
+                let (Some(mut c), Some(t)) = (candidates[axis], target[axis]) else { continue };
+                if covering[axis] && t >= spans[axis].0 && t <= spans[axis].1 {
+                    let other = 1 - axis;
+                    let (start, end) = bounds[axis];
+                    let mut occupied: Vec<_> = areas.iter().filter_map(|(_, points, _, _, rect, _)| {
+                        let (lo, hi) = rect[axis];
+                        (points[axis].is_some() && lo >= start && hi <= end && (lo > start || hi < end)
+                            && rect[other].1 >= bounds[other].0 && rect[other].0 <= bounds[other].1).then_some((lo, hi))
+                    }).collect();
+                    occupied.sort_unstable_by(|first, second| first.0.total_cmp(&second.0));
+                    let pad = [pl, pt][axis];
+                    let far = [width - pr, height - pb][axis];
+                    let mut cursor = start;
+                    let mut nearest: Option<f64> = None;
+                    for (lo, hi) in occupied.into_iter().chain(std::iter::once((end, end))) {
+                        if cursor < lo {
+                            let near_edge = cursor - pad;
+                            let far_edge = lo - far;
+                            let gap = if near_edge <= far_edge { t.clamp(near_edge, far_edge) } else {
+                                match align[axis] { "end" => far_edge, "center" => (near_edge + far_edge) / 2.0, _ => near_edge }
+                            }.clamp(spans[axis].0, spans[axis].1);
+                            if nearest.is_none_or(|prior| (gap - t).abs() < (prior - t).abs()) {
+                                nearest = Some(gap);
+                            }
+                        }
+                        cursor = cursor.max(hi);
+                    }
+                    c = nearest.unwrap_or(c);
+                }
                 let c = reachable(axis, c);
                 mine[axis] = Some(c);
                 if best[axis].is_none_or(|(b, _)| (c - t).abs() < (b - t).abs()) {
