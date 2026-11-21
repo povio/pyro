@@ -246,6 +246,40 @@ fn key_paths_generators_and_constraints() {
 }
 
 #[test]
+fn blob_file_key_paths_use_stored_metadata() {
+    let env = Env::new();
+    let doc = env.doc("http://idb.test/");
+    doc.eval(HELPERS);
+    let got = env.run(
+        &doc,
+        r#"
+        const db = await openDb('file-keys', 1, db => {
+          const store = db.createObjectStore('rows', {keyPath: ['payload.size', 'payload.type']});
+          store.createIndex('files', ['payload.name', 'payload.lastModified']);
+        });
+        const tx = db.transaction('rows', 'readwrite');
+        const rows = tx.objectStore('rows');
+        const completed = done(tx);
+        const blobKey = await req(rows.add({payload: new Blob([])}));
+        const fileKey = await req(rows.add({payload: new File(['ab'], 'record', {type: 'text/plain', lastModified: 0})}));
+        await completed;
+        const aborted = db.transaction('rows', 'readwrite');
+        const rolledBack = done(aborted).catch(error => error.name);
+        await req(aborted.objectStore('rows').delete(fileKey));
+        aborted.abort();
+        await rolledBack;
+        db.close();
+        const reopened = await openDb('file-keys', 1);
+        const index = reopened.transaction('rows').objectStore('rows').index('files');
+        const count = await req(index.count());
+        const restored = await req(index.get(['record', 0]));
+        out = JSON.stringify([blobKey, fileKey, count, restored.payload.name, restored.payload.size]);
+        "#,
+    );
+    assert_eq!(got, r#"[[0,""],[2,"text/plain"],1,"record",2]"#);
+}
+
+#[test]
 fn failed_unique_writes_preserve_the_generator() {
     let env = Env::new();
     let doc = env.doc("http://idb.test/");

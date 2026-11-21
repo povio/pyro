@@ -326,8 +326,12 @@
     for (const id of path.split('.')) {
       if (typeof value === 'string' && id === 'length') value = value.length;
       else if (isArray(value) && id === 'length') value = value.length;
-      else if (value === null || typeof value !== 'object' || !hasOwn(value, id)) return FAIL;
-      else value = value[id];
+      else if (value === null || typeof value !== 'object') return FAIL;
+      else if (hasOwn(value, id)) value = value[id];
+      else if (id === 'size' || id === 'type' || id === 'name' || id === 'lastModified') {
+        value = N.blobKeyPath(value, id);
+        if (value === undefined) return FAIL;
+      } else return FAIL;
     }
     return value;
   }
