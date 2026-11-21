@@ -7,7 +7,7 @@ use std::ptr::NonNull;
 use rav1d::include::dav1d::data::Dav1dData;
 use rav1d::include::dav1d::dav1d::{Dav1dContext, Dav1dSettings};
 use rav1d::include::dav1d::headers::{
-    DAV1D_MC_BT2020_NCL, DAV1D_MC_BT470BG, DAV1D_MC_BT601, DAV1D_MC_BT709, DAV1D_MC_UNKNOWN, DAV1D_PIXEL_LAYOUT_I400,
+    DAV1D_MC_BT470BG, DAV1D_MC_BT601, DAV1D_MC_BT709, DAV1D_MC_BT2020_NCL, DAV1D_MC_UNKNOWN, DAV1D_PIXEL_LAYOUT_I400,
     DAV1D_PIXEL_LAYOUT_I420, DAV1D_PIXEL_LAYOUT_I422,
 };
 use rav1d::include::dav1d::picture::Dav1dPicture;
@@ -21,6 +21,8 @@ use super::{Decoded, Decoder};
 
 pub(super) struct Av1 {
     ctx: Option<Dav1dContext>,
+    packet_output: bool,
+    declared_color: Option<super::packet::Av1Color>,
 }
 
 fn eagain() -> i32 {
@@ -29,6 +31,10 @@ fn eagain() -> i32 {
 
 impl Av1 {
     pub(super) fn new() -> Option<Av1> {
+        Self::open(None, None)
+    }
+
+    pub(super) fn open(packet_area: Option<u32>, declared_color: Option<super::packet::Av1Color>) -> Option<Av1> {
         let mut settings = MaybeUninit::<Dav1dSettings>::uninit();
         let mut ctx: Option<Dav1dContext> = None;
         // SAFETY: dav1d_default_settings initializes every field of the
@@ -38,15 +44,18 @@ impl Av1 {
             let mut settings = settings.assume_init();
             settings.n_threads = 1;
             settings.max_frame_delay = 1;
+            if let Some(area) = packet_area {
+                settings.frame_size_limit = area;
+            }
             if dav1d_open(NonNull::new(&mut ctx), NonNull::new(&mut settings)).0 != 0 {
                 return None;
             }
         }
-        ctx.is_some().then_some(Av1 { ctx })
+        ctx.is_some().then_some(Av1 { ctx, packet_output: packet_area.is_some(), declared_color })
     }
 
     /// Takes every picture ready now.
-    fn drain(&mut self, want: &mut dyn FnMut(u64) -> bool, out: &mut Vec<Decoded>) -> Result<(), String> {
+    fn drain(&mut self, want: &mut dyn FnMut(u64, u32, u32) -> bool, out: &mut Vec<Decoded>) -> Result<(), String> {
         loop {
             let mut pic = MaybeUninit::<Dav1dPicture>::zeroed();
             // SAFETY: the context is open; the picture is written by
@@ -61,7 +70,11 @@ impl Av1 {
             // SAFETY: a successful dav1d_get_picture filled the picture.
             let mut pic = unsafe { pic.assume_init() };
             let tag = pic.m.timestamp as u64;
-            let image = if want(tag) { convert(&pic) } else { None };
+            let image = if want(tag, pic.p.w as u32, pic.p.h as u32) {
+                convert(&pic, self.packet_output, self.declared_color)
+            } else {
+                None
+            };
             // SAFETY: the picture came from dav1d_get_picture.
             unsafe { dav1d_picture_unref(NonNull::new(&mut pic)) };
             out.push(Decoded { tag, image });
@@ -69,7 +82,11 @@ impl Av1 {
     }
 }
 
-fn convert(pic: &Dav1dPicture) -> Option<(u32, u32, Vec<u8>)> {
+fn convert(
+    pic: &Dav1dPicture,
+    packet_output: bool,
+    declared: Option<super::packet::Av1Color>,
+) -> Option<(u32, u32, Vec<u8>)> {
     let (w, h) = (usize::try_from(pic.p.w).ok()?, usize::try_from(pic.p.h).ok()?);
     let depth = u32::try_from(pic.p.bpc).ok()?;
     let (ss, mono): ((u32, u32), bool) = match pic.p.layout {
@@ -81,12 +98,39 @@ fn convert(pic: &Dav1dPicture) -> Option<(u32, u32, Vec<u8>)> {
     let (ys, cs) = (usize::try_from(pic.stride[0]).ok()?, usize::try_from(pic.stride[1]).ok()?);
     // SAFETY: the sequence header lives as long as the picture.
     let seq = pic.seq_hdr.map(|s| unsafe { s.as_ref() });
+    // A short codec string does not carry CICP information. Inspect the
+    // decoded sequence too, before exposing pixels under an sRGB label.
+    let transfer = if packet_output {
+        use rav1d::include::dav1d::headers::{
+            DAV1D_COLOR_PRI_BT709, DAV1D_COLOR_PRI_UNKNOWN, DAV1D_TRC_BT709, DAV1D_TRC_SRGB, DAV1D_TRC_UNKNOWN,
+        };
+        let hdr = seq?;
+        if hdr.profile != 0
+            || !matches!(depth, 8 | 10)
+            || !matches!(hdr.pri, DAV1D_COLOR_PRI_BT709 | DAV1D_COLOR_PRI_UNKNOWN)
+            || !matches!(hdr.mtrx, DAV1D_MC_BT709 | DAV1D_MC_BT601 | DAV1D_MC_BT470BG | DAV1D_MC_UNKNOWN)
+        {
+            return None;
+        }
+        match hdr.trc {
+            DAV1D_TRC_SRGB => yuv::OutputTransfer::Preserve,
+            DAV1D_TRC_UNKNOWN if declared.is_some_and(|c| c.srgb_transfer) => yuv::OutputTransfer::Preserve,
+            DAV1D_TRC_BT709 | DAV1D_TRC_UNKNOWN => yuv::OutputTransfer::Bt709ToSrgb,
+            _ => return None,
+        }
+    } else {
+        yuv::OutputTransfer::Preserve
+    };
     let full_range = seq.is_some_and(|s| s.color_range != 0);
     let matrix = match seq.map(|s| s.mtrx) {
         Some(DAV1D_MC_BT709) => Matrix::Bt709,
         Some(DAV1D_MC_BT2020_NCL) => Matrix::Bt2020,
         Some(DAV1D_MC_BT601 | DAV1D_MC_BT470BG) => Matrix::Bt601,
-        Some(DAV1D_MC_UNKNOWN) | None => Matrix::untagged(h as u32),
+        Some(DAV1D_MC_UNKNOWN) | None => match declared {
+            Some(color) if color.bt709_matrix => Matrix::Bt709,
+            Some(_) => Matrix::Bt601,
+            None => Matrix::untagged(h as u32),
+        },
         _ => Matrix::Bt709,
     };
     let ch = (h + ss.1 as usize) >> ss.1;
@@ -97,7 +141,7 @@ fn convert(pic: &Dav1dPicture) -> Option<(u32, u32, Vec<u8>)> {
     };
     let y = plane(0, ys, h)?;
     let uv = if mono { None } else { Some((plane(1, cs, ch)?, plane(2, cs, ch)?)) };
-    let rgba = yuv::to_rgba(&Picture { width: w, height: h, y, uv, ss, depth, full_range, matrix });
+    let rgba = yuv::to_rgba(&Picture { width: w, height: h, y, uv, ss, depth, full_range, matrix }, transfer);
     Some((w as u32, h as u32, rgba))
 }
 
@@ -106,7 +150,7 @@ impl Decoder for Av1 {
         &mut self,
         sample: &[u8],
         tag: u64,
-        want: &mut dyn FnMut(u64) -> bool,
+        want: &mut dyn FnMut(u64, u32, u32) -> bool,
         out: &mut Vec<Decoded>,
     ) -> Result<(), String> {
         if sample.is_empty() {
@@ -145,7 +189,7 @@ impl Decoder for Av1 {
         result
     }
 
-    fn finish(&mut self, want: &mut dyn FnMut(u64) -> bool, out: &mut Vec<Decoded>) -> Result<(), String> {
+    fn finish(&mut self, want: &mut dyn FnMut(u64, u32, u32) -> bool, out: &mut Vec<Decoded>) -> Result<(), String> {
         self.drain(want, out)
     }
 }

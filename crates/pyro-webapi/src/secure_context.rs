@@ -7,7 +7,7 @@ use pyro_js::{JsResult, Scope};
 use crate::page::PageDom;
 
 /// Interface objects on the global that exist only in a secure context.
-const GLOBALS: &[&str] = &["LockManager", "Lock", "MediaDevices", "Worklet"];
+const GLOBALS: &[&str] = &["LockManager", "Lock", "MediaDevices", "Worklet", "VideoDecoder"];
 /// `Navigator` members that exist only in a secure context.
 const NAVIGATOR: &[&str] = &["locks", "mediaDevices", "registerProtocolHandler", "unregisterProtocolHandler"];
 

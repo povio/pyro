@@ -7,9 +7,9 @@ use pyro_js::{ClassDef, Engine, JsClass, JsError, JsResult, NoParent, Scope, Val
 pub(crate) struct EncodedChunk {
     video: bool,
     key: bool,
-    timestamp: i64,
-    duration: Option<u64>,
-    data: Bytes,
+    pub(crate) timestamp: i64,
+    pub(crate) duration: Option<u64>,
+    pub(crate) data: Bytes,
     cluster: crate::page::AgentCluster,
 }
 
@@ -95,6 +95,11 @@ pub(crate) fn register(engine: &Engine) {
 
 pub(crate) fn parts(s: &Scope<'_>, value: Value<'_>) -> Option<EncodedChunk> {
     s.unwrap::<EncodedAudioChunk>(value).or_else(|| s.unwrap::<EncodedVideoChunk>(value)).map(|c| (*c).clone())
+}
+
+pub(crate) fn video_parts(s: &Scope<'_>, value: Value<'_>) -> JsResult<EncodedChunk> {
+    s.unwrap::<EncodedVideoChunk>(value).map(|chunk| (*chunk).clone())
+        .ok_or_else(|| JsError::Type("Expected an EncodedVideoChunk".into()))
 }
 
 pub(crate) fn exposed_in(s: &Scope<'_>) -> bool {

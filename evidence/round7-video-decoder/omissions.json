@@ -1,0 +1,16 @@
+{
+  "webcodecs/videoDecoder-codec-specific.https.any.html?av1": "Encoding-error page also submits deliberately corrupt video packets; excluded from native-decoder execution.",
+  "webcodecs/videoDecoder-codec-specific.https.any.html?h264_annexb": "Encoding-error page also submits deliberately corrupt video packets; excluded from native-decoder execution.",
+  "webcodecs/videoDecoder-codec-specific.https.any.html?h264_avc": "Encoding-error page also submits deliberately corrupt video packets; excluded from native-decoder execution.",
+  "webcodecs/videoDecoder-codec-specific.https.any.html?h265_annexb": "Encoding-error page also submits deliberately corrupt video packets; excluded from native-decoder execution.",
+  "webcodecs/videoDecoder-codec-specific.https.any.html?h265_hevc": "Encoding-error page also submits deliberately corrupt video packets; excluded from native-decoder execution.",
+  "webcodecs/videoDecoder-codec-specific.https.any.html?vp8": "Encoding-error page also submits deliberately corrupt video packets; excluded from native-decoder execution.",
+  "webcodecs/videoDecoder-codec-specific.https.any.html?vp9": "Encoding-error page also submits deliberately corrupt video packets; excluded from native-decoder execution.",
+  "webcodecs/videoDecoder-codec-specific.https.any.worker.html?av1": "Encoding-error page also submits deliberately corrupt video packets; excluded from native-decoder execution.",
+  "webcodecs/videoDecoder-codec-specific.https.any.worker.html?h264_annexb": "Encoding-error page also submits deliberately corrupt video packets; excluded from native-decoder execution.",
+  "webcodecs/videoDecoder-codec-specific.https.any.worker.html?h264_avc": "Encoding-error page also submits deliberately corrupt video packets; excluded from native-decoder execution.",
+  "webcodecs/videoDecoder-codec-specific.https.any.worker.html?h265_annexb": "Encoding-error page also submits deliberately corrupt video packets; excluded from native-decoder execution.",
+  "webcodecs/videoDecoder-codec-specific.https.any.worker.html?h265_hevc": "Encoding-error page also submits deliberately corrupt video packets; excluded from native-decoder execution.",
+  "webcodecs/videoDecoder-codec-specific.https.any.worker.html?vp8": "Encoding-error page also submits deliberately corrupt video packets; excluded from native-decoder execution.",
+  "webcodecs/videoDecoder-codec-specific.https.any.worker.html?vp9": "Encoding-error page also submits deliberately corrupt video packets; excluded from native-decoder execution."
+}
