@@ -2849,7 +2849,23 @@ impl BaseDocument {
                 }
                 drop(global_font_ctx);
 
-                // TODO: see if we can only invalidate if resolved fonts may have changed
+                // Reshaping updates text advances. Font-relative values in computed
+                // styles (including pseudo-elements) also need the new metrics.
+                let device = self.stylist.device();
+                if device.used_root_font_metrics() {
+                    device.update_root_font_metrics();
+                }
+                if let Some(root) = self.try_root_element()
+                    && device.style_uses_font_metrics()
+                {
+                    let id = root.id;
+                    if let Some(style) = root.primary_styles() {
+                        let height = device.calc_line_height(style.get_font(), style.writing_mode, None);
+                        device.set_root_line_height(style.effective_zoom.unzoom(height.0.px()));
+                    }
+                    self.nodes[id].set_restyle_hint(RestyleHint::recascade_subtree());
+                    self.sampled_animations.invalidate_bases();
+                }
                 self.invalidate_inline_contexts();
             }
             Resource::None => {
@@ -4214,6 +4230,9 @@ impl BaseDocument {
         drop(root_styles);
 
         let old_device = self.stylist.device();
+        if old_device.style_uses_font_metrics() {
+            device.note_style_font_metrics();
+        }
         let viewport_size_changed = old_device.au_viewport_size() != device.au_viewport_size()
             || old_device.au_viewport_unit_size() != device.au_viewport_unit_size();
         let styles_use_viewport_units = old_device.used_viewport_size();

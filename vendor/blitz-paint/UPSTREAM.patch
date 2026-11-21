@@ -5477,7 +5477,7 @@ new file mode 100644
 +            FontPalette::Mix(mix) => {
 +                let missing = mix.omitted_weight();
 +                let palettes = mix.items.iter().map(|item| {
-+                    Some((self.entries(&item.palette)?, item.weight.unwrap_or(missing)))
++                    Some((self.entries(&item.palette)?, item.weight.map_or(missing, |weight| weight.0)))
 +                }).collect::<Option<Vec<_>>>()?;
 +                let count = palettes.iter().map(|(entries, _)| entries.len()).min()?;
 +                let color = |[r, g, b, a]: [u8; 4]| AbsoluteColor::srgb_legacy(r, g, b, f32::from(a) / 255.0);

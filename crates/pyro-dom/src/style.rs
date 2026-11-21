@@ -1252,6 +1252,7 @@ impl StyleEngine {
     /// styles; `None`: elements have none.
     pub fn set_style_engine(&self, source: Option<std::rc::Rc<dyn crate::geometry::GeometrySource>>) {
         *self.external.borrow_mut() = source.map(|s| (s, None));
+        self.timing_rules.borrow_mut().take();
     }
 
     /// The layout engine synced `dom` (styles and layout).
@@ -2106,10 +2107,11 @@ impl StyleEngine {
             let idx = dom.check(*n).ok()?;
             Some((dom.id_of(dom.root_idx(idx)), dom.child_text_content(*n).into_owned()))
         }));
-        let rules = Rc::new(crate::timing::TimingRules::parse_scoped(
-            texts.iter().map(|(scope, text)| (*scope, text.as_str())),
-            &self.viewport,
-        ));
+        let mut rules = crate::timing::TimingRules::parse_scoped(
+            texts.iter().map(|(scope, text)| (*scope, text.as_str())), &self.viewport,
+        );
+        rules.geometry = self.external.borrow().as_ref().map(|(source, _)| Rc::downgrade(source));
+        let rules = Rc::new(rules);
         *self.timing_rules.borrow_mut() = Some((key, unregistered, rules.clone()));
         rules
     }

@@ -389,3 +389,72 @@ fn transitions_compare_bounded_absolute_inset_endpoints() {
     "#);
     assert_eq!(compared, "true|true");
 }
+
+#[test]
+fn palette_mix_weights_compute_in_the_elements_context() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        document.body.innerHTML = '<main><b></b><b id="palette"></b></main>';
+        const el = document.querySelector('#palette');
+        el.style.fontPalette = 'palette-mix(in lch, --a calc(10% * sibling-index()), --b)';
+        const specified = el.style.fontPalette.includes('sibling-index()');
+        const before = getComputedStyle(el).fontPalette;
+        el.previousElementSibling.remove();
+        const after = getComputedStyle(el).fontPalette;
+        [specified, before, after].join('|')
+    "#);
+    assert_eq!(actual, "true|palette-mix(in lch, --a 20%, --b 80%)|palette-mix(in lch, --a 10%, --b 90%)");
+}
+
+#[test]
+fn element_dependent_timing_uses_actual_attributes_and_pseudo_font_metrics() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        document.body.innerHTML = `<style>
+            @keyframes step-test { to { opacity: .5 } }
+            section { transition-delay: 5s }
+            #target {
+                font-size: 20px;
+                animation-name: attr(data-name type(<custom-ident>), var(--missing));
+                animation-duration: attr(data-time type(<time>), 3s);
+                transition-delay: attr(missing, inherit);
+            }
+            @layer weak {
+                #target#target { animation-name: wrong; animation-duration: 9s }
+            }
+            #target::before {
+                content: "";
+                font-size: 10px;
+                transition-delay: calc(2s * sign(1em - 12px));
+            }
+        </style><section><i id="target" data-name="step-test" data-time="4s"></i></section>`;
+        const target = document.getElementById('target');
+        const computed = () => getComputedStyle(target);
+        const animation = target.getAnimations().find(a => a.animationName === 'step-test');
+        const result = [computed().animationName, computed().animationDuration, computed().transitionDelay,
+            getComputedStyle(target, '::before').transitionDelay, animation?.effect.getTiming().duration];
+        target.setAttribute('data-time', 'invalid');
+        result.push(computed().animationDuration);
+        target.setAttribute('data-name', '"invalid"');
+        result.push(computed().animationName);
+        result.join('|')
+    "#);
+    assert_eq!(actual, "step-test|4s|5s|-2s|4000|3s|none");
+}
+
+#[test]
+fn menulist_line_height_is_adjusted_after_lh_units_are_computed() {
+    let (_t, realm) = page();
+    assert_eq!(eval(&realm, r#"
+        document.body.innerHTML = '<div style="line-height:100px"><select multiple></select></div>';
+        getComputedStyle(document.querySelector('select')).lineHeight
+    "#), "normal");
+    let result = eval(&realm, r#"
+        document.body.innerHTML = '<style>select{line-height:100px;width:5lh}</style><select></select><select multiple></select><select style="appearance:none"></select><select style="appearance:menulist-button"></select>';
+        [...document.querySelectorAll('select')].map(el => {
+            const style = getComputedStyle(el);
+            return style.width + '/' + style.lineHeight;
+        }).join('|')
+    "#);
+    assert_eq!(result, "500px/normal|500px/100px|500px/100px|500px/normal");
+}

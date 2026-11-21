@@ -303,6 +303,72 @@ impl crate::document::BaseDocument {
         if !changed_rules.is_empty() { self.invalidate_anchor_rule_users(changed_rules); }
     }
 
+    /// A read-only cascade without a single-rule embedder stylesheet. The normal
+    /// document retains that rule (Pyro uses it to suppress native animation scheduling).
+    pub fn style_without_override(
+        &self,
+        id: NodeId,
+        pseudo: Option<&PseudoElement>,
+        sheet: &crate::UserAgentStylesheet,
+    ) -> Option<Arc<ComputedValues>> {
+        use style::computed_value_flags::ComputedValueFlags;
+        use style::context::CascadeInputs;
+        use style::properties::FirstLineReparenting;
+        use style::stylesheets::CssRule;
+
+        let sheet = &sheet.sheet().0;
+        let sheet_guard = sheet.shared_lock.read();
+        let contents = sheet.contents.read_with(&sheet_guard);
+        let [CssRule::Style(rule)] = contents.rules.read_with(&sheet_guard).0.as_slice() else { return None };
+        let ignored = &rule.read_with(&sheet_guard).block;
+        let primary = |node: &Node| node.primary_styles().map(|s| (*s).clone())
+            .or_else(|| self.resolve_undisplayed_style(node.id));
+        let cascade = |node: &Node, pseudo: Option<&PseudoElement>, base: &ComputedValues, parent: Option<&ComputedValues>| {
+            let _scope = LayoutThreadScope::enter();
+            let guard = self.guard.read();
+            let guards = StylesheetGuards::same(&guard);
+            let mut inputs = CascadeInputs::new_from_style(base);
+            for path in [&mut inputs.rules, &mut inputs.visited_rules].into_iter().flatten() {
+                let rules: Vec<_> = path.self_and_ancestors().filter_map(|n| {
+                    let source = n.style_source()?;
+                    (!Arc::ptr_eq(source.get(), ignored)).then(|| (source.borrow(), n.cascade_priority()))
+                }).collect();
+                *path = self.stylist.rule_tree().insert_ordered_rules(rules.into_iter().rev());
+            }
+            self.stylist.cascade_style_and_visited(
+                Some(node), pseudo, &inputs, &guards, parent, parent, FirstLineReparenting::No,
+                &Default::default(), None, &mut Default::default(), &mut Default::default(),
+            )
+        };
+
+        let mut node = self.get_node(id)?;
+        let mut pseudo = pseudo;
+        let mut base = match pseudo {
+            Some(p) => self.pseudo_element_style(id, p, false)?,
+            None => primary(node)?,
+        };
+        let mut children = Vec::new();
+        // Timing longhands are reset properties. Reconstruct a parent's author timing
+        // only when an explicit inherit (possibly from substitution) was used.
+        let mut result = loop {
+            let parent = if pseudo.is_some() { Some(node) } else { TElement::inheritance_parent(&node) };
+            let parent_style = parent.and_then(primary);
+            let style = cascade(node, pseudo, &base, parent_style.as_deref());
+            if !style.flags.contains(ComputedValueFlags::INHERITS_RESET_STYLE) {
+                break style;
+            }
+            let (Some(p), Some(p_style)) = (parent, parent_style) else { break style };
+            children.push((node, pseudo, base));
+            node = p;
+            pseudo = None;
+            base = p_style;
+        };
+        while let Some((child, pseudo, base)) = children.pop() {
+            result = cascade(child, pseudo, &base, Some(&result));
+        }
+        Some(result)
+    }
+
     /// Compute the style of an element which the regular style traversal
     /// skipped because it lives inside a `display: none` subtree.
     ///

@@ -921,7 +921,9 @@ impl<'a, 'b: 'a> StyleAdjuster<'a, 'b> {
             a => a,
         };
 
-        if appearance == Appearance::Menulist {
+        if appearance == Appearance::Menulist
+            || (appearance == Appearance::MenulistButton && *box_.get__moz_default_appearance() == Appearance::Menulist)
+        {
             if *self.style.get_font().get_line_height() == LineHeight::normal() {
                 return;
             }
