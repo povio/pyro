@@ -1163,3 +1163,23 @@ fn connected_stylesheet_moves_follow_document_order() {
     "#);
     assert_eq!(actual, "second|first|second|first");
 }
+
+#[test]
+fn registered_numeric_font_units_follow_the_computing_element() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        CSS.registerProperty({name:'--scale',syntax:'<number>',inherits:true,initialValue:'1'});
+        const parent=document.body.appendChild(document.createElement('section'));
+        const child=parent.appendChild(document.createElement('div'));
+        parent.style.cssText='font-size:30px;--scale:calc(1em / 1px)';
+        child.style.cssText='font-size:10px;--raw:1em;margin-left:var(--raw)';
+        const cs=getComputedStyle(child);
+        const values=[cs.getPropertyValue('--scale'),cs.marginLeft];
+        child.style.setProperty('--scale','calc(1em / 1px)');
+        values.push(cs.getPropertyValue('--scale'));
+        child.style.fontSize='12px';
+        values.push(cs.getPropertyValue('--scale'),cs.marginLeft);
+        values.join('|')
+    "#);
+    assert_eq!(actual, "30|10px|10|12|12px");
+}

@@ -102,17 +102,16 @@ impl DataType {
             DataType::Length
             | DataType::LengthPercentage
             | DataType::TransformFunction
-            | DataType::TransformList => DependentDataTypes::LENGTH,
-            DataType::Color => DependentDataTypes::COLOR,
-            DataType::Number
+            | DataType::TransformList
+            // Typed arithmetic can cancel the length dimension while still needing font metrics.
+            | DataType::Number
             | DataType::Percentage
-            | DataType::Image
-            | DataType::Url
             | DataType::Integer
             | DataType::Angle
             | DataType::Time
-            | DataType::Resolution
-            | DataType::CustomIdent
+            | DataType::Resolution => DependentDataTypes::LENGTH,
+            DataType::Color => DependentDataTypes::COLOR,
+            DataType::Image | DataType::Url | DataType::CustomIdent
             | DataType::String => DependentDataTypes::empty(),
         }
     }

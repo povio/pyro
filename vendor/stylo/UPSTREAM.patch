@@ -4947,6 +4947,33 @@ diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
  flags = "IS_LEGACY_SHORTHAND ALLOWS_DISABLED_SUBPROPERTIES"
  sub_properties = ["line-clamp"]
  spec = "https://drafts.csswg.org/css-overflow-4/#webkit-line-clamp"
+diff -ruN a/properties_and_values/syntax/data_type.rs b/properties_and_values/syntax/data_type.rs
+--- a/properties_and_values/syntax/data_type.rs	2026-11-11 19:55:57
++++ b/properties_and_values/syntax/data_type.rs	2026-11-21 23:40:59
+@@ -102,17 +102,16 @@
+             DataType::Length
+             | DataType::LengthPercentage
+             | DataType::TransformFunction
+-            | DataType::TransformList => DependentDataTypes::LENGTH,
+-            DataType::Color => DependentDataTypes::COLOR,
+-            DataType::Number
++            | DataType::TransformList
++            // Typed arithmetic can cancel the length dimension while still needing font metrics.
++            | DataType::Number
+             | DataType::Percentage
+-            | DataType::Image
+-            | DataType::Url
+             | DataType::Integer
+             | DataType::Angle
+             | DataType::Time
+-            | DataType::Resolution
+-            | DataType::CustomIdent
++            | DataType::Resolution => DependentDataTypes::LENGTH,
++            DataType::Color => DependentDataTypes::COLOR,
++            DataType::Image | DataType::Url | DataType::CustomIdent
+             | DataType::String => DependentDataTypes::empty(),
+         }
+     }
 diff -ruN a/properties_and_values/value.rs b/properties_and_values/value.rs
 --- a/properties_and_values/value.rs	2026-11-11 19:55:57
 +++ b/properties_and_values/value.rs	2026-11-21 22:30:43
