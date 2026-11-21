@@ -7,6 +7,9 @@ WPT `a421f2fea5eb7f91e0db399e44b0fb0779ee1603`, Studio Chrome stable `158.0.8127
 | Parent `fafdfaa4` (`eventobject`) | 5,695 | 181,218 | — |
 | `217431bf` (`viewbox`) | 5,697 | 181,249 | +2/−0; +31/−0 |
 | `122f9ca0` (`bordershape`) | 5,698 | 181,329 | +1/−0; +80/−0 |
+| `229e0e59` (`shaperead`) | 5,699 | 181,335 | +1/−0; +6/−0 |
+
+Resolved CSSOM now omits the default reference box for each contour and collapses identical contours with the same effective box. The specified value and paint representation stay intact. This converts the computed-value page to an LP-only strict pass; it does not reduce the Chrome-only strict page count. Main LP-only / Chrome-only: 278 / 1,529 pages, 5,898 / 7,526 names. Supplement and timeout counts unchanged.
 
 The object-view-box fix gained 24 interpolation assertions, one transition-mutation assertion and six generic transition assertions. Border-shape gained all 80 previously missing names on its animation page, including incompatible boxes, two contours, and shape commands. Neighboring clip-path and shape-outside focused controls lost no passes. The vendor patches reconstruct the upstream and reverse-apply.
 
