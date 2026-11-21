@@ -9593,7 +9593,7 @@ diff -ruN a/values/specified/border.rs b/values/specified/border.rs
      #[inline]
 diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 --- a/values/specified/box.rs	2026-11-11 19:55:57
-+++ b/values/specified/box.rs	2026-11-21 07:18:12
++++ b/values/specified/box.rs	2026-11-21 10:07:53
 @@ -15,7 +15,7 @@
      GenericLineClamp, GenericOverflowClipMargin, GenericPerspective, GenericScrollbarInset,
      MaxLines, OverflowClipMarginBox,
@@ -9696,19 +9696,19 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      pub const WebkitInlineBox: Self = Self(
          ((DisplayOutside::Inline as u16) << Self::OUTSIDE_SHIFT) | DisplayInside::WebkitBox as u16,
      );
-@@ -368,6 +375,12 @@
-     #[inline]
-     pub fn is_inline_flow(&self) -> bool {
+@@ -370,6 +377,12 @@
          self.outside() == DisplayOutside::Inline && self.inside() == DisplayInside::Flow
-+    }
-+
+     }
+ 
 +    /// pyro: whether this is `display: run-in` (see [`Self::RUN_IN_MASK`]).
 +    #[inline]
 +    pub const fn is_run_in(&self) -> bool {
 +        (self.0 & Self::RUN_IN_MASK) != 0
-     }
- 
++    }
++
      /// Returns whether this `display` value is some kind of list-item.
+     #[inline]
+     pub const fn is_list_item(&self) -> bool {
 @@ -440,6 +453,10 @@
          if is_root_element && (self.is_contents() || self.is_list_item()) {
              return Display::Block;
@@ -9863,8 +9863,8 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +    #[cfg(feature = "servo")]
 +    #[css(skip)]
 +    VerticalAlignTextTop,
- }
- 
++}
++
 +#[cfg(feature = "servo")]
 +impl AlignmentBaseline {
 +    /// pyro: the value `vertical-align` sets for a keyword of this longhand (see
@@ -9887,8 +9887,8 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +            other => other,
 +        }
 +    }
-+}
-+
+ }
+ 
 +impl ToCss for AlignmentBaseline {
 +    fn to_css<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result
 +    where
@@ -9967,6 +9967,15 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      #[inline]
      /// Get default `touch-action` as `auto`
      pub fn auto() -> TouchAction {
+@@ -1381,7 +1502,7 @@
+ )]
+ #[css(bitflags(
+     single = "none,strict,content",
+-    mixed = "size,layout,style,paint,inline-size",
++    mixed = "size,inline-size,layout,style,paint",
+     overlapping_bits
+ ))]
+ #[repr(C)]
 @@ -1593,7 +1714,7 @@
  )]
  #[css(bitflags(
@@ -10018,10 +10027,12 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
          }
      }
  }
-@@ -2293,6 +2422,15 @@
+@@ -2291,6 +2420,15 @@
+ pub enum ScrollBehavior {
+     Auto,
      Smooth,
- }
- 
++}
++
 +#[allow(missing_docs)]
 +#[derive(Clone, Copy, Debug, Deserialize, Eq, FromPrimitive, Hash, MallocSizeOf, Parse, PartialEq,
 +         Serialize, SpecifiedValueInfo, ToComputedValue, ToCss, ToResolvedValue, ToShmem, ToTyped)]
@@ -10029,11 +10040,9 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +pub enum ScrollAxisLock {
 +    Auto,
 +    None,
-+}
-+
+ }
+ 
  /// https://drafts.fxtf.org/compositing/#isolation
- #[allow(missing_docs)]
- #[derive(
 @@ -2320,6 +2458,15 @@
      Isolate,
  }
@@ -10050,12 +10059,10 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
  /// https://drafts.csswg.org/css-transforms/#backface-visibility-property
  #[allow(missing_docs)]
  #[derive(
-@@ -2486,6 +2633,15 @@
- pub enum ImageOrientation {
-     FromImage,
+@@ -2488,6 +2635,15 @@
      None,
-+}
-+
+ }
+ 
 +/// Controls interpolation between intrinsic sizing keywords and numeric sizes.
 +#[allow(missing_docs)]
 +#[derive(Clone, Copy, Debug, Deserialize, Eq, FromPrimitive, Hash, MallocSizeOf, Parse, PartialEq, Serialize, SpecifiedValueInfo, ToComputedValue, ToCss, ToResolvedValue, ToShmem, ToTyped)]
@@ -10063,14 +10070,15 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +pub enum InterpolateSize {
 +    NumericOnly,
 +    AllowKeywords,
- }
- 
++}
++
  /// Nonstandard (https://developer.mozilla.org/en-US/docs/Web/CSS/box-align)
-@@ -2628,4 +2784,91 @@
- pub enum DirectionProperty {
+ #[allow(missing_docs)]
+ #[derive(
+@@ -2629,3 +2785,90 @@
      Ltr,
      Rtl,
-+}
+ }
 +
 +/// pyro: the `scroll-marker-group` property (CSS Overflow 5): whether a scroll container
 +/// generates a `::scroll-marker-group` box, and on which side of its own box it goes.
@@ -10112,7 +10120,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +        /// The markers are tabs (the focus model).
 +        const TABS = 1 << 3;
 +    }
- }
++}
 +
 +impl ScrollMarkerGroup {
 +    fn validate_mixed_flags(&self) -> bool {

@@ -1502,7 +1502,7 @@ impl TouchAction {
 )]
 #[css(bitflags(
     single = "none,strict,content",
-    mixed = "size,layout,style,paint,inline-size",
+    mixed = "size,inline-size,layout,style,paint",
     overlapping_bits
 ))]
 #[repr(C)]
