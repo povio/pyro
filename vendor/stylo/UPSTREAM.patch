@@ -10967,7 +10967,7 @@ diff -ruN a/values/specified/image.rs b/values/specified/image.rs
      /// <cf-image> = <percentage>? && [ <image> | <color> ]
 diff -ruN a/values/specified/length.rs b/values/specified/length.rs
 --- a/values/specified/length.rs	2026-11-11 19:55:57
-+++ b/values/specified/length.rs	2026-11-20 22:47:50
++++ b/values/specified/length.rs	2026-11-21 09:38:21
 @@ -187,13 +187,14 @@
              "lvi" if !in_page_rule => Self::Lvi,
              "dvi" if !in_page_rule => Self::Dvi,
@@ -10981,12 +10981,12 @@ diff -ruN a/values/specified/length.rs b/values/specified/length.rs
 -            "cqmax" if !in_page_rule && cfg!(feature = "gecko") => Self::Cqmax,
 +            // we may fall back to them. pyro: for servo too (Blitz answers container size
 +            // queries for `@container`).
-+            "cqw" if !in_page_rule => Self::Cqw,
-+            "cqh" if !in_page_rule => Self::Cqh,
-+            "cqi" if !in_page_rule => Self::Cqi,
-+            "cqb" if !in_page_rule => Self::Cqb,
-+            "cqmin" if !in_page_rule => Self::Cqmin,
-+            "cqmax" if !in_page_rule => Self::Cqmax,
++            "cqw" if !in_page_rule && allows_computational_dependence => Self::Cqw,
++            "cqh" if !in_page_rule && allows_computational_dependence => Self::Cqh,
++            "cqi" if !in_page_rule && allows_computational_dependence => Self::Cqi,
++            "cqb" if !in_page_rule && allows_computational_dependence => Self::Cqb,
++            "cqmin" if !in_page_rule && allows_computational_dependence => Self::Cqmin,
++            "cqmax" if !in_page_rule && allows_computational_dependence => Self::Cqmax,
              _ => return Err(()),
          })
      }

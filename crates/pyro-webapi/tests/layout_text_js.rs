@@ -324,6 +324,8 @@ fn css_register_property_validates_and_supplies_initial_values() {
     assert_eq!(err("{name:'--no-initial',syntax:'<length>',inherits:false}"), "SyntaxError");
     assert_eq!(err("{name:'--wrong',syntax:'<length>',inherits:false,initialValue:'red'}"), "SyntaxError");
     assert_eq!(err("{name:'--relative',syntax:'<length>',inherits:false,initialValue:'1em'}"), "SyntaxError");
+    assert_eq!(err("{name:'--container',syntax:'<length>',inherits:false,initialValue:'calc(1px + 1cqi)'}"), "SyntaxError");
+    assert_eq!(err("{name:'--viewport',syntax:'<length>',inherits:false,initialValue:'1vw'}"), "ok");
     assert_eq!(err("{name:'--keyword',syntax:'<length>',inherits:false,initialValue:'inherit'}"), "SyntaxError");
     assert_eq!(err("{name:'--single',syntax:'<transform-function>',inherits:false,initialValue:'scale(2) rotate(1deg)'}"), "SyntaxError");
     assert_eq!(err("{name:'--list',syntax:'<transform-list>',inherits:false,initialValue:'scale(2) rotate(1deg)'}"), "ok");
