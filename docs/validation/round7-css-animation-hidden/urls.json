@@ -1,0 +1,12 @@
+[
+  "css/css-animations/CSSAnimation-canceling.tentative.html",
+  "css/css-animations/display-none-prevents-starting-in-subtree.html",
+  "css/css-animations/display-none-dont-cancel.tentative.html",
+  "css/css-animations/display-contents-animates.html",
+  "css/css-animations/CSSAnimation-ready.tentative.html",
+  "css/css-animations/Element-getAnimations.tentative.html",
+  "css/css-animations/Element-getAnimations-dynamic-changes.tentative.html",
+  "css/css-transitions/CSSTransition-canceling.tentative.html",
+  "css/css-transitions/CSSTransition-not-canceling.tentative.html",
+  "css/css-transitions/transitioncancel-001.html"
+]

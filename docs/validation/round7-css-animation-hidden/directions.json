@@ -1,0 +1,81 @@
+{
+  "parent": {
+    "named": {
+      "gain": [
+        [
+          "css/css-animations/CSSAnimation-canceling.tentative.html",
+          "Setting display:none on an ancestor element cancels animations on descendants"
+        ],
+        [
+          "css/css-animations/CSSAnimation-canceling.tentative.html",
+          "Setting display:none on an element cancel its animations"
+        ],
+        [
+          "css/css-animations/display-none-prevents-starting-in-subtree.html",
+          "Elements in a \"display: none\" tree cannot start CSS Animations."
+        ]
+      ],
+      "loss": []
+    },
+    "strict": {
+      "gain": [
+        "css/css-animations/CSSAnimation-canceling.tentative.html",
+        "css/css-animations/display-none-prevents-starting-in-subtree.html"
+      ],
+      "loss": []
+    }
+  },
+  "chrome": {
+    "named": {
+      "gain": [
+        [
+          "css/css-animations/Element-getAnimations-dynamic-changes.tentative.html",
+          "Animation state is preserved when interleaving animations in list"
+        ],
+        [
+          "css/css-animations/Element-getAnimations-dynamic-changes.tentative.html",
+          "Animations are removed from the start of the list while preserving the state of existing Animations"
+        ],
+        [
+          "css/css-animations/Element-getAnimations-dynamic-changes.tentative.html",
+          "Only the startTimes of existing animations are preserved"
+        ]
+      ],
+      "loss": [
+        [
+          "css/css-animations/display-none-dont-cancel.tentative.html",
+          "A CSS variable of display:none animating to display:inline should be inline for the whole animation."
+        ],
+        [
+          "css/css-animations/display-none-dont-cancel.tentative.html",
+          "Animating from display:none to display:none should not cancel the animation."
+        ],
+        [
+          "css/css-animations/display-none-dont-cancel.tentative.html",
+          "Animating from display:none to display:none with an intermediate variable should not cancel the animation."
+        ],
+        [
+          "css/css-animations/display-none-dont-cancel.tentative.html",
+          "display:none animating to display:inline should be inline for the whole animation."
+        ],
+        [
+          "css/css-transitions/CSSTransition-canceling.tentative.html",
+          "An after-change style value can't be interpolated"
+        ],
+        [
+          "css/css-transitions/CSSTransition-canceling.tentative.html",
+          "Setting zero combined duration"
+        ]
+      ]
+    },
+    "strict": {
+      "gain": [
+        "css/css-animations/Element-getAnimations-dynamic-changes.tentative.html"
+      ],
+      "loss": [
+        "css/css-animations/display-none-dont-cancel.tentative.html",
+        "css/css-transitions/CSSTransition-canceling.tentative.html"
+      ]
+    }
+  }
+}
