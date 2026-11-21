@@ -1091,6 +1091,7 @@ impl JsClass for Selection {
                     sel.page.typing_values.take();
                     editing::retarget_selection(&sel.page, to, to);
                 }
+                editing::track_composed_caret(&sel.page);
             }
             Ok(s.undefined())
         });
