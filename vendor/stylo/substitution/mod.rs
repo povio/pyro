@@ -8,6 +8,7 @@
 pub mod attr;
 pub mod env;
 pub mod conditional;
+pub mod function;
 pub mod var;
 
 use crate::custom_properties::{
@@ -307,12 +308,15 @@ fn parse_block_tokens<const IF_PRELUDE: bool>(
             },
             Token::Function(ref name) => {
                 let substitution_kind = SubstitutionFunctionKind::from_ident(name).ok();
-                if let Some(substitution_kind) = substitution_kind {
+                let dashed = crate::custom_properties::parse_name(name).ok().map(|_| crate::Atom::from(name.as_ref()));
+                if substitution_kind.is_some() || dashed.is_some() {
                     let start = token_start.byte_index() - context.input_start.byte_index();
                     let mut input_end_position = None;
                     let function = input.parse_nested_block(|input| {
-                        let function =
-                            SubstitutionFunction::parse(substitution_kind, input, context)?;
+                        let function = match dashed {
+                            Some(name) => SubstitutionFunction::Custom(function::FunctionCall::parse(name, start, input, context)?),
+                            None => SubstitutionFunction::parse(substitution_kind.unwrap(), input, context)?,
+                        };
                         input.expect_exhausted()?;
                         input_end_position = Some(input.position());
                         Ok(function)
@@ -482,6 +486,8 @@ pub struct ParsedArgument<'a, T: Clone> {
 /// A substitution function along with the data specific to it.
 #[derive(Clone, Debug, MallocSizeOf, PartialEq, ToShmem)]
 pub enum SubstitutionFunction {
+    /// A call to an author-defined dashed function.
+    Custom(function::FunctionCall),
     /// A `var()` reference.
     Var(VarFunction),
     /// An `inherit()` reference to a parent custom property.
@@ -515,7 +521,7 @@ impl SubstitutionFunction {
     #[inline]
     pub fn reference_flags(&self) -> ReferenceFlags {
         match self {
-            Self::Var(..) | Self::If(..) | Self::Inherit(..) => ReferenceFlags::VAR,
+            Self::Custom(..) | Self::Var(..) | Self::If(..) | Self::Inherit(..) => ReferenceFlags::VAR,
             Self::Env(..) => ReferenceFlags::ENV,
             Self::Attr(..) => ReferenceFlags::ATTR,
         }
@@ -527,6 +533,7 @@ impl SubstitutionFunction {
         context: &mut SubstitutionReplacementContext<'a, '_, '_, '_>,
     ) -> Result<Substitution<'a>, ()> {
         match self {
+            Self::Custom(function) => function.replace(source, context),
             Self::If(function) => function.replace(source, context),
             Self::Var(function) => function.replace(source, context, false),
             Self::Inherit(function) => function.replace(source, context, true),
@@ -542,6 +549,7 @@ impl SubstitutionFunction {
         F: FnMut(&ArbitraryDeclarationValue),
     {
         match self {
+            Self::Custom(function) => function.arguments.iter().for_each(f),
             Self::If(function) => function.for_each_unparsed_value(f),
             Self::Var(function) | Self::Inherit(function) => function.for_each_unparsed_value(f),
             Self::Env(function) => function.for_each_unparsed_value(f),
@@ -698,7 +706,7 @@ impl AttrTaint {
     }
 
     #[inline(always)]
-    fn new_fully_tainted(end: usize) -> Self {
+    pub(crate) fn new_fully_tainted(end: usize) -> Self {
         let mut taint = Self::default();
         taint.push(0, end);
         taint
@@ -807,6 +815,8 @@ pub struct SubstitutionReplacementContext<'a, 'b, 'c, 't> {
     pub(crate) consulted_attr_taint: bool,
     /// Number of random functions parsed during substitution of this declaration.
     pub(crate) early_random_count: i32,
+    pub(crate) function_frame: Option<std::rc::Rc<function::Frame>>,
+    pub(crate) function_dependencies: Option<std::rc::Rc<std::cell::RefCell<Vec<Name>>>>,
     /// The custom properties currently being resolved, for cycle detection.
     pub seen: SmallVec<[Name; 8]>,
 }
@@ -829,6 +839,8 @@ impl<'a, 'b, 'c, 't> SubstitutionReplacementContext<'a, 'b, 'c, 't> {
             seen: SmallVec::new(),
             consulted_attr_taint: false,
             early_random_count: 0,
+            function_frame: None,
+            function_dependencies: None,
         }
     }
 

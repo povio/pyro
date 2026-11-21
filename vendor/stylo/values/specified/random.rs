@@ -114,6 +114,8 @@ pub struct RandomCacheKey {
     pub ua_ident: RandomUaIdent,
     /// Whether `element-scoped` was specified.
     pub is_element_scoped: bool,
+    /// Extra identity of the hypothetical element evaluating a typed function slot.
+    pub(crate) function_invocation_seed: Option<u64>,
 }
 
 impl Parse for RandomCacheKey {
@@ -122,6 +124,7 @@ impl Parse for RandomCacheKey {
             name: DashedIdent::empty(),
             ua_ident: RandomUaIdent::empty(),
             is_element_scoped: false,
+            function_invocation_seed: context.property_declaration_context.function_invocation_seed,
         };
 
         loop {
@@ -216,6 +219,7 @@ impl RandomKey {
             name: DashedIdent::empty(),
             ua_ident: RandomUaIdent::from_property_and_index(property_id, index, context.property_declaration_context.is_early_random()),
             is_element_scoped: true,
+            function_invocation_seed: context.property_declaration_context.function_invocation_seed,
         }))
     }
 }

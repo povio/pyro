@@ -91,6 +91,7 @@ pub trait FontMetricsProvider: Debug + Sync {
 #[derive(Debug, MallocSizeOf)]
 pub(super) struct ExtraDeviceData {
     style_uses_font_metrics: AtomicBool,
+    style_uses_media_conditions: AtomicBool,
     #[ignore_malloc_size_of = "Shared document URL"]
     document_url: Option<Arc<url::Url>>,
     #[ignore_malloc_size_of = "Inline hash keys"]
@@ -138,6 +139,16 @@ pub struct MediaData {
 }
 
 impl Device {
+    /// A computed declaration can contain a media query even when no stylesheet rule does.
+    pub fn note_style_media_condition(&self) {
+        self.extra.style_uses_media_conditions.store(true, Ordering::Relaxed);
+    }
+
+    /// Whether changing this device could change a computed inline conditional.
+    pub fn style_uses_media_conditions(&self) -> bool {
+        self.extra.style_uses_media_conditions.load(Ordering::Relaxed)
+    }
+
     /// Records a computed value that depends on font metrics, as distinct from text layout.
     pub fn note_style_font_metrics(&self) {
         self.extra.style_uses_font_metrics.store(true, Ordering::Relaxed);
@@ -185,6 +196,7 @@ impl Device {
             submit_string,
             extra: ExtraDeviceData {
                 style_uses_font_metrics: AtomicBool::new(false),
+                style_uses_media_conditions: AtomicBool::new(false),
                 document_url: None,
                 random_state: RandomState::new(),
                 media_data,

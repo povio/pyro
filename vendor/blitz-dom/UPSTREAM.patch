@@ -2497,7 +2497,15 @@ diff --git a/packages/blitz-dom/src/config.rs b/packages/blitz-dom/src/config.rs
 diff --git a/packages/blitz-dom/src/cssom.rs b/packages/blitz-dom/src/cssom.rs
 --- a/packages/blitz-dom/src/cssom.rs
 +++ b/packages/blitz-dom/src/cssom.rs
-@@ -337,6 +337,9 @@
+@@ -168,6 +168,7 @@
+         CssRule::Container(_) => "CSSContainerRule",
+         CssRule::FontFace(_) => "CSSFontFaceRule",
+         CssRule::FontFeatureValues(_) => "CSSFontFeatureValuesRule",
++        CssRule::Function(_) => "CSSFunctionRule",
+         CssRule::FontPaletteValues(_) => "CSSFontPaletteValuesRule",
+         CssRule::CounterStyle(_) => "CSSCounterStyleRule",
+         CssRule::Keyframes(_) => "CSSKeyframesRule",
+@@ -337,6 +338,9 @@
              shell_provider: self.shell_provider.clone(),
              abort_signal: self.abort_signal.clone(),
              import_depth: 0,
@@ -2507,7 +2515,7 @@ diff --git a/packages/blitz-dom/src/cssom.rs b/packages/blitz-dom/src/cssom.rs
          }
      }
  
-@@ -522,6 +525,7 @@
+@@ -522,6 +526,7 @@
                  &self.shell_provider,
                  &guard,
                  self.abort_signal.as_ref(),
@@ -5207,11 +5215,15 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
          // Text is shaped at a specific scale factor, so cached inline layouts
          // must be invalidated when the scale changes, as must every node's
-@@ -2314,9 +4230,22 @@
+@@ -2314,9 +4230,26 @@
          drop(root_styles);
  
          let old_device = self.stylist.device();
 -        let viewport_size_changed = old_device.au_viewport_size() != device.au_viewport_size();
++        let style_uses_media_conditions = old_device.style_uses_media_conditions();
++        if style_uses_media_conditions {
++            device.note_style_media_condition();
++        }
 +        if old_device.style_uses_font_metrics() {
 +            device.note_style_font_metrics();
 +        }
@@ -5231,7 +5243,18 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let origins = {
              let guard = &self.guard;
              let guards = StylesheetGuards {
-@@ -2460,10 +4389,19 @@
+@@ -2338,7 +4271,9 @@
+         // when the viewport size changes, even if no media query results
+         // changed. Invalidate just the elements whose styles use viewport
+         // units (tracked via per-element computed value flags).
+-        if viewport_size_changed && styles_use_viewport_units {
++        // Inline media conditions use the same per-style dependency flag. Their
++        // predicates can also change on a media type or input-device update.
++        if (viewport_size_changed && styles_use_viewport_units) || style_uses_media_conditions {
+             if self
+                 .stylist
+                 .get_custom_property_initial_values_flags()
+@@ -2460,10 +4395,19 @@
              pos.x += node.unrounded_layout().location.x - node.scroll_offset().x as f32;
              pos.y += node.unrounded_layout().location.y - node.scroll_offset().y as f32;
              current = node.containing_block();
@@ -5251,7 +5274,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Computes the size and position of the `Node` relative to the viewport
      pub fn get_client_bounding_rect(&self, node_id: NodeId) -> Option<BoundingRect> {
          // Non-atomic inline elements have no layout box of their own: return
-@@ -2620,6 +4558,35 @@
+@@ -2620,6 +4564,35 @@
          self.find_element_by_tag_name(&local_name!("title"))
      }
  
@@ -5287,7 +5310,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub fn with_text_input(
          &mut self,
          node_id: NodeId,
-@@ -2643,12 +4610,22 @@
+@@ -2643,12 +4616,22 @@
      /// Recompute the scroll offset of the text input at `node_id` (if any) so that its caret
      /// remains visible within the input's content box.
      pub(crate) fn clamp_text_input_scroll(&mut self, node_id: NodeId) {
@@ -5315,7 +5338,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
          if let Some(text_input) = node
              .element_data_mut()
-@@ -2677,7 +4654,7 @@
+@@ -2677,7 +4660,7 @@
      /// Find the text position (inline_root_id, byte_offset) at a given point.
      /// Uses hit() for proper coordinate transformation, then finds the inline root
      /// and byte offset.
@@ -5324,7 +5347,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let hit = self.hit(x, y)?;
          let hit_node = self.get_node(hit.node_id)?;
          let inline_root = hit_node.inline_root_ancestor()?;
-@@ -2835,6 +4812,10 @@
+@@ -2835,6 +4818,10 @@
      /// Get all selection ranges as Vec<(node_id, start_offset, end_offset)>.
      /// Returns empty vec if no selection.
      pub fn get_text_selection_ranges(&self) -> Vec<(NodeId, usize, usize)> {
@@ -5335,7 +5358,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let lookup = |parent_id, idx| self.find_anonymous_block_by_index(parent_id, idx);
  
          let anchor_node = match self.text_selection.anchor.resolve_node_id(lookup) {
-@@ -3782,6 +5763,7 @@
+@@ -3782,6 +5769,7 @@
                      family_name: Some(String::from(ALIAS)),
                      weight: Some(800.0),
                      style: Some(parley::fontique::FontStyle::Italic),
@@ -5343,7 +5366,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                  },
              )),
          };
-@@ -3804,6 +5786,52 @@
+@@ -3804,6 +5792,52 @@
               not the font file's internal `name` table entry",
          );
      }
@@ -5396,7 +5419,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  }
  
  #[cfg(test)]
-@@ -3846,3 +5874,154 @@
+@@ -3846,3 +5880,154 @@
          assert!(doc.has_changes());
      }
  }

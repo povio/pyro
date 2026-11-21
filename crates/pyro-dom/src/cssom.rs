@@ -673,6 +673,18 @@ fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces, re
         }
         return Some(ParsedRule::Group { name: lower, condition: name.to_css_string(), rules });
     }
+    if lower == "function" {
+        use style::shared_lock::{SharedRwLock, ToCssWithGuard};
+        use style::stylesheets::{CssRuleType, FunctionRule, Origin};
+
+        let url = crate::stylo::url_data();
+        let context = style::parser::ParserContext::new(
+            Origin::Author, &url, Some(CssRuleType::Function), style_traits::ParsingMode::DEFAULT,
+            style::context::QuirksMode::NoQuirks, Default::default(), None, None, Default::default(),
+        );
+        let rule = FunctionRule::from_css(&context, &prelude, &block?).ok()?;
+        return Some(ParsedRule::Other { rule_type: 0, text: rule.to_css_string(&SharedRwLock::new().read()) });
+    }
     if lower == "position-try" {
         let mut parser = Parser::new(&prelude);
         let ident = parser.expect_ident().ok()?.clone();

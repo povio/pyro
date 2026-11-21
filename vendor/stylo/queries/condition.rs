@@ -1150,6 +1150,8 @@ impl IfPredicate<'_> {
                 }
             },
             Self::Media(q) => {
+                #[cfg(feature = "servo")]
+                cx.stylist.device().note_style_media_condition();
                 cx.computed_context.builder.add_flags(ComputedValueFlags::USES_VIEWPORT_UNITS);
                 computed::Context::for_media_query_evaluation(cx.stylist.device(), cx.computed_context.quirks_mode,
                     |ctx| q.matches(ctx, &mut CustomMediaEvaluator::none(), cx.attribute_tracker))

@@ -516,3 +516,44 @@ fn font_feature_value_maps_read_and_update_the_owning_rule() {
     "#);
     assert_eq!(result, "b:8,9/a:1|a:5,7:true/b:6:true|true|4|InvalidAccessError|true|Other Family");
 }
+
+#[test]
+fn custom_functions_resolve_typed_parameters_and_locals() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        const s = document.head.appendChild(document.createElement('style'));
+        s.textContent = `
+          @function --add(--x <length>, --y <length>: var(--x)) returns <length> {
+            --copy: var(--x);
+            result: calc(var(--copy) + var(--y));
+          }
+          @function --nested(--input) { result: --add(var(--input)); }
+          #f { --input: 99px; width: --nested(9px); --out: --add(10px, 3px) }
+        `;
+        const el = document.body.appendChild(document.createElement('div'));
+        el.id = 'f';
+        const first = getComputedStyle(el).width;
+        const out = getComputedStyle(el).getPropertyValue('--out');
+        s.sheet.insertRule('@function --add(--x, --y: 0px) { result: 27px; }', s.sheet.cssRules.length);
+        [first, out, getComputedStyle(el).width].join('|')
+    "#);
+    assert_eq!(actual, "18px|13px|27px");
+}
+
+#[test]
+fn custom_functions_distinguish_typed_and_untyped_results() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        const s = document.head.appendChild(document.createElement('style'));
+        s.textContent = `
+          @function --typed() returns <number> { result: calc(2 + 3); }
+          @function --tokens() { result: calc(2 + 3); }
+          @function --shadow(--x) { --x: green; result: var(--x); }
+          #f { --x: red; --a: --typed(); --b: --tokens(); color: --shadow(blue); }
+        `;
+        const el = document.body.appendChild(document.createElement('div')); el.id='f';
+        const cs=getComputedStyle(el);
+        [cs.getPropertyValue('--a'),cs.getPropertyValue('--b'),cs.color].join('|')
+    "#);
+    assert_eq!(actual, "5|calc(2 + 3)|rgb(0, 128, 0)");
+}

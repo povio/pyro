@@ -2346,6 +2346,20 @@ fn substitute_all(
                     refs_stack.push(iter);
                 }
                 let (next_var, fallback) = match next.function {
+                    SubstitutionFunction::Custom(ref function) => {
+                        for arg in &function.arguments { check_declaration_value_cycle!(arg); }
+                        // Locals and parameters shadow the element map. Let invocation identify
+                        // the element properties actually read through the active bindings.
+                        let deps = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+                        let mut replacement = context.replacement_context(property_id);
+                        replacement.function_dependencies = Some(deps.clone());
+                        let _ = function.replace(source, &mut replacement);
+                        drop(replacement);
+                        for name in deps.take() {
+                            visit_link(VarType::Custom(name), index, references_from_non_custom_properties, context, lowlink, self_ref);
+                        }
+                        continue;
+                    },
                     SubstitutionFunction::If(ref function) => {
                         for branch in &function.branches {
                             let before = *early_random_count;

@@ -112,6 +112,7 @@ pub struct PropertyDeclarationContext<'a> {
     /// in the current property declaration. Used when a random() function
     /// has a `property-index-scoped` key.
     random_count: Cell<i32>,
+    pub(crate) function_invocation_seed: Option<u64>,
     early_random_indices: Option<&'a EarlyRandomIndices<'a>>,
 }
 
@@ -263,6 +264,14 @@ impl<'a> ParserContext<'a> {
                 ..Default::default()
             },
         })
+    }
+
+    pub(crate) fn with_function_invocation<R>(&self, seed: u64, tainted: bool, length: usize, f: impl FnOnce(&ParserContext) -> R) -> R {
+        let mut cx = ParserContext::new_with_property_id(self.stylesheet_origin, self.url_data, Some(CssRuleType::Style),
+            self.parsing_mode, self.quirks_mode, Cow::Borrowed(&self.namespaces), self.error_reporter, self.use_counters,
+            if tainted { AttrTaint::new_fully_tainted(length) } else { AttrTaint::default() }, self.property_declaration_context.property_id());
+        cx.property_declaration_context.function_invocation_seed = Some(seed);
+        f(&cx)
     }
 
     /// Temporarily sets the rule_type and executes the callback function, returning its result.

@@ -385,6 +385,7 @@ impl SanitizationKind {
             CssRule::Margin(..) |
             CssRule::Property(..) |
             CssRule::FontFeatureValues(..) |
+            CssRule::Function(..) |
             CssRule::FontPaletteValues(..) |
             CssRule::CounterStyle(..) |
             CssRule::ViewTransition(..) => !is_standard,

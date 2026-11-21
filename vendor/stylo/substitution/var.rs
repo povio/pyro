@@ -97,10 +97,15 @@ impl VarFunction {
         inherited.get(registration, name)
     }
 
-    fn resolve_custom_property<'a>(
+    pub(super) fn resolve_custom_property<'a>(
         name: &Name,
         context: &mut SubstitutionReplacementContext<'a, '_, '_, '_>,
     ) -> Option<Substitution<'a>> {
+        if let Some(result) = super::function::local_value(name, context) { return result; }
+        if let Some(deps) = &context.function_dependencies {
+            let mut deps = deps.borrow_mut();
+            if !deps.contains(name) { deps.push(name.clone()); }
+        }
         let registration = context.stylist.get_custom_property_registration(name);
         let value = context.substitution_functions.get_var(registration, name);
         if value.is_some_and(|v| v.viewport_dependent) {
