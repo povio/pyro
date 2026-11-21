@@ -359,6 +359,65 @@ pub(super) fn after_line_break(page: &PageDom, dom: &mut Dom, host: NodeId, poin
     }
 }
 
+/// Do not promote spaces that already collapsed before the edit into NBSPs.
+pub(super) fn visible_before_deletion(dom: &Dom, from: Point, to: Point) -> bool {
+    let Ok(text) = dom.char_data(from.0) else { return false };
+    let Ok((a, b)) = pyro_dom::dom::utf16_range(text, from.1, to.1 - from.1) else { return false };
+    let start = text[..a].trim_end_matches(space).len();
+    let end = text.len() - text[b..].trim_start_matches(space).len();
+    if text[start..end].contains("  ") { return false; }
+    if end == text.len() {
+        if let Some(right) = dom.next_sibling(from.0).ok().flatten().and_then(|n| dom.char_data(n).ok()) {
+            let run = &right[..right.len() - right.trim_start_matches(space).len()];
+            if run.contains("  ") || (text.ends_with(' ') && run.starts_with(' ')) { return false; }
+        }
+    }
+    if start == 0 {
+        if let Some(left) = dom.prev_sibling(from.0).ok().flatten().and_then(|n| dom.char_data(n).ok()) {
+            let run = &left[left.trim_end_matches(space).len()..];
+            if run.contains("  ") || (run.ends_with(' ') && text.starts_with(' ')) { return false; }
+        }
+    }
+    true
+}
+
+/// Consecutive sibling text nodes form one visual text run. At a shared
+/// boundary the selection stays upstream while the downstream text is
+/// rebalanced. Preserve node identity on either side of the edit.
+pub(super) fn after_text_deletion(page: &PageDom, dom: &mut Dom, host: NodeId, (node, offset): Point, rebalance: bool) -> Option<Point> {
+    let prev = dom.prev_sibling(node).ok().flatten().filter(|&n| editing::is_text(dom, n));
+    let next = dom.next_sibling(node).ok().flatten().filter(|&n| editing::is_text(dom, n));
+    let len = editing::len(dom, node);
+    let mut right = next;
+    if offset == len {
+        while let Some(n) = right {
+            if editing::len(dom, n) != 0 { break; }
+            right = dom.next_sibling(n).ok().flatten().filter(|&s| editing::is_text(dom, s));
+            let _ = dom.remove_node(n);
+        }
+    }
+    let mut left = prev;
+    if offset == 0 {
+        while let Some(n) = left {
+            if editing::len(dom, n) != 0 { break; }
+            left = dom.prev_sibling(n).ok().flatten().filter(|&s| editing::is_text(dom, s));
+            let _ = dom.remove_node(n);
+        }
+    }
+    let caret = if offset == 0 {
+        left.map(|n| (n, editing::len(dom, n))).unwrap_or((node, offset))
+    } else {
+        (node, offset)
+    };
+    let point = if offset == len { right.map(|n| (n, 0)).unwrap_or(caret) } else { (node, offset) };
+    if rebalance { at(page, dom, host, point, Repair::RemovedBox); }
+    if len == 0 && (left.is_some() || right.is_some()) {
+        let _ = dom.remove_node(node);
+        return if left.is_some() { Some(caret) } else { right.map(|n| (n, 0)) };
+    }
+    Some(caret)
+}
+
 /// Normalize only the run touching the edit, retaining UTF-16 offsets.
 pub(super) fn at(page: &PageDom, dom: &mut Dom, host: NodeId, (node, offset): Point, repair: Repair) {
     if !editing::is_text(dom, node) || editing::editing_host(dom, node) != Some(host) {
