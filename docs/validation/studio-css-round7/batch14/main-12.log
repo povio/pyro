@@ -1,0 +1,7 @@
+wptserve on http://web-platform.test:53584 (log /var/folders/xc/t3xnmpsx6j7bsplg3rdr6zj40000gn/T/pyro-wptserve-vS0qsF/serve.log)
+batch14: 100/513 (11 s)
+batch14: 200/513 (12 s)
+batch14: 300/513 (26 s)
+batch14: 400/513 (36 s)
+batch14: 500/513 (58 s)
+batch14: done 513 pages in 58.5 s (CPU: browser 7.6 s, runner 4.7 s, server 0.0 s), restarts 0, event loop lag p50 2 ms p99 3 ms
