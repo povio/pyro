@@ -33,3 +33,19 @@ fn exceptional_math_values_survive_folding_and_resolution() {
         check(&node);
     }
 }
+
+#[test]
+fn attr_unit_names_parse_before_element_specific_validation() {
+    use pyro_dom::stylo::declarations::DeclarationBlock;
+
+    for ty in ["furlong", "kHz", "grad", "fr", "%", "number", "type(<image>)"] {
+        let value = format!("attr(data-value {ty}, 3px)");
+        let declarations = DeclarationBlock::parse(&format!("width: {value}"));
+        assert!(!declarations.value("width").is_empty(), "{value}");
+    }
+    for ty in ["default", "type(<url>)", "type(<url> | <length>)", "type(<url>+)"] {
+        let value = format!("attr(data-value {ty}, 3px)");
+        let declarations = DeclarationBlock::parse(&format!("width: {value}"));
+        assert!(declarations.value("width").is_empty(), "{value}");
+    }
+}

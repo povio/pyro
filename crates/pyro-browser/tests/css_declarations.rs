@@ -180,3 +180,108 @@ fn scroll_margin_reads_back_computed_and_inline() {
         "0px|1px 2px 3px 4px|4px|scroll-margin: 1px 2px 3px 4px;|7px 6px 0px 5px|||7px"
     );
 }
+
+#[test]
+fn attr_number_preserves_integer_tokens_and_taints_fallbacks() {
+    let (_t, root) = page();
+    let values = eval(&root, r#"
+        document.body.innerHTML = `<style>p {
+            z-index: attr(n number, 7);
+            padding-left: attr(d em, 0px);
+            font-size: 10px;
+            background-image: attr(d number, url("data:,fallback"));
+        }</style>
+        <p id="integer" n=" /* prefix */ +1 /* suffix */ " d="1e1"></p>
+        <p id="decimal" n="1.0"></p>
+        <p id="invalid" n="1 2" d="invalid"></p>`;
+        const styles = id => getComputedStyle(document.getElementById(id));
+        [styles('integer').zIndex, styles('decimal').zIndex, styles('invalid').zIndex,
+         styles('integer').paddingLeft, styles('decimal').backgroundImage, styles('invalid').backgroundImage].join('|')
+    "#);
+    assert_eq!(values, "1|auto|7|100px|none|none");
+}
+
+#[test]
+fn inline_if_resolves_only_consulted_branches_and_predicates() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        document.body.innerHTML = `<style>
+        @property --length { syntax: "<length>"; inherits: false; initial-value: 0px }
+        @property --size { syntax: "<length>"; inherits: false; initial-value: 10px }
+        body { --x: parent }
+        p {
+            --x: child;
+            --length: 10px;
+            --size: if(else: 13px; else: 1em);
+            font-size: var(--size);
+            --lazy: if(style(--x: child) and style(9px < --length < 11px): 37px; else: var(--lazy));
+            --cycle: if(else: var(--cycle));
+            --on: yes;
+            --a: if(style(--on) or style(--b): 10px; else: 20px);
+            --b: var(--a);
+            left: var(--b);
+            --self: if(style(--self): 1px; else: 29px);
+            --negated: if(not style(--negated): 31px; else: 1px);
+            --either: if(style(--either) or style(--x: child): 41px; else: 1px);
+            padding: var(--self) var(--negated) var(--either);
+            --empty: if(style(--missing): 97px);
+            --fallthrough: if(unknown: bad; supports(display: block): 19px);
+            margin-left: var(--lazy);
+            margin-top: var(--cycle, 23px);
+            margin-bottom: 11px var(--empty, 17px);
+            margin-right: var(--fallthrough);
+        }
+        </style><p id="p">text</p>`;
+        const cs = getComputedStyle(document.querySelector('#p'));
+        ['left','font-size','padding-top','padding-right','padding-bottom','margin-left',
+         'margin-top','margin-bottom','margin-right'].map(name => cs.getPropertyValue(name)).join('|')
+    "#);
+    assert_eq!(actual, "10px|13px|29px|31px|41px|37px|23px|11px|19px");
+}
+
+#[test]
+fn inline_if_taints_only_urls_that_depend_on_attributes() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        document.body.innerHTML = `<style>
+        p { --value: attr(data-value type(<number>)); --enabled: yes }
+        #equality { background-image: if(style(--value: 7): url(data:image/gif;base64,R0lGODlhAQABAAAAACw=)) }
+        #range { background-image: if(style(--value < 5): none; else: url(data:image/gif;base64,R0lGODlhAQABAAAAACw=)) }
+        #failed {
+            background-image: if(style(--enabled: var(--value) var(--missing)): none; else: url(data:image/gif;base64,R0lGODlhAQABAAAAACw=));
+        }
+        #failed-attr { background-image: if(style(--enabled: attr(n type(<number>))): none; else: url(data:,fallback)) }
+        #nested {
+            background-image: if(if(style(--value: 7): var(--missing)): none; else: url(data:image/gif;base64,R0lGODlhAQABAAAAACw=));
+        }
+        #clean { background-image: if(style(--enabled) or style(--value: 7): url(data:image/gif;base64,R0lGODlhAQABAAAAACw=)) }
+        </style>
+        <p id="equality" data-value="7"></p><p id="range" data-value="7"></p><p id="clean" data-value="7"></p><p id="failed" data-value="7"></p><p id="nested" data-value="7"></p><p id="failed-attr" n="invalid"></p>`;
+        ['equality','range','failed','nested','failed-attr','clean']
+            .map(id => getComputedStyle(document.getElementById(id)).backgroundImage).join('|')
+    "#);
+    assert_eq!(actual, r#"none|none|none|none|none|url("data:image/gif;base64,R0lGODlhAQABAAAAACw=")"#);
+}
+
+#[test]
+fn font_affecting_properties_resolve_local_lengths_against_the_parent() {
+    let (_t, root) = page();
+    let computed = eval(&root, r#"
+        document.documentElement.style.fontSize = '32px';
+        document.body.innerHTML = `<style>
+            main { font-size: 10px; line-height: 20px }
+            #child {
+                font-size: 50px;
+                font-weight: calc(1em / 1px);
+                font-style: oblique calc(1lh / 1px * 1deg);
+                line-height: 2em;
+                margin-left: 1em;
+            }
+            #grandchild { font-weight: calc(1rem / 1px) }
+        </style><main><div id="child"><span id="grandchild"></span></div></main>`;
+        const child = getComputedStyle(document.getElementById('child'));
+        const grandchild = getComputedStyle(document.getElementById('grandchild'));
+        [child.fontWeight, child.fontStyle, child.lineHeight, child.marginLeft, grandchild.fontWeight].join('|')
+    "#);
+    assert_eq!(computed, "10|oblique 20deg|100px|50px|32");
+}

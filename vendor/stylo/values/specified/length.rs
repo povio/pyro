@@ -684,6 +684,14 @@ impl NoCalcLength {
         base_size: FontBaseSize,
         line_height_base: LineHeightBase,
     ) -> computed::Length {
+        // Font-affecting longhands use the parent's metrics, even when a length is
+        // nested inside typed arithmetic. Root-relative units still use the root
+        // on descendants, as handled by reference_font_size_and_length.
+        let (base_size, line_height_base) = if context.for_font_affecting_property {
+            (FontBaseSize::InheritedStyle, LineHeightBase::InheritedStyle)
+        } else {
+            (base_size, line_height_base)
+        };
         let (reference_size, length) =
             self.reference_font_size_and_length(context, base_size, line_height_base);
         (reference_size * length).finite()
@@ -729,9 +737,13 @@ impl NoCalcLength {
                 FontMetricsOrientation::MatchContextPreferHorizontal,
                 QueryFontMetricsFlags::NEEDS_CH,
             );
+            let writing_mode = match base_size {
+                FontBaseSize::CurrentStyle => context.style().writing_mode,
+                FontBaseSize::InheritedStyle => *context.style().inherited_writing_mode(),
+            };
             metrics.zero_advance_measure_or_default(
                 reference_font_size.used_size(),
-                context.style().writing_mode.is_upright(),
+                writing_mode.is_vertical() && writing_mode.is_upright(),
             )
         }
 
@@ -764,6 +776,10 @@ impl NoCalcLength {
             .add_flags(ComputedValueFlags::USES_FONT_OR_WM_RELATIVE_UNITS);
 
         let reference_font_size = base_size.resolve(context);
+        let line_height_writing_mode = || match line_height_base {
+            LineHeightBase::CurrentStyle => context.style().writing_mode,
+            LineHeightBase::InheritedStyle => *context.style().inherited_writing_mode(),
+        };
         let length = self.value;
         match self.unit {
             LengthUnit::Em => {
@@ -790,7 +806,7 @@ impl NoCalcLength {
                     let line_height = context.builder.calc_line_height(
                         context.device(),
                         line_height_base,
-                        context.style().writing_mode,
+                        line_height_writing_mode(),
                     );
                     if context.for_non_inherited_property
                         && line_height_base == LineHeightBase::CurrentStyle
@@ -870,7 +886,7 @@ impl NoCalcLength {
                         .calc_line_height(
                             context.device(),
                             line_height_base,
-                            context.style().writing_mode,
+                            line_height_writing_mode(),
                         )
                         .0
                 } else if context.in_media_query {

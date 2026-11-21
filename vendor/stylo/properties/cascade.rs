@@ -2331,6 +2331,32 @@ fn substitute_all(
             *non_custom_references |= refs.flags;
             for next in &refs.refs {
                 let (next_var, fallback) = match next.function {
+                    SubstitutionFunction::If(ref function) => {
+                        for branch in &function.branches {
+                            if check_declaration_value_cycle!(branch.condition) {
+                                break;
+                            }
+                            let (Some(test), _) = branch.parsed_condition(source, &mut context.replacement_context(property_id)) else {
+                                continue;
+                            };
+                            let result = test.evaluate(&mut |predicate| {
+                                predicate.for_each_property(&mut |name| {
+                                    // An already guarded query evaluates to false without a var() edge.
+                                    if context.index_map.var.get(&name).is_some_and(|&i| context.var_info[i].var.is_some()) {
+                                        return;
+                                    }
+                                    visit_link(VarType::Custom(name), index, references_from_non_custom_properties,
+                                        context, lowlink, self_ref);
+                                });
+                                predicate.matches(source, &mut context.replacement_context(property_id), &mut false)
+                            });
+                            if result.to_bool(false) {
+                                refs_stack.push(&branch.value.references);
+                                break;
+                            }
+                        }
+                        continue;
+                    },
                     SubstitutionFunction::Env(ref env_fn) => {
                         let name = match &env_fn.name {
                             SubstitutionArgument::Unparsed(arg) => {

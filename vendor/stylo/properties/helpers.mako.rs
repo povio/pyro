@@ -128,6 +128,9 @@ pub mod ${property.ident} {
         }
         % endif
 
+        % if property.is_font_affecting():
+        let previous_font_basis = std::mem::replace(&mut context.for_font_affecting_property, true);
+        % endif
         % if property.vector and not property.vector.simple_bindings and engine == "gecko":
             // In the case of a vector property we want to pass down an
             // iterator so that this can be computed without allocation.
@@ -150,7 +153,10 @@ pub mod ${property.ident} {
             % else:
             let computed = specified_value.to_computed_value(context);
             % endif
-            context.builder.set_${property.ident}(computed)
+            context.builder.set_${property.ident}(computed);
+        % endif
+        % if property.is_font_affecting():
+        context.for_font_affecting_property = previous_font_basis;
         % endif
         % endif
     }

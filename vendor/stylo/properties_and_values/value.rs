@@ -230,7 +230,7 @@ impl<Component: Animate> Animate for Value<Component> {
         Ok(Value {
             v,
             url_data: self.url_data.clone(),
-            attr_tainted: self.attr_tainted,
+            attr_tainted: self.attr_tainted || other.attr_tainted,
         })
     }
 }
@@ -638,13 +638,23 @@ impl<'a> Parser<'a> {
 }
 
 /// An animated value for custom property.
-#[derive(Clone, Debug, MallocSizeOf, PartialEq)]
+#[derive(Clone, Debug, MallocSizeOf)]
 pub struct CustomAnimatedValue {
     /// The name of the custom property.
     pub(crate) name: crate::custom_properties::Name,
     /// The computed value of the custom property.
     /// `None` represents the guaranteed-invalid value.
     pub(crate) value: Option<ComputedValue>,
+}
+
+impl PartialEq for CustomAnimatedValue {
+    fn eq(&self, other: &Self) -> bool {
+        // The sampled value goes back into the cascade. A change in its taint alone
+        // can change the validity of declarations that substitute it.
+        self.name == other.name
+            && self.value == other.value
+            && self.value.as_ref().map(|v| v.attr_tainted) == other.value.as_ref().map(|v| v.attr_tainted)
+    }
 }
 
 impl Animate for CustomAnimatedValue {
