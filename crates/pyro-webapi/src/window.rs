@@ -188,6 +188,7 @@ where
     crate::web_locks::define_globals(def);
     crate::media_devices::define_globals(def);
     crate::paint_worklet::define_globals(def);
+    crate::lazy_module::lazy_globals!(def, crate::pseudo_element::MODULE, "CSSPseudoElement");
     crate::typed_om::define_globals(def);
     crate::trusted_types::define_globals(def);
     crate::trusted_types::define_parser_options_global(def);
