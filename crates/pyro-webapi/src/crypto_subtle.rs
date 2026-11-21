@@ -18,6 +18,7 @@ use rsa::{PrivateKey as RsaPrivateKey, PublicKey as RsaPublicKey};
 use sha1::Sha1;
 use sha2::{Digest, Sha256, Sha384, Sha512};
 
+pub(crate) mod public_key;
 mod rsa;
 
 fn data_error(message: impl Into<String>) -> JsError {
@@ -784,6 +785,15 @@ fn u32_arg(v: Value<'_>) -> JsResult<u32> {
     Ok(if n.is_finite() && n > 0.0 { n.min(u32::MAX as f64) as u32 } else { 0 })
 }
 
+fn public_material(kind: &str, curve: &str, material: &[u8]) -> JsResult<Vec<u8>> {
+    match kind {
+        "EC" => on_curve!(curve, public_of(material)),
+        "RSA" => rsa_private(material)?.public().to_spki(),
+        "Ed25519" | "X25519" => okp_public_of(kind, material),
+        _ => Err(operation_error("Unsupported public key type")),
+    }
+}
+
 /// The object subtle.js receives: one function per primitive.
 pub(crate) fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
     let n = s.object();
@@ -805,6 +815,26 @@ pub(crate) fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
             buffer(s, &hmac(hash, &key, &data))
         } else {
             Ok(s.boolean(hmac_verify(hash, &key, &data, &bytes_arg(s, a.get(3))?)))
+        }
+    });
+    native!("chacha20Poly1305", |s, a| {
+        use ring::aead::{Aad, LessSafeKey, Nonce, UnboundKey, CHACHA20_POLY1305};
+        let key = UnboundKey::new(&CHACHA20_POLY1305, &bytes_arg(s, a.get(1))?)
+            .map_err(|_| operation_error("ChaCha20-Poly1305 requires a 256-bit key"))?;
+        // Web Crypto supplies the caller's IV for each operation.
+        let nonce = Nonce::try_assume_unique_for_key(&bytes_arg(s, a.get(2))?)
+            .map_err(|_| operation_error("ChaCha20-Poly1305 requires a 96-bit IV"))?;
+        let mut bytes = bytes_arg(s, a.get(3))?;
+        let aad = Aad::from(bytes_arg(s, a.get(4))?);
+        let key = LessSafeKey::new(key);
+        if a.get(0).to_bool() {
+            key.seal_in_place_append_tag(nonce, aad, &mut bytes)
+                .map_err(|_| operation_error("ChaCha20-Poly1305 encryption failed"))?;
+            buffer(s, &bytes)
+        } else {
+            let plaintext = key.open_in_place(nonce, aad, &mut bytes)
+                .map_err(|_| operation_error("ChaCha20-Poly1305 decryption failed"))?;
+            buffer(s, plaintext)
         }
     });
     native!("aesCbc", |s, a| {
@@ -859,15 +889,29 @@ pub(crate) fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         let private = str_arg(a.get(2))? == "private";
         export_asym(s, &str_arg(a.get(0))?, &str_arg(a.get(1))?, private, &str_arg(a.get(3))?, &bytes_arg(s, a.get(4))?)
     });
-    native!("publicOf", |s, a| {
-        let (kind, curve, material) = (str_arg(a.get(0))?, str_arg(a.get(1))?, bytes_arg(s, a.get(2))?);
-        let public = match kind.as_str() {
-            "EC" => on_curve!(curve.as_str(), public_of(&material))?,
-            "RSA" => rsa_private(&material)?.public().to_spki()?,
-            _ => okp_public_of(&kind, &material)?,
-        };
-        buffer(s, &public)
+    native!("supportsRsaGeneration", |s, a| {
+        let bits = u32_arg(a.get(0))?;
+        let exponent = bytes_arg(s, a.get(1))?;
+        Ok(s.boolean(RsaPrivateKey::generation_exponent(bits, &exponent).is_ok()))
     });
+    native!("foreignKey", |s, a| crate::crypto::foreign_key(s, a.get(0)));
+    native!("rejectOnTask", |s, a| {
+        let page = crate::target::page_of(s)?;
+        let error = pyro_js::Persistent::new(s, a.get(0));
+        let realm = s.realm().downgrade();
+        let d = s.deferred()?;
+        let promise = d.promise.get(s);
+        page.post_task(Box::new(move || {
+            let Some(realm) = realm.upgrade() else { return };
+            if let Ok(scope) = realm.scope() {
+                let _ = d.reject(&scope, error.get(&scope));
+            }
+        }));
+        Ok(promise)
+    });
+    native!("publicOf", |s, a| public_key::request(
+        s, str_arg(a.get(0))?, str_arg(a.get(1))?, bytes_arg(s, a.get(2))?, a.get(3)
+    ));
     native!("generateAsym", |s, a| {
         let exponent = if a.get(3).is_undefined() { Vec::new() } else { bytes_arg(s, a.get(3))? };
         generate_asym(s, &str_arg(a.get(0))?, &str_arg(a.get(1))?, u32_arg(a.get(2))?, &exponent)

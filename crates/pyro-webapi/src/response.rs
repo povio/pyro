@@ -353,29 +353,37 @@ fn consume<'s>(s: &Scope<'s>, data: &ResponseData, kind: ReadKind) -> JsResult<V
         deferred.reject(s, JsError::Type("Response body has already been consumed".into()).to_value(s))?;
         return Ok(promise);
     }
+    let headers = if matches!(kind, ReadKind::Blob | ReadKind::FormData) {
+        hidden(s, data, HEADERS).ok().and_then(|v| s.unwrap::<Headers>(v).map(|h| h.clone()))
+    } else {
+        None
+    };
     if data.script_stream.get() {
         let page = crate::target::page_of(s)?;
         let name = match kind {
-            ReadKind::FormData => {
-                return Err(JsError::Type("formData() is not supported on a stream body".into()));
-            }
+            ReadKind::FormData | ReadKind::Blob => "package",
             ReadKind::Text => "text",
             ReadKind::Json => "json",
             // A script's stream has no pieces to share: its bytes, in a buffer.
             ReadKind::ArrayBuffer | ReadKind::Chunks => "arrayBuffer",
             ReadKind::Bytes => "bytes",
-            ReadKind::Blob => "blob",
         };
         data.used.set(true);
-        let args = [hidden(s, data, STREAM)?, s.string(name), s.string(&data.body.mime.borrow())];
+        let package = if name == "package" {
+            s.function("packageBody", move |s, _, args| {
+                let bytes = crate::encoding::buffer_source_bytes(s, args.get(0))?
+                    .ok_or_else(|| JsError::Type("Expected body bytes".into()))?;
+                crate::fetch::package_body(s, kind, bytes, headers.as_ref())
+            })?
+            .value()
+        } else {
+            s.undefined()
+        };
+        let args = [hidden(s, data, STREAM)?, s.string(name), package];
         return crate::streams::helper(s, &page, "consume", &args);
     }
     let used = if data.body.is_null() { false } else { data.used.replace(true) };
-    if matches!(kind, ReadKind::Blob | ReadKind::FormData) {
-        let pairs = hidden(s, data, HEADERS).ok().and_then(|h| s.unwrap::<Headers>(h).map(|h| h.pairs())).unwrap_or_default();
-        data.body.refresh_mime(&pairs, matches!(kind, ReadKind::Blob));
-    }
-    data.body.read(s, kind, used)
+    data.body.read(s, kind, used, headers)
 }
 pub(crate) fn wrap<'s>(
     s: &Scope<'s>,

@@ -112,6 +112,7 @@ pub struct EventFields {
     pub char_code: u32,
     pub data: Option<String>,
     pub input_type: String,
+    pub(crate) editing_range: Option<Box<(TargetKey, crate::range::StaticRangeData)>>,
     pub pointer_id: i32,
     pub pointer_type: String,
     pub is_primary: bool,
@@ -1520,7 +1521,22 @@ impl JsClass for InputEvent {
                 None => s.null(),
             })
         });
-        def.pure_method("getTargetRanges", 0, |s, _e, _a| Ok(s.array(&[])?.value()));
+        def.method("getTargetRanges", 0, |s, e, _a| {
+            let fields = e.fields.borrow();
+            if let Some((host, range)) = fields.editing_range.as_deref() {
+                // The dispatch path retargets the editing host at shadow boundaries.
+                // Later DOM mutations must not hide the snapshot from a listener
+                // on the original path or expose it to a retargeted ancestor.
+                let state = e.state.borrow();
+                if state.current_target.is_some() && state.target == Some(*host) {
+                    let (start, end) = range.points();
+                    let data = crate::range::StaticRangeData::from_points(&e.page, start, end)?;
+                    let range = s.wrap::<crate::range::StaticRange>(data, None)?;
+                    return Ok(s.array(&[range.value()])?.value());
+                }
+            }
+            Ok(s.array(&[])?.value())
+        });
     }
 }
 

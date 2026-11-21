@@ -1385,6 +1385,130 @@ pub fn dataset<'s>(s: &Scope<'s>, page: &PageDom, id: NodeId) -> JsResult<Object
     s.wrap::<DomStringMap>(StringMapData { el: NodeHold::new(&page, id)? }, Some(key))
 }
 
+// ----- SVGStringList -----------------------------------------------------------
+
+use pyro_dom::svg_string_list::StringListAttribute;
+
+pub struct StringListData {
+    el: NodeHold,
+    kind: StringListAttribute,
+}
+
+impl StringListData {
+    fn with_items<R>(&self, f: impl FnOnce(&[String]) -> R) -> JsResult<R> {
+        let mut dom = self.el.page.dom.borrow_mut();
+        Ok(f(dom.svg_string_list(self.el.id, self.kind).js()?))
+    }
+
+    fn edit<R>(&self, f: impl FnOnce(&mut Vec<String>) -> JsResult<R>) -> JsResult<R> {
+        let mut dom = self.el.page.dom.borrow_mut();
+        let mut items = dom.svg_string_list(self.el.id, self.kind).js()?.to_vec();
+        let result = f(&mut items)?;
+        dom.set_svg_string_list(self.el.id, self.kind, items).js()?;
+        Ok(result)
+    }
+
+    fn replace(&self, index: usize, value: String) -> JsResult<()> {
+        self.edit(|items| {
+            *items.get_mut(index).ok_or_else(string_list_index_error)? = value;
+            Ok(())
+        })
+    }
+}
+
+/// Web IDL unsigned long conversion uses modulo after truncation, even for
+/// doubles outside Rust's signed integer range. NaN and infinities map to zero.
+fn svg_list_index(value: Value<'_>) -> JsResult<usize> {
+    Ok(value.to_number()?.trunc().rem_euclid(4_294_967_296.0) as u32 as usize)
+}
+
+fn string_list_index_error() -> JsError {
+    JsError::dom("IndexSizeError", "The index is outside the SVG string list.")
+}
+
+pub struct SvgStringList;
+impl JsClass for SvgStringList {
+    const NAME: &'static str = "SVGStringList";
+    type Data = StringListData;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        for name in ["length", "numberOfItems"] {
+            def.getter(name, |s, l| l.with_items(|v| s.number(v.len() as f64)));
+        }
+        def.legacy_platform_object();
+        def.indexed(|s, l, i| l.with_items(|v| v.get(i as usize).map(|item| s.string(item))));
+        def.indexed_iterator();
+        def.named_setter(|_, l, name, value| {
+            let Some(i) = name.parse::<u32>().ok().filter(|i| *i != u32::MAX && i.to_string() == name) else {
+                return Ok(false);
+            };
+            l.replace(i as usize, dom_string(value)?)?;
+            Ok(true)
+        });
+        def.method("clear", 0, |s, l, _| {
+            l.el.page.dom.borrow_mut().set_svg_string_list(l.el.id, l.kind, Vec::new()).js()?;
+            Ok(s.undefined())
+        });
+        def.method("getItem", 1, |s, l, a| {
+            a.require(1, "SVGStringList.getItem")?;
+            let i = svg_list_index(a.get(0))?;
+            l.with_items(|v| v.get(i).map(|item| s.string(item)))?.ok_or_else(string_list_index_error)
+        });
+        def.method("initialize", 1, |s, l, a| {
+            a.require(1, "SVGStringList.initialize")?;
+            let value = dom_string(a.get(0))?;
+            let result = s.string(&value);
+            l.el.page.dom.borrow_mut().set_svg_string_list(l.el.id, l.kind, vec![value]).js()?;
+            Ok(result)
+        });
+        def.method("appendItem", 1, |s, l, a| {
+            a.require(1, "SVGStringList.appendItem")?;
+            let value = dom_string(a.get(0))?;
+            let result = s.string(&value);
+            l.edit(|items| { items.push(value); Ok(()) })?;
+            Ok(result)
+        });
+        def.method("insertItemBefore", 2, |s, l, a| {
+            a.require(2, "SVGStringList.insertItemBefore")?;
+            let value = dom_string(a.get(0))?;
+            let i = svg_list_index(a.get(1))?;
+            let result = s.string(&value);
+            l.edit(|items| { items.insert(i.min(items.len()), value); Ok(()) })?;
+            Ok(result)
+        });
+        def.method("replaceItem", 2, |s, l, a| {
+            a.require(2, "SVGStringList.replaceItem")?;
+            let value = dom_string(a.get(0))?;
+            let i = svg_list_index(a.get(1))?;
+            let result = s.string(&value);
+            l.replace(i, value)?;
+            Ok(result)
+        });
+        def.method("removeItem", 1, |s, l, a| {
+            a.require(1, "SVGStringList.removeItem")?;
+            let i = svg_list_index(a.get(0))?;
+            let value = l.edit(|items| {
+                if i >= items.len() { return Err(string_list_index_error()); }
+                Ok(items.remove(i))
+            })?;
+            Ok(s.string(&value))
+        });
+    }
+}
+
+pub fn svg_string_list<'s>(s: &Scope<'s>, n: &NodeData, kind: StringListAttribute) -> JsResult<Value<'s>> {
+    let slot = match kind {
+        StringListAttribute::RequiredExtensions => 440,
+        StringListAttribute::SystemLanguage => 441,
+    };
+    let key = coll_identity(n.page(), slot, n.id);
+    if let Some(obj) = s.lookup_identity(key) {
+        return Ok(obj.value());
+    }
+    let el = NodeHold::new(n.page(), n.id)?;
+    Ok(s.wrap::<SvgStringList>(StringListData { el, kind }, Some(key))?.value())
+}
+
 // ----- SVGAnimatedEnumeration ---------------------------------------------------
 
 /// An SVG element's enumerated attribute (`clipPathUnits`, `spreadMethod`, ...):
@@ -2359,6 +2483,7 @@ pub fn animated_transform_list<'s>(s: &Scope<'s>, page: &PageDom, id: NodeId, at
 }
 
 pub(crate) fn register(engine: &pyro_js::Engine) {
+    engine.register::<SvgStringList>();
     engine.register::<SvgAnimatedTransformList>();
     engine.register::<SvgTransformList>();
     engine.register::<SvgTransform>();
@@ -2374,6 +2499,7 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<SvgAnimatedLength>();
     engine.register::<SvgLength>();
     engine.register::<SvgPoint>();
+    engine.register::<SvgPointList>();
     engine.register::<NodeList>();
     engine.register::<RadioNodeList>();
     engine.register::<HtmlCollection>();
@@ -2405,15 +2531,15 @@ mod tests {
 
 /// A detached SVG point or the live pan of an SVG viewport.
 pub enum SvgPointData {
-    Detached(Cell<(f32, f32)>),
+    Item(Rc<pyro_dom::svg_point_list::PointItem>),
     Translate(NodeHold),
 }
 
 impl SvgPointData {
     fn coordinates(&self) -> (f64, f64) {
         match self {
-            Self::Detached(value) => {
-                let (x, y) = value.get();
+            Self::Item(value) => {
+                let (x, y) = value.coordinates();
                 (f64::from(x), f64::from(y))
             }
             Self::Translate(node) => {
@@ -2429,9 +2555,9 @@ impl SvgPointData {
             return Err(JsError::Type("The provided float value is non-finite.".into()));
         }
         match self {
-            Self::Detached(point) => {
-                let (x, y) = point.get();
-                point.set(if horizontal { (value, y) } else { (x, value) });
+            Self::Item(point) => {
+                let (x, y) = point.coordinates();
+                point.set_coordinates(if horizontal { (value, y) } else { (x, value) }).js()?;
             }
             Self::Translate(node) => {
                 let mut dom = node.page.dom.borrow_mut();
@@ -2445,7 +2571,7 @@ impl SvgPointData {
 }
 
 pub fn detached_point<'s>(s: &Scope<'s>, x: f64, y: f64) -> JsResult<Value<'s>> {
-    Ok(s.wrap::<SvgPoint>(SvgPointData::Detached(Cell::new((x as f32, y as f32))), None)?.value())
+    point_value(s, PointItem::detached((x as f32, y as f32)))
 }
 
 pub struct SvgPoint;
@@ -2466,4 +2592,111 @@ impl JsClass for SvgPoint {
             detached_point(s, matrix[0] * x + matrix[2] * y + matrix[4], matrix[1] * x + matrix[3] * y + matrix[5])
         });
     }
+}
+
+use pyro_dom::svg_point_list::{PointItem, PointLists};
+
+fn point_value<'s>(s: &Scope<'s>, item: Rc<PointItem>) -> JsResult<Value<'s>> {
+    // The wrapper owns this Rc and its weak identity entry ends at GC. Each
+    // realm therefore gets one wrapper per point for as long as it is held.
+    let key = IdentityKey((1 << 59) | (1 << 56), Rc::as_ptr(&item) as u64);
+    Ok(s.wrap::<SvgPoint>(SvgPointData::Item(item), Some(key))?.value())
+}
+
+fn point_argument(s: &Scope<'_>, value: Value<'_>) -> JsResult<Rc<PointItem>> {
+    let point = s.unwrap::<SvgPoint>(value).ok_or_else(|| JsError::Type("Expected an SVGPoint.".into()))?;
+    Ok(match &*point {
+        SvgPointData::Item(item) => item.clone(),
+        SvgPointData::Translate(_) => {
+            let (x, y) = point.coordinates();
+            PointItem::detached((x as f32, y as f32))
+        }
+    })
+}
+
+pub struct PointListData {
+    lists: Rc<PointLists>,
+    animated: bool,
+}
+
+impl PointListData {
+    fn writable(&self) -> JsResult<&Rc<PointLists>> {
+        if self.animated { return Err(dom_err(pyro_dom::svg_point_list::read_only())); }
+        Ok(&self.lists)
+    }
+}
+
+pub struct SvgPointList;
+impl JsClass for SvgPointList {
+    const NAME: &'static str = "SVGPointList";
+    type Data = PointListData;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        for name in ["numberOfItems", "length"] {
+            def.getter(name, |s, l| Ok(s.number(l.lists.len(l.animated) as f64)));
+        }
+        def.legacy_platform_object();
+        def.indexed_iterator();
+        def.indexed(|s, l, i| l.lists.item(i as usize, l.animated).map(|v| point_value(s, v)).transpose());
+        def.named_setter(|s, l, name, value| {
+            let Some(i) = name.parse::<u32>().ok().filter(|i| *i != u32::MAX && i.to_string() == name) else {
+                return Ok(false);
+            };
+            let item = point_argument(s, value)?;
+            l.writable()?.insert(i as usize, &item, true).js()?;
+            Ok(true)
+        });
+        def.method("getItem", 1, |s, l, a| {
+            a.require(1, "SVGPointList.getItem")?;
+            let i = svg_list_index(a.get(0))?;
+            let item = l.lists.item(i, l.animated).ok_or_else(|| JsError::dom("IndexSizeError", "The index is outside the SVG point list."))?;
+            point_value(s, item)
+        });
+        def.method("clear", 0, |s, l, _| {
+            l.writable()?.clear().js()?;
+            Ok(s.undefined())
+        });
+        def.method("initialize", 1, |s, l, a| {
+            a.require(1, "SVGPointList.initialize")?;
+            let item = point_argument(s, a.get(0))?;
+            point_value(s, l.writable()?.initialize(&item).js()?)
+        });
+        def.method("appendItem", 1, |s, l, a| {
+            a.require(1, "SVGPointList.appendItem")?;
+            let item = point_argument(s, a.get(0))?;
+            point_value(s, l.writable()?.insert(usize::MAX, &item, false).js()?)
+        });
+        def.method("insertItemBefore", 2, |s, l, a| {
+            a.require(2, "SVGPointList.insertItemBefore")?;
+            let item = point_argument(s, a.get(0))?;
+            let i = svg_list_index(a.get(1))?;
+            point_value(s, l.writable()?.insert(i, &item, false).js()?)
+        });
+        def.method("replaceItem", 2, |s, l, a| {
+            a.require(2, "SVGPointList.replaceItem")?;
+            let item = point_argument(s, a.get(0))?;
+            let i = svg_list_index(a.get(1))?;
+            point_value(s, l.writable()?.insert(i, &item, true).js()?)
+        });
+        def.method("removeItem", 1, |s, l, a| {
+            a.require(1, "SVGPointList.removeItem")?;
+            let i = svg_list_index(a.get(0))?;
+            point_value(s, l.writable()?.remove(i).js()?)
+        });
+    }
+}
+
+pub fn point_list<'s>(s: &Scope<'s>, n: &NodeData, animated: bool) -> JsResult<Value<'s>> {
+    let key = coll_identity(n.page(), if animated { 443 } else { 442 }, n.id);
+    if let Some(obj) = s.lookup_identity(key) { return Ok(obj.value()); }
+    let hold = NodeHold::new(n.page(), n.id)?;
+    let write = Box::new(move |text: Option<&str>| {
+        let mut dom = hold.page.dom.borrow_mut();
+        match text {
+            Some(text) => dom.set_attribute_local(hold.id, &pyro_dom::LocalName::from("points"), text),
+            None => dom.remove_attribute_ns(hold.id, None, "points").map(|_| ()),
+        }
+    });
+    let lists = n.page().dom.borrow_mut().svg_point_lists(n.id, write).js()?;
+    Ok(s.wrap::<SvgPointList>(PointListData { lists, animated }, Some(key))?.value())
 }

@@ -880,10 +880,9 @@ impl Browser {
             }
             if !rendered {
                 host.hidden_objects.borrow_mut().push((page, node));
-            } else if embed {
-                self.embed_event(page, node);
             } else {
-                self.object_event(page, node);
+                self.apply_same_document_url(page);
+                if embed { self.embed_event(page, node); } else { self.object_event(page, node); }
             }
         }
     }

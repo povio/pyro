@@ -2993,6 +2993,36 @@ fn dom_parser_parses_inert_html_documents() {
 }
 
 #[test]
+fn dom_parser_inline_patches_stay_in_the_inert_html_document() {
+    let e = env("<body><main></main></body>");
+    let r = &e.main;
+    assert_eq!(
+        eval(r, r#"const parser = new DOMParser();
+            const html = parser.parseFromString(
+              '<main><?marker name="slot"></main><template for="slot"><b>new</b><script>globalThis.patchRan=true</script></template>',
+              'text/html');
+            [html.querySelector('main').firstChild.textContent, html.querySelector('main script') !== null,
+             html.querySelector('template') === null, typeof globalThis.patchRan, document.querySelector('main').childNodes.length].join('|')"#),
+        "new|true|true|undefined|0"
+    );
+    assert_eq!(
+        eval(r, r#"const start = '<head><?marker name="h"></head><body>';
+            const inline = '<template for="h"><meta id="added"></template>';
+            const parse = s => parser.parseFromString(s, 'text/html');
+            [parse(start + inline).head.lastChild.id, parse(start + '<div>' + inline + '</div>').head.querySelector('meta') === null,
+             parse(start + '<template for="h" src="part.html">fallback</template>').body.firstChild.localName].join('|')"#),
+        "added|true|template"
+    );
+    assert_eq!(
+        eval(r, r#"const xml = parser.parseFromString(
+            '<div xmlns="http://www.w3.org/1999/xhtml"><?marker name="slot"?><template for="slot"><b>xml</b></template></div>',
+            'application/xhtml+xml');
+            [xml.documentElement.firstChild.nodeType, xml.getElementsByTagName('template').length].join('|')"#),
+        "7|1"
+    );
+}
+
+#[test]
 fn element_click_is_a_virtual_pointer_click() {
     let e = env("<body><button id=b>go</button></body>");
     let r = &e.main;

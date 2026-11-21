@@ -63,6 +63,13 @@ fn line_end_at(page: &PageDom, dom: &Dom, node: NodeId, host: NodeId) -> Result<
     Ok(None)
 }
 
+fn editable_paragraph(page: &PageDom, dom: &Dom, node: NodeId, host: NodeId) -> bool {
+    dom.element(node).is_ok_and(|el| el.is_html() && matches!(&**el.local_name(), "div" | "p"))
+        && editing_host(dom, node) == Some(host)
+        && page.layout().computed_style_value(dom, node, "display") == "block"
+        && page.layout().computed_style_value(dom, node, "visibility") == "visible"
+}
+
 fn first_line(page: &PageDom, dom: &Dom, root: NodeId, host: NodeId) -> Option<LineEnd> {
     for node in dom.descendants(root).ok()?.skip(1) {
         if let Some(end) = line_end_at(page, dom, node, host).ok()? {
@@ -138,6 +145,20 @@ pub(super) fn at_boundary(
     if !at_edge && right_to_left {
         return None;
     }
+    // At the start of the first nested paragraph, backspace crosses the
+    // outer paragraph's boundary. Stop as soon as any content precedes it.
+    if right_to_left {
+        while block != host && dom.prev_sibling(block).ok()?.is_none() {
+            let parent = dom.parent_element(block).ok()??;
+            if parent == host
+                || !editable_paragraph(page, dom, block, host)
+                || !editable_paragraph(page, dom, parent, host)
+            {
+                break;
+            }
+            block = parent;
+        }
+    }
     let (other, separators) = adjacent(dom, block, !right_to_left)?;
     let (left, right) = if right_to_left { (other, block) } else { (block, other) };
     let parent = dom.parent(left).ok()??;
@@ -189,6 +210,11 @@ pub(super) fn at_boundary(
         if layout.computed_style_value(dom, right_el, "visibility") != "visible" {
             return Some(visible_seam);
         }
+        if layout.computed_style_value(dom, left, "white-space")
+            == layout.computed_style_value(dom, right_el, "white-space")
+        {
+            return None;
+        }
         return join_anonymous_right(page, dom, host, left, right, visible_seam);
     }
     if !at_edge {
@@ -223,7 +249,16 @@ pub(super) fn at_boundary(
     if !separators.is_empty() && (!left_block || !matches!(parent_style.as_str(), "normal" | "nowrap")) {
         return None;
     }
-    let source_style = layout.computed_style_value(dom, right, "white-space");
+    // The box containing the source line can be nested within the right
+    // paragraph. Only descend through its leading editable block children.
+    let mut source = right;
+    while let Some(child) = dom.first_child(source).ok()? {
+        if !editable_paragraph(page, dom, child, host) {
+            break;
+        }
+        source = child;
+    }
+    let source_style = layout.computed_style_value(dom, source, "white-space");
     let destination = if left_block { left } else { parent };
     let dest_style = layout.computed_style_value(dom, destination, "white-space");
     let left_style =
@@ -234,8 +269,15 @@ pub(super) fn at_boundary(
     if !is_text(dom, deep_forward(dom, (right, 0)).0) {
         return None;
     }
-    let line = first_line(page, dom, right, host)?;
-    let fragment = extract_line(dom, right, (right, 0), line)?;
+    if source != right
+        && (layout.computed_style_value(dom, right, "visibility") != "visible"
+            || layout.computed_style_value(dom, destination, "visibility") != "visible"
+            || layout.computed_style_value(dom, dom.parent_element(seam.0).ok()??, "visibility") != "visible")
+    {
+        return None;
+    }
+    let line = first_line(page, dom, source, host)?;
+    let (fragment, styled) = extract_styled_line(page, dom, host, source, line, source != right)?;
     if len(dom, fragment) > 0 {
         let content = if source_style != dest_style {
             let span = dom.create_element(dom.node_document(right).ok()?, "span").ok()?;
@@ -247,11 +289,22 @@ pub(super) fn at_boundary(
         };
         dom.insert_before(destination, content, (!left_block).then_some(right)).ok()?;
     }
+    for (node, values) in styled {
+        preserve_style(page, dom, node, &values)?;
+    }
     for separator in separators {
         dom.remove_node(separator).ok()?;
     }
-    if len(dom, right) == 0 {
-        dom.remove_node(right).ok()?;
+    // Remove only emptied containers along the source line's original
+    // ancestry. Siblings after a BR, preserved newline or block remain.
+    let mut emptied = source;
+    while len(dom, emptied) == 0 {
+        let parent = dom.parent(emptied).ok()??;
+        dom.remove_node(emptied).ok()?;
+        if emptied == right {
+            break;
+        }
+        emptied = parent;
     }
     Some(seam)
 }
@@ -337,7 +390,7 @@ fn preserve_style(page: &PageDom, dom: &mut Dom, node: NodeId, source: &[String]
 /// Preflight the affected subtree and record its text styling in preorder
 /// before changing the DOM. Range extraction moves fully contained nodes
 /// and clones only partially contained formatting ancestors.
-fn join_anonymous_right(
+pub(super) fn join_anonymous_right(
     page: &PageDom,
     dom: &mut Dom,
     host: NodeId,
@@ -346,12 +399,6 @@ fn join_anonymous_right(
     seam: Point,
 ) -> Option<Point> {
     let start = (host, dom.index_in_parent(right).ok()?);
-    let left_style = page.layout().computed_style_value(dom, left, "white-space");
-    let right_element = if is_text(dom, right) { host } else { right };
-    let right_style = page.layout().computed_style_value(dom, right_element, "white-space");
-    if right_style.is_empty() || left_style == right_style {
-        return None;
-    }
     let mut node = right;
     let mut styles = Vec::new();
     let end = 'siblings: loop {
@@ -394,6 +441,65 @@ fn join_anonymous_right(
     dom.append_child(left, fragment).ok()?;
     for (child, values) in moved.into_iter().zip(styles) {
         preserve_style(page, dom, child, &values)?;
+    }
+    Some(seam)
+}
+
+/// Snapshot formatting on the inclusive preorder prefix which Range
+/// extraction will move or clone out of the source paragraph.
+fn extract_styled_line(
+    page: &PageDom,
+    dom: &mut Dom,
+    host: NodeId,
+    source: NodeId,
+    line: LineEnd,
+    keep_style: bool,
+) -> Option<(NodeId, Vec<(NodeId, Vec<String>)>)> {
+    if !keep_style {
+        return Some((extract_line(dom, source, (source, 0), line)?, Vec::new()));
+    }
+    let mut styles = Vec::new();
+    let stop = match line {
+        LineEnd::Break(n) => Some((n, false)),
+        LineEnd::Newline(n, i) => Some((n, i != 0)),
+        LineEnd::Boundary((p, i)) => dom.child_at(p, i).ok()?.map(|n| (n, false)),
+    };
+    for n in dom.descendants(source).ok()?.skip(1) {
+        if stop == Some((n, false)) {
+            break;
+        }
+        if editing_host(dom, n) != Some(host) {
+            return None;
+        }
+        styles.push(text_style(page, dom, n)?);
+        if stop == Some((n, true)) {
+            break;
+        }
+    }
+    let fragment = extract_line(dom, source, (source, 0), line)?;
+    let moved: Vec<_> = dom.descendants(fragment).ok()?.skip(1).collect();
+    Some((fragment, moved.into_iter().zip(styles).collect()))
+}
+
+/// Move the first rendered line of the planned source paragraph without
+/// reparenting or discarding its surrounding containers and following lines.
+pub(super) fn join_first_line(
+    page: &PageDom,
+    dom: &mut Dom,
+    host: NodeId,
+    source: NodeId,
+    destination: NodeId,
+    before: Option<NodeId>,
+    seam: Point,
+) -> Option<Point> {
+    let line = first_line(page, dom, source, host)?;
+    let (fragment, styled) = extract_styled_line(page, dom, host, source, line, true)?;
+    dom.insert_before(destination, fragment, before).ok()?;
+    for (n, values) in styled {
+        preserve_style(page, dom, n, &values)?;
+    }
+    if len(dom, source) == 0 {
+        dom.remove_node(source).ok()?;
     }
     Some(seam)
 }

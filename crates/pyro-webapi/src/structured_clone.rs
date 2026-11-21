@@ -85,6 +85,12 @@ pub(crate) fn clone_value<'s>(
     realm_clone(s)?.call(None, &[value, options])
 }
 
+/// Clone a value for persistent storage, observing member access in graph order.
+pub(crate) fn clone_for_storage<'s>(s: &Scope<'s>, value: pyro_js::Value<'s>) -> JsResult<pyro_js::Value<'s>> {
+    let unused = s.undefined();
+    realm_clone(s)?.call(None, &[value, unused, unused, unused, unused, unused, s.boolean(true)])
+}
+
 /// [`clone_value`] that also returns the new ports of the transferred
 /// MessagePorts, in transfer-list order (a `MessageEvent`'s `ports`).
 pub(crate) fn clone_with_ports<'s>(

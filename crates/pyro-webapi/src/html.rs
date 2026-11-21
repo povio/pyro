@@ -3601,6 +3601,9 @@ impl JsClass for MathMlElement {
     }
 }
 simple_class!(SvgGraphicsElement, "SVGGraphicsElement", SvgElement, |def| {
+    use pyro_dom::svg_string_list::StringListAttribute;
+    def.getter("requiredExtensions", |s, n| collections::svg_string_list(s, n, StringListAttribute::RequiredExtensions));
+    def.getter("systemLanguage", |s, n| collections::svg_string_list(s, n, StringListAttribute::SystemLanguage));
     // pyro: `transform` (SVG 2 `SVGAnimatedTransformList`, the attribute's list).
     def.getter("transform", |s, n| Ok(collections::animated_transform_list(s, n.page(), n.id, "transform")?.value()));
     // No rasterizer, but geometry is attribute-defined: the user-space box
@@ -3735,8 +3738,12 @@ simple_class!(SvgGeometryElement, "SVGGeometryElement", SvgGraphicsElement, |def
     def.getter("pathLength", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &PATH_LENGTH)?.value()));
 });
 simple_class!(SvgPathElement, "SVGPathElement", SvgGeometryElement);
-simple_class!(SvgPolylineElement, "SVGPolylineElement", SvgGeometryElement);
-simple_class!(SvgPolygonElement, "SVGPolygonElement", SvgGeometryElement);
+fn svg_animated_points<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
+    def.getter("points", |s, n| collections::point_list(s, n, false));
+    def.getter("animatedPoints", |s, n| collections::point_list(s, n, true));
+}
+simple_class!(SvgPolylineElement, "SVGPolylineElement", SvgGeometryElement, |def| { svg_animated_points(def); });
+simple_class!(SvgPolygonElement, "SVGPolygonElement", SvgGeometryElement, |def| { svg_animated_points(def); });
 simple_class!(SvgStopElement, "SVGStopElement", SvgElement, |def| {
     def.getter("offset", |s, n| Ok(collections::animated_attr::<collections::SvgAnimatedNumber>(s, n.page(), n.id, &STOP_OFFSET)?.value()));
 });

@@ -425,7 +425,7 @@ impl PageHooks for Hooks {
                             NavigationReason::Anchor
                         },
                         cdp_request_id: None,
-                        referrer: b.doc(page).map(|p| p.main_frame.url.clone()),
+                        referrer: b.doc(page).and_then(|p| p.main_frame.navigation_referrer()),
                         // The link's own policy, else that of the document that navigates
                         // (not of the frame a `target` names).
                         referrer_policy: request.referrer_policy.or_else(|| {
@@ -792,7 +792,8 @@ impl Browser {
 
     pub(crate) fn drain_dom_resources(&mut self, page: FrameKey) {
         let Some(host) = self.page(page.page).map(|p| p.frames.clone()) else { return };
-        host.connect_rendered_objects();
+        self.apply_same_document_url(page);
+        host.connect_rendered_objects(|parent| self.apply_same_document_url(parent));
         self.fetch_rendered_objects(&host);
         self.fetch_rendered_images(page);
         // Runs at every checkpoint: leave early when nothing is queued.
@@ -806,6 +807,7 @@ impl Browser {
         // Parser mutations have no native-callback boundary: flush before scripts.
         if iframe_events {
             for key in host.keys() {
+                self.apply_same_document_url(key);
                 if let Some(bindings) = host.page_dom(key) {
                     bindings.flush_iframe_events();
                 }
@@ -844,6 +846,7 @@ impl Browser {
             else {
                 continue;
             };
+            self.apply_same_document_url(target);
             let Some(bindings) = frame_host.page_dom(target) else { continue };
             if event.kind == pyro_dom::script::ResourceKind::Stylesheet {
                 if stylesheet_nodes.insert(event.node) {
