@@ -1,0 +1,30 @@
+eventobject-main-candidate 8082 page passes 5695 named passes 181218 observed names 194657 statuses {'complete:0': 7871, 'complete:2': 104, 'timeout:None': 11, 'complete:1': 95, 'hang:None': 1}
+eventobject-main-parent 8082 page passes 5695 named passes 181216 observed names 194657 statuses {'complete:0': 7871, 'complete:2': 104, 'timeout:None': 11, 'complete:1': 95, 'hang:None': 1}
+eventobject-main-stable 8082 page passes 6950 named passes 182963 observed names 194912 statuses {'complete:0': 7986, 'complete:2': 62, 'complete:1': 23, 'timeout:None': 10, 'hang:None': 1}
+eventobject-main-parent pages left only 0 right only 0
+eventobject-main-parent passes left only 2 right only 0
+eventobject-main-parent observed left only 0 right only 0
+eventobject-main-stable pages left only 277 right only 1532
+eventobject-main-stable passes left only 5898 right only 7643
+eventobject-main-stable observed left only 260 right only 515
+Losses vs parent by URL: Counter()
+eventobject-focus-candidate 383 page passes 241 named passes 5534 observed names 6603 statuses {'complete:0': 372, 'complete:2': 10, 'timeout:None': 1}
+eventobject-focus-parent 383 page passes 241 named passes 5532 observed names 6603 statuses {'complete:0': 372, 'complete:2': 10, 'timeout:None': 1}
+eventobject-focus-stable 383 page passes 315 named passes 5871 observed names 6603 statuses {'complete:0': 383}
+eventobject-focus-parent pages left only 0 right only 0
+eventobject-focus-parent passes left only 2 right only 0
+eventobject-focus-parent observed left only 0 right only 0
+eventobject-focus-stable pages left only 9 right only 83
+eventobject-focus-stable passes left only 153 right only 490
+eventobject-focus-stable observed left only 28 right only 28
+Losses vs parent by URL: Counter()
+eventobject-supplement-candidate 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+eventobject-supplement-parent 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+eventobject-supplement-stable 41 page passes 35 named passes 619 observed names 874 statuses {'complete:0': 41}
+eventobject-supplement-parent pages left only 0 right only 0
+eventobject-supplement-parent passes left only 0 right only 0
+eventobject-supplement-parent observed left only 0 right only 0
+eventobject-supplement-stable pages left only 0 right only 8
+eventobject-supplement-stable passes left only 0 right only 42
+eventobject-supplement-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()
