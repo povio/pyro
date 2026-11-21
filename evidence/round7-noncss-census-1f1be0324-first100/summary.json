@@ -1,0 +1,63 @@
+{
+ "head": "1f1be032436bfeee9f48cdb5acbc0f71d21d5af9",
+ "binarySHA256": "543a7b85e3ecd8b99400d8c0c6861ff4756621b106d86407ca9d9098ca9b0d4d",
+ "chrome": "158.0.8127.37",
+ "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+ "manifestSHA256": "34a67512a84d43630f7adbecebd4378df5f410446591015cc6a20a3034e02819",
+ "priorHead": "8e7144b7e7de68be3b5b345138abe2c1dcc6d232",
+ "manifestCount": 31827,
+ "frozenEligible": 30359,
+ "newHolds": {
+  "websockets/back-forward-cache-with-open-websocket-connection-and-close-it-in-pagehide.window.html": [
+   [
+    "Chrome158",
+    "hang"
+   ],
+   [
+    "census",
+    "ordinary-178",
+    "hang"
+   ]
+  ]
+ },
+ "scheduled": 30358,
+ "matched": 9286,
+ "missingEligible": 21072,
+ "lifecycle": {
+  "timeout": 459,
+  "complete": 8468,
+  "error": 359
+ },
+ "comparisons": {
+  "headChrome": {
+   "matched": 9286,
+   "firstFull": 4826,
+   "secondFull": 7514,
+   "firstOnlyFull": 234,
+   "secondOnlyFull": 2922,
+   "firstPass": 559343,
+   "secondPass": 577230,
+   "commonPass": 552044,
+   "firstOnly": 7299,
+   "secondOnly": 25186,
+   "missingFirstName": 5184,
+   "missingSecondName": 2348
+  },
+  "headPrevious": {
+   "matched": 9286,
+   "firstFull": 4826,
+   "secondFull": 4784,
+   "firstOnlyFull": 48,
+   "secondOnlyFull": 6,
+   "firstPass": 559343,
+   "secondPass": 557705,
+   "commonPass": 557661,
+   "firstOnly": 1682,
+   "secondOnly": 44,
+   "missingFirstName": 58,
+   "missingSecondName": 111
+  }
+ },
+ "completeShards": 100,
+ "totalShards": 320
+}

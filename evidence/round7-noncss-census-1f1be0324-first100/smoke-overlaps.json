@@ -1,0 +1,386 @@
+{
+ "css/css-mixins/function-definition-scope.html": {
+  "receipt": "head-css.json",
+  "group": "css",
+  "overlap": false,
+  "held": false,
+  "freshFourJob": false,
+  "sourceSHA256": "3fa80748ef2e1796a390a70d3cd34d6efd5961de54897c76bbbf24367be92391"
+ },
+ "css/css-mixins/function-parameter-scoping.html": {
+  "receipt": "head-css.json",
+  "group": "css",
+  "overlap": false,
+  "held": false,
+  "freshFourJob": false,
+  "sourceSHA256": "3fa80748ef2e1796a390a70d3cd34d6efd5961de54897c76bbbf24367be92391"
+ },
+ "css/css-mixins/function-property-context.html": {
+  "receipt": "head-css.json",
+  "group": "css",
+  "overlap": false,
+  "held": false,
+  "freshFourJob": false,
+  "sourceSHA256": "3fa80748ef2e1796a390a70d3cd34d6efd5961de54897c76bbbf24367be92391"
+ },
+ "css/css-mixins/function-relative-units.html": {
+  "receipt": "head-css.json",
+  "group": "css",
+  "overlap": false,
+  "held": false,
+  "freshFourJob": false,
+  "sourceSHA256": "3fa80748ef2e1796a390a70d3cd34d6efd5961de54897c76bbbf24367be92391"
+ },
+ "css/css-mixins/functions/local-if-substitution.html": {
+  "receipt": "head-css.json",
+  "group": "css",
+  "overlap": false,
+  "held": false,
+  "freshFourJob": false,
+  "sourceSHA256": "3fa80748ef2e1796a390a70d3cd34d6efd5961de54897c76bbbf24367be92391"
+ },
+ "css/css-mixins/functions/local-inherit-substitution.html": {
+  "receipt": "head-css.json",
+  "group": "css",
+  "overlap": false,
+  "held": false,
+  "freshFourJob": false,
+  "sourceSHA256": "3fa80748ef2e1796a390a70d3cd34d6efd5961de54897c76bbbf24367be92391"
+ },
+ "css/css-values/if-media-invalidation.html": {
+  "receipt": "head-css.json",
+  "group": "css",
+  "overlap": false,
+  "held": false,
+  "freshFourJob": false,
+  "sourceSHA256": "3fa80748ef2e1796a390a70d3cd34d6efd5961de54897c76bbbf24367be92391"
+ },
+ "referrer-policy/gen/iframe.http-rp/no-referrer/iframe-tag.http.html": {
+  "receipt": "head-guards.json",
+  "group": "guards",
+  "overlap": true,
+  "held": false,
+  "freshFourJob": true,
+  "sourceSHA256": "e181c0791e66c5d8b695ca7662944483a10e3d0c0815103d67f137fb1531e398"
+ },
+ "referrer-policy/gen/iframe.http-rp/unset/iframe-tag.http.html": {
+  "receipt": "head-guards.json",
+  "group": "guards",
+  "overlap": true,
+  "held": false,
+  "freshFourJob": true,
+  "sourceSHA256": "e181c0791e66c5d8b695ca7662944483a10e3d0c0815103d67f137fb1531e398"
+ },
+ "referrer-policy/gen/iframe.meta/unsafe-url/iframe-tag.http.html": {
+  "receipt": "head-guards.json",
+  "group": "guards",
+  "overlap": true,
+  "held": false,
+  "freshFourJob": true,
+  "sourceSHA256": "e181c0791e66c5d8b695ca7662944483a10e3d0c0815103d67f137fb1531e398"
+ },
+ "referrer-policy/gen/srcdoc.meta/unsafe-url/iframe-tag.http.html": {
+  "receipt": "head-guards.json",
+  "group": "guards",
+  "overlap": true,
+  "held": false,
+  "freshFourJob": true,
+  "sourceSHA256": "e181c0791e66c5d8b695ca7662944483a10e3d0c0815103d67f137fb1531e398"
+ },
+ "dom/events/EventTarget-add-listener-platform-object.html": {
+  "receipt": "head-guards.json",
+  "group": "guards",
+  "overlap": true,
+  "held": false,
+  "freshFourJob": true,
+  "sourceSHA256": "e181c0791e66c5d8b695ca7662944483a10e3d0c0815103d67f137fb1531e398"
+ },
+ "dom/events/EventTarget-dispatchEvent-returnvalue.html": {
+  "receipt": "head-guards.json",
+  "group": "guards",
+  "overlap": true,
+  "held": false,
+  "freshFourJob": true,
+  "sourceSHA256": "e181c0791e66c5d8b695ca7662944483a10e3d0c0815103d67f137fb1531e398"
+ },
+ "dom/events/EventTarget-this-of-listener.html": {
+  "receipt": "head-guards.json",
+  "group": "guards",
+  "overlap": true,
+  "held": false,
+  "freshFourJob": true,
+  "sourceSHA256": "e181c0791e66c5d8b695ca7662944483a10e3d0c0815103d67f137fb1531e398"
+ },
+ "webmessaging/MessageEvent.any.html": {
+  "receipt": "head-guards.json",
+  "group": "guards",
+  "overlap": true,
+  "held": false,
+  "freshFourJob": true,
+  "sourceSHA256": "e181c0791e66c5d8b695ca7662944483a10e3d0c0815103d67f137fb1531e398"
+ },
+ "webmessaging/MessagePort_onmessage_start.any.html": {
+  "receipt": "head-guards.json",
+  "group": "guards",
+  "overlap": true,
+  "held": false,
+  "freshFourJob": true,
+  "sourceSHA256": "e181c0791e66c5d8b695ca7662944483a10e3d0c0815103d67f137fb1531e398"
+ },
+ "webmessaging/broadcastchannel/basics.any.html": {
+  "receipt": "head-guards.json",
+  "group": "guards",
+  "overlap": true,
+  "held": false,
+  "freshFourJob": true,
+  "sourceSHA256": "e181c0791e66c5d8b695ca7662944483a10e3d0c0815103d67f137fb1531e398"
+ },
+ "webmessaging/event.ports.sub.htm": {
+  "receipt": "head-guards.json",
+  "group": "guards",
+  "overlap": true,
+  "held": false,
+  "freshFourJob": true,
+  "sourceSHA256": "e181c0791e66c5d8b695ca7662944483a10e3d0c0815103d67f137fb1531e398"
+ },
+ "webmessaging/event.source.htm": {
+  "receipt": "head-guards.json",
+  "group": "guards",
+  "overlap": true,
+  "held": false,
+  "freshFourJob": true,
+  "sourceSHA256": "e181c0791e66c5d8b695ca7662944483a10e3d0c0815103d67f137fb1531e398"
+ },
+ "webmessaging/message-channels/cross-document.html": {
+  "receipt": "head-guards.json",
+  "group": "guards",
+  "overlap": true,
+  "held": false,
+  "freshFourJob": true,
+  "sourceSHA256": "e181c0791e66c5d8b695ca7662944483a10e3d0c0815103d67f137fb1531e398"
+ },
+ "webmessaging/multi-globals/messageport-current.html": {
+  "receipt": "head-guards.json",
+  "group": "guards",
+  "overlap": true,
+  "held": false,
+  "freshFourJob": true,
+  "sourceSHA256": "e181c0791e66c5d8b695ca7662944483a10e3d0c0815103d67f137fb1531e398"
+ },
+ "webmessaging/postMessage_Date.sub.htm": {
+  "receipt": "head-guards.json",
+  "group": "guards",
+  "overlap": true,
+  "held": false,
+  "freshFourJob": true,
+  "sourceSHA256": "e181c0791e66c5d8b695ca7662944483a10e3d0c0815103d67f137fb1531e398"
+ },
+ "webmessaging/postMessage_MessagePorts_sorigin.htm": {
+  "receipt": "head-guards.json",
+  "group": "guards",
+  "overlap": true,
+  "held": false,
+  "freshFourJob": true,
+  "sourceSHA256": "e181c0791e66c5d8b695ca7662944483a10e3d0c0815103d67f137fb1531e398"
+ },
+ "editing/other/insert-text-in-void-element.tentative.html": {
+  "receipt": "head-edit.json",
+  "group": "edit",
+  "overlap": true,
+  "held": false,
+  "freshFourJob": true,
+  "sourceSHA256": "80924aa61e55d62875848822cd14413aa14662ed74638ae61e262347f9cb1500"
+ },
+ "editing/plaintext-only/styling-commands.html?styleWithCSS=false": {
+  "receipt": "head-edit.json",
+  "group": "edit",
+  "overlap": true,
+  "held": false,
+  "freshFourJob": true,
+  "sourceSHA256": "80924aa61e55d62875848822cd14413aa14662ed74638ae61e262347f9cb1500"
+ },
+ "editing/plaintext-only/styling-commands.html?styleWithCSS=true": {
+  "receipt": "head-edit.json",
+  "group": "edit",
+  "overlap": true,
+  "held": false,
+  "freshFourJob": true,
+  "sourceSHA256": "80924aa61e55d62875848822cd14413aa14662ed74638ae61e262347f9cb1500"
+ },
+ "editing/run/inserttext.html?1-1000": {
+  "receipt": "head-edit.json",
+  "group": "edit",
+  "overlap": true,
+  "held": false,
+  "freshFourJob": true,
+  "sourceSHA256": "80924aa61e55d62875848822cd14413aa14662ed74638ae61e262347f9cb1500"
+ },
+ "editing/run/inserttext.html?1001-2000": {
+  "receipt": "head-edit.json",
+  "group": "edit",
+  "overlap": true,
+  "held": false,
+  "freshFourJob": true,
+  "sourceSHA256": "80924aa61e55d62875848822cd14413aa14662ed74638ae61e262347f9cb1500"
+ },
+ "editing/run/inserttext.html?2001-last": {
+  "receipt": "head-edit.json",
+  "group": "edit",
+  "overlap": true,
+  "held": false,
+  "freshFourJob": true,
+  "sourceSHA256": "80924aa61e55d62875848822cd14413aa14662ed74638ae61e262347f9cb1500"
+ },
+ "editing/whitespaces/chrome-compat/delete.tentative.html": {
+  "receipt": "head-edit.json",
+  "group": "edit",
+  "overlap": true,
+  "held": false,
+  "freshFourJob": true,
+  "sourceSHA256": "80924aa61e55d62875848822cd14413aa14662ed74638ae61e262347f9cb1500"
+ },
+ "editing/whitespaces/chrome-compat/forwarddelete.tentative.html": {
+  "receipt": "head-edit.json",
+  "group": "edit",
+  "overlap": true,
+  "held": false,
+  "freshFourJob": true,
+  "sourceSHA256": "80924aa61e55d62875848822cd14413aa14662ed74638ae61e262347f9cb1500"
+ },
+ "editing/whitespaces/chrome-compat/inserttext.tentative.html": {
+  "receipt": "head-edit.json",
+  "group": "edit",
+  "overlap": true,
+  "held": false,
+  "freshFourJob": true,
+  "sourceSHA256": "80924aa61e55d62875848822cd14413aa14662ed74638ae61e262347f9cb1500"
+ },
+ "selection/contenteditable/initial-selection-on-focus.tentative.html?div": {
+  "receipt": "head-edit.json",
+  "group": "edit",
+  "overlap": true,
+  "held": false,
+  "freshFourJob": true,
+  "sourceSHA256": "80924aa61e55d62875848822cd14413aa14662ed74638ae61e262347f9cb1500"
+ },
+ "selection/contenteditable/initial-selection-on-focus.tentative.html?span": {
+  "receipt": "head-edit.json",
+  "group": "edit",
+  "overlap": true,
+  "held": false,
+  "freshFourJob": true,
+  "sourceSHA256": "80924aa61e55d62875848822cd14413aa14662ed74638ae61e262347f9cb1500"
+ },
+ "selection/fire-selectionchange-event-on-document-if-textcontrol-element-is-in-shadow-tree.html": {
+  "receipt": "head-edit.json",
+  "group": "edit",
+  "overlap": true,
+  "held": false,
+  "freshFourJob": true,
+  "sourceSHA256": "80924aa61e55d62875848822cd14413aa14662ed74638ae61e262347f9cb1500"
+ },
+ "selection/onselectionchange-on-distinct-text-controls.html": {
+  "receipt": "head-edit.json",
+  "group": "edit",
+  "overlap": true,
+  "held": false,
+  "freshFourJob": true,
+  "sourceSHA256": "80924aa61e55d62875848822cd14413aa14662ed74638ae61e262347f9cb1500"
+ },
+ "selection/shadow-dom/tentative/Range-isPointInRange.html": {
+  "receipt": "head-edit.json",
+  "group": "edit",
+  "overlap": true,
+  "held": false,
+  "freshFourJob": true,
+  "sourceSHA256": "80924aa61e55d62875848822cd14413aa14662ed74638ae61e262347f9cb1500"
+ },
+ "selection/shadow-dom/tentative/Selection-collapse-and-extend.html": {
+  "receipt": "head-edit.json",
+  "group": "edit",
+  "overlap": true,
+  "held": false,
+  "freshFourJob": true,
+  "sourceSHA256": "80924aa61e55d62875848822cd14413aa14662ed74638ae61e262347f9cb1500"
+ },
+ "selection/shadow-dom/tentative/Selection-getComposedRanges-collapsed.html": {
+  "receipt": "head-edit.json",
+  "group": "edit",
+  "overlap": true,
+  "held": false,
+  "freshFourJob": true,
+  "sourceSHA256": "80924aa61e55d62875848822cd14413aa14662ed74638ae61e262347f9cb1500"
+ },
+ "selection/shadow-dom/tentative/Selection-getComposedRanges-dom-mutations-removal.html?mode=closed": {
+  "receipt": "head-edit.json",
+  "group": "edit",
+  "overlap": true,
+  "held": false,
+  "freshFourJob": true,
+  "sourceSHA256": "80924aa61e55d62875848822cd14413aa14662ed74638ae61e262347f9cb1500"
+ },
+ "selection/shadow-dom/tentative/Selection-getComposedRanges-dom-mutations-removal.html?mode=open": {
+  "receipt": "head-edit.json",
+  "group": "edit",
+  "overlap": true,
+  "held": false,
+  "freshFourJob": true,
+  "sourceSHA256": "80924aa61e55d62875848822cd14413aa14662ed74638ae61e262347f9cb1500"
+ },
+ "selection/shadow-dom/tentative/Selection-getComposedRanges-range-update.html": {
+  "receipt": "head-edit.json",
+  "group": "edit",
+  "overlap": true,
+  "held": false,
+  "freshFourJob": true,
+  "sourceSHA256": "80924aa61e55d62875848822cd14413aa14662ed74638ae61e262347f9cb1500"
+ },
+ "selection/shadow-dom/tentative/Selection-getComposedRanges-slot.html": {
+  "receipt": "head-edit.json",
+  "group": "edit",
+  "overlap": true,
+  "held": false,
+  "freshFourJob": true,
+  "sourceSHA256": "80924aa61e55d62875848822cd14413aa14662ed74638ae61e262347f9cb1500"
+ },
+ "selection/shadow-dom/tentative/Selection-getComposedRanges.html": {
+  "receipt": "head-edit.json",
+  "group": "edit",
+  "overlap": true,
+  "held": false,
+  "freshFourJob": true,
+  "sourceSHA256": "80924aa61e55d62875848822cd14413aa14662ed74638ae61e262347f9cb1500"
+ },
+ "selection/shadow-dom/tentative/Selection-isCollapsed.html": {
+  "receipt": "head-edit.json",
+  "group": "edit",
+  "overlap": true,
+  "held": false,
+  "freshFourJob": true,
+  "sourceSHA256": "80924aa61e55d62875848822cd14413aa14662ed74638ae61e262347f9cb1500"
+ },
+ "selection/textcontrols/selectionchange-bubble.html": {
+  "receipt": "head-edit.json",
+  "group": "edit",
+  "overlap": true,
+  "held": false,
+  "freshFourJob": true,
+  "sourceSHA256": "80924aa61e55d62875848822cd14413aa14662ed74638ae61e262347f9cb1500"
+ },
+ "selection/textcontrols/selectionchange-on-shadow-dom.html": {
+  "receipt": "head-edit.json",
+  "group": "edit",
+  "overlap": true,
+  "held": false,
+  "freshFourJob": true,
+  "sourceSHA256": "80924aa61e55d62875848822cd14413aa14662ed74638ae61e262347f9cb1500"
+ },
+ "selection/textcontrols/selectionchange.html": {
+  "receipt": "head-edit.json",
+  "group": "edit",
+  "overlap": true,
+  "held": false,
+  "freshFourJob": true,
+  "sourceSHA256": "80924aa61e55d62875848822cd14413aa14662ed74638ae61e262347f9cb1500"
+ }
+}

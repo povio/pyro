@@ -1,0 +1,1288 @@
+{
+ "html": {
+  "headChromeFirstOnly": 365,
+  "headChromeSecondOnly": 2599,
+  "headPreviousFirstOnly": 108,
+  "headPreviousSecondOnly": 4
+ },
+ "webnn": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 2734,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "editing": {
+  "headChromeFirstOnly": 2235,
+  "headChromeSecondOnly": 5290,
+  "headPreviousFirstOnly": 1069,
+  "headPreviousSecondOnly": 13
+ },
+ "fetch": {
+  "headChromeFirstOnly": 113,
+  "headChromeSecondOnly": 524,
+  "headPreviousFirstOnly": 40,
+  "headPreviousSecondOnly": 1
+ },
+ "referrer-policy": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 87,
+  "headPreviousFirstOnly": 88,
+  "headPreviousSecondOnly": 0
+ },
+ "sanitizer-api": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 352,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "subresource-integrity": {
+  "headChromeFirstOnly": 6,
+  "headChromeSecondOnly": 51,
+  "headPreviousFirstOnly": 6,
+  "headPreviousSecondOnly": 6
+ },
+ "timing-entrytypes-registry": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 1,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "mixed-content": {
+  "headChromeFirstOnly": 4,
+  "headChromeSecondOnly": 164,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "service-workers": {
+  "headChromeFirstOnly": 24,
+  "headChromeSecondOnly": 254,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "uievents": {
+  "headChromeFirstOnly": 6,
+  "headChromeSecondOnly": 12,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "xhr": {
+  "headChromeFirstOnly": 57,
+  "headChromeSecondOnly": 62,
+  "headPreviousFirstOnly": 1,
+  "headPreviousSecondOnly": 2
+ },
+ "cookies": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 74,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "FileAPI": {
+  "headChromeFirstOnly": 9,
+  "headChromeSecondOnly": 91,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "compression": {
+  "headChromeFirstOnly": 166,
+  "headChromeSecondOnly": 14,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "dom": {
+  "headChromeFirstOnly": 33,
+  "headChromeSecondOnly": 89,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "domparsing": {
+  "headChromeFirstOnly": 8,
+  "headChromeSecondOnly": 1281,
+  "headPreviousFirstOnly": 1,
+  "headPreviousSecondOnly": 0
+ },
+ "encoding": {
+  "headChromeFirstOnly": 238,
+  "headChromeSecondOnly": 86,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "svg": {
+  "headChromeFirstOnly": 92,
+  "headChromeSecondOnly": 1799,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "webaudio": {
+  "headChromeFirstOnly": 358,
+  "headChromeSecondOnly": 1578,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "shadow-dom": {
+  "headChromeFirstOnly": 676,
+  "headChromeSecondOnly": 220,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "streams": {
+  "headChromeFirstOnly": 67,
+  "headChromeSecondOnly": 205,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "urlpattern": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "mathml": {
+  "headChromeFirstOnly": 17,
+  "headChromeSecondOnly": 297,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "resource-timing": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 112,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "server-timing": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 22,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "input-events": {
+  "headChromeFirstOnly": 91,
+  "headChromeSecondOnly": 196,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "mimesniff": {
+  "headChromeFirstOnly": 1165,
+  "headChromeSecondOnly": 1,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "IndexedDB": {
+  "headChromeFirstOnly": 1,
+  "headChromeSecondOnly": 42,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "WebCryptoAPI": {
+  "headChromeFirstOnly": 1263,
+  "headChromeSecondOnly": 1453,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "accname": {
+  "headChromeFirstOnly": 1,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "compute-pressure": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 7,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "content-index": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "content-security-policy": {
+  "headChromeFirstOnly": 3,
+  "headChromeSecondOnly": 354,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "credential-management": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 4,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "forced-colors-mode": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "js": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 1,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "mediacapture-record": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 114,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "navigation-api": {
+  "headChromeFirstOnly": 1,
+  "headChromeSecondOnly": 63,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "orientation-event": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 34,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "pointerevents": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 112,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "preload": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 17,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "scroll-to-text-fragment": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 44,
+  "headPreviousFirstOnly": 3,
+  "headPreviousSecondOnly": 0
+ },
+ "selection": {
+  "headChromeFirstOnly": 13,
+  "headChromeSecondOnly": 60,
+  "headPreviousFirstOnly": 6,
+  "headPreviousSecondOnly": 0
+ },
+ "signed-exchange": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 2,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "soft-navigation-heuristics": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 29,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "speculation-rules": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 96
+ },
+ "storage-access-api": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 26,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "trusted-types": {
+  "headChromeFirstOnly": 2,
+  "headChromeSecondOnly": 158,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "vibration": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 2,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "web-animations": {
+  "headChromeFirstOnly": 7,
+  "headChromeSecondOnly": 62,
+  "headPreviousFirstOnly": 6,
+  "headPreviousSecondOnly": 0
+ },
+ "webcodecs": {
+  "headChromeFirstOnly": 46,
+  "headChromeSecondOnly": 518,
+  "headPreviousFirstOnly": 354,
+  "headPreviousSecondOnly": 0
+ },
+ "webmcp": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "websockets": {
+  "headChromeFirstOnly": 6,
+  "headChromeSecondOnly": 114,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 1
+ },
+ "webvtt": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 41,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "workers": {
+  "headChromeFirstOnly": 2,
+  "headChromeSecondOnly": 76,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "ai": {
+  "headChromeFirstOnly": 1,
+  "headChromeSecondOnly": 3,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "clipboard-apis": {
+  "headChromeFirstOnly": 11,
+  "headChromeSecondOnly": 4,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "close-watcher": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 2,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "custom-elements": {
+  "headChromeFirstOnly": 2,
+  "headChromeSecondOnly": 75,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "html-aam": {
+  "headChromeFirstOnly": 14,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "https-upgrades": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "js-self-profiling": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 7,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "keyboard-lock": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 1,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "orientation-sensor": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 11,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "permissions-policy": {
+  "headChromeFirstOnly": 2,
+  "headChromeSecondOnly": 40,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "scheduler": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 25,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "scroll-animations": {
+  "headChromeFirstOnly": 1,
+  "headChromeSecondOnly": 296,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "upgrade-insecure-requests": {
+  "headChromeFirstOnly": 6,
+  "headChromeSecondOnly": 72,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "url": {
+  "headChromeFirstOnly": 162,
+  "headChromeSecondOnly": 1,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "video-rvfc": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "webidl": {
+  "headChromeFirstOnly": 6,
+  "headChromeSecondOnly": 5,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "webrtc-stats": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 12,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "webxr": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 165,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "xml": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 5,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "client-hints": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 15,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "domxpath": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "element-timing": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 5,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "encrypted-media": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 30,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "hr-time": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 3,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "private-click-measurement": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "wai-aria": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 9,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "web-bundle": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "web-nfc": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "animation-worklet": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "clear-site-data": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 2,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "encoding-detection": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 10,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "gamepad": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "infrastructure": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "intersection-observer": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 54,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "largest-contentful-paint": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 44,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "measure-memory": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 7,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "webmessaging": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 8,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "webtransport": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "accessibility": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "cors": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 20,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "loading": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 8,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "media-capabilities": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 118,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "push-api": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 2,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "beacon": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "event-timing": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 14,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "idle-detection": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "mediacapture-insertable-streams": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 8,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "web-share": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 6,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "webrtc": {
+  "headChromeFirstOnly": 1,
+  "headChromeSecondOnly": 667,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "audio-output": {
+  "headChromeFirstOnly": 2,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "connection-allowlist": {
+  "headChromeFirstOnly": 1,
+  "headChromeSecondOnly": 37,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "digital-credentials": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 14,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "direct-sockets": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "eventsource": {
+  "headChromeFirstOnly": 1,
+  "headChromeSecondOnly": 3,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "focus": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 4,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "import-maps": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 38,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "layout-instability": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 16,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "media-source": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 214,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "mediacapture-extensions": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "mediacapture-streams": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 12,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "navigation-timing": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 30,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "webrtc-svc": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 34,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "webstorage": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 2,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "webusb": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 363,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "fullscreen": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 9,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "gyroscope": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 5,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "storage": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 55,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "cookiestore": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 116,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "device-bound-session-credentials": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "document-picture-in-picture": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 4,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "dpub-aam": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "performance-timeline": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 3,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "picture-in-picture": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 48,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "reporting": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 6,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "ambient-light": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "longtask-timing": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 6,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "quirks": {
+  "headChromeFirstOnly": 1,
+  "headChromeSecondOnly": 14,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "screen-orientation": {
+  "headChromeFirstOnly": 2,
+  "headChromeSecondOnly": 1,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "web-locks": {
+  "headChromeFirstOnly": 1,
+  "headChromeSecondOnly": 28,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "worklets": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 36,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "accelerometer": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 6,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "container-timing": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "fs": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 278,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "presentation-api": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 4,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "screen-wake-lock": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 11,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "visual-viewport": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "resize-observer": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 25,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "mediasession": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 50,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "x-frame-options": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 2,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "imagebitmap-renderingcontext": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 6,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "serial": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 18,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "user-timing": {
+  "headChromeFirstOnly": 1,
+  "headChromeSecondOnly": 18,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 17
+ },
+ "document-policy": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "jpegxl": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 2,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "webrtc-encoded-transform": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 21,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "payment-method-manifest": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 13,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "touch-events": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "file-system-access": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 6,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "managed": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 3,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "speech-api": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 1,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "merchant-validation": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "virtual-keyboard": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 4,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "long-animation-frame": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 24
+ },
+ "webauthn": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "console": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 4,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "paint-timing": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 13,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "proximity": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "secure-payment-confirmation": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 10,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "contenteditable": {
+  "headChromeFirstOnly": 2,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "mediacapture-image": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 24,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "cpu-performance": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 1,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "old-tests": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 1,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "page-lifecycle": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "screen-capture": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 1,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "notifications": {
+  "headChromeFirstOnly": 2,
+  "headChromeSecondOnly": 44,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "png": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "wasm": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "ua-client-hints": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 20,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "svg-aam": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "payment-request": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 9,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "shape-detection": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 5,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "is-input-pending": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 2,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "window-management": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "hsts": {
+  "headChromeFirstOnly": 1,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "font-access": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 5,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "inert": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 5,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "webrtc-extensions": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 17,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "bluetooth": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 1,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "delegated-ink": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 1,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "device-posture": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "background-sync": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 9,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "keyboard-map": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 2,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "network-error-logging": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "secure-contexts": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 3,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "mediacapture-fromelement": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 1,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "background-fetch": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 3,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "magnetometer": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "media-playback-quality": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 1,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "geolocation-sensor": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "savedata": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 2,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "trust-tokens": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 1,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "compat": {
+  "headChromeFirstOnly": 1,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "fenced-frame": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "intervention-reporting": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "permissions": {
+  "headChromeFirstOnly": 3,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "battery-status": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 4,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "gpc": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "netinfo": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 4,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "periodic-background-sync": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 10,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "webgl": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 6,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "remote-playback": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 2,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "subapps": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "entries-api": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 1,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "density-size-correction": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 5,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "page-visibility": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "requestidlecallback": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "webrtc-identity": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "device-memory": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 0,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ },
+ "geolocation": {
+  "headChromeFirstOnly": 0,
+  "headChromeSecondOnly": 1,
+  "headPreviousFirstOnly": 0,
+  "headPreviousSecondOnly": 0
+ }
+}

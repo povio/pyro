@@ -1,0 +1,30 @@
+{
+ "profile": "same four-job wptserve H2 testdriver manifest fresh-context viewport profile",
+ "sourceURLs": 69,
+ "matchedURLs": 10,
+ "sourceReceipts": [
+  "round6-noncss-measure/combined-305840f45/navigator-00.json",
+  "round6-noncss-measure/combined-305840f45/video-focus.json",
+  "round6-noncss-measure/combined-305840f45/video-guard.json"
+ ],
+ "round7First_frozen305Second": {
+  "matched": 10,
+  "firstFull": 7,
+  "secondFull": 7,
+  "firstOnlyFull": 0,
+  "secondOnlyFull": 0,
+  "firstPass": 358,
+  "secondPass": 358,
+  "commonPass": 358,
+  "firstOnly": 0,
+  "secondOnly": 0,
+  "missingFirstName": 0,
+  "missingSecondName": 0
+ },
+ "allFrozenProfiles": {
+  "wptserve/jobs=2/http2=True": 151,
+  "wptserve/jobs=4/http2=True": 69,
+  "static/jobs=1/http2=False": 5,
+  "wptserve/jobs=1/http2=True": 41
+ }
+}

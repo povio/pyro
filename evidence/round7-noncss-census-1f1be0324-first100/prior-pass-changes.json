@@ -1,0 +1,60 @@
+{
+ "chromeDisposition": {
+  "gain": {
+   "Pass": 1617,
+   "missing-name": 7,
+   "Fail": 58
+  },
+  "loss": {
+   "Pass": 24,
+   "missing-name": 6,
+   "Fail": 14
+  }
+ },
+ "byArea": {
+  "editing": {
+   "gain": 1069,
+   "loss": 13
+  },
+  "fetch": {
+   "gain": 40,
+   "loss": 1
+  },
+  "html": {
+   "loss": 4,
+   "gain": 108
+  },
+  "referrer-policy": {
+   "gain": 88
+  },
+  "subresource-integrity": {
+   "loss": 6,
+   "gain": 6
+  },
+  "xhr": {
+   "gain": 1,
+   "loss": 2
+  },
+  "domparsing": {
+   "gain": 1
+  },
+  "scroll-to-text-fragment": {
+   "gain": 3
+  },
+  "user-timing": {
+   "loss": 17
+  },
+  "websockets": {
+   "loss": 1
+  },
+  "webcodecs": {
+   "gain": 354
+  },
+  "selection": {
+   "gain": 6
+  },
+  "web-animations": {
+   "gain": 6
+  }
+ }
+}
