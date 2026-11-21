@@ -1347,7 +1347,7 @@ fn inline_css(tag: &str) -> Option<(&'static str, &'static str)> {
 fn format_inline(page: &Rc<PageDom>, host: NodeId, tag: &str, carriers: &[&str], input_type: &str, href: Option<&str>) {
     let (start, end) = editing::host_range(page, host);
     let collapsed = start == end;
-    editing::edit_with(page, host, input_type, None, None, |page| {
+    editing::apply_edit(page, host, input_type, href, None, |page| {
         let texts = {
             let mut dom = page.dom.borrow_mut();
             let texts = if collapsed {
@@ -1473,7 +1473,7 @@ fn remove_inline(page: &Rc<PageDom>, host: NodeId, names: &[&str], input_type: &
     if start == end && !names.contains(&"a") {
         return;
     }
-    editing::edit_with(page, host, input_type, None, None, |page| {
+    editing::apply_edit(page, host, input_type, None, None, |page| {
         let texts = {
             let mut dom = page.dom.borrow_mut();
             let (start, end) = if start == end {
@@ -1518,7 +1518,7 @@ fn selected_blocks(dom: &Dom, host: NodeId, start: Point, end: Point) -> Vec<Nod
 /// host without blocks is wrapped in one).
 fn format_block(page: &Rc<PageDom>, host: NodeId, tag: &str) {
     let (start, end) = editing::host_range(page, host);
-    editing::edit_with(page, host, "formatBlock", None, None, |page| {
+    editing::apply_edit(page, host, "formatBlock", None, None, |page| {
         let selection = {
             let mut dom = page.dom.borrow_mut();
             let Ok(doc) = dom.node_document(host) else { return };
@@ -1552,7 +1552,7 @@ fn format_block(page: &Rc<PageDom>, host: NodeId, tag: &str) {
 /// lines again.
 fn toggle_list(page: &Rc<PageDom>, host: NodeId, tag: &str, input_type: &str) {
     let (start, end) = editing::host_range(page, host);
-    editing::edit_with(page, host, input_type, None, None, |page| {
+    editing::apply_edit(page, host, input_type, None, None, |page| {
         {
             let mut dom = page.dom.borrow_mut();
             let Ok(doc) = dom.node_document(host) else { return };

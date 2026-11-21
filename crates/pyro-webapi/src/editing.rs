@@ -488,7 +488,7 @@ fn before_edit(
         && connected(page, host)
 }
 
-fn apply_edit(
+pub(crate) fn apply_edit(
     page: &Rc<PageDom>,
     host: NodeId,
     input_type: &str,
