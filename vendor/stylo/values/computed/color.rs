@@ -163,19 +163,27 @@ pub type OutlineColor = crate::values::generics::color::GenericOutlineColor<Colo
 
 /// A normalized mixture of the standard, constrained and unrestricted HDR limits.
 /// The exposed computed value contains contributions, independent of display luminance.
-#[derive(Clone, Copy, Debug, Deserialize, MallocSizeOf, PartialEq, Serialize, ToShmem)]
-pub struct DynamicRangeLimit([f32; 3]);
+#[derive(Clone, Copy, ComputeSquaredDistance, Debug, Deserialize, MallocSizeOf, PartialEq, Serialize, ToAnimatedValue, ToResolvedValue, ToShmem)]
+pub struct DynamicRangeLimit {
+    standard: f32,
+    constrained: f32,
+    unrestricted: f32,
+}
 
 impl DynamicRangeLimit {
     /// Initial value of the dynamic-range-limit property.
     pub fn no_limit() -> Self {
-        Self([0.0, 0.0, 1.0])
+        Self { standard: 0.0, constrained: 0.0, unrestricted: 1.0 }
     }
 
     pub(crate) fn from_level(level: DynamicRangeLevel) -> Self {
         let mut weights = [0.0; 3];
         weights[level as usize] = 1.0;
-        Self(weights)
+        Self::from_weights(weights)
+    }
+
+    fn from_weights([standard, constrained, unrestricted]: [f32; 3]) -> Self {
+        Self { standard, constrained, unrestricted }
     }
 
     pub(crate) fn normalized(weights: [f64; 3]) -> Self {
@@ -183,15 +191,15 @@ impl DynamicRangeLimit {
         if total <= 0.0 || !total.is_finite() {
             return Self::no_limit();
         }
-        Self(weights.map(|w| (w / total) as f32))
+        Self::from_weights(weights.map(|w| (w / total) as f32))
     }
 
     pub(crate) fn weights(&self) -> [f32; 3] {
-        self.0
+        [self.standard, self.constrained, self.unrestricted]
     }
 
     pub(crate) fn single_level(&self) -> Option<DynamicRangeLevel> {
-        let mut levels = DynamicRangeLevel::ORDER.into_iter().filter(|level| self.0[*level as usize] > 0.0);
+        let mut levels = DynamicRangeLevel::ORDER.into_iter().zip(self.weights()).filter(|(_, w)| *w > 0.0).map(|(level, _)| level);
         let first = levels.next()?;
         levels.next().is_none().then_some(first)
     }
@@ -204,7 +212,7 @@ impl ToCss for DynamicRangeLimit {
         }
 
         dest.write_str("dynamic-range-limit-mix(")?;
-        let items = DynamicRangeLevel::ORDER.into_iter().zip(self.0).filter(|(_, weight)| *weight > 0.0);
+        let items = DynamicRangeLevel::ORDER.into_iter().zip(self.weights()).filter(|(_, weight)| *weight > 0.0);
         for (i, (level, weight)) in items.enumerate() {
             if i != 0 {
                 dest.write_str(", ")?;
@@ -223,34 +231,16 @@ impl ToTyped for DynamicRangeLimit {
     }
 }
 
-impl crate::values::animated::ToAnimatedValue for DynamicRangeLimit {
-    type AnimatedValue = Self;
-    fn to_animated_value(self, _: &crate::values::animated::Context) -> Self { self }
-    fn from_animated_value(value: Self) -> Self { value }
-}
-
-impl crate::values::resolved::ToResolvedValue for DynamicRangeLimit {
-    type ResolvedValue = Self;
-    fn to_resolved_value(self, _: &crate::values::resolved::Context) -> Self { self }
-    fn from_resolved_value(value: Self) -> Self { value }
-}
-
 impl crate::values::animated::Animate for DynamicRangeLimit {
     fn animate(&self, other: &Self, procedure: crate::values::animated::Procedure) -> Result<Self, ()> {
         let crate::values::animated::Procedure::Interpolate { progress } = procedure else { return Err(()) };
         if progress <= 0.0 { return Ok(*self); }
         if progress >= 1.0 { return Ok(*other); }
+        let left = self.weights();
+        let right = other.weights();
         Ok(Self::normalized(std::array::from_fn(|i| {
-            (1.0 - progress) * f64::from(self.0[i]) + progress * f64::from(other.0[i])
+            (1.0 - progress) * f64::from(left[i]) + progress * f64::from(right[i])
         })))
-    }
-}
-
-impl crate::values::distance::ComputeSquaredDistance for DynamicRangeLimit {
-    fn compute_squared_distance(&self, other: &Self) -> Result<crate::values::distance::SquaredDistance, ()> {
-        Ok(self.0.iter().zip(other.0).map(|(&a, b)| {
-            crate::values::distance::SquaredDistance::from_sqrt((f64::from(a) - f64::from(b)).abs())
-        }).sum())
     }
 }
 
