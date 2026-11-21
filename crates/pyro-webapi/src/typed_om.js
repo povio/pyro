@@ -1080,9 +1080,9 @@
   // reify (as in Chromium): always a plain CSSStyleValue.
   const UNREIFIED = new Set(['border-top-left-radius', 'border-top-right-radius', 'border-bottom-left-radius',
     'border-bottom-right-radius',
-    'border-spacing', 'column-rule-width', 'vertical-align']);
+    'border-spacing', 'vertical-align']);
   const CSS_WIDE = /^(inherit|initial|unset|revert|revert-layer|default)$/i;
-  const OPAQUE_PROPERTIES = new Set(['flex-flow', 'font', 'font-family', 'font-variant', 'gap', 'grid-gap',
+  const OPAQUE_PROPERTIES = new Set(['margin', 'padding', 'border-radius', 'border-width', 'border-color', 'transition', 'flex-flow', 'font', 'font-family', 'font-variant', 'gap', 'grid-gap',
     'grid', 'grid-area', 'grid-template', 'marker', 'mask', 'offset', 'scroll-margin', 'scroll-padding',
     'text-decoration', 'text-shadow', 'will-change']);
   const LIST_VALUED = new Set(['transition', 'transition-property', 'transition-duration', 'transition-timing-function',
@@ -1116,7 +1116,13 @@
     out.push(text.slice(start).trim());
     return out;
   };
+  const COLUMN_RULE_VALUES = new Set(['column-rule-style', 'column-rule-width']);
   const reifyOne = (property, text, custom, shorthand = false) => {
+    if (property === 'background-size') {
+      // A single size is stored and serialized with an automatic second dimension.
+      const pair = splitSpaces(text);
+      if (pair.length === 2 && pair[1] === 'auto') text = pair[0];
+    }
     if (custom || /var\(/i.test(text)) return unparsedFrom(text);
     if (CSS_WIDE.test(text)) return new CSSKeywordValue(text.toLowerCase());
     if (UNREIFIED.has(property)) return plain(property, text);
@@ -1136,7 +1142,12 @@
     const [name, which] = k;
     if (which === 2) return [unparsedFrom(text)];
     if (CSS_WIDE.test(text) || /var\(/i.test(text)) return [reifyOne(name, text, false)];
-    if (computed && BORDER_IMAGE_TUPLES.has(name)) return [plain(name, text)];
+    if (COLUMN_RULE_VALUES.has(name) || (computed && BORDER_IMAGE_TUPLES.has(name))) return [plain(name, text)];
+    // A declared transition-property list is an opaque value unless it is 'none'.
+    // A single computed property name reifies as a keyword.
+    if (name === 'transition-property' && text !== 'none' && (!computed || splitTop(text).length > 1)) {
+      return [plain(name, text)];
+    }
     if ((name === 'text-shadow' && text === 'none') || (name === 'will-change' && text === 'auto')) return [new CSSKeywordValue(text)];
     if (OPAQUE_PROPERTIES.has(name)) return [plain(name, text)];
     // A shorthand's value of several components is not reified (a plain CSSStyleValue); one
@@ -1144,7 +1155,20 @@
     if (which === 1) return [splitSpaces(text).length > 1 ? plain(name, text) : reifyOne(name, text, false, true)];
     const parts = LIST_VALUED.has(name) ? splitTop(text) : [text];
     const values = parts.map((t) => reifyOne(name, t, false));
+    if (name === 'background-size' && values.some(value => value.constructor === CSSStyleValue)) {
+      return [plain(name, text)];
+    }
     return all ? values : values.slice(0, 1);
+  };
+  const reifyMapValue = (src, name, all) => {
+    // CSS column rules store parsed CSS text as a repeatable list. A scalar
+    // supplied through Typed OM keeps its numeric or keyword specified value.
+    if (COLUMN_RULE_VALUES.has(name)) {
+      const typed = src.typedText?.(name);
+      if (typed != null) return [reifyOne(name, typed, false)];
+    }
+    const text = src.get(name);
+    return text === '' ? [] : reify(name, text, all, src.computed) || [];
   };
   function parseValues(property, cssText, all, what) {
     const k = kind(property);
@@ -1182,19 +1206,14 @@
     get(property) {
       const src = mapSource(this);
       if (arguments.length < 1) throw new TypeError("Failed to execute 'get' on 'StylePropertyMapReadOnly': 1 argument required, but only 0 present.");
-      const [name, which] = nameOf(property, 'get', 'StylePropertyMapReadOnly');
-      const text = src.get(name);
-      if (text === '') return which === 2 ? undefined : undefined;
-      const values = reify(name, text, false, src.computed);
-      return values ? values[0] : undefined;
+      const [name] = nameOf(property, 'get', 'StylePropertyMapReadOnly');
+      return reifyMapValue(src, name, false)[0];
     }
     getAll(property) {
       const src = mapSource(this);
       if (arguments.length < 1) throw new TypeError("Failed to execute 'getAll' on 'StylePropertyMapReadOnly': 1 argument required, but only 0 present.");
       const [name] = nameOf(property, 'getAll', 'StylePropertyMapReadOnly');
-      const text = src.get(name);
-      if (text === '') return [];
-      return reify(name, text, true, src.computed) || [];
+      return reifyMapValue(src, name, true);
     }
     has(property) {
       const src = mapSource(this);
@@ -1205,10 +1224,10 @@
     get size() { return mapSource(this).names().length; }
     entries() {
       const src = mapSource(this);
-      return src.names().map((n) => [n, reify(n, src.get(n), true, src.computed) || []])[Symbol.iterator]();
+      return src.names().map((n) => [n, reifyMapValue(src, n, true)])[Symbol.iterator]();
     }
     keys() { const src = mapSource(this); return src.names()[Symbol.iterator](); }
-    values() { const src = mapSource(this); return src.names().map((n) => reify(n, src.get(n), true, src.computed) || [])[Symbol.iterator](); }
+    values() { const src = mapSource(this); return src.names().map((n) => reifyMapValue(src, n, true))[Symbol.iterator](); }
     forEach(cb, thisArg = undefined) {
       for (const [k, v] of this.entries()) apply(cb, thisArg, [v, k, this]);
     }
@@ -1217,6 +1236,14 @@
 
   // A value given to set()/append() as text for `name`: a CSSStyleValue's serialization (checked
   // against the property), or a string parsed as the property.
+  const integerLonghands = new Set(['order', 'orphans', 'widows', 'z-index', 'column-count', 'math-depth']);
+  const opacityLonghands = new Set(['opacity', 'fill-opacity', 'flood-opacity', 'stop-opacity', 'stroke-opacity']);
+  function retainsTypedOrigin(name, value, text) {
+    if (name === 'column-rule-width' || name === 'column-rule-style')
+      return value instanceof CSSNumericValue || value instanceof CSSKeywordValue && !CSS_WIDE.test(value.value);
+    if (opacityLonghands.has(name)) return value instanceof CSSMathValue || isUnit(value) && value.unit === 'percent';
+    return integerLonghands.has(name) && value instanceof CSSNumericValue && text.startsWith('calc(');
+  }
   const valueText = (name, which, v, what) => {
     if (v instanceof CSSStyleValue) {
       if (associatedProperties.has(v) && associatedProperties.get(v) !== name) {
@@ -1247,6 +1274,12 @@
         return text;
       }
       if (parse(name, text) !== null) return text;
+      // Typed OM represents a fractional <number> assigned to an <integer> as
+      // a one-item sum. CSS calc() rounds it when the property computes.
+      if (isUnit(v) && v.unit === 'number' && !Number.isInteger(v.value) && integerLonghands.has(name)) {
+        const wrapped = `calc(${text})`;
+        if (parse(name, wrapped) !== null) return wrapped;
+      }
       // A value of the right type outside the property's range is kept, in calc() (which clamps).
       // (Only below the range: its absolute value must be valid, so a non-integer stays invalid for an integer.)
       const below = v.value < 0 ? parse(name, unitText(-v.value, v.unit)) !== null : v.unit === 'number' && parse(name, '1') !== null && (Number.isInteger(v.value) || parse(name, '1.5') !== null)
@@ -1280,7 +1313,11 @@
       const texts = values.map((v) => valueText(name, which, v, 'set'));
       const text = texts.join(', ');
       if (values.length > 1 && parse(name, text) === null) throw new TypeError("Failed to execute 'set' on 'StylePropertyMap': Invalid type for property");
-      src.set(name, text);
+      if (which === 0 && values.length === 1 && retainsTypedOrigin(name, values[0], text)) {
+        src.setTyped(name, text);
+      } else {
+        src.set(name, text);
+      }
     }
     append(property, ...values) {
       const src = mapSource(this);
@@ -1294,7 +1331,11 @@
         throw new TypeError("Failed to execute 'append' on 'StylePropertyMap': Invalid type for property");
       }
       const texts = values.map((v) => valueText(name, which, v, 'append'));
-      src.set(name, [current, ...texts].filter((t) => t !== '').join(', '));
+      const combined = [current, ...texts].filter((t) => t !== '').join(', ');
+      if (texts.some((t) => CSS_WIDE.test(t)) || parse(name, combined) === null) {
+        throw new TypeError("Failed to execute 'append' on 'StylePropertyMap': Invalid type for property");
+      }
+      src.set(name, combined);
     }
     delete(property) {
       const src = mapSource(this);
@@ -1320,12 +1361,14 @@
     if (m) return m;
     m = new StylePropertyMap(ILLEGAL, {
       get: (name) => d.getPropertyValue(name),
+      typedText: (name) => native.typedNumericText(d, name),
+      setTyped: (name, text) => native.setTypedNumeric(d, name, text),
       set: (name, text) => { if (text === '') d.removeProperty(name); else d.setProperty(name, text); },
       clear: () => { d.cssText = ''; },
       names: () => {
         const seen = new Set();
         for (let i = 0; i < d.length; i++) seen.add(d.item(i));
-        return [...seen].sort((a, b) => (b.startsWith('--') - a.startsWith('--')) || (a < b ? -1 : a > b ? 1 : 0));
+        return [...seen];
       },
     });
     styleMaps.set(d, m);
@@ -1333,7 +1376,20 @@
   };
   const attributeStyleMap = (el) => declarationMap(declOf(el));
   // `element.computedStyleMap()`: the element's computed values (`getComputedStyle`).
-  const RESOLVED = /^((min-|max-)?(width|height|inline-size|block-size)|(margin|padding|inset)(-(top|right|bottom|left|block|inline|block-start|block-end|inline-start|inline-end))?|top|right|bottom|left|transform)$/;
+  const RESOLVED = /^((min-|max-)?(width|height|inline-size|block-size)|(margin|padding|inset)(-(top|right|bottom|left|block|inline|block-start|block-end|inline-start|inline-end))?|top|right|bottom|left|transform|line-height|border-(top|right|bottom|left|(block|inline)-(start|end))-width)$/;
+  // Standard names precede vendor-prefixed names, then custom names in Unicode code-point order.
+  const propertyGroup = (name) => name.startsWith('--') ? 2 : name.startsWith('-') ? 1 : 0;
+  const compareComputedPropertyNames = (a, b) => {
+    const group = propertyGroup(a) - propertyGroup(b);
+    if (group || a === b) return group;
+    if (!a.startsWith('--')) return a < b ? -1 : 1;
+    for (let i = 2; i < a.length && i < b.length;) {
+      const x = a.codePointAt(i), y = b.codePointAt(i);
+      if (x !== y) return x - y;
+      i += x > 0xffff ? 2 : 1;
+    }
+    return a.length - b.length;
+  };
   const computedStyleMap = (el, computedValue) => {
     const cs = () => getComputedStyle(el);
     return new StylePropertyMapReadOnly(ILLEGAL, {
@@ -1345,7 +1401,7 @@
         const s = cs();
         const names = [];
         for (let i = 0; i < s.length; i++) names.push(s.item(i));
-        return names.sort((a, b) => (b.startsWith('--') - a.startsWith('--')) || (a < b ? -1 : a > b ? 1 : 0));
+        return names.sort(compareComputedPropertyNames);
       },
     });
   };

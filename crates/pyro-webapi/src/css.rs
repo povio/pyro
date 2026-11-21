@@ -15,7 +15,7 @@ use std::rc::{Rc, Weak};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use pyro_dom::cssom::{normalize_relative_selector, parse_rules, CounterDescriptor, CounterRule, FeatureRule, Namespaces, PaletteRule, ParsedRule, ParseRelative, PropertyRule};
-use pyro_dom::stylo::declarations::{self, CssRuleType, DeclarationBlock};
+use pyro_dom::stylo::declarations::{self, CssRuleType, DeclarationBlock, TypedStyleValues};
 use pyro_dom::NodeId;
 use pyro_js::{ClassDef, IdentityKey, JsClass, JsError, JsResult, NoParent, Object, Scope, Value};
 
@@ -345,6 +345,12 @@ impl Block {
     fn css_text(&self) -> String {
         self.with_kept(self.parsed.css_text())
     }
+    fn css_with_typed(&self, typed: Option<&TypedStyleValues>) -> String {
+        match typed {
+            Some(values) => self.with_kept(self.parsed.css_with_typed_values(values)),
+            None => self.css_text(),
+        }
+    }
     fn with_kept(&self, parsed: String) -> String {
         let kept = serialize_declarations(&self.kept);
         match (parsed.is_empty(), kept.is_empty()) {
@@ -391,9 +397,9 @@ impl StyleData {
     }
 
     fn css_text(&self) -> String {
-        let text = self.text();
+        let (text, _, typed) = self.text_and_backing();
         if let Some(rule) = self.declaration_rule() { return DeclarationBlock::parse_in_rule(&text, rule).css_text(); }
-        self.font_block(&text).map_or_else(|| Block::parse(&text).css_text(), |block| block.css_text())
+        self.font_block(&text).map_or_else(|| Block::parse(&text).css_with_typed(typed.as_ref()), |block| block.css_text())
     }
     fn is_position_try(&self) -> bool {
         matches!(&self.source, StyleSource::Rule { node, .. } if matches!(&node.kind, RuleKind::Other { rule_type: 0, text } if text.borrow().starts_with("@position-try ")))
@@ -415,24 +421,24 @@ impl StyleData {
     /// The block's text: the `style` attribute, or the rule's block.
     fn text(&self) -> String { self.text_and_backing().0 }
 
-    fn text_and_backing(&self) -> (String, Option<bool>) {
+    fn text_and_backing(&self) -> (String, Option<bool>, Option<TypedStyleValues>) {
         match &self.source {
             StyleSource::Inline(el) => {
                 let dom = el.page.dom.borrow();
-                let Ok(e) = dom.element(el.id) else { return (String::new(), None) };
+                let Ok(e) = dom.element(el.id) else { return (String::new(), None, None) };
                 (e.semantic_inline_style().or_else(|| e.attr_local(&markup5ever::local_name!("style")))
-                    .unwrap_or("").to_owned(), e.checked_inline_style_backing())
+                    .unwrap_or("").to_owned(), e.checked_inline_style_backing(), e.typed_style_values().cloned())
             }
-            StyleSource::Rule { owner, .. } if owner.access().is_err() => (String::new(), None),
+            StyleSource::Rule { owner, .. } if owner.access().is_err() => (String::new(), None, None),
             StyleSource::Rule { node, .. } => match &node.kind {
                 RuleKind::Style { block, .. } | RuleKind::Declarations(block) =>
-                    (block.borrow().clone(), node.checked_style_backing.get()),
+                    (block.borrow().clone(), node.checked_style_backing.get(), node.typed_values.borrow().clone()),
                 RuleKind::Other { text, .. } => {
                     let text = text.borrow();
-                    let Some((_, body)) = split_block(&text) else { return (String::new(), None) };
-                    (if is_page(node) { page_parts(body).0 } else { body.trim().to_owned() }, None)
+                    let Some((_, body)) = split_block(&text) else { return (String::new(), None, None) };
+                    (if is_page(node) { page_parts(body).0 } else { body.trim().to_owned() }, None, None)
                 }
-                _ => (String::new(), None),
+                _ => (String::new(), None, None),
             },
         }
     }
@@ -483,13 +489,18 @@ impl StyleData {
     }
     /// Rule blocks are the renderer's input. CSSOM reads serialize that input canonically.
     fn write_semantic(&self, canonical: String, semantic: Option<String>) -> JsResult<()> {
+        self.write_origins(canonical, semantic, None)
+    }
+
+    fn write_origins(&self, canonical: String, semantic: Option<String>, typed: Option<TypedStyleValues>) -> JsResult<()> {
         match &self.source {
-            StyleSource::Inline(el) => el.page.dom.borrow_mut().set_cssom_inline_style(el.id, canonical, semantic).js(),
+            StyleSource::Inline(el) => el.page.dom.borrow_mut().set_cssom_inline_style_with_typed_values(el.id, canonical, semantic, typed).js(),
             StyleSource::Rule { node, .. } => match &node.kind {
                 RuleKind::Style { .. } | RuleKind::Declarations(_) => {
                     let signed = semantic.is_some();
                     self.write_raw(semantic.unwrap_or(canonical))?;
                     node.checked_style_backing.set(Some(signed));
+                    *node.typed_values.borrow_mut() = typed;
                     Ok(())
                 }
                 _ => self.write_raw(canonical),
@@ -505,6 +516,7 @@ impl StyleData {
                     RuleKind::Style { block, .. } | RuleKind::Declarations(block) => {
                         *block.borrow_mut() = text;
                         node.checked_style_backing.set(Some(false));
+                        node.typed_values.borrow_mut().take();
                     }
                     RuleKind::Other { .. } if is_page(node) => write_page(&*owner.rules()?, node, Some(&text)),
                     RuleKind::Other { text: rule, .. } => {
@@ -534,7 +546,10 @@ impl StyleData {
     /// `getPropertyValue(name)`. Only the declarations that can change the
     /// answer are parsed.
     fn get(&self, name: &str) -> String {
-        let text = self.text();
+        let (text, _, typed) = self.text_and_backing();
+        if let Some((_, value)) = typed.as_ref().and_then(|v| v.iter().find(|(n, _)| n == name)) {
+            return value.clone();
+        }
         if let Some(rule) = self.declaration_rule() { return DeclarationBlock::parse_in_rule(&text, rule).value(name); }
         if let Some(block) = self.font_block(&text) { return block.get(name); }
         if text.is_empty() {
@@ -573,6 +588,68 @@ impl StyleData {
         }
     }
 
+    pub(crate) fn typed_text(&self, name: &str) -> JsResult<Option<String>> {
+        let find = |typed: Option<&TypedStyleValues>| {
+            typed.and_then(|values| values.iter().find(|(n, _)| n == name)).map(|(_, v)| v.clone())
+        };
+        Ok(match &self.source {
+            StyleSource::Inline(el) => find(el.page.dom.borrow().element(el.id).js()?.typed_style_values()),
+            StyleSource::Rule { owner, node } => { owner.access()?; find(node.typed_values.borrow().as_ref()) }
+        })
+    }
+
+    /// Mutate parsed values for cascade and retain the specified serialization for
+    /// typed longhands. CSS text writes revoke the origin for every affected longhand.
+    fn edit_typed(
+        &self, text: &str, name: &str, value: &str, important: bool,
+        prior: Option<TypedStyleValues>, from_object: bool,
+    ) -> JsResult<String> {
+        let mut block = Block::parse(text);
+        let mut typed = prior.as_ref().map_or_else(Vec::new, |v| v.as_ref().clone());
+        let old = typed.iter().find(|(n, _)| n == name).map(|(_, v)| v.clone()).unwrap_or_else(|| block.parsed.value(name));
+        let changed = if unparsed(name) {
+            let i = block.kept.iter().position(|d| d.name == name);
+            if value.is_empty() {
+                if let Some(i) = i { let old = block.kept.remove(i).value; self.publish_typed(&block, typed)?; return Ok(old) }
+                return Ok(old);
+            }
+            let decl = Declaration { name: name.into(), value: value.into(), important };
+            if let Some(i) = i { block.kept[i] = decl; } else { block.kept.push(decl); }
+            true
+        } else if value.is_empty() {
+            block.parsed.remove(name)
+        } else {
+            let Some(changed) = block.parsed.set(name, value, important) else { return Ok(old) };
+            changed
+        };
+        typed.retain(|(n, _)| (from_object && n == name) || !declarations::overlaps(n, name));
+        if from_object {
+            if let Some((_, old_value)) = typed.iter_mut().find(|(n, _)| n == name) {
+                value.clone_into(old_value);
+            } else {
+                typed.push((name.to_owned(), value.to_owned()));
+            }
+        }
+        if changed || typed.as_slice() != prior.as_ref().map_or(&[][..], |v| v.as_slice()) {
+            self.publish_typed(&block, typed)?;
+        }
+        Ok(old)
+    }
+
+    fn publish_typed(&self, block: &Block, values: Vec<(String, String)>) -> JsResult<()> {
+        let typed = (!values.is_empty()).then(|| std::sync::Arc::new(values));
+        let canonical = block.css_with_typed(typed.as_ref());
+        let semantic = block.parsed.css_for_reparse().map(|v| block.with_kept(v)).filter(|v| *v != canonical);
+        self.write_origins(canonical, semantic, typed)
+    }
+
+    pub(crate) fn set_typed(&self, name: &str, value: &str) -> JsResult<()> {
+        if !self.allows(name) || self.declaration_rule().is_some() { return Ok(()); }
+        let (source, _, typed) = self.text_and_backing();
+        self.edit_typed(&source, name, value, false, typed, true)?;
+        Ok(())
+    }
+
     /// `setProperty(name, value, priority)`: an empty value removes the
     /// property; an invalid one, or a name that is no property, changes
     /// nothing. When no other declaration sets a longhand of `name`, the new
@@ -602,7 +679,8 @@ impl StyleData {
         if !css_property(name) {
             return Ok(());
         }
-        let (text, known) = self.text_and_backing();
+        let (text, known, typed) = self.text_and_backing();
+        if typed.is_some() { self.edit_typed(&text, name, value, important, typed, false)?; return Ok(()) }
         let may_need_backing = declarations::may_need_signed_zero_backing(value);
         if let Some(signed) = known {
             if !may_need_backing && text.len() <= 8192 && !unparsed(name)
@@ -675,7 +753,8 @@ impl StyleData {
     }
     /// `removeProperty(name)`: the value it had.
     fn remove(&self, name: &str) -> JsResult<String> {
-        let (text, known) = self.text_and_backing();
+        let (text, known, typed) = self.text_and_backing();
+        if typed.is_some() { return self.edit_typed(&text, name, "", false, typed, false) }
         if let Some(rule) = self.declaration_rule() {
             let mut block = DeclarationBlock::parse_in_rule(&text, rule);
             let old = block.value(name);
@@ -884,6 +963,7 @@ enum RuleKind {
 }
 
 struct RuleNode {
+    typed_values: RefCell<Option<TypedStyleValues>>,
     checked_style_backing: Cell<Option<bool>>,
     identity: IdentityKey,
     kind: RuleKind,
@@ -922,7 +1002,7 @@ impl RuleNode {
                 }
                 ParsedRule::Other { rule_type, text } => RuleKind::Other { rule_type, text: RefCell::new(text) },
             };
-            RuleNode { identity, kind, parent: RefCell::new(parent), checked_style_backing: Cell::new(None) }
+            RuleNode { identity, kind, parent: RefCell::new(parent), checked_style_backing: Cell::new(None), typed_values: RefCell::default() }
         })
     }
 
@@ -990,14 +1070,14 @@ impl RuleNode {
                     .filter(|part| !part.is_empty()).collect::<Vec<_>>().join(" ");
                 format!("{head} {{ {inner} }}")
             }
-            RuleKind::Declarations(text) => DeclarationBlock::parse(&text.borrow()).css_text(),
+            RuleKind::Declarations(text) => Block::parse(&text.borrow()).css_with_typed(self.typed_values.borrow().as_ref()),
             RuleKind::Counter(rule) => rule.borrow().text(),
             RuleKind::Features(rule) => rule.borrow().text(),
             RuleKind::Palette(rule) => rule.text.clone(),
             RuleKind::Property(rule) => rule.text.clone(),
             RuleKind::Style { selector, block, list } => {
                 // As the rule's `style.cssText` serializes the block.
-                let decls = Block::parse(&block.borrow()).css_text();
+                let decls = Block::parse(&block.borrow()).css_with_typed(self.typed_values.borrow().as_ref());
                 if !list.rules.borrow().is_empty() {
                     let mut lines = Vec::new();
                     if !decls.is_empty() { lines.push(decls); }

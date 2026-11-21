@@ -919,3 +919,86 @@ fn dynamic_range_limit_accepts_either_term_order_and_zero_weight_mixes() {
     // including when the element would inherit another limit.
     assert_eq!(actual, "true|dynamic-range-limit-mix(standard 80%, no-limit 20%)|true|constrained|true|no-limit");
 }
+
+#[test]
+fn typed_maps_reify_shorthands_background_layers_and_column_rule_values() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        const el = document.body.appendChild(document.createElement('div'));
+        const declared = el.attributeStyleMap, computed = el.computedStyleMap();
+        el.style.cssText = 'margin: 1px; background-size: 21px auto, cover; column-rule: 2px solid red;';
+        const type = v => v.constructor.name;
+        const out = [type(declared.get('margin')), type(computed.getAll('margin')[0]),
+                     declared.getAll('background-size').map(type).join(','),
+                     declared.get('background-size').value, type(declared.get('column-rule-width'))];
+        el.style.backgroundSize = '21px auto, auto 3px';
+        out.push(declared.getAll('background-size').length, type(declared.get('background-size')));
+        declared.set('column-rule-style', new CSSKeywordValue('dotted'));
+        declared.set('column-rule-width', CSS.px(7));
+        out.push(type(declared.get('column-rule-style')), type(computed.get('column-rule-style')),
+                 declared.getAll('column-rule-width')[0].value, type(computed.get('column-rule-width')));
+        el.style.columnRuleWidth = '8px';
+        out.push(type(declared.get('column-rule-width')), String(declared.get('column-rule-width')));
+        out.join('|')
+    "#);
+    assert_eq!(actual, concat!(
+        "CSSStyleValue|CSSStyleValue|CSSUnitValue,CSSKeywordValue|21|CSSStyleValue|1|CSSStyleValue|",
+        "CSSKeywordValue|CSSStyleValue|7|CSSStyleValue|CSSStyleValue|8px"
+    ));
+}
+
+#[test]
+fn typed_computed_widths_and_line_height_read_the_cascaded_values() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        const el = document.body.appendChild(document.createElement('div'));
+        el.style.cssText = 'zoom:2; writing-mode:vertical-rl; line-height:1.25; font-size:16px; border-block-start-width:thick;';
+        const map = el.computedStyleMap(), css = getComputedStyle(el);
+        [css.borderRightWidth, map.get('border-right-width').value,
+         map.get('border-block-start-width').value, css.lineHeight,
+         map.get('line-height').value, map.get('line-height').unit].join('|')
+    "#);
+    assert_eq!(actual, "0px|5|5|20px|1.25|number");
+}
+
+#[test]
+fn typed_numeric_writes_preserve_units_and_math_until_replaced() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        const sheet = new CSSStyleSheet();
+        sheet.replaceSync('#typed-numeric { opacity: 25%; }');
+        document.adoptedStyleSheets = [sheet];
+        const rule = sheet.cssRules[0], el = document.body.appendChild(document.createElement('div'));
+        el.id = 'typed-numeric';
+        const result = [String(rule.styleMap.get('opacity'))];
+        const percentage = CSS.percent(25);
+        rule.styleMap.set('opacity', percentage);
+        percentage.value = 99;
+        rule.style.color = 'blue';
+        result.push(rule.style.opacity, String(rule.styleMap.get('opacity')), rule.cssText.includes('opacity: 25%'),
+                    String(el.computedStyleMap().get('opacity')));
+        rule.style.opacity = '25%';
+        result.push(String(rule.styleMap.get('opacity')));
+        el.attributeStyleMap.set('fill-opacity', CSS.percent(-3));
+        el.style.display = 'block';
+        const clone = el.cloneNode(true);
+        result.push(clone.style.fillOpacity, String(clone.attributeStyleMap.get('fill-opacity')),
+                    String(el.computedStyleMap().get('fill-opacity')));
+        el.style.cssText = el.style.cssText;
+        result.push(String(el.attributeStyleMap.get('fill-opacity')));
+        const sum = new CSSMathSum(CSS.number(2), CSS.number(3));
+        el.attributeStyleMap.set('orphans', sum);
+        el.attributeStyleMap.set('order', CSS.number(-3.14));
+        const order = el.attributeStyleMap.get('order');
+        result.push(el.style.orphans, el.attributeStyleMap.get('orphans').values.length,
+                    String(el.computedStyleMap().get('orphans')), order.constructor.name,
+                    order.values[0].value, String(el.computedStyleMap().get('order')));
+        el.style.setProperty('order', 'bogus');
+        result.push(el.style.order, el.style.removeProperty('order'), el.attributeStyleMap.has('order'));
+        result.join('|')
+    "#);
+    assert_eq!(actual, concat!(
+        "0.25|25%|25%|true|0.25|0.25|-3%|-3%|0|-0.03|",
+        "calc(2 + 3)|2|5|CSSMathSum|-3.14|-3|calc(-3.14)|calc(-3.14)|false"
+    ));
+}

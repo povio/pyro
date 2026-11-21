@@ -3399,10 +3399,18 @@ impl Dom {
 
     /// Set both the CSSOM serialization and the style parser's backing in one DOM mutation.
     pub fn set_cssom_inline_style(&mut self, id: NodeId, canonical: String, semantic: Option<String>) -> DomResult<()> {
+        self.set_cssom_inline_style_with_typed_values(id, canonical, semantic, None)
+    }
+
+    pub fn set_cssom_inline_style_with_typed_values(
+        &mut self, id: NodeId, canonical: String, semantic: Option<String>, typed: Option<crate::stylo::declarations::TypedStyleValues>,
+    ) -> DomResult<()> {
         let (i, el) = self.el(id)?;
         let local = local_name!("style");
         let slot = el.attrs.iter().position(|a| a.name.local == local && a.name.ns == ns!());
-        let backing = semantic.map(std::sync::Arc::new);
+        let backing = (semantic.is_some() || typed.is_some()).then(|| {
+            std::sync::Arc::new(crate::node::InlineStyleBacking { semantic, typed })
+        });
         let semantic_only = el.semantic_style != backing && slot.is_some_and(|k| *el.attrs[k].value == *canonical);
         match slot {
             Some(k) => self.change_attr(i, k, &canonical),

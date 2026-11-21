@@ -1099,7 +1099,18 @@ impl PropertyDeclarationBlock {
     ///
     /// https://drafts.csswg.org/cssom/#serialize-a-css-declaration-block
     pub fn to_css(&self, dest: &mut CssStringWriter) -> fmt::Result {
-        self.serialize_block(dest, None)
+        self.serialize_block(dest, None, &[])
+    }
+
+    /// Serialize with values supplied as Typed OM objects. CSS text parsing may
+    /// simplify their equivalent specified value, e.g. an opacity percentage.
+    pub fn to_css_with_typed_values(&self, dest: &mut CssStringWriter, typed: &[(String, String)]) -> fmt::Result {
+        let mut separate = LonghandIdSet::new();
+        for (name, _) in typed {
+            if let Ok(id) = PropertyId::parse_enabled_for_all_content(name)
+                && let Err(PropertyDeclarationId::Longhand(id)) = id.as_shorthand() { separate.insert(id); }
+        }
+        self.serialize_block(dest, Some(&separate), typed)
     }
 
     /// Private style input for a renderer that reparses CSS. CSSOM serializes −0
@@ -1116,11 +1127,11 @@ impl PropertyDeclarationBlock {
         }
         if signed.is_empty() { return Ok(None); }
         scratch.clear();
-        crate::values::serialize_for_reparse(|| self.serialize_block(&mut scratch, Some(&signed))).0?;
+        crate::values::serialize_for_reparse(|| self.serialize_block(&mut scratch, Some(&signed), &[])).0?;
         Ok(Some(scratch))
     }
 
-    fn serialize_block(&self, dest: &mut CssStringWriter, signed: Option<&LonghandIdSet>) -> fmt::Result {
+    fn serialize_block(&self, dest: &mut CssStringWriter, signed: Option<&LonghandIdSet>, typed: &[(String, String)]) -> fmt::Result {
         let mut is_first_serialization = true; // trailing serializations should have a prepended space
 
         // Step 1 -> dest = result list
@@ -1171,6 +1182,12 @@ impl PropertyDeclarationBlock {
                     continue;
                 },
             };
+
+            if let Some((_, css)) = typed.iter().find(|(name, _)| name == longhand_id.name()) {
+                append_serialization(dest, &property, AppendableValue::Css(css), importance, &mut is_first_serialization)?;
+                already_serialized.insert(longhand_id.into());
+                continue;
+            }
 
             // Step 3.2
             if already_serialized.contains(longhand_id.into()) {

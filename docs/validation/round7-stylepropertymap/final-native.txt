@@ -1,0 +1,7 @@
+running 3 tests
+test css_declarations::typed_computed_widths_and_line_height_read_the_cascaded_values ... ok
+test css_declarations::typed_maps_reify_shorthands_background_layers_and_column_rule_values ... ok
+test css_declarations::typed_numeric_writes_preserve_units_and_math_until_replaced ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 526 filtered out; finished in 0.09s
+
