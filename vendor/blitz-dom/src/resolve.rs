@@ -68,7 +68,11 @@ impl BaseDocument {
             device_changed || root.has_damaged_descendants() || root.damage().is_none_or(|damage| !damage.is_empty());
         // A size query is the exceptional style read which needs geometry.
         // Ordinary style reads leave construction/layout and damage untouched.
-        if self.stylist.has_container_queries() {
+        let has_queries = self.stylist.has_container_queries();
+        if !has_queries {
+            self.nodes.anchor_query_choices.lock().unwrap().clear();
+        }
+        if has_queries || self.has_queried_container_units() {
             // Style-only queries also call the size adapter, including on normal
             // containers. Inspect final styles now that traversal has released
             // element data, and only lay out real size-container dependencies.
@@ -97,8 +101,15 @@ impl BaseDocument {
             }
         } else {
             self.nodes.container_query_sizes.lock().unwrap().clear();
-            self.nodes.anchor_query_choices.lock().unwrap().clear();
         }
+    }
+
+    fn has_queried_container_units(&self) -> bool {
+        use style::computed_value_flags::ComputedValueFlags;
+        !self.nodes.container_query_sizes.lock().unwrap().is_empty()
+            && self.nodes.iter().any(|(_, node)| {
+                node.primary_styles().is_some_and(|style| style.flags.contains(ComputedValueFlags::USES_CONTAINER_UNITS))
+            })
     }
 
     /// pyro: whether an element's restyle damage reaches layout (a box changed, not only what
@@ -186,19 +197,8 @@ impl BaseDocument {
             // pyro: counters and quotes in generated content, before damage propagates.
             self.resolve_generated_content();
             timer.record_time("style");
-            if !self.stylist.has_container_queries() {
-                // pyro: container units (`cqw`, ...) query container sizes too: keep those of a
-                // document that has styles using them.
-                use style::computed_value_flags::ComputedValueFlags;
-                let mut sizes = self.nodes.container_query_sizes.lock().unwrap();
-                if !sizes.is_empty()
-                    && !self.nodes.iter().any(|(_, node)| {
-                        node.primary_styles()
-                            .is_some_and(|style| style.flags.contains(ComputedValueFlags::USES_CONTAINER_UNITS))
-                    })
-                {
-                    sizes.clear();
-                }
+            if !self.stylist.has_container_queries() && !self.has_queried_container_units() {
+                self.nodes.container_query_sizes.lock().unwrap().clear();
             }
             phase_profile::mark(0, &mut phase_t);
 

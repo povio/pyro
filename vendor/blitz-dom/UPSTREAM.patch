@@ -49857,7 +49857,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
  use parley::LayoutContext;
  use selectors::Element as _;
  use style::dom::TDocument;
-@@ -21,27 +22,99 @@
+@@ -21,27 +22,110 @@
  use taffy::AvailableSpace;
  
  use crate::{
@@ -49911,7 +49911,11 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +            device_changed || root.has_damaged_descendants() || root.damage().is_none_or(|damage| !damage.is_empty());
 +        // A size query is the exceptional style read which needs geometry.
 +        // Ordinary style reads leave construction/layout and damage untouched.
-+        if self.stylist.has_container_queries() {
++        let has_queries = self.stylist.has_container_queries();
++        if !has_queries {
++            self.nodes.anchor_query_choices.lock().unwrap().clear();
++        }
++        if has_queries || self.has_queried_container_units() {
 +            // Style-only queries also call the size adapter, including on normal
 +            // containers. Inspect final styles now that traversal has released
 +            // element data, and only lay out real size-container dependencies.
@@ -49940,8 +49944,15 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +            }
 +        } else {
 +            self.nodes.container_query_sizes.lock().unwrap().clear();
-+            self.nodes.anchor_query_choices.lock().unwrap().clear();
 +        }
++    }
++
++    fn has_queried_container_units(&self) -> bool {
++        use style::computed_value_flags::ComputedValueFlags;
++        !self.nodes.container_query_sizes.lock().unwrap().is_empty()
++            && self.nodes.iter().any(|(_, node)| {
++                node.primary_styles().is_some_and(|style| style.flags.contains(ComputedValueFlags::USES_CONTAINER_UNITS))
++            })
 +    }
 +
 +    /// pyro: whether an element's restyle damage reaches layout (a box changed, not only what
@@ -49965,7 +49976,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
              #[cfg(feature = "tracing")]
              tracing::warn!("No DOM - not resolving");
              return;
-@@ -63,74 +136,201 @@
+@@ -63,74 +147,190 @@
              return;
          }
  
@@ -50024,19 +50035,8 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +            // pyro: counters and quotes in generated content, before damage propagates.
 +            self.resolve_generated_content();
 +            timer.record_time("style");
-+            if !self.stylist.has_container_queries() {
-+                // pyro: container units (`cqw`, ...) query container sizes too: keep those of a
-+                // document that has styles using them.
-+                use style::computed_value_flags::ComputedValueFlags;
-+                let mut sizes = self.nodes.container_query_sizes.lock().unwrap();
-+                if !sizes.is_empty()
-+                    && !self.nodes.iter().any(|(_, node)| {
-+                        node.primary_styles()
-+                            .is_some_and(|style| style.flags.contains(ComputedValueFlags::USES_CONTAINER_UNITS))
-+                    })
-+                {
-+                    sizes.clear();
-+                }
++            if !self.stylist.has_container_queries() && !self.has_queried_container_units() {
++                self.nodes.container_query_sizes.lock().unwrap().clear();
 +            }
 +            phase_profile::mark(0, &mut phase_t);
 +
@@ -51129,8 +51129,8 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +                let padded = if in_columns { self.columns_rect(node_id, padded, scale) } else { padded };
 +                overflow = unite_overflow(overflow, padded);
 +            }
-         }
- 
++        }
++
 +        // pyro: the lines of an inline formatting context are
 +        // overflow too (a nowrap name in a 100px `truncate` cell scrolls), and
 +        // a scroll container adds its end padding after them.
@@ -51203,8 +51203,8 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +                (grid.right as f64 + bl) * scale,
 +                (grid.bottom as f64 + bt) * scale,
 +            ));
-+        }
-+
+         }
+ 
 +        // pyro: a right-to-left item's outside marker, painted after its border box's right edge
 +        // (blitz-paint's outside markers), is its overflow there. Chrome: WPT css-lists
 +        // `list-style-type-string-003`, a long rtl string marker makes the document 1137px wide.
@@ -51226,7 +51226,9 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +        let contribution = self.overflow_contribution(node_id, overflow, layout.size, scale);
 +        place_overflow(&self.nodes[node_id], (scaled_x, scaled_y), scale, contribution)
 +    }
-+
+ 
+-        let full = if let Some(t) = transform {
+-            Affine::translate((scaled_x, scaled_y)) * t
 +    /// pyro: an in-flow child's border box in its scroll container (device px), grown on each
 +    /// side by the container's `padding` and the child's margin there (not below zero), the
 +    /// child's part of the container's scrollable overflow with the end padding after it. Its
@@ -51348,9 +51350,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +            .primary_styles()
 +            .is_some_and(|s| s.clone_position() == style::computed_values::position::T::Fixed)
 +    }
- 
--        let full = if let Some(t) = transform {
--            Affine::translate((scaled_x, scaled_y)) * t
++
 +    /// pyro: the box of the lines of `node_id`'s inline formatting
 +    /// context or text control (its own coordinates, device px; a scroll
 +    /// container's end padding added after them), and whether they reach
