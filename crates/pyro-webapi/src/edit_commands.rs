@@ -1158,6 +1158,9 @@ pub(crate) fn exec_command(page: &Rc<PageDom>, doc: NodeId, command: &str, value
     if let Some(Target::Control(c)) = target {
         return match cmd.as_str() {
             "inserthtml" => {
+                if !page.dom.borrow().is_mutable_text(c).unwrap_or(false) {
+                    return false;
+                }
                 let textarea = editing::local(&page.dom.borrow(), c) == "textarea";
                 let text = if textarea { Dom::plaintext_from_html(value) } else { Dom::single_line_text_from_html(value) };
                 let Ok(text) = text else { return false };
@@ -1753,7 +1756,11 @@ pub(crate) fn query_enabled(page: &PageDom, doc: NodeId, command: &str) -> bool 
     };
     match cmd.as_str() {
         "selectall" | "stylewithcss" | "usecss" | "defaultparagraphseparator" => true,
-        "inserthtml" => matches!(command_target(page), Some(Target::Host(_) | Target::Control(_))),
+        "inserthtml" => match command_target(page) {
+            Some(Target::Control(c)) => page.dom.borrow().is_mutable_text(c).unwrap_or(false),
+            Some(Target::Host(_)) => true,
+            _ => false,
+        },
         "copy" => has_range(),
         "cut" => command_target(page).is_some() && has_range(),
         "undo" => !page.undo.borrow().undo.is_empty(),

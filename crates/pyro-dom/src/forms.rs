@@ -438,6 +438,11 @@ impl Dom {
         Ok(self.is_disabled_idx(self.check(id)?))
     }
 
+    /// Whether a text edit at this control is permitted by its current state.
+    pub fn is_mutable_text(&self, id: NodeId) -> DomResult<bool> {
+        Ok(self.is_mutable_text_idx(self.check(id)?))
+    }
+
     /// Editable text control (input text-like or textarea), not readonly/disabled.
     pub(crate) fn is_mutable_text_idx(&self, idx: u32) -> bool {
         let Some(local) = self.html_local(idx) else { return false };
