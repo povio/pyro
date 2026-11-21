@@ -176,6 +176,7 @@ pub struct EventFields {
     pub touch: Option<Rc<TouchLists>>,
     /// `AnimationEvent.animationName`.
     pub animation_name: String,
+    pub css_animation: Option<Persistent>,
     /// `TransitionEvent.propertyName`.
     pub property_name: String,
     /// `elapsedTime` (seconds) and `pseudoElement` of both.
@@ -936,14 +937,24 @@ fn fill_message<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>
     Ok(())
 }
 
-fn fill_animation<'s>(_: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
+fn css_event_animation<'s>(s: &Scope<'s>, init: Option<Object<'s>>, transition: bool) -> JsResult<Option<Persistent>> {
+    let Some(init) = init else { return Ok(None) };
+    let value = init.get_atom("animation")?;
+    if value.is_undefined() || value.is_null() { return Ok(None); }
+    crate::animations::validate_event_animation(s, value, transition)?;
+    Ok(Some(Persistent::new(s, value)))
+}
+
+fn fill_animation<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
+    f.css_animation = css_event_animation(s, init, false)?;
     f.animation_name = get_str(init, "animationName")?;
     f.elapsed_time = get_num(init, "elapsedTime", 0.0)?;
     f.pseudo_element = get_str(init, "pseudoElement")?;
     Ok(())
 }
 
-fn fill_transition<'s>(_: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
+fn fill_transition<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
+    f.css_animation = css_event_animation(s, init, true)?;
     f.property_name = get_str(init, "propertyName")?;
     f.elapsed_time = get_num(init, "elapsedTime", 0.0)?;
     f.pseudo_element = get_str(init, "pseudoElement")?;
@@ -1906,6 +1917,7 @@ impl JsClass for AnimationEvent {
             construct::<AnimationEvent>(s, nt, a, EventInterface::AnimationEvent, fill_animation)
         });
         def.getter("animationName", |s, e| Ok(s.string(&e.fields.borrow().animation_name)));
+        def.getter("animation", |s, e| Ok(e.fields.borrow().css_animation.as_ref().map_or(s.null(), |value| value.get(s))));
         def.getter("elapsedTime", |s, e| Ok(s.number(e.fields.borrow().elapsed_time)));
         def.getter("pseudoElement", |s, e| Ok(s.string(&e.fields.borrow().pseudo_element)));
     }
@@ -1923,6 +1935,7 @@ impl JsClass for TransitionEvent {
             construct::<TransitionEvent>(s, nt, a, EventInterface::TransitionEvent, fill_transition)
         });
         def.getter("propertyName", |s, e| Ok(s.string(&e.fields.borrow().property_name)));
+        def.getter("animation", |s, e| Ok(e.fields.borrow().css_animation.as_ref().map_or(s.null(), |value| value.get(s))));
         def.getter("elapsedTime", |s, e| Ok(s.number(e.fields.borrow().elapsed_time)));
         def.getter("pseudoElement", |s, e| Ok(s.string(&e.fields.borrow().pseudo_element)));
     }

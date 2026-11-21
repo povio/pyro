@@ -76,6 +76,11 @@ fn unavailable() -> JsError {
     JsError::Type("Web Animations are unavailable".into())
 }
 
+pub(crate) fn validate_event_animation<'s>(s: &Scope<'s>, value: Value<'s>, transition: bool) -> JsResult<()> {
+    call(module(s, &page_of(s)?)?, "validateEventAnimation", &[value, s.boolean(transition)])?;
+    Ok(())
+}
+
 pub(crate) fn view_runs<'s>(s: &Scope<'s>, page: &Rc<PageDom>, target: Value<'s>, runs: Value<'s>) -> JsResult<Value<'s>> {
     call(module(s, page)?, "viewRuns", &[target, runs])
 }

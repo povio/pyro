@@ -2209,6 +2209,10 @@
     Animation, AnimationEffect, KeyframeEffect, AnimationTimeline, DocumentTimeline, AnimationPlaybackEvent,
     ScrollTimeline, ViewTimeline,
     CSSAnimation, CSSTransition,
+    validateEventAnimation(value, transition) {
+      if (animations.get(value)?.css !== (transition ? CSS_TRANSITION : CSS_ANIMATION))
+        throw new TypeError(transition ? 'Expected a CSSTransition' : 'Expected a CSSAnimation');
+    },
     animate, elementAnimations, rootAnimations, cssSync, viewRuns, timeline: () => documentTimeline,
   };
 })
