@@ -23,7 +23,7 @@ impl PreserveAspectRatio {
         let keyword = words.next()?;
         let align = ALIGN.iter().position(|&s| s == keyword)? as u16 + 1;
         let slice = match words.next() {
-            Some("slice") => align != 1,
+            Some("slice") => true,
             None | Some("meet") => false,
             _ => return None,
         };
@@ -55,10 +55,6 @@ impl PreserveAspectRatio {
 
 impl Dom {
     pub fn svg_aspect_ratio(&self, id: NodeId) -> DomResult<PreserveAspectRatio> {
-        let index = self.check(id)?;
-        if self.svg_none_slice.contains(&index) {
-            return Ok(PreserveAspectRatio { align: 1, slice: true });
-        }
         Ok(self
             .get_attribute_ns(id, None, "preserveAspectRatio")?
             .and_then(PreserveAspectRatio::parse)
@@ -66,16 +62,9 @@ impl Dom {
     }
 
     pub fn set_svg_aspect_ratio(&mut self, id: NodeId, value: PreserveAspectRatio) -> DomResult<()> {
-        let index = self.check(id)?;
         let align = ALIGN[usize::from(value.align - 1)];
         let mode = if value.slice { "slice" } else { "meet" };
-        self.set_attribute_ns(id, None, "preserveAspectRatio", &format!("{align} {mode}"))?;
-        // The DOM setters change the two components independently. Parsing
-        // "none slice" from a content attribute ignores the second component.
-        if value.align == 1 && value.slice {
-            self.svg_none_slice.insert(index);
-        }
-        Ok(())
+        self.set_attribute_ns(id, None, "preserveAspectRatio", &format!("{align} {mode}"))
     }
 }
 
@@ -85,19 +74,20 @@ mod tests {
     use crate::DocumentKind;
 
     #[test]
-    fn typed_none_keeps_its_slice_component_until_the_content_attribute_is_written() {
+    fn none_reflects_the_explicit_slice_keyword_without_preserving_the_geometry_ratio() {
         let mut dom = Dom::new();
         let doc = dom.create_document(DocumentKind::Html, "about:blank");
         let svg = dom.create_element_ns(doc, Some("http://www.w3.org/2000/svg"), "svg").unwrap();
         dom.set_attribute(svg, "preserveAspectRatio", "none slice").unwrap();
         let parsed = dom.svg_aspect_ratio(svg).unwrap();
-        assert_eq!((parsed.align(), parsed.meet_or_slice()), (1, 1));
+        assert_eq!((parsed.align(), parsed.meet_or_slice()), (1, 2));
+        assert_eq!(parsed.alignment(), None);
         dom.set_svg_aspect_ratio(svg, parsed.with_meet_or_slice(2).unwrap()).unwrap();
         dom.set_attribute_ns(svg, Some("urn:other"), "preserveAspectRatio", "xMaxYMax").unwrap();
         assert_eq!(dom.get_attribute_ns(svg, None, "preserveAspectRatio").unwrap(), Some("none slice"));
         assert_eq!(dom.svg_aspect_ratio(svg).unwrap().meet_or_slice(), 2);
         dom.set_attribute(svg, "preserveAspectRatio", "none slice").unwrap();
-        assert_eq!(dom.svg_aspect_ratio(svg).unwrap().meet_or_slice(), 1);
+        assert_eq!(dom.svg_aspect_ratio(svg).unwrap().meet_or_slice(), 2);
         dom.remove_attribute(svg, "preserveAspectRatio").unwrap();
         assert_eq!(dom.svg_aspect_ratio(svg).unwrap().align(), 6);
     }

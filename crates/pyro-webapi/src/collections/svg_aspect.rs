@@ -71,7 +71,7 @@ impl JsClass for Aspect {
                     let mut dom = data.el.page.dom.borrow_mut();
                     let current = dom.svg_aspect_ratio(data.el.id).js()?;
                     let next = if align { current.with_align(value) } else { current.with_meet_or_slice(value) }
-                        .ok_or_else(|| JsError::dom("NotSupportedError", "Unsupported preserveAspectRatio value."))?;
+                        .ok_or_else(|| JsError::Type("Unsupported preserveAspectRatio value.".into()))?;
                     dom.set_svg_aspect_ratio(data.el.id, next).js()
                 },
             );
