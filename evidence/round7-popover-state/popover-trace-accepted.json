@@ -1,0 +1,118 @@
+{
+  "version": {
+    "Browser": "Chrome/124.0.6367.29",
+    "Protocol-Version": "1.3",
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "V8-Version": "",
+    "WebKit-Version": "",
+    "webSocketDebuggerUrl": "ws://127.0.0.1:50682/"
+  },
+  "rows": [
+    {
+      "mode": "remove",
+      "states": [
+        {
+          "phase": "before",
+          "parentOpen": true,
+          "childOpen": true,
+          "childConnected": true,
+          "attribute": "auto",
+          "eventCount": 0
+        },
+        {
+          "phase": "immediate",
+          "parentOpen": true,
+          "childOpen": false,
+          "childConnected": false,
+          "attribute": "manual",
+          "eventCount": 1
+        },
+        {
+          "phase": "next task",
+          "parentOpen": true,
+          "childOpen": false,
+          "childConnected": false,
+          "attribute": "manual",
+          "eventCount": 1
+        },
+        {
+          "phase": "frame window",
+          "parentOpen": true,
+          "childOpen": false,
+          "childConnected": false,
+          "attribute": "manual",
+          "eventCount": 1
+        },
+        {
+          "phase": "settled",
+          "parentOpen": true,
+          "childOpen": false,
+          "childConnected": false,
+          "attribute": "manual",
+          "eventCount": 1
+        }
+      ],
+      "events": [
+        [
+          "child",
+          "beforetoggle",
+          "open",
+          "closed"
+        ]
+      ]
+    },
+    {
+      "mode": "second-change",
+      "states": [
+        {
+          "phase": "before",
+          "parentOpen": true,
+          "childOpen": true,
+          "childConnected": true,
+          "attribute": "auto",
+          "eventCount": 0
+        },
+        {
+          "phase": "immediate",
+          "parentOpen": true,
+          "childOpen": false,
+          "childConnected": true,
+          "attribute": "hint",
+          "eventCount": 1
+        },
+        {
+          "phase": "next task",
+          "parentOpen": true,
+          "childOpen": false,
+          "childConnected": true,
+          "attribute": "hint",
+          "eventCount": 1
+        },
+        {
+          "phase": "frame window",
+          "parentOpen": true,
+          "childOpen": false,
+          "childConnected": true,
+          "attribute": "hint",
+          "eventCount": 1
+        },
+        {
+          "phase": "settled",
+          "parentOpen": true,
+          "childOpen": false,
+          "childConnected": true,
+          "attribute": "hint",
+          "eventCount": 1
+        }
+      ],
+      "events": [
+        [
+          "child",
+          "beforetoggle",
+          "open",
+          "closed"
+        ]
+      ]
+    }
+  ]
+}
