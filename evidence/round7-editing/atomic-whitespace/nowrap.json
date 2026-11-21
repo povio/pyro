@@ -1,0 +1,622 @@
+[
+  {
+    "parent": {
+      "tag": "canvas",
+      "shape": "nowrap",
+      "backward": false,
+      "before": {
+        "html": "a&nbsp;&nbsp; <canvas></canvas>b",
+        "text": "a\u00a0\u00a0 b",
+        "originalAtom": true,
+        "caret": [
+          [],
+          1
+        ],
+        "undo": false
+      },
+      "after": {
+        "html": "a&nbsp;&nbsp; b",
+        "text": "a\u00a0\u00a0 b",
+        "originalAtom": false,
+        "caret": [
+          [],
+          1
+        ],
+        "undo": true
+      },
+      "undone": true,
+      "restored": {
+        "html": "a&nbsp;&nbsp; <canvas></canvas>b",
+        "text": "a\u00a0\u00a0 b",
+        "originalAtom": false,
+        "caret": [
+          [
+            0
+          ],
+          4
+        ],
+        "undo": false
+      }
+    },
+    "first": {
+      "tag": "canvas",
+      "shape": "nowrap",
+      "backward": false,
+      "before": {
+        "html": "a&nbsp;&nbsp; <canvas></canvas>b",
+        "text": "a\u00a0\u00a0 b",
+        "originalAtom": true,
+        "caret": [
+          [],
+          1
+        ],
+        "undo": false
+      },
+      "after": {
+        "html": "a &nbsp; b",
+        "text": "a \u00a0 b",
+        "originalAtom": false,
+        "caret": [
+          [],
+          1
+        ],
+        "undo": true
+      },
+      "undone": true,
+      "restored": {
+        "html": "a&nbsp;&nbsp; <canvas></canvas>b",
+        "text": "a\u00a0\u00a0 b",
+        "originalAtom": false,
+        "caret": [
+          [
+            0
+          ],
+          4
+        ],
+        "undo": false
+      }
+    },
+    "final": {
+      "tag": "canvas",
+      "shape": "nowrap",
+      "backward": false,
+      "before": {
+        "html": "a&nbsp;&nbsp; <canvas></canvas>b",
+        "text": "a\u00a0\u00a0 b",
+        "originalAtom": true,
+        "caret": [
+          [],
+          1
+        ],
+        "undo": false
+      },
+      "after": {
+        "html": "a&nbsp;&nbsp; b",
+        "text": "a\u00a0\u00a0 b",
+        "originalAtom": false,
+        "caret": [
+          [],
+          1
+        ],
+        "undo": true
+      },
+      "undone": true,
+      "restored": {
+        "html": "a&nbsp;&nbsp; <canvas></canvas>b",
+        "text": "a\u00a0\u00a0 b",
+        "originalAtom": false,
+        "caret": [
+          [
+            0
+          ],
+          4
+        ],
+        "undo": false
+      }
+    },
+    "chrome": {
+      "tag": "canvas",
+      "shape": "nowrap",
+      "backward": false,
+      "before": {
+        "html": "a&nbsp;&nbsp; <canvas></canvas>b",
+        "text": "a\u00a0\u00a0 b",
+        "originalAtom": true,
+        "caret": [
+          [],
+          1
+        ],
+        "undo": false
+      },
+      "after": {
+        "html": "a&nbsp;&nbsp; b",
+        "text": "a\u00a0\u00a0 b",
+        "originalAtom": false,
+        "caret": [
+          [
+            0
+          ],
+          4
+        ],
+        "undo": true
+      },
+      "undone": true,
+      "restored": {
+        "html": "a&nbsp;&nbsp; <canvas></canvas>b",
+        "text": "a\u00a0\u00a0 b",
+        "originalAtom": true,
+        "caret": [
+          [
+            0
+          ],
+          4
+        ],
+        "undo": false
+      }
+    }
+  },
+  {
+    "parent": {
+      "tag": "canvas",
+      "shape": "nowrap",
+      "backward": true,
+      "before": {
+        "html": "a&nbsp;&nbsp; <canvas></canvas>b",
+        "text": "a\u00a0\u00a0 b",
+        "originalAtom": true,
+        "caret": [
+          [],
+          2
+        ],
+        "undo": false
+      },
+      "after": {
+        "html": "a&nbsp;&nbsp; b",
+        "text": "a\u00a0\u00a0 b",
+        "originalAtom": false,
+        "caret": [
+          [],
+          1
+        ],
+        "undo": true
+      },
+      "undone": true,
+      "restored": {
+        "html": "a&nbsp;&nbsp; <canvas></canvas>b",
+        "text": "a\u00a0\u00a0 b",
+        "originalAtom": false,
+        "caret": [
+          [
+            2
+          ],
+          0
+        ],
+        "undo": false
+      }
+    },
+    "first": {
+      "tag": "canvas",
+      "shape": "nowrap",
+      "backward": true,
+      "before": {
+        "html": "a&nbsp;&nbsp; <canvas></canvas>b",
+        "text": "a\u00a0\u00a0 b",
+        "originalAtom": true,
+        "caret": [
+          [],
+          2
+        ],
+        "undo": false
+      },
+      "after": {
+        "html": "a &nbsp; b",
+        "text": "a \u00a0 b",
+        "originalAtom": false,
+        "caret": [
+          [],
+          1
+        ],
+        "undo": true
+      },
+      "undone": true,
+      "restored": {
+        "html": "a&nbsp;&nbsp; <canvas></canvas>b",
+        "text": "a\u00a0\u00a0 b",
+        "originalAtom": false,
+        "caret": [
+          [
+            2
+          ],
+          0
+        ],
+        "undo": false
+      }
+    },
+    "final": {
+      "tag": "canvas",
+      "shape": "nowrap",
+      "backward": true,
+      "before": {
+        "html": "a&nbsp;&nbsp; <canvas></canvas>b",
+        "text": "a\u00a0\u00a0 b",
+        "originalAtom": true,
+        "caret": [
+          [],
+          2
+        ],
+        "undo": false
+      },
+      "after": {
+        "html": "a&nbsp;&nbsp; b",
+        "text": "a\u00a0\u00a0 b",
+        "originalAtom": false,
+        "caret": [
+          [],
+          1
+        ],
+        "undo": true
+      },
+      "undone": true,
+      "restored": {
+        "html": "a&nbsp;&nbsp; <canvas></canvas>b",
+        "text": "a\u00a0\u00a0 b",
+        "originalAtom": false,
+        "caret": [
+          [
+            2
+          ],
+          0
+        ],
+        "undo": false
+      }
+    },
+    "chrome": {
+      "tag": "canvas",
+      "shape": "nowrap",
+      "backward": true,
+      "before": {
+        "html": "a&nbsp;&nbsp; <canvas></canvas>b",
+        "text": "a\u00a0\u00a0 b",
+        "originalAtom": true,
+        "caret": [
+          [],
+          2
+        ],
+        "undo": false
+      },
+      "after": {
+        "html": "a&nbsp;&nbsp; b",
+        "text": "a\u00a0\u00a0 b",
+        "originalAtom": false,
+        "caret": [
+          [
+            0
+          ],
+          4
+        ],
+        "undo": true
+      },
+      "undone": true,
+      "restored": {
+        "html": "a&nbsp;&nbsp; <canvas></canvas>b",
+        "text": "a\u00a0\u00a0 b",
+        "originalAtom": true,
+        "caret": [
+          [
+            2
+          ],
+          0
+        ],
+        "undo": false
+      }
+    }
+  },
+  {
+    "parent": {
+      "tag": "img",
+      "shape": "nowrap",
+      "backward": false,
+      "before": {
+        "html": "a&nbsp;&nbsp; <img>b",
+        "text": "a\u00a0\u00a0 b",
+        "originalAtom": true,
+        "caret": [
+          [],
+          1
+        ],
+        "undo": false
+      },
+      "after": {
+        "html": "a&nbsp;&nbsp; b",
+        "text": "a\u00a0\u00a0 b",
+        "originalAtom": false,
+        "caret": [
+          [],
+          1
+        ],
+        "undo": true
+      },
+      "undone": true,
+      "restored": {
+        "html": "a&nbsp;&nbsp; <img>b",
+        "text": "a\u00a0\u00a0 b",
+        "originalAtom": false,
+        "caret": [
+          [
+            0
+          ],
+          4
+        ],
+        "undo": false
+      }
+    },
+    "first": {
+      "tag": "img",
+      "shape": "nowrap",
+      "backward": false,
+      "before": {
+        "html": "a&nbsp;&nbsp; <img>b",
+        "text": "a\u00a0\u00a0 b",
+        "originalAtom": true,
+        "caret": [
+          [],
+          1
+        ],
+        "undo": false
+      },
+      "after": {
+        "html": "a &nbsp; b",
+        "text": "a \u00a0 b",
+        "originalAtom": false,
+        "caret": [
+          [],
+          1
+        ],
+        "undo": true
+      },
+      "undone": true,
+      "restored": {
+        "html": "a&nbsp;&nbsp; <img>b",
+        "text": "a\u00a0\u00a0 b",
+        "originalAtom": false,
+        "caret": [
+          [
+            0
+          ],
+          4
+        ],
+        "undo": false
+      }
+    },
+    "final": {
+      "tag": "img",
+      "shape": "nowrap",
+      "backward": false,
+      "before": {
+        "html": "a&nbsp;&nbsp; <img>b",
+        "text": "a\u00a0\u00a0 b",
+        "originalAtom": true,
+        "caret": [
+          [],
+          1
+        ],
+        "undo": false
+      },
+      "after": {
+        "html": "a&nbsp;&nbsp; b",
+        "text": "a\u00a0\u00a0 b",
+        "originalAtom": false,
+        "caret": [
+          [],
+          1
+        ],
+        "undo": true
+      },
+      "undone": true,
+      "restored": {
+        "html": "a&nbsp;&nbsp; <img>b",
+        "text": "a\u00a0\u00a0 b",
+        "originalAtom": false,
+        "caret": [
+          [
+            0
+          ],
+          4
+        ],
+        "undo": false
+      }
+    },
+    "chrome": {
+      "tag": "img",
+      "shape": "nowrap",
+      "backward": false,
+      "before": {
+        "html": "a&nbsp;&nbsp; <img>b",
+        "text": "a\u00a0\u00a0 b",
+        "originalAtom": true,
+        "caret": [
+          [],
+          1
+        ],
+        "undo": false
+      },
+      "after": {
+        "html": "a&nbsp;&nbsp; b",
+        "text": "a\u00a0\u00a0 b",
+        "originalAtom": false,
+        "caret": [
+          [
+            0
+          ],
+          4
+        ],
+        "undo": true
+      },
+      "undone": true,
+      "restored": {
+        "html": "a&nbsp;&nbsp; <img>b",
+        "text": "a\u00a0\u00a0 b",
+        "originalAtom": true,
+        "caret": [
+          [],
+          1
+        ],
+        "undo": false
+      }
+    }
+  },
+  {
+    "parent": {
+      "tag": "img",
+      "shape": "nowrap",
+      "backward": true,
+      "before": {
+        "html": "a&nbsp;&nbsp; <img>b",
+        "text": "a\u00a0\u00a0 b",
+        "originalAtom": true,
+        "caret": [
+          [],
+          2
+        ],
+        "undo": false
+      },
+      "after": {
+        "html": "a&nbsp;&nbsp; b",
+        "text": "a\u00a0\u00a0 b",
+        "originalAtom": false,
+        "caret": [
+          [],
+          1
+        ],
+        "undo": true
+      },
+      "undone": true,
+      "restored": {
+        "html": "a&nbsp;&nbsp; <img>b",
+        "text": "a\u00a0\u00a0 b",
+        "originalAtom": false,
+        "caret": [
+          [
+            2
+          ],
+          0
+        ],
+        "undo": false
+      }
+    },
+    "first": {
+      "tag": "img",
+      "shape": "nowrap",
+      "backward": true,
+      "before": {
+        "html": "a&nbsp;&nbsp; <img>b",
+        "text": "a\u00a0\u00a0 b",
+        "originalAtom": true,
+        "caret": [
+          [],
+          2
+        ],
+        "undo": false
+      },
+      "after": {
+        "html": "a &nbsp; b",
+        "text": "a \u00a0 b",
+        "originalAtom": false,
+        "caret": [
+          [],
+          1
+        ],
+        "undo": true
+      },
+      "undone": true,
+      "restored": {
+        "html": "a&nbsp;&nbsp; <img>b",
+        "text": "a\u00a0\u00a0 b",
+        "originalAtom": false,
+        "caret": [
+          [
+            2
+          ],
+          0
+        ],
+        "undo": false
+      }
+    },
+    "final": {
+      "tag": "img",
+      "shape": "nowrap",
+      "backward": true,
+      "before": {
+        "html": "a&nbsp;&nbsp; <img>b",
+        "text": "a\u00a0\u00a0 b",
+        "originalAtom": true,
+        "caret": [
+          [],
+          2
+        ],
+        "undo": false
+      },
+      "after": {
+        "html": "a&nbsp;&nbsp; b",
+        "text": "a\u00a0\u00a0 b",
+        "originalAtom": false,
+        "caret": [
+          [],
+          1
+        ],
+        "undo": true
+      },
+      "undone": true,
+      "restored": {
+        "html": "a&nbsp;&nbsp; <img>b",
+        "text": "a\u00a0\u00a0 b",
+        "originalAtom": false,
+        "caret": [
+          [
+            2
+          ],
+          0
+        ],
+        "undo": false
+      }
+    },
+    "chrome": {
+      "tag": "img",
+      "shape": "nowrap",
+      "backward": true,
+      "before": {
+        "html": "a&nbsp;&nbsp; <img>b",
+        "text": "a\u00a0\u00a0 b",
+        "originalAtom": true,
+        "caret": [
+          [],
+          2
+        ],
+        "undo": false
+      },
+      "after": {
+        "html": "a&nbsp;&nbsp; b",
+        "text": "a\u00a0\u00a0 b",
+        "originalAtom": false,
+        "caret": [
+          [
+            0
+          ],
+          4
+        ],
+        "undo": true
+      },
+      "undone": true,
+      "restored": {
+        "html": "a&nbsp;&nbsp; <img>b",
+        "text": "a\u00a0\u00a0 b",
+        "originalAtom": true,
+        "caret": [
+          [],
+          2
+        ],
+        "undo": false
+      }
+    }
+  }
+]

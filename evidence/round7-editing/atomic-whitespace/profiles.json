@@ -1,0 +1,1554 @@
+{
+  "parent": {
+    "bin": "/Users/xban1x/Library/Caches/lightningpanda/round7-editing/atomic-whitespace/base",
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "restarts": 0,
+    "jobs": 1,
+    "server": "static",
+    "testdriver": false,
+    "pages": [
+      {
+        "url": "dom/ranges/Range-mutations-appendChild.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 70,
+        "total": 70
+      },
+      {
+        "url": "dom/ranges/Range-mutations-appendData.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 384,
+        "total": 384
+      },
+      {
+        "url": "dom/ranges/Range-mutations-dataChange.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 2808,
+        "total": 2808
+      },
+      {
+        "url": "dom/ranges/Range-mutations-deleteData.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 564,
+        "total": 564
+      },
+      {
+        "url": "dom/ranges/Range-mutations-insertBefore.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 76,
+        "total": 76
+      },
+      {
+        "url": "dom/ranges/Range-mutations-insertData.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 382,
+        "total": 382
+      },
+      {
+        "url": "dom/ranges/Range-mutations-removeChild.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 20,
+        "total": 20
+      },
+      {
+        "url": "dom/ranges/Range-mutations-replaceChild.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 60,
+        "total": 60
+      },
+      {
+        "url": "dom/ranges/Range-mutations-replaceData.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 1146,
+        "total": 1146
+      },
+      {
+        "url": "dom/ranges/Range-mutations-splitText.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 116,
+        "total": 116
+      },
+      {
+        "url": "editing/other/insert-text-in-void-element.tentative.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 41,
+        "total": 48
+      },
+      {
+        "url": "editing/plaintext-only/delete-around-linebreak-or-block-boundary.html?white-space=normal",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 37,
+        "total": 37
+      },
+      {
+        "url": "editing/plaintext-only/delete-around-linebreak-or-block-boundary.html?white-space=pre",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 38,
+        "total": 38
+      },
+      {
+        "url": "editing/plaintext-only/delete-around-linebreak-or-block-boundary.html?white-space=pre-line",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 38,
+        "total": 38
+      },
+      {
+        "url": "editing/plaintext-only/delete-around-linebreak-or-block-boundary.html?white-space=pre-wrap",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 38,
+        "total": 38
+      },
+      {
+        "url": "editing/plaintext-only/delete-part-of-white-spaces.html?white-space=pre",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 7,
+        "total": 7
+      },
+      {
+        "url": "editing/plaintext-only/delete-part-of-white-spaces.html?white-space=pre-wrap",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 7,
+        "total": 7
+      },
+      {
+        "url": "editing/plaintext-only/forwardDelete-around-linebreak-or-block-boundary.html?white-space=normal",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 37,
+        "total": 37
+      },
+      {
+        "url": "editing/plaintext-only/forwardDelete-around-linebreak-or-block-boundary.html?white-space=pre",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 38,
+        "total": 38
+      },
+      {
+        "url": "editing/plaintext-only/forwardDelete-around-linebreak-or-block-boundary.html?white-space=pre-line",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 38,
+        "total": 38
+      },
+      {
+        "url": "editing/plaintext-only/forwardDelete-around-linebreak-or-block-boundary.html?white-space=pre-wrap",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 38,
+        "total": 38
+      },
+      {
+        "url": "editing/plaintext-only/forwardDelete-part-of-white-spaces.html?white-space=pre",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 7,
+        "total": 7
+      },
+      {
+        "url": "editing/plaintext-only/forwardDelete-part-of-white-spaces.html?white-space=pre-wrap",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 7,
+        "total": 7
+      },
+      {
+        "url": "editing/plaintext-only/styling-commands.html?styleWithCSS=false",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 150,
+        "total": 150
+      },
+      {
+        "url": "editing/plaintext-only/styling-commands.html?styleWithCSS=true",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 150,
+        "total": 150
+      },
+      {
+        "url": "editing/run/delete.html?1-1000",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 964,
+        "total": 1000
+      },
+      {
+        "url": "editing/run/forwarddelete.html?1-1000",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 966,
+        "total": 1000
+      },
+      {
+        "url": "editing/run/inserttext.html?1-1000",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 991,
+        "total": 1000
+      },
+      {
+        "url": "editing/run/inserttext.html?1001-2000",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 964,
+        "total": 1000
+      },
+      {
+        "url": "editing/run/inserttext.html?2001-last",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 943,
+        "total": 1009
+      },
+      {
+        "url": "editing/whitespaces/chrome-compat/delete.tentative.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 542,
+        "total": 584
+      },
+      {
+        "url": "dom/ranges/Range-in-shadow-after-the-shadow-removed.html?mode=closed",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 2,
+        "total": 2
+      },
+      {
+        "url": "dom/ranges/Range-in-shadow-after-the-shadow-removed.html?mode=open",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 2,
+        "total": 2
+      },
+      {
+        "url": "dom/ranges/Range-mutations-normalize.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 4,
+        "total": 4
+      },
+      {
+        "url": "editing/whitespaces/chrome-compat/delete-img.tentative.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 1,
+        "total": 7
+      },
+      {
+        "url": "editing/whitespaces/chrome-compat/delete-to-join-blocks.tentative.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 0,
+        "total": 18
+      },
+      {
+        "url": "editing/whitespaces/chrome-compat/forwarddelete-img.tentative.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 1,
+        "total": 7
+      },
+      {
+        "url": "editing/whitespaces/chrome-compat/forwarddelete-to-join-blocks.tentative.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 0,
+        "total": 18
+      },
+      {
+        "url": "editing/whitespaces/chrome-compat/forwarddelete.tentative.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 538,
+        "total": 602
+      },
+      {
+        "url": "editing/whitespaces/chrome-compat/insertlinebreak.tentative.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 3,
+        "total": 11
+      },
+      {
+        "url": "editing/whitespaces/chrome-compat/insertparagraph.tentative.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 11,
+        "total": 11
+      },
+      {
+        "url": "editing/whitespaces/chrome-compat/inserttext.tentative.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 223,
+        "total": 223
+      },
+      {
+        "url": "selection/contenteditable/initial-selection-on-focus.tentative.html?div",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 100,
+        "total": 100
+      },
+      {
+        "url": "selection/contenteditable/initial-selection-on-focus.tentative.html?span",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 51,
+        "total": 51
+      },
+      {
+        "url": "selection/shadow-dom/tentative/Range-isPointInRange.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 1,
+        "total": 2
+      },
+      {
+        "url": "selection/shadow-dom/tentative/Selection-collapse-and-extend.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 4,
+        "total": 4
+      },
+      {
+        "url": "selection/shadow-dom/tentative/Selection-getComposedRanges-collapsed.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 1,
+        "total": 1
+      },
+      {
+        "url": "selection/shadow-dom/tentative/Selection-getComposedRanges-dom-mutations-removal.html?mode=closed",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 6,
+        "total": 6
+      },
+      {
+        "url": "selection/shadow-dom/tentative/Selection-getComposedRanges-dom-mutations-removal.html?mode=open",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 6,
+        "total": 6
+      },
+      {
+        "url": "selection/shadow-dom/tentative/Selection-getComposedRanges-range-update.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 5,
+        "total": 9
+      },
+      {
+        "url": "selection/shadow-dom/tentative/Selection-getComposedRanges-slot.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 1,
+        "total": 3
+      },
+      {
+        "url": "selection/shadow-dom/tentative/Selection-getComposedRanges.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 12,
+        "total": 12
+      },
+      {
+        "url": "selection/shadow-dom/tentative/Selection-isCollapsed.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 2,
+        "total": 4
+      },
+      {
+        "url": "selection/textcontrols/selectionchange.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 60,
+        "total": 60
+      }
+    ]
+  },
+  "first": {
+    "bin": "/Users/xban1x/Library/Caches/lightningpanda/round7-editing/atomic-whitespace/pyro",
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "restarts": 0,
+    "jobs": 1,
+    "server": "static",
+    "testdriver": false,
+    "pages": [
+      {
+        "url": "dom/ranges/Range-mutations-appendChild.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 70,
+        "total": 70
+      },
+      {
+        "url": "dom/ranges/Range-mutations-appendData.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 384,
+        "total": 384
+      },
+      {
+        "url": "dom/ranges/Range-mutations-dataChange.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 2808,
+        "total": 2808
+      },
+      {
+        "url": "dom/ranges/Range-mutations-deleteData.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 564,
+        "total": 564
+      },
+      {
+        "url": "dom/ranges/Range-mutations-insertBefore.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 76,
+        "total": 76
+      },
+      {
+        "url": "dom/ranges/Range-mutations-insertData.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 382,
+        "total": 382
+      },
+      {
+        "url": "dom/ranges/Range-mutations-removeChild.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 20,
+        "total": 20
+      },
+      {
+        "url": "dom/ranges/Range-mutations-replaceChild.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 60,
+        "total": 60
+      },
+      {
+        "url": "dom/ranges/Range-mutations-replaceData.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 1146,
+        "total": 1146
+      },
+      {
+        "url": "dom/ranges/Range-mutations-splitText.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 116,
+        "total": 116
+      },
+      {
+        "url": "editing/other/insert-text-in-void-element.tentative.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 41,
+        "total": 48
+      },
+      {
+        "url": "editing/plaintext-only/delete-around-linebreak-or-block-boundary.html?white-space=normal",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 37,
+        "total": 37
+      },
+      {
+        "url": "editing/plaintext-only/delete-around-linebreak-or-block-boundary.html?white-space=pre",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 38,
+        "total": 38
+      },
+      {
+        "url": "editing/plaintext-only/delete-around-linebreak-or-block-boundary.html?white-space=pre-line",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 38,
+        "total": 38
+      },
+      {
+        "url": "editing/plaintext-only/delete-around-linebreak-or-block-boundary.html?white-space=pre-wrap",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 38,
+        "total": 38
+      },
+      {
+        "url": "editing/plaintext-only/delete-part-of-white-spaces.html?white-space=pre",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 7,
+        "total": 7
+      },
+      {
+        "url": "editing/plaintext-only/delete-part-of-white-spaces.html?white-space=pre-wrap",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 7,
+        "total": 7
+      },
+      {
+        "url": "editing/plaintext-only/forwardDelete-around-linebreak-or-block-boundary.html?white-space=normal",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 37,
+        "total": 37
+      },
+      {
+        "url": "editing/plaintext-only/forwardDelete-around-linebreak-or-block-boundary.html?white-space=pre",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 38,
+        "total": 38
+      },
+      {
+        "url": "editing/plaintext-only/forwardDelete-around-linebreak-or-block-boundary.html?white-space=pre-line",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 38,
+        "total": 38
+      },
+      {
+        "url": "editing/plaintext-only/forwardDelete-around-linebreak-or-block-boundary.html?white-space=pre-wrap",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 38,
+        "total": 38
+      },
+      {
+        "url": "editing/plaintext-only/forwardDelete-part-of-white-spaces.html?white-space=pre",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 7,
+        "total": 7
+      },
+      {
+        "url": "editing/plaintext-only/forwardDelete-part-of-white-spaces.html?white-space=pre-wrap",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 7,
+        "total": 7
+      },
+      {
+        "url": "editing/plaintext-only/styling-commands.html?styleWithCSS=false",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 150,
+        "total": 150
+      },
+      {
+        "url": "editing/plaintext-only/styling-commands.html?styleWithCSS=true",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 150,
+        "total": 150
+      },
+      {
+        "url": "editing/run/delete.html?1-1000",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 964,
+        "total": 1000
+      },
+      {
+        "url": "editing/run/forwarddelete.html?1-1000",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 966,
+        "total": 1000
+      },
+      {
+        "url": "editing/run/inserttext.html?1-1000",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 991,
+        "total": 1000
+      },
+      {
+        "url": "editing/run/inserttext.html?1001-2000",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 964,
+        "total": 1000
+      },
+      {
+        "url": "editing/run/inserttext.html?2001-last",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 943,
+        "total": 1009
+      },
+      {
+        "url": "editing/whitespaces/chrome-compat/delete.tentative.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 542,
+        "total": 584
+      },
+      {
+        "url": "dom/ranges/Range-in-shadow-after-the-shadow-removed.html?mode=closed",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 2,
+        "total": 2
+      },
+      {
+        "url": "dom/ranges/Range-in-shadow-after-the-shadow-removed.html?mode=open",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 2,
+        "total": 2
+      },
+      {
+        "url": "dom/ranges/Range-mutations-normalize.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 4,
+        "total": 4
+      },
+      {
+        "url": "editing/whitespaces/chrome-compat/delete-img.tentative.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 7,
+        "total": 7
+      },
+      {
+        "url": "editing/whitespaces/chrome-compat/delete-to-join-blocks.tentative.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 0,
+        "total": 18
+      },
+      {
+        "url": "editing/whitespaces/chrome-compat/forwarddelete-img.tentative.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 7,
+        "total": 7
+      },
+      {
+        "url": "editing/whitespaces/chrome-compat/forwarddelete-to-join-blocks.tentative.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 0,
+        "total": 18
+      },
+      {
+        "url": "editing/whitespaces/chrome-compat/forwarddelete.tentative.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 538,
+        "total": 602
+      },
+      {
+        "url": "editing/whitespaces/chrome-compat/insertlinebreak.tentative.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 3,
+        "total": 11
+      },
+      {
+        "url": "editing/whitespaces/chrome-compat/insertparagraph.tentative.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 11,
+        "total": 11
+      },
+      {
+        "url": "editing/whitespaces/chrome-compat/inserttext.tentative.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 223,
+        "total": 223
+      },
+      {
+        "url": "selection/contenteditable/initial-selection-on-focus.tentative.html?div",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 100,
+        "total": 100
+      },
+      {
+        "url": "selection/contenteditable/initial-selection-on-focus.tentative.html?span",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 51,
+        "total": 51
+      },
+      {
+        "url": "selection/shadow-dom/tentative/Range-isPointInRange.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 1,
+        "total": 2
+      },
+      {
+        "url": "selection/shadow-dom/tentative/Selection-collapse-and-extend.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 4,
+        "total": 4
+      },
+      {
+        "url": "selection/shadow-dom/tentative/Selection-getComposedRanges-collapsed.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 1,
+        "total": 1
+      },
+      {
+        "url": "selection/shadow-dom/tentative/Selection-getComposedRanges-dom-mutations-removal.html?mode=closed",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 6,
+        "total": 6
+      },
+      {
+        "url": "selection/shadow-dom/tentative/Selection-getComposedRanges-dom-mutations-removal.html?mode=open",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 6,
+        "total": 6
+      },
+      {
+        "url": "selection/shadow-dom/tentative/Selection-getComposedRanges-range-update.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 5,
+        "total": 9
+      },
+      {
+        "url": "selection/shadow-dom/tentative/Selection-getComposedRanges-slot.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 1,
+        "total": 3
+      },
+      {
+        "url": "selection/shadow-dom/tentative/Selection-getComposedRanges.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 12,
+        "total": 12
+      },
+      {
+        "url": "selection/shadow-dom/tentative/Selection-isCollapsed.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 2,
+        "total": 4
+      },
+      {
+        "url": "selection/textcontrols/selectionchange.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 60,
+        "total": 60
+      }
+    ]
+  },
+  "final": {
+    "bin": "/Users/xban1x/Library/Caches/lightningpanda/round7-editing/atomic-whitespace/revision2/pyro",
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "restarts": 0,
+    "jobs": 1,
+    "server": "static",
+    "testdriver": false,
+    "pages": [
+      {
+        "url": "dom/ranges/Range-mutations-appendChild.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 70,
+        "total": 70
+      },
+      {
+        "url": "dom/ranges/Range-mutations-appendData.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 384,
+        "total": 384
+      },
+      {
+        "url": "dom/ranges/Range-mutations-dataChange.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 2808,
+        "total": 2808
+      },
+      {
+        "url": "dom/ranges/Range-mutations-deleteData.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 564,
+        "total": 564
+      },
+      {
+        "url": "dom/ranges/Range-mutations-insertBefore.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 76,
+        "total": 76
+      },
+      {
+        "url": "dom/ranges/Range-mutations-insertData.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 382,
+        "total": 382
+      },
+      {
+        "url": "dom/ranges/Range-mutations-removeChild.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 20,
+        "total": 20
+      },
+      {
+        "url": "dom/ranges/Range-mutations-replaceChild.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 60,
+        "total": 60
+      },
+      {
+        "url": "dom/ranges/Range-mutations-replaceData.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 1146,
+        "total": 1146
+      },
+      {
+        "url": "dom/ranges/Range-mutations-splitText.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 116,
+        "total": 116
+      },
+      {
+        "url": "editing/other/insert-text-in-void-element.tentative.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 41,
+        "total": 48
+      },
+      {
+        "url": "editing/plaintext-only/delete-around-linebreak-or-block-boundary.html?white-space=normal",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 37,
+        "total": 37
+      },
+      {
+        "url": "editing/plaintext-only/delete-around-linebreak-or-block-boundary.html?white-space=pre",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 38,
+        "total": 38
+      },
+      {
+        "url": "editing/plaintext-only/delete-around-linebreak-or-block-boundary.html?white-space=pre-line",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 38,
+        "total": 38
+      },
+      {
+        "url": "editing/plaintext-only/delete-around-linebreak-or-block-boundary.html?white-space=pre-wrap",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 38,
+        "total": 38
+      },
+      {
+        "url": "editing/plaintext-only/delete-part-of-white-spaces.html?white-space=pre",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 7,
+        "total": 7
+      },
+      {
+        "url": "editing/plaintext-only/delete-part-of-white-spaces.html?white-space=pre-wrap",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 7,
+        "total": 7
+      },
+      {
+        "url": "editing/plaintext-only/forwardDelete-around-linebreak-or-block-boundary.html?white-space=normal",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 37,
+        "total": 37
+      },
+      {
+        "url": "editing/plaintext-only/forwardDelete-around-linebreak-or-block-boundary.html?white-space=pre",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 38,
+        "total": 38
+      },
+      {
+        "url": "editing/plaintext-only/forwardDelete-around-linebreak-or-block-boundary.html?white-space=pre-line",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 38,
+        "total": 38
+      },
+      {
+        "url": "editing/plaintext-only/forwardDelete-around-linebreak-or-block-boundary.html?white-space=pre-wrap",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 38,
+        "total": 38
+      },
+      {
+        "url": "editing/plaintext-only/forwardDelete-part-of-white-spaces.html?white-space=pre",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 7,
+        "total": 7
+      },
+      {
+        "url": "editing/plaintext-only/forwardDelete-part-of-white-spaces.html?white-space=pre-wrap",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 7,
+        "total": 7
+      },
+      {
+        "url": "editing/plaintext-only/styling-commands.html?styleWithCSS=false",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 150,
+        "total": 150
+      },
+      {
+        "url": "editing/plaintext-only/styling-commands.html?styleWithCSS=true",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 150,
+        "total": 150
+      },
+      {
+        "url": "editing/run/delete.html?1-1000",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 964,
+        "total": 1000
+      },
+      {
+        "url": "editing/run/forwarddelete.html?1-1000",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 966,
+        "total": 1000
+      },
+      {
+        "url": "editing/run/inserttext.html?1-1000",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 991,
+        "total": 1000
+      },
+      {
+        "url": "editing/run/inserttext.html?1001-2000",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 964,
+        "total": 1000
+      },
+      {
+        "url": "editing/run/inserttext.html?2001-last",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 943,
+        "total": 1009
+      },
+      {
+        "url": "editing/whitespaces/chrome-compat/delete.tentative.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 542,
+        "total": 584
+      },
+      {
+        "url": "dom/ranges/Range-in-shadow-after-the-shadow-removed.html?mode=closed",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 2,
+        "total": 2
+      },
+      {
+        "url": "dom/ranges/Range-in-shadow-after-the-shadow-removed.html?mode=open",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 2,
+        "total": 2
+      },
+      {
+        "url": "dom/ranges/Range-mutations-normalize.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 4,
+        "total": 4
+      },
+      {
+        "url": "editing/whitespaces/chrome-compat/delete-img.tentative.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 7,
+        "total": 7
+      },
+      {
+        "url": "editing/whitespaces/chrome-compat/delete-to-join-blocks.tentative.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 0,
+        "total": 18
+      },
+      {
+        "url": "editing/whitespaces/chrome-compat/forwarddelete-img.tentative.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 7,
+        "total": 7
+      },
+      {
+        "url": "editing/whitespaces/chrome-compat/forwarddelete-to-join-blocks.tentative.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 0,
+        "total": 18
+      },
+      {
+        "url": "editing/whitespaces/chrome-compat/forwarddelete.tentative.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 538,
+        "total": 602
+      },
+      {
+        "url": "editing/whitespaces/chrome-compat/insertlinebreak.tentative.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 3,
+        "total": 11
+      },
+      {
+        "url": "editing/whitespaces/chrome-compat/insertparagraph.tentative.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 11,
+        "total": 11
+      },
+      {
+        "url": "editing/whitespaces/chrome-compat/inserttext.tentative.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 223,
+        "total": 223
+      },
+      {
+        "url": "selection/contenteditable/initial-selection-on-focus.tentative.html?div",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 100,
+        "total": 100
+      },
+      {
+        "url": "selection/contenteditable/initial-selection-on-focus.tentative.html?span",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 51,
+        "total": 51
+      },
+      {
+        "url": "selection/shadow-dom/tentative/Range-isPointInRange.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 1,
+        "total": 2
+      },
+      {
+        "url": "selection/shadow-dom/tentative/Selection-collapse-and-extend.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 4,
+        "total": 4
+      },
+      {
+        "url": "selection/shadow-dom/tentative/Selection-getComposedRanges-collapsed.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 1,
+        "total": 1
+      },
+      {
+        "url": "selection/shadow-dom/tentative/Selection-getComposedRanges-dom-mutations-removal.html?mode=closed",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 6,
+        "total": 6
+      },
+      {
+        "url": "selection/shadow-dom/tentative/Selection-getComposedRanges-dom-mutations-removal.html?mode=open",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 6,
+        "total": 6
+      },
+      {
+        "url": "selection/shadow-dom/tentative/Selection-getComposedRanges-range-update.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 5,
+        "total": 9
+      },
+      {
+        "url": "selection/shadow-dom/tentative/Selection-getComposedRanges-slot.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 1,
+        "total": 3
+      },
+      {
+        "url": "selection/shadow-dom/tentative/Selection-getComposedRanges.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 12,
+        "total": 12
+      },
+      {
+        "url": "selection/shadow-dom/tentative/Selection-isCollapsed.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 2,
+        "total": 4
+      },
+      {
+        "url": "selection/textcontrols/selectionchange.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 60,
+        "total": 60
+      }
+    ]
+  },
+  "chrome": {
+    "bin": "/Users/xban1x/Library/Caches/lightningpanda/round6-reference-158/census/launch-158",
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "restarts": 0,
+    "jobs": 1,
+    "server": "static",
+    "testdriver": false,
+    "pages": [
+      {
+        "url": "dom/ranges/Range-mutations-appendChild.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 70,
+        "total": 70
+      },
+      {
+        "url": "dom/ranges/Range-mutations-appendData.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 384,
+        "total": 384
+      },
+      {
+        "url": "dom/ranges/Range-mutations-dataChange.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 2808,
+        "total": 2808
+      },
+      {
+        "url": "dom/ranges/Range-mutations-deleteData.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 564,
+        "total": 564
+      },
+      {
+        "url": "dom/ranges/Range-mutations-insertBefore.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 76,
+        "total": 76
+      },
+      {
+        "url": "dom/ranges/Range-mutations-insertData.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 382,
+        "total": 382
+      },
+      {
+        "url": "dom/ranges/Range-mutations-removeChild.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 20,
+        "total": 20
+      },
+      {
+        "url": "dom/ranges/Range-mutations-replaceChild.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 60,
+        "total": 60
+      },
+      {
+        "url": "dom/ranges/Range-mutations-replaceData.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 1146,
+        "total": 1146
+      },
+      {
+        "url": "dom/ranges/Range-mutations-splitText.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 116,
+        "total": 116
+      },
+      {
+        "url": "editing/other/insert-text-in-void-element.tentative.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 40,
+        "total": 48
+      },
+      {
+        "url": "editing/plaintext-only/delete-around-linebreak-or-block-boundary.html?white-space=normal",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 37,
+        "total": 37
+      },
+      {
+        "url": "editing/plaintext-only/delete-around-linebreak-or-block-boundary.html?white-space=pre",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 38,
+        "total": 38
+      },
+      {
+        "url": "editing/plaintext-only/delete-around-linebreak-or-block-boundary.html?white-space=pre-line",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 38,
+        "total": 38
+      },
+      {
+        "url": "editing/plaintext-only/delete-around-linebreak-or-block-boundary.html?white-space=pre-wrap",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 38,
+        "total": 38
+      },
+      {
+        "url": "editing/plaintext-only/delete-part-of-white-spaces.html?white-space=pre",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 7,
+        "total": 7
+      },
+      {
+        "url": "editing/plaintext-only/delete-part-of-white-spaces.html?white-space=pre-wrap",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 7,
+        "total": 7
+      },
+      {
+        "url": "editing/plaintext-only/forwardDelete-around-linebreak-or-block-boundary.html?white-space=normal",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 37,
+        "total": 37
+      },
+      {
+        "url": "editing/plaintext-only/forwardDelete-around-linebreak-or-block-boundary.html?white-space=pre",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 38,
+        "total": 38
+      },
+      {
+        "url": "editing/plaintext-only/forwardDelete-around-linebreak-or-block-boundary.html?white-space=pre-line",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 38,
+        "total": 38
+      },
+      {
+        "url": "editing/plaintext-only/forwardDelete-around-linebreak-or-block-boundary.html?white-space=pre-wrap",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 38,
+        "total": 38
+      },
+      {
+        "url": "editing/plaintext-only/forwardDelete-part-of-white-spaces.html?white-space=pre",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 7,
+        "total": 7
+      },
+      {
+        "url": "editing/plaintext-only/forwardDelete-part-of-white-spaces.html?white-space=pre-wrap",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 7,
+        "total": 7
+      },
+      {
+        "url": "editing/plaintext-only/styling-commands.html?styleWithCSS=false",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 150,
+        "total": 150
+      },
+      {
+        "url": "editing/plaintext-only/styling-commands.html?styleWithCSS=true",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 150,
+        "total": 150
+      },
+      {
+        "url": "editing/run/delete.html?1-1000",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 989,
+        "total": 1000
+      },
+      {
+        "url": "editing/run/forwarddelete.html?1-1000",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 996,
+        "total": 1000
+      },
+      {
+        "url": "editing/run/inserttext.html?1-1000",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 991,
+        "total": 1000
+      },
+      {
+        "url": "editing/run/inserttext.html?1001-2000",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 985,
+        "total": 1000
+      },
+      {
+        "url": "editing/run/inserttext.html?2001-last",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 989,
+        "total": 1009
+      },
+      {
+        "url": "editing/whitespaces/chrome-compat/delete.tentative.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 584,
+        "total": 584
+      },
+      {
+        "url": "dom/ranges/Range-in-shadow-after-the-shadow-removed.html?mode=closed",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 2,
+        "total": 2
+      },
+      {
+        "url": "dom/ranges/Range-in-shadow-after-the-shadow-removed.html?mode=open",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 2,
+        "total": 2
+      },
+      {
+        "url": "dom/ranges/Range-mutations-normalize.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 4,
+        "total": 4
+      },
+      {
+        "url": "editing/whitespaces/chrome-compat/delete-img.tentative.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 7,
+        "total": 7
+      },
+      {
+        "url": "editing/whitespaces/chrome-compat/delete-to-join-blocks.tentative.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 18,
+        "total": 18
+      },
+      {
+        "url": "editing/whitespaces/chrome-compat/forwarddelete-img.tentative.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 7,
+        "total": 7
+      },
+      {
+        "url": "editing/whitespaces/chrome-compat/forwarddelete-to-join-blocks.tentative.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 18,
+        "total": 18
+      },
+      {
+        "url": "editing/whitespaces/chrome-compat/forwarddelete.tentative.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 602,
+        "total": 602
+      },
+      {
+        "url": "editing/whitespaces/chrome-compat/insertlinebreak.tentative.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 11,
+        "total": 11
+      },
+      {
+        "url": "editing/whitespaces/chrome-compat/insertparagraph.tentative.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 11,
+        "total": 11
+      },
+      {
+        "url": "editing/whitespaces/chrome-compat/inserttext.tentative.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 223,
+        "total": 223
+      },
+      {
+        "url": "selection/contenteditable/initial-selection-on-focus.tentative.html?div",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 96,
+        "total": 100
+      },
+      {
+        "url": "selection/contenteditable/initial-selection-on-focus.tentative.html?span",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 51,
+        "total": 51
+      },
+      {
+        "url": "selection/shadow-dom/tentative/Range-isPointInRange.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 2,
+        "total": 2
+      },
+      {
+        "url": "selection/shadow-dom/tentative/Selection-collapse-and-extend.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 4,
+        "total": 4
+      },
+      {
+        "url": "selection/shadow-dom/tentative/Selection-getComposedRanges-collapsed.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 1,
+        "total": 1
+      },
+      {
+        "url": "selection/shadow-dom/tentative/Selection-getComposedRanges-dom-mutations-removal.html?mode=closed",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 6,
+        "total": 6
+      },
+      {
+        "url": "selection/shadow-dom/tentative/Selection-getComposedRanges-dom-mutations-removal.html?mode=open",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 6,
+        "total": 6
+      },
+      {
+        "url": "selection/shadow-dom/tentative/Selection-getComposedRanges-range-update.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 8,
+        "total": 9
+      },
+      {
+        "url": "selection/shadow-dom/tentative/Selection-getComposedRanges-slot.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 3,
+        "total": 3
+      },
+      {
+        "url": "selection/shadow-dom/tentative/Selection-getComposedRanges.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 12,
+        "total": 12
+      },
+      {
+        "url": "selection/shadow-dom/tentative/Selection-isCollapsed.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 4,
+        "total": 4
+      },
+      {
+        "url": "selection/textcontrols/selectionchange.html",
+        "status": "complete",
+        "harnessStatus": 0,
+        "passes": 60,
+        "total": 60
+      }
+    ]
+  }
+}
