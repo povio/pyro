@@ -6815,6 +6815,26 @@ fn font_face_descriptors_share_a_live_block() {
 }
 
 #[test]
+fn stylesheet_owner_node_tracks_association() {
+    let e = env("<style id=s>a{}</style>");
+    assert_eq!(
+        eval(
+            &e.main,
+            "const style = document.getElementById('s'), first = style.sheet;
+             const checks = [first.ownerNode === style, new CSSStyleSheet().ownerNode === null];
+             style.textContent = 'b{}'; const second = style.sheet;
+             checks.push(first.ownerNode === null, second.ownerNode === style);
+             style.remove(); checks.push(second.ownerNode === null);
+             document.head.appendChild(style);
+             checks.push(second.ownerNode === null, style.sheet !== second, style.sheet.ownerNode === style);
+             checks.join('|')"
+        ),
+        "true|true|true|true|true|true|true|true"
+    );
+    e.page.dispose();
+}
+
+#[test]
 fn cssom_interface_shapes_and_import_parts() {
     let e = env(concat!(
         "<style id=s>@import \"a.css\" layer(x.y) supports(display: grid) SCREEN; @page {} b { color: red }",
