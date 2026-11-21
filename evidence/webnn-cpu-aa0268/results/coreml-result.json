@@ -1,0 +1,1 @@
+{"inputShape":[2],"outputShape":[3],"wrongShapeRejected":true,"predictions":[[7,1.5,0],[2,3.5,0],[0,0,6.5]],"computeUnits":"CPUOnly","model":"affine-plus-ReLU","compileMs":27.063708315836266,"compiledOnce":true}

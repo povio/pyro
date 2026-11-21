@@ -1,0 +1,5 @@
+[
+ "webnn/conformance_tests/relu.https.any.html?cpu",
+ "webnn/conformance_tests/matmul.https.any.html?cpu",
+ "webnn/conformance_tests/gemm.https.any.html?cpu"
+]

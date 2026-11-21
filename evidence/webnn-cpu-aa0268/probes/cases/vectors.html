@@ -1,0 +1,13 @@
+<!doctype html><title>Separate explicit CPU numerical-fixture check</title>
+<script src="/resources/testharness.js"></script><script src="/resources/testharnessreport.js"></script>
+<script src="original-utils.js"></script><script src="vectors.js"></script><script>
+for (const fixture of cpuVectorFixtures) {
+  promise_test(async t => {
+    const context = await navigator.ml.createContext({accelerated:false});
+    t.add_cleanup(()=>context.destroy());
+    const builder = new MLGraphBuilder(context);
+    const {result,intermediateOperands} = await buildAndExecuteGraph(context,builder,fixture.graph);
+    assertResultsEquals(getPrecisionTolerance,result,fixture.graph,intermediateOperands);
+  }, 'Explicit CPU numeric fixture — '+fixture.name);
+}
+</script>

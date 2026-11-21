@@ -1,0 +1,26 @@
+{
+  "source": "b1f643512d591b50d868ae0ba0393f555d355789",
+  "base": "aa0268b479a6b463da16910b4b743cf38901d962",
+  "WPT": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+  "featureBinarySHA256": "a9857e205b59d00fe851c8659caf71e8c6ebcc139f9a1b606863dd302abeb7fd",
+  "baseBinarySHA256": "9623217e05de0c6866256ce4f855edabf2ca810eb0d6a3ae51a93fd5ba50f7a8",
+  "javascriptCoreKey": "0e0dd7038a7a-6f4649e395e0",
+  "javascriptCoreSHA256": "3deb71f8e7d14daf174e35340a4ff0c1900b0e9f576503adeb5facbb1201f029",
+  "feature": "pyro-webapi/experimental-webnn-cpu",
+  "sourceSHA256": {
+    "crates/pyro-webapi/Cargo.toml": "1b90e887b37c2b7559a0c8d7ecc2125dc6ee2f49442aa11327d70b066facc440",
+    "crates/pyro-webapi/src/lib.rs": "a3803358fa56940bccd698d098127e40690bc8a2502cbb245b7517f4125b2a90",
+    "crates/pyro-webapi/src/webnn_cpu.js": "ed01cdebbed49a5c33683f034c98708957942b8720480691a0faf4fb42eef684",
+    "crates/pyro-webapi/src/webnn_cpu.rs": "53b93bb11d5720ee82ab1463d80f1e300e0ff3a40741a77440b3c8e0f4eacc8f",
+    "crates/pyro-webapi/src/worker_scope.rs": "ba8bc1d4ca71339f88f4aeb0a8761290ebc32323af4112fe929248c35f101d87"
+  },
+  "originalFixtureSHA256": {
+    "matmul.https.any.js": "55c566d35b9ad53c6787c29d6ac65b44426b206fe89e8e00c3891f5586065ea8",
+    "gemm.https.any.js": "dab0d415b0e701a39a76afcfc4434e8309c768d855e7a66b93f9034927f275cd",
+    "relu.https.any.js": "66d433d36d1ea4a9a83cacc2f4637f408c54e3799c080418d9090eae29251cd1"
+  },
+  "originalComparatorSHA256": "56af6ac3a946ed7ee6c2620037405e78ea7a53abec27c3de28eb68a510b92259",
+  "generatedFixtureSHA256": "c04dafb91da4fda14656cfd65bfbabdea4057ab02da16519868932e33d51ffd8",
+  "review": "Independent 5-file source review after rework, plus independent recompilation of the standalone Core ML model.",
+  "featureOffBinarySHA256": "902e8babb29be31e65e4edea39e5352e6780aed1063bc7ba5aa2308b69dd6a77"
+}
