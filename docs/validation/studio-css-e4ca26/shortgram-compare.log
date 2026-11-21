@@ -1,0 +1,30 @@
+shortgram-main-candidate 8082 page passes 5770 named passes 181740 observed names 194657 statuses {'complete:0': 7871, 'complete:2': 104, 'timeout:None': 11, 'complete:1': 95, 'hang:None': 1}
+shortgram-main-parent 8082 page passes 5760 named passes 181713 observed names 194657 statuses {'complete:0': 7871, 'complete:2': 104, 'timeout:None': 11, 'complete:1': 95, 'hang:None': 1}
+shortgram-main-stable 8082 page passes 6950 named passes 182963 observed names 194912 statuses {'complete:0': 7986, 'complete:2': 62, 'complete:1': 23, 'timeout:None': 10, 'hang:None': 1}
+shortgram-main-parent pages left only 10 right only 0
+shortgram-main-parent passes left only 27 right only 0
+shortgram-main-parent observed left only 0 right only 0
+shortgram-main-stable pages left only 286 right only 1466
+shortgram-main-stable passes left only 5905 right only 7128
+shortgram-main-stable observed left only 260 right only 515
+Losses vs parent by URL: Counter()
+shortgram-focus-candidate 529 page passes 433 named passes 18062 observed names 18980 statuses {'complete:0': 529}
+shortgram-focus-parent 529 page passes 429 named passes 18045 observed names 18980 statuses {'complete:0': 529}
+shortgram-focus-stable 529 page passes 398 named passes 17437 observed names 18960 statuses {'complete:0': 529}
+shortgram-focus-parent pages left only 4 right only 0
+shortgram-focus-parent passes left only 17 right only 0
+shortgram-focus-parent observed left only 0 right only 0
+shortgram-focus-stable pages left only 55 right only 20
+shortgram-focus-stable passes left only 757 right only 132
+shortgram-focus-stable observed left only 20 right only 0
+Losses vs parent by URL: Counter()
+shortgram-supplement-candidate 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+shortgram-supplement-parent 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+shortgram-supplement-stable 41 page passes 35 named passes 619 observed names 874 statuses {'complete:0': 41}
+shortgram-supplement-parent pages left only 0 right only 0
+shortgram-supplement-parent passes left only 0 right only 0
+shortgram-supplement-parent observed left only 0 right only 0
+shortgram-supplement-stable pages left only 0 right only 8
+shortgram-supplement-stable passes left only 0 right only 42
+shortgram-supplement-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()
