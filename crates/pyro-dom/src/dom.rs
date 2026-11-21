@@ -3499,7 +3499,7 @@ impl Dom {
         }
         if plain && !self.svg_numbers.is_empty() {
             if let Some(lists) = self.svg_numbers.get(&i).and_then(|attrs| attrs.get(&*name.local)).and_then(std::rc::Weak::upgrade) {
-                lists.attribute_changed(self.n(i).element().unwrap().attr_local(&name.local).unwrap_or_default());
+                lists.attribute_changed(&name.local, self.n(i).element().unwrap().attr_local(&name.local).unwrap_or_default());
             }
         }
         if plain && name.local == local_name!("class") {

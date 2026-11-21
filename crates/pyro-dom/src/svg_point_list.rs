@@ -245,13 +245,13 @@ impl PointLists {
     }
 }
 
-// SVG number lists use comma-wsp between numbers. A missing item or one
+// Filter Effects requires whitespace or a comma between numbers. A missing item or one
 // malformed token invalidates the whole attribute, including its valid prefix.
 fn parse_numbers(text: &str) -> Option<Vec<f32>> {
     let mut values = Vec::new();
     for group in text.split(',') {
         let start = values.len();
-        for token in group.split([' ', '\t', '\r', '\n']).filter(|s| !s.is_empty()) {
+        for token in group.split([' ', '\t', '\r', '\n', '\x0c']).filter(|s| !s.is_empty()) {
             let value = token.parse::<svgtypes::Number>().ok()?.0 as f32;
             if !value.is_finite() {
                 return None;
@@ -265,10 +265,32 @@ fn parse_numbers(text: &str) -> Option<Vec<f32>> {
     Some(values)
 }
 
+// SVG text's rotate attribute uses CSS value syntax: [ <number>+ ]#.
+// Adjacent number tokens need no whitespace when tokenization is unambiguous.
+fn parse_rotate(text: &str) -> Option<Vec<f32>> {
+    use cssparser::{Parser, ParserInput, Token};
+    let mut input = ParserInput::new(text);
+    let mut parser = Parser::new(&mut input);
+    let mut values = Vec::new();
+    let mut need_number = true;
+    while !parser.is_exhausted() {
+        match parser.next().ok()? {
+            Token::Number { value, .. } if value.is_finite() => {
+                values.push(*value);
+                need_number = false;
+            }
+            Token::Comma if !need_number => need_number = true,
+            _ => return None,
+        }
+    }
+    (!need_number).then_some(values)
+}
+
 impl NumberLists {
-    pub(crate) fn attribute_changed(&self, text: &str) {
+    pub(crate) fn attribute_changed(&self, attr: &str, text: &str) {
         if !self.writing.get() {
-            self.sync_attribute(parse_numbers(text).into_iter().flatten());
+            let parsed = if attr == "rotate" { parse_rotate(text) } else { parse_numbers(text) };
+            self.sync_attribute(parsed.into_iter().flatten());
         }
     }
 }
@@ -294,7 +316,7 @@ impl Dom {
             return Ok(lists);
         }
         let lists = NumberLists::new(write, |text, n| write!(text, "{n}").expect("writing to String is infallible"));
-        lists.attribute_changed(self.get_attribute_ns(id, None, attr)?.unwrap_or_default());
+        lists.attribute_changed(attr, self.get_attribute_ns(id, None, attr)?.unwrap_or_default());
         self.svg_numbers.entry(index).or_default().insert(attr, Rc::downgrade(&lists));
         Ok(lists)
     }
@@ -304,6 +326,16 @@ impl Dom {
 mod tests {
     use super::*;
     use crate::DocumentKind;
+
+    #[test]
+    fn rotate_uses_css_number_tokens() {
+        assert_eq!(parse_rotate("1-2,1.2.3/**/4\x0c5"), Some(vec![1., -2., 1.2, 0.3, 4., 5.]));
+        for invalid in ["1,", ",2", "1,,2", "2px", "3%"] {
+            assert_eq!(parse_rotate(invalid), None);
+        }
+        assert_eq!(parse_numbers("1-2"), None);
+        assert_eq!(parse_numbers("1\x0c2"), Some(vec![1., 2.]));
+    }
 
     #[test]
     fn number_attributes_observe_independent_live_lists() {
