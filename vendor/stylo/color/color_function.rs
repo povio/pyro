@@ -466,18 +466,12 @@ impl ColorFunction<ComputedColor> {
                     h.resolve()?.map(|angle| normalize_hue(angle.degrees())),
                     s.resolve()?.map(|s| {
                         if use_rgb_sytax {
-                            s.to_number(SATURATION_RANGE).clamp(0.0, SATURATION_RANGE)
+                            s.to_number(SATURATION_RANGE).max(0.0)
                         } else {
                             s.to_number(SATURATION_RANGE)
                         }
                     }),
-                    l.resolve()?.map(|l| {
-                        if use_rgb_sytax {
-                            l.to_number(LIGHTNESS_RANGE).clamp(0.0, LIGHTNESS_RANGE)
-                        } else {
-                            l.to_number(LIGHTNESS_RANGE)
-                        }
-                    }),
+                    l.resolve()?.map(|l| l.to_number(LIGHTNESS_RANGE)),
                     alpha!(alpha),
                 );
 

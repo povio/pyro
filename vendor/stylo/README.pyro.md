@@ -524,3 +524,6 @@ without a style context (custom properties left as they are): pyro serializes a 
 - Round 7 (R-HTML-16r): `queries/feature_expression.rs` `QueryExpressionValue::parse`: a length media feature takes a
   math function that resolves to the number 0 (`calc(0)`) as a zero length, as Blink does. WPT html
   `the-img-element/sizes/parse-a-sizes-attribute-*` (`(min-width:calc(0)) 1px`).
+- Round 7 (CSS Color 4 §7): absolute HSL floors negative saturation without clipping extended
+  saturation or lightness before serialization. HSL ↔ HWB uses their common sRGB representation
+  directly rather than an XYZ round trip. Mix finalization and CSSOM operand storage are unchanged.

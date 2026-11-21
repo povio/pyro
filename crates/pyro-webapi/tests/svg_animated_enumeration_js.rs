@@ -440,6 +440,33 @@ fn relative_colors_keep_missing_components() {
     );
 }
 
+#[test]
+fn missing_polar_colors_across_declaration_paths() {
+    let env = Env::new("http://color.test/");
+    assert_eq!(env.eval(r#"(() => {
+        const target = document.body.appendChild(document.createElement('div'));
+        target.id = 'polar';
+        const sheet = document.head.appendChild(document.createElement('style'));
+        for (const [value, expected] of [
+            ['hsl(none 160% 120%)', 'hsl(none 160% 120%)'],
+            ['hsl(none -10% 40%)', 'hsl(none 0% 40%)'],
+            ['hsl(from hwb(180 none 25%) h s l)', 'color(srgb 0 0.75 0.75)'],
+            ['color-mix(in hwb, red, red)', 'color(srgb 1 0 0)'],
+        ]) {
+            target.style.setProperty('color', value);
+            if (getComputedStyle(target).color !== expected) return 'setProperty: ' + value;
+            target.setAttribute('style', 'color: ' + value);
+            if (getComputedStyle(target).color !== expected) return 'attribute: ' + value;
+            target.removeAttribute('style');
+            sheet.textContent = '#polar {color: ' + value + '}';
+            if (getComputedStyle(target).color !== expected) return 'stylesheet: ' + value;
+            sheet.textContent = '';
+        }
+        target.style.setProperty('color', 'color-mix(in hsl, hsl(120 100% 50%), red)');
+        return target.style.getPropertyValue('color');
+    })()"#), "color-mix(in hsl, rgb(0, 255, 0), red)");
+}
+
 /// A color function with a `calc()` component keeps its function form as its specified value, the
 /// `calc()`s simplified and the other components as the numbers the function resolves them to
 /// (css-color-4 § 15, as Chromium); legacy `rgb()`, `hsl()` and `hwb()` with numeric `calc()`s
