@@ -4403,7 +4403,11 @@ fn resolved_property_name(name: &str) -> Cow<'_, str> {
     }
     if name.starts_with('-') {
         if let Some(style::properties::PropertyId::NonCustom(property)) = crate::stylo::property_id(name) {
-            return Cow::Borrowed(property.unaliased().name());
+            return Cow::Borrowed(match property.unaliased().name() {
+                "-webkit-transform" => "transform",
+                "-webkit-perspective" => "perspective",
+                canonical => canonical,
+            });
         }
     }
     if name.bytes().any(|b| b.is_ascii_uppercase()) {
