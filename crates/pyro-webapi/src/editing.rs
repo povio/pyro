@@ -701,14 +701,21 @@ fn typing_point(page: &PageDom, dom: &Dom, host: NodeId, caret: Point) -> Option
         if editing_host(dom, node) != Some(host) {
             break;
         }
-        let end = editable_edge(dom, (node, len(dom, node)), false);
-        if is_text(dom, end.0) {
-            return Some(end);
+        if is_text(dom, node) {
+            return Some((node, len(dom, node)));
         }
-        if dom.child_count(node).ok() != Some(0) || !is_container(dom, node)
-            || dom.shadow_root(node).ok().flatten().is_some()
+        if !is_container(dom, node) || dom.shadow_root(node).ok().flatten().is_some()
             || layout.computed_style_value(dom, node, "display") != "inline"
+            || layout.computed_style_value(dom, node, "visibility") == "hidden"
         {
+            break;
+        }
+        if dom.child_count(node).ok() != Some(0) {
+            let end = editable_edge(dom, (node, len(dom, node)), false);
+            // A descendant can have a different display or visibility.
+            if is_text(dom, end.0) && dom.parent(end.0).ok().flatten() == Some(node) {
+                return Some(end);
+            }
             break;
         }
         previous = dom.prev_sibling(node).ok().flatten();
