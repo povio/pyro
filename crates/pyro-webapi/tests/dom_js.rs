@@ -7884,6 +7884,8 @@ fn encoded_chunks_clone_internal_slots_and_reject_storage() {
         })()"#), "true,true,delta,22,5,3,8");
         let scope = e.main.scope().unwrap();
         let graph = scope.eval("({nested:[chunk]})", None, 1).unwrap();
-        assert!(matches!(serialize_for_storage(&scope, graph), Err(pyro_js::JsError::Dom(ex)) if ex.name == "DataCloneError"));
+        let error = serialize_for_storage(&scope, graph).err().expect("encoded chunks must not be stored");
+        let exception = error.to_value(&scope).as_object().unwrap();
+        assert_eq!(exception.get_atom("name").unwrap().to_string().unwrap(), "DataCloneError");
     }
 }
