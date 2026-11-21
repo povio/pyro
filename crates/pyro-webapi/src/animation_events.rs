@@ -544,8 +544,16 @@ fn update(page: &Rc<PageDom>, defer: bool) {
         let mut wanted = Vec::new();
         let style_of = |e: NodeId| style.stylo_style(&dom, e);
         let pseudo_rules = rules.has_pseudo_rules();
+        let display_effects = std::cell::OnceCell::new();
+        let may_sample_display = |target| {
+            display_effects.get_or_init(|| {
+                crate::animation_frame::frame(page, state.task_now(page), false).elements.into_iter()
+                    .filter(|element| element.animations.iter().any(|effect| rules.may_sample_display(effect)))
+                    .map(|element| element.key).collect::<FxHashSet<_>>()
+            }).contains(&pyro_dom::snapshot::render_key(target))
+        };
         for el in rules.animation_candidates(&dom, page.document()) {
-            if dom.is_connected(el).unwrap_or(false) {
+            if dom.is_connected(el).unwrap_or(false) && !animation_display_suppressed(&dom, style, el, &may_sample_display) {
                 wanted.extend(rules.element(&dom, el, &style_of).animations.into_iter().map(|a| (el, None, a)));
                 // Its `::before`/`::after`, while it generates a box.
                 if pseudo_rules {
@@ -1150,6 +1158,33 @@ fn transitions_display(
         .transitions
         .iter()
         .any(|t| t.allow_discrete && matches!(t.property.as_str(), "display" | "all"))
+}
+
+fn animation_display_suppressed(
+    dom: &pyro_dom::Dom, style: &pyro_dom::style::StyleEngine, el: NodeId, may_sample_display: &impl Fn(NodeId) -> bool,
+) -> bool {
+    if style.displayed_as_synced(dom, el) != Some(false) {
+        return false;
+    }
+    let mut current = Some(el);
+    while let Some(target) = current {
+        if let Some(snapshot) = style.stylo_style(dom, target).filter(displays_none) {
+            let sampled = snapshot.rules.as_ref().is_some_and(|rules| {
+                rules.self_and_ancestors().any(|rule| rule.cascade_level().is_animation())
+            });
+            let ordinary = !sampled || !may_sample_display(target);
+            if ordinary && !hides_content(dom, target)
+                && !matches!(style.transition_value(target, "display"), Some(pyro_dom::animation::TransitionValue::Text(value)) if value != "none") {
+                return true;
+            }
+        }
+        current = dom.assigned_slot_any(target).or_else(|| {
+            let parent = dom.parent(target).ok()??;
+            if dom.is_shadow_root(parent).unwrap_or(false) { dom.fragment_host(parent).ok().flatten() }
+            else { dom.element(parent).ok().map(|_| parent) }
+        });
+    }
+    false
 }
 
 /// Whether the engine's `display: none` of `el` is where Chrome has
