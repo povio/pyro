@@ -1301,15 +1301,15 @@ fn texts_in(dom: &Dom, scope: NodeId, start: Point, end: Point) -> Vec<NodeId> {
     .collect()
 }
 
-fn rich_node_in_host(dom: &Dom, host: NodeId, node: NodeId) -> bool {
-    editing::editing_host(dom, node) == Some(host) && !editing::plaintext_at(dom, node)
+fn rich_node(dom: &Dom, node: NodeId) -> bool {
+    editing::is_editable(dom, node) && !editing::plaintext_at(dom, node)
 }
 
-/// Rich inline commands affect only text owned by this editing host. A
-/// nested host inside a locked island has its own editing context.
+/// A locked island is skipped, but a rich descendant can opt back into editing.
+/// The caller restricts the walk to the selection's enclosing editing host.
 fn inline_texts(dom: &Dom, host: NodeId, start: Point, end: Point) -> Vec<NodeId> {
     let mut texts = texts_in(dom, host, start, end);
-    texts.retain(|&node| rich_node_in_host(dom, host, node));
+    texts.retain(|&node| rich_node(dom, node));
     texts
 }
 
@@ -1395,10 +1395,27 @@ fn format_inline(page: &Rc<PageDom>, host: NodeId, tag: &str, carriers: &[&str],
                 let Ok(Some(parent)) = dom.parent(t) else {
                     continue;
                 };
-                let prev = dom.prev_sibling(t).ok().flatten();
-                if let Some(w) = last_wrapper.filter(|&w| prev == Some(w)) {
-                    let _ = dom.append_child(w, t);
-                    continue;
+                if let Some(w) = last_wrapper.filter(|&w| dom.parent(w).ok().flatten() == Some(parent)) {
+                    // A fully selected plaintext island may inherit formatting
+                    // from an outer wrapper. Do not insert markup inside it.
+                    let mut next = dom.next_sibling(w).ok().flatten();
+                    let mut islands = Vec::new();
+                    while let Some(el) = next {
+                        if el == t || !dom.get_attribute(el, "contenteditable").ok().flatten()
+                            .is_some_and(|mode| mode.eq_ignore_ascii_case("plaintext-only"))
+                        {
+                            break;
+                        }
+                        islands.push(el);
+                        next = dom.next_sibling(el).ok().flatten();
+                    }
+                    if next == Some(t) {
+                        for island in islands {
+                            let _ = dom.append_child(w, island);
+                        }
+                        let _ = dom.append_child(w, t);
+                        continue;
+                    }
                 }
                 let style = if dom.document_data(doc).is_ok_and(|d| d.style_with_css) { inline_css(tag) } else { None };
                 let Ok(w) = dom.create_element(doc, if style.is_some() { "span" } else { tag }) else {
@@ -1511,11 +1528,31 @@ fn remove_inline(page: &Rc<PageDom>, host: NodeId, names: &[&str], input_type: &
         let texts = {
             let mut dom = page.dom.borrow_mut();
             let texts = split_texts(&mut dom, selected, start, end);
+            let first = (texts[0], 0);
+            let last = *texts.last().unwrap();
+            let last = (last, editing::len(&dom, last));
             for &t in &texts {
-                while let Some(a) = ancestor_format(&dom, t, host, names, true) {
-                    hoist(&mut dom, t, a);
-                    // A hoist that could not move the text would repeat.
-                    if ancestor_format(&dom, t, host, names, true) == Some(a) {
+                let Some(owner) = editing::editing_host(&dom, t) else { continue };
+                while let Some(a) = ancestor_format(&dom, t, owner, names, true) {
+                    // Remove a completely selected carrier as a unit. Hoisting
+                    // only its editable text would leave a formatting wrapper
+                    // around its locked children or clone their ancestors.
+                    let begins = editing::deep_forward(&dom, (a, 0));
+                    let ends = editing::deep_backward(&dom, (a, editing::len(&dom, a)));
+                    if crate::range::compare_boundary_points_dom(&dom, first, begins) <= 0
+                        && crate::range::compare_boundary_points_dom(&dom, ends, last) <= 0
+                    {
+                        let Some(parent) = dom.parent(a).ok().flatten() else { break };
+                        while let Ok(Some(child)) = dom.first_child(a) {
+                            if dom.insert_before(parent, child, Some(a)).is_err() { break; }
+                        }
+                        if dom.child_count(a).ok() == Some(0) {
+                            let _ = dom.remove_child(parent, a);
+                        }
+                    } else {
+                        hoist(&mut dom, t, a);
+                    }
+                    if ancestor_format(&dom, t, owner, names, true) == Some(a) {
                         break;
                     }
                 }
