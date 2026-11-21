@@ -472,3 +472,6 @@ without a style context (custom properties left as they are): pyro serializes a 
   that resolves at computed-value time gets the NaN adjustment absolute colors get (it was only done for colors the
   parser had resolved), and a NaN hue of `lch()`/`oklch()` computes to 0. WPT css-color `parsing/color-valid-*`,
   `color-computed-lab`; test `color_functions_keep_calc_in_their_specified_value` (pyro-webapi).
+- Round 7 (CSS Color 4 §7): absolute HSL floors negative saturation without clipping extended
+  saturation or lightness before serialization. HSL ↔ HWB uses their common sRGB representation
+  directly rather than an XYZ round trip. Mix finalization and CSSOM operand storage are unchanged.
