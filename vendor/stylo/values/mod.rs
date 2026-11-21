@@ -234,6 +234,23 @@ where
     serialize_specified_dimension(v, "", /* was_calc = */ false, dest)
 }
 
+thread_local! {
+    // None for public CSS serialization; Some records a negative zero written for reparsing.
+    static REPARSE_SIGNED_ZERO: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+pub(crate) fn serialize_for_reparse<T>(f: impl FnOnce() -> T) -> (T, bool) {
+    struct Restore<'a>(&'a std::cell::Cell<Option<bool>>, Option<bool>);
+    impl Drop for Restore<'_> {
+        fn drop(&mut self) { self.0.set(self.1); }
+    }
+    REPARSE_SIGNED_ZERO.with(|mode| {
+        let _restore = Restore(mode, mode.replace(Some(false)));
+        let result = f();
+        (result, mode.get() == Some(true))
+    })
+}
+
 /// Serialize a specified dimension with unit, calc, and NaN/infinity handling (if enabled)
 pub fn serialize_specified_dimension<W>(
     v: f32,
@@ -265,6 +282,10 @@ where
         if !unit.is_empty() {
             dest.write_str(" * 1")?;
         }
+    } else if v.to_bits() == (-0.0_f32).to_bits() && REPARSE_SIGNED_ZERO.with(|mode| {
+        if mode.get().is_some() { mode.set(Some(true)); true } else { false }
+    }) {
+        dest.write_str("-0")?;
     } else {
         v.to_css(dest)?;
     }

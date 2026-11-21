@@ -923,8 +923,14 @@ impl ElementData {
                 })
     }
 
+    /// Inline CSS for the cascade. The ordinary attribute keeps its CSSOM serialization.
+    pub(crate) fn inline_declarations(&self) -> Option<&str> {
+        let reflected = self.attr(local_name!("style"))?;
+        Some(self.attrs.state("inline-declarations").unwrap_or(reflected))
+    }
+
     pub fn flush_style_attribute(&mut self, guard: &SharedRwLock, url_extra_data: &UrlExtraData) {
-        self.style_attribute = self.attr(local_name!("style")).map(|style_str| {
+        self.style_attribute = self.inline_declarations().map(|style_str| {
             ServoArc::new(guard.wrap(parse_style_attribute(
                 style_str,
                 url_extra_data,

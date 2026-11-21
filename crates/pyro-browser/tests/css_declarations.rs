@@ -640,3 +640,202 @@ fn function_slots_compute_against_the_calling_elements_font_metrics() {
     "#);
     assert_eq!(actual, "42px|31px|21px|66px|23px");
 }
+
+#[test]
+fn style_rule_edits_retain_signed_zero_until_the_property_is_replaced() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        const el = document.body.appendChild(document.createElement('div'));
+        el.id = 'signed-zero-rule';
+        const sheet = document.head.appendChild(document.createElement('style')).sheet;
+        sheet.insertRule('#signed-zero-rule { position: absolute; }');
+        const rule = sheet.cssRules[0];
+        const value = unit => 'clamp(-1, 1 / sign(sign(' + unit + ')), 1)';
+        const z = () => getComputedStyle(el).zIndex;
+        rule.style.zIndex = value('-0em');
+        const first = z();
+        const publicText = [rule.style.zIndex, rule.style.cssText, rule.cssText];
+        rule.style.color = 'red';
+        const groupIndex = sheet.insertRule('@media all { #signed-zero-rule { } }', sheet.cssRules.length);
+        const group = sheet.cssRules[groupIndex];
+        group.cssRules[0].style.order = value('-0em');
+        const nested = getComputedStyle(el).order;
+        const afterOtherEdits = z();
+        rule.style.removeProperty('z-index');
+        rule.style.setProperty('z-index', value('0em'));
+        const positive = z();
+        rule.style.cssText = 'position: absolute; z-index: ' + value('-0em') + ' !important';
+        const priority = rule.style.getPropertyPriority('z-index');
+        const replaced = z();
+        const removed = rule.style.removeProperty('z-index');
+        [first, publicText.every(s => s.includes('0em') && !s.includes('-0em')),
+         afterOtherEdits, nested, !group.cssText.includes('-0em'), positive, priority, replaced,
+         removed.includes('-0em'), z()].join('|')
+    "#);
+    assert_eq!(actual, "-1|true|-1|-1|true|1|important|-1|false|auto");
+}
+
+#[test]
+fn constructed_style_rule_keeps_other_signed_zero_longhands_on_shorthand_edits() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        const el = document.body.appendChild(document.createElement('div'));
+        el.id = 'signed-zero-margin';
+        const sheet = new CSSStyleSheet();
+        sheet.replaceSync('#signed-zero-margin { margin: 0; }');
+        document.adoptedStyleSheets = [sheet];
+        const rule = sheet.cssRules[0];
+        rule.style.margin = '1px calc(1px * 10em / -0em) 2px';
+        const negative = () => parseFloat(getComputedStyle(el).marginLeft) < -1e6;
+        const before = negative();
+        rule.style.marginRight = '4px';
+        const afterSplit = negative();
+        rule.style.removeProperty('margin-top');
+        const afterRemove = negative();
+        rule.style.cssText = rule.style.cssText;
+        [before, afterSplit, afterRemove, parseFloat(getComputedStyle(el).marginLeft) > 1e6].join('|')
+    "#);
+    assert_eq!(actual, "true|true|true|true");
+}
+
+#[test]
+fn inline_cssom_preserves_signed_zero_until_the_declarations_are_replaced() {
+    let (_t, root) = page();
+    let result = eval(&root, r#"
+        const e = document.body.appendChild(document.createElement('p'));
+        const num = n => `clamp(-1, 1 / sign(sign(${n}em)), 1)`;
+        const read = el => getComputedStyle(el).zIndex;
+        e.style.zIndex = num('-0');
+        const out = [read(e), !e.getAttribute('style').includes('-0em'),
+                     e.getAttribute('style') === e.style.cssText];
+        e.style.color = 'red';
+        e.style.zIndex = num('0');
+        out.push(read(e), read(document.body.appendChild(e.cloneNode(true))));
+        e.setAttribute('style', e.getAttribute('style'));
+        out.push(read(e));
+        e.style.cssText = e.style.cssText;
+        out.push(read(e));
+        e.style.removeProperty('z-index');
+        e.style.cssText = 'z-index: ' + num('-0');
+        out.push(read(e));
+        e.setAttributeNS(null, 'style', 'z-index: ' + num('0'));
+        out.push(read(e));
+        e.style.cssText = 'z-index: ' + num('-0');
+        e.removeAttribute('style');
+        out.push(read(e), e.style.length);
+        out.join('|')
+    "#);
+    assert_eq!(result, "-1|true|true|-1|-1|-1|1|-1|1|auto|0");
+}
+
+#[test]
+fn inline_shorthand_updates_preserve_the_other_signed_longhands_and_priorities() {
+    let (_t, root) = page();
+    let result = eval(&root, r#"
+        const e = document.body.appendChild(document.createElement('div'));
+        const val = n => `calc(1px * clamp(-1, 1 / sign(sign(${n}em)), 1))`;
+        e.style.setProperty('margin', val('-0') + ' ' + val('0'), 'important');
+        const margins = () => {
+            const cs = getComputedStyle(e);
+            return [cs.marginTop, cs.marginRight, cs.marginBottom, cs.marginLeft].join(',');
+        };
+        const out = [margins(), !e.getAttribute('style').includes('-0em')];
+        e.style.marginLeft = '6px';
+        out.push(margins(), e.style.getPropertyPriority('margin-left'), e.style.getPropertyPriority('margin-top'));
+        e.style.removeProperty('margin-top');
+        out.push(margins());
+        out.join('|')
+    "#);
+    assert_eq!(result, "-1px,1px,-1px,1px|true|-1px,1px,-1px,6px||important|0px,1px,-1px,6px");
+}
+
+#[test]
+fn sibling_inline_styles_do_not_share_opposite_zero_signs_in_unresolved_math() {
+    let (_thread, realm) = page();
+    let result = eval(&realm, r#"
+        document.body.innerHTML = '<div><i></i><i></i><i></i><i></i></div>';
+        const kids = Array.from(document.querySelectorAll('i'));
+        for (const [i, el] of kids.entries()) {
+          const v = 'clamp(-1, 1 / sign(' + (i % 2 ? '-0em' : '0em') + '), 1)';
+          if (i < 2) el.setAttribute('style', 'z-index:' + v);
+          else el.style.zIndex = v;
+        }
+        kids.map(el => getComputedStyle(el).zIndex).join(',')
+    "#);
+    assert_eq!(result, "1,-1,1,-1");
+}
+
+#[test]
+fn connected_keyframe_edits_retain_signed_zero_and_keyframe_grammar() {
+    let (_t, root) = page();
+    let result = eval(&root, r#"
+        const s = document.head.appendChild(document.createElement('style'));
+        const value = 'clamp(-1, 1 / sign(sign(-0em)), 1)';
+        s.textContent = '@keyframes number-sign { from { z-index: '+value+'; } to { z-index: 7; } }';
+        const anim = s.sheet.cssRules[0], from = anim.cssRules[0];
+        const el = document.body.appendChild(document.createElement('div'));
+        el.style.cssText = 'position:relative; z-index:13; animation:number-sign 100s step-end paused';
+        const sample = () => getComputedStyle(el).zIndex;
+        const before = sample();
+        from.style.color = 'green';
+        from.style.setProperty('z-index', '9', 'important');
+        const afterSet = sample();
+        from.style.removeProperty('color');
+        const afterRemove = sample();
+        from.style.cssText = 'z-index: '+value+'; opacity: 0.5 !important; animation-name: other;';
+        const afterText = sample();
+        const filtered = !from.style.opacity && !from.style.animationName;
+        const publicText = [from.style.zIndex, from.style.cssText, from.cssText, anim.cssText]
+            .every(text => text.includes('0em') && !text.includes('-0em'));
+        const removed = from.style.removeProperty('z-index');
+        [before, afterSet, afterRemove, afterText, filtered, publicText,
+         removed.includes('0em') && !removed.includes('-0em'), sample()].join('|')
+    "#);
+    assert_eq!(result, "-1|-1|-1|-1|true|true|true|13");
+}
+
+#[test]
+fn margin_rule_keeps_signed_zero_private_during_cssom_edits() {
+    let (_t, realm) = page();
+    let result = eval(&realm, r#"
+        const sheet = new CSSStyleSheet();
+        sheet.replaceSync('@page { @top-left { width:calc(1px * sign(-0em)); } }');
+        const pageRule = sheet.cssRules[0], margin = pageRule.cssRules[0];
+        margin.style.color = 'red';
+        const serializations = () => [margin.style.width, margin.style.cssText, margin.cssText, pageRule.cssText];
+        const clean = () => serializations().every(t => t.includes('0em') && !t.includes('-0em'));
+        const set = clean();
+        margin.style.removeProperty('color');
+        [set, clean()].join('|')
+    "#);
+    assert_eq!(result, "true|true");
+}
+
+#[test]
+fn cached_longhand_writes_follow_external_edits_ranges_and_priority() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        const el = document.body.appendChild(document.createElement('div'));
+        const style = el.style, z = 'clamp(-1, 1 / sign(-0em), 1)';
+        style.cssText = `opacity: .2; --label: "a;b"; z-index: ${z}; color: red; letter-spacing: 1px`;
+        style.opacity = '0.75';
+        style.letterSpacing = '120px';
+        style.color = 'rebeccapurple';
+        style.opacity = '1';
+        style.letterSpacing = '3px';
+        style.setProperty('color', 'blue', 'important');
+        const read = () => getComputedStyle(el);
+        const out = [read().zIndex, style.opacity, style.letterSpacing, style.getPropertyPriority('color'),
+                     style.getPropertyValue('--label'), !el.getAttribute('style').includes('-0em')];
+        el.setAttribute('style', `color: green; z-index: ${z}; margin-left: 4px; margin-inline-start: 9px; opacity: .25`);
+        style.opacity = '0.5';
+        style.marginLeft = '7px';
+        out.push(read().color, read().marginLeft, read().zIndex, style.letterSpacing,
+                 style.getPropertyPriority('color'), style.opacity);
+        style.margin = '2px 4px';
+        style.marginLeft = '11px';
+        out.push(read().marginLeft, read().marginRight, read().zIndex);
+        out.join('|')
+    "#);
+    assert_eq!(actual, r#"-1|1|3px|important|"a;b"|true|rgb(0, 128, 0)|7px|-1|||0.5|11px|4px|-1"#);
+}

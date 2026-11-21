@@ -3397,6 +3397,27 @@ impl Dom {
         Ok(())
     }
 
+    /// Set both the CSSOM serialization and the style parser's backing in one DOM mutation.
+    pub fn set_cssom_inline_style(&mut self, id: NodeId, canonical: String, semantic: Option<String>) -> DomResult<()> {
+        let (i, el) = self.el(id)?;
+        let local = local_name!("style");
+        let slot = el.attrs.iter().position(|a| a.name.local == local && a.name.ns == ns!());
+        let backing = semantic.map(std::sync::Arc::new);
+        let semantic_only = el.semantic_style != backing && slot.is_some_and(|k| *el.attrs[k].value == *canonical);
+        match slot {
+            Some(k) => self.change_attr(i, k, &canonical),
+            None => self.append_attr(i, QualName::new(None, ns!(), local.clone()), &canonical),
+        }
+        let el = self.n_mut(i).element_mut().unwrap();
+        el.semantic_style = backing;
+        el.checked_style_backing = true;
+        if semantic_only {
+            self.bump();
+            self.note(Change::attr(i, &QualName::new(None, ns!(), local)));
+        }
+        Ok(())
+    }
+
     /// Sets the attribute in no namespace named `local`, as a reflected IDL
     /// attribute does (`className`, `id`, `slot`): the name is a valid,
     /// lowercase atom already, so nothing is validated, lowercased or looked up.
@@ -3539,6 +3560,11 @@ impl Dom {
         let name = el.attrs[k].name.clone();
         let old = self.edit_attrs(i, &name, |el| el.replace_attr_value(k, value.into()));
         if *old != *value {
+            if name.ns == ns!() && name.local == local_name!("style") {
+                let el = self.n_mut(i).element_mut().unwrap();
+                el.semantic_style = None;
+                el.checked_style_backing = false;
+            }
             self.note_style_attr(i, &name, Some(&old));
         }
         if *old == *value {
@@ -3609,7 +3635,13 @@ impl Dom {
     }
     fn remove_attr_at(&mut self, i: u32, k: usize) {
         let name = self.n(i).element().unwrap().attrs[k].name.clone();
-        let attr = self.edit_attrs(i, &name, |el| el.remove_attr(k));
+        let attr = self.edit_attrs(i, &name, |el| {
+            if name.ns == ns!() && name.local == local_name!("style") {
+                el.semantic_style = None;
+                el.checked_style_backing = false;
+            }
+            el.remove_attr(k)
+        });
         if !self.attr_nodes.is_empty() {
             self.attr_removed(i, &attr.name, &attr.value);
         }

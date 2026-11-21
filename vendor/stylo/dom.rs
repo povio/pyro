@@ -499,6 +499,11 @@ pub trait TElement:
     /// Get this element's style attribute.
     fn style_attribute(&self) -> Option<ArcBorrow<'_, Locked<PropertyDeclarationBlock>>>;
 
+    /// Original input of the parsed inline block, when the embedder reparses CSS.
+    fn style_attribute_source(&self) -> Option<&str> {
+        None
+    }
+
     /// Get this element's SMIL override declarations.
     fn smil_override(&self) -> Option<ArcBorrow<'_, Locked<PropertyDeclarationBlock>>> {
         None
