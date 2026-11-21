@@ -1175,16 +1175,25 @@ impl LayoutPassState<'_> {
                 }
             });
         let resolved_line_height = font_styles.map(|s| s.1);
-        // A form control with a cyclic percentage width contributes zero to
-        // min-content sizing (CSS Sizing 3 §5.2.2, compressible): text
-        // inputs, textareas and selects shrink into a flex-wrap line. This is
-        // the measured content contribution, not a preferred width:
-        // ContentSize measurements ignore preferred-width styles. Auto and
-        // max-content sizing keep the intrinsic width; known dimensions and
-        // explicit minima remain the leaf/parent layout algorithm's.
-        let compressible_min_content = inputs.available_space.width == AvailableSpace::MinContent
+        let compressible_min_content = if inputs.available_space.width == AvailableSpace::MinContent
             && inputs.parent_size.width.is_none()
-            && matches!(node.layout_style().size().width.expand(), taffy::style::ExpandedDimension::Percent(_));
+            && inputs.known_dimensions.width.is_none()
+        {
+            let style = node.layout_style();
+            let width = style.size().width;
+            use taffy::style::ExpandedDimension::{Calc, Percent};
+            matches!(width.expand(), Percent(_) | Calc(_)).then(|| {
+                let edges = if style.box_sizing() == taffy::BoxSizing::BorderBox {
+                    style.padding().resolve_or_zero(None, resolve_calc_value).horizontal_axis_sum()
+                        + style.border().resolve_or_zero(None, resolve_calc_value).horizontal_axis_sum()
+                } else {
+                    0.0
+                };
+                (width.resolve_or_zero(Some(0.0), resolve_calc_value) - edges).max(0.0)
+            })
+        } else {
+            None
+        };
 
         // pyro: the root `<svg>` of an SVG document keeps usvg's size (see the `Svg` arm below).
         let is_root_element = node.is_root_element();
@@ -1295,12 +1304,10 @@ impl LayoutPassState<'_> {
                                 return taffy::Size { width: 1.0, height: line_height };
                             }
                             taffy::Size {
-                                width: if compressible_min_content {
-                                    0.0
-                                } else {
+                                width: compressible_min_content.unwrap_or_else(|| {
                                     cols.map(|cols| cols * font_size.unwrap_or(16.0) * 0.6).unwrap_or(300.0)
                                         + scrollbar_room
-                                },
+                                }),
                                 height: resolved_line_height.unwrap_or(16.0) * rows,
                             }
                         },
@@ -1390,11 +1397,7 @@ impl LayoutPassState<'_> {
                         2.0
                     };
                     let content = taffy::Size {
-                        width: if compressible_min_content {
-                            0.0
-                        } else {
-                            (chars as f32 * 0.5 * font_size + 21.0).ceil()
-                        },
+                        width: compressible_min_content.unwrap_or_else(|| (chars as f32 * 0.5 * font_size + 21.0).ceil()),
                         height: line_height.map_or((font_size * 1.25).ceil(), |h| h + extra),
                     };
                     let mut output =
@@ -1486,7 +1489,9 @@ impl LayoutPassState<'_> {
                                 _ => None,
                             };
                             let natural = taffy::Size {
-                                width: (w - padding.horizontal_axis_sum() - border.horizontal_axis_sum()).max(0.0),
+                                width: compressible_min_content.filter(|_| kind == Some("range")).unwrap_or_else(|| {
+                                    (w - padding.horizontal_axis_sum() - border.horizontal_axis_sum()).max(0.0)
+                                }),
                                 height: (h - padding.vertical_axis_sum() - border.vertical_axis_sum()).max(0.0),
                             };
                             let mut out = compute_leaf_layout(
@@ -1530,7 +1535,7 @@ impl LayoutPassState<'_> {
                                 .and_then(|layout| layout.lines().next())
                                 .map(|line| *line.metrics());
                             let style = node.layout_style();
-                            let contribution_width = if compressible_min_content { 0.0 } else { width };
+                            let contribution_width = compressible_min_content.unwrap_or(width);
                             // pyro: as tall as its text's line, which is `normal`
                             // for a line height of no more than the font size.
                             let line_height = line

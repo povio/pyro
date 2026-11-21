@@ -1191,6 +1191,23 @@ fn flow_parity_shrink_to_fit_min_content_floor() {
 }
 
 #[test]
+fn flex_compressible_mixed_percentage_keeps_length() {
+    for (direction, writing_mode, metric) in [("row", "horizontal-tb", 2), ("column", "vertical-lr", 3)] {
+        for kind in ["text", "range"] {
+            for (sizing, expected) in [("border-box", 140.0), ("content-box", 154.0)] {
+                let html = format!(
+                    "<!doctype html><div style='display:flex;flex-direction:{direction};width:300px;height:300px'>\
+                     <div style='flex:0 0 200px'></div>\
+                     <input id=field type={kind} style='appearance:none;writing-mode:{writing_mode};\
+                     inline-size:calc(100% + 140px);box-sizing:{sizing};padding:5px;border:2px solid;margin:0'></div>"
+                );
+                assert_eq!(page(&html).metrics("field")[metric], expected, "{direction} {kind} {sizing}");
+            }
+        }
+    }
+}
+
+#[test]
 fn flex_parity_compressible_percentage_inputs() {
     // TOS cargo form: `w-full` inputs in flex:1 items shrink with the row
     // (no min-content contribution); inputs with auto width keep their
