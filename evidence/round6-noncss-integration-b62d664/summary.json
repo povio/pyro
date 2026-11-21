@@ -1,0 +1,345 @@
+{
+ "browsers": {
+  "production": {
+   "base": {
+    "pages": 58,
+    "fullPages": 11,
+    "namedPass": 5340,
+    "namedTotal": 13098,
+    "page/complete": 58
+   },
+   "head": {
+    "pages": 58,
+    "fullPages": 14,
+    "namedPass": 9188,
+    "namedTotal": 13329,
+    "page/complete": 57,
+    "page/timeout": 1
+   },
+   "prior-local": {
+    "pages": 58,
+    "fullPages": 8,
+    "namedPass": 9189,
+    "namedTotal": 13329,
+    "page/complete": 57,
+    "page/timeout": 1
+   },
+   "chrome-local": {
+    "pages": 58,
+    "fullPages": 43,
+    "namedPass": 10609,
+    "namedTotal": 13347,
+    "page/complete": 57,
+    "page/timeout": 1
+   },
+   "studio-lp": {
+    "missingPages": 58
+   },
+   "chrome-studio": {
+    "missingPages": 58
+   }
+  },
+  "css": {
+   "base": {
+    "pages": 315,
+    "fullPages": 225,
+    "namedPass": 3966,
+    "namedTotal": 4675,
+    "page/complete": 315
+   },
+   "head": {
+    "pages": 315,
+    "fullPages": 224,
+    "namedPass": 3966,
+    "namedTotal": 4675,
+    "page/complete": 315
+   },
+   "prior-local": {
+    "missingPages": 315
+   },
+   "chrome-local": {
+    "pages": 8,
+    "fullPages": 8,
+    "namedPass": 427,
+    "namedTotal": 427,
+    "page/complete": 8,
+    "missingPages": 307
+   },
+   "studio-lp": {
+    "pages": 315,
+    "fullPages": 224,
+    "namedPass": 3966,
+    "namedTotal": 4675,
+    "page/complete": 315
+   },
+   "chrome-studio": {
+    "pages": 315,
+    "fullPages": 272,
+    "namedPass": 4151,
+    "namedTotal": 4675,
+    "page/complete": 315
+   }
+  },
+  "guard": {
+   "base": {
+    "pages": 33,
+    "fullPages": 27,
+    "namedPass": 778,
+    "namedTotal": 801,
+    "page/complete": 33
+   },
+   "head": {
+    "pages": 33,
+    "fullPages": 27,
+    "namedPass": 779,
+    "namedTotal": 801,
+    "page/complete": 33
+   },
+   "prior-local": {
+    "pages": 33,
+    "fullPages": 27,
+    "namedPass": 779,
+    "namedTotal": 801,
+    "page/complete": 33
+   },
+   "chrome-local": {
+    "pages": 33,
+    "fullPages": 31,
+    "namedPass": 788,
+    "namedTotal": 801,
+    "page/complete": 33
+   },
+   "studio-lp": {
+    "missingPages": 33
+   },
+   "chrome-studio": {
+    "missingPages": 33
+   }
+  },
+  "focus": {
+   "base": {
+    "pages": 32,
+    "fullPages": 5,
+    "namedPass": 62,
+    "namedTotal": 494,
+    "page/complete": 32
+   },
+   "head": {
+    "pages": 32,
+    "fullPages": 7,
+    "namedPass": 172,
+    "namedTotal": 494,
+    "page/complete": 32
+   },
+   "prior-local": {
+    "pages": 32,
+    "fullPages": 7,
+    "namedPass": 172,
+    "namedTotal": 494,
+    "page/complete": 32
+   },
+   "chrome-local": {
+    "pages": 32,
+    "fullPages": 30,
+    "namedPass": 475,
+    "namedTotal": 494,
+    "page/complete": 32
+   },
+   "studio-lp": {
+    "missingPages": 32
+   },
+   "chrome-studio": {
+    "missingPages": 32
+   }
+  },
+  "navigator": {
+   "base": {
+    "pages": 20,
+    "fullPages": 5,
+    "namedPass": 34,
+    "namedTotal": 322,
+    "page/complete": 15,
+    "page/error": 5
+   },
+   "head": {
+    "pages": 20,
+    "fullPages": 7,
+    "namedPass": 279,
+    "namedTotal": 322,
+    "page/complete": 15,
+    "page/error": 5
+   },
+   "prior-local": {
+    "pages": 20,
+    "fullPages": 7,
+    "namedPass": 279,
+    "namedTotal": 322,
+    "page/complete": 15,
+    "page/error": 5
+   },
+   "chrome-local": {
+    "pages": 20,
+    "fullPages": 12,
+    "namedPass": 318,
+    "namedTotal": 322,
+    "page/complete": 15,
+    "page/error": 5
+   },
+   "studio-lp": {
+    "missingPages": 20
+   },
+   "chrome-studio": {
+    "missingPages": 20
+   }
+  }
+ },
+ "comparisons": {
+  "production": {
+   "base to head": {
+    "pairedPages": 58,
+    "gainedPages": 11,
+    "lostPages": 8,
+    "commonPass": 5256,
+    "gainedPass": 3932,
+    "lostPass": 84
+   },
+   "prior-local to head": {
+    "pairedPages": 58,
+    "gainedPages": 7,
+    "lostPages": 1,
+    "commonPass": 9119,
+    "gainedPass": 69,
+    "lostPass": 70
+   },
+   "chrome-local to head": {
+    "pairedPages": 58,
+    "gainedPages": 0,
+    "lostPages": 29,
+    "commonPass": 7856,
+    "gainedPass": 1332,
+    "lostPass": 2753
+   },
+   "studio-lp to head": {},
+   "chrome-studio to head": {}
+  },
+  "css": {
+   "base to head": {
+    "pairedPages": 315,
+    "gainedPages": 0,
+    "lostPages": 1,
+    "commonPass": 3965,
+    "gainedPass": 1,
+    "lostPass": 1
+   },
+   "prior-local to head": {},
+   "chrome-local to head": {
+    "pairedPages": 8,
+    "gainedPages": 0,
+    "lostPages": 2,
+    "commonPass": 425,
+    "gainedPass": 0,
+    "lostPass": 2
+   },
+   "studio-lp to head": {
+    "pairedPages": 315,
+    "gainedPages": 0,
+    "lostPages": 0,
+    "commonPass": 3966,
+    "gainedPass": 0,
+    "lostPass": 0
+   },
+   "chrome-studio to head": {
+    "pairedPages": 315,
+    "gainedPages": 6,
+    "lostPages": 54,
+    "commonPass": 3914,
+    "gainedPass": 52,
+    "lostPass": 237
+   }
+  },
+  "guard": {
+   "base to head": {
+    "pairedPages": 33,
+    "gainedPages": 0,
+    "lostPages": 0,
+    "commonPass": 778,
+    "gainedPass": 1,
+    "lostPass": 0
+   },
+   "prior-local to head": {
+    "pairedPages": 33,
+    "gainedPages": 0,
+    "lostPages": 0,
+    "commonPass": 779,
+    "gainedPass": 0,
+    "lostPass": 0
+   },
+   "chrome-local to head": {
+    "pairedPages": 33,
+    "gainedPages": 1,
+    "lostPages": 5,
+    "commonPass": 774,
+    "gainedPass": 5,
+    "lostPass": 14
+   },
+   "studio-lp to head": {},
+   "chrome-studio to head": {}
+  },
+  "focus": {
+   "base to head": {
+    "pairedPages": 32,
+    "gainedPages": 2,
+    "lostPages": 0,
+    "commonPass": 62,
+    "gainedPass": 110,
+    "lostPass": 0
+   },
+   "prior-local to head": {
+    "pairedPages": 32,
+    "gainedPages": 0,
+    "lostPages": 0,
+    "commonPass": 172,
+    "gainedPass": 0,
+    "lostPass": 0
+   },
+   "chrome-local to head": {
+    "pairedPages": 32,
+    "gainedPages": 0,
+    "lostPages": 23,
+    "commonPass": 172,
+    "gainedPass": 0,
+    "lostPass": 303
+   },
+   "studio-lp to head": {},
+   "chrome-studio to head": {}
+  },
+  "navigator": {
+   "base to head": {
+    "pairedPages": 20,
+    "gainedPages": 2,
+    "lostPages": 0,
+    "commonPass": 34,
+    "gainedPass": 245,
+    "lostPass": 0
+   },
+   "prior-local to head": {
+    "pairedPages": 20,
+    "gainedPages": 0,
+    "lostPages": 0,
+    "commonPass": 279,
+    "gainedPass": 0,
+    "lostPass": 0
+   },
+   "chrome-local to head": {
+    "pairedPages": 20,
+    "gainedPages": 0,
+    "lostPages": 5,
+    "commonPass": 279,
+    "gainedPass": 0,
+    "lostPass": 39
+   },
+   "studio-lp to head": {},
+   "chrome-studio to head": {}
+  }
+ }
+}

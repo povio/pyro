@@ -1,0 +1,91 @@
+{
+ "previousLossUrls": [
+  "FileAPI/file/File-lastModified.html",
+  "html/canvas/element/manual/imagebitmap/createImageBitmap-origin.sub.html",
+  "html/webappapis/animation-frames/nested-raf-not-sync.html",
+  "input-events/input-events-get-target-ranges-during-and-after-dispatch.tentative.html",
+  "input-events/input-events-get-target-ranges-forwarddelete.tentative.html",
+  "input-events/input-events-get-target-ranges.html",
+  "input-events/input-events-typing.html",
+  "referrer-policy/gen/iframe.http-rp/no-referrer/iframe-tag.http.html",
+  "referrer-policy/gen/iframe.meta/default/iframe-tag.http.html",
+  "referrer-policy/gen/iframe.meta/no-referrer/iframe-tag.http.html",
+  "referrer-policy/gen/iframe.meta/unset/iframe-tag.http.html",
+  "referrer-policy/gen/srcdoc-inherit.http-rp/no-referrer/iframe-tag.http.html",
+  "referrer-policy/gen/srcdoc-inherit.http-rp/origin-when-cross-origin/iframe-tag.http.html",
+  "referrer-policy/gen/srcdoc-inherit.http-rp/origin/iframe-tag.http.html",
+  "referrer-policy/gen/srcdoc-inherit.http-rp/strict-origin-when-cross-origin/iframe-tag.http.html",
+  "referrer-policy/gen/srcdoc-inherit.http-rp/strict-origin/iframe-tag.http.html",
+  "referrer-policy/gen/srcdoc-inherit.http-rp/unsafe-url/iframe-tag.http.html",
+  "referrer-policy/gen/srcdoc-inherit.http-rp/unset/iframe-tag.http.html",
+  "referrer-policy/gen/srcdoc-inherit.meta/default/iframe-tag.http.html",
+  "referrer-policy/gen/srcdoc-inherit.meta/origin-when-cross-origin/iframe-tag.http.html",
+  "referrer-policy/gen/srcdoc-inherit.meta/origin-when-crossorigin/iframe-tag.http.html",
+  "referrer-policy/gen/srcdoc-inherit.meta/origin/iframe-tag.http.html",
+  "referrer-policy/gen/srcdoc-inherit.meta/strict-origin-when-cross-origin/iframe-tag.http.html",
+  "referrer-policy/gen/srcdoc-inherit.meta/unsafe-url/iframe-tag.http.html",
+  "referrer-policy/gen/srcdoc-inherit.meta/unset/iframe-tag.http.html",
+  "referrer-policy/gen/srcdoc.meta/always/iframe-tag.http.html",
+  "referrer-policy/gen/srcdoc.meta/default/iframe-tag.http.html",
+  "referrer-policy/gen/srcdoc.meta/no-referrer/iframe-tag.http.html",
+  "referrer-policy/gen/srcdoc.meta/origin-when-cross-origin/iframe-tag.http.html",
+  "referrer-policy/gen/srcdoc.meta/origin-when-crossorigin/iframe-tag.http.html",
+  "referrer-policy/gen/srcdoc.meta/origin/iframe-tag.http.html",
+  "referrer-policy/gen/srcdoc.meta/unsafe-url/iframe-tag.http.html",
+  "subresource-integrity/signatures/tentative/authority.https.window.html",
+  "webaudio/the-audio-api/the-delaynode-interface/ctor-delay.html",
+  "webaudio/the-audio-api/the-delaynode-interface/delaynode-maxdelaylimit.html",
+  "webaudio/the-audio-api/the-pannernode-interface/ctor-panner.html"
+ ],
+ "highestGainExamples": {
+  "mimesniff": [
+   "mimesniff/mime-types/parsing.any.html",
+   "mimesniff/mime-types/parsing.any.worker.html"
+  ],
+  "input-events": [
+   "input-events/input-events-get-target-ranges-joining-dl-elements.tentative.html?Backspace",
+   "input-events/input-events-get-target-ranges-joining-dl-elements.tentative.html?Delete"
+  ],
+  "WebCryptoAPI": [
+   "WebCryptoAPI/modern-algos/generateKey/failures_chacha20_poly1305.https.any.html",
+   "WebCryptoAPI/modern-algos/generateKey/failures_chacha20_poly1305.https.any.worker.html"
+  ],
+  "webaudio": [
+   "webaudio/idlharness.https.window.html",
+   "webaudio/the-audio-api/the-pannernode-interface/panner-automation-basic.html"
+  ],
+  "svg": [
+   "svg/idlharness.window.html",
+   "svg/types/scripted/SVGPointList-error-handling.html"
+  ],
+  "IndexedDB": [
+   "IndexedDB/idlharness.any.html",
+   "IndexedDB/idlharness.any.serviceworker.html"
+  ],
+  "html": [
+   "html/dom/idlharness.any.worker.html",
+   "html/dom/idlharness.https.html?exclude=(Document|Window|HTML.+)"
+  ],
+  "editing": [
+   "editing/whitespaces/chrome-compat/delete.tentative.html",
+   "editing/whitespaces/chrome-compat/forwarddelete.tentative.html"
+  ],
+  "notifications": [
+   "notifications/idlharness.https.any.sharedworker.html",
+   "notifications/idlharness.https.any.worker.html"
+  ],
+  "subresource-integrity": [
+   "subresource-integrity/signatures/tentative/authority.https.window.html"
+  ],
+  "referrer-policy": [
+   "referrer-policy/gen/iframe.http-rp/unsafe-url/iframe-tag.http.html",
+   "referrer-policy/gen/srcdoc.meta/strict-origin/iframe-tag.http.html"
+  ],
+  "wasm": [
+   "wasm/serialization/module/serialization-via-notifications-api.any.worker.html"
+  ],
+  "uievents": [
+   "uievents/mouse/mouse_boundary_events_after_reappending_last_over_target.tentative.html"
+  ]
+ }
+}

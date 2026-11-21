@@ -1,0 +1,270 @@
+{
+ "base": "b62d66442df323c3e294630e4832eb17d1802c29",
+ "head": "97a4b379d2eb2dd0f0a3f64e38126b5cded5f098",
+ "oldBase": "52d8b7c576c82ff38b5709f989dca24a8cba141d",
+ "stack": "bab023c81acab5a6286118c21a70932e9c20d1f7",
+ "domParser": "93117170d0781be02321901ce68060e2cb59e40a",
+ "changes": [
+  {
+   "original": "46fc5b245d1dbc4c1a8ffa52b029c97b1eca1578",
+   "integrated": "22f4ed5eebbae740c6da7d11aeb3d66986b643d8",
+   "stablePatchID": "2a95ed996ed6e2b4c6e5ea59925617a4aba08c97"
+  },
+  {
+   "original": "51ee20a86a73fe08631188ad5e2e4161a0c16881",
+   "integrated": "ad6830934592377628a24e0b40e2ec364cd9c7b7",
+   "stablePatchID": "1cb2f2c7f8506e9b1f51e1b8fbf9cd7be80d4edd"
+  },
+  {
+   "original": "e27f7c3d9508f64230d0078e5bb02691079758bc",
+   "integrated": "4fb065ad8fdc74638d6e9ee42c58044717667d18",
+   "stablePatchID": "718cc3e4c7ce58fcb869f8a8c959e4e5a62f6609"
+  },
+  {
+   "original": "e7e41759dc5ff651cf9d7b5accf188172a8eb620",
+   "integrated": "50f3a79693e179c6ab1a4ef88c9220996ba0e77a",
+   "stablePatchID": "6da6dbb45cb6afda155a57ff68afa4663e4e304a"
+  },
+  {
+   "original": "eefd9269e71720e5b830d2453536da64df13104c",
+   "integrated": "a42f40f450b23dd3785ebb254ec9f0cff145bd99",
+   "stablePatchID": "458c5eba3879c8ccb6269655ed84fa47d0a9a3f6"
+  },
+  {
+   "original": "1199546fe30d1ab59c5d3216f688f94de5339837",
+   "integrated": "017b75edc72932312ffc33b08e64776f017a5a3f",
+   "stablePatchID": "3e220d82cc0ae646eaf8f5882a81090b59cf6059"
+  },
+  {
+   "original": "0e5941f99717daa1e933eee0a5b4868188f9c470",
+   "integrated": "d49972c0c91756ab204bdefe788c806429c1156c",
+   "stablePatchID": "b7f81d5dc561d7c154f1749bcc619565cf164a32"
+  },
+  {
+   "original": "ee1fc6294036f1ced92cb5d0fedb8c07216908da",
+   "integrated": "3601119850981551e07ad35fed84b46b93254df5",
+   "stablePatchID": "033cee6d056944726a36dd3cfef8547ab3f02db8"
+  },
+  {
+   "original": "a41269e97aa2e0e1d5868e6dd51d824ac77d519d",
+   "integrated": "03a4975aa5625eeaa8ca525445b179b980bdfd74",
+   "stablePatchID": "c3d8df0112df8d974bed49a945bb6875f685fbe3"
+  },
+  {
+   "original": "959d48dde757dd7f40ff05388cfe3a63ea64f189",
+   "integrated": "65425b103e46dc5bc709df77362c2052a0474efb",
+   "stablePatchID": "03db152391f2c301878834fadc628c54aa386dad"
+  },
+  {
+   "original": "e91839a2eb7636426b3fa54f5201dbec1d1a2b1f",
+   "integrated": "d5f07efa45b5b6b7f154da8c1b588fa69ddf9da3",
+   "stablePatchID": "73636f93300ee7cbe5a5a2f838eeba7fe1e6ca15"
+  },
+  {
+   "original": "caa38c02e3d69385166b114eee74558830676123",
+   "integrated": "93384aeb1e8b8bcf9f52f0377eec53ada6fbb4de",
+   "stablePatchID": "e842eb0bee2972e69de767feca534aad2c263d59"
+  },
+  {
+   "original": "a21a441ba723c617a89e55c0a67fc53d98d9ea33",
+   "integrated": "d21ffb11723c25722232bdf225cf798d0a6b5f4d",
+   "stablePatchID": "048d15063a12140d7941dc7716d9cd3ad3f33c22"
+  },
+  {
+   "original": "2fca6482c37a7f33fbf2c9ed0f5d5bd176fcb964",
+   "integrated": "94408903e56693b2beb9698baf61d6f75a966953",
+   "stablePatchID": "7201f99d445d4ce31c74a57922b9fbdfe21998c8"
+  },
+  {
+   "original": "5c29bdbadffcb31db37347178f7eb72942b1b703",
+   "integrated": "d712455b2cc6b3d282a27ee47f9975b4bf8c2d03",
+   "stablePatchID": "5c3c46829ac767f58519dcf69e6e60d3f7ce1f41"
+  },
+  {
+   "original": "2c30125cdbe55a034997231a4daa8e227fec068d",
+   "integrated": "bb79a4741df024bac464b143d1d8cb3fb678f200",
+   "stablePatchID": "ccdf333d90f85b80938d133d6aef6cad142e5dab"
+  },
+  {
+   "original": "51c838073700fe863c792926222de6af374a8c70",
+   "integrated": "fe351863faf59de8dc40bf8c8a2818dc4fbf29cd",
+   "stablePatchID": "797edbe796ac7f7e84f462f7f3b49fafa78d8052"
+  },
+  {
+   "original": "a54d03cb7738a8ee24967160d1844cb11a117699",
+   "integrated": "b412f70a3b7f82d3d7dec5db59b34a562805fd02",
+   "stablePatchID": "ddca188240a3586068b858af0ed4ea005007abdd"
+  },
+  {
+   "original": "cc05fee0546e1388e6b7576f9545624f2fe7696e",
+   "integrated": "db05bf3fa57ad3ba3d3300f52568ad48aea5b29c",
+   "stablePatchID": "3f99be1e2224baba2880413fed918f722cd5488b"
+  },
+  {
+   "original": "0890a640959669811cb3e38986d15d753495bfce",
+   "integrated": "0eb81ca7d9527bdda84033c76f9d06f9ebf95ace",
+   "stablePatchID": "06ed4141731ed4f21a09349bb0e26be02826384f"
+  },
+  {
+   "original": "74731aad97a0ca527f74fee5846020de83c63643",
+   "integrated": "06197dff9801009f85a4a2b3daf24a3d997b9b27",
+   "stablePatchID": "efabf238cc13768031af1955eae2478a9ba620ce"
+  },
+  {
+   "original": "8e7144b7e7de68be3b5b345138abe2c1dcc6d232",
+   "integrated": "9ba6c74fec20fd23fe23cb86f65e9fc6ad0086b5",
+   "stablePatchID": "88415d109729d08b92b0e8804017b249acfbb5db"
+  },
+  {
+   "original": "1809cf70cf619e00225749ccb70f28bd8a05ef3e",
+   "integrated": "57ffc2b7e66eb030dd78e1c5d695aba374fb6f0f",
+   "stablePatchID": "cc3c08a9d8064acbbb7e7c8c3f454249b1ef1d4b"
+  },
+  {
+   "original": "054ffa4c43fa84bdd609b0a02cac2ccb1bb04760",
+   "integrated": "d9f386cd342af0b85126135d515f94fd0023316a",
+   "stablePatchID": "4b0d95fb2c2b0d3301a512a93d992fc846ffa521"
+  },
+  {
+   "original": "bab023c81acab5a6286118c21a70932e9c20d1f7",
+   "integrated": "97f6d1c6c0ca3f2f0275487f6f01d035df9f1532",
+   "stablePatchID": "0c4fa926fd39ba6cf74108eae0a752a3671b350a"
+  },
+  {
+   "original": "93117170d0781be02321901ce68060e2cb59e40a",
+   "integrated": "97a4b379d2eb2dd0f0a3f64e38126b5cded5f098",
+   "stablePatchID": "92bada15b34a1337a7d62f93aa6c33e4880bbd43"
+  }
+ ],
+ "unchangedCSSPaths": [
+  "docs/validation/studio-css-e4ca26/atomic-keyword-sizing.md",
+  "docs/validation/studio-css-e4ca26/difference-flexcrossbound-main-parent.json.gz",
+  "docs/validation/studio-css-e4ca26/difference-flexcrossbound-main-stable.json.gz",
+  "docs/validation/studio-css-e4ca26/difference-flexcrossbound-main-vs-flexsuggest.json.gz",
+  "docs/validation/studio-css-e4ca26/difference-flexcrossbound-main-vs-inlinecross.json.gz",
+  "docs/validation/studio-css-e4ca26/difference-flexcrossbound-supplement-parent.json.gz",
+  "docs/validation/studio-css-e4ca26/difference-flexcrossbound-supplement-stable.json.gz",
+  "docs/validation/studio-css-e4ca26/difference-flexcrossbound-supplement-vs-flexsuggest.json.gz",
+  "docs/validation/studio-css-e4ca26/difference-flexcrossbound-supplement-vs-inlinecross.json.gz",
+  "docs/validation/studio-css-e4ca26/difference-flexsuggest-main-parent.json.gz",
+  "docs/validation/studio-css-e4ca26/difference-flexsuggest-main-stable.json.gz",
+  "docs/validation/studio-css-e4ca26/difference-flexsuggest-main-vs-inlinecross.json.gz",
+  "docs/validation/studio-css-e4ca26/difference-flexsuggest-supplement-parent.json.gz",
+  "docs/validation/studio-css-e4ca26/difference-flexsuggest-supplement-stable.json.gz",
+  "docs/validation/studio-css-e4ca26/difference-flexsuggest-supplement-vs-inlinecross.json.gz",
+  "docs/validation/studio-css-e4ca26/difference-inlinebounds-main-parent.json.gz",
+  "docs/validation/studio-css-e4ca26/difference-inlinebounds-main-stable.json.gz",
+  "docs/validation/studio-css-e4ca26/difference-inlinebounds-supplement-parent.json.gz",
+  "docs/validation/studio-css-e4ca26/difference-inlinebounds-supplement-stable.json.gz",
+  "docs/validation/studio-css-e4ca26/difference-inlinecross-main-parent.json.gz",
+  "docs/validation/studio-css-e4ca26/difference-inlinecross-main-stable.json.gz",
+  "docs/validation/studio-css-e4ca26/difference-inlinecross-supplement-parent.json.gz",
+  "docs/validation/studio-css-e4ca26/difference-inlinecross-supplement-stable.json.gz",
+  "docs/validation/studio-css-e4ca26/difference-replacedtransfer-main-parent.json.gz",
+  "docs/validation/studio-css-e4ca26/difference-replacedtransfer-main-stable.json.gz",
+  "docs/validation/studio-css-e4ca26/difference-replacedtransfer-supplement-parent.json.gz",
+  "docs/validation/studio-css-e4ca26/difference-replacedtransfer-supplement-stable.json.gz",
+  "docs/validation/studio-css-e4ca26/flex-line-stretch.md",
+  "docs/validation/studio-css-e4ca26/flexbounds-r1-flexcrossbound.json.gz",
+  "docs/validation/studio-css-e4ca26/flexbounds-r1-flexsuggest.json.gz",
+  "docs/validation/studio-css-e4ca26/flexbounds-r1-inlinecross.json.gz",
+  "docs/validation/studio-css-e4ca26/flexbounds-r2-flexcrossbound.json.gz",
+  "docs/validation/studio-css-e4ca26/flexbounds-r2-flexsuggest.json.gz",
+  "docs/validation/studio-css-e4ca26/flexbounds-r2-inlinecross.json.gz",
+  "docs/validation/studio-css-e4ca26/flexbounds-r3-flexcrossbound.json.gz",
+  "docs/validation/studio-css-e4ca26/flexbounds-r3-flexsuggest.json.gz",
+  "docs/validation/studio-css-e4ca26/flexbounds-r3-inlinecross.json.gz",
+  "docs/validation/studio-css-e4ca26/flexbounds-repeat.json",
+  "docs/validation/studio-css-e4ca26/inlinebounds-compare.log",
+  "docs/validation/studio-css-e4ca26/inlinebounds-controls.json",
+  "docs/validation/studio-css-e4ca26/inlinecross-compare.log",
+  "docs/validation/studio-css-e4ca26/outcomes-flexcrossbound-main-candidate.json.gz",
+  "docs/validation/studio-css-e4ca26/outcomes-flexcrossbound-supplement-candidate.json.gz",
+  "docs/validation/studio-css-e4ca26/outcomes-flexsuggest-main-candidate.json.gz",
+  "docs/validation/studio-css-e4ca26/outcomes-flexsuggest-supplement-candidate.json.gz",
+  "docs/validation/studio-css-e4ca26/outcomes-inlinebounds-main-candidate.json.gz",
+  "docs/validation/studio-css-e4ca26/outcomes-inlinebounds-supplement-candidate.json.gz",
+  "docs/validation/studio-css-e4ca26/outcomes-inlinecross-main-candidate.json.gz",
+  "docs/validation/studio-css-e4ca26/outcomes-inlinecross-supplement-candidate.json.gz",
+  "docs/validation/studio-css-e4ca26/outcomes-replacedtransfer-main-candidate.json.gz",
+  "docs/validation/studio-css-e4ca26/outcomes-replacedtransfer-supplement-candidate.json.gz",
+  "docs/validation/studio-css-e4ca26/replacedtransfer-compare.log",
+  "vendor/blitz-dom/UPSTREAM.patch",
+  "vendor/blitz-dom/src/layout/inline/layout.rs",
+  "vendor/blitz-dom/src/layout/replaced.rs",
+  "vendor/taffy/UPSTREAM.patch",
+  "vendor/taffy/src/compute/flexbox.rs"
+ ],
+ "topicPaths": [
+  "Cargo.lock",
+  "crates/pyro-browser/src/bindings.rs",
+  "crates/pyro-browser/src/frames.rs",
+  "crates/pyro-browser/src/images.rs",
+  "crates/pyro-browser/src/lib.rs",
+  "crates/pyro-browser/src/nav.rs",
+  "crates/pyro-browser/tests/referrer_policy.rs",
+  "crates/pyro-dom/src/dom.rs",
+  "crates/pyro-dom/src/lib.rs",
+  "crates/pyro-dom/src/node.rs",
+  "crates/pyro-dom/src/parse.rs",
+  "crates/pyro-dom/src/svg_geometry.rs",
+  "crates/pyro-dom/src/svg_point_list.rs",
+  "crates/pyro-dom/src/svg_string_list.rs",
+  "crates/pyro-dom/src/template_patch.rs",
+  "crates/pyro-dom/tests/fragment_context.rs",
+  "crates/pyro-js/src/realm.rs",
+  "crates/pyro-media/Cargo.toml",
+  "crates/pyro-media/src/convolution.rs",
+  "crates/pyro-media/src/lib.rs",
+  "crates/pyro-media/tests/convolution.rs",
+  "crates/pyro-webapi/Cargo.toml",
+  "crates/pyro-webapi/src/canvas.rs",
+  "crates/pyro-webapi/src/canvas2d.js",
+  "crates/pyro-webapi/src/collections.rs",
+  "crates/pyro-webapi/src/crypto.rs",
+  "crates/pyro-webapi/src/crypto_subtle.rs",
+  "crates/pyro-webapi/src/crypto_subtle/public_key.rs",
+  "crates/pyro-webapi/src/crypto_subtle/rsa.rs",
+  "crates/pyro-webapi/src/dom_parser.rs",
+  "crates/pyro-webapi/src/editing.rs",
+  "crates/pyro-webapi/src/editing/character.rs",
+  "crates/pyro-webapi/src/editing/paragraph_join.rs",
+  "crates/pyro-webapi/src/editing/target_range.rs",
+  "crates/pyro-webapi/src/editing/whitespace.rs",
+  "crates/pyro-webapi/src/event.rs",
+  "crates/pyro-webapi/src/fetch.rs",
+  "crates/pyro-webapi/src/headers.rs",
+  "crates/pyro-webapi/src/html.rs",
+  "crates/pyro-webapi/src/idb.js",
+  "crates/pyro-webapi/src/indexeddb.rs",
+  "crates/pyro-webapi/src/lifecycle.rs",
+  "crates/pyro-webapi/src/navigator_extras.js",
+  "crates/pyro-webapi/src/navigator_extras.rs",
+  "crates/pyro-webapi/src/node.rs",
+  "crates/pyro-webapi/src/page.rs",
+  "crates/pyro-webapi/src/range.rs",
+  "crates/pyro-webapi/src/request.rs",
+  "crates/pyro-webapi/src/response.rs",
+  "crates/pyro-webapi/src/secure_context.rs",
+  "crates/pyro-webapi/src/streams.js",
+  "crates/pyro-webapi/src/structured_clone.js",
+  "crates/pyro-webapi/src/structured_clone.rs",
+  "crates/pyro-webapi/src/subtle.js",
+  "crates/pyro-webapi/src/thread_state.rs",
+  "crates/pyro-webapi/src/webaudio.js",
+  "crates/pyro-webapi/src/webaudio.rs",
+  "crates/pyro-webapi/src/window.rs",
+  "crates/pyro-webapi/src/worker_scope.rs",
+  "crates/pyro-webapi/tests/dom_js.rs",
+  "docs/webapi/EDITING.md",
+  "docs/webapi/MEDIA.md",
+  "vendor/html5ever/README.pyro.md",
+  "vendor/html5ever/src/tree_builder/mod.rs",
+  "vendor/html5ever/src/tree_builder/rules.rs"
+ ],
+ "binarySHA256": {
+  "base": "a0645663aeb1908cb6218ee6b83905236b5ad966a5712ca937c9eca65c8a2cc9",
+  "head": "87c96dd2233f7afe8b41a21e4cfb4b5e0096eea01b3accc35412c7d1e8c04b27"
+ },
+ "jscArchiveSHA256": "3deb71f8e7d14daf174e35340a4ff0c1900b0e9f576503adeb5facbb1201f029"
+}

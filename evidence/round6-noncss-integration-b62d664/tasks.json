@@ -1,0 +1,66 @@
+[
+ {
+  "key": "focus-00",
+  "cohort": "focus",
+  "scope": "non-css",
+  "jobs": 2,
+  "count": 32,
+  "sha256": "0f535dd51aaa686df56dfcdfa34066c358622a2b2ed3fbee20af89550fc69d49"
+ },
+ {
+  "key": "guard-00",
+  "cohort": "guard",
+  "scope": "non-css",
+  "jobs": 2,
+  "count": 33,
+  "sha256": "f6f10f572e29aa8b3d2b7a3b681f9682095264a2e58847367557fe0d022a424b"
+ },
+ {
+  "key": "navigator-00",
+  "cohort": "navigator",
+  "scope": "non-css",
+  "jobs": 4,
+  "count": 20,
+  "sha256": "b6317297e3bdc0c06f7471a36fb040999c4133d90a024c44ad2fd4e20ce080d4"
+ },
+ {
+  "key": "production-00",
+  "cohort": "production",
+  "scope": "non-css",
+  "jobs": 2,
+  "count": 58,
+  "sha256": "5ffea9902ca55554cdf0c6ba6f507c2b5dcc334b633682e8edc25e3896536212"
+ },
+ {
+  "key": "css-00",
+  "cohort": "css",
+  "scope": "css",
+  "jobs": 2,
+  "count": 80,
+  "sha256": "493a7edc80961ec9fbbb05539d7b462031123709a552e272ecd135f1a921c327"
+ },
+ {
+  "key": "css-01",
+  "cohort": "css",
+  "scope": "css",
+  "jobs": 2,
+  "count": 80,
+  "sha256": "3a9a6a4bca3eb6bb4e43260ae23ae9f7e300db7e5f3dd0bddbb3e82deaa789f0"
+ },
+ {
+  "key": "css-02",
+  "cohort": "css",
+  "scope": "css",
+  "jobs": 2,
+  "count": 80,
+  "sha256": "2a920ba6b1b57564825756b8642cbad419c28375a3cc86b1fd62ddcaa84fff91"
+ },
+ {
+  "key": "css-03",
+  "cohort": "css",
+  "scope": "css",
+  "jobs": 2,
+  "count": 75,
+  "sha256": "92aeea8f56c1e2a2e3542cc6ea07352d7f93979ffbcea9837e938f1c460e1f59"
+ }
+]
