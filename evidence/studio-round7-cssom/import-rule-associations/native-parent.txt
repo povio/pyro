@@ -1,0 +1,25 @@
+running 3 tests
+test style_load::an_import_rule_exposes_the_sheet_it_loaded ... ok
+test style_load::media_lists_and_imports_are_their_sheet_objects ... ok
+test style_load::imported_sheet_uses_the_rules_media_and_parent ... FAILED
+
+failures:
+
+---- style_load::imported_sheet_uses_the_rules_media_and_parent stdout ----
+
+thread 'style_load::imported_sheet_uses_the_rules_media_and_parent' (50030407) panicked at crates/pyro-browser/tests/style_load.rs:214:5:
+assertion `left == right` failed
+  left: "missing"
+ right: "true|print|true"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    style_load::imported_sheet_uses_the_rules_media_and_parent
+
+test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 504 filtered out; finished in 0.05s
+
+error: test failed, to rerun pass `-p pyro-browser --test integration`
+real 53.92
+user 145.21
+sys 3.28

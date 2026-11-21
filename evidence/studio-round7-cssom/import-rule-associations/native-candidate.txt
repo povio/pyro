@@ -1,0 +1,10 @@
+running 3 tests
+test style_load::an_import_rule_exposes_the_sheet_it_loaded ... ok
+test style_load::media_lists_and_imports_are_their_sheet_objects ... ok
+test style_load::imported_sheet_uses_the_rules_media_and_parent ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 504 filtered out; finished in 0.06s
+
+real 27.25
+user 70.28
+sys 1.46
