@@ -1002,3 +1002,28 @@ fn typed_numeric_writes_preserve_units_and_math_until_replaced() {
         "calc(2 + 3)|2|5|CSSMathSum|-3.14|-3|calc(-3.14)|calc(-3.14)|false"
     ));
 }
+
+#[test]
+fn typed_shorthand_and_grid_line_writes_preserve_valid_declarations() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        const el = document.createElement('div'), map = el.attributeStyleMap;
+        map.set('margin', '1px 2px');
+        map.set('grid-row-start', 'span 2');
+        const results = [];
+        for (const [property, value] of [
+            ['margin', CSS.px(3)], ['grid-row-start', new CSSMathSum(CSS.number(2), CSS.number(3))]
+        ]) {
+            try { map.set(property, value); results.push(false); }
+            catch (e) { results.push(e instanceof TypeError); }
+        }
+        results.push(el.style.margin, el.style.gridRowStart);
+        map.set('margin', CSSStyleValue.parse('margin', '4px'));
+        map.set('grid-row-start', new CSSKeywordValue('auto'));
+        map.set('grid-column-end', '3');
+        map.set('margin-left', CSS.px(7));
+        results.push(el.style.marginTop, el.style.gridRowStart, el.style.gridColumnEnd, el.style.marginLeft);
+        results.join('|')
+    "#);
+    assert_eq!(actual, "true|true|1px 2px|span 2|4px|auto|3|7px");
+}
