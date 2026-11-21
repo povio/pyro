@@ -17,3 +17,5 @@ Eight fresh processes ran serially in ABBA/BAAB order. Each fixture had one warm
 | matrix-e26a3c916 | array | 0.77 | 2.0 |
 | matrix-e26a3c916 | string | 1.30 | 1.5 |
 | matrix-e26a3c916 | math | 1.43 | 1.0 |
+
+Across 2.263 seconds, host CPU averaged 26.95% overall, 27.52% on base arms and 26.47% on candidate arms. The containing 30-second interval averaged 59.9%; an IDB compiler appeared in adjacent snapshots. Dedicated QA had completed, and no external CI worker or census overlapped. [Per-arm host receipt](host.json)
