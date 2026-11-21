@@ -129,6 +129,8 @@ struct FlexItem {
     /// position of this item's central baseline (synthesized in its middle without one), for the
     /// container's `Baselines::dominant_first`.
     dominant_baseline: Option<f32>,
+    exported_last_baseline: Option<f32>,
+    dominant_last_baseline: Option<f32>,
     /// pyro: the distance from this item's last baseline to its outer cross-end edge, for `last baseline`
     last_baseline_descent: f32,
 
@@ -669,28 +671,14 @@ fn compute_preliminary(tree: &mut impl LayoutFlexboxContainer, node: NodeId, inp
     // line's visual position: for wrap-reverse containers the cross axis is flipped, so the
     // startmost line is the last line in flex-line order rather than the first.
     let first_line = if constants.is_wrap_reverse { flex_lines.last() } else { flex_lines.first() };
-    let first_vertical_baseline = first_line.and_then(|line| {
-        if constants.is_column {
-            // For column containers the baseline is generated from the startmost item in the line,
-            // which for reverse-direction containers is the last item in flex order.
-            let item = if constants.dir.is_reverse() { line.items.last() } else { line.items.first() };
-            item.map(|child| child.baseline)
-        } else {
-            line.items
-                .iter()
-                .find(|item| item.participates_in_baseline_alignment(constants.dir))
-                .or_else(|| line.items.iter().next())
-                .map(|child| child.baseline)
-        }
+    let last_line = if constants.is_wrap_reverse { flex_lines.first() } else { flex_lines.last() };
+    let first_item = first_line.and_then(|line| {
+        line.items.iter().find(|item| constants.is_row && item.participates_in_baseline_alignment(constants.dir))
+            .or_else(|| if constants.dir.is_reverse() { line.items.last() } else { line.items.first() })
     });
-
-    // pyro: and its central baseline, from the same item (rows on a central baseline).
-    let first_dominant_baseline = first_line.filter(|_| !constants.is_column).and_then(|line| {
-        line.items
-            .iter()
-            .find(|item| item.participates_in_baseline_alignment(constants.dir))
-            .or_else(|| line.items.iter().next())
-            .and_then(|child| child.dominant_baseline)
+    let last_item = last_line.and_then(|line| {
+        line.items.iter().rev().find(|item| constants.is_row && item.participates_in_last_baseline_alignment(constants.dir))
+            .or_else(|| if constants.dir.is_reverse() { line.items.first() } else { line.items.last() })
     });
 
     let mut output = LayoutOutput::from_sizes_and_baselines(
@@ -713,7 +701,11 @@ fn compute_preliminary(tree: &mut impl LayoutFlexboxContainer, node: NodeId, inp
                 crate::tree::ScrollableOverflow::ZERO
             }
         },
-        Baselines { dominant_first: first_dominant_baseline, ..Baselines::from_first(first_vertical_baseline) },
+        Baselines {
+            dominant_first: first_item.and_then(|item| item.dominant_baseline),
+            dominant_last: last_item.and_then(|item| item.dominant_last_baseline),
+            ..Baselines::new(first_item.map(|item| item.baseline), last_item.and_then(|item| item.exported_last_baseline))
+        },
     );
     output.oof_candidates = candidates;
     output.oof_positioning_area =
@@ -1177,6 +1169,8 @@ fn generate_anonymous_flex_items(
                 column_baseline_far: if constants.is_column { child_style.orthogonal_block_start_is_far() } else { None },
                 column_baseline_shim: 0.0,
                 dominant_baseline: None,
+                exported_last_baseline: None,
+                dominant_last_baseline: None,
                 last_baseline_descent: 0.0,
 
                 offset_main: 0.0,
@@ -2795,11 +2789,11 @@ fn calculate_children_base_lines(
             }
             let height = measured_size_and_baselines.size.height;
             if last {
-                // pyro: a box without a last baseline (or a scroll container) has one synthesized from its
-                // border box's bottom edge
+                let baselines = measured_size_and_baselines.baselines;
+                let last = if constants.block_baseline_synthesis == 0.5 { baselines.dominant().1 } else { baselines.last };
                 let last_baseline = match child.overflow.y.is_scroll_container() {
                     true => height,
-                    false => measured_size_and_baselines.baselines.last.unwrap_or(height).min(height),
+                    false => last.unwrap_or(height * constants.block_baseline_synthesis).min(height),
                 };
                 child.last_baseline_descent = height - last_baseline + child.margin.bottom;
                 continue;
@@ -3440,21 +3434,21 @@ fn calculate_flex_item(
         + item.margin.cross_start(direction)
         + cross_relative_inset;
 
-    let inner_baseline =
-        child_first_baseline(layout_output.baselines.first, size.height, item.overflow.y).unwrap_or(size.height);
-    if direction.is_row() {
-        let baseline_offset_cross =
-            total_offset_cross + item.offset_cross + effective_line_offset_cross + item.margin.cross_start(direction);
-        item.baseline = baseline_offset_cross + inner_baseline;
-        item.dominant_baseline = (constants.block_baseline_synthesis == 0.5).then(|| {
-            let baselines = &layout_output.baselines;
-            baseline_offset_cross
-                + child_first_baseline(baselines.dominant_first.or(baselines.first), size.height, item.overflow.y)
-                    .unwrap_or(size.height * 0.5)
-        });
+    let baseline_offset = if direction.is_row() {
+        total_offset_cross + item.offset_cross + effective_line_offset_cross + item.margin.cross_start(direction)
     } else {
-        let baseline_offset_main = *total_offset_main + item.offset_main + item.margin.main_start(direction);
-        item.baseline = baseline_offset_main + inner_baseline;
+        *total_offset_main + item.offset_main + item.margin.main_start(direction)
+    };
+    let exported = |baseline, fallback| {
+        baseline_offset + child_first_baseline(baseline, size.height, item.overflow.y).unwrap_or(fallback)
+    };
+    let baselines = layout_output.baselines;
+    item.baseline = exported(baselines.first, size.height);
+    item.exported_last_baseline = Some(exported(baselines.last, size.height));
+    if constants.block_baseline_synthesis == 0.5 {
+        let (first, last) = baselines.dominant();
+        item.dominant_baseline = Some(exported(first, size.height * 0.5));
+        item.dominant_last_baseline = Some(exported(last, size.height * 0.5));
     }
 
     let location = if direction.is_row() {
