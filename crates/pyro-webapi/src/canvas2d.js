@@ -812,13 +812,11 @@
   }
 
   // ---- OffscreenCanvas -------------------------------------------------
-  // Its 2D context is a CanvasRenderingContext2D (canvas.rs) drawing into
-  // its own bitmap; `OffscreenCanvasRenderingContext2D` recognizes it.
+  // Its native 2D context (canvas.rs) draws into the offscreen bitmap.
   // `placeholder` is the native handle of the `<canvas>` it shows on (made
   // by `transferControlToOffscreen`), or null. A transferred OffscreenCanvas
   // is detached: its size reads 0 and using it throws InvalidStateError.
   const offscreens = new WeakMap();
-  const offscreenContexts = new WeakSet();
   function oc(self) {
     const o = offscreens.get(self);
     if (!o) throw new TypeErrorC('Illegal invocation');
@@ -857,7 +855,6 @@
       if (type !== '2d') return null;
       if (!o.context) {
         o.context = natives.offscreenContext(this, o.width, o.height, o.placeholder);
-        offscreenContexts.add(o.context);
       }
       return o.context;
     }
@@ -882,12 +879,6 @@
     }
   }
   webidl(OffscreenCanvas, 'OffscreenCanvas');
-  function OffscreenCanvasRenderingContext2D() { throw illegal(); }
-  defineProperty(OffscreenCanvasRenderingContext2D, Symbol.hasInstance, {
-    value: (v) => offscreenContexts.has(v), configurable: true,
-  });
-  defineProperty(OffscreenCanvasRenderingContext2D, 'prototype', { value: Object.create(null), writable: false });
-  defineProperty(OffscreenCanvasRenderingContext2D.prototype, Symbol.toStringTag, { value: 'OffscreenCanvasRenderingContext2D', configurable: true });
   const metrics = new WeakMap();
   const METRICS = [
     'width', 'actualBoundingBoxLeft', 'actualBoundingBoxRight', 'fontBoundingBoxAscent', 'fontBoundingBoxDescent',
@@ -917,7 +908,7 @@
     rectList(rects) { return new DOMRectList(secret, rects); },
     rectValue(x,y,width,height,readonly) { return readonly ? new DOMRectReadOnly(x,y,width,height) : new DOMRect(x,y,width,height); },
     Path2D, ImageData, CanvasGradient, CanvasPattern, TextMetrics,
-    ImageBitmap, OffscreenCanvas, OffscreenCanvasRenderingContext2D, createImageBitmap,
+    ImageBitmap, OffscreenCanvas, createImageBitmap,
     // Helpers for canvas.rs.
     gradient(kind, args) { return new CanvasGradient(secret, kind, args); },
     pattern(repetition, image) { return new CanvasPattern(secret, repetition, image); },
