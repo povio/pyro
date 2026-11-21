@@ -13,6 +13,8 @@ autotests = false
 test-hooks = []
 
 [dependencies]
+scoped-tls-hkt = "=0.1.5"
+wasmparser = { version = "=0.228.0", default-features = false }
 wasmi = { version = "=2.0.2", default-features = false, features = ["stable", "std", "validate", "memory64", "simd", "auto-dispatch"] }
 # Web Crypto (crypto_subtle.rs) uses the RustCrypto primitives below; the
 # AES modes (GCM with any IV and tag length, CBC, CTR) are built on aes + ghash.
