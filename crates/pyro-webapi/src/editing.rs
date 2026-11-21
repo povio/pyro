@@ -648,10 +648,10 @@ pub(crate) fn insertion_point(dom: &Dom, caret: Point) -> Point {
 
 pub(crate) fn insert_at(dom: &mut Dom, caret: Point, text: &str) -> Point {
     let point = insertion_point(dom, caret);
-    insert_at_point(dom, point, text)
+    insert_at_point(dom, point, text, true)
 }
 
-fn insert_at_point(dom: &mut Dom, (n, off): Point, text: &str) -> Point {
+fn insert_at_point(dom: &mut Dom, (n, off): Point, text: &str, replace_placeholder: bool) -> Point {
     let units = pyro_dom::dom::utf16_len(text);
     if is_text(dom, n) {
         let _ = dom.replace_data(n, off, 0, text);
@@ -663,7 +663,7 @@ fn insert_at_point(dom: &mut Dom, (n, off): Point, text: &str) -> Point {
     // Typing into an empty block replaces its <br> placeholder, as does
     // typing on the empty last line after a line break (`a<br>[]<br>`).
     let placeholder = before.filter(|&b| {
-        local(dom, b) == "br"
+        replace_placeholder && local(dom, b) == "br"
             && dom.next_sibling(b).ok().flatten().is_none()
             && (dom.child_count(n).unwrap_or(0) == 1
                 || (off > 0 && dom.child_at(n, off - 1).ok().flatten().is_some_and(|p| local(dom, p) == "br")))
@@ -743,7 +743,7 @@ pub fn insert_text(page: &Rc<PageDom>, host: NodeId, text: &str) {
                 }
                 if !part.is_empty() {
                     let Some(point) = typing_point(page, &dom, host, caret) else { return };
-                    let inserted_end = insert_at_point(&mut dom, point, part);
+                    let inserted_end = insert_at_point(&mut dom, point, part, true);
                     whitespace::inserted(page, &mut dom, host, inserted_end, part);
                     caret = crate::edit_commands::inline_value::format_typed(
                         page,
@@ -1088,6 +1088,38 @@ fn merge_blocks(page: &PageDom, dom: &mut Dom, host: NodeId, from: Point, to: Po
     let seam =
         if dom.contains(first, from.0).ok()? && from.1 <= len(dom, from.0) { from } else { (first, len(dom, first)) };
     Some(placeholder_if_empty(dom, first).unwrap_or(seam))
+}
+
+/// Plaintext-only editability is inherited until the nearest explicit
+/// contenteditable mode, including a rich island inside a plaintext host.
+pub(crate) fn plaintext_at(dom: &Dom, mut node: NodeId) -> bool {
+    loop {
+        if let Ok(Some(value)) = dom.get_attribute(node, "contenteditable") {
+            if value.eq_ignore_ascii_case("plaintext-only") {
+                return true;
+            }
+            if value.is_empty() || value.eq_ignore_ascii_case("true") || value.eq_ignore_ascii_case("false") {
+                return false;
+            }
+        }
+        let Ok(Some(parent)) = dom.parent_element(node) else { return false };
+        node = parent;
+    }
+}
+
+/// The unmodified Enter key inserts a line break in a plaintext editor.
+pub(crate) fn enter(page: &Rc<PageDom>, host: NodeId) {
+    let (start, _) = host_range(page, host);
+    let plain = {
+        let dom = page.dom.borrow();
+        dom.get_attribute(host, "contenteditable").ok().flatten().is_some_and(|v| v.eq_ignore_ascii_case("plaintext-only"))
+            && plaintext_at(&dom, start.0)
+    };
+    if plain {
+        insert_line_break(page, host);
+    } else {
+        insert_paragraph(page, host);
+    }
 }
 
 /// Enter: splits the caret's block (insertParagraph).
@@ -1691,7 +1723,9 @@ pub fn insert_line_break(page: &Rc<PageDom>, host: NodeId) {
 fn preserved_break_at(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point) -> Point {
     let point = insertion_point(dom, caret);
     let at_end = whitespace::at_line_end(page, dom, host, point);
-    let after = insert_at(dom, caret, if at_end { "\n\n" } else { "\n" });
+    // A padding BR in a plaintext editor already supplies the final empty line.
+    let keep_padding = !is_text(dom, point.0) && plaintext_at(dom, point.0);
+    let after = insert_at_point(dom, point, if at_end { "\n\n" } else { "\n" }, !keep_padding);
     if at_end {
         (after.0, after.1.saturating_sub(1))
     } else {
