@@ -1,0 +1,107 @@
+{
+  "columns": [
+    "url",
+    "name",
+    "occurrence",
+    "base",
+    "ad7467f57",
+    "ef248c500",
+    "7a55e1c8e",
+    "459fad29d",
+    "signed158"
+  ],
+  "receipts": {
+    "base": {
+      "rawSHA256": "132420b362497f1b98920e46aee14cef0b6185dae64c6845545533f9c51b888c",
+      "completePages": 122,
+      "fullPassPages": 15,
+      "names": 15493,
+      "passes": 14400,
+      "binary": "/Users/xban1x/Library/Caches/lightningpanda/round7-editing/inline-host-paragraph/base",
+      "server": "wptserve",
+      "testdriver": true,
+      "workers": 1
+    },
+    "ad7467f57": {
+      "rawSHA256": "3124870629cafa78dd89204870f0bcb474699c025d79f09eaeb83ad929a766d5",
+      "completePages": 122,
+      "fullPassPages": 81,
+      "names": 15493,
+      "passes": 14892,
+      "binary": "/Users/xban1x/Library/Caches/lightningpanda/round7-editing/inline-host-paragraph/pyro",
+      "server": "wptserve",
+      "testdriver": true,
+      "workers": 1
+    },
+    "ef248c500": {
+      "rawSHA256": "cda8cb6673f9e9e85d233134449b705077c0a63ce551f55760c537844944167b",
+      "completePages": 122,
+      "fullPassPages": 81,
+      "names": 15493,
+      "passes": 14892,
+      "binary": "/Users/xban1x/Library/Caches/lightningpanda/round7-editing/inline-host-paragraph/revision2/pyro",
+      "server": "wptserve",
+      "testdriver": true,
+      "workers": 1
+    },
+    "7a55e1c8e": {
+      "rawSHA256": "cab3c984996947be281b98438d1c950671e778f4415b8d815386c53d4c8b726d",
+      "completePages": 122,
+      "fullPassPages": 63,
+      "names": 15493,
+      "passes": 14889,
+      "binary": "/Users/xban1x/Library/Caches/lightningpanda/round7-editing/inline-host-paragraph/final/pyro",
+      "server": "wptserve",
+      "testdriver": true,
+      "workers": 1
+    },
+    "459fad29d": {
+      "rawSHA256": "8994e3f13882caf59af542ce8f5ac536e078d3123bf2a5c1e9a55d727676350f",
+      "completePages": 122,
+      "fullPassPages": 63,
+      "names": 15493,
+      "passes": 14892,
+      "binary": "/Users/xban1x/Library/Caches/lightningpanda/round7-editing/inline-host-paragraph/accepted/pyro",
+      "server": "wptserve",
+      "testdriver": true,
+      "workers": 1
+    },
+    "signed158": {
+      "rawSHA256": "98c5f9f128a13bf27cc842c85b0b6c5fd67dfdaa7056aac46ce7790f6520595c",
+      "completePages": 122,
+      "fullPassPages": 60,
+      "names": 15493,
+      "passes": 14928,
+      "binary": "/Users/xban1x/Library/Caches/lightningpanda/round6-reference-158/census/launch-158",
+      "server": "wptserve",
+      "testdriver": true,
+      "workers": 1
+    }
+  },
+  "finalDeltas": {
+    "base": {
+      "gains": 492,
+      "losses": 0,
+      "gainsChromePass": 450,
+      "lossesChromePass": 0
+    },
+    "ad7467f57": {
+      "gains": 24,
+      "losses": 24,
+      "gainsChromePass": 24,
+      "lossesChromePass": 0
+    },
+    "ef248c500": {
+      "gains": 24,
+      "losses": 24,
+      "gainsChromePass": 24,
+      "lossesChromePass": 0
+    },
+    "7a55e1c8e": {
+      "gains": 3,
+      "losses": 0,
+      "gainsChromePass": 3,
+      "lossesChromePass": 0
+    }
+  }
+}
