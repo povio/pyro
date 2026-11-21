@@ -154,11 +154,18 @@ pub fn serialize(style: &ComputedValues, name: &str) -> Option<String> {
             Some(resolved_alignment(shorthand.name(), out))
         }
         Err(declaration) => {
-            // Stylo resolves every length unzoomed but a line-height length.
+            // Serialize resolved line-height in CSS pixels at the element's effective zoom.
             if name.eq_ignore_ascii_case("line-height") {
-                if let style::values::generics::font::GenericLineHeight::Length(l) = style.get_font().line_height {
+                use style::values::generics::font::GenericLineHeight;
+                let font = style.get_font();
+                let zoomed_px = match font.line_height {
+                    GenericLineHeight::Length(l) => Some(l.0.px()),
+                    GenericLineHeight::Number(n) => Some(n.0 * font.font_size.computed_size().px()),
+                    _ => None,
+                };
+                if let Some(length) = zoomed_px {
                     let mut out = String::new();
-                    let px = style.effective_zoom.unzoom(l.0.px());
+                    let px = style.effective_zoom.unzoom(length);
                     style_traits::ToCss::to_css(&CSSPixelLength::new(px), &mut style_traits::CssWriter::new(&mut out))
                         .ok()?;
                     return Some(out);
