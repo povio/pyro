@@ -216,19 +216,47 @@
 
   // ---------- CSSNumericValue ----------
   const typeEquals = (a, b) => TYPES.every((t) => (a[t] || 0) === (b[t] || 0));
-  const addTypes = (a, b) => {
-    // Percent hint: a type with percent added to a length-like type takes the other.
-    if (typeEquals(a, b)) return { ...a };
-    const pa = a.percent || 0, pb = b.percent || 0;
-    const strip = (t) => { const o = { ...t }; delete o.percent; return o; };
-    if (pa && !pb && Object.keys(strip(a)).length === 0) return { ...b, percentHint: Object.keys(b).find((k) => b[k])};
-    if (pb && !pa && Object.keys(strip(b)).length === 0) return { ...a, percentHint: Object.keys(a).find((k) => a[k]) };
+  const mathTypes = new WeakMap();
+  const applyPercentHint = (type, hint) => {
+    if (type.percentHint === hint) return type;
+    const result = { ...type, percentHint: hint };
+    if (result.percent) {
+      result[hint] = (result[hint] || 0) + result.percent;
+      delete result.percent;
+    }
+    return result;
+  };
+  const combineTypes = (left, right, multiply) => {
+    if (left.percentHint && right.percentHint && left.percentHint !== right.percentHint) return null;
+    const hint = left.percentHint || right.percentHint;
+    if (hint) {
+      left = applyPercentHint(left, hint);
+      right = applyPercentHint(right, hint);
+    }
+    if (multiply) {
+      const result = hint ? { percentHint: hint } : {};
+      for (const k of TYPES) {
+        const power = (left[k] || 0) + (right[k] || 0);
+        if (power) result[k] = power;
+      }
+      return result;
+    }
+    if (typeEquals(left, right)) return left;
+    if (hint || (!left.percent && !right.percent)) return null;
+    for (const k of TYPES) {
+      if (k === 'percent' || (!left[k] && !right[k])) continue;
+      const candidate = applyPercentHint(left, k);
+      if (typeEquals(candidate, applyPercentHint(right, k))) return candidate;
+    }
     return null;
   };
-  const mulTypes = (a, b) => {
-    const t = {};
-    for (const k of TYPES) { const v = (a[k] || 0) + (b[k] || 0); if (v) t[k] = v; }
-    return t;
+  const combineValueTypes = (values, multiply) => {
+    let result = numericType(values[0]);
+    for (let i = 1; result && i < values.length; i++) {
+      const next = numericType(values[i]);
+      result = next && combineTypes(result, next, multiply);
+    }
+    return result;
   };
   const rectify = (v, what) => {
     if (v instanceof CSSNumericValue) return v;
@@ -353,7 +381,9 @@
       if (args.length < minArgs) throw new DE(`Failed to construct '${name}': Must specify at least one argument.`, 'SyntaxError');
       const values = args.map((v) => rectify(v, name));
       this.#values = new CSSNumericArray(ILLEGAL, values);
-      if (name !== 'CSSMathProduct' && !numericType(this)) throw new TypeError(`Failed to construct '${name}': Incompatible types`);
+      const type = combineValueTypes(values, name === 'CSSMathProduct');
+      if (!type) throw new TypeError(`Failed to construct '${name}': Incompatible types`);
+      mathTypes.set(this, type);
     }
     get values() { return this.#values; }
     get operator() { return OPERATORS[name]; }
@@ -394,10 +424,9 @@
       this.#lower = rectify(lower, 'CSSMathClamp');
       this.#value = rectify(value, 'CSSMathClamp');
       this.#upper = rectify(upper, 'CSSMathClamp');
-      const t = numericType(this.#lower);
-      if (!t || !typeEquals(t, numericType(this.#value) || {}) || !typeEquals(t, numericType(this.#upper) || {})) {
-        throw new TypeError("Failed to construct 'CSSMathClamp': Incompatible types");
-      }
+      const type = combineValueTypes([this.#lower, this.#value, this.#upper], false);
+      if (!type) throw new TypeError("Failed to construct 'CSSMathClamp': Incompatible types");
+      mathTypes.set(this, type);
     }
     get lower() { return this.#lower; }
     get value() { return this.#value; }
@@ -445,27 +474,11 @@
     if (v instanceof CSSMathInvert) {
       const t = numericType(v.value);
       if (!t) return null;
-      const o = {};
+      const o = t.percentHint ? { percentHint: t.percentHint } : {};
       for (const k of TYPES) if (t[k]) o[k] = -t[k];
       return o;
     }
-    if (v instanceof CSSMathClamp) return numericType(v.lower);
-    if (v instanceof CSSMathProduct) {
-      let t = {};
-      for (const x of v.values) { const xt = numericType(x); if (!xt) return null; t = mulTypes(t, xt); }
-      return t;
-    }
-    if (v instanceof CSSMathSum || v instanceof CSSMathMin || v instanceof CSSMathMax) {
-      let t = null;
-      for (const x of v.values) {
-        const xt = numericType(x);
-        if (!xt) return null;
-        t = t === null ? xt : addTypes(t, xt);
-        if (!t) return null;
-      }
-      return t;
-    }
-    return null;
+    return mathTypes.get(v) || null;
   };
 
   // A value as a sum of unit values with at most one non-number unit each (`toSum`, `to`), or null.
