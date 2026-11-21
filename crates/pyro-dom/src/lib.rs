@@ -49,6 +49,7 @@ pub mod snapshot;
 pub mod style;
 pub mod stylo;
 pub mod svg_geometry;
+mod template_patch;
 pub mod text_metrics;
 pub mod upgrade;
 pub mod viewport_meta;

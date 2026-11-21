@@ -91,6 +91,9 @@ pub struct TreeBuilder<Handle, Sink> {
     /// Whether a reconstructed formatting element or furthest block is
     /// removed by the parser sanitizer. Ordinary parsers leave this unset.
     pub removed_formatting_element: Option<fn(&Sink, &Handle) -> bool>,
+    /// An explicit template end tag finalizes a content patch before its
+    /// template is popped. EOF unwinding does not perform these steps.
+    pub close_patch: Option<fn(&Sink, &Handle)>,
 
     /// Insertion mode.
     mode: Cell<InsertionMode>,
@@ -157,6 +160,7 @@ where
         let doc_handle = sink.get_document();
         TreeBuilder {
             removed_formatting_element: None,
+            close_patch: None,
             opts,
             sink,
             mode: Cell::new(InsertionMode::Initial),
@@ -198,6 +202,7 @@ where
 
         let tb = TreeBuilder {
             removed_formatting_element: None,
+            close_patch: None,
             opts,
             sink,
             mode: Cell::new(InsertionMode::Initial),

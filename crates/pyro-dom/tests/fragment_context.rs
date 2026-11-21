@@ -48,3 +48,54 @@ fn table_in_paragraph_inherits_context_document_quirks() {
         assert_eq!(dom.inner_html(context).unwrap(), expected);
     }
 }
+
+#[test]
+fn explicit_template_end_removes_patch_markers_but_eof_preserves_them() {
+    let mut dom = Dom::new();
+    let doc = dom.create_document(DocumentKind::Html, "about:blank");
+    let context = dom.create_element(doc, "div").unwrap();
+    let markup = "<div><?start name='a'><i>old</i><?end></div><template for=a><b>new";
+    set_inner_html(&mut dom, context, markup).unwrap();
+    let result = dom.inner_html(context).unwrap();
+    assert!(result.contains("<?start"), "{result}");
+    assert!(result.contains("<?end"), "{result}");
+    assert!(result.contains("<b>new</b>"), "{result}");
+    assert!(!result.contains("old") && !result.contains("<template"), "{result}");
+
+    set_inner_html(&mut dom, context, &format!("{markup}</template>")).unwrap();
+    assert_eq!(dom.inner_html(context).unwrap(), "<div><b>new</b></div>");
+}
+
+#[test]
+fn sibling_patches_preserve_the_template_contents_scope() {
+    let mut dom = Dom::new();
+    let doc = dom.create_document(DocumentKind::Html, "about:blank");
+    let context = dom.create_element(doc, "div").unwrap();
+    let markup = concat!(
+        "<p><?marker name='a'></p><template><i><?marker name='a'></i>",
+        "<template for=a>inside</template></template><template for=a>outside</template>",
+    );
+    set_inner_html(&mut dom, context, markup).unwrap();
+    assert_eq!(dom.inner_html(context).unwrap(), "<p>outside</p><template><i>inside</i></template>");
+}
+
+#[test]
+fn range_editing_and_external_fragment_templates_keep_their_contents() {
+    use pyro_dom::parse::{parse_contextual_fragment, parse_fragment};
+
+    let mut dom = Dom::new();
+    let doc = dom.create_document(DocumentKind::Html, "about:blank");
+    let context = dom.create_element(doc, "div").unwrap();
+    let fragment =
+        parse_contextual_fragment(&mut dom, context, "<p><?marker name='a'></p><template for=a>range</template>")
+            .unwrap();
+    assert!(dom.query_selector(fragment, &parse_selectors("template[for]").unwrap()).unwrap().is_some());
+
+    let editing_fragment =
+        parse_fragment(&mut dom, context, "<p><?marker name='a'></p><template for=a>editing</template>").unwrap();
+    assert!(dom.query_selector(editing_fragment, &parse_selectors("template[for]").unwrap()).unwrap().is_some());
+
+    set_inner_html(&mut dom, context, "<p><?marker name='a'></p><template for=a src='part.html'>fallback</template>")
+        .unwrap();
+    assert!(dom.query_selector(context, &parse_selectors("template[src]").unwrap()).unwrap().is_some());
+}
