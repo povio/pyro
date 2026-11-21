@@ -298,7 +298,6 @@ pub use self::GenericCaretColor as CaretColor;
     PartialEq,
     Parse,
     SpecifiedValueInfo,
-    ToAnimatedValue,
     ToAnimatedZero,
     ToComputedValue,
     ToCss,

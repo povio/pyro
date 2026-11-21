@@ -60,6 +60,23 @@ impl ComputeSquaredDistance for AbsoluteColor {
 /// An animated value for `<color>`.
 pub type Color = GenericColor<Percentage>;
 
+impl crate::values::animated::ToAnimatedValue for crate::values::computed::color::OutlineColor {
+    type AnimatedValue = Self;
+
+    fn to_animated_value(self, context: &crate::values::animated::Context) -> Self {
+        use crate::values::generics::color::{GenericColorOrAuto, GenericOutlineColor};
+        use crate::values::specified::OutlineStyle;
+        match self.0 {
+            GenericColorOrAuto::Auto if !matches!(context.style.get_outline().outline_style, OutlineStyle::Auto) => {
+                GenericOutlineColor(GenericColorOrAuto::Color(Color::currentcolor()))
+            },
+            _ => self,
+        }
+    }
+
+    fn from_animated_value(animated: Self) -> Self { animated }
+}
+
 /// An animated value for `<color-mix>`.
 pub type ColorMix = GenericColorMix<Color, Percentage>;
 

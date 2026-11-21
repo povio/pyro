@@ -7260,8 +7260,32 @@ diff -ruN a/url/servo.rs b/url/servo.rs
  }
 diff -ruN a/values/animated/color.rs b/values/animated/color.rs
 --- a/values/animated/color.rs	2026-11-11 19:55:57
-+++ b/values/animated/color.rs	2026-11-20 23:03:05
-@@ -69,7 +69,7 @@
++++ b/values/animated/color.rs	2026-11-21 11:23:39
+@@ -60,6 +60,23 @@
+ /// An animated value for `<color>`.
+ pub type Color = GenericColor<Percentage>;
+ 
++impl crate::values::animated::ToAnimatedValue for crate::values::computed::color::OutlineColor {
++    type AnimatedValue = Self;
++
++    fn to_animated_value(self, context: &crate::values::animated::Context) -> Self {
++        use crate::values::generics::color::{GenericColorOrAuto, GenericOutlineColor};
++        use crate::values::specified::OutlineStyle;
++        match self.0 {
++            GenericColorOrAuto::Auto if !matches!(context.style.get_outline().outline_style, OutlineStyle::Auto) => {
++                GenericOutlineColor(GenericColorOrAuto::Color(Color::currentcolor()))
++            },
++            _ => self,
++        }
++    }
++
++    fn from_animated_value(animated: Self) -> Self { animated }
++}
++
+ /// An animated value for `<color-mix>`.
+ pub type ColorMix = GenericColorMix<Color, Percentage>;
+ 
+@@ -69,7 +86,7 @@
          let (left_weight, right_weight) = procedure.weights();
  
          Ok(Self::from_color_mix(ColorMix {
@@ -7270,7 +7294,7 @@ diff -ruN a/values/animated/color.rs b/values/animated/color.rs
              items: OwnedSlice::from_slice(&[
                  GenericColorMixItem {
                      color: self.clone(),
-@@ -81,7 +81,7 @@
+@@ -81,7 +98,7 @@
                  },
              ]),
              // See https://github.com/w3c/csswg-drafts/issues/7324
@@ -8451,7 +8475,7 @@ diff -ruN a/values/generics/calc.rs b/values/generics/calc.rs
          }
 diff -ruN a/values/generics/color.rs b/values/generics/color.rs
 --- a/values/generics/color.rs	2026-11-11 19:55:57
-+++ b/values/generics/color.rs	2026-11-20 23:03:05
++++ b/values/generics/color.rs	2026-11-21 11:22:36
 @@ -41,6 +41,8 @@
          const NORMALIZE_WEIGHTS = 1 << 0;
          /// The result should always be converted to the modern color syntax.
@@ -8471,7 +8495,7 @@ diff -ruN a/values/generics/color.rs b/values/generics/color.rs
  #[derive(
      Animate,
      Clone,
-@@ -252,22 +257,66 @@
+@@ -252,22 +257,65 @@
      ToAnimatedValue,
      ToAnimatedZero,
      ToComputedValue,
@@ -8507,7 +8531,7 @@ diff -ruN a/values/generics/color.rs b/values/generics/color.rs
  }
  
  pub use self::GenericCaretColor as CaretColor;
- 
++
 +/// pyro: outline-color, `auto | <color>` (CSS UI 4): `auto` is the accent colour (else
 +/// currentcolor) of an `outline-style: auto` outline, currentcolor for the other styles.
 +#[derive(
@@ -8520,7 +8544,6 @@ diff -ruN a/values/generics/color.rs b/values/generics/color.rs
 +    PartialEq,
 +    Parse,
 +    SpecifiedValueInfo,
-+    ToAnimatedValue,
 +    ToAnimatedZero,
 +    ToComputedValue,
 +    ToCss,
@@ -8529,7 +8552,7 @@ diff -ruN a/values/generics/color.rs b/values/generics/color.rs
 +)]
 +#[repr(transparent)]
 +pub struct GenericOutlineColor<C>(pub GenericColorOrAuto<C>);
-+
+ 
 +impl<C> GenericOutlineColor<C> {
 +    /// Returns the `auto` value.
 +    pub fn auto() -> Self {
