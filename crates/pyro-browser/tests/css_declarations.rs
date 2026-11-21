@@ -1242,3 +1242,19 @@ fn synthetic_events_do_not_acquire_generated_hit_targets() {
     "#);
     assert_eq!(actual, "true|true|true|true|true");
 }
+
+#[test]
+fn matrix_strings_use_css_tokens_and_context_independent_transforms() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        const matrix = new DOMMatrix('scale(2) translateX(calc(2 * 2.5px))');
+        const zero = new DOMMatrixReadOnly('/**/none/**/');
+        const invalid = [' ', '/**/', 'translateX(5%)', 'translateX(1em)', 'scale(sibling-index())'];
+        const errors = invalid.every(text => {
+            try { matrix.setMatrixValue(text); return false; }
+            catch(e) { return e.name === 'SyntaxError'; }
+        });
+        [matrix.a,matrix.e,matrix.is2D,zero.isIdentity,errors,new DOMMatrix('').isIdentity].join('|')
+    "#);
+    assert_eq!(actual, "2|10|true|true|true|true");
+}

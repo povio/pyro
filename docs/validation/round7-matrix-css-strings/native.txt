@@ -1,0 +1,6 @@
+running 2 tests
+test css_declarations::matrix_strings_use_css_tokens_and_context_independent_transforms ... ok
+test messaging::geometry_serialization_preserves_quad_point_aliases_and_mutability ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 540 filtered out; finished in 0.49s
+
