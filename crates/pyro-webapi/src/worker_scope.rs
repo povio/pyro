@@ -1085,6 +1085,7 @@ impl JsClass for DedicatedWorkerGlobalScope {
     type Data = ScopeData;
     type Parent = WorkerGlobalScope;
     fn define(def: &mut ClassDef<Self>) {
+        crate::canvas::define_video_globals(def);
         def.getter("name", |s, g| Ok(s.string(&g.name)));
         def.method("postMessage", 1, |s, g, a| {
             a.require(1, "DedicatedWorkerGlobalScope.postMessage")?;
