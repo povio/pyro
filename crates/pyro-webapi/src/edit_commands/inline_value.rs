@@ -148,6 +148,16 @@ pub(super) fn reselect(page: &Rc<PageDom>, original: (Point, Point), points: [Po
     }
 }
 
+/// A paragraph or soft break continues typing at the new caret.
+pub(crate) fn set_break_caret(page: &Rc<PageDom>, original: (Point, Point), caret: Point) {
+    let pending = page.typing_values.take().filter(|v| v.range == original);
+    editing::set_selection(page, caret, caret);
+    if let Some(mut pending) = pending {
+        pending.range = (caret, caret);
+        page.typing_values.replace(Some(pending));
+    }
+}
+
 fn effective(page: &PageDom, dom: &Dom, kind: Kind, node: NodeId) -> String {
     let mut el = if dom.node_type(node).ok() == Some(NodeType::Element) {
         Some(node)

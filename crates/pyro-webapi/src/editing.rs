@@ -1156,7 +1156,7 @@ pub fn insert_paragraph(page: &Rc<PageDom>, host: NodeId) {
             let caret = if start != end { delete_range(&mut dom, host, start, end, true) } else { start };
             split_block(page, &mut dom, host, caret)
         };
-        set_selection(page, caret, caret);
+        crate::edit_commands::inline_value::set_break_caret(page, (start, end), caret);
     });
 }
 
@@ -1814,7 +1814,7 @@ pub fn insert_line_break(page: &Rc<PageDom>, host: NodeId) {
                 line_break_at(&mut dom, host, caret)
             }
         };
-        set_selection(page, caret, caret);
+        crate::edit_commands::inline_value::set_break_caret(page, (start, end), caret);
     });
 }
 
