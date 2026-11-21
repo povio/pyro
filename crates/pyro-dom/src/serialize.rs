@@ -22,7 +22,8 @@ enum Step {
     ShadowClose,
 }
 
-pub(crate) fn is_void(local: &str) -> bool {
+/// Whether an HTML element with this local name omits its end tag and contents.
+pub fn is_void(local: &str) -> bool {
     matches!(
         local,
         "area"

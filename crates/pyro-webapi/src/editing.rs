@@ -289,8 +289,10 @@ pub(crate) fn is_text(dom: &Dom, n: NodeId) -> bool {
 
 /// Elements a caret descends into (not void/replaced ones).
 pub(crate) fn is_container(dom: &Dom, n: NodeId) -> bool {
-    dom.node_type(n).ok() == Some(NodeType::Element)
-        && !matches!(local(dom, n).as_str(), "br" | "img" | "input" | "hr" | "iframe" | "video" | "canvas" | "svg")
+    dom.element(n).is_ok_and(|el| {
+        !(el.is_html() && pyro_dom::serialize::is_void(el.local_name()))
+            && !matches!(el.local_name().as_ref(), "iframe" | "video" | "canvas" | "svg")
+    })
 }
 
 const BLOCKS: &[&str] = &[
@@ -669,6 +671,21 @@ pub(crate) fn insert_at(dom: &mut Dom, caret: Point, text: &str) -> Point {
     (t, units)
 }
 
+/// A DOM selection can be inside a void element. Place typed text at its
+/// editable parent boundary, retaining preceding inline formatting if possible.
+fn typing_point(dom: &Dom, host: NodeId, caret: Point) -> Option<Point> {
+    let Ok(element) = dom.element(caret.0) else { return Some(caret) };
+    if !element.is_html() || !pyro_dom::serialize::is_void(element.local_name()) {
+        return Some(caret);
+    }
+    if caret.0 == host {
+        return None;
+    }
+    let parent = dom.parent(caret.0).ok()??;
+    let index = dom.index_in_parent(caret.0).ok()?;
+    Some((parent, index))
+}
+
 /// insertText (typing, `Input.insertText`): replaces the selection.
 pub fn insert_text(page: &Rc<PageDom>, host: NodeId, text: &str) {
     let (start, end) = host_range(page, host);
@@ -676,7 +693,7 @@ pub fn insert_text(page: &Rc<PageDom>, host: NodeId, text: &str) {
         let caret = {
             let mut dom = page.dom.borrow_mut();
             let caret = if start != end { delete_range(&mut dom, host, start, end, false) } else { start };
-            let mut caret = caret;
+            let Some(mut caret) = typing_point(&dom, host, caret) else { return };
             for (index, part) in text.split('\n').enumerate() {
                 if index != 0 {
                     // An inserted linefeed performs insertParagraph within
