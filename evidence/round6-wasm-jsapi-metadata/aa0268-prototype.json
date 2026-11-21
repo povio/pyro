@@ -1,0 +1,16 @@
+{
+  "window": {
+    "Global": "undefined",
+    "Table": "undefined",
+    "Memory": "undefined",
+    "Tag": "undefined",
+    "Function": "undefined"
+  },
+  "worker": {
+    "Global": "undefined",
+    "Table": "undefined",
+    "Memory": "undefined",
+    "Tag": "undefined",
+    "Function": "undefined"
+  }
+}
