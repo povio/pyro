@@ -729,7 +729,13 @@ impl BlitzGeometry {
                 Some(&(_, _, old)) if old == hash => {}
                 Some(_) if is_style => changed.push(owner),
                 Some(_) => return None,
-                None if is_style => {}
+                None if is_style => {
+                    // An owner can already be in the render tree before its sheet is registered.
+                    // Its first CSSOM edit supplies new text without a DOM mutation.
+                    if style.sheet_text(dom, owner).is_some() {
+                        changed.push(owner);
+                    }
+                }
                 None => return None,
             }
         }

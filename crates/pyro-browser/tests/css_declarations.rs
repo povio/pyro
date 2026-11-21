@@ -595,3 +595,21 @@ fn custom_functions_test_local_style_values_in_their_own_scope() {
     "#);
     assert_eq!(actual, "yes");
 }
+
+#[test]
+fn first_cssom_edit_of_a_rendered_style_updates_ordinary_rules() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        const s = document.head.appendChild(document.createElement('style'));
+        s.textContent = '#first-edit { width: 11px; }';
+        const el = document.body.appendChild(document.createElement('div'));
+        el.id = 'first-edit';
+        const width = () => getComputedStyle(el).width;
+        const before = width();
+        const index = s.sheet.insertRule('#first-edit { width: 23px; }', s.sheet.cssRules.length);
+        const inserted = width();
+        s.sheet.deleteRule(index);
+        [before, inserted, width()].join('|')
+    "#);
+    assert_eq!(actual, "11px|23px|11px");
+}
