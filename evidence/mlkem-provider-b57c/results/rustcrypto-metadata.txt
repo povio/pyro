@@ -1,0 +1,18 @@
+ml-kem #crypto #kyber #lattice #post-quantum
+Pure Rust implementation of the Module-Lattice-Based Key-Encapsulation Mechanism Standard
+(formerly known as Kyber) as described in FIPS 203
+version: 0.3.4
+license: Apache-2.0 OR MIT
+rust-version: 1.87
+documentation: https://docs.rs/ml-kem/0.3.4
+homepage: https://github.com/RustCrypto/KEMs/tree/master/ml-kem
+repository: https://github.com/RustCrypto/KEMs
+crates.io: https://crates.io/crates/ml-kem/0.3.4
+features:
+ +default   = [alloc]
+  alloc     = [module-lattice/alloc, pkcs8?/alloc]
+  getrandom = [kem/getrandom]
+  hazmat    = []
+  pem       = [pkcs8/pem]
+  pkcs8     = [dep:const-oid, dep:pkcs8]
+  zeroize   = [module-lattice/zeroize, dep:zeroize]

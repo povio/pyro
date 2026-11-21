@@ -1,0 +1,3 @@
+{"algorithm":"ML-KEM-512","roundTrips":31,"medianNs":{"keygen":22291,"encapsulate":19875,"decapsulate":24667}}
+{"algorithm":"ML-KEM-768","roundTrips":31,"medianNs":{"keygen":36000,"encapsulate":33250,"decapsulate":38542}}
+{"algorithm":"ML-KEM-1024","roundTrips":31,"medianNs":{"keygen":54750,"encapsulate":50875,"decapsulate":57000}}

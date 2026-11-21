@@ -1,0 +1,2 @@
+{"algorithm":"ML-KEM-768","ciphertextBytes":1088,"medianNs":{"decapsulate":64959,"encapsulate":16417,"keygen":141375},"roundTrips":31,"sharedBytes":32}
+{"algorithm":"ML-KEM-1024","ciphertextBytes":1568,"medianNs":{"decapsulate":96000,"encapsulate":23459,"keygen":216541},"roundTrips":31,"sharedBytes":32}

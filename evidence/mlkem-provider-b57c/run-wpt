@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+D=$(CDPATH= cd -- "$(dirname "$0")" && pwd); P=${CENSUS_ROOT:?}
+cd "$P/runner"
+export NODE_PATH="$P/runner/node_modules" WPT_CHROME_STATE_DIR="$D/profile" WPT_CHROME_REFERENCE_MODE=wpt-stable
+exec bun bench/wpt/run-no-native-retry.mjs --kind testharness --wpt "${WPT_CHECKOUT:?}" --server wptserve --testdriver --http2 --generated-globals "${WPT_MANIFEST:?}" --manifest-inventory --measure-reviewed-skips --dirs WebCryptoAPI --jobs 4 --tests "$D/urls.json" --bin "$1=$2" --out "$D/$1.json"
