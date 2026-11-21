@@ -8,6 +8,8 @@ license.workspace = true
 autotests = false
 
 [features]
+# External OpenSSL SDK experiment; no system crypto or TLS replacement.
+experimental-mlkem-openssl = ["dep:cc"]
 # Hooks only tests use (`test_hooks`): enabled through dev-dependencies (pyro-cdp's), never in a build
 # of the browser (resolver 2 does not unify dev-dependency features into it).
 test-hooks = []
@@ -93,3 +95,6 @@ tokio = { version = "1", features = ["sync"] }
 
 [lints]
 workspace = true
+
+[build-dependencies]
+cc = { version = "1", optional = true }

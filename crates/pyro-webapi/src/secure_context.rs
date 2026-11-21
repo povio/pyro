@@ -29,6 +29,8 @@ pub(crate) fn hide_if_insecure(s: &Scope<'_>, page: &PageDom) -> JsResult<()> {
     if secure(s, page) {
         return Ok(());
     }
+    #[cfg(feature = "experimental-mlkem-openssl")]
+    hide_mlkem(s)?;
     let global = s.global();
     for name in GLOBALS {
         global.delete(name)?;
@@ -37,6 +39,18 @@ pub(crate) fn hide_if_insecure(s: &Scope<'_>, page: &PageDom) -> JsResult<()> {
         if let Some(proto) = navigator.get_atom("prototype")?.as_object() {
             for name in NAVIGATOR {
                 proto.delete(name)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "experimental-mlkem-openssl")]
+pub(crate) fn hide_mlkem(s: &Scope<'_>) -> JsResult<()> {
+    if let Some(ctor) = s.global().get_atom("SubtleCrypto")?.as_object() {
+        if let Some(prototype) = ctor.get_atom("prototype")?.as_object() {
+            for method in ["encapsulateBits", "decapsulateBits", "encapsulateKey", "decapsulateKey"] {
+                prototype.delete(method)?;
             }
         }
     }

@@ -18,6 +18,8 @@ use rsa::{PrivateKey as RsaPrivateKey, PublicKey as RsaPublicKey};
 use sha1::Sha1;
 use sha2::{Digest, Sha256, Sha384, Sha512};
 
+#[cfg(feature = "experimental-mlkem-openssl")]
+mod mlkem;
 mod rsa;
 
 fn data_error(message: impl Into<String>) -> JsError {
@@ -787,6 +789,10 @@ fn u32_arg(v: Value<'_>) -> JsResult<u32> {
 /// The object subtle.js receives: one function per primitive.
 pub(crate) fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
     let n = s.object();
+    #[cfg(feature = "experimental-mlkem-openssl")]
+    if crate::secure_context::secure(s, crate::target::page_of(s)?.as_ref()) {
+        mlkem::install(s, n)?;
+    }
     macro_rules! native {
         ($name:literal, |$s:ident, $a:ident| $body:expr) => {
             n.set($name, s.function($name, |$s, _this, $a| $body)?.value())?;

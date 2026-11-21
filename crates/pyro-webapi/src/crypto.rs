@@ -180,6 +180,8 @@ impl JsClass for SubtleCrypto {
                 def.method($m, $length, |s, _d, a| subtle_call(s, $m, a));
             )*};
         }
+        #[cfg(feature = "experimental-mlkem-openssl")]
+        operations!("encapsulateBits": 2, "decapsulateBits": 3, "encapsulateKey": 5, "decapsulateKey": 6);
         operations!(
             "encrypt": 3,
             "decrypt": 3,

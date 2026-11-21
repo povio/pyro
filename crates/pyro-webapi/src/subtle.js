@@ -173,6 +173,8 @@
 
   // ----- Algorithm normalization -----------------------------------------
 
+  const ML_KEM = ownDescriptor(N, 'mlKemGenerate') ? ['ML-KEM-512','ML-KEM-768','ML-KEM-1024'] : [];
+  const validUsages = ML_KEM.length ? [...USAGES,...KEM_USAGES] : USAGES;
   const CHACHA = 'ChaCha20-Poly1305';
   const AES = ['AES-CTR', 'AES-CBC', 'AES-GCM', 'AES-KW'];
   const RSA = ['RSASSA-PKCS1-v1_5', 'RSA-PSS', 'RSA-OAEP'];
@@ -185,18 +187,20 @@
   const cipher = { [CHACHA]: 'AeadParams', 'RSA-OAEP': 'RsaOaepParams', 'AES-CTR': 'AesCtrParams', 'AES-CBC': 'AesCbcParams', 'AES-GCM': 'AesGcmParams' };
   const signer = { 'RSASSA-PKCS1-v1_5': '', 'RSA-PSS': 'RsaPssParams', ECDSA: 'EcdsaParams', Ed25519: '', HMAC: '' };
   const REGISTRY = {
+    encapsulate: map(ML_KEM,''),
+    decapsulate: map(ML_KEM,''),
     encrypt: cipher,
     decrypt: cipher,
     sign: signer,
     verify: signer,
     digest: map(SHA, ''),
     generateKey: {
-      ...map(RSA, 'RsaHashedKeyGenParams'), ECDSA: 'EcKeyGenParams', ECDH: 'EcKeyGenParams', Ed25519: '', X25519: '',
+      ...map(ML_KEM, ''), ...map(RSA, 'RsaHashedKeyGenParams'), ECDSA: 'EcKeyGenParams', ECDH: 'EcKeyGenParams', Ed25519: '', X25519: '',
       [CHACHA]: '', ...map(AES, 'AesKeyGenParams'), HMAC: 'HmacKeyGenParams',
     },
     deriveBits: { ECDH: 'EcdhKeyDeriveParams', X25519: 'EcdhKeyDeriveParams', HKDF: 'HkdfParams', PBKDF2: 'Pbkdf2Params' },
     importKey: {
-      ...map(RSA, 'RsaHashedImportParams'), ECDSA: 'EcKeyImportParams', ECDH: 'EcKeyImportParams', Ed25519: '', X25519: '',
+      ...map(ML_KEM, ''), ...map(RSA, 'RsaHashedImportParams'), ECDSA: 'EcKeyImportParams', ECDH: 'EcKeyImportParams', Ed25519: '', X25519: '',
       [CHACHA]: '', ...map(AES, ''), HMAC: 'HmacImportParams', HKDF: '', PBKDF2: '',
     },
     wrapKey: { 'AES-KW': '' },
@@ -338,7 +342,7 @@
   };
   const canonicalUsages = (usages) => {
     const out = [];
-    for (const usage of USAGES) if (has(usages, usage)) out.push(usage);
+    for (const usage of validUsages) if (has(usages, usage)) out.push(usage);
     return out;
   };
   const makeKey = (type, extractable, alg, usages, material) => {
@@ -372,6 +376,7 @@
   const CRYPT_KEY = { public: ['encrypt', 'wrapKey'], private: ['decrypt', 'unwrapKey'] };
   const DERIVE_KEY = { public: [], private: ['deriveKey', 'deriveBits'] };
   const pairUsages = (name) => {
+    if (has(ML_KEM,name)) return {public: ['encapsulateKey','encapsulateBits'], private: ['decapsulateKey','decapsulateBits']};
     if (name === 'RSA-OAEP') return CRYPT_KEY;
     if (name === 'ECDH' || name === 'X25519') return DERIVE_KEY;
     return SIGN_KEY;
@@ -543,6 +548,15 @@
     if (format === 'jwk' ? keyData.jwk === undefined : keyData.buffer === undefined) {
       throw new TypeErrorC(format === 'jwk' ? 'Key data must be a JsonWebKey for the jwk format' : 'Key data must be a BufferSource for this format');
     }
+    if (has(ML_KEM,name)) {
+      const priv = format === 'raw-seed' || format === 'pkcs8';
+      if (!priv && format !== 'raw-public' && format !== 'spki') throw notSupported('Unsupported ML-KEM key format');
+      const type = priv ? 'private' : 'public';
+      checkUsages(usages, pairUsages(name)[type]);
+      if (priv && !usages.length) throw syntax('Private keys require usages');
+      const material = N.mlKemConvert(name, format, priv ? 'raw-seed' : 'raw-public', copy(keyData.buffer));
+      return makeKey(type,extractable,{name},usages,view(material));
+    }
     format = resolveKeyFormat(format, name);
     const key = SECRET_USAGES[name] ? importSecret(format, keyData, normalized, extractable, usages) : importAsym(format, keyData, normalized, extractable, usages);
     const k = slotsOf(key);
@@ -554,6 +568,13 @@
     const name = k.alg.name;
     if (name === 'HKDF' || name === 'PBKDF2') throw notSupported(`${name} keys cannot be exported`);
     if (!k.extractable) throw access('The key is not extractable');
+    if (has(ML_KEM,name)) {
+      const priv = format === 'raw-seed' || format === 'pkcs8';
+      if (!priv && format !== 'raw-public' && format !== 'spki') throw notSupported('Unsupported ML-KEM key format');
+      if ((priv ? 'private' : 'public') !== k.type) throw access('Invalid ML-KEM key type');
+      const stored = priv ? 'raw-seed' : 'raw-public';
+      return format === stored ? copyOut(k.material) : N.mlKemConvert(name,stored,format,k.material);
+    }
     format = resolveKeyFormat(format, name);
     if (k.type === 'secret') {
       if (format === (name === CHACHA ? 'raw-secret' : 'raw')) return copyOut(k.material);
@@ -617,9 +638,18 @@
       if (usages.length === 0) throw syntax('Usages cannot be empty when creating a key.');
       return makeKey('secret', extractable, alg, usages, bytes);
     }
-    const kind = asymKind(name);
     const allowed = pairUsages(name);
     checkUsages(usages, [...allowed.public, ...allowed.private]);
+    if (has(ML_KEM,name)) {
+      const priv = usages.filter(u=>has(allowed.private,u));
+      if (!priv.length) throw syntax('Private keys require usages');
+      const pair = N.mlKemGenerate(name);
+      return {
+        privateKey: makeKey('private',extractable,{name},priv,view(pair[0])),
+        publicKey: makeKey('public',true,{name},usages.filter(u=>has(allowed.public,u)),view(pair[1])),
+      };
+    }
+    const kind = asymKind(name);
     const alg = { name };
     if (kind === 'EC') {
       if (!has(CURVES, normalized.namedCurve)) throw notSupported(`Unsupported namedCurve '${normalized.namedCurve}'`);
@@ -721,6 +751,31 @@
 
   // ----- SubtleCrypto methods ----------------------------------------------
 
+  function kem(args, encapsulating, asKey) {
+    const op = encapsulating ? 'encapsulate' : 'decapsulate';
+    const method = op + (asKey ? 'Key' : 'Bits');
+    const offset = encapsulating ? 2 : 3;
+    required(args,offset+(asKey?3:0),method);
+    const k = keyArg(args[1],'parameter 2');
+    const source = encapsulating ? null : requireBuffer(args[2],'parameter 3');
+    const extractable = asKey && toBoolean(args[offset+1]);
+    const usages = asKey ? keyUsages(args[offset+2]) : null;
+    const algorithm = normalize(args[0],op);
+    const target = asKey ? normalize(args[offset],'importKey') : null;
+    checkKey(k,algorithm,method);
+    if (k.type !== (encapsulating?'public':'private')) throw access('Wrong ML-KEM key type');
+    let bits, ciphertext;
+    if (encapsulating) {
+      const result = N.mlKemEncapsulate(algorithm.name, k.material);
+      bits = result[0];
+      ciphertext = result[1];
+    } else {
+      bits = N.mlKemDecapsulate(algorithm.name, k.material, copy(source));
+    }
+    const sharedKey = asKey ? importKeyStep('raw-secret',{buffer:[bits,0,apply(abLength,bits,[])]},target,extractable,usages) : bits;
+    return encapsulating ? {sharedKey,ciphertext} : sharedKey;
+  }
+
   const methods = {
     encrypt(args) {
       required(args, 3, 'encrypt');
@@ -764,6 +819,10 @@
       checkKey(k, normalized, 'verify');
       return verifyStep(normalized, k, signature, bytes);
     },
+    encapsulateBits(args) {return kem(args,true,false);},
+    decapsulateBits(args) {return kem(args,false,false);},
+    encapsulateKey(args) {return kem(args,true,true);},
+    decapsulateKey(args) {return kem(args,false,true);},
     generateKey(args) {
       required(args, 3, 'generateKey');
       const [algorithm, extractableValue, usagesValue] = args;
@@ -888,7 +947,7 @@
       if (!isObject(usages) || !(material instanceof Uint8ArrayC)) throw bad();
       const list = [];
       for (let i = 0; i < usages.length; i++) {
-        if (!has(USAGES, usages[i])) throw bad();
+        if (!has(validUsages, usages[i])) throw bad();
         list.push(usages[i]);
       }
       // Own data properties only: nothing the receiving realm's prototypes add.
