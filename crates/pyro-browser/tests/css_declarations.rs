@@ -1071,3 +1071,21 @@ fn transition_effect_exposes_independent_computed_endpoints() {
     "#);
     assert_eq!(actual, "2|12px|0|45px|1|linear|auto|45px|1");
 }
+
+#[test]
+fn css_animation_effect_lists_computed_values_in_offset_order() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        const sheet = document.head.appendChild(document.createElement('style'));
+        sheet.textContent = '@keyframes probe { to { left: var(--end); } from { left: 2em; } }';
+        const el = document.body.appendChild(document.createElement('div'));
+        el.style.cssText = 'position:relative;font-size:10px;--end:50px;animation:probe 100s linear';
+        const effect = el.getAnimations()[0].effect, first = effect.getKeyframes();
+        el.style.setProperty('--end', '60px');
+        const second = effect.getKeyframes();
+        const script = new KeyframeEffect(el, [{left:'1em'}, {left:'3em'}], 100);
+        [first.length, first[0].offset, first[0].left, first[1].computedOffset, first[1].left,
+         second[1].left, second[0].easing, second[0].composite, script.getKeyframes()[0].left].join('|')
+    "#);
+    assert_eq!(actual, "2|0|20px|1|50px|60px|linear|auto|1em");
+}
