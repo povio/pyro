@@ -501,9 +501,9 @@ impl LayoutPassState<'_> {
             };
             self.dispatch_child_layout(node_id, probe, None).size
         });
-        let apply = |function: &LengthPercentage, size: f32, inset: f32| -> f32 {
+        let apply = |function: &LengthPercentage, size: f32, inset: f32, percent: Option<f32>| -> f32 {
             let basis = (size - inset).max(0.0);
-            function.resolve(CSSPixelLength::new(basis)).px().max(0.0) + inset
+            function.resolve_size(CSSPixelLength::new(basis), CSSPixelLength::new(percent.unwrap_or_default())).px().max(0.0) + inset
         };
         let previous = |axis, known, has_function: bool| {
             if !has_function { return None; }
@@ -525,7 +525,7 @@ impl LayoutPassState<'_> {
         if let Some(function) = &functions.width {
             let size = inputs.known_dimensions.width.or(measured.map(|size| size.width)).unwrap_or(0.0);
             width_basis = Some(size);
-            let mut width = apply(function, size, box_inset.width);
+            let mut width = apply(function, size, box_inset.width, inputs.parent_size.width);
             // A size measured in definite space is the box's fit-content size: the space between
             // the calculation of its min-content and max-content sizes (as Blink), not the
             // calculation of the fit-content size of its basis.
@@ -546,11 +546,11 @@ impl LayoutPassState<'_> {
                 let max_content = content(AvailableSpace::MaxContent).max(min_content);
                 if measuring_flex_width {
                     let fit = space.clamp(min_content, max_content);
-                    width = apply(function, fit, box_inset.width);
+                    width = apply(function, fit, box_inset.width, inputs.parent_size.width);
                     width_basis = Some(fit);
                 } else {
-                    let minimum = apply(function, min_content, box_inset.width);
-                    width = space.clamp(minimum, apply(function, max_content, box_inset.width).max(minimum));
+                    let minimum = apply(function, min_content, box_inset.width, inputs.parent_size.width);
+                    width = space.clamp(minimum, apply(function, max_content, box_inset.width, inputs.parent_size.width).max(minimum));
                     width_basis = None;
                 }
             }
@@ -563,7 +563,7 @@ impl LayoutPassState<'_> {
         if let Some(function) = &functions.height {
             let size = inputs.known_dimensions.height.or(measured.map(|size| size.height)).unwrap_or(0.0);
             height_basis = Some(size);
-            let height = apply(function, size, box_inset.height).maybe_min(max.height).maybe_max(min.height);
+            let height = apply(function, size, box_inset.height, inputs.parent_size.height).maybe_min(max.height).maybe_max(min.height);
             if inputs.known_dimensions.height.is_none() {
                 self.calc_size_results.push((node_id, 1, height.max(padding_border.height), height_basis));
                 if column_flex {
@@ -573,14 +573,14 @@ impl LayoutPassState<'_> {
             inputs.known_dimensions.height = Some(height.max(padding_border.height));
         }
         if inputs.run_mode == RunMode::PerformLayout {
-            let limits = |intrinsic: Option<f32>, numeric: Option<Option<f32>>, inset: f32, padding: f32, minimum: Option<f32>, maximum: Option<f32>| {
+            let limits = |percent, intrinsic: Option<f32>, numeric: Option<Option<f32>>, inset: f32, padding: f32, minimum: Option<f32>, maximum: Option<f32>| {
                 numeric.or_else(|| intrinsic.map(|size| Some((size - inset).max(0.0)))).map(|basis| {
-                    (basis, (minimum.unwrap_or(0.0).max(padding) - inset).max(0.0), maximum.map(|value| value - inset))
+                    (basis, percent, (minimum.unwrap_or(0.0).max(padding) - inset).max(0.0), maximum.map(|value| value - inset))
                 })
             };
             self.nodes[dom_node_id(node_id)].layout_data_mut().calc_size_inputs = [
-                limits(width_basis, numeric_width, box_inset.width, padding_border.width, min.width, max.width),
-                limits(height_basis, numeric_height, box_inset.height, padding_border.height, min.height, max.height),
+                limits(inputs.parent_size.width, width_basis, numeric_width, box_inset.width, padding_border.width, min.width, max.width),
+                limits(inputs.parent_size.height, height_basis, numeric_height, box_inset.height, padding_border.height, min.height, max.height),
             ];
         }
         inputs
@@ -2458,6 +2458,11 @@ impl LayoutPartialTree for LayoutPassState<'_> {
                 *unrounded = *layout;
                 if let Some(height) = border_height { unrounded.size.height = height; }
             });
+    }
+
+    fn resolve_size_calculation(&self, calc_ptr: *const (), size: f32, percent: f32) -> f32 {
+        let calc = unsafe { &*(calc_ptr as *const CalcLengthPercentage) };
+        calc.resolve_size(CSSPixelLength::new(size), CSSPixelLength::new(percent)).px()
     }
 
     fn resolve_calc_value(&self, calc_ptr: *const (), parent_size: f32) -> f32 {

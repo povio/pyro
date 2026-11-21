@@ -1,5 +1,5 @@
 diff --git a/src/compute/block.rs b/src/compute/block.rs
-index 3cd3e713..f6a9ec56 100644
+index 3cd3e713..1272ff92 100644
 --- a/src/compute/block.rs
 +++ b/src/compute/block.rs
 @@ -6,8 +6,8 @@ use crate::style::{
@@ -760,7 +760,7 @@ index 3cd3e713..f6a9ec56 100644
 +            Some(height) if min_height_is_content => {
 +                // pyro: `min-height: calc-size(auto, ...)` is its calculation of the content height
 +                let content = match calc_size_min_height {
-+                    Some(function) => function.apply(intrinsic_outer_height, |val, basis| tree.calc(val, basis)),
++                    Some(function) => function.apply(intrinsic_outer_height, parent_size.height, |val, size, percent| tree.resolve_size_calculation(val, size, percent)),
 +                    None => intrinsic_outer_height,
 +                };
 +                height.max(content.maybe_min(max_size.height))
@@ -1160,7 +1160,7 @@ index 3cd3e713..f6a9ec56 100644
 +    );
 +    // pyro: `min-width: calc-size(auto, ...)` is its calculation of it.
 +    let width = match item.calc_size_min_width {
-+        Some(function) => function.apply(width, |val, basis| tree.calc(val, basis)),
++        Some(function) => function.apply(width, parent_size.width, |val, size, percent| tree.resolve_size_calculation(val, size, percent)),
 +        None => width,
 +    };
 +    width.maybe_min(item.max_size.width)
@@ -1877,7 +1877,7 @@ index 86f630aa..45e5cc51 100644
      let keyword_width = if known_dimensions.width.is_none() {
          resolve_sizing_keyword(size_style.width, Some(stretch_size.width), Some(area_size.width), |val, basis| {
 diff --git a/src/compute/flexbox.rs b/src/compute/flexbox.rs
-index a8dbbcf2..6e4d31ff 100644
+index a8dbbcf2..1df80654 100644
 --- a/src/compute/flexbox.rs
 +++ b/src/compute/flexbox.rs
 @@ -3,6 +3,7 @@ use crate::compute::common::alignment::{
@@ -2592,7 +2592,7 @@ index a8dbbcf2..6e4d31ff 100644
          // Spec: https://www.w3.org/TR/css-flexbox-1/#change-2016-max-contribution
          let padding_border_sum = child.padding.main_axis_sum(constants.dir) + child.border.main_axis_sum(constants.dir);
 +        if let Some(calculation) = basis_calculation {
-+            child.flex_basis = calculation.apply((child.flex_basis - box_sizing_adjustment).max(0.0), |value, basis| tree.calc(value, basis)) + box_sizing_adjustment;
++            child.flex_basis = calculation.apply((child.flex_basis - box_sizing_adjustment).max(0.0), percent_resolution_main_size, |val, size, percent| tree.resolve_size_calculation(val, size, percent)) + box_sizing_adjustment;
 +        }
          child.flex_basis = child.flex_basis.max(padding_border_sum);
  
@@ -2696,7 +2696,7 @@ index a8dbbcf2..6e4d31ff 100644
 +        if style_min_main_size.is_none() {
 +            if let Some(function) = tree.get_flexbox_child_style(child.node).calc_size_min().main(dir) {
 +                child.resolved_minimum_main_size =
-+                    function.apply(child.resolved_minimum_main_size, |val, basis| tree.calc(val, basis));
++                    function.apply(child.resolved_minimum_main_size, percent_resolution_main_size, |val, size, percent| tree.resolve_size_calculation(val, size, percent));
 +            }
 +        }
 +
@@ -10049,7 +10049,7 @@ index a3f746b1..713dbd97 100644
  
  /// Controls whether grid items are placed row-wise or column-wise. And whether the sparse or dense packing algorithm is used.
 diff --git a/src/style/mod.rs b/src/style/mod.rs
-index a9e57f33..2c58e5ed 100644
+index a9e57f33..1c38e270 100644
 --- a/src/style/mod.rs
 +++ b/src/style/mod.rs
 @@ -41,7 +41,7 @@ pub use self::grid::{
@@ -10069,8 +10069,8 @@ index a9e57f33..2c58e5ed 100644
 +/// basis gives.
 +#[derive(Copy, Clone, Debug, PartialEq)]
 +pub enum CalcSizeFunction {
-+    /// `size` times this factor
-+    Scale(f32),
++    /// A fraction of the percentage reference length
++    Percentage(f32),
 +    /// This length, whatever the size
 +    Length(f32),
 +    /// A `calc()` whose percentage basis is the size (an opaque handle, as `CompactLength::calc`)
@@ -10080,11 +10080,11 @@ index a9e57f33..2c58e5ed 100644
 +impl CalcSizeFunction {
 +    /// The calculation applied to `size`, never negative.
 +    #[inline]
-+    pub fn apply(self, size: f32, calc_resolver: impl Fn(*const (), f32) -> f32) -> f32 {
++    pub fn apply(self, size: f32, percent_basis: Option<f32>, calc_resolver: impl Fn(*const (), f32, f32) -> f32) -> f32 {
 +        let value = match self {
-+            Self::Scale(factor) => size * factor,
++            Self::Percentage(factor) => percent_basis.unwrap_or_default() * factor,
 +            Self::Length(length) => length,
-+            Self::Calc(calc) => calc_resolver(calc, size),
++            Self::Calc(calc) => calc_resolver(calc, size, percent_basis.unwrap_or_default()),
 +        };
 +        value.max(0.0)
 +    }
@@ -10448,10 +10448,20 @@ index e250d742..f9ddda97 100644
              bottom_margin: CollapsibleMarginSet::ZERO,
              margins_can_collapse_through: false,
 diff --git a/src/tree/traits.rs b/src/tree/traits.rs
-index 7d4adf22..c83a4405 100644
+index 7d4adf22..6b18b88d 100644
 --- a/src/tree/traits.rs
 +++ b/src/tree/traits.rs
-@@ -201,6 +201,15 @@ pub trait LayoutPartialTree: TraversePartialTree {
+@@ -196,11 +196,25 @@ pub trait LayoutPartialTree: TraversePartialTree {
+         0.0
+     }
+ 
++    /// Resolve a calc-size expression with independent size and percentage bases.
++    fn resolve_size_calculation(&self, val: *const (), size: f32, _percent: f32) -> f32 {
++        self.resolve_calc_value(val, size)
++    }
++
+     /// Set the node's unrounded layout
+     fn set_unrounded_layout(&mut self, node_id: NodeId, layout: &Layout);
  
      /// Compute the specified node's size or full layout given the specified constraints
      fn compute_child_layout(&mut self, node_id: NodeId, inputs: LayoutInput) -> LayoutOutput;
@@ -10467,7 +10477,7 @@ index 7d4adf22..c83a4405 100644
  }
  
  /// Extends [`LayoutPartialTree`] with the operations needed by the out-of-flow positioning pass
-@@ -221,6 +230,33 @@ pub trait LayoutContainingBlock: LayoutPartialTree {
+@@ -221,6 +235,33 @@ pub trait LayoutContainingBlock: LayoutPartialTree {
      /// Interpreted in the containing block's axes (see [`LayoutPartialTree::get_core_container_style`]).
      fn get_oof_item_style(&self, node_id: NodeId) -> Self::OofItemStyle<'_>;
  
@@ -10501,7 +10511,7 @@ index 7d4adf22..c83a4405 100644
      /// Clear the list of out-of-flow (absolute/fixed) boxes whose containing block is `node_id`.
      ///
      /// This is called (exactly once) for each node laid out with `RunMode::PerformLayout`, before
-@@ -228,6 +264,9 @@ pub trait LayoutContainingBlock: LayoutPartialTree {
+@@ -228,6 +269,9 @@ pub trait LayoutContainingBlock: LayoutPartialTree {
      /// so that lists recorded by previous layout runs do not persist.
      fn clear_hoisted_children(&mut self, node_id: NodeId);
  
@@ -10511,7 +10521,7 @@ index 7d4adf22..c83a4405 100644
      /// Append to the list of out-of-flow boxes whose containing block is `node_id`.
      ///
      /// This is called by each containing block for the boxes it lays out, and by
-@@ -239,6 +278,25 @@ pub trait LayoutContainingBlock: LayoutPartialTree {
+@@ -239,6 +283,25 @@ pub trait LayoutContainingBlock: LayoutPartialTree {
      /// implementing paint/hit-testing traversals.
      fn add_hoisted_children(&mut self, node_id: NodeId, hoisted: &[NodeId]);
  
@@ -10537,7 +10547,7 @@ index 7d4adf22..c83a4405 100644
      /// Read back the detailed layout information most recently recorded for `node_id`
      /// (as stored by [`LayoutGridContainer::set_detailed_grid_info`]).
      ///
-@@ -290,6 +348,16 @@ pub trait RoundTree: TraverseTree {
+@@ -290,6 +353,16 @@ pub trait RoundTree: TraverseTree {
      /// Get the nth out-of-flow box whose containing block is `node_id`
      /// (as recorded by [`LayoutContainingBlock::add_hoisted_children`])
      fn get_hoisted_child_id(&self, node_id: NodeId, index: usize) -> NodeId;
@@ -10554,7 +10564,7 @@ index 7d4adf22..c83a4405 100644
  }
  
  /// Trait used by the `print_tree` method which prints a debug representation
-@@ -344,6 +412,76 @@ pub trait LayoutGridContainer: LayoutPartialTree {
+@@ -344,6 +417,76 @@ pub trait LayoutGridContainer: LayoutPartialTree {
      /// Interpreted in the container's axes (see [`LayoutPartialTree::get_core_container_style`]).
      fn get_grid_child_style(&self, child_node_id: NodeId) -> Self::GridItemStyle<'_>;
  
@@ -10631,7 +10641,7 @@ index 7d4adf22..c83a4405 100644
      /// Set the node's detailed grid information
      ///
      /// Implementing this method is optional. Doing so allows you to access details about the the grid such as
-@@ -351,6 +489,22 @@ pub trait LayoutGridContainer: LayoutPartialTree {
+@@ -351,6 +494,22 @@ pub trait LayoutGridContainer: LayoutPartialTree {
      fn set_detailed_grid_info(&mut self, _node_id: NodeId, _detailed_grid_info: DetailedGridInfo<Self::CustomIdent>) {
          debug_log!("LayoutGridContainer::set_detailed_grid_info called");
      }
@@ -10654,7 +10664,7 @@ index 7d4adf22..c83a4405 100644
  }
  
  #[cfg(feature = "block_layout")]
-@@ -373,6 +527,152 @@ pub trait LayoutBlockContainer: LayoutPartialTree {
+@@ -373,6 +532,152 @@ pub trait LayoutBlockContainer: LayoutPartialTree {
      /// Interpreted in the container's axes (see [`LayoutPartialTree::get_core_container_style`]).
      fn get_block_child_style(&self, child_node_id: NodeId) -> Self::BlockItemStyle<'_>;
  

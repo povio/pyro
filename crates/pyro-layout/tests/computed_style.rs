@@ -447,6 +447,19 @@ fn flex_basis_calculates_from_content_independently_of_height() {
 }
 
 #[test]
+fn intrinsic_size_and_container_percentage_are_independent() {
+    let page = Page::new(r#"<!doctype html><div style="display:flex;width:300px">
+        <div id=row style="min-width:0;flex:0 0 calc-size(max-content,size + 10%)"><div style="width:45px"></div></div></div>
+        <div style="display:flex;flex-direction:column;height:200px">
+        <div id=column style="flex:0 0 calc-size(calc-size(content,size + 10%),size + 20%)"><div style="height:25px"></div></div></div>
+        <div style="display:flex;flex-direction:column"><div id=indefinite style="flex:0 0 calc-size(content,size + 50%)"><div style="height:35px"></div></div></div>"#);
+    let used = |selector, name| page.layout.computed_style_value(&page.dom.borrow(), page.find(selector), name);
+    assert_eq!(used("#row", "width"), "75px");
+    assert_eq!(used("#column", "height"), "85px");
+    assert_eq!(used("#indefinite", "height"), "35px");
+}
+
+#[test]
 fn flex_basis_calculation_uses_the_items_box_sizing() {
     let page = Page::new(r#"<!doctype html><div style="display:flex;width:240px">
         <div id=content style="width:40px;padding:5px;flex:0 0 calc-size(auto,size * 2)"></div>

@@ -358,7 +358,7 @@ impl BaseDocument {
         use style::values::computed::Size;
         let node = self.get_node(node_id)?;
         let live = node.primary_styles()?;
-        let (basis, min, max) = node.layout_data().calc_size_inputs[usize::from(!width)]?;
+        let (basis, percent, min, max) = node.layout_data().calc_size_inputs[usize::from(!width)]?;
         if !live.writing_mode.is_horizontal() { return None; }
         let (live, sampled) = (live.get_position(), sampled.get_position());
         let sizes = if width { (&live.width, &sampled.width) } else { (&live.height, &sampled.height) };
@@ -372,7 +372,7 @@ impl BaseDocument {
             _ => return None,
         };
         let reference = if calculation.0.has_percentage() { basis? } else { 0.0 };
-        Some(calculation.0.resolve(CSSPixelLength::new(reference)).px().min(max.unwrap_or(f32::INFINITY)).max(min))
+        Some(calculation.0.resolve_size(CSSPixelLength::new(reference), CSSPixelLength::new(percent.unwrap_or_default())).px().min(max.unwrap_or(f32::INFINITY)).max(min))
     }
 
     fn resolved_style_value_with_style(

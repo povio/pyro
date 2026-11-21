@@ -141,7 +141,7 @@ pub fn fit_content_function(val: &stylo::LengthPercentage) -> taffy::Dimension {
 pub fn calc_size_function(val: &stylo::LengthPercentage) -> taffy::CalcSizeFunction {
     match val.unpack() {
         stylo::UnpackedLengthPercentage::Length(len) => taffy::CalcSizeFunction::Length(len.px()),
-        stylo::UnpackedLengthPercentage::Percentage(percentage) => taffy::CalcSizeFunction::Scale(percentage.0),
+        stylo::UnpackedLengthPercentage::Percentage(percentage) => taffy::CalcSizeFunction::Percentage(percentage.0),
         stylo::UnpackedLengthPercentage::Calc(calc_ptr) => {
             taffy::CalcSizeFunction::Calc(calc_ptr as *const stylo::CalcLengthPercentage as *const ())
         }

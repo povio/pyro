@@ -107,9 +107,9 @@ impl calc::CalcNodeLeaf for ComputedLeaf {
         }
     }
 
-    fn as_percentage(&self) -> Option<(f32, Optional<NumericBaseType>)> {
+    fn size_coefficient(&self) -> Option<f32> {
         match *self {
-            Self::Percentage(p) => Some((p.get(), p.hint)),
+            Self::Percentage(p) if p.size_basis => Some(p.get()),
             _ => None,
         }
     }
@@ -202,7 +202,8 @@ impl calc::CalcNodeLeaf for ComputedLeaf {
                 *one += *other;
             },
             (&mut Percentage(ref mut one), Percentage(other)) => {
-                *one = CalcPercentageLeaf::new(one.get() + other.get(), one.combined_hint(other));
+                if one.size_basis != other.size_basis { return Err(()); }
+                *one = one.scaled(one.get() + other.get());
             },
             (&mut Number(ref mut one), Number(other)) => {
                 *one += *other;
@@ -264,10 +265,10 @@ impl calc::CalcNodeLeaf for ComputedLeaf {
         }
         Ok(match (self, other) {
             (Length(one), Length(other)) => Length(super::Length::new(op(one.px(), other.px()))),
-            (Percentage(one), Percentage(other)) => Self::Percentage(CalcPercentageLeaf::new(
-                op(one.get(), other.get()),
-                one.combined_hint(other),
-            )),
+            (Percentage(one), Percentage(other)) => Self::Percentage({
+                if one.size_basis != other.size_basis { return Err(()); }
+                one.scaled(op(one.get(), other.get()))
+            }),
             (&Number(one), &Number(other)) => Self::Number(op(one, other)),
             (Angle(one), Angle(other)) => Self::Angle(super::Angle::from_degrees(op(
                 one.degrees(),
@@ -296,7 +297,7 @@ impl calc::CalcNodeLeaf for ComputedLeaf {
                 *value = Length::new(op(value.px()));
             },
             Self::Percentage(p) => {
-                *p = CalcPercentageLeaf::new(op(p.get()), p.hint);
+                *p = p.scaled(op(p.get()));
             },
             Self::Number(value) => {
                 *value = op(*value);

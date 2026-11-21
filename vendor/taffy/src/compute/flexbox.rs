@@ -1508,7 +1508,7 @@ fn determine_flex_base_size(
         // Spec: https://www.w3.org/TR/css-flexbox-1/#change-2016-max-contribution
         let padding_border_sum = child.padding.main_axis_sum(constants.dir) + child.border.main_axis_sum(constants.dir);
         if let Some(calculation) = basis_calculation {
-            child.flex_basis = calculation.apply((child.flex_basis - box_sizing_adjustment).max(0.0), |value, basis| tree.calc(value, basis)) + box_sizing_adjustment;
+            child.flex_basis = calculation.apply((child.flex_basis - box_sizing_adjustment).max(0.0), percent_resolution_main_size, |val, size, percent| tree.resolve_size_calculation(val, size, percent)) + box_sizing_adjustment;
         }
         child.flex_basis = child.flex_basis.max(padding_border_sum);
 
@@ -1621,7 +1621,7 @@ fn determine_flex_base_size(
         if style_min_main_size.is_none() {
             if let Some(function) = tree.get_flexbox_child_style(child.node).calc_size_min().main(dir) {
                 child.resolved_minimum_main_size =
-                    function.apply(child.resolved_minimum_main_size, |val, basis| tree.calc(val, basis));
+                    function.apply(child.resolved_minimum_main_size, percent_resolution_main_size, |val, size, percent| tree.resolve_size_calculation(val, size, percent));
             }
         }
 

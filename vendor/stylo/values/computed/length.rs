@@ -499,7 +499,7 @@ impl Size {
         if matches!(self, Self::CalcSizeBasis(_)) || matches!(other, Self::CalcSizeBasis(_)) {
             return self.prepared_size().animate_size(other.prepared_size(), procedure, allow_keywords);
         }
-        let identity = NonNegative(LengthPercentage::new_percent(Percentage(1.0)));
+        let identity = NonNegative(LengthPercentage::size_identity());
         let calculation = |value: &Self, basis: &Self| -> Option<NonNegativeLengthPercentage> {
             match (value, basis) {
                 (Self::CalcSizeAuto(value), Self::CalcSizeAuto(_))
