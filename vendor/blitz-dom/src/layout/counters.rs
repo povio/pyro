@@ -866,6 +866,7 @@ pub(crate) fn format(value: i32, style: &CounterStyle) -> String {
                 .map(|symbol| match symbol {
                     Symbol::String(string) => string.to_string(),
                     Symbol::Ident(ident) => ident.0.to_string(),
+                    Symbol::Image(_) => "\u{fffc}".to_string(),
                 })
                 .collect();
             let symbols: Vec<&str> = symbols.iter().map(String::as_str).collect();

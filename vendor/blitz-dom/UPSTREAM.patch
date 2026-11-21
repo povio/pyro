@@ -9875,7 +9875,7 @@ diff --git a/packages/blitz-dom/src/layout/counters.rs b/packages/blitz-dom/src/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/layout/counters.rs
-@@ -0,0 +1,1160 @@
+@@ -0,0 +1,1161 @@
 +//! pyro: CSS counters and quotes in generated content (CSS Lists 3 4, CSS 2.1 12.3-12.4).
 +//!
 +//! Before construction, a walk over the document in tree order applies each box's
@@ -10744,6 +10744,7 @@ new file mode 100644
 +                .map(|symbol| match symbol {
 +                    Symbol::String(string) => string.to_string(),
 +                    Symbol::Ident(ident) => ident.0.to_string(),
++                    Symbol::Image(_) => "\u{fffc}".to_string(),
 +                })
 +                .collect();
 +            let symbols: Vec<&str> = symbols.iter().map(String::as_str).collect();
@@ -19885,7 +19886,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
  
              ListItemLayoutPosition::Outside(Box::new(layout))
          }
-@@ -112,14 +326,342 @@
+@@ -112,14 +326,343 @@
  
      Some(ListItemLayout {
          marker,
@@ -20163,6 +20164,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
 +    let symbol = |symbol: &Symbol| match symbol {
 +        Symbol::String(text) => text.to_string(),
 +        Symbol::Ident(ident) => ident.0.to_string(),
++        Symbol::Image(_) => "\u{fffc}".to_string(),
 +    };
 +    let descriptors = rule.descriptors();
 +    let System::Extends(base) = rule.resolved_system() else {
@@ -20229,7 +20231,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
          CounterStyle::None => return None,
          CounterStyle::Name(name) => match &*name.0 {
              "lower-alpha" => {
-@@ -132,13 +674,34 @@
+@@ -132,13 +675,34 @@
                  build_alpha_marker(index, &mut marker);
                  Marker::String(format!("{}. ", marker.to_ascii_uppercase()))
              }
@@ -20266,7 +20268,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
          },
          CounterStyle::String(atom_string) => Marker::String(atom_string.as_ref().to_string()),
          CounterStyle::Symbols { symbols, .. } => {
-@@ -149,7 +712,7 @@
+@@ -149,12 +713,13 @@
                  Marker::Char('•')
              } else {
                  // Cycle through symbols based on index: 1st, 2nd, 1st, 2nd, etc.
@@ -20275,7 +20277,13 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
                  // Symbol is String or Ident variant, extract the string value
                  let sym = &syms[idx];
                  let marker_str = match sym {
-@@ -171,6 +734,36 @@
+                     style::counter_style::Symbol::String(s) => s.to_string(),
+                     style::counter_style::Symbol::Ident(id) => id.0.to_string(),
++                    style::counter_style::Symbol::Image(_) => "\u{fffc}".to_string(),
+                 };
+                 Marker::String(marker_str)
+             }
+@@ -171,6 +736,36 @@
      None
  }
  
@@ -20312,7 +20320,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
  const ALPHABET: [char; 26] = [
      'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's',
      't', 'u', 'v', 'w', 'x', 'y', 'z',
-@@ -204,24 +797,24 @@
+@@ -204,24 +799,24 @@
  
      #[test]
      fn test_marker_for_disc() {
@@ -20344,7 +20352,7 @@ diff --git a/packages/blitz-dom/src/layout/list.rs b/packages/blitz-dom/src/layo
          assert_eq!(result_1, Some(Marker::String("a. ".to_string())));
          assert_eq!(result_2, Some(Marker::String("b. ".to_string())));
          assert_eq!(result_extended_1, Some(Marker::String("aa. ".to_string())));
-@@ -230,10 +823,10 @@
+@@ -230,10 +825,10 @@
  
      #[test]
      fn test_marker_for_upper_alpha() {

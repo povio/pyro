@@ -358,6 +358,24 @@ fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces, sc
         return Some(ParsedRule::Group { name: lower, condition, rules: rules? });
     }
     let (prelude, block) = parse_prelude_and_block(p, start, raw_block);
+    if lower == "counter-style" {
+        use style::counter_style::{parse_counter_style_name_definition, DescriptorParser, Descriptors};
+        use style::stylesheets::{CssRuleType, Origin};
+        use style_traits::ToCss as StyleToCss;
+
+        let name = Parser::new(&prelude).parse_entirely(parse_counter_style_name_definition).ok()?;
+        let block = block?;
+        let url = crate::stylo::url_data();
+        let context = style::parser::ParserContext::new(
+            Origin::Author, &url, Some(CssRuleType::CounterStyle), style_traits::ParsingMode::DEFAULT,
+            style::context::QuirksMode::NoQuirks, Default::default(), None, None, Default::default(),
+        );
+        let mut descriptors = Descriptors::default();
+        let mut parser = DescriptorParser { context: &context, descriptors: &mut descriptors };
+        cssparser::RuleBodyParser::new(&mut Parser::new(&block), &mut parser).for_each(drop);
+        let text = format!("@counter-style {} {{ {}}}", name.to_css_string(), descriptors.to_css_string());
+        return Some(ParsedRule::Other { rule_type: 11, text });
+    }
     if lower == "view-transition" {
         use style::shared_lock::{SharedRwLock, ToCssWithGuard};
         use style::stylesheets::{CssRuleType, Origin, ViewTransitionRule};
@@ -514,7 +532,6 @@ fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces, sc
         "font-face" => 5,
         "page" => 6,
         "namespace" => 10,
-        "counter-style" => 11,
         "starting-style" => 0,
         _ => return None,
     };
@@ -541,7 +558,7 @@ fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces, sc
         // An empty descriptor block serializes as `{ }`.
         Some(block)
             if block.trim().is_empty()
-                && matches!(lower.as_str(), "page" | "font-face" | "counter-style" | "font-palette-values" | "position-try") =>
+                && matches!(lower.as_str(), "page" | "font-face" | "font-palette-values" | "position-try") =>
         {
             format!("{head} {{ }}")
         }
@@ -856,6 +873,20 @@ mod tests {
         assert_eq!(rules, [style("> .child", " color:red ")]);
         assert!(parse_one_rule("@scope (unknown|g) {}", &mut namespaces).is_err());
         assert!(parse_one_rule("@scope (a::before) {}", &mut namespaces).is_err());
+    }
+
+    #[test]
+    fn counter_style_rule_recovers_after_invalid_descriptors() {
+        let parse = |source| parse_one_rule(source, &mut Namespaces::new());
+        assert!(parse("@counter-style Disclosure-Closed {}").is_err());
+        assert!(parse("@counter-style a b {}").is_err());
+        assert!(parse("@counter-style a;").is_err());
+        let ParsedRule::Other { rule_type: 11, text } = parse(r#"@counter-style a\ b { prefix: 'x;y'; prefix: 12; speak-as: SPELL-OUT; symbols: url(pic.png) }"#).unwrap() else { panic!() };
+        assert!(text.starts_with(r"@counter-style a\ b { "));
+        assert!(text.contains(r#"prefix: "x;y";"#));
+        assert!(text.contains(r#"symbols: url("pic.png");"#));
+        assert!(text.contains("speak-as: spell-out;"));
+        assert_eq!(parse("@counter-style a { prefix: initial }").unwrap(), ParsedRule::Other { rule_type: 11, text: "@counter-style a { }".into() });
     }
 
     #[test]

@@ -600,6 +600,7 @@ fn custom_counter_marker(doc: &BaseDocument, item: NodeId, list_style_type: &Lis
     let symbol = |symbol: &Symbol| match symbol {
         Symbol::String(text) => text.to_string(),
         Symbol::Ident(ident) => ident.0.to_string(),
+        Symbol::Image(_) => "\u{fffc}".to_string(),
     };
     let descriptors = rule.descriptors();
     let System::Extends(base) = rule.resolved_system() else {
@@ -718,6 +719,7 @@ fn marker_for_style(list_style_type: &ListStyleType, number: i32) -> Option<Mark
                 let marker_str = match sym {
                     style::counter_style::Symbol::String(s) => s.to_string(),
                     style::counter_style::Symbol::Ident(id) => id.0.to_string(),
+                    style::counter_style::Symbol::Image(_) => "\u{fffc}".to_string(),
                 };
                 Marker::String(marker_str)
             }

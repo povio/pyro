@@ -506,7 +506,7 @@ impl ToCss for System {
 
 /// <https://drafts.csswg.org/css-counter-styles/#typedef-symbol>
 #[derive(
-    Clone, Debug, Eq, MallocSizeOf, PartialEq, ToComputedValue, ToResolvedValue, ToCss, ToShmem,
+    Clone, Debug, Eq, MallocSizeOf, PartialEq, ToComputedValue, ToResolvedValue, ToShmem,
 )]
 #[repr(u8)]
 pub enum Symbol {
@@ -514,13 +514,27 @@ pub enum Symbol {
     String(crate::OwnedStr),
     /// <custom-ident>
     Ident(CustomIdent),
-    // Not implemented:
-    // /// <image>
-    // Image(Image),
+    /// The serialized specified image.
+    Image(crate::OwnedStr),
+}
+
+impl ToCss for Symbol {
+    fn to_css<W: Write>(&self, dest: &mut CssWriter<W>) -> fmt::Result {
+        match self {
+            Self::Image(image) => dest.write_str(image),
+            Self::String(string) => string.to_css(dest),
+            Self::Ident(ident) => ident.to_css(dest),
+        }
+    }
 }
 
 impl Parse for Symbol {
-    fn parse(_context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
+    fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
+        if context.rule_types().contains(crate::stylesheets::CssRuleType::CounterStyle) {
+            if let Ok(image) = input.try_parse(|p| crate::values::specified::Image::parse_forbid_none(context, p)) {
+                return Ok(Symbol::Image(image.to_css_string().into()));
+            }
+        }
         match *input.next()? {
             Token::QuotedString(ref s) => Ok(Symbol::String(s.as_ref().to_owned().into())),
             Token::Ident(ref s) => Ok(Symbol::Ident(CustomIdent::from_ident(s, &[])?)),
@@ -721,15 +735,14 @@ pub enum SpeakAs {
     Numbers,
     /// words
     Words,
-    // /// spell-out, not supported, see bug 1024178
-    // SpellOut,
+    /// spell-out
+    SpellOut,
     /// <counter-style-name>
     Other(CustomIdent),
 }
 
 impl Parse for SpeakAs {
     fn parse(_context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
-        let mut is_spell_out = false;
         let result = input.try_parse(|input| {
             let ident = input.expect_ident().map_err(|_| ())?;
             match_ignore_ascii_case! { ident,
@@ -737,18 +750,10 @@ impl Parse for SpeakAs {
                 "bullets" => Ok(SpeakAs::Bullets),
                 "numbers" => Ok(SpeakAs::Numbers),
                 "words" => Ok(SpeakAs::Words),
-                "spell-out" => {
-                    is_spell_out = true;
-                    Err(())
-                },
+                "spell-out" => Ok(SpeakAs::SpellOut),
                 _ => Err(()),
             }
         });
-        if is_spell_out {
-            // spell-out is not supported, but don’t parse it as a <counter-style-name>.
-            // See bug 1024178.
-            return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
-        }
         result.or_else(|_| Ok(SpeakAs::Other(parse_counter_style_name(input)?)))
     }
 }
