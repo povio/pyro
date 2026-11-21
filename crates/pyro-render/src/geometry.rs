@@ -21,6 +21,7 @@ use stylo_taffy::CopyStyleGetters;
 
 use blitz_dom::{BaseDocument, NodeId};
 use kurbo::{Affine, Rect};
+use style::values::specified::box_::DisplayInside;
 
 /// One element's boxes, CSS px.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -614,9 +615,7 @@ impl Geometry {
         // a block-level sticky box is none: WPT `position-sticky-large-top-2`).
         let mut cb = doc.get_node(id).and_then(|n| n.parent);
         if is_table_part(doc, id) || is_cell(doc, id) {
-            while let Some(c) = cb.filter(|&c| tag(doc, c) != Some("table")) {
-                cb = doc.get_node(c).and_then(|n| n.parent);
-            }
+            cb = table_of(doc, id);
         } else {
             let inline = |c: NodeId| {
                 doc.get_node(c).and_then(|n| n.primary_styles()).is_some_and(|s| {
@@ -701,8 +700,12 @@ impl Geometry {
         if b.width != 0.0 || b.height != 0.0 {
             return Some(b);
         }
-        if is_table_part(doc, id) {
-            if tag(doc, id) == Some("tr") {
+        let inside = display_inside(doc, id);
+        if matches!(inside, Some(DisplayInside::TableColumn | DisplayInside::TableColumnGroup)) {
+            return Some(self.column_track_box(doc, id).unwrap_or(b));
+        }
+        if is_row_or_group(inside) {
+            if inside == Some(DisplayInside::TableRow) {
                 if let Some(row) = self.row_track_box(doc, id) {
                     return Some(row);
                 }
@@ -781,6 +784,31 @@ impl Geometry {
         Some(row_track_rect(doc, (row.start as f64, row.end as f64), columns, id, base, transform, fixed))
     }
 
+    fn column_track_box(&self, doc: &BaseDocument, id: NodeId) -> Option<LayoutBox> {
+        let table = table_of(doc, id)?;
+        self.row_tracks_apply(doc, table)?;
+        let element = doc.get_node(table)?.element_data()?;
+        let blitz_dom::node::SpecialElementData::TableRoot(context) = &element.special_data else { return None };
+        let grid = context.computed_grid_info.try_borrow().ok()?;
+        let grid = grid.as_ref()?;
+        let mut tracks = context
+            .columns
+            .iter()
+            .zip(&grid.columns.positions)
+            .filter_map(|(column, track)| (column.node_id == id || column.group == Some(id)).then_some(track));
+        let first = tracks.next()?;
+        let last = tracks.next_back().unwrap_or(first);
+        let top = context.grid_box.borrow().map_or(0.0, |(top, _)| top);
+        let local = Rect::new(
+            first.start.min(last.start).into(),
+            (top + grid.rows.positions.first()?.start).into(),
+            first.end.max(last.end).into(),
+            (top + grid.rows.positions.last()?.end).into(),
+        );
+        let (transform, fixed) = self.transform(doc, table)?;
+        Some(LayoutBox::from_rect(transform.transform_rect_bbox(local), fixed))
+    }
+
     /// The checks of [`Geometry::row_track_box`] that depend on the table
     /// alone (`None`: no row of it is projected from its track).
     fn row_tracks_apply(&self, doc: &BaseDocument, table: NodeId) -> Option<()> {
@@ -836,7 +864,7 @@ impl Geometry {
             // The group's rows in the grid, in order: a row child the grid
             // placed is the next of them; one it did not (hidden) is read
             // as any other child.
-            if tag(doc, c) == Some("tr") && rows.peek().is_some_and(|(_, row)| row.node_id == c) {
+            if rows.peek().is_some_and(|(_, row)| row.node_id == c) {
                 let (index, _) = rows.next()?;
                 if transformed(child) {
                     return None;
@@ -855,7 +883,7 @@ impl Geometry {
 
     /// Union of the (adjusted) boxes of a table part's children.
     fn children_union(&self, doc: &BaseDocument, id: NodeId) -> Option<Rect> {
-        if is_table_part(doc, id) && tag(doc, id) != Some("tr") {
+        if display_inside(doc, id) != Some(DisplayInside::TableRow) {
             if let Some(union) = self.group_rows_union(doc, id) {
                 return union;
             }
@@ -1548,13 +1576,29 @@ pub(crate) fn is_cell(doc: &BaseDocument, id: NodeId) -> bool {
 }
 
 pub(crate) fn is_table_part(doc: &BaseDocument, id: NodeId) -> bool {
-    matches!(tag(doc, id), Some("tr" | "thead" | "tbody" | "tfoot"))
+    is_row_or_group(display_inside(doc, id))
 }
 
-/// The nearest `<table>` ancestor of `id`.
+fn display_inside(doc: &BaseDocument, id: NodeId) -> Option<DisplayInside> {
+    doc.get_node(id)?.table_box_display_inside()
+}
+
+fn is_row_or_group(inside: Option<DisplayInside>) -> bool {
+    matches!(
+        inside,
+        Some(
+            DisplayInside::TableRow
+                | DisplayInside::TableRowGroup
+                | DisplayInside::TableHeaderGroup
+                | DisplayInside::TableFooterGroup
+        )
+    )
+}
+
+/// The nearest table box ancestor of `id`.
 fn table_of(doc: &BaseDocument, id: NodeId) -> Option<NodeId> {
     let mut table = doc.get_node(id)?.parent?;
-    while tag(doc, table) != Some("table") {
+    while !doc.get_node(table)?.flags.is_table_root() {
         table = doc.get_node(table)?.parent?;
     }
     Some(table)

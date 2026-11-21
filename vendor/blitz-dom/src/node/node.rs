@@ -1408,6 +1408,19 @@ impl Node {
         )
     }
 
+    pub fn table_box_display_inside(&self) -> Option<DisplayInside> {
+        let inside = self.display_style()?.inside();
+        match inside {
+            DisplayInside::TableRow | DisplayInside::TableRowGroup | DisplayInside::TableHeaderGroup
+            | DisplayInside::TableFooterGroup | DisplayInside::TableColumn | DisplayInside::TableColumnGroup => {
+                let element = self.element_data()?;
+                let control = matches!(element.name.local.as_ref(), "input" | "select" | "textarea");
+                (!control && !crate::layout::replaced::is_replaced(element)).then_some(inside)
+            }
+            _ => None,
+        }
+    }
+
     /// Whether this is a `<br>` that generates a line break. Like Chrome, a `<br>` is a piece of
     /// inline text in any container: only `display: none` and `display: contents` have an effect
     /// on it (no break). Its other display values (blockified as a flex or grid item, too), its
