@@ -552,6 +552,18 @@ fn control_replace(
     {
         return false;
     }
+    apply_control_replace(page, el, range, text, input_type, data)
+}
+
+/// Apply the edit after its user-input gate, or directly for a script command.
+fn apply_control_replace(
+    page: &Rc<PageDom>,
+    el: NodeId,
+    range: Option<(u32, u32)>,
+    text: &str,
+    input_type: &str,
+    data: Option<&str>,
+) -> bool {
     record_control_edit(page, el, input_type);
     let changed = {
         let mut dom = page.dom.borrow_mut();
@@ -1146,8 +1158,10 @@ pub(crate) fn exec_command(page: &Rc<PageDom>, doc: NodeId, command: &str, value
     if let Some(Target::Control(c)) = target {
         return match cmd.as_str() {
             "inserthtml" => {
-                let Ok(text) = Dom::plaintext_from_html(value) else { return false };
-                control_replace(page, c, None, &text, "insertText", Some(&text));
+                let textarea = editing::local(&page.dom.borrow(), c) == "textarea";
+                let text = if textarea { Dom::plaintext_from_html(value) } else { Dom::single_line_text_from_html(value) };
+                let Ok(text) = text else { return false };
+                apply_control_replace(page, c, None, &text, "insertText", Some(&text));
                 true
             }
             "delete" => {

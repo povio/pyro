@@ -313,16 +313,35 @@ impl Dom {
         self.collect_text_from(style, el, false)
     }
 
-    /// Convert insertion markup to text without connecting any parsed node
-    /// to the active page. Block separators and space collapsing use the
-    /// same text collector as innerText.
+    /// Plaintext insertion uses the rendered separators and whitespace of
+    /// the parsed fragment, without attaching its nodes to the active page.
     pub fn plaintext_from_html(html: &str) -> DomResult<String> {
+        let (dom, container, doc) = Self::inert_editing_fragment(html)?;
+        dom.collect_text_from(&StyleEngine::new(doc), container, true)
+    }
+
+    /// Single-line text controls use the fragment's text nodes in tree order,
+    /// including non-rendered text. Line feeds and HTML breaks become spaces.
+    pub fn single_line_text_from_html(html: &str) -> DomResult<String> {
+        let (dom, container, _) = Self::inert_editing_fragment(html)?;
+        let mut text = String::new();
+        for node in dom.descendants(container)? {
+            match &dom.n(node.idx).kind {
+                NodeKind::Text(data) => text.extend(data.chars().map(|c| if c == '\n' || c == '\r' { ' ' } else { c })),
+                NodeKind::Element(el) if el.is_html() && el.local_name().as_ref() == "br" => text.push(' '),
+                _ => {}
+            }
+        }
+        Ok(text)
+    }
+
+    fn inert_editing_fragment(html: &str) -> DomResult<(Self, NodeId, NodeId)> {
         let mut dom = Dom::new();
         let doc = dom.create_document(crate::node::DocumentKind::Html, "about:blank");
         let container = dom.create_element(doc, "div")?;
         let fragment = crate::parse::parse_setter_fragment(&mut dom, container, html)?;
         dom.append_child(container, fragment)?;
-        dom.collect_text_from(&StyleEngine::new(doc), container, true)
+        Ok((dom, container, doc))
     }
 
     fn collect_text_from(&self, style: &StyleEngine, el: NodeId, detached: bool) -> DomResult<String> {
