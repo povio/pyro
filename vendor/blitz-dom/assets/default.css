@@ -211,7 +211,8 @@ select {
     display: inline-block;
     box-sizing: border-box;
     border: 1px solid #767676;
-    line-height: normal !important;
+    /* The native menulist fixup runs after other properties resolve lh. */
+    line-height: normal;
     /* pyro: blitz-paint rounds a native menu list's corners (not of `appearance: none` or
        `menulist-button`, which is painted with its CSS border). */
     -moz-default-appearance: menulist;

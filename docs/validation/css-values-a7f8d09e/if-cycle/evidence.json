@@ -1,0 +1,62 @@
+{
+  "pin": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+  "upstreamWptHead": "9986bb32c9e97707eff870ab284ebc5cc7ae8d21",
+  "latestUpstreamCommitChangingTest": "649319c229a6037ad25250a4f006bf605e986e81",
+  "wptFileSha256": "61e95f22f70ce20a9a14e09554fb707d0161ca2a01bd4a71721d8d7d8c7356f9",
+  "csswgDraftsHead": "804b7b0055e80dfaba091e7f32a4bca303e569e3",
+  "referenceExecutableSha256": "b87bcebb575e53b0f29a4eeeb6480ec9c9bc3537690cacd52d6c67c2c3e3908e",
+  "outcomes": {
+    "original": {
+      "name": "CSS Values and Units Test: CSS if() function cycles 4",
+      "status": "Pass",
+      "msg": ""
+    },
+    "current": {
+      "name": "CSS Values and Units Test: CSS if() function cycles 4",
+      "status": "Fail",
+      "msg": "assert_equals: \"if(style(--prop): var(--prop); else: value)\" should be substituted to \"\". expected \"\" but got \"value\""
+    },
+    "chrome": {
+      "name": "CSS Values and Units Test: CSS if() function cycles 4",
+      "status": "Pass",
+      "msg": ""
+    }
+  },
+  "isolatedReadback": {
+    "chromeVersion": "158.0.8127.37",
+    "chrome": [
+      {
+        "expression": "if(style(--prop): var(--prop); else: value)",
+        "computed": "",
+        "viaVar": "fallback"
+      },
+      {
+        "expression": "if(else: var(--prop))",
+        "computed": "",
+        "viaVar": "fallback"
+      },
+      {
+        "expression": "if(style(--absent): never)",
+        "computed": "",
+        "viaVar": "fallback"
+      }
+    ],
+    "pyro": [
+      {
+        "expression": "if(style(--prop): var(--prop); else: value)",
+        "computed": "value",
+        "viaVar": "value"
+      },
+      {
+        "expression": "if(else: var(--prop))",
+        "computed": "",
+        "viaVar": "fallback"
+      },
+      {
+        "expression": "if(style(--absent): never)",
+        "computed": "",
+        "viaVar": ""
+      }
+    ]
+  }
+}

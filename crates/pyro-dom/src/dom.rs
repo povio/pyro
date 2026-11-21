@@ -4666,6 +4666,7 @@ mod walk_tests {
 /// and its viewport's scroll position (CSS px).
 #[derive(Clone, Debug, PartialEq)]
 pub struct FrameDocument {
+    pub document_url: Option<String>,
     pub html: String,
     pub url: String,
     pub scroll: (f64, f64),
@@ -4695,6 +4696,7 @@ impl FrameDocument {
         let mut h = rustc_hash::FxHasher::default();
         self.html.hash(&mut h);
         self.url.hash(&mut h);
+        self.document_url.hash(&mut h);
         self.client.hash(&mut h);
         self.sheets.hash(&mut h);
         for (index, frame) in &self.frames.entries {

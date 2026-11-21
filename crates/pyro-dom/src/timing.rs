@@ -154,6 +154,8 @@ enum Value {
     /// `cubic-bezier(0.4, 0, 0.2, 1)`, `opacity`;
     /// times in full precision).
     List(Vec<String>),
+    /// Resolves at computed-value time against the element's fonts, attributes and variables.
+    ElementStyle,
     /// `initial`, `unset`, `revert`, `revert-layer`: the initial value (none
     /// of these properties inherit).
     Initial,
@@ -319,6 +321,7 @@ pub struct ElementTiming {
 #[derive(Default)]
 pub struct TimingRules {
     rules: Vec<Rule>,
+    pub(crate) geometry: Option<std::rc::Weak<dyn crate::geometry::GeometrySource>>,
     keyframes: FxHashSet<String>,
     /// The longhands each `@keyframes` rule declares, by name.
     keyframe_longhands: rustc_hash::FxHashMap<String, FxHashSet<&'static str>>,
@@ -622,6 +625,17 @@ impl TimingRules {
         if inline.is_empty() && matching.is_empty() {
             return out;
         }
+        // A layered, scoped or conditional rule can defeat the simple ordering below.
+        // Once a matching candidate needs the element context, ask the native cascade
+        // for this longhand even if the manual ordering would choose a literal.
+        let mut needs_element = [false; Longhand::ALL.len()];
+        for (longhand, value, _) in inline.iter().chain(matching.iter().flat_map(|(_, _, rule)| &rule.declarations)) {
+            if !matches!(longhand, Longhand::AnimationTrigger | Longhand::TimelineTrigger)
+                && matches!(value, Value::ElementStyle | Value::Pending { .. })
+            {
+                needs_element[*longhand as usize] = true;
+            }
+        }
         let cascaded = |longhand: Longhand| -> Option<&Value> {
             let own = inline.iter().rev().find(|d| d.0 == longhand);
             if let Some((_, value, true)) = own {
@@ -646,10 +660,41 @@ impl TimingRules {
             }
         };
         let mut style = None;
+        let authored = std::cell::OnceCell::new();
+        let element_list = |longhand: Longhand| -> Option<Vec<String>> {
+            let authored: &StyleSnapshot = authored.get_or_init(|| {
+                let geometry = self.geometry.as_ref()?.upgrade()?;
+                // Bring the mirror up to date before the read-only cascade.
+                style_of(el)?;
+                let pseudo = pseudo.map(|p| match p {
+                    PseudoElement::Before => style::selector_parser::PseudoElement::Before,
+                    PseudoElement::After => style::selector_parser::PseudoElement::After,
+                    PseudoElement::Marker => style::selector_parser::PseudoElement::Marker,
+                });
+                geometry.element_timing_style(crate::snapshot::render_key(el), pseudo.as_ref())
+            }).as_ref()?;
+            // Keep 'auto' distinct for progress-based animation timelines.
+            if longhand == Longhand::AnimationDuration {
+                use style::values::generics::animation::AnimationDuration;
+                return Some(authored.get_ui().animation_duration_iter().map(|v| match v {
+                    AnimationDuration::Time(t) => format!("{}s", t.seconds()),
+                    AnimationDuration::Auto => "auto".to_owned(),
+                }).collect());
+            }
+            let css = crate::stylo::serialize(authored, longhand.name())?;
+            Some(split_commas(&css).into_iter().map(|s| s.trim().to_owned()).collect())
+        };
         for longhand in Longhand::ALL {
+            if needs_element[longhand as usize] {
+                if let Some(list) = element_list(longhand) {
+                    out.0[longhand as usize] = Some(list);
+                    continue;
+                }
+            }
             out.0[longhand as usize] = match cascaded(longhand) {
                 None | Some(Value::Initial) => None,
                 Some(Value::List(list)) => Some(list.clone()),
+                Some(Value::ElementStyle) => element_list(longhand),
                 Some(Value::Inherit) if pseudo.is_some() => self.lists(dom, el, style_of).0[longhand as usize].clone(),
                 Some(Value::Inherit) => dom
                     .parent_element(el)
@@ -661,6 +706,7 @@ impl TimingRules {
                     match self.substitute(property, text, style.as_ref()) {
                         Some(values) => match values.iter().find(|(l, _)| *l == longhand) {
                             Some((_, Value::List(list))) => Some(list.clone()),
+                            Some((_, Value::ElementStyle)) => element_list(longhand),
                             Some((_, Value::Inherit)) if pseudo.is_some() => {
                                 self.lists(dom, el, style_of).0[longhand as usize].clone()
                             }
@@ -671,7 +717,9 @@ impl TimingRules {
                                 .and_then(|parent| self.lists(dom, parent, style_of).0[longhand as usize].clone()),
                             _ => None,
                         },
-                        None => None,
+                        // An unresolved var() can be in an unused attr()/if() fallback.
+                        // Let Stylo select the branch and apply its invalid-at-computed-value rules.
+                        None => element_list(longhand),
                     }
                 }
             };
@@ -835,18 +883,8 @@ fn shown(longhand: Longhand, item: &str) -> String {
     }
 }
 
-/// CSSOM time values use six significant digits, including when rounding changes the exponent.
 fn serialize_seconds(seconds: f64) -> String {
-    if seconds == 0.0 || !seconds.is_finite() {
-        return "0s".to_owned();
-    }
-    let scientific = format!("{seconds:.5e}");
-    let (mantissa, exponent) = scientific.split_once('e').unwrap();
-    let exponent: i32 = exponent.parse().unwrap();
-    if (-4..6).contains(&exponent) {
-        return format!("{}s", scientific.parse::<f64>().unwrap());
-    }
-    format!("{}e{exponent:+03}s", mantissa.trim_end_matches('0').trim_end_matches('.'))
+    format!("{}s", crate::computed::serialize_css_number(seconds))
 }
 
 /// Chromium's computed `transition`: an item per `transition-property`
@@ -1037,10 +1075,10 @@ pub fn changed_longhands_with<'a>(
     let differs = |longhand: style::properties::LonghandId| {
         let id = PropertyDeclarationId::Longhand(longhand);
         let physical = PropertyDeclarationId::Longhand(longhand.to_physical(after.writing_mode));
-        before.computed_value_to_string(id) != after.computed_value_to_string(id)
+        crate::animation::transition_endpoint_css(id, before) != crate::animation::transition_endpoint_css(id, after)
             && match (
-                AnimationValue::from_computed_values(physical, before),
-                AnimationValue::from_computed_values(physical, after),
+                crate::animation::transition_endpoint_value(physical, before),
+                crate::animation::transition_endpoint_value(physical, after),
             ) {
                 // (A property Stylo animates discretely transitions only with `allow-discrete`,
                 // as in Chromium, css-transitions-2 §2.1, even where its `Animate` succeeds; WPT
@@ -1099,7 +1137,7 @@ pub fn transition_keyframes(
         PropertyDeclarationId::Longhand(id) => PropertyDeclarationId::Longhand(id.to_physical(after.writing_mode)),
         custom => custom,
     };
-    let value = |style: &StyleSnapshot| style.computed_value_to_string(physical);
+    let value = |style: &StyleSnapshot| crate::animation::transition_endpoint_css(physical, style);
     let mut name = String::new();
     cssparser::serialize_identifier(match physical { PropertyDeclarationId::Longhand(id) => id.name(), _ => longhand }, &mut name).ok()?;
     let frame = |offset: f64, value: String| crate::animation::TextKeyframe {
@@ -1369,17 +1407,17 @@ fn parse_property(property: &str, value: &str) -> Option<Vec<(Longhand, Value)>>
                 CSSWideKeyword::Inherit => Value::Inherit,
                 _ => Value::Initial,
             },
-            PropertyDeclaration::WithVariables(_) => Value::Initial,
-            PropertyDeclaration::AnimationDuration(list) => Value::List(list.0.iter().map(|duration| {
+            PropertyDeclaration::WithVariables(_) => Value::ElementStyle,
+            PropertyDeclaration::AnimationDuration(list) => time_list(list.0.iter().map(|duration| {
                 use style::values::generics::animation::AnimationDuration;
                 match duration {
                     AnimationDuration::Time(time) => computed_time_item(*longhand, time),
-                    AnimationDuration::Auto => "auto".to_owned(),
+                    AnimationDuration::Auto => Some("auto".to_owned()),
                 }
-            }).collect()),
-            PropertyDeclaration::AnimationDelay(list) => Value::List(list.0.iter().map(|t| computed_time_item(*longhand, t)).collect()),
-            PropertyDeclaration::TransitionDelay(list) => Value::List(list.0.iter().map(|t| computed_time_item(*longhand, t)).collect()),
-            PropertyDeclaration::TransitionDuration(list) => Value::List(list.0.iter().map(|t| computed_time_item(*longhand, t)).collect()),
+            })),
+            PropertyDeclaration::AnimationDelay(list) => time_list(list.0.iter().map(|t| computed_time_item(*longhand, t))),
+            PropertyDeclaration::TransitionDelay(list) => time_list(list.0.iter().map(|t| computed_time_item(*longhand, t))),
+            PropertyDeclaration::TransitionDuration(list) => time_list(list.0.iter().map(|t| computed_time_item(*longhand, t))),
             PropertyDeclaration::AnimationName(list) => Value::List(list.0.iter().map(style_traits::ToCss::to_css_string).collect()),
             PropertyDeclaration::AnimationTimingFunction(list) => Value::List(list.0.iter().map(easing_text).collect()),
             PropertyDeclaration::TransitionTimingFunction(list) => {
@@ -1403,12 +1441,16 @@ fn easing_text(easing: &style::values::specified::TimingFunction) -> String {
     easing.to_computed_value_without_context().to_css_string()
 }
 
-fn computed_time_item(longhand: Longhand, time: &style::values::specified::Time) -> String {
+fn time_list(items: impl Iterator<Item = Option<String>>) -> Value {
+    items.collect::<Option<Vec<_>>>().map_or(Value::ElementStyle, Value::List)
+}
+
+fn computed_time_item(longhand: Longhand, time: &style::values::specified::Time) -> Option<String> {
     use style_traits::ToCss;
-    match time.calc_seconds_without_context() {
-        Some(seconds) => format!("{seconds}s"),
-        None => computed_item(longhand, &time.to_css_string()),
+    if time.is_calc() {
+        return time.calc_seconds_without_context().map(|seconds| format!("{seconds}s"));
     }
+    Some(computed_item(longhand, &time.to_css_string()))
 }
 
 /// One specified item (Stylo's serialization) as its computed value: times

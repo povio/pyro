@@ -203,7 +203,9 @@ pub struct Snapshot {
     /// pyro: the frame table: the documents the snapshot's frame elements show, by the index
     /// their `data-pyro-frame` names (`pyro_layout::frame_table`). Markup holds no frame content or client.
     pub frames: blitz_dom::FrameTable,
-    /// Document URL; relative URLs resolve against it.
+    /// Actual document URL when it differs from the resource base.
+    pub document_url: Option<String>,
+    /// Relative URLs resolve against this base.
     pub base_url: String,
     /// Texts of `<link rel=stylesheet>` sheets by absolute URL, served to
     /// Blitz without a fetch (they include CSSOM edits).
@@ -766,7 +768,9 @@ const PREWARM_HTML: &str = r#"<!doctype html><html><body style="font-family: sys
 /// UA rule that settles transitions and animations at their end values (the page samples them in).
 /// `animation-name` only, not the `animation` shorthand: that would also reset `animation-timeline`
 /// and `animation-range`, which the scroll-driven animations read from these styles.
-const NO_TRANSITIONS: &str = "*, *::before, *::after { transition: none !important; animation-name: none !important; }";
+static NO_TRANSITIONS: std::sync::LazyLock<blitz_dom::UserAgentStylesheet> = std::sync::LazyLock::new(|| {
+    blitz_dom::UserAgentStylesheet::parse("*, *::before, *::after { transition: none !important; animation-name: none !important; }")
+});
 /// Chrome's `<input type=file>` box ("Choose File · No file chosen"): Blitz
 /// lays the control out with no content to size it by, so it would be
 /// zero-sized and never visible or clickable.
@@ -1202,6 +1206,7 @@ impl Renderer {
         let mut config = DocumentConfig {
             raster_budget: snap.raster_budget.clone(),
             base_url: Some(snap.base_url.clone()),
+            document_url: snap.document_url.clone(),
             net_provider: Some(provider),
             viewport: Some(viewport_of(snap)),
             media_environment: snap.media_environment,
@@ -1220,7 +1225,7 @@ impl Renderer {
         // Documents are resolved at time 0: a CSS transition or animation
         // would stay at its first frame (a drawer sliding in stays off
         // screen). Layout queries, screenshots and PDFs take the end state.
-        config.ua_stylesheets.push(blitz_dom::UserAgentStylesheet::parse(NO_TRANSITIONS));
+        config.ua_stylesheets.push(NO_TRANSITIONS.clone());
         config.ua_stylesheets.push(blitz_dom::UserAgentStylesheet::parse(FILE_INPUT));
         config
     }
@@ -1233,6 +1238,7 @@ impl Renderer {
             Some(m)
                 if m.scope != snap.resource_scope
                     || m.base_url != snap.base_url
+                    || m.document_url != snap.document_url
                     || m.facts.0 != snap.xml_document
                     || m.facts.1 != snap.content_language
                     || m.facts.2 != snap.quirks_mode
@@ -2133,6 +2139,14 @@ impl Renderer {
                 caches.clear();
             }
         }
+    }
+
+    /// The element or pseudo's timing properties with the renderer's suppression rule omitted.
+    pub fn element_timing_style(
+        &self, page: u64, key: u64, pseudo: Option<&style::selector_parser::PseudoElement>,
+    ) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
+        let m = self.mirrors.get(&page)?;
+        m.doc.style_without_override(m.node(key)?, pseudo, &NO_TRANSITIONS)
     }
 
     /// The starting style (`@starting-style`) of the element keyed `key` in `page`'s persistent
@@ -4591,7 +4605,7 @@ impl blitz_dom::HtmlParserProvider for SvgImageParser {
 
     /// A frame's document (the render snapshot's `srcdoc`), with the page's own UA additions.
     fn parse_document(&self, html: &str, mut config: DocumentConfig) -> Box<dyn blitz_dom::Document> {
-        config.ua_stylesheets.push(blitz_dom::UserAgentStylesheet::parse(NO_TRANSITIONS));
+        config.ua_stylesheets.push(NO_TRANSITIONS.clone());
         config.ua_stylesheets.push(blitz_dom::UserAgentStylesheet::parse(FILE_INPUT));
         config.html_parser_provider = Some(Arc::new(SvgImageParser));
         let mut doc = blitz_html::HtmlDocument::from_html(html, config);

@@ -377,6 +377,7 @@ fn a_frame_scrolled_past_its_reach_lays_out_its_timelines_at_the_reachable_offse
                <div style='height:260px'></div><div id=s data-pyro-key=7></div>"
             .into(),
         url: "http://test/".into(),
+        document_url: None,
         scroll: (0.0, 0.0),
         client: "F#L".into(),
         frames: Default::default(),

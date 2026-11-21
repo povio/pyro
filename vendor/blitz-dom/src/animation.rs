@@ -272,6 +272,15 @@ pub(crate) struct SampledAnimations {
 }
 
 impl SampledAnimations {
+    /// A font arrival can change computed keyframes while rules and parent identity stay the same.
+    pub(crate) fn invalidate_bases(&mut self) {
+        for element in self.elements.values_mut() {
+            element.base = None;
+            element.pseudos = Default::default();
+        }
+        self.pending |= !self.is_empty();
+    }
+
     pub(crate) fn is_empty(&self) -> bool {
         self.elements.is_empty()
     }

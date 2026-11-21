@@ -737,7 +737,7 @@ diff -ruN a/data.rs b/data.rs
  
 diff -ruN a/device/servo.rs b/device/servo.rs
 --- a/device/servo.rs	2026-11-14 22:08:19
-+++ b/device/servo.rs	2026-11-21 10:19:53
++++ b/device/servo.rs	2026-11-21 17:00:53
 @@ -33,12 +33,37 @@
  use parking_lot::RwLock;
  use servo_arc::Arc;
@@ -777,7 +777,7 @@ diff -ruN a/device/servo.rs b/device/servo.rs
  /// A trait used to query font metrics in clients of Stylo. This is used by Device to
  /// query font metrics in a way that is specific to the client using Stylo.
  pub trait FontMetricsProvider: Debug + Sync {
-@@ -52,15 +77,34 @@
+@@ -52,15 +77,37 @@
      ) -> FontMetrics;
      /// Gets the base size given a generic font family.
      fn base_size_for_generic(&self, generic: GenericFontFamily) -> Length;
@@ -794,6 +794,9 @@ diff -ruN a/device/servo.rs b/device/servo.rs
  
  #[derive(Debug, MallocSizeOf)]
  pub(super) struct ExtraDeviceData {
++    style_uses_font_metrics: AtomicBool,
++    #[ignore_malloc_size_of = "Shared document URL"]
++    document_url: Option<Arc<url::Url>>,
 +    #[ignore_malloc_size_of = "Inline hash keys"]
 +    random_state: RandomState,
      /// Data which Stylo uses to evaluate media queries
@@ -812,7 +815,7 @@ diff -ruN a/device/servo.rs b/device/servo.rs
  }
  
  #[derive(Debug, MallocSizeOf, Clone, PartialEq)]
-@@ -80,6 +124,8 @@
+@@ -80,6 +127,8 @@
      /// Whether the user prefers light mode or dark mode
      #[ignore_malloc_size_of = "Pure stack type"]
      pub prefers_color_scheme: PrefersColorScheme,
@@ -821,10 +824,38 @@ diff -ruN a/device/servo.rs b/device/servo.rs
      /// The capabilities of the primary pointer input
      #[ignore_malloc_size_of = "Pure stack type"]
      pub primary_pointer_capabilities: PointerCapabilities,
-@@ -116,8 +162,11 @@
+@@ -89,6 +138,25 @@
+ }
+ 
+ impl Device {
++    /// Records a computed value that depends on font metrics, as distinct from text layout.
++    pub fn note_style_font_metrics(&self) {
++        self.extra.style_uses_font_metrics.store(true, Ordering::Relaxed);
++    }
++
++    /// Whether a computed style has needed metrics that can change when a face loads.
++    pub fn style_uses_font_metrics(&self) -> bool {
++        self.extra.style_uses_font_metrics.load(Ordering::Relaxed)
++    }
++
++    /// The document associated with local fragment references, independent of the stylesheet URL.
++    pub fn set_document_url(&mut self, url: Arc<url::Url>) {
++        self.extra.document_url = Some(url);
++    }
++
++    pub(crate) fn document_url(&self) -> Option<&url::Url> {
++        self.extra.document_url.as_deref()
++    }
++
+     /// Trivially construct a new `Device`.
+     pub fn new(
+         default_values: Arc<ComputedValues>,
+@@ -116,8 +184,13 @@
              body_text_color: RwLock::new(AbsoluteColor::BLACK),
              submit_string,
              extra: ExtraDeviceData {
++                style_uses_font_metrics: AtomicBool::new(false),
++                document_url: None,
 +                random_state: RandomState::new(),
                  media_data,
                  font_metrics_provider,
@@ -833,7 +864,7 @@ diff -ruN a/device/servo.rs b/device/servo.rs
              },
          }
      }
-@@ -132,8 +181,14 @@
+@@ -132,8 +205,14 @@
          _element: Option<()>,
      ) -> NonNegativeLength {
          (match font.line_height {
@@ -850,7 +881,7 @@ diff -ruN a/device/servo.rs b/device/servo.rs
              LineHeight::Number(number) => font.font_size.computed_size() * number.0,
              LineHeight::Length(length) => length.0,
          })
-@@ -149,10 +204,13 @@
+@@ -149,10 +228,13 @@
      /// base values of `random()` functions between document instances.
      #[inline]
      pub fn document_random_hasher(&self) -> impl Hasher {
@@ -866,7 +897,7 @@ diff -ruN a/device/servo.rs b/device/servo.rs
      /// Gets the base size given a generic font family.
      pub fn base_size_for_generic(&self, generic: GenericFontFamily) -> Length {
          self.extra
-@@ -160,6 +218,11 @@
+@@ -160,6 +242,11 @@
              .base_size_for_generic(generic)
      }
  
@@ -878,7 +909,7 @@ diff -ruN a/device/servo.rs b/device/servo.rs
      /// Whether a given animation name may be referenced from style.
      pub fn animation_name_may_be_referenced(&self, _: &KeyframesName) -> bool {
          // Assume it is, since we don't have any good way to prove it's not.
-@@ -222,7 +285,23 @@
+@@ -222,9 +309,25 @@
          self.used_viewport_size.store(true, Ordering::Relaxed);
          // Servo doesn't have dynamic UA interfaces that affect the viewport,
          // so we can just ignore the ViewportVariant.
@@ -895,15 +926,25 @@ diff -ruN a/device/servo.rs b/device/servo.rs
 +            (size.width - Au::from_f32_px(w)).max(Au(0)),
 +            (size.height - Au::from_f32_px(h)).max(Au(0)),
 +        )
-+    }
-+
+     }
+ 
 +    /// pyro: sets what the viewport is smaller by for viewport units (CSS px).
 +    pub fn set_viewport_unit_inset(&mut self, inset: (f32, f32)) {
 +        self.extra.viewport_unit_inset = inset;
-     }
- 
++    }
++
      /// Returns the number of app units per device pixel we're using currently.
-@@ -361,7 +440,15 @@
+     pub fn app_units_per_device_pixel(&self) -> i32 {
+         (AU_PER_PX as f32 / self.extra.media_data.device_pixel_ratio.0) as i32
+@@ -283,6 +386,7 @@
+         track_usage: bool,
+     ) -> FontMetrics {
+         if track_usage {
++            self.note_style_font_metrics();
+             self.used_font_metrics.store(true, Ordering::Relaxed);
+         }
+         self.extra
+@@ -361,7 +465,15 @@
          self.extra.media_data.all_pointer_capabilities
      }
  
@@ -919,7 +960,7 @@ diff -ruN a/device/servo.rs b/device/servo.rs
          // Inspired by
          // https://searchfox.org/firefox-main/rev/0a7f146ccac85b8f413264042dcd764028d419ec/widget/nsXPLookAndFeel.cpp#1296
          let supports_dark_mode = color_scheme_flags.contains(ColorSchemeFlags::DARK);
-@@ -400,15 +487,17 @@
+@@ -400,15 +512,17 @@
                  | SystemColor::Activeborder
                  | SystemColor::Inactiveborder
                  | SystemColor::Threeddarkshadow
@@ -940,7 +981,7 @@ diff -ruN a/device/servo.rs b/device/servo.rs
                  SystemColor::Buttontext => srgb(245, 245, 245),
                  SystemColor::Canvas
                  // Deprecated system colors (CSS Color 4) mapped to Canvas.
-@@ -450,15 +539,17 @@
+@@ -450,15 +564,17 @@
                  | SystemColor::Activeborder
                  | SystemColor::Inactiveborder
                  | SystemColor::Threeddarkshadow
@@ -1261,9 +1302,122 @@ diff -ruN a/matching.rs b/matching.rs
  
          if data.styles.pseudos.is_empty() && old_styles.pseudos.is_empty() {
              // This is the common case; no need to examine pseudos here.
+diff -ruN a/parser.rs b/parser.rs
+--- a/parser.rs	2026-11-11 19:55:57
++++ b/parser.rs	2026-11-21 16:45:02
+@@ -13,7 +13,7 @@
+ use cssparser::{Parser, SourceLocation, UnicodeRange};
+ use selectors::parser::ParseRelative;
+ use std::borrow::Cow;
+-use std::cell::Cell;
++use std::cell::{Cell, RefCell};
+ use style_traits::{OneOrMoreSeparated, ParseError, ParsingMode, Separator};
+ 
+ /// Nesting context for parsing rules.
+@@ -70,6 +70,39 @@
+     }
+ }
+ 
++/// Positions of random functions parsed while substituting one conditional prelude.
++/// Parsers may try the same token under different numeric grammars before one succeeds.
++pub(crate) struct EarlyRandomIndices<'a> {
++    stylist: &'a crate::stylist::Stylist,
++    start: i32,
++    positions: RefCell<smallvec::SmallVec<[usize; 4]>>,
++}
++
++impl std::fmt::Debug for EarlyRandomIndices<'_> {
++    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        fmt.debug_struct("EarlyRandomIndices").field("start", &self.start).field("positions", &self.positions).finish()
++    }
++}
++
++impl<'a> EarlyRandomIndices<'a> {
++    pub(crate) fn new(start: i32, stylist: &'a crate::stylist::Stylist) -> Self {
++        Self { start, stylist, positions: Default::default() }
++    }
++
++    pub(crate) fn end(&self) -> i32 {
++        self.start + self.positions.borrow().len() as i32
++    }
++
++    fn index(&self, position: usize) -> i32 {
++        let mut positions = self.positions.borrow_mut();
++        let index = positions.binary_search(&position).unwrap_or_else(|i| {
++            positions.insert(i, position);
++            i
++        });
++        self.start + index as i32 + 1
++    }
++}
++
+ /// Context for the property declaration that is currently being parsed.
+ #[derive(Debug, Default)]
+ pub struct PropertyDeclarationContext<'a> {
+@@ -79,6 +112,7 @@
+     /// in the current property declaration. Used when a random() function
+     /// has a `property-index-scoped` key.
+     random_count: Cell<i32>,
++    early_random_indices: Option<&'a EarlyRandomIndices<'a>>,
+ }
+ 
+ impl<'a> PropertyDeclarationContext<'a> {
+@@ -90,13 +124,24 @@
+     /// The index of the current random() function in this declaration.
+     pub fn current_random_index(&self) -> i32 {
+         self.random_count.get()
++    }
++
++    pub(crate) fn is_early_random(&self) -> bool {
++        self.early_random_indices.is_some()
++    }
++
++    pub(crate) fn inline_style_registration(
++        &self,
++        name: &crate::custom_properties::Name,
++    ) -> Option<&crate::properties_and_values::rule::Descriptors> {
++        Some(self.early_random_indices?.stylist.get_custom_property_registration(name))
+     }
+ 
+     /// Claims the next index for a random() function in this declaration. The
+     /// index is 1-based and follows the order the functions appear in the
+     /// parsed value.
+-    pub fn increment_random_count(&self) -> i32 {
+-        let index = self.random_count.get() + 1;
++    pub fn increment_random_count(&self, position: usize) -> i32 {
++        let index = self.early_random_indices.map_or_else(|| self.random_count.get() + 1, |indices| indices.index(position));
+         self.random_count.set(index);
+         index
+     }
+@@ -189,8 +234,17 @@
+     /// Constructs a temporary ParserContext with the given property ID, passes it to the
+     /// callback and returns its result.
+     pub fn with_property_id<'b, R>(
++        &'b self,
++        property_id: Option<PropertyIdRef<'b>>,
++        cb: impl FnOnce(&ParserContext<'b>) -> R,
++    ) -> R {
++        self.with_random_scope(property_id, None, cb)
++    }
++
++    pub(crate) fn with_random_scope<'b, R>(
+         &'b self,
+         property_id: Option<PropertyIdRef<'b>>,
++        early_random_indices: Option<&'b EarlyRandomIndices<'b>>,
+         cb: impl FnOnce(&ParserContext<'b>) -> R,
+     ) -> R {
+         cb(&ParserContext {
+@@ -205,6 +259,7 @@
+             attr_tainted_regions: Cow::Borrowed(&*self.attr_tainted_regions),
+             property_declaration_context: PropertyDeclarationContext {
+                 property_id,
++                early_random_indices,
+                 ..Default::default()
+             },
+         })
 diff -ruN a/properties/cascade.rs b/properties/cascade.rs
 --- a/properties/cascade.rs	2026-11-11 19:55:57
-+++ b/properties/cascade.rs	2026-11-21 16:27:55
++++ b/properties/cascade.rs	2026-11-21 16:41:23
 @@ -386,6 +386,17 @@
              if using_cached_reset_properties {
                  LonghandIdSet::late_group_only_inherited()
@@ -1334,18 +1488,61 @@ diff -ruN a/properties/cascade.rs b/properties/cascade.rs
      }
  
      /// Special handling of font-size: math (used for MathML).
-@@ -2284,6 +2331,32 @@
-             *non_custom_references |= refs.flags;
-             for next in &refs.refs {
+@@ -2254,6 +2301,7 @@
+         lowlink: &mut usize,
+         self_ref: &mut bool,
+         non_custom_references: &mut ReferenceFlags,
++        early_random_count: &mut i32,
+     ) {
+         macro_rules! check_declaration_value_cycle {
+             ($arg:expr) => {{
+@@ -2270,6 +2318,7 @@
+                     &mut arg_lowlink,
+                     &mut arg_self_ref,
+                     non_custom_references,
++                    early_random_count,
+                 );
+                 *lowlink = cmp::min(*lowlink, arg_lowlink);
+                 *self_ref |= arg_self_ref;
+@@ -2278,20 +2327,64 @@
+         }
+ 
+         // FIXME: Maybe avoid visiting the same var twice if not needed?
+-        let mut refs_stack = SmallVec::<[&References; 5]>::new();
+-        refs_stack.push(root);
+-        while let Some(refs) = refs_stack.pop() {
+-            *non_custom_references |= refs.flags;
+-            for next in &refs.refs {
++        // Follow chosen fallback and branch values in substitution order before resuming
++        // their enclosing value. Early random indexes belong to that ordered evaluation.
++        let mut refs_stack = SmallVec::<[std::slice::Iter<'_, _>; 5]>::new();
++        macro_rules! queue_references {
++            ($refs:expr) => {{
++                let refs: &References = $refs;
++                *non_custom_references |= refs.flags;
++                if !refs.refs.is_empty() {
++                    refs_stack.push(refs.refs.iter());
++                }
++            }};
++        }
++        queue_references!(root);
++        while let Some(mut iter) = refs_stack.pop() {
++            if let Some(next) = iter.next() {
++                if !iter.as_slice().is_empty() {
++                    refs_stack.push(iter);
++                }
                  let (next_var, fallback) = match next.function {
 +                    SubstitutionFunction::If(ref function) => {
 +                        for branch in &function.branches {
++                            let before = *early_random_count;
 +                            if check_declaration_value_cycle!(branch.condition) {
 +                                break;
 +                            }
-+                            let (Some(test), _) = branch.parsed_condition(source, &mut context.replacement_context(property_id)) else {
-+                                continue;
-+                            };
++                            let mut replacement = context.replacement_context(property_id);
++                            replacement.early_random_count = before;
++                            let (test, _) = branch.parsed_condition(source, &mut replacement);
++                            *early_random_count = replacement.early_random_count;
++                            let Some(test) = test else { continue };
 +                            let result = test.evaluate(&mut |predicate| {
 +                                predicate.for_each_property(&mut |name| {
 +                                    // An already guarded query evaluates to false without a var() edge.
@@ -1358,7 +1555,7 @@ diff -ruN a/properties/cascade.rs b/properties/cascade.rs
 +                                predicate.matches(source, &mut context.replacement_context(property_id), &mut false)
 +                            });
 +                            if result.to_bool(false) {
-+                                refs_stack.push(&branch.value.references);
++                                queue_references!(&branch.value.references);
 +                                break;
 +                            }
 +                        }
@@ -1367,12 +1564,108 @@ diff -ruN a/properties/cascade.rs b/properties/cascade.rs
                      SubstitutionFunction::Env(ref env_fn) => {
                          let name = match &env_fn.name {
                              SubstitutionArgument::Unparsed(arg) => {
-@@ -2783,5 +2856,47 @@
++                                let before = *early_random_count;
+                                 if check_declaration_value_cycle!(arg) {
+                                     continue;
+                                 }
+                                 let mut replacement_context =
+                                     context.replacement_context(property_id);
++                                replacement_context.early_random_count = before;
+                                 env_fn
+                                     .replace_name(source, &mut replacement_context)
+                                     .value
+@@ -2313,21 +2406,20 @@
+                             })
+                             .is_some();
+                         if !present && let Some(ref fallback) = env_fn.fallback {
+-                            refs_stack.push(&fallback.references);
++                            queue_references!(&fallback.references);
+                         }
+                         continue;
+                     },
+                     SubstitutionFunction::Attr(ref attr_fn) => {
+                         let arg = match &attr_fn.arg {
+                             SubstitutionArgument::Unparsed(arg) => {
++                                let before = *early_random_count;
+                                 if check_declaration_value_cycle!(arg) {
+                                     continue;
+                                 }
+-                                attr_fn
+-                                    .replace_arg(
+-                                        source,
+-                                        &mut context.replacement_context(property_id),
+-                                    )
++                                let mut replacement_context = context.replacement_context(property_id);
++                                replacement_context.early_random_count = before;
++                                attr_fn.replace_arg(source, &mut replacement_context)
+                                     .value
+                                     .map(|arg| Cow::Owned(arg.into_owned()))
+                             },
+@@ -2336,7 +2428,7 @@
+                         };
+                         let Some(arg) = arg else {
+                             if let Some(ref fallback) = attr_fn.fallback {
+-                                refs_stack.push(&fallback.references);
++                                queue_references!(&fallback.references);
+                             }
+                             continue;
+                         };
+@@ -2362,11 +2454,13 @@
+                     SubstitutionFunction::Var(ref var_fn) => {
+                         let name = match &var_fn.name {
+                             SubstitutionArgument::Unparsed(arg) => {
++                                let before = *early_random_count;
+                                 if check_declaration_value_cycle!(arg) {
+                                     continue;
+                                 }
+                                 let mut replacement_context =
+                                     context.replacement_context(property_id);
++                                replacement_context.early_random_count = before;
+                                 var_fn
+                                     .replace_name(source, &mut replacement_context)
+                                     .value
+@@ -2377,7 +2471,7 @@
+                         };
+                         let Some(name) = name else {
+                             if let Some(ref fallback) = var_fn.fallback {
+-                                refs_stack.push(&fallback.references);
++                                queue_references!(&fallback.references);
+                             }
+                             continue;
+                         };
+@@ -2420,7 +2514,7 @@
+                 }
+ 
+                 if !primary_valid && let Some(fallback) = fallback {
+-                    refs_stack.push(&fallback.references);
++                    queue_references!(&fallback.references);
+                 }
+             }
+         }
+@@ -2588,6 +2682,7 @@
+                 &mut lowlink,
+                 &mut self_ref,
+                 &mut value_non_custom_refs,
++                &mut 0,
+             );
+ 
+             // ... Then the non-custom properties this value depends on (font-size, line-height,
+@@ -2652,6 +2747,7 @@
+                         &mut lowlink,
+                         &mut self_ref,
+                         &mut Default::default(),
++                        &mut 0,
+                     );
+                 }
+             }
+@@ -2782,6 +2878,49 @@
+             &mut lowlink,
              &mut self_ref,
              &mut Default::default(),
++            &mut 0,
          );
-+    }
-+}
+     }
+ }
 +
 +/// pyro: the font-size scale factor for a `math-depth` change from `parent_math_depth` to
 +/// `computed_math_depth` (MathML Core § 3.1.2), the gecko cascade's algorithm, for servo.
@@ -1392,7 +1685,7 @@ diff -ruN a/properties/cascade.rs b/properties/cascade.rs
 +    let mut invert_scale_factor = false;
 +    if a == b {
 +        return s;
-     }
++    }
 +    if b < a {
 +        std::mem::swap(&mut a, &mut b);
 +        invert_scale_factor = true;
@@ -1414,7 +1707,7 @@ diff -ruN a/properties/cascade.rs b/properties/cascade.rs
 +    } else {
 +        s
 +    }
- }
++}
 diff -ruN a/properties/computed_value_flags.rs b/properties/computed_value_flags.rs
 --- a/properties/computed_value_flags.rs	2026-11-11 19:55:57
 +++ b/properties/computed_value_flags.rs	2026-11-17 00:11:39
@@ -4345,7 +4638,7 @@ diff -ruN a/properties/shorthands.toml b/properties/shorthands.toml
  spec = "https://drafts.csswg.org/css-overflow-4/#webkit-line-clamp"
 diff -ruN a/properties_and_values/value.rs b/properties_and_values/value.rs
 --- a/properties_and_values/value.rs	2026-11-11 19:55:57
-+++ b/properties_and_values/value.rs	2026-11-21 16:24:12
++++ b/properties_and_values/value.rs	2026-11-21 16:45:02
 @@ -230,7 +230,7 @@
          Ok(Value {
              v,
@@ -4355,7 +4648,35 @@ diff -ruN a/properties_and_values/value.rs b/properties_and_values/value.rs
          })
      }
  }
-@@ -559,9 +559,15 @@
+@@ -367,8 +367,17 @@
+             property_id,
+         );
+ 
++        Self::parse_with_context(&context, input, syntax)
++    }
++
++    pub(crate) fn parse_with_context(
++        context: &ParserContext,
++        input: &mut CSSParser,
++        syntax: &Descriptor,
++    ) -> Result<Self, StyleParseError> {
++        let url_data = context.url_data;
+         if syntax.is_universal() {
+-            let parsed = ComputedPropertyValue::parse(&context, input)?;
++            let parsed = ComputedPropertyValue::parse(context, input)?;
+             return Ok(Self::new(
+                 ValueInner::Universal(Arc::new(parsed)),
+                 url_data.clone(),
+@@ -379,7 +388,7 @@
+         let mut multiplier = None;
+         {
+             let mut parser = Parser::new(syntax, &mut values, &mut multiplier);
+-            parser.parse(&context, input)?;
++            parser.parse(context, input)?;
+         }
+         let v = if let Some(multiplier) = multiplier {
+             ValueInner::List(ComponentList {
+@@ -559,9 +568,15 @@
              DataType::Resolution => {
                  SpecifiedValueComponent::Resolution(specified::Resolution::parse(context, input)?)
              },
@@ -4374,7 +4695,7 @@ diff -ruN a/properties_and_values/value.rs b/properties_and_values/value.rs
              DataType::CustomIdent => {
                  let name = CustomIdent::parse(input, &[])?;
                  SpecifiedValueComponent::CustomIdent(name)
-@@ -632,13 +638,23 @@
+@@ -632,7 +647,7 @@
  }
  
  /// An animated value for custom property.
@@ -4383,11 +4704,10 @@ diff -ruN a/properties_and_values/value.rs b/properties_and_values/value.rs
  pub struct CustomAnimatedValue {
      /// The name of the custom property.
      pub(crate) name: crate::custom_properties::Name,
-     /// The computed value of the custom property.
-     /// `None` represents the guaranteed-invalid value.
+@@ -641,12 +656,30 @@
      pub(crate) value: Option<ComputedValue>,
-+}
-+
+ }
+ 
 +impl PartialEq for CustomAnimatedValue {
 +    fn eq(&self, other: &Self) -> bool {
 +        // The sampled value goes back into the cascade. A change in its taint alone
@@ -4396,10 +4716,11 @@ diff -ruN a/properties_and_values/value.rs b/properties_and_values/value.rs
 +            && self.value == other.value
 +            && self.value.as_ref().map(|v| v.attr_tainted) == other.value.as_ref().map(|v| v.attr_tainted)
 +    }
- }
- 
++}
++
  impl Animate for CustomAnimatedValue {
-@@ -647,6 +663,14 @@
+     fn animate(&self, other: &Self, procedure: Procedure) -> Result<Self, ()> {
+         if self.name != other.name {
              return Err(());
          }
          let value = self.value.animate(&other.value, procedure)?;
@@ -4416,16 +4737,26 @@ diff -ruN a/properties_and_values/value.rs b/properties_and_values/value.rs
              value,
 diff -ruN a/queries/condition.rs b/queries/condition.rs
 --- a/queries/condition.rs	2026-11-11 19:55:57
-+++ b/queries/condition.rs	2026-11-21 16:27:55
-@@ -25,6 +25,7 @@
++++ b/queries/condition.rs	2026-11-21 16:45:58
+@@ -25,6 +25,8 @@
  use crate::substitution;
  use crate::substitution::AttrTaint;
  use crate::values::{AtomString, DashedIdent, computed};
++use crate::values::computed::ToComputedValue;
 +use crate::values::specified::position::PositionTryFallbacksItem;
  use crate::{error_reporting::ContextualParseError, parser::Parse, parser::ParserContext};
  use cssparser::{
      Parser, SourceLocation, SourcePosition, Token, match_ignore_ascii_case, parse_important,
-@@ -256,22 +257,19 @@
+@@ -52,6 +54,8 @@
+ 
+ #[derive(Clone, Debug, PartialEq, ToShmem)]
+ enum StyleFeatureValue {
++    /// A registered inline style-query operand parsed in its declaration’s early random scope.
++    Typed(Arc<SpecifiedRegisteredValue>),
+     Value(Option<Arc<custom_properties::SpecifiedValue>>),
+     Keyword(CSSWideKeyword),
+ }
+@@ -256,22 +260,19 @@
      ) -> KleeneValue {
          ctx.builder
              .add_flags(ComputedValueFlags::DEPENDS_ON_CONTAINER_STYLE_QUERY);
@@ -4461,7 +4792,32 @@ diff -ruN a/queries/condition.rs b/queries/condition.rs
          }
      }
  
-@@ -417,6 +415,33 @@
+@@ -381,6 +382,10 @@
+         dest.write_str("--")?;
+         crate::values::serialize_atom_identifier(&self.name, dest)?;
+         match self.value {
++            StyleFeatureValue::Typed(ref value) => {
++                dest.write_str(": ")?;
++                value.to_css(dest)?;
++            },
+             StyleFeatureValue::Keyword(k) => {
+                 dest.write_str(": ")?;
+                 k.to_css(dest)?;
+@@ -407,6 +412,13 @@
+             input.skip_whitespace();
+             if let Ok(keyword) = input.try_parse(|i| CSSWideKeyword::parse(i)) {
+                 StyleFeatureValue::Keyword(keyword)
++            } else if let Some(registration) = context.property_declaration_context.inline_style_registration(&name)
++                && let Some(syntax) = registration.syntax.as_ref().filter(|s| !s.is_universal())
++                && let Ok(value) = input.try_parse(|i| i.parse_until_before(cssparser::Delimiter::Bang,
++                    |i| SpecifiedRegisteredValue::parse_with_context(context, i, syntax)))
++            {
++                let _ = input.try_parse(parse_important);
++                StyleFeatureValue::Typed(Arc::new(value))
+             } else {
+                 let value = custom_properties::SpecifiedValue::parse(context, input)?;
+                 // `!important` is allowed (but ignored) after the value.
+@@ -417,6 +429,34 @@
              StyleFeatureValue::Value(None)
          };
          Ok(Self { name, value })
@@ -4475,6 +4831,7 @@ diff -ruN a/queries/condition.rs b/queries/condition.rs
 +        let initial = context.stylist.get_custom_property_initial_values().get(registration, &self.name);
 +        let inherited = ctx.builder.inherited_style.custom_properties().get(registration, &self.name);
 +        match &self.value {
++            StyleFeatureValue::Typed(value) => current == Some(&value.as_ref().to_computed_value(ctx)),
 +            StyleFeatureValue::Value(None) => current != initial,
 +            StyleFeatureValue::Value(Some(value)) => {
 +                let query = custom_properties::compute_variable_value(value, registration, ctx, None);
@@ -4495,7 +4852,15 @@ diff -ruN a/queries/condition.rs b/queries/condition.rs
      }
  
      // Substitute custom-property references in `value`, then re-parse and compute it,
-@@ -675,6 +700,8 @@
+@@ -479,6 +519,7 @@
+             .inherited_custom_properties()
+             .get(registration, &self.name);
+         KleeneValue::from(match self.value {
++            StyleFeatureValue::Typed(ref value) => current_value == Some(&value.as_ref().to_computed_value(ctx)),
+             StyleFeatureValue::Value(Some(ref v)) => {
+                 if ctx.container_info.is_none() {
+                     // If no container, custom props are guaranteed-unknown.
+@@ -675,6 +716,8 @@
      InParens(Box<QueryCondition>),
      /// A <style> query.
      Style(StyleQuery),
@@ -4504,12 +4869,10 @@ diff -ruN a/queries/condition.rs b/queries/condition.rs
      /// A -moz-pref() query.
      MozPref(MozPrefFeature),
      /// [ <function-token> <any-value>? ) ] | [ ( <any-value>? ) ]
-@@ -707,6 +734,17 @@
-             Self::Style(ref c) => {
-                 dest.write_str("style(")?;
+@@ -709,6 +752,17 @@
                  c.to_css(dest)?;
-+                dest.write_char(')')
-+            },
+                 dest.write_char(')')
+             },
 +            Self::Anchored(ref query) => {
 +                dest.write_str("anchored(fallback")?;
 +                if let Some(value) = query {
@@ -4519,10 +4882,12 @@ diff -ruN a/queries/condition.rs b/queries/condition.rs
 +                        None => dest.write_str("none")?,
 +                    }
 +                }
-                 dest.write_char(')')
-             },
++                dest.write_char(')')
++            },
              Self::MozPref(ref c) => {
-@@ -755,6 +793,7 @@
+                 dest.write_str("-moz-pref(")?;
+                 c.to_css(dest)?;
+@@ -755,6 +809,7 @@
              | Self::Feature(..)
              | Self::GeneralEnclosed(..)
              | Self::Style(..)
@@ -4530,7 +4895,7 @@ diff -ruN a/queries/condition.rs b/queries/condition.rs
              | Self::MozPref(..) => {},
              Self::Not(ref cond) => cond.visit(visitor),
              Self::Operation(ref conds, _op) => {
-@@ -772,6 +811,7 @@
+@@ -772,6 +827,7 @@
          let mut result = FeatureFlags::empty();
          self.visit(&mut |condition| match condition {
              Self::Style(..) => result.insert(FeatureFlags::STYLE),
@@ -4538,7 +4903,7 @@ diff -ruN a/queries/condition.rs b/queries/condition.rs
              Self::Feature(f) => result.insert(f.feature_flags()),
              Self::GeneralEnclosed(_, _, flags) => result.insert(*flags),
              _ => {},
-@@ -834,6 +874,9 @@
+@@ -834,6 +890,9 @@
              Self::InParens(ref c) => c.matches(context, custom, attribute_tracker),
              Self::Not(ref c) => !c.matches(context, custom, attribute_tracker),
              Self::Style(ref c) => c.matches(context, attribute_tracker),
@@ -4548,7 +4913,7 @@ diff -ruN a/queries/condition.rs b/queries/condition.rs
              Self::MozPref(ref c) => c.matches(context),
              Self::Operation(ref conditions, op) => {
                  debug_assert!(!conditions.is_empty(), "We never create an empty op");
-@@ -962,6 +1005,16 @@
+@@ -962,6 +1021,16 @@
              },
              Token::Function(ref name) => {
                  match_ignore_ascii_case! { name,
@@ -4565,7 +4930,7 @@ diff -ruN a/queries/condition.rs b/queries/condition.rs
                      "style" if StyleQuery::enabled(feature_type) => {
                          let query = try_parse_block(context, input, start, start_location, |input| {
                              StyleQuery::parse(context, input, feature_type)
-@@ -1000,3 +1053,119 @@
+@@ -1000,3 +1069,119 @@
          Self::Operation(conditions, operator)
      }
  }
@@ -6234,7 +6599,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
      fn default_namespace(&self) -> Option<Namespace> {
 diff -ruN a/style_adjuster.rs b/style_adjuster.rs
 --- a/style_adjuster.rs	2026-11-11 19:55:57
-+++ b/style_adjuster.rs	2026-11-21 13:53:50
++++ b/style_adjuster.rs	2026-11-21 17:02:38
 @@ -186,6 +186,84 @@
              .set_adjusted_display(new_display, false);
      }
@@ -6320,10 +6685,13 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
      /// CSS 2.1 section 9.7:
      ///
      ///    If 'position' has the value 'absolute' or 'fixed', [...] the computed
-@@ -406,6 +484,51 @@
-         }
-     }
- 
+@@ -403,7 +481,52 @@
+             } else {
+                 self.style.mutate_box().set_display(Display::InlineBlock);
+             }
++        }
++    }
++
 +    /// pyro: `text-combine-upright: all` on an inline box in a vertical (not sideways) line: its
 +    /// text is combined into one upright 1em square (CSS Writing Modes 4 § 9.1.1). Laid out as an
 +    /// inline-block of `horizontal-tb` writing (`adjust_for_writing_mode` below makes it one), 1em
@@ -6341,7 +6709,7 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
 +        let parent = layout_parent_style.writing_mode;
 +        if !parent.is_vertical() || parent.is_sideways() || *self.style.get_box().get_display() != Display::Inline {
 +            return;
-+        }
+         }
 +        // Emphasis marks of combined text go beside the composition, as for one glyph of the
 +        // vertical line, which an inline-block's own text cannot draw: such text is left as it
 +        // was (upright glyphs), until the line marks combined boxes itself.
@@ -6367,11 +6735,9 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
 +        self.style
 +            .mutate_font()
 +            .set_line_height(crate::values::computed::LineHeight::Length(NonNegative(Length::new(em.px()))));
-+    }
-+
+     }
+ 
      /// CSS overflow-x and overflow-y require some fixup as well in some cases.
-     /// https://drafts.csswg.org/css-overflow-3/#overflow-properties
-     /// "Computed value: as specified, except with `visible`/`clip` computing to
 @@ -419,9 +542,14 @@
          }
  
@@ -6389,7 +6755,18 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
          }
      }
  
-@@ -821,6 +949,75 @@
+@@ -793,7 +921,9 @@
+             a => a,
+         };
+ 
+-        if appearance == Appearance::Menulist {
++        if appearance == Appearance::Menulist
++            || (appearance == Appearance::MenulistButton && *box_.get__moz_default_appearance() == Appearance::Menulist)
++        {
+             if *self.style.get_font().get_line_height() == LineHeight::normal() {
+                 return;
+             }
+@@ -821,6 +951,75 @@
      /// for web-compat reasons.
      /// We intentionally don't check 'list-style-image' below since we want it to use
      /// the same font as its fallback ('list-style-type') in case it fails to load.
@@ -6465,10 +6842,13 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
      #[cfg(feature = "gecko")]
      fn adjust_for_marker_pseudo(&mut self, author_or_user_specified_properties: &LonghandIdSet) {
          use crate::values::computed::counters::Content;
-@@ -1032,6 +1229,31 @@
-         }
-     }
- 
+@@ -1029,7 +1228,32 @@
+             pos.set_align_self(flipped);
+         } else {
+             pos.set_justify_self(flipped);
++        }
++    }
++
 +    /// pyro: `backface-visibility: hidden` on an element participating in a 3D rendering context
 +    /// (its layout parent `preserve-3d`) makes it the containing block of its absolutely and
 +    /// fixed positioned descendants, as in Chromium (WPT css-transforms
@@ -6486,18 +6866,16 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
 +            || box_style.will_change.bits.contains(WillChangeBits::FIXPOS_CB_NON_SVG)
 +        {
 +            return;
-+        }
+         }
 +        let display = *box_style.get_display();
 +        if display.is_none() || display.is_contents() || display.is_inline_flow() {
 +            return;
 +        }
 +        self.style.mutate_box().will_change.bits |= WillChangeBits::FIXPOS_CB_NON_SVG;
-+    }
-+
+     }
+ 
      /// Adjusts the style to account for various fixups that don't fit naturally into the cascade.
-     #[allow(unused_variables)]
-     pub fn adjust<E>(
-@@ -1064,7 +1286,20 @@
+@@ -1064,7 +1288,20 @@
          //     "Should always have an element around for non-pseudo styles"
          // );
  
@@ -6518,7 +6896,7 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
          self.adjust_for_prohibited_display_contents(element);
          #[cfg(feature = "gecko")]
          {
-@@ -1084,12 +1319,20 @@
+@@ -1084,12 +1321,20 @@
          }
          self.adjust_for_justify_items();
          self.adjust_for_table_text_align();
@@ -7544,8 +7922,8 @@ diff -ruN a/substitution/attr.rs b/substitution/attr.rs
  
 diff -ruN a/substitution/conditional.rs b/substitution/conditional.rs
 --- a/substitution/conditional.rs	1970-01-01 00:00:00.000000000 +0000
-+++ b/substitution/conditional.rs	2026-11-21 16:27:55
-@@ -0,0 +1,98 @@
++++ b/substitution/conditional.rs	2026-11-21 16:45:02
+@@ -0,0 +1,103 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
 + * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
@@ -7583,8 +7961,13 @@ diff -ruN a/substitution/conditional.rs b/substitution/conditional.rs
 +        context.consulted_attr_taint |= earlier;
 +        let Ok(substituted) = substituted else { return (None, consulted) };
 +        let parser_context = context.parser_context(&source.url_data);
-+        let parsed = Parser::new(&substituted.css)
-+            .parse_entirely(|i| IfCondition::parse(&parser_context, i)).ok();
++        let indices = crate::parser::EarlyRandomIndices::new(context.early_random_count, context.stylist);
++        let parsed = parser_context.with_random_scope(context.property_id, Some(&indices), |cx| {
++            Parser::new(&substituted.css).parse_entirely(|i| IfCondition::parse(cx, i)).ok()
++        });
++        if parsed.is_some() {
++            context.early_random_count = indices.end();
++        }
 +        (parsed, substituted.attr_tainted || consulted)
 +    }
 +}
@@ -7646,7 +8029,7 @@ diff -ruN a/substitution/conditional.rs b/substitution/conditional.rs
 +}
 diff -ruN a/substitution/mod.rs b/substitution/mod.rs
 --- a/substitution/mod.rs	2026-11-11 19:55:57
-+++ b/substitution/mod.rs	2026-11-21 16:27:55
++++ b/substitution/mod.rs	2026-11-21 16:40:59
 @@ -7,6 +7,7 @@
  
  pub mod attr;
@@ -7780,25 +8163,28 @@ diff -ruN a/substitution/mod.rs b/substitution/mod.rs
              Self::Var(function) => function.for_each_unparsed_value(f),
              Self::Env(function) => function.for_each_unparsed_value(f),
              Self::Attr(function) => function.for_each_unparsed_value(f),
-@@ -750,6 +788,9 @@
+@@ -750,6 +788,11 @@
      pub computed_context: &'b computed::Context<'c>,
      /// Tracks the attributes queried by `attr()`.
      pub attribute_tracker: &'b mut AttributeTracker<'t>,
 +    /// Records tainted inputs encountered before a substitution fails. An enclosing if()
 +    /// may recover from that failure by choosing a different branch.
 +    pub(crate) consulted_attr_taint: bool,
++    /// Number of random functions parsed during substitution of this declaration.
++    pub(crate) early_random_count: i32,
      /// The custom properties currently being resolved, for cycle detection.
      pub seen: SmallVec<[Name; 8]>,
  }
-@@ -770,6 +811,7 @@
+@@ -770,6 +813,8 @@
              computed_context,
              attribute_tracker,
              seen: SmallVec::new(),
 +            consulted_attr_taint: false,
++            early_random_count: 0,
          }
      }
  
-@@ -849,6 +891,7 @@
+@@ -849,6 +894,7 @@
              }
  
              let substitution = reference.function.replace(source, self)?;
@@ -7895,7 +8281,7 @@ diff -ruN a/traversal.rs b/traversal.rs
              let cascade_inputs = ElementCascadeInputs::new_from_element_data(data);
 diff -ruN a/url/mod.rs b/url/mod.rs
 --- a/url/mod.rs	2026-11-11 19:55:57
-+++ b/url/mod.rs	2026-11-19 20:21:23
++++ b/url/mod.rs	2026-11-21 16:51:45
 @@ -4,10 +4,12 @@
  
  //! Common handling for the specified value CSS url() values.
@@ -7940,7 +8326,7 @@ diff -ruN a/url/mod.rs b/url/mod.rs
      }
  
      /// Parse a URL from a string value that is a valid CSS token for a URL,
-@@ -69,3 +88,179 @@
+@@ -69,3 +88,192 @@
          Self::parse_with_cors_mode(context, input, CorsMode::None)
      }
  }
@@ -8021,6 +8407,11 @@ diff -ruN a/url/mod.rs b/url/mod.rs
 +/// CORS mode). Every valid `url()` has these, most with no modifier set.
 +#[derive(Clone, Debug, Deserialize, Eq, Hash, MallocSizeOf, PartialEq, Serialize)]
 +pub struct RequestUrlModifiers {
++    /// Fragment-only spelling retained alongside the referrer when computing a local CSS URL.
++    #[cfg(feature = "servo")]
++    #[serde(default)]
++    #[ignore_malloc_size_of = "Arc"]
++    local_fragment: Option<servo_arc::Arc<String>>,
 +    /// `cross-origin()`
 +    pub cross_origin: Option<CrossOriginModifier>,
 +    /// `integrity()`: the integrity metadata (Subresource Integrity § 3.3).
@@ -8034,10 +8425,18 @@ diff -ruN a/url/mod.rs b/url/mod.rs
 +}
 +
 +impl RequestUrlModifiers {
++    /// Whether this resource was specified with a fragment-only URL.
++    #[cfg(feature = "servo")]
++    pub fn is_local_fragment(&self) -> bool {
++        self.local_fragment.is_some()
++    }
++
 +    /// Parses `<request-url-modifier>*` up to the end of `input`: `None` when there is none, an
 +    /// error for any other token, an unknown modifier, or one given twice.
 +    pub fn parse(context: &ParserContext, input: &mut Parser) -> Result<Option<Self>, ParseError> {
 +        let mut modifiers = Self {
++            #[cfg(feature = "servo")]
++            local_fragment: None,
 +            cross_origin: None,
 +            integrity: None,
 +            referrer_policy: None,
@@ -8122,7 +8521,7 @@ diff -ruN a/url/mod.rs b/url/mod.rs
 +}
 diff -ruN a/url/servo.rs b/url/servo.rs
 --- a/url/servo.rs	2026-11-11 19:55:57
-+++ b/url/servo.rs	2026-11-19 20:21:23
++++ b/url/servo.rs	2026-11-21 16:42:15
 @@ -45,6 +45,10 @@
      /// The resolved value for the url, if valid.
      #[ignore_malloc_size_of = "Arc"]
@@ -8134,7 +8533,7 @@ diff -ruN a/url/servo.rs b/url/servo.rs
  }
  
  impl ToShmem for CssUrl {
-@@ -79,12 +83,38 @@
+@@ -79,12 +83,40 @@
              .then(|| context.url_data.0.join(&serialization))
              .and_then(Result::ok)
              .map(Arc::new);
@@ -8143,6 +8542,7 @@ diff -ruN a/url/servo.rs b/url/servo.rs
 +        // modifier of its own.
 +        let modifiers = resolved.is_some().then(|| {
 +            Arc::new(super::RequestUrlModifiers {
++                local_fragment: serialization.starts_with('#').then(|| serialization.clone()),
 +                cross_origin: None,
 +                integrity: None,
 +                referrer_policy: None,
@@ -8157,7 +8557,8 @@ diff -ruN a/url/servo.rs b/url/servo.rs
      }
  
 +    /// pyro: this URL with the request URL modifiers `modifiers`.
-+    pub(super) fn with_modifiers(self, modifiers: super::RequestUrlModifiers) -> Self {
++    pub(super) fn with_modifiers(self, mut modifiers: super::RequestUrlModifiers) -> Self {
++        modifiers.local_fragment = self.original.clone().filter(|s| s.starts_with('#'));
 +        CssUrl(Arc::new(CssUrlData {
 +            original: self.0.original.clone(),
 +            resolved: self.0.resolved.clone(),
@@ -8173,7 +8574,21 @@ diff -ruN a/url/servo.rs b/url/servo.rs
      /// Returns true if the URL is definitely invalid. For Servo URLs, we can
      /// use its |resolved| status.
      pub fn is_invalid(&self) -> bool {
-@@ -123,6 +153,7 @@
+@@ -94,12 +126,8 @@
+     /// Returns true if this URL looks like a fragment.
+     /// See https://drafts.csswg.org/css-values/#local-urls
+     ///
+-    /// Since Servo currently stores resolved URLs, this is hard to implement. We
+-    /// either need to change servo to lazily resolve (like Gecko), or note this
+-    /// information in the tokenizer.
+     pub fn is_fragment(&self) -> bool {
+-        error!("Can't determine whether the url is a fragment.");
+-        false
++        self.original.as_ref().is_some_and(|s| s.starts_with('#'))
+     }
+ 
+     /// Returns the resolved url if it was valid.
+@@ -123,6 +151,7 @@
          CssUrl(Arc::new(CssUrlData {
              original: None,
              resolved: Some(url),
@@ -8181,7 +8596,7 @@ diff -ruN a/url/servo.rs b/url/servo.rs
          }))
      }
  
-@@ -134,6 +165,7 @@
+@@ -134,6 +163,7 @@
                  .then(|| ::url::Url::parse(url))
                  .and_then(Result::ok)
                  .map(Arc::new),
@@ -8189,7 +8604,7 @@ diff -ruN a/url/servo.rs b/url/servo.rs
          }))
      }
  }
-@@ -142,7 +174,7 @@
+@@ -142,7 +172,7 @@
      fn eq(&self, other: &Self) -> bool {
          // TODO(emilio): maybe we care about equality of the specified values if
          // present? Seems not.
@@ -8198,7 +8613,7 @@ diff -ruN a/url/servo.rs b/url/servo.rs
      }
  }
  
-@@ -166,6 +198,9 @@
+@@ -166,6 +196,9 @@
  
          dest.write_str("url(")?;
          string.to_css(dest)?;
@@ -8208,22 +8623,33 @@ diff -ruN a/url/servo.rs b/url/servo.rs
          dest.write_char(')')
      }
  }
-@@ -180,7 +215,7 @@
+@@ -178,9 +211,16 @@
+ 
+     // If we can't resolve the URL from the specified one, we fall back to the original
      // but still return it as a ComputedUrl::Invalid
-     fn to_computed_value(&self, _: &Context) -> Self::ComputedValue {
+-    fn to_computed_value(&self, _: &Context) -> Self::ComputedValue {
++    fn to_computed_value(&self, context: &Context) -> Self::ComputedValue {
++        if self.is_fragment()
++            && let Some(document) = context.device().document_url()
++            && let Some(original) = &self.original
++            && let Ok(url) = document.join(original)
++        {
++            return ComputedUrl::Valid(Arc::new(url), self.modifiers.clone());
++        }
          match self.resolved {
 -            Some(ref url) => ComputedUrl::Valid(url.clone()),
 +            Some(ref url) => ComputedUrl::Valid(url.clone(), self.modifiers.clone()),
              None => match self.original {
                  Some(ref url) => ComputedUrl::Invalid(url.clone()),
                  None => {
-@@ -192,13 +227,15 @@
+@@ -192,13 +232,15 @@
  
      fn from_computed_value(computed: &ComputedUrl) -> Self {
          let data = match *computed {
 -            ComputedUrl::Valid(ref url) => CssUrlData {
+-                original: None,
 +            ComputedUrl::Valid(ref url, ref modifiers) => CssUrlData {
-                 original: None,
++                original: modifiers.as_ref().and_then(|m| m.local_fragment.clone()),
                  resolved: Some(url.clone()),
 +                modifiers: modifiers.clone(),
              },
@@ -8234,7 +8660,7 @@ diff -ruN a/url/servo.rs b/url/servo.rs
              },
          };
          CssUrl(Arc::new(data))
-@@ -210,18 +247,30 @@
+@@ -210,18 +252,30 @@
  pub enum ComputedUrl {
      /// The `url()` was invalid or it wasn't specified by the user.
      Invalid(#[ignore_malloc_size_of = "Arc"] Arc<String>),
@@ -8268,12 +8694,14 @@ diff -ruN a/url/servo.rs b/url/servo.rs
  }
  
  impl ToCss for ComputedUrl {
-@@ -230,12 +279,15 @@
+@@ -230,12 +284,17 @@
          W: Write,
      {
          let string = match *self {
 -            ComputedUrl::Valid(ref url) => url.as_str(),
-+            ComputedUrl::Valid(ref url, _) => url.as_str(),
++            ComputedUrl::Valid(ref url, ref modifiers) => modifiers.as_ref()
++                .and_then(|m| m.local_fragment.as_ref())
++                .map_or_else(|| url.as_str(), |fragment| fragment.as_str()),
              ComputedUrl::Invalid(ref invalid_string) => invalid_string,
          };
  
@@ -8654,6 +9082,25 @@ diff -ruN a/values/computed/effects.rs b/values/computed/effects.rs
 -
  /// A computed value for the `drop-shadow()` filter.
  pub type SimpleShadow = GenericSimpleShadow<Color, Length, NonNegativeLength>;
+diff -ruN a/values/computed/font.rs b/values/computed/font.rs
+--- a/values/computed/font.rs	2026-11-11 19:55:57
++++ b/values/computed/font.rs	2026-11-21 16:59:00
+@@ -32,11 +32,14 @@
+ use style_traits::{CssWriter, ParseError, ToCss};
+ use thin_vec::ThinVec;
+ 
++/// A palette with element-dependent percentages resolved for the current style.
++pub type FontPalette = specified::GenericFontPalette<Percentage>;
++
+ pub use crate::values::computed::Length as MozScriptMinSize;
+ pub use crate::values::specified::Integer as SpecifiedInteger;
+ pub use crate::values::specified::Number as SpecifiedNumber;
+ pub use crate::values::specified::font::{
+-    FontKerning, FontOpticalSizing, FontPalette, FontSmoothing, FontSynthesis, FontSynthesisStyle,
++    FontKerning, FontOpticalSizing, FontSmoothing, FontSynthesis, FontSynthesisStyle,
+     FontVariantCaps, FontVariantEmoji, FontVariantPosition, MathShift, MathStyle, MathVariant,
+     MozScriptSizeMultiplier,
+ };
 diff -ruN a/values/computed/image.rs b/values/computed/image.rs
 --- a/values/computed/image.rs	2026-11-11 19:55:57
 +++ b/values/computed/image.rs	2026-11-15 07:03:49
@@ -11696,7 +12143,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +}
 diff -ruN a/values/specified/calc.rs b/values/specified/calc.rs
 --- a/values/specified/calc.rs	2026-11-11 19:55:57
-+++ b/values/specified/calc.rs	2026-11-21 16:00:02
++++ b/values/specified/calc.rs	2026-11-21 17:10:09
 @@ -305,6 +305,9 @@
          const ANCHOR = 1 << 0;
          /// `anchor-size()` function.
@@ -11778,6 +12225,15 @@ diff -ruN a/values/specified/calc.rs b/values/specified/calc.rs
                          return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
                      }
  
+@@ -1256,7 +1269,7 @@
+                     // random keys construct the correct random cache name when parsed.
+                     context
+                         .property_declaration_context
+-                        .increment_random_count();
++                        .increment_random_count(input.position().byte_index());
+ 
+                     let key = match input.try_parse(|input| RandomKey::parse(context, input)) {
+                         Ok(key) => {
 @@ -1627,6 +1640,23 @@
              ..Default::default()
          };
@@ -12030,8 +12486,16 @@ diff -ruN a/values/specified/effects.rs b/values/specified/effects.rs
              let f = input.expect_function()?;
 diff -ruN a/values/specified/font.rs b/values/specified/font.rs
 --- a/values/specified/font.rs	2026-11-11 19:55:57
-+++ b/values/specified/font.rs	2026-11-21 00:36:36
-@@ -46,7 +46,7 @@
++++ b/values/specified/font.rs	2026-11-21 16:59:00
+@@ -20,6 +20,7 @@
+ use crate::values::specified::calc::{Leaf, PercentageContext};
+ use crate::values::specified::length::{FontBaseSize, LengthUnit, LineHeightBase, PX_PER_PT};
+ use crate::values::specified::number::parse_number_with_clamping_mode;
++use crate::values::specified::percentage::ToPercentage;
+ use crate::values::specified::{AllowQuirks, Angle, Integer, LengthPercentage};
+ use crate::values::specified::{
+     NoCalcLength, NonNegativeLengthPercentage, NonNegativeNumber, NonNegativePercentage, Number,
+@@ -46,7 +47,7 @@
              }
              #[cfg(feature = "servo")]
              {
@@ -12040,7 +12504,7 @@ diff -ruN a/values/specified/font.rs b/values/specified/font.rs
              }
          }
      };
-@@ -74,7 +74,6 @@
+@@ -74,7 +75,6 @@
      Clone, Copy, Debug, Eq, Hash, MallocSizeOf, Parse, PartialEq, SpecifiedValueInfo, ToCss, ToShmem,
  )]
  #[allow(missing_docs)]
@@ -12048,7 +12512,7 @@ diff -ruN a/values/specified/font.rs b/values/specified/font.rs
  pub enum SystemFont {
      /// https://drafts.csswg.org/css-fonts/#valdef-font-caption
      Caption,
-@@ -89,44 +88,26 @@
+@@ -89,42 +89,24 @@
      /// https://drafts.csswg.org/css-fonts/#valdef-font-status-bar
      StatusBar,
      /// Internal system font, used by the `<menupopup>`s on macOS.
@@ -12070,8 +12534,8 @@ diff -ruN a/values/specified/font.rs b/values/specified/font.rs
 +    #[cfg(feature = "gecko")]
      #[css(skip)]
      End, // Just for indexing purposes.
- }
- 
+-}
+-
 -// We don't parse system fonts in servo, but in the interest of not
 -// littering a lot of code with `if engine == "gecko"` conditionals,
 -// we have a dummy system font module that does nothing
@@ -12093,12 +12557,10 @@ diff -ruN a/values/specified/font.rs b/values/specified/font.rs
 -    pub fn parse(_context: &ParserContext, _input: &mut Parser) -> Result<Self, ()> {
 -        Err(())
 -    }
--}
--
- const DEFAULT_SCRIPT_MIN_SIZE_PT: u32 = 8;
- const DEFAULT_SCRIPT_SIZE_MULTIPLIER: f64 = 0.71;
+ }
  
-@@ -515,7 +496,7 @@
+ const DEFAULT_SCRIPT_MIN_SIZE_PT: u32 = 8;
+@@ -515,7 +497,7 @@
      XXXLarge,
      /// Indicate whether to apply font-size: math is specified so that extra
      /// scaling due to math-depth changes is applied during the cascade.
@@ -12107,24 +12569,23 @@ diff -ruN a/values/specified/font.rs b/values/specified/font.rs
      Math,
      #[css(skip)]
      None,
-@@ -529,16 +510,9 @@
+@@ -529,15 +511,8 @@
      }
  
      /// Returns true if the font size is the math keyword
 -    #[cfg(feature = "gecko")]
      pub fn is_math(self) -> bool {
          matches!(self, Self::Math)
-     }
+-    }
 -
 -    /// Returns true if the font size is the math keyword
 -    #[cfg(feature = "servo")]
 -    pub fn is_math(self) -> bool {
 -        false
--    }
+     }
  }
  
- #[derive(
-@@ -971,10 +945,10 @@
+@@ -971,10 +946,10 @@
                          line_height_base,
                      )
                  },
@@ -12137,7 +12598,7 @@ diff -ruN a/values/specified/font.rs b/values/specified/font.rs
                      }
                      #[cfg(feature = "gecko")]
                      {
-@@ -1642,48 +1616,183 @@
+@@ -1642,44 +1617,178 @@
  #[derive(
      Clone,
      Debug,
@@ -12157,17 +12618,23 @@ diff -ruN a/values/specified/font.rs b/values/specified/font.rs
  /// Allows authors to choose a palette from those supported by a color font
  /// (and potentially @font-palette-values overrides).
 -pub struct FontPalette(Atom);
-+pub enum FontPalette {
++pub enum GenericFontPalette<P> {
 +    /// `normal`, `light`, `dark` or a `<dashed-ident>`.
 +    Named(Atom),
 +    /// `palette-mix()` mixes the entries of one or more palettes.
-+    Mix(Box<FontPaletteMix>),
++    Mix(Box<FontPaletteMix<P>>),
 +}
  
 -#[allow(missing_docs)]
 -impl FontPalette {
 -    pub fn normal() -> Self {
 -        Self(atom!("normal"))
+-    }
+-    pub fn light() -> Self {
+-        Self(atom!("light"))
++/// A specified palette retains percentage expressions until the element is styled.
++pub type FontPalette = GenericFontPalette<crate::values::specified::Percentage>;
++
 +/// An ordered palette mix and its interpolation method.
 +#[derive(
 +    Clone,
@@ -12178,24 +12645,23 @@ diff -ruN a/values/specified/font.rs b/values/specified/font.rs
 +    Serialize,
 +    ToShmem,
 +)]
-+pub struct FontPaletteMix {
++pub struct FontPaletteMix<P> {
 +    /// The colour space the entries are mixed in.
 +    pub interpolation: crate::color::mix::ColorInterpolationMethod,
-+    /// Palette, fractional weight and specified math expression, in source order.
-+    pub items: Vec<PaletteMixItem>,
++    /// Palettes and their optional percentages, in source order.
++    pub items: Vec<PaletteMixItem<P>>,
 +}
 +
 +#[derive(Clone, Debug, Deserialize, MallocSizeOf, PartialEq, Serialize, ToShmem)]
 +#[allow(missing_docs)]
-+pub struct PaletteMixItem {
-+    pub palette: FontPalette,
-+    pub weight: Option<f32>,
-+    expression: Option<String>,
++pub struct PaletteMixItem<P> {
++    pub palette: GenericFontPalette<P>,
++    pub weight: Option<P>,
 +}
 +
-+impl SpecifiedValueInfo for FontPaletteMix {}
++impl<P> SpecifiedValueInfo for FontPaletteMix<P> {}
 +
-+impl crate::values::animated::Animate for FontPalette {
++impl crate::values::animated::Animate for computed::FontPalette {
 +    fn animate(&self, other: &Self, procedure: crate::values::animated::Procedure) -> Result<Self, ()> {
 +        let crate::values::animated::Procedure::Interpolate { progress } = procedure else { return Err(()) };
 +        if progress <= 0.0 || self == other { return Ok(self.clone()); }
@@ -12203,52 +12669,41 @@ diff -ruN a/values/specified/font.rs b/values/specified/font.rs
 +        Ok(Self::Mix(Box::new(FontPaletteMix {
 +            interpolation: Default::default(),
 +            items: vec![
-+                PaletteMixItem { palette: self.clone(), weight: None, expression: None },
-+                PaletteMixItem { palette: other.clone(), weight: Some(progress as f32), expression: None },
++                PaletteMixItem { palette: self.clone(), weight: None },
++                PaletteMixItem { palette: other.clone(), weight: Some(ComputedPercentage(progress as f32)) },
 +            ],
 +        })))
-     }
--    pub fn light() -> Self {
--        Self(atom!("light"))
-+}
-+
-+impl crate::values::distance::ComputeSquaredDistance for FontPalette {
-+    fn compute_squared_distance(&self, other: &Self) -> Result<crate::values::distance::SquaredDistance, ()> {
-+        if self == other { Ok(crate::values::distance::SquaredDistance::from_sqrt(0.0)) } else { Err(()) }
      }
 -    pub fn dark() -> Self {
 -        Self(atom!("dark"))
 +}
 +
-+impl crate::values::animated::ToAnimatedZero for FontPalette {
-+    fn to_animated_zero(&self) -> Result<Self, ()> { Err(()) }
-+}
-+
-+// Computation drops the specified math spelling recursively from nested mixes.
-+impl ToComputedValue for FontPalette {
-+    type ComputedValue = Self;
-+
-+    #[inline]
-+    fn to_computed_value(&self, context: &Context) -> Self {
-+        match self {
-+            Self::Named(_) => self.clone(),
-+            Self::Mix(mix) => Self::Mix(Box::new(FontPaletteMix {
-+                interpolation: mix.interpolation,
-+                items: mix.items.iter().map(|item| PaletteMixItem { palette: item.palette.to_computed_value(context), weight: item.weight, expression: None }).collect(),
-+            })),
-+        }
++impl crate::values::distance::ComputeSquaredDistance for computed::FontPalette {
++    fn compute_squared_distance(&self, other: &Self) -> Result<crate::values::distance::SquaredDistance, ()> {
++        if self == other { Ok(crate::values::distance::SquaredDistance::from_sqrt(0.0)) } else { Err(()) }
      }
-+
-+    #[inline]
-+    fn from_computed_value(computed: &Self) -> Self {
-+        computed.clone()
-+    }
  }
  
 -impl Parse for FontPalette {
 -    /// normal | light | dark | dashed-ident
 -    fn parse(_context: &ParserContext, input: &mut Parser) -> Result<FontPalette, ParseError> {
-+impl crate::values::resolved::ToResolvedValue for FontPalette {
++impl crate::values::animated::ToAnimatedZero for computed::FontPalette {
++    fn to_animated_zero(&self) -> Result<Self, ()> { Err(()) }
++}
++
++impl ToComputedValue for FontPalette {
++    type ComputedValue = computed::FontPalette;
++
++    fn to_computed_value(&self, context: &Context) -> Self::ComputedValue {
++        self.map_weights(&|weight| weight.to_computed_value(context))
++    }
++
++    fn from_computed_value(computed: &Self::ComputedValue) -> Self {
++        computed.map_weights(&crate::values::specified::Percentage::from_computed_value)
++    }
++}
++
++impl crate::values::resolved::ToResolvedValue for computed::FontPalette {
 +    type ResolvedValue = Self;
 +
 +    #[inline]
@@ -12262,17 +12717,30 @@ diff -ruN a/values/specified/font.rs b/values/specified/font.rs
 +    }
 +}
 +
-+impl FontPaletteMix {
++impl<P: ToPercentage> FontPaletteMix<P> {
 +    /// Each omitted weight receives an equal share of the remaining percentage.
 +    pub fn omitted_weight(&self) -> f32 {
 +        let missing = self.items.iter().filter(|item| item.weight.is_none()).count();
 +        if missing == 0 { return 0.0; }
-+        (1.0 - self.items.iter().filter_map(|item| item.weight).sum::<f32>()).max(0.0) / missing as f32
++        (1.0 - self.items.iter().filter_map(|item| item.weight.as_ref()?.to_percentage()).sum::<f32>()).max(0.0) / missing as f32
 +    }
 +}
 +
 +#[allow(missing_docs)]
-+impl FontPalette {
++impl<P> GenericFontPalette<P> {
++    fn map_weights<Q>(&self, convert: &impl Fn(&P) -> Q) -> GenericFontPalette<Q> {
++        match self {
++            Self::Named(name) => GenericFontPalette::Named(name.clone()),
++            Self::Mix(mix) => GenericFontPalette::Mix(Box::new(FontPaletteMix {
++                interpolation: mix.interpolation,
++                items: mix.items.iter().map(|item| PaletteMixItem {
++                    palette: item.palette.map_weights(convert),
++                    weight: item.weight.as_ref().map(convert),
++                }).collect(),
++            })),
++        }
++    }
++
 +    pub fn normal() -> Self {
 +        Self::Named(atom!("normal"))
 +    }
@@ -12290,6 +12758,9 @@ diff -ruN a/values/specified/font.rs b/values/specified/font.rs
 +        }
 +    }
 +
++}
++
++impl FontPalette {
 +    fn parse_one(context: &ParserContext, input: &mut Parser) -> Result<FontPalette, ParseError> {
 +        if input
 +            .try_parse(|input| input.expect_function_matching("palette-mix"))
@@ -12308,10 +12779,7 @@ diff -ruN a/values/specified/font.rs b/values/specified/font.rs
 +                    let first = percentage(input).ok();
 +                    let palette = Self::parse_one(context, input)?;
 +                    let percentage = first.or_else(|| percentage(input).ok());
-+                    let Some(percentage) = percentage else { return Ok(PaletteMixItem { palette, weight: None, expression: None }); };
-+                    let value = percentage.resolve().ok_or(ParseError::custom(StyleParseErrorKind::UnspecifiedError))?;
-+                    let expression = percentage.is_calc().then(|| percentage.to_css_string());
-+                    Ok(PaletteMixItem { palette, weight: Some(value.clamp(0.0, 1.0)), expression })
++                    Ok(PaletteMixItem { palette, weight: percentage })
 +                })?;
 +                Ok(Self::Mix(Box::new(FontPaletteMix { interpolation, items })))
 +            });
@@ -12327,18 +12795,20 @@ diff -ruN a/values/specified/font.rs b/values/specified/font.rs
              } else {
                  Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent))
              },
-         }
-+    }
-+}
-+
+@@ -1687,12 +1796,48 @@
+     }
+ }
+ 
+-impl ToCss for FontPalette {
 +impl Parse for FontPalette {
 +    /// normal | light | dark | dashed-ident | palette-mix()
 +    fn parse(context: &ParserContext, input: &mut Parser) -> Result<FontPalette, ParseError> {
 +        Self::parse_one(context, input)
-     }
- }
- 
-@@ -1692,7 +1801,31 @@
++    }
++}
++
++impl<P: ToCss + ToPercentage> ToCss for GenericFontPalette<P> {
+     fn to_css<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result
      where
          W: Write,
      {
@@ -12351,18 +12821,23 @@ diff -ruN a/values/specified/font.rs b/values/specified/font.rs
 +                    mix.interpolation.to_css(dest)?;
 +                    dest.write_str(", ")?;
 +                }
++                let has_math = mix.items.iter().any(|item| item.weight.as_ref().is_some_and(ToPercentage::is_calc));
 +                let missing = mix.omitted_weight();
-+                let has_math = mix.items.iter().any(|item| item.expression.is_some());
-+                let uniform = !has_math && mix.items.iter().all(|item| item.weight.unwrap_or(missing) == 1.0 / mix.items.len() as f32);
++                let uniform = !has_math && mix.items.iter().all(|item| {
++                    item.weight.as_ref().and_then(ToPercentage::to_percentage).unwrap_or(missing)
++                        == 1.0 / mix.items.len() as f32
++                });
 +                for (index, item) in mix.items.iter().enumerate() {
 +                    if index != 0 { dest.write_str(", ")?; }
 +                    item.palette.to_css(dest)?;
-+                    if let Some(expression) = &item.expression {
-+                        dest.write_char(' ')?;
-+                        dest.write_str(expression)?;
-+                    } else if !uniform && (!has_math || item.weight.is_some()) {
-+                        dest.write_char(' ')?;
-+                        crate::values::serialize_percentage(item.weight.unwrap_or(missing), dest)?;
++                    if !uniform {
++                        if let Some(weight) = &item.weight {
++                            dest.write_char(' ')?;
++                            weight.to_css(dest)?;
++                        } else if !has_math {
++                            dest.write_char(' ')?;
++                            crate::values::serialize_percentage(missing, dest)?;
++                        }
 +                    }
 +                }
 +                dest.write_char(')')
@@ -12546,7 +13021,7 @@ diff -ruN a/values/specified/image.rs b/values/specified/image.rs
      /// <cf-image> = <percentage>? && [ <image> | <color> ]
 diff -ruN a/values/specified/length.rs b/values/specified/length.rs
 --- a/values/specified/length.rs	2026-11-11 19:55:57
-+++ b/values/specified/length.rs	2026-11-21 16:32:46
++++ b/values/specified/length.rs	2026-11-21 17:00:53
 @@ -187,13 +187,14 @@
              "lvi" if !in_page_rule => Self::Lvi,
              "dvi" if !in_page_rule => Self::Dvi,
@@ -12569,10 +13044,14 @@ diff -ruN a/values/specified/length.rs b/values/specified/length.rs
              _ => return Err(()),
          })
      }
-@@ -683,6 +684,14 @@
+@@ -683,6 +684,18 @@
          base_size: FontBaseSize,
          line_height_base: LineHeightBase,
      ) -> computed::Length {
++        #[cfg(feature = "servo")]
++        if !matches!(self.unit, LengthUnit::Em | LengthUnit::Rem) {
++            context.device().note_style_font_metrics();
++        }
 +        // Font-affecting longhands use the parent's metrics, even when a length is
 +        // nested inside typed arithmetic. Root-relative units still use the root
 +        // on descendants, as handled by reference_font_size_and_length.
@@ -12584,7 +13063,7 @@ diff -ruN a/values/specified/length.rs b/values/specified/length.rs
          let (reference_size, length) =
              self.reference_font_size_and_length(context, base_size, line_height_base);
          (reference_size * length).finite()
-@@ -728,9 +737,13 @@
+@@ -728,9 +741,13 @@
                  FontMetricsOrientation::MatchContextPreferHorizontal,
                  QueryFontMetricsFlags::NEEDS_CH,
              );
@@ -12599,7 +13078,7 @@ diff -ruN a/values/specified/length.rs b/values/specified/length.rs
              )
          }
  
-@@ -763,6 +776,10 @@
+@@ -763,6 +780,10 @@
              .add_flags(ComputedValueFlags::USES_FONT_OR_WM_RELATIVE_UNITS);
  
          let reference_font_size = base_size.resolve(context);
@@ -12610,7 +13089,7 @@ diff -ruN a/values/specified/length.rs b/values/specified/length.rs
          let length = self.value;
          match self.unit {
              LengthUnit::Em => {
-@@ -789,7 +806,7 @@
+@@ -789,7 +810,7 @@
                      let line_height = context.builder.calc_line_height(
                          context.device(),
                          line_height_base,
@@ -12619,7 +13098,7 @@ diff -ruN a/values/specified/length.rs b/values/specified/length.rs
                      );
                      if context.for_non_inherited_property
                          && line_height_base == LineHeightBase::CurrentStyle
-@@ -869,7 +886,7 @@
+@@ -869,7 +890,7 @@
                          .calc_line_height(
                              context.device(),
                              line_height_base,
@@ -12628,10 +13107,11 @@ diff -ruN a/values/specified/length.rs b/values/specified/length.rs
                          )
                          .0
                  } else if context.in_media_query {
-@@ -1679,10 +1696,21 @@
+@@ -1678,11 +1699,22 @@
+ 
  /// A wrapper of LengthPercentage, whose value must be >= 0.
  pub type NonNegativeLengthPercentage = NonNegative<LengthPercentage>;
- 
++
 +impl crate::values::generics::length::SizeCalculationCss for NonNegativeLengthPercentage {
 +    fn calculation_css<const SIZE: bool, W: Write>(&self, dest: &mut CssWriter<W>) -> fmt::Result {
 +        match &self.0 {
@@ -12640,7 +13120,7 @@ diff -ruN a/values/specified/length.rs b/values/specified/length.rs
 +        }
 +    }
 +}
-+
+ 
  /// Either a NonNegativeLengthPercentage or the `normal` keyword.
  pub type NonNegativeLengthPercentageOrNormal =
      GenericLengthPercentageOrNormal<NonNegativeLengthPercentage>;
@@ -12650,7 +13130,7 @@ diff -ruN a/values/specified/length.rs b/values/specified/length.rs
  /// A specified `fit-tolerance` value.
  pub type FitTolerance = GenericFitTolerance<NonNegativeLengthPercentage>;
  
-@@ -1844,6 +1872,7 @@
+@@ -1844,6 +1876,7 @@
              allow_quirks,
              allow_webkit_fill_available,
              ParseAnchorFunctions::Yes,
@@ -12658,7 +13138,7 @@ diff -ruN a/values/specified/length.rs b/values/specified/length.rs
          )
      }
  
-@@ -1858,6 +1887,7 @@
+@@ -1858,6 +1891,7 @@
              AllowQuirks::No,
              true,
              ParseAnchorFunctions::No,
@@ -12666,7 +13146,7 @@ diff -ruN a/values/specified/length.rs b/values/specified/length.rs
          )
      }
  
-@@ -1871,10 +1901,15 @@
+@@ -1871,10 +1905,15 @@
          allow_quirks: AllowQuirks,
          allow_webkit_fill_available: bool,
          allow_anchor_functions: ParseAnchorFunctions,
@@ -12682,7 +13162,7 @@ diff -ruN a/values/specified/length.rs b/values/specified/length.rs
  
          let allow_anchor = allow_anchor_functions == ParseAnchorFunctions::Yes
              && crate::pref!("layout.css.anchor-positioning.enabled", gecko = true);
-@@ -1916,6 +1951,7 @@
+@@ -1916,6 +1955,7 @@
              allow_quirks,
              allow_webkit_fill_available,
              ParseAnchorFunctions::Yes,
@@ -12690,7 +13170,7 @@ diff -ruN a/values/specified/length.rs b/values/specified/length.rs
          )
      }
  
-@@ -1935,6 +1971,7 @@
+@@ -1935,6 +1975,7 @@
              AllowQuirks::No,
              allow_webkit_fill_available,
              ParseAnchorFunctions::Yes,
@@ -12698,7 +13178,7 @@ diff -ruN a/values/specified/length.rs b/values/specified/length.rs
          )
      }
  
-@@ -1943,8 +1980,90 @@
+@@ -1943,8 +1984,90 @@
      pub fn zero_percent() -> Self {
          GenericSize::LengthPercentage(NonNegativeLengthPercentage::zero_percent())
      }
@@ -13033,9 +13513,15 @@ diff -ruN a/values/specified/position.rs b/values/specified/position.rs
  #[derive(
 diff -ruN a/values/specified/random.rs b/values/specified/random.rs
 --- a/values/specified/random.rs	2026-11-11 19:55:57
-+++ b/values/specified/random.rs	2026-11-21 10:27:21
-@@ -33,7 +33,7 @@
-         let mut ua_ident = "ua-".to_string();
++++ b/values/specified/random.rs	2026-11-21 16:40:59
+@@ -29,11 +29,11 @@
+ pub struct RandomUaIdent(CustomIdent);
+ 
+ impl RandomUaIdent {
+-    fn ua_prefixed(property_id: PropertyIdRef) -> String {
+-        let mut ua_ident = "ua-".to_string();
++    fn ua_prefixed(property_id: PropertyIdRef, early: bool) -> String {
++        let mut ua_ident = if early { "ua-early-" } else { "ua-" }.to_owned();
          match property_id {
              PropertyIdRef::NonCustom(non_custom) => {
 -                ua_ident += non_custom.name();
@@ -13043,6 +13529,53 @@ diff -ruN a/values/specified/random.rs b/values/specified/random.rs
              },
              PropertyIdRef::Custom(custom) => {
                  ua_ident += "--";
+@@ -51,15 +51,15 @@
+     }
+ 
+     /// Builds the `ua-PROPERTY` ident used to replace `property-scoped`.
+-    pub fn from_property(property_id: PropertyIdRef) -> Self {
+-        Self(CustomIdent(Atom::from(Self::ua_prefixed(property_id))))
++    pub fn from_property(property_id: PropertyIdRef, early: bool) -> Self {
++        Self(CustomIdent(Atom::from(Self::ua_prefixed(property_id, early))))
+     }
+ 
+     /// Builds the `ua-PROPERTY-INDEX` ident used to replace `property-index-scoped`,
+     /// where `index` is the 1-based index of this random function among all of the
+     /// random functions in the declaration.
+-    pub fn from_property_and_index(property_id: PropertyIdRef, index: i32) -> Self {
+-        let mut ua_ident = Self::ua_prefixed(property_id);
++    pub fn from_property_and_index(property_id: PropertyIdRef, index: i32, early: bool) -> Self {
++        let mut ua_ident = Self::ua_prefixed(property_id, early);
+         write!(ua_ident, "-{index}").unwrap();
+         Self(CustomIdent(Atom::from(ua_ident)))
+     }
+@@ -83,7 +83,7 @@
+             let Some(property_id) = context.property_declaration_context.property_id() else {
+                 return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
+             };
+-            return Ok(RandomUaIdent::from_property(property_id));
++            return Ok(RandomUaIdent::from_property(property_id, context.property_declaration_context.is_early_random()));
+         }
+ 
+         if ident.eq_ignore_ascii_case("property-index-scoped") {
+@@ -91,7 +91,7 @@
+                 return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
+             };
+             let index = context.property_declaration_context.current_random_index();
+-            return Ok(RandomUaIdent::from_property_and_index(property_id, index));
++            return Ok(RandomUaIdent::from_property_and_index(property_id, index, context.property_declaration_context.is_early_random()));
+         }
+ 
+         if !ident.starts_with("ua-") {
+@@ -214,7 +214,7 @@
+ 
+         Ok(Self::CacheKey(RandomCacheKey {
+             name: DashedIdent::empty(),
+-            ua_ident: RandomUaIdent::from_property_and_index(property_id, index),
++            ua_ident: RandomUaIdent::from_property_and_index(property_id, index, context.property_declaration_context.is_early_random()),
+             is_element_scoped: true,
+         }))
+     }
 diff -ruN a/values/specified/text.rs b/values/specified/text.rs
 --- a/values/specified/text.rs	2026-11-11 19:55:57
 +++ b/values/specified/text.rs	2026-11-20 21:35:22

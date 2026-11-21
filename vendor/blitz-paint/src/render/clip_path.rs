@@ -636,9 +636,7 @@ pub(super) mod svg_reference {
     pub(in crate::render) fn local_reference(dom: &BaseDocument, url: &ComputedUrl) -> Option<NodeId> {
         let url = url.url()?;
         let fragment = url.fragment()?;
-        let document = |url: &str| url.split_once('#').map_or(url, |(document, _)| document).to_owned();
-        let target = document(url.as_str());
-        if target != document(dom.url().as_str()) && target != document(dom.base_url().as_str()) {
+        if !dom.is_document_url(url) {
             return None;
         }
         dom.get_element_by_id(&percent_decode(fragment))

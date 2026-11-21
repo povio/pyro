@@ -90,6 +90,9 @@ pub trait FontMetricsProvider: Debug + Sync {
 
 #[derive(Debug, MallocSizeOf)]
 pub(super) struct ExtraDeviceData {
+    style_uses_font_metrics: AtomicBool,
+    #[ignore_malloc_size_of = "Shared document URL"]
+    document_url: Option<Arc<url::Url>>,
     #[ignore_malloc_size_of = "Inline hash keys"]
     random_state: RandomState,
     /// Data which Stylo uses to evaluate media queries
@@ -135,6 +138,25 @@ pub struct MediaData {
 }
 
 impl Device {
+    /// Records a computed value that depends on font metrics, as distinct from text layout.
+    pub fn note_style_font_metrics(&self) {
+        self.extra.style_uses_font_metrics.store(true, Ordering::Relaxed);
+    }
+
+    /// Whether a computed style has needed metrics that can change when a face loads.
+    pub fn style_uses_font_metrics(&self) -> bool {
+        self.extra.style_uses_font_metrics.load(Ordering::Relaxed)
+    }
+
+    /// The document associated with local fragment references, independent of the stylesheet URL.
+    pub fn set_document_url(&mut self, url: Arc<url::Url>) {
+        self.extra.document_url = Some(url);
+    }
+
+    pub(crate) fn document_url(&self) -> Option<&url::Url> {
+        self.extra.document_url.as_deref()
+    }
+
     /// Trivially construct a new `Device`.
     pub fn new(
         default_values: Arc<ComputedValues>,
@@ -162,6 +184,8 @@ impl Device {
             body_text_color: RwLock::new(AbsoluteColor::BLACK),
             submit_string,
             extra: ExtraDeviceData {
+                style_uses_font_metrics: AtomicBool::new(false),
+                document_url: None,
                 random_state: RandomState::new(),
                 media_data,
                 font_metrics_provider,
@@ -362,6 +386,7 @@ impl Device {
         track_usage: bool,
     ) -> FontMetrics {
         if track_usage {
+            self.note_style_font_metrics();
             self.used_font_metrics.store(true, Ordering::Relaxed);
         }
         self.extra

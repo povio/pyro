@@ -818,6 +818,11 @@ pub trait GeometrySource {
     fn element_style(&self, _key: u64) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
         None
     }
+    /// Authored timing values whose computation needs the element or its pseudo-element.
+    fn element_timing_style(
+        &self, _key: u64, _pseudo: Option<&style::selector_parser::PseudoElement>,
+    ) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> { None }
+
     /// One element's starting style (`@starting-style`), as of the last sync (`None`: none applies).
     fn element_starting_style(&self, _key: u64) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
         None

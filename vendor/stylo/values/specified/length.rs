@@ -684,6 +684,10 @@ impl NoCalcLength {
         base_size: FontBaseSize,
         line_height_base: LineHeightBase,
     ) -> computed::Length {
+        #[cfg(feature = "servo")]
+        if !matches!(self.unit, LengthUnit::Em | LengthUnit::Rem) {
+            context.device().note_style_font_metrics();
+        }
         // Font-affecting longhands use the parent's metrics, even when a length is
         // nested inside typed arithmetic. Root-relative units still use the root
         // on descendants, as handled by reference_font_size_and_length.

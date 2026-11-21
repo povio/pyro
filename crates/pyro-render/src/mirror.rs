@@ -91,6 +91,7 @@ pub(crate) struct Mirror {
     pub(crate) bridge: crate::net::Bridge,
     pub(crate) scope: String,
     pub(crate) base_url: String,
+    pub(crate) document_url: Option<String>,
     /// The document facts it was built with ([`crate::Snapshot::xml_document`],
     /// [`crate::Snapshot::content_language`]).
     pub(crate) facts: (bool, Option<String>, bool, bool),
@@ -203,6 +204,7 @@ impl Mirror {
         viewport: crate::ViewportKey,
     ) -> Result<Mirror, Rebuild> {
         let base_url = config.base_url.clone().unwrap_or_default();
+        let document_url = config.document_url.clone();
         let facts = (config.xml_document, config.content_language.clone(), config.quirks_mode, config.line_height_quirk);
         let mut doc = BaseDocument::new(config);
         // Diagnostics: incremental restyle, full relayout every render (tells
@@ -243,6 +245,7 @@ impl Mirror {
             bridge,
             scope,
             base_url,
+            document_url,
             facts,
             viewport,
             sheets,

@@ -737,8 +737,8 @@ impl Page {
             // (Its animated elements keyed, its animations kept for the renderer.)
             // pyro: at the frame document's own base (its `<base href>`), as the top document's
             // capture takes it (`render_base_url`).
-            let frame_base = if base_url.is_empty() { url } else { base_url };
-            let base = page_dom.render_base_url(&frame_base);
+            let frame_base = if base_url.is_empty() { &url } else { &base_url };
+            let base = page_dom.render_base_url(frame_base);
             // pyro: with its own frames' table (set before, deeper first), which its markup names.
             let frames = page_dom.dom.try_borrow().map(|dom| dom.frame_table(page_dom.document())).unwrap_or_default();
             let start = transitions.len();
@@ -746,6 +746,7 @@ impl Page {
             let (snapshot, animations) = page_dom.render_snapshot_frame(&base, &transitions[start..]);
             let document = pyro_dom::FrameDocument {
                 html: snapshot.html,
+                document_url: (url != base).then_some(url),
                 url: base,
                 scroll: (snapshot.scroll_x, snapshot.scroll_y),
                 client,

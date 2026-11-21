@@ -135,3 +135,18 @@ fn font_relative_units_use_the_adjusted_size() {
     assert_eq!(e[0], (32, 60), "{e:?}");
     assert_eq!(e[1], (40, 40), "{e:?}");
 }
+
+#[test]
+fn font_load_updates_boxes_sized_from_root_and_pseudo_font_metrics() {
+    let sizes = extents(
+        &[""],
+        "<style>
+           html { font: 20px F0, monospace }
+           #root-units { background: red; width: 2rch; height: 3rlh }
+           #pseudo::before { content: ' '; display: block; font: 25px F0, monospace;
+                             background: blue; width: 3ch; height: 2lh }
+         </style><div id='root-units'></div><div id='pseudo'></div>",
+        &[RED, BLUE],
+    );
+    assert_eq!(sizes, [(60, 40), (50, 75)]);
+}
