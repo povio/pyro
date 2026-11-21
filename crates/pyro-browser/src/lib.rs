@@ -522,6 +522,12 @@ pub struct NavigationError {
 }
 
 impl Frame {
+    /// The document providing the navigation's client referrer; a srcdoc
+    /// document obtains it from its nearest non-srcdoc container document.
+    pub(crate) fn navigation_referrer(&self) -> Option<String> {
+        self.page_dom.as_ref()?.client_referrer().map(Into::into)
+    }
+
     /// Field-wise equality by identity (realm ids, shared `Rc`s), without cloning.
     pub(crate) fn same_as(&self, other: &Frame) -> bool {
         self.id == other.id
