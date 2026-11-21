@@ -472,6 +472,23 @@ fn css_animation_timing(t: &crate::animation_events::Timeline) -> Option<(Timing
     ))
 }
 
+pub(crate) fn interrupted_transition(
+    state: &crate::animation_events::State,
+    timeline: &crate::animation_events::Timeline,
+    now: f64,
+) -> Option<(f64, bool)> {
+    let scripted = state.scripted.borrow();
+    let (sample, easing, original) = if let Some(effect) = scripted.values().find(|effect| effect.css == Some(timeline.id())) {
+        let sample = progress(&effect.timing, effect.current(now)?, effect.rate)?;
+        let original_target = effect.el == Some(timeline.el()) && effect.pseudo == Pseudo::of(timeline.pseudo());
+        (sample, effect.easing.as_deref().unwrap_or("linear"), original_target && effect.keyframes.frames.is_empty())
+    } else {
+        let local = ((now - timeline.start_ms()) / FRAME_MS).floor().max(0.0) * FRAME_MS;
+        (progress(&transition_timing(timeline), local, 1.0)?, timeline.easing().unwrap_or("ease"), true)
+    };
+    Some((pyro_dom::animation::eased_progress(sample.progress, sample.before, easing), original))
+}
+
 /// A CSS transition's timing (a `CSSTransition`'s effect fills backwards).
 fn transition_timing(t: &crate::animation_events::Timeline) -> Timing {
     Timing {

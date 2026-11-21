@@ -102,6 +102,7 @@ pub(crate) struct Timeline {
     /// A transition: the before-change and after-change styles it runs between
     /// (`getComputedStyle` interpolates them, `animation_frame::Source::transition_value`).
     pub(crate) styles: Option<(StyleSnapshot, StyleSnapshot)>,
+    reversal: Option<(StyleSnapshot, f64)>,
     /// pyro: a CSS animation's `animation-timeline` and range as last handed to script (`None`:
     /// time-based), to tell its object of a change.
     timeline_text: Option<(String, String, String)>,
@@ -716,6 +717,7 @@ fn update(page: &Rc<PageDom>, defer: bool) {
                 easing: None,
                 keyframes: None,
                 styles: None,
+                reversal: None,
             };
             // Held at 0 when paused: it starts only where a negative delay
             // put it in its active phase already, and goes no further. (A scroll-driven one has
@@ -1391,6 +1393,8 @@ fn is_ancestor(dom: &pyro_dom::Dom, ancestor: NodeId, node: NodeId) -> bool {
 /// hundreds per frame, and a pass per start cost more than the restyle.
 #[derive(Default)]
 struct Starting {
+    previous: Option<FxHashMap<(NodeId, Option<PseudoElement>, String), usize>>,
+    canceled: FxHashSet<u64>,
     changed: FxHashMap<(NodeId, Option<PseudoElement>), (StyleSnapshot, Vec<String>)>,
     timelines: Vec<Timeline>,
     /// The properties started, by element, with their index in `timelines`.
@@ -1420,13 +1424,13 @@ impl Starting {
     /// Replaces the running transitions of the elements and properties that
     /// start again, and starts the new ones.
     fn commit(self, state: &State, planned: &mut Vec<Planned>) {
-        if self.timelines.is_empty() && self.changed.is_empty() {
+        if self.timelines.is_empty() && self.changed.is_empty() && self.canceled.is_empty() {
             return;
         }
         let mut running = state.transitions.borrow_mut();
         let previous_count = running.len();
         running.retain(|known| {
-            let same = self
+            let same = self.canceled.contains(&known.id) || self
                 .keys
                 .get(&(known.el, known.pseudo))
                 .is_some_and(|started| started.iter().any(|(name, _)| *name == known.name));
@@ -1506,8 +1510,39 @@ fn start_transitions_of(
             if crate::animation_frame::animates(state, rules, el, pseudo, longhand) {
                 continue;
             }
-            // Started already in this style change event (an element of a
-            // revealed root that changed too): that one is replaced.
+            let running = state.transitions.borrow();
+            let previous = starting.previous.get_or_insert_with(|| running.iter().enumerate()
+                .filter(|(_, run)| run.is_live() && !run.has_ended())
+                .map(|(index, run)| ((run.el, run.pseudo, run.name.clone()), index)).collect());
+            let mut from = before.clone();
+            let mut reversing_start = before.clone();
+            let mut factor = 1.0;
+            if let Some(old) = previous.get(&(el, pseudo, longhand.to_owned())).map(|index| &running[*index]) {
+                if let (Some((old_from, old_to)), Some((portion, original))) =
+                    (&old.styles, crate::animation_frame::interrupted_transition(state, old, now_ms))
+                {
+                    if original {
+                        if let Some(pyro_dom::animation::TransitionValue::Style(sample)) =
+                            pyro_dom::animation::transition_value(longhand, old_from, old_to, portion, false, Some("linear"))
+                        {
+                            if pyro_dom::animation::same_computed_value(longhand, &sample, now) {
+                                starting.canceled.insert(old.id);
+                                continue;
+                            }
+                            from = sample;
+                        }
+                    }
+                    reversing_start = from.clone();
+                    if let Some((start, previous_factor)) = &old.reversal {
+                        if pyro_dom::animation::same_computed_value(longhand, start, now) {
+                            factor = (portion * previous_factor + 1.0 - previous_factor).abs().min(1.0);
+                            reversing_start = old_to.clone();
+                        }
+                    }
+                }
+            }
+            let duration = transition.duration_ms * factor;
+            let delay = if transition.delay_ms < 0.0 { transition.delay_ms * factor } else { transition.delay_ms };
             let index = starting.timelines.len();
             let keys = starting.keys.entry((el, pseudo)).or_default();
             match keys.iter_mut().find(|(name, _)| *name == longhand) {
@@ -1522,8 +1557,8 @@ fn start_transitions_of(
                 timeline_text: None,
                 id: state.next_id(),
                 start_ms: now_ms,
-                delay_ms: transition.delay_ms,
-                duration_ms: transition.duration_ms,
+                delay_ms: delay,
+                duration_ms: duration,
                 iterations: 1.0,
                 el,
                 pseudo,
@@ -1536,10 +1571,10 @@ fn start_transitions_of(
                 epoch: Rc::new(Cell::new(true)),
                 progress: Rc::new(Cell::new(0)),
                 easing: transition.easing.clone(),
-                keyframes: pyro_dom::timing::transition_keyframes(before, now, longhand).map(std::sync::Arc::new),
-                styles: Some((before.clone(), now.clone())),
+                keyframes: pyro_dom::timing::transition_keyframes(&from, now, longhand).map(std::sync::Arc::new),
+                styles: Some((from, now.clone())),
+                reversal: Some((reversing_start, factor)),
             };
-            let (delay, duration) = (transition.delay_ms, transition.duration_ms);
             // (`transitionstart` and `transitionend` belong to the transition's plan, which script
             // replaces through its `CSSTransition`: `scripted_state`.)
             let event = |ty: &'static str, at_ms: f64, elapsed_ms: f64, step: Option<u32>| Planned {
