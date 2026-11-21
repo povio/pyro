@@ -824,6 +824,84 @@ fn point_arg(
     Ok((node, off))
 }
 
+// Boundary points in a common tree can use the ordinary Range comparison.
+// Across trees, each shadow subtree comes before the light children of its host.
+fn composed_order(dom: &Dom, a: Point, b: Point) -> JsResult<i8> {
+    let a_root = dom.root_node(a.0, false).js()?;
+    let b_root = dom.root_node(b.0, false).js()?;
+    if a_root == b_root {
+        return compare_points_in(dom, a, b);
+    }
+    let path = |mut root, mut point| -> JsResult<Vec<(NodeId, Point)>> {
+        let mut path = vec![(root, point)];
+        while let Some(host) = dom.fragment_host(root).js()? {
+            point = (host, 0);
+            root = dom.root_node(host, false).js()?;
+            path.push((root, point));
+        }
+        Ok(path)
+    };
+    let a_path = path(a_root, a)?;
+    let b_path = path(b_root, b)?;
+    let ((common_root, a_point), (_, b_point)) = a_path.iter().rev().zip(b_path.iter().rev())
+        .take_while(|(left, right)| left.0 == right.0)
+        .last().ok_or_else(wrong_document)?;
+    let order = compare_points_in(dom, *a_point, *b_point)?;
+    if order == 0 {
+        return Ok(i8::from(b_root != *common_root) - i8::from(a_root != *common_root));
+    }
+    Ok(order)
+}
+
+fn rescope_point(dom: &Dom, mut point: Point, end: bool, allowed: &[NodeId]) -> JsResult<Point> {
+    loop {
+        let root = dom.root_node(point.0, false).js()?;
+        let Some(host) = dom.fragment_host(root).js()? else { return Ok(point) };
+        if allowed.contains(&root) {
+            return Ok(point);
+        }
+        let parent = dom.parent(host).js()?.ok_or_else(wrong_document)?;
+        point = (parent, dom.index_in_parent(host).js()? + u32::from(end));
+    }
+}
+
+fn composed_ranges<'s>(s: &Scope<'s>, page: &Rc<PageDom>, options: Value<'s>) -> JsResult<Value<'s>> {
+    let mut allowed = Vec::new();
+    if !options.is_null() && !options.is_undefined() {
+        let options = options.as_object().ok_or_else(|| JsError::Type("Expected GetComposedRangesOptions".into()))?;
+        let roots = options.get_atom("shadowRoots")?;
+        if !roots.is_undefined() {
+            let local = page.clone();
+            let roots = s.convert_sequence(roots, "Selection.getComposedRanges", move |s, value| {
+                let root = s.unwrap::<crate::node::ShadowRoot>(value)
+                    .ok_or_else(|| JsError::Type("shadowRoots must contain ShadowRoot objects".into()))?;
+                if Rc::ptr_eq(&local.dom, &root.page().dom) {
+                    Ok(Some(NodeHold::new(&local, root.id)?))
+                } else {
+                    Ok(None)
+                }
+            })?;
+            let dom = page.dom.borrow();
+            for root in roots.iter().flatten() {
+                let mut root = root.id;
+                while !allowed.contains(&root) {
+                    allowed.push(root);
+                    let Some(host) = dom.fragment_host(root).js()? else { break };
+                    root = dom.root_node(host, false).js()?;
+                }
+            }
+        }
+    }
+    let Some((a, b)) = crate::editing::selection(page) else { return Ok(s.array(&[])?.value()) };
+    let (start, end) = {
+        let dom = page.dom.borrow();
+        let (start, end) = if composed_order(&dom, a, b)? > 0 { (b, a) } else { (a, b) };
+        (rescope_point(&dom, start, false, &allowed)?, rescope_point(&dom, end, true, &allowed)?)
+    };
+    let data = StaticRangeData::from_points(page, start, end)?;
+    Ok(s.array(&[s.wrap::<StaticRange>(data, None)?.value()])?.value())
+}
+
 fn node_or_null<'s>(s: &Scope<'s>, page: &Rc<PageDom>, n: Option<NodeId>) -> JsResult<Value<'s>> {
     match n {
         Some(n) => Ok(wrap_node(s, page, n)?.value()),
@@ -861,6 +939,7 @@ impl JsClass for Selection {
                 Some(_) => "backward",
             }))
         });
+        def.method("getComposedRanges", 0, |s, sel, args| composed_ranges(s, &sel.page, args.get(0)));
         def.method("getRangeAt", 1, |s, sel, a| {
             if editing::selection(&sel.page).is_none() || to_u32(a.get(0)).ok() != Some(0) {
                 return Err(JsError::dom("IndexSizeError", "The index provided is not a valid range index."));

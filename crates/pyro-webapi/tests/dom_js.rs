@@ -850,6 +850,29 @@ fn range_boundaries_follow_mutations() {
 }
 
 #[test]
+fn composed_selection_uses_iterable_roots_and_static_snapshots() {
+    let e = env("<body><div id=host></div></body>");
+    assert_eq!(eval(&e.main, r#"
+        const host = document.getElementById('host');
+        const outer = host.attachShadow({mode:'closed'});
+        const nested = outer.appendChild(document.createElement('div'));
+        const inner = nested.attachShadow({mode:'closed'});
+        const text = inner.appendChild(document.createTextNode('abc'));
+        const selection = document.getSelection();
+        selection.setBaseAndExtent(text, 2, text, 1);
+        const [range] = selection.getComposedRanges({shadowRoots:new Set([inner])});
+        const [scoped] = selection.getComposedRanges({shadowRoots:[outer]});
+        text.deleteData(0, 1);
+        [range instanceof StaticRange, range.startContainer === text, range.startOffset,
+         range.endOffset, scoped.startContainer === outer, scoped.startOffset, scoped.endOffset].join()
+    "#), "true,true,1,2,true,0,1");
+    assert_eq!(eval(&e.main, r#"
+        selection.removeAllRanges();
+        try { selection.getComposedRanges({shadowRoots:[host]}); } catch (e) { e.name }
+    "#), "TypeError");
+}
+
+#[test]
 fn static_range_keeps_its_points_as_given() {
     let e = env("<body><div id=x>abc</div></body>");
     let init = "{startContainer: x, startOffset: 5, endContainer: x.firstChild, endOffset: 1}";
