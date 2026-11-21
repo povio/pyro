@@ -3833,7 +3833,7 @@ fn bounds_of(doc: &blitz_dom::BaseDocument, id: blitz_dom::NodeId, dpr: f64, sna
 
 fn viewport_of(snap: &Snapshot) -> BlitzViewport {
     let dpr = snap.device_scale_factor.clamp(0.1, 16.0);
-    let physical = |css: u32| (css.max(1) as f64 * dpr).round() as u32;
+    let physical = |css: u32| (css as f64 * dpr).round() as u32;
     let mut viewport = BlitzViewport::new(
         physical(snap.width),
         physical(snap.height),
