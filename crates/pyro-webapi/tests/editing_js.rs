@@ -277,6 +277,28 @@ fn copy_handlers_set_the_data_and_cut_deletes() {
 }
 
 #[test]
+fn removing_bold_preserves_editability_boundaries() {
+    let e = env("<body><div id=ed contenteditable></div></body>");
+    for (mode, inside, expected) in [
+        ("false", "<b>e</b>", "<b>e</b>"),
+        ("false", "<span contenteditable><b>e</b></span>", "<span contenteditable=\"\">e</span>"),
+        ("plaintext-only", "<b>e</b>", "e"),
+    ] {
+        let script = format!(r#"
+            (() => {{
+                ed.innerHTML = 'abc<b>d<span contenteditable="{mode}">{inside}</span>f</b>ghi';
+                ed.focus();
+                const carrier = ed.firstElementChild, island = carrier.firstElementChild;
+                getSelection().setBaseAndExtent(carrier.lastChild, 1, carrier.firstChild, 0);
+                document.execCommand('bold');
+                return [ed.firstElementChild === island, island.innerHTML, getSelection().direction].join('|');
+            }})()
+        "#);
+        assert_eq!(eval(&e.main, &script), format!("true|{expected}|backward"));
+    }
+}
+
+#[test]
 fn inline_formatting_skips_noneditable_islands() {
     let e = env("<body><div id=ed contenteditable>ab<span id=island contenteditable=false>LOCK</span>cd</div></body>");
     let r = &e.main;
