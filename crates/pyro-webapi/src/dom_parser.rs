@@ -31,7 +31,7 @@ impl JsClass for DomParser {
             let page = page_of(s)?;
             let url = page.dom.borrow().document_data(page.document()).map(|d| d.url.to_string()).unwrap_or_default();
             let doc = if mime == "text/html" {
-                pyro_dom::parse::parse_document(&page.dom, &url, &html)
+                pyro_dom::parse::parse_domparser_document(&page.dom, &url, &html)
             } else {
                 pyro_dom::xml::parse_document(&mut page.dom.borrow_mut(), &url, &html, &mime)
             };
