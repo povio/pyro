@@ -1,0 +1,310 @@
+{
+  "pages": 236,
+  "basePass": 4592,
+  "candidatePass": 4626,
+  "observedBase": 4890,
+  "observedCandidate": 4890,
+  "basePages": 171,
+  "candidatePages": 179,
+  "matchedInventoryGains": [
+    [
+      "css/css-animations/parsing/animation-delay-computed.html",
+      "Property animation-delay value 'calc(10s + (sign(2cqw - 10px) * 5s))'"
+    ],
+    [
+      "css/css-animations/parsing/animation-duration-computed.html",
+      "Property animation-duration value 'calc(10s + (sign(2cqw - 10px) * 5s))'"
+    ],
+    [
+      "css/css-values/attr-all-types.html",
+      "CSS Values and Units Test: attr 118"
+    ],
+    [
+      "css/css-values/attr-all-types.html",
+      "CSS Values and Units Test: attr 119"
+    ],
+    [
+      "css/css-values/attr-all-types.html",
+      "CSS Values and Units Test: attr 120"
+    ],
+    [
+      "css/css-values/attr-all-types.html",
+      "CSS Values and Units Test: attr 121"
+    ],
+    [
+      "css/css-values/attr-all-types.html",
+      "CSS Values and Units Test: attr 17"
+    ],
+    [
+      "css/css-values/attr-all-types.html",
+      "CSS Values and Units Test: attr 18"
+    ],
+    [
+      "css/css-values/attr-all-types.html",
+      "CSS Values and Units Test: attr 19"
+    ],
+    [
+      "css/css-values/attr-all-types.html",
+      "CSS Values and Units Test: attr 21"
+    ],
+    [
+      "css/css-values/attr-all-types.html",
+      "CSS Values and Units Test: attr 53"
+    ],
+    [
+      "css/css-values/attr-all-types.html",
+      "CSS Values and Units Test: attr 54"
+    ],
+    [
+      "css/css-values/attr-all-types.html",
+      "CSS Values and Units Test: attr 55"
+    ],
+    [
+      "css/css-values/attr-all-types.html",
+      "CSS Values and Units Test: attr 81"
+    ],
+    [
+      "css/css-values/calc-infinity-nan-computed.html",
+      "Property transition-delay value 'calc(1s / (-1 * sign(1em - 16px)))'"
+    ],
+    [
+      "css/css-values/calc-infinity-nan-computed.html",
+      "Property transition-delay value 'calc(1s / sign(1em - 16px))'"
+    ],
+    [
+      "css/css-values/ch-pseudo-recalc-on-font-load.html",
+      "ch in pseudo-element ::after should be recalculated after loading a web font"
+    ],
+    [
+      "css/css-values/ch-pseudo-recalc-on-font-load.html",
+      "ch in pseudo-element ::before should be recalculated after loading a web font"
+    ],
+    [
+      "css/css-values/ch-pseudo-recalc-on-font-load.html",
+      "ch in pseudo-element ::first-letter should be recalculated after loading a web font"
+    ],
+    [
+      "css/css-values/ch-pseudo-recalc-on-font-load.html",
+      "ch in pseudo-element ::first-line should be recalculated after loading a web font"
+    ],
+    [
+      "css/css-values/ch-recalc-on-font-load.html",
+      "ch in a normal div should be recalculated after loading a web font"
+    ],
+    [
+      "css/css-values/ch-recalc-on-font-load.html",
+      "ch in display:contents should be recalculated after loading a web font"
+    ],
+    [
+      "css/css-values/lh-unit-003.html",
+      "Line-height and lh after @font-face loaded"
+    ],
+    [
+      "css/css-values/lh-unit-004.html",
+      "lh must be relative to computed line-height before select element fixup"
+    ],
+    [
+      "css/css-values/random-computed.tentative.html",
+      "Property font-palette value 'palette-mix(in lch, --blue calc(90% * random(1, 0)), --yellow 10%)'"
+    ],
+    [
+      "css/css-values/random-computed.tentative.html",
+      "Property font-palette value 'palette-mix(in lch, --blue random(90%, 10%), --yellow 10%)'"
+    ],
+    [
+      "css/css-values/random-computed.tentative.html",
+      "Shared by property 'font-palette' with values 'palette-mix(in lch, --blue calc(90% * random(0, 1)), --yellow)', 'palette-mix(in lch, --blue calc(90% * random(property-index-scoped, 0, 1)), --yellow)'"
+    ],
+    [
+      "css/css-values/random-computed.tentative.html",
+      "Shared by property 'font-palette' with values 'palette-mix(in lch, --blue random(10%, 90%), --yellow)', 'palette-mix(in lch, --blue random(property-index-scoped, 10%, 90%), --yellow)'"
+    ],
+    [
+      "css/css-values/signs-abs-computed.html",
+      "calc(5s + 15s * sign(38px - 2em)) should be used-value-equivalent to -10s"
+    ],
+    [
+      "css/css-values/signs-abs-computed.html",
+      "calc(5s + 15s * sign(40px - 2em)) should be used-value-equivalent to 5s"
+    ],
+    [
+      "css/css-values/signs-abs-computed.html",
+      "calc(5s + 15s * sign(42px - 2em)) should be used-value-equivalent to 20s"
+    ],
+    [
+      "css/css-values/tree-counting/sibling-index-keyframe-palette-mix-dynamic.html",
+      "Initially, the sibling-index() is 4 for #target"
+    ],
+    [
+      "css/css-values/tree-counting/sibling-index-keyframe-palette-mix-dynamic.html",
+      "Removing a preceding sibling of #target reduces the sibling-index()"
+    ]
+  ],
+  "gained": [
+    [
+      "css/css-animations/parsing/animation-delay-computed.html",
+      "Property animation-delay value 'calc(10s + (sign(2cqw - 10px) * 5s))'"
+    ],
+    [
+      "css/css-animations/parsing/animation-duration-computed.html",
+      "Property animation-duration value 'calc(10s + (sign(2cqw - 10px) * 5s))'"
+    ],
+    [
+      "css/css-fonts/parsing/palette-mix-computed.html",
+      "Property font-palette value 'palette-mix(in oklab, light calc(sign(1rem - 1px) * 10%), dark calc(sign(1rem - 1px) * 40%))'"
+    ],
+    [
+      "css/css-values/attr-all-types.html",
+      "CSS Values and Units Test: attr 118"
+    ],
+    [
+      "css/css-values/attr-all-types.html",
+      "CSS Values and Units Test: attr 119"
+    ],
+    [
+      "css/css-values/attr-all-types.html",
+      "CSS Values and Units Test: attr 120"
+    ],
+    [
+      "css/css-values/attr-all-types.html",
+      "CSS Values and Units Test: attr 121"
+    ],
+    [
+      "css/css-values/attr-all-types.html",
+      "CSS Values and Units Test: attr 17"
+    ],
+    [
+      "css/css-values/attr-all-types.html",
+      "CSS Values and Units Test: attr 18"
+    ],
+    [
+      "css/css-values/attr-all-types.html",
+      "CSS Values and Units Test: attr 19"
+    ],
+    [
+      "css/css-values/attr-all-types.html",
+      "CSS Values and Units Test: attr 21"
+    ],
+    [
+      "css/css-values/attr-all-types.html",
+      "CSS Values and Units Test: attr 53"
+    ],
+    [
+      "css/css-values/attr-all-types.html",
+      "CSS Values and Units Test: attr 54"
+    ],
+    [
+      "css/css-values/attr-all-types.html",
+      "CSS Values and Units Test: attr 55"
+    ],
+    [
+      "css/css-values/attr-all-types.html",
+      "CSS Values and Units Test: attr 81"
+    ],
+    [
+      "css/css-values/calc-infinity-nan-computed.html",
+      "Property transition-delay value 'calc(1s / (-1 * sign(1em - 16px)))'"
+    ],
+    [
+      "css/css-values/calc-infinity-nan-computed.html",
+      "Property transition-delay value 'calc(1s / sign(1em - 16px))'"
+    ],
+    [
+      "css/css-values/ch-pseudo-recalc-on-font-load.html",
+      "ch in pseudo-element ::after should be recalculated after loading a web font"
+    ],
+    [
+      "css/css-values/ch-pseudo-recalc-on-font-load.html",
+      "ch in pseudo-element ::before should be recalculated after loading a web font"
+    ],
+    [
+      "css/css-values/ch-pseudo-recalc-on-font-load.html",
+      "ch in pseudo-element ::first-letter should be recalculated after loading a web font"
+    ],
+    [
+      "css/css-values/ch-pseudo-recalc-on-font-load.html",
+      "ch in pseudo-element ::first-line should be recalculated after loading a web font"
+    ],
+    [
+      "css/css-values/ch-recalc-on-font-load.html",
+      "ch in a normal div should be recalculated after loading a web font"
+    ],
+    [
+      "css/css-values/ch-recalc-on-font-load.html",
+      "ch in display:contents should be recalculated after loading a web font"
+    ],
+    [
+      "css/css-values/lh-unit-003.html",
+      "Line-height and lh after @font-face loaded"
+    ],
+    [
+      "css/css-values/lh-unit-004.html",
+      "lh must be relative to computed line-height before select element fixup"
+    ],
+    [
+      "css/css-values/random-computed.tentative.html",
+      "Property font-palette value 'palette-mix(in lch, --blue calc(90% * random(1, 0)), --yellow 10%)'"
+    ],
+    [
+      "css/css-values/random-computed.tentative.html",
+      "Property font-palette value 'palette-mix(in lch, --blue random(90%, 10%), --yellow 10%)'"
+    ],
+    [
+      "css/css-values/random-computed.tentative.html",
+      "Shared by property 'font-palette' with values 'palette-mix(in lch, --blue calc(90% * random(0, 1)), --yellow)', 'palette-mix(in lch, --blue calc(90% * random(property-index-scoped, 0, 1)), --yellow)'"
+    ],
+    [
+      "css/css-values/random-computed.tentative.html",
+      "Shared by property 'font-palette' with values 'palette-mix(in lch, --blue random(10%, 90%), --yellow)', 'palette-mix(in lch, --blue random(property-index-scoped, 10%, 90%), --yellow)'"
+    ],
+    [
+      "css/css-values/signs-abs-computed.html",
+      "calc(5s + 15s * sign(38px - 2em)) should be used-value-equivalent to -10s"
+    ],
+    [
+      "css/css-values/signs-abs-computed.html",
+      "calc(5s + 15s * sign(40px - 2em)) should be used-value-equivalent to 5s"
+    ],
+    [
+      "css/css-values/signs-abs-computed.html",
+      "calc(5s + 15s * sign(42px - 2em)) should be used-value-equivalent to 20s"
+    ],
+    [
+      "css/css-values/tree-counting/sibling-index-keyframe-palette-mix-dynamic.html",
+      "Initially, the sibling-index() is 4 for #target"
+    ],
+    [
+      "css/css-values/tree-counting/sibling-index-keyframe-palette-mix-dynamic.html",
+      "Removing a preceding sibling of #target reduces the sibling-index()"
+    ]
+  ],
+  "lost": [],
+  "newNames": [],
+  "missingNames": [],
+  "gainedPages": [
+    "css/css-animations/parsing/animation-delay-computed.html",
+    "css/css-fonts/parsing/palette-mix-computed.html",
+    "css/css-values/attr-all-types.html",
+    "css/css-values/ch-pseudo-recalc-on-font-load.html",
+    "css/css-values/ch-recalc-on-font-load.html",
+    "css/css-values/lh-unit-003.html",
+    "css/css-values/lh-unit-004.html",
+    "css/css-values/tree-counting/sibling-index-keyframe-palette-mix-dynamic.html"
+  ],
+  "lostPages": [],
+  "statusChanges": {},
+  "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+  "jsc": "0e0dd7038a7a-6f4649e395e0",
+  "browserSHA256": {
+    "topic3": "943538da27eaeff7737366e99b4772e810605a74be5379bd172263e6b4132e42",
+    "verified4": "d7b4e3cb12c74795fde82b1dbcdf2442ac2f8596ecc9dbb98872049552b1193b",
+    "base": "ef3c0ae10633920a957d3a76ae0103bbaafb0270848987c42e12286223695ec6"
+  },
+  "wallMs": [
+    9027,
+    6423
+  ],
+  "parentCommit": "3e799f75458ec113284dfc5903b5ca682bb36ff5",
+  "candidateCommit": "21fd48c15418cfc292c11a378e18b6ea50b158b0",
+  "originalCommit": "a7f8d09e2c6e6a86e2ff6f60d9c48481ba50a41f"
+}
