@@ -1,0 +1,28 @@
+{
+  "available": true,
+  "arity": 2,
+  "invalidIv": false,
+  "bigIntDictionary": {
+    "exception": "TypeError"
+  },
+  "coercedBigInt": {
+    "exception": "TypeError"
+  },
+  "badRsa": false,
+  "kdfWrap": false,
+  "canDerive": true,
+  "additionalReads": [
+    "name",
+    "hash",
+    "hash",
+    "name",
+    "hash",
+    "hash"
+  ],
+  "cipher": true,
+  "actualRoundTrip": [
+    12,
+    34,
+    56
+  ]
+}

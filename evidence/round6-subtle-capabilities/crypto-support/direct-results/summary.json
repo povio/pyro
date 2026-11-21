@@ -1,0 +1,77 @@
+{
+  "urls": 4,
+  "reference": "chrome158",
+  "counts": [
+    {
+      "namedPass": 0,
+      "full": 0,
+      "reported": 694,
+      "complete": 4
+    },
+    {
+      "namedPass": 550,
+      "full": 0,
+      "reported": 694,
+      "complete": 4
+    },
+    {
+      "namedPass": 616,
+      "full": 0,
+      "reported": 694,
+      "complete": 4
+    }
+  ],
+  "delta": {
+    "gained": 550,
+    "lost": 0,
+    "added": 0,
+    "missing": 0,
+    "chromeOnly": 102,
+    "lpOnly": 36
+  },
+  "areas": {
+    "WebCryptoAPI": {
+      "gained": 550,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 102,
+      "lpOnly": 36
+    }
+  },
+  "losses": [],
+  "perURL": {
+    "WebCryptoAPI/modern-algos/supports-modern.https.any.html": {
+      "gained": 82,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 44,
+      "lpOnly": 6
+    },
+    "WebCryptoAPI/modern-algos/supports-modern.https.any.worker.html": {
+      "gained": 82,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 44,
+      "lpOnly": 6
+    },
+    "WebCryptoAPI/modern-algos/supports.https.any.html": {
+      "gained": 193,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 7,
+      "lpOnly": 12
+    },
+    "WebCryptoAPI/modern-algos/supports.https.any.worker.html": {
+      "gained": 193,
+      "lost": 0,
+      "added": 0,
+      "missing": 0,
+      "chromeOnly": 7,
+      "lpOnly": 12
+    }
+  }
+}

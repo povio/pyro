@@ -1,0 +1,26 @@
+{
+  "reference": "chrome158",
+  "allowMissingReference": true,
+  "supplementalChrome": [
+    [
+      "@merged-aa0268/crypto-support/chrome158-wpt.json",
+      "merged-aa0268/crypto-support/chrome158-wpt.log"
+    ],
+    [
+      "@merged-aa0268/public-key/chrome158-wpt.json",
+      "merged-aa0268/public-key/chrome158-wpt.log"
+    ]
+  ],
+  "control": [
+    [
+      "merged-aa-support-reviewed",
+      "merged-aa0268/crypto-support/reviewed.log"
+    ]
+  ],
+  "candidate": [
+    [
+      "merged-aa-public-final",
+      "merged-aa0268/public-key/final.log"
+    ]
+  ]
+}

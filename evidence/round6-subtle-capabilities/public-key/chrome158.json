@@ -1,0 +1,12 @@
+{
+  "nonextractable-ECDSA": true,
+  "nonextractable-ECDH": true,
+  "nonextractable-Ed25519": true,
+  "nonextractable-X25519": true,
+  "nonextractable-RSA-OAEP": true,
+  "concurrent-imported": true,
+  "wrong-key-type-order": "InvalidAccessError,microtask",
+  "bad-usage-order": "SyntaxError,microtask",
+  "wrong-receiver": true,
+  "same-origin-frame": true
+}

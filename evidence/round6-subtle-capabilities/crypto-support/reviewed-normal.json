@@ -1,0 +1,27 @@
+{
+  "available": true,
+  "arity": 2,
+  "invalidIv": false,
+  "bigIntDictionary": false,
+  "coercedBigInt": false,
+  "badRsa": false,
+  "kdfWrap": false,
+  "canDerive": true,
+  "additionalReads": [
+    "name",
+    "name",
+    "hash",
+    "name",
+    "name",
+    "hash",
+    "name",
+    "name",
+    "hash"
+  ],
+  "cipher": true,
+  "actualRoundTrip": [
+    12,
+    34,
+    56
+  ]
+}

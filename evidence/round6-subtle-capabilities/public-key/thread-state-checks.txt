@@ -1,0 +1,6 @@
+running 2 tests
+test thread_state::a_thread_nothing_used_is_clean ... ok
+test thread_state::every_thread_local_is_classified ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 634 filtered out; finished in 0.01s
+
