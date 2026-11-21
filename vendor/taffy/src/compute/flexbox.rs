@@ -125,6 +125,7 @@ struct FlexItem {
     baseline: f32,
     column_baseline_far: Option<bool>,
     column_baseline_shim: f32,
+    column_group_span: f32,
     /// pyro: on a central baseline (`AlgoConstants::block_baseline_synthesis` 0.5, rows), the
     /// position of this item's central baseline (synthesized in its middle without one), for the
     /// container's `Baselines::dominant_first`.
@@ -1168,6 +1169,7 @@ fn generate_anonymous_flex_items(
                 baseline: 0.0,
                 column_baseline_far: if constants.is_column { child_style.orthogonal_block_start_is_far() } else { None },
                 column_baseline_shim: 0.0,
+                column_group_span: 0.0,
                 dominant_baseline: None,
                 exported_last_baseline: None,
                 dominant_last_baseline: None,
@@ -2718,18 +2720,24 @@ fn calculate_children_base_lines(
         } else {
             line.items.iter().filter(|child| child.participates_in_baseline_alignment(constants.dir)).nth(1).is_some()
         };
-        let measure_last = constants.is_row && line.items.iter()
-            .filter(|child| child.participates_in_last_baseline_alignment(constants.dir)).nth(1).is_some();
+        let mut last_items = line.items.iter().filter(|child| child.participates_in_last_baseline_alignment(constants.dir));
+        let measure_last = if constants.is_column {
+            last_items.any(|child| child.column_baseline_far.is_some())
+        } else {
+            last_items.nth(1).is_some()
+        };
         if !measure_first && !measure_last {
             continue;
         }
 
         let mut column_group_max = [f32::NEG_INFINITY; 2];
+        let mut column_group_remainder = [f32::NEG_INFINITY; 2];
         for child in line.items.iter_mut() {
             // Only calculate baselines for children participating in baseline alignment
             let first = measure_first && (constants.is_row || child.column_baseline_far.is_some())
                 && child.participates_in_baseline_alignment(constants.dir);
-            let last = measure_last && child.participates_in_last_baseline_alignment(constants.dir);
+            let last = measure_last && (constants.is_row || child.column_baseline_far.is_some())
+                && child.participates_in_last_baseline_alignment(constants.dir);
             if !first && !last {
                 continue;
             }
@@ -2774,14 +2782,20 @@ fn calculate_children_base_lines(
             );
 
             if let Some(far) = child.column_baseline_far {
-                if let Some(distance) = child_first_baseline(
-                    measured_size_and_baselines.baselines.orthogonal_first,
-                    measured_size_and_baselines.size.width,
-                    child.overflow.x,
-                ) {
+                let far = far ^ last;
+                let width = measured_size_and_baselines.size.width;
+                let baselines = measured_size_and_baselines.baselines;
+                let distance = if last {
+                    child_first_baseline(baselines.orthogonal_last, width, child.overflow.x).map(|offset| width - offset)
+                } else {
+                    child_first_baseline(baselines.orthogonal_first, width, child.overflow.x)
+                };
+                if let Some(distance) = distance {
                     let distance = distance + if far { child.margin.right } else { child.margin.left };
                     child.column_baseline_shim = distance;
                     column_group_max[far as usize] = column_group_max[far as usize].max(distance);
+                    let remainder = child.hypothetical_outer_size.cross(constants.dir) - distance;
+                    column_group_remainder[far as usize] = column_group_remainder[far as usize].max(remainder);
                 } else {
                     child.column_baseline_far = None;
                 }
@@ -2812,9 +2826,12 @@ fn calculate_children_base_lines(
             child.baseline = baseline + child.margin.top;
         }
         if constants.is_column {
-            for child in line.items.iter_mut().filter(|child| child.participates_in_baseline_alignment(constants.dir)) {
+            for child in line.items.iter_mut().filter(|child| child.participates_in_baseline_alignment(constants.dir)
+                || child.participates_in_last_baseline_alignment(constants.dir)) {
                 if let Some(far) = child.column_baseline_far {
-                    child.column_baseline_shim = column_group_max[far as usize] - child.column_baseline_shim;
+                    let group = (far ^ child.participates_in_last_baseline_alignment(constants.dir)) as usize;
+                    child.column_baseline_shim = column_group_max[group] - child.column_baseline_shim;
+                    child.column_group_span = column_group_max[group] + column_group_remainder[group];
                 }
             }
         }
@@ -2867,8 +2884,11 @@ fn calculate_cross_size(flex_lines: &mut [FlexLine], node_size: Size<Option<f32>
                 .items
                 .iter()
                 .map(|child| {
-                    if child.participates_in_baseline_alignment(constants.dir) {
-                        max_baseline - child.baseline + child.column_baseline_shim + child.hypothetical_outer_size.cross(constants.dir)
+                    if child.column_baseline_far.is_some() && (child.participates_in_baseline_alignment(constants.dir)
+                        || child.participates_in_last_baseline_alignment(constants.dir)) {
+                        child.column_group_span
+                    } else if child.participates_in_baseline_alignment(constants.dir) {
+                        max_baseline - child.baseline + child.hypothetical_outer_size.cross(constants.dir)
                     } else if constants.is_row && child.participates_in_last_baseline_alignment(constants.dir) {
                         max_last_descent - child.last_baseline_descent + child.hypothetical_outer_size.cross(constants.dir)
                     } else {
@@ -3217,6 +3237,17 @@ fn align_flex_items_along_cross_axis(
         child.align_self.keyword
     };
 
+    if let Some(far) = child.column_baseline_far {
+        if matches!(align_keyword, AlignItemsKeyword::Baseline | AlignItemsKeyword::LastBaseline) {
+            let far = far ^ (align_keyword == AlignItemsKeyword::LastBaseline);
+            let mut inset = child.column_baseline_shim;
+            if constants.is_wrap_reverse {
+                inset += free_space + child.outer_target_size.cross(constants.dir) - child.column_group_span;
+            }
+            return if far { free_space - inset } else { inset };
+        }
+    }
+
     match align_keyword {
         AlignItemsKeyword::Start => {
             if cross_axis_should_reverse {
@@ -3248,9 +3279,7 @@ fn align_flex_items_along_cross_axis(
         }
         AlignItemsKeyword::Center => free_space / 2.0,
         AlignItemsKeyword::Baseline => {
-            if let Some(far) = child.column_baseline_far {
-                if far { free_space - child.column_baseline_shim } else { child.column_baseline_shim }
-            } else if constants.is_row {
+            if constants.is_row {
                 if constants.is_wrap_reverse {
                     // In a wrap-reverse container the cross axis is flipped, so the baseline-aligned
                     // group of items is aligned to the cross-start edge, which is the bottom of the line.
