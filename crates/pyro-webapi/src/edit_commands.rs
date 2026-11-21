@@ -1272,8 +1272,11 @@ pub(crate) fn exec_command(page: &Rc<PageDom>, doc: NodeId, command: &str, value
         _ => {
             let Some((tag, carriers, input_type)) = format_of(&cmd) else { return false };
             let (start, end) = editing::host_range(page, host);
-            // A collapsed selection would only set the style of the next
-            // typed text, which is not modelled.
+            if start == end && matches!(tag, "b" | "i") {
+                let enabled = !format_state(page, &cmd).1;
+                inline_value::set_toggle(page, (start, end), tag, enabled);
+                return true;
+            }
             if start == end {
                 return false;
             }
@@ -1700,6 +1703,13 @@ fn toggle_list(page: &Rc<PageDom>, host: NodeId, tag: &str, input_type: &str) {
 /// inline style of `command`, by computed style as Chromium reads it.
 fn format_state(page: &PageDom, command: &str) -> (bool, bool) {
     let Some((start, end)) = editing::selection_range(page) else { return (false, false) };
+    if start == end {
+        if let Some((tag, _, _)) = format_of(command) {
+            if let Some(active) = inline_value::toggle_state(page, (start, end), tag) {
+                return (active, active);
+            }
+        }
+    }
     let dom = page.dom.borrow();
     let doc = page.document();
     let scope = dom.body(doc).ok().flatten().or_else(|| dom.document_element(doc).ok().flatten());
