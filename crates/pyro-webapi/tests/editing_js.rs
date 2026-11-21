@@ -419,6 +419,21 @@ fn word_and_line_keys_in_text_controls() {
 }
 
 #[test]
+fn deletion_at_text_edge_preserves_locked_blocks() {
+    let e = env("<body><div id=ed contenteditable><p>abc</p><pre id=locked contenteditable=false>keep</pre>xyz</div></body>");
+    let r = &e.main;
+    eval(r, "ed.focus(); const original = locked; const left = ed.firstChild.firstChild; const right = ed.lastChild; getSelection().collapse(left,3)");
+    press(&e.page, "Delete", "", input::Modifiers::default());
+    assert_eq!(eval(r, "[original.parentNode===ed,getSelection().focusNode===left,getSelection().focusOffset,document.queryCommandEnabled('undo')].join()"), "true,true,3,false");
+    eval(r, "getSelection().collapse(right,0)");
+    press(&e.page, "Backspace", "", input::Modifiers::default());
+    assert_eq!(eval(r, "[original.parentNode===ed,getSelection().focusNode===right,getSelection().focusOffset,ed.textContent].join()"), "true,true,0,abckeepxyz");
+    eval(r, "original.style.display='inline'; getSelection().collapse(left,3)");
+    press(&e.page, "Delete", "", input::Modifiers::default());
+    assert_eq!(eval(r, "[original.isConnected,ed.textContent].join()"), "false,abcxyz");
+}
+
+#[test]
 fn contenteditable_line_breaks_arrows_and_words() {
     let e = env("<body><div id=ed contenteditable><p>hello world</p></div></body>");
     let r = &e.main;

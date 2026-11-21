@@ -170,6 +170,13 @@ fn at_edge(page: &PageDom, dom: &Dom, host: NodeId, p: Point, backward: bool) ->
                 {
                     return Some(((parent, dom.index_in_parent(block).ok()?), (block, len(dom, block))));
                 }
+                // A caret leaving editable text cannot cross a locked block
+                // boundary to delete the whole neighboring paragraph.
+                if is_text(dom, p.0) && len(dom, p.0) != 0
+                    && page.layout().style().computed(dom, candidate).is_some_and(|s| s.box_kind == pyro_dom::style::BoxKind::Block)
+                {
+                    return Some((p, p));
+                }
                 let at = dom.index_in_parent(candidate).ok()?;
                 return Some(((parent, at), (parent, at + 1)));
             }
