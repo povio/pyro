@@ -230,9 +230,14 @@ fn deletes_visible_space(
     if loses_width {
         return true;
     }
+    wraps(page, dom, node)
+}
+
+fn wraps(page: &PageDom, dom: &Dom, node: NodeId) -> bool {
     let Some(el) = dom.parent_element(node).ok().flatten() else {
         return false;
     };
+    let layout = page.layout();
     match layout.computed_style_value(dom, el, "text-wrap-mode").as_str() {
         "wrap" => true,
         "" => !layout
@@ -246,6 +251,7 @@ fn deletes_visible_space(
 pub(super) enum Repair {
     Exposed,
     Deleted,
+    Inserted,
 }
 
 /// Whether the deletion needs whitespace repair at the resulting caret.
@@ -329,15 +335,23 @@ pub(super) fn at(page: &PageDom, dom: &mut Dom, host: NodeId, (node, offset): Po
     if !collapses(page, dom, node) {
         return;
     }
+    let repair = if matches!(repair, Repair::Inserted) && !wraps(page, dom, node) {
+        Repair::Exposed
+    } else {
+        repair
+    };
     let left_char = text[..byte].chars().rev().nth(left as usize);
     let right_char = text[byte..].chars().nth(right as usize);
     let mut parts = Vec::new();
-    let mut first = left_char.is_none() && extend(page, dom, host, node, false, &mut parts);
+    // Insertion rebalances only the edited text node. Adjacent formatting
+    // elements retain their own whitespace and text offsets.
+    let local = matches!(repair, Repair::Inserted);
+    let mut first = left_char.is_none() && (local || extend(page, dom, host, node, false, &mut parts));
     parts.reverse();
     if left + right > 0 {
         parts.push((node, offset - left, left + right));
     }
-    let mut last = right_char.is_none() && extend(page, dom, host, node, true, &mut parts);
+    let mut last = right_char.is_none() && (local || extend(page, dom, host, node, true, &mut parts));
     if parts.is_empty() {
         return;
     }
@@ -350,10 +364,10 @@ pub(super) fn at(page: &PageDom, dom: &mut Dom, host: NodeId, (node, offset): Po
     let count = parts.iter().map(|p| p.2 as usize).sum();
     let sequence = match repair {
         Repair::Exposed => canonical(count, first, last),
-        // Blink rebalances a visible run after deletion from left to right.
+        // Blink rebalances a visible run after editing from left to right.
         // Keep the last space visible at a line end and allow an isolated
         // internal space to wrap.
-        Repair::Deleted => (0..count)
+        Repair::Deleted | Repair::Inserted => (0..count)
             .map(|i| {
                 let nonbreaking = (i % 2 == 0 && (count > 1 || first)) || (i + 1 == count && (last || right_char.is_none()));
                 if nonbreaking { '\u{a0}' } else { ' ' }
@@ -370,15 +384,17 @@ pub(super) fn at(page: &PageDom, dom: &mut Dom, host: NodeId, (node, offset): Po
 }
 
 pub(super) fn inserted(page: &PageDom, dom: &mut Dom, host: NodeId, end: Point, text: &str) {
-    let mut off = end.1.saturating_sub(pyro_dom::dom::utf16_len(text));
-    at(page, dom, host, (end.0, off), Repair::Exposed);
-    let mut was_space = true; // The first boundary was already visited.
+    let start = end.1.saturating_sub(pyro_dom::dom::utf16_len(text));
+    let mut offset = start;
+    let mut in_space = false;
     for c in text.chars() {
-        if space(c) && !was_space {
-            at(page, dom, host, (end.0, off), Repair::Exposed);
+        if offset == start || (space(c) && !in_space) {
+            at(page, dom, host, (end.0, offset), Repair::Inserted);
         }
-        was_space = space(c);
-        off += c.len_utf16() as u32;
+        in_space = space(c);
+        offset += c.len_utf16() as u32;
     }
-    at(page, dom, host, end, Repair::Exposed);
+    if !in_space {
+        at(page, dom, host, end, Repair::Inserted);
+    }
 }
