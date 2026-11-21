@@ -1,0 +1,2166 @@
+{
+ "pages": [
+  {
+   "id": "strict-origin-when-cross-origin-0-preload-",
+   "kind": "preload",
+   "override": null,
+   "policy": "strict-origin-when-cross-origin",
+   "depth": 0,
+   "source": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "expected": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "received": true,
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "pass": true
+  },
+  {
+   "id": "strict-origin-when-cross-origin-0-preload-invalid",
+   "kind": "preload",
+   "override": "invalid",
+   "policy": "strict-origin-when-cross-origin",
+   "depth": 0,
+   "source": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "expected": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "received": true,
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "pass": true
+  },
+  {
+   "id": "strict-origin-when-cross-origin-0-preload-no-referrer",
+   "kind": "preload",
+   "override": "no-referrer",
+   "policy": "strict-origin-when-cross-origin",
+   "depth": 0,
+   "source": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "expected": null,
+   "received": true,
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "pass": false
+  },
+  {
+   "id": "strict-origin-when-cross-origin-0-preload-origin",
+   "kind": "preload",
+   "override": "origin",
+   "policy": "strict-origin-when-cross-origin",
+   "depth": 0,
+   "source": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "expected": "http://127.0.0.1:49800/",
+   "received": true,
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "pass": false
+  },
+  {
+   "id": "strict-origin-when-cross-origin-0-preload-unsafe-url",
+   "kind": "preload",
+   "override": "unsafe-url",
+   "policy": "strict-origin-when-cross-origin",
+   "depth": 0,
+   "source": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "expected": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "received": true,
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "pass": true
+  },
+  {
+   "id": "strict-origin-when-cross-origin-0-modulepreload-",
+   "kind": "modulepreload",
+   "override": null,
+   "policy": "strict-origin-when-cross-origin",
+   "depth": 0,
+   "source": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "expected": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "received": true,
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "pass": true
+  },
+  {
+   "id": "strict-origin-when-cross-origin-0-modulepreload-invalid",
+   "kind": "modulepreload",
+   "override": "invalid",
+   "policy": "strict-origin-when-cross-origin",
+   "depth": 0,
+   "source": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "expected": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "received": true,
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "pass": true
+  },
+  {
+   "id": "strict-origin-when-cross-origin-0-modulepreload-no-referrer",
+   "kind": "modulepreload",
+   "override": "no-referrer",
+   "policy": "strict-origin-when-cross-origin",
+   "depth": 0,
+   "source": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "expected": null,
+   "received": true,
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "pass": false
+  },
+  {
+   "id": "strict-origin-when-cross-origin-0-modulepreload-origin",
+   "kind": "modulepreload",
+   "override": "origin",
+   "policy": "strict-origin-when-cross-origin",
+   "depth": 0,
+   "source": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "expected": "http://127.0.0.1:49800/",
+   "received": true,
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "pass": false
+  },
+  {
+   "id": "strict-origin-when-cross-origin-0-modulepreload-unsafe-url",
+   "kind": "modulepreload",
+   "override": "unsafe-url",
+   "policy": "strict-origin-when-cross-origin",
+   "depth": 0,
+   "source": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "expected": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "received": true,
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "pass": true
+  },
+  {
+   "id": "strict-origin-when-cross-origin-1-preload-",
+   "kind": "preload",
+   "override": null,
+   "policy": "strict-origin-when-cross-origin",
+   "depth": 1,
+   "source": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "expected": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "received": true,
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "pass": true
+  },
+  {
+   "id": "strict-origin-when-cross-origin-1-preload-invalid",
+   "kind": "preload",
+   "override": "invalid",
+   "policy": "strict-origin-when-cross-origin",
+   "depth": 1,
+   "source": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "expected": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "received": true,
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "pass": true
+  },
+  {
+   "id": "strict-origin-when-cross-origin-1-preload-no-referrer",
+   "kind": "preload",
+   "override": "no-referrer",
+   "policy": "strict-origin-when-cross-origin",
+   "depth": 1,
+   "source": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "expected": null,
+   "received": true,
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "pass": false
+  },
+  {
+   "id": "strict-origin-when-cross-origin-1-preload-origin",
+   "kind": "preload",
+   "override": "origin",
+   "policy": "strict-origin-when-cross-origin",
+   "depth": 1,
+   "source": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "expected": "http://127.0.0.1:49800/",
+   "received": true,
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "pass": false
+  },
+  {
+   "id": "strict-origin-when-cross-origin-1-preload-unsafe-url",
+   "kind": "preload",
+   "override": "unsafe-url",
+   "policy": "strict-origin-when-cross-origin",
+   "depth": 1,
+   "source": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "expected": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "received": true,
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "pass": true
+  },
+  {
+   "id": "strict-origin-when-cross-origin-1-modulepreload-",
+   "kind": "modulepreload",
+   "override": null,
+   "policy": "strict-origin-when-cross-origin",
+   "depth": 1,
+   "source": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "expected": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "received": true,
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "pass": true
+  },
+  {
+   "id": "strict-origin-when-cross-origin-1-modulepreload-invalid",
+   "kind": "modulepreload",
+   "override": "invalid",
+   "policy": "strict-origin-when-cross-origin",
+   "depth": 1,
+   "source": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "expected": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "received": true,
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "pass": true
+  },
+  {
+   "id": "strict-origin-when-cross-origin-1-modulepreload-no-referrer",
+   "kind": "modulepreload",
+   "override": "no-referrer",
+   "policy": "strict-origin-when-cross-origin",
+   "depth": 1,
+   "source": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "expected": null,
+   "received": true,
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "pass": false
+  },
+  {
+   "id": "strict-origin-when-cross-origin-1-modulepreload-origin",
+   "kind": "modulepreload",
+   "override": "origin",
+   "policy": "strict-origin-when-cross-origin",
+   "depth": 1,
+   "source": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "expected": "http://127.0.0.1:49800/",
+   "received": true,
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "pass": false
+  },
+  {
+   "id": "strict-origin-when-cross-origin-1-modulepreload-unsafe-url",
+   "kind": "modulepreload",
+   "override": "unsafe-url",
+   "policy": "strict-origin-when-cross-origin",
+   "depth": 1,
+   "source": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "expected": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "received": true,
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "pass": true
+  },
+  {
+   "id": "strict-origin-when-cross-origin-2-preload-",
+   "kind": "preload",
+   "override": null,
+   "policy": "strict-origin-when-cross-origin",
+   "depth": 2,
+   "source": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "expected": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "received": true,
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "pass": true
+  },
+  {
+   "id": "strict-origin-when-cross-origin-2-preload-invalid",
+   "kind": "preload",
+   "override": "invalid",
+   "policy": "strict-origin-when-cross-origin",
+   "depth": 2,
+   "source": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "expected": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "received": true,
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "pass": true
+  },
+  {
+   "id": "strict-origin-when-cross-origin-2-preload-no-referrer",
+   "kind": "preload",
+   "override": "no-referrer",
+   "policy": "strict-origin-when-cross-origin",
+   "depth": 2,
+   "source": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "expected": null,
+   "received": true,
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "pass": false
+  },
+  {
+   "id": "strict-origin-when-cross-origin-2-preload-origin",
+   "kind": "preload",
+   "override": "origin",
+   "policy": "strict-origin-when-cross-origin",
+   "depth": 2,
+   "source": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "expected": "http://127.0.0.1:49800/",
+   "received": true,
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "pass": false
+  },
+  {
+   "id": "strict-origin-when-cross-origin-2-preload-unsafe-url",
+   "kind": "preload",
+   "override": "unsafe-url",
+   "policy": "strict-origin-when-cross-origin",
+   "depth": 2,
+   "source": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "expected": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "received": true,
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "pass": true
+  },
+  {
+   "id": "strict-origin-when-cross-origin-2-modulepreload-",
+   "kind": "modulepreload",
+   "override": null,
+   "policy": "strict-origin-when-cross-origin",
+   "depth": 2,
+   "source": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "expected": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "received": true,
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "pass": true
+  },
+  {
+   "id": "strict-origin-when-cross-origin-2-modulepreload-invalid",
+   "kind": "modulepreload",
+   "override": "invalid",
+   "policy": "strict-origin-when-cross-origin",
+   "depth": 2,
+   "source": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "expected": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "received": true,
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "pass": true
+  },
+  {
+   "id": "strict-origin-when-cross-origin-2-modulepreload-no-referrer",
+   "kind": "modulepreload",
+   "override": "no-referrer",
+   "policy": "strict-origin-when-cross-origin",
+   "depth": 2,
+   "source": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "expected": null,
+   "received": true,
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "pass": false
+  },
+  {
+   "id": "strict-origin-when-cross-origin-2-modulepreload-origin",
+   "kind": "modulepreload",
+   "override": "origin",
+   "policy": "strict-origin-when-cross-origin",
+   "depth": 2,
+   "source": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "expected": "http://127.0.0.1:49800/",
+   "received": true,
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "pass": false
+  },
+  {
+   "id": "strict-origin-when-cross-origin-2-modulepreload-unsafe-url",
+   "kind": "modulepreload",
+   "override": "unsafe-url",
+   "policy": "strict-origin-when-cross-origin",
+   "depth": 2,
+   "source": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "expected": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "received": true,
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "pass": true
+  },
+  {
+   "id": "strict-origin-when-cross-origin-url-srcdoc-preload-",
+   "kind": "preload",
+   "override": null,
+   "policy": "strict-origin-when-cross-origin",
+   "depth": "url-srcdoc",
+   "source": "http://127.0.0.1:49800/child?policy=strict-origin-when-cross-origin",
+   "expected": "http://127.0.0.1:49800/child?policy=strict-origin-when-cross-origin",
+   "received": true,
+   "header": "http://127.0.0.1:49800/child?policy=strict-origin-when-cross-origin",
+   "pass": true
+  },
+  {
+   "id": "strict-origin-when-cross-origin-url-srcdoc-preload-invalid",
+   "kind": "preload",
+   "override": "invalid",
+   "policy": "strict-origin-when-cross-origin",
+   "depth": "url-srcdoc",
+   "source": "http://127.0.0.1:49800/child?policy=strict-origin-when-cross-origin",
+   "expected": "http://127.0.0.1:49800/child?policy=strict-origin-when-cross-origin",
+   "received": true,
+   "header": "http://127.0.0.1:49800/child?policy=strict-origin-when-cross-origin",
+   "pass": true
+  },
+  {
+   "id": "strict-origin-when-cross-origin-url-srcdoc-preload-no-referrer",
+   "kind": "preload",
+   "override": "no-referrer",
+   "policy": "strict-origin-when-cross-origin",
+   "depth": "url-srcdoc",
+   "source": "http://127.0.0.1:49800/child?policy=strict-origin-when-cross-origin",
+   "expected": null,
+   "received": true,
+   "header": "http://127.0.0.1:49800/child?policy=strict-origin-when-cross-origin",
+   "pass": false
+  },
+  {
+   "id": "strict-origin-when-cross-origin-url-srcdoc-preload-origin",
+   "kind": "preload",
+   "override": "origin",
+   "policy": "strict-origin-when-cross-origin",
+   "depth": "url-srcdoc",
+   "source": "http://127.0.0.1:49800/child?policy=strict-origin-when-cross-origin",
+   "expected": "http://127.0.0.1:49800/",
+   "received": true,
+   "header": "http://127.0.0.1:49800/child?policy=strict-origin-when-cross-origin",
+   "pass": false
+  },
+  {
+   "id": "strict-origin-when-cross-origin-url-srcdoc-preload-unsafe-url",
+   "kind": "preload",
+   "override": "unsafe-url",
+   "policy": "strict-origin-when-cross-origin",
+   "depth": "url-srcdoc",
+   "source": "http://127.0.0.1:49800/child?policy=strict-origin-when-cross-origin",
+   "expected": "http://127.0.0.1:49800/child?policy=strict-origin-when-cross-origin",
+   "received": true,
+   "header": "http://127.0.0.1:49800/child?policy=strict-origin-when-cross-origin",
+   "pass": true
+  },
+  {
+   "id": "strict-origin-when-cross-origin-url-srcdoc-modulepreload-",
+   "kind": "modulepreload",
+   "override": null,
+   "policy": "strict-origin-when-cross-origin",
+   "depth": "url-srcdoc",
+   "source": "http://127.0.0.1:49800/child?policy=strict-origin-when-cross-origin",
+   "expected": "http://127.0.0.1:49800/child?policy=strict-origin-when-cross-origin",
+   "received": true,
+   "header": "http://127.0.0.1:49800/child?policy=strict-origin-when-cross-origin",
+   "pass": true
+  },
+  {
+   "id": "strict-origin-when-cross-origin-url-srcdoc-modulepreload-invalid",
+   "kind": "modulepreload",
+   "override": "invalid",
+   "policy": "strict-origin-when-cross-origin",
+   "depth": "url-srcdoc",
+   "source": "http://127.0.0.1:49800/child?policy=strict-origin-when-cross-origin",
+   "expected": "http://127.0.0.1:49800/child?policy=strict-origin-when-cross-origin",
+   "received": true,
+   "header": "http://127.0.0.1:49800/child?policy=strict-origin-when-cross-origin",
+   "pass": true
+  },
+  {
+   "id": "strict-origin-when-cross-origin-url-srcdoc-modulepreload-no-referrer",
+   "kind": "modulepreload",
+   "override": "no-referrer",
+   "policy": "strict-origin-when-cross-origin",
+   "depth": "url-srcdoc",
+   "source": "http://127.0.0.1:49800/child?policy=strict-origin-when-cross-origin",
+   "expected": null,
+   "received": true,
+   "header": "http://127.0.0.1:49800/child?policy=strict-origin-when-cross-origin",
+   "pass": false
+  },
+  {
+   "id": "strict-origin-when-cross-origin-url-srcdoc-modulepreload-origin",
+   "kind": "modulepreload",
+   "override": "origin",
+   "policy": "strict-origin-when-cross-origin",
+   "depth": "url-srcdoc",
+   "source": "http://127.0.0.1:49800/child?policy=strict-origin-when-cross-origin",
+   "expected": "http://127.0.0.1:49800/",
+   "received": true,
+   "header": "http://127.0.0.1:49800/child?policy=strict-origin-when-cross-origin",
+   "pass": false
+  },
+  {
+   "id": "strict-origin-when-cross-origin-url-srcdoc-modulepreload-unsafe-url",
+   "kind": "modulepreload",
+   "override": "unsafe-url",
+   "policy": "strict-origin-when-cross-origin",
+   "depth": "url-srcdoc",
+   "source": "http://127.0.0.1:49800/child?policy=strict-origin-when-cross-origin",
+   "expected": "http://127.0.0.1:49800/child?policy=strict-origin-when-cross-origin",
+   "received": true,
+   "header": "http://127.0.0.1:49800/child?policy=strict-origin-when-cross-origin",
+   "pass": true
+  },
+  {
+   "id": "origin-0-preload-",
+   "kind": "preload",
+   "override": null,
+   "policy": "origin",
+   "depth": 0,
+   "source": "http://127.0.0.1:49800/container?policy=origin",
+   "expected": "http://127.0.0.1:49800/",
+   "received": true,
+   "header": "http://127.0.0.1:49800/",
+   "pass": true
+  },
+  {
+   "id": "origin-0-preload-invalid",
+   "kind": "preload",
+   "override": "invalid",
+   "policy": "origin",
+   "depth": 0,
+   "source": "http://127.0.0.1:49800/container?policy=origin",
+   "expected": "http://127.0.0.1:49800/",
+   "received": true,
+   "header": "http://127.0.0.1:49800/",
+   "pass": true
+  },
+  {
+   "id": "origin-0-preload-no-referrer",
+   "kind": "preload",
+   "override": "no-referrer",
+   "policy": "origin",
+   "depth": 0,
+   "source": "http://127.0.0.1:49800/container?policy=origin",
+   "expected": null,
+   "received": true,
+   "header": "http://127.0.0.1:49800/",
+   "pass": false
+  },
+  {
+   "id": "origin-0-preload-origin",
+   "kind": "preload",
+   "override": "origin",
+   "policy": "origin",
+   "depth": 0,
+   "source": "http://127.0.0.1:49800/container?policy=origin",
+   "expected": "http://127.0.0.1:49800/",
+   "received": true,
+   "header": "http://127.0.0.1:49800/",
+   "pass": true
+  },
+  {
+   "id": "origin-0-preload-unsafe-url",
+   "kind": "preload",
+   "override": "unsafe-url",
+   "policy": "origin",
+   "depth": 0,
+   "source": "http://127.0.0.1:49800/container?policy=origin",
+   "expected": "http://127.0.0.1:49800/container?policy=origin",
+   "received": true,
+   "header": "http://127.0.0.1:49800/",
+   "pass": false
+  },
+  {
+   "id": "origin-0-modulepreload-",
+   "kind": "modulepreload",
+   "override": null,
+   "policy": "origin",
+   "depth": 0,
+   "source": "http://127.0.0.1:49800/container?policy=origin",
+   "expected": "http://127.0.0.1:49800/",
+   "received": true,
+   "header": "http://127.0.0.1:49800/",
+   "pass": true
+  },
+  {
+   "id": "origin-0-modulepreload-invalid",
+   "kind": "modulepreload",
+   "override": "invalid",
+   "policy": "origin",
+   "depth": 0,
+   "source": "http://127.0.0.1:49800/container?policy=origin",
+   "expected": "http://127.0.0.1:49800/",
+   "received": true,
+   "header": "http://127.0.0.1:49800/",
+   "pass": true
+  },
+  {
+   "id": "origin-0-modulepreload-no-referrer",
+   "kind": "modulepreload",
+   "override": "no-referrer",
+   "policy": "origin",
+   "depth": 0,
+   "source": "http://127.0.0.1:49800/container?policy=origin",
+   "expected": null,
+   "received": true,
+   "header": "http://127.0.0.1:49800/",
+   "pass": false
+  },
+  {
+   "id": "origin-0-modulepreload-origin",
+   "kind": "modulepreload",
+   "override": "origin",
+   "policy": "origin",
+   "depth": 0,
+   "source": "http://127.0.0.1:49800/container?policy=origin",
+   "expected": "http://127.0.0.1:49800/",
+   "received": true,
+   "header": "http://127.0.0.1:49800/",
+   "pass": true
+  },
+  {
+   "id": "origin-0-modulepreload-unsafe-url",
+   "kind": "modulepreload",
+   "override": "unsafe-url",
+   "policy": "origin",
+   "depth": 0,
+   "source": "http://127.0.0.1:49800/container?policy=origin",
+   "expected": "http://127.0.0.1:49800/container?policy=origin",
+   "received": true,
+   "header": "http://127.0.0.1:49800/",
+   "pass": false
+  },
+  {
+   "id": "origin-1-preload-",
+   "kind": "preload",
+   "override": null,
+   "policy": "origin",
+   "depth": 1,
+   "source": "http://127.0.0.1:49800/container?policy=origin",
+   "expected": "http://127.0.0.1:49800/",
+   "received": true,
+   "header": "http://127.0.0.1:49800/",
+   "pass": true
+  },
+  {
+   "id": "origin-1-preload-invalid",
+   "kind": "preload",
+   "override": "invalid",
+   "policy": "origin",
+   "depth": 1,
+   "source": "http://127.0.0.1:49800/container?policy=origin",
+   "expected": "http://127.0.0.1:49800/",
+   "received": true,
+   "header": "http://127.0.0.1:49800/",
+   "pass": true
+  },
+  {
+   "id": "origin-1-preload-no-referrer",
+   "kind": "preload",
+   "override": "no-referrer",
+   "policy": "origin",
+   "depth": 1,
+   "source": "http://127.0.0.1:49800/container?policy=origin",
+   "expected": null,
+   "received": true,
+   "header": "http://127.0.0.1:49800/",
+   "pass": false
+  },
+  {
+   "id": "origin-1-preload-origin",
+   "kind": "preload",
+   "override": "origin",
+   "policy": "origin",
+   "depth": 1,
+   "source": "http://127.0.0.1:49800/container?policy=origin",
+   "expected": "http://127.0.0.1:49800/",
+   "received": true,
+   "header": "http://127.0.0.1:49800/",
+   "pass": true
+  },
+  {
+   "id": "origin-1-preload-unsafe-url",
+   "kind": "preload",
+   "override": "unsafe-url",
+   "policy": "origin",
+   "depth": 1,
+   "source": "http://127.0.0.1:49800/container?policy=origin",
+   "expected": "http://127.0.0.1:49800/container?policy=origin",
+   "received": true,
+   "header": "http://127.0.0.1:49800/",
+   "pass": false
+  },
+  {
+   "id": "origin-1-modulepreload-",
+   "kind": "modulepreload",
+   "override": null,
+   "policy": "origin",
+   "depth": 1,
+   "source": "http://127.0.0.1:49800/container?policy=origin",
+   "expected": "http://127.0.0.1:49800/",
+   "received": true,
+   "header": "http://127.0.0.1:49800/",
+   "pass": true
+  },
+  {
+   "id": "origin-1-modulepreload-invalid",
+   "kind": "modulepreload",
+   "override": "invalid",
+   "policy": "origin",
+   "depth": 1,
+   "source": "http://127.0.0.1:49800/container?policy=origin",
+   "expected": "http://127.0.0.1:49800/",
+   "received": true,
+   "header": "http://127.0.0.1:49800/",
+   "pass": true
+  },
+  {
+   "id": "origin-1-modulepreload-no-referrer",
+   "kind": "modulepreload",
+   "override": "no-referrer",
+   "policy": "origin",
+   "depth": 1,
+   "source": "http://127.0.0.1:49800/container?policy=origin",
+   "expected": null,
+   "received": true,
+   "header": "http://127.0.0.1:49800/",
+   "pass": false
+  },
+  {
+   "id": "origin-1-modulepreload-origin",
+   "kind": "modulepreload",
+   "override": "origin",
+   "policy": "origin",
+   "depth": 1,
+   "source": "http://127.0.0.1:49800/container?policy=origin",
+   "expected": "http://127.0.0.1:49800/",
+   "received": true,
+   "header": "http://127.0.0.1:49800/",
+   "pass": true
+  },
+  {
+   "id": "origin-1-modulepreload-unsafe-url",
+   "kind": "modulepreload",
+   "override": "unsafe-url",
+   "policy": "origin",
+   "depth": 1,
+   "source": "http://127.0.0.1:49800/container?policy=origin",
+   "expected": "http://127.0.0.1:49800/container?policy=origin",
+   "received": true,
+   "header": "http://127.0.0.1:49800/",
+   "pass": false
+  },
+  {
+   "id": "origin-2-preload-",
+   "kind": "preload",
+   "override": null,
+   "policy": "origin",
+   "depth": 2,
+   "source": "http://127.0.0.1:49800/container?policy=origin",
+   "expected": "http://127.0.0.1:49800/",
+   "received": true,
+   "header": "http://127.0.0.1:49800/",
+   "pass": true
+  },
+  {
+   "id": "origin-2-preload-invalid",
+   "kind": "preload",
+   "override": "invalid",
+   "policy": "origin",
+   "depth": 2,
+   "source": "http://127.0.0.1:49800/container?policy=origin",
+   "expected": "http://127.0.0.1:49800/",
+   "received": true,
+   "header": "http://127.0.0.1:49800/",
+   "pass": true
+  },
+  {
+   "id": "origin-2-preload-no-referrer",
+   "kind": "preload",
+   "override": "no-referrer",
+   "policy": "origin",
+   "depth": 2,
+   "source": "http://127.0.0.1:49800/container?policy=origin",
+   "expected": null,
+   "received": true,
+   "header": "http://127.0.0.1:49800/",
+   "pass": false
+  },
+  {
+   "id": "origin-2-preload-origin",
+   "kind": "preload",
+   "override": "origin",
+   "policy": "origin",
+   "depth": 2,
+   "source": "http://127.0.0.1:49800/container?policy=origin",
+   "expected": "http://127.0.0.1:49800/",
+   "received": true,
+   "header": "http://127.0.0.1:49800/",
+   "pass": true
+  },
+  {
+   "id": "origin-2-preload-unsafe-url",
+   "kind": "preload",
+   "override": "unsafe-url",
+   "policy": "origin",
+   "depth": 2,
+   "source": "http://127.0.0.1:49800/container?policy=origin",
+   "expected": "http://127.0.0.1:49800/container?policy=origin",
+   "received": true,
+   "header": "http://127.0.0.1:49800/",
+   "pass": false
+  },
+  {
+   "id": "origin-2-modulepreload-",
+   "kind": "modulepreload",
+   "override": null,
+   "policy": "origin",
+   "depth": 2,
+   "source": "http://127.0.0.1:49800/container?policy=origin",
+   "expected": "http://127.0.0.1:49800/",
+   "received": true,
+   "header": "http://127.0.0.1:49800/",
+   "pass": true
+  },
+  {
+   "id": "origin-2-modulepreload-invalid",
+   "kind": "modulepreload",
+   "override": "invalid",
+   "policy": "origin",
+   "depth": 2,
+   "source": "http://127.0.0.1:49800/container?policy=origin",
+   "expected": "http://127.0.0.1:49800/",
+   "received": true,
+   "header": "http://127.0.0.1:49800/",
+   "pass": true
+  },
+  {
+   "id": "origin-2-modulepreload-no-referrer",
+   "kind": "modulepreload",
+   "override": "no-referrer",
+   "policy": "origin",
+   "depth": 2,
+   "source": "http://127.0.0.1:49800/container?policy=origin",
+   "expected": null,
+   "received": true,
+   "header": "http://127.0.0.1:49800/",
+   "pass": false
+  },
+  {
+   "id": "origin-2-modulepreload-origin",
+   "kind": "modulepreload",
+   "override": "origin",
+   "policy": "origin",
+   "depth": 2,
+   "source": "http://127.0.0.1:49800/container?policy=origin",
+   "expected": "http://127.0.0.1:49800/",
+   "received": true,
+   "header": "http://127.0.0.1:49800/",
+   "pass": true
+  },
+  {
+   "id": "origin-2-modulepreload-unsafe-url",
+   "kind": "modulepreload",
+   "override": "unsafe-url",
+   "policy": "origin",
+   "depth": 2,
+   "source": "http://127.0.0.1:49800/container?policy=origin",
+   "expected": "http://127.0.0.1:49800/container?policy=origin",
+   "received": true,
+   "header": "http://127.0.0.1:49800/",
+   "pass": false
+  },
+  {
+   "id": "origin-url-srcdoc-preload-",
+   "kind": "preload",
+   "override": null,
+   "policy": "origin",
+   "depth": "url-srcdoc",
+   "source": "http://127.0.0.1:49800/child?policy=origin",
+   "expected": "http://127.0.0.1:49800/",
+   "received": true,
+   "header": "http://127.0.0.1:49800/",
+   "pass": true
+  },
+  {
+   "id": "origin-url-srcdoc-preload-invalid",
+   "kind": "preload",
+   "override": "invalid",
+   "policy": "origin",
+   "depth": "url-srcdoc",
+   "source": "http://127.0.0.1:49800/child?policy=origin",
+   "expected": "http://127.0.0.1:49800/",
+   "received": true,
+   "header": "http://127.0.0.1:49800/",
+   "pass": true
+  },
+  {
+   "id": "origin-url-srcdoc-preload-no-referrer",
+   "kind": "preload",
+   "override": "no-referrer",
+   "policy": "origin",
+   "depth": "url-srcdoc",
+   "source": "http://127.0.0.1:49800/child?policy=origin",
+   "expected": null,
+   "received": true,
+   "header": "http://127.0.0.1:49800/",
+   "pass": false
+  },
+  {
+   "id": "origin-url-srcdoc-preload-origin",
+   "kind": "preload",
+   "override": "origin",
+   "policy": "origin",
+   "depth": "url-srcdoc",
+   "source": "http://127.0.0.1:49800/child?policy=origin",
+   "expected": "http://127.0.0.1:49800/",
+   "received": true,
+   "header": "http://127.0.0.1:49800/",
+   "pass": true
+  },
+  {
+   "id": "origin-url-srcdoc-preload-unsafe-url",
+   "kind": "preload",
+   "override": "unsafe-url",
+   "policy": "origin",
+   "depth": "url-srcdoc",
+   "source": "http://127.0.0.1:49800/child?policy=origin",
+   "expected": "http://127.0.0.1:49800/child?policy=origin",
+   "received": true,
+   "header": "http://127.0.0.1:49800/",
+   "pass": false
+  },
+  {
+   "id": "origin-url-srcdoc-modulepreload-",
+   "kind": "modulepreload",
+   "override": null,
+   "policy": "origin",
+   "depth": "url-srcdoc",
+   "source": "http://127.0.0.1:49800/child?policy=origin",
+   "expected": "http://127.0.0.1:49800/",
+   "received": true,
+   "header": "http://127.0.0.1:49800/",
+   "pass": true
+  },
+  {
+   "id": "origin-url-srcdoc-modulepreload-invalid",
+   "kind": "modulepreload",
+   "override": "invalid",
+   "policy": "origin",
+   "depth": "url-srcdoc",
+   "source": "http://127.0.0.1:49800/child?policy=origin",
+   "expected": "http://127.0.0.1:49800/",
+   "received": true,
+   "header": "http://127.0.0.1:49800/",
+   "pass": true
+  },
+  {
+   "id": "origin-url-srcdoc-modulepreload-no-referrer",
+   "kind": "modulepreload",
+   "override": "no-referrer",
+   "policy": "origin",
+   "depth": "url-srcdoc",
+   "source": "http://127.0.0.1:49800/child?policy=origin",
+   "expected": null,
+   "received": true,
+   "header": "http://127.0.0.1:49800/",
+   "pass": false
+  },
+  {
+   "id": "origin-url-srcdoc-modulepreload-origin",
+   "kind": "modulepreload",
+   "override": "origin",
+   "policy": "origin",
+   "depth": "url-srcdoc",
+   "source": "http://127.0.0.1:49800/child?policy=origin",
+   "expected": "http://127.0.0.1:49800/",
+   "received": true,
+   "header": "http://127.0.0.1:49800/",
+   "pass": true
+  },
+  {
+   "id": "origin-url-srcdoc-modulepreload-unsafe-url",
+   "kind": "modulepreload",
+   "override": "unsafe-url",
+   "policy": "origin",
+   "depth": "url-srcdoc",
+   "source": "http://127.0.0.1:49800/child?policy=origin",
+   "expected": "http://127.0.0.1:49800/child?policy=origin",
+   "received": true,
+   "header": "http://127.0.0.1:49800/",
+   "pass": false
+  },
+  {
+   "id": "no-referrer-0-preload-",
+   "kind": "preload",
+   "override": null,
+   "policy": "no-referrer",
+   "depth": 0,
+   "source": "http://127.0.0.1:49800/container?policy=no-referrer",
+   "expected": null,
+   "received": true,
+   "header": null,
+   "pass": true
+  },
+  {
+   "id": "no-referrer-0-preload-invalid",
+   "kind": "preload",
+   "override": "invalid",
+   "policy": "no-referrer",
+   "depth": 0,
+   "source": "http://127.0.0.1:49800/container?policy=no-referrer",
+   "expected": null,
+   "received": true,
+   "header": null,
+   "pass": true
+  },
+  {
+   "id": "no-referrer-0-preload-no-referrer",
+   "kind": "preload",
+   "override": "no-referrer",
+   "policy": "no-referrer",
+   "depth": 0,
+   "source": "http://127.0.0.1:49800/container?policy=no-referrer",
+   "expected": null,
+   "received": true,
+   "header": null,
+   "pass": true
+  },
+  {
+   "id": "no-referrer-0-preload-origin",
+   "kind": "preload",
+   "override": "origin",
+   "policy": "no-referrer",
+   "depth": 0,
+   "source": "http://127.0.0.1:49800/container?policy=no-referrer",
+   "expected": "http://127.0.0.1:49800/",
+   "received": true,
+   "header": null,
+   "pass": false
+  },
+  {
+   "id": "no-referrer-0-preload-unsafe-url",
+   "kind": "preload",
+   "override": "unsafe-url",
+   "policy": "no-referrer",
+   "depth": 0,
+   "source": "http://127.0.0.1:49800/container?policy=no-referrer",
+   "expected": "http://127.0.0.1:49800/container?policy=no-referrer",
+   "received": true,
+   "header": null,
+   "pass": false
+  },
+  {
+   "id": "no-referrer-0-modulepreload-",
+   "kind": "modulepreload",
+   "override": null,
+   "policy": "no-referrer",
+   "depth": 0,
+   "source": "http://127.0.0.1:49800/container?policy=no-referrer",
+   "expected": null,
+   "received": true,
+   "header": null,
+   "pass": true
+  },
+  {
+   "id": "no-referrer-0-modulepreload-invalid",
+   "kind": "modulepreload",
+   "override": "invalid",
+   "policy": "no-referrer",
+   "depth": 0,
+   "source": "http://127.0.0.1:49800/container?policy=no-referrer",
+   "expected": null,
+   "received": true,
+   "header": null,
+   "pass": true
+  },
+  {
+   "id": "no-referrer-0-modulepreload-no-referrer",
+   "kind": "modulepreload",
+   "override": "no-referrer",
+   "policy": "no-referrer",
+   "depth": 0,
+   "source": "http://127.0.0.1:49800/container?policy=no-referrer",
+   "expected": null,
+   "received": true,
+   "header": null,
+   "pass": true
+  },
+  {
+   "id": "no-referrer-0-modulepreload-origin",
+   "kind": "modulepreload",
+   "override": "origin",
+   "policy": "no-referrer",
+   "depth": 0,
+   "source": "http://127.0.0.1:49800/container?policy=no-referrer",
+   "expected": "http://127.0.0.1:49800/",
+   "received": true,
+   "header": null,
+   "pass": false
+  },
+  {
+   "id": "no-referrer-0-modulepreload-unsafe-url",
+   "kind": "modulepreload",
+   "override": "unsafe-url",
+   "policy": "no-referrer",
+   "depth": 0,
+   "source": "http://127.0.0.1:49800/container?policy=no-referrer",
+   "expected": "http://127.0.0.1:49800/container?policy=no-referrer",
+   "received": true,
+   "header": null,
+   "pass": false
+  },
+  {
+   "id": "no-referrer-1-preload-",
+   "kind": "preload",
+   "override": null,
+   "policy": "no-referrer",
+   "depth": 1,
+   "source": "http://127.0.0.1:49800/container?policy=no-referrer",
+   "expected": null,
+   "received": true,
+   "header": null,
+   "pass": true
+  },
+  {
+   "id": "no-referrer-1-preload-invalid",
+   "kind": "preload",
+   "override": "invalid",
+   "policy": "no-referrer",
+   "depth": 1,
+   "source": "http://127.0.0.1:49800/container?policy=no-referrer",
+   "expected": null,
+   "received": true,
+   "header": null,
+   "pass": true
+  },
+  {
+   "id": "no-referrer-1-preload-no-referrer",
+   "kind": "preload",
+   "override": "no-referrer",
+   "policy": "no-referrer",
+   "depth": 1,
+   "source": "http://127.0.0.1:49800/container?policy=no-referrer",
+   "expected": null,
+   "received": true,
+   "header": null,
+   "pass": true
+  },
+  {
+   "id": "no-referrer-1-preload-origin",
+   "kind": "preload",
+   "override": "origin",
+   "policy": "no-referrer",
+   "depth": 1,
+   "source": "http://127.0.0.1:49800/container?policy=no-referrer",
+   "expected": "http://127.0.0.1:49800/",
+   "received": true,
+   "header": null,
+   "pass": false
+  },
+  {
+   "id": "no-referrer-1-preload-unsafe-url",
+   "kind": "preload",
+   "override": "unsafe-url",
+   "policy": "no-referrer",
+   "depth": 1,
+   "source": "http://127.0.0.1:49800/container?policy=no-referrer",
+   "expected": "http://127.0.0.1:49800/container?policy=no-referrer",
+   "received": true,
+   "header": null,
+   "pass": false
+  },
+  {
+   "id": "no-referrer-1-modulepreload-",
+   "kind": "modulepreload",
+   "override": null,
+   "policy": "no-referrer",
+   "depth": 1,
+   "source": "http://127.0.0.1:49800/container?policy=no-referrer",
+   "expected": null,
+   "received": true,
+   "header": null,
+   "pass": true
+  },
+  {
+   "id": "no-referrer-1-modulepreload-invalid",
+   "kind": "modulepreload",
+   "override": "invalid",
+   "policy": "no-referrer",
+   "depth": 1,
+   "source": "http://127.0.0.1:49800/container?policy=no-referrer",
+   "expected": null,
+   "received": true,
+   "header": null,
+   "pass": true
+  },
+  {
+   "id": "no-referrer-1-modulepreload-no-referrer",
+   "kind": "modulepreload",
+   "override": "no-referrer",
+   "policy": "no-referrer",
+   "depth": 1,
+   "source": "http://127.0.0.1:49800/container?policy=no-referrer",
+   "expected": null,
+   "received": true,
+   "header": null,
+   "pass": true
+  },
+  {
+   "id": "no-referrer-1-modulepreload-origin",
+   "kind": "modulepreload",
+   "override": "origin",
+   "policy": "no-referrer",
+   "depth": 1,
+   "source": "http://127.0.0.1:49800/container?policy=no-referrer",
+   "expected": "http://127.0.0.1:49800/",
+   "received": true,
+   "header": null,
+   "pass": false
+  },
+  {
+   "id": "no-referrer-1-modulepreload-unsafe-url",
+   "kind": "modulepreload",
+   "override": "unsafe-url",
+   "policy": "no-referrer",
+   "depth": 1,
+   "source": "http://127.0.0.1:49800/container?policy=no-referrer",
+   "expected": "http://127.0.0.1:49800/container?policy=no-referrer",
+   "received": true,
+   "header": null,
+   "pass": false
+  },
+  {
+   "id": "no-referrer-2-preload-",
+   "kind": "preload",
+   "override": null,
+   "policy": "no-referrer",
+   "depth": 2,
+   "source": "http://127.0.0.1:49800/container?policy=no-referrer",
+   "expected": null,
+   "received": true,
+   "header": null,
+   "pass": true
+  },
+  {
+   "id": "no-referrer-2-preload-invalid",
+   "kind": "preload",
+   "override": "invalid",
+   "policy": "no-referrer",
+   "depth": 2,
+   "source": "http://127.0.0.1:49800/container?policy=no-referrer",
+   "expected": null,
+   "received": true,
+   "header": null,
+   "pass": true
+  },
+  {
+   "id": "no-referrer-2-preload-no-referrer",
+   "kind": "preload",
+   "override": "no-referrer",
+   "policy": "no-referrer",
+   "depth": 2,
+   "source": "http://127.0.0.1:49800/container?policy=no-referrer",
+   "expected": null,
+   "received": true,
+   "header": null,
+   "pass": true
+  },
+  {
+   "id": "no-referrer-2-preload-origin",
+   "kind": "preload",
+   "override": "origin",
+   "policy": "no-referrer",
+   "depth": 2,
+   "source": "http://127.0.0.1:49800/container?policy=no-referrer",
+   "expected": "http://127.0.0.1:49800/",
+   "received": true,
+   "header": null,
+   "pass": false
+  },
+  {
+   "id": "no-referrer-2-preload-unsafe-url",
+   "kind": "preload",
+   "override": "unsafe-url",
+   "policy": "no-referrer",
+   "depth": 2,
+   "source": "http://127.0.0.1:49800/container?policy=no-referrer",
+   "expected": "http://127.0.0.1:49800/container?policy=no-referrer",
+   "received": true,
+   "header": null,
+   "pass": false
+  },
+  {
+   "id": "no-referrer-2-modulepreload-",
+   "kind": "modulepreload",
+   "override": null,
+   "policy": "no-referrer",
+   "depth": 2,
+   "source": "http://127.0.0.1:49800/container?policy=no-referrer",
+   "expected": null,
+   "received": true,
+   "header": null,
+   "pass": true
+  },
+  {
+   "id": "no-referrer-2-modulepreload-invalid",
+   "kind": "modulepreload",
+   "override": "invalid",
+   "policy": "no-referrer",
+   "depth": 2,
+   "source": "http://127.0.0.1:49800/container?policy=no-referrer",
+   "expected": null,
+   "received": true,
+   "header": null,
+   "pass": true
+  },
+  {
+   "id": "no-referrer-2-modulepreload-no-referrer",
+   "kind": "modulepreload",
+   "override": "no-referrer",
+   "policy": "no-referrer",
+   "depth": 2,
+   "source": "http://127.0.0.1:49800/container?policy=no-referrer",
+   "expected": null,
+   "received": true,
+   "header": null,
+   "pass": true
+  },
+  {
+   "id": "no-referrer-2-modulepreload-origin",
+   "kind": "modulepreload",
+   "override": "origin",
+   "policy": "no-referrer",
+   "depth": 2,
+   "source": "http://127.0.0.1:49800/container?policy=no-referrer",
+   "expected": "http://127.0.0.1:49800/",
+   "received": true,
+   "header": null,
+   "pass": false
+  },
+  {
+   "id": "no-referrer-2-modulepreload-unsafe-url",
+   "kind": "modulepreload",
+   "override": "unsafe-url",
+   "policy": "no-referrer",
+   "depth": 2,
+   "source": "http://127.0.0.1:49800/container?policy=no-referrer",
+   "expected": "http://127.0.0.1:49800/container?policy=no-referrer",
+   "received": true,
+   "header": null,
+   "pass": false
+  },
+  {
+   "id": "no-referrer-url-srcdoc-preload-",
+   "kind": "preload",
+   "override": null,
+   "policy": "no-referrer",
+   "depth": "url-srcdoc",
+   "source": "http://127.0.0.1:49800/child?policy=no-referrer",
+   "expected": null,
+   "received": true,
+   "header": null,
+   "pass": true
+  },
+  {
+   "id": "no-referrer-url-srcdoc-preload-invalid",
+   "kind": "preload",
+   "override": "invalid",
+   "policy": "no-referrer",
+   "depth": "url-srcdoc",
+   "source": "http://127.0.0.1:49800/child?policy=no-referrer",
+   "expected": null,
+   "received": true,
+   "header": null,
+   "pass": true
+  },
+  {
+   "id": "no-referrer-url-srcdoc-preload-no-referrer",
+   "kind": "preload",
+   "override": "no-referrer",
+   "policy": "no-referrer",
+   "depth": "url-srcdoc",
+   "source": "http://127.0.0.1:49800/child?policy=no-referrer",
+   "expected": null,
+   "received": true,
+   "header": null,
+   "pass": true
+  },
+  {
+   "id": "no-referrer-url-srcdoc-preload-origin",
+   "kind": "preload",
+   "override": "origin",
+   "policy": "no-referrer",
+   "depth": "url-srcdoc",
+   "source": "http://127.0.0.1:49800/child?policy=no-referrer",
+   "expected": "http://127.0.0.1:49800/",
+   "received": true,
+   "header": null,
+   "pass": false
+  },
+  {
+   "id": "no-referrer-url-srcdoc-preload-unsafe-url",
+   "kind": "preload",
+   "override": "unsafe-url",
+   "policy": "no-referrer",
+   "depth": "url-srcdoc",
+   "source": "http://127.0.0.1:49800/child?policy=no-referrer",
+   "expected": "http://127.0.0.1:49800/child?policy=no-referrer",
+   "received": true,
+   "header": null,
+   "pass": false
+  },
+  {
+   "id": "no-referrer-url-srcdoc-modulepreload-",
+   "kind": "modulepreload",
+   "override": null,
+   "policy": "no-referrer",
+   "depth": "url-srcdoc",
+   "source": "http://127.0.0.1:49800/child?policy=no-referrer",
+   "expected": null,
+   "received": true,
+   "header": null,
+   "pass": true
+  },
+  {
+   "id": "no-referrer-url-srcdoc-modulepreload-invalid",
+   "kind": "modulepreload",
+   "override": "invalid",
+   "policy": "no-referrer",
+   "depth": "url-srcdoc",
+   "source": "http://127.0.0.1:49800/child?policy=no-referrer",
+   "expected": null,
+   "received": true,
+   "header": null,
+   "pass": true
+  },
+  {
+   "id": "no-referrer-url-srcdoc-modulepreload-no-referrer",
+   "kind": "modulepreload",
+   "override": "no-referrer",
+   "policy": "no-referrer",
+   "depth": "url-srcdoc",
+   "source": "http://127.0.0.1:49800/child?policy=no-referrer",
+   "expected": null,
+   "received": true,
+   "header": null,
+   "pass": true
+  },
+  {
+   "id": "no-referrer-url-srcdoc-modulepreload-origin",
+   "kind": "modulepreload",
+   "override": "origin",
+   "policy": "no-referrer",
+   "depth": "url-srcdoc",
+   "source": "http://127.0.0.1:49800/child?policy=no-referrer",
+   "expected": "http://127.0.0.1:49800/",
+   "received": true,
+   "header": null,
+   "pass": false
+  },
+  {
+   "id": "no-referrer-url-srcdoc-modulepreload-unsafe-url",
+   "kind": "modulepreload",
+   "override": "unsafe-url",
+   "policy": "no-referrer",
+   "depth": "url-srcdoc",
+   "source": "http://127.0.0.1:49800/child?policy=no-referrer",
+   "expected": "http://127.0.0.1:49800/child?policy=no-referrer",
+   "received": true,
+   "header": null,
+   "pass": false
+  }
+ ],
+ "requests": [
+  {
+   "id": "strict-origin-when-cross-origin-0-preload-",
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "method": "GET",
+   "at": 1795283705093
+  },
+  {
+   "id": "strict-origin-when-cross-origin-0-preload-invalid",
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "method": "GET",
+   "at": 1795283705095
+  },
+  {
+   "id": "strict-origin-when-cross-origin-0-preload-no-referrer",
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "method": "GET",
+   "at": 1795283705096
+  },
+  {
+   "id": "strict-origin-when-cross-origin-0-preload-origin",
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "method": "GET",
+   "at": 1795283705098
+  },
+  {
+   "id": "strict-origin-when-cross-origin-0-preload-unsafe-url",
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "method": "GET",
+   "at": 1795283705099
+  },
+  {
+   "id": "strict-origin-when-cross-origin-0-modulepreload-",
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "method": "GET",
+   "at": 1795283705100
+  },
+  {
+   "id": "strict-origin-when-cross-origin-0-modulepreload-invalid",
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "method": "GET",
+   "at": 1795283705101
+  },
+  {
+   "id": "strict-origin-when-cross-origin-0-modulepreload-no-referrer",
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "method": "GET",
+   "at": 1795283705102
+  },
+  {
+   "id": "strict-origin-when-cross-origin-0-modulepreload-origin",
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "method": "GET",
+   "at": 1795283705103
+  },
+  {
+   "id": "strict-origin-when-cross-origin-0-modulepreload-unsafe-url",
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "method": "GET",
+   "at": 1795283705104
+  },
+  {
+   "id": "strict-origin-when-cross-origin-1-preload-",
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "method": "GET",
+   "at": 1795283705118
+  },
+  {
+   "id": "strict-origin-when-cross-origin-1-preload-invalid",
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "method": "GET",
+   "at": 1795283705119
+  },
+  {
+   "id": "strict-origin-when-cross-origin-1-preload-no-referrer",
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "method": "GET",
+   "at": 1795283705120
+  },
+  {
+   "id": "strict-origin-when-cross-origin-1-preload-origin",
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "method": "GET",
+   "at": 1795283705121
+  },
+  {
+   "id": "strict-origin-when-cross-origin-1-preload-unsafe-url",
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "method": "GET",
+   "at": 1795283705121
+  },
+  {
+   "id": "strict-origin-when-cross-origin-1-modulepreload-",
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "method": "GET",
+   "at": 1795283705122
+  },
+  {
+   "id": "strict-origin-when-cross-origin-1-modulepreload-invalid",
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "method": "GET",
+   "at": 1795283705123
+  },
+  {
+   "id": "strict-origin-when-cross-origin-1-modulepreload-no-referrer",
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "method": "GET",
+   "at": 1795283705124
+  },
+  {
+   "id": "strict-origin-when-cross-origin-1-modulepreload-origin",
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "method": "GET",
+   "at": 1795283705125
+  },
+  {
+   "id": "strict-origin-when-cross-origin-1-modulepreload-unsafe-url",
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "method": "GET",
+   "at": 1795283705125
+  },
+  {
+   "id": "strict-origin-when-cross-origin-2-preload-",
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "method": "GET",
+   "at": 1795283705141
+  },
+  {
+   "id": "strict-origin-when-cross-origin-2-preload-invalid",
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "method": "GET",
+   "at": 1795283705143
+  },
+  {
+   "id": "strict-origin-when-cross-origin-2-preload-no-referrer",
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "method": "GET",
+   "at": 1795283705144
+  },
+  {
+   "id": "strict-origin-when-cross-origin-2-preload-origin",
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "method": "GET",
+   "at": 1795283705145
+  },
+  {
+   "id": "strict-origin-when-cross-origin-2-preload-unsafe-url",
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "method": "GET",
+   "at": 1795283705145
+  },
+  {
+   "id": "strict-origin-when-cross-origin-2-modulepreload-",
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "method": "GET",
+   "at": 1795283705146
+  },
+  {
+   "id": "strict-origin-when-cross-origin-2-modulepreload-invalid",
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "method": "GET",
+   "at": 1795283705146
+  },
+  {
+   "id": "strict-origin-when-cross-origin-2-modulepreload-no-referrer",
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "method": "GET",
+   "at": 1795283705147
+  },
+  {
+   "id": "strict-origin-when-cross-origin-2-modulepreload-origin",
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "method": "GET",
+   "at": 1795283705148
+  },
+  {
+   "id": "strict-origin-when-cross-origin-2-modulepreload-unsafe-url",
+   "header": "http://127.0.0.1:49800/container?policy=strict-origin-when-cross-origin",
+   "method": "GET",
+   "at": 1795283705148
+  },
+  {
+   "id": "strict-origin-when-cross-origin-url-srcdoc-preload-",
+   "header": "http://127.0.0.1:49800/child?policy=strict-origin-when-cross-origin",
+   "method": "GET",
+   "at": 1795283705164
+  },
+  {
+   "id": "strict-origin-when-cross-origin-url-srcdoc-preload-invalid",
+   "header": "http://127.0.0.1:49800/child?policy=strict-origin-when-cross-origin",
+   "method": "GET",
+   "at": 1795283705165
+  },
+  {
+   "id": "strict-origin-when-cross-origin-url-srcdoc-preload-no-referrer",
+   "header": "http://127.0.0.1:49800/child?policy=strict-origin-when-cross-origin",
+   "method": "GET",
+   "at": 1795283705166
+  },
+  {
+   "id": "strict-origin-when-cross-origin-url-srcdoc-preload-origin",
+   "header": "http://127.0.0.1:49800/child?policy=strict-origin-when-cross-origin",
+   "method": "GET",
+   "at": 1795283705166
+  },
+  {
+   "id": "strict-origin-when-cross-origin-url-srcdoc-preload-unsafe-url",
+   "header": "http://127.0.0.1:49800/child?policy=strict-origin-when-cross-origin",
+   "method": "GET",
+   "at": 1795283705167
+  },
+  {
+   "id": "strict-origin-when-cross-origin-url-srcdoc-modulepreload-",
+   "header": "http://127.0.0.1:49800/child?policy=strict-origin-when-cross-origin",
+   "method": "GET",
+   "at": 1795283705168
+  },
+  {
+   "id": "strict-origin-when-cross-origin-url-srcdoc-modulepreload-invalid",
+   "header": "http://127.0.0.1:49800/child?policy=strict-origin-when-cross-origin",
+   "method": "GET",
+   "at": 1795283705168
+  },
+  {
+   "id": "strict-origin-when-cross-origin-url-srcdoc-modulepreload-no-referrer",
+   "header": "http://127.0.0.1:49800/child?policy=strict-origin-when-cross-origin",
+   "method": "GET",
+   "at": 1795283705169
+  },
+  {
+   "id": "strict-origin-when-cross-origin-url-srcdoc-modulepreload-origin",
+   "header": "http://127.0.0.1:49800/child?policy=strict-origin-when-cross-origin",
+   "method": "GET",
+   "at": 1795283705170
+  },
+  {
+   "id": "strict-origin-when-cross-origin-url-srcdoc-modulepreload-unsafe-url",
+   "header": "http://127.0.0.1:49800/child?policy=strict-origin-when-cross-origin",
+   "method": "GET",
+   "at": 1795283705170
+  },
+  {
+   "id": "origin-0-preload-",
+   "header": "http://127.0.0.1:49800/",
+   "method": "GET",
+   "at": 1795283705179
+  },
+  {
+   "id": "origin-0-preload-invalid",
+   "header": "http://127.0.0.1:49800/",
+   "method": "GET",
+   "at": 1795283705180
+  },
+  {
+   "id": "origin-0-preload-no-referrer",
+   "header": "http://127.0.0.1:49800/",
+   "method": "GET",
+   "at": 1795283705181
+  },
+  {
+   "id": "origin-0-preload-origin",
+   "header": "http://127.0.0.1:49800/",
+   "method": "GET",
+   "at": 1795283705182
+  },
+  {
+   "id": "origin-0-preload-unsafe-url",
+   "header": "http://127.0.0.1:49800/",
+   "method": "GET",
+   "at": 1795283705183
+  },
+  {
+   "id": "origin-0-modulepreload-",
+   "header": "http://127.0.0.1:49800/",
+   "method": "GET",
+   "at": 1795283705184
+  },
+  {
+   "id": "origin-0-modulepreload-invalid",
+   "header": "http://127.0.0.1:49800/",
+   "method": "GET",
+   "at": 1795283705185
+  },
+  {
+   "id": "origin-0-modulepreload-no-referrer",
+   "header": "http://127.0.0.1:49800/",
+   "method": "GET",
+   "at": 1795283705185
+  },
+  {
+   "id": "origin-0-modulepreload-origin",
+   "header": "http://127.0.0.1:49800/",
+   "method": "GET",
+   "at": 1795283705186
+  },
+  {
+   "id": "origin-0-modulepreload-unsafe-url",
+   "header": "http://127.0.0.1:49800/",
+   "method": "GET",
+   "at": 1795283705187
+  },
+  {
+   "id": "origin-1-preload-",
+   "header": "http://127.0.0.1:49800/",
+   "method": "GET",
+   "at": 1795283705200
+  },
+  {
+   "id": "origin-1-preload-invalid",
+   "header": "http://127.0.0.1:49800/",
+   "method": "GET",
+   "at": 1795283705201
+  },
+  {
+   "id": "origin-1-preload-no-referrer",
+   "header": "http://127.0.0.1:49800/",
+   "method": "GET",
+   "at": 1795283705201
+  },
+  {
+   "id": "origin-1-preload-origin",
+   "header": "http://127.0.0.1:49800/",
+   "method": "GET",
+   "at": 1795283705202
+  },
+  {
+   "id": "origin-1-preload-unsafe-url",
+   "header": "http://127.0.0.1:49800/",
+   "method": "GET",
+   "at": 1795283705203
+  },
+  {
+   "id": "origin-1-modulepreload-",
+   "header": "http://127.0.0.1:49800/",
+   "method": "GET",
+   "at": 1795283705203
+  },
+  {
+   "id": "origin-1-modulepreload-invalid",
+   "header": "http://127.0.0.1:49800/",
+   "method": "GET",
+   "at": 1795283705204
+  },
+  {
+   "id": "origin-1-modulepreload-no-referrer",
+   "header": "http://127.0.0.1:49800/",
+   "method": "GET",
+   "at": 1795283705205
+  },
+  {
+   "id": "origin-1-modulepreload-origin",
+   "header": "http://127.0.0.1:49800/",
+   "method": "GET",
+   "at": 1795283705206
+  },
+  {
+   "id": "origin-1-modulepreload-unsafe-url",
+   "header": "http://127.0.0.1:49800/",
+   "method": "GET",
+   "at": 1795283705206
+  },
+  {
+   "id": "origin-2-preload-",
+   "header": "http://127.0.0.1:49800/",
+   "method": "GET",
+   "at": 1795283705226
+  },
+  {
+   "id": "origin-2-preload-invalid",
+   "header": "http://127.0.0.1:49800/",
+   "method": "GET",
+   "at": 1795283705227
+  },
+  {
+   "id": "origin-2-preload-no-referrer",
+   "header": "http://127.0.0.1:49800/",
+   "method": "GET",
+   "at": 1795283705228
+  },
+  {
+   "id": "origin-2-preload-origin",
+   "header": "http://127.0.0.1:49800/",
+   "method": "GET",
+   "at": 1795283705229
+  },
+  {
+   "id": "origin-2-preload-unsafe-url",
+   "header": "http://127.0.0.1:49800/",
+   "method": "GET",
+   "at": 1795283705230
+  },
+  {
+   "id": "origin-2-modulepreload-",
+   "header": "http://127.0.0.1:49800/",
+   "method": "GET",
+   "at": 1795283705230
+  },
+  {
+   "id": "origin-2-modulepreload-invalid",
+   "header": "http://127.0.0.1:49800/",
+   "method": "GET",
+   "at": 1795283705231
+  },
+  {
+   "id": "origin-2-modulepreload-no-referrer",
+   "header": "http://127.0.0.1:49800/",
+   "method": "GET",
+   "at": 1795283705232
+  },
+  {
+   "id": "origin-2-modulepreload-origin",
+   "header": "http://127.0.0.1:49800/",
+   "method": "GET",
+   "at": 1795283705233
+  },
+  {
+   "id": "origin-2-modulepreload-unsafe-url",
+   "header": "http://127.0.0.1:49800/",
+   "method": "GET",
+   "at": 1795283705234
+  },
+  {
+   "id": "origin-url-srcdoc-preload-",
+   "header": "http://127.0.0.1:49800/",
+   "method": "GET",
+   "at": 1795283705250
+  },
+  {
+   "id": "origin-url-srcdoc-preload-invalid",
+   "header": "http://127.0.0.1:49800/",
+   "method": "GET",
+   "at": 1795283705251
+  },
+  {
+   "id": "origin-url-srcdoc-preload-no-referrer",
+   "header": "http://127.0.0.1:49800/",
+   "method": "GET",
+   "at": 1795283705252
+  },
+  {
+   "id": "origin-url-srcdoc-preload-origin",
+   "header": "http://127.0.0.1:49800/",
+   "method": "GET",
+   "at": 1795283705252
+  },
+  {
+   "id": "origin-url-srcdoc-preload-unsafe-url",
+   "header": "http://127.0.0.1:49800/",
+   "method": "GET",
+   "at": 1795283705253
+  },
+  {
+   "id": "origin-url-srcdoc-modulepreload-",
+   "header": "http://127.0.0.1:49800/",
+   "method": "GET",
+   "at": 1795283705254
+  },
+  {
+   "id": "origin-url-srcdoc-modulepreload-invalid",
+   "header": "http://127.0.0.1:49800/",
+   "method": "GET",
+   "at": 1795283705254
+  },
+  {
+   "id": "origin-url-srcdoc-modulepreload-no-referrer",
+   "header": "http://127.0.0.1:49800/",
+   "method": "GET",
+   "at": 1795283705255
+  },
+  {
+   "id": "origin-url-srcdoc-modulepreload-origin",
+   "header": "http://127.0.0.1:49800/",
+   "method": "GET",
+   "at": 1795283705255
+  },
+  {
+   "id": "origin-url-srcdoc-modulepreload-unsafe-url",
+   "header": "http://127.0.0.1:49800/",
+   "method": "GET",
+   "at": 1795283705256
+  },
+  {
+   "id": "no-referrer-0-preload-",
+   "header": null,
+   "method": "GET",
+   "at": 1795283705263
+  },
+  {
+   "id": "no-referrer-0-preload-invalid",
+   "header": null,
+   "method": "GET",
+   "at": 1795283705264
+  },
+  {
+   "id": "no-referrer-0-preload-no-referrer",
+   "header": null,
+   "method": "GET",
+   "at": 1795283705265
+  },
+  {
+   "id": "no-referrer-0-preload-origin",
+   "header": null,
+   "method": "GET",
+   "at": 1795283705266
+  },
+  {
+   "id": "no-referrer-0-preload-unsafe-url",
+   "header": null,
+   "method": "GET",
+   "at": 1795283705266
+  },
+  {
+   "id": "no-referrer-0-modulepreload-",
+   "header": null,
+   "method": "GET",
+   "at": 1795283705267
+  },
+  {
+   "id": "no-referrer-0-modulepreload-invalid",
+   "header": null,
+   "method": "GET",
+   "at": 1795283705268
+  },
+  {
+   "id": "no-referrer-0-modulepreload-no-referrer",
+   "header": null,
+   "method": "GET",
+   "at": 1795283705269
+  },
+  {
+   "id": "no-referrer-0-modulepreload-origin",
+   "header": null,
+   "method": "GET",
+   "at": 1795283705269
+  },
+  {
+   "id": "no-referrer-0-modulepreload-unsafe-url",
+   "header": null,
+   "method": "GET",
+   "at": 1795283705270
+  },
+  {
+   "id": "no-referrer-1-preload-",
+   "header": null,
+   "method": "GET",
+   "at": 1795283705281
+  },
+  {
+   "id": "no-referrer-1-preload-invalid",
+   "header": null,
+   "method": "GET",
+   "at": 1795283705282
+  },
+  {
+   "id": "no-referrer-1-preload-no-referrer",
+   "header": null,
+   "method": "GET",
+   "at": 1795283705283
+  },
+  {
+   "id": "no-referrer-1-preload-origin",
+   "header": null,
+   "method": "GET",
+   "at": 1795283705284
+  },
+  {
+   "id": "no-referrer-1-preload-unsafe-url",
+   "header": null,
+   "method": "GET",
+   "at": 1795283705285
+  },
+  {
+   "id": "no-referrer-1-modulepreload-",
+   "header": null,
+   "method": "GET",
+   "at": 1795283705286
+  },
+  {
+   "id": "no-referrer-1-modulepreload-invalid",
+   "header": null,
+   "method": "GET",
+   "at": 1795283705286
+  },
+  {
+   "id": "no-referrer-1-modulepreload-no-referrer",
+   "header": null,
+   "method": "GET",
+   "at": 1795283705287
+  },
+  {
+   "id": "no-referrer-1-modulepreload-origin",
+   "header": null,
+   "method": "GET",
+   "at": 1795283705287
+  },
+  {
+   "id": "no-referrer-1-modulepreload-unsafe-url",
+   "header": null,
+   "method": "GET",
+   "at": 1795283705288
+  },
+  {
+   "id": "no-referrer-2-preload-",
+   "header": null,
+   "method": "GET",
+   "at": 1795283705313
+  },
+  {
+   "id": "no-referrer-2-preload-invalid",
+   "header": null,
+   "method": "GET",
+   "at": 1795283705314
+  },
+  {
+   "id": "no-referrer-2-preload-no-referrer",
+   "header": null,
+   "method": "GET",
+   "at": 1795283705315
+  },
+  {
+   "id": "no-referrer-2-preload-origin",
+   "header": null,
+   "method": "GET",
+   "at": 1795283705316
+  },
+  {
+   "id": "no-referrer-2-preload-unsafe-url",
+   "header": null,
+   "method": "GET",
+   "at": 1795283705317
+  },
+  {
+   "id": "no-referrer-2-modulepreload-",
+   "header": null,
+   "method": "GET",
+   "at": 1795283705318
+  },
+  {
+   "id": "no-referrer-2-modulepreload-invalid",
+   "header": null,
+   "method": "GET",
+   "at": 1795283705319
+  },
+  {
+   "id": "no-referrer-2-modulepreload-no-referrer",
+   "header": null,
+   "method": "GET",
+   "at": 1795283705320
+  },
+  {
+   "id": "no-referrer-2-modulepreload-origin",
+   "header": null,
+   "method": "GET",
+   "at": 1795283705321
+  },
+  {
+   "id": "no-referrer-2-modulepreload-unsafe-url",
+   "header": null,
+   "method": "GET",
+   "at": 1795283705322
+  },
+  {
+   "id": "no-referrer-url-srcdoc-preload-",
+   "header": null,
+   "method": "GET",
+   "at": 1795283705338
+  },
+  {
+   "id": "no-referrer-url-srcdoc-preload-invalid",
+   "header": null,
+   "method": "GET",
+   "at": 1795283705339
+  },
+  {
+   "id": "no-referrer-url-srcdoc-preload-no-referrer",
+   "header": null,
+   "method": "GET",
+   "at": 1795283705340
+  },
+  {
+   "id": "no-referrer-url-srcdoc-preload-origin",
+   "header": null,
+   "method": "GET",
+   "at": 1795283705340
+  },
+  {
+   "id": "no-referrer-url-srcdoc-preload-unsafe-url",
+   "header": null,
+   "method": "GET",
+   "at": 1795283705341
+  },
+  {
+   "id": "no-referrer-url-srcdoc-modulepreload-",
+   "header": null,
+   "method": "GET",
+   "at": 1795283705342
+  },
+  {
+   "id": "no-referrer-url-srcdoc-modulepreload-invalid",
+   "header": null,
+   "method": "GET",
+   "at": 1795283705343
+  },
+  {
+   "id": "no-referrer-url-srcdoc-modulepreload-no-referrer",
+   "header": null,
+   "method": "GET",
+   "at": 1795283705343
+  },
+  {
+   "id": "no-referrer-url-srcdoc-modulepreload-origin",
+   "header": null,
+   "method": "GET",
+   "at": 1795283705344
+  },
+  {
+   "id": "no-referrer-url-srcdoc-modulepreload-unsafe-url",
+   "header": null,
+   "method": "GET",
+   "at": 1795283705345
+  }
+ ]
+}

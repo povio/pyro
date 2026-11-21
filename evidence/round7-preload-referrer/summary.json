@@ -1,0 +1,18 @@
+{
+ "base/full": 10,
+ "base/complete": 20,
+ "candidate/full": 10,
+ "candidate/complete": 20,
+ "chrome/full": 20,
+ "chrome/complete": 24,
+ "base/pass": 53,
+ "candidate/pass": 53,
+ "chrome/pass": 301,
+ "gains": 0,
+ "losses": 0,
+ "chromeOnly": 254,
+ "candidateOnly": 6,
+ "base/timeout": 8,
+ "candidate/timeout": 8,
+ "chrome/timeout": 4
+}
