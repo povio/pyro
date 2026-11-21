@@ -9125,7 +9125,7 @@ index bb954acf..a07ad780 100644
  }
  
 diff --git a/src/compute/oof.rs b/src/compute/oof.rs
-index 2c6179a4..79c9f48e 100644
+index 2c6179a4..f60e54ea 100644
 --- a/src/compute/oof.rs
 +++ b/src/compute/oof.rs
 @@ -23,7 +23,9 @@ use crate::{AxisStaticEdge, BoxSizing, Direction};
@@ -9295,10 +9295,20 @@ index 2c6179a4..79c9f48e 100644
  
      let is_replaced = child_style.is_replaced();
      let is_table = child_style.is_table();
-@@ -583,8 +658,10 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
+@@ -583,8 +658,20 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
          child_style.justify_self().unwrap_or(AlignSelf::NORMAL).resolve_self_relative(item_direction, direction, true);
      let align_self =
          child_style.align_self().unwrap_or(AlignSelf::NORMAL).resolve_self_relative(item_direction, direction, false);
++    let area_insets = |start: Option<f32>, end: Option<f32>, alignment: AlignSelf| {
++        if anchor_area.is_some() && (alignment != AlignSelf::NORMAL || start.is_some() == end.is_some()) {
++            (Some(start.unwrap_or(0.0)), Some(end.unwrap_or(0.0)))
++        } else {
++            (start, end)
++        }
++    };
++    let (left, right) = area_insets(left, right, justify_self);
++    let (top, bottom) = area_insets(top, bottom, align_self);
++    if anchor_area.is_some() { margin = margin.map(|value| Some(value.unwrap_or(0.0))); }
 +    let justify_self = anchor_area.filter(|_| justify_self == AlignSelf::NORMAL).map_or(justify_self, |area| area.2.x);
 +    let align_self = anchor_area.filter(|_| align_self == AlignSelf::NORMAL).map_or(align_self, |area| area.2.y);
      let overflow = child_style.overflow();
@@ -9307,7 +9317,7 @@ index 2c6179a4..79c9f48e 100644
      #[cfg(feature = "content_size")]
      let contain = child_style.contain();
  
-@@ -592,15 +669,23 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
+@@ -592,15 +679,23 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
  
      // Static positions are relative to the containing block's border box: make them relative to
      // the inset-resolution area
@@ -9340,7 +9350,7 @@ index 2c6179a4..79c9f48e 100644
      };
  
      let horizontal = OofAxis {
-@@ -649,8 +734,7 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
+@@ -649,8 +744,7 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
              &mut known_dimensions,
              size_style,
              area_size,
@@ -9350,7 +9360,7 @@ index 2c6179a4..79c9f48e 100644
              SizingMode::ContentSize,
          );
          known_dimensions = known_dimensions.maybe_apply_aspect_ratio(aspect_ratio).maybe_clamp(min_size, max_size);
-@@ -691,8 +775,148 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
+@@ -691,8 +785,148 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
          }
      }
  
@@ -9499,7 +9509,7 @@ index 2c6179a4..79c9f48e 100644
          _ => {
              let measured_size = tree.measure_child_size_both(
                  candidate.node,
-@@ -707,9 +931,27 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
+@@ -707,9 +941,27 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
      }
      .maybe_clamp(min_size, max_size);
  
@@ -9528,7 +9538,7 @@ index 2c6179a4..79c9f48e 100644
          parent_size: area_size.map(Some),
          available_space,
          sizing_mode: SizingMode::ContentSize,
-@@ -719,6 +961,10 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
+@@ -719,6 +971,10 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
      };
      before_layout(tree, &layout_input);
      let mut layout_output = tree.compute_child_layout(candidate.node, layout_input);
@@ -9539,7 +9549,7 @@ index 2c6179a4..79c9f48e 100644
  
      // Resolve auto margins <https://www.w3.org/TR/css-position-3/#abspos-margins>
      let horizontal_margin = horizontal.resolve_margins(final_size.width);
-@@ -731,17 +977,27 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
+@@ -731,17 +987,27 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
      };
  
      // Align the margin box within the IMCB <https://www.w3.org/TR/css-position-3/#abspos-alignment>
@@ -9572,7 +9582,7 @@ index 2c6179a4..79c9f48e 100644
  
      let layout = Layout {
          order: candidate.order,
-@@ -756,14 +1012,14 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
+@@ -756,14 +1022,14 @@ pub(crate) fn layout_oof_box<Tree: LayoutContainingBlock>(
      };
      tree.set_unrounded_layout(candidate.node, &layout);
  
@@ -9589,7 +9599,7 @@ index 2c6179a4..79c9f48e 100644
  }
  
  /// Perform final layout on the out-of-flow candidates for which the current node is the
-@@ -801,7 +1057,24 @@ pub(crate) fn perform_oof_layout(
+@@ -801,7 +1067,24 @@ pub(crate) fn perform_oof_layout(
      #[cfg_attr(not(feature = "content_size"), allow(unused_variables))] reversed: Point<bool>,
      hoisted: &mut Vec<NodeId>,
      unclaimed: &mut OofCandidates,
@@ -9614,7 +9624,7 @@ index 2c6179a4..79c9f48e 100644
      #[cfg_attr(not(feature = "content_size"), allow(unused_mut))]
      let mut absolute_overflow_rect = Rect::ZERO;
      #[cfg(feature = "content_size")]
-@@ -828,7 +1101,8 @@ pub(crate) fn perform_oof_layout(
+@@ -828,7 +1111,8 @@ pub(crate) fn perform_oof_layout(
      // to the work list (Blink-style re-sweep).
      let mut worklist: Vec<OofCandidate> = Vec::new();
      for candidate in candidates {
@@ -9624,7 +9634,7 @@ index 2c6179a4..79c9f48e 100644
              worklist.push(*candidate);
          } else {
              unclaimed.push(*candidate);
-@@ -851,17 +1125,22 @@ pub(crate) fn perform_oof_layout(
+@@ -851,17 +1135,22 @@ pub(crate) fn perform_oof_layout(
              overflow,
              #[cfg(feature = "content_size")]
              contain,
@@ -9658,7 +9668,7 @@ index 2c6179a4..79c9f48e 100644
          let location = layout.location;
          let final_size = layout.size;
  
-@@ -871,7 +1150,7 @@ pub(crate) fn perform_oof_layout(
+@@ -871,7 +1160,7 @@ pub(crate) fn perform_oof_layout(
          if !surfaced.is_empty() {
              surfaced.translate(location);
              for surfaced_candidate in surfaced.iter() {

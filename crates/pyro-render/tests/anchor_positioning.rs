@@ -191,6 +191,19 @@ fn scroll_fit_invalidation_coalesces_before_layout() {
 }
 
 #[test]
+fn area_stretch_uses_anchor_edges_only_with_a_resolved_anchor() {
+    let html = "<!doctype html><style>main{position:relative;width:120px;height:80px}i{display:block;anchor-name:--a;width:20px;height:12px}b{position:absolute;position-area:bottom span-all;place-self:stretch;margin:auto;position-anchor:--a}b:last-child{position-anchor:--missing}</style><main><i></i><b id=anchored></b><b id=missing></b></main>";
+    let mut doc = blitz_html::HtmlDocument::from_html(html, Default::default());
+    doc.viewport_mut().window_size = (400, 300);
+    doc.resolve(0.);
+    let layout = |selector| doc.get_node(doc.query_selector(selector).unwrap().unwrap()).unwrap().final_layout();
+    let anchored = layout("#anchored");
+    assert_eq!((anchored.location.y, anchored.size.width, anchored.size.height), (12., 120., 68.));
+    let missing = layout("#missing");
+    assert_eq!((missing.size.width, missing.size.height), (0., 0.));
+}
+
+#[test]
 fn scroll_fit_splits_area_at_visual_anchor_edges() {
     let html = "<!doctype html><style>main{position:relative;width:200px;height:200px}section{width:200px;height:200px;overflow:scroll}i{display:block;anchor-name:--a;height:50px;margin:150px 0}b{position:absolute;position-anchor:--a;position-area:bottom;position-try-fallbacks:flip-block;width:50px;height:50px}</style><main><section><i></i></section><b></b></main>";
     let mut doc = blitz_html::HtmlDocument::from_html(html, blitz_dom::DocumentConfig::default());
