@@ -2208,6 +2208,7 @@ impl PageDom {
             return false;
         }
         !dom.has_iframe_events()
+            && !dom.has_changed_popovers()
             && !dom.has_details_toggles()
             && !self.render_blocking_pending(&dom)
             && !dom.has_pending_mutations()
