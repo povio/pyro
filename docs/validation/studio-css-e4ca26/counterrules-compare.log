@@ -1,0 +1,30 @@
+counterrules-main-candidate 8082 page passes 5724 named passes 181532 observed names 194657 statuses {'complete:0': 7871, 'complete:2': 104, 'timeout:None': 11, 'complete:1': 95, 'hang:None': 1}
+counterrules-main-parent 8082 page passes 5713 named passes 181469 observed names 194657 statuses {'complete:0': 7871, 'complete:2': 104, 'timeout:None': 11, 'complete:1': 95, 'hang:None': 1}
+counterrules-main-stable 8082 page passes 6950 named passes 182963 observed names 194912 statuses {'complete:0': 7986, 'complete:2': 62, 'complete:1': 23, 'timeout:None': 10, 'hang:None': 1}
+counterrules-main-parent pages left only 11 right only 0
+counterrules-main-parent passes left only 63 right only 0
+counterrules-main-parent observed left only 0 right only 0
+counterrules-main-stable pages left only 280 right only 1506
+counterrules-main-stable passes left only 5901 right only 7332
+counterrules-main-stable observed left only 260 right only 515
+Losses vs parent by URL: Counter()
+counterrules-focus-candidate 52 page passes 50 named passes 1098 observed names 1147 statuses {'complete:0': 52}
+counterrules-focus-parent 52 page passes 39 named passes 1036 observed names 1147 statuses {'complete:0': 52}
+counterrules-focus-stable 52 page passes 44 named passes 841 observed names 1147 statuses {'complete:0': 52}
+counterrules-focus-parent pages left only 11 right only 0
+counterrules-focus-parent passes left only 62 right only 0
+counterrules-focus-parent observed left only 0 right only 0
+counterrules-focus-stable pages left only 7 right only 1
+counterrules-focus-stable passes left only 282 right only 25
+counterrules-focus-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()
+counterrules-supplement-candidate 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+counterrules-supplement-parent 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+counterrules-supplement-stable 41 page passes 35 named passes 619 observed names 874 statuses {'complete:0': 41}
+counterrules-supplement-parent pages left only 0 right only 0
+counterrules-supplement-parent passes left only 0 right only 0
+counterrules-supplement-parent observed left only 0 right only 0
+counterrules-supplement-stable pages left only 0 right only 8
+counterrules-supplement-stable passes left only 0 right only 42
+counterrules-supplement-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()
