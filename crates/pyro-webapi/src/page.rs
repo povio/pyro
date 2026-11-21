@@ -15,6 +15,23 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 static NEXT_PAGE: AtomicU64 = AtomicU64::new(1);
 
+/// The browser's origin-keyed agent clusters are partitioned by browsing context group.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AgentClusterGroup(u64);
+
+impl Default for AgentClusterGroup {
+    fn default() -> Self {
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        Self(NEXT.fetch_add(1, Ordering::Relaxed))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct AgentCluster {
+    group: AgentClusterGroup,
+    origin: std::sync::Arc<str>,
+}
+
 /// High bit marks identity keys of non-node event targets / events.
 pub(crate) const OTHER_NS: u64 = 1 << 63;
 pub(crate) const EVENT_NS: u64 = 1 << 62;
@@ -88,6 +105,7 @@ pub struct PageDom {
     /// frame without `allow-same-origin`). Set by the embedder before the
     /// context services.
     opaque_origin: Cell<bool>,
+    agent_cluster: RefCell<AgentCluster>,
     /// HTML "sticky activation": the user interacted with the document.
     sticky_activation: Cell<bool>,
     flushing_iframes: Cell<bool>,
@@ -852,6 +870,7 @@ impl PageDom {
             document: Cell::new(document),
             scripting_disabled: Cell::new(false),
             opaque_origin: Cell::new(false),
+            agent_cluster: RefCell::new(AgentCluster { group: AgentClusterGroup::default(), origin: "".into() }),
             sticky_activation: Cell::new(false),
             flushing_iframes: Cell::new(false),
             render_blocking: Default::default(),
@@ -1036,6 +1055,19 @@ impl PageDom {
     pub fn set_fullscreen_allowed(&self, allowed: bool) {
         self.fullscreen_allowed.set(allowed);
     }
+    /// Install the origin identity committed by the frame loader, including its opaque token.
+    pub fn set_window_agent_cluster(&self, group: AgentClusterGroup, origin: String) {
+        *self.agent_cluster.borrow_mut() = AgentCluster { group, origin: origin.into() };
+    }
+
+    pub(crate) fn agent_cluster(&self) -> AgentCluster {
+        self.agent_cluster.borrow().clone()
+    }
+
+    pub(crate) fn inherit_agent_cluster(&self, cluster: AgentCluster) {
+        *self.agent_cluster.borrow_mut() = cluster;
+    }
+
     /// The embedder's identity for the document's origin, used when that origin is opaque.
     pub fn set_opaque_origin_token(&self, token: u64) {
         self.opaque_origin_token.set(Some(token));

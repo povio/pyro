@@ -36,6 +36,7 @@ pub mod dom_parser;
 mod edit_commands;
 pub mod editing;
 mod editing_globals;
+mod encoded_chunks;
 pub mod encoding;
 pub mod event;
 mod event_source;
@@ -138,7 +139,7 @@ pub use file_reader::FileReaderLimits;
 pub use identity::UserAgentOverride;
 pub use navigator_extras::{ContextServices, GeolocationFix, PermissionSetting, UserAgentMetadata};
 pub use node::{wrap_node, NodeData};
-pub use page::{AvailableImage, FrameContainer,
+pub use page::{AgentClusterGroup, AvailableImage, FrameContainer,
     BodyPart, DialogAnswer, DocumentTiming, DownloadRequest, FocusTarget, FocusTransition, FrameViewportSource,
     IframeAttribute, MediaFetchHandle, MediaRequest, MediaResponse, NavigationRequest, PageDom, PageHooks, Partial,
     RemotePoster,
@@ -147,7 +148,10 @@ pub use popup::{popup_window_proxy, PopupCommand, PopupState, PopupTicket};
 pub use render_blocking::RenderBlocker;
 pub use service_worker::{navigation_route, subresource_route, LoadRoute};
 pub use storage::{StorageNamespace, StorageSeed};
-pub use structured_clone::{decode_message as deserialize_message, encode_message as serialize_message, WireMessage};
+pub use structured_clone::{
+    decode_message as deserialize_message, encode_for_storage as serialize_for_storage, encode_message as serialize_message,
+    WireMessage,
+};
 pub use target::{EventTarget, EventTargetData};
 pub use window::{define_members, WindowHost};
 pub use worker::{
@@ -184,6 +188,7 @@ pub fn register(engine: &pyro_js::Engine) {
     engine.register::<file_reader::FileReader>();
     data_transfer::register(engine);
     encoding::register(engine);
+    encoded_chunks::register(engine);
     validity::register(engine);
     window::register(engine);
     mutation_observer::register(engine);

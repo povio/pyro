@@ -1041,6 +1041,7 @@ pub(crate) fn create(
     bindings.set_opaque_origin(frame.sandbox.opaque);
     // The origin's identity, which an opaque origin needs (`PageDom::origin_key`).
     bindings.set_opaque_origin_token(frame.opaque_origin);
+    bindings.set_window_agent_cluster(host.cluster_group.get(), crate::frames::frame_origin_key(&frame));
     // Permissions Policy for `fullscreen`, inherited through the container when the document is made.
     if page.child.is_some() {
         bindings.set_fullscreen_allowed(fullscreen_allowed_in(host, page, url, frame.sandbox.opaque));

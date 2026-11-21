@@ -1,0 +1,21 @@
+test dom_js::structured_clone_rejects_unsupported_values_without_proxy_traps_or_detachment ... ok
+test dom_js::structured_clone_accessors_descriptors_and_failure_identity ... ok
+test dom_js::structured_clone_tos_form_snapshot_preserves_graph_and_values ... ok
+test dom_js::encoded_chunks_snapshot_views_and_validate_transfers_before_detaching ... ok
+test dom_js::encoded_chunks_clone_internal_slots_and_reject_storage ... ok
+test dom_js::structured_clone_resizable_buffers_and_explicit_limits ... ok
+test dom_js::structured_clone_cross_world_values_use_destination_intrinsics ... ok
+test dom_js::structured_clone_collections_buffers_and_reentrant_snapshot ... ok
+test dom_js::structured_clone_captures_intrinsics_and_releases_temporary_graphs ... ok
+test messaging_js::structured_clone_transfers_array_buffers_and_message_ports ... ok
+test messaging_js::encoded_chunk_and_image_data_keep_graph_aliases_in_a_message ... ok
+test messaging_js::structured_clone_copies_blobs_files_and_file_lists_sharing_bytes ... ok
+test messaging_js::structured_clone_copies_errors_and_dom_exceptions ... ok
+test messaging_js::window_post_message_clones_checks_target_origin_and_transfers ... ok
+test messaging_js::message_ports_travel_through_post_message_as_event_ports ... ok
+test messaging_js::wire_format_carries_errors_dom_exceptions_and_files ... ok
+test messaging_js::wire_format_carries_crypto_keys_but_not_untransferred_ports ... ok
+test messaging_js::streams_transfer_through_structured_clone_and_ports ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 644 filtered out; finished in 0.07s
+

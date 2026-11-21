@@ -1,0 +1,52 @@
+{
+  "adjacent": {
+    "base/full": 20,
+    "base/passes": 44,
+    "base/complete": 24,
+    "accepted/full": 20,
+    "accepted/passes": 44,
+    "accepted/complete": 24,
+    "chrome/full": 22,
+    "chrome/passes": 46,
+    "chrome/complete": 24,
+    "gains": 0,
+    "losses": 0,
+    "matchedChromeGains": 0,
+    "notRunToFail": 0,
+    "namesChanged": 0
+  },
+  "selection": {
+    "base/full": 4,
+    "base/passes": 610,
+    "base/complete": 28,
+    "accepted/full": 9,
+    "accepted/passes": 667,
+    "accepted/complete": 28,
+    "chrome/full": 25,
+    "chrome/passes": 1433,
+    "chrome/complete": 29,
+    "gains": 57,
+    "losses": 0,
+    "matchedChromeGains": 57,
+    "notRunToFail": 0,
+    "namesChanged": 0,
+    "base/error": 1,
+    "accepted/error": 1
+  },
+  "harness": {
+    "base/full": 0,
+    "base/passes": 0,
+    "base/error": 37,
+    "accepted/full": 1,
+    "accepted/passes": 8,
+    "accepted/complete": 37,
+    "chrome/full": 37,
+    "chrome/passes": 366,
+    "chrome/complete": 37,
+    "gains": 8,
+    "losses": 0,
+    "matchedChromeGains": 8,
+    "notRunToFail": 358,
+    "namesChanged": 0
+  }
+}

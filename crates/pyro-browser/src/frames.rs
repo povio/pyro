@@ -172,6 +172,7 @@ pub(crate) struct FrameHost {
     pub root: RefCell<Frame>,
     root_nav: Rc<PageNav>,
     pub dom: pyro_dom::parse::DomRef,
+    pub(crate) cluster_group: Cell<pyro_webapi::AgentClusterGroup>,
     pub settings: RefCell<Settings>,
     pub page: PageId,
     pub context: ContextId,
@@ -277,6 +278,7 @@ impl FrameHost {
             // adopted into the popup's (`w.document.body.appendChild(node)`), which a store of its
             // own could not hold (HTML: one browsing context group, one event loop).
             dom: self.dom.clone(),
+            cluster_group: Cell::new(self.cluster_group.get()),
             settings: RefCell::new(settings),
             page: id,
             context: self.context,
@@ -339,6 +341,7 @@ impl FrameHost {
             root: RefCell::new(root),
             root_nav: nav,
             dom: Rc::new(RefCell::new(pyro_dom::Dom::new())),
+            cluster_group: Cell::default(),
             settings: RefCell::new(Settings {
                 local,
                 services,
@@ -1458,7 +1461,7 @@ pub(crate) fn post_message<'s>(
 }
 
 /// A frame's origin key (`PageDom::origin_key`'s): its tuple origin, or `opaque:<token>`.
-fn frame_origin_key(f: &Frame) -> String {
+pub(crate) fn frame_origin_key(f: &Frame) -> String {
     if f.origin == "null" { format!("opaque:{}", f.opaque_origin) } else { f.origin.clone() }
 }
 

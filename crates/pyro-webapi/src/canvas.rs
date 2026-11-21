@@ -55,7 +55,7 @@ const CONTEXT_2D: &str = "__lpCanvas2d";
 /// The OffscreenCanvas of an offscreen context (hidden on its wrapper).
 const OFFSCREEN: &str = "__lpOffscreen";
 
-static MODULE: LazyModule = LazyModule {
+pub(crate) static MODULE: LazyModule = LazyModule {
     key: "lpCanvas2d",
     source: include_str!("canvas2d.js"),
     url: "pyro://internal/canvas2d.js",

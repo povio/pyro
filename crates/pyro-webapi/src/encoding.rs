@@ -109,7 +109,7 @@ pub(crate) fn install(s: &Scope<'_>, helpers: Value<'_>) -> JsResult<()> {
     Ok(())
 }
 
-fn encoding_helper<'s>(s: &Scope<'s>, name: &'static str) -> JsResult<pyro_js::Object<'s>> {
+pub(crate) fn encoding_helper<'s>(s: &Scope<'s>, name: &'static str) -> JsResult<pyro_js::Object<'s>> {
     let page = crate::target::page_of(s)?;
     let helpers = page.encoding_helpers.borrow().get(&s.realm_id()).cloned()
         .ok_or_else(|| JsError::Type("Encoding bindings are not installed".into()))?;

@@ -1,0 +1,17 @@
+{
+  "version": "158.0.8127.37",
+  "results": {
+    "chunkAlias": true,
+    "imageAlias": true,
+    "pixelAlias": false,
+    "colorSpace": "display-p3",
+    "pixels": [
+      1,
+      23,
+      45,
+      255
+    ],
+    "side": 55,
+    "sideDetached": true
+  }
+}

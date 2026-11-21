@@ -263,6 +263,64 @@
     if (variable) throw new TypeError_('Expected a fixed-length backing buffer');
     return apply(viewLength, view, []);
   };
+  // WebCodecs uses fixed BufferSources, including shared buffers and views.
+  // Use brand-checking intrinsic getters so an overridden buffer or byteLength
+  // property cannot change the range copied.
+  const fixedByteView = (value, source = false) => {
+    let buffer = value;
+    const view = isView(value);
+    const typed = view && apply(viewName, value, []) !== undefined;
+    if (view) buffer = apply(typed ? viewBuffer : dataViewBuffer, value, []);
+    let shared = false, length;
+    try { length = apply(bufferLength, buffer, []); }
+    catch (error) {
+      if (!sharedLength) throw error;
+      length = apply(sharedLength, buffer, []);
+      shared = true;
+    }
+    const variable = shared ? growable : resizable;
+    if (variable && apply(variable, buffer, [])) throw new TypeError_('Expected a fixed-length buffer');
+    // Reading the bytes held by a detached input produces the empty byte
+    // sequence. A copy destination must remain writable.
+    if (source && length === 0) return new Uint8Array_(0);
+    if (!view) return new Uint8Array_(buffer);
+    const offset = apply(typed ? viewOffset : dataViewOffset, value, []);
+    return new Uint8Array_(buffer, offset, apply(typed ? viewLength : dataViewLength, value, []));
+  };
+  const transferBuffer = ArrayBuffer.prototype.transfer, byteSet = Uint8Array_.prototype.set;
+  const Set_ = Set, setAdd = Set.prototype.add, setHas = Set.prototype.has;
+  const CloneException = DOMException;
+  const chunkTransferList = value => {
+    const out = [];
+    if (value !== undefined) {
+      if (value === null || (typeof value !== 'object' && typeof value !== 'function'))
+        throw new TypeError_('Chunk transfer list must be a sequence');
+      for (const entry of value) {
+        apply(bufferLength, entry, []);
+        if (resizable && apply(resizable, entry, [])) throw new TypeError_('Expected a fixed-length transfer buffer');
+        append(out, entry);
+      }
+    }
+    return out;
+  };
+  const copyChunkInput = (bytes, transfers) => {
+    const seen = new Set_();
+    for (let i = 0; i < transfers.length; i++) {
+      const entry = transfers[i];
+      if (apply(setHas, seen, [entry])) throw new CloneException('Duplicate transfer', 'DataCloneError');
+      apply(setAdd, seen, [entry]);
+      try { new Uint8Array_(entry, 0, 0); }
+      catch (_) { throw new CloneException('Detached transfer', 'DataCloneError'); }
+    }
+    // Take a snapshot, including for shared data, before detaching any input.
+    const snapshot = new Uint8Array_(bytes);
+    for (let i = 0; i < transfers.length; i++) apply(transferBuffer, transfers[i], [0]);
+    return snapshot;
+  };
+  const copyChunkTo = (dst, src) => {
+    if (apply(viewLength, src, []) > apply(viewLength, dst, [])) throw new TypeError_('Chunk destination is too small');
+    apply(byteSet, dst, [src]);
+  };
   const toWellFormed = String.prototype.toWellFormed;
   const blobParts = (parts) => {
     const out = [];
@@ -298,7 +356,7 @@
 
   return {
     blobParts,
-    encoding: { __proto__: null, viewBytes, encodeIntoCapacity },
+    encoding: { __proto__: null, viewBytes, encodeIntoCapacity, fixedByteView, chunkTransferList, copyChunkInput, copyChunkTo },
     mutationOptions,
     intersection: [intersectionThresholds, freeze],
     formData: [formDataPopulated, formDataIteratorPopulated],

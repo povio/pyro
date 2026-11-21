@@ -107,26 +107,33 @@ pub fn send_window_message<'s>(
     deliver: bool,
 ) -> JsResult<()> {
     let rs = realm.scope()?;
-    let (data, ports) = if message.as_object().is_none() && options.is_nullish() {
-        (Persistent::new(&rs, rs.rehome(message)), None)
+    let payload = if message.as_object().is_none() && options.is_nullish() {
+        crate::structured_clone::MessagePayload::Local(Persistent::new(&rs, rs.rehome(message)), None)
     } else {
-        let (data, ports) = crate::structured_clone::clone_into(s, &rs, message, options)?;
-        (Persistent::new(&rs, data), Some(Persistent::new(&rs, ports.value())))
+        crate::structured_clone::clone_into(s, &rs, message, options)?
     };
     if !deliver {
         return Ok(());
     }
     let weak = Rc::downgrade(page);
+    let realm = realm.downgrade();
     page.post_task(Box::new(move || {
         let Some(page) = weak.upgrade() else { return };
         if page.is_disposed() {
             return;
         }
         let Some(window) = page.window_target() else { return };
-        let ev = EventCore::trusted(&page, EventInterface::MessageEvent, "message", false, false);
+        let Some(realm) = realm.upgrade() else { return };
+        let Ok(scope) = realm.scope() else { return };
+        let (ty, data, ports) = match payload.read(&scope) {
+            Ok((value, ports)) => ("message", Some(value), ports),
+            Err(JsError::Terminated) => return,
+            Err(_) => ("messageerror", None, None),
+        };
+        let ev = EventCore::trusted(&page, EventInterface::MessageEvent, ty, false, false);
         {
             let mut f = ev.fields.borrow_mut();
-            f.message_data = Some(data);
+            f.message_data = data;
             f.message_ports = ports;
             f.origin = origin;
             match source {

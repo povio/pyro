@@ -1,0 +1,17 @@
+{
+  "version": "124.0.6367.29",
+  "results": {
+    "chunkAlias": true,
+    "imageAlias": true,
+    "pixelAlias": true,
+    "colorSpace": "display-p3",
+    "pixels": [
+      1,
+      23,
+      45,
+      255
+    ],
+    "side": 55,
+    "sideDetached": true
+  }
+}
