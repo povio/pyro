@@ -530,6 +530,18 @@ fn paragraph_insertion_in_a_phrasing_host_uses_the_caret_style() {
 }
 
 #[test]
+fn fresh_typing_at_link_edges_does_not_extend_the_link() {
+    let e = env("<body><div id=ed contenteditable><p>L<a id=link href='/go'>abc</a>R</p></div></body>");
+    let r = &e.main;
+    eval(r, "ed.focus(); const original = link; getSelection().collapse(link.firstChild,3); document.execCommand('insertText',false,'XY')");
+    assert_eq!(eval(r, "[ed.textContent,link.textContent,original===link,getSelection().focusOffset].join()"), "LabcXYR,abc,true,2");
+    eval(r, "getSelection().collapse(link.firstChild,0); document.execCommand('insertText',false,'Z')");
+    assert_eq!(eval(r, "ed.textContent"), "LZabcXYR");
+    eval(r, "getSelection().collapse(link.firstChild,1); document.execCommand('insertText',false,'Q')");
+    assert_eq!(eval(r, "link.textContent"), "aQbc");
+}
+
+#[test]
 fn contenteditable_line_breaks_arrows_and_words() {
     let e = env("<body><div id=ed contenteditable><p>hello world</p></div></body>");
     let r = &e.main;

@@ -1933,6 +1933,10 @@ impl Saved {
 }
 
 impl UndoHistory {
+    pub(crate) fn continues_host_typing(&self, host: NodeId, point: Point) -> bool {
+        self.typing == Some((host, Caret::Host(point)))
+    }
+
     fn push(&mut self, step: Step) {
         self.undo.push(step);
         self.redo.clear();

@@ -723,9 +723,74 @@ fn typing_point(page: &PageDom, dom: &Dom, host: NodeId, caret: Point) -> Option
     Some(boundary)
 }
 
+fn enclosing_link(dom: &Dom, host: NodeId, mut node: NodeId) -> Option<NodeId> {
+    while node != host {
+        if dom.element(node).is_ok_and(|el| el.is_html() && el.local_name() == &markup5ever::local_name!("a") && el.attr("href").is_some()) {
+            return Some(node);
+        }
+        node = dom.parent(node).ok()??;
+    }
+    None
+}
+
+/// Typing at the outside edge of a rendered inline link does not extend its
+/// destination. An interior caret and an anchor serving as the editor itself
+/// remain within their original text.
+fn link_typing_point(page: &PageDom, dom: &Dom, host: NodeId, point: Point) -> Point {
+    let Some(link) = enclosing_link(dom, host, point.0) else { return point };
+    let mut first = point.1 == 0;
+    let mut last = point.1 == len(dom, point.0);
+    let mut node = point.0;
+    while node != link {
+        if !first && !last { return point; }
+        first &= dom.prev_sibling(node).ok().flatten().is_none();
+        last &= dom.next_sibling(node).ok().flatten().is_none();
+        let Some(parent) = dom.parent(node).ok().flatten() else { return point };
+        node = parent;
+    }
+    if first == last { return point; }
+    let layout = page.layout();
+    let display = layout.computed_style_value(dom, link, "display");
+    if !(display == "inline" || display == "contents" || display.starts_with("inline-")) {
+        return point;
+    }
+    let (Ok(Some(parent)), Ok(index)) = (dom.parent(link), dom.index_in_parent(link)) else { return point };
+    if first {
+        // Prefer the preceding editable text on the same line. At the
+        // start of the line retain the link parent's formatting context.
+        let mut edge = link;
+        while edge != host {
+            if let Ok(Some(previous)) = dom.prev_sibling(edge) {
+                let end = editable_edge(dom, (previous, len(dom, previous)), false);
+                if is_text(dom, end.0) && block_of(dom, end.0, host) == block_of(dom, link, host)
+                    && editing_host(dom, end.0) == Some(host) && enclosing_link(dom, host, end.0).is_none()
+                    && target_range::rendered(page, dom, end.0)
+                {
+                    return end;
+                }
+                break;
+            }
+            let Some(container) = dom.parent(edge).ok().flatten() else { break };
+            if container == host || layout.computed_style_value(dom, container, "display") != "inline" { break; }
+            edge = container;
+        }
+    } else if let Ok(Some(next)) = dom.next_sibling(link) {
+        if is_text(dom, next) { return (next, 0); }
+    }
+    (parent, index + u32::from(last))
+}
+
 /// insertText (typing, `Input.insertText`): replaces the selection.
 pub fn insert_text(page: &Rc<PageDom>, host: NodeId, text: &str) {
     let (start, end) = host_range(page, host);
+    // Replacement and continued typing form one edit. Keep typing inside
+    // the link when that edit began on selected link text.
+    let keep_link = if start == end {
+        page.undo.borrow().continues_host_typing(host, start)
+    } else {
+        let dom = page.dom.borrow();
+        enclosing_link(&dom, host, start.0).is_some_and(|link| dom.contains(link, end.0).unwrap_or(false))
+    };
     edit(page, host, "insertText", Some(text), |page| {
         let caret = {
             let mut dom = page.dom.borrow_mut();
@@ -743,6 +808,7 @@ pub fn insert_text(page: &Rc<PageDom>, host: NodeId, text: &str) {
                 }
                 if !part.is_empty() {
                     let Some(point) = typing_point(page, &dom, host, caret) else { return };
+                    let point = if index == 0 && !keep_link { link_typing_point(page, &dom, host, point) } else { point };
                     let inserted_end = insert_at_point(&mut dom, point, part, true);
                     whitespace::inserted(page, &mut dom, host, inserted_end, part);
                     caret = crate::edit_commands::inline_value::format_typed(
