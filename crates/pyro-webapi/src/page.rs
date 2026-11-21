@@ -1365,6 +1365,14 @@ impl PageDom {
     /// defers work until the next safe point.
     pub fn flush_iframe_events(&self) {
         use pyro_dom::iframe::IframeChange;
+        if self.dom.try_borrow().is_ok_and(|dom| dom.has_changed_popovers()) {
+            if let Some(page) = self.this.upgrade() {
+                let changed = self.dom.borrow_mut().take_changed_popovers(self.document());
+                for el in changed {
+                    let _ = crate::popover::hide_showing_popover(&page, el, true, true, None);
+                }
+            }
+        }
         // `<details>` toggles pyro-dom queued: one empty check otherwise.
         if self.dom.try_borrow().is_ok_and(|d| d.has_details_toggles()) {
             if let Some(this) = self.this.upgrade() {

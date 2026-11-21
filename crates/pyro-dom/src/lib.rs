@@ -61,7 +61,7 @@ pub mod xml;
 pub mod xpath;
 
 pub use dom::{attr_name_hash, position, CollectionWatch, Dom, FrameDocument, FrameTable, ScriptName};
-pub use top_layer::PopoverStack;
+pub use top_layer::{PopoverStack, PopoverType};
 pub use window_names::window_name_hash;
 pub use error::{DomError, DomErrorKind, DomResult};
 pub use node::{

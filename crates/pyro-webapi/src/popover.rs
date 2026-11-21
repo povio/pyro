@@ -24,7 +24,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use pyro_dom::forms::InputType;
-use pyro_dom::{Dom, NodeId, PopoverStack};
+use pyro_dom::{Dom, NodeId, PopoverStack, PopoverType};
 use pyro_js::{ClassDef, JsClass, JsError, JsResult};
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -77,13 +77,6 @@ impl PopoverState {
 
 // ----- helpers ---------------------------------------------------------------
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-enum PopoverType {
-    Auto,
-    Manual,
-    Hint,
-}
-
 fn is_html(dom: &Dom, el: NodeId, local: &str) -> bool {
     dom.element(el).is_ok_and(|e| e.is_html() && &*e.name.local == local)
 }
@@ -91,14 +84,7 @@ fn is_html(dom: &Dom, el: NodeId, local: &str) -> bool {
 /// The `popover` attribute's state: missing is none, empty or `auto` is
 /// auto, an invalid value is manual.
 fn popover_type(dom: &Dom, el: NodeId) -> Option<PopoverType> {
-    let v = dom.get_attribute(el, "popover").ok().flatten()?;
-    Some(if v.is_empty() || v.eq_ignore_ascii_case("auto") {
-        PopoverType::Auto
-    } else if v.eq_ignore_ascii_case("hint") {
-        PopoverType::Hint
-    } else {
-        PopoverType::Manual
-    })
+    dom.get_attribute(el, "popover").ok().flatten().map(PopoverType::from_value)
 }
 
 fn stack_of(ty: Option<PopoverType>) -> Option<PopoverStack> {
@@ -483,17 +469,31 @@ pub(crate) fn hide_popover(
     if !check_popover_validity(page, el, true, throw)? {
         return Ok(());
     }
+    hide_showing_popover(page, el, focus_previous, fire_events, source)
+}
+
+/// Run the closing steps even when the mutation that triggered them removed the attribute.
+pub(crate) fn hide_showing_popover(
+    page: &Rc<PageDom>,
+    el: NodeId,
+    focus_previous: bool,
+    fire_events: bool,
+    source: Option<NodeId>,
+) -> JsResult<()> {
+    let still_showing = || page.dom.borrow().is_popover_showing(el);
+    if !still_showing() {
+        return Ok(());
+    }
     let nested = !page.popover.busy.borrow_mut().insert(el);
     let _busy = Busy(page, el, !nested);
     let fire_events = fire_events && !nested;
-    let ty = popover_type(&page.dom.borrow(), el);
-    // The stack it is in (none for a manual popover, or one whose type
-    // changed while it showed).
-    let stack = stack_of(ty).filter(|&s| page.dom.borrow().popover_stack(s).contains(&el));
+    // Stack membership records how the element opened, even after an attribute mutation.
+    let stack = [PopoverStack::Auto, PopoverStack::Hint].into_iter()
+        .find(|&stack| page.dom.borrow().popover_stack(stack).contains(&el));
     if let Some(stack) = stack {
         // The popovers above it in its stack close first.
         close_stack_until(page, stack, Some(el), focus_previous, fire_events);
-        if !check_popover_validity(page, el, true, false)? {
+        if !still_showing() {
             return Ok(());
         }
     }
@@ -504,7 +504,7 @@ pub(crate) fn hide_popover(
             // A handler showed another popover above it.
             close_stack_until(page, stack, Some(el), focus_previous, false);
         }
-        if !check_popover_validity(page, el, true, false)? {
+        if !still_showing() {
             return Ok(());
         }
         queue_toggle(page, el, true, false, source);

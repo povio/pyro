@@ -175,6 +175,9 @@ impl Dom {
         {
             self.inline_transitions_seen = true;
         }
+        if name.ns == markup5ever::ns!() && &*name.local == "popover" {
+            self.popover_attribute_changed(i, old, new);
+        }
         let observes = self.n(i).element().is_some_and(|e| e.flags & element_flags::OBSERVES_ATTRIBUTES != 0);
         if observes {
             self.observed_attribute_changed(i, name, old, new);
