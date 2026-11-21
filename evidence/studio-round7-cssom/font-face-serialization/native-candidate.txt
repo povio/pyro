@@ -1,0 +1,10 @@
+running 3 tests
+test dom_js::font_face_descriptors_share_a_live_block ... ok
+test dom_js::font_face_rule_serializes_its_live_descriptors ... ok
+test dom_js::cssom_interface_shapes_and_import_parts ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 652 filtered out; finished in 0.03s
+
+real 23.36
+user 70.60
+sys 1.55
