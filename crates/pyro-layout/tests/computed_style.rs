@@ -461,8 +461,8 @@ fn intrinsic_size_and_container_percentage_are_independent() {
 
 #[test]
 fn percentage_endpoint_interpolates_with_intrinsic_size() {
-    use style::values::animated::{Animate, Procedure};
-    use style::values::computed::{length::CSSPixelLength, Size};
+    use ::style::values::animated::{Animate, Procedure};
+    use ::style::values::computed::{length::CSSPixelLength, Size};
 
     let page = Page::new(r#"<div id=start style="height:calc-size(auto, size * 2)"></div><div id=end style="height:50%"></div>"#);
     let height = |selector| page.layout.style().stylo_style(&page.dom.borrow(), page.find(selector)).unwrap().get_position().height.clone();
