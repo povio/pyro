@@ -35326,7 +35326,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +    };
 +    style.grid_template_rows = row_tracks(&rows, gutter);
 +    // pyro: a collapsed row takes its border spacing with it (taffy `Style::collapsed_rows`).
-+    style.collapsed_rows = rows.iter().enumerate().filter(|(_, row)| row.collapsed).map(|(i, _)| i as u16).collect();
++    style.collapsed_rows = collapsed_rows(doc, &rows);
 +    style.collapsed_columns = collapsed_columns(doc, &columns);
 +    // pyro: a `<col>`'s width has the halves of the collapsed borders beside its column in it (CSS 2.1
 +    // § 17.6.2, as Chromium): in uniform gutters, which hold the borders whole, the track is that much
@@ -36202,12 +36202,12 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +            for cell in &mut ctx.cells[at..at + row.cell_count as usize] {
 +                cell.row = r as u16;
 +                cell.style.grid_row.start = style_helpers::line(r as i16 + 1);
-+            }
+             }
 +            if let Some(placement) = ctx.placement.as_mut() {
 +                for area in &mut placement.areas[at..at + row.cell_count as usize] {
 +                    area.height = taffy::Line { start: r as u16, end: r as u16 + 1 };
 +                }
-             }
++            }
 +            at += row.cell_count as usize;
 +        }
 +    }
@@ -36396,7 +36396,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +    };
 +    ctx.style.grid_template_rows = row_tracks(&ctx.rows, gutter);
 +    // pyro: a collapsed row takes its border spacing with it (taffy `Style::collapsed_rows`).
-+    ctx.style.collapsed_rows = ctx.rows.iter().enumerate().filter(|(_, row)| row.collapsed).map(|(i, _)| i as u16).collect();
++    ctx.style.collapsed_rows = collapsed_rows(doc, &ctx.rows);
 +    ctx.style.collapsed_columns = collapsed_columns(doc, &ctx.columns);
 +    if boxes_changed {
 +        let (before, after) = (doc.nodes[table].before(), doc.nodes[table].after());
@@ -36459,7 +36459,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
  }
  
  /// Collect `<col>` elements (and `display: table-column` elements) along with their
-@@ -449,65 +3142,266 @@
+@@ -449,65 +3142,275 @@
      if !node.is_element() {
          return;
      }
@@ -36507,6 +36507,15 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
 +        })
 +        .map(|(i, _)| i as u16)
 +        .collect()
++}
++
++fn collapsed_rows(doc: &BaseDocument, rows: &[TableRow]) -> Vec<u16> {
++    rows.iter().enumerate().filter_map(|(index, row)| {
++        let group_collapsed = row.group.and_then(|group| doc.nodes[group].primary_styles()).is_some_and(|style| {
++            style.get_inherited_box().visibility == style::computed_values::visibility::T::Collapse
++        });
++        (row.collapsed || group_collapsed).then_some(index as u16)
++    }).collect()
 +}
 +
 +fn push_columns(
@@ -36780,7 +36789,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
      }
  }
  
-@@ -526,10 +3420,12 @@
+@@ -526,10 +3429,12 @@
      columns: &mut Vec<TrackSizingFunction>,
      first_cell_border: &mut Option<ServoArc<Border>>,
      percent_columns: &mut Vec<(u16, f32, f32)>,
@@ -36794,7 +36803,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
          return;
      }
  
-@@ -548,6 +3444,8 @@
+@@ -548,6 +3453,8 @@
      // block rather than as part of the table grid.
      let position = node.primary_styles().unwrap().clone_position();
      if position.is_absolutely_positioned() {
@@ -36803,7 +36812,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
          oof_children.push((node_id, stylo_taffy::convert::position(position)));
          return;
      }
-@@ -557,11 +3455,27 @@
+@@ -557,11 +3464,27 @@
          | DisplayInside::TableHeaderGroup
          | DisplayInside::TableFooterGroup
          | DisplayInside::Contents => {
@@ -36835,7 +36844,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
                  collect_table_cells(
                      doc,
                      child_id,
-@@ -576,10 +3490,14 @@
+@@ -576,10 +3499,14 @@
                      columns,
                      first_cell_border,
                      percent_columns,
@@ -36851,7 +36860,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
                  for row in &mut rows[first_row..] {
                      row.group.get_or_insert(node_id);
                  }
-@@ -590,19 +3508,39 @@
+@@ -590,19 +3517,39 @@
              *row += 1;
              cursor.start_row();
  
@@ -36896,7 +36905,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
                  collect_table_cells(
                      doc,
                      child_id,
-@@ -617,24 +3555,76 @@
+@@ -617,24 +3564,76 @@
                      columns,
                      first_cell_border,
                      percent_columns,
@@ -36982,7 +36991,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
  
              // In the collapsed borders model the borders are laid out as gutters between
              // the cells (see the table's `gap`) rather than as part of the cells
-@@ -653,34 +3643,35 @@
+@@ -653,34 +3652,35 @@
                  style.min_size.width = style_helpers::length(0.0);
              }
  
@@ -37038,7 +37047,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
                              // Resolved in `build_table_context` once the column count is known
                              percent_columns.push((col, style.size.width.value(), extra));
                              style_helpers::percent(style.size.width.value())
-@@ -707,15 +3698,17 @@
+@@ -707,15 +3707,17 @@
              // The margin properties do not apply to table-internal elements
              style.margin = taffy::Rect::ZERO.map(style_helpers::length);
  
@@ -37064,7 +37073,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
              style.grid_row = taffy::Line {
                  start: style_helpers::line(*row as i16),
                  end: style_helpers::span(rowspan),
-@@ -726,11 +3719,80 @@
+@@ -726,11 +3728,80 @@
                  }
              }
  
@@ -37145,7 +37154,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
                  style,
              });
  
-@@ -740,7 +3802,9 @@
+@@ -740,7 +3811,9 @@
          | DisplayInside::FlowRoot
          | DisplayInside::Flex
          | DisplayInside::Grid
@@ -37156,7 +37165,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
              node.remove_damage(CONSTRUCT_DESCENDENT | CONSTRUCT_FC | CONSTRUCT_BOX);
              // Probably a table caption: ignore
              // println!(
-@@ -801,7 +3865,7 @@
+@@ -801,7 +3874,7 @@
      type CustomIdent = Atom;
  
      fn get_core_container_style(&self, _node_id: taffy::NodeId) -> &taffy::Style<Atom> {
@@ -37165,7 +37174,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
      }
  
      fn resolve_calc_value(&self, calc_ptr: *const (), parent_size: f32) -> f32 {
-@@ -809,8 +3873,19 @@
+@@ -809,8 +3882,19 @@
      }
  
      fn set_unrounded_layout(&mut self, node_id: taffy::NodeId, layout: &taffy::Layout) {
@@ -37187,7 +37196,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
      }
  
      fn compute_child_layout(
-@@ -818,9 +3893,141 @@
+@@ -818,9 +3902,141 @@
          node_id: taffy::NodeId,
          inputs: taffy::tree::LayoutInput,
      ) -> taffy::LayoutOutput {
@@ -37331,7 +37340,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
      }
  }
  
-@@ -843,6 +4050,135 @@
+@@ -843,6 +4059,135 @@
          &self.ctx.cells[usize::from(child_node_id)].style
      }
  
@@ -37467,7 +37476,7 @@ diff --git a/packages/blitz-dom/src/layout/table.rs b/packages/blitz-dom/src/lay
      fn set_detailed_grid_info(
          &mut self,
          _node_id: taffy::NodeId,
-@@ -851,3 +4187,659 @@
+@@ -851,3 +4196,659 @@
          *self.ctx.computed_grid_info.borrow_mut() = Some(detailed_grid_info);
      }
  }
@@ -44228,7 +44237,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      }
  
      pub fn pe_by_index(&self, index: usize) -> Option<NodeId> {
-@@ -483,13 +1400,47 @@
+@@ -483,13 +1400,60 @@
          Some(
              if self.element_data().is_some_and(|el| el.is_button_input()) {
                  stylo_taffy::convert::button_input_display(display)
@@ -44240,6 +44249,19 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          )
      }
  
++    pub fn table_box_display_inside(&self) -> Option<DisplayInside> {
++        let inside = self.display_style()?.inside();
++        match inside {
++            DisplayInside::TableRow | DisplayInside::TableRowGroup | DisplayInside::TableHeaderGroup
++            | DisplayInside::TableFooterGroup | DisplayInside::TableColumn | DisplayInside::TableColumnGroup => {
++                let element = self.element_data()?;
++                let control = matches!(element.name.local.as_ref(), "input" | "select" | "textarea");
++                (!control && !crate::layout::replaced::is_replaced(element)).then_some(inside)
++            }
++            _ => None,
++        }
++    }
++
 +    /// Whether this is a `<br>` that generates a line break. Like Chrome, a `<br>` is a piece of
 +    /// inline text in any container: only `display: none` and `display: contents` have an effect
 +    /// on it (no break). Its other display values (blockified as a flex or grid item, too), its
@@ -44276,7 +44298,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          let style = self.primary_styles();
          let style = style.as_ref();
  
-@@ -514,14 +1465,35 @@
+@@ -514,14 +1478,35 @@
          }
          let display = self.display_style().unwrap_or(StyloDisplay::inline());
          match display.outside() {
@@ -44316,7 +44338,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  } else {
                      false
                  }
-@@ -537,6 +1509,26 @@
+@@ -537,6 +1522,26 @@
              .contains(NodeFlags::IS_INLINE_WITH_ONLY_BLOCK_CHILDREN)
      }
  
@@ -44343,7 +44365,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      pub fn is_whitespace_node(&self) -> bool {
          match &self.data {
              NodeData::Text(data) => data.content.chars().all(|c| c.is_ascii_whitespace()),
-@@ -633,6 +1625,56 @@
+@@ -633,6 +1638,56 @@
              .is_some_and(|flag| flag.load(Ordering::Relaxed))
      }
  
@@ -44400,7 +44422,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      /// Clears the damaged_descendants flag on this node.
      pub fn unset_damaged_descendants(&self) {
          if let Some(flag) = self.damaged_descendants_flag() {
-@@ -649,6 +1691,8 @@
+@@ -649,6 +1704,8 @@
      pub fn mark_damaged(&self) {
          if let Some(flag) = self.damaged_descendants_flag() {
              if flag.swap(true, Ordering::Relaxed) {
@@ -44409,7 +44431,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  return;
              }
          }
-@@ -659,6 +1703,8 @@
+@@ -659,6 +1716,8 @@
              // because all further ancestors must also have it set
              if let Some(flag) = parent.damaged_descendants_flag() {
                  if flag.swap(true, Ordering::Relaxed) {
@@ -44418,7 +44440,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                      break;
                  }
              }
-@@ -666,6 +1712,55 @@
+@@ -666,6 +1725,55 @@
          }
      }
  
@@ -44474,7 +44496,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      // pub fn damage_mut(&mut self) -> Option<&mut RestyleDamage> {
      //     self.stylo_element_data
      //         .get_mut()
-@@ -761,8 +1856,8 @@
+@@ -761,8 +1869,8 @@
  
      pub fn focus(&mut self, shell_provider: Arc<dyn ShellProvider>) {
          if let Some(data) = self.element_data_mut() {
@@ -44485,7 +44507,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          }
          self.mark_ancestors_dirty();
  
-@@ -864,9 +1959,13 @@
+@@ -864,9 +1972,13 @@
              .and_then(|el| el.text_input_data())
          {
              if !input_data.is_multiline {
@@ -44501,7 +44523,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
                  return y_offset as f64;
              }
-@@ -945,6 +2044,11 @@
+@@ -945,6 +2057,11 @@
          self.downcast_element()?.attr(name)
      }
  
@@ -44513,7 +44535,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      pub fn has_attr(&self, name: impl PartialEq<LocalName>) -> bool {
          self.downcast_element()
              .is_some_and(|elem| elem.has_attr(name))
-@@ -965,11 +2069,14 @@
+@@ -965,11 +2082,14 @@
  pub struct TextNodeData {
      /// The textual content of the text node
      pub content: String,
@@ -44529,7 +44551,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      }
  }
  
-@@ -1061,6 +2168,11 @@
+@@ -1061,6 +2181,11 @@
          matches!(self.data, NodeData::Element { .. })
      }
  
@@ -44541,7 +44563,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      pub fn is_anonymous(&self) -> bool {
          matches!(self.data, NodeData::AnonymousBlock { .. })
      }
-@@ -1148,6 +2260,11 @@
+@@ -1148,6 +2273,11 @@
          Some(&attr.value)
      }
  
@@ -44553,7 +44575,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      pub fn primary_styles(&self) -> Option<impl Deref<Target = ServoArc<ComputedValues>>> {
          self.try_stylo_element_data()
              .and_then(|stylo| stylo.primary_styles())
-@@ -1161,37 +2278,169 @@
+@@ -1161,37 +2291,169 @@
      pub fn layout_style(&self) -> stylo_taffy::TaffyStyloStyle<ComputedStyleRef<'_>> {
          let styles = self
              .try_stylo_element_data()
@@ -44646,17 +44668,17 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +            style.scrollbar_size_limit = self.layout_data().scrollbar_size_limit;
 +            style.natural_ratio = natural_ratio;
 +            style
-+        }
-+    }
-+
+         }
+     }
+ 
 +    /// The half collapsed borders of a cell in a table without uniform ones.
 +    pub(crate) fn collapsed_border(&self) -> Option<[f32; 4]> {
 +        match &self.data {
 +            NodeData::Element(data) | NodeData::AnonymousBlock(data) => data.layout_data().collapsed_border,
 +            _ => None,
-         }
-     }
- 
++        }
++    }
++
 +    /// pyro: rewrite the layout styles derived from the node's primary style
 +    /// ([`LayoutStyles`]). Called wherever the primary style is replaced outside the style
 +    /// traversal, and when a cell's collapsed borders change.
@@ -44728,7 +44750,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      /// The node's style for Taffy, expressed in the axes of the writing mode `layout_wm` (the writing
      /// mode of the box laying this node out). Used for the child-style getters.
      #[cfg(feature = "writing-mode")]
-@@ -1234,12 +2483,24 @@
+@@ -1234,12 +2496,24 @@
              .unwrap_or(stylo_taffy::WritingMode::empty())
      }
  
@@ -44756,7 +44778,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  if self.element_data().is_some_and(|el| el.is_button_input())
                      && !matches!(
                          display.inside(),
-@@ -1290,7 +2551,7 @@
+@@ -1290,7 +2564,7 @@
              }
              NodeData::Element(..) | NodeData::AnonymousBlock(..) => {
                  for child_id in self.children.iter() {
@@ -44765,7 +44787,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  }
              }
              _ => {}
-@@ -1327,8 +2588,47 @@
+@@ -1327,8 +2601,47 @@
              .unwrap_or(0)
      }
  
@@ -44814,7 +44836,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          let Some(style) = self.primary_styles() else {
              return false;
          };
-@@ -1336,7 +2636,7 @@
+@@ -1336,7 +2649,7 @@
          let position = style.clone_position();
          let has_z_index = !style.clone_z_index().is_auto();
  
@@ -44823,7 +44845,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              return true;
          }
  
-@@ -1358,10 +2658,37 @@
+@@ -1358,10 +2671,37 @@
              return true;
          }
  
@@ -44861,7 +44883,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          if style.get_box().isolation == Isolation::Isolate {
              return true;
          }
-@@ -1369,7 +2696,48 @@
+@@ -1369,7 +2709,48 @@
          if style.get_effects().mix_blend_mode != style::computed_values::mix_blend_mode::T::Normal {
              return true;
          }
@@ -44911,7 +44933,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          false
      }
-@@ -1397,12 +2765,14 @@
+@@ -1397,12 +2778,14 @@
              return true;
          }
  
@@ -44932,7 +44954,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
      }
  
      /// Takes an (x, y) position (relative to the *parent's* top-left corner) and returns:
-@@ -1431,9 +2801,32 @@
+@@ -1431,9 +2814,32 @@
          y: f32,
          scale: f64,
          scrollbar: &mut Option<crate::node::ScrollbarRef>,
@@ -44965,7 +44987,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          // Don't hit on visbility:hidden elements
          if let Some(style) = self.primary_styles() {
-@@ -1500,11 +2893,15 @@
+@@ -1500,11 +2906,15 @@
              || y < overflow_rect.top() + client_y
              || y > overflow_rect.bottom() + client_y);
  
@@ -44981,7 +45003,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                  x >= bbox.left && x <= bbox.right && y >= bbox.top && y <= bbox.bottom
              }
              None => false,
-@@ -1519,7 +2916,25 @@
+@@ -1519,7 +2929,25 @@
              && y >= (overflow.y0 / scale) as f32
              && y <= (overflow.y1 / scale) as f32;
  
@@ -45008,7 +45030,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              return None;
          }
  
-@@ -1533,6 +2948,8 @@
+@@ -1533,6 +2961,8 @@
          {
              *scrollbar = Some(sb);
          }
@@ -45017,7 +45039,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          // Text clusters and callers of the returned coordinates work in the
          // inline root's content box, but embedded boxes store border-box
-@@ -1541,10 +2958,7 @@
+@@ -1541,10 +2971,7 @@
          // padded inline root are hit one padding down and right of where
          // they are painted.
          let content_box_offset = if self.flags.is_inline_root() {
@@ -45029,7 +45051,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          } else {
              taffy::Point { x: 0.0, y: 0.0 }
          };
-@@ -1556,30 +2970,46 @@
+@@ -1556,30 +2983,46 @@
                      let Some(child) = self.tree().get(hoisted_child.node_id) else {
                          continue;
                      };
@@ -45088,7 +45110,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
                      child_x -= self.scroll_offset().x as f32;
                      child_y -= self.scroll_offset().y as f32;
                      let viewport_scroll = self.tree().viewport_scroll();
-@@ -1590,26 +3020,94 @@
+@@ -1590,26 +3033,94 @@
                  child_x -= offset.x;
                  child_y -= offset.y;
              }
@@ -45198,7 +45220,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          }
  
          // Inline children
-@@ -1642,6 +3140,24 @@
+@@ -1642,6 +3153,24 @@
              }
          }
  
@@ -45223,7 +45245,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          // Self (this node)
          if matches_self && !pointer_events_none {
              return Some(HitResult {
-@@ -1716,7 +3232,7 @@
+@@ -1716,7 +3245,7 @@
              return false;
          };
          if self.flags.is_inline_root()
@@ -45232,7 +45254,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
          {
              return false;
          }
-@@ -1741,8 +3257,13 @@
+@@ -1741,8 +3270,13 @@
          let y = y + self.final_layout().location.y - self.scroll_offset().y as f32;
  
          // Recurse up the positioning hierarchy
@@ -45247,7 +45269,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              .unwrap_or(crate::util::Point { x, y })
      }
  
-@@ -1818,8 +3339,28 @@
+@@ -1818,8 +3352,28 @@
  
          let root_layout = inline_root.unrounded_layout();
          let content_box_inset = root_layout.padding + root_layout.border;
@@ -45278,7 +45300,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
  
          fn union(acc: &mut Option<taffy::Rect<f32>>, left: f32, top: f32, right: f32, bottom: f32) {
              *acc = Some(match *acc {
-@@ -1877,11 +3418,36 @@
+@@ -1877,11 +3431,36 @@
                  }
              }
  
@@ -45320,7 +45342,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
              })
          }))
      }
-@@ -1938,14 +3504,14 @@
+@@ -1938,14 +3517,14 @@
      /// borders and scrollbar)
      pub fn client_width(&self) -> f32 {
          let layout = self.final_layout();
