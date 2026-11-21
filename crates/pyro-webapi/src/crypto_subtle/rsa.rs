@@ -372,10 +372,9 @@ impl PrivateKey {
         &self.public
     }
 
-    /// A new key of `bits` bits (a multiple of 8 from 256 to MAX_BITS) with
-    /// the public exponent 3 or 65537, Chromium's ranges.
-    pub(super) fn generate(bits: u32, exponent: &[u8]) -> JsResult<PrivateKey> {
-        let e: u32 = match trim(exponent) {
+    /// Validate key generation options without generating any prime numbers.
+    pub(super) fn generation_exponent(bits: u32, exponent: &[u8]) -> JsResult<u32> {
+        let e = match trim(exponent) {
             [3] => 3,
             [1, 0, 1] => 65537,
             _ => return Err(operation_error("The RSA public exponent must be 3 or 65537")),
@@ -383,6 +382,12 @@ impl PrivateKey {
         if !(256..=MAX_BITS).contains(&bits) || !bits.is_multiple_of(8) {
             return Err(operation_error("The RSA modulus length must be a multiple of 8 between 256 and 16384"));
         }
+        Ok(e)
+    }
+
+    /// A new key of `bits` bits with the supported public exponent.
+    pub(super) fn generate(bits: u32, exponent: &[u8]) -> JsResult<PrivateKey> {
+        let e = Self::generation_exponent(bits, exponent)?;
         loop {
             // Two top bits set in each prime: the product has exactly `bits` bits.
             let p = generate_prime(bits / 2, e)?;

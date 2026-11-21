@@ -148,6 +148,13 @@ impl JsClass for SubtleCrypto {
     type Data = ();
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
+        def.static_method("supports", 2, |s, a| {
+            a.require(2, "SubtleCrypto.supports")?;
+            let page = crate::target::page_of(s)?;
+            let module = subtle_module(s, &page)?;
+            let args: Vec<_> = a.iter().collect();
+            module.get_atom("supports")?.as_object().ok_or_else(unavailable)?.call(None, &args)
+        });
         def.method("digest", 2, |s, _d, a| {
             // Argument errors reject the promise (Web Crypto §14.3.5).
             let result = (|| -> JsResult<Vec<u8>> {
