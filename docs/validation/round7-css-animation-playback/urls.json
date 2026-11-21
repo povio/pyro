@@ -1,0 +1,12 @@
+[
+  "css/css-animations/CSSAnimation-playState.tentative.html",
+  "css/css-animations/CSSAnimation-ready.tentative.html",
+  "css/css-animations/CSSAnimation-pausing.tentative.html",
+  "css/css-animations/CSSAnimation-canceling.tentative.html",
+  "css/css-animations/Element-getAnimations.tentative.html",
+  "css/css-animations/Element-getAnimations-dynamic-changes.tentative.html",
+  "css/css-animations/CSSAnimation-startTime.tentative.html",
+  "css/css-animations/CSSAnimation-animationName.tentative.html",
+  "css/css-animations/animationevent-interface.html",
+  "css/css-transitions/transitionevent-interface.html"
+]
