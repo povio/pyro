@@ -58,6 +58,11 @@ pub trait FlexboxContainerStyle: CoreStyle {
 
 /// The set of styles required for a Flexbox item (child of a Flexbox container)
 pub trait FlexboxItemStyle: CoreStyle {
+    /// For an orthogonal item, whether its block-start is the far edge of the container's inline coordinate.
+    fn orthogonal_block_start_is_far(&self) -> Option<bool> {
+        None
+    }
+
     /// Sets the initial main axis size of the item
     #[inline(always)]
     fn flex_basis(&self) -> Dimension {
