@@ -1810,6 +1810,12 @@ impl Stylist {
     /// Also, the device that arrives here may need to take the viewport rules
     /// into account.
     pub fn set_device(&mut self, device: Device, guards: &StylesheetGuards) -> OriginSet {
+        #[cfg(feature = "servo")]
+        let device = {
+            let mut device = device;
+            device.inherit_document_random_state(&self.device);
+            device
+        };
         self.device = device;
         self.media_features_change_changed_style(guards, &self.device)
     }

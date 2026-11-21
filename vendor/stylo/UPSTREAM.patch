@@ -591,8 +591,14 @@ diff -ruN a/data.rs b/data.rs
  
 diff -ruN a/device/servo.rs b/device/servo.rs
 --- a/device/servo.rs	2026-11-14 22:08:19
-+++ b/device/servo.rs	2026-11-21 08:30:40
-@@ -38,7 +38,32 @@
++++ b/device/servo.rs	2026-11-21 10:19:53
+@@ -33,12 +33,37 @@
+ use parking_lot::RwLock;
+ use servo_arc::Arc;
+ use std::fmt::Debug;
+-use std::hash::{DefaultHasher, Hasher};
++use std::hash::{BuildHasher, Hasher, RandomState};
+ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
  use style_traits::{CSSPixel, DevicePixel};
  
  use crate::device::Device;
@@ -625,7 +631,7 @@ diff -ruN a/device/servo.rs b/device/servo.rs
  /// A trait used to query font metrics in clients of Stylo. This is used by Device to
  /// query font metrics in a way that is specific to the client using Stylo.
  pub trait FontMetricsProvider: Debug + Sync {
-@@ -52,6 +77,15 @@
+@@ -52,15 +77,34 @@
      ) -> FontMetrics;
      /// Gets the base size given a generic font family.
      fn base_size_for_generic(&self, generic: GenericFontFamily) -> Length;
@@ -641,7 +647,11 @@ diff -ruN a/device/servo.rs b/device/servo.rs
  }
  
  #[derive(Debug, MallocSizeOf)]
-@@ -61,6 +95,14 @@
+ pub(super) struct ExtraDeviceData {
++    #[ignore_malloc_size_of = "Inline hash keys"]
++    random_state: RandomState,
+     /// Data which Stylo uses to evaluate media queries
+     media_data: MediaData,
      /// An implementation of a trait which implements support for querying font metrics.
      #[ignore_malloc_size_of = "Owned by embedder"]
      font_metrics_provider: Box<dyn FontMetricsProvider>,
@@ -656,7 +666,7 @@ diff -ruN a/device/servo.rs b/device/servo.rs
  }
  
  #[derive(Debug, MallocSizeOf, Clone, PartialEq)]
-@@ -80,6 +122,8 @@
+@@ -80,6 +124,8 @@
      /// Whether the user prefers light mode or dark mode
      #[ignore_malloc_size_of = "Pure stack type"]
      pub prefers_color_scheme: PrefersColorScheme,
@@ -665,8 +675,11 @@ diff -ruN a/device/servo.rs b/device/servo.rs
      /// The capabilities of the primary pointer input
      #[ignore_malloc_size_of = "Pure stack type"]
      pub primary_pointer_capabilities: PointerCapabilities,
-@@ -118,6 +162,8 @@
+@@ -116,8 +162,11 @@
+             body_text_color: RwLock::new(AbsoluteColor::BLACK),
+             submit_string,
              extra: ExtraDeviceData {
++                random_state: RandomState::new(),
                  media_data,
                  font_metrics_provider,
 +                page_color_scheme: ColorSchemeFlags::empty(),
@@ -674,7 +687,7 @@ diff -ruN a/device/servo.rs b/device/servo.rs
              },
          }
      }
-@@ -132,8 +178,14 @@
+@@ -132,8 +181,14 @@
          _element: Option<()>,
      ) -> NonNegativeLength {
          (match font.line_height {
@@ -691,7 +704,23 @@ diff -ruN a/device/servo.rs b/device/servo.rs
              LineHeight::Number(number) => font.font_size.computed_size() * number.0,
              LineHeight::Length(length) => length.0,
          })
-@@ -160,6 +212,11 @@
+@@ -149,10 +204,13 @@
+     /// base values of `random()` functions between document instances.
+     #[inline]
+     pub fn document_random_hasher(&self) -> impl Hasher {
+-        // TODO: Implement a document-specific hasher (like Gecko in Bug 2081781).
+-        DefaultHasher::new()
++        self.extra.random_state.build_hasher()
+     }
+ 
++    pub(crate) fn inherit_document_random_state(&mut self, previous: &Device) {
++        self.extra.random_state = previous.extra.random_state.clone();
++    }
++
+     /// Gets the base size given a generic font family.
+     pub fn base_size_for_generic(&self, generic: GenericFontFamily) -> Length {
+         self.extra
+@@ -160,6 +218,11 @@
              .base_size_for_generic(generic)
      }
  
@@ -703,7 +732,7 @@ diff -ruN a/device/servo.rs b/device/servo.rs
      /// Whether a given animation name may be referenced from style.
      pub fn animation_name_may_be_referenced(&self, _: &KeyframesName) -> bool {
          // Assume it is, since we don't have any good way to prove it's not.
-@@ -222,7 +279,23 @@
+@@ -222,7 +285,23 @@
          self.used_viewport_size.store(true, Ordering::Relaxed);
          // Servo doesn't have dynamic UA interfaces that affect the viewport,
          // so we can just ignore the ViewportVariant.
@@ -728,7 +757,7 @@ diff -ruN a/device/servo.rs b/device/servo.rs
      }
  
      /// Returns the number of app units per device pixel we're using currently.
-@@ -361,7 +434,15 @@
+@@ -361,7 +440,15 @@
          self.extra.media_data.all_pointer_capabilities
      }
  
@@ -744,7 +773,7 @@ diff -ruN a/device/servo.rs b/device/servo.rs
          // Inspired by
          // https://searchfox.org/firefox-main/rev/0a7f146ccac85b8f413264042dcd764028d419ec/widget/nsXPLookAndFeel.cpp#1296
          let supports_dark_mode = color_scheme_flags.contains(ColorSchemeFlags::DARK);
-@@ -400,15 +481,17 @@
+@@ -400,15 +487,17 @@
                  | SystemColor::Activeborder
                  | SystemColor::Inactiveborder
                  | SystemColor::Threeddarkshadow
@@ -765,7 +794,7 @@ diff -ruN a/device/servo.rs b/device/servo.rs
                  SystemColor::Buttontext => srgb(245, 245, 245),
                  SystemColor::Canvas
                  // Deprecated system colors (CSS Color 4) mapped to Canvas.
-@@ -450,15 +533,17 @@
+@@ -450,15 +539,17 @@
                  | SystemColor::Activeborder
                  | SystemColor::Inactiveborder
                  | SystemColor::Threeddarkshadow
@@ -6257,7 +6286,7 @@ diff -ruN a/stylesheets/supports_rule.rs b/stylesheets/supports_rule.rs
  /// supports_condition | declaration
 diff -ruN a/stylist.rs b/stylist.rs
 --- a/stylist.rs	2026-11-11 19:55:57
-+++ b/stylist.rs	2026-11-21 02:01:17
++++ b/stylist.rs	2026-11-21 10:19:53
 @@ -31,8 +31,8 @@
  use crate::parser::ParserContext;
  use crate::properties::StyleBuilder;
@@ -6283,10 +6312,12 @@ diff -ruN a/stylist.rs b/stylist.rs
      /// Returns the number of selectors.
      pub fn num_selectors(&self) -> usize {
          self.cascade_data
-@@ -1219,6 +1226,62 @@
-         doc_author_rules_apply && f(&self.cascade_data.author)
-     }
+@@ -1217,6 +1224,62 @@
+         }
  
+         doc_author_rules_apply && f(&self.cascade_data.author)
++    }
++
 +    /// pyro: whether a rule that can make `pseudo` (`::before` or `::after`, eagerly
 +    /// cascaded for `element`) generate a box matches `element`, so that the full match and
 +    /// cascade of the pseudo-element can give a style that is kept. When this is `false`, every
@@ -6341,21 +6372,13 @@ diff -ruN a/stylist.rs b/stylist.rs
 +            }
 +        }
 +        false
-+    }
-+
+     }
+ 
      /// Execute callback for all applicable style rule data.
-     pub fn for_each_cascade_data_with_scope<'a, E, F>(&'a self, element: E, mut f: F)
-     where
-@@ -1365,6 +1428,64 @@
-         Some(self.compute_pseudo_element_style_with_inputs(
-             cascade_inputs,
-             pseudo,
-+            guards,
-+            Some(originating_element_style),
-+            Some(element),
-+        ))
-+    }
-+
+@@ -1371,6 +1434,64 @@
+         ))
+     }
+ 
 +    /// pyro: the style of a node that is a pseudo-element's box (`element.implemented_pseudo_element()`,
 +    /// which reaches its originating element through `pseudo_element_originating_element()`), whose
 +    /// rules are matched against the node itself in normal mode: state pseudo-classes after the
@@ -6408,9 +6431,15 @@ diff -ruN a/stylist.rs b/stylist.rs
 +        Some(self.compute_pseudo_element_style_with_inputs(
 +            inputs,
 +            &pseudo,
-             guards,
-             Some(originating_element_style),
-             Some(element),
++            guards,
++            Some(originating_element_style),
++            Some(element),
++        ))
++    }
++
+     /// Computes a pseudo-element style lazily using the given CascadeInputs.
+     /// This can be used for truly lazy pseudo-elements or to avoid redoing
+     /// selector matching for eager pseudo-elements when we need to recompute
 @@ -1623,10 +1744,9 @@
              &mut matching_context,
          );
@@ -6436,7 +6465,20 @@ diff -ruN a/stylist.rs b/stylist.rs
          Some(CascadeInputs {
              rules: Some(rules),
              visited_rules,
-@@ -1757,6 +1881,8 @@
+@@ -1686,6 +1810,12 @@
+     /// Also, the device that arrives here may need to take the viewport rules
+     /// into account.
+     pub fn set_device(&mut self, device: Device, guards: &StylesheetGuards) -> OriginSet {
++        #[cfg(feature = "servo")]
++        let device = {
++            let mut device = device;
++            device.inherit_document_random_state(&self.device);
++            device
++        };
+         self.device = device;
+         self.media_features_change_changed_style(guards, &self.device)
+     }
+@@ -1757,6 +1887,8 @@
          let mut cur = element;
          let mut pseudos = SmallVec::<[_; 2]>::new();
          if let Some(pseudo) = pseudo_element {
@@ -6445,7 +6487,7 @@ diff -ruN a/stylist.rs b/stylist.rs
              pseudos.push(pseudo.clone());
          }
          while let Some(p) = cur.implemented_pseudo_element() {
-@@ -1857,7 +1983,36 @@
+@@ -1857,7 +1989,36 @@
          self.lookup_element_dependent_at_rule(element, |data| data.animations.get(name))
      }
  
@@ -6483,7 +6525,7 @@ diff -ruN a/stylist.rs b/stylist.rs
      /// <https://drafts.csswg.org/css-view-transitions-2/#resolve-view-transition-rule>
      #[inline]
      pub fn last_view_transition_rule(&self) -> Option<&Arc<ViewTransitionRule>> {
-@@ -1870,7 +2025,7 @@
+@@ -1870,7 +2031,7 @@
  
      /// Returns the registered `@position-try-rule` animation for the specified name.
      #[inline]
@@ -6492,7 +6534,7 @@ diff -ruN a/stylist.rs b/stylist.rs
          &'a self,
          name: &Atom,
          scope: CascadeLevel,
-@@ -2645,7 +2800,7 @@
+@@ -2645,7 +2806,7 @@
  
  fn component_needs_revalidation(c: &Component<SelectorImpl>) -> bool {
      match *c {
@@ -6501,11 +6543,10 @@ diff -ruN a/stylist.rs b/stylist.rs
          | Component::AttributeInNoNamespace { .. }
          | Component::AttributeOther(_)
          | Component::Empty
-@@ -2863,7 +3018,83 @@
-     fn clear(&mut self) {
+@@ -2864,8 +3025,84 @@
          self.element_map.clear();
          self.pseudos_map.clear();
-+    }
+     }
 +}
 +
 +/// pyro: the `::before` and `::after` rules (one pseudo-element level, in
@@ -6528,8 +6569,8 @@ diff -ruN a/stylist.rs b/stylist.rs
 +struct BoxGeneratingPseudoRules {
 +    before: SelectorMap<Rule>,
 +    after: SelectorMap<Rule>,
-+}
-+
+ }
+ 
 +impl BoxGeneratingPseudoRules {
 +    /// Whether a rule with these declarations goes in the index (when it is a single-level
 +    /// `::before` or `::after` rule).
@@ -6571,7 +6612,7 @@ diff -ruN a/stylist.rs b/stylist.rs
 +        } else {
 +            None
 +        }
-     }
++    }
 +
 +    fn clear(&mut self) {
 +        self.before.clear();
@@ -6582,21 +6623,23 @@ diff -ruN a/stylist.rs b/stylist.rs
 +        self.before.shrink_if_needed();
 +        self.after.shrink_if_needed();
 +    }
- }
- 
++}
++
  /// The id of a given layer, a sequentially-increasing identifier.
-@@ -3360,6 +3591,10 @@
-     /// The data coming from normal style rules that apply to elements at this
+ #[derive(Clone, Copy, Debug, Eq, MallocSizeOf, PartialEq, PartialOrd, Ord)]
+ pub struct LayerId(u16);
+@@ -3361,6 +3598,10 @@
      /// cascade level.
      normal_rules: ElementAndPseudoRules,
-+
+ 
 +    /// pyro: the rules of `normal_rules` that can make a `::before` or `::after`
 +    /// generate a box.
 +    box_generating_pseudo_rules: BoxGeneratingPseudoRules,
- 
++
      /// The `:host` pseudo rules that are the rightmost selector (without
      /// accounting for pseudo-elements), or `:scope` rules that may match
-@@ -3522,10 +3757,17 @@
+     /// the featureless host.
+@@ -3522,10 +3763,17 @@
  }
  
  impl CascadeData {
@@ -6614,7 +6657,7 @@ diff -ruN a/stylist.rs b/stylist.rs
              featureless_host_rules: None,
              slotted_rules: None,
              part_rules: None,
-@@ -3730,6 +3972,25 @@
+@@ -3730,6 +3978,25 @@
      #[inline]
      pub fn normal_rules(&self, pseudo_elements: &[PseudoElement]) -> Option<&SelectorMap<Rule>> {
          self.normal_rules.rules(pseudo_elements)
@@ -6640,7 +6683,7 @@ diff -ruN a/stylist.rs b/stylist.rs
      }
  
      /// Returns the featureless pseudo rule map for a given pseudo-element.
-@@ -3850,6 +4111,7 @@
+@@ -3850,6 +4117,7 @@
  
      fn shrink_maps_if_needed(&mut self) {
          self.normal_rules.shrink_if_needed();
@@ -6648,7 +6691,7 @@ diff -ruN a/stylist.rs b/stylist.rs
          if let Some(ref mut host_rules) = self.featureless_host_rules {
              host_rules.shrink_if_needed();
          }
-@@ -3955,10 +4217,20 @@
+@@ -3955,10 +4223,20 @@
          quirks_mode: QuirksMode,
          mut collected_scope_dependencies: Option<&mut Vec<Dependency>>,
      ) -> Result<(), AllocErr> {
@@ -6670,7 +6713,7 @@ diff -ruN a/stylist.rs b/stylist.rs
              let pseudo_elements = selector.pseudo_elements();
              let inner_pseudo_element = pseudo_elements.first();
              if let Some(pseudo) = inner_pseudo_element {
-@@ -4102,6 +4374,15 @@
+@@ -4102,6 +4380,15 @@
                  // :scope may match featureless shadow host if the scope
                  // root is the shadow root.
                  // See https://github.com/w3c/csswg-drafts/issues/9025
@@ -6686,7 +6729,7 @@ diff -ruN a/stylist.rs b/stylist.rs
                  let rules = if matches_featureless_host_only {
                      self.featureless_host_rules.get_or_insert_with(Box::default)
                  } else if rule.selector.is_slotted() {
-@@ -4476,6 +4757,13 @@
+@@ -4476,6 +4763,13 @@
                                  | ImplicitScopeRoot::DocumentElement => {
                                      StylistImplicitScopeRoot::Normal(root)
                                  },
@@ -6700,7 +6743,7 @@ diff -ruN a/stylist.rs b/stylist.rs
                                  ImplicitScopeRoot::ShadowHost(_)
                                  | ImplicitScopeRoot::InShadowTree(_) => {
                                      // Style data can be shared between shadow trees, so we must
-@@ -4817,6 +5105,7 @@
+@@ -4817,6 +5111,7 @@
      /// Clears the cascade data, but not the invalidation data.
      fn clear_cascade_data(&mut self) {
          self.normal_rules.clear();
@@ -10168,7 +10211,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +}
 diff -ruN a/values/specified/calc.rs b/values/specified/calc.rs
 --- a/values/specified/calc.rs	2026-11-11 19:55:57
-+++ b/values/specified/calc.rs	2026-11-20 20:06:02
++++ b/values/specified/calc.rs	2026-11-21 10:27:21
 @@ -305,6 +305,9 @@
          const ANCHOR = 1 << 0;
          /// `anchor-size()` function.
@@ -10207,14 +10250,22 @@ diff -ruN a/values/specified/calc.rs b/values/specified/calc.rs
              Token::Ident(ident) => {
                  let leaf = match_ignore_ascii_case! { &**ident,
                      "e" => Leaf::Number(NoCalcNumber::new(std::f32::consts::E)),
-@@ -1627,6 +1644,23 @@
-             ..Default::default()
-         };
-         Self::parse(context, input, function, flags)?
-+            .into_length_or_percentage(clamping_mode)
-+            .map_err(|()| ParseError::custom(StyleParseErrorKind::UnspecifiedError))
-+    }
-+
+@@ -1248,7 +1265,10 @@
+                     })
+                 },
+                 MathFunction::Random => {
+-                    if !crate::pref!("layout.css.random.enabled") {
++                    if !crate::pref!("layout.css.random.enabled")
++                        || !context.has_element_context()
++                        || context.property_declaration_context.property_id().is_none()
++                    {
+                         return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
+                     }
+ 
+@@ -1631,6 +1651,23 @@
+             .map_err(|()| ParseError::custom(StyleParseErrorKind::UnspecifiedError))
+     }
+ 
 +    /// pyro: the calculation of a `calc-size()`, its `size` keyword as `100%`.
 +    pub fn parse_calc_size_calculation(
 +        context: &ParserContext,
@@ -10228,10 +10279,14 @@ diff -ruN a/values/specified/calc.rs b/values/specified/calc.rs
 +            ..Default::default()
 +        };
 +        Self::parse_argument(context, input, flags)?
-             .into_length_or_percentage(clamping_mode)
-             .map_err(|()| ParseError::custom(StyleParseErrorKind::UnspecifiedError))
-     }
-@@ -1703,6 +1737,30 @@
++            .into_length_or_percentage(clamping_mode)
++            .map_err(|()| ParseError::custom(StyleParseErrorKind::UnspecifiedError))
++    }
++
+     /// Convenience parsing function for percentages.
+     pub fn parse_percentage(
+         context: &ParserContext,
+@@ -1703,6 +1740,30 @@
          .map_err(|()| ParseError::custom(StyleParseErrorKind::UnspecifiedError))
      }
  
@@ -11361,6 +11416,18 @@ diff -ruN a/values/specified/position.rs b/values/specified/position.rs
  /// https://drafts.csswg.org/css-images/#propdef-object-fit
  #[allow(missing_docs)]
  #[derive(
+diff -ruN a/values/specified/random.rs b/values/specified/random.rs
+--- a/values/specified/random.rs	2026-11-11 19:55:57
++++ b/values/specified/random.rs	2026-11-21 10:27:21
+@@ -33,7 +33,7 @@
+         let mut ua_ident = "ua-".to_string();
+         match property_id {
+             PropertyIdRef::NonCustom(non_custom) => {
+-                ua_ident += non_custom.name();
++                ua_ident += non_custom.unaliased().name();
+             },
+             PropertyIdRef::Custom(custom) => {
+                 ua_ident += "--";
 diff -ruN a/values/specified/text.rs b/values/specified/text.rs
 --- a/values/specified/text.rs	2026-11-11 19:55:57
 +++ b/values/specified/text.rs	2026-11-20 21:35:22

@@ -33,7 +33,7 @@ impl RandomUaIdent {
         let mut ua_ident = "ua-".to_string();
         match property_id {
             PropertyIdRef::NonCustom(non_custom) => {
-                ua_ident += non_custom.name();
+                ua_ident += non_custom.unaliased().name();
             },
             PropertyIdRef::Custom(custom) => {
                 ua_ident += "--";

@@ -33,7 +33,7 @@ use mime::Mime;
 use parking_lot::RwLock;
 use servo_arc::Arc;
 use std::fmt::Debug;
-use std::hash::{DefaultHasher, Hasher};
+use std::hash::{BuildHasher, Hasher, RandomState};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use style_traits::{CSSPixel, DevicePixel};
 
@@ -90,6 +90,8 @@ pub trait FontMetricsProvider: Debug + Sync {
 
 #[derive(Debug, MallocSizeOf)]
 pub(super) struct ExtraDeviceData {
+    #[ignore_malloc_size_of = "Inline hash keys"]
+    random_state: RandomState,
     /// Data which Stylo uses to evaluate media queries
     media_data: MediaData,
     /// An implementation of a trait which implements support for querying font metrics.
@@ -160,6 +162,7 @@ impl Device {
             body_text_color: RwLock::new(AbsoluteColor::BLACK),
             submit_string,
             extra: ExtraDeviceData {
+                random_state: RandomState::new(),
                 media_data,
                 font_metrics_provider,
                 page_color_scheme: ColorSchemeFlags::empty(),
@@ -201,8 +204,11 @@ impl Device {
     /// base values of `random()` functions between document instances.
     #[inline]
     pub fn document_random_hasher(&self) -> impl Hasher {
-        // TODO: Implement a document-specific hasher (like Gecko in Bug 2081781).
-        DefaultHasher::new()
+        self.extra.random_state.build_hasher()
+    }
+
+    pub(crate) fn inherit_document_random_state(&mut self, previous: &Device) {
+        self.extra.random_state = previous.extra.random_state.clone();
     }
 
     /// Gets the base size given a generic font family.

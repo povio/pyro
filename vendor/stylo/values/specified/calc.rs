@@ -1265,7 +1265,10 @@ impl CalcNode {
                     })
                 },
                 MathFunction::Random => {
-                    if !crate::pref!("layout.css.random.enabled") {
+                    if !crate::pref!("layout.css.random.enabled")
+                        || !context.has_element_context()
+                        || context.property_declaration_context.property_id().is_none()
+                    {
                         return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
                     }
 
