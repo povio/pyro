@@ -1,0 +1,7 @@
+main previous {'pages': [10, 0], 'passes': [154, 3], 'observed': [1, 0], 'status': [157, 156], 'pageState': [0, 0]}
+main frozen {'pages': [59, 0], 'passes': [692, 21], 'observed': [2, 0], 'status': [714, 712], 'pageState': [3, 3]}
+main chrome {'pages': [299, 1356], 'passes': [5968, 5762], 'observed': [260, 498], 'status': [11324, 11562], 'pageState': [150, 150]}
+Counter({('HDR gained', ('Fail',), ('Pass',), ('Pass',)): 99, ('geometry gained', ('Fail',), ('Pass',), ('Pass',)): 12, ('HDR lost', ('Pass',), ('Fail',), ('Pass',)): 2, ('HDR lost', ('Pass',), ('Fail',), ('Fail',)): 1})
+supplement previous {'pages': [0, 0], 'passes': [0, 0], 'observed': [0, 0], 'status': [0, 0], 'pageState': [0, 0]}
+supplement frozen {'pages': [0, 0], 'passes': [0, 0], 'observed': [0, 0], 'status': [0, 0], 'pageState': [0, 0]}
+supplement chrome {'pages': [0, 8], 'passes': [0, 42], 'observed': [0, 0], 'status': [42, 42], 'pageState': [0, 0]}
