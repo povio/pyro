@@ -1,0 +1,415 @@
+{
+  "systemLanguage": {
+    "absent": [
+      null,
+      0,
+      []
+    ],
+    "same": true,
+    "proto": "SVGStringList",
+    "cleared": [
+      null,
+      0,
+      []
+    ],
+    "spaced": [
+      "en fr",
+      1,
+      [
+        "en fr"
+      ]
+    ],
+    "comma": [
+      "en fr,de,zh",
+      2,
+      [
+        "en fr",
+        "de,zh"
+      ]
+    ],
+    "removed": "en fr",
+    "afterRemove": [
+      "de,zh",
+      1,
+      [
+        "de,zh"
+      ]
+    ],
+    "replaced": [
+      "new item",
+      1,
+      [
+        "new item"
+      ]
+    ],
+    "outside": "IndexSizeError",
+    "atEnd": [
+      "new item,tail",
+      2,
+      [
+        "new item",
+        "tail"
+      ]
+    ],
+    "sameTextWrite": [
+      "new item,tail",
+      2,
+      [
+        "new item",
+        "tail"
+      ]
+    ],
+    "removeAttribute": [
+      null,
+      0,
+      []
+    ],
+    "emptyItem": [
+      "",
+      1,
+      [
+        ""
+      ]
+    ],
+    "clearAgain": [
+      null,
+      0,
+      []
+    ],
+    "emptyAttr": [
+      "",
+      1,
+      [
+        ""
+      ]
+    ],
+    " one  two, three four ": [
+      " one  two, three four ",
+      2,
+      [
+        "one  two",
+        "three four"
+      ]
+    ],
+    "a\tb\nc": [
+      "a\tb\nc",
+      1,
+      [
+        "a\tb\nc"
+      ]
+    ],
+    "a,,b": [
+      "a,,b",
+      3,
+      [
+        "a",
+        "",
+        "b"
+      ]
+    ],
+    "  ": [
+      "  ",
+      1,
+      [
+        ""
+      ]
+    ],
+    "a,b,c": [
+      "a,b,c",
+      3,
+      [
+        "a",
+        "b",
+        "c"
+      ]
+    ],
+    ",": [
+      ",",
+      2,
+      [
+        "",
+        ""
+      ]
+    ],
+    "x, y,": [
+      "x, y,",
+      3,
+      [
+        "x",
+        "y",
+        ""
+      ]
+    ],
+    "wrappedIndex": "one",
+    "coercion": [
+      "three",
+      [
+        "value",
+        "index"
+      ],
+      [
+        "one,three,two",
+        3,
+        [
+          "one",
+          "three",
+          "two"
+        ]
+      ]
+    ],
+    "keys": [
+      "0",
+      "1",
+      "2"
+    ],
+    "iteration": [
+      "one",
+      "three",
+      "two"
+    ],
+    "namespace": [
+      "one",
+      "after"
+    ],
+    "strong": [
+      true,
+      true
+    ],
+    "arity": [
+      1,
+      1,
+      2,
+      0
+    ],
+    "missing": "TypeError",
+    "neg": "IndexSizeError",
+    "symbol": "TypeError",
+    "adoption": [
+      true,
+      1,
+      "x y",
+      true
+    ],
+    "reentrant": [
+      "red,green,blue",
+      3,
+      [
+        "red",
+        "green",
+        "blue"
+      ]
+    ],
+    "attrNodeWrite": [
+      "a, b",
+      2,
+      [
+        "a",
+        "b"
+      ]
+    ]
+  },
+  "requiredExtensions": {
+    "absent": [
+      null,
+      0,
+      []
+    ],
+    "same": true,
+    "proto": "SVGStringList",
+    "cleared": [
+      null,
+      0,
+      []
+    ],
+    "spaced": [
+      "en fr",
+      1,
+      [
+        "en fr"
+      ]
+    ],
+    "comma": [
+      "en fr de,zh",
+      2,
+      [
+        "en fr",
+        "de,zh"
+      ]
+    ],
+    "removed": "en fr",
+    "afterRemove": [
+      "de,zh",
+      1,
+      [
+        "de,zh"
+      ]
+    ],
+    "replaced": [
+      "new item",
+      1,
+      [
+        "new item"
+      ]
+    ],
+    "outside": "IndexSizeError",
+    "atEnd": [
+      "new item tail",
+      2,
+      [
+        "new item",
+        "tail"
+      ]
+    ],
+    "sameTextWrite": [
+      "new item tail",
+      3,
+      [
+        "new",
+        "item",
+        "tail"
+      ]
+    ],
+    "removeAttribute": [
+      null,
+      0,
+      []
+    ],
+    "emptyItem": [
+      "",
+      1,
+      [
+        ""
+      ]
+    ],
+    "clearAgain": [
+      null,
+      0,
+      []
+    ],
+    "emptyAttr": [
+      "",
+      0,
+      []
+    ],
+    " one  two, three four ": [
+      " one  two, three four ",
+      4,
+      [
+        "one",
+        "two,",
+        "three",
+        "four"
+      ]
+    ],
+    "a\tb\nc": [
+      "a\tb\nc",
+      3,
+      [
+        "a",
+        "b",
+        "c"
+      ]
+    ],
+    "a,,b": [
+      "a,,b",
+      1,
+      [
+        "a,,b"
+      ]
+    ],
+    "  ": [
+      "  ",
+      0,
+      []
+    ],
+    "a,b,c": [
+      "a,b,c",
+      1,
+      [
+        "a,b,c"
+      ]
+    ],
+    ",": [
+      ",",
+      1,
+      [
+        ","
+      ]
+    ],
+    "x, y,": [
+      "x, y,",
+      2,
+      [
+        "x,",
+        "y,"
+      ]
+    ],
+    "wrappedIndex": "one",
+    "coercion": [
+      "three",
+      [
+        "value",
+        "index"
+      ],
+      [
+        "one three two",
+        3,
+        [
+          "one",
+          "three",
+          "two"
+        ]
+      ]
+    ],
+    "keys": [
+      "0",
+      "1",
+      "2"
+    ],
+    "iteration": [
+      "one",
+      "three",
+      "two"
+    ],
+    "namespace": [
+      "one",
+      "after"
+    ],
+    "strong": [
+      true,
+      true
+    ],
+    "arity": [
+      1,
+      1,
+      2,
+      0
+    ],
+    "missing": "TypeError",
+    "neg": "IndexSizeError",
+    "symbol": "TypeError",
+    "adoption": [
+      true,
+      1,
+      "x y",
+      true
+    ],
+    "reentrant": [
+      "red green blue",
+      3,
+      [
+        "red",
+        "green",
+        "blue"
+      ]
+    ],
+    "attrNodeWrite": [
+      "a  b",
+      2,
+      [
+        "a",
+        "b"
+      ]
+    ]
+  }
+}

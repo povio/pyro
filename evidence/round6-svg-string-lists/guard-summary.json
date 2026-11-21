@@ -1,0 +1,46 @@
+{
+  "urls": 787,
+  "columns": [
+    "base",
+    "refined",
+    "Chrome stable 158.0.8127.37"
+  ],
+  "counts": [
+    {
+      "namedPass": 12922,
+      "full": 311,
+      "complete": 720,
+      "timeout": 58,
+      "error": 9
+    },
+    {
+      "namedPass": 13009,
+      "full": 312,
+      "complete": 720,
+      "timeout": 58,
+      "error": 9
+    },
+    {
+      "namedPass": 14799,
+      "full": 672,
+      "complete": 786,
+      "timeout": 1
+    }
+  ],
+  "delta": {
+    "missing": 0,
+    "added": 0,
+    "gained": 87
+  },
+  "losses": [],
+  "netByUrl": {
+    "svg/idlharness.window.html": 68,
+    "svg/struct/scripted/element-g.html": 1,
+    "svg/struct/scripted/element-switch.html": 1,
+    "svg/struct/systemLanguage-parsing.html": 13,
+    "svg/types/scripted/SVGList-getItem-identity.html": 1,
+    "svg/types/scripted/SVGList-identity-across-attribute-change.html": 1,
+    "svg/types/scripted/SVGList-mutator-return-identity.html": 1,
+    "svg/types/scripted/SVGList-reflected-attribute-synchronize.html": 1
+  }
+}
