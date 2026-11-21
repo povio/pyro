@@ -671,26 +671,26 @@ servo_restyle_damage = "rebuild_box"
 affects = "layout"
 
 [column-rule-color]
-type = "Color"
-initial = "computed_value::T::currentcolor()"
+type = "column::RuleColor"
+initial = "computed::Color::currentcolor().into()"
 struct = "column"
 ignored_when_colors_disabled = true
 spec = "https://drafts.csswg.org/css-multicol/#propdef-column-rule-color"
 affects = "paint"
 
 [column-rule-style]
-type = "BorderStyle"
-initial = "computed::BorderStyle::None"
+type = "column::RuleStyle"
+initial = "computed::BorderStyle::None.into()"
 struct = "column"
 animation_type = "discrete"
 spec = "https://drafts.csswg.org/css-multicol/#propdef-column-rule-style"
 affects = "paint"
 
 [column-rule-width]
-type = "BorderSideWidth"
-initial = "computed::BorderSideWidth::medium()"
+type = "column::RuleWidth"
+initial = "computed::BorderSideWidth::medium().into()"
 struct = "column"
-initial_specified_value = "specified::BorderSideWidth::medium()"
+initial_specified_value = "specified::BorderSideWidth::medium().into()"
 spec = "https://drafts.csswg.org/css-multicol/#propdef-column-rule-width"
 affects = "layout"
 
@@ -740,8 +740,8 @@ spec = "https://drafts.csswg.org/css-gaps-1/#propdef-rule-overlap"
 affects = "paint"
 
 [row-rule-color]
-type = "Color"
-initial = "computed_value::T::currentcolor()"
+type = "column::RuleColor"
+initial = "computed::Color::currentcolor().into()"
 struct = "column"
 engine = "servo"
 ignored_when_colors_disabled = true
@@ -749,8 +749,8 @@ spec = "https://drafts.csswg.org/css-gaps-1/#column-row-rule-color"
 affects = "paint"
 
 [row-rule-style]
-type = "BorderStyle"
-initial = "computed::BorderStyle::None"
+type = "column::RuleStyle"
+initial = "computed::BorderStyle::None.into()"
 struct = "column"
 engine = "servo"
 animation_type = "discrete"
@@ -758,9 +758,9 @@ spec = "https://drafts.csswg.org/css-gaps-1/#column-row-rule-style"
 affects = "paint"
 
 [row-rule-width]
-type = "BorderSideWidth"
-initial = "computed::BorderSideWidth::medium()"
-initial_specified_value = "specified::BorderSideWidth::medium()"
+type = "column::RuleWidth"
+initial = "computed::BorderSideWidth::medium().into()"
+initial_specified_value = "specified::BorderSideWidth::medium().into()"
 struct = "column"
 engine = "servo"
 spec = "https://drafts.csswg.org/css-gaps-1/#column-row-rule-width"

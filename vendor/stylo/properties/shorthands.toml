@@ -545,6 +545,7 @@ spec = "https://drafts.csswg.org/css-multicol/#propdef-columns"
 servo_pref = "layout.css.columns.enabled"
 
 [column-rule]
+kind = "gap_rule"
 sub_properties = ["column-rule-width", "column-rule-style", "column-rule-color"]
 spec = "https://drafts.csswg.org/css-multicol/#propdef-column-rule"
 
@@ -552,7 +553,7 @@ spec = "https://drafts.csswg.org/css-multicol/#propdef-column-rule"
 sub_properties = ["row-rule-width", "row-rule-style", "row-rule-color"]
 engine = "servo"
 spec = "https://drafts.csswg.org/css-gaps-1/#propdef-row-rule"
-kind = "single_border"
+kind = "gap_rule"
 
 [rule-break]
 sub_properties = ["column-rule-break", "row-rule-break"]

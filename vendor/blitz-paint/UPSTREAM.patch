@@ -23143,7 +23143,7 @@ diff --git a/packages/blitz-paint/src/render/multicol.rs b/packages/blitz-paint/
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-paint/src/render/multicol.rs
-@@ -0,0 +1,432 @@
+@@ -0,0 +1,431 @@
 +//! pyro: multi-column containers (blitz-dom `layout/multicol.rs`).
 +//!
 +//! A multi-column container's content is laid out in one strip a column wide; each column shows
@@ -23448,17 +23448,7 @@ new file mode 100644
 +            return;
 +        }
 +        let column = self.style.get_column();
-+        let style = column.column_rule_style;
-+        let width = column.column_rule_width.0.to_f64_px();
-+        if matches!(style, BorderStyle::None | BorderStyle::Hidden) || width <= 0.0 {
-+            return;
-+        }
-+        let color = column.column_rule_color.resolve_to_absolute(&self.style.clone_color()).as_srgb_color();
-+        if color.components[3] <= 0.0 {
-+            return;
-+        }
 +        let scale = self.scale;
-+        let thickness = (width * scale).round().max(1.0);
 +        // The visible part of the element's space (device px), for dotted and dashed rules.
 +        let screen = Affine::translate((-self.context.initial_x, -self.context.initial_y));
 +        let visible = (screen * self.transform).inverse().transform_rect_bbox(clip_rect);
@@ -23467,11 +23457,20 @@ new file mode 100644
 +            if visible.y0.is_nan() { f64::NEG_INFINITY } else { visible.y0 },
 +            if visible.y1.is_nan() { f64::INFINITY } else { visible.y1 },
 +        );
-+        for pair in columns.fragments.windows(2) {
++        let pairs = columns.fragments.windows(2).filter(|pair| {
++            !pair[0].spanner && !pair[1].spanner && (pair[0].top - pair[1].top).abs() <= 0.5
++        });
++        let total = pairs.clone().count();
++        for (index, pair) in pairs.enumerate() {
 +            let (a, b) = (&pair[0], &pair[1]);
-+            if a.spanner || b.spanner || (a.top - b.top).abs() > 0.5 {
++            let style = *column.column_rule_style.for_gap(index, total);
++            if matches!(style, BorderStyle::None | BorderStyle::Hidden) { continue; }
++            let width = column.column_rule_width.for_gap(index, total).0.to_f64_px();
++            let color = column.column_rule_color.for_gap(index, total).resolve_to_absolute(&self.style.clone_color()).as_srgb_color();
++            if width <= 0.0 || color.components[3] <= 0.0 {
 +                continue;
 +            }
++            let thickness = (width * scale).round().max(1.0);
 +            let (left, right) = if a.x <= b.x { (a, b) } else { (b, a) };
 +            // pyro: in a vertical writing mode the columns stack down the inline axis (physical
 +            // y) and the rule runs across the row's block extent (physical x, from the right

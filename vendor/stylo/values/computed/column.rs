@@ -5,6 +5,12 @@
 //! Computed types for the column properties.
 
 use crate::values::computed::PositiveInteger;
+#[allow(missing_docs)]
+pub type RuleColor = super::super::generics::column::RuleList<super::Color, i32>;
+#[allow(missing_docs)]
+pub type RuleWidth = super::super::generics::column::RuleList<super::BorderSideWidth, i32>;
+#[allow(missing_docs)]
+pub type RuleStyle = super::super::generics::column::RuleList<super::BorderStyle, i32>;
 use crate::values::generics::column::GenericColumnCount;
 pub use crate::values::specified::column::{RuleBreak, RuleOverlap, RuleVisibilityItems};
 pub use crate::values::specified::column::{ColumnFill, ColumnSpan, ColumnWrap};

@@ -629,7 +629,7 @@ pub mod ${property.ident} {
         % if shorthand.kind == "mirrored":
         ${self.mirrored_shorthand(shorthand)}
         % endif
-        % if shorthand.kind in ("single_border", "mirrored_border"):
+        % if shorthand.kind in ("single_border", "mirrored_border", "gap_rule"):
         ${self.single_border_shorthand(shorthand)}
         % endif
         % if "IS_LEGACY_SHORTHAND" in shorthand.flags:
@@ -774,7 +774,7 @@ pub mod ${property.ident} {
         context: &ParserContext,
         input: &mut Parser,
     ) -> Result<Longhands, ParseError> {
-        let (width, style, color) = crate::properties::shorthands::parse_border(context, input)?;
+        let (width, style, color) = crate::properties::shorthands::${'parse_border' if shorthand.kind == 'single_border' else 'parse_gap_rules'}(context, input)?;
         Ok(crate::properties::shorthands::expanded! {
             % if shorthand.kind == 'mirrored_border':
             ${shorthand.sub_properties[3].ident}: width.clone(),
@@ -794,7 +794,7 @@ pub mod ${property.ident} {
             if self.${shorthand.sub_properties[i].ident} != self.${shorthand.sub_properties[i+3].ident} { return Ok(()); }
             % endfor
             % endif
-            crate::properties::shorthands::serialize_directional_border(
+            crate::properties::shorthands::${'serialize_directional_border' if shorthand.kind == 'single_border' else 'serialize_gap_rules'}(
                 dest,
                 % for i in range(3):
                 self.${shorthand.sub_properties[i].ident},
