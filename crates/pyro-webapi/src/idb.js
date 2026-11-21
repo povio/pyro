@@ -18,7 +18,6 @@
   const hasOwn = (o, k) => O.prototype.hasOwnProperty.call(o, k);
   const isArray = A.isArray, apply = Reflect.apply, stringify = JSON.stringify, parse = JSON.parse;
   const fromCharCode = String.fromCharCode;
-  const addListener = ET.prototype.addEventListener;
   const AB = ArrayBuffer, U8 = Uint8Array, DV = DataView, isView = AB.isView;
   const getter = (proto, key) => descriptor(proto, key).get;
   const abLength = getter(AB.prototype, 'byteLength');
@@ -33,7 +32,15 @@
   const token = Symbol('IndexedDB');
   const illegal = () => new TE('Illegal constructor');
   const fail = (name, message) => new DE(message, name);
-  const tag = (C, name) => defineProperty(C.prototype, tagKey, { value: name, configurable: true });
+  // Class syntax supplies the IDL getters and operations. Web IDL makes
+  // string-named members enumerable; the constructor and symbols stay hidden.
+  function enumerableMembers(holder, names) {
+    for (let i = 0; i < names.length; i++) defineProperty(holder, names[i], { enumerable: true });
+  }
+  function tag(C, name, ...members) {
+    enumerableMembers(C.prototype, members);
+    defineProperty(C.prototype, tagKey, { value: name, configurable: true });
+  }
   const domString = (v) => `${v}`;
 
   // ---- Keys ----
@@ -213,7 +220,7 @@
     #upperValue;
     #lowerOpen;
     #upperOpen;
-    constructor(t, lower, upper, lowerOpen, upperOpen) {
+    constructor(t = undefined, lower, upper, lowerOpen, upperOpen) {
       if (t !== token) throw illegal();
       this.#lower = lower;
       this.#upper = upper;
@@ -263,7 +270,8 @@
       return new IDBKeyRange(token, l, u, !!lowerOpen, !!upperOpen);
     }
   }
-  tag(IDBKeyRange, 'IDBKeyRange');
+  enumerableMembers(IDBKeyRange, ['only', 'lowerBound', 'upperBound', 'bound']);
+  tag(IDBKeyRange, 'IDBKeyRange', 'lower', 'upper', 'lowerOpen', 'upperOpen', 'includes');
   function inRange([lower, upper, lowerOpen, upperOpen], key) {
     if (lower !== null && (key < lower || (lowerOpen && key === lower))) return false;
     if (upper !== null && (key > upper || (upperOpen && key === upper))) return false;
@@ -365,7 +373,7 @@
   let listOf;
   class DOMStringList {
     #list;
-    constructor(t, list) {
+    constructor(t = undefined, list) {
       if (t !== token) throw illegal();
       this.#list = list;
       for (let i = 0; i < list.length; i++) defineProperty(this, i, { value: list[i], enumerable: true });
@@ -387,14 +395,14 @@
       return this.#list.values();
     }
   }
-  tag(DOMStringList, 'DOMStringList');
+  tag(DOMStringList, 'DOMStringList', 'length', 'item', 'contains');
   const sortedList = (names) => new DOMStringList(token, [...names].sort());
 
   class IDBRecord {
     #key;
     #primaryKey;
     #value;
-    constructor(t, key, primaryKey, value) {
+    constructor(t = undefined, key, primaryKey, value) {
       if (t !== token) throw illegal();
       this.#key = key;
       this.#primaryKey = primaryKey;
@@ -410,38 +418,45 @@
       return this.#value;
     }
   }
-  tag(IDBRecord, 'IDBRecord');
+  tag(IDBRecord, 'IDBRecord', 'key', 'primaryKey', 'value');
 
   // ---- Event handler attributes ----
-  const HANDLERS = new WeakMap();
-  function handlers(C, ...types) {
-    for (const type of types) {
-      defineProperty(C.prototype, 'on' + type, {
-        configurable: true,
-        enumerable: true,
-        get() {
-          if (!(this instanceof C)) throw new TE('Illegal invocation');
-          const h = HANDLERS.get(this);
-          return (h && h[type]) ?? null;
-        },
-        set(v) {
-          if (!(this instanceof C)) throw new TE('Illegal invocation');
-          let h = HANDLERS.get(this);
-          if (!h) HANDLERS.set(this, (h = {}));
-          const fresh = !(type in h);
-          h[type] = typeof v === 'function' || (typeof v === 'object' && v !== null) ? v : null;
-          if (fresh) {
-            const self = this;
-            apply(addListener, this, [
-              type,
-              function (event) {
-                const f = h[type];
-                if (typeof f === 'function') return apply(f, self, [event]);
-              },
-            ]);
-          }
-        },
+  // The host EventTarget owns this state: same-origin realms borrowing an
+  // accessor see the same handler, and a forged prototype carries no brand.
+  function initHandlerState(target, state) {
+    state.assign = assignHandler;
+    N.handlerState(target, state);
+  }
+  function assignHandler(target, h, type, value) {
+    const previous = h[type] ?? null;
+    const next = typeof value === 'function' || (typeof value === 'object' && value !== null) ? value : null;
+    h[type] = next;
+    if (previous === null && next !== null) {
+      // Install from the target's realm even when another realm's setter is
+      // borrowed. A replacement keeps the registration in its current position.
+      N.setHandler(target, type, event => {
+        if (apply(h[type], target, [event]) === false) N.cancelEvent(event);
       });
+    } else if (previous !== null && next === null) {
+      N.setHandler(target, type, null);
+    }
+  }
+  function handlers(C, brand, ...types) {
+    function state(receiver) {
+      const h = N.handlerState(receiver);
+      if (!h || !h[brand]) throw new TE('Illegal invocation');
+      return h;
+    }
+    for (let i = 0; i < types.length; i++) {
+      const type = types[i], name = 'on' + type;
+      const accessors = {
+        get [name]() { return state(this)[type] ?? null; },
+        set [name](v) {
+          const h = state(this);
+          h.assign(this, h, type, v);
+        },
+      };
+      defineProperty(C.prototype, name, descriptor(accessors, name));
     }
   }
 
@@ -463,7 +478,7 @@
       return this.#newVersion;
     }
   }
-  tag(IDBVersionChangeEvent, 'IDBVersionChangeEvent');
+  tag(IDBVersionChangeEvent, 'IDBVersionChangeEvent', 'oldVersion', 'newVersion');
   const versionEvent = (type, oldVersion, newVersion) =>
     new IDBVersionChangeEvent(type, { oldVersion, newVersion });
   const plainEvent = (type, bubbles, cancelable) => new EV(type, { bubbles, cancelable });
@@ -502,9 +517,10 @@
   let requestState;
   class IDBRequest extends ET {
     #s;
-    constructor(t) {
+    constructor(t = undefined, open = false) {
       if (t !== token) throw illegal();
       super();
+      initHandlerState(this, { __proto__: null, request: true, open });
       this.#s = { done: false, result: undefined, error: null, source: null, tx: null };
     }
     static {
@@ -530,15 +546,15 @@
       return this.#s.done ? 'done' : 'pending';
     }
   }
-  tag(IDBRequest, 'IDBRequest');
-  handlers(IDBRequest, 'success', 'error');
+  tag(IDBRequest, 'IDBRequest', 'result', 'error', 'source', 'transaction', 'readyState');
+  handlers(IDBRequest, 'request', 'success', 'error');
   class IDBOpenDBRequest extends IDBRequest {
-    constructor(t) {
-      super(t);
+    constructor(t = undefined) {
+      super(t, true);
     }
   }
   tag(IDBOpenDBRequest, 'IDBOpenDBRequest');
-  handlers(IDBOpenDBRequest, 'blocked', 'upgradeneeded');
+  handlers(IDBOpenDBRequest, 'open', 'blocked', 'upgradeneeded');
 
   const succeed = (s, result) => {
     s.done = true;
@@ -593,9 +609,10 @@
   let connection;
   class IDBDatabase extends ET {
     #c;
-    constructor(t, c) {
+    constructor(t = undefined, c) {
       if (t !== token) throw illegal();
       super();
+      initHandlerState(this, { __proto__: null, database: true });
       this.#c = c;
     }
     static {
@@ -676,17 +693,19 @@
       }
     }
   }
-  tag(IDBDatabase, 'IDBDatabase');
-  handlers(IDBDatabase, 'abort', 'close', 'error', 'versionchange');
+  tag(IDBDatabase, 'IDBDatabase', 'name', 'version', 'objectStoreNames', 'createObjectStore', 'deleteObjectStore',
+    'transaction', 'close');
+  handlers(IDBDatabase, 'database', 'abort', 'close', 'error', 'versionchange');
 
   // ---- Transactions ----
   const txs = [];
   let txOf;
   class IDBTransaction extends ET {
     #x;
-    constructor(t, x) {
+    constructor(t = undefined, x) {
       if (t !== token) throw illegal();
       super();
+      initHandlerState(this, { __proto__: null, transaction: true });
       this.#x = x;
     }
     static {
@@ -733,8 +752,9 @@
       abortTx(x, null);
     }
   }
-  tag(IDBTransaction, 'IDBTransaction');
-  handlers(IDBTransaction, 'abort', 'complete', 'error');
+  tag(IDBTransaction, 'IDBTransaction', 'objectStoreNames', 'mode', 'durability', 'db', 'error', 'objectStore',
+    'commit', 'abort');
+  handlers(IDBTransaction, 'transaction', 'abort', 'complete', 'error');
 
   function newTransaction(c, scope, mode, durability, upgrade) {
     const x = {
@@ -1007,7 +1027,7 @@
   }
   class IDBObjectStore {
     #h;
-    constructor(t, h) {
+    constructor(t = undefined, h) {
       if (t !== token) throw illegal();
       this.#h = h;
     }
@@ -1155,7 +1175,9 @@
       im.deleted = true;
     }
   }
-  tag(IDBObjectStore, 'IDBObjectStore');
+  tag(IDBObjectStore, 'IDBObjectStore', 'name', 'keyPath', 'indexNames', 'transaction', 'autoIncrement', 'put',
+    'add', 'delete', 'clear', 'get', 'getKey', 'getAll', 'getAllKeys', 'getAllRecords', 'count', 'openCursor',
+    'openKeyCursor', 'index', 'createIndex', 'deleteIndex');
 
   // ---- Indexes ----
   let indexOf;
@@ -1173,7 +1195,7 @@
   }
   class IDBIndex {
     #d;
-    constructor(t, d) {
+    constructor(t = undefined, d) {
       if (t !== token) throw illegal();
       this.#d = d;
     }
@@ -1249,7 +1271,8 @@
       return openCursor(this, this.#d.h, this.#d, query, dir, true);
     }
   }
-  tag(IDBIndex, 'IDBIndex');
+  tag(IDBIndex, 'IDBIndex', 'name', 'objectStore', 'keyPath', 'multiEntry', 'unique', 'get', 'getKey', 'getAll',
+    'getAllKeys', 'getAllRecords', 'count', 'openCursor', 'openKeyCursor');
 
   // ---- Cursors ----
   function openCursor(source, h, index, query, dir, keyOnly) {
@@ -1323,7 +1346,7 @@
   }
   class IDBCursor {
     #c;
-    constructor(t, c) {
+    constructor(t = undefined, c) {
       if (t !== token) throw illegal();
       this.#c = c;
     }
@@ -1409,10 +1432,11 @@
       });
     }
   }
-  tag(IDBCursor, 'IDBCursor');
+  tag(IDBCursor, 'IDBCursor', 'source', 'direction', 'key', 'primaryKey', 'request', 'advance', 'continue',
+    'continuePrimaryKey', 'update', 'delete');
   class IDBCursorWithValue extends IDBCursor {
     #v;
-    constructor(t, c) {
+    constructor(t = undefined, c) {
       super(t, c);
       this.#v = c;
     }
@@ -1420,7 +1444,7 @@
       return this.#v.value;
     }
   }
-  tag(IDBCursorWithValue, 'IDBCursorWithValue');
+  tag(IDBCursorWithValue, 'IDBCursorWithValue', 'value');
 
   // ---- Opening and deleting databases ----
   const queues = new Map();
