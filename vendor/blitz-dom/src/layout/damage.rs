@@ -1097,8 +1097,6 @@ impl BaseDocument {
             })
             .collect();
         let old = elem.reference_images.clone();
-        let document = |url: &str| url.split_once('#').map_or(url, |(document, _)| document).to_owned();
-        let own = [document(self.url().as_str()), document(self.base_url().as_str())];
         let mut new: ThinVec<Option<ImageResourceData>> = ThinVec::with_capacity(urls.len());
         for (idx, url) in urls.into_iter().enumerate() {
             let Some((url, options)) = url else {
@@ -1113,7 +1111,7 @@ impl BaseDocument {
                 continue;
             }
             // An element of this document: nothing to load.
-            if own.contains(&document(url.as_str())) {
+            if self.is_document_url(&url) {
                 new.push(Some(
                     ImageResourceData { url, status: Status::Ok, image: ImageData::None, options: Default::default() }
                         .with_options(options),
@@ -1177,7 +1175,7 @@ impl BaseDocument {
             cors: Some(blitz_traits::net::CorsCredentials::SameOrigin),
             ..Default::default()
         });
-        let document_url: url::Url = (*self.url).clone();
+        let document_url: url::Url = self.url().clone();
         let node = self.nodes.get_mut(node_id).unwrap();
         // Clone the primary style `Arc` into an owned value so the immutable
         // borrow of `node` (held by the stylo element data guard) is released
@@ -1253,6 +1251,16 @@ impl BaseDocument {
                     // pyro: kept only for the same request (URL, mode, integrity, referrer policy,
                     // client): a changed `integrity()` asks again, and its response alone goes in.
                     if elem_images[idx].as_ref().is_some_and(|data| data.is_request(new_url, &options)) {
+                        continue;
+                    }
+                    // A fragment-only mask refers to an SVG element in this document.
+                    // Keep its slot in sync without issuing an image request.
+                    if matches!(kind, ImageLayerKind::Mask)
+                        && modifiers.as_ref().is_some_and(|m| m.is_local_fragment())
+                    {
+                        elem_images[idx] = Some(ImageResourceData {
+                            url: new_url.clone(), status: Status::Ok, image: crate::node::ImageData::None, options,
+                        });
                         continue;
                     }
                     let key = options.cache_key(new_url.as_str());

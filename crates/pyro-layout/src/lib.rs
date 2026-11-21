@@ -158,7 +158,7 @@ pub fn install_with(fetchers: FetcherFactory) {
             resources: std::cell::Cell::new(RESOURCES.load(Ordering::Relaxed)),
             scroll_stale: Default::default(),
             base_url: RefCell::new(BaseUrl::new(BLANK)),
-            snapshot_base: RefCell::new(String::new()),
+            snapshot_base: RefCell::new(Default::default()),
             fetcher: RefCell::new(fetchers(None)),
             loader: RefCell::new(None),
             fetchers: fetchers.clone(),
@@ -196,6 +196,7 @@ pub fn frame_table(table: pyro_dom::FrameTable) -> pyro_render::FrameTable {
             let content = pyro_render::FrameContent {
                 html: frame.html,
                 url: frame.url,
+                document_url: frame.document_url,
                 scroll: frame.scroll,
                 client: frame.client,
                 frames: frame_table(frame.frames),
@@ -237,7 +238,7 @@ pub struct BlitzGeometry {
     base_url: RefCell<BaseUrl>,
     /// pyro: the base URL the last whole snapshot resolved against ([`Self::document_base`]); a
     /// delta resolves against it too, so a changed base takes a whole snapshot.
-    snapshot_base: RefCell<String>,
+    snapshot_base: RefCell<(String, String)>,
     /// Loads the document's sub-resources: made by `fetchers` from `loader`.
     fetcher: RefCell<Arc<dyn Fetcher>>,
     /// The document's network (`None` until the embedder gives it one).
@@ -459,7 +460,8 @@ impl BlitzGeometry {
     fn snapshot(&self, dom: &Dom, style: &StyleEngine) -> Option<Snapshot> {
         let t = pyro_render::profiling::on().then(Instant::now);
         let base = self.document_base(dom, style.document());
-        *self.snapshot_base.borrow_mut() = base.text.clone();
+        let location = dom.document_url_parsed(style.document()).ok().flatten().map_or("", url::Url::as_str);
+        *self.snapshot_base.borrow_mut() = (base.text.clone(), location.to_owned());
         let sheets = RefCell::new(HashMap::new());
         let tree = {
             let (style_text, stylesheet_href) = Self::render_opts(dom, style, base.parsed.as_ref(), Some(&sheets));
@@ -477,6 +479,7 @@ impl BlitzGeometry {
             raster_budget: dom.document_data(style.document()).ok()?.raster_budget.clone(),
             frames: frame_table(dom.frame_table(style.document())),
             html: String::new(),
+            document_url: (!location.is_empty() && location != base.text).then(|| location.to_owned()),
             base_url: base.text.clone(),
             sheets: sheets.into_inner(),
             width: v.width,
@@ -613,7 +616,8 @@ impl BlitzGeometry {
                 None
             };
             let base = self.document_base(dom, style.document());
-            let same_base = base.text == *self.snapshot_base.borrow();
+            let location = dom.document_url_parsed(style.document()).ok().flatten().map_or("", url::Url::as_str);
+            let same_base = { let previous = self.snapshot_base.borrow(); previous.0 == base.text && previous.1 == location };
             if let (Some(restyled), true) = (restyled, vp == viewport && same_base) {
                 let profiling = pyro_render::profiling::on();
                 let t = profiling.then(Instant::now);
@@ -1326,7 +1330,7 @@ mod tests {
             resources: Default::default(),
             scroll_stale: Default::default(),
             base_url: RefCell::new(super::BaseUrl::new(super::BLANK)),
-            snapshot_base: RefCell::new(String::new()),
+            snapshot_base: RefCell::new(Default::default()),
             fetcher: RefCell::new(std::sync::Arc::new(NoFetch)),
             loader: RefCell::new(None),
             fetchers: Rc::new(|_| std::sync::Arc::new(NoFetch)),

@@ -25,6 +25,7 @@ use crate::stylist::Stylist;
 use crate::substitution;
 use crate::substitution::AttrTaint;
 use crate::values::{AtomString, DashedIdent, computed};
+use crate::values::computed::ToComputedValue;
 use crate::values::specified::position::PositionTryFallbacksItem;
 use crate::{error_reporting::ContextualParseError, parser::Parse, parser::ParserContext};
 use cssparser::{
@@ -53,6 +54,8 @@ enum AllowOr {
 
 #[derive(Clone, Debug, PartialEq, ToShmem)]
 enum StyleFeatureValue {
+    /// A registered inline style-query operand parsed in its declaration’s early random scope.
+    Typed(Arc<SpecifiedRegisteredValue>),
     Value(Option<Arc<custom_properties::SpecifiedValue>>),
     Keyword(CSSWideKeyword),
 }
@@ -379,6 +382,10 @@ impl ToCss for StyleFeaturePlain {
         dest.write_str("--")?;
         crate::values::serialize_atom_identifier(&self.name, dest)?;
         match self.value {
+            StyleFeatureValue::Typed(ref value) => {
+                dest.write_str(": ")?;
+                value.to_css(dest)?;
+            },
             StyleFeatureValue::Keyword(k) => {
                 dest.write_str(": ")?;
                 k.to_css(dest)?;
@@ -405,6 +412,13 @@ impl StyleFeaturePlain {
             input.skip_whitespace();
             if let Ok(keyword) = input.try_parse(|i| CSSWideKeyword::parse(i)) {
                 StyleFeatureValue::Keyword(keyword)
+            } else if let Some(registration) = context.property_declaration_context.inline_style_registration(&name)
+                && let Some(syntax) = registration.syntax.as_ref().filter(|s| !s.is_universal())
+                && let Ok(value) = input.try_parse(|i| i.parse_until_before(cssparser::Delimiter::Bang,
+                    |i| SpecifiedRegisteredValue::parse_with_context(context, i, syntax)))
+            {
+                let _ = input.try_parse(parse_important);
+                StyleFeatureValue::Typed(Arc::new(value))
             } else {
                 let value = custom_properties::SpecifiedValue::parse(context, input)?;
                 // `!important` is allowed (but ignored) after the value.
@@ -425,6 +439,7 @@ impl StyleFeaturePlain {
         let initial = context.stylist.get_custom_property_initial_values().get(registration, &self.name);
         let inherited = ctx.builder.inherited_style.custom_properties().get(registration, &self.name);
         match &self.value {
+            StyleFeatureValue::Typed(value) => current == Some(&value.as_ref().to_computed_value(ctx)),
             StyleFeatureValue::Value(None) => current != initial,
             StyleFeatureValue::Value(Some(value)) => {
                 let query = custom_properties::compute_variable_value(value, registration, ctx, None);
@@ -504,6 +519,7 @@ impl StyleFeaturePlain {
             .inherited_custom_properties()
             .get(registration, &self.name);
         KleeneValue::from(match self.value {
+            StyleFeatureValue::Typed(ref value) => current_value == Some(&value.as_ref().to_computed_value(ctx)),
             StyleFeatureValue::Value(Some(ref v)) => {
                 if ctx.container_info.is_none() {
                     // If no container, custom props are guaranteed-unknown.

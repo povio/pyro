@@ -2034,6 +2034,15 @@ impl StyleEngine {
         self.value_with(dom, el, name, false)
     }
 
+    /// A CSSOM value and the zoom at which its layout lengths were computed.
+    pub(crate) fn computed_value_with_zoom(&self, dom: &Dom, el: NodeId, name: &str) -> Option<(String, f32)> {
+        if crate::gecko_only::handles(name) {
+            return self.gecko_only_value(dom, el, name).map(|value| (value, 1.0));
+        }
+        let style = self.stylo_style(dom, el)?;
+        Some((crate::stylo::serialize(&style, name)?, style.effective_zoom.value()))
+    }
+
     /// Computed `display`: the author value or the UA default, blockified
     /// (css-display-3 §2.7) for the root, floats, absolutely positioned
     /// boxes and flex/grid items, so a `<span>` in a flex `<label>` reports
@@ -2066,10 +2075,7 @@ impl StyleEngine {
                 _ => "normal".into(),
             });
         }
-        if crate::gecko_only::handles(name) {
-            return self.gecko_only_value(dom, el, name);
-        }
-        self.stylo_value(dom, el, name)
+        self.computed_value_with_zoom(dom, el, name).map(|(value, _)| value)
     }
 
     /// The animation and transition rules of the document's sheets

@@ -90,6 +90,8 @@ pub trait FontMetricsProvider: Debug + Sync {
 
 #[derive(Debug, MallocSizeOf)]
 pub(super) struct ExtraDeviceData {
+    #[ignore_malloc_size_of = "Shared document URL"]
+    document_url: Option<Arc<url::Url>>,
     #[ignore_malloc_size_of = "Inline hash keys"]
     random_state: RandomState,
     /// Data which Stylo uses to evaluate media queries
@@ -135,6 +137,15 @@ pub struct MediaData {
 }
 
 impl Device {
+    /// The document associated with local fragment references, independent of the stylesheet URL.
+    pub fn set_document_url(&mut self, url: Arc<url::Url>) {
+        self.extra.document_url = Some(url);
+    }
+
+    pub(crate) fn document_url(&self) -> Option<&url::Url> {
+        self.extra.document_url.as_deref()
+    }
+
     /// Trivially construct a new `Device`.
     pub fn new(
         default_values: Arc<ComputedValues>,
@@ -162,6 +173,7 @@ impl Device {
             body_text_color: RwLock::new(AbsoluteColor::BLACK),
             submit_string,
             extra: ExtraDeviceData {
+                document_url: None,
                 random_state: RandomState::new(),
                 media_data,
                 font_metrics_provider,

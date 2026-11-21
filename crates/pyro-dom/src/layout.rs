@@ -4190,16 +4190,26 @@ impl Layout {
     }
 
     pub fn typed_computed_value(&self, dom: &Dom, el: NodeId, name: &str) -> Option<String> {
+        let computed = || {
+            let css = self.style.computed_value(dom, el, name)?;
+            if css.starts_with(|c: char| c.is_ascii_digit() || c == '-' || c == '.') {
+                if let Some(value) = self.style.stylo_style(dom, el)
+                    .and_then(|style| crate::stylo::precise_typed_numeric(&style, name, &css)) {
+                    return Some(value);
+                }
+            }
+            Some(css)
+        };
         if !self.style.style_overridden() {
             match self.style.transition_value(el, name) {
                 Some(crate::animation::TransitionValue::Text(value)) => return Some(value),
                 Some(crate::animation::TransitionValue::Style(sample)) => {
-                    return self.style.with_style_override(el, sample, || self.style.computed_value(dom, el, name)).flatten();
+                    return self.style.with_style_override(el, sample, computed).flatten();
                 }
                 None => {}
             }
         }
-        self.style.computed_value(dom, el, name)
+        computed()
     }
 
     /// `getComputedStyle(el).getPropertyValue(name)`
@@ -4274,7 +4284,7 @@ impl Layout {
         if let Some(v) = self.style.timing_value(dom, el, name) {
             return v;
         }
-        let declared = self.style.computed_value(dom, el, name);
+        let (declared, zoom) = self.style.computed_value_with_zoom(dom, el, name).unzip();
         if !self.style.style_overridden()
             && matches!(name, "margin" | "margin-inline" | "margin-block" | "margin-inline-start" | "margin-inline-end"
                 | "margin-block-start" | "margin-block-end" | "margin-left" | "margin-right" | "margin-top" | "margin-bottom"
@@ -4367,7 +4377,7 @@ impl Layout {
                 }
             }
         }
-        if let Some(v) = declared.as_deref().and_then(|v| self.resolved_value(dom, el, name, v)) {
+        if let Some(v) = declared.as_deref().and_then(|v| self.resolved_value(dom, el, name, v, zoom.unwrap_or(1.0))) {
             return v;
         }
         if let Some(v) = declared {
@@ -4460,7 +4470,7 @@ impl Layout {
     /// `auto` minimum sizes outside flex and grid items, `auto` insets of
     /// relatively positioned boxes, lengths clamped to Blink's LayoutUnit
     /// range. `None`: the computed value stands.
-    fn resolved_value(&self, dom: &Dom, el: NodeId, name: &str, value: &str) -> Option<String> {
+    fn resolved_value(&self, dom: &Dom, el: NodeId, name: &str, value: &str, zoom: f32) -> Option<String> {
         let position = || self.position_of(dom, el);
         match name {
             "min-width" | "min-height" | "max-width" | "max-height" if value.contains("anchor-size(") => {
@@ -4479,6 +4489,10 @@ impl Layout {
             }
             "top" | "bottom" | "left" | "right" if value == "auto" || value.contains('%') || value.contains("anchor(") || value.contains("anchor-size(") => {
                 self.resolved_inset(dom, el, name, value, position()).or_else(|| clamp_layout_units(value))
+            }
+            "top" | "bottom" | "left" | "right"
+            | "inset-inline-start" | "inset-inline-end" | "inset-block-start" | "inset-block-end" => {
+                serialize_large_inset(value, zoom).or_else(|| clamp_layout_units(value))
             }
             _ => clamp_layout_units(value),
         }
@@ -4602,6 +4616,27 @@ impl Layout {
             Position::Static => None,
         }
     }
+}
+
+/// Blink's layout coordinates use a signed 32-bit fixed point with six fractional bits.
+/// CSSPrimitiveValue reserves two pixels at either end for float round trips.
+pub(crate) fn bounded_layout_px(px: f32) -> f32 {
+    const MIN: f32 = (i32::MIN / 64 + 2) as f32;
+    const MAX: f32 = (i32::MAX / 64 - 2) as f32;
+    px.clamp(MIN, MAX)
+}
+
+/// Resolved physical and logical inset lengths are exposed in unzoomed CSS pixels.
+fn serialize_large_inset(value: &str, zoom: f32) -> Option<String> {
+    let px = value.strip_suffix("px")?.parse::<f32>().ok()?;
+    let zoom = if zoom > 0.0 { zoom } else { 1.0 };
+    let zoomed = px * zoom;
+    let bounded = bounded_layout_px(zoomed);
+    if bounded == zoomed && px.abs() < 1e6 {
+        return None;
+    }
+    let px = if bounded == zoomed { px } else { bounded / zoom };
+    Some(format!("{}px", crate::computed::serialize_css_number(f64::from(px))))
 }
 
 /// `value` with every px length beyond Blink's LayoutUnit range (±2^25)

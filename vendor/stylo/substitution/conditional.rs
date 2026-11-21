@@ -35,8 +35,13 @@ impl Branch {
         context.consulted_attr_taint |= earlier;
         let Ok(substituted) = substituted else { return (None, consulted) };
         let parser_context = context.parser_context(&source.url_data);
-        let parsed = Parser::new(&substituted.css)
-            .parse_entirely(|i| IfCondition::parse(&parser_context, i)).ok();
+        let indices = crate::parser::EarlyRandomIndices::new(context.early_random_count, context.stylist);
+        let parsed = parser_context.with_random_scope(context.property_id, Some(&indices), |cx| {
+            Parser::new(&substituted.css).parse_entirely(|i| IfCondition::parse(cx, i)).ok()
+        });
+        if parsed.is_some() {
+            context.early_random_count = indices.end();
+        }
         (parsed, substituted.attr_tainted || consulted)
     }
 }

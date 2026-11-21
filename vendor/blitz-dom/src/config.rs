@@ -35,6 +35,8 @@ pub struct FrameContent {
     pub html: String,
     /// Its URL, which its relative URLs resolve against.
     pub url: String,
+    /// The actual URL when a base element or inherited frame base changes resource resolution.
+    pub document_url: Option<String>,
     /// Its viewport's scroll position.
     pub scroll: (f64, f64),
     /// The frame (frame id and loader id) its requests are made for.
@@ -194,6 +196,8 @@ pub struct DocumentConfig {
     pub media_environment: MediaEnvironment,
     /// The initial `Viewport`
     pub viewport: Option<Viewport>,
+    /// Actual document URL when it differs from the base used for relative resources.
+    pub document_url: Option<String>,
     /// The base url which relative URLs are resolved against
     pub base_url: Option<String>,
     /// pyro: the id of the frame this is the document of (a frame document of the render
@@ -268,6 +272,7 @@ impl Default for DocumentConfig {
             viewport: None,
             media_environment: Default::default(),
             base_url: None,
+            document_url: None,
             frame_client: None,
             frames: FrameTable::default(),
             ua_stylesheets: vec![UserAgentStylesheet::default_sheet()],

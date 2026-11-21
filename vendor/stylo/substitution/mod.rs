@@ -791,6 +791,8 @@ pub struct SubstitutionReplacementContext<'a, 'b, 'c, 't> {
     /// Records tainted inputs encountered before a substitution fails. An enclosing if()
     /// may recover from that failure by choosing a different branch.
     pub(crate) consulted_attr_taint: bool,
+    /// Number of random functions parsed during substitution of this declaration.
+    pub(crate) early_random_count: i32,
     /// The custom properties currently being resolved, for cycle detection.
     pub seen: SmallVec<[Name; 8]>,
 }
@@ -812,6 +814,7 @@ impl<'a, 'b, 'c, 't> SubstitutionReplacementContext<'a, 'b, 'c, 't> {
             attribute_tracker,
             seen: SmallVec::new(),
             consulted_attr_taint: false,
+            early_random_count: 0,
         }
     }
 

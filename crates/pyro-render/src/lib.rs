@@ -203,7 +203,9 @@ pub struct Snapshot {
     /// pyro: the frame table: the documents the snapshot's frame elements show, by the index
     /// their `data-pyro-frame` names (`pyro_layout::frame_table`). Markup holds no frame content or client.
     pub frames: blitz_dom::FrameTable,
-    /// Document URL; relative URLs resolve against it.
+    /// Actual document URL when it differs from the resource base.
+    pub document_url: Option<String>,
+    /// Relative URLs resolve against this base.
     pub base_url: String,
     /// Texts of `<link rel=stylesheet>` sheets by absolute URL, served to
     /// Blitz without a fetch (they include CSSOM edits).
@@ -1202,6 +1204,7 @@ impl Renderer {
         let mut config = DocumentConfig {
             raster_budget: snap.raster_budget.clone(),
             base_url: Some(snap.base_url.clone()),
+            document_url: snap.document_url.clone(),
             net_provider: Some(provider),
             viewport: Some(viewport_of(snap)),
             media_environment: snap.media_environment,
@@ -1233,6 +1236,7 @@ impl Renderer {
             Some(m)
                 if m.scope != snap.resource_scope
                     || m.base_url != snap.base_url
+                    || m.document_url != snap.document_url
                     || m.facts.0 != snap.xml_document
                     || m.facts.1 != snap.content_language
                     || m.facts.2 != snap.quirks_mode

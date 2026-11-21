@@ -1276,7 +1276,7 @@ impl CalcNode {
                     // random keys construct the correct random cache name when parsed.
                     context
                         .property_declaration_context
-                        .increment_random_count();
+                        .increment_random_count(input.position().byte_index());
 
                     let key = match input.try_parse(|input| RandomKey::parse(context, input)) {
                         Ok(key) => {

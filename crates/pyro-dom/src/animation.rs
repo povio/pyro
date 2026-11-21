@@ -170,6 +170,67 @@ pub enum TransitionValue {
     Style(crate::timing::StyleSnapshot),
 }
 
+/// Absolute inset transition endpoints are already computed layout lengths. CSS
+/// keyframes instead interpolate their specified expressions before range limiting.
+fn bounded_transition_inset(
+    property: style::properties::PropertyDeclarationId,
+    style: &style::properties::ComputedValues,
+) -> Option<style::properties::animated_properties::AnimationValue> {
+    use style::properties::{LonghandId as L, PropertyDeclarationId::Longhand};
+    use style::properties::animated_properties::AnimationValue;
+    use style::values::computed::{CSSPixelLength, LengthPercentage};
+    use style::values::generics::position::GenericInset;
+
+    let pos = style.get_position();
+    let inset = match property {
+        Longhand(L::Left) => &pos.left,
+        Longhand(L::Right) => &pos.right,
+        Longhand(L::Top) => &pos.top,
+        Longhand(L::Bottom) => &pos.bottom,
+        _ => return None,
+    };
+    let GenericInset::LengthPercentage(lp) = inset else { return None };
+    let px = lp.to_length()?.px();
+    let bounded = crate::layout::bounded_layout_px(px);
+    if px == bounded {
+        return None;
+    }
+    let inset = GenericInset::LengthPercentage(LengthPercentage::new_length(CSSPixelLength::new(bounded)));
+    Some(match property {
+        Longhand(L::Left) => AnimationValue::Left(inset),
+        Longhand(L::Right) => AnimationValue::Right(inset),
+        Longhand(L::Top) => AnimationValue::Top(inset),
+        Longhand(L::Bottom) => AnimationValue::Bottom(inset),
+        _ => unreachable!(),
+    })
+}
+
+pub(crate) fn transition_endpoint_value(
+    physical: style::properties::PropertyDeclarationId,
+    style: &style::properties::ComputedValues,
+) -> Option<style::properties::animated_properties::AnimationValue> {
+    use style::properties::animated_properties::AnimationValue;
+    bounded_transition_inset(physical, style).or_else(|| AnimationValue::from_computed_values(physical, style))
+}
+
+/// Serialize the same computed endpoint for transition creation, interruption and keyframes.
+pub(crate) fn transition_endpoint_css(
+    property: style::properties::PropertyDeclarationId,
+    style: &style::properties::ComputedValues,
+) -> String {
+    use style::properties::PropertyDeclarationId::Longhand;
+    let physical = match property {
+        Longhand(id) => Longhand(id.to_physical(style.writing_mode)),
+        custom => custom,
+    };
+    let Some(inset) = bounded_transition_inset(physical, style) else {
+        return style.computed_value_to_string(property);
+    };
+    let mut bounded = style.clone();
+    inset.set_longhand_in_style(&mut bounded);
+    bounded.computed_value_to_string(physical)
+}
+
 /// The value of `longhand` a CSS transition from the style `before` to `after` gives at iteration
 /// progress `progress` (before `easing`, CSS text; `None`: `ease`; `before_flag` for step easings).
 /// Values that do not interpolate flip halfway; a transform's ends are the ends' own lists.
@@ -206,8 +267,8 @@ pub fn transition_value(
         }
     };
     let physical = PropertyDeclarationId::Longhand(id.to_physical(after.writing_mode));
-    let from = AnimationValue::from_computed_values(physical, before)?;
-    let to = AnimationValue::from_computed_values(physical, after)?;
+    let from = transition_endpoint_value(physical, before)?;
+    let to = transition_endpoint_value(physical, after)?;
     // `display` to or from `none` shows the other value throughout, `none` only at its end
     // (css-display-4 §2.1, Stylo's `Animate for Display`, which the discrete path skips).
     if longhand == "display" {
@@ -326,7 +387,7 @@ pub fn with_longhand_of(
 pub fn same_computed_value(longhand: &str, a: &crate::timing::StyleSnapshot, b: &crate::timing::StyleSnapshot) -> bool {
     let Some(id) = crate::stylo::property_id(longhand) else { return false };
     let Some(id) = id.as_shorthand().err() else { return false };
-    a.computed_value_to_string(id) == b.computed_value_to_string(id)
+    transition_endpoint_css(id, a) == transition_endpoint_css(id, b)
 }
 
 /// Whether an interpolated transform is one Stylo defers (`interpolatematrix()`,

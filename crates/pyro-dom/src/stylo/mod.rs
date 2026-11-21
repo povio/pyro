@@ -176,6 +176,33 @@ pub fn serialize(style: &ComputedValues, name: &str) -> Option<String> {
     }
 }
 
+/// Preserve the DOM double carried by a CSSUnitValue across the text bridge to Typed OM.
+pub(crate) fn precise_typed_numeric(style: &ComputedValues, name: &str, css: &str) -> Option<String> {
+    use style::typed_om::{NumericValue, TypedValue};
+    let id = property_id(name)?;
+    let longhand = id.longhand_id()?;
+    let mut context = style::values::resolved::Context { style, for_property: id, current_longhand: None };
+    // Use the same property-specific unzooming and resolution as the CSSOM string.
+    let declaration = style.computed_or_resolved_declaration(longhand, Some(&mut context));
+    let list = declaration.to_typed_value_list()?;
+    let [TypedValue::Numeric(NumericValue::Unit(unit))] = list.values.as_slice() else { return None };
+    let suffix = match unit.unit_str() {
+        "percent" => "%",
+        "number" => "",
+        other => other,
+    };
+    // Compound values can reify differently for different properties. Only replace a
+    // serialized standalone number with the same unit as the reified value.
+    css.strip_suffix(suffix)?.parse::<f64>().ok()?;
+    // CSSUnitValue stores numbers as f32 in Stylo, but an <integer> CSS
+    // declaration preserves all 32 bits. Keep the exact integer serialization.
+    if suffix.is_empty() && css.parse::<i32>().is_ok_and(|n|
+        n as f32 == unit.value && f64::from(n) != f64::from(unit.value)) {
+        return None;
+    }
+    unit.value.is_finite().then(|| format!("{}{suffix}", f64::from(unit.value)))
+}
+
 fn resolved_alignment(name: &str, value: String) -> String {
     if matches!(name, "align-items" | "align-content" | "align-self" | "justify-items" | "justify-content" | "justify-self" | "place-items" | "place-content" | "place-self")
         && value.contains("flex-")

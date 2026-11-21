@@ -285,3 +285,107 @@ fn font_affecting_properties_resolve_local_lengths_against_the_parent() {
     "#);
     assert_eq!(computed, "10|oblique 20deg|100px|50px|32");
 }
+
+#[test]
+fn a_local_url_retains_its_fragment_through_computed_style() {
+    let (_t, root) = page();
+    let actual = eval(&root, r##"
+        document.head.innerHTML = '<base href="https://example.test/assets/">';
+        document.body.innerHTML = '<div></div>';
+        const el = document.body.firstChild;
+        el.style.setProperty('--image', 'url("#mark")');
+        el.style.backgroundImage = 'var(--image)';
+        el.style.cursor = 'url(shape.svg#mark), auto';
+        const computed = getComputedStyle(el);
+        [computed.backgroundImage, computed.cursor].join('|')
+    "##);
+    assert_eq!(actual, r##"url("#mark")|url("https://example.test/assets/shape.svg#mark"), auto"##);
+}
+
+#[test]
+fn inline_if_random_indexes_follow_selected_substitutions_in_order() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        const el = document.body.appendChild(document.createElement('div'));
+        CSS.registerProperty({name:'--number',syntax:'<number>',initialValue:'1',inherits:false});
+        el.style.setProperty('--indices', [
+            'if(style(random(property-index-scoped, 0, 1) = random(ua-early---indices-1, 0, 1)): first; else: fail)',
+            'if(else: if(style(random(property-index-scoped, 0px, 1px) = random(ua-early---indices-3, 0px, 1px)): nested; else: fail))',
+            'if(style(--number: random(1,1)): registered; else: fail)',
+            'if(style(random(property-index-scoped, 0, 1) = random(ua-early---indices-6, 0, 1)): last; else: fail)'
+        ].join(' '));
+        getComputedStyle(el).getPropertyValue('--indices')
+    "#);
+    assert_eq!(actual, "first nested registered last");
+}
+
+#[test]
+fn extreme_insets_resolve_and_transition_in_layout_coordinates() {
+    let (_t, root) = page();
+    let values = eval(&root, r#"
+        const target = document.body.appendChild(document.createElement('div'));
+        target.style.cssText = 'position:absolute;left:33554400px';
+        const value = () => getComputedStyle(target).left;
+        const results = [value()];
+        target.style.zoom = '2';
+        target.style.left = 'calc(infinity * 1px)';
+        results.push(value());
+        target.style.zoom = '0.5';
+        target.style.left = '-1e20px';
+        results.push(value());
+        target.style.zoom = '1';
+        target.style.left = '0px';
+        value();
+        target.style.transition = 'left 100s steps(2, jump-end) -50s';
+        target.style.left = 'calc(infinity * 1px)';
+        results.push(value());
+        results.join('|')
+    "#);
+    assert_eq!(values, "3.35544e+07px|1.67772e+07px|-6.71089e+07px|1.67772e+07px");
+}
+
+#[test]
+fn typed_computed_numeric_retains_subpixel_precision_and_zoom() {
+    let (_t, root) = page();
+    assert_eq!(eval(&root, "document.body.style.order='16777217';document.body.computedStyleMap().get('order').value"), "16777217");
+    assert_eq!(eval(&root, r#"
+        document.body.innerHTML = `<style>
+          #n { width: 99.99999px; zoom: 2; margin-left: 32.125%; height: auto }
+        </style><div id="n"></div>`;
+        const m = document.getElementById('n').computedStyleMap();
+        const w = m.get('width'), p = m.get('margin-left');
+        [w.value === Math.fround(99.99999), w.unit, p.value, p.unit, m.get('height').value].join('|')
+    "#), "true|px|32.125|percent|auto");
+}
+
+#[test]
+fn transitions_compare_bounded_absolute_inset_endpoints() {
+    let (_t, root) = page();
+    let compared = eval(&root, r#"
+        const check = property => {
+            const target = document.body.appendChild(document.createElement('div'));
+            target.style.cssText = 'position:absolute;left:1e20px';
+            const read = () => getComputedStyle(target).left;
+            const transition = () => target.getAnimations().find(a => a.transitionProperty === 'left');
+            read();
+            target.style.transition = property + ' 100s steps(2, jump-end) -50s';
+            target.style.left = '1e30px';
+            read();
+            const noConstantTransition = !transition();
+            target.style.transition = 'none';
+            target.style.left = '0px';
+            read();
+            target.style.transition = property + ' 100s steps(2, jump-end) -50s';
+            target.style.left = '1e20px';
+            const firstSample = read();
+            const first = transition();
+            target.style.left = '1e30px';
+            const sameSample = read() === firstSample;
+            const sameTransition = !!first && transition() === first;
+            target.remove();
+            return noConstantTransition && sameSample && sameTransition;
+        };
+        [check('left'), check('all')].join('|')
+    "#);
+    assert_eq!(compared, "true|true");
+}

@@ -835,18 +835,8 @@ fn shown(longhand: Longhand, item: &str) -> String {
     }
 }
 
-/// CSSOM time values use six significant digits, including when rounding changes the exponent.
 fn serialize_seconds(seconds: f64) -> String {
-    if seconds == 0.0 || !seconds.is_finite() {
-        return "0s".to_owned();
-    }
-    let scientific = format!("{seconds:.5e}");
-    let (mantissa, exponent) = scientific.split_once('e').unwrap();
-    let exponent: i32 = exponent.parse().unwrap();
-    if (-4..6).contains(&exponent) {
-        return format!("{}s", scientific.parse::<f64>().unwrap());
-    }
-    format!("{}e{exponent:+03}s", mantissa.trim_end_matches('0').trim_end_matches('.'))
+    format!("{}s", crate::computed::serialize_css_number(seconds))
 }
 
 /// Chromium's computed `transition`: an item per `transition-property`
@@ -1037,10 +1027,10 @@ pub fn changed_longhands_with<'a>(
     let differs = |longhand: style::properties::LonghandId| {
         let id = PropertyDeclarationId::Longhand(longhand);
         let physical = PropertyDeclarationId::Longhand(longhand.to_physical(after.writing_mode));
-        before.computed_value_to_string(id) != after.computed_value_to_string(id)
+        crate::animation::transition_endpoint_css(id, before) != crate::animation::transition_endpoint_css(id, after)
             && match (
-                AnimationValue::from_computed_values(physical, before),
-                AnimationValue::from_computed_values(physical, after),
+                crate::animation::transition_endpoint_value(physical, before),
+                crate::animation::transition_endpoint_value(physical, after),
             ) {
                 // (A property Stylo animates discretely transitions only with `allow-discrete`,
                 // as in Chromium, css-transitions-2 §2.1, even where its `Animate` succeeds; WPT
@@ -1099,7 +1089,7 @@ pub fn transition_keyframes(
         PropertyDeclarationId::Longhand(id) => PropertyDeclarationId::Longhand(id.to_physical(after.writing_mode)),
         custom => custom,
     };
-    let value = |style: &StyleSnapshot| style.computed_value_to_string(physical);
+    let value = |style: &StyleSnapshot| crate::animation::transition_endpoint_css(physical, style);
     let mut name = String::new();
     cssparser::serialize_identifier(match physical { PropertyDeclarationId::Longhand(id) => id.name(), _ => longhand }, &mut name).ok()?;
     let frame = |offset: f64, value: String| crate::animation::TextKeyframe {

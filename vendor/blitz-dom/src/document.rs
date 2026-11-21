@@ -373,6 +373,7 @@ pub struct BaseDocument {
     // Config
     /// Base url for resolving linked resources (stylesheets, images, fonts, etc)
     pub(crate) url: DocumentUrl,
+    fragment_document: Option<DocumentUrl>,
     // Devtool settings. Currently used to render debug overlays
     pub(crate) devtool_settings: DevtoolSettings,
     // Viewport details such as the dimensions, HiDPI scale, and zoom factor,
@@ -864,8 +865,7 @@ impl BaseDocument {
 
         let viewport = config.viewport.unwrap_or_default();
         let media_type = config.media_type.unwrap_or_else(MediaType::screen);
-        let device = make_device(&viewport, None, media_type.clone(), config.media_environment, font_ctx.clone());
-        let stylist = Stylist::new(device, QuirksMode::NoQuirks);
+        let mut device = make_device(&viewport, None, media_type.clone(), config.media_environment, font_ctx.clone());
         let snapshots = SnapshotMap::new();
         let mut nodes = Box::new(NodeTree::new(config.raster_budget.clone()));
         nodes.xml_document = config.xml_document;
@@ -881,6 +881,9 @@ impl BaseDocument {
             .base_url
             .and_then(|url| DocumentUrl::from_str(&url).ok())
             .unwrap_or_default();
+        let fragment_document = config.document_url.and_then(|text| DocumentUrl::from_str(&text).ok());
+        device.set_document_url(fragment_document.as_ref().unwrap_or(&base_url).inline_url_data().clone());
+        let stylist = Stylist::new(device, QuirksMode::NoQuirks);
         nodes.base_url = without_fragment(base_url.as_str()).to_owned();
 
         let net_provider = config
@@ -936,6 +939,7 @@ impl BaseDocument {
             inline_urls: std::sync::Arc::new(std::sync::Mutex::new(vec![base_url.inline_url_data().clone()])),
             devtool_settings: DevtoolSettings::default(),
             url: base_url,
+            fragment_document,
             nodes_to_stylesheet: BTreeMap::new(),
             shadow_sheet_hosts: HashMap::new(),
             linked_page_css: BTreeMap::new(),
@@ -1146,6 +1150,7 @@ impl BaseDocument {
     /// Set base url for resolving linked resources (stylesheets, images, fonts, etc)
     pub fn set_base_url(&mut self, url: &str) {
         self.url = DocumentUrl::from(Url::parse(url).unwrap());
+        self.stylist.device_mut().set_document_url(self.fragment_document.as_ref().unwrap_or(&self.url).inline_url_data().clone());
         crate::net::adopt_inline(&self.inline_urls, self.url.inline_url_data());
         self.nodes.base_url = without_fragment(self.url.as_str()).to_owned();
     }
@@ -2278,9 +2283,14 @@ impl BaseDocument {
         urls
     }
 
-    /// The document's base URL
+    /// Whether a resolved CSS URL refers to this document, ignoring its fragment.
+    pub fn is_document_url(&self, url: &Url) -> bool {
+        self.fragment_document.as_ref().unwrap_or(&self.url).is_same_document(url)
+    }
+
+    /// The document URL used to identify same-document resources.
     pub fn url(&self) -> &url::Url {
-        &self.url
+        self.fragment_document.as_ref().unwrap_or(&self.url)
     }
 
     /// pyro: `options` for a request this document makes, with this document's frame as the
@@ -4153,6 +4163,7 @@ impl BaseDocument {
         }
 
         let mut device = make_device(&self.viewport, self.layout_size, self.media_type.clone(), self.media_environment, self.font_ctx.clone());
+        device.set_document_url(self.fragment_document.as_ref().unwrap_or(&self.url).inline_url_data().clone());
         device.set_page_color_scheme(self.page_color_scheme);
         device.set_viewport_unit_inset(self.viewport_unit_inset);
         self.set_stylist_device(device);
@@ -5911,6 +5922,7 @@ impl BaseDocument {
                 let config = crate::DocumentConfig {
                     viewport: Some(viewport.clone()),
                     base_url: None,
+                    document_url: None,
                     font_ctx: Some(self.font_ctx.lock().unwrap().clone()),
                     media_type: Some(self.media_type.clone()),
                     media_environment: self.media_environment,
