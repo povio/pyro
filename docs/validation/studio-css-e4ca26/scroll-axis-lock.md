@@ -11,3 +11,10 @@ Studio, WPT `a421f2fea5eb7f91e0db399e44b0fb0779ee1603`, stable Chrome `158.0.812
 | Chrome stable | 216 | 1,696 |
 
 Four new strict pages: valid parsing, computed value, inheritance and discrete interpolation. The 59 new passes comprise 6, 8, 2 and 42 names on those pages, plus one new XML enumeration assertion. Zero LP-only page or name losses. Candidate-exclusive versus Chrome: 3 pages / 52 names; Chrome-exclusive: 99 / 328. Touch, viewport and subframe input failures remain in the results; no interaction-test gain is claimed. This focused set does not replace the 8,082 main, 41 supplemental and 39 withheld accounting.
+## Viewport and nested-frame scrolling
+
+The negative-direction wheel checks failed **before** dispatch: the viewport clamped `scrollLeft` to 3,208 rather than 3,223; inside the frame it clamped to 800 rather than 815. The scrollbar occupied those 15 CSS pixels. The clamp now uses the visible scrollport instead of the entire frame; root client geometry still uses the layout viewport on mobile. The two wheel pages strictly pass (+2 pages, +4 names; no losses across the 239 URLs). All 298 additional scroll-snap, writing-mode, and CSSOM View control URLs had identical passing and observed sets against the parent (128 strict, 1,900 named). The desktop Chrome controls passed 256 strict / 2,334 named. This change does not claim new touch coverage.
+
+## Remaining gap ranking at the full matrix checkpoint
+
+The exact main differences at `64833ed4` contain 1,631 Chrome-only pages and 8,759 Chrome-only names. Grouping names gives 837 across `calc-size/` (20 Chrome-only strict pages), 369 across CSS mixins (24), 331 across random-function pages (6), 242 across conditional-substitution pages (7), and 148 rounded-polygon names (10). The first four are investigation families, not proven single root causes. Overflow (99), conditional rules (93), scroll snap (92), and anchor positioning (91) led by Chrome-only page count before the axis-lock work. The 24 unresolved repeater-color names are a subset of 30 Chrome-exclusive names on the two rule-color interpolation pages. No rounding tolerance was changed.
