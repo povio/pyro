@@ -14,7 +14,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use pyro_dom::cssom::{normalize_relative_selector, parse_rules, CounterDescriptor, CounterRule, Namespaces, PaletteRule, ParsedRule, ParseRelative, PropertyRule};
+use pyro_dom::cssom::{normalize_relative_selector, parse_rules, CounterDescriptor, CounterRule, FeatureRule, Namespaces, PaletteRule, ParsedRule, ParseRelative, PropertyRule};
 use pyro_dom::stylo::declarations::{self, DeclarationBlock};
 use pyro_dom::NodeId;
 use pyro_js::{ClassDef, IdentityKey, JsClass, JsError, JsResult, NoParent, Object, Scope, Value};
@@ -382,7 +382,7 @@ impl StyleData {
                             write_page(&*owner.rules()?, &page, None);
                         }
                     }
-                    RuleKind::Counter(_) | RuleKind::Group { .. } | RuleKind::Property(_) | RuleKind::Palette(_) | RuleKind::ViewTransition { .. } => return Ok(()),
+                    RuleKind::Features(_) | RuleKind::Counter(_) | RuleKind::Group { .. } | RuleKind::Property(_) | RuleKind::Palette(_) | RuleKind::ViewTransition { .. } => return Ok(()),
                 }
                 owner.commit(&*owner.rules()?);
                 Ok(())
@@ -683,6 +683,7 @@ impl RuleList {
 
 enum RuleKind {
     Counter(RefCell<CounterRule>),
+    Features(RefCell<FeatureRule>),
     ViewTransition { navigation: String, types: Vec<String>, text: String },
     Declarations(RefCell<String>),
     Property(PropertyRule),
@@ -715,6 +716,7 @@ impl RuleNode {
                     RuleKind::Group { name: "scope".into(), condition: RefCell::new(parts.join(" ")), list, bounds: Some((start, end)) }
                 }
                 ParsedRule::Property(rule) => RuleKind::Property(rule),
+                ParsedRule::Features(rule) => RuleKind::Features(RefCell::new(rule)),
                 ParsedRule::Counter(rule) => RuleKind::Counter(RefCell::new(rule)),
                 ParsedRule::Palette(rule) => RuleKind::Palette(rule),
                 ParsedRule::Style { selector, block, rules } => {
@@ -739,6 +741,7 @@ impl RuleNode {
             RuleKind::ViewTransition { text, .. } => text.clone(),
             RuleKind::Declarations(text) => text.borrow().clone(),
             RuleKind::Counter(rule) => rule.borrow().text(),
+            RuleKind::Features(rule) => rule.borrow().text(),
             RuleKind::Palette(rule) => rule.text.clone(),
             RuleKind::Property(rule) => rule.text.clone(),
             RuleKind::Style { selector, block, list } => {
@@ -766,6 +769,7 @@ impl RuleNode {
             }
             RuleKind::Declarations(text) => DeclarationBlock::parse(&text.borrow()).css_text(),
             RuleKind::Counter(rule) => rule.borrow().text(),
+            RuleKind::Features(rule) => rule.borrow().text(),
             RuleKind::Palette(rule) => rule.text.clone(),
             RuleKind::Property(rule) => rule.text.clone(),
             RuleKind::Style { selector, block, list } => {
@@ -1040,6 +1044,7 @@ fn rule_wrapper<'s>(s: &Scope<'s>, rule: &Rc<RuleNode>, owner: &SheetOwner) -> J
         RuleKind::Group { name, .. } if name == "container" => s.wrap::<CssContainerRule>(data, key),
         RuleKind::Group { bounds: Some(_), .. } => s.wrap::<CssScopeRule>(data, key),
         RuleKind::Group { .. } => s.wrap::<CssConditionRule>(data, key),
+        RuleKind::Features(_) => s.wrap::<CssFontFeatureValuesRule>(data, key),
         RuleKind::Counter(_) => s.wrap::<CssCounterStyleRule>(data, key),
         RuleKind::Other { rule_type: MARGIN_RULE, .. } => s.wrap::<CssMarginRule>(data, key),
         RuleKind::Other { text, .. } => {
@@ -1049,7 +1054,6 @@ fn rule_wrapper<'s>(s: &Scope<'s>, rule: &Rc<RuleNode>, owner: &SheetOwner) -> J
                 "font-face" => s.wrap::<CssFontFaceRule>(data, key),
                 "page" => s.wrap::<CssPageRule>(data, key),
                 "namespace" => s.wrap::<CssNamespaceRule>(data, key),
-                "font-feature-values" => s.wrap::<CssFontFeatureValuesRule>(data, key),
                 "layer" if text.trim_end().ends_with(';') => s.wrap::<CssLayerStatementRule>(data, key),
                 "layer" => s.wrap::<CssLayerBlockRule>(data, key),
                 "starting-style" => s.wrap::<CssStartingStyleRule>(data, key),
@@ -1146,6 +1150,7 @@ fn define_rule<C: JsClass<Data = RuleData>>(def: &mut ClassDef<C>) {
     def.getter("type", |s, r| {
         Ok(s.number(match &r.node()?.kind {
             RuleKind::Counter(_) => 11.0,
+            RuleKind::Features(_) => 14.0,
             RuleKind::Style { .. } => 1.0,
             RuleKind::Group { name, .. } if matches!(name.as_str(), "keyframes" | "-webkit-keyframes") => 7.0,
             RuleKind::Group { name, .. } if name == "media" => 4.0,
@@ -1742,7 +1747,108 @@ rule_class!(CssNamespaceRule, "CSSNamespaceRule", CssRule, |def| {
     def.getter("namespaceURI", |s, r| Ok(s.string(&parts(r).1)));
     def.getter("prefix", |s, r| Ok(s.string(&parts(r).0)));
 });
-rule_class!(CssFontFeatureValuesRule, "CSSFontFeatureValuesRule", CssRule);
+fn feature_rule(data: &RuleData) -> JsResult<&RefCell<FeatureRule>> {
+    match &data.node()?.kind {
+        RuleKind::Features(rule) => Ok(rule),
+        _ => unreachable!(),
+    }
+}
+
+fn commit_feature_edit(data: &RuleData) -> JsResult<()> {
+    let model = data.owner.rules()?;
+    if is_attached(&model, &data.rule_node) { data.owner.commit(&model); }
+    Ok(())
+}
+
+fn feature_map<'s, const BLOCK: usize>(s: &Scope<'s>, data: &RuleData) -> JsResult<Value<'s>> {
+    let node = data.node()?;
+    let key = IdentityKey(node.identity.0 | ((BLOCK as u64 + 1) << 40), node.identity.1);
+    if let Some(obj) = s.lookup_identity(key) { return Ok(obj.value()); }
+    let rule = RuleData { owner: data.owner.hold()?, rule_node: node.clone() };
+    Ok(s.wrap::<CssFontFeatureValuesMap>(FeatureMapData { rule, block: BLOCK }, Some(key))?.value())
+}
+
+rule_class!(CssFontFeatureValuesRule, "CSSFontFeatureValuesRule", CssRule, |def| {
+    def.accessor("fontFamily", |s, d| Ok(s.string(&feature_rule(d)?.borrow().family)), |_s, d, value| {
+        let text = dom_string(value)?;
+        if feature_rule(d)?.borrow_mut().set_family(&text) { commit_feature_edit(d)?; }
+        Ok(())
+    });
+    def.getter("swash", feature_map::<0>);
+    def.getter("stylistic", feature_map::<1>);
+    def.getter("ornaments", feature_map::<2>);
+    def.getter("annotation", feature_map::<3>);
+    def.getter("characterVariant", feature_map::<4>);
+    def.getter("styleset", feature_map::<5>);
+});
+
+pub struct FeatureMapData {
+    rule: RuleData,
+    block: usize,
+}
+
+pub(crate) struct CssFontFeatureValuesMap;
+impl JsClass for CssFontFeatureValuesMap {
+    const NAME: &'static str = "CSSFontFeatureValuesMap";
+    type Data = FeatureMapData;
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        def.getter("size", |s, d| Ok(s.number(feature_rule(&d.rule)?.borrow().maps[d.block].len() as f64)));
+        def.method("get", 1, |s, d, args| {
+            args.require(1, "CSSFontFeatureValuesMap.get")?;
+            let key = dom_string(args.get(0))?;
+            let rule = feature_rule(&d.rule)?.borrow();
+            let Some(values) = rule.maps[d.block].get(&key) else { return Ok(s.undefined()) };
+            feature_indexes(s, values)
+        });
+        def.method("has", 1, |s, d, args| {
+            args.require(1, "CSSFontFeatureValuesMap.has")?;
+            let key = dom_string(args.get(0))?;
+            Ok(s.boolean(feature_rule(&d.rule)?.borrow().maps[d.block].get(&key).is_some()))
+        });
+        def.method("delete", 1, |s, d, args| {
+            args.require(1, "CSSFontFeatureValuesMap.delete")?;
+            let key = dom_string(args.get(0))?;
+            let removed = feature_rule(&d.rule)?.borrow_mut().maps[d.block].delete(&key);
+            if removed { commit_feature_edit(&d.rule)?; }
+            Ok(s.boolean(removed))
+        });
+        def.method("clear", 0, |s, d, _| {
+            if feature_rule(&d.rule)?.borrow_mut().maps[d.block].clear() { commit_feature_edit(&d.rule)?; }
+            Ok(s.undefined())
+        });
+        // install.js performs WebIDL union conversion before reaching this mutator.
+        def.method("set", 2, |s, d, args| {
+            args.require(2, "CSSFontFeatureValuesMap.set")?;
+            let key = dom_string(args.get(0))?;
+            let seq = args.get(1).as_object().ok_or_else(|| JsError::Type("Expected feature indexes".into()))?;
+            let count = to_u32(seq.get("length")?)?;
+            let limit = match d.block { 5 => u32::MAX, 4 => 2, _ => 1 };
+            if count == 0 || count > limit {
+                return Err(JsError::dom("InvalidAccessError", "Invalid number of font feature indexes."));
+            }
+            let values = (0..count).map(|i| to_u32(seq.get_index(i)?)).collect::<JsResult<Vec<_>>>()?;
+            if feature_rule(&d.rule)?.borrow_mut().maps[d.block].set(key, values) { commit_feature_edit(&d.rule)?; }
+            Ok(s.undefined())
+        });
+        // Consumed and hidden by the iterator prototype hook.
+        def.method("nextEntry", 1, |s, d, args| {
+            let cursor = args.get(0).to_number()? as u64;
+            let rule = feature_rule(&d.rule)?.borrow();
+            let Some((next, key, values)) = rule.maps[d.block].next(cursor) else { return Ok(s.undefined()) };
+            let mut entry = pyro_js::RootedVec::new();
+            entry.push(s, s.number(next as f64));
+            entry.push(s, s.string(key));
+            entry.push(s, feature_indexes(s, values)?);
+            Ok(s.array(&entry.iter(s).collect::<Vec<_>>())?.value())
+        });
+    }
+}
+
+fn feature_indexes<'s>(s: &Scope<'s>, values: &[u32]) -> JsResult<Value<'s>> {
+    Ok(s.array(&values.iter().map(|&v| s.number(v as f64)).collect::<Vec<_>>())?.value())
+}
+
 rule_class!(CssLayerBlockRule, "CSSLayerBlockRule", CssGroupRule, |def| {
     def.getter("name", |s, r| match &r.node()?.kind {
         RuleKind::Group { condition, .. } => Ok(s.string(&condition.borrow())),
@@ -2261,7 +2367,7 @@ impl MediaList {
                         let media = if text.is_empty() { String::new() } else { format!(" {text}") };
                         *rule.borrow_mut() = format!("@import {head}{media};");
                     }
-                    RuleKind::Counter(_) | RuleKind::Style { .. } | RuleKind::Property(_) | RuleKind::Palette(_) | RuleKind::Declarations(_) | RuleKind::ViewTransition { .. } => return Ok(()),
+                    RuleKind::Features(_) | RuleKind::Counter(_) | RuleKind::Style { .. } | RuleKind::Property(_) | RuleKind::Palette(_) | RuleKind::Declarations(_) | RuleKind::ViewTransition { .. } => return Ok(()),
                 }
                 r.owner.commit(&*r.owner.rules()?);
                 return Ok(());
@@ -2922,6 +3028,7 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<CssKeyframeRule>();
     engine.register::<CssNamespaceRule>();
     engine.register::<CssFontFeatureValuesRule>();
+    engine.register::<CssFontFeatureValuesMap>();
     engine.register::<CssLayerBlockRule>();
     engine.register::<CssLayerStatementRule>();
     engine.register::<CssPropertyRule>();

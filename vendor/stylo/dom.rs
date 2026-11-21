@@ -1006,6 +1006,12 @@ pub trait TElement:
 
 /// Provides element-level context needed during style computation.
 pub trait ElementContext {
+    /// Looks up a function in the reference tree or an enclosing host tree.
+    fn lookup_function(&self, stylist: &crate::stylist::Stylist, _: crate::rule_tree::CascadeLevel, name: &crate::Atom, _: usize)
+        -> Option<(Arc<crate::stylesheets::FunctionRule>, usize)> {
+        stylist.iter_extra_data_origins().find_map(|(data, _)| data.functions.get(name).cloned()).map(|rule| (rule, usize::MAX))
+    }
+
     /// Opaque handle to the element.
     fn opaque_element(&self) -> Option<OpaqueElement>;
 
@@ -1026,6 +1032,20 @@ pub trait ElementContext {
 }
 
 impl<T: TElement> ElementContext for T {
+    fn lookup_function(&self, stylist: &crate::stylist::Stylist, scope: crate::rule_tree::CascadeLevel, name: &crate::Atom, skip: usize)
+        -> Option<(Arc<crate::stylesheets::FunctionRule>, usize)> {
+        let mut shadow = scope.get_shadow_root_for_scoped(*self);
+        let mut depth = 0;
+        while let Some(root) = shadow {
+            if depth >= skip && let Some(rule) = root.style_data().and_then(|d| d.function_by_name(name)) {
+                return Some((rule.clone(), depth));
+            }
+            depth += 1;
+            shadow = root.host().containing_shadow();
+        }
+        stylist.iter_extra_data_origins().find_map(|(data, _)| data.functions.get(name).cloned()).map(|rule| (rule, usize::MAX))
+    }
+
     fn opaque_element(&self) -> Option<OpaqueElement> {
         Some(self.opaque())
     }

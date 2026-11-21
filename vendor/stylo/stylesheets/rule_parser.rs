@@ -252,6 +252,7 @@ pub enum AtRuleType {
     FontFace,
     FontFeatureValues,
     FontFeatureValuesBlock,
+    Function,
     FontPaletteValues,
     CounterStyle,
     Media,
@@ -277,6 +278,7 @@ impl AtRuleType {
     fn from_name(name: &str, context: &ParserContext) -> Option<Self> {
         Some(match_ignore_ascii_case! { name,
             "font-face" => Self::FontFace,
+            "function" => Self::Function,
             "font-feature-values" => Self::FontFeatureValues,
             "font-palette-values" if crate::pref!("layout.css.font-palette.enabled", gecko = true) => Self::FontPaletteValues,
             // pyro: for servo too (blitz-dom reads `system: extends` for list markers).
@@ -330,6 +332,8 @@ pub enum AtRulePrelude {
     FontFace,
     /// A @font-feature-values rule prelude, with its FamilyName list.
     FontFeatureValues(Vec<FamilyName>),
+    /// A custom function signature.
+    Function(crate::stylesheets::FunctionRule),
     /// A @font-palette-values rule prelude, with its identifier.
     FontPaletteValues(DashedIdent),
     /// A @counter-style rule prelude, with its counter style name.
@@ -631,6 +635,7 @@ impl<'a, 'i> NestedRuleParser<'a, 'i> {
                     .unwrap_or_default();
                 AtRulePrelude::Layer(names)
             },
+            AtRuleType::Function => AtRulePrelude::Function(crate::stylesheets::FunctionRule::prelude(&self.context, input)?),
             AtRuleType::FontFeatureValues => {
                 let family_names = parse_family_name_list(&self.context, input)?;
                 AtRulePrelude::FontFeatureValues(family_names)
@@ -723,6 +728,7 @@ impl<'a, 'i> NestedRuleParser<'a, 'i> {
 
             AtRulePrelude::Namespace(..)
             | AtRulePrelude::FontFace
+            | AtRulePrelude::Function(..)
             | AtRulePrelude::FontFeatureValues(..)
             | AtRulePrelude::FontPaletteValues(..)
             | AtRulePrelude::CounterStyle(..)
@@ -922,6 +928,7 @@ impl<'a, 'i> AtRuleParser<'i> for NestedRuleParser<'a, 'i> {
                     source_location,
                 ))))
             }),
+            AtRulePrelude::Function(rule) => CssRule::Function(Arc::new(rule.parse_body(&self.context, input))),
             AtRulePrelude::FontFeatureValues(family_names) => {
                 self.nest_for_rule(CssRuleType::FontFeatureValues, |p| {
                     CssRule::FontFeatureValues(Arc::new(FontFeatureValuesRule::parse(

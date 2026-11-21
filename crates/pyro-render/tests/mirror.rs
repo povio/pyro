@@ -6228,3 +6228,15 @@ fn review_misc2_a_password_input_size_change_paints_as_a_fresh_build() {
     // Pre-existing, not from the layout dispatch split: the same hashes on 267ac8c5 and 42c7a0f0.
     steps_match_fresh_builds(r#"<input id=pw type=password size=7 value=secret>"#, vec![attr("#pw", "size", "15")]);
 }
+
+#[test]
+fn inline_media_conditions_update_when_the_device_changes() {
+    let page = Page::new("<!doctype html><style>body { margin:0; --tone: if(media(width < 100px): red; else: blue); background:var(--tone) }</style><body></body>");
+    let mut renderer = Renderer::new();
+    let mut snap = page.snapshot(1, page.tree());
+    for (width, expected) in [(80, [255, 0, 0]), (120, [0, 0, 255]), (90, [255, 0, 0])] {
+        snap.width = width;
+        let (image, _) = renderer.render(&snap, Area::Viewport, Backend::Cpu, &fetcher()).unwrap();
+        assert_eq!(&image.data[..3], &expected, "viewport {width}");
+    }
+}

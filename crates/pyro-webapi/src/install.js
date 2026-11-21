@@ -129,6 +129,46 @@
     },
   };
 
+  const fontFeatureMap = (proto) => {
+    const nextEntry = proto.nextEntry, nativeSet = proto.set;
+    const size = getOwnPropertyDescriptor(proto, 'size').get;
+    delete proto.nextEntry;
+    const define = (name, value) => defineProperty(proto, name, { __proto__: null, value, writable: true, enumerable: true, configurable: true });
+    function entries() { return iterator(this, 0); }
+    function iterator(map, kind) {
+      apply(size, map, []); // Brand check at iterator creation.
+      let cursor = 0, done = false;
+      return {
+        __proto__: iteratorPrototypeOfArrays,
+        next() {
+          const entry = done ? undefined : apply(nextEntry, map, [cursor]);
+          if (entry === undefined) { done = true; return { value: undefined, done }; }
+          cursor = entry[0];
+          return { value: kind === 1 ? entry[1] : kind === 2 ? entry[2] : [entry[1], entry[2]], done };
+        },
+      };
+    }
+    define('set', function set(key, indexes) {
+      apply(size, this, []);
+      if (arguments.length < 2) throw new TypeError_('CSSFontFeatureValuesMap.set requires two arguments');
+      if (typeof key === 'symbol') throw new TypeError_('Cannot convert symbol to string');
+      key = String_(key);
+      const values = [];
+      const method = indexes !== null && (typeof indexes === 'object' || typeof indexes === 'function')
+        ? indexes[symbolIterator] : undefined;
+      if (method == null) { append(values, indexes >>> 0); }
+      else {
+        for (const v of { [symbolIterator]() { return apply(method, indexes, []); } }) append(values, v >>> 0);
+      }
+      return apply(nativeSet, this, [key, values]);
+    });
+    define('entries', entries);
+    define('keys', function keys() { return iterator(this, 1); });
+    define('values', function values() { return iterator(this, 2); });
+    define('forEach', forEachOf(entries));
+    defineProperty(proto, symbolIterator, { __proto__: null, value: entries, writable: true, configurable: true });
+  };
+
   // url_search_params, given the native USVString conversion: [helpers, the
   // steps completing URLSearchParams.prototype and the iterator prototype
   // once their members are installed].
@@ -264,6 +304,7 @@
     formData: [formDataPopulated, formDataIteratorPopulated],
     headers: [headersHelpers, headersPopulated],
     urlSearchParams,
+    fontFeatureMap,
     structuredClone: structuredCloneFactory,
     // Element's own [Unscopable] `slot` (DOM) joins ChildNode's and ParentNode's.
     unscopables: [unscopable([...child, ...parent, 'slot']), unscopable(child), unscopable(child), unscopable([...parent, 'fullscreen']), unscopable(parent)],

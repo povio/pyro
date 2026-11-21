@@ -2569,6 +2569,9 @@ pub struct ExtraStyleData {
     /// A list of effective font-palette-values rules.
     pub font_palette_values: LayerOrderedVec<Arc<FontPaletteValuesRule>>,
 
+    /// Effective custom functions by dashed name.
+    pub functions: LayerOrderedMap<Arc<crate::stylesheets::FunctionRule>>,
+
     /// A map of effective counter-style rules.
     pub counter_styles: LayerOrderedMap<Arc<Locked<CounterStyleRule>>>,
 
@@ -2651,6 +2654,7 @@ impl ExtraStyleData {
     fn sort_by_layer(&mut self, layers: &[CascadeLayer]) {
         self.font_faces.sort(layers);
         self.font_feature_values.sort(layers);
+        self.functions.sort(layers);
         self.font_palette_values.sort(layers);
         self.counter_styles.sort(layers);
         self.position_try_rules.sort(layers);
@@ -2660,6 +2664,7 @@ impl ExtraStyleData {
     fn clear(&mut self) {
         self.font_faces.clear();
         self.font_feature_values.clear();
+        self.functions.clear();
         self.font_palette_values.clear();
         self.counter_styles.clear();
         self.position_try_rules.clear();
@@ -2697,6 +2702,7 @@ impl MallocSizeOf for ExtraStyleData {
         let mut n = 0;
         n += self.font_faces.shallow_size_of(ops);
         n += self.font_feature_values.shallow_size_of(ops);
+        n += self.functions.shallow_size_of(ops);
         n += self.font_palette_values.shallow_size_of(ops);
         n += self.counter_styles.shallow_size_of(ops);
         n += self.position_try_rules.shallow_size_of(ops);
@@ -3763,6 +3769,11 @@ pub fn replace_parent_selector_with_implicit_scope(
 }
 
 impl CascadeData {
+    pub(crate) fn function_by_name(&self, name: &Atom) -> Option<&Arc<crate::stylesheets::FunctionRule>> {
+        self.extra_data.functions.get(name)
+    }
+
+
     /// pyro: the `@counter-style` rule named `name` in this cascade data (an embedder resolving a
     /// counter style name in a shadow tree before the document's).
     pub fn counter_style(&self, name: &Atom) -> Option<&Arc<Locked<CounterStyleRule>>> {
@@ -4536,6 +4547,9 @@ impl CascadeData {
                     self.extra_data
                         .add_font_face(rule, containing_rule_state.layer_id);
                 },
+                CssRule::Function(ref rule) => {
+                    self.extra_data.functions.try_insert(&rule.name, rule.clone(), containing_rule_state.layer_id)?;
+                },
                 CssRule::FontFeatureValues(ref rule) => {
                     self.extra_data
                         .add_font_feature_values(rule, containing_rule_state.layer_id);
@@ -5002,6 +5016,7 @@ impl CascadeData {
                 | CssRule::LayerBlock(..)
                 | CssRule::LayerStatement(..)
                 | CssRule::FontPaletteValues(..)
+                | CssRule::Function(..)
                 | CssRule::FontFeatureValues(..)
                 | CssRule::Scope(..)
                 | CssRule::StartingStyle(..)

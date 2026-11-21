@@ -58,6 +58,8 @@ pub use self::container_rule::ContainerRule;
 pub use self::counter_style_rule::CounterStyleRule;
 pub use self::document_rule::DocumentRule;
 pub use self::font_face_rule::FontFaceRule;
+pub mod function_rule;
+pub use self::function_rule::FunctionRule;
 pub use self::font_feature_values_rule::FontFeatureValuesRule;
 pub use self::font_palette_values_rule::FontPaletteValuesRule;
 pub use self::import_rule::ImportRule;
@@ -344,6 +346,7 @@ pub enum CssRule {
     Container(Arc<ContainerRule>),
     FontFace(Arc<Locked<FontFaceRule>>),
     FontFeatureValues(Arc<FontFeatureValuesRule>),
+    Function(Arc<FunctionRule>),
     FontPaletteValues(Arc<FontPaletteValuesRule>),
     CounterStyle(Arc<Locked<CounterStyleRule>>),
     Keyframes(Arc<Locked<KeyframesRule>>),
@@ -390,6 +393,7 @@ impl CssRule {
             },
             CssRule::FontFace(_) => 0,
             CssRule::FontFeatureValues(_) => 0,
+            CssRule::Function(_) => 0,
             CssRule::FontPaletteValues(_) => 0,
             CssRule::CounterStyle(_) => 0,
             CssRule::Keyframes(_) => 0,
@@ -454,6 +458,7 @@ impl CssRule {
             | CssRule::Property(_)
             | CssRule::LayerStatement(_)
             | CssRule::FontFeatureValues(_)
+            | CssRule::Function(_)
             | CssRule::FontPaletteValues(_)
             | CssRule::NestedDeclarations(_)
             | CssRule::PositionTry(_)
@@ -520,6 +525,7 @@ pub enum CssRuleRef<'a> {
     Container(&'a ContainerRule),
     FontFace(&'a LockedFontFaceRule),
     FontFeatureValues(&'a FontFeatureValuesRule),
+    Function(&'a FunctionRule),
     FontPaletteValues(&'a FontPaletteValuesRule),
     CounterStyle(&'a LockedCounterStyleRule),
     Keyframes(&'a LockedKeyframesRule),
@@ -549,6 +555,7 @@ impl<'a> From<&'a CssRule> for CssRuleRef<'a> {
             CssRule::Container(r) => CssRuleRef::Container(r.as_ref()),
             CssRule::FontFace(r) => CssRuleRef::FontFace(r.as_ref()),
             CssRule::FontFeatureValues(r) => CssRuleRef::FontFeatureValues(r.as_ref()),
+            CssRule::Function(r) => CssRuleRef::Function(r.as_ref()),
             CssRule::FontPaletteValues(r) => CssRuleRef::FontPaletteValues(r.as_ref()),
             CssRule::CounterStyle(r) => CssRuleRef::CounterStyle(r.as_ref()),
             CssRule::Keyframes(r) => CssRuleRef::Keyframes(r.as_ref()),
@@ -615,6 +622,7 @@ pub enum CssRuleType {
     AppearanceBase = 26,
     // https://drafts.csswg.org/css-view-transitions-2/#view-transition-rule
     ViewTransition = 27,
+    Function = 28,
 }
 
 impl CssRuleType {
@@ -730,6 +738,7 @@ impl CssRule {
             CssRule::CustomMedia(_) => CssRuleType::CustomMedia,
             CssRule::FontFace(_) => CssRuleType::FontFace,
             CssRule::FontFeatureValues(_) => CssRuleType::FontFeatureValues,
+            CssRule::Function(_) => CssRuleType::Function,
             CssRule::FontPaletteValues(_) => CssRuleType::FontPaletteValues,
             CssRule::CounterStyle(_) => CssRuleType::CounterStyle,
             CssRule::Keyframes(_) => CssRuleType::Keyframes,
@@ -860,6 +869,7 @@ impl DeepCloneWithLock for CssRule {
                 CssRule::FontFace(Arc::new(lock.wrap(rule.clone())))
             },
             CssRule::FontFeatureValues(ref arc) => CssRule::FontFeatureValues(arc.clone()),
+            CssRule::Function(ref arc) => CssRule::Function(arc.clone()),
             CssRule::FontPaletteValues(ref arc) => CssRule::FontPaletteValues(arc.clone()),
             CssRule::CounterStyle(ref arc) => {
                 let rule = arc.read_with(guard);
@@ -924,6 +934,7 @@ impl ToCssWithGuard for CssRule {
             CssRule::Style(ref lock) => lock.read_with(guard).to_css(guard, dest),
             CssRule::FontFace(ref lock) => lock.read_with(guard).to_css(guard, dest),
             CssRule::FontFeatureValues(ref rule) => rule.to_css(guard, dest),
+            CssRule::Function(ref rule) => rule.to_css(guard, dest),
             CssRule::FontPaletteValues(ref rule) => rule.to_css(guard, dest),
             CssRule::CounterStyle(ref lock) => lock.read_with(guard).to_css(guard, dest),
             CssRule::Keyframes(ref lock) => lock.read_with(guard).to_css(guard, dest),

@@ -492,3 +492,124 @@ fn inherit_reads_the_parent_and_only_resolves_a_selected_fallback() {
     "#);
     assert_eq!(values, "7:parent child|11:updated child|A//C|2");
 }
+
+#[test]
+fn font_feature_value_maps_read_and_update_the_owning_rule() {
+    let (_t, root) = page();
+    let result = eval(&root, r#"
+        const sheet = new CSSStyleSheet();
+        sheet.replaceSync('@font-feature-values Demo { @swash { a: 4; a: sibling-index() } @styleset { b: 2 3; a: 1; b: 8 9 } }');
+        const rule = sheet.cssRules[0], map = rule.styleset;
+        const initial = [...map].map(([key, value]) => key + ':' + value.join(',')).join('/');
+        const copy = map.get('b');
+        copy[0] = 99;
+        map.set('a', new Set([5, 7]));
+        map.delete('b');
+        map.set('b', 6);
+        rule.fontFamily = 'Other Family';
+        const visits = [];
+        map.forEach((value, key, self) => visits.push(key + ':' + value.join(',') + ':' + (self === map)));
+        let limits = '';
+        try { rule.swash.set('bad', [1, 2]); } catch (e) { limits = e.name; }
+        [initial, visits.join('/'), map === rule.styleset, rule.swash.get('a')[0],
+         limits, rule.cssText.includes('@styleset { a: 5 7; b: 6; }'), rule.fontFamily].join('|')
+    "#);
+    assert_eq!(result, "b:8,9/a:1|a:5,7:true/b:6:true|true|4|InvalidAccessError|true|Other Family");
+}
+
+#[test]
+fn custom_functions_resolve_typed_parameters_and_locals() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        const s = document.head.appendChild(document.createElement('style'));
+        s.textContent = `
+          @function --add(--x <length>, --y <length>: var(--x)) returns <length> {
+            --copy: var(--x);
+            result: calc(var(--copy) + var(--y));
+          }
+          @function --nested(--input) { result: --add(var(--input)); }
+          #f { --input: 99px; width: --nested(9px); --out: --add(10px, 3px) }
+        `;
+        const el = document.body.appendChild(document.createElement('div'));
+        el.id = 'f';
+        const first = getComputedStyle(el).width;
+        const out = getComputedStyle(el).getPropertyValue('--out');
+        s.sheet.insertRule('@function --add(--x, --y: 0px) { result: 27px; }', s.sheet.cssRules.length);
+        [first, out, getComputedStyle(el).width].join('|')
+    "#);
+    assert_eq!(actual, "18px|13px|27px");
+}
+
+#[test]
+fn custom_functions_distinguish_typed_and_untyped_results() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        const s = document.head.appendChild(document.createElement('style'));
+        s.textContent = `
+          @function --typed() returns <number> { result: calc(2 + 3); }
+          @function --tokens() { result: calc(2 + 3); }
+          @function --shadow(--x) { --x: green; result: var(--x); }
+          #f { --x: red; --a: --typed(); --b: --tokens(); color: --shadow(blue); }
+        `;
+        const el = document.body.appendChild(document.createElement('div')); el.id='f';
+        const cs=getComputedStyle(el);
+        [cs.getPropertyValue('--a'),cs.getPropertyValue('--b'),cs.color].join('|')
+    "#);
+    assert_eq!(actual, "5|calc(2 + 3)|rgb(0, 128, 0)");
+}
+
+#[test]
+fn custom_functions_default_over_the_argument_scope_and_inherit_from_callers() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        const s = document.head.appendChild(document.createElement('style'));
+        s.textContent = `
+          @function --later(--a <length>: var(--b), --b <length>: 7px) { result: var(--a) }
+          @function --optional(--a) { result: var(--a, omitted) }
+          @function --unused(--a) { result: unused }
+          @function --outer(--v) { --v: caller; result: --nested-inherit(); }
+          @function --nested-inherit() { --v: hidden; result: inherit(--v, missing); }
+          @function --wide() { --v: initial extra; result: var(--v); }
+          #call { --v: element; --a: --later(); --b: --optional(); --c: --unused();
+                  --d: --outer(); --e: --nested-inherit(); --f: --wide() }
+        `;
+        const el = document.body.appendChild(document.createElement('div')); el.id='call';
+        const cs=getComputedStyle(el);
+        ['--a','--b','--c','--d','--e','--f'].map(n=>cs.getPropertyValue(n)).join('|')
+    "#);
+    assert_eq!(actual, "7px|omitted|unused|caller|element|initial extra");
+}
+
+#[test]
+fn custom_functions_test_local_style_values_in_their_own_scope() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        const s=document.head.appendChild(document.createElement('style'));
+        s.textContent=`
+          @function --test(--arg <length>) { --x: 3px;
+            result: if(style(--arg: calc(1px + 2px)) and style(--x: 3px) and style(--x < 5px): yes; else: no) }
+          #f { --x: 20px; --result: --test(3px) }
+        `;
+        const el=document.body.appendChild(document.createElement('div')); el.id='f';
+        getComputedStyle(el).getPropertyValue('--result')
+    "#);
+    assert_eq!(actual, "yes");
+}
+
+#[test]
+fn first_cssom_edit_of_a_rendered_style_updates_ordinary_rules() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        const s = document.head.appendChild(document.createElement('style'));
+        s.textContent = '#first-edit { width: 11px; }';
+        const el = document.body.appendChild(document.createElement('div'));
+        el.id = 'first-edit';
+        const width = () => getComputedStyle(el).width;
+        const before = width();
+        const index = s.sheet.insertRule('#first-edit { width: 23px; }', s.sheet.cssRules.length);
+        const inserted = width();
+        s.sheet.deleteRule(index);
+        [before, inserted, width()].join('|')
+    "#);
+    assert_eq!(actual, "11px|23px|11px");
+}

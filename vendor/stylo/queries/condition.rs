@@ -412,8 +412,7 @@ impl StyleFeaturePlain {
             input.skip_whitespace();
             if let Ok(keyword) = input.try_parse(|i| CSSWideKeyword::parse(i)) {
                 StyleFeatureValue::Keyword(keyword)
-            } else if let Some(registration) = context.property_declaration_context.inline_style_registration(&name)
-                && let Some(syntax) = registration.syntax.as_ref().filter(|s| !s.is_universal())
+            } else if let Some(syntax) = context.property_declaration_context.inline_style_syntax(&name).filter(|s| !s.is_universal())
                 && let Ok(value) = input.try_parse(|i| i.parse_until_before(cssparser::Delimiter::Bang,
                     |i| SpecifiedRegisteredValue::parse_with_context(context, i, syntax)))
             {
@@ -1130,6 +1129,44 @@ impl IfPredicate<'_> {
     ) -> KleeneValue {
         match self {
             Self::Style(feature) => {
+                if let Some(frame) = cx.function_frame.clone() {
+                    return match feature {
+                        StyleFeature::Plain(p) => {
+                            if frame.guarded(&p.name) { return KleeneValue::False; }
+                            let current = frame.query_value(&p.name, cx);
+                            *attr_tainted |= current.as_ref().is_some_and(|(_, taint)| *taint);
+                            let current = current.as_ref().map(|(v, _)| v.css.as_str());
+                            match &p.value {
+                                StyleFeatureValue::Value(None) => current != frame.initial(&p.name).as_ref().map(|(v, _)| v.css.as_str()),
+                                StyleFeatureValue::Value(Some(v)) => current == Some(v.css.as_str()),
+                                StyleFeatureValue::Typed(v) => current == Some(v.as_ref().to_computed_value(cx.computed_context).to_css_string().as_str()),
+                                StyleFeatureValue::Keyword(CSSWideKeyword::Initial) => current == frame.initial(&p.name).as_ref().map(|(v, _)| v.css.as_str()),
+                                StyleFeatureValue::Keyword(CSSWideKeyword::Inherit | CSSWideKeyword::Unset) => {
+                                    let outer = frame.outer(&p.name, cx);
+                                    *attr_tainted |= outer.as_ref().is_some_and(|(_, taint)| *taint);
+                                    current == outer.as_ref().map(|(v, _)| v.css.as_str())
+                                }
+                                StyleFeatureValue::Keyword(_) => false,
+                            }.into()
+                        },
+                        StyleFeature::Range(r) => {
+                            let mut values = cx.substitution_functions.clone();
+                            let mut guarded = false;
+                            r.for_each_custom_property(&mut |name| {
+                                let reg = cx.stylist.get_custom_property_registration(&name);
+                                if frame.guarded(&name) { guarded = true; return; }
+                                if let Some((v, tainted)) = frame.query_value(&name, cx) {
+                                    let mut value = ComputedRegisteredValue::universal(Arc::new(v));
+                                    value.attr_tainted |= tainted;
+                                    values.insert_var(reg, &name, value);
+                                } else { values.remove_var(reg, &name); }
+                            });
+                            if guarded { KleeneValue::False } else {
+                                r.evaluate_with_properties(cx.computed_context, cx.attribute_tracker, &values.custom_properties, attr_tainted)
+                            }
+                        },
+                    };
+                }
                 // Active properties still contain their specified substitutions. Other
                 // properties queried by this predicate have been visited before this call.
                 let mut guarded = false;
@@ -1150,6 +1187,8 @@ impl IfPredicate<'_> {
                 }
             },
             Self::Media(q) => {
+                #[cfg(feature = "servo")]
+                cx.stylist.device().note_style_media_condition();
                 cx.computed_context.builder.add_flags(ComputedValueFlags::USES_VIEWPORT_UNITS);
                 computed::Context::for_media_query_evaluation(cx.stylist.device(), cx.computed_context.quirks_mode,
                     |ctx| q.matches(ctx, &mut CustomMediaEvaluator::none(), cx.attribute_tracker))

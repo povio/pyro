@@ -550,6 +550,11 @@ impl<'a> Context<'a> {
         self.resolve_tree_counting_result().sibling_index
     }
 
+    pub(crate) fn lookup_function(&self, stylist: &Stylist, name: &crate::Atom, scope_skip: usize)
+        -> Option<(Arc<crate::stylesheets::FunctionRule>, usize)> {
+        self.element_context.lookup_function(stylist, self.current_scope(), name, scope_skip)
+    }
+
     /// Returns the random base value for the given random cache key. This constructs a
     /// PRNG seed by hashing the components of the key's specified random cache name,
     /// and then generating a random value from the seed. This ensures that the same
@@ -568,6 +573,7 @@ impl<'a> Context<'a> {
                 .add_flags(ComputedValueFlags::USES_ELEMENT_SCOPED_RANDOM);
             self.rule_cache_conditions.borrow_mut().set_uncacheable();
             self.element_context.random_seed().hash(&mut hasher);
+            if let Some(seed) = key.function_invocation_seed { seed.hash(&mut hasher); }
         }
 
         // Returns a float in the range [0, 1).

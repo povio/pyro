@@ -4230,6 +4230,10 @@ impl BaseDocument {
         drop(root_styles);
 
         let old_device = self.stylist.device();
+        let style_uses_media_conditions = old_device.style_uses_media_conditions();
+        if style_uses_media_conditions {
+            device.note_style_media_condition();
+        }
         if old_device.style_uses_font_metrics() {
             device.note_style_font_metrics();
         }
@@ -4267,7 +4271,9 @@ impl BaseDocument {
         // when the viewport size changes, even if no media query results
         // changed. Invalidate just the elements whose styles use viewport
         // units (tracked via per-element computed value flags).
-        if viewport_size_changed && styles_use_viewport_units {
+        // Inline media conditions use the same per-style dependency flag. Their
+        // predicates can also change on a media type or input-device update.
+        if (viewport_size_changed && styles_use_viewport_units) || style_uses_media_conditions {
             if self
                 .stylist
                 .get_custom_property_initial_values_flags()

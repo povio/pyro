@@ -75,9 +75,89 @@ pub struct PaletteRule {
     pub text: String,
 }
 
+/// The six feature maps supported by the font engine, in CSS serialization order.
+pub const FEATURE_BLOCKS: [&str; 6] = ["swash", "stylistic", "ornaments", "annotation", "character-variant", "styleset"];
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct FeatureMap {
+    // Entry IDs increase across removal and clear, so a live iterator can resume after edits.
+    entries: indexmap::IndexMap<String, (u64, Vec<u32>)>,
+    next_id: u64,
+}
+
+impl FeatureMap {
+    pub fn len(&self) -> usize { self.entries.len() }
+    pub fn get(&self, key: &str) -> Option<&[u32]> { self.entries.get(key).map(|(_, v)| v.as_slice()) }
+    pub fn next(&self, cursor: u64) -> Option<(u64, &str, &[u32])> {
+        let entries = self.entries.as_slice();
+        let pos = entries.partition_point(|_, (id, _)| *id < cursor);
+        self.entries.get_index(pos).map(|(key, (id, v))| (*id + 1, key.as_str(), v.as_slice()))
+    }
+    pub fn set(&mut self, key: String, value: Vec<u32>) -> bool {
+        if let Some((_, old)) = self.entries.get_mut(&key) {
+            if *old == value { return false }
+            *old = value;
+        } else {
+            self.entries.insert(key, (self.next_id, value));
+            self.next_id += 1;
+        }
+        true
+    }
+    pub fn delete(&mut self, key: &str) -> bool { self.entries.shift_remove(key).is_some() }
+    pub fn clear(&mut self) -> bool {
+        let changed = !self.entries.is_empty();
+        self.entries.clear();
+        changed
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FeatureRule {
+    pub family: String,
+    pub maps: [FeatureMap; 6],
+    display: Option<String>,
+}
+
+impl FeatureRule {
+    pub fn set_family(&mut self, input: &str) -> bool {
+        use style::stylesheets::{font_feature_values_rule::parse_family_name_list, CssRuleType, Origin};
+        use style_traits::ToCss;
+        let url = crate::stylo::url_data();
+        let context = style::parser::ParserContext::new(
+            Origin::Author, &url, Some(CssRuleType::FontFeatureValues), style_traits::ParsingMode::DEFAULT,
+            style::context::QuirksMode::NoQuirks, Default::default(), None, None, Default::default(),
+        );
+        let Ok(list) = Parser::new(input).parse_entirely(|p| parse_family_name_list(&context, p)) else { return false };
+        let family = list.to_css_string();
+        if family == self.family { return false }
+        self.family = family;
+        true
+    }
+
+    pub fn text(&self) -> String {
+        use std::fmt::Write;
+        let mut text = format!("@font-feature-values {} {{ ", self.family);
+        if let Some(display) = &self.display { write!(text, "font-display: {display}; ").unwrap(); }
+        for (name, map) in FEATURE_BLOCKS.iter().zip(&self.maps) {
+            if map.entries.is_empty() { continue }
+            write!(text, "@{name} {{ ").unwrap();
+            for (key, (_, values)) in &map.entries {
+                cssparser::serialize_identifier(key, &mut text).unwrap();
+                text.push(':');
+                for value in values { write!(text, " {value}").unwrap(); }
+                text.push_str("; ");
+            }
+            text.push_str("} ");
+        }
+        text.push('}');
+        text
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParsedRule {
     Counter(CounterRule),
+    Features(FeatureRule),
     ViewTransition { navigation: String, types: Vec<String>, text: String },
     Palette(PaletteRule),
     Declarations(String),
@@ -525,10 +605,9 @@ fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces, re
         return Some(ParsedRule::Group { name: lower, condition, rules });
     }
     if lower == "font-feature-values" {
-        use style::shared_lock::{SharedRwLock, ToCssWithGuard};
-        use style::stylesheets::{font_feature_values_rule::parse_family_name_list, CssRuleType, FontFeatureValuesRule, Origin, UrlExtraData};
-
-        let url = UrlExtraData(style::servo_arc::Arc::new(url::Url::parse("about:blank").ok()?));
+        use style::stylesheets::{font_feature_values_rule::parse_family_name_list, CssRuleType, FontFeatureValuesRule, Origin};
+        use style_traits::ToCss;
+        let url = crate::stylo::url_data();
         let context = style::parser::ParserContext::new(
             Origin::Author, &url, Some(CssRuleType::FontFeatureValues), style_traits::ParsingMode::DEFAULT,
             style::context::QuirksMode::NoQuirks, Default::default(), None, None, Default::default(),
@@ -538,9 +617,17 @@ fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces, re
         let mut input = Parser::new(&block);
         let location = input.current_source_location();
         let rule = FontFeatureValuesRule::parse(&context, &mut input, families, location);
-        let mut text = String::new();
-        rule.to_css(&SharedRwLock::new().read(), &mut text).ok()?;
-        return Some(ParsedRule::Other { rule_type: 14, text });
+        let mut maps: [FeatureMap; 6] = Default::default();
+        for (map, entries) in maps.iter_mut().zip([rule.swash, rule.stylistic, rule.ornaments, rule.annotation]) {
+            for entry in entries { map.set(entry.name.to_string(), vec![entry.value.0]); }
+        }
+        for entry in rule.character_variant {
+            maps[4].set(entry.name.to_string(), std::iter::once(entry.value.0).chain(entry.value.1).collect());
+        }
+        for entry in rule.styleset { maps[5].set(entry.name.to_string(), entry.value.0); }
+        return Some(ParsedRule::Features(FeatureRule {
+            family: rule.family_names.to_css_string(), display: rule.font_display.map(|v| v.to_css_string()), maps,
+        }));
     }
     if lower == "layer" {
         use style::parser::Parse;
@@ -585,6 +672,18 @@ fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces, re
             rules.extend(read_keyframe(&mut parser));
         }
         return Some(ParsedRule::Group { name: lower, condition: name.to_css_string(), rules });
+    }
+    if lower == "function" {
+        use style::shared_lock::{SharedRwLock, ToCssWithGuard};
+        use style::stylesheets::{CssRuleType, FunctionRule, Origin};
+
+        let url = crate::stylo::url_data();
+        let context = style::parser::ParserContext::new(
+            Origin::Author, &url, Some(CssRuleType::Function), style_traits::ParsingMode::DEFAULT,
+            style::context::QuirksMode::NoQuirks, Default::default(), None, None, Default::default(),
+        );
+        let rule = FunctionRule::from_css(&context, &prelude, &block?).ok()?;
+        return Some(ParsedRule::Other { rule_type: 0, text: rule.to_css_string(&SharedRwLock::new().read()) });
     }
     if lower == "position-try" {
         let mut parser = Parser::new(&prelude);
@@ -887,8 +986,8 @@ mod tests {
         let parse = |source| parse_one_rule(source, &mut Namespaces::new());
         assert!(parse("@font-feature-values serif { }").is_err());
         assert!(parse("@font-feature-values Demo;").is_err());
-        assert_eq!(parse("@font-feature-values Demo { @styleset { first: 1; bad: -1; second: 2; } font-display: swap; @styleset { first: 3; } }"),
-            Ok(ParsedRule::Other { rule_type: 14, text: "@font-feature-values Demo { font-display: swap; @styleset { first: 3; second: 2; } }".into() }));
+        let ParsedRule::Features(rule) = parse("@font-feature-values Demo { @styleset { first: 1; bad: -1; second: 2; } font-display: swap; @styleset { first: 3; } }").unwrap() else { panic!() };
+        assert_eq!(rule.text(), "@font-feature-values Demo { font-display: swap; @styleset { first: 3; second: 2; } }");
     }
 
     /// CSS Syntax's order (WPT css/CSS2/syntax/at-charset-*): byte order mark, protocol
