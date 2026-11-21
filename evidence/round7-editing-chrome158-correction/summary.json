@@ -1,0 +1,58 @@
+{
+ "censusEvidence": "ee24e07f6b15b399d6e8e2157c763809341b6e44",
+ "columns": [
+  "lpBase",
+  "lpCandidate",
+  "historicalSystem157Static",
+  "signed158Static",
+  "signed158Census"
+ ],
+ "distinct": {
+  "historical157ToSigned158Static": {
+   "gained": 0,
+   "lost": 0
+  },
+  "historicalSystem157Static": {
+   "fullPages": 37,
+   "names": 9827,
+   "pages": 47,
+   "passes": 9353
+  },
+  "signed158Census": {
+   "fullPages": 37,
+   "names": 9827,
+   "pages": 47,
+   "passes": 9353
+  },
+  "signed158Static": {
+   "fullPages": 37,
+   "names": 9827,
+   "pages": 47,
+   "passes": 9353
+  },
+  "signed158StaticToOfficial158Census": {
+   "gained": 6,
+   "lost": 6
+  }
+ },
+ "distinctURLs": 47,
+ "historicalDifferencesAcrossReceipts": {},
+ "historicalExecutableSHA256": "304226ddaf697606b8bcbd2fbec20c6b6f6f56741ac492cb5deea7663bf10a74",
+ "historicalLauncherSHA256": "0eaefe38be38c817e9752585171dd898647a534ee836c9b4c17eefb5669aa739",
+ "historicalReferenceVersion": "157.0.8103.80",
+ "manifest": "34a67512a84d43630f7adbecebd4378df5f410446591015cc6a20a3034e02819",
+ "newMeasurement": {
+  "jobs": 1,
+  "restarts": 0,
+  "server": "static",
+  "testdriver": false,
+  "watchdogKills": 0
+ },
+ "newReceiptSHA256": "8cc067400615cb1d744d9ad0b4df4fadbfca1c1dd64542058f51d4097e19bad6",
+ "newRunnerSHA256": "400b2e488fb3dbcee2948d411a4de95d5cf94710b4b621e85e1c0ea7366f1930",
+ "receiptAliases": 11,
+ "signedExecutableSHA256": "b87bcebb575e53b0f29a4eeeb6480ec9c9bc3537690cacd52d6c67c2c3e3908e",
+ "signedLauncherSHA256": "9249fd4ed0c99ddcc34ca0ba377af793a2d49184152d3cdd59c23ee80b2a1ab9",
+ "verifiedStaticVersion": "158.0.8127.37",
+ "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603"
+}

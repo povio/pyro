@@ -1,0 +1,25 @@
+{
+ "mode": "wpt-stable",
+ "exe": "round6-reference-158/Google Chrome.app/Contents/MacOS/Google Chrome",
+ "pid": 50751,
+ "flags": [
+  "--headless",
+  "--no-first-run",
+  "--disable-background-networking",
+  "--remote-debugging-port=60354",
+  "--user-data-dir=<private temporary profile>",
+  "--disable-popup-blocking",
+  "--enable-features=WebMachineLearningNeuralNetwork",
+  "--ignore-certificate-errors-spki-list=WXjEgm6G9rSgRQQVGbD5q+zOszPmv3ZBSfaIAMv+bY8=",
+  "--autoplay-policy=no-user-gesture-required",
+  "--disable-infobars",
+  "--disable-background-timer-throttling",
+  "--disable-backgrounding-occluded-windows",
+  "--disable-component-extensions-with-background-pages",
+  "--enable-blink-features=ViewTransitionLongCallbackTimeoutForTesting,NoFontAntialiasing",
+  "--disable-features=ScrollbarAnimations",
+  "--host-resolver-rules=MAP nonexistent.*.test ^NOTFOUND, MAP *.test 127.0.0.1, MAP *.test. 127.0.0.1, MAP apple.com ^NOTFOUND, MAP *.apple.com ^NOTFOUND"
+ ],
+ "profile": "private temporary profile",
+ "parent_owns_profile": false
+}

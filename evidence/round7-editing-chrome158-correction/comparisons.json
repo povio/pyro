@@ -1,0 +1,827 @@
+{
+ ".": {
+  "columns": {
+   "historicalSystem157Static": {
+    "full": 2,
+    "names": 2741,
+    "page/complete": 5,
+    "pages": 5,
+    "passes": 2331
+   },
+   "lpBase": {
+    "full": 0,
+    "names": 2741,
+    "page/complete": 5,
+    "pages": 5,
+    "passes": 2147
+   },
+   "lpCandidate": {
+    "full": 2,
+    "names": 2741,
+    "page/complete": 5,
+    "pages": 5,
+    "passes": 2267
+   },
+   "signed158Census": {
+    "full": 2,
+    "names": 2741,
+    "page/complete": 5,
+    "pages": 5,
+    "passes": 2331
+   },
+   "signed158Static": {
+    "full": 2,
+    "names": 2741,
+    "page/complete": 5,
+    "pages": 5,
+    "passes": 2331
+   }
+  },
+  "comparisons": {
+   "historicalSystem157StaticTosigned158Static": {
+    "addedNames": 0,
+    "gained": 0,
+    "lost": 0,
+    "missingNames": 0
+   },
+   "lpBaseTolpCandidate": {
+    "addedNames": 0,
+    "gained": 120,
+    "lost": 0,
+    "missingNames": 0
+   },
+   "lpCandidateTosigned158Census": {
+    "addedNames": 0,
+    "gained": 87,
+    "lost": 23,
+    "missingNames": 0
+   },
+   "lpCandidateTosigned158Static": {
+    "addedNames": 0,
+    "gained": 87,
+    "lost": 23,
+    "missingNames": 0
+   },
+   "lpGainsAlsoPassingOnChrome": {
+    "historical157Static": 120,
+    "signed158Static": 120
+   },
+   "signed158StaticTosigned158Census": {
+    "addedNames": 0,
+    "gained": 0,
+    "lost": 0,
+    "missingNames": 0
+   }
+  }
+ },
+ "composed": {
+  "columns": {
+   "historicalSystem157Static": {
+    "full": 9,
+    "names": 198,
+    "page/complete": 11,
+    "pages": 11,
+    "passes": 193
+   },
+   "lpBase": {
+    "full": 2,
+    "names": 198,
+    "page/complete": 11,
+    "pages": 11,
+    "passes": 153
+   },
+   "lpCandidate": {
+    "full": 5,
+    "names": 198,
+    "page/complete": 11,
+    "pages": 11,
+    "passes": 177
+   },
+   "signed158Census": {
+    "full": 9,
+    "names": 198,
+    "page/complete": 11,
+    "pages": 11,
+    "passes": 193
+   },
+   "signed158Static": {
+    "full": 9,
+    "names": 198,
+    "page/complete": 11,
+    "pages": 11,
+    "passes": 193
+   }
+  },
+  "comparisons": {
+   "historicalSystem157StaticTosigned158Static": {
+    "addedNames": 0,
+    "gained": 0,
+    "lost": 0,
+    "missingNames": 0
+   },
+   "lpBaseTolpCandidate": {
+    "addedNames": 0,
+    "gained": 24,
+    "lost": 0,
+    "missingNames": 0
+   },
+   "lpCandidateTosigned158Census": {
+    "addedNames": 0,
+    "gained": 20,
+    "lost": 4,
+    "missingNames": 0
+   },
+   "lpCandidateTosigned158Static": {
+    "addedNames": 0,
+    "gained": 20,
+    "lost": 4,
+    "missingNames": 0
+   },
+   "lpGainsAlsoPassingOnChrome": {
+    "historical157Static": 24,
+    "signed158Static": 24
+   },
+   "signed158StaticTosigned158Census": {
+    "addedNames": 0,
+    "gained": 0,
+    "lost": 0,
+    "missingNames": 0
+   }
+  }
+ },
+ "initial-caret": {
+  "columns": {
+   "historicalSystem157Static": {
+    "full": 1,
+    "names": 151,
+    "page/complete": 2,
+    "pages": 2,
+    "passes": 147
+   },
+   "lpBase": {
+    "full": 0,
+    "names": 151,
+    "page/complete": 2,
+    "pages": 2,
+    "passes": 92
+   },
+   "lpCandidate": {
+    "full": 0,
+    "names": 151,
+    "page/complete": 2,
+    "pages": 2,
+    "passes": 133
+   },
+   "signed158Census": {
+    "full": 1,
+    "names": 151,
+    "page/complete": 2,
+    "pages": 2,
+    "passes": 147
+   },
+   "signed158Static": {
+    "full": 1,
+    "names": 151,
+    "page/complete": 2,
+    "pages": 2,
+    "passes": 147
+   }
+  },
+  "comparisons": {
+   "historicalSystem157StaticTosigned158Static": {
+    "addedNames": 0,
+    "gained": 0,
+    "lost": 0,
+    "missingNames": 0
+   },
+   "lpBaseTolpCandidate": {
+    "addedNames": 0,
+    "gained": 41,
+    "lost": 0,
+    "missingNames": 0
+   },
+   "lpCandidateTosigned158Census": {
+    "addedNames": 0,
+    "gained": 18,
+    "lost": 4,
+    "missingNames": 0
+   },
+   "lpCandidateTosigned158Static": {
+    "addedNames": 0,
+    "gained": 18,
+    "lost": 4,
+    "missingNames": 0
+   },
+   "lpGainsAlsoPassingOnChrome": {
+    "historical157Static": 41,
+    "signed158Static": 41
+   },
+   "signed158StaticTosigned158Census": {
+    "addedNames": 0,
+    "gained": 0,
+    "lost": 0,
+    "missingNames": 0
+   }
+  }
+ },
+ "initial-caret/revision2": {
+  "columns": {
+   "historicalSystem157Static": {
+    "full": 1,
+    "names": 151,
+    "page/complete": 2,
+    "pages": 2,
+    "passes": 147
+   },
+   "lpBase": {
+    "full": 0,
+    "names": 151,
+    "page/complete": 2,
+    "pages": 2,
+    "passes": 92
+   },
+   "lpCandidate": {
+    "full": 2,
+    "names": 151,
+    "page/complete": 2,
+    "pages": 2,
+    "passes": 151
+   },
+   "signed158Census": {
+    "full": 1,
+    "names": 151,
+    "page/complete": 2,
+    "pages": 2,
+    "passes": 147
+   },
+   "signed158Static": {
+    "full": 1,
+    "names": 151,
+    "page/complete": 2,
+    "pages": 2,
+    "passes": 147
+   }
+  },
+  "comparisons": {
+   "historicalSystem157StaticTosigned158Static": {
+    "addedNames": 0,
+    "gained": 0,
+    "lost": 0,
+    "missingNames": 0
+   },
+   "lpBaseTolpCandidate": {
+    "addedNames": 0,
+    "gained": 59,
+    "lost": 0,
+    "missingNames": 0
+   },
+   "lpCandidateTosigned158Census": {
+    "addedNames": 0,
+    "gained": 0,
+    "lost": 4,
+    "missingNames": 0
+   },
+   "lpCandidateTosigned158Static": {
+    "addedNames": 0,
+    "gained": 0,
+    "lost": 4,
+    "missingNames": 0
+   },
+   "lpGainsAlsoPassingOnChrome": {
+    "historical157Static": 59,
+    "signed158Static": 59
+   },
+   "signed158StaticTosigned158Census": {
+    "addedNames": 0,
+    "gained": 0,
+    "lost": 0,
+    "missingNames": 0
+   }
+  }
+ },
+ "insertion": {
+  "columns": {
+   "historicalSystem157Static": {
+    "full": 24,
+    "names": 4171,
+    "page/complete": 26,
+    "pages": 26,
+    "passes": 4156
+   },
+   "lpBase": {
+    "full": 16,
+    "names": 4171,
+    "page/complete": 26,
+    "pages": 26,
+    "passes": 3759
+   },
+   "lpCandidate": {
+    "full": 16,
+    "names": 4171,
+    "page/complete": 26,
+    "pages": 26,
+    "passes": 3935
+   },
+   "signed158Census": {
+    "full": 24,
+    "names": 4171,
+    "page/complete": 26,
+    "pages": 26,
+    "passes": 4156
+   },
+   "signed158Static": {
+    "full": 24,
+    "names": 4171,
+    "page/complete": 26,
+    "pages": 26,
+    "passes": 4156
+   }
+  },
+  "comparisons": {
+   "historicalSystem157StaticTosigned158Static": {
+    "addedNames": 0,
+    "gained": 0,
+    "lost": 0,
+    "missingNames": 0
+   },
+   "lpBaseTolpCandidate": {
+    "addedNames": 0,
+    "gained": 176,
+    "lost": 0,
+    "missingNames": 0
+   },
+   "lpCandidateTosigned158Census": {
+    "addedNames": 6,
+    "gained": 229,
+    "lost": 8,
+    "missingNames": 6
+   },
+   "lpCandidateTosigned158Static": {
+    "addedNames": 0,
+    "gained": 223,
+    "lost": 2,
+    "missingNames": 0
+   },
+   "lpGainsAlsoPassingOnChrome": {
+    "historical157Static": 176,
+    "signed158Static": 176
+   },
+   "signed158StaticTosigned158Census": {
+    "addedNames": 6,
+    "gained": 6,
+    "lost": 6,
+    "missingNames": 6
+   }
+  }
+ },
+ "insertion/revision2": {
+  "columns": {
+   "historicalSystem157Static": {
+    "full": 24,
+    "names": 4171,
+    "page/complete": 26,
+    "pages": 26,
+    "passes": 4156
+   },
+   "lpBase": {
+    "full": 16,
+    "names": 4171,
+    "page/complete": 26,
+    "pages": 26,
+    "passes": 3759
+   },
+   "lpCandidate": {
+    "full": 17,
+    "names": 4171,
+    "page/complete": 26,
+    "pages": 26,
+    "passes": 3939
+   },
+   "signed158Census": {
+    "full": 24,
+    "names": 4171,
+    "page/complete": 26,
+    "pages": 26,
+    "passes": 4156
+   },
+   "signed158Static": {
+    "full": 24,
+    "names": 4171,
+    "page/complete": 26,
+    "pages": 26,
+    "passes": 4156
+   }
+  },
+  "comparisons": {
+   "historicalSystem157StaticTosigned158Static": {
+    "addedNames": 0,
+    "gained": 0,
+    "lost": 0,
+    "missingNames": 0
+   },
+   "lpBaseTolpCandidate": {
+    "addedNames": 0,
+    "gained": 180,
+    "lost": 0,
+    "missingNames": 0
+   },
+   "lpCandidateTosigned158Census": {
+    "addedNames": 6,
+    "gained": 225,
+    "lost": 8,
+    "missingNames": 6
+   },
+   "lpCandidateTosigned158Static": {
+    "addedNames": 0,
+    "gained": 219,
+    "lost": 2,
+    "missingNames": 0
+   },
+   "lpGainsAlsoPassingOnChrome": {
+    "historical157Static": 180,
+    "signed158Static": 180
+   },
+   "signed158StaticTosigned158Census": {
+    "addedNames": 6,
+    "gained": 6,
+    "lost": 6,
+    "missingNames": 6
+   }
+  }
+ },
+ "insertion/revision2/typing": {
+  "columns": {
+   "historicalSystem157Static": {
+    "full": 0,
+    "names": 3009,
+    "page/complete": 3,
+    "pages": 3,
+    "passes": 2965
+   },
+   "lpBase": {
+    "full": 0,
+    "names": 3009,
+    "page/complete": 3,
+    "pages": 3,
+    "passes": 2893
+   },
+   "lpCandidate": {
+    "full": 0,
+    "names": 3009,
+    "page/complete": 3,
+    "pages": 3,
+    "passes": 2899
+   },
+   "signed158Census": {
+    "full": 0,
+    "names": 3009,
+    "page/complete": 3,
+    "pages": 3,
+    "passes": 2965
+   },
+   "signed158Static": {
+    "full": 0,
+    "names": 3009,
+    "page/complete": 3,
+    "pages": 3,
+    "passes": 2965
+   }
+  },
+  "comparisons": {
+   "historicalSystem157StaticTosigned158Static": {
+    "addedNames": 0,
+    "gained": 0,
+    "lost": 0,
+    "missingNames": 0
+   },
+   "lpBaseTolpCandidate": {
+    "addedNames": 0,
+    "gained": 6,
+    "lost": 0,
+    "missingNames": 0
+   },
+   "lpCandidateTosigned158Census": {
+    "addedNames": 0,
+    "gained": 86,
+    "lost": 20,
+    "missingNames": 0
+   },
+   "lpCandidateTosigned158Static": {
+    "addedNames": 0,
+    "gained": 86,
+    "lost": 20,
+    "missingNames": 0
+   },
+   "lpGainsAlsoPassingOnChrome": {
+    "historical157Static": 4,
+    "signed158Static": 4
+   },
+   "signed158StaticTosigned158Census": {
+    "addedNames": 0,
+    "gained": 0,
+    "lost": 0,
+    "missingNames": 0
+   }
+  }
+ },
+ "insertion/typing": {
+  "columns": {
+   "historicalSystem157Static": {
+    "full": 0,
+    "names": 3009,
+    "page/complete": 3,
+    "pages": 3,
+    "passes": 2965
+   },
+   "lpBase": {
+    "full": 0,
+    "names": 3009,
+    "page/complete": 3,
+    "pages": 3,
+    "passes": 2893
+   },
+   "lpCandidate": {
+    "full": 0,
+    "names": 3009,
+    "page/complete": 3,
+    "pages": 3,
+    "passes": 2899
+   },
+   "signed158Census": {
+    "full": 0,
+    "names": 3009,
+    "page/complete": 3,
+    "pages": 3,
+    "passes": 2965
+   },
+   "signed158Static": {
+    "full": 0,
+    "names": 3009,
+    "page/complete": 3,
+    "pages": 3,
+    "passes": 2965
+   }
+  },
+  "comparisons": {
+   "historicalSystem157StaticTosigned158Static": {
+    "addedNames": 0,
+    "gained": 0,
+    "lost": 0,
+    "missingNames": 0
+   },
+   "lpBaseTolpCandidate": {
+    "addedNames": 0,
+    "gained": 7,
+    "lost": 1,
+    "missingNames": 0
+   },
+   "lpCandidateTosigned158Census": {
+    "addedNames": 0,
+    "gained": 85,
+    "lost": 19,
+    "missingNames": 0
+   },
+   "lpCandidateTosigned158Static": {
+    "addedNames": 0,
+    "gained": 85,
+    "lost": 19,
+    "missingNames": 0
+   },
+   "lpGainsAlsoPassingOnChrome": {
+    "historical157Static": 5,
+    "signed158Static": 5
+   },
+   "signed158StaticTosigned158Census": {
+    "addedNames": 0,
+    "gained": 0,
+    "lost": 0,
+    "missingNames": 0
+   }
+  }
+ },
+ "selection": {
+  "columns": {
+   "historicalSystem157Static": {
+    "full": 7,
+    "names": 2809,
+    "page/complete": 10,
+    "pages": 10,
+    "passes": 2399
+   },
+   "lpBase": {
+    "full": 2,
+    "names": 2809,
+    "page/complete": 10,
+    "pages": 10,
+    "passes": 2297
+   },
+   "lpCandidate": {
+    "full": 7,
+    "names": 2809,
+    "page/complete": 10,
+    "pages": 10,
+    "passes": 2335
+   },
+   "signed158Census": {
+    "full": 7,
+    "names": 2809,
+    "page/complete": 10,
+    "pages": 10,
+    "passes": 2399
+   },
+   "signed158Static": {
+    "full": 7,
+    "names": 2809,
+    "page/complete": 10,
+    "pages": 10,
+    "passes": 2399
+   }
+  },
+  "comparisons": {
+   "historicalSystem157StaticTosigned158Static": {
+    "addedNames": 0,
+    "gained": 0,
+    "lost": 0,
+    "missingNames": 0
+   },
+   "lpBaseTolpCandidate": {
+    "addedNames": 0,
+    "gained": 38,
+    "lost": 0,
+    "missingNames": 0
+   },
+   "lpCandidateTosigned158Census": {
+    "addedNames": 0,
+    "gained": 87,
+    "lost": 23,
+    "missingNames": 0
+   },
+   "lpCandidateTosigned158Static": {
+    "addedNames": 0,
+    "gained": 87,
+    "lost": 23,
+    "missingNames": 0
+   },
+   "lpGainsAlsoPassingOnChrome": {
+    "historical157Static": 38,
+    "signed158Static": 38
+   },
+   "signed158StaticTosigned158Census": {
+    "addedNames": 0,
+    "gained": 0,
+    "lost": 0,
+    "missingNames": 0
+   }
+  }
+ },
+ "whitespace": {
+  "columns": {
+   "historicalSystem157Static": {
+    "full": 24,
+    "names": 4171,
+    "page/complete": 26,
+    "pages": 26,
+    "passes": 4156
+   },
+   "lpBase": {
+    "full": 16,
+    "names": 4171,
+    "page/complete": 26,
+    "pages": 26,
+    "passes": 3057
+   },
+   "lpCandidate": {
+    "full": 16,
+    "names": 4171,
+    "page/complete": 26,
+    "pages": 26,
+    "passes": 3757
+   },
+   "signed158Census": {
+    "full": 24,
+    "names": 4171,
+    "page/complete": 26,
+    "pages": 26,
+    "passes": 4156
+   },
+   "signed158Static": {
+    "full": 24,
+    "names": 4171,
+    "page/complete": 26,
+    "pages": 26,
+    "passes": 4156
+   }
+  },
+  "comparisons": {
+   "historicalSystem157StaticTosigned158Static": {
+    "addedNames": 0,
+    "gained": 0,
+    "lost": 0,
+    "missingNames": 0
+   },
+   "lpBaseTolpCandidate": {
+    "addedNames": 0,
+    "gained": 702,
+    "lost": 2,
+    "missingNames": 0
+   },
+   "lpCandidateTosigned158Census": {
+    "addedNames": 6,
+    "gained": 407,
+    "lost": 8,
+    "missingNames": 6
+   },
+   "lpCandidateTosigned158Static": {
+    "addedNames": 0,
+    "gained": 401,
+    "lost": 2,
+    "missingNames": 0
+   },
+   "lpGainsAlsoPassingOnChrome": {
+    "historical157Static": 702,
+    "signed158Static": 702
+   },
+   "signed158StaticTosigned158Census": {
+    "addedNames": 6,
+    "gained": 6,
+    "lost": 6,
+    "missingNames": 6
+   }
+  }
+ },
+ "whitespace/revision2": {
+  "columns": {
+   "historicalSystem157Static": {
+    "full": 24,
+    "names": 4171,
+    "page/complete": 26,
+    "pages": 26,
+    "passes": 4156
+   },
+   "lpBase": {
+    "full": 16,
+    "names": 4171,
+    "page/complete": 26,
+    "pages": 26,
+    "passes": 3057
+   },
+   "lpCandidate": {
+    "full": 16,
+    "names": 4171,
+    "page/complete": 26,
+    "pages": 26,
+    "passes": 3759
+   },
+   "signed158Census": {
+    "full": 24,
+    "names": 4171,
+    "page/complete": 26,
+    "pages": 26,
+    "passes": 4156
+   },
+   "signed158Static": {
+    "full": 24,
+    "names": 4171,
+    "page/complete": 26,
+    "pages": 26,
+    "passes": 4156
+   }
+  },
+  "comparisons": {
+   "historicalSystem157StaticTosigned158Static": {
+    "addedNames": 0,
+    "gained": 0,
+    "lost": 0,
+    "missingNames": 0
+   },
+   "lpBaseTolpCandidate": {
+    "addedNames": 0,
+    "gained": 702,
+    "lost": 0,
+    "missingNames": 0
+   },
+   "lpCandidateTosigned158Census": {
+    "addedNames": 6,
+    "gained": 405,
+    "lost": 8,
+    "missingNames": 6
+   },
+   "lpCandidateTosigned158Static": {
+    "addedNames": 0,
+    "gained": 399,
+    "lost": 2,
+    "missingNames": 0
+   },
+   "lpGainsAlsoPassingOnChrome": {
+    "historical157Static": 702,
+    "signed158Static": 702
+   },
+   "signed158StaticTosigned158Census": {
+    "addedNames": 6,
+    "gained": 6,
+    "lost": 6,
+    "missingNames": 6
+   }
+  }
+ }
+}
