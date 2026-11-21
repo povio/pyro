@@ -1255,6 +1255,7 @@ impl<Impl: SelectorImpl> Selector<Impl> {
                 LocalName(..)
                 | ID(..)
                 | Class(..)
+                | ClassPrefix(..)
                 | AttributeInNoNamespaceExists { .. }
                 | AttributeInNoNamespace { .. }
                 | AttributeOther(..)
@@ -2082,6 +2083,7 @@ pub enum Component<Impl: SelectorImpl> {
 
     ID(#[cfg_attr(feature = "to_shmem", shmem(field_bound))] Impl::Identifier),
     Class(#[cfg_attr(feature = "to_shmem", shmem(field_bound))] Impl::Identifier),
+    ClassPrefix(#[cfg_attr(feature = "to_shmem", shmem(field_bound))] Impl::Identifier),
 
     AttributeInNoNamespaceExists {
         #[cfg_attr(feature = "to_shmem", shmem(field_bound))]
@@ -2259,6 +2261,12 @@ impl<Impl: SelectorImpl> Component<Impl> {
                     local_name,
                     local_name_lower,
                 ) {
+                    return false;
+                }
+            },
+            ClassPrefix(_) => {
+                let class_name = Impl::LocalName::from("class");
+                if !visitor.visit_attribute_selector(&NamespaceConstraint::Specific(&namespace_empty_string::<Impl>()), &class_name, &class_name) {
                     return false;
                 }
             },
@@ -2622,6 +2630,11 @@ impl<Impl: SelectorImpl> ToCss for Component<Impl> {
             Class(ref s) => {
                 dest.write_char('.')?;
                 s.to_css(dest)
+            },
+            ClassPrefix(ref prefix) => {
+                dest.write_char('.')?;
+                prefix.to_css(dest)?;
+                dest.write_char('*')
             },
             LocalName(ref s) => s.to_css(dest),
             ExplicitUniversalType => dest.write_char('*'),
@@ -3669,7 +3682,15 @@ where
                         return Err(ParseError::custom(e));
                     },
                 };
-                Component::Class(class.as_ref().into())
+                let ends_with_dash = class.ends_with('-');
+                let name = class.as_ref().into();
+                if ends_with_dash && input.try_parse(|input| {
+                    matches!(input.next_including_whitespace(), Ok(Token::Delim('*'))).then_some(()).ok_or(())
+                }).is_ok() {
+                    Component::ClassPrefix(name)
+                } else {
+                    Component::Class(name)
+                }
             })
         },
         Token::SquareBracketBlock => {

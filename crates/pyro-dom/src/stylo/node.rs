@@ -558,6 +558,9 @@ impl<'a, C: CxSource<'a>> selectors::Element for SNode<'a, C> {
             CaseSensitivity::AsciiCaseInsensitive => classes.iter().any(|c| c.eq_ignore_ascii_case(&name.0)),
         }
     }
+    fn has_class_prefix(&self, prefix: &AtomIdent, quirks: bool) -> bool {
+        self.element().classes().iter().any(|class| selectors::attr::matches_class_prefix(class, &prefix.0, quirks))
+    }
     fn imported_part(&self, _name: &AtomIdent) -> Option<AtomIdent> {
         None
     }

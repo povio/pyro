@@ -725,6 +725,41 @@ diff -ruN a/font_face.rs b/font_face.rs
  }
  
  macro_rules! impl_range {
+diff -ruN a/gecko/wrapper.rs b/gecko/wrapper.rs
+--- a/gecko/wrapper.rs	2026-11-11 19:55:57
++++ b/gecko/wrapper.rs	2026-11-21 02:02:38
+@@ -2157,6 +2157,12 @@
+     }
+ 
+     #[inline(always)]
++    fn has_class_prefix(&self, prefix: &AtomIdent, quirks: bool) -> bool {
++        let mut found = false;
++        self.each_class(|class| found |= crate::values::matches_class_prefix(class, prefix, quirks));
++        found
++    }
++
+     fn has_class(&self, name: &AtomIdent, case_sensitivity: CaseSensitivity) -> bool {
+         let attr = match self.get_class_attr() {
+             Some(c) => c,
+diff -ruN a/invalidation/element/element_wrapper.rs b/invalidation/element/element_wrapper.rs
+--- a/invalidation/element/element_wrapper.rs	2026-11-11 19:55:57
++++ b/invalidation/element/element_wrapper.rs	2026-11-21 02:02:38
+@@ -407,6 +407,15 @@
+         }
+     }
+ 
++    fn has_class_prefix(&self, prefix: &AtomIdent, quirks: bool) -> bool {
++        if let Some(snapshot) = self.snapshot().filter(|snapshot| snapshot.has_attrs()) {
++            let mut found = false;
++            snapshot.each_class(|class| found |= crate::values::matches_class_prefix(class, prefix, quirks));
++            return found;
++        }
++        self.element.has_class_prefix(prefix, quirks)
++    }
++
+     fn has_class(&self, name: &AtomIdent, case_sensitivity: CaseSensitivity) -> bool {
+         match self.snapshot() {
+             Some(snapshot) if snapshot.has_attrs() => snapshot.has_class(name, case_sensitivity),
 diff -ruN a/invalidation/element/invalidation_map.rs b/invalidation/element/invalidation_map.rs
 --- a/invalidation/element/invalidation_map.rs	2026-11-11 19:55:57
 +++ b/invalidation/element/invalidation_map.rs	2026-11-11 19:55:57
@@ -5905,7 +5940,7 @@ diff -ruN a/stylesheets/supports_rule.rs b/stylesheets/supports_rule.rs
  /// supports_condition | declaration
 diff -ruN a/stylist.rs b/stylist.rs
 --- a/stylist.rs	2026-11-11 19:55:57
-+++ b/stylist.rs	2026-11-20 12:13:59
++++ b/stylist.rs	2026-11-21 02:01:17
 @@ -31,8 +31,8 @@
  use crate::parser::ParserContext;
  use crate::properties::StyleBuilder;
@@ -5931,12 +5966,10 @@ diff -ruN a/stylist.rs b/stylist.rs
      /// Returns the number of selectors.
      pub fn num_selectors(&self) -> usize {
          self.cascade_data
-@@ -1217,6 +1224,62 @@
-         }
- 
+@@ -1219,6 +1226,62 @@
          doc_author_rules_apply && f(&self.cascade_data.author)
-+    }
-+
+     }
+ 
 +    /// pyro: whether a rule that can make `pseudo` (`::before` or `::after`, eagerly
 +    /// cascaded for `element`) generate a box matches `element`, so that the full match and
 +    /// cascade of the pseudo-element can give a style that is kept. When this is `false`, every
@@ -5991,13 +6024,21 @@ diff -ruN a/stylist.rs b/stylist.rs
 +            }
 +        }
 +        false
-     }
- 
++    }
++
      /// Execute callback for all applicable style rule data.
-@@ -1371,6 +1434,64 @@
-         ))
-     }
- 
+     pub fn for_each_cascade_data_with_scope<'a, E, F>(&'a self, element: E, mut f: F)
+     where
+@@ -1365,6 +1428,64 @@
+         Some(self.compute_pseudo_element_style_with_inputs(
+             cascade_inputs,
+             pseudo,
++            guards,
++            Some(originating_element_style),
++            Some(element),
++        ))
++    }
++
 +    /// pyro: the style of a node that is a pseudo-element's box (`element.implemented_pseudo_element()`,
 +    /// which reaches its originating element through `pseudo_element_originating_element()`), whose
 +    /// rules are matched against the node itself in normal mode: state pseudo-classes after the
@@ -6050,15 +6091,9 @@ diff -ruN a/stylist.rs b/stylist.rs
 +        Some(self.compute_pseudo_element_style_with_inputs(
 +            inputs,
 +            &pseudo,
-+            guards,
-+            Some(originating_element_style),
-+            Some(element),
-+        ))
-+    }
-+
-     /// Computes a pseudo-element style lazily using the given CascadeInputs.
-     /// This can be used for truly lazy pseudo-elements or to avoid redoing
-     /// selector matching for eager pseudo-elements when we need to recompute
+             guards,
+             Some(originating_element_style),
+             Some(element),
 @@ -1623,10 +1744,9 @@
              &mut matching_context,
          );
@@ -6140,10 +6175,20 @@ diff -ruN a/stylist.rs b/stylist.rs
          &'a self,
          name: &Atom,
          scope: CascadeLevel,
-@@ -2864,8 +3019,84 @@
+@@ -2645,7 +2800,7 @@
+ 
+ fn component_needs_revalidation(c: &Component<SelectorImpl>) -> bool {
+     match *c {
+-        Component::AttributeInNoNamespaceExists { .. }
++        Component::ClassPrefix(_) | Component::AttributeInNoNamespaceExists { .. }
+         | Component::AttributeInNoNamespace { .. }
+         | Component::AttributeOther(_)
+         | Component::Empty
+@@ -2863,7 +3018,83 @@
+     fn clear(&mut self) {
          self.element_map.clear();
          self.pseudos_map.clear();
-     }
++    }
 +}
 +
 +/// pyro: the `::before` and `::after` rules (one pseudo-element level, in
@@ -6166,8 +6211,8 @@ diff -ruN a/stylist.rs b/stylist.rs
 +struct BoxGeneratingPseudoRules {
 +    before: SelectorMap<Rule>,
 +    after: SelectorMap<Rule>,
- }
- 
++}
++
 +impl BoxGeneratingPseudoRules {
 +    /// Whether a rule with these declarations goes in the index (when it is a single-level
 +    /// `::before` or `::after` rule).
@@ -6209,7 +6254,7 @@ diff -ruN a/stylist.rs b/stylist.rs
 +        } else {
 +            None
 +        }
-+    }
+     }
 +
 +    fn clear(&mut self) {
 +        self.before.clear();
@@ -6220,11 +6265,9 @@ diff -ruN a/stylist.rs b/stylist.rs
 +        self.before.shrink_if_needed();
 +        self.after.shrink_if_needed();
 +    }
-+}
-+
+ }
+ 
  /// The id of a given layer, a sequentially-increasing identifier.
- #[derive(Clone, Copy, Debug, Eq, MallocSizeOf, PartialEq, PartialOrd, Ord)]
- pub struct LayerId(u16);
 @@ -3360,6 +3591,10 @@
      /// The data coming from normal style rules that apply to elements at this
      /// cascade level.
@@ -8313,6 +8356,24 @@ diff -ruN a/values/generics/text.rs b/values/generics/text.rs
          if !self.sink.is_zero() {
              dest.write_char(' ')?;
              self.sink.to_css(dest)?;
+diff -ruN a/values/mod.rs b/values/mod.rs
+--- a/values/mod.rs	2026-11-11 19:55:57
++++ b/values/mod.rs	2026-11-21 02:02:38
+@@ -173,6 +173,14 @@
+ 
+ /// A CSS integer value.
+ pub type CSSInteger = i32;
++
++/// Tests a class atom against a Selectors 5 class prefix.
++pub fn matches_class_prefix(class: &AtomIdent, prefix: &AtomIdent, quirks: bool) -> bool {
++    #[cfg(feature = "gecko")]
++    return prefix.0.with_str(|prefix| class.0.with_str(|class| selectors::attr::matches_class_prefix(class, prefix, quirks)));
++    #[cfg(feature = "servo")]
++    return selectors::attr::matches_class_prefix(&class.0, &prefix.0, quirks);
++}
+ 
+ /// Serialize an identifier which is represented as an atom.
+ #[cfg(feature = "gecko")]
 diff -ruN a/values/resolved/color.rs b/values/resolved/color.rs
 --- a/values/resolved/color.rs	2026-11-11 19:55:57
 +++ b/values/resolved/color.rs	2026-11-19 20:50:37

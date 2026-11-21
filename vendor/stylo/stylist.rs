@@ -2800,7 +2800,7 @@ struct StylistSelectorVisitor<'a> {
 
 fn component_needs_revalidation(c: &Component<SelectorImpl>) -> bool {
     match *c {
-        Component::AttributeInNoNamespaceExists { .. }
+        Component::ClassPrefix(_) | Component::AttributeInNoNamespaceExists { .. }
         | Component::AttributeInNoNamespace { .. }
         | Component::AttributeOther(_)
         | Component::Empty

@@ -152,6 +152,8 @@ pub trait Element: Sized + Copy + Clone + Debug {
 
     fn has_custom_state(&self, name: &<Self::Impl as SelectorImpl>::Identifier) -> bool;
 
+    fn has_class_prefix(&self, prefix: &<Self::Impl as SelectorImpl>::Identifier, quirks: bool) -> bool;
+
     /// Returns the mapping from the `exportparts` attribute in the reverse
     /// direction, that is, in an outer-tree -> inner-tree direction.
     fn imported_part(

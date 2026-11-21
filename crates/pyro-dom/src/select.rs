@@ -787,6 +787,9 @@ impl selectors::Element for ElemRef<'_> {
             CaseSensitivity::AsciiCaseInsensitive => classes.iter().any(|c| c.eq_ignore_ascii_case(&name.0)),
         }
     }
+    fn has_class_prefix(&self, prefix: &CssIdent, quirks: bool) -> bool {
+        self.data().classes().iter().any(|class| selectors::attr::matches_class_prefix(class, &prefix.0, quirks))
+    }
     fn has_custom_state(&self, name: &CssIdent) -> bool {
         self.dom.has_custom_state_idx(self.idx, &name.0)
     }

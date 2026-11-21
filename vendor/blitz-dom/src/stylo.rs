@@ -1026,6 +1026,10 @@ impl selectors::Element for BlitzNode<'_> {
             .unwrap_or(false)
     }
 
+    fn has_class_prefix(&self, prefix: &AtomIdent, quirks: bool) -> bool {
+        self.element_data().is_some_and(|data| data.classes.iter().any(|class| selectors::attr::matches_class_prefix(class, &prefix.0, quirks)))
+    }
+
     fn has_class(
         &self,
         search_name: &<Self::Impl as selectors::SelectorImpl>::Identifier,

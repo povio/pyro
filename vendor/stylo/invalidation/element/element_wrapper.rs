@@ -407,6 +407,15 @@ where
         }
     }
 
+    fn has_class_prefix(&self, prefix: &AtomIdent, quirks: bool) -> bool {
+        if let Some(snapshot) = self.snapshot().filter(|snapshot| snapshot.has_attrs()) {
+            let mut found = false;
+            snapshot.each_class(|class| found |= crate::values::matches_class_prefix(class, prefix, quirks));
+            return found;
+        }
+        self.element.has_class_prefix(prefix, quirks)
+    }
+
     fn has_class(&self, name: &AtomIdent, case_sensitivity: CaseSensitivity) -> bool {
         match self.snapshot() {
             Some(snapshot) if snapshot.has_attrs() => snapshot.has_class(name, case_sensitivity),
