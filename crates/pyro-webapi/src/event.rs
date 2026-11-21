@@ -277,7 +277,7 @@ impl EventCore {
                     | EventInterface::DragEvent
                     | EventInterface::UiEvent
                     | EventInterface::TouchEvent
-            ),
+            ) && !matches!(ty, "pointerenter" | "pointerleave" | "mouseenter" | "mouseleave"),
         );
         e.state.borrow_mut().is_trusted = true;
         e

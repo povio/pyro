@@ -1993,8 +1993,13 @@ pub(crate) fn mouse_event(
         f.client_y = m.y;
         f.screen_x = m.x;
         f.screen_y = m.y;
-        f.button =
-            if ty.ends_with("move") || ty.ends_with("over") || ty.ends_with("out") { 0 } else { m.button.dom_button() };
+        // A physical mouse move or a boundary crossing changes no button.
+        // MouseEvent uses 0 here; PointerEvent reserves -1 for this case.
+        f.button = match ty {
+            "pointermove" | "pointerover" | "pointerout" | "pointerenter" | "pointerleave" => -1,
+            "mousemove" | "mouseover" | "mouseout" | "mouseenter" | "mouseleave" | "dragover" => 0,
+            _ => m.button.dom_button(),
+        };
         f.buttons = m.buttons;
         f.detail = m.click_count as f64;
         f.ctrl_key = m.modifiers.ctrl;
