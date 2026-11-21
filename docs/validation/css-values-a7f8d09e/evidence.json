@@ -1,0 +1,236 @@
+{
+  "source": "672ba0c747e86321b9014cd1a4c2ca58c0e2fedd",
+  "base": "a7f8d09e2c6e6a86e2ff6f60d9c48481ba50a41f",
+  "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+  "jsc": "0e0dd7038a7a-6f4649e395e0",
+  "binarySha256": {
+    "base": "ef3c0ae10633920a957d3a76ae0103bbaafb0270848987c42e12286223695ec6",
+    "final": "5b141a01c9fe82df86973e798ab40086accb9c7e8fce368d3ab006d9f9b67ca1"
+  },
+  "chromeOnlyByFamilyAndURL": {
+    "Animated calc() extremes and used-value clamping": {
+      "css/css-values/animations/calc-interpolation.html": 22
+    },
+    "Engine-dependent names reporting equivalent rotation matrices": {
+      "css/css-values/minmax-angle-serialize.html": 19
+    },
+    "Font-relative metrics, invalidation and line height": {
+      "css/css-values/animations/line-height-lh-transition.html": 1,
+      "css/css-values/ch-pseudo-recalc-on-font-load.html": 4,
+      "css/css-values/ch-recalc-on-font-load.html": 2,
+      "css/css-values/lh-unit-003.html": 1,
+      "css/css-values/lh-unit-004.html": 1,
+      "css/css-values/using-font-relative-units-in-font-properties.html": 5
+    },
+    "Inline if() conditions, branch substitution and dependency cycles": {
+      "css/css-values/if-conditionals.html": 199,
+      "css/css-values/if-cycle.html": 36,
+      "css/css-values/if-function-revert-rule.html": 2,
+      "css/css-values/if-initial-unregistered.html": 1,
+      "css/css-values/if-invalidation.html": 1,
+      "css/css-values/if-media-invalidation.html": 1,
+      "css/css-values/if-style-invalidation.html": 1,
+      "css/css-values/if-supports-quirks.html": 1,
+      "css/css-values/tree-counting/sibling-function-if-style-query.html": 4
+    },
+    "Math functions, typed arithmetic, clamping and serialization": {
+      "css/css-values/calc-complex-unresolved-serialize.html": 6,
+      "css/css-values/calc-infinity-nan-computed.html": 12,
+      "css/css-values/exp-log-compute.html": 5,
+      "css/css-values/hypot-pow-sqrt-computed.html": 12,
+      "css/css-values/round-function.html": 2,
+      "css/css-values/sign-in-keyframes-with-relative-units.html": 2,
+      "css/css-values/signs-abs-computed.html": 11,
+      "css/css-values/typed_arithmetic.html": 4
+    },
+    "Reserved intrinsic-size interpolation and layout": {
+      "css/css-values/calc-size/animation/calc-size-height-interpolation.html": 202,
+      "css/css-values/calc-size/animation/calc-size-interpolation-expansion.html": 5,
+      "css/css-values/calc-size/animation/calc-size-width-interpolation.html": 128,
+      "css/css-values/calc-size/animation/interpolate-size-height-composition.html": 1,
+      "css/css-values/calc-size/animation/interpolate-size-height-interpolation.html": 88,
+      "css/css-values/calc-size/animation/interpolate-size-logical-properties-interpolation.html": 62,
+      "css/css-values/calc-size/animation/interpolate-size-max-height-composition.html": 16,
+      "css/css-values/calc-size/animation/interpolate-size-max-height-interpolation.html": 48,
+      "css/css-values/calc-size/animation/interpolate-size-max-width-composition.html": 24,
+      "css/css-values/calc-size/animation/interpolate-size-max-width-interpolation.html": 48,
+      "css/css-values/calc-size/animation/interpolate-size-which-value.html": 2,
+      "css/css-values/calc-size/animation/interpolate-size-width-composition.html": 1,
+      "css/css-values/calc-size/animation/interpolate-size-width-interpolation.html": 66,
+      "css/css-values/calc-size/calc-size-flex-basis-on-column.html": 2,
+      "css/css-values/calc-size/calc-size-flex-basis-on-row.html": 2,
+      "css/css-values/calc-size/calc-size-height-box-sizing.html": 4,
+      "css/css-values/calc-size/calc-size-height.html": 5,
+      "css/css-values/calc-size/calc-size-out-of-flow.html": 4,
+      "css/css-values/calc-size/calc-size-parsing.html": 8,
+      "css/css-values/calc-size/calc-size-typed-om.html": 3,
+      "css/css-values/calc-size/calc-size-width-box-sizing.html": 4,
+      "css/css-values/calc-size/calc-size-width.html": 5
+    },
+    "Tree-counting functions in keyframes, descriptors and shadow trees": {
+      "css/css-values/tree-counting/calc-sibling-function-in-shadow-dom.html": 1,
+      "css/css-values/tree-counting/sibling-function-descriptors.tentative.html": 3,
+      "css/css-values/tree-counting/sibling-index-keyframe-font-style-dynamic.html": 1,
+      "css/css-values/tree-counting/sibling-index-keyframe-font-variation-settings-dynamic.html": 1,
+      "css/css-values/tree-counting/sibling-index-keyframe-font-weight-dynamic.html": 1,
+      "css/css-values/tree-counting/sibling-index-keyframe-length-value-dynamic.html": 1,
+      "css/css-values/tree-counting/sibling-index-keyframe-palette-mix-dynamic.html": 2,
+      "css/css-values/tree-counting/sibling-index-keyframe-percent-dynamic.html": 1,
+      "css/css-values/tree-counting/sibling-index-keyframe-registered-properties-dynamic.html": 10,
+      "css/css-values/tree-counting/sibling-index-keyframe-rotate-dynamic.html": 1,
+      "css/css-values/tree-counting/sibling-index-keyframe-scale-dynamic.html": 1,
+      "css/css-values/tree-counting/sibling-index-keyframe-transform-dynamic.html": 1,
+      "css/css-values/tree-counting/sibling-index-keyframe-value-dynamic.html": 1
+    },
+    "Typed attr() substitution and parsing": {
+      "css/css-values/attr-all-types.html": 14,
+      "css/css-values/attr-parse-url.html": 1
+    },
+    "URL resolution and request modifiers": {
+      "css/css-values/urls/cross-origin/url-font-cross-origin-anonymous-negative.sub.html": 1,
+      "css/css-values/urls/cross-origin/url-font-cross-origin-use-credentials-negative.sub.html": 1,
+      "css/css-values/urls/fragment-only.html": 5,
+      "css/css-values/urls/integrity/url-font-integrity-negative.sub.html": 1,
+      "css/css-values/urls/referrer-policy/no-referrer/url-font-referrer-policy.sub.html": 1
+    },
+    "Viewport units, scrollbar reservation and media queries": {
+      "css/css-values/viewport-units-compute.html": 1,
+      "css/css-values/viewport-units-scrollbars-compute.html": 8,
+      "css/css-values/viewport-units-scrollbars-mq-001.html": 1
+    },
+    "inherit() substitution": {
+      "css/css-values/inherit-function-basic.html": 1
+    },
+    "random() in functions, conditionals, descriptors and computed values": {
+      "css/css-values/random-computed.tentative.html": 5,
+      "css/css-values/random-in-custom-function.tentative.html": 63,
+      "css/css-values/random-in-descriptors.tentative.html": 1,
+      "css/css-values/random-in-if.tentative.html": 9
+    }
+  },
+  "summary": {
+    "urls": 26,
+    "observed": 1032,
+    "basePasses": 964,
+    "candidatePasses": 991,
+    "basePassingPages": 17,
+    "candidatePassingPages": 20,
+    "gainedPages": [
+      "css/css-values/exp-log-compute.html",
+      "css/css-values/hypot-pow-sqrt-computed.html",
+      "css/css-values/round-function.html"
+    ],
+    "lostPages": []
+  },
+  "gained": [
+    [
+      "css/css-values/calc-infinity-nan-computed.html",
+      "Property animation-duration value 'calc(1 / 0 * 1s)'"
+    ],
+    [
+      "css/css-values/calc-infinity-nan-computed.html",
+      "Property animation-duration value 'calc(NaN * 1s)'"
+    ],
+    [
+      "css/css-values/calc-infinity-nan-computed.html",
+      "Property animation-duration value 'calc(infinity * 1s)'"
+    ],
+    [
+      "css/css-values/calc-infinity-nan-computed.html",
+      "Property animation-duration value 'calc(max(infinity * 1s, 10s)'"
+    ],
+    [
+      "css/css-values/calc-infinity-nan-computed.html",
+      "Property transition-delay value 'calc(-infinity* 1s)'"
+    ],
+    [
+      "css/css-values/calc-infinity-nan-computed.html",
+      "Property transition-delay value 'calc(max(10000s, 0s) + min(-infinity * 1s, infinity * 1s))'"
+    ],
+    [
+      "css/css-values/calc-infinity-nan-computed.html",
+      "Property transition-delay value 'calc(min(-infinity * 1s, 10s))'"
+    ],
+    [
+      "css/css-values/exp-log-compute.html",
+      "calc(-1 * log(2, 1)) should be used-value-equivalent to calc(NaN)"
+    ],
+    [
+      "css/css-values/exp-log-compute.html",
+      "calc(-1 * log(5, 1)) should be used-value-equivalent to calc(NaN)"
+    ],
+    [
+      "css/css-values/exp-log-compute.html",
+      "calc(1 / log(1, 0.5)) should be used-value-equivalent to calc(infinity)"
+    ],
+    [
+      "css/css-values/exp-log-compute.html",
+      "log(2, 1) should be used-value-equivalent to calc(NaN)"
+    ],
+    [
+      "css/css-values/exp-log-compute.html",
+      "log(5, 1) should be used-value-equivalent to calc(NaN)"
+    ],
+    [
+      "css/css-values/hypot-pow-sqrt-computed.html",
+      "calc(-1 * pow(-1, -infinity)) should be used-value-equivalent to calc(NaN)"
+    ],
+    [
+      "css/css-values/hypot-pow-sqrt-computed.html",
+      "calc(-1 * pow(-1, infinity)) should be used-value-equivalent to calc(NaN)"
+    ],
+    [
+      "css/css-values/hypot-pow-sqrt-computed.html",
+      "calc(-1 * pow(1, -infinity)) should be used-value-equivalent to calc(NaN)"
+    ],
+    [
+      "css/css-values/hypot-pow-sqrt-computed.html",
+      "calc(-1 * pow(1, NaN)) should be used-value-equivalent to calc(NaN)"
+    ],
+    [
+      "css/css-values/hypot-pow-sqrt-computed.html",
+      "calc(-1 * pow(1, infinity)) should be used-value-equivalent to calc(NaN)"
+    ],
+    [
+      "css/css-values/hypot-pow-sqrt-computed.html",
+      "calc(-1 * pow(NaN, 0)) should be used-value-equivalent to calc(NaN)"
+    ],
+    [
+      "css/css-values/hypot-pow-sqrt-computed.html",
+      "pow(-1, -infinity) should be used-value-equivalent to calc(NaN)"
+    ],
+    [
+      "css/css-values/hypot-pow-sqrt-computed.html",
+      "pow(-1, infinity) should be used-value-equivalent to calc(NaN)"
+    ],
+    [
+      "css/css-values/hypot-pow-sqrt-computed.html",
+      "pow(1, -infinity) should be used-value-equivalent to calc(NaN)"
+    ],
+    [
+      "css/css-values/hypot-pow-sqrt-computed.html",
+      "pow(1, NaN) should be used-value-equivalent to calc(NaN)"
+    ],
+    [
+      "css/css-values/hypot-pow-sqrt-computed.html",
+      "pow(1, infinity) should be used-value-equivalent to calc(NaN)"
+    ],
+    [
+      "css/css-values/hypot-pow-sqrt-computed.html",
+      "pow(NaN, 0) should be used-value-equivalent to calc(NaN)"
+    ],
+    [
+      "css/css-values/round-function.html",
+      "calc(-1 * round(infinity, NaN)) should be used-value-equivalent to calc(NaN)"
+    ],
+    [
+      "css/css-values/round-function.html",
+      "round(infinity, NaN) should be used-value-equivalent to calc(NaN)"
+    ],
+    [
+      "css/css-values/typed_arithmetic.html",
+      "Property animation-duration value 'calc(2s / (10s - 10s) * 1s)'"
+    ]
+  ],
+  "lost": []
+}
