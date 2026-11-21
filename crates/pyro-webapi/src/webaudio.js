@@ -188,7 +188,9 @@
     }
     get value() {
       const p = paramOf(this);
-      return p.events.length ? Math.fround(clampParam(p, valueAt(p, ctxOf(p.ctx).time()))) : p.value;
+      const context = ctxOf(p.ctx);
+      if (context.offline) return p.renderedValue ?? p.value;
+      return p.events.length ? Math.fround(clampParam(p, valueAt(p, context.time()))) : p.value;
     }
     set value(v) {
       const p = paramOf(this);
@@ -287,10 +289,12 @@
   function setParamValue(p, value, t) {
     // Setting value is equivalent to inserting a setValueAtTime at currentTime.
     checkValueAtTime(p, t);
+    value = Math.fround(clampParam(p, value));
     const at = p.events.findIndex(e => e.type === SET && e.time === t);
     if (at >= 0) p.events[at].value = value;
     else if (p.events.length) insertEvent(p, {type: SET, time: t, value});
-    p.value = Math.fround(value);
+    p.value = value;
+    p.renderedValue = value;
   }
   function nodeParam(n, ...options) {
     const param = new AudioParam(secret, n.ctx, ...options);
@@ -381,8 +385,9 @@
     p.q = q;
     const out = p.values;
     if (!p.events.length) out.fill(p.value);
-    else if (p.rate === 'k-rate') out.fill(valueAt(p, f0 / rate));
-    else for (let i = 0; i < QUANTUM; i++) out[i] = valueAt(p, (f0 + i) / rate);
+    else if (p.rate === 'k-rate') out.fill(clampParam(p, valueAt(p, f0 / rate)));
+    else for (let i = 0; i < QUANTUM; i++) out[i] = clampParam(p, valueAt(p, (f0 + i) / rate));
+    p.renderedValue = out[QUANTUM - 1];
     if (p.inputs.length) {
       const mono = new F32(QUANTUM);
       for (const { node, output } of p.inputs) mix(pull(node, q, f0, output), [mono], 'speakers', 1);
@@ -1115,7 +1120,7 @@
       applyNodeOptions(this, inherited);
       const n = nodeOf(this);
       n.delayTime = nodeParam(n, 0, 0, fround(limit));
-      params.get(n.delayTime).value = fround(delay);
+      setParamValue(params.get(n.delayTime), delay, 0);
       // Store only the rendered part of the delay line, bounded by its maximum
       // age. Two extra quanta cover the neighboring sample and the current write.
       n.slots = max(1, ceil(limit * ctxOf(context).rate / QUANTUM)) + 2;
@@ -1381,7 +1386,7 @@
       n.Q = parameter('Q', 1, -F32_MAX, F32_MAX);
       n.detune = parameter('detune', 0, -153600, 153600);
       n.frequency = parameter('frequency', 350, 0, rate / 2);
-      n.gain = parameter('gain', 0, -F32_MAX, Math.fround(40 * Math.log10(F32_MAX)));
+      n.gain = parameter('gain', 0, -F32_MAX, fround(40 * fround(Math.log10(F32_MAX))));
       const suppliedType = options?.type;
       if (suppliedType !== undefined) {
         const type = `${suppliedType}`;
@@ -1670,8 +1675,8 @@
         if (o.type === 'custom') throw new DE("Failed to construct 'OscillatorNode': A PeriodicWave must be specified if the type is set to \"custom\"", 'InvalidStateError');
         this.type = o.type;
       }
-      if (o.frequency !== undefined) params.get(n.frequency).value = Math.fround(finite(o.frequency, 'construct', 'OscillatorNode'));
-      if (o.detune !== undefined) params.get(n.detune).value = Math.fround(finite(o.detune, 'construct', 'OscillatorNode'));
+      if (o.frequency !== undefined) setParamValue(params.get(n.frequency), finite(o.frequency, 'construct', 'OscillatorNode'), 0);
+      if (o.detune !== undefined) setParamValue(params.get(n.detune), finite(o.detune, 'construct', 'OscillatorNode'), 0);
       n.process = (f0, q) => {
         const rate = ctxOf(context).rate;
         const range = activeRange(n, rate, f0);
