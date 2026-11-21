@@ -1,0 +1,728 @@
+{
+  "main": [
+    {
+      "url": "css/css-scroll-snap/input/keyboard.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "If the original intended offset is valid as making a snap area cover the snapport, but there's a defined snap offset in between, use the defined snap offset.",
+        "If the original intended offset is valid as making a snap area cover thesnapport, and there's no other snap offset in between, use the originalintended offset",
+        "If there is no valid snap offset on the arrow key's direction other than the current offset, and the scroll-snap-type is mandatory, stay at the current offset.",
+        "If there is no valid snap offset on the arrow key's direction other than the current offset, and the scroll-snap-type is proximity, go to the original intended offset",
+        "Snaps to bottom-left after pressing ArrowDown",
+        "Snaps to top-left after pressing ArrowLeft",
+        "Snaps to top-left after pressing ArrowUp",
+        "Snaps to top-right after pressing ArrowRight"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/snap-inline-block.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "Snaps correctly for 'direction: rtl' with 'scroll-snap-align: end start' alignment",
+        "Snaps correctly for 'direction: rtl' with 'scroll-snap-align: start end' alignment",
+        "Snaps correctly for horizontal-tb writing mode with 'scroll-snap-align: start end' alignment",
+        "Snaps correctly for vertical-lr writing mode with 'scroll-snap-align: end start' alignment",
+        "Snaps correctly for vertical-lr writing mode with 'scroll-snap-align: start end' alignment",
+        "Snaps correctly for vertical-rl writing mode with 'scroll-snap-align: end start' alignment",
+        "Snaps correctly for vertical-rl writing mode with 'scroll-snap-align: start end' alignment"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/snap-after-relayout/multiple-aligned-targets/prefer-targeted-element.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "scroller selects targeted area box2 among multiple aligned areas.",
+        "scroller selects targeted area box3 among multiple aligned areas.",
+        "scroller selects targeted area box5 among multiple aligned areas.",
+        "scroller selects targeted area box6 among multiple aligned areas.",
+        "scroller selects targeted area box8 among multiple aligned areas.",
+        "scroller selects targeted area box9 among multiple aligned areas."
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/input/paged.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "Doesn't skip past large snappable content",
+        "Doesn't skip past small snappable content",
+        "Scrolls more than a page if necessary",
+        "Scrolls multiple smaller items into view",
+        "Scrolls past items currently in view"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/snap-after-relayout/multiple-aligned-targets/prefer-targeted-element-positioned.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "prefer-targeted-element-positioned",
+        "prefer-targeted-element-positioned 1",
+        "prefer-targeted-element-positioned 2",
+        "prefer-targeted-element-positioned 3",
+        "prefer-targeted-element-positioned 4"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/scroll-initial-target/scroll-initial-target-nested-container.tentative.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "display:none scroll-initial-target becomes display:block",
+        "intermediate overflow:visible container becomes overflow:scroll",
+        "outer scroll-initial-target takes precedence over inner",
+        "scroll containers can also be scroll-initial-targets"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/snap-after-relayout/layout-follows-focused-targeted-block.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "block axis area is preferred (vertical writing-mode).",
+        "block axis area is preferred.",
+        "focused area prefered over targeted area.",
+        "targeted area prefered over non-focused area."
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/snap-events/scrollsnapchange/scrollsnapchange-after-layout-change.tentative.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "scrollsnapchange fires after snap area is snapped to upon layout change without scroll.",
+        "scrollsnapchange fires after snap area is snapped to upon layout change.",
+        "scrollsnapchange fires when container stops snapping",
+        "scrollsnapchange fires when snap container no longer has snap areas"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/overflowing-snap-areas.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "Don't snap back even if scrollTo tries to scroll to positions which are outside of the scroll range and if a snap target element covers the snaport",
+        "Snaps to a snap area (400) that is closer than the position that reveals the space between snap areas (600) within the larger snap area on x.",
+        "Snaps to a snap area (400) that is closer than the position that reveals the space between snap areas (600) within the larger snap area on y."
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/parsing/scroll-snap-type-pair.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "e.style['scroll-snap-type'] = \"pair mandatory\" should set the property value",
+        "e.style['scroll-snap-type'] = \"pair proximity\" should set the property value",
+        "e.style['scroll-snap-type'] = \"pair\" should set the property value"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/scroll-snap-stop-001.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "A scroll outside bounds in the non-snapping axis with intended direction and end position should not pass a snap area with scroll-snap-stop: always.",
+        "A scroll outside bounds in the snapping axis with intended direction and end position should not pass a snap area with scroll-snap-stop: always.",
+        "A scroll with intended direction and end position should not pass a snap area with scroll-snap-stop: always."
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/snap-after-relayout/changing-scroll-snap-type-on-root-element.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "Changing the scroller's snap type axis should make it resnap.",
+        "Changing the scroller's snap type to x should make it resnap on the x-axis.",
+        "Changing the scroller's snap type to y should make it resnap on the y-axis."
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/snap-events/scrollsnapchange/scrollsnapchange-on-programmatic-root-scroll.tentative.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "Document.onscrollsnapchange event fires after snap target changes viascrollTo",
+        "scrollsnapchange event fires after snap target changes via scrollTo",
+        "scrollsnapchange is not fired if snap target doesn't change on programmatic scroll"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/snap-events/scrollsnapchange/scrollsnapchange-on-programmatic-scroll.tentative.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "Element.onscrollsnapchange event fires after snap target changes viascrollTo",
+        "scrollsnapchange event fires after snap target changes via scrollTo",
+        "scrollsnapchange is not fired if snap target doesn't change on programmatic scroll"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/snap-events/scrollsnapchanging/scrollsnapchanging-on-programmatic-root-scroll.tentative.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "Document.scrollsnapchanging fires on programmatic scrolls that changes ascroller's snap targets.",
+        "scrollsnapchanging does not fire on programmatic scrolls that don't trigger a change in snap targets.",
+        "scrollsnapchanging fires on programmatic scrolls that changes a scroller's snap targets."
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/snap-events/scrollsnapchanging/scrollsnapchanging-on-programmatic-scroll.tentative.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "Element.onscrollsnapchanging fires on programmatic scrolls that changes a scroller's snap targets.",
+        "scrollsnapchanging fires on programmatic scrolls that changes a scroller's snap targets.",
+        "scrollsnapchanging should not fire since the snap target doesn't change."
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/snap-to-column-scroll-origin.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "Snaps to ::column snap areas of a sideways-lr, direction: ltr multicol scroll snap container",
+        "Snaps to ::column snap areas of a vertical-rl, direction: rtl multicol scroll snap container",
+        "Snaps to ::column snap areas of an RTL multicol scroll snap container"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/input/snap-area-overflow-boundary-viewport-covering.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "Keyboard scrolling with vertical snap-area overflow",
+        "Mouse-wheel scrolling with vertical snap-area overflow"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/overflowing-snap-areas-nested.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "Snap within a snap area which covers snapport on x selects a valid snap position that avoids the overlapping areas at 800-1000 and 1400-1600.",
+        "Snap within a snap area which covers snapport on y selects a valid snap position that avoids the overlapping areas at 800-1000 and 1400-1600."
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/scroll-initial-target/parsing/scroll-initial-target-computed.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "Property scroll-initial-target value 'nearest'",
+        "Property scroll-initial-target value 'none'"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/scroll-initial-target/parsing/scroll-initial-target-valid.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "e.style['scroll-initial-target'] = \"nearest\" should set the property value",
+        "e.style['scroll-initial-target'] = \"none\" should set the property value"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/scroll-initial-target/scroll-initial-target-display-toggled.tentative.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "display:block scroll-initial-target becomes display: none",
+        "display:none scroll-initial-target becomes display: block"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/scroll-initial-target/scroll-initial-target-with-user-programmatic-scroll.tentative.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "scroll-initial-target does not override programmatic scroll",
+        "scroll-initial-target does not override user scroll"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/scroll-margin-overflow-ancestor.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "scroll-margin and scroll-padding are respected when overflowing an overflow: auto container",
+        "scroll-margin is respected when overflowing an overflow: auto container"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/scroll-padding-and-margin.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "scroll-padding-and-margin",
+        "scroll-padding-and-margin 1"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/scroll-padding-focus.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "Avoid left scroll-padding",
+        "Avoid right scroll-padding"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/scroll-snap-nested-snap-area-layout-changed.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "newly larger-than-snapport area is snapped to when straddled close to bottom.",
+        "snapport remains within newly covering snap area when already in covering position."
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/scroll-snap-stop-change.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "scroll-snap-stop for areas on DIV should control snapping behavior and changing it takes effect",
+        "scroll-snap-stop for areas on HTML should control snapping behavior and changing it takes effect"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/snap-after-relayout/changing-scroll-snap-align.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "Changing an element snap alignment from none to start by adding a class should make the scroller resnap.",
+        "Changing an element snap alignment from none to start should make thescroller resnap."
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/snap-after-relayout/changing-scroll-snap-type.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "Changing the scroller's snap type axis should make it resnap.",
+        "Changing the scroller's snap type to x should make it resnap on the x-axis."
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/snap-after-relayout/multiple-aligned-targets/prefer-inner-target.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "snap container follows the innermost snap target after layout change (not the co-located outer target)",
+        "snap container selects innermost area as snap target"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/snap-events/scrollsnapchange/scrollsnapchange-same-targets-after-layout-changed.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "scrollsnapchange doesn't fire after layout change if snapped to the same elements",
+        "scrollsnapchange doesn't fire after snap to the same targets after scroll. elements"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/snap-events/scrollsnapchange/scrollsnapchange-scrolling-non-snapping-axis.tentative.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "keyboard scroll on non-snapping axis doesn't trigger scrollsnapchange",
+        "wheel scroll on non-snapping axis doesn't trigger scrollsnapchange"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/snap-events/snap-events-with-nested-pseudo-target.tentative.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "snapTarget for scrollsnapchange is the originating element when a snap area belongs to a nested pseudo-element",
+        "snapTarget for scrollsnapchanging is the originating element when a snap area belongs to a nested pseudo-element"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/snap-events/snapevents-at-document-bubble-to-window.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "scrollsnapchange bubbles when fired at the document (addEventListener).",
+        "scrollsnapchange bubbles when fired at the document (onscrollsnapchange)."
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/unrelated-gesture-scroll-during-snap.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "gesture on separate scroll container works while another container snaps",
+        "gesture on separate snap container works while another container snaps"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/input/keyboard-snap-interruption.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "Interrupting a snap animation with another key press targeting the same node preserves snapping destination"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/input/scroll-padding-paged.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "After page down, the scroll padding is also taken into account"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/nested-scrollIntoView-snaps.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "All the scrollers affected by scrollIntoView should land on a snap position if one exists. Otherwise, land according to the specified alignment"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/overscroll-snap.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "snapport covered by snap area doesn't jump"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/scroll-initial-target/scroll-initial-target-aligns-with-snap-align.tentative.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "scroll-initial-target aligns with scroll-snap-align"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/scroll-initial-target/scroll-initial-target-root.tentative.html",
+      "chromeOnlyPage": true,
+      "names": [
+        " CSS Scroll Snap 2 Test: scroll-initial-target*"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/scroll-initial-target/scroll-initial-target-rtl.tentative.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "scroll-initial-target reflects vertical rtl writing mode."
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/scroll-initial-target/scroll-initial-target-shadow-dom.tentative.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "scroll-initial-target in shadow DOM is scrolled to initially."
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/scroll-initial-target/scroll-initial-target-span.tentative.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "<span> scroll-initial-target is honored"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/scroll-initial-target/scroll-initial-target-with-anchor-navigation.tentative.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "scroll-initial-target does not override anchor navigation."
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/scroll-initial-target/scroll-initial-target-with-scroll-snap.tentative.html",
+      "chromeOnlyPage": true,
+      "names": [
+        " CSS Scroll Snap 2 Test: scroll-initial-target*"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/scroll-initial-target/scroll-initial-target-with-scroll-start-root.tentative.html",
+      "chromeOnlyPage": true,
+      "names": [
+        " CSS Scroll Snap 2 Test: scroll-initial-target*"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/scroll-initial-target/scroll-initial-target-with-scroll-start.tentative.html",
+      "chromeOnlyPage": true,
+      "names": [
+        " CSS Scroll Snap 2 Test: scroll-initial-target*"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/scroll-initial-target/scroll-initial-target-with-text-fragment-navigation.tentative.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "scroll-start doesn't override text fragment navigation"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/scroll-initial-target/scroll-initial-target.tentative.html",
+      "chromeOnlyPage": true,
+      "names": [
+        " CSS Scroll Snap 2 Test: scroll-initial-target*"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/scroll-margin-focus.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "Focus should scroll button outside of scroll margin"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/scroll-on-large-element-not-covering-snapport.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "snaps to bottom edge of large snap area that doesn't cover the snap port."
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/scroll-snap-stop-002-nested.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "`scroll-snap-stop: always` snap point is further than the scroll destination and a snap area covers the snapport"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/scroll-snap-stop-002.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "`scroll-snap-stop: always` snap point is preferred even if the snap area entire snapport"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/scroll-snap-type-change.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "scroll-snap-type on HTML should control snapping behavior and changing it takes effect"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/scroll-snap-type-on-root-element.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "The writing-mode (vertical-lr) on the body is used"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/scroll-snap-type-pair-001.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "Single-axis snap areas (start none / none start) are skipped under scroll-snap-type: pair"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/scroll-snap-type-pair-002.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "Single-axis scroll prioritizes candidates along the scrolled axis without jumping axes"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/scroll-snap-type-pair-003.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "Resolves dual-axis candidate conflicts using 2D Euclidean distance to base position"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/scroll-snap-type-pair-004.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "Resolves X-axis tie between candidates to the area matching the Y-axis snap selection"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/scroll-snap-type-pair-005.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "Dispatches scrollsnapchange with the single dual-axis target under scroll-snap-type: pair"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/scroll-snap-type-pair-006.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "Relatively positioned targets with scroll-snap-align: center snap accurately under pair mandatory"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/scroll-snap-type-pair-007.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "DirectionStrategy prefers higher cosine similarity candidate during 2D scrollBy"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/selection-target.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "Test scrolling into view when typing"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/snap-after-initial-layout/initial-snap-matches-scroll.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "initial scroll snap matches scrolling scroll snap position."
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/snap-after-relayout/adding-only-snap-area.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "Adding a new snap area when there are none should make the scroller snap to it."
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/snap-after-relayout/focus-element-no-snap.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "Resnap to focused element after relayout"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/snap-after-relayout/multiple-aligned-targets/nested-supercedes-common-to-both-axes.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "scroller prefers nested area over area aligned in both axes."
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/snap-after-relayout/multiple-aligned-targets/prefer-first-in-flat-tree-order.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "scroller follows the element that is first in flat tree order, not DOM order"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/snap-after-relayout/multiple-aligned-targets/prefer-first-in-tree-order.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "first in tree-order is selected as snap target."
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/snap-after-relayout/multiple-aligned-targets/prefer-focused-element-scaled-ancestor.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "out-of-viewport focused element is not the selected snap target under a scaled ancestor."
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/snap-after-relayout/multiple-aligned-targets/prefer-focused-element.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "scroller selects focused target from aligned choices on snap"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/snap-after-relayout/multiple-aligned-targets/prefer-focused-nested-containers.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "Snap container prefers focused nested snap target."
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/snap-after-relayout/multiple-aligned-targets/prefer-snap-target-containing-focused-element.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "Re-snap prefers snap target containing the focused element when multiple targets are aligned"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/snap-after-relayout/multiple-aligned-targets/prefer-targeted-element-main-frame.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "targeted box is selected snap target."
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/snap-after-relayout/multiple-aligned-targets/re-snap-per-axis-target.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "Re-snap tracks snap target on each axis independently"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/snap-after-relayout/resnap-on-reconstructing-frame.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "Stay at the last snap point even after reconstrucing the scroll container"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/snap-after-relayout/resnap-to-focused.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "Resnap to focused element after relayout"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/snap-after-relayout/snap-to-different-targets.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "Scroller should snap to at least one of the targets if unable to snap to both after a layout change."
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/snap-after-style-change-respects-scroll-behavior.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "Dynamically enabling scroll-snap should trigger a smooth scroll if scroll-behavior is smooth."
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/snap-events/scrollsnapchange/scrollsnapchange-scroll-snap-type-change.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "Trigger scrollsnapchange event on scroll-snap-type change"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/snap-events/scrollsnapchange/scrollsnapchange-with-proximity-strictness.tentative.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "Scrollsnapchange fires when scrolling outside proximity range."
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/snap-events/scrollsnapchanging/scrollsnapchanging-on-fast-scroll.tentative.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "A fast wheel scroll that starts and ends between compositor commits fires scrollsnapchanging before scrollsnapchange."
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/snap-intended-direction.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "`intended direction` scroll snaps only at points ahead of the scroll direction"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/snap-to-empty-sized-element.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "Resnap to empty sized element"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/snap-to-visible-areas-both-pseudo.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "Only snap to visible areas in the case where taking the closest snap point of   each axis does not snap to a visible area"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/snap-to-visible-areas-both.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "Only snap to visible areas in the case where taking the closest snap point of   each axis does not snap to a visible area"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/snap-to-visible-areas-x-axis.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "Only snap to visible area on X axis, even when the non-visible ones are closer"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/snap-to-visible-areas-y-axis.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "Only snap to visible area on Y axis, even when the non-visible ones are closer"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/snapevent-constructor.html",
+      "chromeOnlyPage": false,
+      "names": [
+        "Missing type argument"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/unreachable-snap-positions-003.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "Snaps to the positions defined by the element as much as possible"
+      ]
+    },
+    {
+      "url": "css/css-scroll-snap/unreachable-snap-positions-004.html",
+      "chromeOnlyPage": true,
+      "names": [
+        "Snaps to the positions defined by the element as much as possible"
+      ]
+    }
+  ],
+  "supplement": []
+}

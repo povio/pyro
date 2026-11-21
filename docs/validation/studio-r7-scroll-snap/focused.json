@@ -1,0 +1,195 @@
+{
+  "urls": [
+    "css/css-scroll-snap/ignore-snap-points-orthogonal-to-snap-axis.html",
+    "css/css-scroll-snap/resnap-on-snap-alignment-change.html",
+    "css/css-scroll-snap/scroll-padding-and-margin.html",
+    "css/css-scroll-snap/scroll-snap-type-on-root-element.html",
+    "css/css-scroll-snap/snap-inline-block.html",
+    "css/css-scroll-snap/snap-to-column-scroll-origin.html"
+  ],
+  "runs": {
+    "frozen": {
+      "wallMs": 262,
+      "browserCpuS": 0.14,
+      "runnerCpuS": 0.93932,
+      "serverCpuS": 0,
+      "restarts": 0,
+      "watchdogKills": 0,
+      "pages": 2,
+      "names": 6,
+      "observed": 19
+    },
+    "candidate": {
+      "wallMs": 207,
+      "browserCpuS": 0.13,
+      "runnerCpuS": 1.39144,
+      "serverCpuS": 0,
+      "restarts": 0,
+      "watchdogKills": 0,
+      "pages": 3,
+      "names": 14,
+      "observed": 19
+    },
+    "chrome": {
+      "wallMs": 864,
+      "browserCpuS": 0.9,
+      "runnerCpuS": 1.097011,
+      "serverCpuS": 0,
+      "restarts": 0,
+      "watchdogKills": 0,
+      "pages": 6,
+      "names": 19,
+      "observed": 19
+    }
+  },
+  "differences": {
+    "frozenOnlyVsCandidate": {
+      "pages": [],
+      "names": [],
+      "observed": []
+    },
+    "frozenOnlyVsChrome": {
+      "pages": [],
+      "names": [],
+      "observed": []
+    },
+    "candidateOnlyVsFrozen": {
+      "pages": [
+        "css/css-scroll-snap/snap-inline-block.html"
+      ],
+      "names": [
+        [
+          "css/css-scroll-snap/snap-inline-block.html",
+          "Snaps correctly for 'direction: rtl' with 'scroll-snap-align: end start' alignment"
+        ],
+        [
+          "css/css-scroll-snap/snap-inline-block.html",
+          "Snaps correctly for 'direction: rtl' with 'scroll-snap-align: start end' alignment"
+        ],
+        [
+          "css/css-scroll-snap/snap-inline-block.html",
+          "Snaps correctly for horizontal-tb writing mode with 'scroll-snap-align: start end' alignment"
+        ],
+        [
+          "css/css-scroll-snap/snap-inline-block.html",
+          "Snaps correctly for vertical-lr writing mode with 'scroll-snap-align: end start' alignment"
+        ],
+        [
+          "css/css-scroll-snap/snap-inline-block.html",
+          "Snaps correctly for vertical-lr writing mode with 'scroll-snap-align: start end' alignment"
+        ],
+        [
+          "css/css-scroll-snap/snap-inline-block.html",
+          "Snaps correctly for vertical-rl writing mode with 'scroll-snap-align: end start' alignment"
+        ],
+        [
+          "css/css-scroll-snap/snap-inline-block.html",
+          "Snaps correctly for vertical-rl writing mode with 'scroll-snap-align: start end' alignment"
+        ],
+        [
+          "css/css-scroll-snap/snap-to-column-scroll-origin.html",
+          "Snaps to ::column snap areas of an RTL multicol scroll snap container"
+        ]
+      ],
+      "observed": []
+    },
+    "candidateOnlyVsChrome": {
+      "pages": [],
+      "names": [],
+      "observed": []
+    },
+    "chromeOnlyVsFrozen": {
+      "pages": [
+        "css/css-scroll-snap/scroll-padding-and-margin.html",
+        "css/css-scroll-snap/scroll-snap-type-on-root-element.html",
+        "css/css-scroll-snap/snap-inline-block.html",
+        "css/css-scroll-snap/snap-to-column-scroll-origin.html"
+      ],
+      "names": [
+        [
+          "css/css-scroll-snap/scroll-padding-and-margin.html",
+          "scroll-padding-and-margin"
+        ],
+        [
+          "css/css-scroll-snap/scroll-padding-and-margin.html",
+          "scroll-padding-and-margin 1"
+        ],
+        [
+          "css/css-scroll-snap/scroll-snap-type-on-root-element.html",
+          "The writing-mode (vertical-lr) on the body is used"
+        ],
+        [
+          "css/css-scroll-snap/snap-inline-block.html",
+          "Snaps correctly for 'direction: rtl' with 'scroll-snap-align: end start' alignment"
+        ],
+        [
+          "css/css-scroll-snap/snap-inline-block.html",
+          "Snaps correctly for 'direction: rtl' with 'scroll-snap-align: start end' alignment"
+        ],
+        [
+          "css/css-scroll-snap/snap-inline-block.html",
+          "Snaps correctly for horizontal-tb writing mode with 'scroll-snap-align: start end' alignment"
+        ],
+        [
+          "css/css-scroll-snap/snap-inline-block.html",
+          "Snaps correctly for vertical-lr writing mode with 'scroll-snap-align: end start' alignment"
+        ],
+        [
+          "css/css-scroll-snap/snap-inline-block.html",
+          "Snaps correctly for vertical-lr writing mode with 'scroll-snap-align: start end' alignment"
+        ],
+        [
+          "css/css-scroll-snap/snap-inline-block.html",
+          "Snaps correctly for vertical-rl writing mode with 'scroll-snap-align: end start' alignment"
+        ],
+        [
+          "css/css-scroll-snap/snap-inline-block.html",
+          "Snaps correctly for vertical-rl writing mode with 'scroll-snap-align: start end' alignment"
+        ],
+        [
+          "css/css-scroll-snap/snap-to-column-scroll-origin.html",
+          "Snaps to ::column snap areas of a sideways-lr, direction: ltr multicol scroll snap container"
+        ],
+        [
+          "css/css-scroll-snap/snap-to-column-scroll-origin.html",
+          "Snaps to ::column snap areas of a vertical-rl, direction: rtl multicol scroll snap container"
+        ],
+        [
+          "css/css-scroll-snap/snap-to-column-scroll-origin.html",
+          "Snaps to ::column snap areas of an RTL multicol scroll snap container"
+        ]
+      ],
+      "observed": []
+    },
+    "chromeOnlyVsCandidate": {
+      "pages": [
+        "css/css-scroll-snap/scroll-padding-and-margin.html",
+        "css/css-scroll-snap/scroll-snap-type-on-root-element.html",
+        "css/css-scroll-snap/snap-to-column-scroll-origin.html"
+      ],
+      "names": [
+        [
+          "css/css-scroll-snap/scroll-padding-and-margin.html",
+          "scroll-padding-and-margin"
+        ],
+        [
+          "css/css-scroll-snap/scroll-padding-and-margin.html",
+          "scroll-padding-and-margin 1"
+        ],
+        [
+          "css/css-scroll-snap/scroll-snap-type-on-root-element.html",
+          "The writing-mode (vertical-lr) on the body is used"
+        ],
+        [
+          "css/css-scroll-snap/snap-to-column-scroll-origin.html",
+          "Snaps to ::column snap areas of a sideways-lr, direction: ltr multicol scroll snap container"
+        ],
+        [
+          "css/css-scroll-snap/snap-to-column-scroll-origin.html",
+          "Snaps to ::column snap areas of a vertical-rl, direction: rtl multicol scroll snap container"
+        ]
+      ],
+      "observed": []
+    }
+  }
+}
