@@ -1,0 +1,30 @@
+keycss-main-candidate 8082 page passes 5618 named passes 180434 observed names 194655 statuses {'complete:0': 7870, 'complete:2': 105, 'timeout:None': 11, 'complete:1': 95, 'hang:None': 1}
+keycss-main-parent 8082 page passes 5607 named passes 180307 observed names 194541 statuses {'complete:0': 7867, 'complete:2': 105, 'timeout:None': 11, 'complete:1': 98, 'hang:None': 1}
+keycss-main-stable 8082 page passes 6950 named passes 182963 observed names 194912 statuses {'complete:0': 7986, 'complete:2': 62, 'complete:1': 23, 'timeout:None': 10, 'hang:None': 1}
+keycss-main-parent pages left only 11 right only 0
+keycss-main-parent passes left only 127 right only 0
+keycss-main-parent observed left only 114 right only 0
+keycss-main-stable pages left only 273 right only 1605
+keycss-main-stable passes left only 5867 right only 8396
+keycss-main-stable observed left only 309 right only 566
+Losses vs parent by URL: Counter()
+keycss-focus-candidate 89 page passes 57 named passes 432 observed names 571 statuses {'complete:0': 89}
+keycss-focus-parent 89 page passes 48 named passes 337 observed names 457 statuses {'complete:0': 86, 'complete:1': 3}
+keycss-focus-stable 89 page passes 81 named passes 556 observed names 571 statuses {'complete:0': 89}
+keycss-focus-parent pages left only 9 right only 0
+keycss-focus-parent passes left only 95 right only 0
+keycss-focus-parent observed left only 114 right only 0
+keycss-focus-stable pages left only 1 right only 25
+keycss-focus-stable passes left only 5 right only 129
+keycss-focus-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()
+keycss-supplement-candidate 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+keycss-supplement-parent 41 page passes 27 named passes 577 observed names 874 statuses {'complete:0': 41}
+keycss-supplement-stable 41 page passes 35 named passes 619 observed names 874 statuses {'complete:0': 41}
+keycss-supplement-parent pages left only 0 right only 0
+keycss-supplement-parent passes left only 0 right only 0
+keycss-supplement-parent observed left only 0 right only 0
+keycss-supplement-stable pages left only 0 right only 8
+keycss-supplement-stable passes left only 0 right only 42
+keycss-supplement-stable observed left only 0 right only 0
+Losses vs parent by URL: Counter()
