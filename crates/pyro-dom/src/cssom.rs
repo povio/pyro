@@ -315,11 +315,23 @@ fn collapse(text: &str) -> String {
 
 /// An `@import` prelude with its URL serialized as CSSOM does: `url("...")`.
 fn import_url_form(prelude: &str) -> Option<String> {
+    use style::parser::Parse;
+    use style::stylesheets::{CssRuleType, Origin};
+    use style_traits::ToCss as StyleToCss;
     let mut p = Parser::new(prelude);
-    let url = p.expect_url_or_string().ok()?;
-    let mut out = String::from("url(");
-    let _ = cssparser::serialize_string(&url, &mut out);
-    out.push(')');
+    let mut out = if let Ok(string) = p.try_parse(|input| input.expect_string_cloned()) {
+        let mut out = String::from("url(");
+        cssparser::serialize_string(&string, &mut out).ok()?;
+        out.push(')');
+        out
+    } else {
+        let url = crate::stylo::url_data();
+        let context = style::parser::ParserContext::new(
+            Origin::Author, &url, Some(CssRuleType::Import), style_traits::ParsingMode::DEFAULT,
+            style::context::QuirksMode::NoQuirks, Default::default(), None, None, Default::default(),
+        );
+        style::url::CssUrl::parse(&context, &mut p).ok()?.to_css_string()
+    };
     // The layer and supports() parts as written, the media queries serialized.
     let (head, media) = import_split(prelude);
     let modifiers = head[head.len().min(p.position().byte_index())..].trim().to_owned();
@@ -588,8 +600,7 @@ fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces, sc
         return Some(ParsedRule::Other { rule_type: 10, text });
     }
     // `@name prelude {block}`, without a second space when the prelude is empty.
-    let prelude = collapse(&prelude);
-    let prelude = if lower == "import" { import_url_form(&prelude)? } else { prelude };
+    let prelude = if lower == "import" { import_url_form(prelude.trim())? } else { collapse(&prelude) };
     let head = if prelude.is_empty() { format!("@{name}") } else { format!("@{name} {prelude}") };
     let text = match block {
         // An empty descriptor block serializes as `{ }`.
@@ -1027,6 +1038,12 @@ mod tests {
         assert_eq!(leading_imports(""), Vec::<String>::new());
         // The last rule may end with the sheet.
         assert_eq!(leading_imports("@import url(last.css)"), ["last.css"]);
+    }
+
+    #[test]
+    fn import_url_serialization_preserves_string_spaces_and_orders_modifiers() {
+        let rule = parse_one_rule(r#"@import url("a  b" referrer-policy(no-referrer) cross-origin(anonymous)) screen;"#, &mut Namespaces::new()).unwrap();
+        assert_eq!(rule, ParsedRule::Other { rule_type: 3, text: r#"@import url("a  b" cross-origin(anonymous) referrer-policy(no-referrer)) screen;"#.into() });
     }
 
     #[test]
