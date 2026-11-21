@@ -940,7 +940,12 @@ fn delete_content(
     if start == end && from.0 == to.0 && !is_text(dom, from.0) && to.1 == from.1 + 1 {
         if let Ok(Some(child)) = dom.child_at(from.0, from.1) {
             if !is_container(dom, child) || !is_editable(dom, child) {
-                let _ = dom.remove_child(from.0, child);
+                let replaced = matches!(local(dom, child).as_str(), "img" | "canvas" | "video" | "iframe")
+                    && is_editable(dom, child)
+                    && page.layout().computed_style_value(dom, child, "display").starts_with("inline");
+                if dom.remove_child(from.0, child).is_ok() && replaced {
+                    whitespace::after_replaced_element(page, dom, host, from);
+                }
                 return placeholder_if_empty(dom, block_of(dom, from.0, host)).unwrap_or(from);
             }
         }
