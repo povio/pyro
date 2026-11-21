@@ -14,7 +14,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use pyro_dom::cssom::{normalize_selector, parse_rules, CounterDescriptor, CounterRule, Namespaces, PaletteRule, ParsedRule, PropertyRule};
+use pyro_dom::cssom::{normalize_relative_selector, parse_rules, CounterDescriptor, CounterRule, Namespaces, PaletteRule, ParsedRule, ParseRelative, PropertyRule};
 use pyro_dom::stylo::declarations::{self, DeclarationBlock};
 use pyro_dom::NodeId;
 use pyro_js::{ClassDef, IdentityKey, JsClass, JsError, JsResult, NoParent, Object, Scope, Value};
@@ -934,6 +934,14 @@ fn commit_edit(page: &PageDom, owner: NodeId, model: &SheetModel) {
     }
 }
 
+fn selector_context(parent: &Weak<RuleNode>) -> ParseRelative {
+    std::iter::successors(parent.upgrade(), |node| node.parent.borrow().upgrade()).find_map(|node| match &node.kind {
+        RuleKind::Style { .. } => Some(ParseRelative::ForNesting),
+        RuleKind::Group { bounds: Some(_), .. } => Some(ParseRelative::ForScope),
+        _ => None,
+    }).unwrap_or(ParseRelative::No)
+}
+
 fn insert_into(
     list: &RuleList,
     namespaces: &Namespaces,
@@ -948,14 +956,12 @@ fn insert_into(
     let mut scoped = namespaces.clone();
     // CSSOM "parse a CSS rule": one rule, and nothing after it but whitespace.
     let invalid = || JsError::dom("SyntaxError", format!("Failed to parse the rule '{rule}'."));
-    use pyro_dom::cssom::ParseRelative;
-    let relative = std::iter::successors(parent.upgrade(), |node| node.parent.borrow().upgrade()).find_map(|node| match &node.kind {
-        RuleKind::Style { .. } => Some(ParseRelative::ForNesting),
-        RuleKind::Group { bounds: Some(_), .. } => Some(ParseRelative::ForScope),
-        _ => None,
-    }).unwrap_or(ParseRelative::No);
+    let relative = selector_context(&parent);
     let mut parsed = vec![pyro_dom::cssom::parse_one_rule_in_scope(rule, &mut scoped, relative).or_else(|_| {
         if relative == ParseRelative::No { return Err(invalid()); }
+        if relative == ParseRelative::ForNesting && matches!(pyro_dom::cssom::parse_one_rule(rule, &mut namespaces.clone()), Ok(parsed) if !matches!(parsed, ParsedRule::Style { .. })) {
+            return Err(JsError::dom("HierarchyRequestError", "This rule cannot be nested inside a style rule."));
+        }
         let declarations = DeclarationBlock::parse(rule);
         if declarations.is_empty() { return Err(invalid()); }
         Ok(ParsedRule::Declarations(declarations.css_text()))
@@ -1275,7 +1281,7 @@ impl JsClass for CssStyleRule {
             |_s, r, v| {
                 let text = dom_string(v)?;
                 let model = r.owner.rules()?;
-                let normalized = normalize_selector(&text, &model.namespaces.borrow());
+                let normalized = normalize_relative_selector(&text, &model.namespaces.borrow(), selector_context(&r.node()?.parent.borrow()));
                 // An invalid selector leaves the rule unchanged.
                 if let (Some(normalized), RuleKind::Style { selector, .. }) = (normalized, &r.node()?.kind) {
                     *selector.borrow_mut() = normalized;

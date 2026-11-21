@@ -129,6 +129,16 @@ pub fn normalize_selector(text: &str, namespaces: &Namespaces) -> Option<String>
     crate::stylo::select::parse(text).map(|list| list.to_css_string())
 }
 
+pub fn normalize_relative_selector(text: &str, namespaces: &Namespaces, relative: ParseRelative) -> Option<String> {
+    if relative == ParseRelative::No { return normalize_selector(text, namespaces); }
+    let url = crate::stylo::url_data();
+    let namespaces = stylo_namespaces(namespaces);
+    let selector_parser = style::selector_parser::SelectorParser {
+        stylesheet_origin: style::stylesheets::Origin::Author, namespaces: &namespaces, url_data: &url, for_supports_rule: false,
+    };
+    Some(Parser::new(text).parse_entirely(|input| selectors::SelectorList::parse(&selector_parser, input, relative)).ok()?.to_css_string())
+}
+
 fn parse_list(p: &mut Parser<'_>, namespaces: &mut Namespaces, top: bool, relative: ParseRelative) -> Vec<ParsedRule> {
     let mut rules: Vec<ParsedRule> = Vec::new();
     // `@import` and `@namespace` only count before every other rule (`@layer`
@@ -282,14 +292,7 @@ fn parse_style_rule(
         _ => {}
     }
     let (prelude, block) = parse_prelude_and_block(p, start, raw_block);
-    let selector = if relative != ParseRelative::No {
-        let url = crate::stylo::url_data();
-        let namespaces = stylo_namespaces(namespaces);
-        let selector_parser = style::selector_parser::SelectorParser {
-            stylesheet_origin: style::stylesheets::Origin::Author, namespaces: &namespaces, url_data: &url, for_supports_rule: false,
-        };
-        Parser::new(&prelude).parse_entirely(|input| selectors::SelectorList::parse(&selector_parser, input, relative)).ok()?.to_css_string()
-    } else { normalize_selector(&prelude, namespaces)? };
+    let selector = normalize_relative_selector(&prelude, namespaces, relative)?;
     let mut block = block?;
     let mut rules = Vec::new();
     if block.contains('{') {

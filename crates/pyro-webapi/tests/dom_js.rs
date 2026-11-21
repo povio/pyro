@@ -6676,6 +6676,14 @@ fn nested_style_rules_preserve_live_children_and_declaration_order() {
 }
 
 #[test]
+fn nested_cssom_edits_respect_rule_context() {
+    let env = env("<style>.outer { @media all { .a {} } }</style>");
+    assert_eq!(eval(&env.main, "const outer = document.styleSheets[0].cssRules[0], group = outer.cssRules[0], child = group.cssRules[0];
+        child.selectorText = '> .b'; child.selectorText = '.invalid,'; outer.selectorText = '.parent';
+        [outer.selectorText, child.selectorText, ...['@font-face {}', '@font-face {} .extra {}'].map(text => { try { group.insertRule(text); } catch (error) { return error.name; } }), group.cssRules.length].join('|')"), ".parent|& > .b|HierarchyRequestError|SyntaxError|1");
+}
+
+#[test]
 fn style_block_replacement_supersedes_cssom_without_another_sheet_read() {
     let env = env("<style id=source>.target { z-index: 1 }</style><div class=target></div>");
     assert_eq!(eval(&env.main, "const elem = document.querySelector('.target'), source = document.querySelector('style');
