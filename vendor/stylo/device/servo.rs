@@ -538,12 +538,12 @@ impl Device {
                 | SystemColor::Threedhighlight
                 | SystemColor::Threedlightshadow
                 | SystemColor::Threedshadow
-                | SystemColor::Windowframe => srgb(169, 169, 169),
+                | SystemColor::Windowframe => srgb(153, 153, 153),
                 SystemColor::Buttonface
                 // Deprecated system colors (CSS Color 4) mapped to Buttonface.
                 | SystemColor::Buttonhighlight
                 | SystemColor::Buttonshadow
-                | SystemColor::Threedface => srgb(220, 220, 220),
+                | SystemColor::Threedface => srgb(239, 239, 239),
                 SystemColor::Buttontext => srgb(0, 0, 0),
                 SystemColor::Canvas
                 // Deprecated system colors (CSS Color 4) mapped to Canvas.

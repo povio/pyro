@@ -70,9 +70,12 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      unicode-bidi: isolate;
  }
  
-@@ -43,13 +68,25 @@
+@@ -41,15 +66,27 @@
+ 
+ /* https://html.spec.whatwg.org/#phrasing-content-3: only links are styled */
  a[href] {
-     color: rgb(0, 0, 238);
+-    color: rgb(0, 0, 238);
++    color: LinkText;
      text-decoration: underline;
 +    /* pyro: Chromium's `a:-webkit-any-link { cursor: pointer }`. */
 +    cursor: pointer;
@@ -90,7 +93,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  
 +::scroll-marker,
 +::column::scroll-marker {
-+    color: rgb(0, 0, 238);
++    color: LinkText;
 +    text-decoration: underline;
 +    cursor: pointer;
 +}
@@ -99,7 +102,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  input {
      display: inline-block;
  }
-@@ -59,25 +96,104 @@
+@@ -59,25 +96,107 @@
      display: none !important;
  }
  
@@ -145,10 +148,11 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
 +    box-sizing: border-box;
 +    inline-size: 50px;
 +    block-size: 27px;
-+    border: 1px solid #767676;
++    border: 1px solid ButtonBorder;
 +    padding-block: 1px;
 +    padding-inline: 2px;
-+    background-color: #EFEFEF;
++    background-color: ButtonFace;
++    color: ButtonText;
 +    cursor: default;
 +}
 +
@@ -186,6 +190,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
 +   draws as Chromium's themed field (`native_textfield`); `appearance: none` shows this border. */
 +input {
 +    border: 2px inset #767676;
++    color: FieldText;
 +    padding-block: 1px;
 +    padding-inline: 2px;
 +    background-color: Field;
@@ -195,6 +200,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
 -input,
  textarea {
 +    appearance: auto;
++    color: FieldText;
      border: 1px solid #999;
      padding: 2px;
 -    background-color: white;
@@ -212,7 +218,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  }
  
  input,
-@@ -86,10 +202,49 @@
+@@ -86,10 +205,49 @@
      font-family: system-ui, sans-serif;
  }
  
@@ -262,7 +268,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  /* https://html.spec.whatwg.org/multipage/rendering.html#form-controls */
  input,
  button,
-@@ -121,17 +276,38 @@
+@@ -121,17 +279,38 @@
      outline: 2px solid #4D90FE;
  }
  
@@ -282,9 +288,12 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  input[type="submit"],
  input[type="reset"],
  input[type="button"] {
-     border: 1px solid #999;
+-    border: 1px solid #999;
 -    border-radius: 1px;
 -    padding: 1px 6px;
+-    color: black;
+-    background-color: #EFEFEF;
++    border: 1px solid ButtonBorder;
 +    /* pyro: Chromium's native look rounds a button's corners by 1px. Not a `border-radius` here
 +       (Chromium's computed one is 0): blitz-paint rounds a button of native appearance
 +       (`-moz-default-appearance: button`, `appearance: auto`, no author border or background),
@@ -294,8 +303,8 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
 +    appearance: auto;
 +    padding-block: 1px;
 +    padding-inline: 6px;
-     color: black;
-     background-color: #EFEFEF;
++    color: ButtonText;
++    background-color: ButtonFace;
      text-align: center;
      display: inline-block;
 +    /* pyro: Chromium's buttons size their border box. */
@@ -303,7 +312,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  }
  
  /* Button-flavored inputs clip their contents to the border box and never
-@@ -150,6 +326,42 @@
+@@ -150,6 +329,42 @@
      background-color: transparent;
  }
  
@@ -317,13 +326,13 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
 +}
 +
 +input[type="file" i]::file-selector-button {
-+    border: 1px solid #999;
++    border: 1px solid ButtonBorder;
 +    -moz-default-appearance: button;
 +    appearance: auto;
 +    padding-block: 1px;
 +    padding-inline: 6px;
-+    color: black;
-+    background-color: #EFEFEF;
++    color: ButtonText;
++    background-color: ButtonFace;
 +    text-align: center;
 +    display: inline-block;
 +    box-sizing: border-box;
@@ -346,7 +355,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  /* https://html.spec.whatwg.org/#the-fieldset-and-legend-elements */
  fieldset {
      display: block;
-@@ -169,8 +381,45 @@
+@@ -169,8 +384,45 @@
      padding-inline-end: 2px;
  }
  
@@ -393,7 +402,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  }
  
  source {
-@@ -249,15 +498,16 @@
+@@ -249,15 +501,16 @@
      unicode-bidi: isolate;
  }
  
@@ -415,7 +424,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      unicode-bidi: plaintext;
  }
  
-@@ -569,6 +819,19 @@
+@@ -569,6 +822,19 @@
      text-align: center;
  }
  
@@ -435,7 +444,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  table[align="center"]>caption {
      margin-inline-start: auto;
      margin-inline-end: auto;
-@@ -762,6 +1025,14 @@
+@@ -762,6 +1028,14 @@
      text-align: match-parent;
  }
  
@@ -450,7 +459,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  /* nested lists have no top/bottom margins */
  :is(ul, ol, dir, menu, dl) ul,
  :is(ul, ol, dir, menu, dl) ol,
-@@ -832,16 +1103,51 @@
+@@ -832,16 +1106,51 @@
      position: static ! important;
      float: none ! important;
      border: none ! important;
@@ -502,7 +511,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  spacer {
      position: static ! important;
      float: none ! important;
-@@ -851,8 +1157,18 @@
+@@ -851,8 +1160,18 @@
      user-select: none;
  }
  
@@ -521,7 +530,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  html:focus-visible {
      /* These elements historically don't show outlines when focused by default.
     * We could consider changing that if needed. */
-@@ -886,14 +1202,15 @@
+@@ -886,14 +1205,15 @@
      display: none;
  }
  
@@ -540,7 +549,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      padding: unset !important;
  }
  
-@@ -922,6 +1239,11 @@
+@@ -922,6 +1242,11 @@
      display: none !important;
  }
  
@@ -552,7 +561,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
  /* media elements */
  video {
      object-fit: contain;
-@@ -996,7 +1318,9 @@
+@@ -996,7 +1321,9 @@
      display: none;
  }
  
@@ -563,7 +572,7 @@ diff --git a/packages/blitz-dom/assets/default.css b/packages/blitz-dom/assets/d
      -moz-top-layer: top !important;
      position: fixed;
      overflow: auto;
-@@ -1128,37 +1452,48 @@
+@@ -1128,37 +1455,48 @@
  }
  
  /* Popover UA style, https://html.spec.whatwg.org/#flow-content-3 */
