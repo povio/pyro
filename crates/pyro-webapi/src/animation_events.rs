@@ -225,6 +225,7 @@ pub(crate) struct Run {
     /// The effect's easing (a transition's; `linear` for an animation, whose
     /// timing function applies per keyframe).
     pub easing: String,
+    pub keyframe_easing: String,
     /// The local time an animation paused by its style holds.
     pub paused_at: Option<f64>,
     /// pyro: an animation's `animation-trigger` item, the element declaring the timeline trigger
@@ -900,6 +901,7 @@ pub(crate) fn runs(page: &Rc<PageDom>) -> Vec<Run> {
                     true => t.easing.clone().unwrap_or_else(|| "ease".to_owned()),
                     false => "linear".to_owned(),
                 },
+                keyframe_easing: style.and_then(|s| s.easing.clone()).unwrap_or_else(|| "ease".into()),
                 paused_at: t.paused_at,
                 trigger: t.timing.as_ref().and_then(|timing| timing.trigger.clone()).and_then(|item| {
                     let name = item.split_whitespace().next()?.to_owned();

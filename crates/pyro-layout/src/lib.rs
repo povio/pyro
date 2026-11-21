@@ -1140,6 +1140,10 @@ impl GeometrySource for BlitzGeometry {
         Some(style)
     }
 
+    fn css_animation_frames(&self, key: u64, name: &str) -> Option<Vec<pyro_dom::animation::CssKeyframeStep>> {
+        RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.css_animation_frames(self.page, key, name))
+    }
+
     fn element_timing_style(
         &self, key: u64, pseudo: Option<&style::selector_parser::PseudoElement>,
     ) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {

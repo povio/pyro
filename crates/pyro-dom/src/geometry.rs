@@ -822,6 +822,8 @@ pub trait GeometrySource {
     fn element_style(&self, _key: u64) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
         None
     }
+    fn css_animation_frames(&self, _key: u64, _name: &str) -> Option<Vec<crate::animation::CssKeyframeStep>> { None }
+
     /// Authored timing values whose computation needs the element or its pseudo-element.
     fn element_timing_style(
         &self, _key: u64, _pseudo: Option<&style::selector_parser::PseudoElement>,
