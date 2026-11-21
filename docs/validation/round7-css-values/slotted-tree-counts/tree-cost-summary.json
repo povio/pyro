@@ -1,0 +1,32 @@
+{
+  "ordinary": {
+    "tree-base": {
+      "wallMs": 3.566,
+      "cpuMs": 3.5
+    },
+    "tree-head": {
+      "wallMs": 3.839,
+      "cpuMs": 3.0
+    }
+  },
+  "slotted": {
+    "tree-base": {
+      "wallMs": 8.825,
+      "cpuMs": 7.5
+    },
+    "tree-head": {
+      "wallMs": 8.825,
+      "cpuMs": 8.0
+    }
+  },
+  "mixedSlots": {
+    "tree-base": {
+      "wallMs": 8.903,
+      "cpuMs": 8.5
+    },
+    "tree-head": {
+      "wallMs": 9.043,
+      "cpuMs": 8.5
+    }
+  }
+}

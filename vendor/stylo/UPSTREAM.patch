@@ -573,6 +573,19 @@ diff -ruN a/color/to_css.rs b/color/to_css.rs
                          );
                      },
                      ColorSpace::SrgbLinear
+diff -ruN a/context.rs b/context.rs
+--- a/context.rs	2026-11-11 19:55:57
++++ b/context.rs	2026-11-21 20:20:12
+@@ -612,6 +612,9 @@
+     /// Look up the tree-counting function values for the given element. If the element and
+     /// its parent node are not cached, the values are computed and stored.
+     pub fn get_or_compute(&mut self, element_context: &dyn ElementContext) -> TreeCountingResult {
++        if let Some(position) = element_context.original_sibling_position() {
++            return position;
++        }
+         let (Some(target), Some(parent)) = (
+             element_context.opaque_element(),
+             element_context.opaque_parent(),
 diff -ruN a/counter_style/mod.rs b/counter_style/mod.rs
 --- a/counter_style/mod.rs	2026-11-11 19:55:57
 +++ b/counter_style/mod.rs	2026-11-21 12:29:40
@@ -1051,43 +1064,58 @@ diff -ruN a/device/servo.rs b/device/servo.rs
                  // Deprecated system colors (CSS Color 4) mapped to Canvas.
 diff -ruN a/dom.rs b/dom.rs
 --- a/dom.rs	2026-11-11 19:55:57
-+++ b/dom.rs	2026-11-21 19:46:25
-@@ -499,6 +499,11 @@
++++ b/dom.rs	2026-11-21 20:21:33
+@@ -498,6 +498,11 @@
+ 
      /// Get this element's style attribute.
      fn style_attribute(&self) -> Option<ArcBorrow<'_, Locked<PropertyDeclarationBlock>>>;
- 
++
 +    /// Original input of the parsed inline block, when the embedder reparses CSS.
 +    fn style_attribute_source(&self) -> Option<&str> {
 +        None
 +    }
-+
+ 
      /// Get this element's SMIL override declarations.
      fn smil_override(&self) -> Option<ArcBorrow<'_, Locked<PropertyDeclarationBlock>>> {
-         None
-@@ -951,6 +956,9 @@
-         &self,
+@@ -952,6 +957,9 @@
          display: &Display,
      ) -> euclid::default::Size2D<Option<app_units::Au>>;
-+
+ 
 +    /// Last layout's selected fallback, if any.
 +    fn query_anchored_fallback(&self) -> Option<crate::values::specified::position::PositionTryFallbacksItem> { None }
- 
++
      /// Returns true if the element has all of specified selector flags.
      fn has_selector_flags(&self, flags: ElementSelectorFlags) -> bool;
-@@ -1003,6 +1011,12 @@
+ 
+@@ -973,6 +981,9 @@
+ 
+     /// Return the value of the given custom attribute if it exists.
+     fn get_attr(&self, attr: &LocalName, namespace: &Namespace) -> Option<String>;
++
++    /// DOM position supplied by an embedder that lays out a flattened tree.
++    fn original_sibling_position(&self) -> Option<TreeCountingResult> { None }
+ 
+     /// Traverse the siblings of the element, returning the element's sibling-index()
+     /// and sibling-count(). Also populates `caches` with the sibling-index() and
+@@ -1003,7 +1014,16 @@
  
  /// Provides element-level context needed during style computation.
  pub trait ElementContext {
+-    /// Opaque handle to the element.
 +    /// Looks up a function in the reference tree or an enclosing host tree.
 +    fn lookup_function(&self, stylist: &crate::stylist::Stylist, _: crate::rule_tree::CascadeLevel, name: &crate::Atom, _: usize)
 +        -> Option<(Arc<crate::stylesheets::FunctionRule>, usize)> {
 +        stylist.iter_extra_data_origins().find_map(|(data, _)| data.functions.get(name).cloned()).map(|rule| (rule, usize::MAX))
 +    }
 +
-     /// Opaque handle to the element.
++    /// DOM sibling position if a flattened-tree embedder supplies it directly.
++    fn original_sibling_position(&self) -> Option<TreeCountingResult> { None }
++
++    /// The element identity for traversal caches.
      fn opaque_element(&self) -> Option<OpaqueElement>;
  
-@@ -1023,6 +1037,20 @@
+     /// Opaque handle to the element's parent node.
+@@ -1023,6 +1043,24 @@
  }
  
  impl<T: TElement> ElementContext for T {
@@ -1103,6 +1131,10 @@ diff -ruN a/dom.rs b/dom.rs
 +            shadow = root.host().containing_shadow();
 +        }
 +        stylist.iter_extra_data_origins().find_map(|(data, _)| data.functions.get(name).cloned()).map(|rule| (rule, usize::MAX))
++    }
++
++    fn original_sibling_position(&self) -> Option<TreeCountingResult> {
++        TElement::original_sibling_position(self)
 +    }
 +
      fn opaque_element(&self) -> Option<OpaqueElement> {

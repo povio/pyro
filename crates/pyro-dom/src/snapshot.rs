@@ -159,7 +159,7 @@ pub const SHADOW_HOST_ATTR: &str = "shadow-host";
 /// (light children of its host), not its own.
 pub const ASSIGNED_SLOT_ATTR: &str = "assigned-slot";
 /// Name ([`STATE_NS`]) of the attribute a light child element of a shadow host carries in render
-/// trees: its index among the host's element children. An assigned node's render parent is its
+/// trees: its zero-based DOM index and total element siblings, separated by '/'. Its render parent is its
 /// slot, so this is how the renderer finds its light-tree siblings (sibling combinators match in
 /// the node tree, not the flat tree).
 pub const LIGHT_INDEX_ATTR: &str = "light-index";
@@ -590,7 +590,7 @@ impl Dom {
         // The element index of each light child of a shadow host or `<details>` (`LIGHT_INDEX_ATTR`),
         // counted once per parent: one pass over its children, however many it has.
         let mut light_indices: rustc_hash::FxHashMap<u32, usize> = Default::default();
-        let mut indexed_parents: rustc_hash::FxHashSet<u32> = Default::default();
+        let mut light_counts: rustc_hash::FxHashMap<u32, usize> = Default::default();
         let mut stack = Vec::new();
         push_children(&mut stack, roots, NONE);
         while let Some(step) = stack.pop() {
@@ -840,14 +840,18 @@ impl Dom {
                         && (self.n(parent).element().is_some_and(|p| p.shadow_root != NIL && !self.has_ua_shadow_idx(p.shadow_root))
                             || self.renders_details_slots(parent))
                     {
-                        if indexed_parents.insert(parent) {
-                            let elements = self.child_idx_iter(parent).filter(|&c| self.n(c).is_element());
-                            light_indices.extend(elements.enumerate().map(|(index, c)| (c, index)));
-                        }
+                        let count = *light_counts.entry(parent).or_insert_with(|| {
+                            let mut count = 0;
+                            for child in self.child_idx_iter(parent).filter(|&c| self.n(c).is_element()) {
+                                light_indices.insert(child, count);
+                                count += 1;
+                            }
+                            count
+                        });
                         let index = light_indices.get(&n).copied().unwrap_or(0);
                         attrs.push(RAttr {
                             name: Cow::Owned(QualName::new(None, STATE_NS.into(), LIGHT_INDEX_ATTR.into())),
-                            value: Cow::Owned(index.to_string()),
+                            value: Cow::Owned(format!("{index}/{count}")),
                             valueless: false,
                         });
                     }

@@ -982,6 +982,9 @@ pub trait TElement:
     /// Return the value of the given custom attribute if it exists.
     fn get_attr(&self, attr: &LocalName, namespace: &Namespace) -> Option<String>;
 
+    /// DOM position supplied by an embedder that lays out a flattened tree.
+    fn original_sibling_position(&self) -> Option<TreeCountingResult> { None }
+
     /// Traverse the siblings of the element, returning the element's sibling-index()
     /// and sibling-count(). Also populates `caches` with the sibling-index() and
     /// sibling-count() values for all siblings of this element.
@@ -1017,7 +1020,10 @@ pub trait ElementContext {
         stylist.iter_extra_data_origins().find_map(|(data, _)| data.functions.get(name).cloned()).map(|rule| (rule, usize::MAX))
     }
 
-    /// Opaque handle to the element.
+    /// DOM sibling position if a flattened-tree embedder supplies it directly.
+    fn original_sibling_position(&self) -> Option<TreeCountingResult> { None }
+
+    /// The element identity for traversal caches.
     fn opaque_element(&self) -> Option<OpaqueElement>;
 
     /// Opaque handle to the element's parent node.
@@ -1049,6 +1055,10 @@ impl<T: TElement> ElementContext for T {
             shadow = root.host().containing_shadow();
         }
         stylist.iter_extra_data_origins().find_map(|(data, _)| data.functions.get(name).cloned()).map(|rule| (rule, usize::MAX))
+    }
+
+    fn original_sibling_position(&self) -> Option<TreeCountingResult> {
+        TElement::original_sibling_position(self)
     }
 
     fn opaque_element(&self) -> Option<OpaqueElement> {
