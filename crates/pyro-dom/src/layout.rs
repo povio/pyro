@@ -4191,6 +4191,10 @@ impl Layout {
 
     pub fn typed_computed_value(&self, dom: &Dom, el: NodeId, name: &str) -> Option<String> {
         let computed = || {
+            if name == "line-height" {
+                // A unitless line-height stays a number in Typed OM.
+                return self.style.used_value(dom, el, name);
+            }
             let css = self.style.computed_value(dom, el, name)?;
             if css.starts_with(|c: char| c.is_ascii_digit() || c == '-' || c == '.') {
                 if let Some(value) = self.style.stylo_style(dom, el)

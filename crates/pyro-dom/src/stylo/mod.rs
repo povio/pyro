@@ -181,10 +181,15 @@ pub(crate) fn precise_typed_numeric(style: &ComputedValues, name: &str, css: &st
     use style::typed_om::{NumericValue, TypedValue};
     let id = property_id(name)?;
     let longhand = id.longhand_id()?;
-    let mut context = style::values::resolved::Context { style, for_property: id, current_longhand: None };
-    // Use the same property-specific unzooming and resolution as the CSSOM string.
-    let declaration = style.computed_or_resolved_declaration(longhand, Some(&mut context));
-    let list = declaration.to_typed_value_list()?;
+    let border_width = longhand.logical_group() == Some(style::properties::LogicalGroupId::BorderWidth);
+    let list = if border_width {
+        // CSSOM resolves a hidden/none border to zero. Typed OM exposes its computed width.
+        style.property_value_to_typed_value_list(longhand)?
+    } else {
+        let mut context = style::values::resolved::Context { style, for_property: id, current_longhand: None };
+        let declaration = style.computed_or_resolved_declaration(longhand, Some(&mut context));
+        declaration.to_typed_value_list()?
+    };
     let [TypedValue::Numeric(NumericValue::Unit(unit))] = list.values.as_slice() else { return None };
     let suffix = match unit.unit_str() {
         "percent" => "%",
@@ -200,7 +205,8 @@ pub(crate) fn precise_typed_numeric(style: &ComputedValues, name: &str, css: &st
         n as f32 == unit.value && f64::from(n) != f64::from(unit.value)) {
         return None;
     }
-    unit.value.is_finite().then(|| format!("{}{suffix}", f64::from(unit.value)))
+    let value = if border_width { style.effective_zoom.unzoom(unit.value) } else { unit.value };
+    value.is_finite().then(|| format!("{}{suffix}", f64::from(value)))
 }
 
 fn resolved_alignment(name: &str, value: String) -> String {

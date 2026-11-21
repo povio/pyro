@@ -13,6 +13,9 @@ use style_traits::ParsingMode;
 
 use super::{property_id, url_data};
 
+/// Specified serializations supplied by typed objects, shared across DOM clones.
+pub type TypedStyleValues = std::sync::Arc<Vec<(String, String)>>;
+
 /// The declarations of `text` as the cascade parses a `style` attribute
 /// (invalid ones dropped).
 pub(crate) fn parse_block(text: &str) -> PropertyDeclarationBlock {
@@ -158,6 +161,13 @@ impl DeclarationBlock {
     /// would lose a negative zero in the parsed longhands.
     pub fn css_for_reparse(&self) -> Option<String> {
         self.0.css_for_reparse().ok().flatten()
+    }
+
+    pub fn css_with_typed_values(&self, typed: &[(String, String)]) -> String {
+        if typed.is_empty() { return self.css_text() }
+        let mut out = String::new();
+        self.0.to_css_with_typed_values(&mut out, typed).expect("writing CSS to a string");
+        out
     }
 
     /// Text suitable for the stylesheet parser, including hidden signed-zero operands.

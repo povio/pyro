@@ -342,6 +342,12 @@ pub struct ControlState {
 /// selector engines compare (one `u64` per comparison).
 pub type Atom = style::Atom;
 
+#[derive(Debug, PartialEq)]
+pub(crate) struct InlineStyleBacking {
+    pub semantic: Option<String>,
+    pub typed: Option<crate::stylo::declarations::TypedStyleValues>,
+}
+
 #[derive(Debug)]
 pub struct ElementData {
     pub(crate) link_explicitly_enabled: bool,
@@ -351,7 +357,7 @@ pub struct ElementData {
     /// `replace_attr_value`, `rename_attr`).
     pub attrs: Vec<Attr>,
     /// Internal CSS input only when CSSOM serialization discarded a parsed numeric sign.
-    pub(crate) semantic_style: Option<std::sync::Arc<String>>,
+    pub(crate) semantic_style: Option<std::sync::Arc<InlineStyleBacking>>,
     /// CSSOM already checked whether the current style text needs a separate parser input.
     pub(crate) checked_style_backing: bool,
     /// The `id` attribute (no namespace) as an atom, parsed when written.
@@ -433,9 +439,13 @@ impl ElementData {
         self.name.ns == markup5ever::ns!(html)
     }
     /// Override for the style parser. DOM attribute access and selector matching use `attrs`.
-    pub fn semantic_inline_style(&self) -> Option<&str> { self.semantic_style.as_ref().map(|s| s.as_str()) }
+    pub fn semantic_inline_style(&self) -> Option<&str> { self.semantic_style.as_ref().and_then(|s| s.semantic.as_deref()) }
+    /// Specified representations assigned as Typed OM objects rather than parsed CSS strings.
+    pub fn typed_style_values(&self) -> Option<&crate::stylo::declarations::TypedStyleValues> {
+        self.semantic_style.as_ref()?.typed.as_ref()
+    }
     pub fn checked_inline_style_backing(&self) -> Option<bool> {
-        self.checked_style_backing.then(|| self.semantic_style.is_some())
+        self.checked_style_backing.then(|| self.semantic_inline_style().is_some())
     }
 
     /// The attribute in no namespace named `local` (a dynamic name; see
@@ -577,7 +587,7 @@ impl ElementData {
 }
 
 /// An element's attributes with their parsed id and classes.
-pub(crate) struct AttrState(Vec<Attr>, Option<Atom>, Box<[Atom]>, Option<std::sync::Arc<String>>, bool);
+pub(crate) struct AttrState(Vec<Attr>, Option<Atom>, Box<[Atom]>, Option<std::sync::Arc<InlineStyleBacking>>, bool);
 
 /// Whether an attribute of this name feeds `ElementData::id` or `classes`.
 #[inline]
