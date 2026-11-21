@@ -1395,7 +1395,7 @@ fn is_ancestor(dom: &pyro_dom::Dom, ancestor: NodeId, node: NodeId) -> bool {
 struct Starting {
     previous: Option<FxHashMap<(NodeId, Option<PseudoElement>, String), usize>>,
     canceled: FxHashSet<u64>,
-    changed: FxHashMap<(NodeId, Option<PseudoElement>), (StyleSnapshot, Vec<String>)>,
+    changed: FxHashMap<(NodeId, Option<PseudoElement>), (StyleSnapshot, Option<Vec<String>>)>,
     timelines: Vec<Timeline>,
     /// The properties started, by element, with their index in `timelines`.
     keys: FxHashMap<(NodeId, Option<PseudoElement>), Vec<(String, usize)>>,
@@ -1434,13 +1434,17 @@ impl Starting {
                 .keys
                 .get(&(known.el, known.pseudo))
                 .is_some_and(|started| started.iter().any(|(name, _)| *name == known.name));
-            let unlisted = self.changed.get(&(known.el, known.pseudo))
-                .is_some_and(|(style, properties)| !pyro_dom::timing::lists_transition(style, properties, &known.name));
-            if (same || unlisted) && known.live.get() && !known.ended.get() {
+            let obsolete = self.changed.get(&(known.el, known.pseudo)).is_some_and(|(style, properties)| {
+                properties.as_ref().is_some_and(|list| !pyro_dom::timing::lists_transition(style, list, &known.name))
+                    || known.styles.as_ref().is_some_and(|(_, end)| {
+                        !pyro_dom::animation::same_computed_value(&known.name, end, style)
+                    })
+            });
+            if (same || obsolete) && known.live.get() && !known.ended.get() {
                 known.live.set(false);
                 planned.push(cancel_event(known.el, known.pseudo, &known.name));
             }
-            !same && !unlisted
+            !same && !obsolete
         });
         if running.len() == previous_count && self.timelines.is_empty() { return; }
         planned.extend(self.events);
@@ -1489,9 +1493,7 @@ fn start_transitions_of(
     let style_of = |e: NodeId| if e == el && pseudo.is_none() { Some(now.clone()) } else { style.stylo_style(dom, e) };
     let ElementTiming { transitions, transition_properties, .. } = rules.element_for(dom, el, pseudo, &style_of);
     if !state.transitions.borrow().is_empty() {
-        if let Some(properties) = transition_properties {
-            starting.changed.insert((el, pseudo), (now.clone(), properties));
-        }
+        starting.changed.insert((el, pseudo), (now.clone(), transition_properties));
     }
     let mut started = Vec::new();
     for transition in transitions.iter().rev() {
