@@ -387,6 +387,29 @@ fn exec_command_formatting_and_structure() {
 }
 
 #[test]
+fn control_history_remembers_both_selections_across_an_intervening_move() {
+    let e = env("<body><textarea id=t>abcdef</textarea></body>");
+    let r = &e.main;
+    eval(r, "t.focus(); t.setSelectionRange(1,4,'backward'); document.execCommand('insertText',false,'Z'); t.setSelectionRange(0,1,'forward')");
+    assert_eq!(eval(r, "document.execCommand('undo'); [t.value,t.selectionStart,t.selectionEnd,t.selectionDirection].join()"), "abcdef,1,4,backward");
+    assert_eq!(eval(r, "document.execCommand('redo'); [t.value,t.selectionStart,t.selectionEnd,t.selectionDirection].join()"), "aZef,2,2,forward");
+}
+
+#[test]
+fn undo_restores_anchor_focus_and_text_boundary_affinity() {
+    let e = env("<body><div id=ed contenteditable>a😀<i>bc</i>def</div></body>");
+    let r = &e.main;
+    eval(r, "ed.focus(); const sel=getSelection(); sel.setBaseAndExtent(ed.lastChild,1,ed.firstChild,3);");
+    assert_eq!(eval(r, "sel.direction + '|' + sel.toString()"), "backward|bcd");
+    eval(r, "document.execCommand('insertText',false,'X'); const changed=ed.innerHTML; document.execCommand('undo')");
+    assert_eq!(eval(r, "[sel.direction,sel.anchorNode===ed.lastChild,sel.anchorOffset,sel.focusNode===ed.querySelector('i').firstChild,sel.focusOffset,sel.toString()].join('|')"),
+        "backward|true|1|true|0|bcd");
+    assert_eq!(eval(r, "document.execCommand('redo'); [ed.innerHTML===changed,sel.isCollapsed].join()"), "true,true");
+    eval(r, "document.execCommand('undo'); sel.collapse(ed.firstChild,3); document.execCommand('insertText',false,'Y'); document.execCommand('undo')");
+    assert_eq!(eval(r, "[sel.isCollapsed,sel.anchorNode===ed.firstChild,sel.focusNode===ed.firstChild,sel.focusOffset].join()"), "true,true,true,3");
+}
+
+#[test]
 fn undo_and_redo_restore_text_controls_and_hosts() {
     let e = env("<body><input id=i><div id=ed contenteditable><p>ab</p></div></body>");
     let r = &e.main;
