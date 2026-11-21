@@ -876,7 +876,7 @@
       if (arguments.length === 1 && effects.has(target) && effects.get(target).keyframe) {
         const src = effects.get(target);
         st = {
-          keyframe: true, target: src.target, pseudo: src.pseudo, frames: src.frames, composite: src.composite,
+          keyframe: true, target: src.target, pseudo: src.pseudo, frames: src.cssFrames ?? src.frames, composite: src.composite,
           iterationComposite: src.iterationComposite, timing: { ...src.timing }, animation: null,
         };
       } else {
@@ -932,7 +932,7 @@
     }
     getKeyframes() {
       const st = brand(effects, this, 'a KeyframeEffect');
-      return st.frames.map(f => {
+      return (st.cssFrames ?? st.frames).map(f => {
         const out = { offset: f.offset, computedOffset: f.computed, easing: f.easing.text, composite: f.composite };
         for (const [key, { value }] of f.values) out[key] = value;
         return out;
@@ -941,6 +941,7 @@
     setKeyframes(keyframes) {
       const st = brand(effects, this, 'a KeyframeEffect');
       st.frames = processKeyframes(keyframes);
+      st.cssFrames = null;
       effectChanged(st);
     }
   }
@@ -1779,6 +1780,14 @@
     if (scrollDriven && timing.duration === 0) timing.duration = 'auto';
     const [timelineValue, rangeStartText, rangeEndText] = scrollDriven ? timelineText : [null, 'normal', 'normal'];
     const effect = new KeyframeEffect(target, null, timing);
+    if (transition && id != null) {
+      const frames = native.transitionFrames(id).map(([offset, property, value]) => {
+        const member = property.startsWith('--') ? property : property === 'offset' ? 'cssOffset' :
+          property === 'float' ? 'cssFloat' : property.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
+        return { offset, [member]: value };
+      });
+      effects.get(effect).cssFrames = processKeyframes(frames);
+    }
     // A scroll-driven one: on its scroll or view timeline, its `auto` duration filling it, its
     // start time at the timeline's start.
     const timeline = scrollDriven ? cssTimeline(timelineValue, target, pseudo) : documentTimeline;

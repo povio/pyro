@@ -233,6 +233,10 @@ pub(crate) struct Run {
 }
 
 impl State {
+    pub(crate) fn transition_frames(&self, id: u64) -> Option<std::sync::Arc<pyro_dom::animation::TextKeyframes>> {
+        self.transitions.borrow().iter().find(|run| run.id == id)?.keyframes()
+    }
+
     /// The animation clock (page time, ms) of the running task: its first reading, held for the
     /// rest of the task, so that the CSS animations and transitions a task starts start at the
     /// time the frame samples them (their time is 0 until the clock moves, as a browser's pending
