@@ -1089,3 +1089,21 @@ fn css_animation_effect_lists_computed_values_in_offset_order() {
     "#);
     assert_eq!(actual, "2|0|20px|1|50px|60px|linear|auto|1em");
 }
+
+#[test]
+fn registered_computed_map_keeps_list_items_and_specified_token_streams() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        CSS.registerProperty({name:'--lengths',syntax:'<length>+',inherits:false,initialValue:'1px 2px'});
+        CSS.registerProperty({name:'--any',syntax:'*',inherits:false});
+        const el = document.body.appendChild(document.createElement('div'));
+        el.style.cssText = 'font-size:10px; --lengths:2em 3px; --any:5px; --raw:6px';
+        const map = el.computedStyleMap();
+        const values = map.getAll('--lengths');
+        const iterated = Array.from(map).find(([key]) => key === '--lengths')[1];
+        [map.get('--lengths').value, values.map(x => x.unit).join(','), iterated.map(String).join(','),
+         map.get('--any').constructor.name, map.get('--raw').constructor.name,
+         el.attributeStyleMap.get('--lengths').constructor.name].join('|')
+    "#);
+    assert_eq!(actual, "20|px,px|20px,3px|CSSUnparsedValue|CSSUnparsedValue|CSSUnparsedValue");
+}
