@@ -1522,7 +1522,7 @@ diff -ruN a/parser.rs b/parser.rs
          &mut self,
 diff -ruN a/properties/cascade.rs b/properties/cascade.rs
 --- a/properties/cascade.rs	2026-11-11 19:55:57
-+++ b/properties/cascade.rs	2026-11-21 18:58:53
++++ b/properties/cascade.rs	2026-11-21 19:21:33
 @@ -386,6 +386,17 @@
              if using_cached_reset_properties {
                  LonghandIdSet::late_group_only_inherited()
@@ -1609,7 +1609,7 @@ diff -ruN a/properties/cascade.rs b/properties/cascade.rs
                  );
                  *lowlink = cmp::min(*lowlink, arg_lowlink);
                  *self_ref |= arg_self_ref;
-@@ -2278,20 +2327,78 @@
+@@ -2278,20 +2327,88 @@
          }
  
          // FIXME: Maybe avoid visiting the same var twice if not needed?
@@ -1644,8 +1644,18 @@ diff -ruN a/properties/cascade.rs b/properties/cascade.rs
 +                        let deps = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
 +                        let mut replacement = context.replacement_context(property_id);
 +                        replacement.function_dependencies = Some(deps.clone());
-+                        let _ = function.replace(source, &mut replacement);
++                        if let Ok(result) = function.replace(source, &mut replacement) {
++                            // An untyped result may introduce units into a registered receiving
++                            // property, just as var() substitution would.
++                            *non_custom_references |= ReferenceFlags::font_units_in(&result.css);
++                        }
++                        // A typed slot converted even inside an unregistered receiving property.
++                        // Only slots whose computed values were consulted contribute these edges.
++                        let consumed = replacement.function_units;
 +                        drop(replacement);
++                        consumed.for_each_non_custom(context.computed_context.is_root_element(), |reference| {
++                            visit_link(VarType::NonCustom(reference), index, references_from_non_custom_properties, context, lowlink, self_ref);
++                        });
 +                        for name in deps.take() {
 +                            visit_link(VarType::Custom(name), index, references_from_non_custom_properties, context, lowlink, self_ref);
 +                        }
@@ -1693,7 +1703,7 @@ diff -ruN a/properties/cascade.rs b/properties/cascade.rs
                                  env_fn
                                      .replace_name(source, &mut replacement_context)
                                      .value
-@@ -2313,21 +2420,20 @@
+@@ -2313,21 +2430,20 @@
                              })
                              .is_some();
                          if !present && let Some(ref fallback) = env_fn.fallback {
@@ -1720,7 +1730,7 @@ diff -ruN a/properties/cascade.rs b/properties/cascade.rs
                                      .value
                                      .map(|arg| Cow::Owned(arg.into_owned()))
                              },
-@@ -2336,7 +2442,7 @@
+@@ -2336,7 +2452,7 @@
                          };
                          let Some(arg) = arg else {
                              if let Some(ref fallback) = attr_fn.fallback {
@@ -1729,7 +1739,7 @@ diff -ruN a/properties/cascade.rs b/properties/cascade.rs
                              }
                              continue;
                          };
-@@ -2359,14 +2465,16 @@
+@@ -2359,14 +2475,16 @@
                              attr_fn.fallback.as_ref(),
                          )
                      },
@@ -1747,7 +1757,7 @@ diff -ruN a/properties/cascade.rs b/properties/cascade.rs
                                  var_fn
                                      .replace_name(source, &mut replacement_context)
                                      .value
-@@ -2377,10 +2485,21 @@
+@@ -2377,10 +2495,21 @@
                          };
                          let Some(name) = name else {
                              if let Some(ref fallback) = var_fn.fallback {
@@ -1770,7 +1780,7 @@ diff -ruN a/properties/cascade.rs b/properties/cascade.rs
                          (VarType::Custom(name.0.clone()), var_fn.fallback.as_ref())
                      },
                  };
-@@ -2420,7 +2539,7 @@
+@@ -2420,7 +2549,7 @@
                  }
  
                  if !primary_valid && let Some(fallback) = fallback {
@@ -1779,7 +1789,7 @@ diff -ruN a/properties/cascade.rs b/properties/cascade.rs
                  }
              }
          }
-@@ -2588,6 +2707,7 @@
+@@ -2588,6 +2717,7 @@
                  &mut lowlink,
                  &mut self_ref,
                  &mut value_non_custom_refs,
@@ -1787,7 +1797,7 @@ diff -ruN a/properties/cascade.rs b/properties/cascade.rs
              );
  
              // ... Then the non-custom properties this value depends on (font-size, line-height,
-@@ -2652,6 +2772,7 @@
+@@ -2652,6 +2782,7 @@
                          &mut lowlink,
                          &mut self_ref,
                          &mut Default::default(),
@@ -1795,14 +1805,14 @@ diff -ruN a/properties/cascade.rs b/properties/cascade.rs
                      );
                  }
              }
-@@ -2782,6 +2903,49 @@
+@@ -2782,6 +2913,49 @@
              &mut lowlink,
              &mut self_ref,
              &mut Default::default(),
 +            &mut 0,
          );
-     }
- }
++    }
++}
 +
 +/// pyro: the font-size scale factor for a `math-depth` change from `parent_math_depth` to
 +/// `computed_math_depth` (MathML Core § 3.1.2), the gecko cascade's algorithm, for servo.
@@ -1822,7 +1832,7 @@ diff -ruN a/properties/cascade.rs b/properties/cascade.rs
 +    let mut invert_scale_factor = false;
 +    if a == b {
 +        return s;
-+    }
+     }
 +    if b < a {
 +        std::mem::swap(&mut a, &mut b);
 +        invert_scale_factor = true;
@@ -1844,7 +1854,7 @@ diff -ruN a/properties/cascade.rs b/properties/cascade.rs
 +    } else {
 +        s
 +    }
-+}
+ }
 diff -ruN a/properties/computed_value_flags.rs b/properties/computed_value_flags.rs
 --- a/properties/computed_value_flags.rs	2026-11-11 19:55:57
 +++ b/properties/computed_value_flags.rs	2026-11-17 00:11:39
@@ -8681,8 +8691,8 @@ diff -ruN a/substitution/conditional.rs b/substitution/conditional.rs
 +}
 diff -ruN a/substitution/function.rs b/substitution/function.rs
 --- a/substitution/function.rs	1970-01-01 00:00:00.000000000 +0000
-+++ b/substitution/function.rs	2026-11-21 19:05:18
-@@ -0,0 +1,273 @@
++++ b/substitution/function.rs	2026-11-21 19:21:33
+@@ -0,0 +1,294 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
 + * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
@@ -8691,7 +8701,7 @@ diff -ruN a/substitution/function.rs b/substitution/function.rs
 +//! local bindings. A missing local name looks outward through invoking frames
 +//! before reaching the custom properties on the element.
 +
-+use super::{ArbitraryDeclarationValue, Substitution, SubstitutionParserContext, SubstitutionReplacementContext};
++use super::{ArbitraryDeclarationValue, ReferenceFlags, Substitution, SubstitutionParserContext, SubstitutionReplacementContext};
 +use crate::Atom;
 +use crate::custom_properties::{Name, VariableValue};
 +use crate::derives::*;
@@ -8765,7 +8775,12 @@ diff -ruN a/substitution/function.rs b/substitution/function.rs
 +            })
 +            .ok()?
 +            .to_computed_value(cx.computed_context);
-+        Some((result.to_variable_value(), tainted || result.attr_tainted))
++        let mut computed = result.to_variable_value();
++        if cx.function_dependencies.is_some() {
++            // The computed value may now be px, so retain the units consulted by this slot.
++            computed.references.flags = v.references.flags | ReferenceFlags::font_units_in(&v.css);
++        }
++        Some((computed, tainted || result.attr_tainted))
 +    }
 +
 +    fn substitute(self: &Rc<Self>, source: &VariableValue, cx: &mut SubstitutionReplacementContext) -> Option<Value> {
@@ -8779,17 +8794,25 @@ diff -ruN a/substitution/function.rs b/substitution/function.rs
 +        nested.seen = cx.seen.clone();
 +        nested.function_frame = Some(self.clone());
 +        nested.function_dependencies = cx.function_dependencies.clone();
-+        let v = nested.substitute_variable_value(source, None).ok().map(|v| owned(v, source));
++        let v = nested.substitute_variable_value(source, None).ok().map(|v| {
++            let (mut value, taint) = owned(v, source);
++            value.references.flags |= nested.function_units;
++            (value, taint)
++        });
 +        cx.consulted_attr_taint |= nested.consulted_attr_taint;
 +        v
 +    }
 +
 +    pub(crate) fn outer(self: &Rc<Self>, name: &Name, cx: &mut SubstitutionReplacementContext) -> Option<Value> {
 +        let previous = std::mem::replace(&mut cx.function_frame, self.parent.clone());
++        let previous_units = std::mem::take(&mut cx.function_units);
 +        let value = super::var::VarFunction::resolve_custom_property(name, cx).map(|v| {
 +            let source = self.rule.result.as_deref().expect("only invoked functions have results");
-+            owned(v, source)
++            let (mut value, taint) = owned(v, source);
++            value.references.flags |= cx.function_units;
++            (value, taint)
 +        });
++        cx.function_units = previous_units;
 +        cx.function_frame = previous;
 +        value
 +    }
@@ -8864,7 +8887,10 @@ diff -ruN a/substitution/function.rs b/substitution/function.rs
 +            frame = f.parent.clone();
 +            continue;
 +        };
-+        return Some(value.map(|(v, tainted)| Substitution::from_value(v, tainted)));
++        return Some(value.map(|(v, tainted)| {
++            cx.function_units |= v.references.flags & ReferenceFlags::NON_CUSTOM;
++            Substitution::from_value(v, tainted)
++        }));
 +    }
 +    None
 +}
@@ -8928,11 +8954,15 @@ diff -ruN a/substitution/function.rs b/substitution/function.rs
 +            parent,
 +        });
 +        for (index, param) in frame.rule.parameters.iter().enumerate() {
-+            let supplied = self
-+                .arguments
-+                .get(index)
++            let previous_units = std::mem::take(&mut cx.function_units);
++            let supplied = self.arguments.get(index)
 +                .and_then(|arg| cx.substitute_declaration_value(arg, source).ok())
-+                .and_then(|v| frame.typed(Some(&param.name), owned(v, source), Some(&param.syntax), cx));
++                .and_then(|substitution| {
++                    let (mut value, taint) = owned(substitution, source);
++                    value.references.flags |= cx.function_units;
++                    frame.typed(Some(&param.name), (value, taint), Some(&param.syntax), cx)
++                });
++            cx.function_units = previous_units;
 +            let binding = match (supplied, &param.default) {
 +                (Some(v), _) => Binding::Ready(Some(v)),
 +                (None, Some(default)) => Binding::Pending(default.clone()),
@@ -8953,12 +8983,13 @@ diff -ruN a/substitution/function.rs b/substitution/function.rs
 +            .extend(frame.rule.locals.iter().map(|(n, v)| (n.clone(), Binding::Pending(v.clone()))));
 +        let v = frame.substitute(&result, cx).ok_or(())?;
 +        let (v, tainted) = frame.typed(None, v, Some(&frame.rule.returns), cx).ok_or(())?;
++        cx.function_units |= v.references.flags & ReferenceFlags::NON_CUSTOM;
 +        Ok(Substitution::from_value(v, tainted))
 +    }
 +}
 diff -ruN a/substitution/mod.rs b/substitution/mod.rs
 --- a/substitution/mod.rs	2026-11-11 19:55:57
-+++ b/substitution/mod.rs	2026-11-21 18:58:53
++++ b/substitution/mod.rs	2026-11-21 19:21:33
 @@ -7,6 +7,8 @@
  
  pub mod attr;
@@ -9012,21 +9043,18 @@ diff -ruN a/substitution/mod.rs b/substitution/mod.rs
          let end = num::NonZeroUsize::new(
              input.position().byte_index() - context.input_start.byte_index()
                  + context.missing_closing_characters.len(),
-@@ -158,15 +175,23 @@
- }
- 
- fn parse_optional_fallback(
-+    input: &mut Parser,
-+    context: &mut SubstitutionParserContext,
-+) -> Result<Option<ArbitraryDeclarationValue>, ParseError> {
+@@ -161,12 +178,20 @@
+     input: &mut Parser,
+     context: &mut SubstitutionParserContext,
+ ) -> Result<Option<ArbitraryDeclarationValue>, ParseError> {
 +    parse_optional_fallback_with_syntax(input, context, true)
 +}
 +
 +fn parse_optional_fallback_with_syntax(
-     input: &mut Parser,
-     context: &mut SubstitutionParserContext,
++    input: &mut Parser,
++    context: &mut SubstitutionParserContext,
 +    is_non_strict: bool,
- ) -> Result<Option<ArbitraryDeclarationValue>, ParseError> {
++) -> Result<Option<ArbitraryDeclarationValue>, ParseError> {
      if input.try_parse(|input| input.expect_comma()).is_ok() {
          let (fallback, _) = ArbitraryDeclarationValue::parse_free_form(
              input,
@@ -9163,7 +9191,33 @@ diff -ruN a/substitution/mod.rs b/substitution/mod.rs
              Self::Env(function) => function.for_each_unparsed_value(f),
              Self::Attr(function) => function.for_each_unparsed_value(f),
          }
-@@ -646,7 +706,7 @@
+@@ -545,6 +605,25 @@
+ }
+ 
+ impl ReferenceFlags {
++    /// Font and line-height units in an already substituted token stream. Only dimensions
++    /// matter here: strings and identifiers spelling a unit are not lengths.
++    pub(crate) fn font_units_in(css: &str) -> Self {
++        fn visit(input: &mut Parser, flags: &mut ReferenceFlags) -> Result<(), ParseError> {
++            while let Ok(token) = input.next() {
++                match token {
++                    Token::Dimension { unit, .. } => *flags |= ReferenceFlags::from_unit(unit),
++                    Token::Function(_) | Token::ParenthesisBlock | Token::SquareBracketBlock | Token::CurlyBracketBlock =>
++                        input.parse_nested_block(|i| visit(i, flags))?,
++                    _ => {},
++                }
++            }
++            Ok(())
++        }
++        let mut flags = Self::empty();
++        let _ = visit(&mut Parser::new(css), &mut flags);
++        flags
++    }
++
+     fn from_unit(value: &CowRcStr) -> Self {
+         // For registered properties, any reference to font-relative dimensions
+         // make it dependent on font-related properties.
+@@ -646,7 +725,7 @@
      }
  
      #[inline(always)]
@@ -9172,7 +9226,7 @@ diff -ruN a/substitution/mod.rs b/substitution/mod.rs
          let mut taint = Self::default();
          taint.push(0, end);
          taint
-@@ -750,6 +810,13 @@
+@@ -750,6 +829,15 @@
      pub computed_context: &'b computed::Context<'c>,
      /// Tracks the attributes queried by `attr()`.
      pub attribute_tracker: &'b mut AttributeTracker<'t>,
@@ -9182,22 +9236,25 @@ diff -ruN a/substitution/mod.rs b/substitution/mod.rs
 +    /// Number of random functions parsed during substitution of this declaration.
 +    pub(crate) early_random_count: i32,
 +    pub(crate) function_frame: Option<std::rc::Rc<function::Frame>>,
++    /// Units consumed by typed function slots on the value's active substitution path.
++    pub(crate) function_units: ReferenceFlags,
 +    pub(crate) function_dependencies: Option<std::rc::Rc<std::cell::RefCell<Vec<Name>>>>,
      /// The custom properties currently being resolved, for cycle detection.
      pub seen: SmallVec<[Name; 8]>,
  }
-@@ -770,6 +837,10 @@
+@@ -770,6 +858,11 @@
              computed_context,
              attribute_tracker,
              seen: SmallVec::new(),
 +            consulted_attr_taint: false,
 +            early_random_count: 0,
 +            function_frame: None,
++            function_units: ReferenceFlags::empty(),
 +            function_dependencies: None,
          }
      }
  
-@@ -849,6 +920,7 @@
+@@ -849,6 +942,7 @@
              }
  
              let substitution = reference.function.replace(source, self)?;
@@ -9207,7 +9264,7 @@ diff -ruN a/substitution/mod.rs b/substitution/mod.rs
              if reference.start == start && reference.end == end {
 diff -ruN a/substitution/var.rs b/substitution/var.rs
 --- a/substitution/var.rs	2026-11-11 19:55:57
-+++ b/substitution/var.rs	2026-11-21 19:03:09
++++ b/substitution/var.rs	2026-11-21 19:21:55
 @@ -7,7 +7,7 @@
  
  use super::{
@@ -9238,7 +9295,7 @@ diff -ruN a/substitution/var.rs b/substitution/var.rs
          Ok(Self { name, fallback })
      }
  
-@@ -56,11 +57,25 @@
+@@ -56,11 +57,28 @@
          &'a self,
          source: &'a VariableValue,
          context: &mut SubstitutionReplacementContext<'a, '_, '_, '_>,
@@ -9251,7 +9308,10 @@ diff -ruN a/substitution/var.rs b/substitution/var.rs
 +            .and_then(|name| {
 +                if inherited {
 +                    if let Some(frame) = context.function_frame.clone() {
-+                        return frame.outer(&name.0, context).map(|(v, tainted)| Substitution::from_value(v, tainted));
++                        return frame.outer(&name.0, context).map(|(v, tainted)| {
++                            context.function_units |= v.references.flags & crate::substitution::ReferenceFlags::NON_CUSTOM;
++                            Substitution::from_value(v, tainted)
++                        });
 +                    }
 +                    let value = Self::inherited_value(&name.0, context)?;
 +                    if value.viewport_dependent {
@@ -9265,7 +9325,7 @@ diff -ruN a/substitution/var.rs b/substitution/var.rs
              .ok_or(())
              .or_else(|_| {
                  context.substitute_declaration_value(self.fallback.as_ref().ok_or(())?, source)
-@@ -69,12 +84,37 @@
+@@ -69,12 +87,37 @@
          Ok(substitution)
      }
  

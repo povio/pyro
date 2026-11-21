@@ -2353,8 +2353,18 @@ fn substitute_all(
                         let deps = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
                         let mut replacement = context.replacement_context(property_id);
                         replacement.function_dependencies = Some(deps.clone());
-                        let _ = function.replace(source, &mut replacement);
+                        if let Ok(result) = function.replace(source, &mut replacement) {
+                            // An untyped result may introduce units into a registered receiving
+                            // property, just as var() substitution would.
+                            *non_custom_references |= ReferenceFlags::font_units_in(&result.css);
+                        }
+                        // A typed slot converted even inside an unregistered receiving property.
+                        // Only slots whose computed values were consulted contribute these edges.
+                        let consumed = replacement.function_units;
                         drop(replacement);
+                        consumed.for_each_non_custom(context.computed_context.is_root_element(), |reference| {
+                            visit_link(VarType::NonCustom(reference), index, references_from_non_custom_properties, context, lowlink, self_ref);
+                        });
                         for name in deps.take() {
                             visit_link(VarType::Custom(name), index, references_from_non_custom_properties, context, lowlink, self_ref);
                         }
