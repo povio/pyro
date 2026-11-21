@@ -48,6 +48,8 @@
 
   // ---- DOMPointReadOnly / DOMPoint -------------------------------------
   const pointState = new WeakMap();
+  const mutableGeometry = new WeakSet();
+  let rectParts, quadPoints, quadFromPoints;
   function pt(self) {
     const p = pointState.get(self);
     if (!p) throw new TypeErrorC('Illegal invocation');
@@ -70,6 +72,7 @@
     toJSON() { const p = pt(this); return { x: p.x, y: p.y, z: p.z, w: p.w }; }
   }
   class DOMPoint extends DOMPointReadOnly {
+    constructor(...args) { super(...args); mutableGeometry.add(this); }
     static fromPoint(other = {}) { return pointFrom(DOMPoint, other); }
     get x() { return pt(this).x; }
     set x(v) { pt(this).x = +v; }
@@ -114,7 +117,7 @@
         top: MathC.min(this.#y, this.#y + this.#height), right: MathC.max(this.#x, this.#x + this.#width),
         bottom: MathC.max(this.#y, this.#y + this.#height), left: MathC.min(this.#x, this.#x + this.#width) };
     }
-    static { setRect = (rect, key, value) => {
+    static { rectParts = o => #x in o ? [o.#x, o.#y, o.#width, o.#height] : null; setRect = (rect, key, value) => {
       switch (key) {
         case 'x': rect.#x = +value; break;
         case 'y': rect.#y = +value; break;
@@ -124,6 +127,7 @@
     }; }
   }
   class DOMRect extends DOMRectReadOnly {
+    constructor(...args) { super(...args); mutableGeometry.add(this); }
     static fromRect(other = {}) { return rectFrom(DOMRect, other); }
     get x() { return super.x; } set x(value) { setRect(this, 'x', value); }
     get y() { return super.y; } set y(value) { setRect(this, 'y', value); }
@@ -132,7 +136,16 @@
   }
   class DOMQuad {
     #points;
+    static {
+      quadPoints = o => #points in o ? o.#points : null;
+      quadFromPoints = points => {
+        const quad = new DOMQuad(secret);
+        quad.#points = points;
+        return quad;
+      };
+    }
     constructor(p1 = {}, p2 = {}, p3 = {}, p4 = {}) {
+      if (p1 === secret) return;
       this.#points = [pointFrom(DOMPoint, p1), pointFrom(DOMPoint, p2), pointFrom(DOMPoint, p3), pointFrom(DOMPoint, p4)];
     }
     static fromRect(other = {}) {
@@ -188,6 +201,7 @@
   function make(C, m, is2D) {
     const o = Object.create(C.prototype);
     matrixState.set(o, { m: m.slice(), is2D });
+    if (C === DOMMatrix) mutableGeometry.add(o);
     return o;
   }
   // C = A · B: the transform that applies B, then A.
@@ -428,6 +442,7 @@
   function copy(self) { const s = st(self); return make(DOMMatrix, s.m, s.is2D); }
 
   class DOMMatrix extends DOMMatrixReadOnly {
+    constructor(...args) { super(...args); mutableGeometry.add(this); }
     static fromMatrix(other = {}) { const s = fixup(other, false); return make(DOMMatrix, s.m, s.is2D); }
     static fromFloat32Array(array) { return fromArray(DOMMatrix, array, Float32ArrayC); }
     static fromFloat64Array(array) { return fromArray(DOMMatrix, array, Float64ArrayC); }
@@ -905,6 +920,32 @@
 
   return {
     DOMRectList, DOMRectReadOnly, DOMRect, SVGRect: DOMRect, DOMQuad, DOMPointReadOnly, DOMPoint, DOMMatrixReadOnly, DOMMatrix, WebKitCSSMatrix: DOMMatrix,
+    geometryParts(value) {
+      const mutable = mutableGeometry.has(value);
+      const p = pointState.get(value);
+      if (p) return [mutable ? 'DOMPoint' : 'DOMPointReadOnly', [p.x, p.y, p.z, p.w]];
+      const rect = rectParts(value);
+      if (rect) return [mutable ? 'DOMRect' : 'DOMRectReadOnly', rect];
+      const points = quadPoints(value);
+      if (points) return ['DOMQuad', [points[0], points[1], points[2], points[3]]];
+      const matrix = matrixState.get(value);
+      if (!matrix) return undefined;
+      const m = matrix.m;
+      return [mutable ? 'DOMMatrix' : 'DOMMatrixReadOnly', matrix.is2D ? [m[0], m[1], m[4], m[5], m[12], m[13]] : m.slice()];
+    },
+    geometryFromParts(name, v) {
+      switch (name) {
+        case 'DOMPoint': return new DOMPoint(v[0], v[1], v[2], v[3]);
+        case 'DOMPointReadOnly': return new DOMPointReadOnly(v[0], v[1], v[2], v[3]);
+        case 'DOMRect': return new DOMRect(v[0], v[1], v[2], v[3]);
+        case 'DOMRectReadOnly': return new DOMRectReadOnly(v[0], v[1], v[2], v[3]);
+        case 'DOMQuad': return quadFromPoints(v);
+        case 'DOMMatrix': case 'DOMMatrixReadOnly':
+          return make(name === 'DOMMatrix' ? DOMMatrix : DOMMatrixReadOnly,
+            v.length === 6 ? from2D(v[0],v[1],v[2],v[3],v[4],v[5]) : v, v.length === 6);
+        default: throw domError('DataCloneError', 'Unknown geometry value');
+      }
+    },
     rectList(rects) { return new DOMRectList(secret, rects); },
     rectValue(x,y,width,height,readonly) { return readonly ? new DOMRectReadOnly(x,y,width,height) : new DOMRect(x,y,width,height); },
     Path2D, ImageData, CanvasGradient, CanvasPattern, TextMetrics,

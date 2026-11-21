@@ -39,6 +39,8 @@ pub(crate) fn install(s: &Scope<'_>, page: &crate::page::PageDom, factory: pyro_
                 }
                 // A transferable ImageBitmap or OffscreenCanvas: its copy
                 // here (the original is detached by mode 9), else undefined.
+                10 => geometry_parts(s, value),
+                11 => crate::canvas::MODULE.helper(s, &crate::target::page_of(s)?, "geometryFromParts", &[value, args.get(2)]),
                 8 => match canvas_object(s, value, true)? {
                     Some(object) => crate::canvas::make_canvas_object(s, &object),
                     None => Ok(s.undefined()),
@@ -144,6 +146,17 @@ fn with_stream_realm<'s, T>(
         }
         None => Ok(None),
     }
+}
+
+/// Read geometry slots in the source realm and construct copies in the receiving realm.
+fn geometry_parts<'s>(s: &Scope<'s>, value: pyro_js::Value<'s>) -> JsResult<pyro_js::Value<'s>> {
+    let Some(realm) = value.as_object().and_then(|object| s.object_realm(object)) else { return Ok(s.undefined()) };
+    let scope = realm.scope()?;
+    let page = crate::target::page_of(&scope)?;
+    let Some(module) = crate::canvas::MODULE.existing(&scope, &page)? else { return Ok(s.undefined()) };
+    let describe = module.get_atom("geometryParts")?.as_object().ok_or(JsError::ContextDestroyed)?;
+    let result = describe.call(None, &[scope.rehome(value)])?;
+    Ok(Persistent::new(&scope, result).get(s))
 }
 
 /// The ImageBitmap or OffscreenCanvas `value` as a [`crate::canvas::CanvasObject`]:
@@ -474,6 +487,8 @@ fn wire_host<'s>(s: &Scope<'s>, args: &pyro_js::Args<'s>) -> JsResult<pyro_js::V
                 .ok_or_else(|| JsError::dom("DataCloneError", "Malformed encoded chunk"))?;
             crate::encoded_chunks::wrap(s, &chunk)
         }
+        15 => geometry_parts(s, value),
+        16 => crate::canvas::MODULE.helper(s, &crate::target::page_of(s)?, "geometryFromParts", &[value, args.get(2)]),
         13 => crate::canvas::MODULE.helper(s, &crate::target::page_of(s)?, "imageInfo", &[value]),
         14 => {
             let tree = value.as_object().ok_or_else(|| JsError::dom("DataCloneError", "Malformed ImageData"))?;

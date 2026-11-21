@@ -286,3 +286,22 @@ fn history_state_is_structured_cloned() {
     settle(&mut t);
     assert_eq!(eval(&root, "popped.join('|')"), "true:true:5");
 }
+
+#[test]
+fn geometry_serialization_preserves_quad_point_aliases_and_mutability() {
+    let (mut thread, _) = loaded(&["https://a.test/main"]);
+    let page = open_page(&mut thread, "https://a.test/main");
+    let realm = main_realm(&thread, page);
+    assert_eq!(eval(&realm, r#"
+        const quad = new DOMQuad({x:-0,y:NaN,z:Infinity,w:8});
+        const matrix = new DOMMatrixReadOnly([1,0,0,1,3,4]);
+        Object.defineProperty(quad, 'p2', {get(){throw Error('public getter invoked')}});
+        const input = [quad.p1, quad, matrix, quad];
+        const result = structuredClone(input);
+        const p = result[0];
+        [result[1] === result[3], result[1].p1 === p, p !== quad.p1,
+         p instanceof DOMPoint, Object.is(p.x,-0), Number.isNaN(p.y), p.z===Infinity, p.w===8,
+         result[2] instanceof DOMMatrixReadOnly, !(result[2] instanceof DOMMatrix),
+         result[2].is2D, result[2].e===3].every(Boolean)
+    "#), "true");
+}

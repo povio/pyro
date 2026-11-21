@@ -222,6 +222,15 @@
                     }
                     return result;
                 }
+                if (kind === '[object DOMPoint]' || kind === '[object DOMPointReadOnly]' ||
+                    kind === '[object DOMRect]' || kind === '[object DOMRectReadOnly]' ||
+                    kind === '[object DOMMatrix]' || kind === '[object DOMMatrixReadOnly]' || kind === '[object DOMQuad]') {
+                    const parts = host(source, 10);
+                    if (!parts) fail('Object type is not supported');
+                    // Quad points participate in the outer graph's identity map.
+                    const slots = parts[0] === 'DOMQuad' ? copy(parts[1], depth + 1) : parts[1];
+                    return remember(source, host(parts[0], 11, slots));
+                }
                 if (kind === '[object ImageData]') {
                     // Serializable: width, height, color space and a copy of the pixels, read
                     // through the interface's own getters (the realm's ImageData).
