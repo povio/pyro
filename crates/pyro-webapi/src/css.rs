@@ -751,7 +751,7 @@ enum RuleKind {
     Declarations(RefCell<String>),
     Property(PropertyRule),
     Palette(PaletteRule),
-    Style { selector: RefCell<String>, block: RefCell<String> },
+    Style { selector: RefCell<String>, block: RefCell<String>, list: RuleList },
     Group { name: String, condition: RefCell<String>, list: RuleList, bounds: Option<(Option<String>, Option<String>)> },
     Other { rule_type: u16, text: RefCell<String> },
 }
@@ -781,8 +781,10 @@ impl RuleNode {
                 ParsedRule::Property(rule) => RuleKind::Property(rule),
                 ParsedRule::Counter(rule) => RuleKind::Counter(RefCell::new(rule)),
                 ParsedRule::Palette(rule) => RuleKind::Palette(rule),
-                ParsedRule::Style { selector, block } => {
-                    RuleKind::Style { selector: RefCell::new(selector), block: RefCell::new(block) }
+                ParsedRule::Style { selector, block, rules } => {
+                    let list = RuleList::default();
+                    list.replace(rules.into_iter().map(|rule| RuleNode::new(rule, me.clone())).collect());
+                    RuleKind::Style { selector: RefCell::new(selector), block: RefCell::new(block), list }
                 }
                 ParsedRule::Group { name, condition, rules } => {
                     let list = RuleList::default();
@@ -803,7 +805,12 @@ impl RuleNode {
             RuleKind::Counter(rule) => rule.borrow().text(),
             RuleKind::Palette(rule) => rule.text.clone(),
             RuleKind::Property(rule) => rule.text.clone(),
-            RuleKind::Style { selector, block } => format!("{} {{{}}}", selector.borrow(), block.borrow()),
+            RuleKind::Style { selector, block, list } => {
+                let children = list.rules.borrow().iter().map(|rule| rule.source_text()).collect::<Vec<_>>().join("\n");
+                let block = block.borrow();
+                let separator = if !children.is_empty() && !block.trim_end().ends_with(';') { ";" } else { "" };
+                format!("{} {{{block}{separator}{children}}}", selector.borrow())
+            },
             RuleKind::Group { name, condition, list, .. } => {
                 let body = list.rules.borrow().iter().map(|r| r.source_text()).collect::<Vec<_>>().join("\n");
                 format!("@{name} {} {{\n{body}\n}}", condition.borrow())
@@ -825,10 +832,15 @@ impl RuleNode {
             RuleKind::Counter(rule) => rule.borrow().text(),
             RuleKind::Palette(rule) => rule.text.clone(),
             RuleKind::Property(rule) => rule.text.clone(),
-            RuleKind::Style { selector, block } => {
+            RuleKind::Style { selector, block, list } => {
                 // As the rule's `style.cssText` serializes the block.
                 let decls = Block::parse(&block.borrow()).css_text();
-                if decls.is_empty() {
+                if !list.rules.borrow().is_empty() {
+                    let mut lines = Vec::new();
+                    if !decls.is_empty() { lines.push(decls); }
+                    lines.extend(list.rules.borrow().iter().map(|rule| rule.css_text()).filter(|text| !text.is_empty()));
+                    format!("{} {{\n  {}\n}}", selector.borrow(), lines.join("\n  "))
+                } else if decls.is_empty() {
                     format!("{} {{ }}", selector.borrow())
                 } else {
                     format!("{} {{ {decls} }}", selector.borrow())
@@ -842,8 +854,10 @@ impl RuleNode {
                     format!("@{name} {prelude} {{\n")
                 };
                 for rule in list.rules.borrow().iter() {
+                    let text = rule.css_text();
+                    if text.is_empty() { continue; }
                     out.push_str("  ");
-                    out.push_str(&rule.css_text());
+                    out.push_str(&text);
                     out.push('\n');
                 }
                 out.push('}');
@@ -930,8 +944,18 @@ fn insert_into(
     let mut scoped = namespaces.clone();
     // CSSOM "parse a CSS rule": one rule, and nothing after it but whitespace.
     let invalid = || JsError::dom("SyntaxError", format!("Failed to parse the rule '{rule}'."));
-    let in_scope = std::iter::successors(parent.upgrade(), |p| p.parent.borrow().upgrade()).any(|p| matches!(&p.kind, RuleKind::Group { bounds: Some(_), .. }));
-    let mut parsed = vec![pyro_dom::cssom::parse_one_rule_in_scope(rule, &mut scoped, in_scope).map_err(|_| invalid())?];
+    use pyro_dom::cssom::ParseRelative;
+    let relative = std::iter::successors(parent.upgrade(), |node| node.parent.borrow().upgrade()).find_map(|node| match &node.kind {
+        RuleKind::Style { .. } => Some(ParseRelative::ForNesting),
+        RuleKind::Group { bounds: Some(_), .. } => Some(ParseRelative::ForScope),
+        _ => None,
+    }).unwrap_or(ParseRelative::No);
+    let mut parsed = vec![pyro_dom::cssom::parse_one_rule_in_scope(rule, &mut scoped, relative).or_else(|_| {
+        if relative == ParseRelative::No { return Err(invalid()); }
+        let declarations = DeclarationBlock::parse(rule);
+        if declarations.is_empty() { return Err(invalid()); }
+        Ok(ParsedRule::Declarations(declarations.css_text()))
+    })?];
     // CSSOM "insert a CSS rule": past the end is an IndexSizeError; @import and
     // @namespace only belong at the top of a sheet.
     if parent.upgrade().is_some() && matches!(parsed[0], ParsedRule::Other { rule_type: IMPORT_RULE | 10, .. }) {
@@ -1013,7 +1037,7 @@ impl RuleListData {
         let model = self.owner.rules()?;
         Ok(match &self.group {
             Some(node) => match &node.kind {
-                RuleKind::Group { list, .. } if is_attached(&model, node) => list.rules.borrow().clone(),
+                RuleKind::Group { list, .. } | RuleKind::Style { list, .. } if is_attached(&model, node) => list.rules.borrow().clone(),
                 _ if is_page(node) && is_attached(&model, node) => page_margins(&model, node),
                 _ => Vec::new(),
             },
@@ -1272,7 +1296,7 @@ impl JsClass for CssGroupRule {
         def.method("insertRule", 1, |s, r, a| {
             let rule = arg_string(&a, 0, "CSSGroupingRule.insertRule")?;
             let index = if a.get(1).is_undefined() { 0 } else { to_u32(a.get(1))? as usize };
-            let RuleKind::Group { list, .. } = &r.node()?.kind else { return Ok(s.undefined()) };
+            let (RuleKind::Group { list, .. } | RuleKind::Style { list, .. }) = &r.node()?.kind else { return Ok(s.undefined()) };
             let model = r.owner.rules()?;
             let namespaces = model.namespaces.borrow().clone();
             insert_into(list, &namespaces, Rc::downgrade(r.node()?), &rule, index, r.owner.is_constructed())?;
@@ -1282,7 +1306,7 @@ impl JsClass for CssGroupRule {
         def.method("deleteRule", 1, |s, r, a| {
             a.require(1, "CSSGroupingRule.deleteRule")?;
             let index = to_u32(a.get(0))? as usize;
-            let RuleKind::Group { list, .. } = &r.node()?.kind else { return Ok(s.undefined()) };
+            let (RuleKind::Group { list, .. } | RuleKind::Style { list, .. }) = &r.node()?.kind else { return Ok(s.undefined()) };
             delete_from(list, index)?;
             r.owner.commit(&*r.owner.rules()?);
             Ok(s.undefined())
@@ -2149,7 +2173,7 @@ fn is_attached(model: &SheetModel, node: &Rc<RuleNode>) -> bool {
     fn within(rules: &[Rc<RuleNode>], node: &Rc<RuleNode>) -> bool {
         rules.iter().any(|r| {
             Rc::ptr_eq(r, node)
-                || matches!(&r.kind, RuleKind::Group { list, .. } if within(&list.rules.borrow(), node))
+                || matches!(&r.kind, RuleKind::Group { list, .. } | RuleKind::Style { list, .. } if within(&list.rules.borrow(), node))
         })
     }
     within(&model.list.rules.borrow(), node)

@@ -4,6 +4,7 @@
 use cssparser::{ParseError, Parser, ToCss, Token};
 
 use crate::select;
+pub use selectors::parser::ParseRelative;
 
 /// `(prefix, url)` of the `@namespace` rules in scope; `""` is the default.
 pub type Namespaces = Vec<(String, String)>;
@@ -83,7 +84,7 @@ pub enum ParsedRule {
     Scope { start: Option<String>, end: Option<String>, rules: Vec<ParsedRule> },
     Property(PropertyRule),
     /// A style rule: serialized selector and the block's raw text.
-    Style { selector: String, block: String },
+    Style { selector: String, block: String, rules: Vec<ParsedRule> },
     /// A grouping rule: at-keyword, serialized prelude and child rules.
     Group { name: String, condition: String, rules: Vec<ParsedRule> },
     /// Any other known at-rule, kept as written. `rule_type` is `CSSRule.type`.
@@ -94,16 +95,16 @@ pub enum ParsedRule {
 /// selectors, unknown at-rules and a rule cut off before its block.
 pub fn parse_rules(text: &str, namespaces: &mut Namespaces) -> Vec<ParsedRule> {
     let mut parser = Parser::new(text);
-    parse_list(&mut parser, namespaces, true, false)
+    parse_list(&mut parser, namespaces, true, ParseRelative::No)
 }
 
 /// CSSOM "parse a CSS rule": the one rule `text` holds, `Err` when anything
 /// but whitespace and comments follows it (or it holds none).
 pub fn parse_one_rule(text: &str, namespaces: &mut Namespaces) -> Result<ParsedRule, ()> {
-    parse_one_rule_in_scope(text, namespaces, false)
+    parse_one_rule_in_scope(text, namespaces, ParseRelative::No)
 }
 
-pub fn parse_one_rule_in_scope(text: &str, namespaces: &mut Namespaces, scoped: bool) -> Result<ParsedRule, ()> {
+pub fn parse_one_rule_in_scope(text: &str, namespaces: &mut Namespaces, relative: ParseRelative) -> Result<ParsedRule, ()> {
     let mut p = Parser::new(text);
     let mut rule = None;
     loop {
@@ -112,8 +113,8 @@ pub fn parse_one_rule_in_scope(text: &str, namespaces: &mut Namespaces, scoped: 
         match token {
             Token::WhiteSpace(_) | Token::Comment(_) => continue,
             _ if rule.is_some() => return Err(()),
-            Token::AtKeyword(name) => rule = Some(parse_at_rule(&mut p, &name, namespaces, scoped).ok_or(())?),
-            token => rule = Some(parse_style_rule(&mut p, start, &token, namespaces, scoped).ok_or(())?),
+            Token::AtKeyword(name) => rule = Some(parse_at_rule(&mut p, &name, namespaces, relative).ok_or(())?),
+            token => rule = Some(parse_style_rule(&mut p, start, &token, namespaces, relative).ok_or(())?),
         }
     }
     rule.ok_or(())
@@ -128,7 +129,7 @@ pub fn normalize_selector(text: &str, namespaces: &Namespaces) -> Option<String>
     crate::stylo::select::parse(text).map(|list| list.to_css_string())
 }
 
-fn parse_list(p: &mut Parser<'_>, namespaces: &mut Namespaces, top: bool, scoped: bool) -> Vec<ParsedRule> {
+fn parse_list(p: &mut Parser<'_>, namespaces: &mut Namespaces, top: bool, relative: ParseRelative) -> Vec<ParsedRule> {
     let mut rules: Vec<ParsedRule> = Vec::new();
     // `@import` and `@namespace` only count before every other rule (`@layer`
     // statements aside); later ones are dropped, as browsers drop them.
@@ -137,8 +138,8 @@ fn parse_list(p: &mut Parser<'_>, namespaces: &mut Namespaces, top: bool, scoped
     loop {
         let start = p.position();
         let Ok(token) = p.next_including_whitespace_and_comments().cloned() else { return rules };
-        if scoped && matches!(token, Token::Semicolon) { continue; }
-        if scoped && matches!(token, Token::Ident(_)) {
+        if relative != ParseRelative::No && matches!(token, Token::Semicolon) { continue; }
+        if relative != ParseRelative::No && matches!(token, Token::Ident(_)) {
             let after_name = p.state();
             if p.expect_colon().is_ok() {
                 let end = loop {
@@ -172,8 +173,8 @@ fn parse_list(p: &mut Parser<'_>, namespaces: &mut Namespaces, top: bool, scoped
                 parse_prelude_and_block(p, p.position(), |body| while body.next().is_ok() {});
                 continue;
             }
-            Token::AtKeyword(name) => parse_at_rule(p, &name, namespaces, scoped),
-            token => parse_style_rule(p, start, &token, namespaces, scoped),
+            Token::AtKeyword(name) => parse_at_rule(p, &name, namespaces, relative),
+            token => parse_style_rule(p, start, &token, namespaces, relative),
         };
         let Some(rule) = rule else { continue };
         if top {
@@ -261,7 +262,7 @@ fn parse_style_rule(
     start: cssparser::SourcePosition,
     first: &Token<'_>,
     namespaces: &Namespaces,
-    scoped: bool,
+    relative: ParseRelative,
 ) -> Option<ParsedRule> {
     match first {
         // The prelude's first token is the block: `{}` has no selector.
@@ -273,15 +274,25 @@ fn parse_style_rule(
         _ => {}
     }
     let (prelude, block) = parse_prelude_and_block(p, start, raw_block);
-    let selector = if scoped {
+    let selector = if relative != ParseRelative::No {
         let url = crate::stylo::url_data();
         let namespaces = stylo_namespaces(namespaces);
         let selector_parser = style::selector_parser::SelectorParser {
             stylesheet_origin: style::stylesheets::Origin::Author, namespaces: &namespaces, url_data: &url, for_supports_rule: false,
         };
-        Parser::new(&prelude).parse_entirely(|input| selectors::SelectorList::parse(&selector_parser, input, selectors::parser::ParseRelative::ForScope)).ok()?.to_css_string()
+        Parser::new(&prelude).parse_entirely(|input| selectors::SelectorList::parse(&selector_parser, input, relative)).ok()?.to_css_string()
     } else { normalize_selector(&prelude, namespaces)? };
-    Some(ParsedRule::Style { selector, block: block? })
+    let mut block = block?;
+    let mut rules = Vec::new();
+    if block.contains('{') {
+        rules = parse_list(&mut Parser::new(&block), &mut namespaces.clone(), false, ParseRelative::ForNesting);
+        block.clear();
+        if let Some(ParsedRule::Declarations(text)) = rules.first_mut() {
+            block = std::mem::take(text);
+            rules.remove(0);
+        }
+    }
+    Some(ParsedRule::Style { selector, block, rules })
 }
 
 fn parse_property_rule(prelude: &str, block: &str) -> Option<ParsedRule> {
@@ -407,12 +418,16 @@ fn stylo_namespaces(namespaces: &Namespaces) -> style::stylesheets::Namespaces {
     result
 }
 
-fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces, scoped: bool) -> Option<ParsedRule> {
+fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces, relative: ParseRelative) -> Option<ParsedRule> {
     let lower = name.to_ascii_lowercase();
     let start = p.position();
+    if relative == ParseRelative::ForNesting && !matches!(lower.as_str(), "media" | "supports" | "container" | "layer" | "scope" | "starting-style") {
+        parse_prelude_and_block(p, start, raw_block);
+        return None;
+    }
     if matches!(lower.as_str(), "media" | "supports") {
         let mut inner = namespaces.clone();
-        let (condition, rules) = parse_prelude_and_block(p, start, |n| parse_list(n, &mut inner, false, scoped));
+        let (condition, rules) = parse_prelude_and_block(p, start, |n| parse_list(n, &mut inner, false, relative));
         let condition = if lower == "media" { serialize_media_list(&condition) } else { collapse(&condition) };
         return Some(ParsedRule::Group { name: lower, condition, rules: rules? });
     }
@@ -485,9 +500,8 @@ fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces, sc
             Origin::Author, &url, Some(CssRuleType::Scope), style_traits::ParsingMode::DEFAULT,
             style::context::QuirksMode::NoQuirks, std::borrow::Cow::Owned(stylo_namespaces(namespaces)), None, None, Default::default(),
         );
-        let relative = if scoped { ParseRelative::ForScope } else { ParseRelative::No };
         let bounds = Parser::new(&prelude).parse_entirely(|input| ScopeBounds::parse(&context, input, relative)).ok()?;
-        let rules = parse_list(&mut Parser::new(&block?), &mut namespaces.clone(), false, true);
+        let rules = parse_list(&mut Parser::new(&block?), &mut namespaces.clone(), false, ParseRelative::ForScope);
         return Some(ParsedRule::Scope { start: bounds.start.map(|s| s.to_css_string()), end: bounds.end.map(|s| s.to_css_string()), rules });
     }
     if lower == "container" {
@@ -496,7 +510,7 @@ fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces, sc
         let condition = conditions.into_iter().map(|(name, query)| {
             if name.is_empty() { query } else if query.is_empty() { name } else { format!("{name} {query}") }
         }).collect::<Vec<_>>().join(", ");
-        let rules = parse_list(&mut Parser::new(&block), &mut namespaces.clone(), false, scoped);
+        let rules = parse_list(&mut Parser::new(&block), &mut namespaces.clone(), false, relative);
         return Some(ParsedRule::Group { name: lower, condition, rules });
     }
     if lower == "font-feature-values" {
@@ -534,7 +548,7 @@ fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces, sc
             } else {
                 parser.parse_entirely(|p| LayerName::parse(&context, p)).ok()?.to_css_string()
             };
-            let rules = parse_list(&mut Parser::new(&block), &mut namespaces.clone(), false, scoped);
+            let rules = parse_list(&mut Parser::new(&block), &mut namespaces.clone(), false, relative);
             return Some(ParsedRule::Group { name: lower, condition, rules });
         }
         let names = parser.parse_comma_separated(|p| LayerName::parse(&context, p)).ok()?;
@@ -854,7 +868,7 @@ mod tests {
     }
 
     fn style(selector: &str, block: &str) -> ParsedRule {
-        ParsedRule::Style { selector: selector.into(), block: block.into() }
+        ParsedRule::Style { selector: selector.into(), block: block.into(), rules: Vec::new() }
     }
 
     #[test]

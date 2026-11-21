@@ -6667,6 +6667,15 @@ fn position_try_prototype_accessors_share_the_declaration_block() {
 }
 
 #[test]
+fn nested_style_rules_preserve_live_children_and_declaration_order() {
+    let env = env("<style>.outer { color: red; > .inner { height: 2px } width: 4px }</style>");
+    assert_eq!(eval(&env.main, "const outer = document.styleSheets[0].cssRules[0], list = outer.cssRules, child = list[0];
+        [outer.style.color, outer.style.width, child.selectorText, list[1].cssText, child.parentRule === outer].join('|')"), "red||& > .inner|width: 4px;|true");
+    assert_eq!(eval(&env.main, "outer.insertRule('height: 7px', 1); outer.deleteRule(0);
+        [list.length, list[0].cssText, child.parentRule === null, child.parentStyleSheet === null].join('|')"), "2|height: 7px;|true|true");
+}
+
+#[test]
 fn page_descriptor_edits_use_page_grammar() {
     let env = env("<style>@page { size: A4; page-orientation: rotate-right; @top-left { content: 'x' } }</style>");
     let realm = &env.main;
