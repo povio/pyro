@@ -204,6 +204,13 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         Ok(if pyro_dom::stylo::is_property(&name) { s.string(&name) } else { s.null() })
     })?;
     natives.set_atom("cssName", css_name.value())?;
+    let keyframe_value = s.function("keyframeValue", |s, _, args| {
+        let property = args.get(0).to_string()?;
+        let value = args.get(1).to_string()?;
+        Ok(pyro_dom::stylo::declarations::normalized_value(&property, &value)
+            .map_or_else(|| s.null(), |v| s.string(&v)))
+    })?;
+    natives.set_atom("keyframeValue", keyframe_value.value())?;
     let valid_pseudo = s.function("validViewPseudo", |s, _, args| {
         let text = args.get(0).to_string()?;
         Ok(s.boolean(text.len() <= 4096 && matches!(pyro_dom::stylo::parse_pseudo_arg(&text), pyro_dom::stylo::PseudoArg::Pseudo(_))))
