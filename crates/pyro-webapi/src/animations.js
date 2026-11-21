@@ -38,6 +38,7 @@
   const isConnected = getter(Node.prototype, 'isConnected');
   const getRootNode = Node.prototype.getRootNode;
   const contains = Node.prototype.contains;
+  const comparePosition = Node.prototype.compareDocumentPosition;
   const htmlInlineStyle = getter(HTMLElement.prototype, 'style');
   const SVGElement_ = typeof SVGElement === 'function' ? SVGElement : null;
   const svgInlineStyle = SVGElement_ !== null ? getter(SVGElement_.prototype, 'style') : null;
@@ -1777,6 +1778,8 @@
     a.css = transition ? CSS_TRANSITION : CSS_ANIMATION;
     a.cssName = name;
     a.cssId = id;
+    a.cssOwner = id == null ? null : target;
+    a.cssPseudoOrder = pseudo === '::marker' ? 1 : pseudo === '::before' ? 2 : pseudo === '::after' ? 3 : 0;
     a.cssTimelineKey = scrollDriven ? JSON.stringify(timelineText) : null;
     if (trigger !== null && trigger !== undefined && !scrollDriven) {
       armTrigger(a, trigger, held);
@@ -1808,7 +1811,7 @@
       a.startTime = null;
       a.holdTime = 0;
       a.ready = deferred();
-      schedulePending(a, 'play', transition ? start : undefined);
+      schedulePending(a, 'play', id == null ? undefined : start);
     } else {
       a.startTime = start;
       a.holdTime = null;
@@ -1951,15 +1954,20 @@
   // (canceled) leave the list.
   function cssSync(runs) {
     const seen = new Set();
-    for (const run of runs) {
+    for (const [index, run] of runs.entries()) {
       seen.add(run[0]);
       const known = cssRuns.get(run[0]);
       if (known !== undefined) {
+        animations.get(known).cssListOrder = index;
         cssFollow(known, run);
         continue;
       }
       // One run that cannot be made is left out; the others are listed.
-      try { cssRuns.set(run[0], cssRun(run)); } catch {}
+      try {
+        const object = cssRun(run);
+        animations.get(object).cssListOrder = index;
+        cssRuns.set(run[0], object);
+      } catch {}
     }
     for (const [id, object] of cssRuns) {
       if (seen.has(id)) continue;
@@ -1968,6 +1976,7 @@
       // (A run the style dropped no longer waits for its trigger.)
       const gone = animations.get(object);
       if (gone) {
+        gone.cssOwner = null;
         triggered.delete(gone);
         if (gone.css === CSS_TRANSITION && playStateOf(gone) !== 'finished') cancel(gone);
       }
@@ -2173,7 +2182,7 @@
     return animation;
   }
 
-  // In composite order: the order the animations were made.
+  // In composite order.
   function relevant(filter) {
     const out = [];
     for (const o of [...live]) {
@@ -2186,8 +2195,17 @@
       if (target && filter(target, a)) out.push(a);
     }
     // CSS transitions, then CSS animations, then script animations.
-    const rank = a => (a.css === undefined ? 2 : a.css);
-    out.sort((x, y) => rank(x) - rank(y) || x.seq - y.seq);
+    const rank = a => a.cssOwner ? a.css : a.viewRun ? 1.5 : 2;
+    out.sort((x, y) => {
+      const type = rank(x) - rank(y);
+      if (type || !x.cssOwner) return type || x.seq - y.seq;
+      if (x.cssOwner !== y.cssOwner) {
+        const pos = apply(comparePosition, x.cssOwner, [y.cssOwner]);
+        return pos & 1 ? x.seq - y.seq : pos & 4 ? -1 : 1;
+      }
+      return x.cssPseudoOrder - y.cssPseudoOrder ||
+        (x.css === CSS_ANIMATION ? x.cssListOrder - y.cssListOrder : x.seq - y.seq);
+    });
     return out.map(a => a.self);
   }
 
