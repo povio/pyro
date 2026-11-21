@@ -1,0 +1,6 @@
+running 2 tests
+test css_declarations::css_animation_effect_lists_computed_values_in_offset_order ... ok
+test css_declarations::transition_effect_exposes_independent_computed_endpoints ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 531 filtered out; finished in 0.09s
+
