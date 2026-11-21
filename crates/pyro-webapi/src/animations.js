@@ -1702,7 +1702,7 @@
   const cssRuns = new Map();
   function playbackState(object) {
     const a = brand(animations, object, 'an Animation');
-    if (a.cssOwner && a.css === CSS_ANIMATION) native.flushPlayback();
+    if (a.cssOwner) native.flushPlayback();
     return a;
   }
   class CSSAnimation extends Animation {
