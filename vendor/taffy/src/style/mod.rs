@@ -1498,6 +1498,10 @@ impl<T: FlexboxItemStyle> FlexboxItemStyle for &'_ T {
         (*self).flex_basis()
     }
     #[inline(always)]
+    fn flex_basis_calculation(&self) -> Option<CalcSizeFunction> {
+        (*self).flex_basis_calculation()
+    }
+    #[inline(always)]
     fn flex_grow(&self) -> f32 {
         (*self).flex_grow()
     }

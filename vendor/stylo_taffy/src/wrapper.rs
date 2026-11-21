@@ -899,6 +899,16 @@ impl<T: Deref<Target = ComputedValues>> taffy::FlexboxItemStyle for TaffyStyloSt
         convert::flex_basis(&self.style.get_position().flex_basis)
     }
 
+    fn flex_basis_calculation(&self) -> Option<taffy::CalcSizeFunction> {
+        let stylo::FlexBasis::Size(size) = &self.style.get_position().flex_basis else { return None };
+        match size.prepared_size() {
+            stylo::Size::CalcSizeAuto(calc) | stylo::Size::CalcSizeStretch(calc) |
+            stylo::Size::CalcSizeFitContent(calc) | stylo::Size::CalcSizeMinContent(calc) |
+            stylo::Size::CalcSizeMaxContent(calc) => Some(convert::calc_size_function(&calc.0)),
+            _ => None,
+        }
+    }
+
     #[inline]
     fn flex_grow(&self) -> f32 {
         self.style.get_position().flex_grow.0

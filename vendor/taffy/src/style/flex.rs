@@ -63,6 +63,10 @@ pub trait FlexboxItemStyle: CoreStyle {
     fn flex_basis(&self) -> Dimension {
         Style::<Self::CustomIdent>::DEFAULT.flex_basis
     }
+    #[inline(always)]
+    fn flex_basis_calculation(&self) -> Option<super::CalcSizeFunction> {
+        None
+    }
     /// The relative rate at which this item grows when it is expanding to fill space
     #[inline(always)]
     fn flex_grow(&self) -> f32 {

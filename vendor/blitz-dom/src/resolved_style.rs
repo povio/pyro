@@ -536,7 +536,7 @@ impl BaseDocument {
             "width" | "height" if has_layout_box => {
                 // Used value: the layout size interpreted according to `box-sizing`
                 // (border-box size for `border-box`, content-box size for `content-box`)
-                let layout = node.unrounded_layout();
+                let layout = self.physical_unrounded_layout(node_id);
                 let border_box = styles.get_position().box_sizing == BoxSizing::BorderBox;
                 let size = if property_name == "width" {
                     if border_box {

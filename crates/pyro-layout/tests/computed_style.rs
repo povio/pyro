@@ -424,6 +424,19 @@ fn flex_items_report_the_used_size_after_flexing() {
     assert_eq!(used("#ordinary", "width"), "15px");
 }
 
+#[test]
+fn flex_basis_calculation_uses_the_items_box_sizing() {
+    let page = Page::new(r#"<!doctype html><div style="display:flex;width:240px">
+        <div id=content style="width:40px;padding:5px;flex:0 0 calc-size(auto,size * 2)"></div>
+        <div id=border style="width:40px;padding:5px;box-sizing:border-box;flex:0 0 calc-size(auto,size * 2)"></div></div>
+        <div style="display:flex;writing-mode:vertical-rl;height:120px"><div id=vertical style="height:20px;width:10px;flex:1"></div></div>"#);
+    let used = |selector, name| page.layout.computed_style_value(&page.dom.borrow(), page.find(selector), name);
+    assert_eq!(used("#content", "width"), "80px");
+    assert_eq!(used("#border", "width"), "80px");
+    assert_eq!(used("#vertical", "width"), "10px");
+    assert_eq!(used("#vertical", "height"), "120px");
+}
+
 /// pyro (lane G): a subgrid's `grid-template-columns` resolves to `subgrid` with the names of each of
 /// the lines it spans (its own), which only its layout knows (css-grid-2 §7.2.6.2).
 #[test]

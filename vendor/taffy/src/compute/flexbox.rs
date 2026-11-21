@@ -1334,6 +1334,7 @@ fn determine_flex_base_size(
         let percent_resolution_main_size =
             if constants.known_main_size_is_definite { constants.node_inner_size.main(dir) } else { None };
         let flex_basis_style = child_style.flex_basis();
+        let basis_calculation = child_style.flex_basis_calculation();
         let flex_basis = flex_basis_style
             .maybe_resolve(percent_resolution_main_size, |val, basis| tree.calc(val, basis))
             .maybe_add(box_sizing_adjustment);
@@ -1506,6 +1507,9 @@ fn determine_flex_base_size(
         // Spec: https://www.w3.org/TR/css-flexbox-1/#intrinsic-item-contributions
         // Spec: https://www.w3.org/TR/css-flexbox-1/#change-2016-max-contribution
         let padding_border_sum = child.padding.main_axis_sum(constants.dir) + child.border.main_axis_sum(constants.dir);
+        if let Some(calculation) = basis_calculation {
+            child.flex_basis = calculation.apply((child.flex_basis - box_sizing_adjustment).max(0.0), |value, basis| tree.calc(value, basis)) + box_sizing_adjustment;
+        }
         child.flex_basis = child.flex_basis.max(padding_border_sum);
 
         // The hypothetical main size is the item’s flex base size clamped according to its

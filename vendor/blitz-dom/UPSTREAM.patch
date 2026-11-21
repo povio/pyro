@@ -53351,6 +53351,15 @@ diff --git a/packages/blitz-dom/src/resolved_style.rs b/packages/blitz-dom/src/r
          match property_name {
              // Shorthands of longhands that resolve to used values
              "margin" | "margin-block" | "margin-inline" | "padding" | "padding-block"
+@@ -466,7 +536,7 @@
+             "width" | "height" if has_layout_box => {
+                 // Used value: the layout size interpreted according to `box-sizing`
+                 // (border-box size for `border-box`, content-box size for `content-box`)
+-                let layout = node.unrounded_layout();
++                let layout = self.physical_unrounded_layout(node_id);
+                 let border_box = styles.get_position().box_sizing == BoxSizing::BorderBox;
+                 let size = if property_name == "width" {
+                     if border_box {
 @@ -682,14 +752,21 @@
                      let reference_box = euclid::Rect::new(
                          euclid::Point2D::new(CSSPixelLength::new(0.0), CSSPixelLength::new(0.0)),
