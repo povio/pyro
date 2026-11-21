@@ -452,6 +452,22 @@ impl LayoutPassState<'_> {
         let numeric_width = numeric_basis(&position.width, inputs.parent_size.width);
         let numeric_height = numeric_basis(&position.height, inputs.parent_size.height);
         let mut functions = taffy::Size { width: calculation(&position.width), height: calculation(&position.height) };
+        let mut measuring_flex_width = false;
+        if inputs.sizing_mode == taffy::SizingMode::ContentSize
+            && !styles.get_box().get_position().is_absolutely_positioned()
+            && let Some(parent) = node.layout_parent.get().and_then(|parent| self.nodes[parent].primary_styles())
+            && parent.clone_display().inside() == style::values::specified::box_::DisplayInside::Flex
+        {
+            let column = matches!(parent.get_position().flex_direction,
+                style::computed_values::flex_direction::T::Column | style::computed_values::flex_direction::T::ColumnReverse);
+            if column == parent.writing_mode.is_horizontal() {
+                if inputs.known_dimensions.height.is_some() { functions.height = None; }
+            } else if inputs.known_dimensions.width.is_some() {
+                functions.width = None;
+            } else {
+                measuring_flex_width = true;
+            }
+        }
         if functions.width.is_none() && functions.height.is_none() &&
             (inputs.run_mode != RunMode::PerformLayout || (numeric_width.is_none() && numeric_height.is_none())) {
             return inputs;
@@ -524,12 +540,19 @@ impl LayoutPassState<'_> {
                         available_space: taffy::Size { width: available, ..inputs.available_space },
                         ..inputs
                     };
-                    apply(function, self.dispatch_child_layout(node_id, probe, None).size.width, box_inset.width)
+                    self.dispatch_child_layout(node_id, probe, None).size.width
                 };
                 let min_content = content(AvailableSpace::MinContent);
                 let max_content = content(AvailableSpace::MaxContent).max(min_content);
-                width = space.clamp(min_content, max_content);
-                width_basis = None;
+                if measuring_flex_width {
+                    let fit = space.clamp(min_content, max_content);
+                    width = apply(function, fit, box_inset.width);
+                    width_basis = Some(fit);
+                } else {
+                    let minimum = apply(function, min_content, box_inset.width);
+                    width = space.clamp(minimum, apply(function, max_content, box_inset.width).max(minimum));
+                    width_basis = None;
+                }
             }
             let width = width.maybe_min(max.width).maybe_max(min.width);
             inputs.known_dimensions.width = Some(width.max(padding_border.width));

@@ -425,6 +425,17 @@ fn flex_items_report_the_used_size_after_flexing() {
 }
 
 #[test]
+fn flex_target_size_is_not_an_intrinsic_calculation_basis() {
+    let page = Page::new(r#"<!doctype html><div style="display:flex;width:200px">
+        <div id=row style="flex:0 0 70px;width:calc-size(fit-content,size + 12px)"></div></div>
+        <div style="display:flex;flex-direction:column;height:100px">
+        <div id=column style="flex:0 0 60px;height:calc-size(auto,size * 2)"></div></div>"#);
+    let used = |selector, name| page.layout.computed_style_value(&page.dom.borrow(), page.find(selector), name);
+    assert_eq!(used("#row", "width"), "70px");
+    assert_eq!(used("#column", "height"), "60px");
+}
+
+#[test]
 fn flex_basis_calculation_uses_the_items_box_sizing() {
     let page = Page::new(r#"<!doctype html><div style="display:flex;width:240px">
         <div id=content style="width:40px;padding:5px;flex:0 0 calc-size(auto,size * 2)"></div>
