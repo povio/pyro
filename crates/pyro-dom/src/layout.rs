@@ -4173,7 +4173,7 @@ impl Layout {
         }
         // A running CSS transition of the pseudo-element: its value now (the layout engine samples
         // none), in the after-change style.
-        if let Some(p) = timing_pseudo.filter(|_| !name.starts_with("--")) {
+        if let Some(p) = timing_pseudo {
             match self.style.pseudo_transition_value(el, p, &name) {
                 Some(crate::animation::TransitionValue::Text(v)) => return v,
                 Some(crate::animation::TransitionValue::Style(style)) => {
@@ -4222,7 +4222,7 @@ impl Layout {
         if matches!(name, "page-orientation" | "size") { return String::new(); }
         // pyro: a running CSS transition's value now (the layout engine samples none), serialized
         // as this function serializes the after-change style with that value in it
-        if !custom && !self.style.style_overridden() {
+        if !self.style.style_overridden() {
             match self.style.transition_value(el, name) {
                 Some(crate::animation::TransitionValue::Text(v)) => return v,
                 Some(crate::animation::TransitionValue::Style(style)) => {

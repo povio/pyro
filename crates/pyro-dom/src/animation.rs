@@ -186,10 +186,6 @@ pub fn transition_value(
     use style::values::animated::Procedure;
     use style::values::generics::easing::BeforeFlag;
     let id = crate::stylo::property_id(longhand)?;
-    let PropertyDeclarationId::Longhand(id) = id.as_shorthand().err()? else { return None };
-    let physical = PropertyDeclarationId::Longhand(id.to_physical(after.writing_mode));
-    let from = AnimationValue::from_computed_values(physical, before)?;
-    let to = AnimationValue::from_computed_values(physical, after)?;
     let eased = match easing_function(easing.unwrap_or("ease")) {
         Some(f) => {
             let flag = if before_flag { BeforeFlag::Set } else { BeforeFlag::Unset };
@@ -197,6 +193,21 @@ pub fn transition_value(
         }
         None => progress,
     };
+    let id = match id.as_shorthand().err()? {
+        PropertyDeclarationId::Longhand(id) => id,
+        custom => {
+            let from = AnimationValue::from_computed_values(custom, before)?;
+            let to = AnimationValue::from_computed_values(custom, after)?;
+            let value = from.animate_with_size_policy(&to, Procedure::Interpolate { progress: eased }, false)
+                .unwrap_or_else(|_| if eased < 0.5 { from } else { to });
+            let mut text = String::new();
+            value.uncompute().to_css(&mut text).ok()?;
+            return Some(TransitionValue::Text(text));
+        }
+    };
+    let physical = PropertyDeclarationId::Longhand(id.to_physical(after.writing_mode));
+    let from = AnimationValue::from_computed_values(physical, before)?;
+    let to = AnimationValue::from_computed_values(physical, after)?;
     // `display` to or from `none` shows the other value throughout, `none` only at its end
     // (css-display-4 §2.1, Stylo's `Animate for Display`, which the discrete path skips).
     if longhand == "display" {
@@ -313,10 +324,8 @@ pub fn with_longhand_of(
 
 /// Whether `longhand` has the same computed value in the styles `a` and `b`.
 pub fn same_computed_value(longhand: &str, a: &crate::timing::StyleSnapshot, b: &crate::timing::StyleSnapshot) -> bool {
-    use style::properties::PropertyDeclarationId;
     let Some(id) = crate::stylo::property_id(longhand) else { return false };
-    let Some(PropertyDeclarationId::Longhand(id)) = id.as_shorthand().err() else { return false };
-    let id = PropertyDeclarationId::Longhand(id);
+    let Some(id) = id.as_shorthand().err() else { return false };
     a.computed_value_to_string(id) == b.computed_value_to_string(id)
 }
 

@@ -963,18 +963,18 @@ pub fn displays_none(style: &StyleSnapshot) -> bool {
 /// The longhands `property` (a longhand, a shorthand or `all`) covers whose
 /// computed value differs between `before` and `after`: the ones a
 /// transition of `property` starts for.
-pub fn changed_longhands(before: &StyleSnapshot, after: &StyleSnapshot, property: &str) -> Vec<&'static str> {
+pub fn changed_longhands<'a>(before: &StyleSnapshot, after: &StyleSnapshot, property: &'a str) -> Vec<&'a str> {
     changed_longhands_with(before, after, property, false)
 }
 
 /// [`changed_longhands`]; with `allow_discrete` (`transition-behavior:
 /// allow-discrete`), values Stylo does not interpolate between count too.
-pub fn changed_longhands_with(
+pub fn changed_longhands_with<'a>(
     before: &StyleSnapshot,
     after: &StyleSnapshot,
-    property: &str,
+    property: &'a str,
     allow_discrete: bool,
-) -> Vec<&'static str> {
+) -> Vec<&'a str> {
     use style::properties::animated_properties::AnimationValue;
     use style::properties::{PropertyDeclarationId, ShorthandId};
     use style::values::animated::Procedure;
@@ -1012,7 +1012,16 @@ pub fn changed_longhands_with(
                 Err(PropertyDeclarationId::Longhand(longhand)) => {
                     return if differs(longhand) { vec![longhand.name()] } else { Vec::new() };
                 }
-                Err(_) => return Vec::new(),
+                Err(id @ PropertyDeclarationId::Custom(_)) => {
+                    if AnimationValue::is_different_for(id, before, after)
+                        && (allow_discrete || AnimationValue::from_computed_values(id, before)
+                            .zip(AnimationValue::from_computed_values(id, after))
+                            .is_some_and(|(from, to)| from.animate_with_size_policy(&to, Procedure::Interpolate { progress: 0.5 }, false).is_ok()))
+                    {
+                        return vec![property];
+                    }
+                    return Vec::new();
+                }
             },
             None => return Vec::new(),
         }
@@ -1035,14 +1044,18 @@ pub fn transition_keyframes(
 ) -> Option<crate::animation::TextKeyframes> {
     use style::properties::PropertyDeclarationId;
     let id = crate::stylo::property_id(longhand)?;
-    let PropertyDeclarationId::Longhand(id) = id.as_shorthand().err()? else { return None };
-    let physical = id.to_physical(after.writing_mode);
-    let value = |style: &StyleSnapshot| style.computed_value_to_string(PropertyDeclarationId::Longhand(physical));
+    let physical = match id.as_shorthand().err()? {
+        PropertyDeclarationId::Longhand(id) => PropertyDeclarationId::Longhand(id.to_physical(after.writing_mode)),
+        custom => custom,
+    };
+    let value = |style: &StyleSnapshot| style.computed_value_to_string(physical);
+    let mut name = String::new();
+    cssparser::serialize_identifier(match physical { PropertyDeclarationId::Longhand(id) => id.name(), _ => longhand }, &mut name).ok()?;
     let frame = |offset: f64, value: String| crate::animation::TextKeyframe {
         offset,
         easing: None,
         composite: None,
-        declarations: format!("{}: {value}", physical.name()),
+        declarations: format!("{name}: {value}"),
     };
     Some(crate::animation::TextKeyframes { frames: vec![frame(0.0, value(before)), frame(1.0, value(after))] })
 }

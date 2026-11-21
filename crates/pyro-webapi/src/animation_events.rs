@@ -1325,7 +1325,7 @@ fn is_ancestor(dom: &pyro_dom::Dom, ancestor: NodeId, node: NodeId) -> bool {
 struct Starting {
     timelines: Vec<Timeline>,
     /// The properties started, by element, with their index in `timelines`.
-    keys: FxHashMap<(NodeId, Option<PseudoElement>), Vec<(&'static str, usize)>>,
+    keys: FxHashMap<(NodeId, Option<PseudoElement>), Vec<(String, usize)>>,
     /// Their events, planned after the cancel events of the transitions
     /// they replace.
     events: Vec<Planned>,
@@ -1411,7 +1411,7 @@ fn start_transitions_of(
     // element's).
     let style_of = |e: NodeId| if e == el && pseudo.is_none() { Some(now.clone()) } else { style.stylo_style(dom, e) };
     let ElementTiming { transitions, .. } = rules.element_for(dom, el, pseudo, &style_of);
-    let mut started: Vec<&'static str> = Vec::new();
+    let mut started = Vec::new();
     for transition in &transitions {
         let changed =
             pyro_dom::timing::changed_longhands_with(before, now, &transition.property, transition.allow_discrete);
@@ -1435,7 +1435,7 @@ fn start_transitions_of(
                     starting.events.push(cancel_event(el, pseudo, longhand));
                     *first = index;
                 }
-                None => keys.push((longhand, index)),
+                None => keys.push((longhand.to_owned(), index)),
             }
             let timeline = Timeline {
                 timeline_text: None,
