@@ -1,0 +1,70 @@
+{
+  "focus": {
+    "urls": 4,
+    "passCounts": [
+      35,
+      48,
+      48
+    ],
+    "nameCounts": [
+      48,
+      48,
+      48
+    ],
+    "fullPages": [
+      0,
+      4,
+      4
+    ],
+    "gains": 13,
+    "losses": 0,
+    "gainsChromePass": 13,
+    "missingNames": 0,
+    "addedNames": 0,
+    "pageOutcomes": [
+      {
+        "complete/OK": 4
+      },
+      {
+        "complete/OK": 4
+      },
+      {
+        "complete/OK": 4
+      }
+    ]
+  },
+  "guards": {
+    "urls": 12,
+    "passCounts": [
+      33,
+      33,
+      34
+    ],
+    "nameCounts": [
+      34,
+      34,
+      34
+    ],
+    "fullPages": [
+      11,
+      11,
+      12
+    ],
+    "gains": 0,
+    "losses": 0,
+    "gainsChromePass": 0,
+    "missingNames": 0,
+    "addedNames": 0,
+    "pageOutcomes": [
+      {
+        "complete/OK": 12
+      },
+      {
+        "complete/OK": 12
+      },
+      {
+        "complete/OK": 12
+      }
+    ]
+  }
+}

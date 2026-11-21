@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+W="$(cd "$(dirname "$0")" && pwd)"
+D=$HOME/Library/Caches/lightningpanda/round6-noncss-measure
+cd "$W/src"
+export PYRO_BUILD_JOBS=1 CARGO_BUILD_JOBS=1
+"$D/build-exact" "$D/template-for-study/target" && cp "$D/template-for-study/target/wptiter/pyro" "$W/pyro-instrumented"

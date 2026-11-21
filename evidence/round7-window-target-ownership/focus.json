@@ -1,0 +1,6 @@
+[
+  "referrer-policy/gen/srcdoc.meta/unsafe-url/iframe-tag.http.html",
+  "referrer-policy/gen/iframe.meta/unsafe-url/iframe-tag.http.html",
+  "referrer-policy/gen/iframe.http-rp/no-referrer/iframe-tag.http.html",
+  "referrer-policy/gen/iframe.http-rp/unset/iframe-tag.http.html"
+]

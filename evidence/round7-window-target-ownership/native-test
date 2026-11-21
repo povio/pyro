@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+W="$(cd "$(dirname "$0")" && pwd)"
+D="$HOME/Library/Caches/lightningpanda/round6-noncss-measure"
+cd "$W/src"
+export PYRO_BUILD_JOBS=1 CARGO_BUILD_JOBS=1
+export CARGO_TARGET_DIR="$D/template-for-study/target" PYRO_JSC_DIR="$HOME/Library/Caches/lightningpanda/jsc/$(scripts/jsc/cache-key.sh)"
+export CARGO_PROFILE_WPTITER_INHERITS=release-fast CARGO_PROFILE_WPTITER_LTO=false CARGO_PROFILE_WPTITER_CODEGEN_UNITS=16 CARGO_PROFILE_WPTITER_INCREMENTAL=true
+cargo test --locked --offline --profile wptiter -p pyro-webapi --test integration dom_js::retiring_an_isolated_world_preserves_the_reused_windows_message_listener -- --exact

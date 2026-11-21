@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+W="$(cd "$(dirname "$0")" && pwd)"
+D="$HOME/Library/Caches/lightningpanda"
+cd "$W/runner"
+export RP_DIAG_BIN="$W/pyro-instrumented" RP_NATIVE_LOG="$W/native-$1.log" RP_OBSERVATIONS="$W/events-$1.jsonl"
+test ! -e "$RP_NATIVE_LOG"
+test ! -e "$RP_OBSERVATIONS"
+test ! -e "$W/$1.json"
+exec bun bench/wpt/observe.mjs --kind testharness --wpt "$D/wptci/wpt-full" --server wptserve --testdriver --http2 --generated-globals "$D/round6-inventory/MANIFEST-pinned.json" --manifest-inventory --measure-reviewed-skips --dirs non-css --jobs 1 --slow-jobs 0 --tests "$W/selection.json" --bin "diagnostic=$W/exec-with-trace" --out "$W/$1.json"

@@ -1,0 +1,2 @@
+#!/bin/sh
+exec "$RP_DIAG_BIN" "$@" 2>>"$RP_NATIVE_LOG"

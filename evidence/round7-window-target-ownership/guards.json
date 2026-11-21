@@ -1,0 +1,14 @@
+[
+  "dom/events/EventTarget-add-listener-platform-object.html",
+  "dom/events/EventTarget-dispatchEvent-returnvalue.html",
+  "dom/events/EventTarget-this-of-listener.html",
+  "webmessaging/event.source.htm",
+  "webmessaging/MessageEvent.any.html",
+  "webmessaging/MessagePort_onmessage_start.any.html",
+  "webmessaging/broadcastchannel/basics.any.html",
+  "webmessaging/event.ports.sub.htm",
+  "webmessaging/message-channels/cross-document.html",
+  "webmessaging/multi-globals/messageport-current.html",
+  "webmessaging/postMessage_Date.sub.htm",
+  "webmessaging/postMessage_MessagePorts_sorigin.htm"
+]

@@ -1,0 +1,22 @@
+[
+  [
+    "dom/events/EventTarget-dispatchEvent.html",
+    null
+  ],
+  [
+    "dom/events/EventTarget-window-constructor.html",
+    null
+  ],
+  [
+    "webmessaging/event.data.sub.htm",
+    null
+  ],
+  [
+    "webmessaging/global-postMessage.html",
+    null
+  ],
+  [
+    "webmessaging/postMessage_arrays.sub.htm",
+    null
+  ]
+]

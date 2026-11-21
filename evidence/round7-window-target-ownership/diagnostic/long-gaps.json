@@ -1,0 +1,178 @@
+[
+ {
+  "url": "referrer-policy/gen/iframe.http-rp/unset/iframe-tag.http.html",
+  "key": "f1baac8f-5536-4a69-bb71-6af1e4a5fa1d",
+  "quietMs": 9912,
+  "lastEvent": "load",
+  "nextEvent": [
+   "complete",
+   "child-0",
+   2
+  ],
+  "nativeTrace": {
+   "53": [
+    [
+     "entry",
+     "source=Some((\"00000000000000000000000000000102\", \"00000000000000000000000000000104\", \"https://web-platform.test:57483/common/security-features/subresource/document.py?action=purge&key=f1baac8f-5536-4a69-bb71-6af1e4a5fa1d&path=%2Fmixed-content\")) target=Some((\"000000000000000000000000000000FA\", \"000000000000000000000000000000FC\", \"http://web-platform.test:57481/common/security-features/scope/document.py?policyDeliveries=%5B%5D\"))"
+    ],
+    [
+     "clone-enter",
+     "opts-origin=true doc=NodeId { idx: 249, gen: 1 } realm=RealmId(124)"
+    ],
+    [
+     "cloned",
+     null
+    ],
+    [
+     "enqueue",
+     "loader=LoaderId(\"000000000000000000000000000000FC\")"
+    ],
+    [
+     "dequeue",
+     "expected=LoaderId(\"000000000000000000000000000000FC\") actual=Some(LoaderId(\"000000000000000000000000000000FC\"))"
+    ],
+    [
+     "fire-start",
+     null
+    ],
+    [
+     "fire-end",
+     null
+    ]
+   ]
+  },
+  "parentObserverResults": []
+ },
+ {
+  "url": "referrer-policy/gen/iframe.meta/unsafe-url/iframe-tag.http.html",
+  "key": "24585689-980f-4742-bf98-12609b486de9",
+  "quietMs": 9779,
+  "lastEvent": "load",
+  "nextEvent": [
+   "complete",
+   "child-0",
+   2
+  ],
+  "nativeTrace": {
+   "106": [
+    [
+     "entry",
+     "source=Some((\"000000000000000000000000000001E8\", \"000000000000000000000000000001EA\", \"https://web-platform.test:57483/common/security-features/subresource/document.py?redirection=no-redirect&action=purge&key=24585689-980f-4742-bf98-12609b486de9&path=%2Fmixed-content\")) target=Some((\"000000000000000000000000000001E0\", \"000000000000000000000000000001E2\", \"http://web-platform.test:57481/common/security-features/scope/document.py?policyDeliveries=%5B%7B%22deliveryType%22%3A%22meta%22%2C%22key%22%3A%22referrerPolicy%22%2C%22value%22%3A%22unsafe-url%22%7D%5D\"))"
+    ],
+    [
+     "clone-enter",
+     "opts-origin=true doc=NodeId { idx: 434, gen: 1 } realm=RealmId(238)"
+    ],
+    [
+     "cloned",
+     null
+    ],
+    [
+     "enqueue",
+     "loader=LoaderId(\"000000000000000000000000000001E2\")"
+    ],
+    [
+     "dequeue",
+     "expected=LoaderId(\"000000000000000000000000000001E2\") actual=Some(LoaderId(\"000000000000000000000000000001E2\"))"
+    ],
+    [
+     "fire-start",
+     null
+    ],
+    [
+     "fire-end",
+     null
+    ]
+   ]
+  },
+  "parentObserverResults": []
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc.meta/unsafe-url/iframe-tag.http.html",
+  "key": "40a17e58-76bd-4fbf-b9fa-4951a52b6c14",
+  "quietMs": 9912,
+  "lastEvent": "load",
+  "nextEvent": [
+   "complete",
+   "child-0",
+   2
+  ],
+  "nativeTrace": {
+   "118": [
+    [
+     "entry",
+     "source=Some((\"00000000000000000000000000000223\", \"00000000000000000000000000000225\", \"http://web-platform.test:57481/common/security-features/subresource/document.py?action=purge&key=40a17e58-76bd-4fbf-b9fa-4951a52b6c14&path=%2Fmixed-content\")) target=Some((\"0000000000000000000000000000021D\", \"0000000000000000000000000000021F\", \"about:srcdoc\"))"
+    ],
+    [
+     "clone-enter",
+     "opts-origin=true doc=NodeId { idx: 124, gen: 1 } realm=RealmId(268)"
+    ],
+    [
+     "cloned",
+     null
+    ],
+    [
+     "enqueue",
+     "loader=LoaderId(\"0000000000000000000000000000021F\")"
+    ],
+    [
+     "dequeue",
+     "expected=LoaderId(\"0000000000000000000000000000021F\") actual=Some(LoaderId(\"0000000000000000000000000000021F\"))"
+    ],
+    [
+     "fire-start",
+     null
+    ],
+    [
+     "fire-end",
+     null
+    ]
+   ]
+  },
+  "parentObserverResults": []
+ },
+ {
+  "url": "referrer-policy/gen/srcdoc.meta/unsafe-url/iframe-tag.http.html",
+  "key": "d106c82e-4946-4ed1-b2fe-afd74520ba33",
+  "quietMs": 9934,
+  "lastEvent": "load",
+  "nextEvent": [
+   "complete",
+   "child-3",
+   2
+  ],
+  "nativeTrace": {
+   "126": [
+    [
+     "entry",
+     "source=Some((\"00000000000000000000000000000239\", \"0000000000000000000000000000023B\", \"https://www1.web-platform.test:57483/common/security-features/subresource/document.py?redirection=no-redirect&action=purge&key=d106c82e-4946-4ed1-b2fe-afd74520ba33&path=%2Fmixed-content\")) target=Some((\"00000000000000000000000000000233\", \"00000000000000000000000000000235\", \"about:srcdoc\"))"
+    ],
+    [
+     "clone-enter",
+     "opts-origin=true doc=NodeId { idx: 184, gen: 1 } realm=RealmId(281)"
+    ],
+    [
+     "cloned",
+     null
+    ],
+    [
+     "enqueue",
+     "loader=LoaderId(\"00000000000000000000000000000235\")"
+    ],
+    [
+     "dequeue",
+     "expected=LoaderId(\"00000000000000000000000000000235\") actual=Some(LoaderId(\"00000000000000000000000000000235\"))"
+    ],
+    [
+     "fire-start",
+     null
+    ],
+    [
+     "fire-end",
+     null
+    ]
+   ]
+  },
+  "parentObserverResults": []
+ }
+]

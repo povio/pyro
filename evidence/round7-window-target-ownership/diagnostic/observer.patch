@@ -1,0 +1,48 @@
+--- /Users/xban1x/Library/Caches/lightningpanda/round6-reference-158/census/runner/bench/wpt/run-no-native-retry.mjs	2026-11-20 23:17:18
++++ /Users/xban1x/Library/Caches/lightningpanda/round7-local/referrer-message-trace/runner/bench/wpt/observe.mjs	2026-11-21 19:03:42
+@@ -312,6 +312,37 @@
+     slot.ctx = await slot.browser.newContext({ ...viewport, ...served });
+     if (TESTDRIVER) await installTestdriver(slot.ctx);
+     slot.page = await slot.ctx.newPage();
++    const notes=[];
++    const note=(stage,data)=>notes.push({page:t.url,at:Date.now(),stage,...data});
++    slot.page.on('pageerror',e=>note('exception',{message:e.message,stack:e.stack}));
++    const requestIDs=new WeakMap();let seq=0;
++    const reqID=r=>{if(!requestIDs.has(r))requestIDs.set(r,++seq);return requestIDs.get(r)};
++    const interesting=url=>url.includes('/scope/document.py')||url.includes('/subresource/document.py');
++    slot.page.on('request',r=>{if(interesting(r.url())) note('request',{seq:reqID(r),url:r.url(),referer:r.headers().referer??null});});
++    slot.page.on('response',r=>{if(interesting(r.url())) note('response',{seq:reqID(r.request()),url:r.url(),status:r.status()});});
++    slot.page.on('requestfailed',r=>{if(interesting(r.url())) note('requestfailed',{seq:reqID(r),url:r.url(),failure:r.failure()});});
++    slot.page.on('framenavigated',f=>{const u=f.url();if(interesting(u))note('frame',{url:u});});
++    slot.page.on('console',m=>{const str=m.text();if(str.startsWith('__rp_trace__')){try{note('page-event',JSON.parse(str.substring(12)))}catch{}}});
++    await slot.page.addInitScript(()=>{
++      const recv=Math.random().toString(36).slice(2);
++      const record=(stage,fields)=>console.debug('__rp_trace__'+JSON.stringify({recv,local:Date.now(),dst:location.href,event:stage,...fields}));
++      addEventListener('load',()=>{
++        let parentSlot=null,grandparentSlot=null;
++        for(let i=0;i<parent.length;i++)if(parent.frames[i]===self){parentSlot=i;break;}
++        for(let i=0;i<top.length;i++)if(top.frames[i]===parent){grandparentSlot=i;break;}
++        const echo=location.pathname.endsWith('/subresource/document.py');
++        record('load',{parentSlot,grandparentSlot,topParent:parent===top,selfParent:parent===self,docRef:echo?document.referrer:null,resultDefined:echo?typeof window.result:null,serverHeader:echo?window.result?.headers?.referer??null:null});
++      },{once:true});
++      addEventListener('error',e=>record('error',{message:e.message??e.type}),true);
++      addEventListener('message',e=>{
++        const v=e.data;if(!v||typeof v!=='object')return;
++        let source=e.source===parent?'parent':e.source===self?'self':'other';
++        for(let i=0;i<frames.length;i++)if(e.source===frames[i]){source='child-'+i;break;}
++        record('message',{source,type:v.type??(v.subresource?'command':v.error?'error':v.headers?'result':'other'),url:v.location??v.subresource?.url??null,sourceContextUrl:v.sourceContextUrl??null,header:v.headers?.referer??null,referrer:v.referrer??null,hs:v.status?.status??null,hcount:v.tests?.length??null});
++      },{capture:true});
++    });
++    slot.traceNotes=notes;
++
+     slot.page.on('dialog', (d) => d.dismiss().catch(() => {}));
+   }
+   // A context kept from the page before (--reuse-context) may have that page's viewport.
+@@ -541,6 +572,7 @@
+     if (r.status === 'timeout') await resetSlot(slot);
+     const { est, limit, retried, solo: alone, refs, fuzzy, viewport, ...meta } = t;
+     inflight.delete(w);
++    fs.appendFileSync(process.env.RP_OBSERVATIONS, (slot.traceNotes||[]).map(row=>JSON.stringify(row)).join('\n')+'\n');
+     trace(`end ${w} ${t.url} ${r.status} ${r.ms ?? ''}`);
+     // A reftest's stage timings, and the worker's own time around the page (`gap`: from the previous page's end to
+     // this page's start, i.e. queueing, solo waits and context resets).

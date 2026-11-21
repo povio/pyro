@@ -1,0 +1,38 @@
+diff --git a/crates/pyro-webapi/tests/dom_js.rs b/crates/pyro-webapi/tests/dom_js.rs
+index e97dfafae..5f0a50cbf 100644
+--- a/crates/pyro-webapi/tests/dom_js.rs
++++ b/crates/pyro-webapi/tests/dom_js.rs
+@@ -104,6 +104,33 @@ pub(crate) fn eval(realm: &Realm, src: &str) -> String {
+     }
+ }
+ 
++#[test]
++fn retiring_an_isolated_world_preserves_the_reused_windows_message_listener() {
++    let e = env("<body></body>");
++    let old = &e.page;
++    let utility = new_realm(&e.engine, e.engine.register::<TestWindow>(), old, "utility");
++    let doc = parse_document(&old.dom, "http://localhost:5173/child", "<body></body>");
++    let new = PageDom::new(old.dom.clone(), doc);
++    new.create_window_target(doc);
++    assert!(adopt_window(old, &new, e.main.id()));
++
++    let target = EventTargetData::window(&new, new.window_target().unwrap());
++    {
++        let scope = e.main.scope().unwrap();
++        scope.global_data::<TestWindow>().unwrap().target.hand_over(&target);
++    }
++    e.main.replace_global_data::<TestWindow>(TestWindowData { page: new.clone(), target }).unwrap();
++    rebind_window(&e.main.scope().unwrap(), new).unwrap();
++    assert_eq!(eval(&e.main, "globalThis.seen = []; addEventListener('message', e => seen.push(e.data)); seen.length"), "0");
++
++    // Release the isolated world's original global payload after registration.
++    let retired = utility.downgrade();
++    utility.dispose();
++    drop(utility);
++    assert!(retired.upgrade().is_none());
++    assert_eq!(eval(&e.main, "postMessage('expected', '*'); seen.join()"), "expected");
++}
++
+ #[test]
+ fn attribute_reflection_kinds() {
+     let e = env("<!doctype html><html><body><p>x</p></body></html>");

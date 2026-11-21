@@ -1,0 +1,113 @@
+diff --git a/crates/pyro-browser/src/bindings.rs b/crates/pyro-browser/src/bindings.rs
+index 8b767afea..ba777eee8 100644
+--- a/crates/pyro-browser/src/bindings.rs
++++ b/crates/pyro-browser/src/bindings.rs
+@@ -196,10 +196,12 @@ impl PageHooks for Hooks {
+     fn post_task(&self, task: Box<dyn FnOnce()>) {
+         let page = self.page;
+         let loader = self.loader.clone();
++        let id = pyro_webapi::window_message::trace_id();
++        if id != 0 { eprintln!("RPTRACE {id} enqueue loader={:?}", loader); }
+         self.sched.post(TaskSource::DomManipulation, move |b| {
+-            if b.doc(page).is_some_and(|p| p.main_frame.loader_id == loader) {
+-                task();
+-            }
++            let current = b.doc(page).map(|p| p.main_frame.loader_id.clone());
++            if id != 0 { eprintln!("RPTRACE {id} dequeue expected={:?} actual={:?}",loader,current); }
++            if current.as_ref() == Some(&loader) { task(); }
+         });
+     }
+ 
+diff --git a/crates/pyro-browser/src/frames.rs b/crates/pyro-browser/src/frames.rs
+index a399611dc..02db262d3 100644
+--- a/crates/pyro-browser/src/frames.rs
++++ b/crates/pyro-browser/src/frames.rs
+@@ -1441,6 +1441,10 @@ pub(crate) fn post_message<'s>(
+     target: FrameKey,
+ ) -> pyro_js::JsResult<()> {
+     let (source_host, source) = source.unwrap_or_else(|| (host.clone(), target));
++    let _scope = pyro_webapi::window_message::begin_trace();
++    let trace_id = pyro_webapi::window_message::trace_id();
++    let desc = |f: &Frame| (f.id.0.clone(), f.loader_id.0.clone(), f.url.clone());
++    eprintln!("RPTRACE {trace_id} entry source={:?} target={:?}", source_host.with_frame(source, desc), host.with_frame(target, desc));
+     let incumbent = source_host.with_frame(source, |f| f.origin.clone()).unwrap_or_else(|| "null".into());
+     // Origins compared by key: an opaque origin ("null" serialized) equals only itself.
+     let incumbent_key = source_host.with_frame(source, frame_origin_key).unwrap_or_else(|| "opaque:gone".into());
+diff --git a/crates/pyro-js/src/realm.rs b/crates/pyro-js/src/realm.rs
+index 142b3c253..ba776197b 100644
+--- a/crates/pyro-js/src/realm.rs
++++ b/crates/pyro-js/src/realm.rs
+@@ -2544,6 +2544,7 @@ impl<'s> Scope<'s> {
+             return;
+         }
+         let details = error.details(self);
++        eprintln!("RPEXCEPTION {:?} {:?} {:?} {:?}", self.realm_id(),details.url,details.message,details.stack);
+         if let Some(reporter) = reporter {
+             if reporter(self, &details) {
+                 return;
+diff --git a/crates/pyro-webapi/src/window_message.rs b/crates/pyro-webapi/src/window_message.rs
+index eaf26a079..ceaf8f7b2 100644
+--- a/crates/pyro-webapi/src/window_message.rs
++++ b/crates/pyro-webapi/src/window_message.rs
+@@ -88,6 +88,20 @@ pub fn post_message_args<'s>(
+     Ok((a.get(0), origin, options))
+ }
+ 
++thread_local! {
++    static TRACE: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
++}
++
++pub struct Trace(u64);
++impl Drop for Trace {
++    fn drop(&mut self) { TRACE.set(self.0); }
++}
++pub fn begin_trace() -> Trace {
++    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
++    Trace(TRACE.replace(NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)))
++}
++pub fn trace_id() -> u64 { TRACE.get() }
++
+ /// Serializes `message` with `options` (`{transfer}`) into `realm`, the
+ /// target window's, and queues the `message` event at `page`'s window.
+ /// `origin` is the source's serialized origin; `source` resolves the
+@@ -106,23 +120,27 @@ pub fn send_window_message<'s>(
+     source: Option<MessageSource>,
+     deliver: bool,
+ ) -> JsResult<()> {
++    let id = trace_id();
++    eprintln!("RPTRACE {id} clone-enter opts-origin={deliver} doc={:?} realm={:?}", page.document(), realm.id());
+     let rs = realm.scope()?;
+     let (data, ports) = if message.as_object().is_none() && options.is_nullish() {
+         (Persistent::new(&rs, rs.rehome(message)), None)
+     } else {
+-        let (data, ports) = crate::structured_clone::clone_into(s, &rs, message, options)?;
++        let (data, ports) = crate::structured_clone::clone_into(s, &rs, message, options).inspect_err(|_| eprintln!("RPTRACE {id} clone-error"))?;
+         (Persistent::new(&rs, data), Some(Persistent::new(&rs, ports.value())))
+     };
++    eprintln!("RPTRACE {id} cloned");
+     if !deliver {
+         return Ok(());
+     }
+     let weak = Rc::downgrade(page);
+     page.post_task(Box::new(move || {
+-        let Some(page) = weak.upgrade() else { return };
++        let Some(page) = weak.upgrade() else { eprintln!("RPTRACE {id} retired"); return };
+         if page.is_disposed() {
++            eprintln!("RPTRACE {id} disposed");
+             return;
+         }
+-        let Some(window) = page.window_target() else { return };
++        let Some(window) = page.window_target() else { eprintln!("RPTRACE {id} no-window"); return };
+         let ev = EventCore::trusted(&page, EventInterface::MessageEvent, "message", false, false);
+         {
+             let mut f = ev.fields.borrow_mut();
+@@ -134,7 +152,9 @@ pub fn send_window_message<'s>(
+                 None => f.message_source = Some(window),
+             }
+         }
++        eprintln!("RPTRACE {id} fire-start");
+         crate::target::fire(&page, window, &ev);
++        eprintln!("RPTRACE {id} fire-end");
+     }));
+     Ok(())
+ }
