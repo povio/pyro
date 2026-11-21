@@ -1,0 +1,3648 @@
+{
+ "receipts": {
+  "round6-noncss-measure/template-for-study/xml.json": [
+   32,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/template-for-study/guard-xml.json": [
+   33,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/guard-main-025.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/guard-main-009.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/guard-css-002.json": [
+   121,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/extra-feature-005.json": [
+   64,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/wave2-noncss-001.json": [
+   96,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/guard-history-001.json": [
+   55,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/guard-main-029.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/guard-main-005.json": [
+   92,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/guard-main-013.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/guard-main-012.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/guard-main-004.json": [
+   91,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/guard-main-028.json": [
+   96,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/guard-history-000.json": [
+   48,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/extra-feature-004.json": [
+   64,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/wave2-noncss-000.json": [
+   96,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/guard-css-003.json": [
+   121,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/guard-main-008.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/guard-main-024.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/preflight-000.json": [
+   6,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/guard-css-008.json": [
+   121,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/guard-main-003.json": [
+   90,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/guard-main-015.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/wasm-metadata-000.json": [
+   7,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/guard-main-023.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/guard-css-004.json": [
+   121,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/guard-main-019.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/extra-feature-003.json": [
+   64,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/guard-main-018.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/extra-feature-002.json": [
+   64,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/guard-css-005.json": [
+   121,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/guard-main-022.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/guard-main-014.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/guard-main-002.json": [
+   81,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/guard-main-017.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/guard-main-001.json": [
+   82,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/extra-feature-001.json": [
+   64,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/guard-css-006.json": [
+   121,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/guard-main-021.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/guard-main-020.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/wasm-storage-supplement-000.json": [
+   5,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/guard-css-007.json": [
+   121,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/extra-feature-000.json": [
+   64,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/wave2-noncss-004.json": [
+   22,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/guard-main-000.json": [
+   80,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/guard-main-016.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/wave2-noncss-003.json": [
+   96,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/guard-css-000.json": [
+   122,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/guard-main-027.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/guard-main-011.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/guard-main-007.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/guard-history-002.json": [
+   55,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/guard-main-006.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/guard-main-010.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/guard-main-026.json": [
+   96,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/upstream-css-000.json": [
+   40,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/guard-css-001.json": [
+   122,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/extra-feature-006.json": [
+   46,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-base/wave2-noncss-002.json": [
+   96,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/guard-main-025.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/guard-main-009.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/guard-css-002.json": [
+   121,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/extra-feature-005.json": [
+   64,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/wave2-noncss-001.json": [
+   96,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/guard-history-001.json": [
+   55,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/guard-main-029.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/guard-main-005.json": [
+   92,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/guard-main-013.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/guard-main-012.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/guard-main-004.json": [
+   91,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/guard-main-028.json": [
+   96,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/guard-history-000.json": [
+   48,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/extra-feature-004.json": [
+   64,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/wave2-noncss-000.json": [
+   96,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/guard-css-003.json": [
+   121,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/guard-main-008.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/guard-main-024.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/preflight-000.json": [
+   6,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/guard-css-008.json": [
+   121,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/guard-main-003.json": [
+   90,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/guard-main-015.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/wasm-metadata-000.json": [
+   7,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/guard-main-023.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/guard-css-004.json": [
+   121,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/guard-main-019.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/extra-feature-003.json": [
+   64,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/guard-main-018.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/extra-feature-002.json": [
+   64,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/guard-css-005.json": [
+   121,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/guard-main-022.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/guard-main-014.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/guard-main-002.json": [
+   81,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/guard-main-017.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/guard-main-001.json": [
+   82,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/extra-feature-001.json": [
+   64,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/guard-css-006.json": [
+   121,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/guard-main-021.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/guard-main-020.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/wasm-storage-supplement-000.json": [
+   5,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/guard-css-007.json": [
+   121,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/extra-feature-000.json": [
+   64,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/wave2-noncss-004.json": [
+   22,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/guard-main-000.json": [
+   80,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/guard-main-016.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/wave2-noncss-003.json": [
+   96,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/guard-css-000.json": [
+   122,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/guard-main-027.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/guard-main-011.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/guard-main-007.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/guard-history-002.json": [
+   55,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/guard-main-006.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/guard-main-010.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/guard-main-026.json": [
+   96,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/upstream-css-000.json": [
+   40,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/guard-css-001.json": [
+   122,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/extra-feature-006.json": [
+   46,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-52d8b7c/raw-head/wave2-noncss-002.json": [
+   96,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-b62d664/raw-base/focus-00.json": [
+   32,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-b62d664/raw-base/production-00.json": [
+   58,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-b62d664/raw-base/css-00.json": [
+   80,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-b62d664/raw-base/css-01.json": [
+   80,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-b62d664/raw-base/css-02.json": [
+   80,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-b62d664/raw-base/css-03.json": [
+   75,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-b62d664/raw-base/guard-00.json": [
+   33,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-b62d664/raw-base/navigator-00.json": [
+   20,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-b62d664/raw-head/focus-00.json": [
+   32,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-b62d664/raw-head/production-00.json": [
+   58,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-b62d664/raw-head/css-00.json": [
+   80,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-b62d664/raw-head/css-01.json": [
+   80,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-b62d664/raw-head/css-02.json": [
+   80,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-b62d664/raw-head/css-03.json": [
+   75,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-b62d664/raw-head/guard-00.json": [
+   33,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/merged-aa0268/integration-b62d664/raw-head/navigator-00.json": [
+   20,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/combined-db594cd99/focus-00.json": [
+   32,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/combined-db594cd99/production-00.json": [
+   58,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/combined-db594cd99/video-focus.json": [
+   30,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/combined-db594cd99/css-00.json": [
+   80,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/combined-db594cd99/css-01.json": [
+   80,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/combined-db594cd99/video-guard.json": [
+   19,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/combined-db594cd99/css-02.json": [
+   80,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/combined-db594cd99/css-03.json": [
+   75,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/combined-db594cd99/guard-00.json": [
+   33,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/combined-db594cd99/navigator-00.json": [
+   20,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/combined-db594cd99/css-values.json": [
+   227,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/template-navigator-combined/focus.json": [
+   32,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/template-navigator-combined/guard.json": [
+   33,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/template-navigator-combined/navigator.json": [
+   20,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/template-inert-documents/guard-base.json": [
+   33,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/template-inert-documents/head.json": [
+   32,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/template-inert-documents/guard-head.json": [
+   33,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/template-inert-documents/base.json": [
+   32,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/template-inert-documents/guard-chrome158.json": [
+   33,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/template-inert-documents/chrome158.json": [
+   32,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/template-combined-8e7144b/guard-base.json": [
+   33,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/template-combined-8e7144b/head.json": [
+   32,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/template-combined-8e7144b/guard-head.json": [
+   33,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/template-combined-8e7144b/base.json": [
+   32,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/template-combined-8e7144b/chrome158.json": [
+   32,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/video-frame-round6/vetted-focus.json": [
+   30,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/video-frame-round6/base-focus.json": [
+   30,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/video-frame-round6/reviewed-guard.json": [
+   19,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/video-frame-round6/reviewed-focus.json": [
+   30,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/video-frame-round6/vetted-guard.json": [
+   19,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/video-frame-round6/base-guard.json": [
+   19,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/video-frame-round6/final-guard.json": [
+   19,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/video-frame-round6/final-focus.json": [
+   30,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/video-frame-round6/closeout/vetted-focus.json": [
+   30,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/video-frame-round6/closeout/base-focus.json": [
+   30,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/video-frame-round6/closeout/vetted-guard.json": [
+   19,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/video-frame-round6/closeout/base-guard.json": [
+   19,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-107.json": [
+   92,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-042.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-150.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-015.json": [
+   92,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-279.json": [
+   92,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-146.json": [
+   92,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-003.json": [
+   91,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-280.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-111.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-054.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-238.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-185.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-243.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-078.json": [
+   89,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-097.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-214.json": [
+   89,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-081.json": [
+   92,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-202.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-193.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-039.json": [
+   91,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-255.json": [
+   91,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-222.json": [
+   92,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-275.json": [
+   91,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-019.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-263.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-234.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-058.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-189.json": [
+   96,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-023.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-166.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-218.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-074.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-131.json": [
+   96,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-062.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-127.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-259.json": [
+   91,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-035.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-170.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-034.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-171.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-258.json": [
+   90,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-063.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-126.json": [
+   92,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-075.json": [
+   92,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-130.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-219.json": [
+   92,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-188.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-022.json": [
+   91,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-167.json": [
+   92,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-059.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-235.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-262.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-018.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-274.json": [
+   90,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-223.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-254.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-192.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-038.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-203.json": [
+   92,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-080.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-215.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-079.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-096.json": [
+   92,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-242.json": [
+   91,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-184.json": [
+   90,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-239.json": [
+   91,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-110.json": [
+   92,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-055.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-281.json": [
+   96,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-147.json": [
+   92,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-002.json": [
+   92,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-278.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-151.json": [
+   90,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-014.json": [
+   91,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-106.json": [
+   90,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-043.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-224.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-048.json": [
+   96,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-273.json": [
+   92,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-265.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-009.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-232.json": [
+   91,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-249.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-025.json": [
+   90,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-160.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-072.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-137.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-208.json": [
+   96,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-064.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-121.json": [
+   96,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-033.json": [
+   92,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-199.json": [
+   92,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-176.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-101.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-044.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-228.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-156.json": [
+   90,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-013.json": [
+   90,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-140.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-005.json": [
+   90,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-269.json": [
+   91,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-117.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-052.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-029.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-183.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-245.json": [
+   92,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-091.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-212.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-068.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-087.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-204.json": [
+   91,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-195.json": [
+   96,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-253.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-252.json": [
+   87,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-194.json": [
+   92,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-205.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-069.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-086.json": [
+   92,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-213.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-090.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-244.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-028.json": [
+   92,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-182.json": [
+   91,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-116.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-053.json": [
+   92,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-268.json": [
+   89,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-141.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-004.json": [
+   90,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-157.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-012.json": [
+   92,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-229.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-100.json": [
+   91,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-045.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-032.json": [
+   92,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-198.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-177.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-065.json": [
+   90,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-120.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-209.json": [
+   92,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-073.json": [
+   92,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-136.json": [
+   87,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-024.json": [
+   92,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-161.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-248.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-233.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-008.json": [
+   87,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-264.json": [
+   96,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-272.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-049.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-225.json": [
+   92,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-174.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-031.json": [
+   92,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-089.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-123.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-066.json": [
+   90,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-135.json": [
+   92,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-070.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-162.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-027.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-119.json": [
+   91,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-230.json": [
+   90,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-267.json": [
+   91,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-158.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-271.json": [
+   91,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-226.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-251.json": [
+   90,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-178.json": [
+   92,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-197.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-206.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-085.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-210.json": [
+   96,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-093.json": [
+   91,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-139.json": [
+   92,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-247.json": [
+   96,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-181.json": [
+   92,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-050.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-115.json": [
+   91,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-284.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-007.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-142.json": [
+   91,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-011.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-154.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-046.json": [
+   91,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-103.json": [
+   92,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-047.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-102.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-010.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-155.json": [
+   96,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-006.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-143.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-285.json": [
+   88,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-051.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-114.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-180.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-246.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-092.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-138.json": [
+   91,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-211.json": [
+   92,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-084.json": [
+   92,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-207.json": [
+   92,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-179.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-196.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-250.json": [
+   91,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-227.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-270.json": [
+   90,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-159.json": [
+   92,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-266.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-231.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-118.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-163.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-026.json": [
+   91,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-134.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-071.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-088.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-122.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-067.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-175.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-030.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-257.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-191.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-200.json": [
+   90,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-129.json": [
+   91,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-083.json": [
+   96,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-216.json": [
+   92,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-095.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-241.json": [
+   91,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-168.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-187.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-056.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-113.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-282.json": [
+   89,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-001.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-144.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-017.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-152.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-040.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-105.json": [
+   91,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-172.json": [
+   92,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-037.json": [
+   91,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-125.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-060.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-133.json": [
+   90,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-099.json": [
+   92,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-076.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-164.json": [
+   92,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-021.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-236.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-148.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-261.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-277.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-109.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-220.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-221.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-108.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-276.json": [
+   90,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-260.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-149.json": [
+   92,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-237.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-165.json": [
+   92,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-020.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-132.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-098.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-077.json": [
+   91,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-124.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-061.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-173.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-036.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-041.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-104.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-016.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-153.json": [
+   92,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-000.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-145.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-283.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-057.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-112.json": [
+   92,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-169.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-186.json": [
+   91,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-240.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-094.json": [
+   94,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-217.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-128.json": [
+   91,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-082.json": [
+   93,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-201.json": [
+   91,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-190.json": [
+   92,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/raw/ordinary-256.json": [
+   90,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-cbdeb1193/css-supplement/raw/css-full-071.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-cbdeb1193/css-supplement/raw/css-full-070.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-cbdeb1193/css-supplement/raw/css-full-069.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-cbdeb1193/css-supplement/raw/css-full-072.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/manifest-runs/census-cbdeb1193/css-supplement/raw/css-full-068.json": [
+   95,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/protocol-handlers/before.json": [
+   20,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/protocol-handlers/after.json": [
+   20,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/combined-305840f45/focus-00.json": [
+   32,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/combined-305840f45/production-00.json": [
+   58,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/combined-305840f45/video-focus.json": [
+   30,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/combined-305840f45/css-00.json": [
+   80,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/combined-305840f45/css-01.json": [
+   80,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/combined-305840f45/video-guard.json": [
+   19,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/combined-305840f45/css-02.json": [
+   80,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/combined-305840f45/css-03.json": [
+   75,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/combined-305840f45/guard-00.json": [
+   33,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/combined-305840f45/navigator-00.json": [
+   20,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/combined-305840f45/studio-closeout.json": [
+   31,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/combined-305840f45/css-values.json": [
+   227,
+   0,
+   0,
+   0
+  ],
+  "round6-noncss-measure/combined-305840f45/studio-closeout-db594.json": [
+   31,
+   0,
+   0,
+   0
+  ],
+  "round7-css-values/numeric-base.json": [
+   17,
+   0,
+   0,
+   0
+  ],
+  "round7-css-values/base.json": [
+   18,
+   0,
+   0,
+   0
+  ],
+  "round7-local/reference-correction/signed158-static.json": [
+   47,
+   0,
+   0,
+   0
+  ],
+  "round7-local/reference-correction/signed158.json": [
+   47,
+   0,
+   0,
+   0
+  ],
+  "round7-local/referrer-message-trace/diagnostic-1.json": [
+   4,
+   0,
+   0,
+   0
+  ],
+  "round7-local/window-target-ownership/candidate-wpt.json": [
+   16,
+   0,
+   0,
+   0
+  ],
+  "round7-local/window-target-ownership/parent-wpt.json": [
+   16,
+   0,
+   0,
+   0
+  ],
+  "round7-local/referrer/inherit-head.json": [
+   24,
+   0,
+   0,
+   0
+  ],
+  "round7-local/referrer/candidate.json": [
+   28,
+   0,
+   0,
+   0
+  ],
+  "round7-local/referrer/inherit-base.json": [
+   24,
+   0,
+   0,
+   0
+  ],
+  "round7-local/referrer/base.json": [
+   28,
+   0,
+   0,
+   0
+  ],
+  "round7-local/referrer/qa-inherit-wpt.json": [
+   24,
+   0,
+   0,
+   0
+  ],
+  "round7-local/referrer/qa-wpt.json": [
+   28,
+   0,
+   0,
+   0
+  ],
+  "round7-qa/css-function2.json": [
+   27,
+   0,
+   0,
+   0
+  ],
+  "round7-qa/insert-plain-base.json": [
+   4,
+   0,
+   0,
+   0
+  ],
+  "round7-qa/insert-revision2.json": [
+   29,
+   0,
+   0,
+   0
+  ],
+  "round7-qa/void-head.json": [
+   11,
+   0,
+   0,
+   0
+  ],
+  "round7-qa/css-function3.json": [
+   27,
+   0,
+   0,
+   0
+  ],
+  "round7-qa/caret-revision2.json": [
+   2,
+   0,
+   0,
+   0
+  ],
+  "round7-qa/void-r2-head.json": [
+   11,
+   0,
+   0,
+   0
+  ],
+  "round7-qa/inherit-exact-head.json": [
+   5,
+   0,
+   0,
+   0
+  ],
+  "round7-qa/base-nested-with-contenteditable-true.json": [
+   0,
+   0,
+   0,
+   0
+  ],
+  "round7-qa/css-function4.json": [
+   27,
+   0,
+   0,
+   0
+  ],
+  "round7-qa/base-styling-commands.json": [
+   2,
+   0,
+   0,
+   0
+  ],
+  "round7-qa/whitespace-head.json": [
+   26,
+   0,
+   0,
+   0
+  ],
+  "round7-qa/selection-parent.json": [
+   7,
+   0,
+   0,
+   0
+  ],
+  "round7-qa/insert-plain-revision2.json": [
+   4,
+   0,
+   0,
+   0
+  ],
+  "round7-qa/enter-head.json": [
+   27,
+   0,
+   0,
+   0
+  ],
+  "round7-qa/head-styling.json": [
+   2,
+   0,
+   0,
+   0
+  ],
+  "round7-qa/insert-candidate.json": [
+   29,
+   0,
+   0,
+   0
+  ],
+  "round7-qa/composed-revision2.json": [
+   11,
+   0,
+   0,
+   0
+  ],
+  "round7-qa/caret-head.json": [
+   2,
+   0,
+   0,
+   0
+  ],
+  "round7-qa/css-base.json": [
+   27,
+   0,
+   0,
+   0
+  ],
+  "round7-qa/insert-parent.json": [
+   29,
+   0,
+   0,
+   0
+  ],
+  "round7-qa/selection-head.json": [
+   7,
+   0,
+   0,
+   0
+  ],
+  "round7-qa/composed-head.json": [
+   11,
+   0,
+   0,
+   0
+  ],
+  "round7-qa/enter-r2-head.json": [
+   27,
+   0,
+   0,
+   0
+  ],
+  "round7-qa/whitespace-base.json": [
+   26,
+   0,
+   0,
+   0
+  ],
+  "round7-qa/numeric-ad8661118.json": [
+   17,
+   0,
+   0,
+   0
+  ],
+  "round7-qa/caret-parent.json": [
+   2,
+   0,
+   0,
+   0
+  ],
+  "round7-qa/numeric-168067d79/head.json": [
+   17,
+   0,
+   0,
+   0
+  ],
+  "round7-qa/combined-1f1be0324/head-edit.json": [
+   25,
+   0,
+   0,
+   0
+  ],
+  "round7-qa/combined-1f1be0324/base-edit.json": [
+   25,
+   0,
+   0,
+   0
+  ],
+  "round7-qa/combined-1f1be0324/head-guards.json": [
+   16,
+   0,
+   0,
+   0
+  ],
+  "round7-qa/combined-1f1be0324/head-css.json": [
+   7,
+   0,
+   0,
+   0
+  ],
+  "round7-qa/combined-1f1be0324/chrome-css.json": [
+   7,
+   0,
+   0,
+   0
+  ],
+  "round7-qa/combined-1f1be0324/base-css.json": [
+   7,
+   0,
+   0,
+   0
+  ],
+  "round7-qa/combined-1f1be0324/base-guards.json": [
+   16,
+   0,
+   0,
+   0
+  ],
+  "round7-editing/chrome.json": [
+   5,
+   0,
+   0,
+   0
+  ],
+  "round7-editing/head.json": [
+   5,
+   0,
+   0,
+   0
+  ],
+  "round7-editing/base.json": [
+   5,
+   0,
+   0,
+   0
+  ],
+  "round7-editing/plaintext-enter/chrome.json": [
+   27,
+   0,
+   0,
+   0
+  ],
+  "round7-editing/plaintext-enter/head.json": [
+   27,
+   0,
+   0,
+   0
+  ],
+  "round7-editing/plaintext-enter/base.json": [
+   27,
+   0,
+   0,
+   0
+  ],
+  "round7-editing/void/chrome.json": [
+   11,
+   0,
+   0,
+   0
+  ],
+  "round7-editing/void/head.json": [
+   11,
+   0,
+   0,
+   0
+  ],
+  "round7-editing/void/base.json": [
+   11,
+   0,
+   0,
+   0
+  ],
+  "round7-editing/void/revision2/chrome.json": [
+   11,
+   0,
+   0,
+   0
+  ],
+  "round7-editing/void/revision2/head.json": [
+   11,
+   0,
+   0,
+   0
+  ],
+  "round7-editing/void/revision2/base.json": [
+   11,
+   0,
+   0,
+   0
+  ],
+  "round7-editing/void/revision2/guards/chrome.json": [
+   43,
+   0,
+   0,
+   0
+  ],
+  "round7-editing/void/revision2/guards/head.json": [
+   43,
+   0,
+   0,
+   0
+  ],
+  "round7-editing/void/revision2/guards/base.json": [
+   43,
+   0,
+   0,
+   0
+  ],
+  "round7-editing/whitespace/chrome.json": [
+   26,
+   0,
+   0,
+   0
+  ],
+  "round7-editing/whitespace/head.json": [
+   26,
+   0,
+   0,
+   0
+  ],
+  "round7-editing/whitespace/base.json": [
+   26,
+   0,
+   0,
+   0
+  ],
+  "round7-editing/whitespace/revision2/chrome.json": [
+   26,
+   0,
+   0,
+   0
+  ],
+  "round7-editing/whitespace/revision2/head.json": [
+   26,
+   0,
+   0,
+   0
+  ],
+  "round7-editing/whitespace/revision2/base.json": [
+   26,
+   0,
+   0,
+   0
+  ],
+  "round7-editing/insertion/chrome.json": [
+   26,
+   0,
+   0,
+   0
+  ],
+  "round7-editing/insertion/head.json": [
+   26,
+   0,
+   0,
+   0
+  ],
+  "round7-editing/insertion/base.json": [
+   26,
+   0,
+   0,
+   0
+  ],
+  "round7-editing/insertion/revision2/chrome.json": [
+   26,
+   0,
+   0,
+   0
+  ],
+  "round7-editing/insertion/revision2/head.json": [
+   26,
+   0,
+   0,
+   0
+  ],
+  "round7-editing/insertion/revision2/base.json": [
+   26,
+   0,
+   0,
+   0
+  ],
+  "round7-editing/insertion/revision2/typing/chrome.json": [
+   3,
+   0,
+   0,
+   0
+  ],
+  "round7-editing/insertion/revision2/typing/head.json": [
+   3,
+   0,
+   0,
+   0
+  ],
+  "round7-editing/insertion/revision2/typing/base.json": [
+   3,
+   0,
+   0,
+   0
+  ],
+  "round7-editing/insertion/typing/chrome.json": [
+   3,
+   0,
+   0,
+   0
+  ],
+  "round7-editing/insertion/typing/head.json": [
+   3,
+   0,
+   0,
+   0
+  ],
+  "round7-editing/insertion/typing/base.json": [
+   3,
+   0,
+   0,
+   0
+  ],
+  "round7-editing/selection/chrome.json": [
+   10,
+   0,
+   0,
+   0
+  ],
+  "round7-editing/selection/head.json": [
+   10,
+   0,
+   0,
+   0
+  ],
+  "round7-editing/selection/base.json": [
+   10,
+   0,
+   0,
+   0
+  ],
+  "round7-editing/composed/chrome.json": [
+   11,
+   0,
+   0,
+   0
+  ],
+  "round7-editing/composed/head.json": [
+   11,
+   0,
+   0,
+   0
+  ],
+  "round7-editing/composed/base.json": [
+   11,
+   0,
+   0,
+   0
+  ],
+  "round7-editing/composed/revision2/head.json": [
+   11,
+   0,
+   0,
+   0
+  ],
+  "round7-editing/composed/revision2/base.json": [
+   11,
+   0,
+   0,
+   0
+  ],
+  "round7-editing/composed/revision2/ordinary/head.json": [
+   13,
+   0,
+   0,
+   0
+  ],
+  "round7-editing/composed/revision2/ordinary/base.json": [
+   13,
+   0,
+   0,
+   0
+  ],
+  "round7-editing/initial-caret/chrome.json": [
+   2,
+   0,
+   0,
+   0
+  ],
+  "round7-editing/initial-caret/head.json": [
+   2,
+   0,
+   0,
+   0
+  ],
+  "round7-editing/initial-caret/base.json": [
+   2,
+   0,
+   0,
+   0
+  ],
+  "round7-editing/initial-caret/revision2/chrome.json": [
+   2,
+   0,
+   0,
+   0
+  ],
+  "round7-editing/initial-caret/revision2/head.json": [
+   2,
+   0,
+   0,
+   0
+  ],
+  "round7-editing/initial-caret/revision2/base.json": [
+   2,
+   0,
+   0,
+   0
+  ],
+  "round7-editing/initial-caret/revision2/guards/head.json": [
+   29,
+   0,
+   0,
+   0
+  ],
+  "css-values-a7f8/round3-combined4.json": [
+   201,
+   0,
+   0,
+   0
+  ],
+  "css-values-a7f8/batch2-guards-freeze2.json": [
+   144,
+   0,
+   0,
+   0
+  ],
+  "css-values-a7f8/b3-shared3.json": [
+   186,
+   0,
+   0,
+   0
+  ],
+  "css-values-a7f8/round4-base.json": [
+   236,
+   0,
+   0,
+   0
+  ],
+  "css-values-a7f8/bundle-final.json": [
+   164,
+   0,
+   0,
+   0
+  ],
+  "css-values-a7f8/head.json": [
+   12,
+   0,
+   0,
+   0
+  ],
+  "css-values-a7f8/batch2-final.json": [
+   107,
+   0,
+   0,
+   0
+  ],
+  "css-values-a7f8/ext-final.json": [
+   15,
+   0,
+   0,
+   0
+  ],
+  "css-values-a7f8/round4-rc4.json": [
+   236,
+   0,
+   0,
+   0
+  ],
+  "css-values-a7f8/round3-base.json": [
+   201,
+   0,
+   0,
+   0
+  ],
+  "css-values-a7f8/round4-topic3.json": [
+   236,
+   0,
+   0,
+   0
+  ],
+  "css-values-a7f8/batch2-shared2.json": [
+   107,
+   0,
+   0,
+   0
+  ],
+  "css-values-a7f8/bundle-topic2.json": [
+   164,
+   0,
+   0,
+   0
+  ],
+  "css-values-a7f8/round3-metricpalette4.json": [
+   201,
+   0,
+   0,
+   0
+  ],
+  "css-values-a7f8/batch2-siblings.json": [
+   107,
+   0,
+   0,
+   0
+  ],
+  "css-values-a7f8/guards-final.json": [
+   26,
+   0,
+   0,
+   0
+  ],
+  "css-values-a7f8/round4-shared4.json": [
+   236,
+   0,
+   0,
+   0
+  ],
+  "css-values-a7f8/bundle-base.json": [
+   164,
+   0,
+   0,
+   0
+  ],
+  "css-values-a7f8/time.json": [
+   12,
+   0,
+   0,
+   0
+  ],
+  "css-values-a7f8/guards-base.json": [
+   26,
+   0,
+   0,
+   0
+  ],
+  "css-values-a7f8/round3-full3.json": [
+   201,
+   0,
+   0,
+   0
+  ],
+  "css-values-a7f8/round3-topic3.json": [
+   201,
+   0,
+   0,
+   0
+  ],
+  "css-values-a7f8/batch2-guards-final.json": [
+   144,
+   0,
+   0,
+   0
+  ],
+  "css-values-a7f8/round3-topic2.json": [
+   201,
+   0,
+   0,
+   0
+  ],
+  "css-values-a7f8/bundle-bundle3.json": [
+   164,
+   0,
+   0,
+   0
+  ],
+  "css-values-a7f8/base.json": [
+   12,
+   0,
+   0,
+   0
+  ],
+  "css-values-a7f8/b3-topic2.json": [
+   186,
+   0,
+   0,
+   0
+  ],
+  "css-values-a7f8/round4-verified4.json": [
+   236,
+   0,
+   0,
+   0
+  ],
+  "css-values-a7f8/ext-font4.json": [
+   15,
+   0,
+   0,
+   0
+  ],
+  "css-values-a7f8/batch2-guards-reviewed2.json": [
+   144,
+   0,
+   0,
+   0
+  ],
+  "css-values-a7f8/cycles/pinned-chrome.json": [
+   1,
+   0,
+   0,
+   0
+  ],
+  "css-values-a7f8/attr-work/parent.json": [
+   2,
+   0,
+   0,
+   0
+  ]
+ },
+ "partial": [],
+ "latestCut": 1795237866.846222
+}

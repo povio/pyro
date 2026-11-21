@@ -1,0 +1,76 @@
+{
+ "chromeDisposition": {
+  "gain": {
+   "Pass": 2659,
+   "missing-name": 9,
+   "Fail": 150
+  },
+  "loss": {
+   "Pass": 86,
+   "missing-name": 6,
+   "Fail": 14
+  }
+ },
+ "byArea": {
+  "editing": {
+   "gain": 1069,
+   "loss": 13
+  },
+  "fetch": {
+   "gain": 45,
+   "loss": 50
+  },
+  "html": {
+   "loss": 14,
+   "gain": 380
+  },
+  "referrer-policy": {
+   "gain": 145
+  },
+  "subresource-integrity": {
+   "loss": 6,
+   "gain": 6
+  },
+  "xhr": {
+   "gain": 1,
+   "loss": 2
+  },
+  "domparsing": {
+   "gain": 1
+  },
+  "scroll-to-text-fragment": {
+   "gain": 3
+  },
+  "user-timing": {
+   "loss": 17
+  },
+  "websockets": {
+   "loss": 1
+  },
+  "webcodecs": {
+   "gain": 996
+  },
+  "selection": {
+   "gain": 140
+  },
+  "web-animations": {
+   "gain": 27,
+   "loss": 1
+  },
+  "mixed-content": {
+   "loss": 1
+  },
+  "navigation-api": {
+   "gain": 1
+  },
+  "preload": {
+   "loss": 1
+  },
+  "web-locks": {
+   "gain": 3
+  },
+  "resize-observer": {
+   "gain": 1
+  }
+ }
+}

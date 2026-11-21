@@ -1,0 +1,1100 @@
+{
+ "round6-noncss-measure/combined-305840f45/css-00.json": {
+  "sha256": "91abb2fccf26dbbb56df311d70f4abcfee0807d628afb0ad747ce75929b79aeb",
+  "head": "305840f45afbc4f55bfa24f303c1e858d30e4c1d",
+  "binarySHA256": "058c0ac124f412b2e91960d7ed5ebfb343341e90149fa38cf5004a2c6687dc09",
+  "profile": {
+   "jobs": 2,
+   "server": "wptserve",
+   "testdriver": true,
+   "dedicatedWorkers": true,
+   "generatedGlobals": true,
+   "http2": true,
+   "reuseContext": false,
+   "manifestInventory": true,
+   "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+   }
+  },
+  "ports": {
+   "http": [
+    58183,
+    58184
+   ],
+   "https": [
+    58185,
+    58186
+   ],
+   "http-local": [
+    58187
+   ],
+   "http-public": [
+    58188
+   ],
+   "https-local": [
+    58189
+   ],
+   "https-public": [
+    58190
+   ],
+   "ws": [
+    58191
+   ],
+   "wss": [
+    58192
+   ],
+   "h2": [
+    58193
+   ],
+   "webtransport-h3": [],
+   "dns": []
+  },
+  "configSHA256": "100ce19b16a360e3a803ceeacd9f891b67f5157818db6a01d61dc60d2ea1d88c",
+  "logSHA256": "b212c6ebe90df38f658509b4a0023b75e951b6e5447af5bad92a2d0ab68f2a9f"
+ },
+ "round6-noncss-measure/combined-305840f45/css-01.json": {
+  "sha256": "8799c7c80e810a618b398763816d00b5e28da37cb1f7ad6ff0a20ec6af287613",
+  "head": "305840f45afbc4f55bfa24f303c1e858d30e4c1d",
+  "binarySHA256": "058c0ac124f412b2e91960d7ed5ebfb343341e90149fa38cf5004a2c6687dc09",
+  "profile": {
+   "jobs": 2,
+   "server": "wptserve",
+   "testdriver": true,
+   "dedicatedWorkers": true,
+   "generatedGlobals": true,
+   "http2": true,
+   "reuseContext": false,
+   "manifestInventory": true,
+   "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+   }
+  },
+  "ports": {
+   "http": [
+    58967,
+    58968
+   ],
+   "https": [
+    58969,
+    58970
+   ],
+   "http-local": [
+    58971
+   ],
+   "http-public": [
+    58972
+   ],
+   "https-local": [
+    58973
+   ],
+   "https-public": [
+    58974
+   ],
+   "ws": [
+    58975
+   ],
+   "wss": [
+    58976
+   ],
+   "h2": [
+    58977
+   ],
+   "webtransport-h3": [],
+   "dns": []
+  },
+  "configSHA256": "0158ce90751cb3699e8481dca1610104d1a1a312bcfb183d8ddcd9515f66c0cf",
+  "logSHA256": "8c0d2d04dd8627585ade8b125c1f904eb60548566821ceb25f4f8a95546c90a5"
+ },
+ "round6-noncss-measure/combined-305840f45/css-02.json": {
+  "sha256": "7176a71c171a738a77ace226aa2afa63a5d2f3b3f3aabfa5e0a01b009b9c1c82",
+  "head": "305840f45afbc4f55bfa24f303c1e858d30e4c1d",
+  "binarySHA256": "058c0ac124f412b2e91960d7ed5ebfb343341e90149fa38cf5004a2c6687dc09",
+  "profile": {
+   "jobs": 2,
+   "server": "wptserve",
+   "testdriver": true,
+   "dedicatedWorkers": true,
+   "generatedGlobals": true,
+   "http2": true,
+   "reuseContext": false,
+   "manifestInventory": true,
+   "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+   }
+  },
+  "ports": {
+   "http": [
+    59737,
+    59738
+   ],
+   "https": [
+    59739,
+    59740
+   ],
+   "http-local": [
+    59741
+   ],
+   "http-public": [
+    59742
+   ],
+   "https-local": [
+    59743
+   ],
+   "https-public": [
+    59744
+   ],
+   "ws": [
+    59745
+   ],
+   "wss": [
+    59746
+   ],
+   "h2": [
+    59747
+   ],
+   "webtransport-h3": [],
+   "dns": []
+  },
+  "configSHA256": "6a205f5e3e8c875ec948b6222e7a675fec8ef865b6426e9dcd2cf850cd8daa99",
+  "logSHA256": "e06e3c0de9f4fa0816ce251b6dbd74296c50bef6fba7c2530e9f1ff85184f4a2"
+ },
+ "round6-noncss-measure/combined-305840f45/css-03.json": {
+  "sha256": "9e9f76495839926c524416b44428c9dfd94663a49d61c642f295536095ab6ffe",
+  "head": "305840f45afbc4f55bfa24f303c1e858d30e4c1d",
+  "binarySHA256": "058c0ac124f412b2e91960d7ed5ebfb343341e90149fa38cf5004a2c6687dc09",
+  "profile": {
+   "jobs": 2,
+   "server": "wptserve",
+   "testdriver": true,
+   "dedicatedWorkers": true,
+   "generatedGlobals": true,
+   "http2": true,
+   "reuseContext": false,
+   "manifestInventory": true,
+   "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+   }
+  },
+  "ports": {
+   "http": [
+    60308,
+    60309
+   ],
+   "https": [
+    60310,
+    60311
+   ],
+   "http-local": [
+    60312
+   ],
+   "http-public": [
+    60313
+   ],
+   "https-local": [
+    60314
+   ],
+   "https-public": [
+    60315
+   ],
+   "ws": [
+    60316
+   ],
+   "wss": [
+    60317
+   ],
+   "h2": [
+    60318
+   ],
+   "webtransport-h3": [],
+   "dns": []
+  },
+  "configSHA256": "7fca8790613d7ff2af2548f3b2647421fd1245bdac7cac1edd1a0d71933219fa",
+  "logSHA256": "46589f7a590ef6c2a8f239a371fafa7c7b044b0a6537884f1318af42d538bb52"
+ },
+ "round6-noncss-measure/combined-305840f45/css-values.json": {
+  "sha256": "54b530e2bf0f831c7ee347ebd0d988a4fff29bc26c6203a10970a824ee1e329f",
+  "head": "305840f45afbc4f55bfa24f303c1e858d30e4c1d",
+  "binarySHA256": "058c0ac124f412b2e91960d7ed5ebfb343341e90149fa38cf5004a2c6687dc09",
+  "profile": {
+   "jobs": 1,
+   "server": "wptserve",
+   "testdriver": false,
+   "dedicatedWorkers": true,
+   "generatedGlobals": true,
+   "http2": null,
+   "reuseContext": false,
+   "manifestInventory": true,
+   "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+   }
+  },
+  "ports": {
+   "http": [
+    56017,
+    56018
+   ],
+   "https": [
+    56019,
+    56020
+   ],
+   "http-local": [
+    56021
+   ],
+   "http-public": [
+    56022
+   ],
+   "https-local": [
+    56023
+   ],
+   "https-public": [
+    56024
+   ],
+   "ws": [
+    56025
+   ],
+   "wss": [
+    56026
+   ],
+   "h2": [],
+   "webtransport-h3": [],
+   "dns": []
+  },
+  "configSHA256": "fbfeef6dcaa344e4d4d4121fe9cc74bdc300e2a5a5cbd02b1aa58917977beffb",
+  "logSHA256": "4260b0a3109e9945c5e550254d084582846532bdf2a095a62d0812d471751ea2"
+ },
+ "round6-noncss-measure/combined-305840f45/focus-00.json": {
+  "sha256": "c1530f95e1925bd6381da9d8de4938ef0603f93ee333e9268b80e37afdfeb2e2",
+  "head": "305840f45afbc4f55bfa24f303c1e858d30e4c1d",
+  "binarySHA256": "058c0ac124f412b2e91960d7ed5ebfb343341e90149fa38cf5004a2c6687dc09",
+  "profile": {
+   "jobs": 2,
+   "server": "wptserve",
+   "testdriver": true,
+   "dedicatedWorkers": true,
+   "generatedGlobals": true,
+   "http2": true,
+   "reuseContext": false,
+   "manifestInventory": true,
+   "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+   }
+  },
+  "ports": {
+   "http": [
+    57490,
+    57491
+   ],
+   "https": [
+    57492,
+    57493
+   ],
+   "http-local": [
+    57494
+   ],
+   "http-public": [
+    57495
+   ],
+   "https-local": [
+    57496
+   ],
+   "https-public": [
+    57497
+   ],
+   "ws": [
+    57498
+   ],
+   "wss": [
+    57499
+   ],
+   "h2": [
+    57500
+   ],
+   "webtransport-h3": [],
+   "dns": []
+  },
+  "configSHA256": "0542058f72b8f3fc8c2b47d6cc378410a8f3734616d36132379af495cefa2a2a",
+  "logSHA256": "4cb41c6d7f8b011c2a6fa3b39aa20972b15350981711638d433db8dcbe9c242f"
+ },
+ "round6-noncss-measure/combined-305840f45/guard-00.json": {
+  "sha256": "6302de35e54edc6ba8d2c2297ea3af36baffc18a12d4ffbfd3d98cd49ec14a24",
+  "head": "305840f45afbc4f55bfa24f303c1e858d30e4c1d",
+  "binarySHA256": "058c0ac124f412b2e91960d7ed5ebfb343341e90149fa38cf5004a2c6687dc09",
+  "profile": {
+   "jobs": 2,
+   "server": "wptserve",
+   "testdriver": true,
+   "dedicatedWorkers": true,
+   "generatedGlobals": true,
+   "http2": true,
+   "reuseContext": false,
+   "manifestInventory": true,
+   "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+   }
+  },
+  "ports": {
+   "http": [
+    57704,
+    57705
+   ],
+   "https": [
+    57706,
+    57707
+   ],
+   "http-local": [
+    57708
+   ],
+   "http-public": [
+    57709
+   ],
+   "https-local": [
+    57710
+   ],
+   "https-public": [
+    57711
+   ],
+   "ws": [
+    57712
+   ],
+   "wss": [
+    57713
+   ],
+   "h2": [
+    57714
+   ],
+   "webtransport-h3": [],
+   "dns": []
+  },
+  "configSHA256": "774c02cb0d42718faf7955bb8326941e2d1202f2c76005cf4c210bc675f3c9b5",
+  "logSHA256": "97e95a650dcb8d44f53de7fcfdc9450d81bb797edaff2028e943952ab4163b93"
+ },
+ "round6-noncss-measure/combined-305840f45/navigator-00.json": {
+  "sha256": "50fe42b58b2d7f732bf061b1475d302cf8d818c0e47462ca4542c7696903f8de",
+  "head": "305840f45afbc4f55bfa24f303c1e858d30e4c1d",
+  "binarySHA256": "058c0ac124f412b2e91960d7ed5ebfb343341e90149fa38cf5004a2c6687dc09",
+  "profile": {
+   "jobs": 4,
+   "server": "wptserve",
+   "testdriver": true,
+   "dedicatedWorkers": true,
+   "generatedGlobals": true,
+   "http2": true,
+   "reuseContext": false,
+   "manifestInventory": true,
+   "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+   }
+  },
+  "ports": {
+   "http": [
+    57967,
+    57968
+   ],
+   "https": [
+    57969,
+    57970
+   ],
+   "http-local": [
+    57971
+   ],
+   "http-public": [
+    57972
+   ],
+   "https-local": [
+    57973
+   ],
+   "https-public": [
+    57974
+   ],
+   "ws": [
+    57975
+   ],
+   "wss": [
+    57976
+   ],
+   "h2": [
+    57977
+   ],
+   "webtransport-h3": [],
+   "dns": []
+  },
+  "configSHA256": "b0b16e6dbb3bc9e20d6d69066a077b92105a1e5fa0b81f495b2841de826b908b",
+  "logSHA256": "436bc07799163a87ebd12469590e2562eac398291a1f3f26d1f7eb3bf6478542"
+ },
+ "round6-noncss-measure/combined-305840f45/production-00.json": {
+  "sha256": "a0501b28cea61215004c4d6d072c5b4a4e2633368c2d456bf1ee0de472f50529",
+  "head": "305840f45afbc4f55bfa24f303c1e858d30e4c1d",
+  "binarySHA256": "058c0ac124f412b2e91960d7ed5ebfb343341e90149fa38cf5004a2c6687dc09",
+  "profile": {
+   "jobs": 2,
+   "server": "wptserve",
+   "testdriver": true,
+   "dedicatedWorkers": true,
+   "generatedGlobals": true,
+   "http2": true,
+   "reuseContext": false,
+   "manifestInventory": true,
+   "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+   }
+  },
+  "ports": {
+   "http": [
+    61432,
+    61433
+   ],
+   "https": [
+    61434,
+    61435
+   ],
+   "http-local": [
+    61436
+   ],
+   "http-public": [
+    61437
+   ],
+   "https-local": [
+    61438
+   ],
+   "https-public": [
+    61439
+   ],
+   "ws": [
+    61440
+   ],
+   "wss": [
+    61441
+   ],
+   "h2": [
+    61442
+   ],
+   "webtransport-h3": [],
+   "dns": []
+  },
+  "configSHA256": "1496c46ae68a230018bdc9f6073023cc6303d9e7c34ae3187b8e7553c0a74b19",
+  "logSHA256": "59eec6d7639fb61f1e2b84d0f2a9140c398e879bbe22133af3ed74b57f67b852"
+ },
+ "round6-noncss-measure/combined-305840f45/studio-closeout.json": {
+  "sha256": "59d86aa1d7ec55e78afe298330b4b594373341faa0bf21a26e09538db9a0e6c9",
+  "head": "305840f45afbc4f55bfa24f303c1e858d30e4c1d",
+  "binarySHA256": "058c0ac124f412b2e91960d7ed5ebfb343341e90149fa38cf5004a2c6687dc09",
+  "profile": {
+   "jobs": 6,
+   "server": "wptserve",
+   "testdriver": true,
+   "dedicatedWorkers": true,
+   "generatedGlobals": true,
+   "http2": null,
+   "reuseContext": false,
+   "manifestInventory": true,
+   "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+   }
+  },
+  "ports": {
+   "http": [
+    55750,
+    55751
+   ],
+   "https": [
+    55752,
+    55753
+   ],
+   "http-local": [
+    55754
+   ],
+   "http-public": [
+    55755
+   ],
+   "https-local": [
+    55756
+   ],
+   "https-public": [
+    55757
+   ],
+   "ws": [
+    55758
+   ],
+   "wss": [
+    55759
+   ],
+   "h2": [],
+   "webtransport-h3": [],
+   "dns": []
+  },
+  "configSHA256": "b46bc1474bd71366658584b4e5322b3ef7930ba408e5338b895f5475685f22b3",
+  "logSHA256": "015c71148c947c9db7194fd133e6b32158de6665b81692c1ab2e529cdfd4675d"
+ },
+ "round6-noncss-measure/combined-305840f45/video-focus.json": {
+  "sha256": "d72ba5c59a890eb5dfe227e4ddc6d4c0688c81575fbb36c1214f36d3ab382e53",
+  "head": "305840f45afbc4f55bfa24f303c1e858d30e4c1d",
+  "binarySHA256": "058c0ac124f412b2e91960d7ed5ebfb343341e90149fa38cf5004a2c6687dc09",
+  "profile": {
+   "jobs": 4,
+   "server": "wptserve",
+   "testdriver": true,
+   "dedicatedWorkers": true,
+   "generatedGlobals": true,
+   "http2": true,
+   "reuseContext": false,
+   "manifestInventory": true,
+   "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+   }
+  },
+  "ports": {
+   "http": [
+    60931,
+    60932
+   ],
+   "https": [
+    60933,
+    60934
+   ],
+   "http-local": [
+    60935
+   ],
+   "http-public": [
+    60936
+   ],
+   "https-local": [
+    60937
+   ],
+   "https-public": [
+    60938
+   ],
+   "ws": [
+    60939
+   ],
+   "wss": [
+    60940
+   ],
+   "h2": [
+    60941
+   ],
+   "webtransport-h3": [],
+   "dns": []
+  },
+  "configSHA256": "562226800c2cb6ac68738cb45e3701d42d65aa6db56fe03cc830d9a34900e2bf",
+  "logSHA256": "18d43440a0da140c52a087c6f2c533af5824060bc9122826bf0f446b22bf8f9a"
+ },
+ "round6-noncss-measure/combined-305840f45/video-guard.json": {
+  "sha256": "f655ea4d0b1ab2a4b0d20c8b4a078e5ba3b60d3885636ee57f364ec2ea058626",
+  "head": "305840f45afbc4f55bfa24f303c1e858d30e4c1d",
+  "binarySHA256": "058c0ac124f412b2e91960d7ed5ebfb343341e90149fa38cf5004a2c6687dc09",
+  "profile": {
+   "jobs": 4,
+   "server": "wptserve",
+   "testdriver": true,
+   "dedicatedWorkers": true,
+   "generatedGlobals": true,
+   "http2": true,
+   "reuseContext": false,
+   "manifestInventory": true,
+   "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+   }
+  },
+  "ports": {
+   "http": [
+    61208,
+    61209
+   ],
+   "https": [
+    61210,
+    61211
+   ],
+   "http-local": [
+    61212
+   ],
+   "http-public": [
+    61213
+   ],
+   "https-local": [
+    61214
+   ],
+   "https-public": [
+    61215
+   ],
+   "ws": [
+    61216
+   ],
+   "wss": [
+    61217
+   ],
+   "h2": [
+    61218
+   ],
+   "webtransport-h3": [],
+   "dns": []
+  },
+  "configSHA256": "06834aa7857d823a8f2ce7c1d437f4677683eab29a523925baea41f7de3a9f2c",
+  "logSHA256": "b71b2f570e8e6cd1dbd3692cd04a5def0a29327c387b4d0bd44faab62d2032b6"
+ },
+ "round7-editing/base.json": {
+  "sha256": "5266700359684bbdcc7d6e38567d7b346d633ca204b8192018c02b12aeee8d85",
+  "head": "305840f45afbc4f55bfa24f303c1e858d30e4c1d",
+  "binarySHA256": "058c0ac124f412b2e91960d7ed5ebfb343341e90149fa38cf5004a2c6687dc09",
+  "profile": {
+   "jobs": 1,
+   "server": "static",
+   "testdriver": false,
+   "dedicatedWorkers": null,
+   "generatedGlobals": null,
+   "http2": null,
+   "reuseContext": false,
+   "manifestInventory": null,
+   "viewport": null
+  },
+  "ports": null,
+  "configSHA256": null,
+  "logSHA256": "faa1270147b4bfe7210f6af584f580398cc1d9dc81e57d98e8e84a71e5a002fc"
+ },
+ "round7-local/referrer/base.json": {
+  "sha256": "d7c02f90e3329a08f83a315cc974a4d4697669f5577e0d4b25fabbb4d34a0f5e",
+  "head": "305840f45afbc4f55bfa24f303c1e858d30e4c1d",
+  "binarySHA256": "058c0ac124f412b2e91960d7ed5ebfb343341e90149fa38cf5004a2c6687dc09",
+  "profile": {
+   "jobs": 2,
+   "server": "wptserve",
+   "testdriver": true,
+   "dedicatedWorkers": true,
+   "generatedGlobals": true,
+   "http2": true,
+   "reuseContext": false,
+   "manifestInventory": true,
+   "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+   }
+  },
+  "ports": {
+   "http": [
+    62938,
+    62939
+   ],
+   "https": [
+    62940,
+    62941
+   ],
+   "http-local": [
+    62942
+   ],
+   "http-public": [
+    62943
+   ],
+   "https-local": [
+    62944
+   ],
+   "https-public": [
+    62945
+   ],
+   "ws": [
+    62946
+   ],
+   "wss": [
+    62947
+   ],
+   "h2": [
+    62948
+   ],
+   "webtransport-h3": [],
+   "dns": []
+  },
+  "configSHA256": "3dea2e69ab499ca2d31dc373ea44adea965d96638055d0c719003c46a920fed8",
+  "logSHA256": "e614a31102335d81d59ccfbdfec2e5d7fc506a3f28876783ed409a0c3aa997d1"
+ },
+ "round7-qa/base-nested-with-contenteditable-true.json": {
+  "sha256": "9c8518cb68bcf10cf51e37f93923f3f396688ceeb89fb22dabe2190a40811b4c",
+  "head": "305840f45afbc4f55bfa24f303c1e858d30e4c1d",
+  "binarySHA256": "058c0ac124f412b2e91960d7ed5ebfb343341e90149fa38cf5004a2c6687dc09",
+  "profile": {
+   "jobs": 1,
+   "server": "static",
+   "testdriver": false,
+   "dedicatedWorkers": null,
+   "generatedGlobals": null,
+   "http2": null,
+   "reuseContext": false,
+   "manifestInventory": null,
+   "viewport": null
+  },
+  "ports": null,
+  "configSHA256": null,
+  "logSHA256": "56a1403f5531dcb7b1b9ca136a201fb31cb30336cd329b43523d1996e740b50b"
+ },
+ "round7-qa/base-styling-commands.json": {
+  "sha256": "31b2f816a49db9e2e2eed65f93e7dc255f201bbf5689f902b4f67984e6f197c7",
+  "head": "305840f45afbc4f55bfa24f303c1e858d30e4c1d",
+  "binarySHA256": "058c0ac124f412b2e91960d7ed5ebfb343341e90149fa38cf5004a2c6687dc09",
+  "profile": {
+   "jobs": 1,
+   "server": "static",
+   "testdriver": false,
+   "dedicatedWorkers": null,
+   "generatedGlobals": null,
+   "http2": null,
+   "reuseContext": false,
+   "manifestInventory": null,
+   "viewport": null
+  },
+  "ports": null,
+  "configSHA256": null,
+  "logSHA256": "3b983399f89f99e3a671a58b915e26e11d5829e612f2e8fdfb6b2b6bbaef2294"
+ },
+ "round7-qa/combined-1f1be0324/base-css.json": {
+  "sha256": "2e1cae70d1d38f7f99c08ebb036f58c113793d2d1f780d981733060d42409fa1",
+  "head": "305840f45afbc4f55bfa24f303c1e858d30e4c1d",
+  "binarySHA256": "058c0ac124f412b2e91960d7ed5ebfb343341e90149fa38cf5004a2c6687dc09",
+  "profile": {
+   "jobs": 1,
+   "server": "wptserve",
+   "testdriver": true,
+   "dedicatedWorkers": true,
+   "generatedGlobals": true,
+   "http2": true,
+   "reuseContext": false,
+   "manifestInventory": true,
+   "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+   }
+  },
+  "ports": {
+   "http": [
+    59448,
+    59449
+   ],
+   "https": [
+    59450,
+    59451
+   ],
+   "http-local": [
+    59452
+   ],
+   "http-public": [
+    59453
+   ],
+   "https-local": [
+    59454
+   ],
+   "https-public": [
+    59455
+   ],
+   "ws": [
+    59456
+   ],
+   "wss": [
+    59457
+   ],
+   "h2": [
+    59458
+   ],
+   "webtransport-h3": [],
+   "dns": []
+  },
+  "configSHA256": "9bb401d9f495f272a4c6c6a11b1fbebb1846ac56da29266d332ad62d974f39e2",
+  "logSHA256": "477adc1f529833b3cfed69f15927ea5a14d0a0c0abde94dd3b3467f3959d0b55"
+ },
+ "round7-qa/combined-1f1be0324/base-edit.json": {
+  "sha256": "31dd34d322372150804413b7ad277853949a9aa08a2b486a0b85069d981d34ce",
+  "head": "305840f45afbc4f55bfa24f303c1e858d30e4c1d",
+  "binarySHA256": "058c0ac124f412b2e91960d7ed5ebfb343341e90149fa38cf5004a2c6687dc09",
+  "profile": {
+   "jobs": 1,
+   "server": "wptserve",
+   "testdriver": true,
+   "dedicatedWorkers": true,
+   "generatedGlobals": true,
+   "http2": true,
+   "reuseContext": false,
+   "manifestInventory": true,
+   "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+   }
+  },
+  "ports": {
+   "http": [
+    58143,
+    58144
+   ],
+   "https": [
+    58145,
+    58146
+   ],
+   "http-local": [
+    58147
+   ],
+   "http-public": [
+    58148
+   ],
+   "https-local": [
+    58149
+   ],
+   "https-public": [
+    58150
+   ],
+   "ws": [
+    58151
+   ],
+   "wss": [
+    58152
+   ],
+   "h2": [
+    58153
+   ],
+   "webtransport-h3": [],
+   "dns": []
+  },
+  "configSHA256": "19fcf99265b4db3e9389fb1391a5f1f35106e5a475ce7d9342d8f22e3a0267c5",
+  "logSHA256": "a09d67ea09a9bc1171ff1172ef5f04c9721106c093ca504d01953cf408201eff"
+ },
+ "round7-qa/combined-1f1be0324/base-guards.json": {
+  "sha256": "6691fa873e7d7618e9e23e22cd600c78ee0dc2baccc895c34c3f36e6bc6107ed",
+  "head": "305840f45afbc4f55bfa24f303c1e858d30e4c1d",
+  "binarySHA256": "058c0ac124f412b2e91960d7ed5ebfb343341e90149fa38cf5004a2c6687dc09",
+  "profile": {
+   "jobs": 1,
+   "server": "wptserve",
+   "testdriver": true,
+   "dedicatedWorkers": true,
+   "generatedGlobals": true,
+   "http2": true,
+   "reuseContext": false,
+   "manifestInventory": true,
+   "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+   }
+  },
+  "ports": {
+   "http": [
+    58132,
+    58133
+   ],
+   "https": [
+    58134,
+    58135
+   ],
+   "http-local": [
+    58136
+   ],
+   "http-public": [
+    58137
+   ],
+   "https-local": [
+    58138
+   ],
+   "https-public": [
+    58139
+   ],
+   "ws": [
+    58140
+   ],
+   "wss": [
+    58141
+   ],
+   "h2": [
+    58142
+   ],
+   "webtransport-h3": [],
+   "dns": []
+  },
+  "configSHA256": "36b6ffcb3076d9c5a0c4af2195f29799ca17d9f13d004ca39cf219b2de9827dd",
+  "logSHA256": "54afbdd13e8bce7800953cfaaed65d973893bb8aec2fee462b6f74783b71bed3"
+ },
+ "round7-qa/combined-1f1be0324/head-css.json": {
+  "sha256": "3fa80748ef2e1796a390a70d3cd34d6efd5961de54897c76bbbf24367be92391",
+  "head": "1f1be032436bfeee9f48cdb5acbc0f71d21d5af9",
+  "binarySHA256": "543a7b85e3ecd8b99400d8c0c6861ff4756621b106d86407ca9d9098ca9b0d4d",
+  "profile": {
+   "jobs": 1,
+   "server": "wptserve",
+   "testdriver": true,
+   "dedicatedWorkers": true,
+   "generatedGlobals": true,
+   "http2": true,
+   "reuseContext": false,
+   "manifestInventory": true,
+   "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+   }
+  },
+  "ports": {
+   "http": [
+    49938,
+    49939
+   ],
+   "https": [
+    49940,
+    49941
+   ],
+   "http-local": [
+    49942
+   ],
+   "http-public": [
+    49943
+   ],
+   "https-local": [
+    49944
+   ],
+   "https-public": [
+    49945
+   ],
+   "ws": [
+    49946
+   ],
+   "wss": [
+    49947
+   ],
+   "h2": [
+    49948
+   ],
+   "webtransport-h3": [],
+   "dns": []
+  },
+  "configSHA256": "880973d7197b02247f5b65ed685cb5907395706c7c0eccac0501aa65e131d2cb",
+  "logSHA256": "a1f0b15f3b9d70d58632b265bc8278688f88ad00b2d5cf8fea79519d3dc2e9c8"
+ },
+ "round7-qa/combined-1f1be0324/head-edit.json": {
+  "sha256": "80924aa61e55d62875848822cd14413aa14662ed74638ae61e262347f9cb1500",
+  "head": "1f1be032436bfeee9f48cdb5acbc0f71d21d5af9",
+  "binarySHA256": "543a7b85e3ecd8b99400d8c0c6861ff4756621b106d86407ca9d9098ca9b0d4d",
+  "profile": {
+   "jobs": 1,
+   "server": "wptserve",
+   "testdriver": true,
+   "dedicatedWorkers": true,
+   "generatedGlobals": true,
+   "http2": true,
+   "reuseContext": false,
+   "manifestInventory": true,
+   "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+   }
+  },
+  "ports": {
+   "http": [
+    64904,
+    64905
+   ],
+   "https": [
+    64906,
+    64907
+   ],
+   "http-local": [
+    64908
+   ],
+   "http-public": [
+    64909
+   ],
+   "https-local": [
+    64910
+   ],
+   "https-public": [
+    64911
+   ],
+   "ws": [
+    64912
+   ],
+   "wss": [
+    64913
+   ],
+   "h2": [
+    64914
+   ],
+   "webtransport-h3": [],
+   "dns": []
+  },
+  "configSHA256": "b0c33f30e0d1081948143bc07e69facdcf16f5f00dcd98619d022373d0933349",
+  "logSHA256": "b080038762c5fe1c6faece9b0b6bb025e966f0d5f16a8f6a13f55a18b49250a6"
+ },
+ "round7-qa/combined-1f1be0324/head-guards.json": {
+  "sha256": "e181c0791e66c5d8b695ca7662944483a10e3d0c0815103d67f137fb1531e398",
+  "head": "1f1be032436bfeee9f48cdb5acbc0f71d21d5af9",
+  "binarySHA256": "543a7b85e3ecd8b99400d8c0c6861ff4756621b106d86407ca9d9098ca9b0d4d",
+  "profile": {
+   "jobs": 1,
+   "server": "wptserve",
+   "testdriver": true,
+   "dedicatedWorkers": true,
+   "generatedGlobals": true,
+   "http2": true,
+   "reuseContext": false,
+   "manifestInventory": true,
+   "viewport": {
+    "width": 800,
+    "height": 600,
+    "deviceScaleFactor": 1
+   }
+  },
+  "ports": {
+   "http": [
+    64892,
+    64893
+   ],
+   "https": [
+    64894,
+    64895
+   ],
+   "http-local": [
+    64896
+   ],
+   "http-public": [
+    64897
+   ],
+   "https-local": [
+    64898
+   ],
+   "https-public": [
+    64899
+   ],
+   "ws": [
+    64900
+   ],
+   "wss": [
+    64901
+   ],
+   "h2": [
+    64902
+   ],
+   "webtransport-h3": [],
+   "dns": []
+  },
+  "configSHA256": "e330fb61c074e859bdceb8736dbecfb9e4e1f133f6cda910e2074e24b043748a",
+  "logSHA256": "43a8c0cffc92a35f07dd2c2948fa33fb09f03e69b7c161d1e34792e05672aaa1"
+ }
+}

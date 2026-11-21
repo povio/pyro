@@ -1,0 +1,135 @@
+{
+ "round6-noncss-measure/combined-305840f45/focus-00.json": [
+  32,
+  2,
+  "wptserve",
+  true,
+  "c1530f95e1925bd6381da9d8de4938ef0603f93ee333e9268b80e37afdfeb2e2"
+ ],
+ "round6-noncss-measure/combined-305840f45/production-00.json": [
+  58,
+  2,
+  "wptserve",
+  true,
+  "a0501b28cea61215004c4d6d072c5b4a4e2633368c2d456bf1ee0de472f50529"
+ ],
+ "round6-noncss-measure/combined-305840f45/video-focus.json": [
+  30,
+  4,
+  "wptserve",
+  true,
+  "d72ba5c59a890eb5dfe227e4ddc6d4c0688c81575fbb36c1214f36d3ab382e53"
+ ],
+ "round6-noncss-measure/combined-305840f45/css-00.json": [
+  80,
+  2,
+  "wptserve",
+  true,
+  "91abb2fccf26dbbb56df311d70f4abcfee0807d628afb0ad747ce75929b79aeb"
+ ],
+ "round6-noncss-measure/combined-305840f45/css-01.json": [
+  80,
+  2,
+  "wptserve",
+  true,
+  "8799c7c80e810a618b398763816d00b5e28da37cb1f7ad6ff0a20ec6af287613"
+ ],
+ "round6-noncss-measure/combined-305840f45/video-guard.json": [
+  19,
+  4,
+  "wptserve",
+  true,
+  "f655ea4d0b1ab2a4b0d20c8b4a078e5ba3b60d3885636ee57f364ec2ea058626"
+ ],
+ "round6-noncss-measure/combined-305840f45/css-02.json": [
+  80,
+  2,
+  "wptserve",
+  true,
+  "7176a71c171a738a77ace226aa2afa63a5d2f3b3f3aabfa5e0a01b009b9c1c82"
+ ],
+ "round6-noncss-measure/combined-305840f45/css-03.json": [
+  75,
+  2,
+  "wptserve",
+  true,
+  "9e9f76495839926c524416b44428c9dfd94663a49d61c642f295536095ab6ffe"
+ ],
+ "round6-noncss-measure/combined-305840f45/guard-00.json": [
+  33,
+  2,
+  "wptserve",
+  true,
+  "6302de35e54edc6ba8d2c2297ea3af36baffc18a12d4ffbfd3d98cd49ec14a24"
+ ],
+ "round6-noncss-measure/combined-305840f45/navigator-00.json": [
+  20,
+  4,
+  "wptserve",
+  true,
+  "50fe42b58b2d7f732bf061b1475d302cf8d818c0e47462ca4542c7696903f8de"
+ ],
+ "round6-noncss-measure/combined-305840f45/studio-closeout.json": [
+  31,
+  6,
+  "wptserve",
+  false,
+  "59d86aa1d7ec55e78afe298330b4b594373341faa0bf21a26e09538db9a0e6c9"
+ ],
+ "round6-noncss-measure/combined-305840f45/css-values.json": [
+  227,
+  1,
+  "wptserve",
+  false,
+  "54b530e2bf0f831c7ee347ebd0d988a4fff29bc26c6203a10970a824ee1e329f"
+ ],
+ "round7-local/referrer/base.json": [
+  28,
+  2,
+  "wptserve",
+  true,
+  "d7c02f90e3329a08f83a315cc974a4d4697669f5577e0d4b25fabbb4d34a0f5e"
+ ],
+ "round7-qa/base-nested-with-contenteditable-true.json": [
+  0,
+  1,
+  "static",
+  false,
+  "9c8518cb68bcf10cf51e37f93923f3f396688ceeb89fb22dabe2190a40811b4c"
+ ],
+ "round7-qa/base-styling-commands.json": [
+  2,
+  1,
+  "static",
+  false,
+  "31b2f816a49db9e2e2eed65f93e7dc255f201bbf5689f902b4f67984e6f197c7"
+ ],
+ "round7-qa/combined-1f1be0324/base-edit.json": [
+  25,
+  1,
+  "wptserve",
+  true,
+  "31dd34d322372150804413b7ad277853949a9aa08a2b486a0b85069d981d34ce"
+ ],
+ "round7-qa/combined-1f1be0324/base-css.json": [
+  7,
+  1,
+  "wptserve",
+  true,
+  "2e1cae70d1d38f7f99c08ebb036f58c113793d2d1f780d981733060d42409fa1"
+ ],
+ "round7-qa/combined-1f1be0324/base-guards.json": [
+  16,
+  1,
+  "wptserve",
+  true,
+  "6691fa873e7d7618e9e23e22cd600c78ee0dc2baccc895c34c3f36e6bc6107ed"
+ ],
+ "round7-editing/base.json": [
+  5,
+  1,
+  "static",
+  false,
+  "5266700359684bbdcc7d6e38567d7b346d633ca204b8192018c02b12aeee8d85"
+ ]
+}

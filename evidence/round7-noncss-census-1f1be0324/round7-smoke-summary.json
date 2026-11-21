@@ -1,0 +1,82 @@
+{
+  "edit": {
+    "urls": 25,
+    "union": 5032,
+    "reported": [
+      5032,
+      5032,
+      5032
+    ],
+    "passes": [
+      3620,
+      4800,
+      4975
+    ],
+    "gained": 1180,
+    "lost": 0,
+    "gainedChromePass": 1174,
+    "lostChromePass": 0,
+    "headOnly": 28,
+    "chromeOnly": 203
+  },
+  "css": {
+    "urls": 7,
+    "union": 52,
+    "reported": [
+      52,
+      52,
+      52
+    ],
+    "passes": [
+      3,
+      48,
+      45
+    ],
+    "gained": 47,
+    "lost": 2,
+    "gainedChromePass": 42,
+    "lostChromePass": 0,
+    "headOnly": 5,
+    "chromeOnly": 2
+  },
+  "guards": {
+    "urls": 16,
+    "union": 82,
+    "reported": [
+      82,
+      82,
+      82
+    ],
+    "passes": [
+      70,
+      81,
+      82
+    ],
+    "gained": 11,
+    "lost": 0,
+    "gainedChromePass": 11,
+    "lostChromePass": 0,
+    "headOnly": 0,
+    "chromeOnly": 1
+  },
+  "all": {
+    "urls": 48,
+    "union": 5166,
+    "reported": [
+      5166,
+      5166,
+      5166
+    ],
+    "passes": [
+      3693,
+      4929,
+      5102
+    ],
+    "gained": 1238,
+    "lost": 2,
+    "gainedChromePass": 1227,
+    "lostChromePass": 0,
+    "headOnly": 33,
+    "chromeOnly": 206
+  }
+}
