@@ -133,6 +133,7 @@ fn parse_list(p: &mut Parser<'_>, namespaces: &mut Namespaces, top: bool, scoped
     // `@import` and `@namespace` only count before every other rule (`@layer`
     // statements aside); later ones are dropped, as browsers drop them.
     let mut past_prologue = false;
+    let mut saw_namespace = false;
     loop {
         let start = p.position();
         let Ok(token) = p.next_including_whitespace_and_comments().cloned() else { return rules };
@@ -166,11 +167,17 @@ fn parse_list(p: &mut Parser<'_>, namespaces: &mut Namespaces, top: bool, scoped
         let rule = match token {
             Token::WhiteSpace(_) | Token::Comment(_) => continue,
             Token::CDO | Token::CDC if top => continue,
+            Token::AtKeyword(ref name) if (name.eq_ignore_ascii_case("namespace") && (!top || past_prologue))
+                || (name.eq_ignore_ascii_case("import") && (!top || past_prologue || saw_namespace)) => {
+                parse_prelude_and_block(p, p.position(), |body| while body.next().is_ok() {});
+                continue;
+            }
             Token::AtKeyword(name) => parse_at_rule(p, &name, namespaces, scoped),
             token => parse_style_rule(p, start, &token, namespaces, scoped),
         };
         let Some(rule) = rule else { continue };
         if top {
+            saw_namespace |= matches!(rule, ParsedRule::Other { rule_type: 10, .. });
             let prologue = match &rule {
                 ParsedRule::Other { rule_type: 3 | 10, .. } => true,
                 ParsedRule::Other { rule_type: 0, text } => text.starts_with("@layer") && text.ends_with(';'),
@@ -307,20 +314,9 @@ fn collapse(text: &str) -> String {
 }
 
 /// An `@import` prelude with its URL serialized as CSSOM does: `url("...")`.
-fn import_url_form(prelude: &str) -> String {
+fn import_url_form(prelude: &str) -> Option<String> {
     let mut p = Parser::new(prelude);
-    let url = match p.next() {
-        Ok(Token::QuotedString(v)) | Ok(Token::UnquotedUrl(v)) => v.to_string(),
-        Ok(Token::Function(f)) if f.eq_ignore_ascii_case("url") => {
-            let inner: Result<String, ParseError<()>> =
-                p.parse_nested_block(|n| n.expect_string().map(|v| v.to_string()).map_err(Into::into));
-            match inner {
-                Ok(v) => v,
-                Err(_) => return prelude.to_owned(),
-            }
-        }
-        _ => return prelude.to_owned(),
-    };
+    let url = p.expect_url_or_string().ok()?;
     let mut out = String::from("url(");
     let _ = cssparser::serialize_string(&url, &mut out);
     out.push(')');
@@ -334,7 +330,7 @@ fn import_url_form(prelude: &str) -> String {
             out.push_str(&part);
         }
     }
-    out
+    Some(out)
 }
 
 /// A `layer()` argument that names a layer: dot-separated identifiers.
@@ -407,6 +403,7 @@ fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces, sc
         return Some(ParsedRule::Group { name: lower, condition, rules: rules? });
     }
     let (prelude, block) = parse_prelude_and_block(p, start, raw_block);
+    if block.is_some() && matches!(lower.as_str(), "namespace" | "import") { return None; }
     if lower == "counter-style" {
         let name = Parser::new(&prelude).parse_entirely(style::counter_style::parse_counter_style_name_definition).ok()?;
         let block = block?;
@@ -592,7 +589,7 @@ fn parse_at_rule(p: &mut Parser<'_>, name: &str, namespaces: &mut Namespaces, sc
     }
     // `@name prelude {block}`, without a second space when the prelude is empty.
     let prelude = collapse(&prelude);
-    let prelude = if lower == "import" { import_url_form(&prelude) } else { prelude };
+    let prelude = if lower == "import" { import_url_form(&prelude)? } else { prelude };
     let head = if prelude.is_empty() { format!("@{name}") } else { format!("@{name} {prelude}") };
     let text = match block {
         // An empty descriptor block serializes as `{ }`.
@@ -1030,6 +1027,15 @@ mod tests {
         assert_eq!(leading_imports(""), Vec::<String>::new());
         // The last rule may end with the sheet.
         assert_eq!(leading_imports("@import url(last.css)"), ["last.css"]);
+    }
+
+    #[test]
+    fn ignored_prologue_rules_do_not_register_namespaces() {
+        let mut namespaces = Namespaces::new();
+        let rules = parse_rules("@import supports(display:grid); @namespace ok 'urn:ok'; @import 'late.css'; @media all { @namespace nested 'urn:nested'; b {} } @namespace late 'urn:late';", &mut namespaces);
+        assert_eq!(namespaces, [("ok".into(), "urn:ok".into())]);
+        assert_eq!(rules.len(), 2);
+        assert!(matches!(&rules[1], ParsedRule::Group { rules, .. } if rules == &[style("b", "")]));
     }
 
     #[test]

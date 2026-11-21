@@ -918,6 +918,9 @@ fn insert_into(
     index: usize,
     constructed: bool,
 ) -> JsResult<()> {
+    if index > list.rules.borrow().len() {
+        return Err(JsError::dom("IndexSizeError", "The index provided is larger than the number of rules."));
+    }
     let mut scoped = namespaces.clone();
     // CSSOM "parse a CSS rule": one rule, and nothing after it but whitespace.
     let invalid = || JsError::dom("SyntaxError", format!("Failed to parse the rule '{rule}'."));
@@ -925,9 +928,6 @@ fn insert_into(
     let mut parsed = vec![pyro_dom::cssom::parse_one_rule_in_scope(rule, &mut scoped, in_scope).map_err(|_| invalid())?];
     // CSSOM "insert a CSS rule": past the end is an IndexSizeError; @import and
     // @namespace only belong at the top of a sheet.
-    if index > list.rules.borrow().len() {
-        return Err(JsError::dom("IndexSizeError", "The index provided is larger than the number of rules."));
-    }
     if parent.upgrade().is_some() && matches!(parsed[0], ParsedRule::Other { rule_type: IMPORT_RULE | 10, .. }) {
         return Err(JsError::dom("HierarchyRequestError", format!("'{rule}' may not be inserted inside a grouping rule.")));
     }
@@ -950,13 +950,17 @@ fn insert_into(
         if (new_is_import && !before_ok) || (!new_is_import && !new_is_statement && import_after) {
             return Err(JsError::dom("HierarchyRequestError", format!("'{rule}' may not be inserted at index {index}.")));
         }
+        let namespace = matches!(parsed[0], ParsedRule::Other { rule_type: 10, .. });
+        let import = matches!(parsed[0], ParsedRule::Other { rule_type: IMPORT_RULE, .. });
+        if (namespace && rules[index..].iter().any(|rule| matches!(rule.kind, RuleKind::Other { rule_type: IMPORT_RULE, .. })))
+            || (import && rules[..index].iter().any(|rule| matches!(rule.kind, RuleKind::Other { rule_type: 10, .. }))) {
+            return Err(JsError::dom("HierarchyRequestError", "Imports must come before namespaces."));
+        }
+        if namespace { check_namespace_edit(&rules)?; }
     }
     // Constructed sheets take no `@import` (CSSOM's insert a CSS rule).
     if constructed && matches!(parsed[0], ParsedRule::Other { rule_type: IMPORT_RULE, .. }) {
         return Err(invalid());
-    }
-    if index > list.rules.borrow().len() {
-        return Err(JsError::dom("IndexSizeError", "The index provided is larger than the number of rules."));
     }
     let node = RuleNode::new(parsed.pop().ok_or_else(invalid)?, parent);
     let mut rules = list.rules.borrow().clone();
@@ -965,11 +969,17 @@ fn insert_into(
     Ok(())
 }
 
+fn check_namespace_edit(rules: &[Rc<RuleNode>]) -> JsResult<()> {
+    if rules.iter().all(|rule| matches!(rule.kind, RuleKind::Other { rule_type: IMPORT_RULE | 10, .. })) { return Ok(()); }
+    Err(JsError::dom("InvalidStateError", "Cannot change namespaces in a sheet containing other rules."))
+}
+
 fn delete_from(list: &RuleList, index: usize) -> JsResult<()> {
     let mut rules = list.rules.borrow().clone();
     if index >= rules.len() {
         return Err(JsError::dom("IndexSizeError", "The index provided is outside the rule list."));
     }
+    if matches!(rules[index].kind, RuleKind::Other { rule_type: 10, .. }) { check_namespace_edit(&rules)?; }
     *rules.remove(index).parent.borrow_mut() = Weak::new();
     list.replace(rules);
     Ok(())
