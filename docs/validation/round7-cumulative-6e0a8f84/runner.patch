@@ -1,0 +1,11 @@
+--- frozen/run.mjs
++++ measured/run.mjs
+@@ -474,7 +474,7 @@
+         }
+       }
+       // The browser was replaced under this page (another slot's page hung it): run the page again.
+-      else if (lost && (t.retried ?? 0) < 3) { t.retried = (t.retried ?? 0) + 1; q.list.push(t); continue; }
++      else if (lost) { r.status = 'error'; }
+     } finally { leave(); inflight.delete(w); }
+     if (KIND === 'crashtest' && r.status !== 'crash' && r.status !== 'hang') {
+       // A panic's lines may still be in the pipe when the page's last answer arrives.

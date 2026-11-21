@@ -1,0 +1,35 @@
+{
+  "startEpoch": 1795293788,
+  "endEpoch": 1795294109,
+  "sampledHostBusyPct": {
+    "count": 21,
+    "mean": 16.49,
+    "minimum": 6.02,
+    "maximum": 37.31
+  },
+  "totalCpuSeconds": {
+    "browserCpuS": 136.93,
+    "runnerCpuS": 70.313,
+    "serverCpuS": 0
+  },
+  "peakCommandRssBytes": 262619136,
+  "restarts": 1,
+  "watchdogKills": 0,
+  "mainShardMs": [
+    41173,
+    54521
+  ],
+  "supplementMs": 467,
+  "states": {
+    "main": {
+      "complete:0": 7873,
+      "complete:1": 95,
+      "complete:2": 102,
+      "timeout:None": 11,
+      "hang:None": 1
+    },
+    "supplement": {
+      "complete:0": 41
+    }
+  }
+}

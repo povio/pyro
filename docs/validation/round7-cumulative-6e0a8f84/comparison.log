@@ -1,0 +1,11 @@
+main candidate {'pages': 5916, 'passes': 183296, 'observed': 194674, 'pageState': 8082, 'status': 194674}
+main previous {'pages': [23, 0], 'passes': [103, 0], 'observed': [1, 0], 'pageState': [1, 1], 'status': [104, 103]}
+main frozen {'pages': [82, 0], 'passes': [819, 21], 'observed': [2, 0], 'pageState': [3, 3], 'status': [841, 839]}
+main chrome {'pages': [300, 1334], 'passes': [5968, 5635], 'observed': [260, 498], 'pageState': [150, 150], 'status': [11197, 11435]}
+attribution {'passes': {'focused': 103, 'missingFocus': 0, 'otherGains': 0, 'losses': 0}, 'pages': {'focused': 23, 'missingFocus': 0, 'otherGains': 0, 'losses': 0}}
+focus mismatch counts {'base': 0, 'head': 0, 'chrome': 0}
+inherited [('inherited HDR failure', ['complete', 0, ['Fail']], ['complete', 0, ['Fail']]), ('inherited HDR failure', ['complete', 0, ['Fail']], ['complete', 0, ['Fail']]), ('inherited HDR failure', ['complete', 0, ['Fail']], ['complete', 0, ['Fail']]), ('previously missing failure', ['timeout', None, []], ['complete', 0, ['Fail']])]
+supplement candidate {'pages': 27, 'passes': 577, 'observed': 874, 'pageState': 41, 'status': 874}
+supplement previous {'pages': [0, 0], 'passes': [0, 0], 'observed': [0, 0], 'pageState': [0, 0], 'status': [0, 0]}
+supplement frozen {'pages': [0, 0], 'passes': [0, 0], 'observed': [0, 0], 'pageState': [0, 0], 'status': [0, 0]}
+supplement chrome {'pages': [0, 8], 'passes': [0, 42], 'observed': [0, 0], 'pageState': [0, 0], 'status': [42, 42]}
