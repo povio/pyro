@@ -31,5 +31,5 @@ for url, name in sorted(focus):
     print('recovered' if (url, name) in changed else 'remaining', url, name)
 base, candidate, signed = (read(label + '-probe') for label in ('base', 'candidate', 'chrome'))
 assert len(candidate) == 160 and candidate == signed
-assert all(old[:-1] == new[:-1] for old, new in zip(base, candidate, strict=True))
+assert len(base) == len(candidate) and all(old[:-1] == new[:-1] for old, new in zip(base, candidate))
 print('direct controls matching Chrome:', sum(old == ref for old, ref in zip(base, signed)), '->', len(candidate))
