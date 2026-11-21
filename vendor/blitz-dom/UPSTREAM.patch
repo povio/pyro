@@ -10394,7 +10394,7 @@ new file mode 100644
 +    // its `::before` and `::after` included (CSS Contain 2 § 3.3); the element's own counter
 +    // properties (above) are outside it.
 +    let contains_style = !display.is_contents()
-+        && (style.get_box().slow_clone_contain().contains(style::values::specified::box_::Contain::STYLE)
++        && (style.get_box().used_containment().contains(style::values::specified::box_::Contain::STYLE)
 +            || style.get_box().container_type.contains(style::values::specified::ContainerType::ANCHORED));
 +    let saved_quote_depth = walk.quote_depth;
 +    if contains_style {
@@ -10606,7 +10606,7 @@ new file mode 100644
 +        // pyro: style containment keeps its descendants' counter changes in its subtree
 +        // (CSS Contain 2 § 3.3; WPT css-contain `contain-style-ol-ordinal-reversed`).
 +        let contains_style = !display.is_contents()
-+            && (style.get_box().slow_clone_contain().contains(style::values::specified::box_::Contain::STYLE)
++            && (style.get_box().used_containment().contains(style::values::specified::box_::Contain::STYLE)
 +                || style.get_box().container_type.contains(style::values::specified::ContainerType::ANCHORED));
 +        if contains_style {
 +            return false;
@@ -11692,8 +11692,9 @@ diff --git a/packages/blitz-dom/src/layout/damage.rs b/packages/blitz-dom/src/la
          if old_box.display != new_box.display
              || old_box.float != new_box.float
              || old_box.position != new_box.position
-             || old_box.contain != new_box.contain
+-            || old_box.contain != new_box.contain
 -            || old.clone_visibility() != new.clone_visibility()
++            || old_box.used_containment() != new_box.used_containment()
          {
              return true;
          }
@@ -16636,6 +16637,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
                  && !style
                      .flags
                      .intersects(StyleFlags::IS_BUTTON | StyleFlags::IS_BUTTON_INPUT);
+-            let contain_layout = box_style.slow_clone_contain().contains(Contain::LAYOUT);
 +            // pyro: a block container's last baseline is its own: with no line box in it (a
 +            // table gives none) it has none, and sits on its bottom margin edge (CSS 2.1
 +            // § 10.8.1), not on its first baseline.
@@ -16643,7 +16645,7 @@ diff --git a/packages/blitz-dom/src/layout/inline/layout.rs b/packages/blitz-dom
 +                && !style
 +                    .flags
 +                    .intersects(StyleFlags::IS_REPLACED | StyleFlags::IS_BUTTON | StyleFlags::IS_BUTTON_INPUT);
-             let contain_layout = box_style.slow_clone_contain().contains(Contain::LAYOUT);
++            let contain_layout = box_style.used_containment().contains(Contain::LAYOUT);
              let exports_baseline = !(contain_layout
                  || (baseline_source == BaselineSource::Auto && is_block_axis_scroll_container));
 -            let box_inputs = inline_box_inputs(style.size().width, margin, child_inputs);
@@ -23797,7 +23799,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +    use style::values::computed::Contain;
 +    use style::values::specified::box_::ContainerType;
 +    let box_style = styles.get_box();
-+    let mut contain = box_style.contain;
++    let mut contain = box_style.used_containment();
 +    if box_style.container_type.intersects(ContainerType::SIZE) {
 +        contain |= Contain::INLINE_SIZE | Contain::BLOCK_SIZE;
 +    } else if box_style.container_type.intersects(ContainerType::INLINE_SIZE) {
@@ -26584,7 +26586,7 @@ new file mode 100644
 +            // `multicol-span-all-010`, `-017`.)
 +            let contained = !b.transform.0.is_empty()
 +                || b.slow_clone_perspective() != style::values::computed::Perspective::None
-+                || b.slow_clone_contain().intersects(Contain::LAYOUT | Contain::PAINT)
++                || b.used_containment().intersects(Contain::LAYOUT | Contain::PAINT)
 +                || !style.get_effects().filter.0.is_empty();
 +            // pyro: an inline split by block-level boxes (block-in-inline) carries them too
 +            // (WPT css-multicol `spanner-in-child-after-parallel-flow-003`).
@@ -27090,7 +27092,7 @@ new file mode 100644
 +                // § 3.3.)
 +                let contains_layout = style
 +                    .get_box()
-+                    .slow_clone_contain()
++                    .used_containment()
 +                    .contains(style::values::specified::box_::Contain::LAYOUT);
 +                // (A first child's `break-before` is its parent's, CSS Fragmentation 3 § 3.1, except
 +                // that it does not leave a box of layout containment: then none, CSS Contain 2
@@ -27099,7 +27101,7 @@ new file mode 100644
 +                    && node.primary_styles().is_some_and(|parent| {
 +                        parent
 +                            .get_box()
-+                            .slow_clone_contain()
++                            .used_containment()
 +                            .contains(style::values::specified::box_::Contain::LAYOUT)
 +                    });
 +                if (forces(style.get_box().break_before) && !first_in_contained)
@@ -27401,7 +27403,7 @@ new file mode 100644
 +        return false;
 +    }
 +    // pyro: a box of size containment is monolithic (CSS Contain 2 § 3.1).
-+    if box_style.slow_clone_contain().contains(style::values::specified::box_::Contain::SIZE) {
++    if box_style.used_containment().contains(style::values::specified::box_::Contain::SIZE) {
 +        return false;
 +    }
 +    // pyro: so is one of a writing mode orthogonal to its parent's (an orthogonal flow is not
@@ -27437,7 +27439,7 @@ new file mode 100644
 +    let scrolls = |o: Overflow| !matches!(o, Overflow::Visible | Overflow::Clip);
 +    scrolls(box_style.overflow_x)
 +        || scrolls(box_style.overflow_y)
-+        || box_style.slow_clone_contain().contains(style::values::specified::box_::Contain::SIZE)
++        || box_style.used_containment().contains(style::values::specified::box_::Contain::SIZE)
 +}
 +
 +#[cfg(test)]
@@ -29197,7 +29199,14 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
  }
  
  impl Node {
-@@ -471,22 +1396,283 @@
+@@ -465,28 +1390,289 @@
+         style.clone_position() != Position::Static
+             || !matches!(box_style.overflow_x, Overflow::Visible)
+             || !matches!(box_style.overflow_y, Overflow::Visible)
+-            || box_style.slow_clone_contain().contains(Contain::PAINT)
++            || box_style.used_containment().contains(Contain::PAINT)
+             || self.element_data().is_some_and(|e| {
+                 e.raster_image_data().is_some()
                      || e.sub_doc_data().is_some()
                      || e.text_input_data().is_some()
              })
@@ -29267,15 +29276,8 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
 +                matches!(parent_style.clone_display().inside(), DisplayInside::Flex | DisplayInside::Grid)
 +            })
 +        })
-     }
- 
--    /// Whether this is a `position: relative` or `sticky` box.
--    fn is_in_flow_positioned(&self) -> bool {
--        self.primary_styles().is_some_and(|style| {
--            matches!(
--                style.clone_position(),
--                Position::Relative | Position::Sticky
--            )
++    }
++
 +    /// pyro: whether this box is a scroll container that, but for its overflow clip, would paint in
 +    /// the phases of an ancestor (`paints_in_ancestor_phases`): it is no stacking context, so CSS 2.1
 +    /// Appendix E paints its background with the other block backgrounds and its content's inline
@@ -29291,7 +29293,7 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
 +        let clips = !matches!(box_style.overflow_x, Overflow::Visible) || !matches!(box_style.overflow_y, Overflow::Visible);
 +        if !clips
 +            || style.clone_position() != Position::Static
-+            || box_style.slow_clone_contain().contains(Contain::PAINT)
++            || box_style.used_containment().contains(Contain::PAINT)
 +            || self.element_data().is_some_and(|e| {
 +                e.raster_image_data().is_some() || e.sub_doc_data().is_some() || e.text_input_data().is_some()
 +            })
@@ -29328,9 +29330,9 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
 +            parent.primary_styles().is_some_and(|parent_style| {
 +                matches!(parent_style.clone_display().inside(), DisplayInside::Flex | DisplayInside::Grid)
 +            })
-         })
-     }
- 
++        })
++    }
++
 +    /// pyro: whether this box is a block-level flex or grid container that paints in the phases of
 +    /// an ancestor: its own box with the block backgrounds (CSS 2.1 Appendix E step 4) and its items,
 +    /// which paint as inline blocks do (css-flexbox-1 § 4.4, css-grid-1 § 9.4), whole with the inline
@@ -29388,8 +29390,15 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
 +                matches!(parent_style.clone_display().inside(), DisplayInside::Flex | DisplayInside::Grid)
 +            })
 +        })
-+    }
-+
+     }
+ 
+-    /// Whether this is a `position: relative` or `sticky` box.
+-    fn is_in_flow_positioned(&self) -> bool {
+-        self.primary_styles().is_some_and(|style| {
+-            matches!(
+-                style.clone_position(),
+-                Position::Relative | Position::Sticky
+-            )
 +    /// pyro: whether this internal table box (row group, row, cell) paints in the phases of its
 +    /// table's painter (Blink: a table's collapsed borders go after the backgrounds of the blocks
 +    /// in its cells and before their inline content, floats and positioned boxes). Only a part
@@ -29430,9 +29439,9 @@ diff --git a/packages/blitz-dom/src/layout/paint_tree.rs b/packages/blitz-dom/sr
 +                    })
 +                })
 +            })
-+        })
-+    }
-+
+         })
+     }
+ 
 +    /// pyro: whether this box is laid out at the inline level (an atomic inline: an inline
 +    /// block, an image): in its parent's paint phases it paints with the inline content.
 +    pub fn is_inline_level(&self) -> bool {
@@ -30489,7 +30498,7 @@ new file mode 100644
 +fn contains_out_of_flow(style: &ComputedValues, fixed: bool) -> bool {
 +    use style::values::specified::box_::Contain;
 +    let b = style.get_box();
-+    let contain = b.slow_clone_contain();
++    let contain = b.used_containment();
 +    (!fixed && b.slow_clone_position() != style::computed_values::position::T::Static)
 +        || !b.transform.0.is_empty()
 +        || b.slow_clone_perspective() != style::values::computed::Perspective::None
@@ -39142,7 +39151,7 @@ diff --git a/packages/blitz-dom/src/layout/writing_mode.rs b/packages/blitz-dom/
 +        let position = computed.get_position();
 +        let block_size = if parent_wm.is_vertical() { &position.width } else { &position.height };
 +        matches!(block_size, style::values::computed::Size::Auto)
-+            && computed.get_box().slow_clone_contain().intersects(style::values::computed::Contain::SIZE | style::values::computed::Contain::BLOCK_SIZE)
++            && computed.get_box().used_containment().intersects(style::values::computed::Contain::SIZE | style::values::computed::Contain::BLOCK_SIZE)
 +    }
 +
 +    /// pyro: the limit an indefinite containing block (the box's layout parent) puts on an
@@ -43698,7 +43707,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +            && !groups(b.overflow_y)
 +            && b.isolation != style::computed_values::isolation::T::Isolate
 +            && s.get_effects().mix_blend_mode == style::computed_values::mix_blend_mode::T::Normal
-+            && !b.slow_clone_contain().contains(Contain::PAINT)
++            && !b.used_containment().contains(Contain::PAINT)
 +            && !self.applies_atomic_paint_effect()
 +    }
 +
@@ -44627,7 +44636,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +                || !matches!(b.rotate, Rotate::None)
 +                || !matches!(b.scale, Scale::None)
 +                || !matches!(b.perspective, Perspective::None)
-+                || b.contain.intersects(Contain::LAYOUT | Contain::PAINT)
++                || b.used_containment().intersects(Contain::LAYOUT | Contain::PAINT)
 +                || b.will_change.bits.intersects(WillChangeBits::TRANSFORM | WillChangeBits::PERSPECTIVE | WillChangeBits::CONTAIN)
 +        })
 +    }
@@ -44720,7 +44729,7 @@ diff --git a/packages/blitz-dom/src/node/node.rs b/packages/blitz-dom/src/node/n
 +        // than a cell (WPT css-contain `contain-paint-stacking-context-*`).
 +        {
 +            use style::values::specified::box_::{Contain, DisplayInside, DisplayOutside};
-+            if box_style.slow_clone_contain().intersects(Contain::LAYOUT | Contain::PAINT) {
++            if box_style.used_containment().intersects(Contain::LAYOUT | Contain::PAINT) {
 +                let display = box_style.display;
 +                let inline_box = display.outside() == DisplayOutside::Inline && display.inside() == DisplayInside::Flow;
 +                let table_internal =
@@ -51577,7 +51586,7 @@ diff --git a/packages/blitz-dom/src/resolve.rs b/packages/blitz-dom/src/resolve.
 +            // 2 § 3.2, § 3.4; Taffy's `compute_scrollable_overflow_contribution` agrees). WPT
 +            // css-contain `contain-layout-ink-overflow-*`.
 +            use style::values::specified::box_::Contain;
-+            let contain = style.get_box().slow_clone_contain();
++            let contain = style.get_box().used_containment();
 +            // pyro: paint containment alone clips as `overflow: clip` does, at its
 +            // `overflow-clip-margin` (below; WPT css-overflow `overflow-clip-margin-005`).
 +            let inline_flow = {

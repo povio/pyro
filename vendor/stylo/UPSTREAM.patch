@@ -4899,7 +4899,7 @@ diff -ruN a/servo/media_features.rs b/servo/media_features.rs
 +]);
 diff -ruN a/servo/restyle_damage.rs b/servo/restyle_damage.rs
 --- a/servo/restyle_damage.rs	2026-11-11 19:55:57
-+++ b/servo/restyle_damage.rs	2026-11-17 23:56:40
++++ b/servo/restyle_damage.rs	2026-11-21 13:53:50
 @@ -66,7 +66,14 @@
              };
          }
@@ -4961,6 +4961,24 @@ diff -ruN a/servo/restyle_damage.rs b/servo/restyle_damage.rs
  fn compute_damage(old: &ComputedValues, new: &ComputedValues) -> ServoRestyleDamage {
      // Damage flags higher up the if-else chain imply damage flags lower down the if-else chain,
      // so we can skip the diffing process for later flags if an earlier flag is true
+@@ -203,6 +224,17 @@
+ }
+ 
+ impl style_structs::Box {
++    #[allow(missing_docs)]
++    pub fn used_containment(&self) -> crate::values::computed::Contain {
++        use crate::values::computed::{Contain, ContentVisibility};
++        let content = Contain::LAYOUT | Contain::STYLE | Contain::PAINT;
++        self.contain | match self.content_visibility {
++            ContentVisibility::Visible => Contain::NONE,
++            ContentVisibility::Auto => content,
++            ContentVisibility::Hidden => content | Contain::SIZE,
++        }
++    }
++
+     /// Whether there is a non-default transform or perspective style set
+     pub fn has_transform_or_perspective(&self) -> bool {
+         !self.transform.0.is_empty()
 diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 --- a/servo/selector_parser.rs	2026-11-11 19:55:57
 +++ b/servo/selector_parser.rs	2026-11-21 01:58:20
@@ -5714,13 +5732,11 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
      fn default_namespace(&self) -> Option<Namespace> {
 diff -ruN a/style_adjuster.rs b/style_adjuster.rs
 --- a/style_adjuster.rs	2026-11-11 19:55:57
-+++ b/style_adjuster.rs	2026-11-20 11:16:55
-@@ -184,6 +184,84 @@
-         self.style
-             .mutate_box()
++++ b/style_adjuster.rs	2026-11-21 13:53:50
+@@ -186,6 +186,84 @@
              .set_adjusted_display(new_display, false);
-+    }
-+
+     }
+ 
 +    /// pyro: `display: -webkit-box` in the servo engine, which has no legacy box layout. With
 +    /// `-webkit-box-orient: vertical` and a line clamp the box is a block container whose lines
 +    /// are clamped, as in Blink and Gecko (above); the style keeps that in
@@ -5797,16 +5813,15 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
 +        pos.set_flex_grow(flex);
 +        pos.set_flex_shrink(flex);
 +        pos.set_align_self(SelfAlignment::auto());
-     }
- 
-     /// CSS 2.1 section 9.7:
-@@ -403,7 +481,52 @@
-             } else {
-                 self.style.mutate_box().set_display(Display::InlineBlock);
-             }
-+        }
 +    }
 +
+     /// CSS 2.1 section 9.7:
+     ///
+     ///    If 'position' has the value 'absolute' or 'fixed', [...] the computed
+@@ -406,6 +484,51 @@
+         }
+     }
+ 
 +    /// pyro: `text-combine-upright: all` on an inline box in a vertical (not sideways) line: its
 +    /// text is combined into one upright 1em square (CSS Writing Modes 4 § 9.1.1). Laid out as an
 +    /// inline-block of `horizontal-tb` writing (`adjust_for_writing_mode` below makes it one), 1em
@@ -5833,7 +5848,7 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
 +            crate::values::computed::TextEmphasisStyle::None
 +        ) {
 +            return;
-         }
++        }
 +        let em = self.style.get_font().slow_clone_font_size().computed_size();
 +        // pyro: the box of combined text (blitz-dom: no letter spacing, width variants, one glued
 +        // letter in the line).
@@ -5850,9 +5865,11 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
 +        self.style
 +            .mutate_font()
 +            .set_line_height(crate::values::computed::LineHeight::Length(NonNegative(Length::new(em.px()))));
-     }
- 
++    }
++
      /// CSS overflow-x and overflow-y require some fixup as well in some cases.
+     /// https://drafts.csswg.org/css-overflow-3/#overflow-properties
+     /// "Computed value: as specified, except with `visible`/`clip` computing to
 @@ -419,9 +542,14 @@
          }
  
@@ -5870,7 +5887,7 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
          }
      }
  
-@@ -821,6 +949,95 @@
+@@ -821,6 +949,75 @@
      /// for web-compat reasons.
      /// We intentionally don't check 'list-style-image' below since we want it to use
      /// the same font as its fallback ('list-style-type') in case it fails to load.
@@ -5924,26 +5941,6 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
 +        border.set_border_bottom_left_radius(BorderCornerRadius::zero());
 +    }
 +
-+    /// pyro: `content-visibility: auto` turns on layout, style and paint containment (CSS
-+    /// Contain 2 § 4.1). Every element is taken as relevant to the user: no size containment, its
-+    /// contents laid out and painted. `hidden` is not supported (no containment, contents shown,
-+    /// as before servo parsed the property). pyro, round 4 lane S4: `hidden` adds size containment
-+    /// as well, and blitz-dom skips its contents.
-+    #[cfg(feature = "servo")]
-+    fn adjust_for_content_visibility(&mut self) {
-+        use crate::values::specified::box_::{Contain, ContentVisibility};
-+        let box_style = self.style.get_box();
-+        let contain = match box_style.slow_clone_content_visibility() {
-+            ContentVisibility::Auto => Contain::LAYOUT | Contain::STYLE | Contain::PAINT,
-+            // pyro: `hidden` skips the element's contents (blitz-dom builds no boxes for them) and
-+            // turns on size containment besides (CSS Contain 2 § 4.1).
-+            ContentVisibility::Hidden => Contain::SIZE | Contain::LAYOUT | Contain::STYLE | Contain::PAINT,
-+            _ => return,
-+        };
-+        let contain = box_style.slow_clone_contain() | contain;
-+        self.style.mutate_box().set_contain(contain);
-+    }
-+
 +    /// pyro: a `::scroll-marker-group` contains its layout always, and its size unless it is
 +    /// absolutely positioned, whatever its `contain` says (CSS Overflow 5 recommends the UA rule
 +    /// `::scroll-marker-group { contain: size !important }`; Chromium contains its layout too and
@@ -5966,13 +5963,10 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
      #[cfg(feature = "gecko")]
      fn adjust_for_marker_pseudo(&mut self, author_or_user_specified_properties: &LonghandIdSet) {
          use crate::values::computed::counters::Content;
-@@ -1029,7 +1246,32 @@
-             pos.set_align_self(flipped);
-         } else {
-             pos.set_justify_self(flipped);
-+        }
-+    }
-+
+@@ -1032,6 +1229,31 @@
+         }
+     }
+ 
 +    /// pyro: `backface-visibility: hidden` on an element participating in a 3D rendering context
 +    /// (its layout parent `preserve-3d`) makes it the containing block of its absolutely and
 +    /// fixed positioned descendants, as in Chromium (WPT css-transforms
@@ -5990,16 +5984,18 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
 +            || box_style.will_change.bits.contains(WillChangeBits::FIXPOS_CB_NON_SVG)
 +        {
 +            return;
-         }
++        }
 +        let display = *box_style.get_display();
 +        if display.is_none() || display.is_contents() || display.is_inline_flow() {
 +            return;
 +        }
 +        self.style.mutate_box().will_change.bits |= WillChangeBits::FIXPOS_CB_NON_SVG;
-     }
- 
++    }
++
      /// Adjusts the style to account for various fixups that don't fit naturally into the cascade.
-@@ -1064,7 +1306,20 @@
+     #[allow(unused_variables)]
+     pub fn adjust<E>(
+@@ -1064,7 +1286,20 @@
          //     "Should always have an element around for non-pseudo styles"
          // );
  
@@ -6020,7 +6016,7 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
          self.adjust_for_prohibited_display_contents(element);
          #[cfg(feature = "gecko")]
          {
-@@ -1084,12 +1339,21 @@
+@@ -1084,12 +1319,20 @@
          }
          self.adjust_for_justify_items();
          self.adjust_for_table_text_align();
@@ -6034,7 +6030,6 @@ diff -ruN a/style_adjuster.rs b/style_adjuster.rs
          self.adjust_for_marker_pseudo(author_or_user_specified_properties);
 +        #[cfg(feature = "servo")]
 +        {
-+            self.adjust_for_content_visibility();
 +            self.adjust_for_scroll_marker_group();
 +            self.adjust_for_author_styled_button(element, author_or_user_specified_properties);
 +            self.adjust_for_backface_in_3d_context(layout_parent_style);
@@ -9907,7 +9902,7 @@ diff -ruN a/values/specified/border.rs b/values/specified/border.rs
      #[inline]
 diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 --- a/values/specified/box.rs	2026-11-11 19:55:57
-+++ b/values/specified/box.rs	2026-11-21 10:07:53
++++ b/values/specified/box.rs	2026-11-21 13:54:58
 @@ -15,7 +15,7 @@
      GenericLineClamp, GenericOverflowClipMargin, GenericPerspective, GenericScrollbarInset,
      MaxLines, OverflowClipMarginBox,
@@ -10129,7 +10124,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      ToShmem,
      ToComputedValue,
      ToResolvedValue,
-@@ -801,31 +834,98 @@
+@@ -801,29 +834,96 @@
      /// Use the text-under baseline.
      TextBottom,
      /// Use the alphabetic baseline.
@@ -10201,8 +10196,8 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +            other => other,
 +        }
 +    }
- }
- 
++}
++
 +impl ToCss for AlignmentBaseline {
 +    fn to_css<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result
 +    where
@@ -10228,11 +10223,9 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +            Self::VerticalAlignTextBottom | Self::VerticalAlignMiddle | Self::VerticalAlignTextTop => unreachable!(),
 +        })
 +    }
-+}
-+
+ }
+ 
  /// A specified value for the `baseline-source` property.
- /// https://drafts.csswg.org/css-inline-3/#baseline-source
- #[derive(
 @@ -1336,11 +1436,17 @@
      ToShmem,
      ToTyped,
@@ -10281,7 +10274,15 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      #[inline]
      /// Get default `touch-action` as `auto`
      pub fn auto() -> TouchAction {
-@@ -1381,7 +1502,7 @@
+@@ -1373,7 +1494,6 @@
+     Parse,
+     PartialEq,
+     SpecifiedValueInfo,
+-    ToComputedValue,
+     ToCss,
+     ToResolvedValue,
+     ToShmem,
+@@ -1381,7 +1501,7 @@
  )]
  #[css(bitflags(
      single = "none,strict,content",
@@ -10290,7 +10291,34 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      overlapping_bits
  ))]
  #[repr(C)]
-@@ -1593,7 +1714,7 @@
+@@ -1407,7 +1527,26 @@
+         const CONTENT = 1 << 6 | Contain::LAYOUT.bits() | Contain::STYLE.bits() | Contain::PAINT.bits();
+         /// `strict` variant, turns on all types of containment
+         const STRICT = 1 << 7 | Contain::LAYOUT.bits() | Contain::STYLE.bits() | Contain::PAINT.bits() | Contain::SIZE.bits();
++    }
++}
++
++impl crate::values::computed::ToComputedValue for Contain {
++    type ComputedValue = Self;
++
++    fn to_computed_value(&self, _: &crate::values::computed::Context) -> Self {
++        let content = Self::LAYOUT | Self::STYLE | Self::PAINT;
++        if *self == content {
++            Self::CONTENT
++        } else if *self == content | Self::SIZE {
++            Self::STRICT
++        } else {
++            *self
++        }
+     }
++
++    fn from_computed_value(value: &Self) -> Self {
++        *value
++    }
+ }
+ 
+ impl Parse for ContainIntrinsicSize {
+@@ -1593,7 +1732,7 @@
  )]
  #[css(bitflags(
      single = "normal",
@@ -10299,7 +10327,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      validate_mixed = "Self::validate_mixed_flags",
  ))]
  #[repr(C)]
-@@ -1614,6 +1735,8 @@
+@@ -1614,6 +1753,8 @@
          const SIZE = 1 << 1;
          /// The `scroll-state` variant.
          const SCROLL_STATE = 1 << 2;
@@ -10308,7 +10336,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      }
  }
  
-@@ -2013,8 +2136,12 @@
+@@ -2013,8 +2154,12 @@
      Auto,
      Page,
      Avoid,
@@ -10321,7 +10349,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
  }
  
  impl BreakBetween {
-@@ -2030,7 +2157,9 @@
+@@ -2030,7 +2175,9 @@
              BreakBetween::Auto | BreakBetween::Avoid | BreakBetween::Left | BreakBetween::Right => {
                  Ok(break_value)
              },
@@ -10332,7 +10360,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
          }
      }
  
-@@ -2047,7 +2176,7 @@
+@@ -2047,7 +2194,7 @@
                  self.to_css(dest)
              },
              BreakBetween::Page => dest.write_str("always"),
@@ -10341,7 +10369,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
          }
      }
  }
-@@ -2291,6 +2420,15 @@
+@@ -2291,6 +2438,15 @@
  pub enum ScrollBehavior {
      Auto,
      Smooth,
@@ -10357,10 +10385,12 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
  }
  
  /// https://drafts.fxtf.org/compositing/#isolation
-@@ -2320,6 +2458,15 @@
+@@ -2318,6 +2474,15 @@
+ pub enum Isolation {
+     Auto,
      Isolate,
- }
- 
++}
++
 +/// Which view transition names are scoped to this element.
 +#[allow(missing_docs)]
 +#[derive(Clone, Copy, Debug, Eq, Hash, MallocSizeOf, Parse, PartialEq, SpecifiedValueInfo, ToComputedValue, ToCss, ToResolvedValue, ToShmem, ToTyped)]
@@ -10368,12 +10398,10 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +pub enum ViewTransitionScope {
 +    Auto,
 +    All,
-+}
-+
+ }
+ 
  /// https://drafts.csswg.org/css-transforms/#backface-visibility-property
- #[allow(missing_docs)]
- #[derive(
-@@ -2488,6 +2635,15 @@
+@@ -2488,6 +2653,15 @@
      None,
  }
  
@@ -10389,10 +10417,11 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
  /// Nonstandard (https://developer.mozilla.org/en-US/docs/Web/CSS/box-align)
  #[allow(missing_docs)]
  #[derive(
-@@ -2629,3 +2785,90 @@
+@@ -2628,4 +2802,91 @@
+ pub enum DirectionProperty {
      Ltr,
      Rtl,
- }
++}
 +
 +/// pyro: the `scroll-marker-group` property (CSS Overflow 5): whether a scroll container
 +/// generates a `::scroll-marker-group` box, and on which side of its own box it goes.
@@ -10434,7 +10463,7 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +        /// The markers are tabs (the focus model).
 +        const TABS = 1 << 3;
 +    }
-+}
+ }
 +
 +impl ScrollMarkerGroup {
 +    fn validate_mixed_flags(&self) -> bool {

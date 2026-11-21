@@ -1494,7 +1494,6 @@ impl TouchAction {
     Parse,
     PartialEq,
     SpecifiedValueInfo,
-    ToComputedValue,
     ToCss,
     ToResolvedValue,
     ToShmem,
@@ -1528,6 +1527,25 @@ bitflags! {
         const CONTENT = 1 << 6 | Contain::LAYOUT.bits() | Contain::STYLE.bits() | Contain::PAINT.bits();
         /// `strict` variant, turns on all types of containment
         const STRICT = 1 << 7 | Contain::LAYOUT.bits() | Contain::STYLE.bits() | Contain::PAINT.bits() | Contain::SIZE.bits();
+    }
+}
+
+impl crate::values::computed::ToComputedValue for Contain {
+    type ComputedValue = Self;
+
+    fn to_computed_value(&self, _: &crate::values::computed::Context) -> Self {
+        let content = Self::LAYOUT | Self::STYLE | Self::PAINT;
+        if *self == content {
+            Self::CONTENT
+        } else if *self == content | Self::SIZE {
+            Self::STRICT
+        } else {
+            *self
+        }
+    }
+
+    fn from_computed_value(value: &Self) -> Self {
+        *value
     }
 }
 

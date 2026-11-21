@@ -303,7 +303,7 @@ fn is_scroll_container(style: &ComputedValues) -> bool {
 fn contains_out_of_flow(style: &ComputedValues, fixed: bool) -> bool {
     use style::values::specified::box_::Contain;
     let b = style.get_box();
-    let contain = b.slow_clone_contain();
+    let contain = b.used_containment();
     (!fixed && b.slow_clone_position() != style::computed_values::position::T::Static)
         || !b.transform.0.is_empty()
         || b.slow_clone_perspective() != style::values::computed::Perspective::None

@@ -1272,7 +1272,7 @@ impl LayoutPassState<'_> {
                 && !style
                     .flags
                     .intersects(StyleFlags::IS_REPLACED | StyleFlags::IS_BUTTON | StyleFlags::IS_BUTTON_INPUT);
-            let contain_layout = box_style.slow_clone_contain().contains(Contain::LAYOUT);
+            let contain_layout = box_style.used_containment().contains(Contain::LAYOUT);
             let exports_baseline = !(contain_layout
                 || (baseline_source == BaselineSource::Auto && is_block_axis_scroll_container));
             drop(style);

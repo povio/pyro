@@ -2207,7 +2207,7 @@ fn containing_block_claims(
                 | WillChangeBits::FIXPOS_CB_NON_SVG
                 | WillChangeBits::CONTAIN,
         )
-        || b.contain.intersects(Contain::LAYOUT | Contain::PAINT)
+        || b.used_containment().intersects(Contain::LAYOUT | Contain::PAINT)
         || filtered;
     (fixed, absolute_only)
 }

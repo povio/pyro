@@ -3220,7 +3220,7 @@ impl Breaks {
                 monolithic = replaced
                     || atomic_inline
                     || writes_otherwise
-                    || b.slow_clone_contain().contains(Contain::SIZE)
+                    || b.used_containment().contains(Contain::SIZE)
                     || b.slow_clone_container_type().contains(ContainerType::SIZE);
                 // An inline-level box is in a line, which already holds it.
                 if avoids || (monolithic && !atomic_inline) {

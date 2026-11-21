@@ -516,7 +516,7 @@ fn walk_element(doc: &BaseDocument, node_id: NodeId, parent: NodeId, walk: &mut 
     // its `::before` and `::after` included (CSS Contain 2 § 3.3); the element's own counter
     // properties (above) are outside it.
     let contains_style = !display.is_contents()
-        && (style.get_box().slow_clone_contain().contains(style::values::specified::box_::Contain::STYLE)
+        && (style.get_box().used_containment().contains(style::values::specified::box_::Contain::STYLE)
             || style.get_box().container_type.contains(style::values::specified::ContainerType::ANCHORED));
     let saved_quote_depth = walk.quote_depth;
     if contains_style {
@@ -728,7 +728,7 @@ fn scan_reversed_element(
         // pyro: style containment keeps its descendants' counter changes in its subtree
         // (CSS Contain 2 § 3.3; WPT css-contain `contain-style-ol-ordinal-reversed`).
         let contains_style = !display.is_contents()
-            && (style.get_box().slow_clone_contain().contains(style::values::specified::box_::Contain::STYLE)
+            && (style.get_box().used_containment().contains(style::values::specified::box_::Contain::STYLE)
                 || style.get_box().container_type.contains(style::values::specified::ContainerType::ANCHORED));
         if contains_style {
             return false;

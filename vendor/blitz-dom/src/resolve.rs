@@ -1673,7 +1673,7 @@ impl BaseDocument {
             // 2 § 3.2, § 3.4; Taffy's `compute_scrollable_overflow_contribution` agrees). WPT
             // css-contain `contain-layout-ink-overflow-*`.
             use style::values::specified::box_::Contain;
-            let contain = style.get_box().slow_clone_contain();
+            let contain = style.get_box().used_containment();
             // pyro: paint containment alone clips as `overflow: clip` does, at its
             // `overflow-clip-margin` (below; WPT css-overflow `overflow-clip-margin-005`).
             let inline_flow = {

@@ -217,7 +217,8 @@ diff --git a/packages/stylo_taffy/src/convert.rs b/packages/stylo_taffy/src/conv
 +    // keep the containing block they had; WPT css-contain `contain-*-ignored-cases-ib-split-001`),
 +    // nor an internal table box other than a cell.
      if box_style
-         .contain
+-        .contain
++        .used_containment()
          .intersects(Contain::LAYOUT | Contain::PAINT)
 +        && {
 +            use style::values::specified::box_::{DisplayInside, DisplayOutside};
@@ -715,7 +716,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
          let box_styles = self.style.get_box();
          let overflow = taffy::Point {
              x: convert::overflow(box_styles.overflow_x),
-@@ -218,9 +285,47 @@
+@@ -218,15 +285,53 @@
          self.layout_wm().logical_point(overflow)
      }
  
@@ -761,6 +762,13 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
 +            rtl: !own_wm.is_bidi_ltr(),
 +        };
 +        self.rect(inputs.layout_edges(self.scrollbar_size_limit))
+     }
+ 
+     #[inline]
+     fn contain(&self) -> taffy::Contain {
+         let box_styles = self.style.get_box();
+-        convert::contain(box_styles.contain, self.effective_display())
++        convert::contain(box_styles.used_containment(), self.effective_display())
      }
  
      #[inline]
@@ -1224,7 +1232,7 @@ diff --git a/packages/stylo_taffy/src/wrapper.rs b/packages/stylo_taffy/src/wrap
 +        if matches!(self.style.clone_position(), stylo::Position::Absolute | stylo::Position::Fixed) {
 +            return false;
 +        }
-+        if self.style.get_box().contain.intersects(Contain::LAYOUT | Contain::PAINT) {
++        if self.style.get_box().used_containment().intersects(Contain::LAYOUT | Contain::PAINT) {
 +            return false;
 +        }
 +        // A size container has layout containment too (css-contain-3 §2)

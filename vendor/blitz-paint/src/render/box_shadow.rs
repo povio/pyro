@@ -68,7 +68,7 @@ pub(super) fn overflow_clip_path(frame: &CssBox, style: &style::properties::Comp
     let box_style = style.get_box();
     let (visible_x, visible_y) = (box_style.overflow_x == Overflow::Visible, box_style.overflow_y == Overflow::Visible);
     // Paint containment clips as `overflow: clip` does, on both axes.
-    let contains = box_style.contain.contains(style::values::computed::Contain::PAINT);
+    let contains = box_style.used_containment().contains(style::values::computed::Contain::PAINT);
     let (clip_x, clip_y) = (
         box_style.overflow_x == Overflow::Clip || contains && visible_x,
         box_style.overflow_y == Overflow::Clip || contains && visible_y,
@@ -231,7 +231,7 @@ impl ElementCx<'_, '_> {
             let b = style.get_box();
             b.overflow_x == Overflow::Visible && b.overflow_y == Overflow::Visible
         };
-        let contains_paint = style.get_box().contain.contains(style::values::computed::Contain::PAINT);
+        let contains_paint = style.get_box().used_containment().contains(style::values::computed::Contain::PAINT);
         if let blitz_dom::node::SpecialElementData::TableRoot(table) = &self.element.special_data
             && visible
             && contains_paint

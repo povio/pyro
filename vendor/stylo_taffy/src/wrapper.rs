@@ -331,7 +331,7 @@ impl<T: Deref<Target = ComputedValues>> taffy::CoreStyle for TaffyStyloStyle<T> 
     #[inline]
     fn contain(&self) -> taffy::Contain {
         let box_styles = self.style.get_box();
-        convert::contain(box_styles.contain, self.effective_display())
+        convert::contain(box_styles.used_containment(), self.effective_display())
     }
 
     #[inline]
@@ -1341,7 +1341,7 @@ impl<T: Deref<Target = ComputedValues>> taffy::GridItemStyle for TaffyStyloStyle
         if matches!(self.style.clone_position(), stylo::Position::Absolute | stylo::Position::Fixed) {
             return false;
         }
-        if self.style.get_box().contain.intersects(Contain::LAYOUT | Contain::PAINT) {
+        if self.style.get_box().used_containment().intersects(Contain::LAYOUT | Contain::PAINT) {
             return false;
         }
         // A size container has layout containment too (css-contain-3 §2)

@@ -3665,7 +3665,7 @@ pub(crate) fn effective_size_containment(styles: &style::properties::ComputedVal
     use style::values::computed::Contain;
     use style::values::specified::box_::ContainerType;
     let box_style = styles.get_box();
-    let mut contain = box_style.contain;
+    let mut contain = box_style.used_containment();
     if box_style.container_type.intersects(ContainerType::SIZE) {
         contain |= Contain::INLINE_SIZE | Contain::BLOCK_SIZE;
     } else if box_style.container_type.intersects(ContainerType::INLINE_SIZE) {

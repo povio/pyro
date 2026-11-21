@@ -769,7 +769,7 @@ pub(crate) fn compute_layout_damage(old: &ComputedValues, new: &ComputedValues) 
         if old_box.display != new_box.display
             || old_box.float != new_box.float
             || old_box.position != new_box.position
-            || old_box.contain != new_box.contain
+            || old_box.used_containment() != new_box.used_containment()
         {
             return true;
         }
