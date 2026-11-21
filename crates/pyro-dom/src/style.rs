@@ -1834,7 +1834,7 @@ impl StyleEngine {
     pub fn sheet_revision(&self, dom: &Dom, owner: NodeId) -> Option<u64> {
         let sheet = self.sheets.iter().find(|s| s.owner == owner)?;
         // A disabled sheet's text is empty: its own identity, its revision of the toggle.
-        if Self::is_off(sheet, dom) {
+        if Self::is_off(sheet, dom) || link_not_stylesheet(dom, owner) {
             return Some((sheet.revision << 2) | 2);
         }
         Some(match sheet.supplied_text(dom) {

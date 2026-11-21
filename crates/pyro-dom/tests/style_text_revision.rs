@@ -115,6 +115,25 @@ fn a_streaming_chunk_that_splits_a_style_body_moves_the_revision() {
 }
 
 #[test]
+fn link_sheet_revision_tracks_whether_the_loaded_text_applies() {
+    let (dom, document) = doc("<link id=sheet rel=stylesheet href='sheet.css'>");
+    let link = find(&dom.borrow(), document, "#sheet");
+    let mut style = StyleEngine::new(document);
+    style.set_sheet_text(link, "p{}");
+    let enabled = style.sheet_revision(&dom.borrow(), link);
+    for (attribute, value) in [("disabled", ""), ("rel", "icon")] {
+        dom.borrow_mut().set_attribute(link, attribute, value).unwrap();
+        assert_eq!(style.sheet_text(&dom.borrow(), link), Some(""));
+        assert_ne!(style.sheet_revision(&dom.borrow(), link), enabled);
+        assert_eq!(style.sheet_own_text(link), Some("p{}"));
+        dom.borrow_mut().remove_attribute(link, attribute).unwrap();
+        dom.borrow_mut().set_attribute(link, "rel", "stylesheet").unwrap();
+        assert_eq!(style.sheet_text(&dom.borrow(), link), Some("p{}"));
+        assert_eq!(style.sheet_revision(&dom.borrow(), link), enabled);
+    }
+}
+
+#[test]
 fn the_sheets_key_follows_the_style_text_and_connected_owners() {
     let (dom, d) = doc("<head><style id=s>p{}</style></head><body id=b></body>");
     let s = find(&dom.borrow(), d, "#s");
