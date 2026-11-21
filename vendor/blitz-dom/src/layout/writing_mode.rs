@@ -131,6 +131,7 @@ impl LayoutPassState<'_> {
         let mut output = if node_wm.is_vertical() == parent_wm.is_vertical() {
             let mut output = self.compute_child_layout_in_current_wm(node_id, inputs, block_ctx);
             if node_wm.is_vertical() && node_wm.is_vertical_lr() != parent_wm.is_vertical_lr() {
+                core::mem::swap(&mut output.top_margin, &mut output.bottom_margin);
                 // Parallel writing modes with opposite block directions (`vertical-lr` in `vertical-rl`
                 // or vice versa) share Taffy's axes but run the block axis the other way.
                 let extent = output.size.height;
