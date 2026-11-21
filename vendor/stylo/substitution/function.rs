@@ -19,7 +19,7 @@ use servo_arc::Arc;
 use std::cell::RefCell;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::rc::Rc;
-use style_traits::ParseError;
+use style_traits::{ParseError, StyleParseErrorKind};
 
 /// A positional invocation with each argument retained as a token range.
 #[derive(Clone, Debug, MallocSizeOf, PartialEq, ToShmem)]
@@ -210,7 +210,17 @@ impl FunctionCall {
         let mut arguments = Vec::new();
         if !input.is_exhausted() {
             loop {
+                let start = input.state();
+                if input.expect_ident().is_ok_and(|ident| ident.starts_with("--"))
+                    && input.expect_colon().is_ok()
+                {
+                    return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
+                }
+                input.reset(&start);
                 let (arg, _) = ArbitraryDeclarationValue::parse_free_form(input, cx, Delimiter::Comma, false)?;
+                if arg.is_empty() {
+                    return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
+                }
                 arguments.push(arg);
                 if input.is_exhausted() {
                     break;

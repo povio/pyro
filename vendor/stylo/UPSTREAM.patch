@@ -8771,8 +8771,8 @@ diff -ruN a/substitution/conditional.rs b/substitution/conditional.rs
 +}
 diff -ruN a/substitution/function.rs b/substitution/function.rs
 --- a/substitution/function.rs	1970-01-01 00:00:00.000000000 +0000
-+++ b/substitution/function.rs	2026-11-21 19:21:33
-@@ -0,0 +1,294 @@
++++ b/substitution/function.rs	2026-11-21 20:23:16
+@@ -0,0 +1,304 @@
 +/* This Source Code Form is subject to the terms of the Mozilla Public
 + * License, v. 2.0. If a copy of the MPL was not distributed with this
 + * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
@@ -8794,7 +8794,7 @@ diff -ruN a/substitution/function.rs b/substitution/function.rs
 +use std::cell::RefCell;
 +use std::hash::{DefaultHasher, Hash, Hasher};
 +use std::rc::Rc;
-+use style_traits::ParseError;
++use style_traits::{ParseError, StyleParseErrorKind};
 +
 +/// A positional invocation with each argument retained as a token range.
 +#[derive(Clone, Debug, MallocSizeOf, PartialEq, ToShmem)]
@@ -8985,7 +8985,17 @@ diff -ruN a/substitution/function.rs b/substitution/function.rs
 +        let mut arguments = Vec::new();
 +        if !input.is_exhausted() {
 +            loop {
++                let start = input.state();
++                if input.expect_ident().is_ok_and(|ident| ident.starts_with("--"))
++                    && input.expect_colon().is_ok()
++                {
++                    return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
++                }
++                input.reset(&start);
 +                let (arg, _) = ArbitraryDeclarationValue::parse_free_form(input, cx, Delimiter::Comma, false)?;
++                if arg.is_empty() {
++                    return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
++                }
 +                arguments.push(arg);
 +                if input.is_exhausted() {
 +                    break;
