@@ -1,0 +1,90 @@
+[
+  {
+    "url": "css/css-pseudo/events-on-pseudo-element-mutation.tentative.html",
+    "name": "CSS Test: event.pseudoTarget stability during DOM mutation/style changes",
+    "occurrence": 1,
+    "parent": "Fail",
+    "parentHarness": "OK",
+    "chrome": "Pass",
+    "candidate": "Fail",
+    "candidateHarness": "OK",
+    "pageStatus": "complete"
+  },
+  {
+    "url": "css/css-pseudo/events-on-pseudo-element-shadow-dom.html",
+    "name": "event.pseudoTarget is null when retargeted across shadow boundary",
+    "occurrence": 1,
+    "parent": "Fail",
+    "parentHarness": "OK",
+    "chrome": "Pass",
+    "candidate": "Pass",
+    "candidateHarness": "OK",
+    "pageStatus": "complete"
+  },
+  {
+    "url": "css/css-pseudo/events-on-pseudo-element-shadow-dom.html",
+    "name": "event.pseudoTarget is preserved when clicking host pseudo-element",
+    "occurrence": 1,
+    "parent": "Fail",
+    "parentHarness": "OK",
+    "chrome": "Pass",
+    "candidate": "Pass",
+    "candidateHarness": "OK",
+    "pageStatus": "complete"
+  },
+  {
+    "url": "css/css-pseudo/events-on-pseudo-element-shadow-dom.html",
+    "name": "event.pseudoTarget is null when clicking ::before::marker retargeted across shadow boundary",
+    "occurrence": 1,
+    "parent": "Fail",
+    "parentHarness": "OK",
+    "chrome": "Pass",
+    "candidate": "Pass",
+    "candidateHarness": "OK",
+    "pageStatus": "complete"
+  },
+  {
+    "url": "css/css-pseudo/events-on-pseudo-element-shadow-dom.html",
+    "name": "event.pseudoTarget is preserved when clicking host ::before::marker pseudo-element",
+    "occurrence": 1,
+    "parent": "Fail",
+    "parentHarness": "OK",
+    "chrome": "Pass",
+    "candidate": "Pass",
+    "candidateHarness": "OK",
+    "pageStatus": "complete"
+  },
+  {
+    "url": "css/css-pseudo/events-on-pseudo-element-shadow-dom.html",
+    "name": "event.pseudoTarget is null when clicking ::after::marker retargeted across shadow boundary",
+    "occurrence": 1,
+    "parent": "Fail",
+    "parentHarness": "OK",
+    "chrome": "Pass",
+    "candidate": "Pass",
+    "candidateHarness": "OK",
+    "pageStatus": "complete"
+  },
+  {
+    "url": "css/css-pseudo/events-on-pseudo-element-shadow-dom.html",
+    "name": "event.pseudoTarget is preserved when clicking host ::after::marker pseudo-element",
+    "occurrence": 1,
+    "parent": "Fail",
+    "parentHarness": "OK",
+    "chrome": "Pass",
+    "candidate": "Pass",
+    "candidateHarness": "OK",
+    "pageStatus": "complete"
+  },
+  {
+    "url": "css/css-pseudo/events-on-pseudo-element.tentative.html",
+    "name": "CSS Test: event.pseudoTarget tests with different events ",
+    "occurrence": 1,
+    "parent": "Timeout",
+    "parentHarness": "Timeout",
+    "chrome": "Pass",
+    "candidate": "Timeout",
+    "candidateHarness": "Timeout",
+    "pageStatus": "timeout"
+  }
+]

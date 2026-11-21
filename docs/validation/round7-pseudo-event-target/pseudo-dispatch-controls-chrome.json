@@ -1,0 +1,120 @@
+{
+  "label": "chrome",
+  "bin": "/Users/xban1x/Library/Caches/lightningpanda/round6-reference-158/census/launch-158",
+  "version": {
+    "Browser": "Chrome/158.0.8127.37",
+    "File-Path-Style": "posix",
+    "Protocol-Version": "1.3",
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/158.0.0.0 Safari/537.36",
+    "V8-Version": "15.8.62.31",
+    "WebKit-Version": "537.36 (@b8c2be851f62f6a394ec57955d7f31335d7cb6d4)",
+    "webSocketDebuggerUrl": "ws://127.0.0.1:60208/devtools/browser/ed01bc30-2ea3-430d-b00e-68d0e4dddac9"
+  },
+  "fixtureSHA256": "89c88e1b5fbf30bfc4f1238e0efd78a843941e2875368841a97040c0c9597fd1",
+  "result": {
+    "closed": {
+      "records": [
+        {
+          "where": "owner",
+          "target": "owner",
+          "pseudo": "::before",
+          "matchesBefore": true
+        },
+        {
+          "where": "outer",
+          "target": "outer",
+          "pseudo": "null",
+          "matchesBefore": false
+        },
+        {
+          "where": "document",
+          "target": "outer",
+          "pseudo": "null",
+          "matchesBefore": false
+        }
+      ],
+      "after": "null"
+    },
+    "nested": {
+      "records": [
+        {
+          "where": "owner",
+          "target": "owner",
+          "pseudo": "::before",
+          "matchesBefore": true
+        },
+        {
+          "where": "middle",
+          "target": "middle",
+          "pseudo": "null",
+          "matchesBefore": false
+        },
+        {
+          "where": "outer",
+          "target": "outer",
+          "pseudo": "null",
+          "matchesBefore": false
+        },
+        {
+          "where": "document",
+          "target": "outer",
+          "pseudo": "null",
+          "matchesBefore": false
+        }
+      ],
+      "after": "null"
+    },
+    "ordinary": {
+      "records": [
+        {
+          "where": "owner",
+          "target": "owner",
+          "pseudo": "null",
+          "matchesBefore": false
+        },
+        {
+          "where": "document",
+          "target": "owner",
+          "pseudo": "null",
+          "matchesBefore": false
+        }
+      ],
+      "after": "null"
+    },
+    "owner": {
+      "records": [
+        {
+          "where": "owner",
+          "target": "owner",
+          "pseudo": "::before",
+          "matchesBefore": true
+        },
+        {
+          "where": "document",
+          "target": "owner",
+          "pseudo": "::before",
+          "matchesBefore": true
+        }
+      ],
+      "after": "null"
+    },
+    "mismatch": {
+      "records": [
+        {
+          "where": "owner",
+          "target": "owner",
+          "pseudo": "null",
+          "matchesBefore": false
+        },
+        {
+          "where": "document",
+          "target": "owner",
+          "pseudo": "null",
+          "matchesBefore": false
+        }
+      ],
+      "after": "null"
+    }
+  },
+  "utc": "2026-11-21T23:16:52.383Z"
+}

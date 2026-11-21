@@ -2033,8 +2033,12 @@ fn fire_mouse(
     ty: &str,
     m: &MouseInput,
     cancelable: bool,
+    hit: Option<pyro_dom::geometry::GeneratedHit>,
 ) -> bool {
-    crate::target::unheard(page, ty) || fire(page, target, &mouse_event(page, iface, ty, m, cancelable))
+    if crate::target::unheard(page, ty) { return true; }
+    let ev = mouse_event(page, iface, ty, m, cancelable);
+    ev.fields.borrow_mut().pseudo_hit = hit.map(|hit| (target, hit));
+    fire(page, target, &ev)
 }
 
 /// The hit-test target at a viewport point. With `root_fallback`, empty
@@ -2390,6 +2394,11 @@ fn dispatch_mouse_inner(
         _ => None,
     };
     let target = captured.unwrap_or(hit);
+    let pseudo = if captured.is_none() {
+        let dom = page.dom.borrow();
+        page.layout().synced_geometry_source(&dom).and_then(|geometry|
+            geometry.generated_hit(pyro_dom::snapshot::render_key(target), m.x, m.y))
+    } else { None };
     let Some(tkey) = key_of(page, target) else { return Err("stale target".into()) };
     // A press handler may open an overlay beneath a stationary pointer.
     // Reconcile boundaries before the next pointer event, including release:
@@ -2404,10 +2413,10 @@ fn dispatch_mouse_inner(
     match kind {
         MouseKind::Moved => {
             if touch.is_none() {
-                fire_mouse(page, tkey, EventInterface::PointerEvent, "pointermove", m, true);
+                fire_mouse(page, tkey, EventInterface::PointerEvent, "pointermove", m, true, pseudo);
             }
             if !(page.compat_mouse_suppressed.get() && m.buttons != 0) {
-                fire_mouse(page, tkey, EventInterface::MouseEvent, "mousemove", m, true);
+                fire_mouse(page, tkey, EventInterface::MouseEvent, "mousemove", m, true, pseudo);
             }
             if m.buttons & 1 != 0 {
                 text_select_move(page, target, m);
@@ -2428,10 +2437,11 @@ fn dispatch_mouse_inner(
             if m.button == MouseButton::Left {
                 set_active(page, page.document(), Some(target));
             }
-            let pd = touch.is_some() || fire_mouse(page, tkey, EventInterface::PointerEvent, "pointerdown", m, true);
-            let md = !pd || fire_mouse(page, tkey, EventInterface::MouseEvent, "mousedown", m, true);
+            let pd = touch.is_some() || fire_mouse(page, tkey, EventInterface::PointerEvent, "pointerdown", m, true, pseudo);
+            let md = !pd || fire_mouse(page, tkey, EventInterface::MouseEvent, "mousedown", m, true, pseudo);
             page.compat_mouse_suppressed.set(!pd);
             page.set_press_target(Some(target));
+            page.pressed_pseudo.set(pseudo);
             note_buttons(page, m);
             let place_caret = m.button == MouseButton::Left && pd && md;
             // A canceled mousedown prevents dragging, as in Chrome.
@@ -2503,7 +2513,7 @@ fn dispatch_mouse_inner(
                 set_active(page, page.document(), None);
             }
             if touch.is_none() {
-                fire_mouse(page, tkey, EventInterface::PointerEvent, "pointerup", m, true);
+                fire_mouse(page, tkey, EventInterface::PointerEvent, "pointerup", m, true, pseudo);
                 // Implicit release right after pointerup: lostpointercapture
                 // before the compatibility mouseup and the click.
                 let mut c = page.mouse_capture.get();
@@ -2516,9 +2526,10 @@ fn dispatch_mouse_inner(
             // Only a canceled pointerdown holds back the mouseup (an app's
             // pointerup handler that calls preventDefault does not).
             if !page.compat_mouse_suppressed.replace(false) {
-                fire_mouse(page, tkey, EventInterface::MouseEvent, "mouseup", m, true);
+                fire_mouse(page, tkey, EventInterface::MouseEvent, "mouseup", m, true, pseudo);
             }
             let pressed = page.take_press_target();
+            let pressed_pseudo = page.pressed_pseudo.take();
             // click targets the common ancestor of press and release targets;
             // under capture, the capture target (as in Chrome).
             let click_target = match pressed {
@@ -2533,6 +2544,10 @@ fn dispatch_mouse_inner(
                     _ => "auxclick",
                 };
                 let ev = mouse_event(page, EventInterface::PointerEvent, name, m, true);
+                let click_pseudo = if pressed == Some(ct) && ct == target {
+                    pressed_pseudo.and_then(|p| p.common(pseudo?))
+                } else { None };
+                ev.fields.borrow_mut().pseudo_hit = click_pseudo.map(|p| (tkey, p));
                 ev.state.borrow_mut().composed = true;
                 if let Some(id) = touch {
                     let mut f = ev.fields.borrow_mut();
@@ -2554,7 +2569,7 @@ fn dispatch_mouse_inner(
                 }
                 if name == "click" && m.click_count == 2 {
                     if let Some(k) = key_of(page, ct) {
-                        fire_mouse(page, k, EventInterface::MouseEvent, "dblclick", m, true);
+                        fire_mouse(page, k, EventInterface::MouseEvent, "dblclick", m, true, click_pseudo);
                     }
                 }
             }
@@ -2569,7 +2584,7 @@ fn dispatch_mouse_inner(
             // 571-615): each axis scrolls the nearest container that can still
             // move, else the viewport, then `scroll` fires as a task.
             let doc = page.document();
-            if !fire_mouse(page, tkey, EventInterface::WheelEvent, "wheel", m, true)
+            if !fire_mouse(page, tkey, EventInterface::WheelEvent, "wheel", m, true, pseudo)
                 || page.is_disposed()
                 || page.document() != doc
             {

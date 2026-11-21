@@ -102,6 +102,31 @@ pub struct ExternalGeometry {
     pub document_height: f64,
 }
 
+/// Generated box identified by the renderer for an already selected DOM owner.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum GeneratedHit { Before, After, Marker, BeforeMarker, AfterMarker }
+
+impl GeneratedHit {
+    /// The common pseudo ancestor for a press and release on the same DOM owner.
+    pub fn common(self, other: Self) -> Option<Self> {
+        use GeneratedHit::*;
+        match (self, other) {
+            (a, b) if a == b => Some(a),
+            (Before, BeforeMarker) | (BeforeMarker, Before) => Some(Before),
+            (After, AfterMarker) | (AfterMarker, After) => Some(After),
+            _ => None,
+        }
+    }
+
+    pub fn selectors(self) -> (&'static str, bool) {
+        use GeneratedHit::*;
+        match self {
+            Before => ("::before", false), BeforeMarker => ("::before", true),
+            After => ("::after", false), AfterMarker => ("::after", true), Marker => ("::marker", false),
+        }
+    }
+}
+
 /// A viewport point to hit-test ([`GeometrySource::hit_candidates`]).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct HitProbe {
@@ -822,6 +847,8 @@ pub trait GeometrySource {
     fn element_style(&self, _key: u64) -> Option<style::servo_arc::Arc<style::properties::ComputedValues>> {
         None
     }
+    fn generated_hit(&self, _owner: u64, _x: f64, _y: f64) -> Option<GeneratedHit> { None }
+
     fn css_animation_frames(&self, _key: u64, _name: &str) -> Option<Vec<crate::animation::CssKeyframeStep>> { None }
 
     /// Authored timing values whose computation needs the element or its pseudo-element.

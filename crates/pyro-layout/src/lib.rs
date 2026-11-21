@@ -1140,6 +1140,10 @@ impl GeometrySource for BlitzGeometry {
         Some(style)
     }
 
+    fn generated_hit(&self, owner: u64, x: f64, y: f64) -> Option<pyro_dom::geometry::GeneratedHit> {
+        RENDERER.with(|r| r.try_borrow_mut().ok()?.as_mut()?.generated_hit(self.page, owner, x, y))
+    }
+
     fn css_animation_frames(&self, key: u64, name: &str) -> Option<Vec<pyro_dom::animation::CssKeyframeStep>> {
         RENDERER.with(|r| r.try_borrow().ok()?.as_ref()?.css_animation_frames(self.page, key, name))
     }

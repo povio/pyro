@@ -319,6 +319,7 @@ pub struct PageDom {
     /// scheduled (`crate::input::update_hover_after_task`).
     pub(crate) hover_update_queued: Cell<bool>,
     press_target: Cell<Option<NodeId>>,
+    pub(crate) pressed_pseudo: Cell<Option<pyro_dom::geometry::GeneratedHit>>,
     /// The `pointerdown` of the press in progress was canceled: its
     /// compatibility mouse events (moves while down, `mouseup`) are not
     /// sent, as in Chromium; a canceled `pointerup` suppresses nothing.
@@ -960,6 +961,7 @@ impl PageDom {
             pointer: RefCell::new(None),
             hover_update_queued: Cell::new(false),
             press_target: Cell::new(None),
+            pressed_pseudo: Cell::new(None),
             compat_mouse_suppressed: Cell::new(false),
             drag_candidate: Cell::new(None),
             text_drag: Cell::new(None),
@@ -2802,6 +2804,7 @@ impl PageDom {
     }
     pub(crate) fn set_press_target(&self, el: Option<NodeId>) {
         self.press_target.set(el);
+        self.pressed_pseudo.set(None);
     }
     pub(crate) fn take_press_target(&self) -> Option<NodeId> {
         self.press_target.take().filter(|&p| self.dom.borrow().is_alive(p))
