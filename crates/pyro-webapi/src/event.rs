@@ -946,10 +946,18 @@ fn css_event_animation<'s>(s: &Scope<'s>, init: Option<Object<'s>>, transition: 
     Ok(Some(Persistent::new(s, value)))
 }
 
+fn css_event_elapsed_time(init: Option<Object<'_>>) -> JsResult<f64> {
+    let elapsed = get_num(init, "elapsedTime", 0.0)?;
+    if !elapsed.is_finite() {
+        return Err(JsError::Type("elapsedTime is not a finite number.".into()));
+    }
+    Ok(elapsed)
+}
+
 fn fill_animation<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
     f.css_animation = css_event_animation(s, init, false)?;
     f.animation_name = get_str(init, "animationName")?;
-    f.elapsed_time = get_num(init, "elapsedTime", 0.0)?;
+    f.elapsed_time = css_event_elapsed_time(init)?;
     f.pseudo_element = get_str(init, "pseudoElement")?;
     Ok(())
 }
@@ -957,7 +965,7 @@ fn fill_animation<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s
 fn fill_transition<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
     f.css_animation = css_event_animation(s, init, true)?;
     f.property_name = get_str(init, "propertyName")?;
-    f.elapsed_time = get_num(init, "elapsedTime", 0.0)?;
+    f.elapsed_time = css_event_elapsed_time(init)?;
     f.pseudo_element = get_str(init, "pseudoElement")?;
     Ok(())
 }
