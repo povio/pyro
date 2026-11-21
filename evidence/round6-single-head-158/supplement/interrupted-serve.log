@@ -1,0 +1,16 @@
+WARNING:root:Skipping HTTP/2 compatibility check as system is not using OpenSSL (found: LibreSSL 2.8.3)
+[2026-11-21 03:09:34,701 wss on port 50730] INFO - Create socket on: (<AddressFamily.AF_INET: 2>, <SocketKind.SOCK_STREAM: 1>, 6, '', ('127.0.0.1', 50730))
+[2026-11-21 03:09:34,701 wss on port 50730] INFO - Bind on: (<AddressFamily.AF_INET: 2>, <SocketKind.SOCK_STREAM: 1>, 6, '', ('127.0.0.1', 50730))
+[2026-11-21 03:09:34,701 wss on port 50730] INFO - Listen on: (<AddressFamily.AF_INET: 2>, <SocketKind.SOCK_STREAM: 1>, 6, '', ('127.0.0.1', 50730))
+[2026-11-21 03:09:34,708 ws on port 50729] INFO - Create socket on: (<AddressFamily.AF_INET: 2>, <SocketKind.SOCK_STREAM: 1>, 6, '', ('127.0.0.1', 50729))
+[2026-11-21 03:09:34,709 ws on port 50729] INFO - Bind on: (<AddressFamily.AF_INET: 2>, <SocketKind.SOCK_STREAM: 1>, 6, '', ('127.0.0.1', 50729))
+[2026-11-21 03:09:34,709 ws on port 50729] INFO - Listen on: (<AddressFamily.AF_INET: 2>, <SocketKind.SOCK_STREAM: 1>, 6, '', ('127.0.0.1', 50729))
+[2026-11-21 03:09:34,795 http-local on port 50725] INFO - Starting https server on https://127.0.0.1:50725
+[2026-11-21 03:09:34,798 http on port 50721] INFO - Starting https server on https://127.0.0.1:50721
+[2026-11-21 03:09:34,800 http on port 50722] INFO - Starting https server on https://127.0.0.1:50722
+[2026-11-21 03:09:34,804 http-public on port 50726] INFO - Starting https server on https://127.0.0.1:50726
+[2026-11-21 03:09:34,805 https-public on port 50728] INFO - Starting https server on https://127.0.0.1:50728
+[2026-11-21 03:09:34,805 https on port 50723] INFO - Starting https server on https://127.0.0.1:50723
+[2026-11-21 03:09:34,818 https on port 50724] INFO - Starting https server on https://127.0.0.1:50724
+[2026-11-21 03:09:34,820 https-local on port 50727] INFO - Starting https server on https://127.0.0.1:50727
+[2026-11-21 03:09:34,828 h2 on port 50731] INFO - Starting http2 server on https://127.0.0.1:50731

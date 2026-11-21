@@ -1,0 +1,108 @@
+{
+  "css/CSS2/floats/float-in-self-painting-inline.html": [
+    "ambiguous or explicit native/security fixture marker in source or path; metadata-only hold"
+  ],
+  "css/CSS2/floats/list-item-taller-than-opportunity-001.html": [
+    "ambiguous or explicit native/security fixture marker in source or path; metadata-only hold"
+  ],
+  "css/CSS2/floats/remove-float-in-first-line.html": [
+    "ambiguous or explicit native/security fixture marker in source or path; metadata-only hold"
+  ],
+  "css/CSS2/floats/remove-float-then-abspos-in-inline.html": [
+    "ambiguous or explicit native/security fixture marker in source or path; metadata-only hold"
+  ],
+  "css/CSS2/linebox/needs-layout-transform.html": [
+    "ambiguous or explicit native/security fixture marker in source or path; metadata-only hold"
+  ],
+  "css/CSS2/positioning/abspos-change-in-inline-block.html": [
+    "ambiguous or explicit native/security fixture marker in source or path; metadata-only hold"
+  ],
+  "css/CSS2/positioning/abspos-inline-container-in-inline-block.html": [
+    "ambiguous or explicit native/security fixture marker in source or path; metadata-only hold"
+  ],
+  "css/CSS2/positioning/detach-abspos-before-layout.html": [
+    "ambiguous or explicit native/security fixture marker in source or path; metadata-only hold"
+  ],
+  "css/css-cascade/inline-style-background.html": [
+    "ambiguous or explicit native/security fixture marker in source or path; metadata-only hold"
+  ],
+  "css/css-contain/contain-flexbox-outline.html": [
+    "ambiguous or explicit native/security fixture marker in source or path; metadata-only hold"
+  ],
+  "css/css-contain/content-visibility/content-visibility-069.html": [
+    "ambiguous or explicit native/security fixture marker in source or path; metadata-only hold"
+  ],
+  "css/css-display/display-contents-svg-tspan-child-display-changed.html": [
+    "ambiguous or explicit native/security fixture marker in source or path; metadata-only hold"
+  ],
+  "css/css-display/display-contents-svg-tspan-child-removed.html": [
+    "ambiguous or explicit native/security fixture marker in source or path; metadata-only hold"
+  ],
+  "css/css-display/display-contents-svg-tspan-child-text-inserted.html": [
+    "ambiguous or explicit native/security fixture marker in source or path; metadata-only hold"
+  ],
+  "css/css-flexbox/align-content-wrap-003.html": [
+    "ambiguous or explicit native/security fixture marker in source or path; metadata-only hold"
+  ],
+  "css/css-grid/parsing/grid-template-node-not-connected.html": [
+    "ambiguous or explicit native/security fixture marker in source or path; metadata-only hold"
+  ],
+  "css/css-grid/subgrid/nested-grid-subgrid-resize.html": [
+    "public Chrome stable: CRASH"
+  ],
+  "css/css-mixins/mixins/contents-rule.html": [
+    "ambiguous or explicit native/security fixture marker in source or path; metadata-only hold"
+  ],
+  "css/css-overflow/parsing/getComputedStyle-scroll-button.html": [
+    "ambiguous or explicit native/security fixture marker in source or path; metadata-only hold"
+  ],
+  "css/css-overflow/scroll-markers/column-scroll-marker-focus-001.html": [
+    "ambiguous or explicit native/security fixture marker in source or path; metadata-only hold"
+  ],
+  "css/css-overflow/scroll-markers/scroll-button-activation-without-scroller.html": [
+    "ambiguous or explicit native/security fixture marker in source or path; metadata-only hold"
+  ],
+  "css/css-overflow/scroll-markers/scroll-button-display-none.html": [
+    "ambiguous or explicit native/security fixture marker in source or path; metadata-only hold"
+  ],
+  "css/css-overflow/text-overflow-ellipsis-hyphen.html": [
+    "ambiguous or explicit native/security fixture marker in source or path; metadata-only hold"
+  ],
+  "css/css-pseudo/pseudo-element-removal.html": [
+    "ambiguous or explicit native/security fixture marker in source or path; metadata-only hold"
+  ],
+  "css/css-shadow/shadow-multiple-links.html": [
+    "ambiguous or explicit native/security fixture marker in source or path; metadata-only hold"
+  ],
+  "css/css-text-decor/text-emphasis-unrepresentable-characters.html": [
+    "ambiguous or explicit native/security fixture marker in source or path; metadata-only hold"
+  ],
+  "css/css-values/ident-function-substitution.html": [
+    "ambiguous or explicit native/security fixture marker in source or path; metadata-only hold"
+  ],
+  "css/css-view-transitions/clear-pseudo-elements-nested-style-update.html": [
+    "ambiguous or explicit native/security fixture marker in source or path; metadata-only hold"
+  ],
+  "css/css-view-transitions/only-child-no-transition.html": [
+    "ambiguous or explicit native/security fixture marker in source or path; metadata-only hold"
+  ],
+  "css/css-view-transitions/scoped/scope-becomes-document-element.html": [
+    "Studio recorded native outcome: hang",
+    "public Chrome stable: CRASH"
+  ],
+  "css/css-view-transitions/transition-skipped-callback-from-detached-iframe.html": [
+    "ambiguous or explicit native/security fixture marker in source or path; metadata-only hold"
+  ],
+  "css/cssom/getComputedStyle-page-rule.xhtml": [
+    "ambiguous or explicit native/security fixture marker in source or path; metadata-only hold"
+  ],
+  "css/selectors/hash-collision-cssom.html": [
+    "ambiguous or explicit native/security fixture marker in source or path; metadata-only hold"
+  ],
+  "css/selectors/invalidation/has-complexity.html": [
+    "Studio recorded native outcome: hang",
+    "checked-in LP baseline-linux.json: hang",
+    "checked-in LP baseline.json: hang",
+    "checked-in LP full/testharness/css.json: hang"
+  ]
+}

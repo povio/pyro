@@ -1,0 +1,55 @@
+{
+  "wpt": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+  "lp": "cbdeb11931f74c3de4417a25fb9103f1df84d54e",
+  "lpBinarySha256": "81d12af223643b8d5c1903fd528a36a5f2ff3040855f998d7bc5e546805b93b2",
+  "chrome": "158.0.8127.37",
+  "manifestVariants": 39989,
+  "supplementComplete": 6903,
+  "interrupted": 95,
+  "additionalHolds": 34,
+  "studioExcluded": 39,
+  "matched": {
+    "non-CSS": {
+      "paired": 30359,
+      "lpFull": 15274,
+      "chromeFull": 24533,
+      "lpOnlyFull": 598,
+      "chromeOnlyFull": 9857,
+      "lpPass": 1683159,
+      "chromePass": 1755476,
+      "lpOnly": 11679,
+      "chromeOnly": 83996,
+      "both": 1671480,
+      "missingLpName": 16394,
+      "missingChromeName": 3315
+    },
+    "CSS": {
+      "lpPass": 175494,
+      "chromePass": 181219,
+      "lpOnly": 5712,
+      "chromeOnly": 11437,
+      "both": 169782,
+      "missingLpName": 791,
+      "missingChromeName": 414,
+      "paired": 7994,
+      "lpFull": 5406,
+      "chromeFull": 6872,
+      "lpOnlyFull": 252,
+      "chromeOnlyFull": 1718
+    }
+  },
+  "combined": {
+    "paired": 38353,
+    "lpFull": 20680,
+    "chromeFull": 31405,
+    "lpOnlyFull": 850,
+    "chromeOnlyFull": 11575,
+    "lpPass": 1858653,
+    "chromePass": 1936695,
+    "lpOnly": 17391,
+    "chromeOnly": 95433,
+    "both": 1841262,
+    "missingLpName": 17185,
+    "missingChromeName": 3729
+  }
+}
