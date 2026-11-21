@@ -1,0 +1,629 @@
+{
+  "primary-base": {
+    "urlRows": [
+      {
+        "url": "editing/other/insertlinebreak-with-white-space-style.tentative.html?nowrap",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/other/insertlinebreak-with-white-space-style.tentative.html?pre",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/other/insertlinebreak-with-white-space-style.tentative.html?pre-line",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/other/insertlinebreak-with-white-space-style.tentative.html?pre-wrap",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=nowrap&command=insertParagraph",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=nowrap&command=insertText",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=pre&command=insertParagraph",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=pre&command=insertText",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=pre-line&command=insertParagraph",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=pre-line&command=insertText",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=pre-wrap&command=insertParagraph",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=pre-wrap&command=insertText",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/plaintext-only/insertLineBreak.html?white-space=normal",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/plaintext-only/insertLineBreak.html?white-space=pre",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/plaintext-only/insertLineBreak.html?white-space=pre-line",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/plaintext-only/insertLineBreak.html?white-space=pre-wrap",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/plaintext-only/insertParagraph.html?white-space=normal",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/plaintext-only/insertParagraph.html?white-space=pre",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/plaintext-only/insertParagraph.html?white-space=pre-line",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/plaintext-only/insertParagraph.html?white-space=pre-wrap",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/plaintext-only/insertText.html?white-space=normal",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/plaintext-only/insertText.html?white-space=pre",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/plaintext-only/insertText.html?white-space=pre-line",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/plaintext-only/insertText.html?white-space=pre-wrap",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/plaintext-only/nested-with-contenteditable-true.html",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/plaintext-only/styling-commands.html?styleWithCSS=false",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/plaintext-only/styling-commands.html?styleWithCSS=true",
+        "status": "complete",
+        "harnessStatus": 0
+      }
+    ],
+    "passes": 2603,
+    "allPass": 7,
+    "server": "wptserve",
+    "testdriver": true,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "bin": "/Users/xban1x/Library/Caches/lightningpanda/round7-editing/break-style/base",
+    "restarts": 0,
+    "jobs": 1
+  },
+  "primary-head": {
+    "urlRows": [
+      {
+        "url": "editing/other/insertlinebreak-with-white-space-style.tentative.html?nowrap",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/other/insertlinebreak-with-white-space-style.tentative.html?pre",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/other/insertlinebreak-with-white-space-style.tentative.html?pre-line",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/other/insertlinebreak-with-white-space-style.tentative.html?pre-wrap",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=nowrap&command=insertParagraph",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=nowrap&command=insertText",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=pre&command=insertParagraph",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=pre&command=insertText",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=pre-line&command=insertParagraph",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=pre-line&command=insertText",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=pre-wrap&command=insertParagraph",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=pre-wrap&command=insertText",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/plaintext-only/insertLineBreak.html?white-space=normal",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/plaintext-only/insertLineBreak.html?white-space=pre",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/plaintext-only/insertLineBreak.html?white-space=pre-line",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/plaintext-only/insertLineBreak.html?white-space=pre-wrap",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/plaintext-only/insertParagraph.html?white-space=normal",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/plaintext-only/insertParagraph.html?white-space=pre",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/plaintext-only/insertParagraph.html?white-space=pre-line",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/plaintext-only/insertParagraph.html?white-space=pre-wrap",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/plaintext-only/insertText.html?white-space=normal",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/plaintext-only/insertText.html?white-space=pre",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/plaintext-only/insertText.html?white-space=pre-line",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/plaintext-only/insertText.html?white-space=pre-wrap",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/plaintext-only/nested-with-contenteditable-true.html",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/plaintext-only/styling-commands.html?styleWithCSS=false",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/plaintext-only/styling-commands.html?styleWithCSS=true",
+        "status": "complete",
+        "harnessStatus": 0
+      }
+    ],
+    "passes": 2675,
+    "allPass": 11,
+    "server": "wptserve",
+    "testdriver": true,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "bin": "/Users/xban1x/Library/Caches/lightningpanda/round7-editing/break-style/pyro",
+    "restarts": 0,
+    "jobs": 1
+  },
+  "primary-chrome": {
+    "urlRows": [
+      {
+        "url": "editing/other/insertlinebreak-with-white-space-style.tentative.html?nowrap",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/other/insertlinebreak-with-white-space-style.tentative.html?pre",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/other/insertlinebreak-with-white-space-style.tentative.html?pre-line",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/other/insertlinebreak-with-white-space-style.tentative.html?pre-wrap",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=nowrap&command=insertParagraph",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=nowrap&command=insertText",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=pre&command=insertParagraph",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=pre&command=insertText",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=pre-line&command=insertParagraph",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=pre-line&command=insertText",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=pre-wrap&command=insertParagraph",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/other/insertparagraph-with-white-space-style.tentative.html?white-space=pre-wrap&command=insertText",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/plaintext-only/insertLineBreak.html?white-space=normal",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/plaintext-only/insertLineBreak.html?white-space=pre",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/plaintext-only/insertLineBreak.html?white-space=pre-line",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/plaintext-only/insertLineBreak.html?white-space=pre-wrap",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/plaintext-only/insertParagraph.html?white-space=normal",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/plaintext-only/insertParagraph.html?white-space=pre",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/plaintext-only/insertParagraph.html?white-space=pre-line",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/plaintext-only/insertParagraph.html?white-space=pre-wrap",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/plaintext-only/insertText.html?white-space=normal",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/plaintext-only/insertText.html?white-space=pre",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/plaintext-only/insertText.html?white-space=pre-line",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/plaintext-only/insertText.html?white-space=pre-wrap",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/plaintext-only/nested-with-contenteditable-true.html",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/plaintext-only/styling-commands.html?styleWithCSS=false",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/plaintext-only/styling-commands.html?styleWithCSS=true",
+        "status": "complete",
+        "harnessStatus": 0
+      }
+    ],
+    "passes": 2534,
+    "allPass": 10,
+    "server": "wptserve",
+    "testdriver": true,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "bin": "/Users/xban1x/Library/Caches/lightningpanda/round6-reference-158/census/launch-158",
+    "restarts": 0,
+    "jobs": 1
+  },
+  "commands-base": {
+    "urlRows": [
+      {
+        "url": "editing/run/multitest.html?1-1000",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/run/multitest.html?1001-2000",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/run/multitest.html?2001-3000",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/run/multitest.html?3001-4000",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/run/multitest.html?4001-5000",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/run/multitest.html?5001-6000",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/run/multitest.html?6001-7000",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/run/multitest.html?7001-8000",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/run/multitest.html?8001-9000",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/run/multitest.html?9001-last",
+        "status": "complete",
+        "harnessStatus": 0
+      }
+    ],
+    "passes": 8761,
+    "allPass": 0,
+    "server": "wptserve",
+    "testdriver": true,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "bin": "/Users/xban1x/Library/Caches/lightningpanda/round7-editing/break-style/base",
+    "restarts": 0,
+    "jobs": 1
+  },
+  "commands-head": {
+    "urlRows": [
+      {
+        "url": "editing/run/multitest.html?1-1000",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/run/multitest.html?1001-2000",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/run/multitest.html?2001-3000",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/run/multitest.html?3001-4000",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/run/multitest.html?4001-5000",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/run/multitest.html?5001-6000",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/run/multitest.html?6001-7000",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/run/multitest.html?7001-8000",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/run/multitest.html?8001-9000",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/run/multitest.html?9001-last",
+        "status": "complete",
+        "harnessStatus": 0
+      }
+    ],
+    "passes": 8791,
+    "allPass": 0,
+    "server": "wptserve",
+    "testdriver": true,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "bin": "/Users/xban1x/Library/Caches/lightningpanda/round7-editing/break-style/pyro",
+    "restarts": 0,
+    "jobs": 1
+  },
+  "commands-chrome": {
+    "urlRows": [
+      {
+        "url": "editing/run/multitest.html?1-1000",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/run/multitest.html?1001-2000",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/run/multitest.html?2001-3000",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/run/multitest.html?3001-4000",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/run/multitest.html?4001-5000",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/run/multitest.html?5001-6000",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/run/multitest.html?6001-7000",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/run/multitest.html?7001-8000",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/run/multitest.html?8001-9000",
+        "status": "complete",
+        "harnessStatus": 0
+      },
+      {
+        "url": "editing/run/multitest.html?9001-last",
+        "status": "complete",
+        "harnessStatus": 0
+      }
+    ],
+    "passes": 8924,
+    "allPass": 0,
+    "server": "wptserve",
+    "testdriver": true,
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "bin": "/Users/xban1x/Library/Caches/lightningpanda/round6-reference-158/census/launch-158",
+    "restarts": 0,
+    "jobs": 1
+  }
+}
