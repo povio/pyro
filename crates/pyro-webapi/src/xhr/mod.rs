@@ -34,6 +34,24 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// XHR send(): preserve the author's header verbatim unless a Document
+/// or USVString body needs an explicit non-UTF-8 charset corrected.
+fn normalize_utf8_charset(header: &mut HeaderValue) -> JsResult<()> {
+    let text: String = header.as_bytes().iter().copied().map(char::from).collect();
+    let Ok(mut mime) = text.parse::<Mime>() else { return Ok(()) };
+    let Some((_, charset)) = mime.parameters.iter_mut().find(|(name, _)| name == "charset") else { return Ok(()) };
+    if !charset.eq_ignore_ascii_case("utf-8") {
+        *charset = "UTF-8".into();
+        // Parameter names are ASCII case-insensitive; keep the first of
+        // each name even if the source used different capitalization.
+        let mut seen = rustc_hash::FxHashSet::default();
+        mime.parameters.retain(|(name, _)| seen.insert(name.clone()));
+        let bytes: Vec<u8> = mime.to_string().chars().map(|c| c as u8).collect();
+        *header = HeaderValue::from_bytes(&bytes).map_err(|_| JsError::Type("Invalid body MIME type".into()))?;
+    }
+    Ok(())
+}
+
 /// Independent XHR limits, with the same shape/defaults as fetch limits.
 pub type XhrLimits = crate::fetch::FetchLimits;
 const RESPONSE: &str = "__lpXhrResponse";
@@ -548,18 +566,29 @@ impl Xhr {
         let generation = self.generation.get();
         let mut request = self.request.borrow().as_ref().unwrap().clone();
         if !matches!(request.method, Method::GET | Method::HEAD) && !body.is_null() && !body.is_undefined() {
-            let (bytes, mime) = if let Some(form) = crate::form_data::multipart_body(s, body)? {
-                form
+            let (bytes, mime, utf8_text) = if let Some(document) = s.unwrap::<crate::node::Document>(body) {
+                let dom = document.page().dom.borrow();
+                let html = dom.document_data(document.id).map_err(crate::util::dom_err)?.kind == pyro_dom::DocumentKind::Html;
+                let text = if html { dom.inner_html(document.id) } else { dom.xml_serialize(document.id) }
+                    .map_err(crate::util::dom_err)?;
+                let mime = if html { "text/html;charset=UTF-8" } else { "application/xml;charset=UTF-8" };
+                (Bytes::from(text), mime.to_owned(), true)
+            } else if let Some((bytes, mime)) = crate::form_data::multipart_body(s, body)? {
+                (bytes, mime, false)
             } else if let Some(blob) = s.unwrap::<crate::file::Blob>(body) {
-                (blob.bytes.clone(), blob.mime.clone())
+                (blob.bytes.clone(), blob.mime.clone(), false)
             } else if let Some(params) = s.unwrap::<crate::url_search_params::URLSearchParams>(body) {
-                (Bytes::from(params.serialize()), "application/x-www-form-urlencoded;charset=UTF-8".into())
+                (Bytes::from(params.serialize()), "application/x-www-form-urlencoded;charset=UTF-8".into(), false)
             } else if let Some(bytes) = crate::encoding::buffer_source_bytes(s, body)? {
-                (Bytes::from(bytes), String::new())
+                (Bytes::from(bytes), String::new(), false)
             } else {
-                (Bytes::from(dom_string(body)?), "text/plain;charset=UTF-8".into())
+                (Bytes::from(dom_string(body)?), "text/plain;charset=UTF-8".into(), true)
             };
-            if !mime.is_empty() && !request.headers.contains_key(header::CONTENT_TYPE) {
+            if let Some(author_type) = request.headers.get_mut(header::CONTENT_TYPE) {
+                if utf8_text {
+                    normalize_utf8_charset(author_type)?;
+                }
+            } else if !mime.is_empty() {
                 request.headers.insert(
                     header::CONTENT_TYPE,
                     HeaderValue::from_str(&mime).map_err(|_| JsError::Type("Invalid body MIME type".into()))?,
