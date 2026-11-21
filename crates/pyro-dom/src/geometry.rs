@@ -700,6 +700,10 @@ pub trait GeometrySource {
     fn resolved_transform_value(&self, _key: u64, _property: &str, _style: &style::properties::ComputedValues) -> Option<String> {
         None
     }
+    /// Authored text declarations that an editor can carry to another block.
+    fn authored_editing_style(&self, _key: u64, _properties: &[&str], _white_space: &str) -> Vec<(&'static str, String)> {
+        Vec::new()
+    }
     /// Computed CSS geometry declarations on an SVG shape, excluding the
     /// default values that must leave XML presentation attributes in effect.
     fn svg_geometry_properties(&self, _key: u64) -> Vec<(&'static str, String)> {
