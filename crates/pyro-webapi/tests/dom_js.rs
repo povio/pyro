@@ -5652,6 +5652,21 @@ fn scroll_offsets_round_like_chromium_so_synced_panes_settle() {
 }
 
 #[test]
+fn computed_shorthands_use_their_own_grammar() {
+    let environment = env("<!doctype html><div id=target style='break-before:page;-webkit-line-clamp:2;background-position:center'></div>");
+    let result = eval(&environment.main, "(() => {
+        const target = document.getElementById('target');
+        const computed = getComputedStyle(target);
+        const values = [computed.pageBreakBefore, computed.breakBefore,
+            computed.getPropertyValue('-webkit-line-clamp'), computed.backgroundPosition];
+        target.style.breakBefore = 'column';
+        values.push(computed.pageBreakBefore, computed.breakBefore);
+        return values.join('|');
+    })()");
+    assert_eq!(result, "always|page|2|50% 50%||column");
+}
+
+#[test]
 fn single_axis_overflow_makes_a_scroll_container_like_chromium() {
     // TOS bookkeeping exports (bookkeeping-vat-lines.e2e.ts:65): the table's
     // scroller is `flex h-full grow flex-col overflow-x-auto`. CSS Overflow 3

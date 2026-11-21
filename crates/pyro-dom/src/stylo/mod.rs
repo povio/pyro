@@ -130,44 +130,28 @@ pub(crate) fn property_id(name: &str) -> Option<style::properties::PropertyId> {
 }
 
 /// A property's computed value as `getComputedStyle` serializes it: a
-/// longhand directly, a shorthand when all its longhands serialize alike, a
+/// longhand directly, a shorthand from its resolved longhands, a
 /// custom property as specified. `None` for unknown properties.
 pub fn serialize(style: &ComputedValues, name: &str) -> Option<String> {
-    use style::properties::PropertyDeclarationId;
     let id = property_id(name)?;
     match id.as_shorthand() {
         Ok(shorthand) => {
-            // The value all its longhands share...
-            let values: Vec<(&str, String)> = shorthand
+            if shorthand == style::properties::ShorthandId::All {
+                return None;
+            }
+            let mut context = style::values::resolved::Context {
+                style,
+                for_property: id.clone(),
+                current_longhand: None,
+            };
+            let declarations: Vec<_> = shorthand
                 .longhands()
-                .map(|longhand| {
-                    let value = style.computed_value_to_string(PropertyDeclarationId::Longhand(longhand));
-                    (longhand.name(), resolved_alignment(longhand.name(), value))
-                })
+                .map(|longhand| style.computed_or_resolved_declaration(longhand, Some(&mut context)))
                 .collect();
-            if values.iter().all(|(_, v)| *v == values[0].1) {
-                return values.into_iter().next().map(|(_, v)| v);
-            }
-            // ...else the shorthand serialization of a block declaring the
-            // longhands' resolved values (CSSOM's).
-            let mut css = String::new();
-            for (name, value) in &values {
-                css.push_str(name);
-                css.push(':');
-                css.push_str(value);
-                css.push(';');
-            }
-            let url = url_data();
-            let block = style::properties::parse_style_attribute(
-                &css,
-                &url,
-                None,
-                QuirksMode::NoQuirks,
-                style::stylesheets::CssRuleType::Style,
-            );
             let mut out = String::new();
-            block.shorthand_to_css(shorthand, &mut out).ok()?;
-            (!out.is_empty()).then_some(out)
+            let declarations: Vec<_> = declarations.iter().collect();
+            shorthand.longhands_to_css(&declarations, &mut out).ok()?;
+            Some(resolved_alignment(shorthand.name(), out))
         }
         Err(declaration) => {
             // Stylo resolves every length unzoomed but a line-height length.
@@ -193,7 +177,7 @@ pub fn serialize(style: &ComputedValues, name: &str) -> Option<String> {
 }
 
 fn resolved_alignment(name: &str, value: String) -> String {
-    if matches!(name, "align-items" | "align-content" | "align-self" | "justify-items" | "justify-content" | "justify-self")
+    if matches!(name, "align-items" | "align-content" | "align-self" | "justify-items" | "justify-content" | "justify-self" | "place-items" | "place-content" | "place-self")
         && value.contains("flex-")
     {
         value.replace("flex-start", "flow-start").replace("flex-end", "flow-end")
