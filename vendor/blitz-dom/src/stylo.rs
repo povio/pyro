@@ -1203,6 +1203,15 @@ impl<'a> TElement for BlitzNode<'a> {
         self
     }
 
+    fn original_sibling_position(&self) -> Option<style::values::computed::TreeCountingResult> {
+        self.assigned_slot_id()?;
+        let value = self.element_data()?.attrs.state(crate::shadow::LIGHT_INDEX_ATTR)?;
+        let (index, count) = value.split_once('/')?;
+        let index = index.parse::<u32>().ok()?.checked_add(1)?;
+        let count = count.parse().ok()?;
+        Some(style::values::computed::TreeCountingResult::new(index, count))
+    }
+
     // pyro: styles inherit through the flat tree (a slot's assigned nodes from the slot, a shadow
     // tree's first level from the host), which `parent_element` leaves for the node trees
     // (`crate::shadow`).

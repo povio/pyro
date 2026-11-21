@@ -839,3 +839,25 @@ fn cached_longhand_writes_follow_external_edits_ranges_and_priority() {
     "#);
     assert_eq!(actual, r#"-1|1|3px|important|"a;b"|true|rgb(0, 128, 0)|7px|-1|||0.5|11px|4px|-1"#);
 }
+
+#[test]
+fn assigned_nodes_count_all_light_tree_siblings_across_slot_changes() {
+    let (_t, realm) = page();
+    let result = eval(&realm, r#"
+        const host = document.body.appendChild(document.createElement('section'));
+        host.innerHTML = '<i slot="unused"></i><b slot="named"></b><i id="target"></i><b slot="unused"></b>';
+        const target = host.querySelector('#target');
+        const root = host.attachShadow({mode:'open'});
+        root.innerHTML = '<style>slot::slotted(*) { z-index:sibling-index(); order:sibling-count() }</style><slot name="named"></slot><slot></slot>';
+        const position = () => { const s=getComputedStyle(target); return s.zIndex + '/' + s.order; };
+        const observed=[position()];
+        const unassigned = document.createElement('b'); unassigned.slot='unused'; host.prepend(unassigned);
+        observed.push(position());
+        target.slot='named';
+        observed.push(position());
+        host.firstElementChild.remove();
+        observed.push(position());
+        observed.join('|')
+    "#);
+    assert_eq!(result, "3/4|4/5|4/5|3/4");
+}
