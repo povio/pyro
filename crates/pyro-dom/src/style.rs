@@ -2243,6 +2243,41 @@ impl StyleEngine {
         Some(crate::gecko_only::value(dom, &rules, el, name, &inline))
     }
 
+    /// Resolve an SVG DOM font-metric unit from the element's current computed
+    /// font and writing mode. A detached SVGLength uses the initial style.
+    pub fn svg_font_unit(&self, dom: &Dom, el: Option<NodeId>, unit: &str) -> f64 {
+        use style::context::TreeCountingCaches;
+        use style::dom::DummyElementContext;
+        use style::properties::StyleBuilder;
+        use style::rule_cache::RuleCacheConditions;
+        use style::stylesheets::container_rule::ContainerSizeQuery;
+        use style::values::computed::Context;
+        use style::values::specified::length::{FontBaseSize, LengthUnit, LineHeightBase, NoCalcLength};
+
+        let unit = match unit {
+            "ex" => LengthUnit::Ex,
+            "ch" => LengthUnit::Ch,
+            "cap" => LengthUnit::Cap,
+            "ic" => LengthUnit::Ic,
+            "lh" => LengthUnit::Lh,
+            _ => unreachable!("expected an SVG font-metric unit"),
+        };
+        let computed = el.and_then(|el| self.stylo_style(dom, el));
+        let device = self.media_device.get_or_init(|| crate::picture::sizes_device(&self.viewport));
+        let style = computed.as_deref().unwrap_or_else(|| device.default_computed_values());
+        let builder = StyleBuilder::for_derived_style(device, None, style, None);
+        let mut conditions = RuleCacheConditions::default();
+        let mut caches = TreeCountingCaches::default();
+        let context = Context::new_for_animation(
+            builder, false, device.quirks_mode(), &mut conditions,
+            ContainerSizeQuery::none(), &DummyElementContext, &mut caches,
+        );
+        let px = NoCalcLength::new(unit, 1.0).to_computed_value_with_base_size(
+            &context, FontBaseSize::CurrentStyle, LineHeightBase::CurrentStyle,
+        );
+        f64::from(style.effective_zoom.unzoom(px.px()))
+    }
+
     /// computedFontSize (StyleManager.zig:2002-2089): inline `font-size`
     /// declarations and `font-size` attributes up the flat tree.
     pub fn computed_font_size(&self, dom: &Dom, el: Option<NodeId>) -> f64 {

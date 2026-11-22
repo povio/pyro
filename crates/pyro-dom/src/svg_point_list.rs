@@ -1,5 +1,5 @@
-//! Live SVG point and number lists. The DOM holds a weak observer, so a retained
-//! list or point keeps the element alive through its writer without a cycle.
+//! Live SVG lists. The DOM holds a weak observer, so a retained list or
+//! attached item keeps the element alive through its writer without a cycle.
 
 use crate::{Dom, DomError, DomErrorKind, DomResult, NodeId};
 use std::cell::{Cell, RefCell};
@@ -86,16 +86,18 @@ pub struct ListStorage<T: Copy> {
     base: RefCell<Vec<Slot<T>>>,
     animated: RefCell<Vec<Slot<T>>>,
     writing: Cell<bool>,
+    length_unit_factor: Option<Box<dyn Fn(u16) -> f64>>,
     write: Writer,
     write_item: fn(&mut String, T),
 }
 
 impl<T: Copy> ListStorage<T> {
-    fn new(write: Writer, write_item: fn(&mut String, T)) -> Rc<Self> {
+    fn new(write: Writer, write_item: fn(&mut String, T), length_unit_factor: Option<Box<dyn Fn(u16) -> f64>>) -> Rc<Self> {
         Rc::new(Self {
             base: RefCell::default(),
             animated: RefCell::default(),
             writing: Cell::new(false),
+            length_unit_factor,
             write,
             write_item,
         })
@@ -228,6 +230,26 @@ pub type PointItem = ListItem<Pair>;
 pub type NumberItem = ListItem<f32>;
 pub type PointLists = ListStorage<Pair>;
 pub type NumberLists = ListStorage<f32>;
+pub type LengthItem = ListItem<(f64, u16)>;
+pub type LengthLists = ListStorage<(f64, u16)>;
+
+/// Unit suffixes indexed by the internal kind. Kinds 1 through 10 are
+/// SVGLength's public constants; the remaining units report UNKNOWN.
+pub const LENGTH_UNITS: [&str; 21] =
+    ["", "", "%", "em", "ex", "px", "cm", "mm", "in", "pt", "pc", "rem", "vw", "vh", "vmin", "vmax", "q", "ch", "cap", "ic", "lh"];
+
+impl LengthItem {
+    /// The current list supplies the viewport, direction and font for unit
+    /// conversion. Detached lengths have no associated element.
+    pub fn unit_factor(&self, kind: u16) -> Option<f64> {
+        let attachment = self.attached.borrow().clone()?;
+        attachment.owner.length_unit_factor.as_ref().map(|factor| factor(kind))
+    }
+
+    pub fn is_read_only(&self) -> bool {
+        self.attached.borrow().as_ref().is_some_and(|a| a.animated)
+    }
+}
 
 impl PointItem {
     pub fn coordinates(&self) -> Pair {
@@ -294,6 +316,45 @@ impl NumberLists {
     }
 }
 
+// For x, y, dx, and dy, SVG 2 Text specifies comma- or space-separated
+// lengths, percentages, or unitless numbers. Reject the whole list when
+// any member is invalid, preserving neither a numeric nor a list prefix.
+fn parse_lengths(text: &str) -> Option<Vec<(f64, u16)>> {
+    use cssparser::{Parser, Token};
+    let mut values = Vec::new();
+    for group in text.split(',') {
+        let start = values.len();
+        for word in group.split_ascii_whitespace() {
+            let mut p = Parser::new(word);
+            let (value, kind) = match p.next_including_whitespace_and_comments().ok()? {
+                Token::Number { value, .. } => (*value, 1),
+                Token::Percentage { .. } => (word.strip_suffix('%')?.parse::<f32>().ok()?, 2),
+                Token::Dimension { value, unit, .. } => {
+                    let kind = LENGTH_UNITS[3..].iter().position(|s| s.eq_ignore_ascii_case(unit))? + 3;
+                    (*value, kind as u16)
+                }
+                _ => return None,
+            };
+            if p.position().byte_index() != word.len() || !value.is_finite() {
+                return None;
+            }
+            values.push((f64::from(value), kind));
+        }
+        if values.len() == start {
+            return None;
+        }
+    }
+    Some(values)
+}
+
+impl LengthLists {
+    pub(crate) fn attribute_changed(&self, text: &str) {
+        if !self.writing.get() {
+            self.sync_attribute(parse_lengths(text).into_iter().flatten());
+        }
+    }
+}
+
 impl Dom {
     pub fn svg_point_lists(&mut self, id: NodeId, write: Box<dyn Fn(Option<&str>) -> DomResult<()>>) -> DomResult<Rc<PointLists>> {
         let index = self.check(id)?;
@@ -303,9 +364,28 @@ impl Dom {
         let point_writer = Box::new(move |text: &str| write((!text.is_empty()).then_some(text)));
         let lists = PointLists::new(point_writer, |text, (x, y)| {
             write!(text, "{x} {y}").expect("writing to String is infallible");
-        });
+        }, None);
         lists.attribute_changed(self.get_attribute_ns(id, None, "points")?.unwrap_or_default());
         self.svg_points.insert(index, Rc::downgrade(&lists));
+        Ok(lists)
+    }
+
+    pub fn svg_length_lists(
+        &mut self,
+        id: NodeId,
+        attr: &'static str,
+        write: Writer,
+        unit_factor: Box<dyn Fn(u16) -> f64>,
+    ) -> DomResult<Rc<LengthLists>> {
+        let index = self.check(id)?;
+        if let Some(lists) = self.svg_lengths.get(&index).and_then(|attrs| attrs.get(attr)).and_then(Weak::upgrade) {
+            return Ok(lists);
+        }
+        let lists = LengthLists::new(write, |text, (value, unit)| {
+            write!(text, "{}{}", value as f32, LENGTH_UNITS[usize::from(unit)]).expect("writing to String is infallible");
+        }, Some(unit_factor));
+        lists.attribute_changed(self.get_attribute_ns(id, None, attr)?.unwrap_or_default());
+        self.svg_lengths.entry(index).or_default().insert(attr, Rc::downgrade(&lists));
         Ok(lists)
     }
 
@@ -314,7 +394,7 @@ impl Dom {
         if let Some(lists) = self.svg_numbers.get(&index).and_then(|attrs| attrs.get(attr)).and_then(Weak::upgrade) {
             return Ok(lists);
         }
-        let lists = NumberLists::new(write, |text, n| write!(text, "{n}").expect("writing to String is infallible"));
+        let lists = NumberLists::new(write, |text, n| write!(text, "{n}").expect("writing to String is infallible"), None);
         lists.attribute_changed(attr, self.get_attribute_ns(id, None, attr)?.unwrap_or_default());
         self.svg_numbers.entry(index).or_default().insert(attr, Rc::downgrade(&lists));
         Ok(lists)
@@ -360,6 +440,48 @@ mod tests {
         assert_eq!(other.item(0, false).unwrap().value(), 100.);
         dom.remove_attribute(node, "other").unwrap();
         assert_eq!(other.len(true), 0);
+    }
+
+    #[test]
+    fn length_lists_parse_units_and_reject_invalid_members() {
+        assert_eq!(parse_lengths(" 1e-2px,+2.5% 3EM, 4Q "),
+            Some(vec![(f64::from(0.01f32), 5), (2.5, 2), (3., 3), (4., 16)]));
+        assert_eq!(parse_lengths("1ch 2cap,3ic 4lh"), Some(vec![(1., 17), (2., 18), (3., 19), (4., 20)]));
+        for text in ["1-2", "1px-2px", "1/**/2", ",1", "1,,2", "1,2,", "1px 2bad", "1e99pc"] {
+            assert_eq!(parse_lengths(text), None, "{text}");
+        }
+    }
+
+    #[test]
+    fn length_items_follow_their_owner_across_mutation_and_removal() {
+        let dom = Rc::new(RefCell::new(Dom::new()));
+        let doc = dom.borrow_mut().create_document(DocumentKind::Html, "about:blank");
+        let node = dom.borrow_mut().create_element_ns(doc, Some("http://www.w3.org/2000/svg"), "text").unwrap();
+        dom.borrow_mut().set_attribute(node, "x", "1cm 25%").unwrap();
+        let writer = dom.clone();
+        let x = dom.borrow_mut().svg_length_lists(
+            node, "x", Box::new(move |s| writer.borrow_mut().set_attribute(node, "x", s)), Box::new(|_| 2.),
+        ).unwrap();
+        let y = dom.borrow_mut().svg_length_lists(node, "y", Box::new(|_| Ok(())), Box::new(|_| 3.)).unwrap();
+        let first = x.item(0, false).unwrap();
+        let last = x.item(1, true).unwrap();
+        assert_eq!(first.unit_factor(2), Some(2.));
+        assert!(!first.is_read_only());
+        assert!(last.is_read_only());
+        assert!(last.set_value((2., 5)).is_err());
+        first.set_value((2., 6)).unwrap();
+        assert_eq!(dom.borrow().get_attribute(node, "x").unwrap(), Some("2cm 25%"));
+        dom.borrow_mut().set_attribute(node, "x", "10em").unwrap();
+        assert_eq!(first.value(), (10., 3));
+        assert_eq!(last.unit_factor(2), None);
+        assert!(!last.is_read_only());
+        last.set_value((3., 5)).unwrap();
+        assert!(Rc::ptr_eq(&last, &y.insert(0, &last, false).unwrap()));
+        assert_eq!(last.unit_factor(2), Some(3.));
+        dom.borrow_mut().set_attribute(node, "x", "5 broken").unwrap();
+        assert_eq!(x.len(true), 0);
+        assert_eq!(first.unit_factor(2), None);
+        assert_eq!(first.value(), (10., 3));
     }
 
     #[test]

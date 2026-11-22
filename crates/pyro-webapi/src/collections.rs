@@ -2033,11 +2033,8 @@ pub struct SvgLengthAttr {
     pub slot: u64,
 }
 
-/// SVGLength unit types, in the order of their constants (0 is unknown, 1 a plain number), then
-/// the CSS units without a constant, whose `unitType` is `SVG_LENGTHTYPE_UNKNOWN` (SVG 2: any CSS
-/// `<length>` is a length; Chromium and Firefox convert them too).
-const LENGTH_UNITS: [&str; 17] =
-    ["", "", "%", "em", "ex", "px", "cm", "mm", "in", "pt", "pc", "rem", "vw", "vh", "vmin", "vmax", "q"];
+use pyro_dom::svg_point_list::{LengthItem, LengthLists, LENGTH_UNITS};
+
 /// The unit types a script can name (`SVG_LENGTHTYPE_*`).
 const NAMED_LENGTH_UNITS: usize = 11;
 
@@ -2062,70 +2059,88 @@ fn length_to_string(value: f64, kind: u16) -> String {
     format!("{}{}", value as f32, LENGTH_UNITS[kind as usize])
 }
 
-pub struct SvgLengthData {
-    el: NodeHold,
-    a: &'static SvgLengthAttr,
-    anim: bool,
-    /// The value and unit of a length that reflects no attribute (`SVGSVGElement.createSVGLength()`):
-    /// it has no element, so its font-relative units use the initial font size and a percentage is
-    /// its number of user units (SVG 2, as Chromium).
-    detached: Option<Cell<(f64, u16)>>,
+pub enum SvgLengthData {
+    Attribute { el: NodeHold, a: &'static SvgLengthAttr, anim: bool },
+    /// A list item or a detached length from createSVGLength. Insertion
+    /// attaches the same object to its new element and percentage direction.
+    Item { page: Rc<PageDom>, item: Rc<LengthItem> },
 }
 
 impl SvgLengthData {
     fn get(&self) -> (f64, u16) {
-        if let Some(own) = &self.detached {
-            return own.get();
+        match self {
+            Self::Item { item, .. } => item.value(),
+            Self::Attribute { el, a, .. } => el.page.dom.borrow().get_attribute(el.id, a.attr)
+                .ok()
+                .flatten()
+                .and_then(parse_svg_length)
+                .or_else(|| parse_svg_length(a.initial))
+                .unwrap_or((0.0, 1)),
         }
-        let dom = self.el.page.dom.borrow();
-        dom.get_attribute(self.el.id, self.a.attr)
-            .ok()
-            .flatten()
-            .and_then(|v| parse_svg_length(&v))
-            .or_else(|| parse_svg_length(self.a.initial))
-            .unwrap_or((0.0, 1))
     }
+
     fn writable(&self) -> JsResult<()> {
-        if self.anim {
+        let animated = match self {
+            Self::Attribute { anim, .. } => *anim,
+            Self::Item { item, .. } => item.is_read_only(),
+        };
+        if animated {
             return Err(JsError::dom("NoModificationAllowedError", "The object is read-only."));
         }
         Ok(())
     }
+
     fn write(&self, value: f64, kind: u16) -> JsResult<()> {
-        if let Some(own) = &self.detached {
-            own.set((value, kind));
-            return Ok(());
+        match self {
+            Self::Item { item, .. } => item.set_value((value, kind)).js(),
+            Self::Attribute { el, a, .. } => {
+                el.page.dom.borrow_mut().set_attribute(el.id, a.attr, &length_to_string(value, kind)).js()
+            }
         }
-        self.el.page.dom.borrow_mut().set_attribute(self.el.id, self.a.attr, &length_to_string(value, kind)).js()
     }
-    /// User units per unit of `kind` for this element (0 when a percentage has no viewport).
+
     fn factor(&self, kind: u16) -> f64 {
+        match self {
+            Self::Attribute { el, a, .. } => Self::attribute_factor(el, a.dir, kind),
+            Self::Item { page, item } => item.unit_factor(kind).unwrap_or_else(|| Self::unit_factor(page, None, kind)),
+        }
+    }
+
+    fn attribute_factor(el: &NodeHold, dir: SvgLengthDir, kind: u16) -> f64 {
+        // An element may be adopted after its length wrapper was created.
+        // The current document supplies the viewport and computed font.
+        let home = &el.page;
+        let doc = home.dom.borrow().node_document(el.id).ok();
+        let other = doc.filter(|id| *id != home.document()).and_then(|id| {
+            home.hooks()?.frame_tree().into_iter().find(|p| p.document() == id && Rc::ptr_eq(&p.dom, &home.dom))
+        });
+        Self::unit_factor(other.as_ref().unwrap_or(home), Some((el.id, dir)), kind)
+    }
+
+    /// User units per unit of `kind`, in the current attribute's coordinate system.
+    fn unit_factor(page: &PageDom, context: Option<(NodeId, SvgLengthDir)>, kind: u16) -> f64 {
         match kind {
             1 | 5 => 1.0,
-            2 if self.detached.is_some() => 1.0,
-            3 if self.detached.is_some() => 16.0,
-            4 if self.detached.is_some() => 8.0,
-            2 => self.viewport_percent(),
-            3 | 4 => {
-                let page = &self.el.page;
-                let dom = page.dom.borrow();
-                let em = page.layout().style().computed_font_size(&dom, Some(self.el.id));
-                if kind == 3 { em } else { em / 2.0 }
-            }
+            2 => context.map_or(1.0, |(id, dir)| Self::viewport_percent(page, id, dir)),
+            3 => context.map_or(16.0, |(id, _)| {
+                page.layout().style().computed_font_size(&page.dom.borrow(), Some(id))
+            }),
+            4 | 17..=20 => page.layout().style().svg_font_unit(
+                &page.dom.borrow(), context.map(|(id, _)| id), LENGTH_UNITS[usize::from(kind)],
+            ),
             6 => 96.0 / 2.54,
             7 => 96.0 / 25.4,
             8 => 96.0,
             9 => 4.0 / 3.0,
             10 => 16.0,
-            11 if self.detached.is_some() => 16.0,
+            11 if context.is_none() => 16.0,
             11 => {
-                let page = &self.el.page;
                 let dom = page.dom.borrow();
                 let root = dom.document_element(page.document()).ok().flatten();
                 page.layout().style().computed_font_size(&dom, root)
             }
             12..=15 => {
-                let layout = self.el.page.layout();
+                let layout = page.layout();
                 let viewport = layout.viewport();
                 let (w, h) = (viewport.width as f64, viewport.height as f64);
                 match kind {
@@ -2136,14 +2151,21 @@ impl SvgLengthData {
                 }
             }
             16 => 96.0 / 2.54 / 40.0,
-            _ => 1.0,
+            21 => {
+                let dom = page.dom.borrow();
+                let root = context.and_then(|(id, _)| dom.node_document(id).ok())
+                    .and_then(|doc| dom.document_element(doc).ok().flatten());
+                page.layout().style().svg_font_unit(&dom, root, "lh")
+            }
+            _ => unreachable!("unrecognized SVG length unit"),
+
         }
     }
     /// One percent of the nearest `svg` ancestor's viewport: its `viewBox`, else its absolute
     /// `width` and `height`; 0 without one.
-    fn viewport_percent(&self) -> f64 {
-        let dom = self.el.page.dom.borrow();
-        let mut p = dom.parent_element(self.el.id).ok().flatten();
+    fn viewport_percent(page: &PageDom, id: NodeId, dir: SvgLengthDir) -> f64 {
+        let dom = page.dom.borrow();
+        let mut p = dom.parent_element(id).ok().flatten();
         while let Some(x) = p {
             if dom.element(x).is_ok_and(|e| &*e.name.local == "svg") {
                 let attr = |n: &str| dom.get_attribute(x, n).ok().flatten().map(|v| v.to_string());
@@ -2160,12 +2182,12 @@ impl SvgLengthData {
                             attr(n).and_then(|v| parse_svg_length(&v)).filter(|(_, k)| *k != 2 && *k != 3 && *k != 4)
                         };
                         match (abs("width"), abs("height")) {
-                            (Some((w, kw)), Some((h, kh))) => (w * self.factor(kw), h * self.factor(kh)),
+                            (Some((w, kw)), Some((h, kh))) => (w * Self::unit_factor(page, Some((id, dir)), kw), h * Self::unit_factor(page, Some((id, dir)), kh)),
                             _ => return 0.0,
                         }
                     }
                 };
-                let base = match self.a.dir {
+                let base = match dir {
                     SvgLengthDir::Width => w,
                     SvgLengthDir::Height => h,
                     SvgLengthDir::Other => ((w * w + h * h) / 2.0).sqrt(),
@@ -2293,21 +2315,17 @@ fn svg_length<'s>(s: &Scope<'s>, el: &NodeHold, a: &'static SvgLengthAttr, anim:
     if let Some(o) = s.lookup_identity(key) {
         return Ok(o);
     }
-    s.wrap::<SvgLength>(SvgLengthData { el: NodeHold::new(&el.page, el.id)?, a, anim, detached: None }, Some(key))
+    s.wrap::<SvgLength>(SvgLengthData::Attribute { el: NodeHold::new(&el.page, el.id)?, a, anim }, Some(key))
 }
 
-static DETACHED_LENGTH: SvgLengthAttr = SvgLengthAttr { attr: "", initial: "0", dir: SvgLengthDir::Other, slot: 0 };
+fn length_item<'s>(s: &Scope<'s>, item: Rc<LengthItem>) -> JsResult<Object<'s>> {
+    let key = IdentityKey((1 << 59) | (4 << 56), Rc::as_ptr(&item) as u64);
+    s.wrap::<SvgLength>(SvgLengthData::Item { page: page_rc(s)?, item }, Some(key))
+}
 
-/// `SVGSVGElement.createSVGLength()`: a new length of 0 user units that reflects no attribute.
-pub fn create_svg_length<'s>(s: &Scope<'s>, svg: NodeId) -> JsResult<Object<'s>> {
-    let page = page_rc(s)?;
-    let data = SvgLengthData {
-        el: NodeHold::new(&page, svg)?,
-        a: &DETACHED_LENGTH,
-        anim: false,
-        detached: Some(Cell::new((0.0, 1))),
-    };
-    s.wrap::<SvgLength>(data, None)
+/// SVGSVGElement.createSVGLength returns a detached length of zero user units.
+pub fn create_svg_length<'s>(s: &Scope<'s>, _svg: NodeId) -> JsResult<Object<'s>> {
+    length_item(s, LengthItem::detached((0.0, 1)))
 }
 
 /// `SVGAnimatedLength`: `baseVal` reflects the attribute, `animVal` reads it.
@@ -2507,6 +2525,8 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<SvgAngle>();
     engine.register::<SvgAnimatedAngle>();
     svg_aspect::register(engine);
+    engine.register::<SvgLengthList>();
+    engine.register::<SvgAnimatedLengthList>();
     engine.register::<SvgAnimatedLength>();
     engine.register::<SvgLength>();
     engine.register::<SvgPoint>();
@@ -2783,4 +2803,69 @@ pub fn animated_number_list<'s>(s: &Scope<'s>, n: &NodeData, attr: &'static str)
     });
     let lists = n.page().dom.borrow_mut().svg_number_lists(n.id, attr, write).js()?;
     Ok(s.wrap::<SvgAnimatedNumberList>(lists, Some(key))?.value())
+}
+
+pub struct SvgLengthList;
+impl JsClass for SvgLengthList {
+    const NAME: &'static str = "SVGLengthList";
+    type Data = SvgListData<(f64, u16)>;
+    type Parent = NoParent;
+
+    fn define(def: &mut ClassDef<Self>) {
+        define_svg_list(def);
+    }
+}
+
+impl SvgItemList<(f64, u16)> for SvgLengthList {
+    fn wrap_item<'s>(s: &Scope<'s>, item: Rc<LengthItem>) -> JsResult<Value<'s>> {
+        Ok(length_item(s, item)?.value())
+    }
+
+    fn unwrap_item(s: &Scope<'_>, value: Value<'_>) -> JsResult<Rc<LengthItem>> {
+        let length = s.unwrap::<SvgLength>(value).ok_or_else(|| JsError::Type("Expected an SVGLength.".into()))?;
+        Ok(match &*length {
+            SvgLengthData::Item { item, .. } => item.clone(),
+            SvgLengthData::Attribute { .. } => LengthItem::detached(length.get()),
+        })
+    }
+}
+
+pub struct SvgAnimatedLengthList;
+impl JsClass for SvgAnimatedLengthList {
+    const NAME: &'static str = "SVGAnimatedLengthList";
+    type Data = Rc<LengthLists>;
+    type Parent = NoParent;
+
+    fn define(def: &mut ClassDef<Self>) {
+        def.getter("baseVal", |s, lists| length_list_view(s, lists, false));
+        def.getter("animVal", |s, lists| length_list_view(s, lists, true));
+    }
+}
+
+fn length_list_view<'s>(s: &Scope<'s>, lists: &Rc<LengthLists>, animated: bool) -> JsResult<Value<'s>> {
+    let key = IdentityKey((1 << 59) | (5 << 56) | u64::from(animated), Rc::as_ptr(lists) as u64);
+    Ok(s.wrap::<SvgLengthList>(SvgListData { lists: lists.clone(), animated }, Some(key))?.value())
+}
+
+pub fn animated_length_list<'s>(s: &Scope<'s>, n: &NodeData, attr: &'static str) -> JsResult<Value<'s>> {
+    let slot = match attr {
+        "x" => 450,
+        "y" => 451,
+        "dx" => 452,
+        "dy" => 453,
+        _ => unreachable!("unexpected SVG text positioning length list"),
+    };
+    let key = coll_identity(n.page(), slot, n.id);
+    if let Some(obj) = s.lookup_identity(key) {
+        return Ok(obj.value());
+    }
+    let el = Rc::new(NodeHold::new(n.page(), n.id)?);
+    let writer = el.clone();
+    let write = Box::new(move |text: &str| {
+        writer.page.dom.borrow_mut().set_attribute_local(writer.id, &pyro_dom::LocalName::from(attr), text)
+    });
+    let dir = if matches!(attr, "y" | "dy") { SvgLengthDir::Height } else { SvgLengthDir::Width };
+    let factor = Box::new(move |kind| SvgLengthData::attribute_factor(&el, dir, kind));
+    let lists = n.page().dom.borrow_mut().svg_length_lists(n.id, attr, write, factor).js()?;
+    Ok(s.wrap::<SvgAnimatedLengthList>(lists, Some(key))?.value())
 }
