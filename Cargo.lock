@@ -2952,6 +2952,7 @@ dependencies = [
  "rustls",
  "ruzstd",
  "sha1",
+ "sha2",
  "tokio",
  "tokio-rustls",
  "tower-service",

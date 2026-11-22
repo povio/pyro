@@ -40,6 +40,9 @@ pub struct ScriptInfo {
     pub integrity: Option<String>,
     /// The `referrerpolicy` content attribute.
     pub referrerpolicy: Option<String>,
+    /// The element (the target of its CSP violations; its cryptographic nonce is read from
+    /// it by the bindings, which hold the slot).
+    pub node: NodeId,
 }
 
 const JS_MIME: &[&str] = &[
@@ -584,6 +587,7 @@ impl Dom {
             crossorigin: e.attr_local(&local_name!("crossorigin")).map(str::to_owned),
             integrity: e.attr_local(&local_name!("integrity")).map(str::to_owned),
             referrerpolicy: e.attr_local(&markup5ever::LocalName::from("referrerpolicy")).map(str::to_owned),
+            node: script,
         })
     }
 

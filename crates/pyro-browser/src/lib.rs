@@ -150,6 +150,7 @@ fn subresource_request_with(
     options: &SubresourceOptions,
 ) -> FetchRequest {
     FetchRequest {
+        csp: None,
         parser_priority: false,
         credentials: None,
         post: None,
@@ -1858,10 +1859,10 @@ impl Browser {
     /// Whether this page's documents ignore their Content-Security-Policy
     /// (`Page.setBypassCSP`). Applies from the next document the page or one
     /// of its frames commits; the document already loaded keeps what it had,
-    /// as in Chrome. The engine enforces no directive, so what this lifts is
-    /// the one effect a policy has: nonce hiding, which a header-delivered
-    /// policy turns on (see `pyro_dom::Dom::set_header_csp`). Returns false
-    /// if there is no such page.
+    /// as in Chrome. A bypassing document records no policy, header or
+    /// `<meta>` (`pyro_dom::Dom::set_csp_bypassed`): nothing is enforced or
+    /// reported, and nonces are not hidden. Returns false if there is no such
+    /// page.
     pub fn set_bypass_csp(&mut self, page: PageId, enabled: bool) -> bool {
         let Some(state) = self.page_mut(page) else { return false };
         state.bypass_csp = enabled;

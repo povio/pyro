@@ -139,6 +139,8 @@ struct Job {
     /// arrived and matched (SRI), then delivered.
     integrity: Option<crate::integrity::Integrity>,
     held_head: RefCell<Option<ResponseHead>>,
+    /// The request's CSP guard: what its redirect checks found is reported as it progresses.
+    csp: Option<Arc<pyro_net::csp::RequestCsp>>,
 }
 
 /// Fetch's keepalive quota: the body bytes of a document's keepalive
@@ -885,6 +887,9 @@ pub(crate) fn send_pings(
 
 pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
     let function = s.function("fetch", |s, _this, args| {
+        // An engine-internal caller's destination for this call (a worklet's module), taken
+        // first so that it never outlives the call.
+        let csp_dest = crate::csp::take_next_fetch_dest();
         let deferred = s.deferred()?;
         let promise = deferred.promise.get(s);
         // streams.js `fetchBuffered` calls back with a boolean third argument and a body it
@@ -915,6 +920,13 @@ pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
             // Init conversion can execute script, including embedder teardown.
             if page.is_disposed() {
                 return Err(JsError::ContextDestroyed);
+            }
+            // CSP: a request the engine makes through `fetch` for another destination (a
+            // worklet's module: `script-src-elem`) is checked as one; blocked, a network error.
+            if let Some(dest) = csp_dest {
+                let check = pyro_net::csp::CspRequest::new(request.url.clone(), dest);
+                request.csp = crate::csp::check_request(&page, check, None)
+                    .map_err(|_| JsError::Type("Failed to fetch".into()))?;
             }
             if let Some(signal) = &signal {
                 let signal = s.unwrap::<AbortSignal>(signal.get(s)).expect("validated signal");
@@ -989,6 +1001,7 @@ pub(crate) fn install(s: &Scope<'_>) -> JsResult<()> {
                     body,
                     integrity: extras.integrity,
                     held_head: RefCell::new(None),
+                    csp: request.csp.clone(),
                 });
                 if job.integrity.is_some() {
                     // Nothing is delivered before the whole body is checked.
@@ -1138,6 +1151,7 @@ fn pump(page_id: u64, id: RequestId) {
     }
     *job.body.visible_terminal.borrow_mut() = terminal.clone();
     page.network_delivery(id, frontier);
+    crate::csp::report_guard(&page, job.csp.as_ref(), None);
     if page.is_disposed() || job.body.disposed.get() || job.body.aborted.get() {
         return;
     }

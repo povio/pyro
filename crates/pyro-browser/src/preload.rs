@@ -53,9 +53,23 @@ const MAX_PRELOADS: usize = 2048;
 impl Browser {
     /// Imports and modulepreloads share one document fetch, regardless of which starts first.
     pub(crate) fn fetch_imported_module(&mut self, page: FrameKey, url: String, waiter: ModuleWaiter) {
+        self.fetch_imported_module_with(page, url, waiter, None);
+    }
+
+    /// [`Browser::fetch_imported_module`] for a request whose CSP check its initiator ran
+    /// (`csp_checked`: that check's guard, a module script element's); `None`: the fetch, if
+    /// this starts one, is checked as an unattributed import.
+    pub(crate) fn fetch_imported_module_with(
+        &mut self,
+        page: FrameKey,
+        url: String,
+        waiter: ModuleWaiter,
+        csp_checked: Option<std::sync::Arc<pyro_net::csp::RequestCsp>>,
+    ) {
+        let opts = crate::loader::ScriptFetch::csp_checked(csp_checked);
         let Some(waiter) = self.preloaded_module_for(page, &url, waiter, true) else { return };
         let Some(mut doc) = self.doc_mut(page) else {
-            self.fetch_text(page, url, ResourceKind::ModuleScript, waiter);
+            self.fetch_script(page, url, ResourceKind::ModuleScript, opts, waiter);
             return;
         };
         let bindings = doc.main_frame.page_dom.clone();
@@ -63,7 +77,7 @@ impl Browser {
         let loader = doc.main_frame.loader_id.clone();
         doc.preloads.modules.insert(url.clone(), ModuleEntry::Pending(Vec::new()));
         drop(doc);
-        self.fetch_text(page, url.clone(), ResourceKind::ModuleScript, move |browser, result| {
+        self.fetch_script(page, url.clone(), ResourceKind::ModuleScript, opts, move |browser, result| {
             if browser.doc(page).is_none_or(|doc| doc.main_frame.loader_id != loader)
                 || bindings
                     .as_ref()
@@ -275,6 +289,7 @@ impl Browser {
             return;
         };
         let request = FetchRequest {
+            csp: None,
             parser_priority: false,
             credentials: None,
             post: None,

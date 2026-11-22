@@ -6,6 +6,7 @@ mod cache;
 pub mod client;
 pub mod cookies;
 pub mod cors;
+pub mod csp;
 pub mod data_url;
 mod h2_probe;
 mod inflate;
