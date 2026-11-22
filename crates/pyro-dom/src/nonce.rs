@@ -11,12 +11,14 @@ use crate::dom::Dom;
 use crate::error::DomResult;
 use crate::node::NodeId;
 
-/// A Content Security Policy of a document (as delivered: its serialization), and whether it is
-/// report-only (`Content-Security-Policy-Report-Only`).
+/// A Content Security Policy of a document (as delivered: its serialization), whether it is
+/// report-only (`Content-Security-Policy-Report-Only`), and whether a `<meta http-equiv>`
+/// delivered it (else a header).
 #[derive(Clone, Debug)]
 pub struct CspPolicy {
     pub text: Box<str>,
     pub report_only: bool,
+    pub meta: bool,
 }
 
 #[derive(Default)]
@@ -49,14 +51,14 @@ impl Dom {
     pub fn set_trusted_types_policies(&mut self, doc: NodeId, enforce: &str, report_only: &str) -> DomResult<()> {
         self.check(doc)?;
         self.nonces.trusted_types.remove(&doc);
-        self.add_csp_policies(doc, enforce, false);
-        self.add_csp_policies(doc, report_only, true);
+        self.add_csp_policies(doc, enforce, false, false);
+        self.add_csp_policies(doc, report_only, true, false);
         Ok(())
     }
 
-    /// Adds the policies in `csp` that have a Trusted Types directive to `doc`'s (a header, or a
-    /// `<meta http-equiv="Content-Security-Policy">` that joined the head).
-    pub(crate) fn add_csp_policies(&mut self, doc: NodeId, csp: &str, report_only: bool) {
+    /// Adds the policies in `csp` that have a Trusted Types directive to `doc`'s (a header, or with
+    /// `meta` a `<meta http-equiv="Content-Security-Policy">` that joined the head).
+    pub(crate) fn add_csp_policies(&mut self, doc: NodeId, csp: &str, report_only: bool, meta: bool) {
         let policies: Vec<CspPolicy> = csp
             .split(',')
             .map(str::trim)
@@ -66,7 +68,7 @@ impl Dom {
                     name.eq_ignore_ascii_case("trusted-types") || name.eq_ignore_ascii_case("require-trusted-types-for")
                 })
             })
-            .map(|policy| CspPolicy { text: policy.into(), report_only })
+            .map(|policy| CspPolicy { text: policy.into(), report_only, meta })
             .collect();
         if !policies.is_empty() {
             self.nonces.trusted_types.entry(doc).or_default().extend(policies);
@@ -118,5 +120,45 @@ impl Dom {
             self.nonces.hidden.insert(el, nonce);
             let _ = self.set_attribute(el, "nonce", "");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use crate::dom::Dom;
+    use crate::node::DocumentKind;
+
+    fn provenance(dom: &Dom, doc: crate::node::NodeId) -> Vec<(String, bool, bool)> {
+        dom.trusted_types_policies(doc).iter().map(|p| (p.text.to_string(), p.report_only, p.meta)).collect()
+    }
+
+    #[test]
+    fn header_policies_are_not_meta() {
+        let mut dom = Dom::new();
+        let doc = dom.create_document(DocumentKind::Html, "https://a.test/");
+        dom.set_trusted_types_policies(doc, "trusted-types a; report-uri /h", "require-trusted-types-for 'script'").unwrap();
+        dom.add_csp_policies(doc, "trusted-types b", false, true);
+        assert_eq!(
+            provenance(&dom, doc),
+            [
+                ("trusted-types a; report-uri /h".to_owned(), false, false),
+                ("require-trusted-types-for 'script'".to_owned(), true, false),
+                ("trusted-types b".to_owned(), false, true),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_meta_in_head_is_meta() {
+        let dom: crate::parse::DomRef = Rc::new(RefCell::new(Dom::new()));
+        let doc = crate::parse::parse_document(
+            &dom,
+            "https://a.test/",
+            r#"<head><meta http-equiv="Content-Security-Policy" content="trusted-types m; report-uri /r"></head>"#,
+        );
+        assert_eq!(provenance(&dom.borrow(), doc), [("trusted-types m; report-uri /r".to_owned(), false, true)]);
     }
 }
