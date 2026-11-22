@@ -488,13 +488,18 @@ fn format_run(page: &PageDom, dom: &mut Dom, host: NodeId, text: NodeId, fmt: &F
     let mut run = text;
     if let Some(carrier) = value_carrier(dom, text, host, fmt) {
         if matches!(fmt.kind, Kind::Size | Kind::Family) && editing::local(dom, carrier) == "font"
-            && dom.get_attribute(carrier, fmt.kind.html_attr()?).ok()? == fmt.legacy.as_deref()
             && equivalent(fmt, &effective(page, dom, fmt.kind, text))
         {
-            // Only a plain legacy FONT at the end of its run can absorb a
-            // following selection without spreading unrelated styling.
-            return (legacy.is_some() && dom.attributes(carrier).ok()?.len() == 1
-                && dom.next_sibling(text).ok()?.is_none()).then_some(carrier);
+            let authored = dom.get_attribute(carrier, fmt.kind.html_attr()?).ok()?;
+            let exact = authored == fmt.legacy.as_deref();
+            if exact || fmt.kind == Kind::Family && authored.zip(fmt.legacy.as_deref())
+                .is_some_and(|(a, b)| a.eq_ignore_ascii_case(b))
+            {
+                // Equivalent family spelling preserves the existing carrier.
+                // Extending it to new text also requires the same literal face.
+                return (exact && legacy.is_some() && dom.attributes(carrier).ok()?.len() == 1
+                    && dom.next_sibling(text).ok()?.is_none()).then_some(carrier);
+            }
         }
         let outer = dom.parent_element(carrier).ok()??;
         let mut points = [(text, 0), (text, editing::len(dom, text))];
@@ -511,6 +516,22 @@ fn format_run(page: &PageDom, dom: &mut Dom, host: NodeId, text: NodeId, fmt: &F
             super::indentation::unwrap(dom, middle, &mut points)?;
         } else {
             run = middle;
+        }
+    }
+    if fmt.kind == Kind::Family {
+        let outer = dom.parent_element(run).ok()??;
+        if outer != host && editing::local(dom, outer) == "font" && dom.child_count(outer).ok()? == 1
+            && dom.has_attribute(outer, "face").ok()?
+        {
+            let plain = dom.attributes(outer).ok()?.len() == 1;
+            if run == text && (legacy.is_some() || !plain) {
+                dom.remove_attribute(outer, "face").ok()?;
+                apply_to(dom, outer, fmt, legacy);
+                return (plain && legacy.is_some()).then_some(outer);
+            }
+            if plain {
+                super::indentation::unwrap(dom, outer, &mut [(text, 0), (text, editing::len(dom, text))])?;
+            }
         }
     }
     // Keep the SPAN around an isolated legacy FONT when it carries other styling.
