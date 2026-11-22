@@ -119,6 +119,21 @@ pub(super) fn note_registry_document(obj: &RegistryObject, page: &Rc<PageDom>, d
     }
 }
 
+/// Every arena that has associated a node with this registry needs the DOM's
+/// definition filters, even if that node has never been connected.
+pub(super) fn registry_arenas(obj: &RegistryObject, documents: &[(Rc<PageDom>, NodeId)]) -> Vec<Rc<PageDom>> {
+    let Some(id) = obj.key.scoped else { return vec![obj.page.clone()] };
+    let state = obj.page.custom_elements.borrow();
+    let observed =
+        state.scoped.get(&id).into_iter().flat_map(|entry| &entry.documents).filter_map(|(page, _)| page.upgrade());
+    let mut seen = FxHashSet::default();
+    std::iter::once(obj.page.clone())
+        .chain(observed)
+        .chain(documents.iter().map(|(page, _)| page.clone()))
+        .filter(|page| seen.insert(Rc::as_ptr(&page.dom)))
+        .collect()
+}
+
 pub(super) fn registry_documents(obj: &RegistryObject) -> Vec<(Rc<PageDom>, NodeId)> {
     let Some(id) = obj.key.scoped else { return vec![(obj.page.clone(), obj.page.document())] };
     let state = obj.page.custom_elements.borrow();

@@ -885,35 +885,26 @@ impl JsClass for CustomElementRegistry {
             let observed = definition.observed.clone();
             with_registry(page, |r| r.defs.insert(key.clone(), definition));
             let association = registry.key.association();
-            {
-                // The parser/DOM name sets are fast candidate filters. The registry
-                // check below decides which definition each candidate receives.
-                let install_hooks = with_registry(page, |r| !std::mem::replace(&mut r.parser_hooks, true));
-                let mut dom = page.dom.borrow_mut();
+            let documents = registry_documents(registry);
+            for arena in registry_arenas(registry, &documents) {
+                // These are lookup filters, independent of whether this
+                // arena has a document in the registry's scoped document set.
+                let install_hooks = with_registry(&arena, |r| !std::mem::replace(&mut r.parser_hooks, true));
+                let mut dom = arena.dom.borrow_mut();
                 dom.enable_custom_upgrades();
                 dom.note_custom_definition(&key.1, observed.clone());
                 if disable_shadow {
-                    dom.disable_shadow_for_registry(page.document(), association, &key.1, &local_name);
+                    dom.disable_shadow_for_registry(arena.document(), association, &key.1, &local_name);
                 }
                 if install_hooks {
-                    dom.set_parser_custom_elements(page.document(), Some(Rc::new(ParserHooks { page: Rc::downgrade(page) })));
+                    dom.set_parser_custom_elements(arena.document(), Some(Rc::new(ParserHooks { page: Rc::downgrade(&arena) })));
                 }
             }
             // Snapshot all candidates before invoking constructors, in scoped
             // document-set order and shadow-including tree order within each.
             let mut existing = Vec::new();
-            for (owner, doc) in registry_documents(registry) {
-                let candidates = {
-                    let mut dom = owner.dom.borrow_mut();
-                    if !Rc::ptr_eq(&owner.dom, &page.dom) {
-                        dom.enable_custom_upgrades();
-                        dom.note_custom_definition(&key.1, observed.clone());
-                        if disable_shadow {
-                            dom.disable_shadow_for_registry(doc, association, &key.1, &local_name);
-                        }
-                    }
-                    dom.upgrade_candidates_named(doc, &key.1)
-                };
+            for (owner, doc) in documents {
+                let candidates = owner.dom.borrow().upgrade_candidates_named(doc, &key.1);
                 for el in candidates {
                     if registry_owns_node(s, registry, &owner, el) {
                         existing.push((owner.clone(), el));
