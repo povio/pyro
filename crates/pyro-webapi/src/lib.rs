@@ -83,6 +83,7 @@ pub mod layout_api;
 pub(crate) mod lazy_module;
 pub mod lifecycle;
 pub mod media;
+mod text_tracks;
 pub(crate) mod media_format;
 pub mod media_source;
 pub mod message_channel;
