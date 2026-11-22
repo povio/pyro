@@ -63,6 +63,9 @@ pub struct PopupState {
     /// The sandboxing flags the popup's documents take from its creator (HTML "popup sandboxing
     /// flag set"), as the embedder encodes them; 0 for none.
     sandbox: Cell<u32>,
+    /// The embedder's id of the child frame whose document opened the popup by following a link
+    /// or submitting a form (None: the top-level frame, or `window.open`, which records it itself).
+    opener_child: Cell<Option<u64>>,
 }
 
 impl std::fmt::Debug for PopupState {
@@ -101,6 +104,7 @@ impl PopupTicket {
             opener_cleared: Cell::new(false),
             prebuilt: RefCell::new(None),
             sandbox: Cell::new(0),
+            opener_child: Cell::new(None),
         });
         (Rc::new(Self(state.clone())), state)
     }
@@ -125,6 +129,14 @@ impl PopupTicket {
     }
     pub fn set_sandbox_bits(&self, bits: u32) {
         self.0.sandbox.set(bits);
+    }
+
+    /// The child frame of the opener page that opened the popup (`PopupState::opener_child`).
+    pub fn opener_child(&self) -> Option<u64> {
+        self.0.opener_child.get()
+    }
+    pub fn set_opener_child(&self, child: Option<u64>) {
+        self.0.opener_child.set(child);
     }
 
     /// The session storage namespace the popup page must use.

@@ -1779,6 +1779,9 @@ impl Browser {
                 p.frames.share_origin_keying(&opener_host);
             }
             *p.frames.opener.borrow_mut() = Some(frames);
+            if let Some(child) = ticket.opener_child() {
+                p.frames.opener_frame.set(Some(crate::frames::FrameKey { page: opener, child: Some(child) }));
+            }
             *p.frames.popup.borrow_mut() = Some(ticket.clone());
             // The initial about:blank document is the opener's creation.
             if p.main_frame.url == "about:blank" && !prebuilt {

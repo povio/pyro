@@ -234,6 +234,9 @@ pub(crate) struct FrameHost {
     /// The page that opened this one as a popup with its opener kept
     /// (`Browser::adopt_popup`): the top-level window's `opener`.
     pub(crate) opener: RefCell<Option<std::rc::Weak<FrameHost>>>,
+    /// For a popup made by `window.open` (`prebuild_popup`): the frame of the opener page whose
+    /// document called it, which the popup's `opener` is (a child frame's window, not the top's).
+    pub(crate) opener_frame: Cell<Option<FrameKey>>,
     /// For such a popup, the ticket through which the opener's document
     /// reaches it (its `window.open` result is `event.source` there).
     pub(crate) popup: RefCell<Option<Rc<pyro_webapi::PopupTicket>>>,
@@ -378,6 +381,7 @@ impl FrameHost {
             class: Cell::new(self.class.get()),
             // Its `window.opener` from the start (`Browser::adopt_popup` sets it again).
             opener: RefCell::new(Some(Rc::downgrade(self))),
+            opener_frame: Cell::new(Some(opener)),
             popup: RefCell::new(None),
             creator_secure: Cell::new(None),
             creator_csp: RefCell::new(None),
@@ -467,6 +471,7 @@ impl FrameHost {
             retired: RefCell::new(Vec::new()),
             class: Cell::new(browser.engine.register::<Window>()),
             opener: RefCell::new(None),
+            opener_frame: Cell::new(None),
             popup: RefCell::new(None),
             creator_secure: Cell::new(None),
             creator_csp: RefCell::new(None),
@@ -1555,8 +1560,9 @@ impl FrameHost {
         Ok(s.wrap::<CrossWindow>(data, Some(pyro_js::IdentityKey(0x4652414d45505258, target.child.unwrap_or(0))))?
             .value())
     }
-    /// `window.opener` of frame `key`: the opener page's top-level window
-    /// for the top-level frame of a popup that kept its opener (null for
+    /// `window.opener` of frame `key`: the window of the opener page's frame that opened it (its
+    /// top-level window unless `window.open` ran in a child frame) for the top-level frame of a
+    /// popup that kept its opener (null for
     /// child frames, other pages, and a closed opener). Same-origin openers
     /// are reached directly; otherwise a cross-origin stand-in.
     pub fn opener_window<'s>(
@@ -1569,7 +1575,11 @@ impl FrameHost {
             return Ok(s.null());
         }
         let Some(opener) = self.opener.borrow().as_ref().and_then(std::rc::Weak::upgrade) else { return Ok(s.null()) };
-        let target = FrameKey::from(opener.page);
+        let target = self
+            .opener_frame
+            .get()
+            .filter(|k| k.page == opener.page && opener.frame(*k).is_some())
+            .unwrap_or_else(|| FrameKey::from(opener.page));
         let (Some(mine), Some(theirs)) = (self.frame(key), opener.frame(target)) else { return Ok(s.null()) };
         let same_origin = if mine.origin == "null" || theirs.origin == "null" {
             mine.origin == theirs.origin && mine.opaque_origin == theirs.opaque_origin
@@ -1583,7 +1593,7 @@ impl FrameHost {
             let value = pyro_js::Persistent::new(&scope, scope.global().value());
             return Ok(value.get(s));
         }
-        opener_proxy(s, &opener, Some((Rc::downgrade(self), key)))
+        opener_proxy(s, &opener, target, Some((Rc::downgrade(self), key)))
     }
     pub fn relation<'s>(
         self: &Rc<Self>,
@@ -1713,14 +1723,18 @@ impl FrameHost {
 fn opener_proxy<'s>(
     s: &pyro_js::Scope<'s>,
     opener: &Rc<FrameHost>,
+    target: FrameKey,
     from: Option<(std::rc::Weak<FrameHost>, FrameKey)>,
 ) -> pyro_js::JsResult<pyro_js::Value<'s>> {
-    let key = pyro_js::IdentityKey(0x4f50454e45525758, u64::from(opener.page.0));
+    // One stand-in per window of the opener page (its top-level one, or a child frame's).
+    let key = match target.child {
+        None => pyro_js::IdentityKey(0x4f50454e45525758, u64::from(opener.page.0)),
+        Some(child) => pyro_js::IdentityKey(0x4f50454e45524658, child),
+    };
     if let Some(o) = s.lookup_identity(key) {
         return Ok(o.value());
     }
-    let data =
-        CrossWindowData { host: Rc::downgrade(opener), source: None, from, target: opener.page.into(), foreign: false };
+    let data = CrossWindowData { host: Rc::downgrade(opener), source: None, from, target, foreign: false };
     Ok(s.wrap::<CrossWindow>(data, Some(key))?.value())
 }
 
@@ -1927,7 +1941,9 @@ impl pyro_js::JsClass for CrossWindow {
                 }
                 ("parent", None) if w.foreign => host.foreign_ancestor(s, w, host.parent_key(w.target))?,
                 ("top", None) if w.foreign => host.foreign_ancestor(s, w, host.page.into())?,
-                ("window" | "self" | "frames" | "parent" | "top", None) => opener_proxy(s, &host, w.from.clone())?,
+                ("window" | "self" | "frames", None) => opener_proxy(s, &host, w.target, w.from.clone())?,
+                ("parent", None) => opener_proxy(s, &host, host.parent_key(w.target), w.from.clone())?,
+                ("top", None) => opener_proxy(s, &host, host.page.into(), w.from.clone())?,
                 ("window" | "self" | "frames", Some(source)) => host.window_value(s, source, w.target)?,
                 ("parent", Some(source)) => host.window_value(s, source, host.parent_key(w.target))?,
                 ("top", Some(source)) => host.window_value(s, source, host.page.into())?,

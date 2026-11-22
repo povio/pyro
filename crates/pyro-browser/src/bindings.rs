@@ -515,6 +515,10 @@ impl PageHooks for Hooks {
                 if let (Some(ticket), Some(sandbox)) = (request.popup.as_ref(), sandbox) {
                     ticket.set_sandbox_bits(sandbox.to_bits());
                 }
+                // The popup's `opener` is this frame's window, a child frame's too.
+                if let Some(ticket) = request.popup.as_ref() {
+                    ticket.set_opener_child(page.child);
+                }
                 if let Some((frame_id, false)) = frame {
                     b.emit(
                         page.page,
