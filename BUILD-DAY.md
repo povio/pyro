@@ -4,7 +4,7 @@ Documentation only. **Do not build until the user authorizes it** (standing ZERO
 
 - Batch branch: `origin/integration/round7-batch-1000` at `9317be985` (when this file was generated).
 - Ledger: `origin/ledger/round7-fix-queue` (`ledger.jsonl`, `estimates.json`).
-- Expected, unverified: MacBook in-scope window pages implemented-unbuilt **1222**; Studio **504**; MacBook worker variants (separate column) 220.
+- Expected, unverified: MacBook in-scope window pages implemented-unbuilt **1224**; Studio **504**; MacBook worker variants (separate column) 220.
 - Every figure is an estimate from source reading. Tentative pages are counted only where the owner gave a figure or the coordinator ruled.
 
 ## 1. JSC archive
@@ -154,6 +154,8 @@ Build the JSC archive through patch **0041**:
 - d6c79a73d: UTF-16 sniff from "<?x" without BOM — check XML/XHTML loading.
 - ca09913e3: an inserted <img> keeps its request (no re-resolve on base URL change) — check lazy/insert img e2e.
 - c0d4f513b: a popup's window.opener is now the window of the frame that opened it (not the top window) — check Playwright popup/opener flows opened from iframes.
+- 1dce34479: <link rel=compression-dictionary> now fetches; image preloads use imagesrcset and the preload scanner skips such links — check preload behaviour on real sites.
+- 83e7fe8fe: noscript/template now appear in the render tree (display:none) — structural selectors (:nth-child, +, ~) count them in rendering (spec/Chrome); check reftests that relied on the old omission; render_html.rs expectations updated.
 
 Additional watchlist notes:
 - 2026-11-22 coordinator: history navigation rate limit risk removed (cc806a11f adds an off switch used by the Playwright drop-in); R-HTML-25 now 7 (recorded on the row).
