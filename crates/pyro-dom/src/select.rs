@@ -870,8 +870,8 @@ impl Dom {
             State(s) => self.has_custom_state_idx(idx, s),
             Required => self.required_applies_idx(idx) && e.attr_local(&local_name!("required")).is_some(),
             Optional => self.required_applies_idx(idx) && e.attr_local(&local_name!("required")).is_none(),
-            ReadWrite => self.is_mutable_text_idx(idx),
-            ReadOnly => !self.is_mutable_text_idx(idx),
+            ReadWrite => self.matches_read_write_idx(idx),
+            ReadOnly => !self.matches_read_write_idx(idx),
             PlaceholderShown => {
                 e.attr_local(&local_name!("placeholder")).is_some()
                     && self.is_mutable_text_idx(idx)

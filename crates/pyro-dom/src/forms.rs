@@ -2081,9 +2081,12 @@ impl Dom {
     /// what bars such a control from constraint validation. Elsewhere `readonly` means nothing.
     fn readonly_applies_and_set_idx(&self, i: u32) -> bool {
         let Some(e) = self.n(i).element() else { return false };
-        if e.attr_local(&local_name!("readonly")).is_none() {
-            return false;
-        }
+        e.attr_local(&local_name!("readonly")).is_some() && self.readonly_applies_idx(i)
+    }
+
+    /// HTML: the elements `readonly` applies to: a textarea, and an input in a text, search,
+    /// URL, telephone, email, password, date/time or number state.
+    fn readonly_applies_idx(&self, i: u32) -> bool {
         match self.html_local(i).map(|l| &**l) {
             Some("textarea") => true,
             Some("input") => matches!(
@@ -2103,6 +2106,37 @@ impl Dom {
             ),
             _ => false,
         }
+    }
+
+    /// Whether `:read-write` matches element `i` (HTML § 4.16.3): a textarea or an input that
+    /// `readonly` applies to and that is mutable (neither readonly nor disabled), or any other
+    /// element that is editable: an editing host or inside one (its nearest `contenteditable`
+    /// says true or plaintext-only), or in a document in design mode. `:read-only` matches the
+    /// others.
+    pub(crate) fn matches_read_write_idx(&self, i: u32) -> bool {
+        let Some(e) = self.n(i).element() else { return false };
+        if matches!(self.html_local(i).map(|l| &**l), Some("input" | "textarea")) {
+            return self.readonly_applies_idx(i)
+                && e.attr_local(&local_name!("readonly")).is_none()
+                && !self.is_disabled_idx(i);
+        }
+        let mut cur = i;
+        while cur != NIL {
+            if let Some(el) = self.n(cur).element() {
+                if let Some(v) = el.attr_local(&local_name!("contenteditable")) {
+                    let v = v.trim();
+                    if v.is_empty() || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("plaintext-only") {
+                        return true;
+                    }
+                    if v.eq_ignore_ascii_case("false") {
+                        return false;
+                    }
+                }
+            }
+            cur = self.n(cur).parent;
+        }
+        let doc = self.n(i).owner_doc;
+        matches!(&self.n(doc).kind, NodeKind::Document(d) if d.design_mode)
     }
 
     /// Whether the element is a candidate for constraint validation.
