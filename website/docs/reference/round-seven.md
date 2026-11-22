@@ -13,7 +13,7 @@ Two Apple silicon Macs ran the same standalone RC.5 workflow executable from `51
 | Pyro RC.5 standalone | 1,691,766 / 1,785,720 | 15,277 |
 | Signed Chrome 158.0.8127.37 (archived reference) | 1,754,948 / 1,802,021 | 24,385 |
 
-Across matched named occurrences, **75,805 passed only in Chrome** and **12,623 passed only in Pyro**. The pinned inventory also contains 1,469 historical holds and 179 additional held variants. [Combined census, runtime identity and shard receipts](https://github.com/povio/pyro/blob/3c1e7fd0442f4bd4b9223a99967f9df9df16ab27/evidence/rc5-census-516dc3159-combined/README.md)
+Across matched named occurrences, **75,805 passed only in Chrome** and **12,623 passed only in Pyro**. The pinned inventory also contains 1,469 historical holds and 179 additional held variants. [Combined census, runtime identity and shard receipts](https://github.com/povio/pyro/blob/5892e136beb3c09446a3e12953c260ca08938cd9/evidence/rc5-census-516dc3159-combined/README.md)
 
 ## Development checkpoint with pinned JavaScriptCore
 
