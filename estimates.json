@@ -28,24 +28,24 @@
     "fetch/fetch-later": 29,
     "html/dom": 24,
     "fetch/content-encoding": 21,
-    "html/infrastructure": 20,
     "html/webappapis": 20,
+    "html/infrastructure": 20,
     "scheduler": 19,
     "html/syntax": 12,
     "fetch/cross-origin-resource-policy": 10,
     "workers": 9,
     "encoding": 7,
     "fetch/data-urls": 6,
-    "fetch/range": 5,
     "fetch/stale-while-revalidate": 5,
+    "fetch/range": 5,
     "FileAPI": 4,
+    "html/rendering": 3,
     "fetch/nosniff": 3,
     "fetch/http-cache": 3,
-    "html/rendering": 3,
     "xhr": 2,
     "IndexedDB": 1,
-    "svg/styling": 1,
-    "quirks": 1
+    "quirks": 1,
+    "svg/styling": 1
    }
   },
   "in_progress": {
@@ -68,8 +68,8 @@
     "html/semantics": 141,
     "html/syntax": 30,
     "html/browsers": 26,
-    "fetch/api": 5,
-    "html/dom": 5
+    "html/dom": 5,
+    "fetch/api": 5
    }
   },
   "queued": {
@@ -93,8 +93,8 @@
     "content-security-policy": 20,
     "webidl": 19,
     "html/canvas": 7,
-    "html/browsers": 5,
     "html/interaction": 5,
+    "html/browsers": 5,
     "svg/path": 4,
     "workers": 3,
     "html/webappapis": 3,
@@ -1588,11 +1588,11 @@
    "tentative": 0
   },
   "R-HTML-10": {
-   "state": "implemented-unbuilt",
-   "in_scope_pages": 2,
+   "state": "split",
+   "in_scope_pages": 0,
    "out_of_scope_pages": 0,
-   "pages": 2,
-   "tentative": 2
+   "pages": 0,
+   "tentative": 0
   },
   "R-HTML-10a": {
    "state": "implemented-unbuilt",
