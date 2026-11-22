@@ -119,18 +119,27 @@ pub fn release_thread() {
 
 /// HTML "text preparation": ASCII whitespace becomes spaces (one line). U+0000 is dropped: it
 /// draws nothing and takes no space, as in Chromium (`2d.text.measure.width.nullCharacter`), where
-/// a font without it would otherwise fall back to one that draws it.
+/// a font without it would otherwise fall back to one that draws it. The other characters that
+/// break lines (U+000B, U+0085, U+2028, U+2029) stay on the line, as in Chromium
+/// (`2d.text.draw.space.collapse.nonspace`): the controls become U+0001, a control that breaks
+/// nothing, which the shaper draws as the font's missing glyph as it would them (and which,
+/// being a control, picks no font); the separators become spaces, as the shaper draws them.
 fn prepare(text: &str) -> Cow<'_, str> {
-    if text.bytes().any(|b| matches!(b, b'\t' | b'\n' | b'\x0c' | b'\r' | b'\0')) {
-        Cow::Owned(
-            text.chars()
-                .filter(|&c| c != '\0')
-                .map(|c| if matches!(c, '\t' | '\n' | '\x0c' | '\r') { ' ' } else { c })
-                .collect(),
-        )
-    } else {
-        Cow::Borrowed(text)
+    let changed =
+        |c: char| matches!(c, '\t' | '\n' | '\x0c' | '\r' | '\0' | '\u{b}' | '\u{85}' | '\u{2028}' | '\u{2029}');
+    if !text.chars().any(changed) {
+        return Cow::Borrowed(text);
     }
+    Cow::Owned(
+        text.chars()
+            .filter(|&c| c != '\0')
+            .map(|c| match c {
+                '\t' | '\n' | '\x0c' | '\r' | '\u{2028}' | '\u{2029}' => ' ',
+                '\u{b}' | '\u{85}' => '\u{1}',
+                c => c,
+            })
+            .collect(),
+    )
 }
 
 /// Shapes `text` as one line in `style`.
