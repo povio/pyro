@@ -75,5 +75,11 @@ test('support converts config in member order and ignores unknown members', asyn
   assert.deepEqual(reads, ['aac', 'bitrate', 'bitrateMode', 'codec', 'numberOfChannels', 'opus', 'sampleRate']);
   assert.equal(Object.hasOwn(result.config, 'unknown'), false);
   assert.equal(result.config.opus.frameDuration, 20000);
+  assert.equal(Object.hasOwn(result.config.opus, 'complexity'), false);
+  const explicit = AudioEncoder.isConfigSupported({...config, opus: {complexity: 0}});
+  const absent = AudioEncoder.isConfigSupported(config);
+  drain();
+  assert.equal((await explicit).config.opus.complexity, 0);
+  assert.equal(Object.hasOwn((await absent).config, 'opus'), false);
   await assert.rejects(AudioEncoder.isConfigSupported({...config, opus: {complexity: 11}}), {name: 'TypeError'});
 });

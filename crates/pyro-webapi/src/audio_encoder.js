@@ -31,7 +31,8 @@
     const d = dictionary(input);
     const application = enumeration(d.application, 'audio', ['audio', 'voip', 'lowdelay']);
     const complexity = d.complexity;
-    const opus = { application, complexity: complexity === undefined ? 9 : unsigned(complexity) };
+    const opus = { application };
+    if (complexity !== undefined) opus.complexity = unsigned(complexity);
     opus.format = enumeration(d.format, 'opus', ['opus', 'ogg']);
     const duration = d.frameDuration;
     opus.frameDuration = duration === undefined ? 20000 : unsigned(duration, 64);
