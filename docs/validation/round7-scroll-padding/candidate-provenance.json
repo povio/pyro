@@ -1,0 +1,18 @@
+{
+  "classification": "development geometry candidate",
+  "source": "f2d6805e002f31f3dab4a873515fd9e404a87830",
+  "tree": "d78874a0e412436639b2b812f03c57f02b599ad5",
+  "parent": "00e529058fdf22677867732ab8e00e46de89a76c",
+  "parentBinarySHA256": "da784ec4a9c053e10c24abe283004662ff4718ff04a1cc20583f2ec56ad3efd7",
+  "binarySHA256": "8fb8848c4e188796b42deeb4e8e5ce3503dcefd7fc45cd689945ee527784a194",
+  "binaryFormat": "Mach-O 64-bit executable arm64",
+  "cleanTrackedSource": true,
+  "profile": "wptiter/render",
+  "buildCommand": "PYRO_BUILD_JOBS=1 CARGO_BUILD_JOBS=1 round6-noncss-measure/build-exact private-target",
+  "rustc": "rustc 1.100.0 (0ef1bc386 2026-11-09)\nbinary: rustc\ncommit-hash: 0ef1bc386059596dada8fb65b50425aab2ea637a\ncommit-date: 2026-11-09\nhost: aarch64-apple-darwin\nrelease: 1.100.0\nLLVM version: 23.1.5",
+  "jscKey": "0e0dd7038a7a-6f4649e395e0",
+  "jscSHA256": "3deb71f8e7d14daf174e35340a4ff0c1900b0e9f576503adeb5facbb1201f029",
+  "start": "Sun Nov 22 07:46:41 UTC 2026",
+  "end": "Sun Nov 22 07:51:31 UTC 2026",
+  "buildLogSHA256": "beefa190accb17e60af089c064d74d278d553c25f50426add9ab059d590dc6f8"
+}
