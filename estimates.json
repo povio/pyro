@@ -38,51 +38,51 @@
     "workers": 9,
     "encoding": 7,
     "fetch/data-urls": 6,
-    "fetch/corb": 6,
     "fetch/range": 6,
+    "fetch/corb": 6,
     "fetch/stale-while-revalidate": 5,
     "FileAPI": 4,
     "html/obsolete": 4,
-    "fetch/http-cache": 3,
     "fetch/nosniff": 3,
+    "fetch/http-cache": 3,
     "xhr": 2,
     "fetch/orb": 2,
     "fetch/redirect-navigate": 1,
-    "svg/styling": 1,
     "fetch/redirects": 1,
-    "IndexedDB": 1,
-    "quirks": 1,
+    "svg/styling": 1,
     "fetch/security": 1,
-    "fetch/content-type": 1
+    "fetch/content-type": 1,
+    "quirks": 1,
+    "IndexedDB": 1
    }
   },
   "in_progress": {
    "scope": {
-    "macbook_in_scope": 32,
+    "macbook_in_scope": 28,
     "studio_in_scope": 22,
     "other_dirs_out_of_scope": 0,
-    "macbook_worker_variants_if_enabled": 8,
+    "macbook_worker_variants_if_enabled": 6,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 30,
+   "distinct_census_pages": 26,
    "owner_reported_unlisted": 0,
-   "selector_union": 465,
-   "owner_estimate_reduction": 435,
+   "selector_union": 459,
+   "owner_estimate_reduction": 433,
    "of_which_tentative": 182,
    "studio_css_reported_pages_not_deduped": 22,
    "studio_css_listed_distinct": 0,
    "by_dir": {
-    "html/canvas": 131,
+    "html/canvas": 125,
     "html/semantics": 121,
     "html/browsers": 108,
     "html/syntax": 37,
     "html/webappapis": 35,
     "html/dom": 13,
     "fetch/compression-dictionary": 8,
-    "html/interaction": 5,
     "fetch/api": 5,
-    "html/infrastructure": 1,
-    "html/obsolete": 1
+    "html/interaction": 5,
+    "html/obsolete": 1,
+    "html/infrastructure": 1
    }
   },
   "queued": {
@@ -3029,14 +3029,14 @@
    "tentative": 0
   },
   "C-P2-line-cross": {
-   "state": "reserved",
+   "state": "deferred",
    "in_scope_pages": 3,
    "out_of_scope_pages": 0,
    "pages": 3,
    "tentative": 0
   },
   "C-P3-arc-scale": {
-   "state": "reserved",
+   "state": "deferred",
    "in_scope_pages": 3,
    "out_of_scope_pages": 0,
    "pages": 3,
