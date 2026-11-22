@@ -1,0 +1,104 @@
+{
+  "legacyParent": {
+    "parentCharset": "windows-1251",
+    "app": {
+      "encoding": "windows-1251",
+      "type": "text/html",
+      "text": "{\"label\":\"й›Є в‚¬  &\"}",
+      "literalMarkup": false
+    },
+    "text": {
+      "encoding": "windows-1251",
+      "type": "text/html",
+      "text": "{\"label\":\"й›Є в‚¬  &\"}",
+      "literalMarkup": false
+    },
+    "plus": {
+      "encoding": "windows-1251",
+      "type": "text/html",
+      "text": "{\"label\":\"й›Є в‚¬  &\"}",
+      "literalMarkup": false
+    },
+    "upper": {
+      "encoding": "windows-1251",
+      "type": "text/html",
+      "text": "{\"label\":\"й›Є в‚¬  &\"}",
+      "literalMarkup": false
+    },
+    "legacy": {
+      "encoding": "windows-1251",
+      "type": "text/html",
+      "text": "{\"label\":\"й›Є в‚¬  &\"}",
+      "literalMarkup": false
+    },
+    "utf8": {
+      "encoding": "UTF-8",
+      "type": "text/html",
+      "text": "{\"label\":\"雪 €  &\"}",
+      "literalMarkup": false
+    },
+    "bom": {
+      "encoding": "UTF-8",
+      "type": "text/html",
+      "text": "{\"label\":\"雪 €  &\"}",
+      "literalMarkup": false
+    },
+    "plain": {
+      "encoding": "windows-1251",
+      "type": "text/plain",
+      "text": "Яр",
+      "literalMarkup": true
+    }
+  },
+  "utf8Parent": {
+    "parentCharset": "UTF-8",
+    "app": {
+      "encoding": "UTF-8",
+      "type": "text/html",
+      "text": "{\"label\":\"雪 €  &\"}",
+      "literalMarkup": false
+    },
+    "text": {
+      "encoding": "UTF-8",
+      "type": "text/html",
+      "text": "{\"label\":\"雪 €  &\"}",
+      "literalMarkup": false
+    },
+    "plus": {
+      "encoding": "UTF-8",
+      "type": "text/html",
+      "text": "{\"label\":\"雪 €  &\"}",
+      "literalMarkup": false
+    },
+    "upper": {
+      "encoding": "UTF-8",
+      "type": "text/html",
+      "text": "{\"label\":\"雪 €  &\"}",
+      "literalMarkup": false
+    },
+    "legacy": {
+      "encoding": "windows-1251",
+      "type": "text/html",
+      "text": "{\"label\":\"й›Є в‚¬  &\"}",
+      "literalMarkup": false
+    },
+    "utf8": {
+      "encoding": "UTF-8",
+      "type": "text/html",
+      "text": "{\"label\":\"雪 €  &\"}",
+      "literalMarkup": false
+    },
+    "bom": {
+      "encoding": "UTF-8",
+      "type": "text/html",
+      "text": "{\"label\":\"雪 €  &\"}",
+      "literalMarkup": false
+    },
+    "plain": {
+      "encoding": "windows-1251",
+      "type": "text/plain",
+      "text": "Яр",
+      "literalMarkup": true
+    }
+  }
+}
