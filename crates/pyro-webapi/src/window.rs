@@ -259,6 +259,7 @@ where
     crate::image_decoder::define(def);
     crate::canvas::define_globals(def);
     crate::media::define_globals(def);
+    crate::media_source::define_globals(def);
     crate::webaudio::define_globals(def);
     def.getter("screen", |s, w| {
         let key = pyro_js::IdentityKey(w.page().id() | (1 << 57), 1);

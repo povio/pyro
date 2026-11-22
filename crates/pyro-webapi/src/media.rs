@@ -29,6 +29,8 @@
 //!
 //! TimeRanges, MediaError and TextTrackList are made in JS (media.js) on a
 //! realm's first use.
+#[path = "mse_playback.rs"]
+pub(crate) mod mse_playback;
 #[path = "track_load.rs"]
 mod track_load;
 pub(crate) use track_load::{check_track_resource, track_ready_state, track_url};
@@ -152,6 +154,7 @@ struct MediaState {
     show_poster: bool,
     /// A `<video>`'s frames, while its resource has a video track.
     frames: Option<Box<VideoFrames>>,
+    mse: Option<mse_playback::Attachment>,
     /// `requestVideoFrameCallback` callbacks: handle, realm, callback.
     frame_callbacks: Vec<(u32, WeakRealm, Persistent)>,
     next_frame_callback: u32,
@@ -217,6 +220,7 @@ impl Default for MediaState {
             played: Vec::new(),
             show_poster: true,
             frames: None,
+            mse: None,
             frame_callbacks: Vec::new(),
             next_frame_callback: 1,
             presented: None,
@@ -231,6 +235,11 @@ impl MediaState {
         match self.clock {
             Some((t0, p0)) => {
                 let p = p0 + (now - t0).max(0.0) / 1000.0 * self.rate;
+                let p = self
+                    .mse
+                    .as_ref()
+                    .and_then(|m| m.buffered.iter().find(|&&(a, b)| a <= p0 && p0 < b))
+                    .map_or(p, |&(a, b)| p.clamp(a, b));
                 if self.duration.is_finite() {
                     p.clamp(0.0, self.duration)
                 } else {
@@ -241,7 +250,10 @@ impl MediaState {
         }
     }
     fn at_end(&self, position: f64) -> bool {
-        self.ready >= HAVE_METADATA && self.duration.is_finite() && position >= self.duration
+        self.mse.as_ref().is_none_or(|m| m.ended)
+            && self.ready >= HAVE_METADATA
+            && self.duration.is_finite()
+            && position >= self.duration
     }
     /// HTML "potentially playing", less "ended playback" (the clock stops at the end itself).
     fn potentially_playing(&self) -> bool {
@@ -291,6 +303,7 @@ fn add_range(ranges: &mut Vec<(f64, f64)>, start: f64, end: f64) {
 pub(crate) struct MediaElements {
     elements: RefCell<FxHashMap<NodeId, MediaState>>,
     track_loads: track_load::Loads,
+    source_urls: RefCell<FxHashMap<String, Rc<mse_playback::Source>>>,
     /// Entry count at which those of collected elements are dropped.
     sweep_at: Cell<usize>,
     /// Elements whose delaying-the-load-event flag is set.
@@ -313,18 +326,29 @@ impl PageDom {
 
 fn with<R>(page: &PageDom, node: NodeId, f: impl FnOnce(&mut MediaState) -> R) -> R {
     let mut elements = page.media.elements.borrow_mut();
-    if !elements.contains_key(&node) && elements.len() >= page.media.sweep_at.get() {
-        sweep(page, &mut elements);
+    let detached = if !elements.contains_key(&node) && elements.len() >= page.media.sweep_at.get() {
+        sweep(page, &mut elements)
+    } else {
+        Vec::new()
+    };
+    let result = f(elements.entry(node).or_default());
+    drop(elements);
+    for attachment in detached {
+        attachment.detach();
     }
-    f(elements.entry(node).or_default())
+    result
 }
 
 /// Drops the state of collected elements (a pinned element is alive).
-fn sweep(page: &PageDom, elements: &mut FxHashMap<NodeId, MediaState>) {
-    let Ok(dom) = page.dom.try_borrow() else { return };
+fn sweep(page: &PageDom, elements: &mut FxHashMap<NodeId, MediaState>) -> Vec<mse_playback::Attachment> {
+    let mut detached = Vec::new();
+    let Ok(dom) = page.dom.try_borrow() else { return detached };
     let delaying = page.media.delaying_load.get();
     elements.retain(|id, st| {
         let keep = st.pinned || dom.is_alive(*id);
+        if !keep {
+            detached.extend(st.mse.take());
+        }
         if !keep && st.delaying_load {
             page.media.delaying_load.set(page.media.delaying_load.get().saturating_sub(1));
         }
@@ -337,6 +361,7 @@ fn sweep(page: &PageDom, elements: &mut FxHashMap<NodeId, MediaState>) {
             hooks.media_load_delay_released();
         }
     }
+    detached
 }
 
 /// Reads state without making it: an untouched element's defaults.
@@ -463,6 +488,7 @@ fn source_removed(page: &PageDom, node: NodeId, source: NodeId, previous: Option
 /// DOM references. Called by `PageDom::dispose` while hooks still exist.
 pub(crate) fn dispose(page: &PageDom) {
     page.media.track_loads.clear();
+    page.media.source_urls.borrow_mut().clear();
     let states = std::mem::take(&mut *page.media.elements.borrow_mut());
     page.media.delaying_load.set(0);
     let hooks = page.hooks();
@@ -472,6 +498,9 @@ pub(crate) fn dispose(page: &PageDom) {
             hooks.clear_media_timer(id);
         }
         drop(st.fetch.take());
+        if let Some(attachment) = st.mse.take() {
+            attachment.detach();
+        }
         if st.pinned {
             pinned.push(node);
         }
@@ -658,12 +687,15 @@ fn tick(page: &Rc<PageDom>, node: NodeId, serial: u32) {
         } else {
             f64::INFINITY
         };
-        Some(st.at_end(position) || remaining < 0.5)
+        Some(st.at_end(position) || remaining < 0.5 && st.mse.as_ref().is_none_or(|m| m.ended))
     });
     match ended {
         None => {}
         Some(true) => reached_end(page, node),
         Some(false) => {
+            if peek(page, node, |st| st.mse.is_some()) {
+                mse_playback::refresh(page, node);
+            }
             if crate::text_tracks::playback(page, node, true) {
                 internal_pause(page, node);
                 return;
@@ -728,10 +760,17 @@ fn seek(page: &Rc<PageDom>, node: NodeId, to: f64) {
     sync_clock(page, node);
     crate::text_tracks::playback(page, node, false);
     queue_event(page, node, generation, "seeking");
-    // Every byte is at hand: the seek completes in the next task.
+    if peek(page, node, |st| st.mse.is_some()) {
+        mse_playback::refresh(page, node);
+    } else {
+        complete_seek(page, node, generation, serial);
+    }
+}
+
+fn complete_seek(page: &Rc<PageDom>, node: NodeId, generation: u32, serial: u32) {
     queue(page, node, generation, move |page| {
         let current = with(page, node, |st| {
-            let current = st.seek_serial == serial && st.seeking;
+            let current = st.seek_serial == serial && st.seeking && (st.mse.is_none() || st.ready >= HAVE_CURRENT_DATA);
             if current {
                 st.seeking = false;
             }
@@ -766,6 +805,9 @@ fn load(page: &Rc<PageDom>, node: NodeId) {
         (st.network, st.generation, st.timer.take(), st.fetch.take())
     });
     drop(old_fetch);
+    if let Some(attachment) = with(page, node, |st| st.mse.take()) {
+        attachment.detach();
+    }
     if let (Some(id), Some(hooks)) = (old_timer, page.hooks()) {
         hooks.clear_media_timer(id);
     }
@@ -918,6 +960,16 @@ fn next_source(page: &Rc<PageDom>, node: NodeId, generation: u32) {
 
 /// HTML "resource fetch algorithm" for `resource` (from `source` in children mode).
 fn fetch_resource(page: &Rc<PageDom>, node: NodeId, generation: u32, resource: Resource, source: Option<NodeId>) {
+    if let Resource::Url(url) = &resource {
+        if url.starts_with("blob:") {
+            if let Some(attached) = mse_playback::attach(page, node, generation, url) {
+                if !attached {
+                    fetched(page, node, generation, source, Seek::default(), Err(FORMAT_ERROR.into()));
+                }
+                return;
+            }
+        }
+    }
     let preload_none =
         page.dom.borrow().get_attribute(node, "preload").ok().flatten().is_some_and(|p| p.eq_ignore_ascii_case("none"));
     if preload_none && !attr(page, node, "autoplay") && peek(page, node, |st| st.paused) {
@@ -1204,6 +1256,9 @@ pub(crate) fn current_frame(page: &PageDom, node: NodeId) -> Option<(pyro_media:
         return None;
     }
     let position = st.position_at(t);
+    if let Some(m) = st.mse.as_mut() {
+        return m.video_frame(position, st.duration).map(|f| (f, true));
+    }
     let frames = st.frames.as_mut()?;
     let clean = frames.clean;
     frames.player()?.frame_at(position).map(|f| (f, clean))
@@ -1222,7 +1277,9 @@ impl PageDom {
             }
             elements
                 .iter()
-                .filter(|(_, st)| st.frames.is_some() && st.ready >= HAVE_CURRENT_DATA)
+                .filter(|(_, st)| {
+                    (st.frames.is_some() || st.mse.is_some() && st.video.0 > 0) && st.ready >= HAVE_CURRENT_DATA
+                })
                 .map(|(&node, st)| (node, st.show_poster))
                 .collect()
         };
@@ -1270,6 +1327,9 @@ fn presented_frame(page: &PageDom, node: NodeId, t: f64) -> Option<(f64, f64, (u
     }
     let position = st.position_at(t);
     let size = st.video;
+    if let Some(m) = st.mse.as_mut() {
+        return m.video_frame(position, st.duration).map(|f| (f.time, f.time, (f.width, f.height)));
+    }
     match st.frames.as_mut().and_then(|f| f.player()) {
         Some(player) => {
             let index = player.index_at(position);
@@ -1338,7 +1398,13 @@ pub fn run_video_frame_callbacks(page: &Rc<PageDom>, now_ms: f64) {
 
 /// `videoWidth`/`videoHeight`: the video track's size once its metadata is known.
 pub(crate) fn video_size(n: &NodeData) -> (u32, u32) {
-    peek(n.page(), n.id, |st| if st.ready >= HAVE_METADATA { st.video } else { (0, 0) })
+    let t = now(n.page());
+    peek(n.page(), n.id, |st| {
+        if st.ready < HAVE_METADATA {
+            return (0, 0);
+        }
+        st.mse.as_ref().map_or(st.video, |m| m.presentation.dimensions(st.position_at(t)))
+    })
 }
 
 /// The element's MediaError in this realm: one object per error.
@@ -1359,6 +1425,10 @@ fn error_value<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
     Ok(error)
 }
 
+pub(crate) fn mse_time_ranges<'s>(s: &Scope<'s>, flat: Value<'s>) -> JsResult<Value<'s>> {
+    MODULE.helper(s, &crate::target::page_of(s)?, "timeRanges", &[flat])
+}
+
 fn time_ranges<'s>(s: &Scope<'s>, n: &NodeData, ranges: &[(f64, f64)]) -> JsResult<Value<'s>> {
     let flat: Vec<Value<'s>> = ranges.iter().flat_map(|&(a, b)| [s.number(a), s.number(b)]).collect();
     let list = s.array(&flat)?;
@@ -1366,8 +1436,11 @@ fn time_ranges<'s>(s: &Scope<'s>, n: &NodeData, ranges: &[(f64, f64)]) -> JsResu
 }
 
 /// The whole resource once it is loaded: every byte is buffered and seekable.
-fn loaded_range(n: &NodeData) -> Vec<(f64, f64)> {
+fn loaded_range(n: &NodeData, seekable: bool) -> Vec<(f64, f64)> {
     peek(n.page(), n.id, |st| {
+        if let Some(m) = &st.mse {
+            return if seekable { m.seekable.clone() } else { m.buffered.clone() };
+        }
         if st.ready >= HAVE_METADATA && st.duration.is_finite() {
             vec![(0.0, st.duration)]
         } else {
@@ -1435,8 +1508,8 @@ pub(crate) fn define(def: &mut ClassDef<HtmlMediaElement>) {
     });
     def.getter("seeking", |s, n| Ok(s.boolean(peek(n.page(), n.id, |st| st.seeking))));
     def.getter("duration", |s, n| Ok(s.number(peek(n.page(), n.id, |st| st.duration))));
-    def.getter("buffered", |s, n| time_ranges(s, n, &loaded_range(n)));
-    def.getter("seekable", |s, n| time_ranges(s, n, &loaded_range(n)));
+    def.getter("buffered", |s, n| time_ranges(s, n, &loaded_range(n, false)));
+    def.getter("seekable", |s, n| time_ranges(s, n, &loaded_range(n, true)));
     def.getter("played", |s, n| {
         let t = now(n.page());
         let ranges = peek(n.page(), n.id, |st| {

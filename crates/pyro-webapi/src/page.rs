@@ -1333,6 +1333,7 @@ impl PageDom {
         self.note_document_scripting();
         self.opaque_storage.clear();
         // Object URLs belong to the replaced document.
+        crate::media::mse_playback::clear_urls(self);
         drop(self.blob_urls.take());
         drop(self.reflected_url_base.take());
         let viewport = self.layout.borrow().viewport().clone();

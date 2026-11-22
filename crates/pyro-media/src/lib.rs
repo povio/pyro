@@ -18,4 +18,6 @@
 
 pub mod audio;
 pub mod convolution;
+pub mod mse;
+pub mod mse_buffer;
 pub mod video;

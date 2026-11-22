@@ -61,7 +61,9 @@ impl JsClass for URL {
             args.require(1, "URL.createObjectURL")?;
             let page = page_of(s)?;
             if s.unwrap::<crate::media_source::MediaSource>(args.get(0)).is_some() {
-                return Ok(s.string(&crate::media_source::object_url(s, &page)?));
+                let url = crate::media_source::object_url(s, &page)?;
+                crate::media::mse_playback::register(s, &page, url.clone(), args.get(0));
+                return Ok(s.string(&url));
             }
             let blob = s.unwrap::<crate::file::Blob>(args.get(0)).ok_or_else(|| {
                 JsError::Type(
@@ -96,6 +98,7 @@ impl JsClass for URL {
                 .is_some_and(|r| r.starts_with('/'))
             {
                 page.blob_urls.borrow_mut().remove(&url);
+                crate::media::mse_playback::revoke(&page, &url);
             }
             Ok(s.undefined())
         });

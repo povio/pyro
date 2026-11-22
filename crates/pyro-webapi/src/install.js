@@ -383,6 +383,10 @@
     headers: [headersHelpers, headersPopulated],
     urlSearchParams,
     fontFeatureMap,
+    mediaSourceStatics(_prototype, constructor) {
+      const descriptor = getOwnPropertyDescriptor({ get canConstructInDedicatedWorker() { return false; } }, 'canConstructInDedicatedWorker');
+      defineProperty(constructor, 'canConstructInDedicatedWorker', descriptor);
+    },
     structuredClone: structuredCloneFactory,
     // Element's own [Unscopable] `slot` (DOM) joins ChildNode's and ParentNode's.
     unscopables: [unscopable([...child, ...parent, 'slot']), unscopable(child), unscopable(child), unscopable([...parent, 'fullscreen']), unscopable(parent)],
