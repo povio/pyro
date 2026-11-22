@@ -3415,14 +3415,43 @@ pub(crate) fn query_value(page: &PageDom, doc: NodeId, command: &str) -> String 
     }
 }
 
+/// A DOM range around empty inline markup can have just one visible caret
+/// position. Unlink requires selected content even when the range is not
+/// collapsed in the DOM.
+fn unlink_has_content(page: &PageDom, dom: &Dom, host: NodeId, start: Point, end: Point) -> bool {
+    if start == end { return false; }
+    if start.0 != end.0 || editing::is_text(dom, start.0) { return true; }
+    let visible = |node| {
+        if !alignment::visible(page, dom, node) { return false; }
+        if editing::is_text(dom, node) {
+            return editing::len(dom, node) > 0 && !editing::invisible_formatting_space(page, dom, host, node);
+        }
+        let Ok(el) = dom.element(node) else { return false };
+        if !el.is_html() || !editing::is_editable(dom, node)
+            || !matches!(&**el.local_name(), "a" | "span" | "b" | "strong" | "i" | "em" | "u" | "s" | "font" | "small" | "sub" | "sup") {
+            return true;
+        }
+        match page.layout().computed_style_value(dom, node, "display").as_str() {
+            "inline" | "contents" => false,
+            "inline-block" => {
+                let rect = page.layout().bounding_client_rect(dom, node).layout_units();
+                rect.width > 0.0 && rect.height > 0.0
+            }
+            _ => true,
+        }
+    };
+    (start.1..end.1).filter_map(|i| dom.child_at(start.0, i).ok().flatten()).any(|child|
+        visible(child) || dom.descendants(child).is_ok_and(|mut nodes| nodes.any(visible)))
+}
+
 /// Rich editing commands require a range in this host. Plaintext-only can
 /// be inherited or overridden within the same editable tree.
 fn rich_selection(page: &PageDom, host: NodeId, command: &str) -> bool {
     let Some((start, end)) = editing::selection_range(page) else { return false };
     // Unlink acts on selected content. A caret inside an anchor does not
     // select that anchor, even when it is the only content in the host.
-    if command == "unlink" && start == end { return false; }
     let dom = page.dom.borrow();
+    if command == "unlink" && !unlink_has_content(page, &dom, host, start, end) { return false; }
     [start.0, end.0].into_iter().all(|node| {
         editing::editing_host(&dom, node) == Some(host) && !editing::plaintext_at(&dom, node)
     })
