@@ -1,0 +1,406 @@
+{
+ "basis": "census 5892e136 strict pages (Chrome strict pass, LP not strict); ESTIMATES, nothing measured",
+ "tiers": {
+  "implemented": {
+   "distinct_census_pages": 110,
+   "studio_css_reported_pages_not_deduped": 0,
+   "by_dir": {
+    "html/canvas": 107,
+    "mathml": 2,
+    "quirks": 1
+   }
+  },
+  "in_progress": {
+   "distinct_census_pages": 138,
+   "studio_css_reported_pages_not_deduped": 34,
+   "by_dir": {
+    "html/canvas": 100,
+    "scheduler": 19,
+    "fetch/content-encoding": 9,
+    "html/semantics": 5,
+    "fetch/data-urls": 3,
+    "svg/styling": 1,
+    "html/rendering": 1
+   }
+  },
+  "queued": {
+   "distinct_census_pages": 603,
+   "studio_css_reported_pages_not_deduped": 126,
+   "by_dir": {
+    "svg/animations": 229,
+    "html/canvas": 138,
+    "intersection-observer": 41,
+    "html/semantics": 23,
+    "dom/events": 21,
+    "webidl": 19,
+    "html/dom": 17,
+    "scroll-animations": 17,
+    "pointerevents": 11,
+    "html/syntax": 8,
+    "selection": 7,
+    "shadow-dom": 7,
+    "workers": 6,
+    "navigation-api": 6,
+    "uievents": 5,
+    "html/editing": 5,
+    "fetch/api": 5,
+    "svg/path": 4,
+    "svg/types": 4,
+    "mathml": 3,
+    "inert": 3,
+    "dom/nodes": 3,
+    "close-watcher": 3,
+    "html/browsers": 3,
+    "event-timing": 3,
+    "soft-navigation-heuristics": 2,
+    "html/rendering": 2,
+    "resource-timing": 2,
+    "fetch/fetch-later": 2,
+    "document-picture-in-picture": 1,
+    "pointerlock": 1,
+    "custom-elements": 1,
+    "editing": 1
+   }
+  }
+ },
+ "per_brief": {
+  "Q01": {
+   "state": "proposed",
+   "pages": 161
+  },
+  "Q02": {
+   "state": "frozen",
+   "pages": 1
+  },
+  "Q03": {
+   "state": "active",
+   "pages": 1
+  },
+  "Q03b": {
+   "state": "proposed",
+   "pages": null
+  },
+  "Q04": {
+   "state": "claimed",
+   "pages": 1
+  },
+  "Q05": {
+   "state": "claimed",
+   "pages": 3
+  },
+  "Q06": {
+   "state": "claimed",
+   "pages": 1
+  },
+  "Q07": {
+   "state": "claimed",
+   "pages": 2
+  },
+  "Q08": {
+   "state": "proposed",
+   "pages": 1
+  },
+  "Q09": {
+   "state": "frozen",
+   "pages": 2
+  },
+  "Q10": {
+   "state": "retired",
+   "pages": 0
+  },
+  "Q11": {
+   "state": "proposed",
+   "pages": 4
+  },
+  "Q12": {
+   "state": "proposed",
+   "pages": 16
+  },
+  "S01": {
+   "state": "merged",
+   "pages": null
+  },
+  "S02": {
+   "state": "claimed",
+   "pages": null
+  },
+  "S03": {
+   "state": "proposed",
+   "pages": null
+  },
+  "S04": {
+   "state": "proposed",
+   "pages": null
+  },
+  "SC-Q01-color-interp-8bit-rounding": {
+   "state": "claimed",
+   "pages": null
+  },
+  "SC-Q02-border-like-width-snap-after-interp": {
+   "state": "claimed",
+   "pages": null
+  },
+  "SC-Q03-image-props-transitions-start": {
+   "state": "proposed",
+   "pages": null
+  },
+  "SC-Q04-scroll-methods-return-promise": {
+   "state": "proposed",
+   "pages": null
+  },
+  "SC-Q05-no-transition-for-inherited-change": {
+   "state": "proposed",
+   "pages": null
+  },
+  "SC-Q06-transitionend-longhand-alias-names": {
+   "state": "proposed",
+   "pages": null
+  },
+  "SC-Q07-font-size-transition-under-zoom": {
+   "state": "proposed",
+   "pages": null
+  },
+  "SC-Q08-align-content-in-fragmentation": {
+   "state": "proposed",
+   "pages": null
+  },
+  "SC-Q09-contain-intrinsic-size-auto-remembered": {
+   "state": "claimed",
+   "pages": null
+  },
+  "SC-Q10-system-font-keywords": {
+   "state": "proposed",
+   "pages": null
+  },
+  "SC-Q11-highlight-pseudo-computed-inheritance": {
+   "state": "proposed",
+   "pages": null
+  },
+  "SC-Q12-Highlight-setlike-interface": {
+   "state": "proposed",
+   "pages": null
+  },
+  "SC-Q13-integer-interp-rounding": {
+   "state": "proposed",
+   "pages": null
+  },
+  "SC-Q14-overflow-clip-margin-discrete": {
+   "state": "claimed",
+   "pages": null
+  },
+  "SC-Q15-position-area-geometry": {
+   "state": "proposed",
+   "pages": null
+  },
+  "SC-Q16-anchor-scrollable-containing-block": {
+   "state": "proposed",
+   "pages": null
+  },
+  "SC-Q17-multicol-getClientRects-wm-dir": {
+   "state": "proposed",
+   "pages": null
+  },
+  "SC-Q18-sticky-constraints": {
+   "state": "proposed",
+   "pages": null
+  },
+  "SC-Q19-overlay-property": {
+   "state": "proposed",
+   "pages": null
+  },
+  "SC-Q20-container-query-nested-containers": {
+   "state": "proposed",
+   "pages": null
+  },
+  "SC-Q21-container-query-fractional-sizes": {
+   "state": "proposed",
+   "pages": null
+  },
+  "SC-Q22-container-units-svg-and-animation": {
+   "state": "proposed",
+   "pages": null
+  },
+  "SC-Q23-cascade-layer-fontface-counterstyle": {
+   "state": "proposed",
+   "pages": null
+  },
+  "SC-Q25-page-rule-selector-validation": {
+   "state": "proposed",
+   "pages": null
+  },
+  "SC-Q26-css-syntax-eof-serialization": {
+   "state": "proposed",
+   "pages": null
+  },
+  "SC-Q27-tiny-number-exponent-serialization": {
+   "state": "proposed",
+   "pages": null
+  },
+  "SC-Q28-transform-interp-mismatched-primitives": {
+   "state": "proposed",
+   "pages": null
+  },
+  "SC-Q29-hit-test-border-radius-clip": {
+   "state": "proposed",
+   "pages": null
+  },
+  "SC-Q30-marker-hit-testing": {
+   "state": "proposed",
+   "pages": null
+  },
+  "SC-Q31-marker-animations": {
+   "state": "proposed",
+   "pages": null
+  },
+  "SC-Q32-smooth-scroll-behavior": {
+   "state": "proposed",
+   "pages": null
+  },
+  "SC-Q33-scroll-anchoring-start-edge": {
+   "state": "proposed",
+   "pages": null
+  },
+  "SC-Q34-env-parsing": {
+   "state": "proposed",
+   "pages": null
+  },
+  "SC-Q35-picker-pseudo-parsing": {
+   "state": "proposed",
+   "pages": null
+  },
+  "SC-Q36-mask-shorthand-none-layers": {
+   "state": "proposed",
+   "pages": null
+  },
+  "SC-Q37-shape-outside-path-absolute": {
+   "state": "proposed",
+   "pages": null
+  },
+  "SC-Q38-text-transform-innerText": {
+   "state": "proposed",
+   "pages": null
+  },
+  "SC-Q39-steps-calc-count": {
+   "state": "proposed",
+   "pages": null
+  },
+  "SC-Q40-starting-style-rule-parsing": {
+   "state": "proposed",
+   "pages": null
+  },
+  "SC-Q41-typed-om-idl-length-enumerable": {
+   "state": "proposed",
+   "pages": null
+  },
+  "SC-Q42-animation-duration-auto-resolved": {
+   "state": "claimed",
+   "pages": null
+  },
+  "SC-Q43-resize-interactive": {
+   "state": "proposed",
+   "pages": null
+  },
+  "SC-Q44-text-input-scroll-on-blur": {
+   "state": "proposed",
+   "pages": null
+  },
+  "SC-Q45-intrinsic-percent-replaced-cyclic": {
+   "state": "proposed",
+   "pages": null
+  },
+  "SC-Q46-clip-path-calc-zero-simplify": {
+   "state": "proposed",
+   "pages": null
+  },
+  "SC-Q47-clip-additive-composition": {
+   "state": "proposed",
+   "pages": null
+  },
+  "SC-Q48-corner-shape-shape-outside": {
+   "state": "proposed",
+   "pages": null
+  },
+  "C01": {
+   "state": "claimed",
+   "pages": 100
+  },
+  "C02": {
+   "state": "frozen",
+   "pages": 77
+  },
+  "C03": {
+   "state": "frozen",
+   "pages": 30
+  },
+  "C04": {
+   "state": "validated",
+   "pages": 19
+  },
+  "C05": {
+   "state": "proposed",
+   "pages": 93
+  },
+  "P01": {
+   "state": "proposed",
+   "pages": 0
+  },
+  "P02": {
+   "state": "proposed",
+   "pages": 2
+  },
+  "P03": {
+   "state": "proposed",
+   "pages": 6
+  },
+  "P04": {
+   "state": "claimed",
+   "pages": 2
+  },
+  "P05": {
+   "state": "proposed",
+   "pages": 5
+  },
+  "P06": {
+   "state": "active",
+   "pages": 19
+  },
+  "P07": {
+   "state": "claimed",
+   "pages": 9
+  },
+  "P08": {
+   "state": "proposed",
+   "pages": 8
+  },
+  "P09": {
+   "state": "proposed",
+   "pages": 0
+  },
+  "P10": {
+   "state": "proposed",
+   "pages": 1
+  },
+  "P11": {
+   "state": "proposed",
+   "pages": 19
+  },
+  "P12": {
+   "state": "proposed",
+   "pages": 0
+  },
+  "P13": {
+   "state": "proposed",
+   "pages": 5
+  },
+  "P14": {
+   "state": "proposed",
+   "pages": 229
+  },
+  "P15": {
+   "state": "proposed",
+   "pages": 36
+  }
+ },
+ "implemented_total_estimate": 110,
+ "milestones_reached": []
+}
