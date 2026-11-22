@@ -2325,8 +2325,8 @@ impl JsClass for Document {
         });
         def.method("elementFromPoint", 2, crate::html::element_from_point);
         def.method("elementsFromPoint", 2, crate::html::elements_from_point);
-        // HTML `designMode`: "on" makes the whole document editable, and puts the selection at its
-        // start (Chrome has a caret there in a focused document: WPT editing/crashtests
+        // HTML `designMode`: "on" makes the whole document editable, and puts a selection it does
+        // not have yet at its start (Chrome has a caret there in a focused document: WPT editing/crashtests
         // designMode-caret-change waits for the selectionchange of an edit made at it).
         def.accessor(
             "designMode",
@@ -2340,7 +2340,9 @@ impl JsClass for Document {
                 };
                 let was = n.page().dom.borrow().design_mode(n.id);
                 n.page().dom.borrow_mut().set_design_mode(n.id, on).js()?;
-                if on && !was && n.page().document() == n.id {
+                // A selection the document already has stays (as Chrome: WPT contenteditable
+                // selection-in-contentEditable-at-turning-designMode-on-off).
+                if on && !was && n.page().document() == n.id && crate::editing::selection(n.page()).is_none() {
                     crate::editing::set_selection(n.page(), (n.id, 0), (n.id, 0));
                 }
                 Ok(())
