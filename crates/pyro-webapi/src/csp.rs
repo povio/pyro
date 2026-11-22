@@ -11,8 +11,9 @@
 //! ([`report_guard`]). Violations fire as `securitypolicyviolation`
 //! (SecurityPolicyViolationEvent, the Trusted Types module's class) at the element that made the
 //! request, else the document (a worker's global in a worker), each in a task of its own,
-//! bubbling and composed. The violation records go to [`report`] unchanged, for a reporting step
-//! (`report-uri`, `report-to`) to send.
+//! bubbling and composed. In the same task, after the event, a document's violation goes to
+//! `crate::csp_report` for its `report-uri` / `report-to` reports ([`report_parts`]); a worker's
+//! sends none yet.
 //!
 //! Provenance: a request carries a nonce only from its initiating element's own
 //! \[\[CryptographicNonce\]\] slot ([`element_initiator`]); everything else is unattributed and
@@ -20,7 +21,7 @@
 //! loader does not say which module or root asked for one.
 //!
 //! Not covered (explicitly): WebAssembly compilation (`wasm_eval_check` exists, nothing calls
-//! it); `report-uri` / `report-to` delivery (violation records only); local-scheme documents
+//! it); `report-uri` / `report-to` reports from workers; local-scheme documents
 //! (`about:blank`, `about:srcdoc`, `data:` frames) do not inherit their creator's policies;
 //! `frame-src` is checked against the parent's policies, not the navigation initiator's, and
 //! a `javascript:` navigation against the target document's; `Page.setBypassCSP` applies from
@@ -192,8 +193,37 @@ pub fn report(page: &Rc<PageDom>, violations: Vec<Violation>, target: Option<Nod
             if let Err(e) = dispatch(&s, &page, &violation, target) {
                 s.report_exception(&e);
             }
+            // CSP3 "report a violation": the reports follow the event in the same task. A
+            // worker's reports belong with the worker hooks.
+            if !crate::worker_scope::is_worker(&s) {
+                let (report, targets) = report_parts(&violation);
+                crate::csp_report::report_violation(&page, &report, &targets);
+            }
         }));
     }
+}
+
+/// What `crate::csp_report` sends for `violation`: the report's fields, and where the policy
+/// sends it. Its URL and referrer are left empty, so they come from the document. The policy
+/// parse already left a `<meta>` policy's `report-uri` out of `report_uris`.
+pub(crate) fn report_parts(
+    violation: &Violation,
+) -> (crate::csp_report::Violation, crate::csp_report::ReportTargets) {
+    let report = crate::csp_report::Violation {
+        blocked: violation.blocked_url.clone(),
+        effective_directive: violation.effective_directive.clone(),
+        policy: violation.original_policy.clone(),
+        report_only: violation.disposition == Disposition::Report,
+        source_file: violation.source_file.clone(),
+        sample: violation.sample.clone(),
+        status_code: violation.status_code,
+        line: violation.line,
+        column: violation.column,
+        ..Default::default()
+    };
+    let targets =
+        crate::csp_report::ReportTargets { uris: violation.report_uris.clone(), group: violation.report_to.clone() };
+    (report, targets)
 }
 
 /// Fires one violation now, in `s` (the realm of `page`'s document or worker).
@@ -231,5 +261,54 @@ pub fn module_dest(ty: pyro_js::ModuleType) -> RequestDest {
         pyro_js::ModuleType::Json | pyro_js::ModuleType::Text => RequestDest::Json,
         pyro_js::ModuleType::Css => RequestDest::Style,
         _ => RequestDest::Script,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn violation(source: PolicySource, report_uris: &[&str], report_to: Option<&str>) -> Violation {
+        Violation {
+            effective_directive: "img-src".into(),
+            violated_directive: "default-src".into(),
+            original_policy: "default-src 'none'; report-uri /r".into(),
+            disposition: Disposition::Report,
+            policy_source: source,
+            blocked_url: "https://c.test/before-redirect.png".into(),
+            checked_url: "https://d.test/after-redirect.png".into(),
+            sample: String::new(),
+            source_file: "https://a.test/s.js".into(),
+            line: 4,
+            column: 9,
+            status_code: 200,
+            report_uris: report_uris.iter().map(|u| u.to_string()).collect(),
+            report_to: report_to.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn report_parts_map_the_core_violation() {
+        let (report, targets) = report_parts(&violation(PolicySource::Header, &["/r"], None));
+        assert_eq!(report.blocked, "https://c.test/before-redirect.png");
+        assert_eq!(report.effective_directive, "img-src");
+        assert_eq!(report.policy, "default-src 'none'; report-uri /r");
+        assert!(report.report_only);
+        assert_eq!((report.source_file.as_str(), report.line, report.column), ("https://a.test/s.js", 4, 9));
+        assert_eq!(report.status_code, 200);
+        // The document fills these in at delivery.
+        assert!(report.url.is_empty() && report.referrer.is_empty());
+        assert_eq!(targets.uris, ["/r"]);
+        assert_eq!(targets.group, None);
+    }
+
+    #[test]
+    fn report_parts_keep_report_to_and_core_meta_filtering() {
+        let (_, targets) = report_parts(&violation(PolicySource::Header, &["/r"], Some("g")));
+        assert_eq!(targets.group.as_deref(), Some("g"));
+        // A <meta> policy reaches here with no report-uri (Policy::parse dropped it).
+        let (_, targets) = report_parts(&violation(PolicySource::Meta, &[], Some("g")));
+        assert!(targets.uris.is_empty());
+        assert_eq!(targets.group.as_deref(), Some("g"));
     }
 }
