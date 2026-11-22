@@ -242,7 +242,11 @@ pub(crate) fn content_attribute_changed(
 }
 
 /// HTML "getting the current value of the event handler": compiles a content attribute's handler
-/// body as a function in `s`'s realm, with the document, form owner and element on its scope chain.
+/// body as a function in `s`'s realm. An element's handler has the element, its form owner and its
+/// document on its scope chain (innermost first); a Window's (`<body onerror>` reflected to the
+/// Window) has none of them. Its source text is `function on<type>(<params>) {\n<body>\n}`, which
+/// `Function.prototype.toString` gives back (WPT event-handler-sourcetext,
+/// compile-event-handler-lexical-scopes{,-form-owner}).
 pub(crate) fn compile_handler<'s>(
     s: &Scope<'s>,
     page: &crate::page::PageDom,
@@ -251,33 +255,62 @@ pub(crate) fn compile_handler<'s>(
     body: &str,
 ) -> JsResult<Value<'s>> {
     let ctor = s.global().get_atom("Function")?;
-    // An SVG element's handler names its argument `evt` (SVG 2, as browsers do).
-    let svg = {
+    let ctor = ctor.as_object().expect("Function constructor");
+    let window = page.is_window_key(key);
+    // The element (none for the Window), whether it is SVG, a `<body>`/`<frameset>`, and the ids
+    // of its form owner (form-associated elements only) and document.
+    let (element, svg, body_or_frameset, form, document) = {
         let dom = page.dom.borrow();
-        dom.key_node(key).and_then(|n| dom.element(n).ok()).is_some_and(|e| &*e.name.ns == "http://www.w3.org/2000/svg")
+        let element = if window { None } else { dom.key_node(key).filter(|&n| dom.element(n).is_ok()) };
+        let e = element.and_then(|n| dom.element(n).ok());
+        let svg = e.is_some_and(|e| &*e.name.ns == "http://www.w3.org/2000/svg");
+        let body_or_frameset = e.is_some_and(|e| e.is_html() && matches!(&*e.name.local, "body" | "frameset"));
+        let form_associated = e.is_some_and(|e| {
+            e.is_html()
+                && matches!(
+                    &*e.name.local,
+                    "button" | "fieldset" | "input" | "object" | "output" | "select" | "textarea" | "img"
+                )
+        }) || element.is_some_and(|n| dom.is_form_associated(n));
+        let form = element.filter(|_| form_associated).and_then(|n| dom.form_owner(n).ok().flatten());
+        let document = element.and_then(|n| dom.node_document(n).ok());
+        (element, svg, body_or_frameset, form, document)
     };
-    // The Window's onerror (OnErrorEventHandler, from <body onerror>)
-    // takes the five ErrorEvent arguments.
-    let params: &[&str] = if ty == "error" && page.is_window_key(key) {
+    // OnErrorEventHandler (the Window's, and `<body>`/`<frameset>`'s onerror) takes the five
+    // ErrorEvent arguments; an SVG element's handler names its argument `evt` (SVG 2, as browsers
+    // do).
+    let params: &[&str] = if ty == "error" && (window || body_or_frameset) {
         &["event", "source", "lineno", "colno", "error"]
     } else if svg {
         &["evt"]
     } else {
         &["event"]
     };
-    // The document, form owner and element are on the scope chain outside
-    // the function, so its parameters come first (`event` in a
-    // `<script onerror>` is the event, not `HTMLScriptElement.event`).
-    let scoped = format!(
-        "with(this.ownerDocument||document){{with(this.form||{{}}){{with(this){{\
-         return (function({}){{{body}\n}}).apply(this,arguments)}}}}}}",
-        params.join(",")
-    );
     let mut args: Vec<Value<'_>> = params.iter().map(|p| s.string(p)).collect();
-    args.push(s.string(&scoped));
-    // The body passed the Trusted Types attribute check already.
-    let f = s.compile_exempt(|| ctor.as_object().expect("Function constructor").construct(&args))?;
-    Ok(f.value())
+    args.push(s.string(body));
+    // The body alone must parse as a function body (a body that closes the function early does
+    // not); it passed the Trusted Types attribute check already.
+    s.compile_exempt(|| ctor.construct(&args))?;
+    let source = format!("function on{ty}({}) {{\n{body}\n}}", params.join(", "));
+    let Some(element) = element else {
+        let outer = s.compile_exempt(|| ctor.construct(&[s.string(&format!("return {source}"))]))?;
+        return outer.call(None, &[]);
+    };
+    // The scopes are the outer function's: `with` on its arguments (an empty object for no form
+    // owner), so the handler's own parameters and locals come first.
+    let outer = s.compile_exempt(|| {
+        ctor.construct(&[s.string(&format!(
+            "with(arguments[0]){{with(arguments[1]){{with(arguments[2]){{return {source}}}}}}}"
+        ))])
+    })?;
+    let wrap = |id: Option<pyro_dom::NodeId>| -> JsResult<Value<'s>> {
+        match id {
+            Some(id) => Ok(crate::node::wrap_node(s, page, id)?.value()),
+            None => Ok(s.object().value()),
+        }
+    };
+    let element = wrap(Some(element))?;
+    outer.call(None, &[wrap(document)?, wrap(form)?, element])
 }
 
 /// Whether `ty` on `<body>`/`<frameset>` targets the Window (HTML "Window-
