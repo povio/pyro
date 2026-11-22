@@ -431,12 +431,7 @@ fn compute(dom: &Dom, root: NodeId, kind: &CollectionKind) -> Vec<NodeId> {
         | CollectionKind::RowCells => crate::html::table_collection(dom, root, kind),
         CollectionKind::Labels => crate::html::labels_for(dom, root),
         CollectionKind::FormElements => {
-            // Listed elements anywhere in the form's tree (form attribute
-            // associations included), in tree order.
-            let Ok(tree_root) = dom.root_node(root, false) else { return Vec::new() };
-            dom.descendants(tree_root)
-                .map(|d| d.skip(1).filter(|&n| matches_kind(dom, root, n, kind)).collect())
-                .unwrap_or_default()
+            dom.owned_form_elements(root).unwrap_or_default().into_iter().filter(|&n| matches_kind(dom, root, n, kind)).collect()
         }
         _ => dom
             .descendants(root)

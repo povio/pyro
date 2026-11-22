@@ -420,6 +420,11 @@ impl Dom {
                     if f.flags & shadow_flags::CLONABLE != 0 {
                         out.push_str(" shadowrootclonable=\"\"");
                     }
+                    if let Some(target) = f.reference_target.as_deref() {
+                        out.push_str(" shadowrootreferencetarget=\"");
+                        escape(out, target, true);
+                        out.push('"');
+                    }
                     use crate::RegistryAssociation::{Default, Null};
                     let document_registry = self.registry_idx(self.n(sr).owner_doc);
                     if !matches!((document_registry, self.registry_idx(sr)), (Null, Null) | (Default, Default)) {

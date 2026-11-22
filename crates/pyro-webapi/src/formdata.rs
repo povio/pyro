@@ -124,9 +124,7 @@ fn form_entries_with_charset(
 ) -> Vec<(String, EntryValue)> {
     let dom = page.dom.borrow();
     let mut out = Vec::new();
-    let Ok(root) = dom.root_node(form, false) else { return out };
-    let Ok(desc) = dom.descendants(root) else { return out };
-    let controls: Vec<NodeId> = desc.filter(|&n| dom.form_owner(n).ok().flatten() == Some(form)).collect();
+    let controls = dom.owned_form_elements(form).unwrap_or_default();
     for c in controls {
         let Ok(e) = dom.element(c) else { continue };
         if !e.is_html() || dom.is_disabled(c).unwrap_or(false) {

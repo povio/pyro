@@ -302,6 +302,8 @@ pub struct FragmentData {
     pub(crate) shadow: Option<ShadowRootMode>,
     /// `shadow_flags` of a shadow root.
     pub(crate) flags: u8,
+    /// The ID designated by this shadow root, including an explicitly empty ID.
+    pub(crate) reference_target: Option<LocalName>,
     /// A shadow root's elements by id and labels by `for`, made when the
     /// first enters it.
     pub(crate) ids: Option<Box<crate::tree_scope::ScopeIndex>>,
@@ -309,7 +311,7 @@ pub struct FragmentData {
 
 impl FragmentData {
     pub(crate) fn new(host: u32, shadow: Option<ShadowRootMode>, flags: u8) -> Self {
-        FragmentData { host, shadow, flags, ids: None }
+        FragmentData { host, shadow, flags, reference_target: None, ids: None }
     }
 }
 

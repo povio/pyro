@@ -503,10 +503,14 @@ impl Dom {
     pub(crate) fn form_owner_idx(&self, idx: u32) -> u32 {
         let Some(e) = self.n(idx).element() else { return NIL };
         if let Some(fid) = e.attr_local(&local_name!("form")) {
+            if !self.is_connected_idx(idx) {
+                return NIL;
+            }
             // The first element with that id in the tree: the tree scope's
             // id map (an empty id is never indexed: walk for it).
             let root = self.root_idx(idx);
             let found = if fid.is_empty() { self.walk_by_id(root, fid) } else { self.first_by_id(root, fid) };
+            let found = self.resolve_reference_target_idx(found);
             return if found != NIL && self.html_local(found) == Some(&local_name!("form")) { found } else { NIL };
         }
         let mut p = self.n(idx).parent;
@@ -521,6 +525,27 @@ impl Dom {
     pub fn form_owner(&self, id: NodeId) -> DomResult<Option<NodeId>> {
         let i = self.check(id)?;
         Ok(self.opt_id(self.form_owner_idx(i)))
+    }
+
+    /// Controls with this owner, including external references to an exposed
+    /// shadow form, in shadow-including tree order.
+    pub fn owned_form_elements(&self, form: NodeId) -> DomResult<Vec<NodeId>> {
+        let f = self.check(form)?;
+        let root = self.reference_scope_idx(f);
+        let cross_scope = root != self.root_idx(f);
+        let mut out = Vec::new();
+        let mut node = root;
+        while node != NIL {
+            if (self.html_local(node).is_some_and(|l| matches!(&**l,
+                "button" | "fieldset" | "input" | "object" | "output" | "select" | "textarea" | "img"))
+                || self.is_face_idx(node))
+                && self.form_owner_idx(node) == f
+            {
+                out.push(self.id_of(node));
+            }
+            node = if cross_scope { self.next_shadow_including(node, root) } else { self.following_in(node, root) };
+        }
+        Ok(out)
     }
 
     pub(crate) fn radio_group(&self, idx: u32) -> Vec<u32> {
@@ -1498,19 +1523,10 @@ impl Dom {
     /// and `textarea` elements gets user validity (HTML form submission,
     /// "interactively validate the constraints").
     pub fn set_form_user_validity(&mut self, form: NodeId) -> DomResult<()> {
-        let f = self.check(form)?;
-        let root = self.root_idx(f);
-        let mut controls = Vec::new();
-        let mut n = root;
-        while n != NIL {
-            let control = self.html_local(n).is_some_and(|l| matches!(&**l, "input" | "select" | "textarea"));
-            if control && self.form_owner_idx(n) == f {
-                controls.push(self.id_of(n));
+        for c in self.owned_form_elements(form)? {
+            if self.html_local(self.check(c)?).is_some_and(|l| matches!(&**l, "input" | "select" | "textarea")) {
+                self.set_user_validity(c, true)?;
             }
-            n = self.following_in(n, root);
-        }
-        for c in controls {
-            self.set_user_validity(c, true)?;
         }
         Ok(())
     }

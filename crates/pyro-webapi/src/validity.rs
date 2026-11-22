@@ -148,10 +148,7 @@ pub(crate) fn check(page: &Rc<PageDom>, id: NodeId, report: bool) -> bool {
 pub(crate) fn check_form(page: &Rc<PageDom>, form: NodeId, report: bool) -> bool {
     let controls: Vec<NodeId> = {
         let dom = page.dom.borrow();
-        let Ok(root) = dom.root_node(form, false) else { return true };
-        dom.descendants(root)
-            .map(|d| d.filter(|&n| dom.form_owner(n).ok().flatten() == Some(form)).collect())
-            .unwrap_or_default()
+        dom.owned_form_elements(form).unwrap_or_default()
     };
     let mut ok = true;
     let mut first_unhandled = None;

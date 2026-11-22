@@ -203,7 +203,7 @@ impl Dom {
         }
     }
 
-    fn refresh_all_faces(&mut self) {
+    pub(crate) fn refresh_all_faces(&mut self) {
         let mut faces: Vec<u32> =
             self.internals.map.iter().filter(|(_, d)| d.face.is_some()).map(|(&i, _)| i).collect();
         // Tree order is not known here; slot order keeps runs deterministic.
@@ -221,7 +221,7 @@ impl Dom {
         let mut i = root;
         while i != NIL {
             if let Some(e) = self.n(i).element() {
-                if e.is_html() && matches!(&*e.name.local, "form" | "fieldset" | "legend") {
+                if e.id().is_some() || (e.is_html() && matches!(&*e.name.local, "form" | "fieldset" | "legend")) {
                     self.refresh_all_faces();
                     return;
                 }
@@ -357,18 +357,11 @@ impl Dom {
         if self.internals.faces == 0 {
             return Ok(());
         }
-        let f = self.check(form)?;
-        let root = self.root_idx(f);
-        let mut i = root;
-        let mut owned = Vec::new();
-        while i != NIL {
-            if self.is_face_idx(i) && self.face_form(self.id_of(i)) == Some(form) {
-                owned.push(i);
+        for element in self.owned_form_elements(form)? {
+            let idx = self.check(element)?;
+            if self.is_face_idx(idx) {
+                self.push_custom_reaction(idx, crate::custom::CustomReaction::FormReset);
             }
-            i = self.following_in(i, root);
-        }
-        for i in owned {
-            self.push_custom_reaction(i, crate::custom::CustomReaction::FormReset);
         }
         Ok(())
     }

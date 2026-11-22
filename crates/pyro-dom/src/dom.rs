@@ -1859,6 +1859,32 @@ impl Dom {
         })
     }
 
+    pub fn shadow_reference_target(&self, id: NodeId) -> DomResult<Option<&str>> {
+        let i = self.check(id)?;
+        match &self.n(i).kind {
+            NodeKind::Fragment(f) if f.shadow.is_some() => Ok(f.reference_target.as_deref()),
+            _ => Err(DomError::Type("not a shadow root")),
+        }
+    }
+
+    pub fn set_shadow_reference_target(&mut self, id: NodeId, target: Option<&str>) -> DomResult<()> {
+        let i = self.check(id)?;
+        match &mut self.n_mut(i).kind {
+            NodeKind::Fragment(f) if f.shadow.is_some() => {
+                if f.reference_target.as_deref() != target {
+                    f.reference_target = target.map(LocalName::from);
+                    // Live labels and form collections can change without a tree mutation.
+                    self.bump();
+                    if self.internals.faces != 0 {
+                        self.refresh_all_faces();
+                    }
+                }
+                Ok(())
+            }
+            _ => Err(DomError::Type("not a shadow root")),
+        }
+    }
+
     /// A custom element name defined with `disabledFeatures: ["shadow"]`.
     pub fn disable_shadow_for(&mut self, name: &str) {
         self.shadow_disabled.push((None, RegistryAssociation::Default, name.into(), name.into()));
@@ -3368,9 +3394,13 @@ impl Dom {
         // A clonable shadow tree comes along, even in a shallow clone.
         let src_sr = self.n(n).element().map_or(NIL, |e| e.shadow_root);
         if src_sr != NIL {
-            if let NodeKind::Fragment(FragmentData { shadow: Some(mode), flags, .. }) = self.n(src_sr).kind {
+            if let NodeKind::Fragment(FragmentData { shadow: Some(mode), flags, ref reference_target, .. }) = self.n(src_sr).kind {
                 if flags & shadow_flags::CLONABLE != 0 {
+                    let reference_target = reference_target.clone();
                     let dst_sr = self.new_shadow_root(copy, mode, flags & !shadow_flags::AVAILABLE_TO_INTERNALS);
+                    if let NodeKind::Fragment(f) = &mut self.n_mut(dst_sr).kind {
+                        f.reference_target = reference_target;
+                    }
                     let registry = self.registry_idx(src_sr);
                     let registry = if registry == RegistryAssociation::Default { self.registry_idx(doc).effective_global() } else { registry };
                     self.set_registry_idx(dst_sr, registry);

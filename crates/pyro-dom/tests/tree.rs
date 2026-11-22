@@ -484,6 +484,27 @@ fn declarative_shadow_roots_are_parser_only_and_outlive_their_template() {
 }
 
 #[test]
+fn shadow_reference_target_survives_cloning_and_serializes_as_an_attribute() {
+    let dom: DomRef = Rc::new(RefCell::new(Dom::new()));
+    let doc = pyro_dom::parse::parse_html_unsafe(&dom, "<body><div id=host><template shadowrootmode=open shadowrootclonable shadowrootreferencetarget='a&amp;&quot;b'></template></div>");
+    let mut dom = dom.borrow_mut();
+    let host = dom.get_element_by_id(doc, "host").unwrap().unwrap();
+    let root = dom.shadow_root(host).unwrap().unwrap();
+    let copy = dom.clone_node(host, false, None).unwrap();
+    let copy_root = dom.shadow_root(copy).unwrap().unwrap();
+    assert_eq!(dom.shadow_reference_target(copy_root).unwrap(), Some("a&\"b"));
+    assert_eq!(
+        dom.get_html(copy, false, &[copy_root]).unwrap(),
+        r#"<template shadowrootmode="open" shadowrootclonable="" shadowrootreferencetarget="a&amp;&quot;b"></template>"#,
+    );
+    dom.set_shadow_reference_target(root, Some("")).unwrap();
+    assert_eq!(dom.shadow_reference_target(root).unwrap(), Some(""));
+    dom.set_shadow_reference_target(root, None).unwrap();
+    assert_eq!(dom.shadow_reference_target(root).unwrap(), None);
+    assert_eq!(dom.shadow_reference_target(copy_root).unwrap(), Some("a&\"b"));
+}
+
+#[test]
 fn declarative_shadow_roots_follow_the_document_opt_in() {
     let dom: DomRef = Rc::new(RefCell::new(Dom::new()));
     let html = "<!doctype html><body><div id=h><template shadowrootmode=open><b>x</b></template></div>";

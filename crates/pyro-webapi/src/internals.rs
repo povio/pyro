@@ -177,7 +177,9 @@ impl JsClass for ElementInternals {
         });
         def.getter("form", |s, d| {
             let el = d.face("form")?;
-            let form = d.page().dom.borrow().face_form(el);
+            let dom = d.page().dom.borrow();
+            let form = dom.face_form(el).and_then(|f| dom.retarget_node(f, dom.root_node(el, false).ok()?));
+            drop(dom);
             node_value(s, d.page(), form)
         });
         def.method("setValidity", 0, |s, d, a| {

@@ -971,7 +971,9 @@ fn popover_target_with(dom: &Dom, node: NodeId, explicit: Option<NodeId>) -> Opt
     if dom.form_owner(node).ok().flatten().is_some() && is_submit_button(dom, node) {
         return None;
     }
-    reflected_element(dom, node, "popovertarget", explicit).filter(|&t| popover_type(dom, t).is_some())
+    reflected_element(dom, node, "popovertarget", explicit)
+        .and_then(|target| dom.resolve_reference_target(target).ok().flatten())
+        .filter(|&t| popover_type(dom, t).is_some())
 }
 
 fn command_for_element(page: &PageDom, dom: &Dom, node: NodeId) -> Option<NodeId> {
@@ -979,6 +981,7 @@ fn command_for_element(page: &PageDom, dom: &Dom, node: NodeId) -> Option<NodeId
         return None;
     }
     reflected_element(dom, node, "commandfor", explicit_of(page, node, Reflected::CommandFor))
+        .and_then(|target| dom.resolve_reference_target(target).ok().flatten())
 }
 
 fn popover_target_of(page: &PageDom, node: NodeId) -> Option<NodeId> {
@@ -1045,11 +1048,7 @@ fn command_state(v: &str) -> Option<Command> {
 pub(crate) fn button_activation(page: &Rc<PageDom>, button: NodeId, event_target: NodeId) {
     let target = {
         let dom = page.dom.borrow();
-        if !dom.has_attribute(button, "commandfor").unwrap_or(false) {
-            None
-        } else {
-            reflected_element(&dom, button, "commandfor", explicit_of(page, button, Reflected::CommandFor))
-        }
+        command_for_element(page, &dom, button)
     };
     let Some(target) = target else {
         popover_target_activation(page, button, event_target);

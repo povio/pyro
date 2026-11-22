@@ -2119,8 +2119,14 @@ simple_class!(HtmlImageElement, "HTMLImageElement", HtmlElement, |def| {
 
 // ----- forms --------------------------------------------------------------------
 
+fn reflected_association(dom: &Dom, from: NodeId, target: Option<NodeId>) -> Option<NodeId> {
+    dom.retarget_node(target?, dom.root_node(from, false).ok()?)
+}
+
 fn form_value<'s>(s: &Scope<'s>, n: &NodeData) -> JsResult<Value<'s>> {
-    let f = n.page().dom.borrow().form_owner(n.id).js()?;
+    let dom = n.page().dom.borrow();
+    let f = reflected_association(&dom, n.id, dom.form_owner(n.id).js()?);
+    drop(dom);
     node_value(s, n.page(), f)
 }
 
@@ -2471,12 +2477,12 @@ simple_class!(HtmlInputElement, "HTMLInputElement", HtmlElement, |def| {
     def.accessor("files", crate::file::input_files, crate::file::set_input_files);
     def.getter("list", |s, n| {
         let dom = n.page().dom.borrow();
-        let id = dom.get_attribute(n.id, "list").js()?.map(str::to_owned);
-        let doc = dom.node_document(n.id).js()?;
-        let target = match id {
-            Some(id) => dom.get_element_by_id(doc, &id).js()?,
-            None => None,
-        };
+        let root = dom.root_node(n.id, false).js()?;
+        let target = dom.get_attribute(n.id, "list").js()?
+            .and_then(|id| dom.get_element_by_id(root, id).ok().flatten())
+            .and_then(|host| dom.resolve_reference_target(host).ok().flatten())
+            .filter(|&element| is_html(&dom, element, &["datalist"]))
+            .and_then(|element| dom.retarget_node(element, root));
         drop(dom);
         node_value(s, n.page(), target)
     });
@@ -2650,7 +2656,7 @@ simple_class!(HtmlOptionElement, "HTMLOptionElement", HtmlElement, |def| {
         let mut p = dom.parent(n.id).js()?;
         while let Some(x) = p {
             if dom.element(x).is_ok_and(|e| &*e.name.local == "select") {
-                let f = dom.form_owner(x).js()?;
+                let f = reflected_association(&dom, n.id, dom.form_owner(x).js()?);
                 drop(dom);
                 return node_value(s, n.page(), f);
             }
@@ -2796,14 +2802,18 @@ simple_class!(HtmlLabelElement, "HTMLLabelElement", HtmlElement, |def| {
         let c = labeled_control(&n.page().dom.borrow(), n.id);
         match c {
             Some(c) => {
-                let f = n.page().dom.borrow().form_owner(c).js()?;
+                let dom = n.page().dom.borrow();
+                let f = reflected_association(&dom, n.id, dom.form_owner(c).js()?);
+                drop(dom);
                 node_value(s, n.page(), f)
             }
             None => Ok(s.null()),
         }
     });
     def.getter("control", |s, n| {
-        let c = labeled_control(&n.page().dom.borrow(), n.id);
+        let dom = n.page().dom.borrow();
+        let c = reflected_association(&dom, n.id, labeled_control(&dom, n.id));
+        drop(dom);
         node_value(s, n.page(), c)
     });
 });
@@ -2831,6 +2841,17 @@ simple_class!(HtmlFieldSetElement, "HTMLFieldSetElement", HtmlElement, |def| {
     );
 });
 simple_class!(HtmlLegendElement, "HTMLLegendElement", HtmlElement, |def| {
+    def.getter("form", |s, n| {
+        let dom = n.page().dom.borrow();
+        let fieldset = dom.parent(n.id).js()?.filter(|&parent| is_html(&dom, parent, &["fieldset"]));
+        let owner = match fieldset {
+            Some(fieldset) => dom.form_owner(fieldset).js()?,
+            None => None,
+        };
+        let form = reflected_association(&dom, n.id, owner);
+        drop(dom);
+        node_value(s, n.page(), form)
+    });
     reflect_str!(def, "align", "align");
 });
 simple_class!(HtmlUListElement, "HTMLUListElement", HtmlElement, |def| {
@@ -3199,6 +3220,19 @@ simple_class!(HtmlTemplateElement, "HTMLTemplateElement", HtmlElement, |def| {
             n.page().dom.borrow_mut().set_attribute(n.id, "shadowrootslotassignment", &value).js()
         },
     );
+    def.accessor(
+        "shadowRootReferenceTarget",
+        |s, n| Ok(n.page().dom.borrow().get_attribute(n.id, "shadowrootreferencetarget").js()?.map_or(s.null(), |v| s.string(v))),
+        |_s, n, v| {
+            if v.is_null() || v.is_undefined() {
+                n.page().dom.borrow_mut().remove_attribute(n.id, "shadowrootreferencetarget").js()?;
+                Ok(())
+            } else {
+                let target = dom_string(v)?;
+                n.page().dom.borrow_mut().set_attribute(n.id, "shadowrootreferencetarget", &target).js()
+            }
+        },
+    );
     reflect_bool!(def, "shadowRootDelegatesFocus", "shadowrootdelegatesfocus");
     reflect_bool!(def, "shadowRootClonable", "shadowrootclonable");
     reflect_bool!(def, "shadowRootSerializable", "shadowrootserializable");
@@ -3438,6 +3472,7 @@ simple_class!(HtmlBaseElement, "HTMLBaseElement", HtmlElement, |def| {
     reflect_str!(def, "target", "target");
 });
 simple_class!(HtmlObjectElement, "HTMLObjectElement", HtmlElement, |def| {
+    def.getter("form", form_value);
     reflect_url!(def, "data", "data");
     reflect_str!(def, "type", "type");
     reflect_str!(def, "name", "name");
