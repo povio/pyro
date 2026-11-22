@@ -1028,9 +1028,16 @@ fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
 
 impl DocumentParser {
     pub fn new(dom: DomRef, doc: NodeId, scripting: bool) -> DomResult<Self> {
+        Self::new_with(dom, doc, scripting, false)
+    }
+
+    /// [`DocumentParser::new`]; `no_doctype_no_quirks`: a missing DOCTYPE leaves the document in
+    /// no-quirks mode (html5ever's iframe srcdoc rule), for a synthesized document.
+    fn new_with(dom: DomRef, doc: NodeId, scripting: bool, no_doctype_no_quirks: bool) -> DomResult<Self> {
         let d = dom.borrow().check(doc)?;
         let sink = Sink::new(dom.clone(), d, element_flags::PARSER_INSERTED, scripting);
-        let tb_opts = TreeBuilderOpts { scripting_enabled: scripting, ..Default::default() };
+        let tb_opts =
+            TreeBuilderOpts { scripting_enabled: scripting, iframe_srcdoc: no_doctype_no_quirks, ..Default::default() };
         let tb = TreeBuilder::new(sink, tb_opts);
         // html5ever would drop a U+FEFF at the head of every feed; `feed` removes the one BOM instead.
         let tok = Tokenizer::new(tb, TokenizerOpts { discard_bom: false, ..Default::default() });
@@ -1088,13 +1095,13 @@ impl DocumentParser {
     fn new_text_document(
         dom: DomRef, doc: NodeId, mime: &str, encoding: Option<&'static encoding_rs::Encoding>,
     ) -> DomResult<Self> {
-        let mut parser = Self::new(dom.clone(), doc, false)?;
+        // No doctype (`document.doctype` is null), and still no-quirks mode, as Chromium's text
+        // documents.
+        let mut parser = Self::new_with(dom.clone(), doc, false, true)?;
         parser.plaintext = true;
         // The synthetic LF consumes HTML's <pre> first-LF rule; response bytes
         // keep their own leading newline when the tokenizer changes state.
-        parser.feed(
-            "<!doctype html><html><head></head><body><pre style=\"white-space: pre-wrap; word-wrap: break-word\">\n",
-        );
+        parser.feed("<html><head></head><body><pre style=\"white-space: pre-wrap; word-wrap: break-word\">\n");
         parser.tok.set_plaintext_state();
         let mut dom = dom.borrow_mut();
         let index = dom.check(doc)?;
