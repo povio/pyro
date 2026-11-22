@@ -1272,7 +1272,7 @@ pub(crate) fn exec_command(page: &Rc<PageDom>, doc: NodeId, command: &str, value
         _ => {
             let Some((tag, carriers, input_type)) = format_of(&cmd) else { return false };
             let (start, end) = editing::host_range(page, host);
-            if start == end && matches!(tag, "b" | "i") {
+            if start == end && matches!(tag, "b" | "i" | "sub" | "sup") {
                 let enabled = !format_state(page, &cmd).1;
                 inline_value::set_toggle(page, (start, end), tag, enabled);
                 return true;
