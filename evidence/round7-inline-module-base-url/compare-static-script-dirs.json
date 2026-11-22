@@ -1,0 +1,34 @@
+{
+ "totals": {
+  "named": 2511,
+  "base": 2124,
+  "cand": 2127,
+  "chrome": 2438,
+  "gained": 3,
+  "lost": 0,
+  "baseFull": 368,
+  "candFull": 368,
+  "chromeFull": null
+ },
+ "pages": [
+  {
+   "url": "html/semantics/scripting-1/the-script-element/module/dynamic-import/string-compilation-base-url-inline-module.html",
+   "base": 0,
+   "cand": 2,
+   "chrome": 2,
+   "total": 5,
+   "gained": 2,
+   "lost": 0
+  },
+  {
+   "url": "html/semantics/scripting-1/the-script-element/module/import-meta/import-meta-url.html",
+   "base": 4,
+   "cand": 5,
+   "chrome": 5,
+   "total": 6,
+   "gained": 1,
+   "lost": 0
+  }
+ ],
+ "losses": []
+}

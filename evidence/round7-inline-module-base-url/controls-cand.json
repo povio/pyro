@@ -1,0 +1,28 @@
+{
+ "origin": "http://127.0.0.1:57966",
+ "expected": {
+  "p1": "http://127.0.0.1:57966/one/#auth frag",
+  "p2": "http://127.0.0.1:57966/one/#auth http://127.0.0.1:57966/x-frag.js",
+  "d1": "http://127.0.0.1:57966/two/#kept http://127.0.0.1:57966/two/r.js http://127.0.0.1:57966/x-top.js",
+  "d2": "http://127.0.0.1:57966/two/#kept http://127.0.0.1:57966/two/r.js http://127.0.0.1:57966/x-top.js",
+  "external": "http://127.0.0.1:57966/ordinary.js#inline-module-authored ext",
+  "plain": "http://127.0.0.1:57966/plain.js"
+ },
+ "runs": {
+  "cand": {
+   "binary": "c65572d38c0d8747f4ba1cd4b4a850a8167fe23cb0a2436f3f561b78434e856d",
+   "observed": {
+    "external": "http://127.0.0.1:57966/ordinary.js#inline-module-authored ext",
+    "plain": "http://127.0.0.1:57966/plain.js"
+   },
+   "match": {
+    "p1": false,
+    "p2": false,
+    "d1": false,
+    "d2": false,
+    "external": true,
+    "plain": true
+   }
+  }
+ }
+}
