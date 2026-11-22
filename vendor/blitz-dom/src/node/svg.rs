@@ -694,7 +694,10 @@ pub(crate) fn reference_candidates<'a>(
     if let (ClipPath::Url(ComputedUrl::Valid(url, modifiers)), false) = (style.get_clip_path(), clip_path_attr) {
         out.push(ReferenceCandidate::Url(url, modifiers.as_deref()));
     }
-    for filter in style.get_effects().filter.0.iter() {
+    // So is its `filter` attribute's.
+    let filter_attr =
+        svg && element.attr(markup5ever::local_name!("filter")).is_some_and(|value| value.trim_start().starts_with("url("));
+    for filter in style.get_effects().filter.0.iter().filter(|_| !filter_attr) {
         if let GenericFilter::Url(ComputedUrl::Valid(url, modifiers)) = filter {
             out.push(ReferenceCandidate::Url(url, modifiers.as_deref()));
         }

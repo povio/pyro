@@ -1941,19 +1941,31 @@ impl Node {
             // SVG presentation attributes enter the author cascade with zero
             // specificity. This also resolves custom properties and currentColor
             // before SVG serialization, text measurement, and getComputedStyle.
-            // Geometry attributes have their own mapping below.
+            // Geometry attributes have their own mapping below. Every SVG element
+            // takes them, unknown ones and those the property does not apply to
+            // included (SVG 2 § 6.6; WPT svg/styling/presentation-attributes-*).
+            // pyro: not `filter` and `mask` on an `<svg>`: an outermost one's are
+            // usvg's (its attributes are written out as they are), and as box effects
+            // blitz-paint would apply them a second time. A hint cannot depend on the
+            // parent: hints are cached until the element's attributes change.
             if elem.name.ns == ns!(svg)
                 && attr.name.ns == ns!()
-                && matches!(&**name,
+                && (matches!(&**name,
                     "clip-path" | "transform-origin" | "overflow" | "pointer-events"
                     | "fill" | "fill-opacity" | "fill-rule"
                     | "stroke" | "stroke-width" | "stroke-opacity" | "stroke-linecap"
                     | "stroke-linejoin" | "stroke-miterlimit" | "stroke-dasharray" | "stroke-dashoffset"
                     | "opacity" | "color" | "visibility" | "display"
                     | "font-family" | "font-size" | "font-weight" | "font-style" | "font-stretch"
+                    | "font-variant"
                     | "letter-spacing" | "word-spacing" | "text-anchor" | "text-decoration"
                     | "dominant-baseline" | "alignment-baseline" | "baseline-shift"
-                    | "paint-order" | "vector-effect" | "shape-rendering" | "text-rendering")
+                    | "paint-order" | "vector-effect" | "shape-rendering" | "text-rendering"
+                    | "clip-rule" | "color-interpolation" | "color-interpolation-filters" | "cursor"
+                    | "direction" | "unicode-bidi" | "writing-mode" | "text-overflow" | "image-rendering"
+                    | "flood-color" | "flood-opacity" | "lighting-color" | "stop-color" | "stop-opacity"
+                    | "marker-start" | "marker-mid" | "marker-end" | "mask-type")
+                    || (matches!(&**name, "filter" | "mask") && *tag != local_name!("svg")))
             {
                 for declaration in parse_svg_presentation_attr(&**name, value) {
                     push_style(declaration);

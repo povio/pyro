@@ -134,3 +134,35 @@ fn primitives_work_in_linear_rgb_by_default() {
     let g = pixel(&img, 50, 50)[1];
     assert!((227..=229).contains(&g), "{g}");
 }
+
+/// `color-interpolation-filters: sRGB` from the page's CSS, and the attribute (a presentation
+/// attribute, so a computed value written for usvg too): the table inverts green in sRGB, so
+/// the green of `#008000` is 127, not 228. usvg reads only the keyword's SVG spelling (`sRGB`).
+#[test]
+fn color_interpolation_filters_from_css_and_attribute() {
+    for (sheet, attr) in [("filter{color-interpolation-filters:sRGB}", ""), ("", " color-interpolation-filters='sRGB'")]
+    {
+        let img = render(&format!(
+            "<style>{sheet}</style><svg width='300' height='200' style='display:block'>
+               <filter id='f'{attr}><feComponentTransfer><feFuncG type='table' tableValues='1 0'/></feComponentTransfer></filter>
+               <rect width='100' height='100' fill='#008000' filter='url(#f)'/>
+             </svg>"
+        ));
+        let g = pixel(&img, 50, 50)[1];
+        assert!((126..=128).contains(&g), "{sheet}{attr}: {g}");
+    }
+}
+
+/// An outermost `<svg>`'s `mask` and `filter` attributes apply once: usvg's, not also as its CSS
+/// box's (they are not mapped to CSS on an `<svg>`). Half a mask over black is 127 grey, not 191.
+#[test]
+fn an_inline_svg_roots_mask_attribute_applies_once() {
+    let img = render(
+        "<svg width='100' height='50' style='display:block' mask='url(#m)'>
+           <mask id='m'><rect width='100' height='50' fill='white' fill-opacity='.5'/></mask>
+           <rect width='100' height='50' fill='black'/>
+         </svg>",
+    );
+    let g = pixel(&img, 10, 10)[1];
+    assert!((126..=128).contains(&g), "{g}");
+}

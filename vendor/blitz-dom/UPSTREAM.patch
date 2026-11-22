@@ -46493,7 +46493,7 @@ diff --git a/packages/blitz-dom/src/node/svg.rs b/packages/blitz-dom/src/node/sv
  /// Map a `viewBox` onto a viewport of the given size per `preserveAspectRatio`.
  fn view_box_transform(
      view_box: usvg::NonZeroRect,
-@@ -263,3 +512,314 @@
+@@ -263,3 +512,317 @@
      let ty = (height - view_box.height() * sy) * align_y - view_box.y() * sy;
      usvg::Transform::from_row(sx, 0.0, 0.0, sy, tx, ty)
  }
@@ -46679,7 +46679,10 @@ diff --git a/packages/blitz-dom/src/node/svg.rs b/packages/blitz-dom/src/node/sv
 +    if let (ClipPath::Url(ComputedUrl::Valid(url, modifiers)), false) = (style.get_clip_path(), clip_path_attr) {
 +        out.push(ReferenceCandidate::Url(url, modifiers.as_deref()));
 +    }
-+    for filter in style.get_effects().filter.0.iter() {
++    // So is its `filter` attribute's.
++    let filter_attr =
++        svg && element.attr(markup5ever::local_name!("filter")).is_some_and(|value| value.trim_start().starts_with("url("));
++    for filter in style.get_effects().filter.0.iter().filter(|_| !filter_attr) {
 +        if let GenericFilter::Url(ComputedUrl::Valid(url, modifiers)) = filter {
 +            out.push(ReferenceCandidate::Url(url, modifiers.as_deref()));
 +        }
@@ -46812,7 +46815,7 @@ diff --git a/packages/blitz-dom/src/node/svg_css.rs b/packages/blitz-dom/src/nod
 new file mode 100644
 --- /dev/null
 +++ b/packages/blitz-dom/src/node/svg_css.rs
-@@ -0,0 +1,2937 @@
+@@ -0,0 +1,2944 @@
 +//! pyro: an inline `<svg>` subtree as a standalone SVG document for usvg, with
 +//! the page's CSS applied.
 +//!
@@ -47888,6 +47891,13 @@ new file mode 100644
 +                }
 +                if author.contains(&id) {
 +                    let value = computed_value(style, id);
++                    // pyro: usvg reads these keywords only in their SVG spelling, which
++                    // Stylo serializes in lower case.
++                    let value = match (id, value.as_str()) {
++                        (LonghandId::ColorInterpolationFilters, "srgb") => "sRGB".to_string(),
++                        (LonghandId::ColorInterpolationFilters, "linearrgb") => "linearRGB".to_string(),
++                        _ => value,
++                    };
 +                    let _ = write!(declarations, "{name}:{value};");
 +                }
 +            }
@@ -56620,26 +56630,38 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          // `<input type=image>` is the only input type that is replaced
          // content, and it is the only one that takes the embedded-content
          // presentational attributes. The type attribute is matched ASCII
-@@ -1100,6 +1938,28 @@
+@@ -1100,6 +1938,40 @@
              let name = &attr.name.local;
              let value = attr.value.as_str();
  
 +            // SVG presentation attributes enter the author cascade with zero
 +            // specificity. This also resolves custom properties and currentColor
 +            // before SVG serialization, text measurement, and getComputedStyle.
-+            // Geometry attributes have their own mapping below.
++            // Geometry attributes have their own mapping below. Every SVG element
++            // takes them, unknown ones and those the property does not apply to
++            // included (SVG 2 § 6.6; WPT svg/styling/presentation-attributes-*).
++            // pyro: not `filter` and `mask` on an `<svg>`: an outermost one's are
++            // usvg's (its attributes are written out as they are), and as box effects
++            // blitz-paint would apply them a second time. A hint cannot depend on the
++            // parent: hints are cached until the element's attributes change.
 +            if elem.name.ns == ns!(svg)
 +                && attr.name.ns == ns!()
-+                && matches!(&**name,
++                && (matches!(&**name,
 +                    "clip-path" | "transform-origin" | "overflow" | "pointer-events"
 +                    | "fill" | "fill-opacity" | "fill-rule"
 +                    | "stroke" | "stroke-width" | "stroke-opacity" | "stroke-linecap"
 +                    | "stroke-linejoin" | "stroke-miterlimit" | "stroke-dasharray" | "stroke-dashoffset"
 +                    | "opacity" | "color" | "visibility" | "display"
 +                    | "font-family" | "font-size" | "font-weight" | "font-style" | "font-stretch"
++                    | "font-variant"
 +                    | "letter-spacing" | "word-spacing" | "text-anchor" | "text-decoration"
 +                    | "dominant-baseline" | "alignment-baseline" | "baseline-shift"
-+                    | "paint-order" | "vector-effect" | "shape-rendering" | "text-rendering")
++                    | "paint-order" | "vector-effect" | "shape-rendering" | "text-rendering"
++                    | "clip-rule" | "color-interpolation" | "color-interpolation-filters" | "cursor"
++                    | "direction" | "unicode-bidi" | "writing-mode" | "text-overflow" | "image-rendering"
++                    | "flood-color" | "flood-opacity" | "lighting-color" | "stop-color" | "stop-opacity"
++                    | "marker-start" | "marker-mid" | "marker-end" | "mask-type")
++                    || (matches!(&**name, "filter" | "mask") && *tag != local_name!("svg")))
 +            {
 +                for declaration in parse_svg_presentation_attr(&**name, value) {
 +                    push_style(declaration);
@@ -56649,7 +56671,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              if *name == local_name!("lang") {
                  if attr.name.ns == ns!(xml) {
                      lang = Some(value);
-@@ -1125,12 +1985,42 @@
+@@ -1125,12 +1997,42 @@
                  }
              }
  
@@ -56692,7 +56714,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
                      _ => None,
                  };
  
-@@ -1164,7 +2054,7 @@
+@@ -1164,7 +2066,7 @@
                          BaselineShift::Keyword(BaselineShiftKeyword::Top),
                      ))
                  } else if value.eq_ignore_ascii_case("middle") {
@@ -56701,7 +56723,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
                  } else if value.eq_ignore_ascii_case("bottom") {
                      Some((
                          AlignmentBaseline::Baseline,
-@@ -1270,7 +2160,9 @@
+@@ -1270,7 +2172,9 @@
              // presentation attributes that map to the CSS `width`/`height`
              // properties, so e.g. `width="1em"` must resolve against the
              // element's font-size like any other CSS length.
@@ -56712,7 +56734,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
                  && (*name == local_name!("width") || *name == local_name!("height"))
              {
                  if let Some(size) = parse_svg_size_attr(value) {
-@@ -1358,6 +2250,16 @@
+@@ -1358,6 +2262,16 @@
                  }
              }
  
@@ -56729,7 +56751,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              if *name == local_name!("bgcolor") {
                  use style::values::specified::Color;
                  if let Some((r, g, b, a)) = parse_color_attr(value) {
-@@ -1373,148 +2275,59 @@
+@@ -1373,148 +2287,59 @@
              }
          }
  
@@ -56917,7 +56939,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
          None
      }
  }
-@@ -1527,6 +2340,41 @@
+@@ -1527,6 +2352,41 @@
      /// dedicated storage on the node (see `flush_image_layers_from_style`)
      /// because their style changed during this traversal.
      nodes_needing_style_image_flush: Mutex<Vec<NodeId>>,
@@ -56959,7 +56981,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  }
  
  impl<'a> RecalcStyle<'a> {
-@@ -1534,11 +2382,206 @@
+@@ -1534,11 +2394,206 @@
          RecalcStyle {
              context,
              nodes_needing_style_image_flush: Mutex::new(Vec::new()),
@@ -57166,7 +57188,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  impl<'dom> DomTraversal<BlitzNode<'dom>> for RecalcStyle<'_> {
      fn process_preorder<F: FnMut(BlitzNode<'dom>)>(
          &self,
-@@ -1546,14 +2589,259 @@
+@@ -1546,14 +2601,259 @@
          node: BlitzNode<'dom>,
          note_child: F,
      ) {
@@ -57426,7 +57448,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
              }
  
              if !data.damage.is_empty() {
-@@ -1597,6 +2885,12 @@
+@@ -1597,6 +2897,12 @@
      }
  }
  
@@ -57439,7 +57461,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Flush updated pseudo-element (`::before`/`::after`) styles from the owning
  /// element's freshly-computed stylo data to the pseudo-element's anonymous node.
  ///
-@@ -1669,12 +2963,41 @@
+@@ -1669,12 +2975,41 @@
                      .push(pe_node_id);
              }
          }
@@ -57481,7 +57503,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
  /// Whether a node's `background-image`/`mask-image` layers need flushing to
  /// dedicated storage on the node: the URLs referenced by the new style differ
  /// from the image data currently stored on the node.
-@@ -1689,24 +3012,46 @@
+@@ -1689,24 +3024,46 @@
              // (a style list of `none` layers and empty storage are in sync).
              return style_images
                  .iter()
@@ -57536,7 +57558,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      })
  }
  
-@@ -1737,3 +3082,745 @@
+@@ -1737,3 +3094,745 @@
  
      // let val = CSSInlineStyleDeclaration();
  }

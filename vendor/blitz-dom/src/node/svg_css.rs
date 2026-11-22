@@ -1073,6 +1073,13 @@ impl Writer<'_> {
                 }
                 if author.contains(&id) {
                     let value = computed_value(style, id);
+                    // pyro: usvg reads these keywords only in their SVG spelling, which
+                    // Stylo serializes in lower case.
+                    let value = match (id, value.as_str()) {
+                        (LonghandId::ColorInterpolationFilters, "srgb") => "sRGB".to_string(),
+                        (LonghandId::ColorInterpolationFilters, "linearrgb") => "linearRGB".to_string(),
+                        _ => value,
+                    };
                     let _ = write!(declarations, "{name}:{value};");
                 }
             }
