@@ -216,6 +216,9 @@ pub struct PageNav {
     /// Script navigations queued ([`PageNav::navigate`]) whose task has not
     /// run yet.
     queued_navigations: Rc<Cell<u32>>,
+    /// A traversal to another document's entry under way: the index it left
+    /// and the document it left, restored if no document commits.
+    traversal_from: Cell<Option<(usize, u64)>>,
 }
 
 /// What the listeners of a Navigation API `navigate` event decided.
@@ -306,6 +309,7 @@ impl PageNav {
             rate_limit: Cell::new((Instant::now(), 0)),
             joint,
             queued_navigations: Rc::new(Cell::new(0)),
+            traversal_from: Cell::new(None),
         });
         nav.joint.members.borrow_mut().push(Rc::downgrade(&nav));
         nav
@@ -393,6 +397,7 @@ impl PageNav {
         document: Option<(DomRef, NodeId)>,
     ) {
         self.pending_frame_url.borrow_mut().take();
+        self.traversal_from.set(None);
         let mut st = self.state.borrow_mut();
         st.doc_seq += 1;
         let id = st.next_entry_id();
@@ -689,6 +694,23 @@ impl PageNav {
     /// pending loader). Not for the frame's initial about:blank document.
     pub(crate) fn leaving_document(&self) -> bool {
         self.queued_navigations.get() > 0 && !self.is_first_blank()
+    }
+
+    /// A traversal to another document's entry ended without a document
+    /// committing (its load failed, was a download or a 204): the frame's
+    /// current entry is again the one it left, and the page's current step
+    /// that entry's.
+    pub(crate) fn abandon_traversal(&self) {
+        let Some((index, doc)) = self.traversal_from.take() else { return };
+        let mut st = self.state.borrow_mut();
+        if st.doc_seq != doc || index >= st.entries.len() {
+            return;
+        }
+        st.index = index;
+        st.state_version += 1;
+        let step = st.entries[index].step;
+        drop(st);
+        self.joint.current.set(step);
     }
 
     /// A traversal of document `doc` to another document's entry has made
@@ -1305,6 +1327,9 @@ fn apply_traversal(
         if state.entries.get(state.index).is_some_and(|e| e.doc != current_doc) {
             return false;
         }
+        if entry.doc != current_doc {
+            nav.traversal_from.set(Some((state.index, current_doc)));
+        }
         state.index = index;
         state.state_version += 1;
     }
@@ -1325,6 +1350,7 @@ fn apply_traversal(
             referrer_policy: None,
         };
         if let Err(e) = b.navigate_frame_with_handling(page, opts, HistoryHandling::Traverse) {
+            nav.abandon_traversal();
             b.report_navigation_error(page, &e);
         }
     }

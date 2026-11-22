@@ -1572,6 +1572,11 @@ impl Browser {
                     }
                     Err(e) => b.document_fetch_failed(page, opts, loader_id, e, history),
                 }
+                // A traversal whose document did not commit (a download, a 204, a
+                // network error) leaves the frame on the entry it was on.
+                if let Some(nav) = b.doc(page).filter(|p| p.pending_loader.is_none()).map(|p| p.nav.clone()) {
+                    nav.abandon_traversal();
+                }
             }),
         );
         if let Some(mut d) = self.doc_mut(page).filter(|d| d.pending_loader.as_ref() == Some(&pending_id)) {
