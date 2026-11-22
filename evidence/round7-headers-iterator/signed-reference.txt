@@ -1,0 +1,14 @@
+Sun Nov 22 17:23:48 UTC 2026
+Urbans-MacBook-Pro.local
+a421f2fea5eb7f91e0db399e44b0fb0779ee1603
+b82c52329f881a5193e21ceb22634517c4cb776bd39bb080692c24eb21ac594a  /Users/xban1x/Library/Caches/lightningpanda/round6-reference-158/census/runner/bench/wpt/run-no-native-retry.mjs
+34a67512a84d43630f7adbecebd4378df5f410446591015cc6a20a3034e02819  /Users/xban1x/Library/Caches/lightningpanda/round6-inventory/MANIFEST-pinned.json
+2b6590ac9066ad4d25f7d9579f4ea95440fb8bfb1ebe62d1244ab3d2e5b7b663  base-pyro
+b87bcebb575e53b0f29a4eeeb6480ec9c9bc3537690cacd52d6c67c2c3e3908e  /Users/xban1x/Library/Caches/lightningpanda/round6-reference-158/Google Chrome.app/Contents/MacOS/Google Chrome
+codesign --verify --strict passed
+Identifier=com.google.Chrome
+Authority=Developer ID Application: Google LLC (EQHXZ8M8AV)
+Authority=Developer ID Certification Authority
+Authority=Apple Root CA
+TeamIdentifier=EQHXZ8M8AV
+Google Chrome 158.0.8127.37 

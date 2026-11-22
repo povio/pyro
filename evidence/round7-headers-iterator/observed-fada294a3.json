@@ -1,0 +1,494 @@
+{
+  "label": "candidate",
+  "bin": "/Users/xban1x/Library/Caches/lightningpanda/round7-qa-replaceable-fada294a3/pyro",
+  "kind": "testharness",
+  "mode": "full",
+  "shard": "0/1",
+  "dirs": [
+    "non-css"
+  ],
+  "jobs": 1,
+  "restricted": true,
+  "reuseContext": false,
+  "server": "wptserve",
+  "testdriver": true,
+  "dedicatedWorkers": true,
+  "generatedGlobals": true,
+  "http2": true,
+  "manifestInventory": true,
+  "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+  "discovered": 4,
+  "plan": [
+    "fetch/api/headers/headers-basic.any.html",
+    "fetch/api/headers/headers-basic.any.sharedworker.html",
+    "fetch/api/headers/headers-basic.any.worker.html",
+    "workers/name-property.html"
+  ],
+  "skipped": [],
+  "inventoryPlan": {
+    "wptRevision": "a421f2fea5eb7f91e0db399e44b0fb0779ee1603",
+    "manifestSha256": "34a67512a84d43630f7adbecebd4378df5f410446591015cc6a20a3034e02819",
+    "viewport": {
+      "width": 800,
+      "height": 600,
+      "deviceScaleFactor": 1
+    },
+    "selector": {
+      "dirs": "non-css",
+      "match": null,
+      "shard": "0/1",
+      "repeat": 1,
+      "server": "wptserve",
+      "testdriver": true,
+      "http2": true,
+      "measureReviewedSkips": true
+    },
+    "eligible": [
+      {
+        "url": "fetch/api/headers/headers-basic.any.html",
+        "dir": "fetch",
+        "source": "fetch/api/headers/headers-basic.any.js",
+        "blob": "ead1047645a15fa63fdbb665eaf8fc685b3bde7b",
+        "environment": "window",
+        "timeoutMs": 15000
+      },
+      {
+        "url": "fetch/api/headers/headers-basic.any.sharedworker.html",
+        "dir": "fetch",
+        "source": "fetch/api/headers/headers-basic.any.js",
+        "blob": "ead1047645a15fa63fdbb665eaf8fc685b3bde7b",
+        "environment": "sharedworker",
+        "timeoutMs": 15000
+      },
+      {
+        "url": "fetch/api/headers/headers-basic.any.worker.html",
+        "dir": "fetch",
+        "source": "fetch/api/headers/headers-basic.any.js",
+        "blob": "ead1047645a15fa63fdbb665eaf8fc685b3bde7b",
+        "environment": "dedicatedworker",
+        "timeoutMs": 15000
+      },
+      {
+        "url": "workers/name-property.html",
+        "dir": "workers",
+        "source": "workers/name-property.html",
+        "blob": "ccc2a9de3a9c59acc19eefb247b1c92b78a52941",
+        "environment": "window",
+        "timeoutMs": 15000
+      }
+    ],
+    "inventoryOnly": []
+  },
+  "wallMs": 555,
+  "loopLagMs": {
+    "p50": 0,
+    "p99": 3,
+    "max": 3,
+    "samples": 5
+  },
+  "browserCpuS": 0.31,
+  "runnerCpuS": 0.885939,
+  "serverCpuS": 0,
+  "restarts": 0,
+  "watchdogKills": 0,
+  "excluded": {},
+  "info": {
+    "inventoryOnly": []
+  },
+  "results": [
+    {
+      "dir": "fetch",
+      "url": "fetch/api/headers/headers-basic.any.html",
+      "source": "fetch/api/headers/headers-basic.any.js",
+      "blob": "ead1047645a15fa63fdbb665eaf8fc685b3bde7b",
+      "environment": "window",
+      "long": false,
+      "protocol": "http",
+      "status": "complete",
+      "ms": 75,
+      "error": null,
+      "subtests": [
+        {
+          "name": "Create headers from no parameter",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Create headers from undefined parameter",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Create headers from empty object",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Create headers with null should throw",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Create headers with 1 should throw",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Create headers with sequence",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Create headers with record",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Create headers with existing headers",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Create headers with existing headers with custom iterator",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Check append method",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Check set method",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Check has method",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Check delete method",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Check get method",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Check keys method",
+          "status": "Fail",
+          "msg": "assert_equals: expected object \"[object Iterator]\" but got null"
+        },
+        {
+          "name": "Check values method",
+          "status": "Fail",
+          "msg": "assert_equals: expected object \"[object Iterator]\" but got null"
+        },
+        {
+          "name": "Check entries method",
+          "status": "Fail",
+          "msg": "assert_equals: expected object \"[object Iterator]\" but got null"
+        },
+        {
+          "name": "Check Symbol.iterator method",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Check forEach method",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Iteration skips elements removed while iterating",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Removing elements already iterated over causes an element to be skipped during iteration",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Appending a value pair during iteration causes it to be reached during iteration",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Prepending a value pair before the current element position causes it to be skipped during iteration and adds the current element a second time",
+          "status": "Pass",
+          "msg": ""
+        }
+      ],
+      "harnessStatus": "OK"
+    },
+    {
+      "dir": "fetch",
+      "url": "fetch/api/headers/headers-basic.any.sharedworker.html",
+      "source": "fetch/api/headers/headers-basic.any.js",
+      "blob": "ead1047645a15fa63fdbb665eaf8fc685b3bde7b",
+      "environment": "sharedworker",
+      "long": false,
+      "protocol": "http",
+      "status": "complete",
+      "ms": 48,
+      "error": null,
+      "subtests": [
+        {
+          "name": "Create headers from no parameter",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Create headers from undefined parameter",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Create headers from empty object",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Create headers with null should throw",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Create headers with 1 should throw",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Create headers with sequence",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Create headers with record",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Create headers with existing headers",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Create headers with existing headers with custom iterator",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Check append method",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Check set method",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Check has method",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Check delete method",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Check get method",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Check keys method",
+          "status": "Fail",
+          "msg": "assert_equals: expected object \"[object Iterator]\" but got null"
+        },
+        {
+          "name": "Check values method",
+          "status": "Fail",
+          "msg": "assert_equals: expected object \"[object Iterator]\" but got null"
+        },
+        {
+          "name": "Check entries method",
+          "status": "Fail",
+          "msg": "assert_equals: expected object \"[object Iterator]\" but got null"
+        },
+        {
+          "name": "Check Symbol.iterator method",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Check forEach method",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Iteration skips elements removed while iterating",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Removing elements already iterated over causes an element to be skipped during iteration",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Appending a value pair during iteration causes it to be reached during iteration",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Prepending a value pair before the current element position causes it to be skipped during iteration and adds the current element a second time",
+          "status": "Pass",
+          "msg": ""
+        }
+      ],
+      "harnessStatus": "OK"
+    },
+    {
+      "dir": "fetch",
+      "url": "fetch/api/headers/headers-basic.any.worker.html",
+      "source": "fetch/api/headers/headers-basic.any.js",
+      "blob": "ead1047645a15fa63fdbb665eaf8fc685b3bde7b",
+      "environment": "dedicatedworker",
+      "long": false,
+      "protocol": "http",
+      "status": "complete",
+      "ms": 42,
+      "error": null,
+      "subtests": [
+        {
+          "name": "Create headers from no parameter",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Create headers from undefined parameter",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Create headers from empty object",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Create headers with null should throw",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Create headers with 1 should throw",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Create headers with sequence",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Create headers with record",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Create headers with existing headers",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Create headers with existing headers with custom iterator",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Check append method",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Check set method",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Check has method",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Check delete method",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Check get method",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Check keys method",
+          "status": "Fail",
+          "msg": "assert_equals: expected object \"[object Iterator]\" but got null"
+        },
+        {
+          "name": "Check values method",
+          "status": "Fail",
+          "msg": "assert_equals: expected object \"[object Iterator]\" but got null"
+        },
+        {
+          "name": "Check entries method",
+          "status": "Fail",
+          "msg": "assert_equals: expected object \"[object Iterator]\" but got null"
+        },
+        {
+          "name": "Check Symbol.iterator method",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Check forEach method",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Iteration skips elements removed while iterating",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Removing elements already iterated over causes an element to be skipped during iteration",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Appending a value pair during iteration causes it to be reached during iteration",
+          "status": "Pass",
+          "msg": ""
+        },
+        {
+          "name": "Prepending a value pair before the current element position causes it to be skipped during iteration and adds the current element a second time",
+          "status": "Pass",
+          "msg": ""
+        }
+      ],
+      "harnessStatus": "OK"
+    }
+  ],
+  "originalReceipt": {
+    "file": "/Users/xban1x/Library/Caches/lightningpanda/round7-qa-replaceable-fada294a3/candidate.json",
+    "sha256": "b9c6e1c445fe4897103e52d9d92a32ba65353f4856e9af398c8524328294800d"
+  }
+}

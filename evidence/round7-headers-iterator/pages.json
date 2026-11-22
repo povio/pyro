@@ -1,0 +1,95 @@
+[
+  {
+    "url": "fetch/api/headers/headers-basic.any.html",
+    "completion": {
+      "chrome158": "complete",
+      "observed-fada294a3": "complete",
+      "base": "complete",
+      "candidate": "complete"
+    },
+    "harnessStatus": {
+      "chrome158": "OK",
+      "observed-fada294a3": "OK",
+      "base": "OK",
+      "candidate": "OK"
+    },
+    "counts": {
+      "chrome158": {
+        "Pass": 23
+      },
+      "observed-fada294a3": {
+        "Fail": 3,
+        "Pass": 20
+      },
+      "base": {
+        "Fail": 3,
+        "Pass": 20
+      },
+      "candidate": {
+        "Pass": 23
+      }
+    }
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.sharedworker.html",
+    "completion": {
+      "chrome158": "complete",
+      "observed-fada294a3": "complete",
+      "base": "complete",
+      "candidate": "complete"
+    },
+    "harnessStatus": {
+      "chrome158": "OK",
+      "observed-fada294a3": "OK",
+      "base": "OK",
+      "candidate": "OK"
+    },
+    "counts": {
+      "chrome158": {
+        "Pass": 23
+      },
+      "observed-fada294a3": {
+        "Fail": 3,
+        "Pass": 20
+      },
+      "base": {
+        "Fail": 3,
+        "Pass": 20
+      },
+      "candidate": {
+        "Pass": 23
+      }
+    }
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.worker.html",
+    "completion": {
+      "chrome158": "complete",
+      "observed-fada294a3": "complete",
+      "base": "complete",
+      "candidate": "complete"
+    },
+    "harnessStatus": {
+      "chrome158": "OK",
+      "observed-fada294a3": "OK",
+      "base": "OK",
+      "candidate": "OK"
+    },
+    "counts": {
+      "chrome158": {
+        "Pass": 23
+      },
+      "observed-fada294a3": {
+        "Fail": 3,
+        "Pass": 20
+      },
+      "base": {
+        "Fail": 3,
+        "Pass": 20
+      },
+      "candidate": {
+        "Pass": 23
+      }
+    }
+  }
+]

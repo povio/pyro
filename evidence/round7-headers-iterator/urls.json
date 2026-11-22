@@ -1,0 +1,5 @@
+[
+  "fetch/api/headers/headers-basic.any.html",
+  "fetch/api/headers/headers-basic.any.sharedworker.html",
+  "fetch/api/headers/headers-basic.any.worker.html"
+]

@@ -556,6 +556,28 @@ fn worker_runs_off_the_page_thread_and_messages_structured_clones_both_ways() {
     assert!(pyro_webapi::join_stopped(Duration::from_secs(5)), "worker threads end");
 }
 
+/// Headers iterators in a worker inherit %IteratorPrototype% through the
+/// worker realm's own "Headers Iterator" prototype, as in a window.
+#[test]
+fn worker_headers_iterators_inherit_the_iterator_prototype() {
+    let (mut t, rec, page) = worker_setup();
+    let script = data_url(
+        "const ip = Object.getPrototypeOf(Object.getPrototypeOf([][Symbol.iterator]()));
+         const h = new Headers([['b', '2'], ['a', '1']]);
+         const p = Object.getPrototypeOf(h.keys());
+         const d = Object.getOwnPropertyDescriptor(p, 'next');
+         postMessage([Object.getPrototypeOf(p) === ip, Object.getPrototypeOf(h.entries()) === p, d.writable, d.enumerable,
+           d.configurable, [...h.keys()].join(), [...h.values()].join(), [...h.entries()].join(';')].join());",
+    );
+    eval(&t, page, &format!("const w = new Worker({script:?}); w.onmessage = (e) => console.log('headers:' + e.data);"));
+    until_console(&mut t, &rec, "headers:");
+    let console = rec.console.borrow().join("\n");
+    assert!(console.contains("log:headers:true,true,true,true,true,a,b,1,2,a,1;b,2"), "{console}");
+    drop(console);
+    t.browser.close_all();
+    assert!(pyro_webapi::join_stopped(Duration::from_secs(5)), "worker threads end");
+}
+
 #[test]
 fn worker_terminate_stops_a_busy_script_and_errors_reach_the_page() {
     let (mut t, rec, page) = worker_setup();
