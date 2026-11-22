@@ -408,8 +408,8 @@ impl JsClass for Window {
             _ => Ok(s.null()),
         });
         // `window.name`: the name of the window's navigable. A child frame
-        // takes it from its iframe's `name` attribute when it is created (and
-        // when the attribute changes), a popup from `window.open`.
+        // takes it from its iframe's `name` attribute when it is created (not
+        // when the attribute changes later), a popup from `window.open`.
         def.accessor(
             "name",
             |s, w| {

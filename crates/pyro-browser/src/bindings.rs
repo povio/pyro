@@ -793,14 +793,10 @@ impl PageHooks for Hooks {
             return;
         }
         let Some(key) = host.owner(node) else { return };
-        if attr == pyro_webapi::IframeAttribute::Name {
-            let name = host.dom.borrow().get_attribute(node, "name").ok().flatten().unwrap_or("").to_owned();
-            if let Some(id) = key.child {
-                if let Some(child) = host.children.borrow_mut().get_mut(&id) {
-                    child.main_frame.name = name;
-                }
-            }
-        } else if attr != pyro_webapi::IframeAttribute::Sandbox {
+        // The container's `name` names its child navigable when that is created only: a later
+        // change leaves the child's `window.name` as it is (as in Chrome; WPT
+        // nested-browsing-contexts/name-attribute).
+        if attr != pyro_webapi::IframeAttribute::Name && attr != pyro_webapi::IframeAttribute::Sandbox {
             if let Some(frame) = host.frame(key) {
                 host.queue_attributes(key, frame.loader_id);
             }
