@@ -1559,6 +1559,52 @@ fn control_key_action(page: &Rc<PageDom>, el: NodeId, key: &str) -> bool {
     true
 }
 
+/// A trusted left-button `mousedown` (not canceled) on an option of a list box (a select with
+/// `multiple` or a display size above 1), or inside one: as Chromium, the option becomes the only
+/// selected option (selectedness set by the user, so dirty) unless it is disabled or the select
+/// is; `input` and `change` fire when the selection changed.
+fn listbox_option_mousedown(page: &Rc<PageDom>, target: NodeId) {
+    let (select, index) = {
+        let dom = page.dom.borrow();
+        let mut cur = Some(target);
+        let mut option = None;
+        while let Some(n) = cur {
+            match local(&dom, n).as_deref() {
+                Some("option") => {
+                    option = Some(n);
+                    break;
+                }
+                Some("select") => return,
+                _ => {}
+            }
+            cur = dom.parent(n).ok().flatten();
+        }
+        let Some(option) = option else { return };
+        let Some(select) = dom.option_nearest_select(option).ok().flatten() else { return };
+        let multiple = dom.has_attribute(select, "multiple").unwrap_or(false);
+        let size = dom.get_attribute(select, "size").ok().flatten().and_then(|s| s.trim().parse::<u32>().ok());
+        if !multiple && size.is_none_or(|s| s <= 1) {
+            return;
+        }
+        if dom.is_disabled(select).unwrap_or(true) || dom.is_disabled(option).unwrap_or(true) {
+            return;
+        }
+        let Some(index) = dom.select_options(select).ok().and_then(|o| o.iter().position(|&x| x == option)) else {
+            return;
+        };
+        (select, index)
+    };
+    let changed = {
+        let mut dom = page.dom.borrow_mut();
+        let before = dom.selected_options(select).unwrap_or_default();
+        let _ = dom.set_selected_index(select, index as i32);
+        dom.selected_options(select).unwrap_or_default() != before
+    };
+    if changed {
+        fire_control_change(page, select);
+    }
+}
+
 /// The keys of a customizable select (`appearance: base-select`, Chromium's behaviour) on a
 /// trusted keydown without Ctrl, Meta or Alt. Returns whether the key was handled (no keypress
 /// or other default action follows).
@@ -2761,9 +2807,11 @@ fn dispatch_mouse_inner(
                     }
                 }
             }
-            // A press on a customizable select's button opens or closes its picker.
+            // A press on a customizable select's button opens or closes its picker; one on an
+            // option of a list box picks it.
             if pd && md && m.button == MouseButton::Left && !page.is_disposed() {
                 crate::popover::select_picker_mousedown(page, target);
+                listbox_option_mousedown(page, target);
             }
             // Chromium on Linux and macOS opens the context menu on the
             // press, whether or not the page canceled it (Windows waits for
