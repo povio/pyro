@@ -124,7 +124,14 @@ pub struct FetchRequest {
 
 impl FetchRequest {
     pub(crate) fn effective_credentials(&self) -> pyro_net::Credentials {
-        if self.kind == ResourceKind::Stylesheet && self.crossorigin.is_none() { return pyro_net::Credentials::Include; }
+        // HTML CORS settings "No CORS": a no-cors request whose credentials mode is "include"
+        // (a classic script or style sheet without `crossorigin`, cross-origin cookies too).
+        if matches!(self.kind, ResourceKind::Stylesheet | ResourceKind::Script)
+            && self.crossorigin.is_none()
+            && self.credentials.is_none()
+        {
+            return pyro_net::Credentials::Include;
+        }
         self.credentials.unwrap_or_else(|| if self.crossorigin.as_deref().is_some_and(|value| value.eq_ignore_ascii_case("use-credentials")) { pyro_net::Credentials::Include } else { pyro_net::Credentials::SameOrigin })
     }
 }
