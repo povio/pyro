@@ -165,6 +165,11 @@ impl JsClass for Blob {
             let bytes = crate::encoding::uint8_array(s, &b.bytes)?;
             crate::streams::helper(s, &page, "fromBytes", &[bytes])
         });
+        def.method("textStream", 0, |s, b, _a| {
+            let page = crate::target::page_of(s)?;
+            let bytes = crate::encoding::uint8_array(s, &b.bytes)?;
+            crate::streams::helper(s, &page, "textFromBytes", &[bytes])
+        });
     }
 }
 

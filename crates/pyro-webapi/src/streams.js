@@ -1988,6 +1988,11 @@
     const c = rcSetup(st, true, undefined, () => pull(c), cancel, 0, () => 1);
     return st.wrapper;
   };
+  const bytesBody = (bytes) => byteBody((c) => {
+    if (bytes.length > 0) bcEnqueue(c, bytes);
+    if (rcCanClose(c)) bcClose(c);
+    return resolved();
+  }, () => resolved());
   return {
     ReadableStream, ReadableStreamDefaultReader, ReadableStreamBYOBReader, ReadableStreamDefaultController, ReadableByteStreamController,
     ReadableStreamBYOBRequest, WritableStream, WritableStreamDefaultWriter, WritableStreamDefaultController, TransformStream,
@@ -2010,12 +2015,13 @@
       }), (reason) => then(apply(cancel, source, [reason]), noop));
     },
     // A byte stream of bytes already in memory (Blob.stream()).
-    fromBytes(bytes) {
-      return byteBody((c) => {
-        if (bytes.length > 0) bcEnqueue(c, bytes);
-        if (rcCanClose(c)) bcClose(c);
-        return resolved();
-      }, () => resolved());
+    fromBytes: bytesBody,
+    // Blob.textStream(): the bytes piped through a UTF-8 TextDecoderStream,
+    // with the module's own pipe (no script-visible pipeThrough lookup).
+    textFromBytes(bytes) {
+      const t = TextDecoderStream$t.get(new TextDecoderStream());
+      handled(rsPipe(rsOf(bytesBody(bytes)), t.writable, false, false, false, undefined));
+      return t.readable.wrapper;
     },
     // Response consumption for a body that is a script's stream.
     consume(stream, kind, packageBody) {

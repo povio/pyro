@@ -914,6 +914,32 @@ fn text_decoder_streams_split_characters() {
 }
 
 #[test]
+fn blob_text_stream_decodes_utf8_and_ignores_type() {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    env.eval(
+        r#"globalThis.state='pending';
+        (async()=>{
+          const all=async(st)=>{const r=st.getReader(),c=[];for(;;){const {done,value}=await r.read();if(done)return c;c.push(value)}};
+          const out=[typeof Blob.prototype.textStream];
+          // Patched globals are not consulted: the pipe is internal.
+          const pt=ReadableStream.prototype.pipeThrough; ReadableStream.prototype.pipeThrough=()=>{throw 'used'};
+          const s=new Blob(['﻿a','€'.slice(0)],{type:'text/plain;charset=utf-16le'}).textStream();
+          ReadableStream.prototype.pipeThrough=pt;
+          out.push(s instanceof ReadableStream);
+          const c=await all(s); out.push(c.every(x=>typeof x==='string')+':'+c.join(''));
+          out.push((await all(new Blob().textStream())).length);
+          const bytes=new Uint8Array([0x68,0x00,0xe2,0x82]);
+          out.push(JSON.stringify((await all(new Blob([bytes]).textStream())).join('')));
+          const b=new Blob(['x']); out.push(b.textStream()!==b.textStream());
+          state=out.join('|');
+        })().catch(e=>state='ERROR '+e+' '+e.stack);"#,
+    );
+    env.until("state!=='pending'");
+    assert_eq!(env.eval("state"), "function|true|true:a\u{20ac}|0|\"h\\u0000\u{fffd}\"|true");
+}
+
+#[test]
 fn fetch_body_stream_abort_rejects_pending_read_with_reason() {
     // Own server: the test server serves one connection at a time.
     let server = Server::new();
