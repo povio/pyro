@@ -554,7 +554,9 @@ fn parse_multipart(bytes: &[u8], boundary: &str) -> Option<Vec<MultipartPart>> {
     let mut pos = find(bytes, &delimiter, 0)? + delimiter.len();
     loop {
         if bytes[pos..].starts_with(b"--") {
-            return Some(parts);
+            // The close delimiter ends the body or a line: "--boundary--boundary--" is malformed.
+            let rest = &bytes[pos + 2..];
+            return (rest.is_empty() || rest.starts_with(b"\r\n")).then_some(parts);
         }
         // CRLF after the delimiter, then headers up to a blank line.
         let line_end = find(bytes, b"\r\n", pos)?;
