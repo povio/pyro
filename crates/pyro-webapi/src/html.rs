@@ -5624,7 +5624,19 @@ fn focus_element<'s>(s: &Scope<'s>, n: &NodeData, a: Args<'s>) -> JsResult<Value
             .get_atom("preventScroll")?
             .to_bool()
     };
-    crate::input::focus_element_with_options(n.page(), n.id, prevent_scroll);
+    // Chrome's `HTMLLabelElement::focus`: a label that is not focusable itself (no `tabindex`)
+    // passes focus to its labeled control, an inert label too (WPT the-dialog-element/
+    // inert-label-focus: the control in a modal dialog takes it).
+    let target = {
+        let dom = n.page().dom.borrow();
+        let is_label = dom.element(n.id).is_ok_and(|e| e.is_html() && &*e.name.local == "label");
+        if is_label && !dom.has_attribute(n.id, "tabindex").unwrap_or(false) {
+            dom.labeled_control(n.id).ok().flatten().unwrap_or(n.id)
+        } else {
+            n.id
+        }
+    };
+    crate::input::focus_element_with_options(n.page(), target, prevent_scroll);
     Ok(s.undefined())
 }
 
