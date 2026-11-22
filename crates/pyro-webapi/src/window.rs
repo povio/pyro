@@ -429,6 +429,7 @@ impl JsClass for Navigator {
         def.getter("permissions", |s, p| crate::navigator_extras::member(s, p, "permissions"));
         def.getter("clipboard", |s, p| crate::navigator_extras::member(s, p, "clipboard"));
         def.getter("storage", |s, p| crate::storage_manager::storage(s, p));
+        def.getter("storageBuckets", |s, p| crate::storage_buckets::manager(s, p));
         def.getter("serviceWorker", |s, p| crate::service_worker::container(s, p));
         def.getter("locks", |s, p| crate::web_locks::locks(s, p));
         def.getter("mediaDevices", |s, p| crate::media_devices::media_devices(s, p));

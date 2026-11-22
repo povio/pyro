@@ -1,0 +1,73 @@
+{
+  "scores": {
+    "baseFull": 14,
+    "candidateFull": 37,
+    "chrome158Full": 51,
+    "baseNamed": 155,
+    "candidateNamed": 452,
+    "chrome158Named": 468,
+    "gained": 297,
+    "lost": 0,
+    "new": 0,
+    "missing": 0,
+    "chromeOnly": 16,
+    "lpOnly": 0
+  },
+  "gainsByPage": {
+    "storage/buckets/bucket-quota-indexeddb.tentative.https.any.html": 1,
+    "storage/buckets/bucket-quota-indexeddb.tentative.https.any.worker.html": 1,
+    "storage/buckets/bucket-storage-policy.tentative.https.any.html": 1,
+    "storage/buckets/bucket-storage-policy.tentative.https.any.serviceworker.html": 1,
+    "storage/buckets/bucket-storage-policy.tentative.https.any.sharedworker.html": 1,
+    "storage/buckets/bucket-storage-policy.tentative.https.any.worker.html": 1,
+    "storage/buckets/bucket_names.tentative.https.any.html": 29,
+    "storage/buckets/bucket_names.tentative.https.any.serviceworker.html": 29,
+    "storage/buckets/bucket_names.tentative.https.any.sharedworker.html": 29,
+    "storage/buckets/bucket_names.tentative.https.any.worker.html": 29,
+    "storage/buckets/buckets_basic.tentative.https.any.html": 3,
+    "storage/buckets/buckets_basic.tentative.https.any.serviceworker.html": 3,
+    "storage/buckets/buckets_basic.tentative.https.any.sharedworker.html": 3,
+    "storage/buckets/buckets_basic.tentative.https.any.worker.html": 3,
+    "storage/buckets/buckets_storage_policy.tentative.https.any.html": 1,
+    "storage/buckets/buckets_storage_policy.tentative.https.any.serviceworker.html": 1,
+    "storage/buckets/buckets_storage_policy.tentative.https.any.sharedworker.html": 1,
+    "storage/buckets/buckets_storage_policy.tentative.https.any.worker.html": 1,
+    "storage/buckets/detached-iframe.https.html": 3,
+    "storage/buckets/idlharness-worker.https.any.html": 33,
+    "storage/buckets/idlharness-worker.https.any.serviceworker.html": 33,
+    "storage/buckets/idlharness-worker.https.any.sharedworker.html": 33,
+    "storage/buckets/idlharness-worker.https.any.worker.html": 33,
+    "storage/buckets/storage_bucket_object.tentative.https.any.html": 6,
+    "storage/buckets/storage_bucket_object.tentative.https.any.serviceworker.html": 6,
+    "storage/buckets/storage_bucket_object.tentative.https.any.sharedworker.html": 6,
+    "storage/buckets/storage_bucket_object.tentative.https.any.worker.html": 6
+  },
+  "engines": {
+    "base": {
+      "pageOutcomes": {
+        "error": 4,
+        "complete": 51
+      },
+      "restarts": 0,
+      "watchdogKills": 0,
+      "receiptSHA256": "26cf5f876fa1174f66b528e7ff283ae5edb5289a4821d170aaa956c99222fa61"
+    },
+    "candidate": {
+      "pageOutcomes": {
+        "complete": 52,
+        "error": 3
+      },
+      "restarts": 0,
+      "watchdogKills": 0,
+      "receiptSHA256": "88068fd3f2f515751358a2d7a19dbbc659a5ec43b4b7c65ff169e0ad7bf14206"
+    },
+    "chrome158": {
+      "pageOutcomes": {
+        "complete": 55
+      },
+      "restarts": 0,
+      "watchdogKills": 0,
+      "receiptSHA256": "f5162210eb8ac7bcf1e01460ef936d0f88024c464193819dcf5512fa791a247a"
+    }
+  }
+}

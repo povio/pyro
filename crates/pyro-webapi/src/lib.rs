@@ -112,6 +112,7 @@ mod smil;
 pub mod sri;
 pub mod storage;
 mod storage_manager;
+mod storage_buckets;
 mod streams;
 mod structured_clone;
 pub mod target;
@@ -208,6 +209,7 @@ pub fn register(engine: &pyro_js::Engine) {
     resize_observer::register(engine);
     xpath::register(engine);
     engine.register::<storage::Storage>();
+    storage_buckets::register(engine);
     engine.register::<indexeddb::IdbFactory>();
     opfs::register(engine);
     engine.register::<cache_storage::CacheHandle>();

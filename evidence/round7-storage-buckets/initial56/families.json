@@ -1,0 +1,65 @@
+{
+  "IndexedDB quota": {
+    "matchedGain": 2,
+    "newPass": 0,
+    "lost": 0,
+    "signedOnly": 0,
+    "lpOnly": 0
+  },
+  "environment: window": {
+    "matchedGain": 78,
+    "newPass": 0,
+    "lost": 0,
+    "signedOnly": 11,
+    "lpOnly": 0
+  },
+  "environment: dedicatedworker": {
+    "matchedGain": 74,
+    "newPass": 0,
+    "lost": 0,
+    "signedOnly": 6,
+    "lpOnly": 0
+  },
+  "storage policy and bucket operations": {
+    "matchedGain": 36,
+    "newPass": 0,
+    "lost": 0,
+    "signedOnly": 1,
+    "lpOnly": 0
+  },
+  "environment: serviceworker": {
+    "matchedGain": 73,
+    "newPass": 0,
+    "lost": 0,
+    "signedOnly": 0,
+    "lpOnly": 0
+  },
+  "environment: sharedworker": {
+    "matchedGain": 73,
+    "newPass": 0,
+    "lost": 0,
+    "signedOnly": 0,
+    "lpOnly": 0
+  },
+  "catalog names and lifecycle": {
+    "matchedGain": 128,
+    "newPass": 0,
+    "lost": 0,
+    "signedOnly": 0,
+    "lpOnly": 0
+  },
+  "bucket interfaces": {
+    "matchedGain": 132,
+    "newPass": 0,
+    "lost": 0,
+    "signedOnly": 0,
+    "lpOnly": 0
+  },
+  "neighboring StorageManager guards": {
+    "matchedGain": 0,
+    "newPass": 0,
+    "lost": 0,
+    "signedOnly": 16,
+    "lpOnly": 0
+  }
+}

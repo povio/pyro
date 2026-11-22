@@ -206,7 +206,7 @@
     return wrap(native.root());
   }
   return {
-    getDirectory, FileSystemHandle, FileSystemDirectoryHandle, FileSystemFileHandle,
+    getDirectory, wrapEntry: wrap, FileSystemHandle, FileSystemDirectoryHandle, FileSystemFileHandle,
     FileSystemWritableFileStream: streams.FileSystemWritableFileStream,
     FileSystemSyncAccessHandle: streams.FileSystemSyncAccessHandle,
   };

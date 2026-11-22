@@ -1,0 +1,36 @@
+{
+  "surface": true,
+  "dedicated": [
+    "function",
+    "function",
+    true,
+    true,
+    "undefined",
+    true,
+    true,
+    true,
+    "shared value"
+  ],
+  "shared": [
+    "function",
+    "function",
+    true,
+    true,
+    "undefined",
+    true,
+    true,
+    true,
+    "shared value"
+  ],
+  "service": [
+    "function",
+    "function",
+    true,
+    true,
+    "undefined",
+    true,
+    true,
+    true,
+    "shared value"
+  ]
+}

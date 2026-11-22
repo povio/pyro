@@ -1,0 +1,17 @@
+{
+  "surface": true,
+  "transaction": "UnknownError",
+  "deleted": true,
+  "heldDB": "InvalidStateError",
+  "staleFactory": [
+    "returned",
+    "UnknownError"
+  ],
+  "closeEvent": [
+    1,
+    1,
+    1,
+    true
+  ],
+  "newNames": []
+}

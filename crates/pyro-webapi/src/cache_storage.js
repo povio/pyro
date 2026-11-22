@@ -59,11 +59,11 @@
   };
 
   // The matching responses (`first`: at most one) of cache `h` (null: all).
-  const lookup = (h, request, o, first) => {
-    if (request === undefined) return native.match(h, null, 'GET', [], false, false, false, first);
+  const lookup = (h, request, o, first, backend = native) => {
+    if (request === undefined) return backend.match(h, null, 'GET', [], false, false, false, first);
     const r = toRequest(request);
     if (r.method !== 'GET' && !o.ignoreMethod) return [];
-    return native.match(h, r.url, r.method, flat(r.headers), o.ignoreSearch, o.ignoreMethod, o.ignoreVary, first);
+    return backend.match(h, r.url, r.method, flat(r.headers), o.ignoreSearch, o.ignoreMethod, o.ignoreVary, first);
   };
 
   const putOp = (r, response, body) => [
@@ -178,44 +178,52 @@
   }
   tag(Cache, 'Cache');
 
+  const stores = new WeakMap();
+  const storeOf = (storage) => {
+    const backend = stores.get(storage);
+    if (!backend) throw new TypeErrorC('Illegal invocation');
+    return backend;
+  };
   class CacheStorage {
-    constructor(t) {
+    constructor(t, ...backend) {
       if (t !== token) throw illegal('CacheStorage');
+      stores.set(this, backend[0]);
     }
     match(request, opts) {
       return run(() => {
+        const backend = storeOf(this);
         need(arguments.length, 1, 'CacheStorage', 'match');
         const o = options(opts);
         if (o.cacheName !== undefined) {
-          const h = native.storage('get', o.cacheName);
-          return h === null ? undefined : lookup(h, request, o, true)[0];
+          const h = backend.storage('get', o.cacheName);
+          return h === null ? undefined : lookup(h, request, o, true, backend)[0];
         }
-        return lookup(null, request, o, true)[0];
+        return lookup(null, request, o, true, backend)[0];
       });
     }
     has(name) {
       return run(() => {
         need(arguments.length, 1, 'CacheStorage', 'has');
-        return native.storage('has', String(name));
+        return storeOf(this).storage('has', String(name));
       });
     }
     open(name) {
       return run(() => {
         need(arguments.length, 1, 'CacheStorage', 'open');
-        return new Cache(token, native.storage('open', String(name)));
+        return new Cache(token, storeOf(this).storage('open', String(name)));
       });
     }
     delete(name) {
       return run(() => {
         need(arguments.length, 1, 'CacheStorage', 'delete');
-        return native.storage('delete', String(name));
+        return storeOf(this).storage('delete', String(name));
       });
     }
     keys() {
-      return run(() => native.storage('keys', ''));
+      return run(() => storeOf(this).storage('keys', ''));
     }
   }
   tag(CacheStorage, 'CacheStorage');
 
-  return { Cache, CacheStorage, caches: new CacheStorage(token) };
+  return { Cache, CacheStorage, caches: new CacheStorage(token, native), bucketCaches: backend => new CacheStorage(token, backend) };
 })

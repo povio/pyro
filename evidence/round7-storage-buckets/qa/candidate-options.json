@@ -1,0 +1,27 @@
+{
+  "surface": true,
+  "reopen": [
+    1048576,
+    1048576,
+    true
+  ],
+  "omit": true,
+  "setPast": "ok",
+  "keysAfter": false,
+  "oldExpires": "error:UnknownError",
+  "new": [
+    true,
+    false
+  ],
+  "limits": [
+    "ok",
+    "ok",
+    "error:TypeError"
+  ],
+  "coercions": [
+    "name",
+    "expires",
+    "persisted",
+    "quota"
+  ]
+}

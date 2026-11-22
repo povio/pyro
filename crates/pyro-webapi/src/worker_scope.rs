@@ -87,6 +87,7 @@ pub(crate) struct WorkerStart {
     /// Its Cache Storage, likewise.
     caches: crate::cache_storage::Namespace,
     opfs: crate::opfs::Namespace,
+    buckets: crate::storage_buckets::catalog::Catalog,
     permissions: crate::navigator_extras::PermissionTable,
     web_locks: crate::web_locks::LockService,
     /// `new Worker(url, {type: 'module'})`: the script is a module.
@@ -133,6 +134,7 @@ impl WorkerStart {
             indexed_db: page.local_storage.borrow().indexed_db(),
             caches: page.local_storage.borrow().caches(),
             opfs: page.local_storage.borrow().opfs(),
+            buckets: page.local_storage.borrow().buckets(),
             permissions: page.context_services().permissions.clone(),
             web_locks: page.context_services().web_locks.clone(),
             module: false,
@@ -179,6 +181,7 @@ impl WorkerStart {
             indexed_db: page.local_storage.borrow().indexed_db(),
             caches: page.local_storage.borrow().caches(),
             opfs: page.local_storage.borrow().opfs(),
+            buckets: page.local_storage.borrow().buckets(),
             permissions: page.context_services().permissions.clone(),
             web_locks: page.context_services().web_locks.clone(),
             module,
@@ -593,7 +596,9 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
     page.set_extra_http_headers(start.extra_headers.clone());
     page.set_cache_disabled(start.cache_disabled);
     page.set_storage_namespaces(
-        crate::storage::StorageNamespace::with_shared(start.indexed_db.clone(), start.caches.clone(), start.opfs.clone()),
+        crate::storage::StorageNamespace::with_shared(
+            start.indexed_db.clone(), start.caches.clone(), start.opfs.clone(), start.buckets.clone(),
+        ),
         Default::default(),
     );
     page.set_request_context(crate::RequestContext { frame_id: start.frame_id.clone(), loader_id: None });
@@ -1259,6 +1264,7 @@ impl JsClass for WorkerNavigator {
         def.getter("language", |s, _ua| Ok(s.string("en-US")));
         def.getter("locks", |s, _ua| crate::web_locks::locks(s, &crate::target::page_of(s)?));
         def.getter("storage", |s, _ua| crate::storage_manager::storage(s, &crate::target::page_of(s)?));
+        def.getter("storageBuckets", |s, _ua| crate::storage_buckets::manager(s, &crate::target::page_of(s)?));
     }
 }
 
@@ -1324,6 +1330,7 @@ fn register(engine: &Engine, service: bool, shared_worker: bool) -> pyro_js::Cla
     engine.register::<crate::xhr::WorkerXMLHttpRequest>();
     engine.register::<crate::xhr::XMLHttpRequestUpload>();
     engine.register::<crate::indexeddb::IdbFactory>();
+    crate::storage_buckets::register(engine);
     crate::opfs::register(engine);
     engine.register::<crate::cache_storage::CacheHandle>();
     engine.register::<crate::cache_storage::StoredBody>();
@@ -1392,10 +1399,16 @@ fn install(s: &Scope<'_>, page: &Rc<PageDom>, global: &str) -> JsResult<()> {
     if secure_worker(s) == Some(true) {
         crate::storage_manager::install_worker_file_system_globals(s)?;
         install_lock_interfaces(s)?;
+        crate::storage_buckets::install_worker(s)?;
     } else if let Some(class) = s.global().get_atom("WorkerNavigator")?.as_object() {
         if let Some(proto) = class.get_atom("prototype")?.as_object() {
             proto.delete("locks")?;
+            proto.delete("storageBuckets")?;
         }
+    }
+    if secure_worker(s) != Some(true) {
+        s.global().delete("StorageBucketManager")?;
+        s.global().delete("StorageBucket")?;
     }
     if s.global_data::<DedicatedWorkerGlobalScope>().is_some_and(|g| !g.secure) {
         s.global().delete("VideoDecoder")?;

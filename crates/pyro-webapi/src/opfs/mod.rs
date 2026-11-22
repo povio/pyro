@@ -116,6 +116,20 @@ fn wrap_entry<'s>(s: &Scope<'s>, handle: Handle) -> JsResult<Value<'s>> {
     Ok(s.wrap::<Entry>(handle, None)?.value())
 }
 
+/// Wrap a named bucket's root through this realm's ordinary OPFS interface
+/// module so default and named handles share constructors and prototypes.
+pub(crate) fn bucket_directory<'s>(
+    s: &Scope<'s>,
+    page: &Rc<PageDom>,
+    bucket: &crate::storage_buckets::catalog::Bucket,
+) -> JsResult<Value<'s>> {
+    bucket.lease.check().map_err(|_| JsError::dom("InvalidStateError", "The storage bucket no longer exists."))?;
+    let dedicated = s.global_data::<crate::worker_scope::DedicatedWorkerGlobalScope>().is_some();
+    let wrap = module(s, page, dedicated)?.get_atom("wrapEntry")?.as_object().ok_or_else(invalid_handle)?;
+    let root = wrap_entry(s, bucket.opfs.root(&bucket.origin))?;
+    wrap.call(None, &[root])
+}
+
 fn natives<'s>(s: &Scope<'s>, page: &PageDom) -> JsResult<Object<'s>> {
     let native = s.object();
     native.set_prototype(s.null());

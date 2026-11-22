@@ -7,6 +7,18 @@ use std::ops::Bound::{Excluded, Included, Unbounded};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::storage_buckets::catalog::{Endpoint, Error as BucketError, Lease as BucketLease, Reservation};
+
+impl From<BucketError> for Error {
+    fn from(error: BucketError) -> Self {
+        match error {
+            BucketError::Removed => Error::Missing,
+            BucketError::QuotaExceeded => Error::Quota,
+            _ => Error::Unknown,
+        }
+    }
+}
+
 /// Pyro's RAM-backed context storage budgets both committed contents and
 /// outstanding transactional write buffers. A sparse extension is charged
 /// for its zero-filled bytes before memory is allocated.
@@ -130,6 +142,7 @@ impl Entry {
 }
 
 struct Tree {
+    bucket: Option<BucketLease>,
     entries: BTreeMap<Path, Entry>,
     /// A move reserves both locators. A removal reserves the whole subtree.
     reserved: BTreeSet<Path>,
@@ -140,6 +153,7 @@ struct Tree {
 impl Default for Tree {
     fn default() -> Self {
         Self {
+            bucket: None,
             entries: BTreeMap::from([(Path::new(), Entry::new(Kind::Directory))]),
             reserved: BTreeSet::new(),
             used: 0,
@@ -149,6 +163,20 @@ impl Default for Tree {
 }
 
 impl Tree {
+    fn active(&self) -> Result<()> {
+        if let Some(bucket) = &self.bucket {
+            bucket.check()?;
+        }
+        Ok(())
+    }
+
+    fn charge(&self, removed: u64, added: u64) -> Result<()> {
+        if let Some(bucket) = &self.bucket {
+            bucket.charge(Endpoint::FileSystem, removed, added)?;
+        }
+        Ok(())
+    }
+
     fn file_mut(&mut self, path: &[String]) -> Result<&mut File> {
         match &mut self.entries.get_mut(path).ok_or(Error::Missing)?.data {
             Data::File(file) => Ok(file),
@@ -208,12 +236,32 @@ impl Tree {
 
 #[derive(Clone, Default)]
 pub(crate) struct Namespace {
+    bucket: Option<BucketLease>,
     origins: Arc<Mutex<HashMap<String, Arc<Mutex<Tree>>>>>,
 }
 
 impl Namespace {
+    pub(crate) fn for_bucket(bucket: BucketLease) -> Self {
+        Self { bucket: Some(bucket), ..Self::default() }
+    }
+
+    /// The catalog has already retired the generation and released its own
+    /// locks. Drop large committed contents even when script retains locators.
+    pub(crate) fn retire(&self) {
+        let trees = std::mem::take(&mut *lock(&self.origins));
+        for (_, tree) in trees {
+            let mut tree = lock(&tree);
+            tree.entries.clear();
+            tree.reserved.clear();
+            tree.used = 0;
+        }
+    }
+
     pub(crate) fn root(&self, origin: &str) -> Handle {
-        let tree = lock(&self.origins).entry(origin.to_owned()).or_default().clone();
+        let tree = lock(&self.origins)
+            .entry(origin.to_owned())
+            .or_insert_with(|| Arc::new(Mutex::new(Tree { bucket: self.bucket.clone(), ..Tree::default() })))
+            .clone();
         Handle::new(tree, Path::new(), Kind::Directory)
     }
 
@@ -253,6 +301,7 @@ impl Handle {
 
     pub(crate) fn unique_id(&self) -> Result<String> {
         let mut tree = lock(&self.tree);
+        tree.active()?;
         let path = lock(&self.path);
         let entry = tree.entries.get_mut(&*path).filter(|e| e.kind() == self.kind).ok_or(Error::Missing)?;
         if let Some(id) = &entry.uuid {
@@ -277,6 +326,7 @@ impl Handle {
     pub(crate) fn get(&self, name: &str, kind: Kind, create: bool) -> Result<Self> {
         validate_name(name)?;
         let mut tree = lock(&self.tree);
+        tree.active()?;
         let mut path = lock(&self.path).clone();
         if self.kind != Kind::Directory {
             return Err(Error::WrongKind);
@@ -299,6 +349,7 @@ impl Handle {
 
     pub(crate) fn next(&self, after: Option<&str>) -> Result<Option<(String, Self)>> {
         let mut tree = lock(&self.tree);
+        tree.active()?;
         let mut path = lock(&self.path).clone();
         if self.kind != Kind::Directory {
             return Err(Error::WrongKind);
@@ -320,13 +371,14 @@ impl Handle {
         if self.kind != Kind::Directory {
             return Err(Error::WrongKind);
         }
+        let tree = lock(&self.tree);
+        tree.active()?;
         if !Arc::ptr_eq(&self.tree, &other.tree) {
             return Ok(None);
         }
         if Arc::ptr_eq(&self.path, &other.path) {
             return Ok(Some(Vec::new()));
         }
-        let _tree = lock(&self.tree);
         let parent = lock(&self.path);
         let child = lock(&other.path);
         Ok(child.strip_prefix(parent.as_slice()).map(|rest| rest.to_vec()))
@@ -338,6 +390,7 @@ impl Handle {
             return Err(Error::WrongKind);
         }
         let mut tree = lock(&self.tree);
+        tree.active()?;
         let mut path = lock(&self.path).clone();
         tree.dir_mut(&path)?;
         path.push(name.to_owned());
@@ -347,6 +400,7 @@ impl Handle {
 
     pub(crate) fn reserve_remove(&self, recursive: bool) -> Result<Mutation> {
         let mut tree = lock(&self.tree);
+        tree.active()?;
         let path = lock(&self.path).clone();
         let plan = tree.prepare_remove(path, Some(self.kind), recursive)?;
         Ok(self.reserve(&mut tree, plan))
@@ -363,6 +417,7 @@ impl Handle {
             return Err(Error::InvalidModification);
         }
         let mut tree = lock(&self.tree);
+        tree.active()?;
         let source = lock(&self.path).clone();
         tree.check_reservation(&source)?;
         if tree.file_mut(&source)?.lock.is_some() {
@@ -399,6 +454,7 @@ impl Handle {
             return Err(Error::WrongKind);
         }
         let mut tree = lock(&self.tree);
+        tree.active()?;
         let file = tree.file_mut(&lock(&self.path))?;
         Ok((file.bytes.clone(), file.mtime))
     }
@@ -417,16 +473,22 @@ impl Handle {
             return Err(Error::WrongKind);
         }
         let mut tree = lock(&self.tree);
+        tree.active()?;
         let path = lock(&self.path).clone();
         tree.check_reservation(&path)?;
         let file = tree.file_mut(&path)?;
         let size = if keep == Some(true) { file.bytes.len() } else { 0 };
         tree.check_growth(0, size as u64)?;
+        let reservation = if keep.is_some() {
+            tree.bucket.as_ref().map(|bucket| bucket.reserve(Endpoint::FileSystem, 0)).transpose()?
+        } else {
+            None
+        };
         let file = tree.file_mut(&path)?;
         file.acquire(mode)?;
         let pending = keep.map(|copy| if copy { file.bytes.clone() } else { Vec::new() });
         tree.staged += size as u64;
-        Ok(Lease { tree: self.tree.clone(), path, mode, pending, cursor: 0, closed: false })
+        Ok(Lease { tree: self.tree.clone(), path, mode, pending, reservation, cursor: 0, closed: false })
     }
 }
 
@@ -464,8 +526,14 @@ impl Mutation {
         let plan = self.plan.take().expect("mutation consumed exactly once");
         let mut tree = lock(&self.tree);
         plan.release(&mut tree);
+        tree.active()?;
         match plan {
             Plan::Remove { path, deleted } => {
+                let removed = deleted.iter().filter_map(|key| match &tree.entries.get(key)?.data {
+                    Data::File(file) => Some(file.bytes.len() as u64),
+                    Data::Directory(_) => None,
+                }).sum();
+                tree.charge(removed, 0)?;
                 if let Some((name, parent)) = path.split_last() {
                     tree.dir_mut(parent)?.remove(name);
                 }
@@ -481,6 +549,9 @@ impl Mutation {
             Plan::Move { source, target, locator } if source != target => {
                 let (old_name, old_parent) = source.split_last().expect("files have a parent");
                 let (new_name, new_parent) = target.split_last().expect("files have a parent");
+                if let Some(Entry { data: Data::File(previous), .. }) = tree.entries.get(&target) {
+                    tree.charge(previous.bytes.len() as u64, 0)?;
+                }
                 tree.dir_mut(old_parent)?.remove(old_name);
                 tree.dir_mut(new_parent)?.insert(new_name.clone());
                 let file = tree.entries.remove(&source).expect("reserved source exists");
@@ -526,13 +597,14 @@ pub(crate) struct Lease {
     path: Path,
     mode: LockMode,
     pending: Option<Vec<u8>>,
+    reservation: Option<Reservation>,
     cursor: u64,
     closed: bool,
 }
 
 impl Lease {
     fn active(&self) -> Result<()> {
-        if self.closed { Err(Error::Closed) } else { Ok(()) }
+        if self.closed { Err(Error::Closed) } else { lock(&self.tree).active().map_err(|_| Error::Closed) }
     }
 
     fn may_write(&self) -> Result<()> {
@@ -589,12 +661,45 @@ impl Lease {
         };
         let requested = if chunk.is_some() { end.max(previous as u64) } else { end };
         let length = tree.check_growth(previous, requested)?;
+        let committed = tree.file_mut(&self.path)?.bytes.len() as u64;
+        let growth = requested.saturating_sub(committed);
+        // Reserve shared quota before allocating. Staged bytes are invisible
+        // to estimate(); a synchronous write commits in this same turn.
+        let immediate = if self.pending.is_none() {
+            tree.bucket.as_ref().map(|bucket| bucket.reserve(Endpoint::FileSystem, growth)).transpose()?
+        } else {
+            None
+        };
+        let mut old_reservation = 0;
+        if let Some(r) = &mut self.reservation {
+            old_reservation = r.bytes();
+            if growth > old_reservation {
+                r.resize(growth)?;
+            }
+        }
+        if length > previous {
+            let bytes = match &mut self.pending {
+                Some(buffer) => buffer,
+                None => &mut tree.file_mut(&self.path)?.bytes,
+            };
+            if bytes.try_reserve_exact(length - previous).is_err() {
+                if let Some(r) = &mut self.reservation {
+                    if growth > old_reservation { r.resize(old_reservation)?; }
+                }
+                return Err(Error::Quota);
+            }
+        }
+        if let Some(r) = &mut self.reservation {
+            if growth < old_reservation { r.resize(growth)?; }
+        }
+        if let Some(r) = immediate {
+            r.commit(previous as u64, requested)?;
+        }
         let bytes = match &mut self.pending {
             Some(buffer) => buffer,
             None => &mut tree.file_mut(&self.path)?.bytes,
         };
         if length > bytes.len() {
-            bytes.try_reserve_exact(length - bytes.len()).map_err(|_| Error::Quota)?;
             bytes.resize(length, 0);
         } else if length < bytes.len() {
             bytes.truncate(length);
@@ -638,19 +743,32 @@ impl Lease {
             return Ok(());
         }
         let mut tree = lock(&self.tree);
-        let file = tree.file_mut(&self.path)?;
-        file.release();
-        if let Some(buffer) = self.pending.take() {
-            let next = buffer.len() as u64;
-            if commit {
-                let old = file.bytes.len() as u64;
-                file.bytes = buffer;
-                file.mtime = now_ms();
-                tree.used = tree.used - old + next;
-            }
-            tree.staged -= next;
-        }
+        // Release local resources on both retirement and quota failure.
+        // Other siloed streams can have changed the committed size since the
+        // last write; revalidate the replacement charge against that size.
         self.closed = true;
+        let pending = self.pending.take();
+        tree.staged -= pending.as_ref().map_or(0, |b| b.len() as u64);
+        let mut reservation = self.reservation.take();
+        if let Ok(file) = tree.file_mut(&self.path) {
+            file.release();
+        }
+        if !commit {
+            return Ok(());
+        }
+        tree.active().map_err(|_| Error::Closed)?;
+        if let Some(buffer) = pending {
+            let next = buffer.len() as u64;
+            let old = tree.file_mut(&self.path)?.bytes.len() as u64;
+            if let Some(mut reserved) = reservation.take() {
+                reserved.resize(next.saturating_sub(old))?;
+                reserved.commit(old, next)?;
+            }
+            let file = tree.file_mut(&self.path)?;
+            file.bytes = buffer;
+            file.mtime = now_ms();
+            tree.used = tree.used - old + next;
+        }
         Ok(())
     }
 }
@@ -664,6 +782,79 @@ impl Drop for Lease {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::storage_buckets::catalog::{Catalog, Options, StorageKey};
+
+    fn storage_key() -> StorageKey {
+        StorageKey {
+            origin: "https://example.org".into(),
+            top_level_site: Some("https://example.org".into()),
+            cross_site_ancestor: false,
+        }
+    }
+
+    #[test]
+    fn named_bucket_removal_retires_old_handles_writers_and_pending_mutations() {
+        let catalog = Catalog::default();
+        let key = storage_key();
+        let bucket = catalog.open(&key, "work", Options::default()).unwrap();
+        let root = bucket.opfs.root(&bucket.origin);
+        let default = Namespace::default().root(&key.origin);
+        assert!(!root.is_same_entry(&default));
+        let file = root.get("data", Kind::File, true).unwrap();
+        let extra = root.get("extra", Kind::File, true).unwrap();
+        let removal = extra.reserve_remove(false).unwrap();
+        let mut stream = file.writable(false, false).unwrap();
+        stream.write(b"staged", None).unwrap();
+        assert_eq!(file.snapshot().unwrap().0.len(), 0);
+        assert!(matches!(default.get("data", Kind::File, false), Err(Error::Missing)));
+
+        catalog.delete(&key, "work").unwrap();
+        let next = catalog.open(&key, "work", Options::default()).unwrap();
+        let new_root = next.opfs.root(&next.origin);
+        assert!(!root.is_same_entry(&new_root));
+        assert!(matches!(root.get("x", Kind::Directory, true), Err(Error::Missing)));
+        assert!(matches!(file.snapshot(), Err(Error::Missing)));
+        assert_eq!(stream.close(), Err(Error::Closed));
+        assert_eq!(removal.commit(), Err(Error::Missing));
+        assert!(new_root.next(None).unwrap().is_none());
+
+        next.set_expires(now_ms() as f64 - 1.0).unwrap();
+        assert!(matches!(new_root.next(None), Err(Error::Missing)));
+    }
+
+    #[test]
+    fn named_bucket_quota_accounts_for_staging_competing_writers_and_removal() {
+        let catalog = Catalog::default();
+        let bucket = catalog.open(&storage_key(), "files", Options { quota: Some(6), ..Options::default() }).unwrap();
+        let root = bucket.opfs.root(&bucket.origin);
+        let file = root.get("f", Kind::File, true).unwrap();
+        let mut sync = file.sync(Mode::ReadWrite).unwrap();
+        sync.write(b"12345", None).unwrap();
+        assert_eq!(sync.write(b"xx", None), Err(Error::Quota));
+        assert_eq!(bucket.estimate().unwrap().file_system, 5);
+        sync.close().unwrap();
+        let mut first = file.writable(true, false).unwrap();
+        let mut second = file.writable(false, false).unwrap();
+        first.write(b"6", Some(5)).unwrap();
+        assert_eq!(bucket.estimate().unwrap().usage, 5);
+        assert_eq!(bucket.lease.charge(Endpoint::Caches, 0, 1), Err(BucketError::QuotaExceeded));
+        second.close().unwrap();
+        bucket.lease.charge(Endpoint::Caches, 0, 5).unwrap();
+        assert_eq!(first.close(), Err(Error::Quota));
+        assert!(file.snapshot().unwrap().0.is_empty());
+        assert_eq!(bucket.estimate().unwrap().file_system, 0);
+
+        let mut abandoned = file.writable(false, true).unwrap();
+        abandoned.write(b"x", None).unwrap();
+        abandoned.abort().unwrap();
+        let mut writer = file.writable(false, false).unwrap();
+        writer.write(b"y", None).unwrap();
+        writer.close().unwrap();
+        assert_eq!(bucket.estimate().unwrap().usage, 6);
+        root.reserve_remove_entry("f", false).unwrap().commit().unwrap();
+        assert_eq!(bucket.estimate().unwrap().usage, 5);
+    }
 
     #[test]
     fn origin_roots_and_locators_follow_context_lifetime() {

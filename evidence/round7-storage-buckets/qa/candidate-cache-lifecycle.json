@@ -1,0 +1,25 @@
+{
+  "surface": true,
+  "used": [
+    true,
+    true,
+    false,
+    true
+  ],
+  "unlink": [
+    true,
+    32768,
+    false
+  ],
+  "orphanWrite": "ok",
+  "reopened": [
+    false,
+    false
+  ],
+  "stale": [
+    "ok",
+    "UnknownError",
+    "NotFoundError",
+    0
+  ]
+}
