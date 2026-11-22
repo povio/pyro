@@ -660,6 +660,7 @@ class Longhand(Property):
                 "ImageOrientation",
                 "InterpolateSize",
                 "Speak",
+                "ReadingFlow",
                 "TextOrientation",
                 "BoxCollapse",
                 "Visibility",
