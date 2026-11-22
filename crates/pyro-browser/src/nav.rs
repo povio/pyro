@@ -65,6 +65,10 @@ struct Entry {
     /// HTML "step": where the entry sits on its page's joint session history
     /// ([`JointHistory`]), shared by the entries of all its frames.
     step: u64,
+    /// HTML "scroll restoration mode" of the entry (`history.scrollRestoration`): "manual"
+    /// when true. A new document's entry starts "auto"; pushState and replaceState keep the
+    /// current entry's.
+    scroll_manual: bool,
 }
 
 /// The ids [`PageNav::history_entries`] gives the steps only a child frame
@@ -148,7 +152,6 @@ struct NavState {
     /// replaceState and same-document traversal. `history.state` returns one
     /// deserialized object per realm until it changes.
     state_version: u64,
-    scroll_restoration_manual: bool,
     /// The viewport scroll position persisted for an entry of this document when it stopped
     /// being the current one (HTML "persist the history entry state"), by entry id.
     scroll_positions: std::collections::HashMap<u64, (i32, i32)>,
@@ -304,7 +307,6 @@ impl PageNav {
                 doc_seq: 0,
                 entry_seq: 0,
                 state_version: 0,
-                scroll_restoration_manual: false,
                 scroll_positions: Default::default(),
                 initial: false,
                 first_blank: false,
@@ -457,6 +459,7 @@ impl PageNav {
             key,
             nav_state: None,
             step: current_step,
+            scroll_manual: false,
         };
         let initial = std::mem::take(&mut st.initial);
         st.first_blank = false;
@@ -629,7 +632,8 @@ impl PageNav {
                 _ => st.next_entry_id(),
             };
             let step = current.map_or(self.joint.current.get(), |e| e.step);
-            let mut entry = Entry { url: url.to_string(), state, doc, id, key, nav_state, step };
+            let scroll_manual = current.is_some_and(|e| e.scroll_manual);
+            let mut entry = Entry { url: url.to_string(), state, doc, id, key, nav_state, step, scroll_manual };
             st.initial = false;
             if st.entries.is_empty() {
                 st.entries.push(entry);
@@ -968,13 +972,22 @@ impl PageNav {
         }
     }
 
+    /// `history.scrollRestoration = mode` on the current entry.
+    fn set_scroll_manual(&self, manual: bool) {
+        let mut st = self.state.borrow_mut();
+        let index = st.index;
+        if let Some(entry) = st.entries.get_mut(index) {
+            entry.scroll_manual = manual;
+        }
+    }
+
     /// HTML "restore persisted state" of a same-document traversal to `entry`: with
     /// `history.scrollRestoration` `auto`, its persisted scroll position; else, without one,
     /// the scroll to its fragment.
     fn restore_scroll(&self, entry: &Entry) {
         let (manual, saved) = {
             let st = self.state.borrow();
-            (st.scroll_restoration_manual, st.scroll_positions.get(&entry.id).copied())
+            (entry.scroll_manual, st.scroll_positions.get(&entry.id).copied())
         };
         let Some(page) = self.page_dom.borrow().upgrade() else { return };
         match saved {
@@ -1792,13 +1805,15 @@ impl JsClass for History {
             "scrollRestoration",
             |s, n| {
                 require_fully_active(n, "scrollRestoration")?;
-                Ok(s.string(if n.state.borrow().scroll_restoration_manual { "manual" } else { "auto" }))
+                let st = n.state.borrow();
+                let manual = st.entries.get(st.index).is_some_and(|e| e.scroll_manual);
+                Ok(s.string(if manual { "manual" } else { "auto" }))
             },
             |_s, n, v| {
                 require_fully_active(n, "scrollRestoration")?;
                 match v.to_string()?.as_str() {
-                    "manual" => n.state.borrow_mut().scroll_restoration_manual = true,
-                    "auto" => n.state.borrow_mut().scroll_restoration_manual = false,
+                    "manual" => n.set_scroll_manual(true),
+                    "auto" => n.set_scroll_manual(false),
                     _ => {} // invalid enum values are ignored
                 }
                 Ok(())
