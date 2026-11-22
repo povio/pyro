@@ -466,8 +466,23 @@ impl<A: DomAccess> TreeSink for Sink<A> {
         let queued = self.dom.with(|d| {
             // The constructor may have moved the sibling.
             let parent = d.n(*sibling).parent;
-            if parent != NIL && !cannot_insert(d, parent, &new_node) {
-                insert_node(d, parent, *sibling, new_node);
+            if parent != NIL {
+                // HTML "appropriate place for inserting a node": a location inside a template
+                // element (a table a script moved into one) is inside its template contents,
+                // after their last child (WPT `foster-parenting-into-template-element`).
+                let contents = d
+                    .n(parent)
+                    .element()
+                    .filter(|e| e.is_html() && e.name.local == local_name!("template"))
+                    .map(|e| e.template_contents)
+                    .filter(|&contents| contents != NIL);
+                let (target, before) = match contents {
+                    Some(contents) => (contents, NIL),
+                    None => (parent, *sibling),
+                };
+                if !cannot_insert(d, target, &new_node) {
+                    insert_node(d, target, before, new_node);
+                }
             }
             d.custom_reactions_queued()
         });
