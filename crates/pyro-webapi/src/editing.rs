@@ -1791,7 +1791,7 @@ fn insert_fragment(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point, fr
     let kids: Vec<NodeId> = dom.children(frag).map(|c| c.collect()).unwrap_or_default();
     let Some(&last) = kids.last() else { return caret };
     let caret = insertion_point(dom, caret);
-    let single_image = kids.len() == 1 && dom.element(last).is_ok_and(|el| el.is_html() && el.local_name().as_ref() == "img");
+    let single_image = kids.len() == 1 && dom.element(last).is_ok_and(|el| el.is_html() && el.local_name() == &markup5ever::local_name!("img"));
     let split_text = is_text(dom, caret.0) && caret.1 > 0 && caret.1 < len(dom, caret.0);
     let (parent, before) = if is_text(dom, caret.0) {
         let n = caret.0;
