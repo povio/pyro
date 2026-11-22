@@ -1633,11 +1633,6 @@ pub(crate) fn delete_span(page: &Rc<PageDom>, host: NodeId, input_type: &str, st
 /// Elements pasted or inserted markup never brings along.
 const DROPPED_ON_INSERT: &[&str] = &["script", "style", "meta", "link", "title", "head", "base", "template"];
 
-/// Moves `frag`'s children to the caret, splitting the text there; returns
-/// the caret after them.
-/// With `sanitize` (paste), event handler attributes and `javascript:` URLs
-/// are dropped too, as Chromium sanitizes pasted markup: the clipboard may
-/// hold markup another page wrote.
 fn html_fragment_boundary(
     page: &PageDom, dom: &mut Dom, host: NodeId, parent: NodeId, before: Option<NodeId>,
 ) -> Option<(NodeId, Option<NodeId>)> {
@@ -1670,6 +1665,11 @@ fn html_fragment_boundary(
     Some((outer, reference))
 }
 
+/// Moves `frag`'s children to the caret, splitting the text there; returns
+/// the caret after them.
+/// With `sanitize` (paste), event handler attributes and `javascript:` URLs
+/// are dropped too, as Chromium sanitizes pasted markup: the clipboard may
+/// hold markup another page wrote.
 fn insert_fragment(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point, frag: NodeId, sanitize: bool) -> Point {
     let drop: Vec<NodeId> = dom
         .descendants(frag)
