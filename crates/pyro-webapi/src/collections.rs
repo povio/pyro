@@ -837,6 +837,9 @@ fn kind_slot(kind: &CollectionKind) -> Option<u64> {
         CollectionKind::SectionRows => 9,
         CollectionKind::Labels => 10,
         CollectionKind::Links => 11,
+        // pyro: `document.anchors` and `document.applets` are [SameObject].
+        CollectionKind::Anchors => 62,
+        CollectionKind::Empty => 63,
         _ => return None,
     })
 }
@@ -846,9 +849,18 @@ pub fn collection<'s>(s: &Scope<'s>, page: &PageDom, root: NodeId, kind: Collect
     // A named-property collection (`document.foo`, `window.foo` with several elements) is the
     // same object on each access while script holds it: its key folds in a hash of the name,
     // and a found wrapper is checked to be for this name (a collision gets an uncached one).
+    // pyro: so are `getElementsByTagName(NS)` collections and the Document's [SameObject] ones
+    // built from them (`document.embeds` and `document.plugins` are one object): by the name, the
+    // namespace and the name for a namespaced one.
+    let ns_name;
     let named = match &kind {
         CollectionKind::DocumentNamed(n) => Some((30, n)),
         CollectionKind::WindowNamed(n) => Some((31, n)),
+        CollectionKind::TagName(n) => Some((60, n)),
+        CollectionKind::TagNameNs(ns, n) => {
+            ns_name = format!("{ns}\u{0}{n}");
+            Some((61, &ns_name))
+        }
         _ => None,
     };
     let mut key = match named {
