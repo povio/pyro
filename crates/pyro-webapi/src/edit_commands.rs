@@ -2396,12 +2396,22 @@ fn listify_bare_text(
     let left = begin.checked_sub(1).map(|i| children[i]);
     let right = children.get(end).copied();
     let list_tag = |n| dom.element(n).ok().filter(|el| el.is_html()).map(|el| el.local_name());
-    if ![left, right].into_iter().flatten().any(|n| list_tag(n).is_some_and(|name| matches!(&**name, "ol" | "ul"))) {
-        return None;
+    let is_list = |n| list_tag(n).is_some_and(|name| matches!(&**name, "ol" | "ul"));
+    let closing_break = right.filter(|&n| editing::local(dom, n) == "br"
+        && dom.next_sibling(n).ok().flatten().is_some_and(is_list));
+    if ![left, right].into_iter().flatten().any(is_list) && closing_break.is_none() { return None; }
+
+    // A terminal locked list supplies no editable position past the line.
+    // The command still completes its input and history step, with the
+    // original text, lists and forward-ordered endpoints in place.
+    if right.is_some_and(|n| is_list(n) && editing::editing_host(dom, n) != Some(host)
+        && dom.next_sibling(n).ok() == Some(None)) {
+        return Some(((text, from), (text, to)));
     }
     let matches = |n| list_tag(n).is_some_and(|name| &**name == tag) && editing::editing_host(dom, n) == Some(host);
     let left = left.filter(|&n| matches(n));
-    let right = right.filter(|&n| matches(n));
+    let right = right.filter(|&n| matches(n) && (left.is_none()
+        || dom.first_child(n).ok().flatten().is_none_or(|first| editing::editing_host(dom, first) == Some(host))));
     let doc = dom.node_document(host).ok()?;
     let item = dom.create_element(doc, "li").ok()?;
     let content = dom.clone_node(text, false, None).ok()?;
@@ -2429,6 +2439,7 @@ fn listify_bare_text(
             dom.append_child(item, child).ok()?;
         }
     }
+    if let Some(br) = closing_break { dom.remove_node(br).ok()?; }
     Some(((content, from), (content, to)))
 }
 
