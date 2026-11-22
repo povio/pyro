@@ -4,8 +4,8 @@
   "implemented": {
    "scope": {
     "macbook_in_scope": 511,
-    "studio_in_scope": 168,
-    "other_dirs_out_of_scope": -36,
+    "studio_in_scope": 111,
+    "other_dirs_out_of_scope": 21,
     "macbook_worker_variants_if_enabled": 183,
     "studio_worker_variants_if_enabled": 0
    },
@@ -36,12 +36,12 @@
     "fetch/range": 5,
     "fetch/stale-while-revalidate": 5,
     "FileAPI": 4,
-    "fetch/nosniff": 3,
     "fetch/http-cache": 3,
+    "fetch/nosniff": 3,
     "xhr": 2,
-    "IndexedDB": 1,
-    "html/rendering": 1,
     "svg/styling": 1,
+    "html/rendering": 1,
+    "IndexedDB": 1,
     "quirks": 1
    }
   },
