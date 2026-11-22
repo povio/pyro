@@ -1,0 +1,34 @@
+[
+  [
+    "editing/run/bold.html?1-1000",
+    "[[\"bold\",\"\"]] \"foo{<b></b>}baz\" queryCommandState(\"bold\") after",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/bold.html?1-1000",
+    "[[\"bold\",\"\"]] \"foo{<b><i></i></b>}baz\" queryCommandState(\"bold\") after",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/bold.html?1-1000",
+    "[[\"bold\",\"\"]] \"foo{<i></i>}baz\" queryCommandState(\"bold\") after",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "editing/run/bold.html?1-1000",
+    "[[\"bold\",\"\"]] \"foo{<i><b></b></i>}baz\" queryCommandState(\"bold\") after",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ]
+]
