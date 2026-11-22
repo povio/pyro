@@ -331,6 +331,14 @@ fn nested_in(dom: &Dom, inner: NodeId, outer: NodeId) -> bool {
     false
 }
 
+/// The popover a dialog or fullscreen element entering the top layer keeps open, with those
+/// below it (HTML "show a modal dialog", Fullscreen "requestFullscreen()"): its topmost popover
+/// ancestor in the hint stack, else in the auto stack.
+fn top_layer_popover_ancestor(dom: &Dom, el: NodeId) -> Option<NodeId> {
+    topmost_popover_ancestor(dom, el, PopoverStack::Hint, None)
+        .or_else(|| topmost_popover_ancestor(dom, el, PopoverStack::Auto, None))
+}
+
 /// HTML "topmost popover ancestor": the highest popover of `stack` that
 /// contains `el` (flat tree) or its invoker.
 fn topmost_popover_ancestor(dom: &Dom, el: NodeId, stack: PopoverStack, invoker: Option<NodeId>) -> Option<NodeId> {
@@ -449,7 +457,7 @@ fn hide_all_popovers_until(page: &Rc<PageDom>, endpoint: Option<NodeId>, focus_p
 /// not contain it close (the topmost auto popover ancestor's stack above it, or all of them),
 /// as for a modal dialog.
 pub(crate) fn hide_popovers_for_fullscreen(page: &Rc<PageDom>, el: NodeId) {
-    let until = topmost_popover_ancestor(&page.dom.borrow(), el, PopoverStack::Auto, None);
+    let until = top_layer_popover_ancestor(&page.dom.borrow(), el);
     hide_all_popovers_until(page, until, false, true);
 }
 
@@ -984,7 +992,7 @@ fn show_dialog(page: &Rc<PageDom>, el: NodeId) -> JsResult<()> {
     let previous = focused(page);
     page.dom.borrow_mut().set_attribute(el, "open", "").js()?;
     // Popovers that do not contain the dialog close, as for showModal().
-    let until = topmost_popover_ancestor(&page.dom.borrow(), el, PopoverStack::Auto, None);
+    let until = top_layer_popover_ancestor(&page.dom.borrow(), el);
     hide_all_popovers_until(page, until, false, true);
     after_dialog_open(page, el, previous);
     Ok(())
@@ -1038,7 +1046,7 @@ fn show_modal_dialog(page: &Rc<PageDom>, el: NodeId, throw: bool, source: Option
         dom.set_modal(el, true).js()?;
     }
     // Popovers that do not contain the dialog close.
-    let until = topmost_popover_ancestor(&page.dom.borrow(), el, PopoverStack::Auto, None);
+    let until = top_layer_popover_ancestor(&page.dom.borrow(), el);
     hide_all_popovers_until(page, until, false, true);
     after_dialog_open(page, el, previous);
     Ok(())
