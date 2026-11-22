@@ -1920,13 +1920,15 @@ impl JsClass for HtmlElement {
             Ok(s.undefined())
         });
         def.method("attachInternals", 0, |s, n, _a| crate::internals::attach(s, n.page(), n.id));
+        // The popover methods act for the document the element is in now: a popover moved into
+        // another frame's document (sharing this DOM) is that page's.
         def.method("showPopover", 0, |s, n, a| {
             let source = crate::popover::source_option(s, a.get(0))?;
-            crate::popover::show_popover(n.page(), n.id, true, source)?;
+            crate::popover::show_popover(&popover_page(n), n.id, true, source)?;
             Ok(s.undefined())
         });
         def.method("hidePopover", 0, |s, n, _a| {
-            crate::popover::hide_popover(n.page(), n.id, true, true, true, None)?;
+            crate::popover::hide_popover(&popover_page(n), n.id, true, true, true, None)?;
             Ok(s.undefined())
         });
         def.method("togglePopover", 0, |s, n, a| {
@@ -1941,7 +1943,7 @@ impl JsClass for HtmlElement {
                     None => (Some(v.to_bool()), None),
                 },
             };
-            let page = n.page();
+            let page = &popover_page(n);
             let showing = page.dom.borrow().is_popover_showing(n.id);
             match force {
                 // Already in the wanted state: only the validity errors.
@@ -2259,6 +2261,11 @@ simple_class!(HtmlImageElement, "HTMLImageElement", HtmlElement, |def| {
 });
 
 // ----- forms --------------------------------------------------------------------
+
+/// The page whose document `n` is in now (`input::sibling_page_of`), else its wrapper's.
+fn popover_page(n: &NodeData) -> Rc<PageDom> {
+    crate::input::sibling_page_of(n.page(), n.id).unwrap_or_else(|| n.page().clone())
+}
 
 /// The elements that take an unset `autocapitalize`/`autocorrect` from their form owner (HTML
 /// "autocapitalize-and-autocorrect inheriting elements").

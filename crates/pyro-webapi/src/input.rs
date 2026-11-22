@@ -97,7 +97,7 @@ fn live_element(page: &PageDom, doc: NodeId, el: NodeId) -> bool {
 /// `el` belongs to, when that is not `page`'s own. A node created by one
 /// document and adopted into a frame's keeps its wrapper's page, so its
 /// `focus()`/`blur()` must be applied by the page that owns it now.
-fn sibling_page_of(page: &Rc<PageDom>, el: NodeId) -> Option<Rc<PageDom>> {
+pub(crate) fn sibling_page_of(page: &Rc<PageDom>, el: NodeId) -> Option<Rc<PageDom>> {
     let doc = page.dom.borrow().node_document(el).ok()?;
     if doc == page.document() {
         return None;
