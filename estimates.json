@@ -32,43 +32,43 @@
     "scheduler": 19,
     "html/syntax": 12,
     "fetch/cross-origin-resource-policy": 10,
-    "workers": 9,
     "html/infrastructure": 9,
+    "workers": 9,
     "encoding": 7,
-    "fetch/corb": 6,
     "fetch/data-urls": 6,
-    "fetch/stale-while-revalidate": 5,
+    "fetch/corb": 6,
     "fetch/range": 5,
+    "fetch/stale-while-revalidate": 5,
     "FileAPI": 4,
     "html/rendering": 3,
     "fetch/http-cache": 3,
     "fetch/nosniff": 3,
-    "xhr": 2,
     "fetch/orb": 2,
-    "fetch/redirect-navigate": 1,
-    "quirks": 1,
+    "xhr": 2,
     "IndexedDB": 1,
+    "fetch/redirect-navigate": 1,
+    "svg/styling": 1,
     "fetch/security": 1,
-    "svg/styling": 1
+    "quirks": 1
    }
   },
   "in_progress": {
    "scope": {
-    "macbook_in_scope": 126,
+    "macbook_in_scope": 123,
     "studio_in_scope": 112,
     "other_dirs_out_of_scope": 0,
-    "macbook_worker_variants_if_enabled": 7,
+    "macbook_worker_variants_if_enabled": 6,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 144,
+   "distinct_census_pages": 141,
    "owner_reported_unlisted": 0,
-   "selector_union": 366,
-   "owner_estimate_reduction": 222,
+   "selector_union": 362,
+   "owner_estimate_reduction": 221,
    "of_which_tentative": 197,
    "studio_css_reported_pages_not_deduped": 92,
    "studio_css_listed_distinct": 0,
    "by_dir": {
-    "html/canvas": 145,
+    "html/canvas": 141,
     "html/semantics": 70,
     "html/rendering": 45,
     "html/syntax": 30,
@@ -81,11 +81,11 @@
     "fetch/security": 4,
     "html/webappapis": 3,
     "fetch/cross-origin-resource-policy": 2,
-    "fetch/range": 1,
-    "fetch/redirects": 1,
+    "fetch/content-type": 1,
     "fetch/images": 1,
-    "fetch/http-cache": 1,
-    "fetch/content-type": 1
+    "fetch/redirects": 1,
+    "fetch/range": 1,
+    "fetch/http-cache": 1
    }
   },
   "queued": {
@@ -107,8 +107,8 @@
     "webidl": 19,
     "fetch/compression-dictionary": 8,
     "html/interaction": 5,
-    "html/semantics": 4,
     "svg/path": 4,
+    "html/semantics": 4,
     "workers": 3,
     "html/webappapis": 2,
     "dom/nodes": 1
@@ -2196,7 +2196,7 @@
    "tentative": 0
   },
   "R-HTML-32": {
-   "state": "reserved",
+   "state": "blocked",
    "in_scope_pages": 5,
    "out_of_scope_pages": 0,
    "pages": 5,
@@ -2530,6 +2530,13 @@
    "out_of_scope_pages": null,
    "pages": null,
    "tentative": null
+  },
+  "OOS-imagebitmap-renderingcontext": {
+   "state": "implemented-unbuilt",
+   "in_scope_pages": 0,
+   "out_of_scope_pages": 0,
+   "pages": 0,
+   "tentative": 0
   }
  },
  "implemented_total_estimate": 1427,
