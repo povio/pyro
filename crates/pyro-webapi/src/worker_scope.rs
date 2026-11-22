@@ -655,6 +655,7 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
         url: start.url.to_string(),
         sched: event_loop.scheduler(),
         in_flight: Rc::default(),
+        classic_service: start.service.is_some() && !start.module,
     })));
     {
         let s = realm.scope()?;
@@ -779,6 +780,8 @@ struct WorkerModuleFetcher {
     /// settles, so concurrent loads would each fetch it. Nothing stays once a
     /// fetch settles: a failed one is fetched again by the next request.
     in_flight: Rc<RefCell<HashMap<(String, pyro_js::ModuleType), Vec<pyro_js::ModuleRequest>>>>,
+    /// A classic service worker, whose every module request is an `import()`.
+    classic_service: bool,
 }
 
 impl pyro_js::ModuleFetcher for WorkerModuleFetcher {
@@ -787,6 +790,17 @@ impl pyro_js::ModuleFetcher for WorkerModuleFetcher {
     }
 
     fn fetch(&self, realm: &Realm, url: String, request: pyro_js::ModuleRequest) {
+        // HTML HostLoadImportedModule: `import()` in a ServiceWorkerGlobalScope
+        // fails with a TypeError, at once (no task, no microtask checkpoint).
+        if self.classic_service {
+            if let Ok(s) = realm.scope() {
+                let e = JsError::Type("import() is disallowed on ServiceWorkerGlobalScope".into());
+                if let Err(e) = request.reject(&s, &e) {
+                    s.report_exception(&e);
+                }
+            }
+            return;
+        }
         let key = (url.clone(), request.module_type());
         {
             let mut in_flight = self.in_flight.borrow_mut();
