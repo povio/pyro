@@ -2249,7 +2249,10 @@ impl Io {
                     .get(header::LOCATION)
                     .map(|v| location_text(v.as_bytes()))
                     .ok_or_else(|| NetError::Other("cached redirect without a Location".into()))?;
-                let target = url.join(&loc).map_err(|_| NetError::InvalidUrl)?;
+                let mut target = url.join(&loc).map_err(|_| NetError::InvalidUrl)?;
+                if target.fragment().is_none() {
+                    target.set_fragment(url.fragment());
+                }
                 if !matches!(target.scheme(), "http" | "https") {
                     return Err(NetError::Blocked("net::ERR_UNSAFE_REDIRECT".into()));
                 }
@@ -2515,7 +2518,12 @@ impl Io {
                     RedirectMode::Follow => {}
                 }
                 if let Some(loc) = resp_headers.get(header::LOCATION).map(|v| location_text(v.as_bytes())) {
-                    let target = url.join(&loc).map_err(|_| NetError::InvalidUrl)?;
+                    let mut target = url.join(&loc).map_err(|_| NetError::InvalidUrl)?;
+                    // Fetch "HTTP-redirect fetch": a Location without a fragment keeps the
+                    // current URL's.
+                    if target.fragment().is_none() {
+                        target.set_fragment(url.fragment());
+                    }
                     // Fetch "HTTP-redirect fetch": only HTTP(S) survives a redirect, and a CORS
                     // request may not be sent to credentials in the URL of another origin.
                     if !matches!(target.scheme(), "http" | "https") {
