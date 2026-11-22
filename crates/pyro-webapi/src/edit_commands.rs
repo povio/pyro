@@ -2093,6 +2093,124 @@ fn format_block(page: &Rc<PageDom>, host: NodeId, tag: &str) {
     });
 }
 
+/// Carry inherited text appearance before the items leave their source
+/// list. A plain text run can carry its style on a span; for structured
+/// items keep the existing children, including locked descendants, intact.
+fn carry_list_text_style(page: &PageDom, dom: &mut Dom, source: NodeId, destination: NodeId, items: &[NodeId]) -> Option<()> {
+    use pyro_dom::stylo::declarations::DeclarationBlock;
+    let layout = page.layout();
+    let authored = DeclarationBlock::parse(dom.get_attribute(source, "style").ok()?.unwrap_or(""));
+    let mut changes = Vec::new();
+    for property in ["color", "font-family", "font-size", "font-style", "font-weight"] {
+        let old = layout.computed_style_value(dom, source, property);
+        let new = layout.computed_style_value(dom, destination, property);
+        if !old.is_empty() && !new.is_empty() && old != new {
+            changes.push((property, old, new));
+        }
+    }
+    if changes.is_empty() { return Some(()); }
+    let doc = dom.node_document(source).ok()?;
+    for &item in items {
+        if dom.element(item).is_err() { continue; }
+        let children: Vec<_> = dom.children(item).ok()?.collect();
+        let text_only = !children.is_empty() && children.iter().all(|&n| editing::is_text(dom, n));
+        let mut style = if text_only { DeclarationBlock::parse("") }
+            else { DeclarationBlock::parse(dom.get_attribute(item, "style").ok()?.unwrap_or("")) };
+        let mut changed = false;
+        for (property, old, new) in &changes {
+            let value = layout.computed_style_value(dom, item, property);
+            if value.is_empty() || &value == new || !style.value(property).is_empty() { continue; }
+            // Prefer the authored color spelling when it resolves to the
+            // actual source color. Relative font sizes must use their
+            // resolved value to avoid scaling a second time.
+            let css = authored.value(property);
+            let css = if *property == "color" && &value == old && !css.is_empty()
+                && pyro_dom::color_well::editing_color(&css).is_some_and(|(c, _)| c == value)
+            { css } else { value };
+            style.set(property, &css, false)?;
+            changed = true;
+        }
+        if !changed { continue; }
+        if text_only {
+            let span = dom.create_element(doc, "span").ok()?;
+            dom.set_attribute(span, "style", &style.css_text()).ok()?;
+            dom.insert_before(item, span, children.first().copied()).ok()?;
+            for child in children { dom.append_child(span, child).ok()?; }
+        } else {
+            dom.set_attribute(item, "style", &style.css_text()).ok()?;
+        }
+    }
+    Some(())
+}
+
+/// Convert a contiguous run of items in an opposite-type list at the same
+/// nesting level. Keep the list items (and their subtrees) intact.
+fn convert_list_items(page: &PageDom, dom: &mut Dom, host: NodeId, tag: &str, start: Point, end: Point) -> Option<(Point, Point)> {
+    let first_point = editing::deep_forward(dom, start);
+    let last_point = if start == end { first_point } else { editing::deep_backward(dom, end) };
+    let item_at = |mut n| -> Option<NodeId> {
+        while n != host {
+            if dom.element(n).is_ok_and(|el| el.is_html() && &**el.local_name() == "li") { return Some(n); }
+            n = dom.parent_element(n).ok()??;
+        }
+        None
+    };
+    let first = item_at(first_point.0)?;
+    let last = item_at(last_point.0)?;
+    let source = dom.parent_element(first).ok()??;
+    if source == host || dom.parent_element(last).ok()?? != source
+        || !dom.element(source).is_ok_and(|el| el.is_html() && matches!(&**el.local_name(), "ol" | "ul") && &**el.local_name() != tag)
+    { return None; }
+    let parent = dom.parent_element(source).ok()??;
+    let begin = dom.index_in_parent(first).ok()? as usize;
+    let finish = dom.index_in_parent(last).ok()? as usize + 1;
+    let children: Vec<_> = dom.children(source).ok()?.collect();
+    let run = children.get(begin..finish)?;
+    if run.is_empty() || !run.iter().all(|&n| {
+        dom.element(n).is_ok_and(|el| el.is_html() && &**el.local_name() == "li")
+            && editing::editing_host(dom, n) == Some(host)
+            || dom.char_data(n).is_ok_and(|s| s.trim().is_empty())
+    }) { return None; }
+
+    let list = dom.create_element(dom.node_document(host).ok()?, tag).ok()?;
+    // Preserve authored presentation on the selected items. Numbering and
+    // the source list's ID belong to the source list, not the converted run.
+    for name in ["dir", "lang"] {
+        if let Some(value) = dom.get_attribute(source, name).ok()?.map(str::to_owned) {
+            dom.set_attribute(list, name, &value).ok()?;
+        }
+    }
+    let after = dom.next_sibling(source).ok()?;
+    let before = if begin == 0 { Some(source) } else { after };
+    dom.insert_before(parent, list, before).ok()?;
+    carry_list_text_style(page, dom, source, list, run)?;
+    if begin > 0 && finish < children.len() {
+        let tail = dom.clone_node(source, false, None).ok()?;
+        dom.remove_attribute(tail, "id").ok()?;
+        dom.insert_before(parent, tail, after).ok()?;
+        for &n in &children[finish..] { dom.append_child(tail, n).ok()?; }
+    }
+    for &n in run { dom.append_child(list, n).ok()?; }
+    if dom.child_count(source).ok()? == 0 { dom.remove_node(source).ok()?; }
+
+    // Adjacent simple lists of the requested type form a single list.
+    let compatible = |dom: &Dom, n| dom.element(n).is_ok_and(|el| el.is_html() && &**el.local_name() == tag)
+        && dom.attributes(n).is_ok_and(|attrs| attrs.is_empty());
+    if compatible(dom, list) {
+        let mut target = list;
+        if let Some(left) = dom.prev_sibling(list).ok()?.filter(|&n| compatible(dom, n)) {
+            while let Some(n) = dom.first_child(list).ok()? { dom.append_child(left, n).ok()?; }
+            dom.remove_node(list).ok()?;
+            target = left;
+        }
+        if let Some(right) = dom.next_sibling(target).ok()?.filter(|&n| compatible(dom, n)) {
+            while let Some(n) = dom.first_child(right).ok()? { dom.append_child(target, n).ok()?; }
+            dom.remove_node(right).ok()?;
+        }
+    }
+    Some((if start.0 == source { first_point } else { start }, if end.0 == source { last_point } else { end }))
+}
+
 /// insertOrderedList / insertUnorderedList: the selected blocks become
 /// items of a new list; inside such a list already, its items become `div`
 /// lines again.
@@ -2102,6 +2220,11 @@ fn toggle_list(page: &Rc<PageDom>, host: NodeId, tag: &str, input_type: &str) {
         {
             let mut dom = page.dom.borrow_mut();
             let Ok(doc) = dom.node_document(host) else { return };
+            if let Some((a, b)) = convert_list_items(page, &mut dom, host, tag, start, end) {
+                drop(dom);
+                editing::set_selection(page, a, b);
+                return;
+            }
             let in_list = ancestor_named(&dom, start.0, host, &[tag]);
             if let Some(list) = in_list {
                 let Ok(Some(parent)) = dom.parent(list) else { return };

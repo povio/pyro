@@ -1,0 +1,432 @@
+[
+ [
+  "editing/run/insertorderedlist.html?1-1000",
+  "[[\"insertorderedlist\",\"\"]] \"<ul><li><div>[foo]</div>bar<li>baz</ul>\" compare innerHTML",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass",
+  "Fail"
+ ],
+ [
+  "editing/run/insertorderedlist.html?1-1000",
+  "[[\"insertorderedlist\",\"\"]] \"<ul><li>[foo]<br>bar<li>baz</ul>\" compare innerHTML",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/insertorderedlist.html?1-1000",
+  "[[\"insertorderedlist\",\"\"]] \"<ul><li>foo<br>[bar]<li>baz</ul>\" compare innerHTML",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/insertorderedlist.html?1-1000",
+  "[[\"insertorderedlist\",\"\"]] \"<ul><li>foo<li>[bar]<li>baz</ul>\" compare innerHTML",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/insertorderedlist.html?1001-last",
+  "[[\"insertorderedlist\",\"\"]] \"<ul id=abc><li>[foo]<li>bar<li>baz</ul>\" compare innerHTML",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/insertorderedlist.html?1001-last",
+  "[[\"insertorderedlist\",\"\"]] \"<ul id=abc><li>foo<li>[bar]<li>baz</ul>\" compare innerHTML",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/insertorderedlist.html?1001-last",
+  "[[\"insertorderedlist\",\"\"]] \"<ul id=abc><li>foo<li>bar<li>[baz]</ul>\" compare innerHTML",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/insertorderedlist.html?1001-last",
+  "[[\"insertorderedlist\",\"\"]] \"<ul style=text-indent:1em><li>[foo]<li>bar<li>baz</ul>\" compare innerHTML",
+  1,
+  "Fail",
+  "Fail",
+  "Pass",
+  "Pass",
+  "Fail"
+ ],
+ [
+  "editing/run/insertorderedlist.html?1001-last",
+  "[[\"insertorderedlist\",\"\"]] \"<ul style=text-indent:1em><li>foo<li>bar<li>[baz]</ul>\" compare innerHTML",
+  1,
+  "Fail",
+  "Fail",
+  "Pass",
+  "Pass",
+  "Fail"
+ ],
+ [
+  "editing/run/insertorderedlist.html?1001-last",
+  "[[\"insertorderedlist\",\"\"]] \"<ul><li>[foo]</li><ul><li>bar</ul><li>baz</ul>\" compare innerHTML",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/insertorderedlist.html?1001-last",
+  "[[\"insertorderedlist\",\"\"]] \"<ul><li>[foo]<ul><li>bar</ul><li>baz</ul>\" compare innerHTML",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/insertorderedlist.html?1001-last",
+  "[[\"insertorderedlist\",\"\"]] \"<ul><li>[foo]<ul><li>bar</ul>baz</ul>\" compare innerHTML",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/insertorderedlist.html?1001-last",
+  "[[\"insertorderedlist\",\"\"]] \"<ul><li>foo</li><ul><li>[bar]<li>baz</ul><li>quz</ul>\" compare innerHTML",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/insertorderedlist.html?1001-last",
+  "[[\"insertorderedlist\",\"\"]] \"<ul><li>foo</li><ul><li>bar<li>[baz]</ul><li>quz</ul>\" compare innerHTML",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/insertorderedlist.html?1001-last",
+  "[[\"insertorderedlist\",\"\"]] \"<ul><li>foo</li><ul><li>bar<li>baz</ul><li>[quz]</ul>\" compare innerHTML",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/insertorderedlist.html?1001-last",
+  "[[\"insertorderedlist\",\"\"]] \"<ul><li>foo<li>[bar<li>baz]</ul>\" compare innerHTML",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/insertorderedlist.html?1001-last",
+  "[[\"insertorderedlist\",\"\"]] \"<ul><li>foo<li>[bar]</li><ul><li>baz</ul><li>quz</ul>\" compare innerHTML",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/insertorderedlist.html?1001-last",
+  "[[\"insertorderedlist\",\"\"]] \"<ul><li>foo<li>[bar]<ul><li>baz</ul><li>quz</ul>\" compare innerHTML",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/insertorderedlist.html?1001-last",
+  "[[\"insertorderedlist\",\"\"]] \"<ul><li>foo<ul><li>bar</ul>[baz]</ul>\" compare innerHTML",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/insertorderedlist.html?1001-last",
+  "[[\"insertorderedlist\",\"\"]] \"<ul><li>foo<ul><li>bar<li>baz</ul><li>[quz]</ul>\" compare innerHTML",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/insertorderedlist.html?1001-last",
+  "[[\"insertorderedlist\",\"\"]] \"foo<ol><li>bar</ol><ul><li>[baz]</ul>quz\" compare innerHTML",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/insertorderedlist.html?1001-last",
+  "[[\"insertorderedlist\",\"\"]] \"foo<ul><li>[bar]</ul><ol><li>baz</ol>quz\" compare innerHTML",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/insertorderedlist.html?1001-last",
+  "[[\"stylewithcss\",\"false\"],[\"insertorderedlist\",\"\"]] \"<ul style=text-indent:1em><li>foo<li>[bar]<li>baz</ul>\" compare innerHTML",
+  1,
+  "Fail",
+  "Fail",
+  "Pass",
+  "Pass",
+  "Fail"
+ ],
+ [
+  "editing/run/insertorderedlist.html?1001-last",
+  "[[\"stylewithcss\",\"true\"],[\"insertorderedlist\",\"\"]] \"<ul style=color:blue><li>[foo]<li>bar<li>baz</ul>\" compare innerHTML",
+  1,
+  "Fail",
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/insertorderedlist.html?1001-last",
+  "[[\"stylewithcss\",\"true\"],[\"insertorderedlist\",\"\"]] \"<ul style=color:blue><li>foo<li>[bar]<li>baz</ul>\" compare innerHTML",
+  1,
+  "Fail",
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/insertorderedlist.html?1001-last",
+  "[[\"stylewithcss\",\"true\"],[\"insertorderedlist\",\"\"]] \"<ul style=color:blue><li>foo<li>bar<li>[baz]</ul>\" compare innerHTML",
+  1,
+  "Fail",
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/insertorderedlist.html?1001-last",
+  "[[\"stylewithcss\",\"true\"],[\"insertorderedlist\",\"\"]] \"<ul style=text-indent:1em><li>foo<li>[bar]<li>baz</ul>\" compare innerHTML",
+  1,
+  "Fail",
+  "Fail",
+  "Pass",
+  "Pass",
+  "Fail"
+ ],
+ [
+  "editing/run/insertunorderedlist.html?1-1000",
+  "[[\"insertunorderedlist\",\"\"]] \"<ol><li><div>[foo]</div>bar<li>baz</ol>\" compare innerHTML",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass",
+  "Fail"
+ ],
+ [
+  "editing/run/insertunorderedlist.html?1-1000",
+  "[[\"insertunorderedlist\",\"\"]] \"<ol><li>[foo]</li><ol><li>bar</ol><li>baz</ol>\" compare innerHTML",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/insertunorderedlist.html?1-1000",
+  "[[\"insertunorderedlist\",\"\"]] \"<ol><li>[foo]<br>bar<li>baz</ol>\" compare innerHTML",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/insertunorderedlist.html?1-1000",
+  "[[\"insertunorderedlist\",\"\"]] \"<ol><li>[foo]<ol><li>bar</ol><li>baz</ol>\" compare innerHTML",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/insertunorderedlist.html?1-1000",
+  "[[\"insertunorderedlist\",\"\"]] \"<ol><li>[foo]<ol><li>bar</ol>baz</ol>\" compare innerHTML",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/insertunorderedlist.html?1-1000",
+  "[[\"insertunorderedlist\",\"\"]] \"<ol><li>foo</li><ol><li>[bar]<li>baz</ol><li>quz</ol>\" compare innerHTML",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/insertunorderedlist.html?1-1000",
+  "[[\"insertunorderedlist\",\"\"]] \"<ol><li>foo</li><ol><li>bar<li>[baz]</ol><li>quz</ol>\" compare innerHTML",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/insertunorderedlist.html?1-1000",
+  "[[\"insertunorderedlist\",\"\"]] \"<ol><li>foo</li><ol><li>bar<li>baz</ol><li>[quz]</ol>\" compare innerHTML",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/insertunorderedlist.html?1-1000",
+  "[[\"insertunorderedlist\",\"\"]] \"<ol><li>foo<br>[bar]<li>baz</ol>\" compare innerHTML",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/insertunorderedlist.html?1-1000",
+  "[[\"insertunorderedlist\",\"\"]] \"<ol><li>foo<li>[bar<li>baz]</ol>\" compare innerHTML",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/insertunorderedlist.html?1-1000",
+  "[[\"insertunorderedlist\",\"\"]] \"<ol><li>foo<li>[bar]</li><ol><li>baz</ol><li>quz</ol>\" compare innerHTML",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/insertunorderedlist.html?1-1000",
+  "[[\"insertunorderedlist\",\"\"]] \"<ol><li>foo<li>[bar]<li>baz</ol>\" compare innerHTML",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/insertunorderedlist.html?1-1000",
+  "[[\"insertunorderedlist\",\"\"]] \"<ol><li>foo<li>[bar]<ol><li>baz</ol><li>quz</ol>\" compare innerHTML",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/insertunorderedlist.html?1-1000",
+  "[[\"insertunorderedlist\",\"\"]] \"<ol><li>foo<ol><li>bar</ol>[baz]</ol>\" compare innerHTML",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "editing/run/insertunorderedlist.html?1-1000",
+  "[[\"insertunorderedlist\",\"\"]] \"<ol><li>foo<ol><li>bar<li>baz</ol><li>[quz]</ol>\" compare innerHTML",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass",
+  "Pass"
+ ],
+ [
+  "input-events/input-events-exec-command.html",
+  "execCommand(\"insertUnorderedList\") should make <ul> and wrap the text with it",
+  1,
+  "Fail",
+  "Pass",
+  "Pass",
+  "Pass",
+  "Pass"
+ ]
+]

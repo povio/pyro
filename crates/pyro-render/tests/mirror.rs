@@ -1142,6 +1142,42 @@ fn a_new_container_filled_in_one_delta_syncs_as_a_delta() {
     }
 }
 
+#[test]
+fn delta_retains_reparented_descendants_when_the_old_parent_is_removed() {
+    use pyro_dom::snapshot::render_key;
+    let page = Page::new("<!doctype html><body><ul id=old><li id=kept><b id=deep>kept</b></li><li id=gone><i id=leaf>gone</i></li></ul></body>");
+    let old = page.find("#old");
+    let kept = page.find("#kept");
+    let deep = page.find("#deep");
+    let gone = page.find("#gone");
+    let leaf = page.find("#leaf");
+    let body = page.find("body");
+    let mut renderer = Renderer::new();
+    renderer.sync_layout(&page.snapshot(1, page.tree()), &fetcher()).unwrap();
+    for n in [old, kept, deep, gone, leaf] {
+        assert!(renderer.element_style(1, render_key(n)).is_some());
+    }
+
+    let since = page.dom.borrow().version();
+    {
+        let mut dom = page.dom.borrow_mut();
+        let new = dom.create_element(page.doc, "ol").unwrap();
+        dom.append_child(body, new).unwrap();
+        dom.append_child(new, kept).unwrap();
+        dom.remove_node(old).unwrap();
+    }
+    let delta = page.dom.borrow().render_delta(page.doc, since, &Page::opts()).unwrap();
+    renderer.sync_delta(1, &delta_ops(delta), (640, 480, 1.0, false, false), false).unwrap();
+    for n in [kept, deep] {
+        assert!(renderer.element_style(1, render_key(n)).is_some());
+        assert!(renderer.element_box(1, render_key(n)).is_some());
+    }
+    for n in [old, gone, leaf] {
+        assert!(renderer.element_style(1, render_key(n)).is_none());
+        assert!(renderer.element_box(1, render_key(n)).is_none());
+    }
+}
+
 /// Pagination scripts add a container, fill it and append to a `<style>` in
 /// one go: each sync must still be a delta, and give what syncing the whole
 /// tree gives.
