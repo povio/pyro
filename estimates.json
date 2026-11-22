@@ -4,7 +4,7 @@
   "implemented": {
    "scope": {
     "macbook_in_scope": 865,
-    "studio_in_scope": 147,
+    "studio_in_scope": 149,
     "other_dirs_out_of_scope": 21,
     "macbook_worker_variants_if_enabled": 217,
     "studio_worker_variants_if_enabled": 0
@@ -15,7 +15,7 @@
    "owner_estimate_reduction": 243,
    "of_which_tentative": 195,
    "studio_css_reported_pages_not_deduped": 0,
-   "studio_css_listed_distinct": 38,
+   "studio_css_listed_distinct": 40,
    "by_dir": {
     "html/canvas": 421,
     "html/semantics": 386,
@@ -27,8 +27,8 @@
     "html/browsers": 42,
     "fetch/fetch-later": 29,
     "html/dom": 24,
-    "fetch/content-encoding": 21,
     "html/webappapis": 21,
+    "fetch/content-encoding": 21,
     "html/infrastructure": 20,
     "scheduler": 19,
     "html/syntax": 12,
@@ -36,14 +36,14 @@
     "workers": 9,
     "encoding": 7,
     "fetch/data-urls": 6,
-    "fetch/stale-while-revalidate": 5,
     "fetch/range": 5,
+    "fetch/stale-while-revalidate": 5,
     "FileAPI": 4,
     "fetch/http-cache": 3,
     "fetch/nosniff": 3,
     "xhr": 2,
-    "html/rendering": 1,
     "svg/styling": 1,
+    "html/rendering": 1,
     "IndexedDB": 1,
     "quirks": 1
    }
@@ -67,9 +67,9 @@
     "html/semantics": 166,
     "html/canvas": 161,
     "html/syntax": 30,
-    "html/webappapis": 5,
+    "html/dom": 5,
     "fetch/api": 5,
-    "html/dom": 5
+    "html/webappapis": 5
    }
   },
   "queued": {
@@ -94,24 +94,24 @@
     "webidl": 19,
     "fetch/fetch-later": 10,
     "fetch/compression-dictionary": 8,
-    "IndexedDB": 6,
     "fetch/corb": 6,
-    "html/interaction": 5,
+    "IndexedDB": 6,
     "fetch/security": 5,
-    "fetch/api": 4,
+    "html/interaction": 5,
     "svg/path": 4,
+    "fetch/api": 4,
     "html/semantics": 4,
     "workers": 3,
+    "fetch/orb": 2,
     "html/rendering": 2,
     "fetch/cross-origin-resource-policy": 2,
-    "fetch/orb": 2,
-    "fetch/images": 1,
-    "fetch/http-cache": 1,
-    "fetch/redirects": 1,
-    "fetch/range": 1,
+    "fetch/content-type": 1,
     "dom/nodes": 1,
+    "fetch/redirects": 1,
+    "fetch/images": 1,
+    "fetch/range": 1,
     "fetch/redirect-navigate": 1,
-    "fetch/content-type": 1
+    "fetch/http-cache": 1
    }
   }
  },
@@ -2061,9 +2061,16 @@
    "out_of_scope_pages": 0,
    "pages": 6,
    "tentative": 0
+  },
+  "SC-TOM-timing-keywords": {
+   "state": "implemented-unbuilt",
+   "in_scope_pages": 2,
+   "out_of_scope_pages": 0,
+   "pages": 0,
+   "tentative": 0
   }
  },
- "implemented_total_estimate": 1261,
+ "implemented_total_estimate": 1263,
  "milestones_reached": [
   250,
   500,
