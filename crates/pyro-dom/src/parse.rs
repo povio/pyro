@@ -1491,8 +1491,10 @@ fn parse_fragment_with(
         // The detached parser cannot see markers outside its output. Without
         // a PI opener in the input there can be no target, so keep the ordinary
         // parser path for fragments without processing instructions.
-        let patches_enabled = matches!(mode, FragmentMode::Setter | FragmentMode::Insertion)
-            && filter.is_none()
+        let patches_enabled = matches!(
+            mode,
+            FragmentMode::Setter | FragmentMode::Insertion | FragmentMode::Range | FragmentMode::Modern { run_scripts: false }
+        ) && filter.is_none()
             && html.contains("<?")
             && !dom.is_xml_document(owner_id);
         let document_registry = dom.registry_idx(owner);

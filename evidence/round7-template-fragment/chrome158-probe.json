@@ -1,0 +1,16 @@
+{
+  "range": "<div><b>new</b> tail</div>",
+  "setHTMLUnsafe": "<div><b>new</b> tail</div>",
+  "appendHTMLUnsafe": "<div><b>new</b> tail</div>",
+  "prependHTMLUnsafe": "<div><b>new</b> tail</div>",
+  "innerHTML": "<div><b>new</b> tail</div>",
+  "parse": "<div><b>new</b> tail</div>",
+  "outer": [
+    "",
+    "TEMPLATE"
+  ],
+  "xml": [
+    2,
+    "template"
+  ]
+}

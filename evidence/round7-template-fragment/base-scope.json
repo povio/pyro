@@ -1,0 +1,15 @@
+{
+  "missing": "<template for=\"missing\"><b>fallback</b></template>",
+  "external": "<div><?marker name=\"p\"?></div><template for=\"p\" src=\"part.html\">fallback</template>",
+  "duplicate": "<p><?marker name=\"p\"?> A <?marker name=\"p\"?> B</p><template for=\"p\">new</template>",
+  "nested": "<article><?marker name=\"outer\"?></article><template><i><?marker name=\"outer\"?></i><template for=\"outer\">inner</template></template><template for=\"outer\">outer</template>",
+  "modernShadow": "<p><?marker name=\"p\"?> end</p><template for=\"p\">start</template>",
+  "filtered": [
+    true,
+    ""
+  ],
+  "activeScope": [
+    true,
+    "<b><?marker name=\"local\"?></b><template for=\"local\">applied</template><template for=\"outside\">untouched</template>"
+  ]
+}
