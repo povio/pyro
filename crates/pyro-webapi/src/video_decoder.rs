@@ -11,7 +11,7 @@ use crate::window::WindowHost;
 
 static MODULE: LazyModule = LazyModule {
     key: "lpVideoDecoder",
-    source: include_str!("video_decoder.js"),
+    source: concat!(include_str!("video_decoder.js"), "(", include_str!("decoder_queue.js"), ")"),
     url: "pyro://internal/video_decoder.js",
     natives: Some(natives),
 };
@@ -129,6 +129,12 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         let chunk = crate::encoded_chunks::video_parts(s, a.get(1))?;
         Ok(s.boolean(config(s, a.get(0))?.is_none_or(|c| c.is_key(&chunk.data))))
     })?.value())?;
+    install_queue_tasks(s, &methods)?;
+    Ok(methods)
+}
+
+/// Install event-loop operations shared by WebCodecs control queues.
+pub(crate) fn install_queue_tasks<'s>(s: &Scope<'s>, methods: &Object<'s>) -> JsResult<()> {
     methods.set_atom("fireDequeue", s.function("fireDequeue", |s, _, a| {
         let decoder = s.unwrap::<crate::target::EventTarget>(a.get(0)).ok_or(JsError::ContextDestroyed)?;
         let event = crate::event::EventCore::trusted(&decoder.page, crate::event::EventInterface::Event, "dequeue", false, false);
@@ -150,5 +156,5 @@ fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
         }));
         Ok(s.undefined())
     })?.value())?;
-    Ok(methods)
+    Ok(())
 }

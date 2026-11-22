@@ -1,0 +1,25 @@
+{
+  "surface": "function",
+  "flac": {
+    "supported": true,
+    "errors": [
+      "NotSupportedError"
+    ],
+    "flush": "NotSupportedError",
+    "state": "closed"
+  },
+  "vorbis": {
+    "supported": true,
+    "errors": [
+      "NotSupportedError"
+    ],
+    "flush": "NotSupportedError",
+    "state": "closed"
+  },
+  "pcm-s16": {
+    "supported": true,
+    "errors": [],
+    "flush": "ok",
+    "state": "configured"
+  }
+}

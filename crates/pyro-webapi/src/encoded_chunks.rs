@@ -97,6 +97,11 @@ pub(crate) fn parts(s: &Scope<'_>, value: Value<'_>) -> Option<EncodedChunk> {
     s.unwrap::<EncodedAudioChunk>(value).or_else(|| s.unwrap::<EncodedVideoChunk>(value)).map(|c| (*c).clone())
 }
 
+pub(crate) fn audio_parts(s: &Scope<'_>, value: Value<'_>) -> JsResult<EncodedChunk> {
+    s.unwrap::<EncodedAudioChunk>(value).map(|chunk| (*chunk).clone())
+        .ok_or_else(|| JsError::Type("Expected an EncodedAudioChunk".into()))
+}
+
 pub(crate) fn video_parts(s: &Scope<'_>, value: Value<'_>) -> JsResult<EncodedChunk> {
     s.unwrap::<EncodedVideoChunk>(value).map(|chunk| (*chunk).clone())
         .ok_or_else(|| JsError::Type("Expected an EncodedVideoChunk".into()))

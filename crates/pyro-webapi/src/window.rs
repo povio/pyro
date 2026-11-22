@@ -230,6 +230,7 @@ where
         |s, w, value| css_namespace_property(s, w.page(), value),
     );
     crate::animations::define_globals(def);
+    crate::audio_decoder::define(def);
     crate::canvas::define_globals(def);
     crate::media::define_globals(def);
     crate::webaudio::define_globals(def);

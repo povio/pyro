@@ -2,6 +2,8 @@
 //! container and codec Chrome decodes there (WAV, MP3, AAC/M4A, Ogg Vorbis,
 //! Opus in Ogg/WebM/MP4, FLAC, plus AIFF, CAF, ALAC) to planar `f32`, and
 //! the resampling to the context's rate that the API asks for.
+pub mod packet;
+
 use std::io::Cursor;
 
 use symphonia::core::codecs::audio::well_known::CODEC_ID_OPUS;

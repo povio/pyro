@@ -1344,6 +1344,7 @@ fn register(engine: &Engine, service: bool, shared_worker: bool) -> pyro_js::Cla
     if shared_worker {
         return engine.register::<SharedWorkerGlobalScope>();
     }
+    crate::audio_data::register(engine);
     crate::encoded_chunks::register(engine);
     engine.register::<DedicatedWorkerGlobalScope>()
 }
@@ -1396,6 +1397,9 @@ fn install(s: &Scope<'_>, page: &Rc<PageDom>, global: &str) -> JsResult<()> {
     if secure_worker(s) == Some(true) {
         crate::storage_manager::install_worker_file_system_globals(s)?;
         install_lock_interfaces(s)?;
+        if s.global_data::<DedicatedWorkerGlobalScope>().is_some() {
+            crate::audio_decoder::install_worker(s)?;
+        }
         crate::storage_buckets::install_worker(s)?;
     } else if let Some(class) = s.global().get_atom("WorkerNavigator")?.as_object() {
         if let Some(proto) = class.get_atom("prototype")?.as_object() {

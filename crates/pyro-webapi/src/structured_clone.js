@@ -1,6 +1,6 @@
 // `guard(value)` is native: whether `value` is an ordinary object. With a
 // mode it is `host(value, mode, extra)`: mode 0 clones a serializable host
-// object (Blob, File, FileList or an encoded media chunk) into this realm
+// object (Blob, File, FileList, encoded media chunk or AudioData) into this realm
 // or returns undefined; extra signals serialization for storage. Mode 1
 // prepares the transfer of a transferable one (a MessagePort: its new port
 // here, undefined if the value is not transferable, DataCloneError if it is
@@ -13,6 +13,8 @@
 // mode 8 prepares the transfer of an ImageBitmap or OffscreenCanvas (its copy
 // here, undefined for anything else, DataCloneError if it is detached) and
 // mode 9 detaches the original. Mode 3 also copies an ImageBitmap.
+// Mode 12 prepares transfer of AudioData, mode 13 revalidates that it is
+// still open, and mode 14 closes the sender after successful serialization.
 ((guard, fail, DOMExceptionC) => {
     const host = (value, mode, extra, attachment) => guard(value, mode, extra, attachment);
     const O = Object, A = Array, M = Map, S = Set, D = Date, R = RegExp, TE = TypeError;
@@ -60,11 +62,11 @@
     // `keep` (worker_wire.js) lists MessagePorts and streams, already
     // validated, that stay themselves in the copy: the cross-VM format
     // transfers them afterwards. `streams` (internal callers) receives the
-    // transferred streams' new streams, `canvases` the transferred
-    // ImageBitmaps' and OffscreenCanvases' copies.
-    function clone(value, options, ports, keep, streams, canvases, forStorage = false, clusterBound) {
+    // transferred streams' new streams, `resources` the transferred
+    // canvas objects' and AudioData frames' copies.
+    function clone(value, options, ports, keep, streams, resources, forStorage = false, clusterBound) {
         const memory = new M(), buffers = [], moved = [];
-        let piped, detached;
+        let piped, detached, audio;
         if (keep) for (let i = 0; i < keep.length; ++i) call(mapSet, memory, [keep[i], keep[i]]);
         if (options != null) {
             if (typeof options !== 'object' && typeof options !== 'function')
@@ -96,9 +98,18 @@
                     const ordinary = guard(entry);
                     const port = ordinary ? undefined : host(entry, 1);
                     if (port === undefined) {
+                        if (!ordinary) {
+                            const frame = host(entry, 12, clusterBound);
+                            if (frame === undefined) fail('Value is not transferable');
+                            call(mapSet, memory, [entry, frame]);
+                            if (!audio) audio = [];
+                            put(audio, audio.length, entry);
+                            put(audio, audio.length, frame);
+                            continue;
+                        }
                         // An ImageBitmap or OffscreenCanvas: its copy, the
                         // original detached once the whole value cloned.
-                        const canvas = ordinary ? host(entry, 8) : undefined;
+                        const canvas = host(entry, 8);
                         if (canvas !== undefined) {
                             call(mapSet, memory, [entry, canvas]);
                             if (!detached) detached = [];
@@ -108,7 +119,7 @@
                         }
                         // A stream: its new stream, over new ports that the
                         // original is piped into once the whole value cloned.
-                        const stream = ordinary ? host(entry, 5) : undefined;
+                        const stream = host(entry, 5);
                         if (stream === undefined) fail('Value is not transferable');
                         call(mapSet, memory, [entry, stream[0]]);
                         if (!piped) piped = [];
@@ -262,6 +273,8 @@
             return result;
         }
         const result = copy(value, 0);
+        // A getter can close a listed frame during serialization.
+        if (audio) for (let i = 0; i < audio.length; i += 2) host(audio[i], 13);
         for (let i = 0; i < buffers.length; ++i) call(abTransfer, buffers[i]);
         for (let i = 0; i < moved.length; i += 2) {
             host(moved[i], 2, moved[i + 1]);
@@ -273,7 +286,11 @@
         }
         if (detached) for (let i = 0; i < detached.length; i += 2) {
             host(detached[i], 9);
-            if (canvases) put(canvases, canvases.length, detached[i + 1]);
+            if (resources) put(resources, resources.length, detached[i + 1]);
+        }
+        if (audio) for (let i = 0; i < audio.length; i += 2) {
+            host(audio[i], 14);
+            if (resources) put(resources, resources.length, audio[i + 1]);
         }
         return result;
     }

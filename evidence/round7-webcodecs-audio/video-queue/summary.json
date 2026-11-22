@@ -1,0 +1,42 @@
+{
+  "scores": {
+    "baseFull": 6,
+    "candidateFull": 6,
+    "chrome158Full": 14,
+    "baseNamed": 12,
+    "candidateNamed": 12,
+    "chrome158Named": 28,
+    "lost": 0,
+    "new": 0,
+    "missing": 0,
+    "chromeOnly": 16,
+    "lpOnly": 0
+  },
+  "gainsByPage": {},
+  "engines": {
+    "base": {
+      "pageOutcomes": {
+        "complete": 14
+      },
+      "restarts": 0,
+      "watchdogKills": 0,
+      "receiptSHA256": "10c575d77a0dcef8301936b7f63846b2d4228794b1b08c0af507e936de84054f"
+    },
+    "candidate": {
+      "pageOutcomes": {
+        "complete": 14
+      },
+      "restarts": 0,
+      "watchdogKills": 0,
+      "receiptSHA256": "0fd1964efdd09da7689b7c1a8bda2ef080088c1940b750114a05d5f2e703c099"
+    },
+    "chrome158": {
+      "pageOutcomes": {
+        "complete": 14
+      },
+      "restarts": null,
+      "watchdogKills": null,
+      "receiptSHA256": "ba8137d6e4f7949bd2004c1625d0853f7da1364d195b1fc8364ab16937f3deca"
+    }
+  }
+}
