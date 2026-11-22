@@ -2,22 +2,23 @@
  "basis": "census 5892e136 strict pages (Chrome strict pass, LP not strict); ESTIMATES, nothing measured",
  "tiers": {
   "implemented": {
-   "distinct_census_pages": 218,
+   "distinct_census_pages": 220,
    "studio_css_reported_pages_not_deduped": 0,
    "by_dir": {
     "html/canvas": 207,
     "FileAPI": 4,
     "fetch/data-urls": 3,
+    "html/semantics": 2,
     "mathml": 2,
     "quirks": 1,
     "html/rendering": 1
    }
   },
   "in_progress": {
-   "distinct_census_pages": 441,
+   "distinct_census_pages": 439,
    "studio_css_reported_pages_not_deduped": 38,
    "by_dir": {
-    "html/semantics": 235,
+    "html/semantics": 233,
     "html/interaction": 108,
     "html/canvas": 35,
     "html/syntax": 34,
@@ -38,8 +39,8 @@
     "html/semantics": 23,
     "dom/events": 21,
     "webidl": 19,
-    "scroll-animations": 17,
     "html/dom": 17,
+    "scroll-animations": 17,
     "workers": 12,
     "pointerevents": 11,
     "html/syntax": 8,
@@ -47,24 +48,24 @@
     "selection": 7,
     "navigation-api": 6,
     "uievents": 5,
-    "html/editing": 5,
     "fetch/api": 5,
-    "svg/types": 4,
+    "html/editing": 5,
     "svg/path": 4,
+    "svg/types": 4,
     "event-timing": 3,
-    "html/browsers": 3,
+    "dom/nodes": 3,
     "close-watcher": 3,
     "mathml": 3,
+    "html/browsers": 3,
     "inert": 3,
-    "dom/nodes": 3,
-    "html/rendering": 2,
     "resource-timing": 2,
-    "fetch/fetch-later": 2,
+    "html/rendering": 2,
     "soft-navigation-heuristics": 2,
-    "pointerlock": 1,
-    "editing": 1,
+    "fetch/fetch-later": 2,
+    "document-picture-in-picture": 1,
     "custom-elements": 1,
-    "document-picture-in-picture": 1
+    "pointerlock": 1,
+    "editing": 1
    }
   }
  },
@@ -102,7 +103,7 @@
    "pages": 1
   },
   "Q07": {
-   "state": "claimed",
+   "state": "implemented-unbuilt",
    "pages": 2
   },
   "Q08": {
@@ -454,6 +455,6 @@
    "pages": 34
   }
  },
- "implemented_total_estimate": 218,
+ "implemented_total_estimate": 220,
  "milestones_reached": []
 }
