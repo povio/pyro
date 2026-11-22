@@ -1973,6 +1973,11 @@ impl Dom {
         if e.namespace() == &markup5ever::ns!(mathml) && e.name.local == local_name!("a") {
             return Ok(e.attr_local(&local_name!("href")).is_some());
         }
+        // An SVG `a` with an `href` (or `xlink:href`) is a link, focusable as an HTML one.
+        if e.namespace() == &markup5ever::ns!(svg) && e.name.local == local_name!("a") {
+            return Ok(e.attr_local(&local_name!("href")).is_some()
+                || e.attrs.iter().any(|a| a.name.ns == markup5ever::ns!(xlink) && &*a.name.local == "href"));
+        }
         Ok(e.is_html()
             && match &*e.name.local {
                 "a" | "area" => e.attr_local(&local_name!("href")).is_some(),
