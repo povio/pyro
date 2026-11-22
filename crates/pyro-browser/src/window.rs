@@ -320,7 +320,7 @@ impl JsClass for Window {
                 move |s, _| {
                     if let Some(f) = cb.get(s).as_object() {
                         if let Err(e) = f.call(None, &[]) {
-                            s.report_exception(&e);
+                            report_in_callback_realm(s, Some(f), &e);
                         }
                     }
                 },
@@ -585,6 +585,17 @@ fn set_timer<'s>(s: &Scope<'s>, w: &WindowData, a: Args<'s>, repeat: bool) -> Js
     schedule(s, w, cb, args, delay, repeat)
 }
 
+/// Web IDL "invoke a callback function": an exception the callback throws is reported in the
+/// callback's realm (its Window's `error` event), not in the realm that called it; a callback whose
+/// realm is gone reports in the caller's.
+fn report_in_callback_realm(scope: &Scope<'_>, callback: Option<pyro_js::Object<'_>>, error: &JsError) {
+    let realm = callback.and_then(|f| scope.object_realm(f)).filter(|r| !r.is_disposed());
+    match realm.as_ref().and_then(|r| r.scope().ok()) {
+        Some(callback_scope) => callback_scope.report_exception(error),
+        None => scope.report_exception(error),
+    }
+}
+
 /// WebIDL ToInt32 for `long`: NaN and infinities are 0, the rest truncates and wraps modulo 2^32
 /// (`setTimeout(f, 2 ** 32)` waits 0 ms, `2 ** 31` is negative and so 0 too).
 fn webidl_long(n: f64) -> i32 {
@@ -654,6 +665,7 @@ fn arm_timer(realm_weak: pyro_js::WeakRealm, w: &WindowData, timer: JsTimer, lev
         } else {
             Ok(cb)
         };
+        let callee = compiled.as_ref().ok().and_then(|f| f.as_object());
         let run_level = level.get();
         let outer = w.timer_nesting.replace(run_level);
         // Arguments are rooted by `args` (Persistent) while this call runs.
@@ -666,7 +678,7 @@ fn arm_timer(realm_weak: pyro_js::WeakRealm, w: &WindowData, timer: JsTimer, lev
         };
         w.timer_nesting.set(outer);
         if let Err(e) = result {
-            scope.report_exception(&e);
+            report_in_callback_realm(&scope, callee, &e);
         }
         if !repeat {
             return;
@@ -859,7 +871,7 @@ fn run_animation_frame(scope: &Scope<'_>) {
         };
         let Some(f) = cb.get(scope).as_object() else { continue };
         if let Err(e) = f.call(None, &[now]) {
-            scope.report_exception(&e);
+            report_in_callback_realm(scope, Some(f), &e);
         }
     }
     w.animation.borrow_mut().running = None;
