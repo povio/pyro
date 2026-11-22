@@ -344,3 +344,38 @@ fn beforeunload_asks_through_the_handler_return_value_and_return_value() {
     assert!(!lifecycle::before_unload(&e.page));
     assert_eq!(eval(r, "seen.join()"), ",false");
 }
+
+#[test]
+fn cookie_changes_deliver_trusted_frozen_lists_after_the_mutation() {
+    let e = env("<body></body>");
+    *e.page.net.borrow_mut() = Some(pyro_net::NetClient::new(Default::default()).unwrap());
+    assert_eq!(
+        eval(&e.main, r#"
+            const initial = [{name:'theme',value:'light'}];
+            const synthetic = new CookieChangeEvent('change', {changed: initial, bubbles:true});
+            initial[0].value = 'replaced';
+            [synthetic instanceof Event, synthetic.isTrusted, synthetic.bubbles,
+             synthetic.changed === synthetic.changed, Object.isFrozen(synthetic.changed),
+             synthetic.changed[0].value, synthetic.deleted.length].join('|')
+        "#),
+        "true|false|true|true|true|light|0"
+    );
+    assert_eq!(
+        eval(&e.main, r#"
+            const log = [];
+            cookieStore.onchange = event => log.push([
+                event instanceof CookieChangeEvent, event.isTrusted, event.target === cookieStore,
+                event.changed.map(c => c.name + '=' + c.value).join(','),
+                event.deleted.map(c => [c.name, 'value' in c].join(':')).join(','), Object.isFrozen(event.deleted)
+            ].join('|'));
+            document.cookie = 'theme=dark; path=/';
+            log.length
+        "#),
+        "0"
+    );
+    e.page.after_task();
+    assert_eq!(eval(&e.main, "log.join()"), "true|true|true|theme=dark||true");
+    assert_eq!(eval(&e.main, "document.cookie = 'theme=; max-age=0; path=/'; log.length"), "1");
+    e.page.after_task();
+    assert_eq!(eval(&e.main, "log[1]"), "true|true|true||theme:false|true");
+}

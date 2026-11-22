@@ -4417,7 +4417,7 @@ pub(crate) fn document_cookie(page: &PageDom, doc: NodeId) -> String {
     let (Some(net), Ok(url)) = (page.net.borrow().clone(), pyro_net::Url::parse(&url)) else { return String::new() };
     let jar = net.cookies().clone();
     let mut jar = jar.lock().unwrap();
-    jar.document_cookie(&url, pyro_net::cookies::now_secs())
+    jar.document_cookie_in(&url, pyro_net::cookies::now_secs(), page.cookie_partition_key().as_deref(), page.cookie_site_context())
 }
 
 pub(crate) fn set_document_cookie(page: &PageDom, doc: NodeId, value: &str) {
@@ -4428,7 +4428,7 @@ pub(crate) fn set_document_cookie(page: &PageDom, doc: NodeId, value: &str) {
     }
     let jar = net.cookies().clone();
     let mut jar = jar.lock().unwrap();
-    jar.set_from_header(&url, value, pyro_net::cookies::Access::Script, pyro_net::cookies::now_secs());
+    jar.set_from_header_in(&url, value, pyro_net::cookies::Access::Script, pyro_net::cookies::now_secs(), page.cookie_partition_key().as_deref(), page.cookie_site_context());
 }
 
 pub(crate) fn create_event<'s>(s: &Scope<'s>, page: &Rc<PageDom>, iface: &str) -> JsResult<Value<'s>> {

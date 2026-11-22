@@ -218,11 +218,17 @@
   tag(ServiceWorker, 'ServiceWorker');
   const me = new ServiceWorker(token, { scriptURL: info.scriptURL, state: 'parsed' });
 
+  const managers = new WeakMap();
   class ServiceWorkerRegistration extends EventTargetC {
     constructor(t) {
       if (t !== token) throw illegal('ServiceWorkerRegistration');
       super();
       defineProperty(this, Symbol.toStringTag, { value: 'ServiceWorkerRegistration', configurable: true });
+    }
+    get cookies() {
+      if (this !== registration) throw illegal('ServiceWorkerRegistration.cookies');
+      if (!managers.has(this)) managers.set(this, native.cookieManager());
+      return managers.get(this);
     }
     get scope() { return info.scope; }
     get updateViaCache() { return info.updateViaCache; }
@@ -233,6 +239,7 @@
     update() { return query('update').then(() => registration); }
     unregister() { return query('unregister'); }
   }
+  defineProperty(ServiceWorkerRegistration.prototype, 'cookies', { enumerable: true });
   tag(ServiceWorkerRegistration, 'ServiceWorkerRegistration');
   const registration = new ServiceWorkerRegistration(token);
   const slots = { installing: null, waiting: null, active: null };
@@ -253,12 +260,13 @@
   }
 
   // -- Dispatch -------------------------------------------------------------------
-  const dispatch = (event) => {
+  const dispatch = (event, trustedCookie = false) => {
     const d = extendData.get(event);
     d.internal = true;
     d.dispatching = true;
     try {
-      self.dispatchEvent(event);
+      if (trustedCookie) native.dispatchTrustedCookieChange(event);
+      else self.dispatchEvent(event);
     } finally {
       d.dispatching = false;
     }
@@ -328,6 +336,11 @@
 
   return {
     clients,
+    ExtendableEvent,
+    dispatchCookieChange(event) {
+      const d = dispatch(event, true);
+      settled(d).catch(error => { self.reportError(error); });
+    },
     registration,
     serviceWorker: me,
     skipWaiting: () => query('skipWaiting').then(() => undefined),

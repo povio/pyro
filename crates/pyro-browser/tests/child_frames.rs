@@ -1052,3 +1052,31 @@ fn a_markup_snapshot_paints_a_stuck_sticky_box_where_the_page_holds_it() {
     };
     assert_eq!((at(5, 5), at(5, 15), at(5, 30)), (vec![0, 128, 0], vec![0, 128, 0], vec![0, 0, 255]));
 }
+
+#[test]
+fn cookie_partition_and_site_for_cookies_follow_the_whole_frame_chain() {
+    use pyro_net::cookies::SiteContext::{CrossSite, SameSite};
+
+    let mut t = crate::browser_thread().unwrap();
+    let loader = Rc::new(StaticLoader::default());
+    let top_url = "https://app.example.test/page";
+    let sibling_url = "https://static.example.test/sibling";
+    let cross_url = "https://other.test/middle";
+    let nested_url = "https://app.example.test/leaf";
+    loader.insert(top_url, "text/html", &format!("<iframe src='{sibling_url}'></iframe><iframe src='{cross_url}'></iframe>"), Duration::ZERO);
+    loader.insert(cross_url, "text/html", &format!("<iframe src='{nested_url}'></iframe>"), Duration::ZERO);
+    for url in [nested_url, sibling_url] {
+        loader.insert(url, "text/html", "<p>loaded</p>", Duration::ZERO);
+    }
+    t.browser.set_loader(Some(loader));
+    let page = t.browser.create_page().unwrap();
+    t.browser.navigate(page, NavigateOpts::address_bar(top_url)).unwrap();
+    settle(&mut t);
+    let frames = t.browser.frames(page);
+    for (url, expected) in [(top_url, SameSite), (sibling_url, SameSite), (cross_url, CrossSite), (nested_url, CrossSite)] {
+        let frame = frames.iter().find(|f| f.url == url).unwrap();
+        let document = t.browser.frame(page, &frame.id).unwrap().page_dom.unwrap();
+        assert_eq!(document.cookie_partition_key().as_deref(), Some("https://example.test"), "{url}");
+        assert_eq!(document.cookie_site_context(), expected, "{url}");
+    }
+}

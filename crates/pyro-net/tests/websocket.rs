@@ -161,6 +161,8 @@ fn request(port: u16, path: &str, protocols: &[&str]) -> WebSocketRequest {
         url: format!("ws://127.0.0.1:{port}{path}").parse().unwrap(),
         protocols: protocols.iter().map(|p| p.to_string()).collect(),
         origin: format!("http://127.0.0.1:{port}"),
+        top_level_site: None,
+        cross_site_ancestor: false,
         frame_id: Some("F".into()),
         defaults: Default::default(),
     }

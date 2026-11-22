@@ -164,6 +164,10 @@
       if (t !== token) throw illegal('ServiceWorkerRegistration');
       super();
       ownTag(this, 'ServiceWorkerRegistration');
+      // Keep both the factory and its result in the receiver's realm. The
+      // same-origin private slot also recognizes receivers from another Window.
+      let cookies;
+      native.registrationCookies.set(this, () => cookies ??= native.cookieManager(r.id, r.scope));
       registrationData.set(this, {
         id: r.id, seq: -1, scope: r.scope, updateViaCache: r.updateViaCache,
         installing: null, waiting: null, active: null, preload: new NavigationPreloadManager(token),
@@ -184,6 +188,11 @@
     get active() {
       return registrationData.get(this).active;
     }
+    get cookies() {
+      const get = native.registrationCookies.get(this);
+      if (!get) throw illegal('ServiceWorkerRegistration.cookies');
+      return get();
+    }
     get navigationPreload() {
       return registrationData.get(this).preload;
     }
@@ -200,6 +209,7 @@
       return PromiseC.resolve([]);
     }
   }
+  defineProperty(ServiceWorkerRegistration.prototype, 'cookies', { enumerable: true });
   tag(ServiceWorkerRegistration, 'ServiceWorkerRegistration');
   handler(ServiceWorkerRegistration, 'updatefound');
 

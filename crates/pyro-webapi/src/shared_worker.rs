@@ -2,7 +2,7 @@
 //! thread of its own as a dedicated worker does (`worker_scope`, with a
 //! `SharedWorkerGlobalScope`), and is shared by every document of the browser
 //! thread that constructs a `SharedWorker` with the same origin, script URL
-//! and name. Each construction makes a `MessageChannel`: one port is the
+//! and name in its context and top-level site. Each construction makes a `MessageChannel`: one port is the
 //! object's `port`, the other moves to the worker, which fires `connect` with
 //! it.
 //!
@@ -45,17 +45,27 @@ struct Client {
     realm: WeakRealm,
 }
 
+#[derive(Clone, Eq, Hash, PartialEq)]
+struct WorkerKey {
+    network_context: usize,
+    top_level_site: String,
+    cross_site_ancestor: bool,
+    origin: String,
+    url: String,
+    name: String,
+}
+
 struct SharedInner {
     id: u64,
-    key: (String, String, String),
+    key: WorkerKey,
     shared: Arc<Shared>,
     state: RefCell<State>,
     clients: RefCell<Vec<Client>>,
 }
 
 thread_local! {
-    /// Live shared workers of this browser thread, by (origin, URL, name).
-    static WORKERS: RefCell<FxHashMap<(String, String, String), Rc<SharedInner>>> = RefCell::default();
+    /// Live shared workers of this browser thread, keyed by storage partition, URL and name.
+    static WORKERS: RefCell<FxHashMap<WorkerKey, Rc<SharedInner>>> = RefCell::default();
     static BY_ID: RefCell<FxHashMap<u64, Weak<SharedInner>>> = RefCell::default();
 }
 
@@ -254,7 +264,17 @@ impl JsClass for SharedWorker {
             s.set_hidden(object, PORT, port1)?;
             pin_target(s, &page, client_key, object);
             let origin = s.realm().origin().unwrap_or_else(|| url.origin().ascii_serialization());
-            let key = (origin, resolved, name.clone());
+            // A live worker retains its context's network client. A different
+            // profile or top-level site must not reuse that worker's cookie jar.
+            let network_context = page.net.borrow().as_ref().map_or(0, |net| Arc::as_ptr(net.cookies()) as usize);
+            let key = WorkerKey {
+                network_context,
+                cross_site_ancestor: page.cookie_site_context() == pyro_net::cookies::SiteContext::CrossSite,
+                top_level_site: page.cookie_partition_key().unwrap_or_else(|| format!("opaque-page:{}", page.id())),
+                origin,
+                url: resolved,
+                name: name.clone(),
+            };
             let existing = WORKERS.with(|w| w.borrow().get(&key).cloned());
             let worker = match existing {
                 Some(worker) => worker,

@@ -1052,6 +1052,17 @@ pub(crate) fn create(
     }
     bindings.set_nested_frame(page.child.is_some());
     bindings.set_opaque_origin(frame.sandbox.opaque);
+    let own_site = pyro_net::Url::parse(&frame.origin).ok().and_then(|url| pyro_net::cookies::partition_key(&url));
+    let (top_level_site, same_site) = if page.child.is_some() {
+        let parent = host.page_dom(host.parent_key(page)).ok_or(JsError::ContextDestroyed)?;
+        let top = parent.cookie_partition_key();
+        let same = own_site.is_some() && own_site == top && parent.cookie_site_context() == pyro_net::cookies::SiteContext::SameSite;
+        (top, same)
+    } else {
+        let same = own_site.is_some();
+        (own_site, same)
+    };
+    bindings.set_cookie_context(top_level_site, if same_site { pyro_net::cookies::SiteContext::SameSite } else { pyro_net::cookies::SiteContext::CrossSite });
     // The origin's identity, which an opaque origin needs (`PageDom::origin_key`).
     bindings.set_opaque_origin_token(frame.opaque_origin);
     bindings.set_window_agent_cluster(host.cluster_group.get(), crate::frames::frame_origin_key(&frame));

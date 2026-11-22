@@ -21,6 +21,7 @@ mod animation_events;
 mod animation_frame;
 mod animations;
 mod cache_storage;
+mod cookie_store;
 mod opfs;
 pub mod canvas;
 mod canvas_path;
@@ -311,6 +312,7 @@ pub fn rebind_window(scope: &Scope<'_>, page: Rc<PageDom>) -> JsResult<()> {
     page.dom.borrow_mut().set_named_item_hook(Some(Rc::new(move |name: &str| names.announce(name))));
     install_listener_connected_hook(&page);
     realm.set_embedder(page.clone());
+    cookie_store::bind_environment(scope, &page)?;
     realm.set_named_properties(Rc::new(window::WindowNamedProperties(page.clone())));
     mutation_observer::bind(scope, &page)
 }
@@ -376,6 +378,7 @@ fn install_page<'s>(scope: &Scope<'s>, page: Rc<PageDom>) -> JsResult<Object<'s>
     install_listener_connected_hook(&page);
     xhr::install(scope, &page)?;
     realm.set_embedder(page.clone());
+    cookie_store::bind_environment(scope, &page)?;
     realm.set_named_properties(Rc::new(window::WindowNamedProperties(page.clone())));
     realm.set_unhandled_rejection_handler(event::dispatch_unhandled_rejection);
     realm.set_rejection_hooks(event::REJECTION_HOOKS);
@@ -395,6 +398,9 @@ fn install_page<'s>(scope: &Scope<'s>, page: Rc<PageDom>) -> JsResult<Object<'s>
         scope.global().get_atom("Object")?.as_object().map(|o| o.get_atom("defineProperty")).transpose()?
     {
         page.define_properties.borrow_mut().insert(scope.realm_id(), pyro_js::Persistent::new(scope, define));
+    }
+    if secure_context::secure(scope, &page) {
+        cookie_store::exposure::install(scope, false)?;
     }
     if page.max_touch_points() > 0 {
         handlers::define_touch_handlers(scope)?;

@@ -36,6 +36,9 @@ use crate::worker::{Shared, MAX_QUEUED_BYTES};
 pub(crate) struct ServiceStart {
     pub version: u64,
     pub registration: u64,
+    pub(crate) partition_key: Option<String>,
+    pub(crate) cookie_site_context: pyro_net::cookies::SiteContext,
+    pub(crate) cookies: Arc<crate::cookie_store::subscriptions::Subscriptions>,
     pub scope: String,
     pub script_url: String,
     pub update_via_cache: String,
@@ -142,6 +145,17 @@ fn call(s: &Scope<'_>, name: &str, args: &[Value<'_>]) {
 pub(crate) fn install(s: &Scope<'_>, start: &ServiceStart, poster: RemotePoster, shared: Arc<Shared>) -> JsResult<()> {
     let version = start.version;
     let native = s.object();
+    let subscriptions = start.cookies.clone();
+    let script_url = pyro_net::Url::parse(&start.script_url).map_err(|_| JsError::ContextDestroyed)?;
+    let manager = s.function("cookieManager", move |s, _, _| {
+        crate::cookie_store::subscriptions::manager(s, &crate::target::page_of(s)?, subscriptions.clone(), Some(script_url.clone()))
+    })?;
+    native.set_atom("cookieManager", manager.value())?;
+    let trusted = s.function("dispatchTrustedCookieChange", |s, _, a| {
+        crate::cookie_store::events::dispatch_trusted(s, s.global().value(), a.get(0))?;
+        Ok(s.undefined())
+    })?;
+    native.set_atom("dispatchTrustedCookieChange", trusted.value())?;
     let up = move |poster: &RemotePoster, message: SwUp| {
         poster(Box::new(move || deliver(version, message)));
     };
@@ -333,6 +347,19 @@ fn respond(s: &Scope<'_>, mut job: FetchJob, a: &pyro_js::Args<'_>) -> JsResult<
 }
 
 /// Moves this worker's own `state` (the browser thread's lifecycle step).
+pub(crate) fn extendable_event<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
+    glue(s)?.get_atom("ExtendableEvent")
+}
+
+/// Fire a functional event in the active worker, using the same extension
+/// and lifetime-promise machinery as its install/activate events.
+pub(crate) fn cookie_change(s: &Scope<'_>, page: &Rc<PageDom>, changes: &[pyro_net::cookies::CookieChange]) {
+    match crate::cookie_store::events::cookie_event(s, page, true, changes) {
+        Ok(event) => call(s, "dispatchCookieChange", &[event]),
+        Err(err) => s.report_exception(&err),
+    }
+}
+
 pub(crate) fn set_state(s: &Scope<'_>, state: &str) {
     call(s, "state", &[s.string(state)]);
 }
