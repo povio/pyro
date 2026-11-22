@@ -439,14 +439,13 @@ impl PageHooks for Hooks {
                         ticket.set_prebuilt(prebuilt);
                         realm
                     });
-                    // Without a popup made ahead (a noopener link), the new
-                    // page is asked for the javascript: URL itself, which
-                    // its initial about:blank document runs
-                    // (`Browser::navigate_frame_with_handling`).
-                    if let Some(realm) = realm {
-                        popup_script = Some((realm, source));
-                        request.url = "about:blank".into();
-                    }
+                    // Without a popup made ahead (noopener), the new window's
+                    // initial about:blank document has an opaque origin of its
+                    // own: HTML "navigate" ignores a javascript: URL whose
+                    // initiator is not same origin-domain with it, so the
+                    // window opens on about:blank and the script never runs.
+                    popup_script = realm.map(|realm| (realm, source));
+                    request.url = "about:blank".into();
                 }
             }
             // HTML "navigate to a javascript: URL": the script runs in the
