@@ -1,0 +1,15 @@
+# Replacing selected inline formatting with a paragraph break
+
+The exact integration parent is a5b05742cfb6dbd260cb91e8fd5d76901c3b6f55. Earlier editing and image-coordinate executables had different production inputs, so one exact parent was built and reused for both candidates. Build receipts record the source trees, pinned JSC and executable hashes. Signed WPT results are from Chrome 158.0.8127.37 on WPT a421f2fea5eb7f91e0db399e44b0fb0779ee1603.
+
+When Enter replaces selected text in a P, DOM boundaries can lie inside a formatting element even though all its text is selected. The editing command removes fully covered inline endpoint wrappers that are empty after deletion. Partially selected wrappers keep their unselected contents. The formatting at the beginning of the selection supplies pending color and emphasis for subsequent typing. The final candidate also carries the background color and combines CSS emphasis on the span holding the typed color value.
+
+All eight insertParagraph shards ran on the parent and both candidates. Parent 7,066/7,195; corrected candidate 7,098/7,195; signed Chrome 7,021/7,195. All 32 matched gains pass Chrome. They cover eight range shapes in two CSS modes and with both default separators. The same 32 URL/name/occurrence triples appear in the separate standalone RC.5 census on 516dc3159. No previous passes or names were lost. All 83 Pyro-only passes held. Six unrelated signed-only failures remain on these shards.
+
+The first candidate c212f6f97 gained all 32 named passes but introduced a typed endpoint difference when the selected color and italic emphasis were applied as nested CSS spans. Corrected source c8d9b10654d9941aa111365aefe248b4658cb0f1 retained every gain and recovered the caret path. Independent QA verified split markup and subsequent typing markup/endpoints in all 18 authored-style fixtures, including foreground with background color and foreground with italic emphasis in both CSS modes. In the 36 core cases, exact split and typed markup improved from 4/36 to 32/36; typed anchor and focus improved from 8/36 to 36/36. The four remaining markup differences involve a locked sibling: Chrome keeps a formatted placeholder BR next to the locked element. The candidate retains the sibling and types with the selected style. No parent-matching field was lost on the corrected candidate.
+
+The owner checked 13,060 static, 300 child-line, 72 void-paragraph, 33,316 formatting and 10,092 multitest outcomes. Every parent-to-head status and name was retained. The formatting ledger also records 36 reference-only observations absent from both Pyro arms. Counting each URL/name/occurrence only once across target and guards gives 63,735 observed Pyro outcomes, 32 signed gains and zero losses.
+
+Pyro undoes the typing and split separately; Chrome groups them. After two undo calls, markup, direction and both endpoints matched in all 54 direct cases. Original node connectivity after undo differed in all 54 on both Pyro builds. The signed raw probes, both Pyro revisions and independent head probes are included.
+
+The native paragraph/select subtree guard passed.

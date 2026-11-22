@@ -170,6 +170,36 @@ pub(super) fn reselect(page: &Rc<PageDom>, original: (Point, Point), points: [Po
     }
 }
 
+/// Fully selected text may lose its formatting element on Enter. Preserve
+/// its color and font emphasis for the next insertion at the break caret.
+pub(crate) fn retain_replacement_style(
+    page: &PageDom, dom: &Dom, range: (Point, Point), text: NodeId, wrapper: NodeId,
+) {
+    let Some(parent) = dom.parent_element(wrapper).ok().flatten() else { return };
+    let Some(element) = dom.parent_element(text).ok().flatten() else { return };
+    for kind in [Kind::Foreground, Kind::Background] {
+        let color = effective(page, dom, kind, text);
+        if color == effective(page, dom, kind, parent) { continue; }
+        if let Some(format) = Format::parse(kind, &color) {
+            let mut slot = page.typing_values.borrow_mut();
+            let pending = pending_at(&mut slot, range);
+            if !pending.values.iter().any(|f| f.kind == kind) { pending.values.push(format); }
+        }
+    }
+    let layout = page.layout();
+    for (tag, property) in [("b", "font-weight"), ("i", "font-style")] {
+        let enabled = |node| {
+            let value = layout.computed_style_value(dom, node, property);
+            if tag == "b" { super::numeric_bold_weight(&value) }
+            else { value.starts_with("italic") || value.starts_with("oblique") }
+        };
+        let active = enabled(element);
+        if active != enabled(parent) && toggle_state(page, range, tag).is_none() {
+            set_toggle(page, range, tag, active);
+        }
+    }
+}
+
 /// A paragraph or soft break continues typing at the new caret.
 pub(crate) fn set_break_caret(page: &Rc<PageDom>, original: (Point, Point), caret: Point) {
     let pending = page.typing_values.take().filter(|v| v.range == original);
@@ -616,11 +646,12 @@ pub(crate) fn format_typed(
         dom.split_text(end.0, end.1).ok()?;
     }
     let typed = if end.1 > units { dom.split_text(end.0, end.1 - units).ok()? } else { end.0 };
+    let mut value_wrapper = None;
     for fmt in &pending.values {
         if fmt.kind == Kind::Background && pyro_dom::color_well::is_fully_transparent(&fmt.css) {
             clear_highlight(page, dom, typed);
         } else {
-            wrap(dom, typed, fmt)?;
+            value_wrapper = Some(wrap(dom, typed, fmt)?);
         }
     }
     if let Some(lines) = decoration { super::decoration::apply(page, dom, host, typed, lines)?; }
@@ -646,6 +677,15 @@ pub(crate) fn format_typed(
         }
         let doc = dom.node_document(typed).ok()?;
         let css = !enabled || dom.document_data(doc).ok()?.style_with_css;
+        if css && enabled {
+            if let Some(span) = value_wrapper.filter(|&el| editing::local(dom, el) == "span"
+                && dom.parent_element(typed).ok().flatten() == Some(el)) {
+                let mut style = DeclarationBlock::parse(dom.get_attribute(span, "style").ok()?.unwrap_or(""));
+                style.set(property, value, false)?;
+                dom.set_attribute(span, "style", &style.css_text()).ok()?;
+                continue;
+            }
+        }
         let wrapper = dom.create_element(doc, if css { "span" } else { tag }).ok()?;
         if css {
             let value = if enabled { value } else if property == "vertical-align" { "baseline" } else { "normal" };

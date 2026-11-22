@@ -1323,13 +1323,62 @@ pub(crate) fn enter(page: &Rc<PageDom>, host: NodeId) {
     }
 }
 
+/// A range ending inside a formatting wrapper can include all its text,
+/// even when neither DOM boundary is outside the wrapper.
+fn selected_inline_wrapper(dom: &Dom, block: NodeId, leaf: NodeId, start: Point, end: Point) -> Option<NodeId> {
+    if !is_text(dom, leaf) { return None; }
+    let mut node = leaf;
+    let mut wrapper = None;
+    while let Some(el) = dom.parent_element(node).ok()? {
+        if el == block || !dom.element(el).ok()?.is_html()
+            || !matches!(local(dom, el).as_str(), "span" | "b" | "strong" | "i" | "em") { break; }
+        let first = deep_forward(dom, (el, 0));
+        let last = deep_backward(dom, (el, len(dom, el)));
+        if crate::range::compare_boundary_points_dom(dom, start, first) > 0
+            || crate::range::compare_boundary_points_dom(dom, last, end) > 0 { break; }
+        wrapper = Some(el);
+        node = el;
+    }
+    wrapper
+}
+
+fn delete_for_paragraph(page: &PageDom, dom: &mut Dom, host: NodeId, start: Point, end: Point) -> Point {
+    let first = deep_forward(dom, start);
+    let last = deep_backward(dom, end);
+    let block = block_of(dom, first.0, host);
+    if local(dom, block) != "p" || block_of(dom, last.0, host) != block {
+        return delete_range(dom, host, start, end, true);
+    }
+    let left = selected_inline_wrapper(dom, block, first.0, first, last);
+    let right = selected_inline_wrapper(dom, block, last.0, first, last);
+    if let Some(wrapper) = left {
+        crate::edit_commands::inline_value::retain_replacement_style(page, dom, (start, end), first.0, wrapper);
+    }
+    let mut caret = delete_range(dom, host, start, end, true);
+    for wrapper in [left, right].into_iter().flatten() {
+        if !dom.is_connected(wrapper).unwrap_or(false) { continue; }
+        // Preserve any surviving child, including an atomic or locked node.
+        let empty = dom.descendants(wrapper).is_ok_and(|mut nodes| nodes.all(|n| {
+            if is_text(dom, n) { len(dom, n) == 0 }
+            else { matches!(local(dom, n).as_str(), "span" | "b" | "strong" | "i" | "em") && editing_host(dom, n) == Some(host) }
+        }));
+        if !empty { continue; }
+        if dom.contains(wrapper, caret.0).unwrap_or(false) {
+            let Ok(Some(parent)) = dom.parent(wrapper) else { continue };
+            caret = (parent, dom.index_in_parent(wrapper).unwrap_or(0));
+        }
+        let _ = dom.remove_node(wrapper);
+    }
+    caret
+}
+
 /// Enter: splits the caret's block (insertParagraph).
 pub fn insert_paragraph(page: &Rc<PageDom>, host: NodeId) {
     let (start, end) = host_range(page, host);
     edit(page, host, "insertParagraph", None, |page| {
         let caret = {
             let mut dom = page.dom.borrow_mut();
-            let caret = if start != end { delete_range(&mut dom, host, start, end, true) } else { start };
+            let caret = if start != end { delete_for_paragraph(page, &mut dom, host, start, end) } else { start };
             split_block(page, &mut dom, host, caret)
         };
         crate::edit_commands::inline_value::set_break_caret(page, (start, end), caret);
