@@ -244,15 +244,17 @@ fn hard_wrap(value: &str, cols: usize) -> String {
         if i > 0 {
             out.push('\n');
         }
-        let mut rest: Vec<char> = line.chars().collect();
-        while rest.len() > cols {
-            let cut = rest[..=cols].iter().rposition(|&c| c == ' ').map_or(cols, |p| p + 1);
+        // Walked by index: draining the front per wrapped line was quadratic on a long line.
+        let chars: Vec<char> = line.chars().collect();
+        let mut start = 0;
+        while chars.len() - start > cols {
+            let cut = chars[start..=start + cols].iter().rposition(|&c| c == ' ').map_or(cols, |p| p + 1);
             let cut = if cut == 0 { cols } else { cut };
-            out.extend(&rest[..cut]);
+            out.extend(&chars[start..start + cut]);
             out.push_str("\r\n");
-            rest.drain(..cut);
+            start += cut;
         }
-        out.extend(&rest);
+        out.extend(&chars[start..]);
     }
     out
 }
