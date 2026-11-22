@@ -1651,6 +1651,23 @@ spec = "https://drafts.csswg.org/css-color/#transparency"
 servo_restyle_damage = "repaint"
 affects = "paint"
 
+[reading-flow]
+type = "ReadingFlow"
+engine = "servo"
+initial = "computed::ReadingFlow::Normal"
+struct = "position"
+animation_type = "none"
+spec = "https://drafts.csswg.org/css-display-4/#propdef-reading-flow"
+affects = ""
+
+[reading-order]
+type = "Integer"
+engine = "servo"
+initial = "0"
+struct = "position"
+spec = "https://drafts.csswg.org/css-display-4/#propdef-reading-order"
+affects = ""
+
 [order]
 type = "Integer"
 initial = "0"

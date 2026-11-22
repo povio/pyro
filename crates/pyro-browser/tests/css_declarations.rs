@@ -1296,3 +1296,23 @@ fn numeric_conversion_reduces_compound_units_and_preserves_authored_objects() {
     "#);
     assert_eq!(actual, "1|88|2|97|4000|9|true");
 }
+
+#[test]
+fn reading_flow_and_order_compute_through_the_cascade() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        const parent=document.body.appendChild(document.createElement('section'));
+        const child=parent.appendChild(document.createElement('div'));
+        parent.style.cssText='reading-flow:grid-rows; reading-order:-4';
+        const cs=getComputedStyle(child);
+        const result=[cs.readingFlow, cs.readingOrder];
+        child.style.cssText='reading-flow:inherit; reading-order:inherit';
+        result.push(cs.readingFlow, cs.readingOrder);
+        child.style.cssText='--flow:flex-visual; reading-flow:var(--flow); reading-order:calc(3.8)';
+        child.style.setProperty('reading-flow','unknown');
+        child.style.setProperty('reading-order','12px');
+        result.push(cs.readingFlow, cs.readingOrder, child.style.getPropertyValue('reading-flow'));
+        result.join('|')
+    "#);
+    assert_eq!(actual, "normal|0|grid-rows|-4|flex-visual|4|var(--flow)");
+}
