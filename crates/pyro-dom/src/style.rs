@@ -1547,6 +1547,12 @@ impl StyleEngine {
         }
     }
 
+    /// The app units per device pixel of this viewport's Stylo device (the unit a border-like
+    /// width snaps to, `snap_as_border_width`).
+    pub fn app_units_per_device_pixel(&self) -> i32 {
+        self.media_device.get_or_init(|| crate::picture::sizes_device(&self.viewport)).app_units_per_device_pixel()
+    }
+
     pub fn matches_media_list(&self, list: &crate::cssom::MediaQueryList) -> bool {
         list.matches(self.media_device.get_or_init(|| crate::picture::sizes_device(&self.viewport)))
     }

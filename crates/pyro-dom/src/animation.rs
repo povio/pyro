@@ -237,6 +237,8 @@ pub(crate) fn transition_endpoint_css(
 /// The value of `longhand` a CSS transition from the style `before` to `after` gives at iteration
 /// progress `progress` (before `easing`, CSS text; `None`: `ease`; `before_flag` for step easings).
 /// Values that do not interpolate flip halfway; a transform's ends are the ends' own lists.
+/// `au_per_dev_px`: the device's app units per device pixel, which an interpolated border-like
+/// width snaps to.
 pub fn transition_value(
     longhand: &str,
     before: &crate::timing::StyleSnapshot,
@@ -244,6 +246,7 @@ pub fn transition_value(
     progress: f64,
     before_flag: bool,
     easing: Option<&str>,
+    au_per_dev_px: i32,
 ) -> Option<TransitionValue> {
     use style::properties::animated_properties::AnimationValue;
     use style::properties::PropertyDeclarationId;
@@ -326,6 +329,37 @@ pub fn transition_value(
         L::StopOpacity => {
             let v = style.get_svg().stop_opacity.clamp(0.0, 1.0);
             style.mutate_svg().set_stop_opacity(v);
+        }
+        // A border-like width is snapped as a border width after interpolation (down to whole
+        // device pixels, a non-zero one to at least one), as the cascade snaps a specified one and
+        // as Chromium snaps an animated one (css-values-4 § snap a length as a border width).
+        L::BorderTopWidth => {
+            let v = style.get_border().border_top_width.snapped(au_per_dev_px);
+            style.mutate_border().set_border_top_width(v);
+        }
+        L::BorderRightWidth => {
+            let v = style.get_border().border_right_width.snapped(au_per_dev_px);
+            style.mutate_border().set_border_right_width(v);
+        }
+        L::BorderBottomWidth => {
+            let v = style.get_border().border_bottom_width.snapped(au_per_dev_px);
+            style.mutate_border().set_border_bottom_width(v);
+        }
+        L::BorderLeftWidth => {
+            let v = style.get_border().border_left_width.snapped(au_per_dev_px);
+            style.mutate_border().set_border_left_width(v);
+        }
+        L::OutlineWidth => {
+            let v = style.get_outline().outline_width.snapped(au_per_dev_px);
+            style.mutate_outline().set_outline_width(v);
+        }
+        L::ColumnRuleWidth => {
+            let v = style.get_column().column_rule_width.map(|w| w.snapped(au_per_dev_px));
+            style.mutate_column().set_column_rule_width(v);
+        }
+        L::RowRuleWidth => {
+            let v = style.get_column().row_rule_width.map(|w| w.snapped(au_per_dev_px));
+            style.mutate_column().set_row_rule_width(v);
         }
         _ => {}
     }
