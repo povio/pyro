@@ -37,40 +37,40 @@
     "fetch/cross-origin-resource-policy": 10,
     "workers": 9,
     "encoding": 7,
-    "fetch/data-urls": 6,
     "fetch/range": 6,
+    "fetch/data-urls": 6,
     "fetch/corb": 6,
     "fetch/stale-while-revalidate": 5,
     "html/obsolete": 4,
     "FileAPI": 4,
-    "fetch/http-cache": 3,
     "fetch/nosniff": 3,
+    "fetch/http-cache": 3,
+    "fetch/orb": 2,
     "xhr": 2,
     "html/user-activation": 2,
-    "fetch/orb": 2,
-    "fetch/content-type": 1,
+    "fetch/redirect-navigate": 1,
     "fetch/security": 1,
     "fetch/redirects": 1,
     "html/select": 1,
     "IndexedDB": 1,
     "svg/styling": 1,
-    "quirks": 1,
-    "fetch/redirect-navigate": 1
+    "fetch/content-type": 1,
+    "quirks": 1
    }
   },
   "in_progress": {
    "scope": {
-    "macbook_in_scope": 12,
+    "macbook_in_scope": 7,
     "studio_in_scope": 22,
     "other_dirs_out_of_scope": 0,
     "macbook_worker_variants_if_enabled": 6,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 10,
+   "distinct_census_pages": 5,
    "owner_reported_unlisted": 0,
-   "selector_union": 303,
-   "owner_estimate_reduction": 293,
-   "of_which_tentative": 169,
+   "selector_union": 290,
+   "owner_estimate_reduction": 285,
+   "of_which_tentative": 156,
    "studio_css_reported_pages_not_deduped": 22,
    "studio_css_listed_distinct": 0,
    "by_dir": {
@@ -79,8 +79,6 @@
     "html/semantics": 50,
     "html/syntax": 30,
     "html/webappapis": 27,
-    "fetch/compression-dictionary": 8,
-    "html/interaction": 5,
     "fetch/api": 5,
     "html/dom": 5
    }
@@ -166,7 +164,7 @@
    "tentative": 0
   },
   "Q03b": {
-   "state": "reserved",
+   "state": "deferred",
    "in_scope_pages": null,
    "out_of_scope_pages": null,
    "pages": null,
@@ -796,7 +794,7 @@
    "tentative": 0
   },
   "F02": {
-   "state": "reserved",
+   "state": "deferred",
    "in_scope_pages": 5,
    "out_of_scope_pages": 0,
    "pages": 5,
@@ -2343,7 +2341,7 @@
    "tentative": 6
   },
   "R-FETCH-DICT": {
-   "state": "reserved",
+   "state": "deferred",
    "in_scope_pages": 8,
    "out_of_scope_pages": 0,
    "pages": 8,
