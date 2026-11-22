@@ -1,0 +1,13 @@
+# Script selection inside a nested rich editing host
+
+Product source `6fc19ee3b2861ef7b65a02042c89087fb1eaf92c`, tree `eb4ca04f31ad6a50771a69b00a87f2512c73674f`; executable SHA-256 `7dda7a975dc10cc021faf0b13630d154218c4d79ad1671b90f1b696ffcaf4d89`. Integration parent `32906a5a6` differs from tested `00522ea4d` only in styled-unlink evidence. Its archived executable rehashed to `27be2479d9938a970dcb9ff22d4c8372432e47af836c4a06e5377d9c8aaecd75`. The parent named results and command/static guard results retain their original styled-unlink revision3 provenance. Direct controls were measured against that executable and signed Chrome 158.0.8127.37. The initial compile stopped on a missing module import before producing the frozen executable.
+
+When a script sets both selection endpoints in a distinct rich editing host nested under the focused editor, the Selection API first installs the range, then invokes the existing focusing steps on that host. This permits formatting inside a rich island below a locked ancestor, including when the containing editor is plaintext-only. Reentrant focus listeners see the new selection.
+
+Independent QA compared 33,326 matched assertions on 44 pages. All four frozen formatting assertions recovered. No prior pass was lost and no test names were added or removed. [Changed assertions](changed-names.json)
+
+Across 108 core, 72 Selection API and 24 reentrant cases, the command result, undo result, and recorded input-event sequence after the command matched Chrome in all 204. Post-command markup matched in 196/204. Active element matched in 159/204. The other differences include existing handling of inherited editable regions, cross-host selections and text controls. The 72 API cases matched Chrome on associated range identity where measured, and the 24 reentrant cases matched the recorded focus-event sequence. Two reentrant range-identity comparisons still differ.
+
+Twenty previously matching original-text connectivity observations differed after undo: six core, eight API, six reentrant. In every such case the parent returned false for both bold and undo, while the candidate and Chrome returned true for both. Chrome retained the original text object; the candidate rebuilt the inner host contents. Final restored markup matched in all 204. [Individual undo observations](undo-identity.json.gz)
+
+The native focus-transition and selection cleanup test passed. All 10,092 command multitest and 13,060 static neighboring WPT statuses retained their parent outcomes. Two additional focus runs covered six discovered pages with 17 named rows and no status changes.

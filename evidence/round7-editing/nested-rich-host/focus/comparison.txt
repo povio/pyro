@@ -1,0 +1,4 @@
+selection/contenteditable/cefalse-on-boundaries.html 4 4 4 gain 0 loss 0 membership delta 0
+selection/contenteditable/collapse.html 0 0 1 gain 0 loss 0 membership delta 0
+selection/contenteditable/selection-outside-focused-editing-host.tentative.html 2 2 2 gain 0 loss 0 membership delta 0
+Total 10 losses 0 gains 0
