@@ -228,14 +228,14 @@
     setValueAtTime(value, startTime) {
       const p = paramOf(this);
       const v = finite(value, 'execute', "setValueAtTime' on 'AudioParam");
-      const t = time(startTime, 'setValueAtTime');
+      const t = automationTime(p, startTime, 'setValueAtTime');
       insertEvent(p, { type: SET, time: t, value: v }, 'setValueAtTime');
       return this;
     }
     linearRampToValueAtTime(value, endTime) {
       const p = paramOf(this);
       const v = finite(value, 'execute', "linearRampToValueAtTime' on 'AudioParam");
-      const t = time(endTime, 'linearRampToValueAtTime');
+      const t = automationTime(p, endTime, 'linearRampToValueAtTime');
       insertEvent(p, ramp(p, { type: LINEAR, time: t, value: v }), 'linearRampToValueAtTime');
       return this;
     }
@@ -245,14 +245,14 @@
       if (abs(v) < 1.401298464324817e-45) {
         throw new RangeErrorC(`Failed to execute 'exponentialRampToValueAtTime' on 'AudioParam': The float target value provided (${v}) should not be in the range (-1.40130e-45, 1.40130e-45).`);
       }
-      const t = time(endTime, 'exponentialRampToValueAtTime');
+      const t = automationTime(p, endTime, 'exponentialRampToValueAtTime');
       insertEvent(p, ramp(p, { type: EXPONENTIAL, time: t, value: v }), 'exponentialRampToValueAtTime');
       return this;
     }
     setTargetAtTime(target, startTime, timeConstant) {
       const p = paramOf(this);
       const v = finite(target, 'execute', "setTargetAtTime' on 'AudioParam");
-      const t = time(startTime, 'setTargetAtTime');
+      const t = automationTime(p, startTime, 'setTargetAtTime');
       const tc = finite(timeConstant, 'execute', "setTargetAtTime' on 'AudioParam");
       if (tc < 0) {
         throw new RangeErrorC(`Failed to execute 'setTargetAtTime' on 'AudioParam': Time constant must be a finite non-negative number: ${tc}`);
@@ -266,7 +266,7 @@
         throw new TypeErrorC("Failed to execute 'setValueCurveAtTime' on 'AudioParam': The provided value cannot be converted to a sequence.");
       }
       const curve = new F32([...values].map((v) => finite(v, 'execute', "setValueCurveAtTime' on 'AudioParam")));
-      const t = time(startTime, 'setValueCurveAtTime');
+      const t = automationTime(p, startTime, 'setValueCurveAtTime');
       const d = finite(duration, 'execute', "setValueCurveAtTime' on 'AudioParam", 'double');
       if (d <= 0) throw new RangeErrorC(`Failed to execute 'setValueCurveAtTime' on 'AudioParam': The curve duration provided (${d}) is less than or equal to the minimum bound (0).`);
       if (curve.length < 2) {
@@ -277,13 +277,13 @@
     }
     cancelScheduledValues(cancelTime) {
       const p = paramOf(this);
-      const t = time(cancelTime, 'cancelScheduledValues');
+      const t = automationTime(p, cancelTime, 'cancelScheduledValues');
       p.events = p.events.filter(e => e.time < t && !(e.type === CURVE && t < eventEnd(e)));
       return this;
     }
     cancelAndHoldAtTime(cancelTime) {
       const p = paramOf(this);
-      const t = time(cancelTime, 'cancelAndHoldAtTime');
+      const t = automationTime(p, cancelTime, 'cancelAndHoldAtTime');
       const next = p.events.find((e) => e.time >= t);
       const kept = p.events.filter(e => e.time < t || (e.time === t && e.type === SET));
       const previous = kept.at(-1);
@@ -321,10 +321,10 @@
     (n.audioParams ??= []).push(params.get(param));
     return param;
   }
-  function time(v, method) {
+  function automationTime(param, v, method) {
     const t = finite(v, 'execute', `${method}' on 'AudioParam`, 'double');
     if (t < 0) throw new RangeErrorC(`Failed to execute '${method}' on 'AudioParam': Time must be a finite non-negative number: ${t}`);
-    return t;
+    return max(t, ctxOf(param.ctx).time());
   }
   // A ramp first in the list starts at the time and value it was made at.
   function ramp(p, e) {
