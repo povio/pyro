@@ -1,0 +1,25 @@
+{
+  "surface": false,
+  "nestedList": true,
+  "missingList": false,
+  "renamedList": false,
+  "restoredList": true,
+  "wrongType": false,
+  "localList": false,
+  "label": [
+    false,
+    false
+  ],
+  "form": [
+    false,
+    false
+  ],
+  "command": [
+    true,
+    0
+  ],
+  "face": [
+    false,
+    []
+  ]
+}

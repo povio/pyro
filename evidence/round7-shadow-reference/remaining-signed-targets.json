@@ -1,0 +1,482 @@
+[
+  [
+    "shadow-dom/reference-target/tentative/event-path.html",
+    "Event path includes all shadow hosts and shadow roots up to the root of the source, but non-bubbling event fires only where currentTarget == retargeted original target",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/event-path.html",
+    "Event path should go all the way to window if source is not in a shadow, but should only fire when currentTarget == retargeted original target",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/event-path.html",
+    "Event path skips root containing neither source nor target. Non-bubbling event fires only where currentTarget == retargeted original target",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/event-path.html",
+    "Event propagates to source's shadow tree only; target in deeper shadow root",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/event-path.html",
+    "beforetoggle event propagates to source's shadow tree only; target in deeper shadow root",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/event-path.html",
+    "beforetoggle event propagates to source's shadow tree only; target in deeper shadow root; showPopover called directly with source option",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/event-path.html",
+    "interest event propagates to source's shadow tree only; target in deeper shadow root",
+    1,
+    "Not Run",
+    "Not Run",
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/event-path.html",
+    "loseinterest event propagates to source's shadow tree only; target in deeper shadow root",
+    1,
+    "Not Run",
+    "Not Run",
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/event-path.html",
+    "submit event propagates to submitter's shadow tree only; target in deeper shadow root",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/event-path.html",
+    "toggle event propagates to source's shadow tree only; target in deeper shadow root",
+    1,
+    "Timeout",
+    "Timeout",
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/interestfor.tentative.html",
+    "Shadow root reference target works with .interestForElement property.",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/interestfor.tentative.html",
+    "Shadow root reference target works with interestfor attribute via options.",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/interestfor.tentative.html",
+    "Shadow root reference target works with interestfor attribute.",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/label-lifetime.html",
+    ".labels across shadow roots keeps working across GC",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/label-lifetime.html",
+    ".labels keeps working after its whole tree is removed from the document and only the list is referenced",
+    1,
+    "Fail",
+    "Fail",
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/property-reflection-idl-setters.html",
+    "button.interestForElement has IDL setter behavior ReflectsHost when pointing to button with reference target",
+    1,
+    null,
+    null,
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/property-reflection-idl-setters.html",
+    "button.interestForElement has IDL setter behavior ReflectsHost when pointing to datalist with reference target",
+    1,
+    null,
+    null,
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/property-reflection-idl-setters.html",
+    "button.interestForElement has IDL setter behavior ReflectsHost when pointing to div with reference target",
+    1,
+    null,
+    null,
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/property-reflection-idl-setters.html",
+    "button.interestForElement has IDL setter behavior ReflectsHost when pointing to fieldset with reference target",
+    1,
+    null,
+    null,
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/property-reflection-idl-setters.html",
+    "button.interestForElement has IDL setter behavior ReflectsHost when pointing to form with reference target",
+    1,
+    null,
+    null,
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/property-reflection-idl-setters.html",
+    "button.interestForElement has IDL setter behavior ReflectsHost when pointing to input with reference target",
+    1,
+    null,
+    null,
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/property-reflection-idl-setters.html",
+    "button.interestForElement has IDL setter behavior ReflectsHost when pointing to label with reference target",
+    1,
+    null,
+    null,
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/property-reflection-idl-setters.html",
+    "button.interestForElement has IDL setter behavior ReflectsHost when pointing to legend with reference target",
+    1,
+    null,
+    null,
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/property-reflection-idl-setters.html",
+    "button.interestForElement has IDL setter behavior ReflectsHost when pointing to meter with reference target",
+    1,
+    null,
+    null,
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/property-reflection-idl-setters.html",
+    "button.interestForElement has IDL setter behavior ReflectsHost when pointing to object with reference target",
+    1,
+    null,
+    null,
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/property-reflection-idl-setters.html",
+    "button.interestForElement has IDL setter behavior ReflectsHost when pointing to option with reference target",
+    1,
+    null,
+    null,
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/property-reflection-idl-setters.html",
+    "button.interestForElement has IDL setter behavior ReflectsHost when pointing to output with reference target",
+    1,
+    null,
+    null,
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/property-reflection-idl-setters.html",
+    "button.interestForElement has IDL setter behavior ReflectsHost when pointing to progress with reference target",
+    1,
+    null,
+    null,
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/property-reflection-idl-setters.html",
+    "button.interestForElement has IDL setter behavior ReflectsHost when pointing to select with reference target",
+    1,
+    null,
+    null,
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/property-reflection-idl-setters.html",
+    "button.interestForElement has IDL setter behavior ReflectsHost when pointing to textarea with reference target",
+    1,
+    null,
+    null,
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/property-reflection-imperative-setup.html",
+    "button.interestForElement has reflection behavior ReflectsHost when pointing to button with reference target with imperative setup",
+    1,
+    null,
+    null,
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/property-reflection-imperative-setup.html",
+    "button.interestForElement has reflection behavior ReflectsHost when pointing to datalist with reference target with imperative setup",
+    1,
+    null,
+    null,
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/property-reflection-imperative-setup.html",
+    "button.interestForElement has reflection behavior ReflectsHost when pointing to div with reference target with imperative setup",
+    1,
+    null,
+    null,
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/property-reflection-imperative-setup.html",
+    "button.interestForElement has reflection behavior ReflectsHost when pointing to fieldset with reference target with imperative setup",
+    1,
+    null,
+    null,
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/property-reflection-imperative-setup.html",
+    "button.interestForElement has reflection behavior ReflectsHost when pointing to form with reference target with imperative setup",
+    1,
+    null,
+    null,
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/property-reflection-imperative-setup.html",
+    "button.interestForElement has reflection behavior ReflectsHost when pointing to input with reference target with imperative setup",
+    1,
+    null,
+    null,
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/property-reflection-imperative-setup.html",
+    "button.interestForElement has reflection behavior ReflectsHost when pointing to label with reference target with imperative setup",
+    1,
+    null,
+    null,
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/property-reflection-imperative-setup.html",
+    "button.interestForElement has reflection behavior ReflectsHost when pointing to legend with reference target with imperative setup",
+    1,
+    null,
+    null,
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/property-reflection-imperative-setup.html",
+    "button.interestForElement has reflection behavior ReflectsHost when pointing to meter with reference target with imperative setup",
+    1,
+    null,
+    null,
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/property-reflection-imperative-setup.html",
+    "button.interestForElement has reflection behavior ReflectsHost when pointing to object with reference target with imperative setup",
+    1,
+    null,
+    null,
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/property-reflection-imperative-setup.html",
+    "button.interestForElement has reflection behavior ReflectsHost when pointing to option with reference target with imperative setup",
+    1,
+    null,
+    null,
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/property-reflection-imperative-setup.html",
+    "button.interestForElement has reflection behavior ReflectsHost when pointing to output with reference target with imperative setup",
+    1,
+    null,
+    null,
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/property-reflection-imperative-setup.html",
+    "button.interestForElement has reflection behavior ReflectsHost when pointing to progress with reference target with imperative setup",
+    1,
+    null,
+    null,
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/property-reflection-imperative-setup.html",
+    "button.interestForElement has reflection behavior ReflectsHost when pointing to select with reference target with imperative setup",
+    1,
+    null,
+    null,
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/property-reflection-imperative-setup.html",
+    "button.interestForElement has reflection behavior ReflectsHost when pointing to textarea with reference target with imperative setup",
+    1,
+    null,
+    null,
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/property-reflection.html",
+    "button.interestForElement has reflection behavior ReflectsHost when pointing to button with reference target",
+    1,
+    null,
+    null,
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/property-reflection.html",
+    "button.interestForElement has reflection behavior ReflectsHost when pointing to datalist with reference target",
+    1,
+    null,
+    null,
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/property-reflection.html",
+    "button.interestForElement has reflection behavior ReflectsHost when pointing to div with reference target",
+    1,
+    null,
+    null,
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/property-reflection.html",
+    "button.interestForElement has reflection behavior ReflectsHost when pointing to fieldset with reference target",
+    1,
+    null,
+    null,
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/property-reflection.html",
+    "button.interestForElement has reflection behavior ReflectsHost when pointing to form with reference target",
+    1,
+    null,
+    null,
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/property-reflection.html",
+    "button.interestForElement has reflection behavior ReflectsHost when pointing to input with reference target",
+    1,
+    null,
+    null,
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/property-reflection.html",
+    "button.interestForElement has reflection behavior ReflectsHost when pointing to label with reference target",
+    1,
+    null,
+    null,
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/property-reflection.html",
+    "button.interestForElement has reflection behavior ReflectsHost when pointing to legend with reference target",
+    1,
+    null,
+    null,
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/property-reflection.html",
+    "button.interestForElement has reflection behavior ReflectsHost when pointing to meter with reference target",
+    1,
+    null,
+    null,
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/property-reflection.html",
+    "button.interestForElement has reflection behavior ReflectsHost when pointing to object with reference target",
+    1,
+    null,
+    null,
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/property-reflection.html",
+    "button.interestForElement has reflection behavior ReflectsHost when pointing to option with reference target",
+    1,
+    null,
+    null,
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/property-reflection.html",
+    "button.interestForElement has reflection behavior ReflectsHost when pointing to output with reference target",
+    1,
+    null,
+    null,
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/property-reflection.html",
+    "button.interestForElement has reflection behavior ReflectsHost when pointing to progress with reference target",
+    1,
+    null,
+    null,
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/property-reflection.html",
+    "button.interestForElement has reflection behavior ReflectsHost when pointing to select with reference target",
+    1,
+    null,
+    null,
+    "Pass"
+  ],
+  [
+    "shadow-dom/reference-target/tentative/property-reflection.html",
+    "button.interestForElement has reflection behavior ReflectsHost when pointing to textarea with reference target",
+    1,
+    null,
+    null,
+    "Pass"
+  ]
+]
