@@ -2834,18 +2834,92 @@ fn distribute_nested_item_color(page: &PageDom, dom: &mut Dom, host: NodeId, ite
 fn convert_text_and_list(page: &PageDom, dom: &mut Dom, host: NodeId, tag: &str, start: Point, end: Point) -> Option<()> {
     if !editing::is_text(dom, start.0) || dom.parent(start.0).ok()? != Some(host) || start == end { return None; }
     let source = dom.next_sibling(start.0).ok()??;
-    if !(local_html(dom, source, "ol") || local_html(dom, source, "ul")) || !dom.attributes(source).ok()?.is_empty() { return None; }
+    if !(local_html(dom, source, "ol") || local_html(dom, source, "ul")) { return None; }
     let last = ancestor_item(dom, end.0, host)?;
     if dom.parent_element(last).ok()? != Some(source) { return None; }
     let first = dom.first_child(source).ok()??;
     if !local_html(dom, first, "li") { return None; }
-    if !local_html(dom, source, tag) { convert_list_run(page, dom, host, tag, source, first, last, false)?; }
-    let list = dom.parent_element(first).ok()??;
+    // Capture the whole preceding inline line, including styled siblings
+    // before the selection's first text.
+    let mut begin = start.0;
+    while let Some(prev) = dom.prev_sibling(begin).ok()? {
+        if editing::editing_host(dom, prev) != Some(host) || local_html(dom, prev, "br")
+            || !editing::is_text(dom, prev) && page.layout().computed_style_value(dom, prev, "display") != "inline" { break; }
+        begin = prev;
+    }
+    let mut line = Vec::new();
+    let mut node = begin;
+    loop {
+        line.push(node);
+        if node == start.0 { break; }
+        node = dom.next_sibling(node).ok()??;
+    }
+    let convert = !local_html(dom, source, tag);
+    let separate = convert && dom.next_sibling(last).ok()?.is_none()
+        && crate::range::compare_boundary_points_dom(dom, end, editing::deep_backward(dom, (last, editing::len(dom,last)))) < 0;
+    if convert { convert_list_run(page, dom, host, tag, source, first, last, false)?; }
     let doc = dom.node_document(host).ok()?;
     let item = dom.create_element(doc, "li").ok()?;
-    dom.insert_before(list, item, Some(first)).ok()?;
-    dom.append_child(item, start.0).ok()?;
+    if separate {
+        let list = dom.create_element(doc, tag).ok()?;
+        dom.insert_before(host, list, Some(begin)).ok()?;
+        dom.append_child(list, item).ok()?;
+    } else {
+        let list = dom.parent_element(first).ok()??;
+        dom.insert_before(list, item, Some(first)).ok()?;
+    }
+    for n in line { dom.append_child(item, n).ok()?; }
     Some(())
+}
+
+/// Extract selected levels of a nested list as lines. A nested list of
+/// another type remains an intact block between the surrounding text.
+fn unlist_nested_run(dom: &mut Dom, host: NodeId, tag: &str, start: Point, end: Point) -> Option<()> {
+    use std::collections::HashSet;
+    let first = ancestor_item(dom, start.0, host)?;
+    let list = dom.parent_element(first).ok()??;
+    if start == end || !local_html(dom, list, tag) || dom.parent(list).ok()? != Some(host)
+        || !dom.contains(list, end.0).ok()? || !dom.descendants(list).ok()?.any(|n| local_html(dom,n,"ol") || local_html(dom,n,"ul"))
+        || dom.descendants(list).ok()?.any(|n| editing::editing_host(dom,n) != Some(host))
+    { return None; }
+    let selected: HashSet<_> = texts_in(dom, list, start, end).into_iter().filter_map(|t| ancestor_item(dom,t,host)).collect();
+    fn lines(dom: &Dom, list: NodeId, tag: &str, selected: &HashSet<NodeId>, output: &mut Vec<(bool, Vec<NodeId>)>) -> Option<()> {
+        let items: Vec<_> = dom.children(list).ok()?.collect();
+        if items.is_empty() || !items.iter().all(|&n| local_html(dom,n,"li") && selected.contains(&n)) { return None; }
+        for item in items {
+            let mut run = Vec::new();
+            for child in dom.children(item).ok()? {
+                if local_html(dom,child,"ol") || local_html(dom,child,"ul") {
+                    if !run.is_empty() { output.push((false,std::mem::take(&mut run))); }
+                    if local_html(dom,child,tag) && dom.children(child).ok()?.all(|n| selected.contains(&n)) {
+                        lines(dom,child,tag,selected,output)?;
+                    } else { output.push((true,vec![child])); }
+                } else { run.push(child); }
+            }
+            if !run.is_empty() { output.push((false,run)); }
+        }
+        Some(())
+    }
+    let mut output = Vec::new();
+    lines(dom,list,tag,&selected,&mut output)?;
+    let doc = dom.node_document(host).ok()?;
+    let mut previous = None;
+    for (block, children) in output {
+        if !block {
+            if let Some(prev) = previous {
+                let br = dom.create_element(doc,"br").ok()?;
+                if local_html(dom,prev,"span") { dom.append_child(prev,br).ok()?; }
+                else { dom.insert_before(host,br,Some(list)).ok()?; }
+            }
+        }
+        previous = if block { None } else { children.last().copied() };
+        for n in children { dom.insert_before(host,n,Some(list)).ok()?; }
+    }
+    if previous.is_some() && dom.next_sibling(list).ok()?.is_some_and(|n| local_html(dom,n,"ul") || local_html(dom,n,"ol")) {
+        let br = dom.create_element(doc,"br").ok()?;
+        dom.insert_before(host,br,Some(list)).ok()?;
+    }
+    dom.remove_node(list).ok()
 }
 
 fn convert_list_run(page: &PageDom, dom: &mut Dom, host: NodeId, tag: &str, source: NodeId, first: NodeId, last: NodeId, nested: bool) -> Option<()> {
@@ -3239,6 +3313,11 @@ fn toggle_list(page: &Rc<PageDom>, host: NodeId, tag: &str, input_type: &str) {
         {
             let mut dom = page.dom.borrow_mut();
             let Ok(doc) = dom.node_document(host) else { return };
+            if unlist_nested_run(&mut dom, host, tag, start, end).is_some() {
+                drop(dom);
+                editing::set_selection(page, start, end);
+                return;
+            }
             if convert_text_and_list(page, &mut dom, host, tag, start, end).is_some() {
                 drop(dom);
                 editing::set_selection(page, start, end);
@@ -3510,6 +3589,9 @@ pub(crate) fn query_state(page: &PageDom, doc: NodeId, command: &str) -> bool {
             };
             if start != end {
                 if let Some(list) = ancestor_named(&dom, start.0, host, &["ol", "ul"]) {
+                    if let Some(end_list) = ancestor_named(&dom, end.0, host, &["ol", "ul"]) {
+                        if list != end_list && dom.parent(list).ok() == dom.parent(end_list).ok() { return false; }
+                    }
                     let other = if tag == "ol" { "ul" } else { "ol" };
                     let nested = ancestor_named(&dom, list, host, &["ol", "ul"]).is_some()
                         || dom.descendants(list).is_ok_and(|mut nodes| nodes.any(|n| local_html(&dom, n, "ol") || local_html(&dom, n, "ul")));
