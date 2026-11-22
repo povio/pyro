@@ -22,6 +22,43 @@ pub fn same_origin(a: &Url, b: &Url) -> bool {
     a.origin() == b.origin()
 }
 
+const CROSS_ORIGIN_RESOURCE_POLICY: header::HeaderName =
+    header::HeaderName::from_static("cross-origin-resource-policy");
+
+/// Fetch "cross-origin resource policy check" (without COEP): whether the
+/// response at `url` (a redirect included) to a `no-cors` request is blocked
+/// by its `Cross-Origin-Resource-Policy` header. The value is compared byte
+/// for byte as the header list's combined value, so a repeated or unknown
+/// value (`same, same-origin`, `SAME-ORIGIN`) allows.
+pub fn corp_blocks(req: &Request, url: &Url, headers: &HeaderMap) -> bool {
+    if req.mode != RequestMode::NoCors {
+        return false;
+    }
+    // A browser-initiated request has no initiator to protect.
+    let Some(origin) = req.origin.as_deref() else { return false };
+    let mut values = headers.get_all(CROSS_ORIGIN_RESOURCE_POLICY).iter();
+    let Some(policy) = values.next() else { return false };
+    if values.next().is_some() {
+        return false;
+    }
+    // "null" (an opaque origin) parses to an error: same-origin and
+    // same-site with nothing.
+    let origin = Url::parse(origin).ok();
+    match policy.as_bytes() {
+        b"same-origin" => !origin.is_some_and(|o| same_origin(&o, url)),
+        b"same-site" => {
+            let Some(o) = origin else { return true };
+            let schemelessly_same_site = match (o.host_str(), url.host_str()) {
+                (Some(a), Some(b)) => crate::cookies::site_of(a).eq_ignore_ascii_case(crate::cookies::site_of(b)),
+                _ => false,
+            };
+            // An `http:` document cannot read a same-site `https:` resource.
+            !(schemelessly_same_site && (o.scheme() == "https" || url.scheme() != "https"))
+        }
+        _ => false,
+    }
+}
+
 fn safelisted_content_type(v: &[u8]) -> bool {
     let Ok(s) = std::str::from_utf8(v) else { return false };
     let essence = s.split(';').next().unwrap_or("").trim().to_ascii_lowercase();

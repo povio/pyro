@@ -2374,6 +2374,11 @@ impl Io {
                 }
             }
 
+            // Fetch's cross-origin resource policy check, on every response a
+            // `no-cors` request gets (a redirect's included) before it is used.
+            if cors::corp_blocks(&req, &url, &resp_headers) {
+                return Err(corp_blocked());
+            }
             // Redirects.
             if status.is_redirection() && status != StatusCode::NOT_MODIFIED {
                 // Fetch "HTTP fetch": the CORS check covers a redirect response too, and runs
@@ -2646,6 +2651,9 @@ impl Io {
         from_cache: bool,
         encoded_len: u64,
     ) -> Result<(), NetError> {
+        if cors::corp_blocks(req, url, &cached.headers) {
+            return Err(corp_blocked());
+        }
         let kind = if hop.cors_cross {
             cors::cors_check(&cached.headers, req.origin.as_deref().unwrap_or("null"), req.credentials)
                 .map_err(NetError::Cors)?;
@@ -2919,6 +2927,12 @@ struct Hop {
     cors_cross: bool,
     same_origin: bool,
     redirected: bool,
+}
+
+/// The network error of a response `Cross-Origin-Resource-Policy` blocks
+/// (Chromium's errorText; its blockedReason is not modelled).
+fn corp_blocked() -> NetError {
+    NetError::Blocked("net::ERR_BLOCKED_BY_RESPONSE".into())
 }
 
 /// Reads and decodes a whole response body (at most `max_body` bytes).
