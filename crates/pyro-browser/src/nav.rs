@@ -1423,10 +1423,12 @@ fn apply_traversal(
     if entry.doc == current_doc {
         let old_url = nav.url();
         nav.set_url_sync(&entry.url);
-        nav.restore_scroll(&entry);
         b.same_document_committed(page, entry.url.clone(), SameDocumentKind::Push);
         nav.navigation_committed("traverse");
+        // HTML "update document for history step application": popstate fires, then the
+        // persisted scroll position is restored, then hashchange (queued) fires.
         b.fire_popstate(page, entry.state.is_some(), &old_url, &entry.url);
+        nav.restore_scroll(&entry);
     } else {
         let opts = NavigateOpts {
             post: None,
