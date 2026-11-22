@@ -74,7 +74,7 @@ impl pyro_js::NamedProperties for WindowNamedProperties {
 }
 
 /// `Window.scroll()`, `scrollTo()` (`operation`) and `scrollBy()` (`by`): returns a scroll
-/// promise (Chrome's `Promise<ScrollResult>`, `layout_api::scroll_promise`).
+/// promise (Chrome's `Promise<ScrollResult>`), settled when a smooth scroll ends.
 fn window_scroll<'s>(
     s: &pyro_js::Scope<'s>,
     page: &Rc<PageDom>,
@@ -82,20 +82,8 @@ fn window_scroll<'s>(
     operation: &str,
     by: bool,
 ) -> JsResult<pyro_js::Value<'s>> {
-    let (l, t, smooth) = crate::layout_api::scroll_options(a, operation, "Window", to_scroll_offset)?;
-    let moved = {
-        let dom = page.dom.borrow();
-        let mut layout = page.layout.borrow_mut();
-        if by {
-            layout.window_scroll_by(&dom, l, t)
-        } else {
-            layout.window_scroll_to(&dom, l, t)
-        }
-    };
-    if moved {
-        crate::layout_api::fire_scroll(page, None);
-    }
-    crate::layout_api::window_scroll_promise(s, page, moved, smooth)
+    let options = crate::layout_api::scroll_options(a, operation, "Window", to_scroll_offset)?;
+    crate::layout_api::window_scroll(s, page, options, by)
 }
 
 /// Setter of a [Replaceable] attribute of a window or worker global:

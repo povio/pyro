@@ -3117,6 +3117,45 @@ impl Layout {
         self.write_scroll(dom, el, ScrollWrite::By { left, top })
     }
 
+    /// pyro: the scroll offsets of `target` (`None`: the viewport).
+    pub fn scroll_position(&self, target: Option<NodeId>) -> (i32, i32) {
+        match target {
+            Some(el) => self.element_scroll.get(&el).copied().unwrap_or((0, 0)),
+            None => self.window_scroll,
+        }
+    }
+
+    /// pyro: the scroll offsets of every scrolled element and of the viewport (`None`), for a
+    /// smooth scroll to find where the boxes a scroll write moved started from.
+    pub fn scroll_positions(&self) -> Vec<(Option<NodeId>, (i32, i32))> {
+        let mut out: Vec<_> = self.element_scroll.iter().map(|(&el, &pos)| (Some(el), pos)).collect();
+        out.push((None, self.window_scroll));
+        out
+    }
+
+    /// pyro: puts `target` (`None`: the viewport) at `pos`, a step of a smooth scroll (CSSOM View
+    /// § 4.1 "perform a smooth scroll"): neither snapped nor clamped, as its ends are offsets a
+    /// scroll write chose (snapped and clamped there). Whether it moved.
+    pub fn set_scroll_position(&mut self, dom: &Dom, target: Option<NodeId>, pos: (i32, i32)) -> bool {
+        if self.scroll_position(target) == pos {
+            return false;
+        }
+        match target {
+            Some(el) => {
+                if self.owned(dom, el).is_none() {
+                    return false;
+                }
+                self.element_scroll.insert(el, pos);
+            }
+            None => self.window_scroll = pos,
+        }
+        self.scroll_generation = self.scroll_generation.wrapping_add(1);
+        if let Some(el) = target {
+            self.capture_scroll_anchor(dom, el);
+        }
+        true
+    }
+
     /// `scrollByAxis` (Element.zig:2206-2211): whether the container moved.
     pub fn scroll_by_axis(&mut self, dom: &Dom, el: NodeId, axis: Axis, delta: i32) -> bool {
         let w = match axis {
