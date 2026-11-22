@@ -1492,6 +1492,18 @@ fn prepare_overridden_bold(page: &PageDom, dom: &mut Dom, host: NodeId, text: No
             Some(FontToggle::Bold.active(&layout.computed_style_value(dom, current, "font-weight")))
         }
         "" => {
+            // A reset from a rule still applies after removing the outer B.
+            // If the selected text fills both elements, keep the reset span
+            // and reapply bold inside it without retaining a redundant B.
+            if let Some(outer) = dom.parent_element(span).ok().flatten().filter(|&outer|
+                outer != host && editing::local(dom, outer) == "b"
+                && dom.element(outer).is_ok_and(|el| el.is_html())
+                && dom.attributes(outer).is_ok_and(|attrs| attrs.is_empty())
+                && dom.child_count(outer).ok() == Some(1) && dom.child_count(span).ok() == Some(1))
+            {
+                let mut points = [(text, 0), (text, editing::len(dom, text))];
+                indentation::unwrap(dom, outer, &mut points)?;
+            }
             if css && dom.child_count(span).ok()? == 1 {
                 style.set("font-weight", "bold", false)?;
                 dom.set_attribute(span, "style", &style.css_text()).ok()?;
