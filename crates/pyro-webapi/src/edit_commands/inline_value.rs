@@ -322,6 +322,26 @@ pub(super) fn query(page: &PageDom, kind: Kind) -> String {
 }
 
 pub(super) fn mixed(page: &PageDom, kind: Kind) -> bool {
+    if kind == Kind::Background {
+        if let Some((a, b)) = editing::selection_range(page).filter(|(a,b)| a != b) {
+            let dom = page.dom.borrow();
+            if let Some(host) = editing::editing_host(&dom, a.0) {
+                let nodes = formattable_nodes(page, &dom, host, a, b);
+                let paint_owner = |n| {
+                    let mut el = dom.parent_element(n).ok()?;
+                    while let Some(node) = el.filter(|&node| node != host) {
+                        if !DeclarationBlock::parse(dom.get_attribute(node, "style").ok()?.unwrap_or(""))
+                            .value("background-color").is_empty() { return Some(node); }
+                        el = dom.parent_element(node).ok()?;
+                    }
+                    None
+                };
+                if let Some(owner) = nodes.first().and_then(|&n| paint_owner(n)) {
+                    if nodes.iter().all(|&n| paint_owner(n) == Some(owner)) { return false; }
+                }
+            }
+        }
+    }
     let values = selected_values(page, kind);
     values.first().is_some_and(|a| values.iter().any(|b| b != a))
 }
@@ -485,6 +505,43 @@ fn value_carrier(dom: &Dom, node: NodeId, host: NodeId, fmt: &Format) -> Option<
         .then_some(parent)
 }
 
+/// Keep the original painted carrier on the unselected suffix. The ID
+/// stays on the first fragment; other authored attributes survive cloning.
+fn isolate_painted_text(dom: &mut Dom, carrier: NodeId, text: NodeId) -> Option<NodeId> {
+    let parent = dom.parent_element(carrier).ok()??;
+    if dom.prev_sibling(text).ok()?.is_some() {
+        let prefix = dom.clone_node(carrier, false, None).ok()?;
+        dom.insert_before(parent, prefix, Some(carrier)).ok()?;
+        dom.remove_attribute(carrier, "id").ok()?;
+        while let Some(child) = dom.first_child(carrier).ok()?.filter(|&n| n != text) {
+            dom.append_child(prefix, child).ok()?;
+        }
+    }
+    if dom.next_sibling(text).ok()?.is_none() { return Some(carrier); }
+    let selected = dom.clone_node(carrier, false, None).ok()?;
+    dom.remove_attribute(carrier, "id").ok()?;
+    dom.insert_before(parent, selected, Some(carrier)).ok()?;
+    dom.append_child(selected, text).ok()?;
+    Some(selected)
+}
+
+fn inline_paint_scope(page: &PageDom, dom: &Dom, host: NodeId, text: NodeId) -> bool {
+    let mut cur = dom.parent_element(text).ok().flatten();
+    let mut painted = false;
+    while let Some(el) = cur.filter(|&el| el != host) {
+        let display = page.layout().computed_style_value(dom, el, "display");
+        let style = DeclarationBlock::parse(dom.get_attribute(el, "style").ok().flatten().unwrap_or(""));
+        if !style.value("background-color").is_empty() {
+            // Nested authored backgrounds have independent paint boundaries.
+            if painted || !matches!(display.as_str(), "inline" | "contents") { return false; }
+            painted = true;
+        }
+        if !matches!(display.as_str(), "inline" | "contents") { break; }
+        cur = dom.parent_element(el).ok().flatten();
+    }
+    true
+}
+
 fn format_run(page: &PageDom, dom: &mut Dom, host: NodeId, text: NodeId, fmt: &Format, previous: Option<NodeId>, single: bool) -> Option<NodeId> {
     let doc = dom.node_document(text).ok()?;
     let legacy = fmt.legacy(dom.document_data(doc).ok()?.style_with_css);
@@ -506,18 +563,21 @@ fn format_run(page: &PageDom, dom: &mut Dom, host: NodeId, text: NodeId, fmt: &F
         }
         if fmt.kind == Kind::Background {
             let style = DeclarationBlock::parse(dom.get_attribute(carrier, "style").ok()?.unwrap_or(""));
-            if style.value("background-color").is_empty() && (dom.child_count(carrier).ok()? != 1
-                || !single && !pyro_dom::color_well::is_fully_transparent(&page.layout().computed_style_value(dom, carrier, "background-color")))
-            {
-                // A partial size carrier or stylesheet-painted element keeps
+            if style.value("background-color").is_empty() && dom.child_count(carrier).ok()? != 1 {
+                // A partial size carrier keeps
                 // its own extent; paint the selected text inside it.
                 return wrap(dom, text, fmt);
             }
         }
         let outer = dom.parent_element(carrier).ok()??;
         let mut points = [(text, 0), (text, editing::len(dom, text))];
-        let middle = super::alignment::split_edge(dom, outer, text, false, &mut points)?;
-        super::alignment::split_edge(dom, outer, text, true, &mut points)?;
+        let middle = if fmt.kind == Kind::Background {
+            isolate_painted_text(dom, carrier, text)?
+        } else {
+            let middle = super::alignment::split_edge(dom, outer, text, false, &mut points)?;
+            super::alignment::split_edge(dom, outer, text, true, &mut points)?;
+            middle
+        };
         let name = editing::local(dom, middle);
         if name == "font" {
             if let Some(attr) = fmt.kind.html_attr() { dom.remove_attribute(middle, attr).ok()?; }
@@ -620,7 +680,7 @@ pub(super) fn apply(page: &Rc<PageDom>, host: NodeId, kind: Kind, value: &str) -
     } else { None };
     let rewrite_runs = (kind != Kind::Background || !pyro_dom::color_well::is_fully_transparent(&fmt.css)) && {
         let dom = page.dom.borrow();
-        nodes.iter().all(|&n| editing::is_text(&dom, n)) && nodes.iter().any(|&n| {
+        nodes.iter().all(|&n| editing::is_text(&dom, n) && (kind != Kind::Background || inline_paint_scope(page, &dom, host, n))) && nodes.iter().any(|&n| {
             value_carrier(&dom, n, host, &fmt).is_some_and(|carrier| {
                 matches!(kind, Kind::Foreground | Kind::Background) || needs.contains(&true) || editing::local(&dom, carrier) == "span"
                     || kind == Kind::Family && dom.document_data(page.document()).is_ok_and(|d| d.style_with_css)
