@@ -601,6 +601,10 @@ fn body_stream<'s>(s: &Scope<'s>, d: &RequestData) -> JsResult<Value<'s>> {
     let read = source.get_atom("read")?;
     let cancel = source.get_atom("cancel")?;
     let stream = crate::streams::helper(s, &page, "fromBody", &[source.value(), read, cancel])?;
+    if d.used.get() {
+        // text()/json()/... or fetch() already read the body: its stream is unusable.
+        crate::streams::helper(s, &page, "markConsumed", &[stream])?;
+    }
     let realm = d.realm.upgrade().ok_or(JsError::ContextDestroyed)?;
     let owner = realm.scope()?;
     let wrapper = owner.lookup_identity(d.id).ok_or(JsError::ContextDestroyed)?;
