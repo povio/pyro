@@ -209,3 +209,77 @@ fn length_constraints_need_a_user_edit_and_a_text_state() {
     dom.insert_text(n, "1").unwrap();
     assert!(dom.validity(n).unwrap().valid(), "minlength does not apply to numbers");
 }
+
+#[test]
+fn opaque_ranges_follow_applied_utf16_replacements_before_selection_updates() {
+    use pyro_dom::forms::RangeMode;
+    let (dom, d) = doc("<textarea id=t>a🌱bc</textarea>");
+    let mut dom = dom.borrow_mut();
+    let t = el(&dom, d, "t");
+    let inside = dom.create_value_range(t, 2, 4).unwrap();
+    let boundary = dom.create_value_range(t, 3, 1).unwrap();
+    assert_eq!(boundary.offsets(), (3, 3));
+    dom.set_range_text(t, "xyz", 1, 3, RangeMode::End).unwrap();
+    assert_eq!(inside.offsets(), (1, 5));
+    assert_eq!(boundary.offsets(), (4, 4));
+    dom.set_selection_range(t, 1, 1).unwrap();
+    dom.insert_text(t, "🌱").unwrap();
+    assert_eq!(inside.offsets(), (1, 7));
+    assert_eq!(boundary.offsets(), (6, 6));
+    dom.set_value(t, "a🌱xyzbc").unwrap();
+    assert_eq!(inside.offsets(), (1, 7));
+    dom.set_value(t, "ab").unwrap();
+    assert_eq!(inside.offsets(), (0, 0));
+    assert!(inside.element().is_some());
+}
+
+#[test]
+fn opaque_ranges_disconnect_on_connected_removal_and_input_type_change() {
+    let (dom, d) = doc("<div id=p><input id=i value=abc></div>");
+    let mut dom = dom.borrow_mut();
+    let p = el(&dom, d, "p");
+    let i = el(&dom, d, "i");
+    let first = dom.create_value_range(i, 1, 3).unwrap();
+    let second = dom.create_value_range(i, 0, 1).unwrap();
+    first.disconnect();
+    first.disconnect();
+    assert_eq!(second.offsets(), (0, 1));
+    dom.remove_node(p).unwrap();
+    assert_eq!(second.element(), None);
+    let detached = dom.create_value_range(i, 0, 3).unwrap();
+    dom.remove_node(i).unwrap();
+    let other = dom.create_document(DocumentKind::Html, "about:blank");
+    dom.adopt_node(other, i).unwrap();
+    assert_eq!(detached.offsets(), (0, 3));
+    dom.set_attribute(i, "type", "search").unwrap();
+    assert_eq!(detached.element(), Some(i));
+    assert_eq!(detached.offsets(), (0, 0));
+    dom.set_attribute(i, "type", "email").unwrap();
+    assert_eq!(detached.element(), None);
+    assert_eq!(dom.create_value_range(i, 0, 0).err().unwrap().kind(), Some(DomErrorKind::NotSupported));
+}
+
+#[test]
+fn opaque_ranges_reset_only_when_the_relevant_value_changes() {
+    let (dom, d) = doc("<textarea id=t>abc</textarea><input id=i value=abc>");
+    let mut dom = dom.borrow_mut();
+    let t = el(&dom, d, "t");
+    let i = el(&dom, d, "i");
+    let clean = dom.create_value_range(i, 1, 3).unwrap();
+    dom.set_attribute(i, "value", "a").unwrap();
+    assert_eq!(clean.offsets(), (0, 0));
+    let clean = dom.create_value_range(t, 1, 3).unwrap();
+    dom.set_text_content(t, "abc").unwrap();
+    assert_eq!(clean.offsets(), (1, 3));
+    dom.set_text_content(t, "a").unwrap();
+    assert_eq!(clean.offsets(), (0, 0));
+    for control in [t, i] {
+        dom.set_value(control, "xyz").unwrap();
+        let dirty = dom.create_value_range(control, 1, 3).unwrap();
+        dom.set_custom_validity(control, "retained").unwrap();
+        dom.reset_control(control).unwrap();
+        assert_eq!(dirty.offsets(), (0, 0));
+        assert_eq!(dom.value(control).unwrap(), "a");
+        assert!(!dom.control_state(control).unwrap().unwrap().custom_validity.as_deref().unwrap().is_empty());
+    }
+}

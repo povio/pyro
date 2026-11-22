@@ -1,4 +1,4 @@
-//! Range, StaticRange and Selection (minimal). Range boundary points are live:
+//! Range, StaticRange, OpaqueRange and Selection. Range boundary points are live:
 //! `pyro_dom::live_range` adjusts them as the tree changes. A node from another
 //! page's `Dom` can't be a boundary point here: comparison methods treat it as
 //! a different root, the setters report NotSupportedError.
@@ -475,7 +475,7 @@ pub struct Range;
 impl JsClass for Range {
     const NAME: &'static str = "Range";
     type Data = RangeData;
-    type Parent = AbstractRange;
+    type Parent = NodeRange;
     fn define(def: &mut ClassDef<Self>) {
         def.upcast(|_d: &RangeData| &());
         def.constructor(0, |s, nt, _a| {
@@ -695,34 +695,64 @@ impl StaticRangeData {
     }
 }
 
-/// DOM `AbstractRange`: the boundary points both `Range` (live) and `StaticRange` have. Its
-/// members read the receiver as either.
+/// DOM AbstractRange exposes offsets and collapsed state for both node-backed
+/// and text-control ranges. Only NodeRange exposes boundary containers.
 pub struct AbstractRange;
 impl JsClass for AbstractRange {
     const NAME: &'static str = "AbstractRange";
     type Data = ();
     type Parent = NoParent;
     fn define(def: &mut ClassDef<Self>) {
+        def.getter_this("startOffset", |s, _d, this| Ok(s.number(abstract_offsets(s, this)?.0 as f64)));
+        def.getter_this("endOffset", |s, _d, this| Ok(s.number(abstract_offsets(s, this)?.1 as f64)));
+        def.getter_this("collapsed", |s, _d, this| Ok(s.boolean(abstract_offsets(s, this)?.2)));
+    }
+}
+
+fn abstract_offsets(s: &Scope<'_>, this: Object<'_>) -> JsResult<(u32, u32, bool)> {
+    if let Some(range) = s.unwrap::<OpaqueRange>(this.value()) {
+        let (start, end) = range.offsets();
+        return Ok((start, end, start == end));
+    }
+    let (_, start, end) = node_range_points(s, this)?;
+    Ok((start.1, end.1, start == end))
+}
+
+pub struct NodeRange;
+impl JsClass for NodeRange {
+    const NAME: &'static str = "NodeRange";
+    type Data = ();
+    type Parent = AbstractRange;
+    fn define(def: &mut ClassDef<Self>) {
+        def.upcast(|data| data);
         def.getter_this("startContainer", |s, _d, this| {
-            let (page, (start, _), _) = abstract_points(s, this)?;
+            let (page, (start, _), _) = node_range_points(s, this)?;
             Ok(wrap_node(s, &page, start)?.value())
         });
-        def.getter_this("startOffset", |s, _d, this| Ok(s.number(abstract_points(s, this)?.1.1 as f64)));
         def.getter_this("endContainer", |s, _d, this| {
-            let (page, _, (end, _)) = abstract_points(s, this)?;
+            let (page, _, (end, _)) = node_range_points(s, this)?;
             Ok(wrap_node(s, &page, end)?.value())
         });
-        def.getter_this("endOffset", |s, _d, this| Ok(s.number(abstract_points(s, this)?.2.1 as f64)));
-        def.getter_this("collapsed", |s, _d, this| {
-            let (_, start, end) = abstract_points(s, this)?;
-            Ok(s.boolean(start == end))
+    }
+}
+
+pub(crate) struct OpaqueRange;
+impl JsClass for OpaqueRange {
+    const NAME: &'static str = "OpaqueRange";
+    type Data = Rc<pyro_dom::forms::OpaqueRange>;
+    type Parent = AbstractRange;
+    fn define(def: &mut ClassDef<Self>) {
+        def.upcast(|_data| &());
+        def.method("disconnect", 0, |s, range, _| {
+            range.disconnect();
+            Ok(s.undefined())
         });
     }
 }
 
 /// The page and boundary points of a `Range` or `StaticRange` receiver.
 #[allow(clippy::type_complexity)]
-fn abstract_points(s: &Scope<'_>, this: Object<'_>) -> JsResult<(Rc<PageDom>, (NodeId, u32), (NodeId, u32))> {
+fn node_range_points(s: &Scope<'_>, this: Object<'_>) -> JsResult<(Rc<PageDom>, (NodeId, u32), (NodeId, u32))> {
     if let Some(r) = s.unwrap::<Range>(this.value()) {
         let (a, b, c, d) = points(&r);
         return Ok((r.page(), (a, b), (c, d)));
@@ -738,7 +768,7 @@ pub struct StaticRange;
 impl JsClass for StaticRange {
     const NAME: &'static str = "StaticRange";
     type Data = StaticRangeData;
-    type Parent = AbstractRange;
+    type Parent = NodeRange;
     fn define(def: &mut ClassDef<Self>) {
         def.upcast(|_d: &StaticRangeData| &());
         def.constructor(1, |s, nt, a| {
@@ -1120,6 +1150,8 @@ pub fn get_selection<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Value<'s
 
 pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<AbstractRange>();
+    engine.register::<NodeRange>();
+    engine.register::<OpaqueRange>();
     engine.register::<Range>();
     engine.register::<StaticRange>();
     engine.register::<Selection>();

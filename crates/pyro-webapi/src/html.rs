@@ -2201,6 +2201,20 @@ fn queue_selection_events_if_changed(n: &NodeData, before: Option<(u32, u32, Opt
 }
 
 fn define_text_selection<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
+    def.method("createValueRange", 2, |s, n, a| {
+        a.require(2, "createValueRange")?;
+        // Web IDL converts both arguments before entering the DOM algorithm.
+        // Reduce the Number modulo 2^32 before narrowing even for huge values.
+        let offset = |v: Value<'_>| -> JsResult<u32> {
+            Ok(v.to_number()?.trunc().rem_euclid(4_294_967_296.0) as u32)
+        };
+        let start = offset(a.get(0))?;
+        let end = offset(a.get(1))?;
+        let range = n.page().dom.borrow_mut().create_value_range(n.id, start, end).js()?;
+        let control = collections::NodeHold::new(n.page(), n.id)?;
+        range.hold_control(Box::new(move || drop(control)));
+        Ok(s.wrap::<crate::range::OpaqueRange>(range, None)?.value())
+    });
     def.accessor(
         "selectionStart",
         |s, n| {
