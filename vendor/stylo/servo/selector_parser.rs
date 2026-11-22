@@ -747,6 +747,9 @@ pub enum NonTSPseudoClass {
     MozMeterSubOptimum,
     MozMeterSubSubOptimum,
     MozTopmostModal,
+    /// pyro: `:-pyro-active-view-transition-scope` (UA sheets only): an element whose
+    /// element-scoped view transition is active (css-view-transitions-2).
+    PyroActiveViewTransitionScope,
     Open,
     Optional,
     OutOfRange,
@@ -861,6 +864,7 @@ impl ToCss for NonTSPseudoClass {
             Self::MozMeterSubOptimum => ":-moz-meter-sub-optimum",
             Self::MozMeterSubSubOptimum => ":-moz-meter-sub-sub-optimum",
             Self::MozTopmostModal => ":-moz-topmost-modal",
+            Self::PyroActiveViewTransitionScope => ":-pyro-active-view-transition-scope",
             Self::Open => ":open",
             Self::Optional => ":optional",
             Self::OutOfRange => ":out-of-range",
@@ -913,6 +917,7 @@ impl NonTSPseudoClass {
             Self::MozMeterSubOptimum => ElementState::SUB_OPTIMUM,
             Self::MozMeterSubSubOptimum => ElementState::SUB_SUB_OPTIMUM,
             Self::MozTopmostModal => ElementState::TOPMOST_MODAL,
+            Self::PyroActiveViewTransitionScope => ElementState::ACTIVE_VIEW_TRANSITION,
             Self::Open => ElementState::OPEN,
             Self::Optional => ElementState::OPTIONAL_,
             Self::OutOfRange => ElementState::OUTOFRANGE,
@@ -1078,6 +1083,14 @@ impl<'a, 'i> ::selectors::Parser<'i> for SelectorParser<'a> {
                     ))
                 }
                 NonTSPseudoClass::MozTopmostModal
+            },
+            "-pyro-active-view-transition-scope" => {
+                if !self.in_user_agent_stylesheet() {
+                    return Err(ParseError::custom(
+                        SelectorParseErrorKind::UnexpectedIdent
+                    ))
+                }
+                NonTSPseudoClass::PyroActiveViewTransitionScope
             },
             "-servo-nonzero-border" => {
                 if !self.in_user_agent_stylesheet() {

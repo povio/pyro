@@ -2541,7 +2541,7 @@ affects = ""
 
 [view-transition-scope]
 type = "ViewTransitionScope"
-initial = "computed::ViewTransitionScope::Auto"
+initial = "computed::ViewTransitionScope::None"
 struct = "ui"
 engine = "servo"
 servo_pref = "layout.css.view-transitions.enabled"

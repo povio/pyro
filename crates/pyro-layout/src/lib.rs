@@ -1198,6 +1198,10 @@ impl GeometrySource for BlitzGeometry {
         RENDERER.with(|renderer| renderer.try_borrow().ok().and_then(|renderer| renderer.as_ref().map(|renderer| renderer.view_transition_names(self.page, root).0)).unwrap_or(false))
     }
 
+    fn layout_containment_eligible(&self, key: u64) -> bool {
+        RENDERER.with(|renderer| renderer.try_borrow().ok().and_then(|renderer| renderer.as_ref()?.layout_containment_eligible(self.page, key))).unwrap_or(false)
+    }
+
     fn set_transition_boxes(&self, root: u64, old: &[pyro_dom::geometry::TransitionBox], new: &[pyro_dom::geometry::TransitionBox]) -> bool {
         if old.len() > 256 || new.len() > 256 { return false; }
         let convert = |boxes: &[pyro_dom::geometry::TransitionBox]| boxes.iter().map(|item| pyro_render::TransitionBox { key: item.key, name: item.name.clone(), size: item.size, transform: item.transform, ink: item.ink, image: None }).collect::<Vec<_>>();

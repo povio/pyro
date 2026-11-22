@@ -1041,6 +1041,26 @@ impl DocumentMutator<'_> {
                 }
                 node.mark_ancestors_dirty();
             }
+            // pyro: the `view-transition-contain` token (the scope of an element-scoped view
+            // transition until its update callback is done): the element keeps the border-box size
+            // of its last layout, from before the token came, until the token goes
+            // (`LayoutData::view_transition_size`).
+            let contain = |v: &str| v.split_ascii_whitespace().any(|t| t == "view-transition-contain");
+            let was_contained = self.doc.nodes[node_id]
+                .element_data()
+                .and_then(|e| e.attrs.state(&name.local))
+                .is_some_and(contain);
+            let contained = value.is_some_and(contain);
+            if was_contained != contained {
+                // (Physical and unrounded: a fractional size stays what script saw.)
+                let size = contained.then(|| self.doc.physical_unrounded_layout(node_id).size);
+                let node = &mut self.doc.nodes[node_id];
+                node.layout_data_mut().view_transition_size = size;
+                if let Some(mut data) = node.try_stylo_element_data_mut().and_then(|s| s.get_mut()) {
+                    data.damage.insert(ALL_DAMAGE);
+                }
+                node.mark_damaged();
+            }
         }
         let Some(parent_id) = self.doc.nodes[node_id].parent else {
             return;

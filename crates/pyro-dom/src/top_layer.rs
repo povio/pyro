@@ -171,6 +171,35 @@ impl Dom {
         dialog && (tl.modal.contains(&id) || tl.pending.contains(&id))
     }
 
+    /// pyro: makes `el` the scope of an active element-scoped view transition (`Some`), or no
+    /// longer one (`None`). The UA sheet gives a scope `view-transition-name: root` and
+    /// `view-transition-scope: all` (`:-pyro-active-view-transition-scope`, as in Chrome). A
+    /// scope that keeps its size (`Some(true)`, from the start of its transition until its update
+    /// callback is done) is laid out at its border-box size from before (css-view-transitions-2:
+    /// size containment with the last remembered size; not part of its computed style).
+    pub fn set_view_transition_scope(&mut self, el: NodeId, state: Option<bool>) {
+        let changed = match state {
+            Some(contained) => self.view_transition_scopes.insert(el, contained) != Some(contained),
+            None => self.view_transition_scopes.remove(&el).is_some(),
+        };
+        if changed {
+            // (A state change of the element alone: its render state attribute.)
+            self.bump();
+            if let Ok(i) = self.check(el) {
+                self.note(crate::dom::Change::State(i));
+            }
+        }
+    }
+
+    /// pyro: whether the element at `idx` is the scope of an active element-scoped view
+    /// transition (`Some`), and whether it keeps its size ([`Dom::set_view_transition_scope`]).
+    pub(crate) fn view_transition_scope_idx(&self, idx: u32) -> Option<bool> {
+        if self.view_transition_scopes.is_empty() {
+            return None;
+        }
+        self.view_transition_scopes.get(&self.id_of(idx)).copied()
+    }
+
     pub(crate) fn is_modal_idx(&self, idx: u32) -> bool {
         !self.top_layer.modal.is_empty() && self.top_layer.modal.contains(&self.id_of(idx))
     }

@@ -2655,7 +2655,7 @@ diff -ruN a/properties/helpers.mako.rs b/properties/helpers.mako.rs
                  self.${shorthand.sub_properties[i].ident},
 diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 --- a/properties/longhands.toml	2026-11-11 19:55:57
-+++ b/properties/longhands.toml	2026-11-22 20:29:14
++++ b/properties/longhands.toml	2026-11-22 21:05:09
 @@ -129,7 +129,6 @@
  type = "ColorOrAuto"
  initial = "generics::color::ColorOrAuto::Auto"
@@ -3430,7 +3430,7 @@ diff -ruN a/properties/longhands.toml b/properties/longhands.toml
 +
 +[view-transition-scope]
 +type = "ViewTransitionScope"
-+initial = "computed::ViewTransitionScope::Auto"
++initial = "computed::ViewTransitionScope::None"
 +struct = "ui"
 +engine = "servo"
 +servo_pref = "layout.css.view-transitions.enabled"
@@ -6560,7 +6560,7 @@ diff -ruN a/servo/restyle_damage.rs b/servo/restyle_damage.rs
          !self.transform.0.is_empty()
 diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 --- a/servo/selector_parser.rs	2026-11-11 19:55:57
-+++ b/servo/selector_parser.rs	2026-11-21 01:58:20
++++ b/servo/selector_parser.rs	2026-11-22 21:05:09
 @@ -24,7 +24,6 @@
  use selectors::attr::{AttrSelectorOperation, CaseSensitivity, NamespaceConstraint};
  use selectors::parser::SelectorParseErrorKind;
@@ -6888,12 +6888,10 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
          result
      }
  
-@@ -166,8 +400,58 @@
-     #[inline]
-     pub fn is_marker(&self) -> bool {
+@@ -168,6 +402,56 @@
          *self == PseudoElement::Marker
-+    }
-+
+     }
+ 
 +    /// pyro: whether this pseudo-element is `::scroll-marker`.
 +    #[inline]
 +    pub fn is_scroll_marker(&self) -> bool {
@@ -6915,8 +6913,8 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +                | PseudoElement::ScrollButtonLeft
 +                | PseudoElement::ScrollButtonRight
 +        )
-     }
- 
++    }
++
 +    /// pyro: the key a rule for this pseudo-element is filed under in the stylist's maps: every
 +    /// `::scroll-button()` rule under `::scroll-button(*)`, as which a button's box is styled (its
 +    /// node then matches each rule's argument against its direction).
@@ -7092,7 +7090,17 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
      Defined,
      Disabled,
      Enabled,
-@@ -405,6 +757,17 @@
+@@ -395,6 +747,9 @@
+     MozMeterSubOptimum,
+     MozMeterSubSubOptimum,
+     MozTopmostModal,
++    /// pyro: `:-pyro-active-view-transition-scope` (UA sheets only): an element whose
++    /// element-scoped view transition is active (css-view-transitions-2).
++    PyroActiveViewTransitionScope,
+     Open,
+     Optional,
+     OutOfRange,
+@@ -405,6 +760,17 @@
      Required,
      ServoNonZeroBorder,
      Target,
@@ -7110,7 +7118,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
      UserInvalid,
      UserValid,
      Valid,
-@@ -417,11 +780,24 @@
+@@ -417,11 +783,24 @@
          matches!(*self, NonTSPseudoClass::Active | NonTSPseudoClass::Hover)
      }
  
@@ -7136,7 +7144,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
          )
      }
  
-@@ -441,6 +817,20 @@
+@@ -441,6 +820,20 @@
              serialize_identifier(lang, dest)?;
              return dest.write_char(')');
          }
@@ -7157,7 +7165,15 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
  
          dest.write_str(match *self {
              Self::Active => ":active",
-@@ -481,11 +871,16 @@
+@@ -471,6 +864,7 @@
+             Self::MozMeterSubOptimum => ":-moz-meter-sub-optimum",
+             Self::MozMeterSubSubOptimum => ":-moz-meter-sub-sub-optimum",
+             Self::MozTopmostModal => ":-moz-topmost-modal",
++            Self::PyroActiveViewTransitionScope => ":-pyro-active-view-transition-scope",
+             Self::Open => ":open",
+             Self::Optional => ":optional",
+             Self::OutOfRange => ":out-of-range",
+@@ -481,11 +875,16 @@
              Self::Required => ":required",
              Self::ServoNonZeroBorder => ":-servo-nonzero-border",
              Self::Target => ":target",
@@ -7175,7 +7191,15 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
          })
      }
  }
-@@ -527,11 +922,20 @@
+@@ -518,6 +917,7 @@
+             Self::MozMeterSubOptimum => ElementState::SUB_OPTIMUM,
+             Self::MozMeterSubSubOptimum => ElementState::SUB_SUB_OPTIMUM,
+             Self::MozTopmostModal => ElementState::TOPMOST_MODAL,
++            Self::PyroActiveViewTransitionScope => ElementState::ACTIVE_VIEW_TRANSITION,
+             Self::Open => ElementState::OPEN,
+             Self::Optional => ElementState::OPTIONAL_,
+             Self::OutOfRange => ElementState::OUTOFRANGE,
+@@ -527,11 +927,20 @@
              Self::ReadWrite => ElementState::READWRITE,
              Self::Required => ElementState::REQUIRED,
              Self::Target => ElementState::URLTARGET,
@@ -7197,7 +7221,7 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
                  ElementState::empty()
              },
          }
-@@ -646,6 +1050,12 @@
+@@ -646,6 +1055,12 @@
              "read-write" => NonTSPseudoClass::ReadWrite,
              "required" => NonTSPseudoClass::Required,
              "target" => NonTSPseudoClass::Target,
@@ -7210,10 +7234,26 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              "user-invalid" => NonTSPseudoClass::UserInvalid,
              "user-valid" => NonTSPseudoClass::UserValid,
              "valid" => NonTSPseudoClass::Valid,
-@@ -697,6 +1107,27 @@
+@@ -669,6 +1084,14 @@
+                 }
+                 NonTSPseudoClass::MozTopmostModal
+             },
++            "-pyro-active-view-transition-scope" => {
++                if !self.in_user_agent_stylesheet() {
++                    return Err(ParseError::custom(
++                        SelectorParseErrorKind::UnexpectedIdent
++                    ))
++                }
++                NonTSPseudoClass::PyroActiveViewTransitionScope
++            },
+             "-servo-nonzero-border" => {
+                 if !self.in_user_agent_stylesheet() {
+                     return Err(ParseError::custom(
+@@ -696,6 +1119,27 @@
+             "state" => {
                  let result = AtomIdent::from(parser.expect_ident()?.as_ref());
                  NonTSPseudoClass::CustomState(CustomState(result))
-             },
++            },
 +            "dir" if !after_part => {
 +                NonTSPseudoClass::Dir(parser.expect_ident()?.to_ascii_lowercase().into())
 +            },
@@ -7234,11 +7274,10 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +                    return Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent));
 +                }
 +                NonTSPseudoClass::HasSlotted(Some(HasSlottedArgument(list)))
-+            },
+             },
              _ => return Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent)),
          };
- 
-@@ -714,8 +1145,26 @@
+@@ -714,8 +1158,26 @@
              "first-letter" => FirstLetter,
              "first-line" if crate::pref!("layout.css.first-line.enabled") => FirstLine,
              "marker" => Marker,
@@ -7265,12 +7304,10 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
              "placeholder" => Placeholder,
              "-servo-text-control-inner-container" => {
                  if !self.in_user_agent_stylesheet() {
-@@ -774,6 +1223,43 @@
-         };
- 
+@@ -776,6 +1238,43 @@
          Ok(pseudo_element)
-+    }
-+
+     }
+ 
 +    // pyro: `::scroll-button(<direction> | *)` (CSS Overflow 5 § 3.2).
 +    fn parse_functional_pseudo_element(
 +        &self,
@@ -7306,9 +7343,11 @@ diff -ruN a/servo/selector_parser.rs b/servo/selector_parser.rs
 +            "right" => ScrollButtonRight,
 +            _ => return Err(ParseError::custom(SelectorParseErrorKind::UnexpectedIdent)),
 +        })
-     }
- 
++    }
++
      fn default_namespace(&self) -> Option<Namespace> {
+         self.namespaces.default.as_ref().map(|ns| ns.clone())
+     }
 diff -ruN a/sharing/checks.rs b/sharing/checks.rs
 --- a/sharing/checks.rs	2026-11-11 19:55:57
 +++ b/sharing/checks.rs	2026-11-21 19:46:25
@@ -13629,7 +13668,7 @@ diff -ruN a/values/specified/border.rs b/values/specified/border.rs
      #[inline]
 diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 --- a/values/specified/box.rs	2026-11-11 19:55:57
-+++ b/values/specified/box.rs	2026-11-22 01:26:58
++++ b/values/specified/box.rs	2026-11-22 21:05:09
 @@ -15,7 +15,7 @@
      GenericLineClamp, GenericOverflowClipMargin, GenericPerspective, GenericScrollbarInset,
      MaxLines, OverflowClipMarginBox,
@@ -14020,10 +14059,13 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
      overlapping_bits
  ))]
  #[repr(C)]
-@@ -1410,6 +1530,25 @@
-     }
- }
- 
+@@ -1407,6 +1527,25 @@
+         const CONTENT = 1 << 6 | Contain::LAYOUT.bits() | Contain::STYLE.bits() | Contain::PAINT.bits();
+         /// `strict` variant, turns on all types of containment
+         const STRICT = 1 << 7 | Contain::LAYOUT.bits() | Contain::STYLE.bits() | Contain::PAINT.bits() | Contain::SIZE.bits();
++    }
++}
++
 +impl crate::values::computed::ToComputedValue for Contain {
 +    type ComputedValue = Self;
 +
@@ -14040,12 +14082,9 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +
 +    fn from_computed_value(value: &Self) -> Self {
 +        *value
-+    }
-+}
-+
- impl Parse for ContainIntrinsicSize {
-     /// none | <length> | auto <length>
-     fn parse(context: &ParserContext, input: &mut Parser) -> Result<Self, ParseError> {
+     }
+ }
+ 
 @@ -1593,7 +1732,7 @@
  )]
  #[css(bitflags(
@@ -14097,10 +14136,12 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
          }
      }
  }
-@@ -2293,6 +2440,15 @@
+@@ -2291,6 +2438,15 @@
+ pub enum ScrollBehavior {
+     Auto,
      Smooth,
- }
- 
++}
++
 +#[allow(missing_docs)]
 +#[derive(Clone, Copy, Debug, Deserialize, Eq, FromPrimitive, Hash, MallocSizeOf, Parse, PartialEq,
 +         Serialize, SpecifiedValueInfo, ToComputedValue, ToCss, ToResolvedValue, ToShmem, ToTyped)]
@@ -14108,33 +14149,30 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +pub enum ScrollAxisLock {
 +    Auto,
 +    None,
-+}
-+
+ }
+ 
  /// https://drafts.fxtf.org/compositing/#isolation
- #[allow(missing_docs)]
- #[derive(
-@@ -2320,6 +2476,15 @@
+@@ -2320,6 +2476,16 @@
      Isolate,
  }
  
-+/// Which view transition names are scoped to this element.
++/// Which view transition names are scoped to this element (`none | all`, initially `none`,
++/// as in Chrome).
 +#[allow(missing_docs)]
 +#[derive(Clone, Copy, Debug, Eq, Hash, MallocSizeOf, Parse, PartialEq, SpecifiedValueInfo, ToComputedValue, ToCss, ToResolvedValue, ToShmem, ToTyped)]
 +#[repr(u8)]
 +pub enum ViewTransitionScope {
-+    Auto,
++    None,
 +    All,
 +}
 +
  /// https://drafts.csswg.org/css-transforms/#backface-visibility-property
  #[allow(missing_docs)]
  #[derive(
-@@ -2486,6 +2651,39 @@
- pub enum ImageOrientation {
-     FromImage,
+@@ -2488,6 +2654,39 @@
      None,
-+}
-+
+ }
+ 
 +/// CSS Display 4 reading-flow keyword selected on a container.
 +#[allow(missing_docs)]
 +#[derive(Clone, Copy, Debug, Eq, MallocSizeOf, Parse, PartialEq, SpecifiedValueInfo, ToComputedValue, ToCss, ToResolvedValue, ToShmem, ToTyped)]
@@ -14166,10 +14204,12 @@ diff -ruN a/values/specified/box.rs b/values/specified/box.rs
 +pub enum InterpolateSize {
 +    NumericOnly,
 +    AllowKeywords,
- }
- 
++}
++
  /// Nonstandard (https://developer.mozilla.org/en-US/docs/Web/CSS/box-align)
-@@ -2629,3 +2827,90 @@
+ #[allow(missing_docs)]
+ #[derive(
+@@ -2629,3 +2828,90 @@
      Ltr,
      Rtl,
  }

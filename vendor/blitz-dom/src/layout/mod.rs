@@ -346,7 +346,14 @@ impl LayoutPassState<'_> {
             Some(styles) => (Some(node_size_containment(&self.nodes[dom_node_id(node_id)], &styles)), has_calc_size(&styles)),
             None => (None, false),
         };
-        if contain.is_some_and(|contain| contain.contains(style::values::computed::Contain::BLOCK_SIZE)) {
+        // pyro: the scope of an element-scoped view transition keeps its size during the update
+        // callback (`Self::view_transition_size`), whatever its contents.
+        if let Some(size) = self.view_transition_size(node_id) {
+            if inputs.run_mode != RunMode::PerformLayout {
+                return taffy::tree::LayoutOutput::from_outer_size(size);
+            }
+            inputs.known_dimensions = size.map(Some);
+        } else if contain.is_some_and(|contain| contain.contains(style::values::computed::Contain::BLOCK_SIZE)) {
             if let Some(size) = self.size_contained_size(node_id, inputs) {
                 if inputs.run_mode != RunMode::PerformLayout {
                     return taffy::tree::LayoutOutput::from_outer_size(size);
@@ -584,6 +591,22 @@ impl LayoutPassState<'_> {
             ];
         }
         inputs
+    }
+
+    /// pyro: the border-box size the scope of an element-scoped view transition keeps until its
+    /// update callback is done (`LayoutData::view_transition_size`, physical), in the axes of the
+    /// running algorithm (as `Self::size_contained_size`).
+    fn view_transition_size(&self, node_id: NodeId) -> Option<taffy::Size<f32>> {
+        let node = &self.nodes[dom_node_id(node_id)];
+        if !node.is_element() {
+            return None;
+        }
+        let size = node.layout_data().view_transition_size?;
+        #[cfg(feature = "writing-mode")]
+        let vertical = self.layout_wm.is_vertical();
+        #[cfg(not(feature = "writing-mode"))]
+        let vertical = false;
+        Some(if vertical { taffy::Size { width: size.height, height: size.width } } else { size })
     }
 
     /// pyro: the size of a box with size containment (`contain: size`, css-contain-2 §3.1): the

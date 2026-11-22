@@ -700,6 +700,9 @@ pub trait GeometrySource {
     fn clear_transition_boxes(&self, _root: u64) {}
     /// Whether the painted subtree can participate in a named view transition.
     fn view_transition_names_valid(&self, _root: u64) -> bool { true }
+    /// Whether element `key` can take layout containment (css-contain-2 § 3.2), as the scope of
+    /// an element-scoped view transition must.
+    fn layout_containment_eligible(&self, _key: u64) -> bool { true }
     fn capture_transition(&self, _root: u64, _old: bool, _pixels: u64, _work: &mut u64) -> Option<Vec<TransitionBox>> { Some(Vec::new()) }
     /// Brings the engine's layout up to the document; the other queries
     /// answer from it.

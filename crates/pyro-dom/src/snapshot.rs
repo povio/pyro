@@ -1258,7 +1258,9 @@ impl Dom {
         let auto_dir = self.has_auto_directionality(n).then(|| self.directionality_idx(n));
         // A custom element not defined yet is not `:defined`.
         let undefined = !e.is_defined();
-        if !kind && !editable && natural.is_none() && auto_dir.is_none() && !undefined {
+        // pyro: the scope of an active element-scoped view transition (`Dom::set_view_transition_scope`).
+        let scope = self.view_transition_scope_idx(n);
+        if !kind && !editable && natural.is_none() && auto_dir.is_none() && !undefined && scope.is_none() {
             return None;
         }
         let mut out = String::new();
@@ -1315,6 +1317,12 @@ impl Dom {
                 out.push(' ');
             }
             out.push_str("dialog-in-top-layer");
+        }
+        if let Some(contained) = scope {
+            if !out.is_empty() {
+                out.push(' ');
+            }
+            out.push_str(if contained { "view-transition-scope view-transition-contain" } else { "view-transition-scope" });
         }
         // The top layer's paint order: renderers paint these elements above
         // the document by rank (one empty check without a top layer).

@@ -9,6 +9,10 @@
 @namespace svg url(http://www.w3.org/2000/svg);
 
 *|*:root { view-transition-name: root; }
+/* pyro: the scope of an active element-scoped view transition (css-view-transitions-2, as in
+   Chrome): it takes part in its own transition as `root` (an author `view-transition-name` wins),
+   and its names stay out of transitions its ancestors start. */
+*|*:-pyro-active-view-transition-scope { view-transition-name: root; view-transition-scope: all; }
 
 *|*::view-transition { position: absolute; inset: 0; }
 *|*::view-transition-group(*) {
