@@ -1,0 +1,32 @@
+{
+  "before": {
+    "html": 96,
+    "anchor": 96,
+    "focus": 96,
+    "direction": 96,
+    "value": 96,
+    "text": 24
+  },
+  "result": {
+    "result": 96
+  },
+  "after": {
+    "html": 84,
+    "anchor": 76,
+    "focus": 84,
+    "direction": 96,
+    "text": 48,
+    "value": 84
+  },
+  "undo": {
+    "undo": 96
+  },
+  "restored": {
+    "html": 96,
+    "anchor": 72,
+    "focus": 72,
+    "direction": 96,
+    "text": 56,
+    "value": 80
+  }
+}

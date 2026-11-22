@@ -1,0 +1,12 @@
+const fs=require('fs'),path=require('path'),net=require('net'),cp=require('child_process'),os=require('os');
+const cache=path.resolve(__dirname,"..","..",".."),pw=require(path.join(cache,'round6-reference-158/census/runner/node_modules/playwright-core'));
+(async()=>{const [label,bin]=process.argv.slice(2),s=net.createServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));const port=s.address().port;await new Promise(r=>s.close(r));
+const proc=cp.spawn(bin,['serve','--port',String(port),'--host','127.0.0.1','--log-level','error'],{stdio:'ignore',env:{...process.env,WPT_CHROME_STATE_DIR:fs.mkdtempSync(path.join(os.tmpdir(),'qa-enter-'))}});let b;
+try{const endpoint='http://127.0.0.1:'+port;let version;for(let i=0;i<100;i++){try{version=await(await fetch(endpoint+'/json/version')).json();break}catch{}await new Promise(r=>setTimeout(r,100))}
+b=await pw.chromium.connectOverCDP(endpoint);const p=await b.newPage(),rows=[];
+for(const [shape,html] of Object.entries({custom:'<quasit style="display:block">foobar</quasit>',listing:'<listing>foobar</listing>',xmp:'<xmp>foobar</xmp>',span:'<span style="display:block">foobar</span>',builtIn:'<p>foobar</p>',section:'<section>foobar</section>' }))for(const tag of ['p','div','h1','blockquote']){
+ await p.setContent('<div id=h contenteditable>'+html+'</div>');rows.push(await p.evaluate(({shape,tag})=>{h.focus();const w=document.createTreeWalker(h,NodeFilter.SHOW_TEXT);let t=[],n;while(n=w.nextNode())t.push(n);const s=getSelection();if(shape==='inline')s.collapse(h,1);else if(['empty','table'].includes(shape))s.selectAllChildren(h);else s.setBaseAndExtent(t[0],1,t.at(-1),4);
+ const path=n=>{let a=[];while(n&&n!==h){if(!n.parentNode)return null;a.unshift([...n.parentNode.childNodes].indexOf(n));n=n.parentNode}return a};const snap=()=>({html:h.innerHTML,value:document.queryCommandValue('formatBlock'),anchor:[path(s.anchorNode),s.anchorOffset],focus:[path(s.focusNode),s.focusOffset],text:s.toString()});
+ const original=h.firstChild;const before=snap(),ok=document.execCommand('formatBlock',false,tag),after={...snap(),originalRetained:h.contains(original)};document.execCommand('undo');return {shape,tag,ok,before,after,undo:snap()};},{shape,tag}));}
+fs.writeFileSync(path.join(__dirname,label+'.json'),JSON.stringify({version,rows},null,2));
+}finally{if(b)await b.close();proc.kill()}})().catch(e=>{console.error(e);process.exitCode=1});

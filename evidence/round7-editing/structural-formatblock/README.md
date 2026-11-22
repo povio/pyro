@@ -1,0 +1,19 @@
+# formatBlock queries on structural selections
+
+Frozen source `34c4ddf0d2c75713f5df815c9609d6afe45c1d6a`, tree `91c5e0358c85de5f528cfa43c74d5d49a7a703aa`, executable SHA-256 `c364953e8144d0748aa0e585a421907427d046b3cc3742e3b87fbd9a2384dd80`. Exact parent `49cf99799a12222be6a38ce908645d2abecc40ff` required a build because archived production canvas and video inputs differed. Signed WPT rows retain their original Chrome 158.0.8127.37 provenance. Direct parent and signed receipts are included for comparison.
+
+A structural query now resolves an element boundary past hidden, empty or collapsed whitespace to a visible editing position. Preserved spaces, NBSP and BR are visible positions. The editable-host boundary still limits the search. All 96 paragraph boundary controls matched Chrome before formatting. The query change itself does not alter markup.
+
+For a range around all the children of a TABLE, the exact parent formatted each cell and left a cross-cell selection identical to formatting the contents of its TBODY. Chrome instead wraps the whole TABLE and selects it; a true cross-cell selection still yields an empty query. A narrowly approved conversion change reuses the whole-table wrapping path when both endpoints are on TABLE and cover its entire contents. Partial section and cell inputs retain their existing conversion paths.
+
+## Named and direct results
+
+Independent QA joined 33,326 assertions across 44 pages. All eight signed target queries recovered: four before formatting leading empty/whitespace paragraphs and four after formatting a complete table. Four pinned table markup passes became failures. The candidate and Chrome wrap the table; the pinned expectations put formatting blocks in each cell. All four losses are counted. Membership stayed constant. [Actual diagnostics](wpt-diagnostics.json)
+
+All 96 sibling controls and 64 lock/typing controls matched Chrome’s formatted markup, both endpoints, direction and query. Open preceding inline text supplies the start at the last visible character boundary. A locked final inline text position produces coincident endpoints with forward direction for initial forward and backward ranges. InsertText returned false in all 24 such typing controls and kept both the locked subtree and host markup intact. BR, nontext and block siblings retained their measured behavior.
+
+## Structural replacement and undo follow-up
+
+Eight DIV-wrapper undo focus matches from the first candidate were lost when the starting caret was corrected. These cover open text or an editable-ending inline sibling, two paragraph separators and both initial directions. The original parent missed all eight. After typing, the candidate can leave an empty table row in the wrapper where Chrome removes the table. For example the typed host can contain `leftQ<div><table><tbody><tr></tr></tbody></table></div>after` instead of `leftQ<div></div>after`. Undo restores the DIV markup but puts the focus at the following text’s offset zero instead of offset one inside the wrapper. Separately, reparsing a P that contained a TABLE can produce an empty P, a sibling TABLE and an empty P instead of restoring the nested table. These replacement and history behaviors remain open. [Eight cases and all four measured builds plus Chrome](undo-focus-followup.json.gz)
+
+The 238 existing formatBlock probe rows were compared using fresh exact-parent/final results and the original archived signed controls from round7-editing/format-block-value. No previously matching field was lost in those five cohorts. First-command paragraph conversion, selected-string serialization and normalized undo endpoints retain residual differences beyond the eight named targets. The native custom-block/line-joining test passed. All 10,092 command multitest and 13,060 static WPT guard statuses matched the exact parent.
