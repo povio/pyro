@@ -2195,7 +2195,17 @@ impl Browser {
                     "display: block;-webkit-user-select: none;margin: auto;background-color: hsl(0, 0%, 90%);",
                 ),
             };
-            format!("<html><head><meta name=\"viewport\" content=\"width=device-width, minimum-scale=0.1\"></head><body style=\"{body}\"><img style=\"{img}\" src=\"{src}\"></body></html>")
+            // A media document is in standards mode and reports its resource's MIME type.
+            let _ = dom.borrow_mut().set_content_type(doc, &resource.mime);
+            format!("<!DOCTYPE html><html><head><meta name=\"viewport\" content=\"width=device-width, minimum-scale=0.1\"></head><body style=\"{body}\"><img style=\"{img}\" src=\"{src}\"></body></html>")
+                .into_bytes()
+        } else if resource.mime.starts_with("video/") || resource.mime.starts_with("audio/") {
+            // A video or audio document (HTML § 7.6.6): Chromium's markup, the one media element
+            // playing the resource.
+            let src = resource.url.replace('&', "&amp;").replace('"', "&quot;");
+            let ty = resource.mime.replace('&', "&amp;").replace('"', "&quot;");
+            let _ = dom.borrow_mut().set_content_type(doc, &resource.mime);
+            format!("<!DOCTYPE html><html><head><meta name=\"viewport\" content=\"width=device-width\"></head><body><video controls autoplay name=\"media\"><source src=\"{src}\" type=\"{ty}\"></video></body></html>")
                 .into_bytes()
         } else {
             std::sync::Arc::unwrap_or_clone(resource.body)

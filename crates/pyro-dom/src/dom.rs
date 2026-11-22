@@ -1547,6 +1547,15 @@ impl Dom {
     }
     /// Makes `doc` an XML or HTML document of `content_type` (a navigation
     /// whose response decided it) decoded as `charset`.
+    /// Sets `doc`'s `contentType` (a media document's is its resource's MIME type).
+    pub fn set_content_type(&mut self, doc: NodeId, content_type: &str) -> DomResult<()> {
+        let i = self.check(doc)?;
+        if let NodeKind::Document(d) = &mut self.n_mut(i).kind {
+            d.content_type = content_type.into();
+        }
+        Ok(())
+    }
+
     pub fn set_document_kind(
         &mut self,
         doc: NodeId,
