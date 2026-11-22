@@ -41,6 +41,7 @@ mod editing_globals;
 mod encoded_chunks;
 mod audio_data;
 mod audio_decoder;
+mod image_decoder;
 mod video_decoder;
 pub mod encoding;
 pub mod event;

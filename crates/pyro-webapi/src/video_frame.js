@@ -354,8 +354,9 @@
       }
     }
   }
+  const decoderOwned = Symbol('decoder-owned frame bytes');
   class VideoFrame {
-    constructor(source, init = {}) {
+    constructor(source, init = {}, privateToken) {
       init = dictionary(init);
       let s;
       if (frames.has(source)) {
@@ -375,10 +376,14 @@
         if (input.size > bytes.length) invalid();
         const output = layoutOf(format, width, height);
         const rect = { x: 0, y: 0, width, height };
-        const data = new U8(output.size);
-        copyPlanes({ format, layout: input.layout, data: bytes }, rect, data, output.layout);
+        // Only decodedImage receives an exclusive, tightly packed native
+        // snapshot. Public buffer constructors always take their own copy.
+        const data = privateToken === decoderOwned ? bytes : new U8(output.size);
+        if (privateToken !== decoderOwned)
+          copyPlanes({ format, layout: input.layout, data: bytes }, rect, data, output.layout);
         s = {
           data,
+          imageLease: null,
           format,
           width,
           height,
@@ -430,6 +435,7 @@
         for (const entry of transfers) bufferGetters[0].call(entry);
         if (transfers.length) cloneBuffers(null, { transfer: transfers });
       }
+      if (s.imageLease) s.imageLease = s.imageLease(true);
       frames.set(this, s);
     }
     get timestamp() {
@@ -492,6 +498,10 @@
     }
     close() {
       const s = state(frames, this);
+      if (s.imageLease) {
+        s.imageLease(false);
+        s.imageLease = null;
+      }
       Object.assign(s, {
         data: null,
         layout: null,
@@ -513,7 +523,7 @@
     }
     Object.defineProperty(C.prototype, Symbol.toStringTag, { value: C.name, configurable: true });
   }
-  function canvasSource(o) {
+  function canvasSource(o, useOrientation = true) {
     if (!frames.has(o)) return null;
     const s = requireLive(o),
       opt = optionsFor(s, { format: 'RGBA' });
@@ -521,29 +531,33 @@
       h = s.rect.height,
       data = new U8(opt.size);
     copyPixels(s, opt, data);
-    const rotated = s.rotation % 180 !== 0,
+    // A destination canvas can draw in stored pixel order without changing
+    // the frame's public rotation, flip, or display dimensions.
+    const rotation = useOrientation ? s.rotation : 0;
+    const flip = useOrientation && s.flip;
+    const rotated = rotation % 180 !== 0,
       outW = rotated ? h : w,
       outH = rotated ? w : h;
     let oriented = data;
-    if (s.rotation || s.flip) {
+    if (rotation || flip) {
       oriented = new U8(data.length);
       for (let y = 0; y < h; y++)
         for (let x = 0; x < w; x++) {
           let xx = x,
             yy = y;
-          if (s.rotation === 90) {
+          if (rotation === 90) {
             xx = h - 1 - y;
             yy = x;
           }
-          if (s.rotation === 180) {
+          if (rotation === 180) {
             xx = w - 1 - x;
             yy = h - 1 - y;
           }
-          if (s.rotation === 270) {
+          if (rotation === 270) {
             xx = y;
             yy = w - 1 - x;
           }
-          if (s.flip) xx = outW - 1 - xx;
+          if (flip) xx = outW - 1 - xx;
           const src = 4 * (y * w + x),
             dst = 4 * (yy * outW + xx);
           oriented.set(data.subarray(src, src + 4), dst);
@@ -551,5 +565,10 @@
     }
     return [5, oriented, outW, outH, rotated ? s.displayH : s.displayW, rotated ? s.displayW : s.displayH];
   }
-  return { VideoFrame, VideoColorSpace, canvasSource };
+  function decodedImage(bytes, init, lease) {
+    const frame = new VideoFrame(bytes, init, decoderOwned);
+    frames.get(frame).imageLease = lease;
+    return frame;
+  }
+  return { VideoFrame, VideoColorSpace, canvasSource, decodedImage };
 });

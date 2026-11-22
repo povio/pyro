@@ -9,7 +9,7 @@ use moxcms::{ColorProfile, DataColorSpace, Layout, TransformExecutor, TransformO
 type Transform = Arc<dyn TransformExecutor<u8> + Send + Sync>;
 
 /// Converts `rgba` (RGBA8, unpremultiplied) from the colour space of the ICC profile `icc` to sRGB.
-pub(crate) fn to_srgb(icc: &[u8], rgba: &mut [u8]) {
+pub fn to_srgb(icc: &[u8], rgba: &mut [u8]) {
     if let Some(transform) = transform_to_srgb(icc) {
         let mut source = [0; 4096];
         for chunk in rgba.chunks_mut(source.len()) {

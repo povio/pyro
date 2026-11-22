@@ -585,6 +585,55 @@ fn canvas_bitmaps_are_lazy_and_reported_for_rendering() {
 }
 
 #[test]
+fn video_frame_draw_orientation_follows_destination_canvas_style() {
+    let e = env("<!doctype html><div id=wrap><canvas id=c width=4 height=4></canvas></div>");
+    let r = &e.main;
+    eval(r, r#"
+        const c = document.getElementById('c'), container = document.getElementById('wrap');
+        const ctx = c.getContext('2d');
+        // Two stored rows, red then blue. A 90-degree clockwise rotation
+        // puts the blue pixel at the origin and makes the frame 2 by 1.
+        const source = new VideoFrame(new Uint8Array([255, 0, 0, 255, 0, 0, 255, 255]), {
+            format: 'RGBA', codedWidth: 1, codedHeight: 2, timestamp: 0, rotation: 90
+        });
+        const draw = () => {
+            ctx.clearRect(0, 0, 4, 4);
+            ctx.drawImage(source, 0, 0);
+            const first = ctx.getImageData(0, 0, 1, 1).data;
+            const edge = ctx.getImageData(1, 0, 1, 1).data;
+            return [first[0], first[2], edge[3], source.rotation, source.displayWidth, source.displayHeight].join();
+        };
+    "#);
+    assert_eq!(eval(r, "draw()"), "0,255,255,90,2,1");
+    assert_eq!(eval(r, "container.style.imageOrientation = 'none'; draw()"), "255,0,0,90,2,1");
+    assert_eq!(eval(r, "c.style.imageOrientation = 'from-image'; draw()"), "0,255,255,90,2,1");
+    eval(r, "source.close()");
+}
+
+#[test]
+fn image_decoder_frame_charge_lasts_until_last_clone_closes() {
+    let env = crate::support::network::Env::new("http://localhost:5173/");
+    let page = &env.page;
+    let budget = page.dom.borrow().document_data(page.document()).unwrap().raster_budget.clone();
+    let before = budget.used();
+    let png = pyro_canvas::Surface::new(2, 3).encode(pyro_canvas::Encoding::Png).unwrap();
+    let source = format!("new Uint8Array({png:?})");
+    env.eval(&format!(
+        "globalThis.done = false;
+         globalThis.decoder = new ImageDecoder({{type:'image/png', data:{source}}});
+         decoder.decode().then(r => {{globalThis.frame = r.image; globalThis.done = true;}});"
+    ));
+    env.until("done");
+    env.eval("decoder.close(); globalThis.clone1 = frame.clone(); globalThis.clone2 = new VideoFrame(clone1)");
+    assert_eq!(budget.used() - before, 2 * 3 * 4);
+    env.eval("frame.close(); frame.close(); clone1.close()");
+    assert_eq!(env.eval("clone2.codedWidth + 'x' + clone2.codedHeight"), "2x3");
+    assert_eq!(budget.used() - before, 2 * 3 * 4);
+    env.eval("clone2.close(); clone2.close()");
+    assert_eq!(budget.used(), before);
+}
+
+#[test]
 fn kept_image_bytes_are_counted_as_they_come_and_go() {
     let e = env("<!doctype html><canvas></canvas><img id=a src=/a.png><img id=b src=/b.png>");
     let page = &e.page;

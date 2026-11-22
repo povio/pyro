@@ -1,0 +1,132 @@
+{
+  "surface": [
+    "function",
+    "function",
+    "function"
+  ],
+  "four-colors.png": {
+    "type": "image/png",
+    "complete": true,
+    "list": [
+      1,
+      0,
+      true
+    ],
+    "track": [
+      false,
+      1,
+      "0"
+    ],
+    "frames": [
+      {
+        "complete": true,
+        "width": 320,
+        "height": 240,
+        "colors": [
+          [
+            255,
+            255,
+            0,
+            255
+          ],
+          [
+            255,
+            0,
+            0,
+            255
+          ],
+          [
+            0,
+            0,
+            255,
+            255
+          ],
+          [
+            0,
+            255,
+            0,
+            255
+          ]
+        ]
+      }
+    ]
+  },
+  "animated-zero-delay.gif": {
+    "type": "image/gif",
+    "complete": true,
+    "list": [
+      1,
+      0,
+      true
+    ],
+    "track": [
+      true,
+      2,
+      "Infinity"
+    ],
+    "frames": [
+      {
+        "complete": true,
+        "width": 2,
+        "height": 2,
+        "colors": [
+          [
+            255,
+            0,
+            0,
+            255
+          ],
+          [
+            255,
+            0,
+            0,
+            255
+          ],
+          [
+            255,
+            0,
+            0,
+            255
+          ],
+          [
+            255,
+            0,
+            0,
+            255
+          ]
+        ]
+      },
+      {
+        "complete": true,
+        "width": 2,
+        "height": 2,
+        "colors": [
+          [
+            0,
+            255,
+            0,
+            255
+          ],
+          [
+            0,
+            255,
+            0,
+            255
+          ],
+          [
+            0,
+            255,
+            0,
+            255
+          ],
+          [
+            0,
+            255,
+            0,
+            255
+          ]
+        ]
+      }
+    ]
+  }
+}

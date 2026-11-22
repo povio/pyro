@@ -25,6 +25,7 @@
 pub mod codec;
 mod composite;
 pub mod fonts;
+pub mod image_decoder;
 mod guard;
 pub mod text;
 

@@ -1,0 +1,85 @@
+{
+  "available": "function",
+  "types": {
+    "IMAGE/PNG": true,
+    "image/png; profile=default": false,
+    "text/plain": "TypeError",
+    "image/example": false
+  },
+  "four-colors.png": {
+    "type": "IMAGE/PNG",
+    "frames": [
+      [
+        320,
+        240,
+        320,
+        240,
+        0,
+        false,
+        0,
+        null
+      ]
+    ],
+    "closed": [
+      false,
+      1,
+      "0",
+      true,
+      0
+    ]
+  },
+  "four-colors.jpg": {
+    "type": "image/jpeg",
+    "frames": [
+      [
+        320,
+        240,
+        320,
+        240,
+        0,
+        false,
+        0,
+        null
+      ]
+    ],
+    "closed": [
+      false,
+      1,
+      "0",
+      true,
+      0
+    ]
+  },
+  "animated-zero-delay.gif": {
+    "type": "image/gif",
+    "frames": [
+      [
+        2,
+        2,
+        2,
+        2,
+        0,
+        false,
+        0,
+        0
+      ],
+      [
+        2,
+        2,
+        2,
+        2,
+        0,
+        false,
+        0,
+        100000
+      ]
+    ],
+    "closed": [
+      true,
+      2,
+      "Infinity",
+      true,
+      0
+    ]
+  }
+}
