@@ -230,20 +230,50 @@ pub(crate) fn shadow(src: &[u8], w: usize, h: usize, shadow: &Shadow) -> Vec<u8>
             alpha[(y as usize) * w + x as usize] = unit(src[((sy as usize) * w + sx as usize) * 4 + 3]);
         }
     }
-    let sigma = shadow.blur / 2.0;
-    if sigma > 0.0 {
-        // Box sizes approximating a Gaussian (W3C filter effects §feGaussianBlur).
-        let d = ((sigma * 3.0 * (2.0 * std::f64::consts::PI).sqrt() / 4.0) + 0.5).floor().max(1.0) as usize;
-        // Three passes; bounded so a huge blur costs what a full-size one does.
-        let d = d.min(w.max(h) * 2);
+    blur(&mut alpha, w, h, shadow.blur / 2.0);
+    colorize(&alpha, shadow)
+}
+
+/// pyro: the shadow of a source already offset (see `lib::shadow_source`),
+/// `pad` pixels larger than the `w` by `h` bitmap on each side: blurred
+/// whole, then cut to the bitmap.
+pub(crate) fn shadow_cropped(src: &[u8], sw: usize, sh: usize, pad: usize, w: usize, h: usize, shadow: &Shadow) -> Vec<u8> {
+    let mut alpha: Vec<f32> = src.chunks_exact(4).map(|p| unit(p[3])).collect();
+    blur(&mut alpha, sw, sh, shadow.blur / 2.0);
+    let mut cut = Vec::with_capacity(w * h);
+    for y in 0..h {
+        let start = (y + pad) * sw + pad;
+        cut.extend_from_slice(&alpha[start..start + w]);
+    }
+    colorize(&cut, shadow)
+}
+
+/// The width of each of the three box passes approximating a Gaussian of
+/// standard deviation `sigma` (W3C filter effects §feGaussianBlur), bounded
+/// by `side` (the bitmap's longer side) so a huge blur costs what a
+/// full-size one does; 0 for no blur.
+pub(crate) fn blur_box(sigma: f64, side: usize) -> usize {
+    if !(sigma > 0.0) {
+        return 0;
+    }
+    let d = ((sigma * 3.0 * (2.0 * std::f64::consts::PI).sqrt() / 4.0) + 0.5).floor().max(1.0);
+    (d.min(1e9) as usize).min(side.saturating_mul(2))
+}
+
+fn blur(alpha: &mut [f32], w: usize, h: usize, sigma: f64) {
+    let d = blur_box(sigma, w.max(h));
+    if d > 0 {
         for _ in 0..3 {
-            box_blur(&mut alpha, w, h, d, true);
-            box_blur(&mut alpha, w, h, d, false);
+            box_blur(alpha, w, h, d, true);
+            box_blur(alpha, w, h, d, false);
         }
     }
+}
+
+fn colorize(alpha: &[f32], shadow: &Shadow) -> Vec<u8> {
     let c = shadow.color.premultiply().components;
-    let mut out = vec![0u8; w * h * 4];
-    for (o, a) in out.chunks_exact_mut(4).zip(&alpha) {
+    let mut out = vec![0u8; alpha.len() * 4];
+    for (o, a) in out.chunks_exact_mut(4).zip(alpha) {
         if *a > 0.0 {
             o[0] = byte(c[0] * a);
             o[1] = byte(c[1] * a);
