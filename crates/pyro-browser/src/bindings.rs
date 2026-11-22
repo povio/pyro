@@ -420,6 +420,11 @@ impl PageHooks for Hooks {
             // HTML "navigate to a javascript: URL": the script runs in the
             // target document; a string result replaces that document.
             if let Some(source) = javascript_url_source(&request.url) {
+                // Only for a target same origin(-domain) with the initiator: a cross-origin
+                // iframe's `_top`/`_parent` or named target runs no script in that document.
+                if named.is_some_and(|t| !b.page(page.page).is_some_and(|p| p.frames.same_origin(page, t))) {
+                    return;
+                }
                 let target = named.unwrap_or(page);
                 let realm = b.doc(target).and_then(|p| p.main_frame.main_realm().cloned());
                 let result = realm
