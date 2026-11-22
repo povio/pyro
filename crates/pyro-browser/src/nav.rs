@@ -213,6 +213,9 @@ pub struct PageNav {
     rate_limit: Cell<(Instant, u32)>,
     /// The joint session history of the page this frame belongs to.
     joint: Rc<JointHistory>,
+    /// Script navigations queued ([`PageNav::navigate`]) whose task has not
+    /// run yet.
+    queued_navigations: Rc<Cell<u32>>,
 }
 
 /// What the listeners of a Navigation API `navigate` event decided.
@@ -302,6 +305,7 @@ impl PageNav {
             navigation_api_call: Cell::new(false),
             rate_limit: Cell::new((Instant::now(), 0)),
             joint,
+            queued_navigations: Rc::new(Cell::new(0)),
         });
         nav.joint.members.borrow_mut().push(Rc::downgrade(&nav));
         nav
@@ -650,7 +654,10 @@ impl PageNav {
             (st.doc_seq, st.stops)
         };
         let frame_id = self.frame_id.clone();
+        let queued = self.queued_navigations.clone();
+        queued.set(queued.get().saturating_add(1));
         self.sched.post(TaskSource::Navigation, move |b| {
+            queued.set(queued.get().saturating_sub(1));
             let Some(page) = b.page(page).and_then(|p| p.frames.key(&frame_id)) else { return };
             // Another document, or this one was opened since (stop loading).
             if !b.doc(page).is_some_and(|p| {
@@ -672,6 +679,13 @@ impl PageNav {
                 b.report_navigation_error(page, &e);
             }
         });
+    }
+
+    /// The frame is about to leave its document for another one: a script
+    /// navigation is queued (its fetch, once started, is the frame's
+    /// pending loader). Not for the frame's initial about:blank document.
+    pub(crate) fn leaving_document(&self) -> bool {
+        self.queued_navigations.get() > 0 && !self.is_first_blank()
     }
 
     /// A traversal of document `doc` to another document's entry has made

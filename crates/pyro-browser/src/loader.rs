@@ -2793,6 +2793,16 @@ impl Browser {
         if self.doc(page).is_none_or(|d| d.main_frame.loaded) {
             return;
         }
+        // HTML "navigate" aborts the document a cross-document navigation
+        // leaves: it does not fire `load` (nor does its container) while the
+        // navigation is queued or fetching, and never if it commits; as in
+        // Chrome. The frame's initial about:blank document is left alone.
+        if self
+            .doc(page)
+            .is_some_and(|d| !d.nav.is_first_blank() && (d.pending_loader.is_some() || d.nav.leaving_document()))
+        {
+            return;
+        }
         let Some(host) = self.page(page.page).map(|p| p.frames.clone()) else { return };
         if host
             .child_keys(page)
