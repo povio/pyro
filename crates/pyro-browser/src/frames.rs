@@ -809,6 +809,7 @@ impl FrameHost {
         sandbox.document_domain_blocked |= ancestor.sandbox.document_domain_blocked;
         sandbox.forms_blocked |= ancestor.sandbox.forms_blocked;
         sandbox.propagates_to_popups |= ancestor.sandbox.propagates_to_popups;
+        sandbox.downloads_blocked |= ancestor.sandbox.downloads_blocked;
         // Blink's Page::kMaxNumberOfFrames: a page holds at most 1000 subframes.
         if self.children.borrow().len() >= 1000 {
             return Err(JsError::Range("child frame limit reached".into()));
@@ -1199,6 +1200,8 @@ pub(crate) struct Sandbox {
     /// The sandbox propagates to auxiliary browsing contexts flag (no
     /// `allow-popups-to-escape-sandbox`): popups take these flags.
     pub propagates_to_popups: bool,
+    /// The sandboxed downloads browsing context flag (no `allow-downloads`): no download starts.
+    pub downloads_blocked: bool,
 }
 impl Sandbox {
     pub fn parse(value: Option<&str>) -> Self {
@@ -1219,6 +1222,7 @@ impl Sandbox {
             document_domain_blocked: true,
             forms_blocked: !tokens.iter().any(|t| t.eq_ignore_ascii_case("allow-forms")),
             propagates_to_popups: !tokens.iter().any(|t| t.eq_ignore_ascii_case("allow-popups-to-escape-sandbox")),
+            downloads_blocked: !tokens.iter().any(|t| t.eq_ignore_ascii_case("allow-downloads")),
         }
     }
 
@@ -1235,6 +1239,7 @@ impl Sandbox {
             self.document_domain_blocked,
             self.forms_blocked,
             self.propagates_to_popups,
+            self.downloads_blocked,
         ]
         .iter()
         .enumerate()
@@ -1253,6 +1258,7 @@ impl Sandbox {
             document_domain_blocked: set(7),
             forms_blocked: set(8),
             propagates_to_popups: set(9),
+            downloads_blocked: set(10),
         }
     }
 

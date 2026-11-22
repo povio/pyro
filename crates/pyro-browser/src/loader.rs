@@ -1824,7 +1824,9 @@ impl Browser {
                         // navigation into a download: nothing commits (Chrome
                         // reports net::ERR_ABORTED to Page.navigate).
                         b.navigation_failed(page, &opts, loader_id, "net::ERR_ABORTED".into());
-                        if let Some(frame_id) = b.doc(page).map(|p| p.main_frame.id.clone()) {
+                        // HTML: a document sandboxed without `allow-downloads` starts none.
+                        let sandboxed = b.doc(page).is_some_and(|p| p.main_frame.sandbox.downloads_blocked);
+                        if let Some(frame_id) = b.doc(page).filter(|_| !sandboxed).map(|p| p.main_frame.id.clone()) {
                             let suggested = suggested_filename(
                                 resource
                                     .content_disposition
@@ -2186,6 +2188,7 @@ impl Browser {
                     sandbox.document_domain_blocked |= flags.document_domain_blocked;
                     sandbox.forms_blocked |= flags.forms_blocked;
                     sandbox.propagates_to_popups |= flags.propagates_to_popups;
+                    sandbox.downloads_blocked |= flags.downloads_blocked;
                 }
                 if flags.forms_blocked {
                     page_dom.set_forms_sandboxed(true);
@@ -3272,6 +3275,11 @@ impl Browser {
     /// request; same-origin HTTP(S) URLs are fetched. The result is reported
     /// as `PageEvent::Download` for the embedder (CDP download behavior).
     pub(crate) fn start_download(&mut self, page: FrameKey, request: pyro_webapi::DownloadRequest) {
+        // HTML "sandboxed downloads browsing context flag": no download from a document sandboxed
+        // without `allow-downloads`.
+        if self.doc(page).is_some_and(|p| p.main_frame.sandbox.downloads_blocked) {
+            return;
+        }
         let Some(frame_id) = self.doc(page).map(|p| p.main_frame.id.clone()) else { return };
         let suggested = suggested_filename(&request.filename, &request.url);
         let attribute = request.filename.clone();

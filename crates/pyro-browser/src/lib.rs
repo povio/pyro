@@ -2257,6 +2257,7 @@ impl Browser {
                 flags.document_domain_blocked |= parent.sandbox.document_domain_blocked;
                 flags.forms_blocked |= parent.sandbox.forms_blocked;
                 flags.propagates_to_popups |= parent.sandbox.propagates_to_popups;
+                flags.downloads_blocked |= parent.sandbox.downloads_blocked;
             }
             flags
         } else {
