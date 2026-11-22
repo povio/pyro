@@ -1,0 +1,859 @@
+{
+  "armOrder": [
+    "parent",
+    "revision2",
+    "signed"
+  ],
+  "affectedRows": [
+    {
+      "index": 1,
+      "previous": [
+        {
+          "case": [
+            "insertOrderedList",
+            "p",
+            "p",
+            "plain"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": false,
+          "secondUndo": false,
+          "restoredEligible": false
+        },
+        {
+          "case": [
+            "insertOrderedList",
+            "p",
+            "p",
+            "plain"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": false,
+          "secondUndo": true,
+          "restoredEligible": false
+        },
+        {
+          "case": [
+            "insertOrderedList",
+            "p",
+            "p",
+            "plain"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": false,
+          "secondUndo": true,
+          "restoredEligible": false
+        }
+      ],
+      "current": [
+        {
+          "case": [
+            "insertOrderedList",
+            "p",
+            "p",
+            "previous-list"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": true,
+          "secondUndo": false,
+          "restoredEligible": false
+        },
+        {
+          "case": [
+            "insertOrderedList",
+            "p",
+            "p",
+            "previous-list"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": true,
+          "secondUndo": true,
+          "restoredEligible": true
+        },
+        {
+          "case": [
+            "insertOrderedList",
+            "p",
+            "p",
+            "previous-list"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": false,
+          "secondUndo": true,
+          "restoredEligible": false
+        }
+      ]
+    },
+    {
+      "index": 2,
+      "previous": [
+        {
+          "case": [
+            "insertOrderedList",
+            "p",
+            "p",
+            "previous-list"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": true,
+          "secondUndo": false,
+          "restoredEligible": false
+        },
+        {
+          "case": [
+            "insertOrderedList",
+            "p",
+            "p",
+            "previous-list"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": true,
+          "secondUndo": true,
+          "restoredEligible": true
+        },
+        {
+          "case": [
+            "insertOrderedList",
+            "p",
+            "p",
+            "previous-list"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": false,
+          "secondUndo": true,
+          "restoredEligible": false
+        }
+      ],
+      "current": [
+        {
+          "case": [
+            "insertOrderedList",
+            "p",
+            "p",
+            "following-list"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": true,
+          "secondUndo": false,
+          "restoredEligible": false
+        },
+        {
+          "case": [
+            "insertOrderedList",
+            "p",
+            "p",
+            "following-list"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": true,
+          "secondUndo": true,
+          "restoredEligible": true
+        },
+        {
+          "case": [
+            "insertOrderedList",
+            "p",
+            "p",
+            "following-list"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": false,
+          "secondUndo": true,
+          "restoredEligible": false
+        }
+      ]
+    },
+    {
+      "index": 3,
+      "previous": [
+        {
+          "case": [
+            "insertOrderedList",
+            "p",
+            "p",
+            "following-list"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": true,
+          "secondUndo": false,
+          "restoredEligible": false
+        },
+        {
+          "case": [
+            "insertOrderedList",
+            "p",
+            "p",
+            "following-list"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": true,
+          "secondUndo": true,
+          "restoredEligible": true
+        },
+        {
+          "case": [
+            "insertOrderedList",
+            "p",
+            "p",
+            "following-list"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": false,
+          "secondUndo": true,
+          "restoredEligible": false
+        }
+      ],
+      "current": [
+        {
+          "case": [
+            "insertOrderedList",
+            "p",
+            "p",
+            "styled"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": true,
+          "secondUndo": false,
+          "restoredEligible": false
+        },
+        {
+          "case": [
+            "insertOrderedList",
+            "p",
+            "p",
+            "styled"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": true,
+          "secondUndo": true,
+          "restoredEligible": true
+        },
+        {
+          "case": [
+            "insertOrderedList",
+            "p",
+            "p",
+            "styled"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": false,
+          "secondUndo": true,
+          "restoredEligible": false
+        }
+      ]
+    },
+    {
+      "index": 4,
+      "previous": [
+        {
+          "case": [
+            "insertOrderedList",
+            "p",
+            "p",
+            "styled"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": true,
+          "secondUndo": false,
+          "restoredEligible": false
+        },
+        {
+          "case": [
+            "insertOrderedList",
+            "p",
+            "p",
+            "styled"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": true,
+          "secondUndo": true,
+          "restoredEligible": true
+        },
+        {
+          "case": [
+            "insertOrderedList",
+            "p",
+            "p",
+            "styled"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": false,
+          "secondUndo": true,
+          "restoredEligible": false
+        }
+      ],
+      "current": [
+        {
+          "case": [
+            "insertOrderedList",
+            "p",
+            "div",
+            "plain"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": true,
+          "secondUndo": false,
+          "restoredEligible": false
+        },
+        {
+          "case": [
+            "insertOrderedList",
+            "p",
+            "div",
+            "plain"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": true,
+          "secondUndo": true,
+          "restoredEligible": true
+        },
+        {
+          "case": [
+            "insertOrderedList",
+            "p",
+            "div",
+            "plain"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": false,
+          "secondUndo": true,
+          "restoredEligible": false
+        }
+      ]
+    },
+    {
+      "index": 5,
+      "previous": [
+        {
+          "case": [
+            "insertOrderedList",
+            "p",
+            "div",
+            "plain"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": true,
+          "secondUndo": false,
+          "restoredEligible": false
+        },
+        {
+          "case": [
+            "insertOrderedList",
+            "p",
+            "div",
+            "plain"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": true,
+          "secondUndo": true,
+          "restoredEligible": true
+        },
+        {
+          "case": [
+            "insertOrderedList",
+            "p",
+            "div",
+            "plain"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": false,
+          "secondUndo": true,
+          "restoredEligible": false
+        }
+      ],
+      "current": [
+        {
+          "case": [
+            "insertOrderedList",
+            "p",
+            "div",
+            "previous-list"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": true,
+          "secondUndo": false,
+          "restoredEligible": false
+        },
+        {
+          "case": [
+            "insertOrderedList",
+            "p",
+            "div",
+            "previous-list"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": true,
+          "secondUndo": true,
+          "restoredEligible": true
+        },
+        {
+          "case": [
+            "insertOrderedList",
+            "p",
+            "div",
+            "previous-list"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": false,
+          "secondUndo": true,
+          "restoredEligible": false
+        }
+      ]
+    },
+    {
+      "index": 6,
+      "previous": [
+        {
+          "case": [
+            "insertOrderedList",
+            "p",
+            "div",
+            "previous-list"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": true,
+          "secondUndo": false,
+          "restoredEligible": false
+        },
+        {
+          "case": [
+            "insertOrderedList",
+            "p",
+            "div",
+            "previous-list"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": true,
+          "secondUndo": true,
+          "restoredEligible": true
+        },
+        {
+          "case": [
+            "insertOrderedList",
+            "p",
+            "div",
+            "previous-list"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": false,
+          "secondUndo": true,
+          "restoredEligible": false
+        }
+      ],
+      "current": [
+        {
+          "case": [
+            "insertOrderedList",
+            "p",
+            "div",
+            "following-list"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": true,
+          "secondUndo": false,
+          "restoredEligible": false
+        },
+        {
+          "case": [
+            "insertOrderedList",
+            "p",
+            "div",
+            "following-list"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": true,
+          "secondUndo": true,
+          "restoredEligible": true
+        },
+        {
+          "case": [
+            "insertOrderedList",
+            "p",
+            "div",
+            "following-list"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": false,
+          "secondUndo": true,
+          "restoredEligible": false
+        }
+      ]
+    },
+    {
+      "index": 7,
+      "previous": [
+        {
+          "case": [
+            "insertOrderedList",
+            "p",
+            "div",
+            "following-list"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": true,
+          "secondUndo": false,
+          "restoredEligible": false
+        },
+        {
+          "case": [
+            "insertOrderedList",
+            "p",
+            "div",
+            "following-list"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": true,
+          "secondUndo": true,
+          "restoredEligible": true
+        },
+        {
+          "case": [
+            "insertOrderedList",
+            "p",
+            "div",
+            "following-list"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": false,
+          "secondUndo": true,
+          "restoredEligible": false
+        }
+      ],
+      "current": [
+        {
+          "case": [
+            "insertOrderedList",
+            "p",
+            "div",
+            "styled"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": true,
+          "secondUndo": false,
+          "restoredEligible": false
+        },
+        {
+          "case": [
+            "insertOrderedList",
+            "p",
+            "div",
+            "styled"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": true,
+          "secondUndo": true,
+          "restoredEligible": true
+        },
+        {
+          "case": [
+            "insertOrderedList",
+            "p",
+            "div",
+            "styled"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": false,
+          "secondUndo": true,
+          "restoredEligible": false
+        }
+      ]
+    },
+    {
+      "index": 8,
+      "previous": [
+        {
+          "case": [
+            "insertOrderedList",
+            "p",
+            "div",
+            "styled"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": true,
+          "secondUndo": false,
+          "restoredEligible": false
+        },
+        {
+          "case": [
+            "insertOrderedList",
+            "p",
+            "div",
+            "styled"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": true,
+          "secondUndo": true,
+          "restoredEligible": true
+        },
+        {
+          "case": [
+            "insertOrderedList",
+            "p",
+            "div",
+            "styled"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": false,
+          "secondUndo": true,
+          "restoredEligible": false
+        }
+      ],
+      "current": [
+        {
+          "case": [
+            "insertOrderedList",
+            "div",
+            "p",
+            "plain"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": true,
+          "secondUndo": false,
+          "restoredEligible": false
+        },
+        {
+          "case": [
+            "insertOrderedList",
+            "div",
+            "p",
+            "plain"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": true,
+          "secondUndo": true,
+          "restoredEligible": true
+        },
+        {
+          "case": [
+            "insertOrderedList",
+            "div",
+            "p",
+            "plain"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": false,
+          "secondUndo": true,
+          "restoredEligible": false
+        }
+      ]
+    },
+    {
+      "index": 9,
+      "previous": [
+        {
+          "case": [
+            "insertOrderedList",
+            "div",
+            "p",
+            "plain"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": true,
+          "secondUndo": false,
+          "restoredEligible": false
+        },
+        {
+          "case": [
+            "insertOrderedList",
+            "div",
+            "p",
+            "plain"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": true,
+          "secondUndo": true,
+          "restoredEligible": true
+        },
+        {
+          "case": [
+            "insertOrderedList",
+            "div",
+            "p",
+            "plain"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": false,
+          "secondUndo": true,
+          "restoredEligible": false
+        }
+      ],
+      "current": [
+        {
+          "case": [
+            "insertOrderedList",
+            "div",
+            "p",
+            "previous-list"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": true,
+          "secondUndo": false,
+          "restoredEligible": false
+        },
+        {
+          "case": [
+            "insertOrderedList",
+            "div",
+            "p",
+            "previous-list"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": true,
+          "secondUndo": true,
+          "restoredEligible": true
+        },
+        {
+          "case": [
+            "insertOrderedList",
+            "div",
+            "p",
+            "previous-list"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": false,
+          "secondUndo": true,
+          "restoredEligible": false
+        }
+      ]
+    },
+    {
+      "index": 10,
+      "previous": [
+        {
+          "case": [
+            "insertOrderedList",
+            "div",
+            "p",
+            "previous-list"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": true,
+          "secondUndo": false,
+          "restoredEligible": false
+        },
+        {
+          "case": [
+            "insertOrderedList",
+            "div",
+            "p",
+            "previous-list"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": true,
+          "secondUndo": true,
+          "restoredEligible": true
+        },
+        {
+          "case": [
+            "insertOrderedList",
+            "div",
+            "p",
+            "previous-list"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": false,
+          "secondUndo": true,
+          "restoredEligible": false
+        }
+      ],
+      "current": [
+        {
+          "case": [
+            "insertOrderedList",
+            "div",
+            "p",
+            "following-list"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": true,
+          "secondUndo": false,
+          "restoredEligible": false
+        },
+        {
+          "case": [
+            "insertOrderedList",
+            "div",
+            "p",
+            "following-list"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": true,
+          "secondUndo": true,
+          "restoredEligible": true
+        },
+        {
+          "case": [
+            "insertOrderedList",
+            "div",
+            "p",
+            "following-list"
+          ],
+          "redo": true,
+          "redoneEligible": true,
+          "initialEligible": false,
+          "secondUndo": true,
+          "restoredEligible": false
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,74 @@
+[
+  [
+    "editing/run/insertorderedlist.html?1001-last",
+    "[[\"insertorderedlist\",\"\"],[\"inserttext\",\"abc\"]] \"<div>{}<br></div>\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertorderedlist.html?1001-last",
+    "[[\"insertorderedlist\",\"\"],[\"inserttext\",\"abc\"]] \"<div>{}<br></div>\" queryCommandState(\"insertorderedlist\") after",
+    1,
+    "matched",
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertorderedlist.html?1001-last",
+    "[[\"insertorderedlist\",\"\"],[\"inserttext\",\"abc\"]] \"<div>{}<br></div>\" queryCommandValue(\"insertorderedlist\") after",
+    1,
+    "matched",
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertorderedlist.html?1001-last",
+    "[[\"insertorderedlist\",\"\"],[\"inserttext\",\"abc\"]] \"<p>{}<br></p>\" queryCommandState(\"insertorderedlist\") after",
+    1,
+    "matched",
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertorderedlist.html?1001-last",
+    "[[\"insertorderedlist\",\"\"],[\"inserttext\",\"abc\"]] \"<p>{}<br></p>\" queryCommandValue(\"insertorderedlist\") after",
+    1,
+    "matched",
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertunorderedlist.html?1001-2000",
+    "[[\"insertunorderedlist\",\"\"],[\"inserttext\",\"abc\"]] \"<div>{}<br></div>\" compare innerHTML",
+    1,
+    "matched",
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertunorderedlist.html?2001-last",
+    "[[\"insertunorderedlist\",\"\"],[\"inserttext\",\"abc\"]] \"<p>{}<br></p>\" queryCommandState(\"insertunorderedlist\") after",
+    1,
+    "matched",
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/insertunorderedlist.html?2001-last",
+    "[[\"insertunorderedlist\",\"\"],[\"inserttext\",\"abc\"]] \"<p>{}<br></p>\" queryCommandValue(\"insertunorderedlist\") after",
+    1,
+    "matched",
+    "Fail",
+    "Pass",
+    "Pass"
+  ]
+]
