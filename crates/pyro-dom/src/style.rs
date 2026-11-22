@@ -1486,7 +1486,7 @@ impl StyleEngine {
                 _ => return None,
             }
         }
-        Some(if pseudo.is_some() && b.display != D::Inline { format!(" {text} ") } else { text })
+        Some(if pseudo.is_some() && b.display.without_ruby() != D::Inline { format!(" {text} ") } else { text })
     }
 
     /// [`ComputedStyle`] from Stylo's computed values, memoized per style
@@ -2409,7 +2409,8 @@ fn derive_computed(
     ComputedStyle {
         display,
         block_flex_or_grid: d == D::Flex || d == D::Grid,
-        author_display: d.to_u16() != display_keyword_bits(ua),
+        // `<ruby>` and `<rt>` compute to `ruby` and `ruby-text`, inline boxes as their UA `inline`.
+        author_display: d.without_ruby().to_u16() != display_keyword_bits(ua),
         visibility_hidden: style.get_inherited_box().visibility != style::computed_values::visibility::T::Visible,
         pointer_events_none: style.get_inherited_ui().pointer_events
             == style::values::specified::ui::PointerEvents::None,

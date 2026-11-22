@@ -1378,7 +1378,7 @@ fn build_inline_layout_with(
                                     let mut id = Some(node_id);
                                     while let Some(ancestor) = id.map(|id| &nodes[id]) {
                                         let Some(s) = ancestor.primary_styles() else { break };
-                                        if s.clone_display() != style::values::computed::Display::Inline {
+                                        if s.clone_display().without_ruby() != style::values::computed::Display::Inline {
                                             break;
                                         }
                                         if s.get_text().wrap_inside == style::values::computed::WrapInside::Avoid {

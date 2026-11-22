@@ -222,8 +222,16 @@ pub struct Display(u16);
 impl Display {
     // Our u16 bits are used as follows: LOOOOOOOIIIIIIII
     pub const LIST_ITEM_MASK: u16 = 0b1000000000000000;
-    pub const OUTSIDE_MASK: u16 = 0b0111111100000000;
+    pub const OUTSIDE_MASK: u16 = 0b0001111100000000;
     pub const INSIDE_MASK: u16 = 0b0000000001111111;
+    /// pyro: `display: ruby` / `block ruby` (CSS Ruby 1, as Blink parses them): `inline flow` or
+    /// `block flow` with this bit. It changes only how the value parses and serializes: layout
+    /// sees the inline or block box it says (blitz-dom finds `<ruby>` by tag name), and
+    /// [`Self::without_ruby`] strips it where a computed value is compared with a plain one.
+    pub const RUBY_MASK: u16 = 0b0100000000000000;
+    /// pyro: `display: ruby-text` (CSS Ruby 1, as Blink): `inline flow` with this bit, like
+    /// [`Self::RUBY_MASK`]. It blockifies to `block`, as in Blink.
+    pub const RUBY_TEXT_MASK: u16 = 0b0010000000000000;
     /// pyro: `display: run-in` (CSS 2.1 § 9.2.3), a block (`block flow`) with this bit: where it
     /// runs in, the next block box lays it out as its first inline box (blitz-dom
     /// `layout::construct`); everywhere else it is the block box it says.
@@ -233,6 +241,19 @@ impl Display {
     /// pyro: `display: run-in` (see [`Self::RUN_IN_MASK`]).
     pub const RunIn: Self = Self(
         ((DisplayOutside::Block as u16) << Self::OUTSIDE_SHIFT) | DisplayInside::Flow as u16 | Self::RUN_IN_MASK,
+    );
+
+    /// pyro: `display: ruby` (`inline ruby`; see [`Self::RUBY_MASK`]).
+    pub const PyroRuby: Self = Self(
+        ((DisplayOutside::Inline as u16) << Self::OUTSIDE_SHIFT) | DisplayInside::Flow as u16 | Self::RUBY_MASK,
+    );
+    /// pyro: `display: block ruby` (see [`Self::RUBY_MASK`]).
+    pub const PyroBlockRuby: Self = Self(
+        ((DisplayOutside::Block as u16) << Self::OUTSIDE_SHIFT) | DisplayInside::Flow as u16 | Self::RUBY_MASK,
+    );
+    /// pyro: `display: ruby-text` (see [`Self::RUBY_TEXT_MASK`]).
+    pub const PyroRubyText: Self = Self(
+        ((DisplayOutside::Inline as u16) << Self::OUTSIDE_SHIFT) | DisplayInside::Flow as u16 | Self::RUBY_TEXT_MASK,
     );
 
     /// https://drafts.csswg.org/css-display/#the-display-properties
@@ -383,6 +404,25 @@ impl Display {
         (self.0 & Self::RUN_IN_MASK) != 0
     }
 
+    /// pyro: whether this is `display: ruby` or `block ruby` (see [`Self::RUBY_MASK`]).
+    #[inline]
+    pub const fn is_pyro_ruby(&self) -> bool {
+        (self.0 & Self::RUBY_MASK) != 0
+    }
+
+    /// pyro: whether this is `display: ruby-text` (see [`Self::RUBY_TEXT_MASK`]).
+    #[inline]
+    pub const fn is_pyro_ruby_text(&self) -> bool {
+        (self.0 & Self::RUBY_TEXT_MASK) != 0
+    }
+
+    /// pyro: this value without the ruby bits: the `inline` or `block` box layout sees for
+    /// `ruby`, `block ruby` and `ruby-text` (any other value is unchanged).
+    #[inline]
+    pub const fn without_ruby(&self) -> Self {
+        Self(self.0 & !(Self::RUBY_MASK | Self::RUBY_TEXT_MASK))
+    }
+
     /// Returns whether this `display` value is some kind of list-item.
     #[inline]
     pub const fn is_list_item(&self) -> bool {
@@ -457,6 +497,13 @@ impl Display {
         if self.is_run_in() {
             return Display::Block;
         }
+        // pyro: `ruby` blockifies to `block ruby`, `ruby-text` to `block` (as Blink).
+        if self.is_pyro_ruby() {
+            return Display::PyroBlockRuby;
+        }
+        if self.is_pyro_ruby_text() {
+            return Display::Block;
+        }
 
         match self.outside() {
             DisplayOutside::Inline => {
@@ -516,6 +563,10 @@ enum DisplayKeyword {
     /// MathML element; on any other element it computes to `flow`, as it is kept here (pyro lays
     /// no MathML out). Its default outside is `inline`.
     Math,
+    /// pyro: the `ruby` inside keyword (see [`Display::RUBY_MASK`]). Its default outside is
+    /// `inline`; it takes no `list-item` (as Blink).
+    #[cfg(feature = "servo")]
+    Ruby,
 }
 
 impl DisplayKeyword {
@@ -544,6 +595,9 @@ impl DisplayKeyword {
             "ruby-base-container" => Full(Display::RubyBaseContainer),
             #[cfg(feature = "gecko")]
             "ruby-text" => Full(Display::RubyText),
+            // pyro: `ruby-text` in servo too (Blink parses it; not `ruby-base` or the containers).
+            #[cfg(feature = "servo")]
+            "ruby-text" => Full(Display::PyroRubyText),
             #[cfg(feature = "gecko")]
             "ruby-text-container" => Full(Display::RubyTextContainer),
             "-webkit-box" => Full(Display::WebkitBox),
@@ -568,6 +622,8 @@ impl DisplayKeyword {
             "grid-lanes" if is_display_grid_lanes_enabled() => Inside(DisplayInside::GridLanes),
             #[cfg(feature = "gecko")]
             "ruby" => Inside(DisplayInside::Ruby),
+            #[cfg(feature = "servo")]
+            "ruby" => Ruby,
         })
     }
 }
@@ -581,6 +637,13 @@ impl ToCss for Display {
         let inside = self.inside();
         if self.is_run_in() {
             return dest.write_str("run-in");
+        }
+        // pyro: see `Display::RUBY_MASK`.
+        if self.is_pyro_ruby() {
+            return dest.write_str(if outside == DisplayOutside::Block { "block ruby" } else { "ruby" });
+        }
+        if self.is_pyro_ruby_text() {
+            return dest.write_str("ruby-text");
         }
         match *self {
             Display::Block | Display::Inline => outside.to_css(dest),
@@ -631,6 +694,10 @@ impl ToTyped for Display {
         if outside == DisplayOutside::Block && inside == DisplayInside::Ruby {
             return Err(());
         }
+        // pyro: `block ruby`, two keywords, as gecko's above.
+        if self.is_pyro_ruby() && outside == DisplayOutside::Block {
+            return Err(());
+        }
 
         if self.is_list_item()
             && (outside != DisplayOutside::Block || inside != DisplayInside::Flow)
@@ -650,12 +717,19 @@ impl Parse for Display {
     fn parse(_: &ParserContext, input: &mut Parser) -> Result<Display, ParseError> {
         let mut got_list_item = false;
         let mut got_math = false;
+        // pyro: see `Display::RUBY_MASK`.
+        let mut got_ruby = false;
         let mut inside = None;
         let mut outside = None;
         match DisplayKeyword::parse(input)? {
             DisplayKeyword::Full(d) => return Ok(d),
             DisplayKeyword::Math => {
                 got_math = true;
+                inside = Some(DisplayInside::Flow);
+            },
+            #[cfg(feature = "servo")]
+            DisplayKeyword::Ruby => {
+                got_ruby = true;
                 inside = Some(DisplayInside::Flow);
             },
             DisplayKeyword::Outside(o) => {
@@ -684,16 +758,24 @@ impl Parse for Display {
                     got_math = true;
                     inside = Some(DisplayInside::Flow);
                 },
+                #[cfg(feature = "servo")]
+                DisplayKeyword::Ruby if inside.is_none() => {
+                    got_ruby = true;
+                    inside = Some(DisplayInside::Flow);
+                },
                 _ => return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError)),
             }
         }
 
         let inside = inside.unwrap_or(DisplayInside::Flow);
         let outside = outside.unwrap_or_else(|| {
-            if got_math { DisplayOutside::Inline } else { inside.default_display_outside() }
+            if got_math || got_ruby { DisplayOutside::Inline } else { inside.default_display_outside() }
         });
-        if got_list_item && (got_math || !inside.is_valid_for_list_item()) {
+        if got_list_item && (got_math || got_ruby || !inside.is_valid_for_list_item()) {
             return Err(ParseError::custom(StyleParseErrorKind::UnspecifiedError));
+        }
+        if got_ruby {
+            return Ok(Display(Display::new(outside, inside).0 | Display::RUBY_MASK));
         }
 
         Ok(Display::from3(outside, inside, got_list_item))

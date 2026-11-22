@@ -197,6 +197,18 @@ how it is kept (pyro lays no MathML out); alone it is inline-level. The declarat
 block-level `::before` in an inline box now renders as a block). Test: `display_math_computes_to_flow` in
 `crates/pyro-render/tests/inline_leftovers.rs`.
 
+`values/specified/box.rs` (`Display::RUBY_MASK`, `RUBY_TEXT_MASK`, `DisplayKeyword::Ruby`), `style_adjuster.rs`:
+`display` accepts `ruby` (`inline ruby`, `ruby inline`), `block ruby` (`ruby block`) and `ruby-text` in the
+servo engine too, as Blink (Chrome 158) does; `ruby-base`, `ruby-base-container`, `ruby-text-container`,
+`run-in ruby` and `ruby list-item` stay invalid, as there. Upstream's ruby display values are gecko-only, so the
+declarations (and the UA sheet's `ruby { display: ruby }`, `rt { display: ruby-text }`) were dropped. They are
+`inline flow` / `block flow` with a pyro bit that only parsing and serialization read: layout sees the inline
+or block box (blitz-dom finds `<ruby>` by tag name), and `Display::without_ruby` strips the bit where a
+computed value is compared with `Display::Inline` (the writing-mode and text-combine-upright fixups here,
+blitz-dom's `wrap-inside` walk, pyro-dom). Blockified, `ruby` is `block ruby` and `ruby-text` is `block`, as in
+Chrome. Tests: `crates/pyro-dom/tests/css_display.rs`, `ruby_display_values_compute_as_chrome` in
+`crates/pyro-webapi/tests/dom_js.rs`, WPT `css/css-display/parsing/display-{valid,computed}.html`.
+
 `values/specified/box.rs` (`DisplayInside::WebkitBox`, `Display::WebkitBox`, `WebkitInlineBox`, `FlowRoot`),
 `properties/longhands.toml` (`-webkit-box-orient`, servo only), `properties/shorthands.toml`
 (`-webkit-line-clamp`), `style_adjuster.rs` (`adjust_for_webkit_box`), `properties/computed_value_flags.rs`

@@ -470,7 +470,8 @@ impl<'a, 'b: 'a> StyleAdjuster<'a, 'b> {
         let parent_writing_mode = *layout_parent_style.get_inherited_box().get_writing_mode();
 
         if our_writing_mode != parent_writing_mode
-            && *self.style.get_box().get_display() == Display::Inline
+            // pyro: `ruby` and `ruby-text` are inline boxes too (`Display::without_ruby`).
+            && self.style.get_box().get_display().without_ruby() == Display::Inline
         {
             // TODO(emilio): Figure out if we can just set the adjusted display
             // on Gecko too and unify this code path.
@@ -499,7 +500,7 @@ impl<'a, 'b: 'a> StyleAdjuster<'a, 'b> {
             return;
         }
         let parent = layout_parent_style.writing_mode;
-        if !parent.is_vertical() || parent.is_sideways() || *self.style.get_box().get_display() != Display::Inline {
+        if !parent.is_vertical() || parent.is_sideways() || self.style.get_box().get_display().without_ruby() != Display::Inline {
             return;
         }
         // Emphasis marks of combined text go beside the composition, as for one glyph of the
