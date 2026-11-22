@@ -1,0 +1,15 @@
+const fs=require('fs'),path=require('path'),net=require('net'),cp=require('child_process'),os=require('os');
+const cache=path.join(os.homedir(),'Library/Caches/lightningpanda'),pw=require(path.join(cache,'round6-reference-158/census/runner/node_modules/playwright-core'));
+(async()=>{const [label,bin]=process.argv.slice(2),s=net.createServer();await new Promise(r=>s.listen(0,'127.0.0.1',r));const port=s.address().port;await new Promise(r=>s.close(r));
+const proc=cp.spawn(bin,['serve','--port',String(port),'--host','127.0.0.1','--log-level','error'],{stdio:'ignore',env:{...process.env,WPT_CHROME_STATE_DIR:fs.mkdtempSync(path.join(os.tmpdir(),'qa-enter-'))}});let b;
+try{const endpoint='http://127.0.0.1:'+port;let version;for(let i=0;i<100;i++){try{version=await(await fetch(endpoint+'/json/version')).json();break}catch{}await new Promise(r=>setTimeout(r,100))}
+b=await pw.chromium.connectOverCDP(endpoint);const p=await b.newPage(),rows=[];
+for(const css of [false,true])for(const weight of ['100','200','300','400','500','599','600','900'])for(const kind of ['inline','mixed','class'])for(const selection of ['part','reverse','all','caret']){
+ await p.setContent('<style>.weighted{font-weight:'+weight+';color:red}</style><div id=h contenteditable>L<span>abcd</span>R</div>');rows.push(await p.evaluate(({weight,kind,selection,css})=>{
+ const span=h.firstElementChild;if(kind==='class')span.className='weighted';else span.setAttribute('style','font-weight:'+weight+(kind==='mixed'?';color:red':''));const t=span.firstChild,s=getSelection();h.focus();let a=selection==='all'?0:1,b=selection==='all'?4:selection==='caret'?1:3;if(selection==='reverse')[a,b]=[b,a];s.setBaseAndExtent(t,a,t,b);document.execCommand('styleWithCSS',false,css);
+ const pnt=n=>{let path=[];while(n&&n!==h){path.unshift(n.parentNode?[...n.parentNode.childNodes].indexOf(n):-1);n=n.parentNode}return path};const glyphStyles=()=>{const walker=document.createTreeWalker(h,NodeFilter.SHOW_TEXT);let n,items=[];while(n=walker.nextNode()){const st=getComputedStyle(n.parentElement);for(const ch of n.data)items.push([ch,st.fontWeight,st.color])}return items};const snap=()=>({glyphStyles:glyphStyles(),html:h.innerHTML,original:h.contains(span),text:s.toString(),anchor:[pnt(s.anchorNode),s.anchorOffset],focus:[pnt(s.focusNode),s.focusOffset],bold:document.queryCommandState('bold'),undo:document.queryCommandEnabled('undo')});
+ const before=snap(),ok=document.execCommand('bold');const toggled=snap();if(selection==='caret')document.execCommand('insertText',false,'X');const after=snap(),undone=document.execCommand('undo');return {kind,weight,selection,css,before,ok,toggled,after,undone,restored:snap()};
+ },{weight,kind,selection,css}));
+}
+fs.writeFileSync(path.join(__dirname,label+'.json'),JSON.stringify({version,rows},null,2));
+}finally{if(b)await b.close();proc.kill()}})().catch(e=>{console.error(e);process.exitCode=1});

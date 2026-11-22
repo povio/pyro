@@ -1,0 +1,966 @@
+[
+  {
+    "url": "editing/run/bold.html?1001-2000",
+    "name": "[[\"stylewithcss\",\"false\"],[\"bold\",\"\"]] \"<span style=\\\"font-weight: 100\\\">foo[bar]baz</span>\" compare innerHTML",
+    "occurrence": 1,
+    "pinned_expected_markup": "<span style=\"font-weight:100\">foo<b>bar</b>baz</span>",
+    "ordinary": {
+      "pinned": [
+        "400",
+        "400",
+        "400"
+      ],
+      "chrome_command": [
+        "700",
+        "700",
+        "700"
+      ],
+      "pyro_command": [
+        "700",
+        "700",
+        "700"
+      ]
+    },
+    "reset_css": {
+      "pinned": [
+        "700",
+        "700",
+        "700"
+      ],
+      "chrome_command": [
+        "700",
+        "700",
+        "700"
+      ],
+      "pyro_command": [
+        "700",
+        "700",
+        "700"
+      ]
+    }
+  },
+  {
+    "url": "editing/run/bold.html?1001-2000",
+    "name": "[[\"stylewithcss\",\"false\"],[\"bold\",\"\"]] \"<span style=\\\"font-weight: 100\\\">foo[barbaz</span>}\" compare innerHTML",
+    "occurrence": 1,
+    "pinned_expected_markup": "<span style=\"font-weight:100\">foo<b>barbaz</b></span>",
+    "ordinary": {
+      "pinned": [
+        "400",
+        "400",
+        "400",
+        "400",
+        "400",
+        "400"
+      ],
+      "chrome_command": [
+        "700",
+        "700",
+        "700",
+        "700",
+        "700",
+        "700"
+      ],
+      "pyro_command": [
+        "700",
+        "700",
+        "700",
+        "700",
+        "700",
+        "700"
+      ]
+    },
+    "reset_css": {
+      "pinned": [
+        "700",
+        "700",
+        "700",
+        "700",
+        "700",
+        "700"
+      ],
+      "chrome_command": [
+        "700",
+        "700",
+        "700",
+        "700",
+        "700",
+        "700"
+      ],
+      "pyro_command": [
+        "700",
+        "700",
+        "700",
+        "700",
+        "700",
+        "700"
+      ]
+    }
+  },
+  {
+    "url": "editing/run/bold.html?1001-2000",
+    "name": "[[\"stylewithcss\",\"false\"],[\"bold\",\"\"]] \"<span style=\\\"font-weight: 400\\\">foo[bar]baz</span>\" compare innerHTML",
+    "occurrence": 1,
+    "pinned_expected_markup": "<span style=\"font-weight:400\">foo<b>bar</b>baz</span>",
+    "ordinary": {
+      "pinned": [
+        "700",
+        "700",
+        "700"
+      ],
+      "chrome_command": [
+        "700",
+        "700",
+        "700"
+      ],
+      "pyro_command": [
+        "700",
+        "700",
+        "700"
+      ]
+    },
+    "reset_css": {
+      "pinned": [
+        "700",
+        "700",
+        "700"
+      ],
+      "chrome_command": [
+        "700",
+        "700",
+        "700"
+      ],
+      "pyro_command": [
+        "700",
+        "700",
+        "700"
+      ]
+    }
+  },
+  {
+    "url": "editing/run/bold.html?1001-2000",
+    "name": "[[\"stylewithcss\",\"false\"],[\"bold\",\"\"]] \"<span style=\\\"font-weight: 400\\\">foo[barbaz</span>}\" compare innerHTML",
+    "occurrence": 1,
+    "pinned_expected_markup": "<span style=\"font-weight:400\">foo<b>barbaz</b></span>",
+    "ordinary": {
+      "pinned": [
+        "700",
+        "700",
+        "700",
+        "700",
+        "700",
+        "700"
+      ],
+      "chrome_command": [
+        "700",
+        "700",
+        "700",
+        "700",
+        "700",
+        "700"
+      ],
+      "pyro_command": [
+        "700",
+        "700",
+        "700",
+        "700",
+        "700",
+        "700"
+      ]
+    },
+    "reset_css": {
+      "pinned": [
+        "700",
+        "700",
+        "700",
+        "700",
+        "700",
+        "700"
+      ],
+      "chrome_command": [
+        "700",
+        "700",
+        "700",
+        "700",
+        "700",
+        "700"
+      ],
+      "pyro_command": [
+        "700",
+        "700",
+        "700",
+        "700",
+        "700",
+        "700"
+      ]
+    }
+  },
+  {
+    "url": "editing/run/bold.html?1001-2000",
+    "name": "[[\"stylewithcss\",\"false\"],[\"bold\",\"\"]] \"{<span style=\\\"font-weight: 100\\\">foobar]baz</span>\" compare innerHTML",
+    "occurrence": 1,
+    "pinned_expected_markup": "<span style=\"font-weight:100\"><b>foobar</b>baz</span>",
+    "ordinary": {
+      "pinned": [
+        "400",
+        "400",
+        "400",
+        "400",
+        "400",
+        "400"
+      ],
+      "chrome_command": [
+        "700",
+        "700",
+        "700",
+        "700",
+        "700",
+        "700"
+      ],
+      "pyro_command": [
+        "700",
+        "700",
+        "700",
+        "700",
+        "700",
+        "700"
+      ]
+    },
+    "reset_css": {
+      "pinned": [
+        "700",
+        "700",
+        "700",
+        "700",
+        "700",
+        "700"
+      ],
+      "chrome_command": [
+        "700",
+        "700",
+        "700",
+        "700",
+        "700",
+        "700"
+      ],
+      "pyro_command": [
+        "700",
+        "700",
+        "700",
+        "700",
+        "700",
+        "700"
+      ]
+    }
+  },
+  {
+    "url": "editing/run/bold.html?1001-2000",
+    "name": "[[\"stylewithcss\",\"false\"],[\"bold\",\"\"]] \"{<span style=\\\"font-weight: 400\\\">foobar]baz</span>\" compare innerHTML",
+    "occurrence": 1,
+    "pinned_expected_markup": "<span style=\"font-weight:400\"><b>foobar</b>baz</span>",
+    "ordinary": {
+      "pinned": [
+        "700",
+        "700",
+        "700",
+        "700",
+        "700",
+        "700"
+      ],
+      "chrome_command": [
+        "700",
+        "700",
+        "700",
+        "700",
+        "700",
+        "700"
+      ],
+      "pyro_command": [
+        "700",
+        "700",
+        "700",
+        "700",
+        "700",
+        "700"
+      ]
+    },
+    "reset_css": {
+      "pinned": [
+        "700",
+        "700",
+        "700",
+        "700",
+        "700",
+        "700"
+      ],
+      "chrome_command": [
+        "700",
+        "700",
+        "700",
+        "700",
+        "700",
+        "700"
+      ],
+      "pyro_command": [
+        "700",
+        "700",
+        "700",
+        "700",
+        "700",
+        "700"
+      ]
+    }
+  },
+  {
+    "url": "editing/run/bold.html?1001-2000",
+    "name": "[[\"stylewithcss\",\"true\"],[\"bold\",\"\"]] \"<span style=\\\"font-weight: 100\\\">foo[bar]baz</span>\" compare innerHTML",
+    "occurrence": 1,
+    "pinned_expected_markup": "<span style=\"font-weight:100\">foo<span style=\"font-weight:bold\">bar</span>baz</span>",
+    "ordinary": {
+      "pinned": [
+        "700",
+        "700",
+        "700"
+      ],
+      "chrome_command": [
+        "700",
+        "700",
+        "700"
+      ],
+      "pyro_command": [
+        "700",
+        "700",
+        "700"
+      ]
+    },
+    "reset_css": {
+      "pinned": [
+        "700",
+        "700",
+        "700"
+      ],
+      "chrome_command": [
+        "700",
+        "700",
+        "700"
+      ],
+      "pyro_command": [
+        "700",
+        "700",
+        "700"
+      ]
+    }
+  },
+  {
+    "url": "editing/run/bold.html?1001-2000",
+    "name": "[[\"stylewithcss\",\"true\"],[\"bold\",\"\"]] \"<span style=\\\"font-weight: 100\\\">foo[barbaz</span>}\" compare innerHTML",
+    "occurrence": 1,
+    "pinned_expected_markup": "<span style=\"font-weight:100\">foo<span style=\"font-weight:bold\">barbaz</span></span>",
+    "ordinary": {
+      "pinned": [
+        "700",
+        "700",
+        "700",
+        "700",
+        "700",
+        "700"
+      ],
+      "chrome_command": [
+        "700",
+        "700",
+        "700",
+        "700",
+        "700",
+        "700"
+      ],
+      "pyro_command": [
+        "700",
+        "700",
+        "700",
+        "700",
+        "700",
+        "700"
+      ]
+    },
+    "reset_css": {
+      "pinned": [
+        "700",
+        "700",
+        "700",
+        "700",
+        "700",
+        "700"
+      ],
+      "chrome_command": [
+        "700",
+        "700",
+        "700",
+        "700",
+        "700",
+        "700"
+      ],
+      "pyro_command": [
+        "700",
+        "700",
+        "700",
+        "700",
+        "700",
+        "700"
+      ]
+    }
+  },
+  {
+    "url": "editing/run/bold.html?1001-2000",
+    "name": "[[\"stylewithcss\",\"true\"],[\"bold\",\"\"]] \"<span style=\\\"font-weight: 400\\\">foo[bar]baz</span>\" compare innerHTML",
+    "occurrence": 1,
+    "pinned_expected_markup": "<span style=\"font-weight:400\">foo<span style=\"font-weight:bold\">bar</span>baz</span>",
+    "ordinary": {
+      "pinned": [
+        "700",
+        "700",
+        "700"
+      ],
+      "chrome_command": [
+        "700",
+        "700",
+        "700"
+      ],
+      "pyro_command": [
+        "700",
+        "700",
+        "700"
+      ]
+    },
+    "reset_css": {
+      "pinned": [
+        "700",
+        "700",
+        "700"
+      ],
+      "chrome_command": [
+        "700",
+        "700",
+        "700"
+      ],
+      "pyro_command": [
+        "700",
+        "700",
+        "700"
+      ]
+    }
+  },
+  {
+    "url": "editing/run/bold.html?1001-2000",
+    "name": "[[\"stylewithcss\",\"true\"],[\"bold\",\"\"]] \"<span style=\\\"font-weight: 400\\\">foo[barbaz</span>}\" compare innerHTML",
+    "occurrence": 1,
+    "pinned_expected_markup": "<span style=\"font-weight:400\">foo<span style=\"font-weight:bold\">barbaz</span></span>",
+    "ordinary": {
+      "pinned": [
+        "700",
+        "700",
+        "700",
+        "700",
+        "700",
+        "700"
+      ],
+      "chrome_command": [
+        "700",
+        "700",
+        "700",
+        "700",
+        "700",
+        "700"
+      ],
+      "pyro_command": [
+        "700",
+        "700",
+        "700",
+        "700",
+        "700",
+        "700"
+      ]
+    },
+    "reset_css": {
+      "pinned": [
+        "700",
+        "700",
+        "700",
+        "700",
+        "700",
+        "700"
+      ],
+      "chrome_command": [
+        "700",
+        "700",
+        "700",
+        "700",
+        "700",
+        "700"
+      ],
+      "pyro_command": [
+        "700",
+        "700",
+        "700",
+        "700",
+        "700",
+        "700"
+      ]
+    }
+  },
+  {
+    "url": "editing/run/bold.html?1001-2000",
+    "name": "[[\"stylewithcss\",\"true\"],[\"bold\",\"\"]] \"{<span style=\\\"font-weight: 100\\\">foobar]baz</span>\" compare innerHTML",
+    "occurrence": 1,
+    "pinned_expected_markup": "<span style=\"font-weight:100\"><span style=\"font-weight:bold\">foobar</span>baz</span>",
+    "ordinary": {
+      "pinned": [
+        "700",
+        "700",
+        "700",
+        "700",
+        "700",
+        "700"
+      ],
+      "chrome_command": [
+        "700",
+        "700",
+        "700",
+        "700",
+        "700",
+        "700"
+      ],
+      "pyro_command": [
+        "700",
+        "700",
+        "700",
+        "700",
+        "700",
+        "700"
+      ]
+    },
+    "reset_css": {
+      "pinned": [
+        "700",
+        "700",
+        "700",
+        "700",
+        "700",
+        "700"
+      ],
+      "chrome_command": [
+        "700",
+        "700",
+        "700",
+        "700",
+        "700",
+        "700"
+      ],
+      "pyro_command": [
+        "700",
+        "700",
+        "700",
+        "700",
+        "700",
+        "700"
+      ]
+    }
+  },
+  {
+    "url": "editing/run/bold.html?1001-2000",
+    "name": "[[\"stylewithcss\",\"true\"],[\"bold\",\"\"]] \"{<span style=\\\"font-weight: 400\\\">foobar]baz</span>\" compare innerHTML",
+    "occurrence": 1,
+    "pinned_expected_markup": "<span style=\"font-weight:400\"><span style=\"font-weight:bold\">foobar</span>baz</span>",
+    "ordinary": {
+      "pinned": [
+        "700",
+        "700",
+        "700",
+        "700",
+        "700",
+        "700"
+      ],
+      "chrome_command": [
+        "700",
+        "700",
+        "700",
+        "700",
+        "700",
+        "700"
+      ],
+      "pyro_command": [
+        "700",
+        "700",
+        "700",
+        "700",
+        "700",
+        "700"
+      ]
+    },
+    "reset_css": {
+      "pinned": [
+        "700",
+        "700",
+        "700",
+        "700",
+        "700",
+        "700"
+      ],
+      "chrome_command": [
+        "700",
+        "700",
+        "700",
+        "700",
+        "700",
+        "700"
+      ],
+      "pyro_command": [
+        "700",
+        "700",
+        "700",
+        "700",
+        "700",
+        "700"
+      ]
+    }
+  },
+  {
+    "url": "editing/run/bold.html?2001-3000",
+    "name": "[[\"stylewithcss\",\"false\"],[\"bold\",\"\"]] \"<span style=font-weight:100>fo[o</span><span style=font-weight:200>b]ar</span>\" compare innerHTML",
+    "occurrence": 1,
+    "pinned_expected_markup": "<span style=\"font-weight:100\">fo<b>o</b></span><span style=\"font-weight:200\"><b>b</b>ar</span>",
+    "ordinary": {
+      "pinned": [
+        "400",
+        "400"
+      ],
+      "chrome_command": [
+        "700",
+        "700"
+      ],
+      "pyro_command": [
+        "700",
+        "700"
+      ]
+    },
+    "reset_css": {
+      "pinned": [
+        "700",
+        "700"
+      ],
+      "chrome_command": [
+        "700",
+        "700"
+      ],
+      "pyro_command": [
+        "700",
+        "700"
+      ]
+    }
+  },
+  {
+    "url": "editing/run/bold.html?2001-3000",
+    "name": "[[\"stylewithcss\",\"false\"],[\"bold\",\"\"]] \"<span style=font-weight:200>fo[o</span><span style=font-weight:300>b]ar</span>\" compare innerHTML",
+    "occurrence": 1,
+    "pinned_expected_markup": "<span style=\"font-weight:200\">fo<b>o</b></span><span style=\"font-weight:300\"><b>b</b>ar</span>",
+    "ordinary": {
+      "pinned": [
+        "400",
+        "400"
+      ],
+      "chrome_command": [
+        "700",
+        "700"
+      ],
+      "pyro_command": [
+        "700",
+        "700"
+      ]
+    },
+    "reset_css": {
+      "pinned": [
+        "700",
+        "700"
+      ],
+      "chrome_command": [
+        "700",
+        "700"
+      ],
+      "pyro_command": [
+        "700",
+        "700"
+      ]
+    }
+  },
+  {
+    "url": "editing/run/bold.html?2001-3000",
+    "name": "[[\"stylewithcss\",\"false\"],[\"bold\",\"\"]] \"<span style=font-weight:300>fo[o</span><span style=font-weight:400>b]ar</span>\" compare innerHTML",
+    "occurrence": 1,
+    "pinned_expected_markup": "<span style=\"font-weight:300\">fo<b>o</b></span><span style=\"font-weight:400\"><b>b</b>ar</span>",
+    "ordinary": {
+      "pinned": [
+        "400",
+        "700"
+      ],
+      "chrome_command": [
+        "700",
+        "700"
+      ],
+      "pyro_command": [
+        "700",
+        "700"
+      ]
+    },
+    "reset_css": {
+      "pinned": [
+        "700",
+        "700"
+      ],
+      "chrome_command": [
+        "700",
+        "700"
+      ],
+      "pyro_command": [
+        "700",
+        "700"
+      ]
+    }
+  },
+  {
+    "url": "editing/run/bold.html?2001-3000",
+    "name": "[[\"stylewithcss\",\"false\"],[\"bold\",\"\"]] \"<span style=font-weight:400>fo[o</span><span style=font-weight:500>b]ar</span>\" compare innerHTML",
+    "occurrence": 1,
+    "pinned_expected_markup": "<span style=\"font-weight:400\">fo<b>o</b></span><span style=\"font-weight:500\"><b>b</b>ar</span>",
+    "ordinary": {
+      "pinned": [
+        "700",
+        "700"
+      ],
+      "chrome_command": [
+        "700",
+        "700"
+      ],
+      "pyro_command": [
+        "700",
+        "700"
+      ]
+    },
+    "reset_css": {
+      "pinned": [
+        "700",
+        "700"
+      ],
+      "chrome_command": [
+        "700",
+        "700"
+      ],
+      "pyro_command": [
+        "700",
+        "700"
+      ]
+    }
+  },
+  {
+    "url": "editing/run/bold.html?2001-3000",
+    "name": "[[\"stylewithcss\",\"false\"],[\"bold\",\"\"]] \"<span style=font-weight:500>fo[o</span><span style=font-weight:600>b]ar</span>\" compare innerHTML",
+    "occurrence": 1,
+    "pinned_expected_markup": "<span style=\"font-weight:500\">fo<b>o</b></span><span style=\"font-weight:600\"><b>b</b>ar</span>",
+    "ordinary": {
+      "pinned": [
+        "700",
+        "900"
+      ],
+      "chrome_command": [
+        "700",
+        "700"
+      ],
+      "pyro_command": [
+        "700",
+        "700"
+      ]
+    },
+    "reset_css": {
+      "pinned": [
+        "700",
+        "700"
+      ],
+      "chrome_command": [
+        "700",
+        "700"
+      ],
+      "pyro_command": [
+        "700",
+        "700"
+      ]
+    }
+  },
+  {
+    "url": "editing/run/bold.html?2001-3000",
+    "name": "[[\"stylewithcss\",\"true\"],[\"bold\",\"\"]] \"<span style=font-weight:100>fo[o</span><span style=font-weight:200>b]ar</span>\" compare innerHTML",
+    "occurrence": 1,
+    "pinned_expected_markup": "<span style=\"font-weight:100\">fo<span style=\"font-weight:bold\">o</span></span><span style=\"font-weight:200\"><span style=\"font-weight:bold\">b</span>ar</span>",
+    "ordinary": {
+      "pinned": [
+        "700",
+        "700"
+      ],
+      "chrome_command": [
+        "700",
+        "700"
+      ],
+      "pyro_command": [
+        "700",
+        "700"
+      ]
+    },
+    "reset_css": {
+      "pinned": [
+        "700",
+        "700"
+      ],
+      "chrome_command": [
+        "700",
+        "700"
+      ],
+      "pyro_command": [
+        "700",
+        "700"
+      ]
+    }
+  },
+  {
+    "url": "editing/run/bold.html?2001-3000",
+    "name": "[[\"stylewithcss\",\"true\"],[\"bold\",\"\"]] \"<span style=font-weight:200>fo[o</span><span style=font-weight:300>b]ar</span>\" compare innerHTML",
+    "occurrence": 1,
+    "pinned_expected_markup": "<span style=\"font-weight:200\">fo<span style=\"font-weight:bold\">o</span></span><span style=\"font-weight:300\"><span style=\"font-weight:bold\">b</span>ar</span>",
+    "ordinary": {
+      "pinned": [
+        "700",
+        "700"
+      ],
+      "chrome_command": [
+        "700",
+        "700"
+      ],
+      "pyro_command": [
+        "700",
+        "700"
+      ]
+    },
+    "reset_css": {
+      "pinned": [
+        "700",
+        "700"
+      ],
+      "chrome_command": [
+        "700",
+        "700"
+      ],
+      "pyro_command": [
+        "700",
+        "700"
+      ]
+    }
+  },
+  {
+    "url": "editing/run/bold.html?2001-3000",
+    "name": "[[\"stylewithcss\",\"true\"],[\"bold\",\"\"]] \"<span style=font-weight:300>fo[o</span><span style=font-weight:400>b]ar</span>\" compare innerHTML",
+    "occurrence": 1,
+    "pinned_expected_markup": "<span style=\"font-weight:300\">fo<span style=\"font-weight:bold\">o</span></span><span style=\"font-weight:400\"><span style=\"font-weight:bold\">b</span>ar</span>",
+    "ordinary": {
+      "pinned": [
+        "700",
+        "700"
+      ],
+      "chrome_command": [
+        "700",
+        "700"
+      ],
+      "pyro_command": [
+        "700",
+        "700"
+      ]
+    },
+    "reset_css": {
+      "pinned": [
+        "700",
+        "700"
+      ],
+      "chrome_command": [
+        "700",
+        "700"
+      ],
+      "pyro_command": [
+        "700",
+        "700"
+      ]
+    }
+  },
+  {
+    "url": "editing/run/bold.html?2001-3000",
+    "name": "[[\"stylewithcss\",\"true\"],[\"bold\",\"\"]] \"<span style=font-weight:400>fo[o</span><span style=font-weight:500>b]ar</span>\" compare innerHTML",
+    "occurrence": 1,
+    "pinned_expected_markup": "<span style=\"font-weight:400\">fo<span style=\"font-weight:bold\">o</span></span><span style=\"font-weight:500\"><span style=\"font-weight:bold\">b</span>ar</span>",
+    "ordinary": {
+      "pinned": [
+        "700",
+        "700"
+      ],
+      "chrome_command": [
+        "700",
+        "700"
+      ],
+      "pyro_command": [
+        "700",
+        "700"
+      ]
+    },
+    "reset_css": {
+      "pinned": [
+        "700",
+        "700"
+      ],
+      "chrome_command": [
+        "700",
+        "700"
+      ],
+      "pyro_command": [
+        "700",
+        "700"
+      ]
+    }
+  },
+  {
+    "url": "editing/run/bold.html?2001-3000",
+    "name": "[[\"stylewithcss\",\"true\"],[\"bold\",\"\"]] \"<span style=font-weight:500>fo[o</span><span style=font-weight:600>b]ar</span>\" compare innerHTML",
+    "occurrence": 1,
+    "pinned_expected_markup": "<span style=\"font-weight:500\">fo<span style=\"font-weight:bold\">o</span></span><span style=\"font-weight:600\"><span style=\"font-weight:bold\">b</span>ar</span>",
+    "ordinary": {
+      "pinned": [
+        "700",
+        "700"
+      ],
+      "chrome_command": [
+        "700",
+        "700"
+      ],
+      "pyro_command": [
+        "700",
+        "700"
+      ]
+    },
+    "reset_css": {
+      "pinned": [
+        "700",
+        "700"
+      ],
+      "chrome_command": [
+        "700",
+        "700"
+      ],
+      "pyro_command": [
+        "700",
+        "700"
+      ]
+    }
+  }
+]
