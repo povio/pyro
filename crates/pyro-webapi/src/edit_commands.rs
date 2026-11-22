@@ -1430,6 +1430,34 @@ fn restored_format_point(page: &PageDom, dom: &Dom, host: NodeId, point: Point) 
         .unwrap_or(point)
 }
 
+/// Remove a conflicting numeric weight from the selected portion before
+/// applying bold. Other attributes and declarations stay on their span.
+fn prepare_numeric_bold(dom: &mut Dom, host: NodeId, text: NodeId, use_css: bool) -> Option<bool> {
+    use pyro_dom::stylo::declarations::DeclarationBlock;
+    let span = dom.parent_element(text).ok()??;
+    if span == host || !dom.element(span).is_ok_and(|el| el.is_html() && &**el.local_name() == "span") {
+        return None;
+    }
+    let mut style = DeclarationBlock::parse(dom.get_attribute(span, "style").ok()??);
+    let weight = style.value("font-weight").parse::<f64>().ok()?;
+    if !(1.0..600.0).contains(&weight) { return None; }
+    style.remove("font-weight");
+    if style.is_empty() && dom.attributes(span).ok()?.len() == 1 {
+        hoist(dom, text, span);
+        return Some(false);
+    }
+    let outer = dom.parent_element(span).ok()??;
+    let middle = alignment::split_edge(dom, outer, text, false, &mut [])?;
+    alignment::split_edge(dom, outer, text, true, &mut [])?;
+    if use_css { style.set("font-weight", "bold", false)?; }
+    if style.is_empty() {
+        dom.remove_attribute(middle, "style").ok()?;
+    } else {
+        dom.set_attribute(middle, "style", &style.css_text()).ok()?;
+    }
+    Some(use_css)
+}
+
 /// Wraps the selected text in `tag` (with `href` for links), skipping text
 /// that already has one of `carriers` around it.
 fn format_inline(page: &Rc<PageDom>, host: NodeId, tag: &str, carriers: &[&str], input_type: &str, href: Option<&str>) {
@@ -1465,7 +1493,11 @@ fn format_inline(page: &Rc<PageDom>, host: NodeId, tag: &str, carriers: &[&str],
                 return;
             };
             let mut last_wrapper: Option<NodeId> = None;
+            let use_css = dom.document_data(doc).is_ok_and(|d| d.style_with_css);
             for &t in &texts {
+                if tag == "b" && prepare_numeric_bold(&mut dom, host, t, use_css) == Some(true) {
+                    continue;
+                }
                 let carried = carriers.iter().any(|c| ancestor_named(&dom, t, host, &[c]).is_some());
                 if carried {
                     continue;
@@ -1495,7 +1527,7 @@ fn format_inline(page: &Rc<PageDom>, host: NodeId, tag: &str, carriers: &[&str],
                         continue;
                     }
                 }
-                let style = if dom.document_data(doc).is_ok_and(|d| d.style_with_css) { inline_css(tag) } else { None };
+                let style = if use_css { inline_css(tag) } else { None };
                 let Ok(w) = dom.create_element(doc, if style.is_some() { "span" } else { tag }) else {
                     continue;
                 };
