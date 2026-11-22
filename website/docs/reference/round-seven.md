@@ -2,13 +2,7 @@
 
 Release candidate **0.0.50-rc.6** tags source commit `9fad5953f`. RC.5 stopped before npm publication when its package exceeded the 185 MiB budget. RC.6 raises that budget to 190 MiB and updates the release documentation. Both tags contain the same browser source. [RC.5 workflow failure](https://github.com/povio/pyro/actions/runs/44998826328) · [Changes between tags](https://github.com/povio/pyro/compare/v0.0.50-rc.5...v0.0.50-rc.6) · [RC.6 tagged source](https://github.com/povio/pyro/tree/v0.0.50-rc.6) · [RC.6 publication workflow](https://github.com/povio/pyro/actions/runs/45008736564)
 
-Install the exact RC.6 version with npm.
-
-```sh
-npm install --save-dev --save-exact @povio/pyro@0.0.50-rc.6
-```
-
-[npm package](https://www.npmjs.com/package/@povio/pyro/v/0.0.50-rc.6) · [Standalone downloads](https://github.com/povio/pyro/releases/tag/v0.0.50-rc.6)
+RC.6 publication is pending. The [publication workflow](https://github.com/povio/pyro/actions/runs/45008736564) tracks the platform builds and npm publication.
 
 ## RC.5 standalone macOS arm64 executable
 
