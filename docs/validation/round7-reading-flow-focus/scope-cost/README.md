@@ -18,3 +18,5 @@ Eight fresh serial processes ran in ABBA/BAAB order using the original reading-n
 | Grid columns | 22.12 | 21.35 | 5.62 / 5.00 |
 
 Source-order wall time fell by 3.14 ms per 64 steps (13.0%); the mean process-tree CPU reading was unchanged. The normal control measured 0.46 ms slower in this series. These are descriptive measurements for this fixture.
+
+Host load was uneven: comparator arms averaged 50.69% host CPU versus 31.59% for the candidate, with 41.93% overall. A registry compiler overlapped all arms. The timing difference cannot be attributed solely to the code change. Independent QA completed beforehand and the IDB build began afterward. [Per-arm host receipt](host.json)
