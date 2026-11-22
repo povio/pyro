@@ -3,22 +3,22 @@
  "tiers": {
   "implemented": {
    "scope": {
-    "macbook_in_scope": 492,
+    "macbook_in_scope": 494,
     "studio_in_scope": 29,
     "other_dirs_out_of_scope": 16,
     "macbook_worker_variants_if_enabled": 180,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 699,
+   "distinct_census_pages": 701,
    "owner_reported_unlisted": 5,
-   "selector_union": 749,
+   "selector_union": 751,
    "owner_estimate_reduction": 55,
    "of_which_tentative": 127,
    "studio_css_reported_pages_not_deduped": 0,
    "studio_css_listed_distinct": 29,
    "by_dir": {
     "html/canvas": 338,
-    "html/semantics": 113,
+    "html/semantics": 115,
     "html/interaction": 100,
     "fetch/api": 54,
     "fetch/fetch-later": 29,
@@ -28,42 +28,42 @@
     "html/syntax": 12,
     "fetch/cross-origin-resource-policy": 10,
     "encoding": 7,
-    "fetch/stale-while-revalidate": 5,
     "fetch/range": 5,
-    "FileAPI": 4,
+    "fetch/stale-while-revalidate": 5,
     "html/browsers": 4,
+    "FileAPI": 4,
     "fetch/nosniff": 3,
     "fetch/http-cache": 3,
     "fetch/data-urls": 3,
     "xhr": 2,
-    "html/rendering": 1,
     "quirks": 1,
-    "IndexedDB": 1,
-    "svg/styling": 1
+    "html/rendering": 1,
+    "svg/styling": 1,
+    "IndexedDB": 1
    }
   },
   "in_progress": {
    "scope": {
-    "macbook_in_scope": 304,
+    "macbook_in_scope": 302,
     "studio_in_scope": 4,
     "other_dirs_out_of_scope": 0,
     "macbook_worker_variants_if_enabled": 40,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 328,
+   "distinct_census_pages": 326,
    "owner_reported_unlisted": 0,
-   "selector_union": 523,
+   "selector_union": 521,
    "owner_estimate_reduction": 195,
    "of_which_tentative": 198,
    "studio_css_reported_pages_not_deduped": 4,
    "studio_css_listed_distinct": 0,
    "by_dir": {
     "html/canvas": 224,
-    "html/semantics": 135,
+    "html/semantics": 133,
     "html/browsers": 85,
     "html/syntax": 30,
-    "html/webappapis": 23,
     "fetch/api": 23,
+    "html/webappapis": 23,
     "html/infrastructure": 3
    }
   },
@@ -912,9 +912,9 @@
   },
   "F08a": {
    "state": "implemented-unbuilt",
-   "in_scope_pages": 22,
+   "in_scope_pages": 24,
    "out_of_scope_pages": 0,
-   "pages": 22,
+   "pages": 24,
    "tentative": 0
   },
   "F08b": {
@@ -1569,12 +1569,12 @@
    "tentative": 0
   }
  },
- "implemented_total_estimate": 728,
+ "implemented_total_estimate": 730,
  "milestones_reached": [
   250,
   500
  ],
- "macbook_in_scope_implemented": 492,
+ "macbook_in_scope_implemented": 494,
  "macbook_in_scope_milestones": [
   100,
   200,
