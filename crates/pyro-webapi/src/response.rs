@@ -321,6 +321,7 @@ fn wrap_script<'s>(
         Some(nt) => s.wrap_new::<Response>(data, nt, Some(id))?,
         None => s.wrap::<Response>(data, Some(id))?,
     };
+    let headers = if origin == Origin::Script { headers.guard_response() } else { headers };
     let headers = s.wrap::<Headers>(headers, None)?;
     s.set_hidden(wrapper, HEADERS, headers.value())?;
     Ok(wrapper.value())

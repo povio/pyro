@@ -16,6 +16,9 @@ pub struct HeaderList {
     /// Fetch's "request" (`Some(false)`) or "request-no-cors" (`Some(true)`)
     /// guard: forbidden request headers are silently not set.
     request_guard: Option<bool>,
+    /// Fetch's "response" guard: forbidden response-header names are
+    /// silently not set or removed.
+    response_guard: bool,
 }
 impl HeaderList {
     fn append(&mut self, name: String, value: String) {
@@ -59,10 +62,18 @@ impl HeadersData {
         self.0.borrow_mut().request_guard = Some(no_cors);
         self
     }
+    /// The headers of a Response script made: its guard is "response".
+    pub(crate) fn guard_response(self) -> Self {
+        self.0.borrow_mut().response_guard = true;
+        self
+    }
     /// Whether the guard lets script write `name: value` (`value` is the
     /// value the header would have, `None` for a removal).
     fn guard_allows(&self, name: &str, value: Option<&str>) -> bool {
         let list = self.0.borrow();
+        if list.response_guard {
+            return !matches!(name, "set-cookie" | "set-cookie2");
+        }
         let Some(no_cors) = list.request_guard else { return true };
         if crate::fetch::forbidden_request_header(name, value.unwrap_or("")) {
             return false;
