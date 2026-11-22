@@ -164,3 +164,29 @@ fn a_modal_dialog_in_a_shadow_tree_does_not_block_its_hosts() {
     assert!(!dom.blocked_by_modal(host) && !dom.blocked_by_modal(html) && !dom.blocked_by_modal(dialog));
     assert!(dom.blocked_by_modal(other) && dom.blocked_by_modal(light));
 }
+
+/// `:hover` and `:focus-within` stop at the innermost top-layer element: it matches, its
+/// ancestors outside it do not, and they match again once it leaves the top layer (Chrome; WPT
+/// css/selectors `hover-toplayer-001`, `focus-within-toplayer-001`, `toplayer-transition-001`).
+#[test]
+fn user_action_pseudo_classes_stop_at_the_top_layer() {
+    let (dom, d) = doc(
+        "<div id=outer><dialog id=dlg><div id=pop popover=manual><input id=inp></div></dialog></div>",
+    );
+    let mut dom = dom.borrow_mut();
+    let (outer, dlg, pop, inp) =
+        (by_id(&dom, d, "outer"), by_id(&dom, d, "dlg"), by_id(&dom, d, "pop"), by_id(&dom, d, "inp"));
+    let m = |dom: &Dom, el: NodeId, s: &str| dom.matches(el, &pyro_dom::select::parse_selectors(s).unwrap()).unwrap();
+    dom.set_focused(d, Some(inp)).unwrap();
+    dom.set_hovered(d, Some(inp)).unwrap();
+    assert!(m(&dom, outer, ":focus-within") && m(&dom, outer, ":hover"));
+    dom.set_modal(dlg, true).unwrap();
+    assert!(m(&dom, dlg, ":focus-within") && m(&dom, dlg, ":hover"));
+    assert!(!m(&dom, outer, ":focus-within") && !m(&dom, outer, ":hover"));
+    dom.set_popover_showing(pop, true).unwrap();
+    assert!(m(&dom, pop, ":focus-within") && m(&dom, pop, ":hover"));
+    assert!(!m(&dom, dlg, ":focus-within") && !m(&dom, dlg, ":hover"), "the innermost top-layer element ends the chain");
+    dom.set_popover_showing(pop, false).unwrap();
+    dom.set_modal(dlg, false).unwrap();
+    assert!(m(&dom, outer, ":focus-within") && m(&dom, outer, ":hover"));
+}
