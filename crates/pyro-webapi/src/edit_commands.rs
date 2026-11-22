@@ -1787,7 +1787,7 @@ fn remove_inline(page: &Rc<PageDom>, host: NodeId, names: &[&str], input_type: &
                             let Ok(span) = dom.create_element(doc, "span") else { break };
                             let at_start = editing::deep_forward(&dom, (a, 0)) == (t, 0);
                             for attr in dom.attributes(a).unwrap_or(&[]).to_vec() {
-                                if attr.name.local.as_ref() == "id" && !at_start { continue; }
+                                if attr.name.ns.is_empty() && attr.name.local == markup5ever::local_name!("id") && !at_start { continue; }
                                 let ns = (!attr.name.ns.is_empty()).then_some(&*attr.name.ns);
                                 let _ = dom.set_attribute_ns(span, ns, &attr.qualified_name(), &attr.value);
                             }

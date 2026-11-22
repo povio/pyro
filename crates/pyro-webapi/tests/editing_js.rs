@@ -320,6 +320,16 @@ fn inline_formatting_skips_noneditable_islands() {
 }
 
 #[test]
+fn remove_format_keeps_foreign_elements_and_the_original_suffix() {
+    let e = env("<body><div id=ed contenteditable><cite id=book>abcd</cite></div></body>");
+    let r = &e.main;
+    eval(r, "ed.focus(); const cite=ed.firstChild, text=cite.firstChild; getSelection().setBaseAndExtent(text,0,text,3);document.execCommand('removeFormat')");
+    assert_eq!(eval(r, "[ed.lastChild===cite,cite.textContent,cite.hasAttribute('id'),getSelection().toString()].join()"), "true,d,false,abc");
+    eval(r, "const foreign=document.createElementNS('urn:example','cite');foreign.textContent='abcd';ed.replaceChildren(foreign);getSelection().selectAllChildren(foreign);document.execCommand('removeFormat')");
+    assert_eq!(eval(r, "[ed.firstChild===foreign,foreign.textContent].join()"), "true,abcd");
+}
+
+#[test]
 fn remove_format_preserves_deletions_and_splits_ids_only_once() {
     let e = env("<body><div id=ed contenteditable><del>deleted</del><cite id=work>abcd</cite></div></body>");
     let r = &e.main;
