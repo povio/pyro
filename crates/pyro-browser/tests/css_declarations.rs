@@ -1433,3 +1433,13 @@ fn find_skips_nonrendered_duplicates_and_modal_focus_escapes_inherited_inertness
     "#);
     assert_eq!(actual, "false|auto|inside|inside");
 }
+
+#[test]
+fn computed_map_orders_custom_property_names_by_utf16_code_unit() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        document.body.style.cssText = '--豈: 豈; --💩: 💩; --b: 1; --a: 2';
+        [...document.body.computedStyleMap().keys()].filter((k) => k.startsWith('--')).join(',')
+    "#);
+    assert_eq!(actual, "--a,--b,--💩,--豈");
+}

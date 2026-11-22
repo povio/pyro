@@ -1500,18 +1500,14 @@
   const attributeStyleMap = (el) => declarationMap(declOf(el));
   // `element.computedStyleMap()`: the element's computed values (`getComputedStyle`).
   const RESOLVED = /^((min-|max-)?(width|height|inline-size|block-size)|(margin|padding|inset)(-(top|right|bottom|left|block|inline|block-start|block-end|inline-start|inline-end))?|top|right|bottom|left|transform|line-height|border-(top|right|bottom|left|(block|inline)-(start|end))-width)$/;
-  // Standard names precede vendor-prefixed names, then custom names in Unicode code-point order.
+  // Standard names precede vendor-prefixed names, then custom names. Chrome orders custom
+  // names by UTF-16 code unit (so `--💩`, a surrogate pair, sorts before `--豈` U+F900),
+  // which is what css-typed-om's computed iterable test expects.
   const propertyGroup = (name) => name.startsWith('--') ? 2 : name.startsWith('-') ? 1 : 0;
   const compareComputedPropertyNames = (a, b) => {
     const group = propertyGroup(a) - propertyGroup(b);
     if (group || a === b) return group;
-    if (!a.startsWith('--')) return a < b ? -1 : 1;
-    for (let i = 2; i < a.length && i < b.length;) {
-      const x = a.codePointAt(i), y = b.codePointAt(i);
-      if (x !== y) return x - y;
-      i += x > 0xffff ? 2 : 1;
-    }
-    return a.length - b.length;
+    return a < b ? -1 : 1;
   };
   const computedStyleMap = (el, computedValue) => {
     const cs = () => getComputedStyle(el);
