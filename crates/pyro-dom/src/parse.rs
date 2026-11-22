@@ -1530,7 +1530,12 @@ fn parse_fragment_with(
     if !body_context && dom.n(ctx).element().is_none() {
         return Err(DomError::Type("fragment context must be an element"));
     }
-    let opts = fragment_tree_options(dom, owner_id)?;
+    let mut opts = fragment_tree_options(dom, owner_id)?;
+    // A template's contents belong to its inert document, which has no browsing context:
+    // parsed with scripting disabled (`<noscript>` contents are markup), as Chromium does.
+    if dom.n(ctx).element().is_some_and(|e| e.template_contents != NIL) {
+        opts.tree_builder.scripting_enabled = false;
+    }
     // Temporary document for the parser; nodes are adopted into `owner`.
     let tmp_id = dom.create_document(crate::node::DocumentKind::Html, "about:blank");
     dom.set_allow_declarative_shadow_roots(tmp_id, matches!(mode, FragmentMode::Modern { .. }))?;
