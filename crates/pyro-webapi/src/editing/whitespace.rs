@@ -385,6 +385,52 @@ fn has_sibling(dom: &Dom, host: NodeId, mut node: NodeId, forward: bool) -> bool
     false
 }
 
+/// Materialize the visible whitespace immediately before an inserted image.
+/// When insertion splits an already collapsed ASCII run, its continuation
+/// on the right of the split did not occupy another space.
+pub(super) fn after_image_insertion(page: &PageDom, dom: &mut Dom, host: NodeId, image: NodeId, split_text: bool) {
+    let Ok(Some(left)) = dom.prev_sibling(image) else { return };
+    let Ok(text) = dom.char_data(left) else { return };
+    let prefix = text.trim_end_matches(space);
+    let run = &text[prefix.len()..];
+    if run.is_empty() || editing::editing_host(dom, left) != Some(host) || !collapses(page, dom, left) {
+        return;
+    }
+    let starts_line = prefix.is_empty() && matches!(adjacent(page, dom, host, left, false), Next::Boundary | Next::Break);
+    let mut ordinary = starts_line;
+    let mut width = 0;
+    for c in run.chars() {
+        if c != ' ' || !ordinary { width += 1; }
+        ordinary = c == ' ';
+    }
+    if ordinary && width > 0 {
+        let right = dom.next_sibling(image).ok().flatten();
+        let ends_line = match right {
+            Some(n) if split_text && dom.char_data(n).is_ok_and(|s| s.trim_matches(' ').is_empty()) => {
+                matches!(adjacent(page, dom, host, n, true), Next::Boundary | Next::Break)
+            }
+            _ => matches!(adjacent(page, dom, host, image, true), Next::Boundary | Next::Break),
+        };
+        if ends_line { width -= 1; }
+    }
+    let offset = pyro_dom::dom::utf16_len(prefix);
+    let count = pyro_dom::dom::utf16_len(run);
+    let replacement: String = (0..width).map(|i| {
+        if i % 2 == 0 || i + 1 == width { '\u{a0}' } else { ' ' }
+    }).collect();
+    if replacement != run {
+        let _ = dom.replace_data(left, offset, count, &replacement);
+    }
+    if split_text && ordinary {
+        if let Ok(Some(right)) = dom.next_sibling(image) {
+            if let Ok(text) = dom.char_data(right) {
+                let collapsed = text.len() - text.trim_start_matches(' ').len();
+                if collapsed != 0 { let _ = dom.replace_data(right, 0, collapsed as u32, ""); }
+            }
+        }
+    }
+}
+
 /// Removing an inline replaced box exposes the start of the following text.
 /// At the end of its container the exposed text is instead on the left.
 pub(super) fn after_replaced_element(page: &PageDom, dom: &mut Dom, host: NodeId, (parent, index): Point) {

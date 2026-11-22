@@ -1791,6 +1791,8 @@ fn insert_fragment(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point, fr
     let kids: Vec<NodeId> = dom.children(frag).map(|c| c.collect()).unwrap_or_default();
     let Some(&last) = kids.last() else { return caret };
     let caret = insertion_point(dom, caret);
+    let single_image = kids.len() == 1 && dom.element(last).is_ok_and(|el| el.is_html() && el.local_name() == &markup5ever::local_name!("img"));
+    let split_text = is_text(dom, caret.0) && caret.1 > 0 && caret.1 < len(dom, caret.0);
     let (parent, before) = if is_text(dom, caret.0) {
         let n = caret.0;
         let parent = dom.parent(n).ok().flatten().unwrap_or(host);
@@ -1813,6 +1815,9 @@ fn insert_fragment(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point, fr
         before.filter(|&b| local(dom, b) == "br" && dom.child_count(parent).unwrap_or(0) == 1 && parent != host);
     for k in kids {
         let _ = dom.insert_before(parent, k, before);
+    }
+    if single_image {
+        whitespace::after_image_insertion(page, dom, host, last, split_text);
     }
     if let Some(br) = placeholder {
         let _ = dom.remove_child(parent, br);
@@ -1925,6 +1930,7 @@ pub(crate) fn insert_replaced_element(page: &Rc<PageDom>, host: NodeId, image_sr
     } else {
         delete_range_with_merging(&mut dom, host, start, end, false, image_src.is_some())
     };
+    let split_text = is_text(&dom, node) && offset > 0 && offset < len(&dom, node);
     let (parent, before) = if is_text(&dom, node) {
         let Ok(Some(p)) = dom.parent(node) else { return false };
         let before = if offset == 0 {
@@ -1958,7 +1964,9 @@ pub(crate) fn insert_replaced_element(page: &Rc<PageDom>, host: NodeId, image_sr
             let _ = dom.remove_child(parent, br);
         }
     }
-    if image_src.is_none() {
+    if image_src.is_some() {
+        whitespace::after_image_insertion(page, &mut dom, host, el, split_text);
+    } else {
         lift_horizontal_rule(&mut dom, host, el);
     }
     let Ok(Some(p)) = dom.parent(el) else { return false };
