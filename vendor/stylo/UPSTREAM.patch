@@ -10970,7 +10970,7 @@ diff -ruN a/values/computed/length.rs b/values/computed/length.rs
          }
 diff -ruN a/values/computed/length_percentage.rs b/values/computed/length_percentage.rs
 --- a/values/computed/length_percentage.rs	2026-11-11 19:55:57
-+++ b/values/computed/length_percentage.rs	2026-11-21 16:00:02
++++ b/values/computed/length_percentage.rs	2026-11-22 18:49:43
 @@ -149,6 +149,10 @@
          Self::new_percent(Percentage::hundred())
      }
@@ -11014,7 +11014,7 @@ diff -ruN a/values/computed/length_percentage.rs b/values/computed/length_percen
          match node {
              CalcNode::Leaf(l) => match l {
                  ComputedLeaf::Length(l) => {
-@@ -317,10 +339,15 @@
+@@ -317,13 +339,36 @@
      /// Resolves the percentage.
      #[inline]
      pub fn resolve(&self, basis: Length) -> Length {
@@ -11031,7 +11031,28 @@ diff -ruN a/values/computed/length_percentage.rs b/values/computed/length_percen
          }
      }
  
-@@ -640,15 +667,42 @@
++    /// Resolves an intrinsic calculation without assuming an indefinite percentage basis is zero.
++    pub fn resolve_size_with_optional_basis(&self, size: Length, basis: Option<Length>) -> Option<Length> {
++        if let Some(basis) = basis { return Some(self.resolve_size(size, basis)); }
++        match self.unpack() {
++            Unpacked::Length(length) => Some(length),
++            Unpacked::Percentage(_) => None,
++            Unpacked::Calc(calc) => {
++                let value = calc.node.resolve_map(|leaf| match leaf {
++                    ComputedLeaf::Percentage(factor) if factor.size_basis => Ok(ComputedLeaf::Length(size * factor.get())),
++                    ComputedLeaf::Percentage(_) => Err(()),
++                    _ => Ok(leaf.clone()),
++                }).ok()?;
++                let ComputedLeaf::Length(length) = value else { return None };
++                Some(Length::new(calc.clamping_mode.clamp(length.px())).normalized())
++            }
++        }
++    }
++
+     /// Resolves the percentage. Just an alias of resolve().
+     #[inline]
+     pub fn percentage_relative_to(&self, basis: Length) -> Length {
+@@ -640,15 +685,42 @@
  }
  
  impl CalcLengthPercentage {
@@ -11075,7 +11096,7 @@ diff -ruN a/values/computed/length_percentage.rs b/values/computed/length_percen
                  } else {
                      leaf.clone()
                  })
-@@ -820,7 +874,7 @@
+@@ -820,7 +892,7 @@
  
          let node = self.0.node.map_leaves(|leaf| match *leaf {
              Leaf::Percentage(p) => {
@@ -11084,7 +11105,7 @@ diff -ruN a/values/computed/length_percentage.rs b/values/computed/length_percen
              },
              Leaf::Length(l) => ComputedLeaf::Length({
                  let result =
-@@ -988,8 +1042,23 @@
+@@ -988,8 +1060,23 @@
                  }
  
                  let (l, r) = procedure.weights();
@@ -11110,7 +11131,7 @@ diff -ruN a/values/computed/length_percentage.rs b/values/computed/length_percen
  
                  Self::new_calc(
                      CalcNode::Sum(vec![one, other].into()),
-@@ -1003,6 +1072,12 @@
+@@ -1003,6 +1090,12 @@
  /// A wrapper of LengthPercentage, whose value must be >= 0.
  pub type NonNegativeLengthPercentage = NonNegative<LengthPercentage>;
  
