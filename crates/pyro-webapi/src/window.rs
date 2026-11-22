@@ -231,6 +231,7 @@ where
     );
     crate::animations::define_globals(def);
     crate::audio_decoder::define(def);
+    crate::audio_encoder::define(def);
     crate::image_decoder::define(def);
     crate::canvas::define_globals(def);
     crate::media::define_globals(def);

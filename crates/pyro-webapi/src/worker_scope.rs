@@ -1399,6 +1399,7 @@ fn install(s: &Scope<'_>, page: &Rc<PageDom>, global: &str) -> JsResult<()> {
         install_lock_interfaces(s)?;
         if s.global_data::<DedicatedWorkerGlobalScope>().is_some() {
             crate::audio_decoder::install_worker(s)?;
+            crate::audio_encoder::install_worker(s)?;
             crate::image_decoder::install_worker(s)?;
         }
         crate::storage_buckets::install_worker(s)?;
