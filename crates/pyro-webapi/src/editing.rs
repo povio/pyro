@@ -1489,6 +1489,31 @@ fn exit_empty_list_item(page: &PageDom, dom: &mut Dom, host: NodeId, item: NodeI
     Some((paragraph, 0))
 }
 
+/// At the end of a heading, keep a terminal padding break with the heading
+/// and start the next line in the editor's default paragraph separator.
+fn heading_end(dom: &Dom, block: NodeId, caret: Point) -> Option<Point> {
+    let (node, offset) = caret;
+    let next = if is_text(dom, node) {
+        if offset != len(dom, node) { return None; }
+        None
+    } else {
+        dom.child_at(node, offset).ok()?
+    };
+    let mut current = node;
+    let mut following = next;
+    while following.is_none() && current != block {
+        following = dom.next_sibling(current).ok()?;
+        current = dom.parent_element(current).ok()??;
+    }
+    match following {
+        None => Some(caret),
+        Some(br) if local(dom, br) == "br" && next_in_block(dom, block, br).is_none() => {
+            Some((dom.parent_element(br).ok()??, dom.index_in_parent(br).ok()? + 1))
+        }
+        _ => None,
+    }
+}
+
 fn split_block(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point) -> Point {
     // A DOM caret inside an inline void has no child insertion position.
     // Split at the rendered object's edge so it travels with the right line.
@@ -1591,9 +1616,18 @@ fn split_block(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point) -> Poi
         block = wrapper;
     }
     let tag = local(dom, block);
-    let new_block = if terminal_break && dom.parent(void).ok().flatten() == Some(block)
-        && matches!(tag.as_str(), "h1" | "h2" | "h3" | "h4" | "h5" | "h6")
-    {
+    let mut exit_heading = false;
+    if matches!(tag.as_str(), "h1" | "h2" | "h3" | "h4" | "h5" | "h6") {
+        if terminal_break && dom.parent(void).ok().flatten() == Some(block) {
+            exit_heading = true;
+        } else if kind.is_none() && dom.contains(block, void).unwrap_or(false) {
+            if let Some(edge) = heading_end(dom, block, caret) {
+                caret = edge;
+                exit_heading = true;
+            }
+        }
+    }
+    let new_block = if exit_heading {
         let separator = dom.document_data(doc).map(|d| d.default_paragraph_separator).unwrap_or("div").to_owned();
         dom.create_element(doc, &separator)
     } else {
@@ -1620,7 +1654,7 @@ fn split_block(page: &PageDom, dom: &mut Dom, host: NodeId, caret: Point) -> Poi
     // Reconstruct the inline ancestor chain on the right side of the split.
     // The original nodes and their IDs stay in the first paragraph.
     let mut container = if is_text(dom, n) { dom.parent(n).ok().flatten() } else { Some(n) };
-    let formatted_edge = if plaintext_at(dom, host) { formatted_split_edge(dom, block, caret) } else { None };
+    let formatted_edge = if exit_heading || plaintext_at(dom, host) { formatted_split_edge(dom, block, caret) } else { None };
     let text_parent = container;
     let mut empty_caret = None;
     let mut right_child = None;
