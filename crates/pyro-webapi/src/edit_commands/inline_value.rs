@@ -373,6 +373,42 @@ fn wrap(dom: &mut Dom, node: NodeId, fmt: &Format) -> Option<NodeId> {
     Some(el)
 }
 
+/// Replace a selected portion of a single-purpose FONT or SPAN. Keep
+/// the original value on either side of the range, and leave carriers
+/// with unrelated attributes or declarations intact.
+fn format_selected(page: &PageDom, dom: &mut Dom, host: NodeId, node: NodeId, fmt: &Format) -> Option<()> {
+    let parent = dom.parent_element(node).ok()??;
+    if parent != host && dom.element(parent).ok()?.is_html() {
+        let tag = editing::local(dom, parent);
+        let attrs = dom.attributes(parent).ok()?;
+        let carrier = match attrs {
+            [attr] if attr.name.ns.is_empty() && tag == "font" => {
+                fmt.kind.html_attr() == Some(&*attr.name.local)
+            }
+            [attr] if tag == "span" && attr.name.local == markup5ever::local_name!("style") => {
+                matches!(crate::css::parse_declarations(&attr.value).as_slice(), [decl] if decl.name == fmt.kind.property())
+            }
+            _ => false,
+        };
+        if carrier {
+            let outer = dom.parent_element(parent).ok()??;
+            let inherited = equivalent(fmt, &effective(page, dom, fmt.kind, outer));
+            let mut edges = [(node, 0), (node, editing::len(dom, node))];
+            let middle = super::alignment::split_edge(dom, outer, node, false, &mut edges)?;
+            super::alignment::split_edge(dom, outer, node, true, &mut edges)?;
+            let doc = dom.node_document(node).ok()?;
+            let legacy = fmt.legacy(dom.document_data(doc).ok()?.style_with_css);
+            if !inherited && tag == if legacy.is_some() { "font" } else { "span" } {
+                apply_to(dom, middle, fmt, legacy);
+                return Some(());
+            }
+            super::indentation::unwrap(dom, middle, &mut edges)?;
+            if inherited { return Some(()); }
+        }
+    }
+    wrap(dom, node, fmt).map(|_| ())
+}
+
 pub(super) fn apply(page: &Rc<PageDom>, host: NodeId, kind: Kind, value: &str) -> bool {
     let Some(fmt) = Format::parse(kind, value) else { return false };
     let Some((start, end)) = editing::selection_range(page) else { return false };
@@ -412,7 +448,7 @@ pub(super) fn apply(page: &Rc<PageDom>, host: NodeId, kind: Kind, value: &str) -
             if kind == Kind::Background && pyro_dom::color_well::is_fully_transparent(&fmt.css) {
                 changed |= clear_highlight(page, &mut dom, n);
             } else {
-                changed |= wrap(&mut dom, n, &fmt).is_some();
+                changed |= format_selected(page, &mut dom, host, n, &fmt).is_some();
             }
         }
     }
