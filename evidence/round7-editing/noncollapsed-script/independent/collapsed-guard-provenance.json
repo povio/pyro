@@ -1,0 +1,42 @@
+{
+  "final-probe.json": {
+    "path": "/Users/xban1x/Library/Caches/lightningpanda/round7-editing/caret-script/final-probe.json",
+    "sha256": "f394d3c96359bb47d182f0c9f04d2e6f23784e4505d455ed41d9372509410665"
+  },
+  "chrome-probe.json": {
+    "path": "/Users/xban1x/Library/Caches/lightningpanda/round7-editing/caret-script/chrome-probe.json",
+    "sha256": "d6628399d936c4bb6472aeeca4d84b822953d7b2c9b01e5e330737366575c0d7"
+  },
+  "final-styled.json": {
+    "path": "/Users/xban1x/Library/Caches/lightningpanda/round7-editing/caret-script/final-styled.json",
+    "sha256": "54964a27fca483a7db35c4a216138082f846a8a86028fd93bed1c03a6be6c1ae"
+  },
+  "chrome-styled.json": {
+    "path": "/Users/xban1x/Library/Caches/lightningpanda/round7-editing/caret-script/chrome-styled.json",
+    "sha256": "d73d3aaac0386c212ff3812206439cb82d7be4ff4507c671c5bf1ebaa3e65fb6"
+  },
+  "final-nested.json": {
+    "path": "/Users/xban1x/Library/Caches/lightningpanda/round7-editing/caret-script/final-nested.json",
+    "sha256": "9a20ea93440c6b462fb0f36df214024f9886a64cd13b1b31ae59a6bed8b6198f"
+  },
+  "chrome-nested.json": {
+    "path": "/Users/xban1x/Library/Caches/lightningpanda/round7-editing/caret-script/chrome-nested.json",
+    "sha256": "1934450c41263cd832d4eeac0076bc82b526fd5c8936a5fe3a06d39ff1826110"
+  },
+  "final-presentation.json": {
+    "path": "/Users/xban1x/Library/Caches/lightningpanda/round7-editing/caret-script/final-presentation.json",
+    "sha256": "c6c5e3f13ce93ff7f123f40d58fc29bb573ad2d34d65682a5ccb57c4e22c54a6"
+  },
+  "chrome-presentation.json": {
+    "path": "/Users/xban1x/Library/Caches/lightningpanda/round7-editing/caret-script/chrome-presentation.json",
+    "sha256": "aa08ca22885a55893367e2200f6c272d470bce97ce3aed8bc77aedc59be854a2"
+  },
+  "final-replay.json": {
+    "path": "/Users/xban1x/Library/Caches/lightningpanda/round7-editing/caret-script/final-replay.json",
+    "sha256": "0a0745c9e08b3f846dcce3e0697d3d4248470b0d5a385da02e7c10f3477a3ad9"
+  },
+  "chrome-replay.json": {
+    "path": "/Users/xban1x/Library/Caches/lightningpanda/round7-editing/caret-script/chrome-replay.json",
+    "sha256": "c23646393a24b64fd4a1f502acf0edee6b17ee297fb97e0cd5bdbf4e5c967349"
+  }
+}
