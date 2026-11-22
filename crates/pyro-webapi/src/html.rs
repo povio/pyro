@@ -3890,10 +3890,42 @@ fn set_constraints<'s>(s: &Scope<'s>, a: &Args<'s>, interface: &str) -> JsResult
     Ok(s.undefined())
 }
 
+/// Why a permission element is invalid, as far as Pyro tells: "style_invalid" when a connected
+/// one has an ancestor with a mask (`mask-image`: its look could be disguised, Chromium's
+/// "locking the PEPC style"), else "" (it is never valid either way: no registration).
+fn permission_invalid_reason(page: &PageDom, el: NodeId) -> &'static str {
+    let layout = page.layout();
+    let dom = page.dom.borrow();
+    if !dom.is_connected(el).unwrap_or(false) {
+        return "";
+    }
+    let mut ancestor = dom.parent_element(el).ok().flatten();
+    while let Some(a) = ancestor {
+        let mask = layout.computed_style_value(&dom, a, "mask-image");
+        if !mask.is_empty() && mask != "none" {
+            return "style_invalid";
+        }
+        ancestor = dom.parent_element(a).ok().flatten();
+    }
+    ""
+}
+
+/// A permission element became connected (`IframeChange::PermissionElement`): in a task, once
+/// its style is known, an element invalid for its style says so with `validationstatuschange`
+/// (WPT html/semantics/permission-element parent-mask, parent-image-mask).
+pub(crate) fn permission_element_connected(page: &Rc<PageDom>, el: NodeId) {
+    let p = page.clone();
+    page.post_task(Box::new(move || {
+        if permission_invalid_reason(&p, el) == "style_invalid" {
+            crate::input::fire_simple(&p, el, "validationstatuschange", false, false);
+        }
+    }));
+}
+
 /// InPagePermissionMixin: never valid (no registration), the permission "prompt".
 fn define_in_page_permission<C: JsClass<Data = NodeData>>(def: &mut ClassDef<C>) {
     def.getter("isValid", |s, _n| Ok(s.boolean(false)));
-    def.getter("invalidReason", |s, _n| Ok(s.string("")));
+    def.getter("invalidReason", |s, n| Ok(s.string(permission_invalid_reason(n.page(), n.id))));
     def.getter("initialPermissionStatus", |s, _n| Ok(s.string("prompt")));
     def.getter("permissionStatus", |s, _n| Ok(s.string("prompt")));
     own_handlers!(def, ["promptaction", "promptdismiss", "validationstatuschange"]);
@@ -3911,7 +3943,7 @@ simple_class!(HtmlInstallElement, "HTMLInstallElement", HtmlElement, |def| {
     reflect_url!(def, "manifest", "manifest");
     reflect_url!(def, "manifestId", "manifestid");
     def.getter("isValid", |s, _n| Ok(s.boolean(false)));
-    def.getter("invalidReason", |s, _n| Ok(s.string("")));
+    def.getter("invalidReason", |s, n| Ok(s.string(permission_invalid_reason(n.page(), n.id))));
     own_handlers!(def, ["validationstatuschange"]);
 });
 simple_class!(HtmlUserMediaElement, "HTMLUserMediaElement", HtmlElement, |def| {

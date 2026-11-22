@@ -1680,6 +1680,11 @@ impl PageDom {
                         hooks.script_connected(event.node);
                         self.flushing_iframes.set(true);
                     }
+                    IframeChange::PermissionElement if connected => {
+                        if let Some(page) = self.this.upgrade() {
+                            crate::html::permission_element_connected(&page, event.node);
+                        }
+                    }
                     _ => (),
                 }
             }
