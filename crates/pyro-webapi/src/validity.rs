@@ -114,7 +114,9 @@ fn email_message(value: &str) -> String {
     }
 }
 
+/// `setCustomValidity(error)`: HTML normalizes the message's newlines (CRLF and CR become LF).
 pub(crate) fn set_custom(page: &PageDom, id: NodeId, msg: String) {
+    let msg = if msg.contains('\r') { msg.replace("\r\n", "\n").replace('\r', "\n") } else { msg };
     let _ = page.dom.borrow_mut().set_custom_validity(id, &msg);
 }
 
