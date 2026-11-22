@@ -13,6 +13,8 @@
 //! - Request directives `no-store`, `no-cache`, `max-age`, `min-fresh` and
 //!   `only-if-cached`, `Pragma: no-cache` (§5.4), and the Fetch cache modes.
 //! - Revalidation with `ETag`/`Last-Modified` and a 304 header merge (§4.3).
+//! - `stale-while-revalidate` (RFC 5861): a stale entry inside the window is
+//!   served while the client revalidates it in the background.
 //! - Invalidation by unsafe methods (§4.4).
 //! - Byte-bounded with LRU eviction.
 //!
@@ -20,8 +22,7 @@
 //! revalidated, never served unsafely):
 //! - heuristic freshness: no explicit lifetime means revalidate when there
 //!   are validators, otherwise do not store;
-//! - serving stale content (`max-stale`, `stale-while-revalidate`,
-//!   `stale-if-error`);
+//! - serving stale content otherwise (`max-stale`, `stale-if-error`);
 //! - partial content and `Range`;
 //! - storing redirects;
 //! - `Vary: *`;
@@ -56,6 +57,8 @@ pub(crate) struct Directives {
     pub public: bool,
     pub private: bool,
     pub s_maxage: Option<Option<u64>>,
+    /// Response-only `stale-while-revalidate` seconds (RFC 5861 §3).
+    pub stale_while_revalidate: Option<u64>,
 }
 
 impl Directives {
@@ -82,6 +85,7 @@ impl Directives {
                     "max-age" => d.max_age = Some(if d.max_age.is_some() { None } else { seconds() }),
                     "s-maxage" if !request => d.s_maxage = Some(if d.s_maxage.is_some() { None } else { seconds() }),
                     "public" if !request => d.public = true,
+                    "stale-while-revalidate" if !request => d.stale_while_revalidate = seconds(),
                     "private" if !request => d.private = true,
                     "min-fresh" if request => d.min_fresh = seconds(),
                     "only-if-cached" if request => d.only_if_cached = true,
@@ -130,6 +134,9 @@ pub(crate) enum Lookup {
     Hit(Cached),
     /// Stored but must be revalidated with these validators first.
     Revalidate(Cached),
+    /// Stale, but inside its `stale-while-revalidate` window: usable as-is
+    /// while the caller revalidates it in the background.
+    StaleWhileRevalidate(Cached),
 }
 
 struct Entry {
@@ -269,15 +276,27 @@ impl HttpCache {
         if matches!(mode, CacheMode::ForceCache | CacheMode::OnlyIfCached) {
             return Lookup::Hit(entry.cached(age));
         }
-        let response_no_cache = Directives::parse(&entry.headers, false).no_cache;
+        let response = Directives::parse(&entry.headers, false);
+        let response_no_cache = response.no_cache;
         let fresh_enough = lifetime > age
             && !response_no_cache
             && !req.no_cache
             && mode != CacheMode::NoCache
             && req.max_age.is_none_or(|m| m.is_some_and(|m| age <= m as f64))
             && req.min_fresh.is_none_or(|m| lifetime - age >= m as f64);
+        // RFC 5861 §3: a request that asks for nothing fresher than the
+        // default takes a stale entry inside the window (the private cache).
+        let stale_while_revalidate = !self.shared
+            && mode == CacheMode::Default
+            && !response_no_cache
+            && !req.no_cache
+            && req.max_age.is_none()
+            && req.min_fresh.is_none()
+            && response.stale_while_revalidate.is_some_and(|window| age < lifetime + window as f64);
         if fresh_enough {
             Lookup::Hit(entry.cached(age))
+        } else if stale_while_revalidate {
+            Lookup::StaleWhileRevalidate(entry.cached(age))
         } else if entry.has_validators() {
             Lookup::Revalidate(entry.cached(age))
         } else {

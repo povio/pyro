@@ -1410,6 +1410,11 @@ struct Io {
     per_origin: Mutex<HashMap<url::Origin, Arc<Semaphore>>>,
     /// Origins whose semaphore grew to `max_per_h2_origin`.
     h2_origins: Mutex<HashSet<url::Origin>>,
+    /// This state itself, for work that outlives the request that started
+    /// it (a `stale-while-revalidate` background revalidation).
+    me: std::rc::Weak<Io>,
+    /// Cache keys being revalidated in the background: one at a time each.
+    background_revalidations: Mutex<HashSet<String>>,
 }
 
 fn io_main(mut rx: mpsc::UnboundedReceiver<Cmd>, shared: Arc<Shared>, cookies: Arc<Mutex<CookieJar>>) {
@@ -1436,7 +1441,9 @@ fn io_main(mut rx: mpsc::UnboundedReceiver<Cmd>, shared: Arc<Shared>, cookies: A
     local.block_on(&rt, async move {
         let sessions = Arc::new(H2Sessions::default());
         let client = http_client(&shared.config, &tls_config(), shared.proxy.clone(), sessions.clone());
-        let io = std::rc::Rc::new(Io {
+        let io = std::rc::Rc::new_cyclic(|me| Io {
+            me: me.clone(),
+            background_revalidations: Mutex::new(HashSet::new()),
             shared,
             cookies,
             client,
@@ -2193,6 +2200,14 @@ impl Io {
                         let hop = Hop { cors_cross, same_origin: basic_tainting, redirected: redirects > 0 };
                         return self.serve_cached(id, &req, sink, &url, cached, hop, true, 0);
                     }
+                    crate::cache::Lookup::StaleWhileRevalidate(cached) => {
+                        // RFC 5861: served stale, revalidated in the background.
+                        let cookies = includes_credentials(req.credentials, basic_tainting);
+                        self.revalidate_in_background(&req, &url, &headers, &cached, credentialed, cookies);
+                        crate::timing::note_timing_allow(&url, &cached.headers, timing_origin.as_deref());
+                        let hop = Hop { cors_cross, same_origin: basic_tainting, redirected: redirects > 0 };
+                        return self.serve_cached(id, &req, sink, &url, cached, hop, true, 0);
+                    }
                     crate::cache::Lookup::Revalidate(cached) if !unconditional => {
                         for (name, value) in cached.validators() {
                             headers.insert(name, value);
@@ -2636,6 +2651,70 @@ impl Io {
         if let Some(s) = &self.shared.config.shared_asset_cache {
             s.with(|c| targets.iter().for_each(|t| c.invalidate(t)));
         }
+    }
+
+    /// Starts a background revalidation of the stored response `cached` to a
+    /// request of `url` sent with `sent` (`stale-while-revalidate`): a
+    /// conditional request when it has validators, whose answer updates or
+    /// replaces the entry. Nobody waits for it and observers do not see it.
+    fn revalidate_in_background(
+        &self,
+        req: &Request,
+        url: &Url,
+        sent: &HeaderMap,
+        cached: &crate::cache::Cached,
+        credentialed: bool,
+        cookies: bool,
+    ) {
+        let Some(io) = self.me.upgrade() else { return };
+        let key = url.as_str().split('#').next().unwrap_or_default().to_owned();
+        if !self.background_revalidations.lock().unwrap().insert(key.clone()) {
+            return;
+        }
+        let mut conditional = sent.clone();
+        for (name, value) in cached.validators() {
+            conditional.insert(name, value);
+        }
+        let (req, url, sent, cached_id) = (req.clone(), url.clone(), sent.clone(), cached.id);
+        tokio::task::spawn_local(async move {
+            let revalidation = async {
+                let request_time = wall_time();
+                let Ok(_permit) = io.origin_semaphore(&url).acquire_owned().await else { return };
+                let Ok(resp) = io.send(Method::GET, &url, conditional, None).await else { return };
+                let status = resp.status();
+                let protocol = resp.version();
+                let resp_headers = own_headers(resp.headers());
+                io.store_cookies(&req, &url, &resp_headers, cookies);
+                let response_time = wall_time();
+                if status == StatusCode::NOT_MODIFIED {
+                    drop(resp);
+                    let mut cache = io.shared.cache.lock().unwrap();
+                    cache.update_from_304(&url, cached_id, &resp_headers, request_time, response_time, credentialed);
+                    return;
+                }
+                let max_entry = {
+                    let cache = io.shared.cache.lock().unwrap();
+                    cache.storable(status, &resp_headers, &sent, CacheMode::Default).then(|| cache.max_entry_bytes())
+                };
+                let Some(max_entry) = max_entry else { return };
+                let encoding = content_encoding(&resp_headers).map(Cow::into_owned);
+                let Ok(body) = read_whole_body(resp, encoding.as_deref(), max_entry).await else { return };
+                let mut cache = io.shared.cache.lock().unwrap();
+                cache.insert(
+                    &url,
+                    &sent,
+                    credentialed,
+                    status,
+                    &resp_headers,
+                    body,
+                    request_time,
+                    response_time,
+                    protocol,
+                );
+            };
+            revalidation.await;
+            io.background_revalidations.lock().unwrap().remove(&key);
+        });
     }
 
     /// Delivers a stored response: a fresh hit (`from_cache`, no network) or one
