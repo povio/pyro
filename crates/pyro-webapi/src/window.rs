@@ -182,7 +182,12 @@ where
     def.getter("customElements", |s, w| crate::custom::registry(s, w.page()));
     def.getter("navigator", |s, w| navigator(s, w.page()));
     def.getter("crypto", |s, _w| crate::crypto::crypto_value(s));
-    def.getter("clientInformation", |s, w| navigator(s, w.page()));
+    // [Replaceable]: assignment shadows it with an own data property.
+    def.accessor(
+        "clientInformation",
+        |s, w| navigator(s, w.page()),
+        |s, w, value| replace_window_attribute(s, w.page(), "clientInformation", value),
+    );
     def.getter("ClipboardItem", |s, w| crate::navigator_extras::member(s, w.page(), "ClipboardItem"));
     def.getter("Notification", |s, w| crate::navigator_extras::member(s, w.page(), "Notification"));
     crate::streams::define_globals(def);
