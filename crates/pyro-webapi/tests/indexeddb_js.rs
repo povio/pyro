@@ -246,6 +246,36 @@ fn key_paths_generators_and_constraints() {
 }
 
 #[test]
+fn decoded_keys_bypass_inherited_index_setters() {
+    let env = Env::new();
+    let doc = env.doc("http://idb.test/");
+    doc.eval(HELPERS);
+    let got = env.run(
+        &doc,
+        r#"
+        const db = await openDb('returned-keys', 1, db => db.createObjectStore('rows'));
+        const tx = db.transaction('rows', 'readwrite');
+        const completed = done(tx);
+        const rows = tx.objectStore('rows');
+        const key = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, ['abcdefghijk', Uint8Array.of(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 255)]];
+        let calls = 0;
+        Object.defineProperty(Object.prototype, '10', {configurable: true, set() { calls++; }});
+        try {
+          const result = await req(rows.put('saved', key));
+          out = [calls, Object.hasOwn(result, 10), indexedDB.cmp(result, key)].join('|');
+        } finally {
+          delete Object.prototype[10];
+        }
+        await completed;
+        db.close();
+        const reopened = await openDb('returned-keys', 1);
+        out += '|' + await req(reopened.transaction('rows').objectStore('rows').get(key));
+        "#,
+    );
+    assert_eq!(got, "0|true|0|saved");
+}
+
+#[test]
 fn blob_file_key_paths_use_stored_metadata() {
     let env = Env::new();
     let doc = env.doc("http://idb.test/");

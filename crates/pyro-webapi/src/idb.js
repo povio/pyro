@@ -160,7 +160,7 @@
     if (t === '3') {
       let out = '', units = [];
       while (s[st.i] !== '!') {
-        units.push(parseInt(s.slice(st.i, st.i + 4), 16));
+        own(units, units.length, parseInt(s.slice(st.i, st.i + 4), 16));
         st.i += 4;
         if (units.length === 4096) {
           out += apply(fromCharCode, null, units);
@@ -173,14 +173,14 @@
     if (t === '4') {
       const bytes = [];
       while (s[st.i] !== '!') {
-        bytes.push(parseInt(s.slice(st.i, st.i + 2), 16));
+        own(bytes, bytes.length, parseInt(s.slice(st.i, st.i + 2), 16));
         st.i += 2;
       }
       st.i++;
       return new U8(bytes).buffer;
     }
     const out = [];
-    while (s[st.i] !== '!') out.push(decodeAt(s, st));
+    while (s[st.i] !== '!') own(out, out.length, decodeAt(s, st));
     st.i++;
     return out;
   }
