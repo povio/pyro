@@ -1,0 +1,10 @@
+{
+  "File_API": {
+    "url": "https://w3c.github.io/FileAPI/",
+    "sha256": "226d4f7a5845b9e1eb72ec6b393f5a73b376f32877daa934c93544a726e460c9"
+  },
+  "File_System_Standard": {
+    "url": "https://fs.spec.whatwg.org/",
+    "sha256": "0bf200adc73a7546db5a79222206a897c018ed2063fe0ab549dea1ec90883e3a"
+  }
+}

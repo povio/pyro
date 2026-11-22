@@ -1,0 +1,14 @@
+running 2 tests
+test storage_events::opfs_writer_copies_a_mutable_view_in_a_storage_task ... ok
+test storage_events::storage_changes_reach_other_same_origin_documents_only ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 548 filtered out; finished in 0.10s
+running 5 tests
+test opfs::store::tests::sync_modes_and_cursors_are_per_handle ... ok
+test opfs::store::tests::siloed_streams_commit_atomically_and_abandonment_releases_locks ... ok
+test opfs::store::tests::move_reserves_both_locators_until_atomic_commit ... ok
+test opfs::store::tests::cancellation_and_failed_acquisition_release_the_entire_reservation ... ok
+test opfs::store::tests::origin_roots_and_locators_follow_context_lifetime ... ok
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 92 filtered out; finished in 0.00s
+running 1 test
+test crypto_js::file_stream_writes_observe_queued_bytes_and_abort_preserves_the_file ... ok
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 693 filtered out; finished in 0.03s
