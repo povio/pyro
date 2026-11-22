@@ -830,6 +830,7 @@ impl Browser {
         self.apply_same_document_url(page);
         host.connect_rendered_objects(|parent| self.apply_same_document_url(parent));
         self.fetch_rendered_objects(&host);
+        self.resume_lazy_frames(&host);
         self.fetch_rendered_images(page);
         // Runs at every checkpoint: leave early when nothing is queued.
         let (iframe_events, resource_events) = {

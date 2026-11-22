@@ -206,6 +206,8 @@ enum InitialIframeLoad {
     Blank { url: url::Url, explicit: bool },
 }
 
+pub(crate) type LazyFrameStamp = (((u64, u64, u32, u32), u64), bool, bool);
+
 pub(crate) struct FrameHost {
     pub children: RefCell<BTreeMap<u64, DocumentState>>,
     pub root: RefCell<Frame>,
@@ -258,6 +260,11 @@ pub(crate) struct FrameHost {
     /// `<object>`/`<embed>` elements not fetched because they were not being rendered: fetched
     /// once rendered (`Browser::fetch_rendered_objects`).
     pub(crate) hidden_objects: RefCell<Vec<(FrameKey, NodeId)>>,
+    /// Lazy iframes whose navigation waits for the lazy load check (`Browser::resume_lazy_frames`),
+    /// each with the parent's observation stamp, `load` state and laziness at its last check.
+    pub(crate) lazy_frames: RefCell<Vec<(FrameKey, Option<LazyFrameStamp>)>>,
+    /// Lazy iframes the check let go: their next attribute processing navigates.
+    pub(crate) lazy_approved: RefCell<Vec<FrameKey>>,
     /// The layout engine's sync stamp when the hidden objects were last checked.
     pub(crate) hidden_checked_at: Cell<Option<(u64, u64, u32, u32)>>,
 }
@@ -369,6 +376,8 @@ impl FrameHost {
             window_proxies: RefCell::new(BTreeMap::new()),
             pending_objects: RefCell::new(Vec::new()),
             hidden_objects: RefCell::new(Vec::new()),
+            lazy_frames: RefCell::new(Vec::new()),
+            lazy_approved: RefCell::new(Vec::new()),
             hidden_checked_at: Cell::new(None),
             focus: RefCell::new(crate::focus::FocusState::new(id)),
         });
@@ -446,6 +455,8 @@ impl FrameHost {
             window_proxies: RefCell::new(BTreeMap::new()),
             pending_objects: RefCell::new(Vec::new()),
             hidden_objects: RefCell::new(Vec::new()),
+            lazy_frames: RefCell::new(Vec::new()),
+            lazy_approved: RefCell::new(Vec::new()),
             hidden_checked_at: Cell::new(None),
             focus: RefCell::new(crate::focus::FocusState::new(page)),
         })
@@ -1902,11 +1913,14 @@ impl Browser {
         let Some(parent) = frame.parent.as_ref().and_then(|id| host.key(id)).and_then(|key| host.frame(key)) else {
             return;
         };
+        if !host.dom.borrow().is_connected(owner).unwrap_or(false) {
+            return;
+        }
+        if self.defer_lazy_frame(&host, key, owner, parent.page_dom.as_deref()) {
+            return;
+        }
         let (srcdoc, src, src_base) = {
             let dom = host.dom.borrow();
-            if !dom.is_connected(owner).unwrap_or(false) {
-                return;
-            }
             // An `<object>` hosting a document navigates to its `data`, an `<embed>` to its `src`
             // (neither has `srcdoc`).
             let embedded = dom.is_document_object(owner);
@@ -2014,6 +2028,89 @@ impl Browser {
 }
 
 impl Browser {
+    /// HTML "will lazy load element steps" for an iframe (`loading=lazy`, scripting enabled in
+    /// its document): its navigation (`src`, `srcdoc` or a `javascript:` URL) waits for the lazy
+    /// load check, the frame staying on its complete initial `about:blank`, which holds up no
+    /// `load`. False when the check let it go (or it is not lazy): navigate now.
+    fn defer_lazy_frame(
+        &mut self,
+        host: &Rc<FrameHost>,
+        key: FrameKey,
+        owner: NodeId,
+        parent_dom: Option<&pyro_webapi::PageDom>,
+    ) -> bool {
+        let lazy = is_lazy_iframe(&host.dom.borrow(), owner) && parent_dom.is_some_and(|d| !d.scripting_disabled());
+        if !lazy {
+            return false;
+        }
+        {
+            let mut approved = host.lazy_approved.borrow_mut();
+            if let Some(i) = approved.iter().position(|k| *k == key) {
+                approved.remove(i);
+                return false;
+            }
+        }
+        {
+            let mut pending = host.lazy_frames.borrow_mut();
+            match pending.iter_mut().find(|(k, _)| *k == key) {
+                // A new navigation while deferred: checked again.
+                Some(entry) => entry.1 = None,
+                None => pending.push((key, None)),
+            }
+        }
+        if let Some(mut doc) = self.doc_mut(key) {
+            doc.main_frame.dom_content_loaded = true;
+            doc.main_frame.loaded = true;
+        }
+        true
+    }
+
+    /// The deferred lazy iframes that stopped being lazy, or that intersect the viewport expanded
+    /// by the lazy load margin once their document's `load` has fired, navigate (their
+    /// attributes are processed again, with what they say then).
+    pub(crate) fn resume_lazy_frames(&mut self, host: &Rc<FrameHost>) {
+        if host.lazy_frames.borrow().is_empty() {
+            return;
+        }
+        let pending: Vec<(FrameKey, Option<LazyFrameStamp>)> = host.lazy_frames.borrow().clone();
+        for (key, checked) in pending {
+            let Some(frame) = host.frame(key) else {
+                host.lazy_frames.borrow_mut().retain(|(k, _)| *k != key);
+                continue;
+            };
+            let Some(owner) = frame.owner else { continue };
+            let Some((parent_loaded, Some(parent_dom))) =
+                self.doc(host.parent_key(key)).map(|d| (d.main_frame.loaded, d.main_frame.page_dom.clone()))
+            else {
+                continue;
+            };
+            let (connected, lazy) = {
+                let dom = host.dom.borrow();
+                (dom.is_connected(owner).unwrap_or(false), is_lazy_iframe(&dom, owner))
+            };
+            if !connected {
+                continue;
+            }
+            // Checked again only when the parent's DOM, style, viewport or scroll offsets changed.
+            let stamp = (parent_dom.layout().observation_stamp(&parent_dom.dom.borrow()), parent_loaded, lazy);
+            if checked == Some(stamp) {
+                continue;
+            }
+            let go = !lazy || (parent_loaded && pyro_webapi::intersection_observer::lazy_load_intersects(&parent_dom, owner));
+            if !go {
+                let stamp = (parent_dom.layout().observation_stamp(&parent_dom.dom.borrow()), parent_loaded, lazy);
+                if let Some(entry) = host.lazy_frames.borrow_mut().iter_mut().find(|(k, _)| *k == key) {
+                    entry.1 = Some(stamp);
+                }
+                continue;
+            }
+            host.lazy_frames.borrow_mut().retain(|(k, _)| *k != key);
+            host.lazy_approved.borrow_mut().push(key);
+            // In a task, as the attribute processing it resumes.
+            host.queue_attributes(key, frame.loader_id.clone());
+        }
+    }
+
     /// Loads `html`, the `srcdoc` of the iframe of `key`, as its document
     /// `about:srcdoc` (the initial navigation, and a navigation to
     /// `about:srcdoc` such as `location.reload()` of that document).
@@ -2189,4 +2286,11 @@ mod frame_id_tests {
         assert_eq!(child_of_frame_id("2A"), None);
         assert_eq!(child_of_frame_id(&format!("{:032X}", u128::from(u64::MAX) + 1)), None);
     }
+}
+
+/// An HTML `<iframe>` whose `loading` attribute is in the Lazy state.
+fn is_lazy_iframe(dom: &pyro_dom::Dom, node: NodeId) -> bool {
+    dom.element(node).is_ok_and(|e| {
+        e.is_html() && &*e.name.local == "iframe" && e.attr("loading").is_some_and(|l| l.eq_ignore_ascii_case("lazy"))
+    })
 }
