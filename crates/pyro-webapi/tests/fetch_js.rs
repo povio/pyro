@@ -149,7 +149,7 @@ fn fetch_post_bytes_headers_redirects_and_http_errors() {
         const redirect=await fetch('/redirect');
         if(!redirect.redirected || !redirect.url.endsWith('/json') || (await redirect.json()).answer!==42) throw Error('redirect');
         const manual=await fetch('/redirect',{redirect:'manual'});
-        if(manual.type!=='opaqueredirect' || manual.status!==0 || manual.url!=='' || [...manual.headers].length || await manual.text()!=='') throw Error('manual');
+        if(manual.type!=='opaqueredirect' || manual.status!==0 || !manual.url.endsWith('/redirect') || [...manual.headers].length || await manual.text()!=='') throw Error('manual');
         try { await fetch('/redirect',{redirect:'error'}); throw Error('redirect accepted') } catch(e){if(!(e instanceof TypeError))throw e;}
         result='ok';
     })().catch(e=>result='ERROR '+e);"#);

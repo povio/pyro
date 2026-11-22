@@ -113,7 +113,9 @@ impl JsClass for Response {
             construct(s, None, Origin::Script, status, status_text, headers, Some(Bytes::from(json)))
         });
         def.getter("url", |s, d| {
-            Ok(s.string(if d.origin != Origin::Network || opaque(d.head.kind) { "" } else { d.head.url.as_str() }))
+            // An opaque filtered response has an empty URL list; an opaque-redirect one keeps it.
+            let empty = d.origin != Origin::Network || d.head.kind == ResponseKind::Opaque;
+            Ok(s.string(if empty { "" } else { d.head.url.as_str() }))
         });
         def.getter("status", |s, d| Ok(s.number(f64::from(status_of(d)))));
         def.getter("statusText", |s, d| {

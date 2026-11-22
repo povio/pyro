@@ -2089,6 +2089,11 @@ impl Io {
             if req.mode == RequestMode::SameOrigin && !same_origin {
                 return Err(NetError::Cors("Cross-origin request in same-origin mode".into()));
             }
+            // Fetch "main fetch": a no-cors request that is not same-origin with basic tainting
+            // may only follow redirects (`redirect: "manual"` would expose an opaque redirect).
+            if req.mode == RequestMode::NoCors && !basic_tainting && req.redirect != RedirectMode::Follow {
+                return Err(NetError::Cors("Cross-origin no-cors request whose redirect mode is not follow".into()));
+            }
 
             // CDP Fetch interception (request stage).
             let interceptor =
@@ -2371,25 +2376,35 @@ impl Io {
 
             // Redirects.
             if status.is_redirection() && status != StatusCode::NOT_MODIFIED {
+                // Fetch "HTTP fetch": the CORS check covers a redirect response too, and runs
+                // before the redirect mode is looked at (a manual redirect is checked as well).
+                if cors_cross {
+                    cors::cors_check(&resp_headers, req.origin.as_deref().unwrap_or("null"), req.credentials)
+                        .map_err(NetError::Cors)?;
+                }
+                // The redirect mode decides with or without a `Location`: only "follow" needs one.
+                match req.redirect {
+                    RedirectMode::Error => return Err(NetError::RedirectNotAllowed),
+                    RedirectMode::Manual => {
+                        crate::timing::note_timing_allow(&url, &resp_headers, timing_origin.as_deref());
+                        drop(resp.into_body().collect().await);
+                        drop(permit);
+                        let head = self
+                            .head(&url, status, resp_headers, ResponseKind::OpaqueRedirect, redirects > 0)
+                            .over(protocol);
+                        return self.finish_empty(id, &req, sink, head);
+                    }
+                    RedirectMode::Follow => {}
+                }
                 if let Some(loc) = resp_headers.get(header::LOCATION).and_then(|v| v.to_str().ok()) {
                     let target = url.join(loc).map_err(|_| NetError::InvalidUrl)?;
+                    // Fetch "HTTP-redirect fetch": only HTTP(S) survives a redirect.
+                    if !matches!(target.scheme(), "http" | "https") {
+                        return Err(NetError::Blocked("net::ERR_UNSAFE_REDIRECT".into()));
+                    }
                     crate::timing::note_timing_allow(&url, &resp_headers, timing_origin.as_deref());
                     drop(resp.into_body().collect().await);
                     drop(permit);
-                    match req.redirect {
-                        RedirectMode::Error => return Err(NetError::RedirectNotAllowed),
-                        RedirectMode::Manual => {
-                            let head = self
-                                .head(&url, status, resp_headers, ResponseKind::OpaqueRedirect, redirects > 0)
-                                .over(protocol);
-                            return self.finish_empty(id, &req, sink, head);
-                        }
-                        RedirectMode::Follow => {}
-                    }
-                    if cors_cross {
-                        cors::cors_check(&resp_headers, req.origin.as_deref().unwrap_or("null"), req.credentials)
-                            .map_err(NetError::Cors)?;
-                    }
                     redirects += 1;
                     if redirects > self.shared.config.max_redirects {
                         return Err(NetError::TooManyRedirects);

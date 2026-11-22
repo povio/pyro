@@ -1358,23 +1358,6 @@ fn default_key_action(page: &Rc<PageDom>, target: NodeId, k: &KeyInput) {
     }
 }
 
-/// An element that uses arrow keys itself (Chrome's focusgroup "key
-/// conflict" elements): text controls, editable content, value-stepping
-/// inputs, radio buttons, selects and media with controls. A focusgroup can
-/// move focus onto one, but arrows do not move it away and Tab leaves it to
-/// the adjacent item.
-fn is_directional_input_handler(dom: &Dom, el: NodeId) -> bool {
-    if is_text_control(dom, el) || crate::editing::editing_host(dom, el).is_some() {
-        return true;
-    }
-    match local(dom, el).as_deref() {
-        Some("select") => true,
-        Some("input") => matches!(dom.input_type(el), Ok(InputType::Radio | InputType::Range | InputType::Number)),
-        Some("video" | "audio") => dom.has_attribute(el, "controls").unwrap_or(false),
-        _ => false,
-    }
-}
-
 /// Scoped focusgroup arrow keys (Chrome's `FocusgroupController`): on a
 /// focused focusgroup item, an arrow along an axis the owner allows moves
 /// focus to the next or previous item (wrapping when the owner wraps), Home
@@ -1389,7 +1372,7 @@ fn focusgroup_key_action(page: &Rc<PageDom>, target: NodeId, key: &str) -> bool 
     let next = {
         let layout = page.layout();
         let dom = page.dom.borrow();
-        if is_directional_input_handler(&dom, target) {
+        if is_text_control(&dom, target) {
             return false;
         }
         let Some((owner, _)) = dom.focusgroup_owner_of(target) else { return false };
@@ -1988,13 +1971,6 @@ fn focus_next(page: &Rc<PageDom>, _from: NodeId, backward: bool) {
         let owner_of = |n: NodeId| dom.focusgroup_owner_of(n).map(|(o, _)| o);
         let leaving = current.and_then(owner_of);
         let mut next = step(current);
-        // Tab from an item that keeps the arrow keys goes to the adjacent
-        // item, the way out of it.
-        let handler = current.is_some_and(|c| is_directional_input_handler(&dom, c));
-        let next_item = next.filter(|_| handler && leaving.is_some());
-        if next_item.is_some() {
-            next = None;
-        }
         let mut guard = 0usize;
         // Pass over the rest of the segment being left.
         while let (Some(n), Some(o)) = (next, leaving) {
@@ -2005,7 +1981,6 @@ fn focus_next(page: &Rc<PageDom>, _from: NodeId, backward: bool) {
             next = step(Some(n));
         }
         match next {
-            _ if next_item.is_some() => next_item,
             Some(n) => match owner_of(n) {
                 Some(owner) => {
                     // The segment entered: `n` and the items of `owner`
