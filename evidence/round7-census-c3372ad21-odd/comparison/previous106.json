@@ -1982,12 +1982,21 @@
   "shard": "ordinary-126"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "<script> load: Move success external classic script to iframe move-back"
+  ],
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   3,
+   5
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_unreached: Script load event fired unexpectedly Reached unreachable code",
   "original": {
    "canonical": "<script> load: Move success external classic script to iframe move-back",
    "chrome158": [
@@ -2025,12 +2034,21 @@
   "shard": "ordinary-135"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "Mixed-Content: Expects blocked for worklet-paint to same-http origin and swap-scheme redirection from https context."
+  ],
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   6,
+   8
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: The resource request should be 'blocked'. expected \"blocked\" but got \"upgraded\"",
   "original": {
    "canonical": "Mixed-Content: Expects blocked for worklet-paint to same-http origin and swap-scheme redirection from https context.",
    "chrome158": [
@@ -2228,12 +2246,21 @@
   "shard": "ordinary-148"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "window error: Move parse-error external classic script to iframe move-back"
+  ],
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   3,
+   5
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_unreached: Window error event shouldn't fired on source window Reached unreachable code",
   "original": {
    "canonical": "window error: Move parse-error external classic script to iframe move-back",
    "chrome158": [
@@ -2314,12 +2341,21 @@
   "shard": "ordinary-178"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Fail",
+   "Make an XHR request immediately after creating link rel=preload."
+  ],
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "complete",
+   "OK",
+   false,
+   0,
+   2
+  ],
+  "currentState": "Fail",
+  "currentSubtestDiagnostic": "assert_equals: resources/dummy.xml?token=5412bfe0-6f0b-45c2-9d8c-6f366d2c38db expected 1 but got 2",
   "original": {
    "canonical": "Make an XHR request immediately after creating link rel=preload.",
    "chrome158": [
