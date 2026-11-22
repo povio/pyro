@@ -33,6 +33,10 @@ JSObjectRef JSLoadModuleGraph(JSContextRef ctx, JSStringRef url, JSValueRef *exc
 JSObjectRef JSLinkAndEvaluateModule(JSContextRef ctx, JSStringRef url, JSValueRef *exception);
 #endif
 bool JSGlobalContextAddImportMap(JSGlobalContextRef ctx, JSStringRef source, JSStringRef baseURL, JSStringRef *messages);
+#ifdef PYRO_JSC_INLINE_MODULE_BASES
+// Patch 0038-inline-module-bases (build.rs defines this when the archive has it).
+bool JSGlobalContextSetInlineModuleBase(JSGlobalContextRef ctx, JSStringRef identifier, JSStringRef baseURL);
+#endif
 typedef JSStringRef (*pyro_module_base_url_cb)(JSGlobalContextRef ctx);
 bool JSGlobalContextSetModuleBaseURLCallback(JSGlobalContextRef ctx, pyro_module_base_url_cb callback);
 
@@ -113,6 +117,27 @@ int pyro_jsc_import_map_add(JSGlobalContextRef ctx, const char *src, size_t src_
     JSStringRelease(source);
     JSStringRelease(baseURL);
     return merged;
+}
+
+// Registers `id` as an inline module script's registry identity resolving
+// against `base` (patch 0038). Returns 1 when registered, 0 without the patch.
+int pyro_jsc_inline_module_base_set(JSGlobalContextRef ctx, const char *id, size_t id_len, const char *base,
+                                    size_t base_len) {
+#ifdef PYRO_JSC_INLINE_MODULE_BASES
+    JSStringRef identifier = pyro_string(id, id_len);
+    JSStringRef baseURL = pyro_string(base, base_len);
+    bool set = JSGlobalContextSetInlineModuleBase(ctx, identifier, baseURL);
+    JSStringRelease(identifier);
+    JSStringRelease(baseURL);
+    return set;
+#else
+    (void)ctx;
+    (void)id;
+    (void)id_len;
+    (void)base;
+    (void)base_len;
+    return 0;
+#endif
 }
 
 // `type` is 0 (JavaScript) or 1 (JSON).

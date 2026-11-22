@@ -1,0 +1,125 @@
+Pyro patch 0038: inline module scripts resolve against a base URL the embedder registers.
+
+An inline module script needs a registry identity of its own (JSC evaluates a key once), but its
+specifiers resolve against its base URL: the document base URL when it was prepared, fragment and
+all. Patch 0005 had the embedder key it `<document URL>#inline-module-N` and dropped the whole
+fragment of any referrer containing that text before matching import map scopes, which also cut the
+authored fragment of an inline script's base and of a fetched module whose URL merely contained the
+text, and let a fetched module named like an inline identity collide with it.
+JSGlobalContextSetInlineModuleBase (JSModuleLoaderRefPrivate.h) associates an identity with its base
+URL. resolveModuleSpecifier resolves a registered referrer against that base (scopes match it as
+given) and keeps the identity itself when it is loaded as an entry point, so it need not be a URL;
+the text-marker fragment removal is gone.
+
+diff --git a/Source/JavaScriptCore/API/JSAPIGlobalObject.cpp b/Source/JavaScriptCore/API/JSAPIGlobalObject.cpp
+--- a/Source/JavaScriptCore/API/JSAPIGlobalObject.cpp
++++ b/Source/JavaScriptCore/API/JSAPIGlobalObject.cpp
+@@ -190,9 +190,20 @@ static std::expected<URL, String> computeValidImportSpecifier(const URL& base, c
+ 
+ std::expected<String, String> JSAPIGlobalObject::resolveModuleSpecifier(const String& specifier, const String& referrer)
+ {
++    // An inline module script's registry identity is no URL; it resolves
++    // against the base URL the embedder registered for it (the document base
++    // URL when it was prepared), fragment and all.
++    String referrerBase = referrer;
++    if (!referrer.isNull()) {
++        if (auto inlineBase = m_inlineModuleBases.find(referrer); inlineBase != m_inlineModuleBases.end())
++            referrerBase = inlineBase->value;
++    }
++    // The identity itself, loaded as an entry point, stays as it is.
++    if (referrer.isEmpty() && m_inlineModuleBases.contains(specifier))
++        return specifier;
+     URL base;
+-    if (!referrer.isNull())
+-        base = URL { { }, referrer };
++    if (!referrerBase.isNull())
++        base = URL { { }, referrerBase };
+     // A script without a URL to resolve against (CDP evaluate, an init script)
+     // uses the document base URL, so it gets the same module as the document's
+     // scripts. blob: and data: modules keep their own URL as the base.
+@@ -215,10 +226,6 @@ std::expected<String, String> JSAPIGlobalObject::resolveModuleSpecifier(const St
+     // do not apply to.
+     if (!m_hasImportMap || (referrer.isEmpty() && URL(specifier).isValid()))
+         return resolveWithoutMap();
+-    // An inline module's referrer is `<document URL>#inline-module-N`; scopes
+-    // match the document URL.
+-    if (base.string().contains("#inline-module-"_s))
+-        base.removeFragmentIdentifier();
+     URL resolved = importMap().resolve(specifier, base);
+     if (resolved.isValid())
+         return resolved.string();
+@@ -566,6 +573,23 @@ bool JSGlobalContextAddImportMap(JSGlobalContextRef ctx, JSStringRef source, JSS
+     return !!parsed;
+ }
+ 
++bool JSGlobalContextSetInlineModuleBase(JSGlobalContextRef ctx, JSStringRef identifier, JSStringRef baseURL)
++{
++    JSGlobalObject* globalObject = toJS(ctx);
++    JSLockHolder locker(globalObject->vm());
++    auto* apiGlobalObject = dynamicDowncast<JSAPIGlobalObject>(globalObject);
++    if (!apiGlobalObject || !identifier)
++        return false;
++    if (!baseURL) {
++        apiGlobalObject->removeInlineModuleBase(identifier->string());
++        return true;
++    }
++    // Registered even when it cannot be a base (about:blank): the identity
++    // still loads, and its specifiers resolve as a script without a URL does.
++    apiGlobalObject->setInlineModuleBase(identifier->string(), baseURL->string());
++    return true;
++}
++
+ JSValueRef JSModuleSourceCreate(JSContextRef ctx, JSStringRef source, JSStringRef url, JSValueRef* exception)
+ {
+     return JSModuleSourceCreateWithType(ctx, source, url, kJSModuleTypeJavaScript, exception);
+diff --git a/Source/JavaScriptCore/API/JSAPIGlobalObject.h b/Source/JavaScriptCore/API/JSAPIGlobalObject.h
+--- a/Source/JavaScriptCore/API/JSAPIGlobalObject.h
++++ b/Source/JavaScriptCore/API/JSAPIGlobalObject.h
+@@ -28,7 +28,9 @@
+ #include "JSGlobalObject.h"
+ #include "ScriptFetchParameters.h"
+ #include <expected>
++#include <wtf/HashMap.h>
+ #include <wtf/RefPtr.h>
++#include <wtf/text/StringHash.h>
+ 
+ OBJC_CLASS JSScript;
+ 
+@@ -70,6 +72,9 @@ public:
+     // From the first import map on, specifiers resolve through importMap().
+     void didAddImportMap() { m_hasImportMap = true; }
+     std::expected<String, String> resolveModuleSpecifier(const String& specifier, const String& referrer);
++    // Inline module scripts (JSGlobalContextSetInlineModuleBase).
++    void setInlineModuleBase(const String& identifier, const String& baseURL) { m_inlineModuleBases.set(identifier, baseURL); }
++    void removeInlineModuleBase(const String& identifier) { m_inlineModuleBases.remove(identifier); }
+     // String compilation hooks (JSForkPrivate.h): a JSCodeForEvalCallback and a
+     // JSCanCompileStringsCallback.
+     void setCompileStringsCallbacks(void* codeForEval, void* canCompileStrings)
+@@ -110,6 +115,7 @@ private:
+     void* m_moduleLoaderInfo { nullptr };
+     void* m_moduleBaseURLCallback { nullptr };
+     bool m_hasImportMap { false };
++    HashMap<String, String> m_inlineModuleBases;
+     // m_moduleLoaderCallback is a JSModuleLoaderTypedFetchCallback.
+     bool m_moduleLoaderTyped { false };
+ #endif
+diff --git a/Source/JavaScriptCore/API/JSModuleLoaderRefPrivate.h b/Source/JavaScriptCore/API/JSModuleLoaderRefPrivate.h
+--- a/Source/JavaScriptCore/API/JSModuleLoaderRefPrivate.h
++++ b/Source/JavaScriptCore/API/JSModuleLoaderRefPrivate.h
+@@ -62,6 +62,16 @@ JS_EXPORT bool JSGlobalContextSetModuleBaseURLCallback(JSGlobalContextRef ctx, J
+    caller. Contexts without a map never consult one when resolving. */
+ JS_EXPORT bool JSGlobalContextAddImportMap(JSGlobalContextRef ctx, JSStringRef source, JSStringRef baseURL, JSStringRef* messages);
+ 
++/* Registers `identifier` as an inline module script's registry identity whose
++   specifiers resolve against `baseURL` (import maps included: its scope is
++   matched against `baseURL` as given, fragment and all). Loading `identifier`
++   as an entry point keeps it unresolved, so it need not be a URL; one that no
++   resolution can produce cannot collide with a fetched module. A NULL baseURL
++   removes the registration. A baseURL that cannot be a base (about:blank)
++   resolves as a script without a URL does. Returns false when the context
++   cannot load modules. */
++JS_EXPORT bool JSGlobalContextSetInlineModuleBase(JSGlobalContextRef ctx, JSStringRef identifier, JSStringRef baseURL);
++
+ /* Creates the module source value passed to a fetch `resolve` function. */
+ JS_EXPORT JSValueRef JSModuleSourceCreate(JSContextRef ctx, JSStringRef source, JSStringRef url, JSValueRef* exception);
+ 

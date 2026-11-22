@@ -204,6 +204,17 @@ JSValueRef pyro_jsc_module_evaluate(JSGlobalContextRef ctx, const char *src, siz
     }
 }
 
+// Inline module base registration is the source-built JavaScriptCore's (patch 0038).
+int pyro_jsc_inline_module_base_set(JSGlobalContextRef ctx, const char *id, size_t id_len, const char *base,
+                                    size_t base_len) {
+    (void)ctx;
+    (void)id;
+    (void)id_len;
+    (void)base;
+    (void)base_len;
+    return 0;
+}
+
 // The module script phases are the source-built JavaScriptCore's (patch 0037).
 int pyro_jsc_module_phases_available(void) { return 0; }
 

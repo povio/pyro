@@ -118,6 +118,10 @@ fn source_shim(lib: &Path) {
     if lib.parent().is_some_and(|dir| dir.join("inputs/patches/0037-module-graph-phases.patch").is_file()) {
         build.define("PYRO_JSC_MODULE_PHASES", None);
     }
+    // Patch 0038: inline module scripts' registered base URLs.
+    if lib.parent().is_some_and(|dir| dir.join("inputs/patches/0038-inline-module-bases.patch").is_file()) {
+        build.define("PYRO_JSC_INLINE_MODULE_BASES", None);
+    }
     build.compile("pyro_jsc_shim");
 }
 

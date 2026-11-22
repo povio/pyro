@@ -179,22 +179,14 @@ pub struct ModuleRequest {
     /// The identifier JSC requested (module registry key); differs from `url`
     /// for root-relative specifiers remapped from `file://`.
     key: String,
+    /// The URL of the module's source: its `import.meta.url`, stack frames
+    /// and dynamic `import()` referrer. `key`, except for an inline module
+    /// script, whose identity is no URL ([`Scope::inline_module_identity`]).
+    source_url: String,
     realm: std::rc::Weak<RealmInner>,
     resolve: Persistent,
     reject: Persistent,
     done: bool,
-}
-
-/// An inline module script's base URL from its registry key: the browser
-/// keys each one `<document base URL>#inline-module-…` (JSC evaluates a key
-/// once), and its `import.meta.url` is the base URL, authored fragment kept.
-/// JSC drops the fragment of such a referrer when matching import map scopes
-/// (patch 0005). Other URLs are returned unchanged.
-pub(crate) fn inline_module_base_url(key: &str) -> &str {
-    match key.rfind("#inline-module-") {
-        Some(at) => &key[..at],
-        None => key,
-    }
 }
 
 // JavaScriptCore's module SPI creates an empty import.meta object. Initialize
@@ -207,7 +199,7 @@ pub(crate) fn module_source_with_url(source: &str, url: &str) -> String {
 
 /// What [`module_source_with_url`] puts before the source.
 pub(crate) fn module_prefix(url: &str) -> String {
-    let url = serde_json::to_string(inline_module_base_url(url))
+    let url = serde_json::to_string(url)
         .expect("a URL string is serializable")
         .replace('\u{2028}', "\\u2028")
         .replace('\u{2029}', "\\u2029");
@@ -227,7 +219,7 @@ impl ModuleRequest {
     /// Provides module source text (a [`ModuleType::JavaScript`] request).
     pub fn resolve(self, scope: &Scope<'_>, source: &str) -> JsResult<()> {
         use crate::bytecode_cache::{Find, SourceKind};
-        let prefix = module_prefix(&self.key);
+        let prefix = module_prefix(&self.source_url);
         if let Some(cache) = scope.realm.engine.bytecode_cache_for(prefix.len() + source.len()) {
             match cache.find(SourceKind::Module, &self.key, &[&prefix, source]) {
                 Find::Hit(key, entry) => return self.resolve_cached(scope, &cache, key, &entry),
@@ -258,7 +250,7 @@ impl ModuleRequest {
         let ctx = scope.realm.global_ctx()?;
         // The engine itself has what it precompiled from the entry.
         let precompiled = scope.realm.engine.precompiled_from_cache.borrow().contains(&key);
-        let url = JsString::new(&self.key);
+        let url = JsString::new(&self.source_url);
         let cached = crate::bytecode_cache::CachedSource::new(entry, !precompiled);
         let mut exc: sys::JSValueRef = ptr::null();
         // SAFETY: a live context of this thread; `cached` is given to this
@@ -313,8 +305,8 @@ impl ModuleRequest {
                 scope.realm.global_ctx()?,
                 source.as_ptr().cast(),
                 source.len(),
-                self.key.as_ptr().cast(),
-                self.key.len(),
+                self.source_url.as_ptr().cast(),
+                self.source_url.len(),
                 module_type,
                 &mut err,
             )
@@ -499,6 +491,9 @@ pub(crate) struct RealmInner {
     /// Sources of top-level modules passed to `eval_module`; JSC requests the
     /// entry module itself through the fetch hook.
     inline_modules: RefCell<HashMap<String, String>>,
+    /// Inline module script identities and their base URLs
+    /// ([`Scope::inline_module_identity`]).
+    inline_module_bases: RefCell<HashMap<String, String>>,
     embedder: RefCell<Option<Rc<dyn Any>>>,
     /// The realm's current event (`window.event`), set by the embedder
     /// around each listener call ([`Scope::set_current_event`]); null
@@ -1587,12 +1582,44 @@ impl<'s> Scope<'s> {
         }
     }
 
+    /// The registry identity of an inline module script whose base URL is
+    /// `base` (the document base URL when it was prepared), for
+    /// [`Scope::eval_module`] and [`Scope::load_module_graph`]; `tag` tells
+    /// the realm's inline scripts apart. JSC evaluates an identity once, so
+    /// each script needs its own, while its `import.meta.url`, the referrer
+    /// its specifiers resolve against (import map scopes included) and its
+    /// stack frames are `base`, fragment and all. With patch 0038 the
+    /// identity is no URL (it starts with U+0001, which a resolved URL
+    /// never holds), registered with its base, so no fetched module can be
+    /// named like it. Without it, `<base without fragment>#inline-module-<tag>`.
+    pub fn inline_module_identity(&self, base: &str, tag: &str) -> String {
+        let identity = format!("\u{1}inline-module-{tag} {base}");
+        let registered = match self.realm.global_ctx() {
+            // SAFETY: a live context of this thread; the slices outlive the call, which copies them.
+            Ok(ctx) => unsafe {
+                sys::modules::pyro_jsc_inline_module_base_set(
+                    ctx,
+                    identity.as_ptr().cast(),
+                    identity.len(),
+                    base.as_ptr().cast(),
+                    base.len(),
+                ) == 1
+            },
+            Err(_) => false,
+        };
+        if registered {
+            self.realm.inline_module_bases.borrow_mut().insert(identity.clone(), base.to_owned());
+            return identity;
+        }
+        format!("{}#inline-module-{tag}", base.split('#').next().unwrap_or(base))
+    }
+
     /// Evaluates a module script; returns its evaluation promise. Imports go
     /// through the realm's [`ModuleFetcher`].
     ///
     /// JSC's module registry is keyed by URL: a URL evaluated once is not
-    /// evaluated again, so inline module scripts need distinct URLs (the
-    /// browser layer appends a fragment, which leaves relative resolution intact).
+    /// evaluated again, so inline module scripts need distinct identities
+    /// ([`Scope::inline_module_identity`]).
     pub fn eval_module(&self, source: &str, url: &str) -> JsResult<Value<'s>> {
         if !self.realm.engine.caps.modules {
             return Err(JsError::Unsupported(&"ES modules (JSScript module SPI)"));
@@ -2866,6 +2893,7 @@ fn allocate(engine: &Rc<EngineInner>, options: RealmOptions) -> JsResult<Realm> 
         native_callback_pending: RefCell::new(None),
         native_callback_hook_active: Cell::new(false),
         inline_modules: RefCell::new(HashMap::new()),
+        inline_module_bases: RefCell::new(HashMap::new()),
         embedder: RefCell::new(None),
         current_event: Cell::new(ptr::null()),
         named_properties: RefCell::new(None),
@@ -3863,10 +3891,12 @@ unsafe extern "C" fn module_fetch(
             let key = crate::string::to_rust_string(identifier);
             let origin = realm.origin.borrow().clone();
             let url = remap_module_url(&key, origin.as_deref());
+            let source_url = realm.inline_module_bases.borrow().get(&key).cloned().unwrap_or_else(|| key.clone());
             let request = ModuleRequest {
                 url: url.clone(),
                 ty: ModuleType::from_raw(module_type),
                 key,
+                source_url,
                 realm: Rc::downgrade(realm),
                 resolve: Persistent::new(scope, Value::from_raw(scope.ctx, resolve as sys::JSValueRef)),
                 reject: Persistent::new(scope, Value::from_raw(scope.ctx, reject as sys::JSValueRef)),
@@ -3931,17 +3961,6 @@ mod tests {
     fn module_source_url_is_encoded_as_a_javascript_string() {
         let source = module_source_with_url("export {}", "https://site.test/a\"b\u{2028}.js");
         assert_eq!(source, "import.meta.url = \"https://site.test/a\\\"b\\u2028.js\";\nexport {}");
-    }
-
-    /// An inline module's `import.meta.url` is its base URL: the registry
-    /// key's `#inline-module-…` suffix goes, an authored fragment stays.
-    #[test]
-    fn inline_module_import_meta_url_is_its_base_url() {
-        let p = |key| module_source_with_url("", key);
-        assert_eq!(p("https://a.test/x/y.html#inline-module-3"), "import.meta.url = \"https://a.test/x/y.html\";\n");
-        assert_eq!(p("https://a.test/s/foo.mjs#inline-module-dyn-7"), "import.meta.url = \"https://a.test/s/foo.mjs\";\n");
-        assert_eq!(p("https://a.test/p#frag#inline-module-dyn-1"), "import.meta.url = \"https://a.test/p#frag\";\n");
-        assert_eq!(p("https://a.test/m.js#inline"), "import.meta.url = \"https://a.test/m.js#inline\";\n");
     }
 
     #[test]
