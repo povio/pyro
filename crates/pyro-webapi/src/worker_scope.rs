@@ -1127,7 +1127,6 @@ impl JsClass for DedicatedWorkerGlobalScope {
     type Data = ScopeData;
     type Parent = WorkerGlobalScope;
     fn define(def: &mut ClassDef<Self>) {
-        crate::audio_decoder::define(def);
         crate::canvas::define_video_globals(def);
         def.getter("name", |s, g| Ok(s.string(&g.name)));
         def.method("postMessage", 1, |s, g, a| {
@@ -1398,6 +1397,9 @@ fn install(s: &Scope<'_>, page: &Rc<PageDom>, global: &str) -> JsResult<()> {
     if secure_worker(s) == Some(true) {
         crate::storage_manager::install_worker_file_system_globals(s)?;
         install_lock_interfaces(s)?;
+        if s.global_data::<DedicatedWorkerGlobalScope>().is_some() {
+            crate::audio_decoder::install_worker(s)?;
+        }
         crate::storage_buckets::install_worker(s)?;
     } else if let Some(class) = s.global().get_atom("WorkerNavigator")?.as_object() {
         if let Some(proto) = class.get_atom("prototype")?.as_object() {
@@ -1410,7 +1412,6 @@ fn install(s: &Scope<'_>, page: &Rc<PageDom>, global: &str) -> JsResult<()> {
         s.global().delete("StorageBucket")?;
     }
     if s.global_data::<DedicatedWorkerGlobalScope>().is_some_and(|g| !g.secure) {
-        s.global().delete("AudioDecoder")?;
         s.global().delete("VideoDecoder")?;
     }
     // Before the worker's script can change the intrinsics they capture.

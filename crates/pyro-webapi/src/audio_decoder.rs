@@ -22,6 +22,17 @@ where
     lazy_globals!(def, MODULE, "AudioDecoder");
 }
 
+pub(crate) fn install_worker(s: &Scope<'_>) -> JsResult<()> {
+    struct AudioDecoder;
+    impl pyro_js::LazyGlobalInterface for AudioDecoder {
+        const NAME: &'static str = "AudioDecoder";
+        fn value<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
+            MODULE.module(s, &crate::target::page_of(s)?)?.get_atom(Self::NAME)
+        }
+    }
+    s.define_lazy_global_interface::<AudioDecoder>()
+}
+
 struct Config {
     codec: String,
     rate: u32,
