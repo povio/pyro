@@ -661,3 +661,20 @@ fn manually_assigned_slots() {
     // `slotchange` (in the mutation observer microtask): both slots changed.
     assert_eq!(eval(r, "[...new Set(log)].sort().join()"), "s1,s2");
 }
+
+/// A right or middle press activates `:active` until its release, as a left one does (Chrome;
+/// WPT css/selectors `active-observable`).
+#[test]
+fn a_non_primary_press_activates_active() {
+    let e = click_env();
+    let r = &e.main;
+    eval(r, "window.held = []; b.addEventListener('pointerdown', () => held.push(b.matches(':active')));");
+    for (button, bits) in [(input::MouseButton::Right, 2), (input::MouseButton::Middle, 4)] {
+        let m = |buttons| input::MouseInput { x: 10.0, y: 10.0, button, buttons, click_count: 1, ..Default::default() };
+        input::dispatch_mouse(&e.page, input::MouseKind::Pressed, &m(bits)).unwrap();
+        assert_eq!(eval(r, "b.matches(':active')"), "true", "{button:?} press");
+        input::dispatch_mouse(&e.page, input::MouseKind::Released, &m(0)).unwrap();
+        assert_eq!(eval(r, "b.matches(':active')"), "false", "{button:?} release");
+    }
+    assert_eq!(eval(r, "held.join()"), "true,true");
+}

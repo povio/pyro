@@ -2836,9 +2836,9 @@ fn dispatch_mouse_inner(
                 c.buttons_down = true;
                 page.mouse_capture.set(c);
             }
-            if m.button == MouseButton::Left {
-                set_active(page, page.document(), Some(target));
-            }
+            // Any button's press activates `:active`, as in Chrome (WPT css/selectors
+            // `active-observable`: right and middle presses too).
+            set_active(page, page.document(), Some(target));
             let pd = touch.is_some() || fire_mouse(page, tkey, EventInterface::PointerEvent, "pointerdown", m, true, pseudo);
             let md = !pd || fire_mouse(page, tkey, EventInterface::MouseEvent, "mousedown", m, true, pseudo);
             page.compat_mouse_suppressed.set(!pd);
@@ -2925,9 +2925,7 @@ fn dispatch_mouse_inner(
             }
             page.drag_candidate.set(None);
             page.text_drag.set(None);
-            if m.button == MouseButton::Left {
-                set_active(page, page.document(), None);
-            }
+            set_active(page, page.document(), None);
             if touch.is_none() {
                 fire_mouse(page, tkey, EventInterface::PointerEvent, "pointerup", m, true, pseudo);
                 // Implicit release right after pointerup: lostpointercapture
