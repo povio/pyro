@@ -641,6 +641,51 @@ fn format_run(page: &PageDom, dom: &mut Dom, host: NodeId, text: NodeId, fmt: &F
     Some(el)
 }
 
+/// Reapplying a highlight to a complete inline run replaces its paint
+/// wrapper. Keep the styled children together so a class on one child
+/// cannot leak onto its neighbors when the new wrapper is assembled.
+fn reapply_highlight(page: &Rc<PageDom>, host: NodeId, start: Point, end: Point, fmt: &Format) -> bool {
+    if fmt.kind != Kind::Background || start == end { return false; }
+    let dom = page.dom.borrow();
+    let Ok(wrapper) = crate::range::common_ancestor(&dom, start.0, end.0) else { return false };
+    if wrapper == host || !super::local_html(&dom, wrapper, "span") || dom.child_count(wrapper).ok().unwrap_or(0) < 2
+        || page.layout().computed_style_value(&dom, wrapper, "display") != "inline"
+        || !dom.attributes(wrapper).is_ok_and(|attrs| attrs.len() == 1)
+        || dom.get_attribute(wrapper, "style").ok().flatten().is_none_or(|v| {
+            let decl = DeclarationBlock::parse(v);
+            decl.names() != ["background-color"] || !equivalent(fmt, &effective(page, &dom, Kind::Background, wrapper))
+        })
+        || editing::deep_forward(&dom, (wrapper, 0)) != editing::deep_forward(&dom, start)
+        || editing::deep_backward(&dom, (wrapper, editing::len(&dom, wrapper))) != editing::deep_backward(&dom, end)
+    { return false; }
+    let children: Vec<_> = dom.children(wrapper).into_iter().flatten().collect();
+    if !children.iter().all(|&n| editing::is_text(&dom, n) || (super::local_html(&dom, n, "span") || super::local_html(&dom, n, "font"))
+        && dom.child_count(n).ok() == Some(1) && dom.first_child(n).ok().flatten().is_some_and(|t| editing::is_text(&dom, t))
+        && super::rich_node(&dom, n) && page.layout().computed_style_value(&dom, n, "display") == "inline")
+    { return false; }
+    let Some((anchor, focus)) = editing::selection(page) else { return false };
+    drop(dom);
+    editing::apply_edit(page, host, "", None, None, |page| {
+        let mut dom = page.dom.borrow_mut();
+        let Ok(Some(parent)) = dom.parent_element(wrapper) else { return };
+        let Ok(span) = dom.create_element(page.document(), "span") else { return };
+        apply_to(&mut dom, span, fmt, None);
+        let _ = dom.insert_before(parent, span, Some(wrapper));
+        for child in children {
+            if !editing::is_text(&dom, child) {
+                let style = DeclarationBlock::parse(dom.get_attribute(child, "style").ok().flatten().unwrap_or(""));
+                let _ = dom.set_attribute(child, "style", &style.css_text());
+            }
+            let _ = dom.append_child(span, child);
+        }
+        let _ = dom.remove_child(parent, wrapper);
+        let retarget = |p: Point| if p.0 == wrapper { (span, p.1) } else { p };
+        drop(dom);
+        editing::set_selection(page, retarget(anchor), retarget(focus));
+    });
+    true
+}
+
 pub(super) fn apply(page: &Rc<PageDom>, host: NodeId, kind: Kind, value: &str) -> bool {
     let Some((start, end)) = editing::selection_range(page) else { return false };
     let Some(fmt) = Format::parse(kind, value) else {
@@ -654,6 +699,7 @@ pub(super) fn apply(page: &Rc<PageDom>, host: NodeId, kind: Kind, value: &str) -
         }
         return true;
     };
+    if reapply_highlight(page, host, start, end, &fmt) { return true; }
     let mut nodes = formattable_nodes(page, &page.dom.borrow(), host, start, end);
     if nodes.is_empty() {
         let mut slot = page.typing_values.borrow_mut();
@@ -760,7 +806,11 @@ pub(super) fn apply(page: &Rc<PageDom>, host: NodeId, kind: Kind, value: &str) -
     super::note_host_edited(page, host);
     if changed {
         let data = if kind == Kind::Family { value } else { &fmt.css };
-        editing::input_event(page, host, "input", fmt.input_type(), (!fmt.hashless).then_some(data), false);
+        if rewrite_runs && kind == Kind::Background {
+            editing::input_event(page, host, "input", "", None, false);
+        } else {
+            editing::input_event(page, host, "input", fmt.input_type(), (!fmt.hashless).then_some(data), false);
+        }
     }
     true
 }
