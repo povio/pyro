@@ -783,6 +783,27 @@ fn version_change_blocks_until_other_documents_close() {
 }
 
 #[test]
+fn window_indexeddb_is_an_own_readonly_accessor() {
+    let env = Env::new();
+    let document = env.doc("http://idb.test/");
+    assert_eq!(
+        document.eval(
+            r#"
+            const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'indexedDB');
+            const get = descriptor.get;
+            let wrongReceiver;
+            try { get.call({}); } catch (error) { wrongReceiver = error.name; }
+            [!('indexedDB' in Window.prototype), descriptor.enumerable, descriptor.configurable,
+             descriptor.set === undefined, get.name, get.length, get.call(undefined) === indexedDB,
+             get.call(globalThis) === indexedDB, wrongReceiver, Reflect.set(globalThis, 'indexedDB', 1),
+             delete globalThis.indexedDB, !('indexedDB' in globalThis)].join('|')
+        "#
+        ),
+        "true|true|true|true|get indexedDB|0|true|true|TypeError|false|true|true"
+    );
+}
+
+#[test]
 fn interfaces_are_lazy_globals_and_opaque_origins_reject() {
     let env = Env::new();
     let d = env.doc("http://idb.test/");
