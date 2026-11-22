@@ -1336,6 +1336,31 @@ fn inline_texts(page: &PageDom, dom: &Dom, host: NodeId, start: Point, end: Poin
     texts
 }
 
+/// A rendered BR in an intervening paragraph is a formatting leaf just like
+/// its neighboring text. Keep the text endpoints for selection restoration.
+fn include_paragraph_breaks(page: &PageDom, dom: &Dom, host: NodeId, texts: Vec<NodeId>) -> Vec<NodeId> {
+    let (Some(&first), Some(&last)) = (texts.first(), texts.last()) else { return texts };
+    if first == last || dom.parent(first).ok() == dom.parent(last).ok() { return texts; }
+    let Ok(descendants) = dom.descendants(host) else { return texts };
+    let mut result = Vec::with_capacity(texts.len());
+    let mut selected = texts.iter().copied().peekable();
+    for node in descendants.skip_while(|&node| node != first) {
+        if selected.peek() == Some(&node) {
+            result.push(node);
+            selected.next();
+            if node == last { break; }
+        } else if dom.element(node).is_ok_and(|e| e.is_html() && e.local_name() == &markup5ever::local_name!("br"))
+            && rich_node(dom, node) && editing::editing_host(dom, node) == Some(host)
+            && ancestor_named(dom, node, host, &["p"]).is_some_and(|p|
+                !dom.contains(p, first).unwrap_or(true) && !dom.contains(p, last).unwrap_or(true))
+            && alignment::visible(page, dom, node)
+        {
+            result.push(node);
+        }
+    }
+    result
+}
+
 /// Splits the text nodes at the range's ends so that whole text nodes make
 /// it up; returns them in order.
 fn split_texts(dom: &mut Dom, mut texts: Vec<NodeId>, start: Point, end: Point) -> Vec<NodeId> {
@@ -1661,6 +1686,7 @@ fn format_inline(page: &Rc<PageDom>, host: NodeId, tag: &str, carriers: &[&str],
             } else {
                 split_texts(&mut dom, selected, start, end)
             };
+            let texts = include_paragraph_breaks(page, &dom, host, texts);
             let Ok(doc) = dom.node_document(host) else {
                 return;
             };
@@ -2037,6 +2063,11 @@ fn remove_inline(page: &Rc<PageDom>, host: NodeId, names: &[&str], input_type: &
         let texts = {
             let mut dom = page.dom.borrow_mut();
             let texts = split_texts(&mut dom, selected, start, end);
+            let texts = if names.is_empty() || input_type == "formatRemove" {
+                texts
+            } else {
+                include_paragraph_breaks(page, &dom, host, texts)
+            };
             let (Some(&first), Some(&last)) = (texts.first(), texts.last()) else { return };
             let first = (first, 0);
             let last = (last, editing::len(&dom, last));
