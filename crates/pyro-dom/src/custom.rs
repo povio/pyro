@@ -188,6 +188,9 @@ impl Dom {
         if self.pending_input_value_attr.is_some() && name.local == markup5ever::local_name!("type") {
             self.apply_pending_input_value_attr(i);
         }
+        if self.selectedcontent_seen && name.ns == markup5ever::ns!() {
+            self.selectedcontent_after_attr(i, &name.local);
+        }
     }
 
     #[cold]

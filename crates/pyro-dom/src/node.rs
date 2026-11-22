@@ -364,6 +364,10 @@ pub struct ControlState {
     /// this list of options, so none is selected by default until an option
     /// is inserted, removed or selected.
     pub(crate) no_selection: Option<Box<[u32]>>,
+    /// `<select>`: the option its selectedcontent elements were last filled
+    /// from (`Some(NIL)`: emptied; `None`: never filled), so an update that
+    /// leaves the selected option as it was mutates nothing.
+    pub(crate) selectedcontent_option: Option<u32>,
 }
 
 /// Atoms of ids and class names: Stylo's, which the cascade and both

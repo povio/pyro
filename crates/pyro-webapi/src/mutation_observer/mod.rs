@@ -239,7 +239,9 @@ pub fn checkpoint(page: &Rc<PageDom>) {
     if page.is_disposed() {
         return;
     }
-    let slots_signaled = page.dom.try_borrow().is_ok_and(|d| d.has_signaled_slots());
+    // Slot changes and selectedcontent updates (HTML queues the latter as
+    // microtasks too) ride the mutation observer microtask.
+    let slots_signaled = page.dom.try_borrow().is_ok_and(|d| d.has_signaled_slots() || d.has_selectedcontent_updates());
     // No observer, nothing pinned, nothing to drop: nothing to do (this runs
     // after every DOM call from script).
     if page.mutations.observers.borrow().is_empty()
@@ -383,6 +385,13 @@ fn notify(page: &Rc<PageDom>) {
     page.mutations.queued.set(None);
     page.mutations.rooted.set(0);
     page.mutations.touch();
+    // Selectedcontent updates queued by option removals and moves: their
+    // mutations reach the observers below.
+    if let Ok(mut dom) = page.dom.try_borrow_mut() {
+        if dom.has_selectedcontent_updates() {
+            dom.run_selectedcontent_updates();
+        }
+    }
     // "Notify mutation observers": the signal set is taken now (slot
     // changes made by the callbacks join the next compound microtask), and
     // its slots get `slotchange` after every observer callback has run.
@@ -550,7 +559,7 @@ fn hook_pending_slow(page: &PageDom, dom: &pyro_dom::Dom, m: &BindingState) -> b
         || page.render_blocking_pending(dom)
         || dom.has_custom_reactions_for(page.document())
         || dom.has_upgrade_candidates()
-        || (dom.has_signaled_slots() && m.queued.get().is_none())
+        || ((dom.has_signaled_slots() || dom.has_selectedcontent_updates()) && m.queued.get().is_none())
         || !m.pending_drops.borrow().is_empty()
         || dom.has_pending_observers_from(m.rooted.get())
         || (!m.pending_roots.borrow().is_empty() && m.queued.get().is_none())

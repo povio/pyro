@@ -862,6 +862,7 @@ impl Dom {
                 let select = self.option_select(node);
                 if select != NIL {
                     self.keep_default_selectedness(select, &[node]);
+                    self.queue_selectedcontent_update(select, false);
                 }
             }
             2 => self.subtree_options_before_remove(node),
@@ -879,6 +880,7 @@ impl Dom {
             self.select_options_idx(select).into_iter().filter(|&o| self.is_inclusive_ancestor_idx(node, o)).collect();
         if !options.is_empty() {
             self.keep_default_selectedness(select, &options);
+            self.queue_selectedcontent_update(select, false);
         }
     }
     fn keep_default_selectedness(&mut self, select: u32, options: &[u32]) {
@@ -930,7 +932,7 @@ impl Dom {
     /// An option's "option element nearest ancestor select" (HTML): the
     /// closest select ancestor, past at most one optgroup and no datalist,
     /// hr or option.
-    fn option_nearest_ancestor_select(&self, opt: u32) -> u32 {
+    pub(crate) fn option_nearest_ancestor_select(&self, opt: u32) -> u32 {
         let mut optgroup = false;
         let mut p = self.n(opt).parent;
         while p != NIL {
@@ -987,11 +989,12 @@ impl Dom {
         let selectedcontent = self.enabled_selectedcontent(select);
         if selectedcontent != NIL {
             let _ = self.clone_selected_option_into(opt, selectedcontent);
+            self.note_selectedcontent_option(select, opt);
         }
     }
     /// "Clone selected option into select content": a fragment of deep
     /// clones of the option's children replaces the selectedcontent's.
-    fn clone_selected_option_into(&mut self, opt: u32, selectedcontent: u32) -> DomResult<()> {
+    pub(crate) fn clone_selected_option_into(&mut self, opt: u32, selectedcontent: u32) -> DomResult<()> {
         let doc = self.id_of(self.n(opt).owner_doc);
         let fragment = self.create_fragment(doc)?;
         let children: Vec<NodeId> = self.child_idx_iter(opt).map(|c| self.id_of(c)).collect();
@@ -1135,6 +1138,7 @@ impl Dom {
         // The setter asks the select for a reset.
         if select != NIL {
             self.set_no_selection(select, None);
+            self.update_select_selectedcontent(select, false);
         }
         Ok(())
     }
@@ -1160,6 +1164,7 @@ impl Dom {
         }
         let none = index < 0 || index as usize >= opts.len();
         self.set_no_selection(s, none.then_some(opts));
+        self.update_select_selectedcontent(s, true);
         Ok(())
     }
 
@@ -1293,6 +1298,7 @@ impl Dom {
                 }
                 let opts = self.select_options_idx(i);
                 self.set_no_selection(i, (!found).then_some(opts));
+                self.update_select_selectedcontent(i, true);
             }
             _ => self.set_attribute(id, "value", v)?,
         }

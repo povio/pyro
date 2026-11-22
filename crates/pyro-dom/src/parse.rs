@@ -240,6 +240,7 @@ impl<A: DomAccess> TreeSink for Sink<A> {
         let template = flags.template;
         if name.ns == markup5ever::ns!(html) && &*name.local == "selectedcontent" {
             self.selectedcontent.set(true);
+            self.dom.with(|d| d.selectedcontent_seen = true);
         }
         let created = self.dom.with(|d| {
             // HTML "create an element for a token": the token's `is` attribute is the is value

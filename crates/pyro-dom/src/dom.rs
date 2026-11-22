@@ -306,6 +306,16 @@ pub struct Dom {
     /// An `<input>` whose type change left the value content attribute to
     /// set (value mode to default mode), set once the type mutation is queued.
     pub(crate) pending_input_value_attr: Option<(u32, String)>,
+    /// A `<selectedcontent>` was created: the select steps of
+    /// `crate::selectedcontent` run (none before, at no cost).
+    pub(crate) selectedcontent_seen: bool,
+    /// `crate::selectedcontent` is cloning into a selectedcontent: its own
+    /// mutations start no update.
+    pub(crate) selectedcontent_updating: bool,
+    /// Updates queued for a microtask (`run_selectedcontent_updates`): a
+    /// select whose options were removed or moved (`false`), or a moved
+    /// selectedcontent (`true`).
+    pub(crate) selectedcontent_pending: Vec<(NodeId, bool)>,
     pub(crate) live_iterators: Vec<std::rc::Weak<crate::live_iterator::LiveIterator>>,
     /// The document whose window a node was created for, by node slot: for
     /// the nodes that moved to a document of another window, and for the
@@ -411,6 +421,9 @@ impl Dom {
             live_ranges: Vec::new(),
             value_ranges: Default::default(),
             pending_input_value_attr: None,
+            selectedcontent_seen: false,
+            selectedcontent_updating: false,
+            selectedcontent_pending: Vec::new(),
             live_iterators: Vec::new(),
             creation_docs: Default::default(),
             upgrades: Default::default(),
@@ -1649,6 +1662,7 @@ impl Dom {
             local_name!("animate") if name.ns == ns!(svg) => self.smil_seen = true,
             _ => {}
         }
+        self.selectedcontent_seen |= name.ns == ns!(html) && &*name.local == "selectedcontent";
         let idx = self.alloc_raw(NodeKind::Element(Box::new(ElementData::new(name))), owner);
         self.set_registry_idx(idx, self.registry_idx(owner));
         if is_template {
@@ -2817,6 +2831,8 @@ impl Dom {
         let old_next = self.n(node).next;
         self.resources_before_move(node);
         self.options_before_remove(node);
+        let moved_selectedcontents =
+            if self.selectedcontent_seen { self.selectedcontents_before_move(node) } else { Vec::new() };
         if !self.live_ranges.is_empty() {
             self.ranges_before_remove(node);
         }
@@ -2841,6 +2857,9 @@ impl Dom {
         }
         self.queue_child_list(old_parent, &[], &[node], old_prev, old_next);
         self.queue_child_list(parent, &[node], &[], new_prev, child);
+        if self.selectedcontent_seen {
+            self.selectedcontent_after_move(node, moved_selectedcontents);
+        }
     }
 
     /// The shadow-including root: a shadow root's host's root, recursively.
@@ -3019,6 +3038,9 @@ impl Dom {
             for &k in nodes {
                 self.hide_nonces(k);
             }
+        }
+        if self.selectedcontent_seen {
+            self.selectedcontent_after_insert(nodes, parent, connected);
         }
     }
 
@@ -3391,7 +3413,7 @@ impl Dom {
                 let attrs = e.attr_state();
                 let control = e.control.as_ref().map(|c| {
                     // Clone steps copy value/checkedness for input elements.
-                    Box::new(ControlState { selection: (0, 0), ..(**c).clone() })
+                    Box::new(ControlState { selection: (0, 0), selectedcontent_option: None, ..(**c).clone() })
                 });
                 // HTML script cloning steps: "already started" is copied.
                 let started = e.flags & crate::node::element_flags::SCRIPT_ALREADY_STARTED;

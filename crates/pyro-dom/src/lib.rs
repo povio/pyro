@@ -48,6 +48,7 @@ pub mod parse;
 pub mod script;
 pub mod select;
 mod select_query;
+mod selectedcontent;
 pub mod serialize;
 mod slots;
 pub mod snapshot;

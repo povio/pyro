@@ -1059,11 +1059,17 @@ pub fn reset_form(page: &Rc<PageDom>, form: NodeId) {
         out
     };
     let mut dom = page.dom.borrow_mut();
-    for c in controls {
+    for &c in &controls {
         let _ = dom.reset_control(c);
         // A file input's selected files are emptied.
         if dom.input_type(c).ok() == Some(InputType::File) && local(&dom, c).as_deref() == Some("input") {
             page.files.borrow_mut().remove(&c);
+        }
+    }
+    // A select's reset updates its selectedcontent elements.
+    for &c in &controls {
+        if local(&dom, c).as_deref() == Some("select") {
+            let _ = dom.selectedcontent_after_reset(c);
         }
     }
     // Form-associated custom elements reset themselves (formResetCallback).
