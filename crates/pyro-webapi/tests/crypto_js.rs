@@ -482,3 +482,27 @@ fn serde_json_string(text: &str) -> String {
     out.push('"');
     out
 }
+
+#[test]
+fn file_stream_writes_observe_queued_bytes_and_abort_preserves_the_file() {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    assert_eq!(run(&env, r#"
+        const root = await navigator.storage.getDirectory();
+        const entry = await root.getFileHandle('sequence.bin', {create:true});
+        const bytes = async () => Array.from(new Uint8Array(await (await entry.getFile()).arrayBuffer())).join(',');
+        const stream = await entry.createWritable();
+        const writer = stream.getWriter(), view = Uint8Array.of(2);
+        const first = writer.write(new Blob([Uint8Array.of(1)]));
+        const second = writer.write(view);
+        view[0] = 9;
+        await Promise.all([first, second]);
+        const beforeClose = await bytes();
+        await writer.close();
+        const discard = await entry.createWritable({keepExistingData:true});
+        await discard.write(Uint8Array.of(7));
+        await discard.abort();
+        const final = await bytes();
+        return [beforeClose, final, await root.isSameEntry(await navigator.storage.getDirectory())].join('|');
+    "#), "|1,9|true");
+}

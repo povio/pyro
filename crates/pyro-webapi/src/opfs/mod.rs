@@ -85,9 +85,10 @@ fn wrap_entry<'s>(s: &Scope<'s>, handle: Handle) -> JsResult<Value<'s>> {
     Ok(s.wrap::<Entry>(handle, None)?.value())
 }
 
-fn natives<'s>(s: &Scope<'s>) -> JsResult<Object<'s>> {
+fn natives<'s>(s: &Scope<'s>, page: &PageDom) -> JsResult<Object<'s>> {
     let native = s.object();
     native.set_prototype(s.null());
+    native.set_atom("writableSlot", crate::streams::shared_slot(s, page, "FileSystemWritableFileStream")?)?;
     macro_rules! operation {
         ($name:literal, $f:expr) => {
             native.set_atom($name, s.function($name, $f)?.value())?
@@ -225,7 +226,7 @@ pub(crate) fn module<'s>(s: &Scope<'s>, page: &Rc<PageDom>, dedicated: bool) -> 
     if let Some(module) = s.get_hidden(holder, MODULE)?.and_then(|v| v.as_object()) {
         return Ok(module);
     }
-    let native = Persistent::new(s, natives(s)?.value());
+    let native = Persistent::new(s, natives(s, page)?.value());
     let streams = s.eval(include_str!("streams.js"), Some("pyro://internal/opfs-streams.js"), 1)?;
     let streams = streams.as_object().ok_or_else(invalid_handle)?.call(None, &[native.get(s)])?;
     let streams = Persistent::new(s, streams);

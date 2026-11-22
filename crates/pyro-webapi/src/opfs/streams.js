@@ -10,6 +10,10 @@
   const arrayBufferLength = descriptor(ArrayBuffer.prototype, 'byteLength').get;
   const sharedLength = typeof SharedArrayBuffer === 'function'
     ? descriptor(SharedArrayBuffer.prototype, 'byteLength').get : undefined;
+  const resizable = descriptor(ArrayBuffer.prototype, 'resizable')?.get;
+  const growable = typeof SharedArrayBuffer === 'function'
+    ? descriptor(SharedArrayBuffer.prototype, 'growable')?.get : undefined;
+  const {get: writableState, set: setWritableState} = ops.writableSlot;
   const blobSize = descriptor(Blob.prototype, 'size').get;
   const blobArrayBuffer = Blob.prototype.arrayBuffer;
   const encoder = new TextEncoder();
@@ -43,22 +47,33 @@
     try { apply(get, value, []); return true; } catch { return false; }
   }
 
-  // Use the view's actual byte span, including for non-byte typed arrays and
-  // DataViews. Getters on an author-defined subclass cannot change the span.
-  function bufferView(value, allowShared) {
-    let buffer = value, offset = 0, length;
+  // BufferSource conversion retains the original object. Get the byte span
+  // only when the operation actually consumes it, using intrinsic getters.
+  function backingBuffer(value, allowShared) {
+    let buffer = value;
     if (isView(value)) {
       const access = branded(typed.buffer, value) ? typed : dataView;
       buffer = apply(access.buffer, value, []);
-      offset = apply(access.offset, value, []);
-      length = apply(access.length, value, []);
-    } else if (!branded(arrayBufferLength, value) && !branded(sharedLength, value)) {
+    }
+    if (branded(arrayBufferLength, buffer)) {
+      if (resizable && apply(resizable, buffer, [])) throw new TypeErrorC('Expected a fixed-length buffer.');
+    } else if (branded(sharedLength, buffer)) {
+      if (!allowShared) throw new TypeErrorC('A shared buffer is not a file stream chunk.');
+      if (growable && apply(growable, buffer, [])) throw new TypeErrorC('Expected a fixed-length buffer.');
+    } else {
       return undefined;
     }
-    if (!allowShared && !branded(arrayBufferLength, buffer)) {
-      throw new TypeErrorC('A shared buffer is not a file stream chunk.');
-    }
-    return new Uint8(buffer, offset, length);
+    return buffer;
+  }
+
+  function byteView(value, buffer) {
+    const size = branded(arrayBufferLength, buffer) ? arrayBufferLength : sharedLength;
+    // WebIDL's copy-of-bytes algorithm returns an empty sequence when a
+    // queued buffer has been detached. A detached DataView's offset throws.
+    if (apply(size, buffer, []) === 0) return new Uint8(0);
+    if (!isView(value)) return new Uint8(buffer);
+    const access = branded(typed.buffer, value) ? typed : dataView;
+    return new Uint8(buffer, apply(access.offset, value, []), apply(access.length, value, []));
   }
 
   function dictionary(value) {
@@ -84,8 +99,7 @@
 
   function asData(value) {
     if (typeof value !== 'object' && typeof value !== 'function') return `${value}`;
-    const view = bufferView(value, false);
-    if (view !== undefined) return new Uint8(view);
+    if (backingBuffer(value, false) !== undefined) return value;
     if (branded(blobSize, value)) return value;
     // Template-literal coercion uses WebIDL ToString (including rejecting a
     // Symbol). TextEncoder performs the USVString scalar-value conversion.
@@ -126,6 +140,9 @@
   async function writeChunk(lease, chunk) {
     try {
       const command = chunk instanceof Command ? chunk : convertChunk(chunk);
+      // Conversion precedes queued storage I/O even when Streams can call
+      // the sink immediately; a mutable buffer is copied by the I/O step.
+      await undefined;
       if (command.type === 'seek') {
         if (command.position === null) throw new TypeErrorC('Seek requires a position.');
         ops.seek(lease, command.position);
@@ -137,8 +154,12 @@
         if (data == null) throw new TypeErrorC('Write requires data.');
         let bytes;
         if (typeof data === 'string') bytes = apply(encode, encoder, [data]);
-        else if (isView(data)) bytes = data;
-        else bytes = new Uint8(await apply(blobArrayBuffer, data, []));
+        else {
+          const buffer = backingBuffer(data, false);
+          bytes = buffer === undefined
+            ? new Uint8(await apply(blobArrayBuffer, data, []))
+            : new Uint8(byteView(data, buffer));
+        }
         ops.write(lease, bytes, command.position);
       }
     } catch (error) {
@@ -155,8 +176,13 @@
     finally { apply(releaseWriter, writer, []); }
   }
 
+  function streamState(receiver) {
+    const state = writableState(receiver);
+    if (!state) throw new TypeErrorC('Expected a FileSystemWritableFileStream.');
+    return state;
+  }
+
   class FileSystemWritableFileStream extends WritableStream {
-    #mode;
     constructor(...args) {
       if (args[0] !== token) throw new TypeErrorC('Illegal constructor');
       const lease = args[1];
@@ -168,28 +194,36 @@
         },
         abort() { ops.abort(lease); },
       });
-      this.#mode = args[2];
+      setWritableState(this, {
+        mode: args[2],
+        enqueue: (type, position, size, data) => queue(this, new Command(type, position, size, data)),
+      });
     }
-    get mode() { return this.#mode; }
+    get mode() { return streamState(this).mode; }
     async write(data) {
-      if (!(#mode in this) || !arguments.length) throw new TypeErrorC('Expected a file stream and a chunk.');
-      return queue(this, convertChunk(data));
+      const state = streamState(this);
+      if (!arguments.length) throw new TypeErrorC('Expected a file stream chunk.');
+      const command = convertChunk(data);
+      return state.enqueue(command.type, command.position, command.size, command.data);
     }
     async seek(position) {
-      if (!(#mode in this) || !arguments.length) throw new TypeErrorC('Expected a file stream and a position.');
-      return queue(this, new Command('seek', unsigned(position, false), null, undefined));
+      const state = streamState(this);
+      if (!arguments.length) throw new TypeErrorC('Expected a seek position.');
+      return state.enqueue('seek', unsigned(position, false), null, undefined);
     }
     async truncate(size) {
-      if (!(#mode in this) || !arguments.length) throw new TypeErrorC('Expected a file stream and a size.');
-      return queue(this, new Command('truncate', null, unsigned(size, false), undefined));
+      const state = streamState(this);
+      if (!arguments.length) throw new TypeErrorC('Expected a truncate size.');
+      return state.enqueue('truncate', null, unsigned(size, false), undefined);
     }
   }
 
   function syncArguments(buffer, options) {
-    const bytes = bufferView(buffer, true);
-    if (bytes === undefined) throw new TypeErrorC('Expected a buffer source.');
+    const backing = backingBuffer(buffer, true);
+    if (backing === undefined) throw new TypeErrorC('Expected a buffer source.');
     const at = dictionary(options).at;
-    return [bytes, at === undefined ? null : unsigned(at, true)];
+    const offset = at === undefined ? null : unsigned(at, true);
+    return [byteView(buffer, backing), offset];
   }
 
   class FileSystemSyncAccessHandle {

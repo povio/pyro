@@ -18,7 +18,7 @@ const KEY: &str = "lpStorageManager";
 /// grants an origin on a typical disk.
 const QUOTA: f64 = 10.0 * 1024.0 * 1024.0 * 1024.0;
 
-const SCRIPT: &str = r#"((estimate, directory, window, secure) => {
+const SCRIPT: &str = r#"((estimate, directory, directorySlot, window, secure) => {
   'use strict';
   const token = Symbol('pyro');
   const PromiseC = Promise;
@@ -30,6 +30,7 @@ const SCRIPT: &str = r#"((estimate, directory, window, secure) => {
     constructor(...t) {
       if (t[0] !== token) throw new TypeErrorC('Illegal constructor');
       this.#brand = true;
+      if (secure) directorySlot.set(this, directory);
     }
     estimate() {
       try {
@@ -44,16 +45,17 @@ const SCRIPT: &str = r#"((estimate, directory, window, secure) => {
     persisted() {
       return this.#check('persisted');
     }
-    persist() {
-      return this.#check('persist');
-    }
     getDirectory() {
       try {
-        if (!(#brand in this)) throw new TypeErrorC("Illegal invocation");
-        return directory();
+        const getRoot = directorySlot.get(this);
+        if (!getRoot) throw new TypeErrorC("Illegal invocation");
+        return getRoot();
       } catch (e) {
         return PromiseC.reject(e);
       }
+    }
+    persist() {
+      return this.#check('persist');
     }
     #check(name) {
       try {
@@ -107,7 +109,13 @@ fn module<'s>(s: &Scope<'s>, page: &Rc<PageDom>) -> JsResult<Object<'s>> {
     let factory = s.eval(SCRIPT, Some("pyro://internal/storage-manager.js"), 1)?;
     let window = s.boolean(!crate::worker_scope::is_worker(s));
     let secure = crate::worker_scope::secure_worker(s).unwrap_or_else(|| crate::secure_context::secure(s, page));
-    let module = factory.as_object().ok_or_else(unavailable)?.call(None, &[estimate.get(s), directory.get(s), window, s.boolean(secure)])?;
+    let slot = if secure {
+        crate::streams::shared_slot(s, page, "StorageManager.getDirectory")?
+    } else {
+        s.null()
+    };
+    let module = factory.as_object().ok_or_else(unavailable)?.call(None,
+        &[estimate.get(s), directory.get(s), slot, window, s.boolean(secure)])?;
     s.set_hidden(holder, KEY, module)?;
     module.as_object().ok_or_else(unavailable)
 }

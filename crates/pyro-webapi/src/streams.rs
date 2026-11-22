@@ -60,6 +60,14 @@ const SLOTS: &str = r"(() => {
   };
 })()";
 
+/// A private slot shared by same-origin realms in this JS agent. An opaque
+/// origin gets a fresh map, just as it does for the built-in stream slots.
+pub(crate) fn shared_slot<'s>(s: &Scope<'s>, page: &PageDom, name: &str) -> JsResult<Value<'s>> {
+    let slots = s.agent_value("streams.slot", SLOTS)?.as_object().ok_or_else(unavailable)?;
+    let origin = crate::storage::document_origin(page).map_or_else(|| s.null(), |origin| s.string(&origin));
+    slots.call(None, &[origin, s.string(name)])
+}
+
 macro_rules! lazy_globals {
     ($def:ident, $($name:literal),+ $(,)?) => {
         $($def.global_value_accessor(
