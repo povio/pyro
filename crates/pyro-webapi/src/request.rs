@@ -277,12 +277,14 @@ fn construct<'s>(
         None => {
             let input = crate::util::dom_string(input)?;
             let resolved = crate::html::resolve_url_utf8(&page.dom.borrow(), page.document(), &input);
-            let mut url = pyro_net::Url::parse(&resolved)
+            let url = pyro_net::Url::parse(&resolved)
                 .map_err(|_| JsError::Type(format!("Failed to construct 'Request': Invalid URL '{input}'").into()))?;
             if !url.username().is_empty() || url.password().is_some() {
                 return Err(JsError::Type("Failed to construct 'Request': Request cannot be constructed from a URL that includes credentials.".into()));
             }
-            url.set_fragment(None);
+            // Fetch: a request's URL keeps its fragment (`Request.url` serializes it); fetch()
+            // leaves it out of the network request (`fetch::parse_request`) and Cache matching
+            // ignores it.
             (
                 Fields {
                     method: "GET".into(),
