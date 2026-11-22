@@ -393,6 +393,7 @@
       return this.#list[+index >>> 0] ?? null;
     }
     contains(string) {
+      if (!arguments.length) throw new TE("Failed to execute 'contains' on 'DOMStringList': 1 argument required.");
       return this.#list.includes(domString(string));
     }
     [iteratorKey]() {
