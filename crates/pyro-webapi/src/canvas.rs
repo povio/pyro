@@ -676,6 +676,7 @@ fn image_source(
     value: Value<'_>,
     what: &str,
     image_data: bool,
+    draw_target: Option<Target>,
 ) -> JsResult<Option<ImageHandle>> {
     let not_source = || {
         JsError::Type(format!(
@@ -801,7 +802,13 @@ fn image_source(
     if source.is_null() {
         if let Some(module) = VIDEO_FRAMES.existing(s, page)? {
             if let Some(source_of) = module.get("canvasSource")?.as_object() {
-                source = source_of.call(None, &[value])?;
+                let use_orientation = match draw_target {
+                    Some(Target::Element(canvas)) => {
+                        page.layout().computed_style_value(&page.dom.borrow(), canvas, "image-orientation") != "none"
+                    }
+                    _ => true,
+                };
+                source = source_of.call(None, &[value, s.boolean(use_orientation)])?;
             }
         }
     }
@@ -889,7 +896,7 @@ fn make_bitmap<'s>(s: &Scope<'s>, a: Args<'s>) -> JsResult<Value<'s>> {
     let page = crate::target::page_of(s)?;
     page.canvas_used.set(true);
     let what = "Window.createImageBitmap";
-    let Some(source) = image_source(s, &page, a.get(0), what, true)? else {
+    let Some(source) = image_source(s, &page, a.get(0), what, true, None)? else {
         return Err(JsError::dom("InvalidStateError", "The source image could not be decoded."));
     };
     let crop = match a.get(1).as_object() {
@@ -1175,7 +1182,7 @@ fn draw_image<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>) -> JsResult<Value
     if !matches!(n, 3 | 5) && n < 9 {
         return Err(JsError::Type(format!("Failed to execute 'drawImage' on 'CanvasRenderingContext2D': Valid arities are: [3, 5, 9], but {n} arguments provided.").into()));
     }
-    let Some(source) = image_source(s, &c.page, a.get(0), what, false)? else { return Ok(s.undefined()) };
+    let Some(source) = image_source(s, &c.page, a.get(0), what, false, Some(c.target))? else { return Ok(s.undefined()) };
     let v = finite_args_from(&a, 1, if n >= 9 { 8 } else { n - 1 })?;
     let Some(v) = v else { return Ok(s.undefined()) };
     let (sw, sh) = (f64::from(source.width), f64::from(source.height));
@@ -1939,7 +1946,7 @@ impl ContextData {
         def.method("createPattern", 2, |s, c, a| {
             let what = "CanvasRenderingContext2D.createPattern";
             a.require(2, what)?;
-            let source = image_source(s, &c.page, a.get(0), what, false)?;
+            let source = image_source(s, &c.page, a.get(0), what, false, None)?;
             let repetition = if a.get(1).is_null() { String::new() } else { dom_string(a.get(1))? };
             let repetition = match repetition.as_str() {
                 "" | "repeat" => "repeat",

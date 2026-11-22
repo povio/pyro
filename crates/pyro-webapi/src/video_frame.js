@@ -523,7 +523,7 @@
     }
     Object.defineProperty(C.prototype, Symbol.toStringTag, { value: C.name, configurable: true });
   }
-  function canvasSource(o) {
+  function canvasSource(o, useOrientation = true) {
     if (!frames.has(o)) return null;
     const s = requireLive(o),
       opt = optionsFor(s, { format: 'RGBA' });
@@ -531,29 +531,33 @@
       h = s.rect.height,
       data = new U8(opt.size);
     copyPixels(s, opt, data);
-    const rotated = s.rotation % 180 !== 0,
+    // A destination canvas can draw in stored pixel order without changing
+    // the frame's public rotation, flip, or display dimensions.
+    const rotation = useOrientation ? s.rotation : 0;
+    const flip = useOrientation && s.flip;
+    const rotated = rotation % 180 !== 0,
       outW = rotated ? h : w,
       outH = rotated ? w : h;
     let oriented = data;
-    if (s.rotation || s.flip) {
+    if (rotation || flip) {
       oriented = new U8(data.length);
       for (let y = 0; y < h; y++)
         for (let x = 0; x < w; x++) {
           let xx = x,
             yy = y;
-          if (s.rotation === 90) {
+          if (rotation === 90) {
             xx = h - 1 - y;
             yy = x;
           }
-          if (s.rotation === 180) {
+          if (rotation === 180) {
             xx = w - 1 - x;
             yy = h - 1 - y;
           }
-          if (s.rotation === 270) {
+          if (rotation === 270) {
             xx = y;
             yy = w - 1 - x;
           }
-          if (s.flip) xx = outW - 1 - xx;
+          if (flip) xx = outW - 1 - xx;
           const src = 4 * (y * w + x),
             dst = 4 * (yy * outW + xx);
           oriented.set(data.subarray(src, src + 4), dst);
