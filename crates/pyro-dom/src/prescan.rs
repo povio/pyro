@@ -350,7 +350,8 @@ impl Prescan {
         } else if attr(attrs, "referrerpolicy").is_some() {
             // The element's request carries its own referrer policy, which a
             // speculative request (the document's) would not: left to the element.
-        } else if is("img") {
+        } else if is("img") || is("image") {
+            // The HTML tree builder reprocesses <image> as <img>.
             let lazy = attr(attrs, "loading").is_some_and(|value| value.eq_ignore_ascii_case("lazy"));
             if !lazy && self.picture_depth == 0 && attr(attrs, "srcset").is_none() {
                 if let Some(src) = attr(attrs, "src").filter(|v| !v.trim().is_empty()) {
@@ -735,6 +736,16 @@ mod tests {
                 Prescanned::Image { src: "/i.png".into() },
             ]
         );
+    }
+
+    #[test]
+    fn treats_image_as_img_only_in_html_content() {
+        let items = scan(
+            r#"<IMAGE src="/alias.png"><image loading="lazy" src="/lazy.png">
+            <svg><image src="/foreign.png"/></svg>
+            <picture><image src="/fallback.png"></picture>"#,
+        );
+        assert_eq!(items, [Prescanned::Image { src: "/alias.png".into() }]);
     }
 
     #[test]
