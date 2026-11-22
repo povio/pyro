@@ -1782,7 +1782,12 @@ fn join_plain_links(dom: &mut Dom, left: NodeId, right: NodeId, href: &str) {
     let compatible = |n| dom.element(n).is_ok_and(|el| el.is_html() && &**el.local_name() == "a")
         && dom.attributes(n).is_ok_and(|attrs| attrs.len() == 1)
         && dom.get_attribute(n, "href").ok().flatten() == Some(href);
-    if !compatible(left) || !compatible(right) { return; }
+    if compatible(left) && compatible(right) { merge_inline_siblings(dom, left, right); }
+}
+
+/// Retain the right wrapper and all child nodes, including text selection
+/// endpoints, as adjacent equivalent formatting elements become one.
+fn merge_inline_siblings(dom: &mut Dom, left: NodeId, right: NodeId) {
     while let Ok(Some(child)) = dom.last_child(left) {
         let first = dom.first_child(right).ok().flatten();
         if dom.insert_before(right, child, first).is_err() { return; }
@@ -1942,6 +1947,17 @@ fn format_inline(page: &Rc<PageDom>, host: NodeId, tag: &str, carriers: &[&str],
                 let _ = dom.append_child(w, unit);
                 if tag == "b" && !use_css { resolve_relative_bold(page, &mut dom, parent, w); }
                 last_wrapper = Some(w);
+            }
+            if tag == "b" && !use_css && texts.len() == 1 {
+                let plain_bold = |dom: &Dom, el| local_html(dom, el, "b") && dom.attributes(el).is_ok_and(|attrs| attrs.is_empty());
+                if let Some(wrapper) = last_wrapper.filter(|&w| plain_bold(&dom, w)) {
+                    if let Some(left) = dom.prev_sibling(wrapper).ok().flatten().filter(|&el| plain_bold(&dom, el)) {
+                        merge_inline_siblings(&mut dom, left, wrapper);
+                    }
+                    if let Some(right) = dom.next_sibling(wrapper).ok().flatten().filter(|&el| plain_bold(&dom, el)) {
+                        merge_inline_siblings(&mut dom, wrapper, right);
+                    }
+                }
             }
             if let Some(value) = href.filter(|_| !collapsed) {
                 for &t in &texts {
