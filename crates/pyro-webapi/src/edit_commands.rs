@@ -1490,9 +1490,41 @@ fn resolve_relative_bold(page: &PageDom, dom: &mut Dom, span: NodeId, bold: Node
     Some(())
 }
 
+/// The old anchor's authored presentation belongs to its original text
+/// run. Convert its declarations into independent formatting around that run.
+fn link_style_shell(dom: &mut Dom, doc: NodeId, mut child: NodeId, style: &str) -> Option<NodeId> {
+    use pyro_dom::stylo::declarations::DeclarationBlock;
+    let mut css = DeclarationBlock::parse(style);
+    if !dom.document_data(doc).ok()?.style_with_css {
+        let color = pyro_dom::color_well::editing_color(&css.value("color")).and_then(|(_, hex)| hex);
+        for (property, value, tag) in [("font-style", "italic", "i"), ("font-weight", "bold", "b")] {
+            if css.value(property) == value {
+                css.remove(property);
+                let el = dom.create_element(doc, tag).ok()?;
+                dom.append_child(el, child).ok()?;
+                child = el;
+            }
+        }
+        if let Some(hex) = color {
+            css.remove("color");
+            let font = dom.create_element(doc, "font").ok()?;
+            dom.set_attribute(font, "color", &hex).ok()?;
+            dom.append_child(font, child).ok()?;
+            child = font;
+        }
+    }
+    if !css.is_empty() {
+        let span = dom.create_element(doc, "span").ok()?;
+        dom.set_attribute(span, "style", &css.css_text()).ok()?;
+        dom.append_child(span, child).ok()?;
+        child = span;
+    }
+    Some(child)
+}
+
 /// Replace the selected part of an existing link. The original anchor
 /// retains its suffix, while an unselected prefix keeps the ID.
-fn relink_text(dom: &mut Dom, host: NodeId, text: NodeId, href: &str) -> Option<NodeId> {
+fn relink_text(dom: &mut Dom, host: NodeId, text: NodeId, href: &str, entire_run: Option<NodeId>) -> Option<NodeId> {
     let anchor = ancestor_named(dom, text, host, &["a"])?;
     let parent = dom.parent_element(anchor).ok()??;
     let branch = alignment::split_edge(dom, anchor, text, false, &mut [])?;
@@ -1500,9 +1532,7 @@ fn relink_text(dom: &mut Dom, host: NodeId, text: NodeId, href: &str) -> Option<
     let doc = dom.node_document(anchor).ok()?;
     let replacement = dom.create_element(doc, "a").ok()?;
     dom.set_attribute(replacement, "href", href).ok()?;
-    if let Some(style) = dom.get_attribute(anchor, "style").ok()?.map(str::to_owned) {
-        dom.set_attribute(replacement, "style", &style).ok()?;
-    }
+    let style = dom.get_attribute(anchor, "style").ok()?.map(str::to_owned);
     if dom.prev_sibling(branch).ok()?.is_some() {
         let prefix = dom.clone_node(anchor, false, None).ok()?;
         dom.insert_before(parent, prefix, Some(anchor)).ok()?;
@@ -1511,8 +1541,20 @@ fn relink_text(dom: &mut Dom, host: NodeId, text: NodeId, href: &str) -> Option<
         }
     }
     dom.remove_attribute(anchor, "id").ok()?;
-    dom.insert_before(parent, replacement, Some(anchor)).ok()?;
-    dom.append_child(replacement, branch).ok()?;
+    let outside = if let Some(style) = style.filter(|_| entire_run == Some(anchor)) {
+        // A selection confined to this link inherits the old presentation
+        // outside the new link. Its own link color can therefore take effect.
+        dom.append_child(replacement, branch).ok()?;
+        link_style_shell(dom, doc, replacement, &style)?
+    } else {
+        let content = match dom.get_attribute(anchor, "style").ok()?.map(str::to_owned) {
+            Some(style) => link_style_shell(dom, doc, branch, &style)?,
+            None => branch,
+        };
+        dom.append_child(replacement, content).ok()?;
+        replacement
+    };
+    dom.insert_before(parent, outside, Some(anchor)).ok()?;
     if dom.child_count(anchor).ok()? == 0 { dom.remove_node(anchor).ok()?; }
     Some(replacement)
 }
@@ -1567,9 +1609,13 @@ fn format_inline(page: &Rc<PageDom>, host: NodeId, tag: &str, carriers: &[&str],
             };
             let mut last_wrapper: Option<NodeId> = None;
             let use_css = dom.document_data(doc).is_ok_and(|d| d.style_with_css);
+            let single_link = href.and_then(|_| {
+                let link = ancestor_named(&dom, *texts.first()?, host, &["a"])?;
+                dom.contains(link, *texts.last()?).ok()?.then_some(link)
+            });
             for &t in &texts {
                 if let Some(value) = href.filter(|_| !collapsed) {
-                    if let Some(link) = relink_text(&mut dom, host, t, value) {
+                    if let Some(link) = relink_text(&mut dom, host, t, value, single_link) {
                         last_wrapper = Some(link);
                         continue;
                     }
