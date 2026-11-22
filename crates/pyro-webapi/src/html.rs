@@ -1955,7 +1955,8 @@ impl JsClass for HtmlElement {
                 _ if showing => crate::popover::hide_popover(page, n.id, true, true, true, source)?,
                 _ => crate::popover::show_popover(page, n.id, true, source)?,
             }
-            Ok(s.boolean(page.dom.borrow().is_popover_showing(n.id)))
+            let now_showing = page.dom.borrow().is_popover_showing(n.id);
+            Ok(s.boolean(now_showing))
         });
     }
 }
