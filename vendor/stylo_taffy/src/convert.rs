@@ -223,6 +223,7 @@ pub fn max_size_keyword(val: &stylo::MaxSize) -> taffy::Dimension {
 #[inline]
 pub fn max_size(val: &stylo::MaxSize) -> taffy::LengthPercentageAuto {
     match val {
+        stylo::MaxSize::Calculation(size) => min_size(size.prepared_size()),
         stylo::MaxSize::LengthPercentage(val) => length_percentage(&val.0).into(),
         stylo::MaxSize::None => taffy::LengthPercentageAuto::AUTO,
 
@@ -237,6 +238,18 @@ pub fn max_size(val: &stylo::MaxSize) -> taffy::LengthPercentageAuto {
         stylo::MaxSize::AnchorSizeFunction(anchor) => anchor.fallback.as_ref().map_or(taffy::LengthPercentageAuto::AUTO, max_size),
         stylo::MaxSize::AnchorContainingCalcFunction(_) => taffy::LengthPercentageAuto::AUTO,
     }
+}
+
+#[inline]
+pub fn max_size_calculation(val: &stylo::MaxSize) -> Option<(taffy::Dimension, taffy::CalcSizeFunction)> {
+    let stylo::MaxSize::Calculation(size) = val else { return None };
+    let basis = size.prepared_size();
+    let calculation = match basis {
+        stylo::Size::CalcSizeMinContent(calc) | stylo::Size::CalcSizeMaxContent(calc)
+        | stylo::Size::CalcSizeFitContent(calc) | stylo::Size::CalcSizeStretch(calc) => calc,
+        _ => return None,
+    };
+    Some((dimension(basis), calc_size_function(&calculation.0)))
 }
 
 #[inline]

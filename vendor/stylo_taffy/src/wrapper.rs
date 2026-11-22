@@ -373,6 +373,19 @@ impl<T: Deref<Target = ComputedValues>> taffy::CoreStyle for TaffyStyloStyle<T> 
         })
     }
 
+    fn max_size_percentage_basis(&self) -> taffy::Size<Option<bool>> {
+        let position = self.style.get_position();
+        let classify = |max: &stylo::MaxSize| {
+            let stylo::MaxSize::Calculation(size) = max else { return None };
+            match size.prepared_size() {
+                stylo::Size::CalcSizeAny(_) => Some(false),
+                stylo::Size::CalcSizePercentage(_) => Some(true),
+                _ => None,
+            }
+        };
+        self.size(taffy::Size { width: classify(&position.max_width), height: classify(&position.max_height) })
+    }
+
     #[inline]
     fn min_size(&self) -> taffy::Size<taffy::LengthPercentageAuto> {
         if self.flags.contains(StyleFlags::IS_SPLIT_INLINE) {
@@ -713,6 +726,17 @@ impl<T: Deref<Target = ComputedValues>> TaffyStyloStyle<T> {
 // BlockItemStyle impl
 #[cfg(feature = "block")]
 impl<T: Deref<Target = ComputedValues>> taffy::BlockItemStyle for TaffyStyloStyle<T> {
+    fn max_size_calculation(&self) -> taffy::Size<Option<(taffy::Dimension, taffy::CalcSizeFunction)>> {
+        if self.flags.contains(StyleFlags::IS_SPLIT_INLINE) {
+            return taffy::Size { width: None, height: None };
+        }
+        let position = self.style.get_position();
+        self.size(taffy::Size {
+            width: convert::max_size_calculation(&position.max_width),
+            height: convert::max_size_calculation(&position.max_height),
+        })
+    }
+
     /// pyro: a block container with a standard `line-clamp` (not `-webkit-line-clamp`, whose
     /// box is a flow root already) establishes an independent formatting context.
     #[inline]

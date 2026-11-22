@@ -450,6 +450,8 @@ struct BlockItem {
     /// (`BlockItemStyle::min_size_keyword`), which `min_size` and `max_size` do not hold.
     min_size_keyword: Size<Dimension>,
     max_size_keyword: Size<Dimension>,
+    max_size_calculation: Size<Option<(Dimension, crate::style::CalcSizeFunction)>>,
+    box_sizing_adjustment: Size<f32>,
     /// pyro: for an item that is no block container (a flex or grid container) and whose height is
     /// its width's through its preferred aspect ratio, with an automatic minimum: the ratio and
     /// what its box is smaller by than the border box. The item is as tall as its content when
@@ -625,7 +627,7 @@ pub fn compute_block_layout(
     let sizes = resolve_sizes_with_aspect_ratio(
         style.size().maybe_resolve(parent_size, |val, basis| tree.calc(val, basis)),
         crate::util::maybe_resolve_min_size(style.min_size(), parent_size, |val, basis| tree.calc(val, basis)),
-        style.max_size().maybe_resolve(parent_size, |val, basis| tree.calc(val, basis)),
+        resolve_block_maximum(&style, parent_size, |val, basis| tree.calc(val, basis)),
         aspect_ratio,
         aspect_ratio_inset(&style, padding_border_size),
         box_sizing_adjustment,
@@ -770,7 +772,7 @@ fn compute_inner(
     let sizes = resolve_sizes_with_aspect_ratio(
         style.size().maybe_resolve(parent_size, |val, basis| tree.calc(val, basis)),
         crate::util::maybe_resolve_min_size(style.min_size(), parent_size, |val, basis| tree.calc(val, basis)),
-        style.max_size().maybe_resolve(parent_size, |val, basis| tree.calc(val, basis)),
+        resolve_block_maximum(&style, parent_size, |val, basis| tree.calc(val, basis)),
         aspect_ratio,
         ratio_inset,
         box_sizing_adjustment,
@@ -1414,6 +1416,24 @@ fn compute_inner(
     output
 }
 
+fn resolve_block_maximum(
+    style: &impl CoreStyle,
+    parent_size: Size<Option<f32>>,
+    calc: impl Fn(*const (), f32) -> f32,
+) -> Size<Option<f32>> {
+    let maximum = style.max_size();
+    let percentage_basis = style.max_size_percentage_basis();
+    let resolve = |value: LengthPercentageAuto, context: Option<f32>, basis: Option<bool>| match basis {
+        None => value.maybe_resolve(context, &calc),
+        Some(true) if context.is_none() => None,
+        Some(_) => value.maybe_resolve(Some(context.unwrap_or_default()), &calc).map(|size| size.max(0.0)),
+    };
+    Size {
+        width: resolve(maximum.width, parent_size.width, percentage_basis.width),
+        height: resolve(maximum.height, parent_size.height, percentage_basis.height),
+    }
+}
+
 /// Create a `Vec` of `BlockItem` structs where each item in the `Vec` represents a child of the current node
 // pyro: not inlined, so its locals stay out of `compute_inner`'s frame, which is on the
 // stack once per tree level of a recursive layout.
@@ -1464,7 +1484,7 @@ fn generate_item_list(
             let sizes = resolve_sizes_with_aspect_ratio(
                 own_size,
                 crate::util::maybe_resolve_min_size(child_style.min_size(), node_inner_size, |val, basis| tree.calc(val, basis)),
-                child_style.max_size().maybe_resolve(node_inner_size, |val, basis| tree.calc(val, basis)),
+                resolve_block_maximum(&child_style, node_inner_size, |val, basis| tree.calc(val, basis)),
                 aspect_ratio,
                 aspect_ratio_inset(&child_style, pb_sum),
                 box_sizing_adjustment,
@@ -1534,6 +1554,8 @@ fn generate_item_list(
                 width_from_ratio: sizes.width_from_ratio,
                 min_size_keyword: child_style.min_size_keyword(),
                 max_size_keyword: child_style.max_size_keyword(),
+                max_size_calculation: child_style.max_size_calculation(),
+                box_sizing_adjustment,
                 content_min_height_ratio: aspect_ratio.filter(|_| {
                     sizes.height_from_ratio
                         && !is_block
@@ -1791,7 +1813,8 @@ fn clamp_width_by_keywords(
     container_width: Option<f32>,
     parent_size: Size<Option<f32>>,
 ) -> f32 {
-    if item.min_size_keyword.width.is_auto() && item.max_size_keyword.width.is_auto() {
+    let calculation = item.max_size_calculation.width;
+    if item.min_size_keyword.width.is_auto() && item.max_size_keyword.width.is_auto() && calculation.is_none() {
         return width;
     }
     let mut resolve = |keyword: Dimension, basis: Option<f32>| -> Option<f32> {
@@ -1843,12 +1866,29 @@ fn clamp_width_by_keywords(
     // `fit-content-length-percentage-012`, `-013`).
     // (A calculation is not resolved against an infinite basis: `calc(200px - 10%)` would be
     // negative there and give the min-content width.)
-    let max_keyword = item.max_size_keyword.width;
+    let max_keyword = calculation.map_or(item.max_size_keyword.width, |(basis, _)| basis);
     let cyclic = container_width.is_none()
         && (max_keyword.into_raw().tag() == crate::style::CompactLength::FIT_CONTENT_PERCENT_TAG || max_keyword.into_raw().is_fit_content_calc());
     let max = if cyclic { resolve(Dimension::max_content(), None) } else { resolve(max_keyword, container_width) };
     let min = resolve(item.min_size_keyword.width, container_width.or(Some(0.0)));
-    width.maybe_min(max).maybe_max(min)
+    let max = max.map(|basis| calculated_maximum(tree, basis, calculation, container_width, item.box_sizing_adjustment.width));
+    let bounded = width.maybe_min(max).maybe_max(min);
+    if calculation.is_some() { bounded.maybe_max(item.min_size.width) } else { bounded }
+}
+
+fn calculated_maximum(
+    tree: &impl LayoutPartialTree,
+    border_box_basis: f32,
+    calculation: Option<(Dimension, crate::style::CalcSizeFunction)>,
+    percentage_basis: Option<f32>,
+    inset: f32,
+) -> f32 {
+    match calculation {
+        Some((_, function)) => function.apply((border_box_basis - inset).max(0.0), percentage_basis, |val, size, percent| {
+            tree.resolve_size_calculation(val, size, percent)
+        }) + inset,
+        None => border_box_basis,
+    }
 }
 
 /// Resolve the known dimensions an in-flow block-level item is laid out with
@@ -1872,7 +1912,8 @@ fn block_item_known_dimensions(
     // WPT css-sizing `stretch/replaced-next-to-float-*`)
     let stretch_keyword = item.size_style.width.is_stretch()
         || item.min_size_keyword.width.is_stretch()
-        || item.max_size_keyword.width.is_stretch();
+        || item.max_size_keyword.width.is_stretch()
+        || item.max_size_calculation.width.is_some_and(|(basis, _)| basis.is_stretch());
     if (item.is_table || item.is_compressible_replaced) && !is_stretch && !stretch_keyword {
         Size::NONE
     } else {
@@ -1944,7 +1985,9 @@ fn block_item_known_dimensions(
         // pyro: `min-height`/`max-height` that are sizing keywords: the content height at the
         // item's width for the content keywords, the stretch height for `stretch`. A height of
         // `auto` is the content height already, so only `stretch` can change it.
-        let (min_keyword, max_keyword) = (item.min_size_keyword.height, item.max_size_keyword.height);
+        let calculation = item.max_size_calculation.height;
+        let min_keyword = item.min_size_keyword.height;
+        let max_keyword = calculation.map_or(item.max_size_keyword.height, |(basis, _)| basis);
         if let (Some(width), false) = (known_dimensions.width, min_keyword.is_auto() && max_keyword.is_auto()) {
             let mut content_height = None;
             let mut resolve = |keyword: Dimension| -> Option<f32> {
@@ -1972,14 +2015,26 @@ fn block_item_known_dimensions(
                 }
             };
             let (max, min) = (resolve(max_keyword), resolve(min_keyword));
+            let automatic = if known_dimensions.height.is_none() && (calculation.is_some() || min_keyword.is_stretch()) {
+                resolve(Dimension::max_content())
+            } else {
+                None
+            };
+            let max = max.map(|basis| calculated_maximum(tree, basis, calculation, parent_size.height, item.box_sizing_adjustment.height));
             match known_dimensions.height {
-                Some(height) => known_dimensions.height = Some(height.maybe_min(max).maybe_max(min)),
+                Some(height) => {
+                    let bounded = height.maybe_min(max).maybe_max(min);
+                    known_dimensions.height = Some(if calculation.is_some() { bounded.maybe_max(item.min_size.height) } else { bounded });
+                }
                 None => {
-                    // An `auto` height: the content's, unless `min-height: stretch` is taller.
-                    if let (true, Some(min)) = (min_keyword.is_stretch(), min) {
-                        let content = resolve(Dimension::max_content()).unwrap_or(0.0);
-                        if min > content {
-                            known_dimensions.height = Some(min);
+                    if let Some(content) = automatic {
+                        let bounded = if calculation.is_some() {
+                            content.maybe_min(max).maybe_max(min).maybe_max(item.min_size.height)
+                        } else {
+                            content.maybe_max(min)
+                        };
+                        if bounded != content {
+                            known_dimensions.height = Some(bounded);
                         }
                     }
                 }
@@ -2349,7 +2404,10 @@ fn perform_final_layout_on_in_flow_children<Tree: LayoutBlockContainer>(
                     is_stretch,
                     non_stretch_justify_self.is_some(),
                 ),
-                known_dimensions_are_definite: Size { width: true, height: true },
+                known_dimensions_are_definite: Size {
+                    width: true,
+                    height: item.max_size_calculation.height.is_none() || !item.size_style.height.is_auto() || item.size.height.is_some(),
+                },
                 parent_size,
                 available_space: available_space.map_width(|_| AvailableSpace::Definite(stretch_width)),
                 vertical_margins_are_collapsible: if item.is_in_same_bfc { Line::TRUE } else { Line::FALSE },

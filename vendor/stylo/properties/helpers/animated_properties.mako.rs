@@ -188,7 +188,7 @@ impl AnimationValue {
     pub fn animate_with_size_policy(&self, other: &Self, procedure: Procedure, allow_keywords: bool) -> Result<Self, ()> {
         if allow_keywords {
             match (self, other) {
-                % for name in ['Width', 'Height', 'MinWidth', 'MinHeight']:
+                % for name in ['Width', 'Height', 'MinWidth', 'MinHeight', 'MaxWidth', 'MaxHeight']:
                 (Self::${name}(from), Self::${name}(to)) => return Ok(Self::${name}(from.animate_size(to, procedure, true)?)),
                 % endfor
                 _ => {},

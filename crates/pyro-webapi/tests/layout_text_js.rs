@@ -216,6 +216,33 @@ fn scroll_into_view_aligns_block_and_inline() {
 }
 
 #[test]
+fn calc_size_maximum_declarations() {
+    let e = env("<!doctype html><div id=target></div>");
+    let result = eval(&e.main, r#"(() => {
+        const target = document.getElementById('target');
+        const failures = [];
+        for (const property of ['max-width', 'max-height', 'max-inline-size', 'max-block-size']) {
+            for (const basis of ['min-content', 'max-content', 'fit-content', 'stretch', '10px', '20%', 'calc-size(min-content, size)']) {
+                const value = `calc-size(${basis}, size + 1em)`;
+                if (!CSS.supports(property, value)) failures.push(property + ': ' + value);
+            }
+            target.style.cssText = 'font-size: 10px';
+            target.style.setProperty(property, 'calc-size(any, 2em)');
+            for (const value of ['calc-size(none, size)', 'calc-size(auto, size)', 'calc-size(content, size)',
+                                 'calc-size(calc-size(auto, size), size)', 'calc-size(any, size)']) {
+                if (CSS.supports(property, value)) failures.push(property + ': ' + value);
+                target.style.setProperty(property, value);
+            }
+            if (target.style.getPropertyValue(property) !== 'calc-size(any, 2em)' ||
+                getComputedStyle(target).getPropertyValue(property) !== 'calc-size(any, 20px)') failures.push(property);
+        }
+        return failures.join('; ');
+    })()"#);
+    assert_eq!(result, "");
+    e.page.dispose();
+}
+
+#[test]
 fn css_supports_parses_with_stylo() {
     let e = env("<div></div>");
     let all = |cases: &str| eval(&e.main, &format!("[{cases}].map(c=>CSS.supports(...c)).join()"));
