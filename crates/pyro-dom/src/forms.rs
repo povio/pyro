@@ -967,6 +967,21 @@ impl Dom {
         if select == NIL || self.is_multiple(select) {
             return;
         }
+        // Only an inserted explicitly selected option can deselect others: without one, skip
+        // the walk over the select's whole list (the parser inserts its options one by one).
+        let explicit_in = |root: u32| {
+            let mut cur = root;
+            while cur != NIL {
+                if self.html_local(cur) == Some(&local_name!("option")) && self.option_explicit(cur) {
+                    return true;
+                }
+                cur = self.following_in(cur, root);
+            }
+            false
+        };
+        if !nodes.iter().any(|&k| explicit_in(k)) {
+            return;
+        }
         let options = self.select_options_idx(select);
         let inserted = |o: u32| nodes.iter().any(|&k| self.is_inclusive_ancestor_idx(k, o));
         let Some(winner) = options.iter().rposition(|&o| inserted(o) && self.option_explicit(o)) else { return };
@@ -976,6 +991,9 @@ impl Dom {
             if let Some(e) = self.n_mut(o).element_mut() {
                 e.control.get_or_insert_with(Default::default).selected = Some(false);
             }
+            // Selectedness is form-control state: `:checked` restyles.
+            self.bump();
+            self.note(crate::dom::Change::State(o));
         }
     }
     /// After a select's `multiple` attribute was added or removed: once it is
@@ -990,6 +1008,9 @@ impl Dom {
             if let Some(e) = self.n_mut(o).element_mut() {
                 e.control.get_or_insert_with(Default::default).selected = Some(false);
             }
+            // Selectedness is form-control state: `:checked` restyles.
+            self.bump();
+            self.note(crate::dom::Change::State(o));
         }
     }
     fn keep_default_selectedness(&mut self, select: u32, options: &[u32]) {
