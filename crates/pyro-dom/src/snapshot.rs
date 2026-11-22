@@ -1198,6 +1198,19 @@ impl Dom {
             self.state_dependents(i, &mut dependents);
             self.auto_dir_ancestors(i, &mut dependents);
         }
+        // `state_dependents` starts above the node: a form, fieldset or select that gained or lost
+        // a child follows it too (WPT pseudo-classes/valid-invalid: an invalid control appended to
+        // an empty form).
+        for &p in parents.iter() {
+            let follows_children = self.slot_live(p)
+                && self
+                    .n(p)
+                    .element()
+                    .is_some_and(|e| e.is_html() && matches!(&*e.name.local, "form" | "fieldset" | "select"));
+            if follows_children {
+                dependents.push(p);
+            }
+        }
         // A fieldset, optgroup or select whose own attributes changed (`disabled`) can disable or
         // enable the controls and options inside it.
         for &i in changed.iter() {
