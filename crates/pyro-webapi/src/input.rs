@@ -845,6 +845,8 @@ fn run_activation_behavior(
             // `commandfor`, else `popovertarget`.
             crate::popover::button_activation(page, el, target);
         }
+        // As Chrome's `IsLiveLink`: an editable link does not navigate.
+        "a" | "area" if crate::editing::is_editable(&page.dom.borrow(), el) => {}
         "a" | "area" => follow_hyperlink(page, el),
         "label" => {
             let control = crate::html::labeled_control(&page.dom.borrow(), el);
