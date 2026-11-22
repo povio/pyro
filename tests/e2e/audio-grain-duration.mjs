@@ -11,7 +11,10 @@ const realtime = batch === 'realtime-quantum';
 const retro = batch === 'retrospective';
 const directory = '/webaudio/the-audio-api/' + (realtime ? 'the-audiocontext-interface/' : hold || retro ? 'the-audioparam-interface/' : periodic ? '' : 'the-audiobuffersourcenode-interface/');
 const pages = retro ? ['setValueAtTime', 'setTargetAtTime', 'linearRampToValueAtTime', 'exponentialRampToValueAtTime', 'setValueCurveAtTime'].map(method => `retrospective-${method}.html`) : realtime ? ['audiocontext-rendersizehint.html'] : hold ? ['audioparam-cancel-and-hold.html', 'cancel-scheduled-values.html'] : periodic ? ['the-periodicwave-interface/periodicWave.html', 'the-oscillatornode-interface/ctor-oscillator.html'] : ['sub-sample-scheduling.html', 'audiobuffersource-duration-loop.html', 'audiobuffersource-duration-loop-playbackrate.html'];
-const allowed = new Set([...pages.map(name => directory + name), '/resources/testharness.js', '/resources/testharnessreport.js', '/webaudio/resources/audit-util.js', '/webaudio/resources/audit.js', ...(periodic ? ['/webaudio/resources/audionodeoptions.js'] : [])]);
+const offlineClose = batch === 'offline-close';
+const batchDirectory = offlineClose ? '/webaudio/the-audio-api/the-offlineaudiocontext-interface/' : directory;
+const batchPages = offlineClose ? ['ctor-offlineaudiocontext.html', 'offlineaudiocontext-close.html'] : pages;
+const allowed = new Set([...batchPages.map(name => batchDirectory + name), '/resources/testharness.js', '/resources/testharnessreport.js', '/webaudio/resources/audit-util.js', '/webaudio/resources/audit.js', ...(periodic || offlineClose ? ['/webaudio/resources/audionodeoptions.js'] : [])]);
 const browser = await chromium.launch({ executablePath });
 if (hold) allowed.add('/webaudio/resources/audio-param.js');
 if (realtime) allowed.add('/webaudio/resources/rendersizehint-testing.js');
@@ -30,8 +33,8 @@ try {
     await route.fulfill({contentType: path.endsWith('.html') ? 'text/html' : 'application/javascript', body});
   });
   const outcomes = {};
-  for (const name of pages) {
-    await page.goto('https://wpt.test' + directory + name);
+  for (const name of batchPages) {
+    await page.goto('https://wpt.test' + batchDirectory + name);
     if (modulePath) assert.ok(await page.evaluate(() => globalThis.installedAudio?.OfflineAudioContext === OfflineAudioContext && globalThis.installedAudio?.AudioBufferSourceNode === AudioBufferSourceNode), 'Web Audio module installation failed');
     if (modulePath && periodic) assert.ok(await page.evaluate(() => installedAudio.AudioContext === AudioContext && installedAudio.OscillatorNode === OscillatorNode && installedAudio.PeriodicWave === globalThis.PeriodicWave));
     if (modulePath && realtime) assert.ok(await page.evaluate(() => installedAudio.AudioContext === AudioContext));

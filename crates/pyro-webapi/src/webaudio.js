@@ -2189,10 +2189,10 @@
       let channels, frames, rate;
       if (arguments.length === 1 && numberOfChannels !== null && typeof numberOfChannels === 'object') {
         const o = numberOfChannels;
-        if (o.length === undefined) throw new TypeErrorC("Failed to construct 'OfflineAudioContext': Failed to read the 'length' property from 'OfflineAudioContextOptions': Required member is undefined.");
+        const lengthOption = o.length;
         if (o.sampleRate === undefined) throw new TypeErrorC("Failed to construct 'OfflineAudioContext': Failed to read the 'sampleRate' property from 'OfflineAudioContextOptions': Required member is undefined.");
         channels = o.numberOfChannels === undefined ? 1 : ulong(o.numberOfChannels);
-        frames = ulong(o.length);
+        frames = lengthOption == null ? null : ulong(lengthOption);
         rate = finite(o.sampleRate, 'construct', 'OfflineAudioContext');
       } else {
         if (arguments.length < 3) throw new TypeErrorC(`Failed to construct 'OfflineAudioContext': 3 arguments required, but only ${arguments.length} present.`);
@@ -2200,7 +2200,7 @@
         frames = ulong(length);
         rate = finite(sampleRate, 'construct', 'OfflineAudioContext');
       }
-      checkBuffer('construct', 'OfflineAudioContext', channels, frames, rate);
+      checkBuffer('construct', 'OfflineAudioContext', channels, frames ?? 1, rate);
       super(secret, rate, channels, true);
       const c = ctxOf(this);
       c.length = frames;
@@ -2213,15 +2213,15 @@
     get length() { return ctxOf(this).length; }
     startRendering(chunkSize = null) {
       const c = ctxOf(this);
-      return new PromiseC(resolve => {
+      return new PromiseC((resolve, reject) => {
         const size = chunkSize === null ? null : ulong(chunkSize);
-        if (c.committed === c.length) throw new DE('All frames have already been committed.', 'InvalidStateError');
+        if (c.closing || c.state === 'closed' || c.committed === c.length) throw new DE('No further frames can be rendered.', 'InvalidStateError');
         if (size === 0) throw new DE('The requested chunk size cannot be zero.', 'NotSupportedError');
         const start = c.committed;
-        const end = size === null ? c.length : min(c.length, start + ceil(size / QUANTUM) * QUANTUM);
+        const end = size === null ? (c.length ?? start + QUANTUM) : min(c.length ?? Infinity, start + ceil(size / QUANTUM) * QUANTUM);
         const output = Array.from({length: c.channels}, () => new F32(end - start));
         c.committed = end;
-        c.chunks.push({start, end, output, resolve});
+        c.chunks.push({start, end, output, resolve, reject});
         if (!c.rendering) {
           c.rendering = true;
           c.state = 'running';
@@ -2230,9 +2230,27 @@
         if (c.chunks.length === 1) setTimer(() => render(c), 0);
       });
     }
+    close() {
+      const c = ctxOf(this);
+      if (c.closing || c.state === 'closed') return PromiseC.reject(new DE('Context is already closed.', 'InvalidStateError'));
+      c.closing = true;
+      return new PromiseC(resolve => {
+        const finish = () => {
+          c.state = 'closed';
+          for (const chunk of c.chunks) chunk.reject(new DE('Rendering was stopped.', 'AbortError'));
+          c.chunks.length = 0;
+          for (const pause of c.suspends.values()) pause.reject(new DE('Context was closed.', 'InvalidStateError'));
+          c.suspends.clear();
+          setTimer(() => fire(c.self, 'statechange'), 0);
+          resolve();
+        };
+        if (c.rendering) setTimer(finish, 0);
+        else finish();
+      });
+    }
     resume() {
       const c = ctxOf(this);
-      if (c.state === 'closed') return PromiseC.reject(new DE("Failed to execute 'resume' on 'OfflineAudioContext': Cannot resume a context that has been closed.", 'InvalidStateError'));
+      if (c.closing || c.state === 'closed') return PromiseC.reject(new DE("Failed to execute 'resume' on 'OfflineAudioContext': Cannot resume a context that has been closed.", 'InvalidStateError'));
       if (!c.rendering) return PromiseC.reject(new DE("Failed to execute 'resume' on 'OfflineAudioContext': Cannot resume a context that has not started.", 'InvalidStateError'));
       if (c.state === 'suspended') {
         c.state = 'running';
@@ -2248,7 +2266,8 @@
       if (!(t >= 0)) return PromiseC.reject(new DE(`Failed to execute 'suspend' on 'OfflineAudioContext': negative suspend time (${t}) is not allowed`, 'InvalidStateError'));
       const lower = floor(t * c.rate / QUANTUM) * QUANTUM;
       const frame = t > lower / c.rate ? lower + QUANTUM : lower;
-      if (frame >= c.length) {
+      if (c.closing || c.state === 'closed') return PromiseC.reject(new DE('Context is closed.', 'InvalidStateError'));
+      if (c.length !== null && frame >= c.length) {
         return PromiseC.reject(new DE(`Failed to execute 'suspend' on 'OfflineAudioContext': cannot schedule a suspend at frame ${frame} (${t} seconds) because it is greater than or equal to the total render duration of ${c.length} frames`, 'InvalidStateError'));
       }
       if (frame < c.frames) {
@@ -2257,7 +2276,7 @@
       if (c.suspends.has(frame)) {
         return PromiseC.reject(new DE(`Failed to execute 'suspend' on 'OfflineAudioContext': cannot schedule more than one suspend at frame ${frame} (${t} seconds)`, 'InvalidStateError'));
       }
-      return new PromiseC((resolve) => c.suspends.set(frame, resolve));
+      return new PromiseC((resolve, reject) => c.suspends.set(frame, {resolve, reject}));
     }
   }
   handler(OfflineAudioContext, 'complete');
@@ -2266,17 +2285,18 @@
   // Renders quanta until the end or a suspend point.
   function render(c) {
     const chunk = c.chunks[0];
-    if (!chunk) return;
+    if (!chunk || c.closing) return;
     setState(c, 'running');
     c.graphEpoch = (c.graphEpoch ?? 0) + 1;
     const dest = nodes.get(c.destination);
-    while (c.frames < chunk.end) {
+    const sliceEnd = min(chunk.end, c.frames + 128 * QUANTUM);
+    while (c.frames < sliceEnd) {
       const pause = c.suspends.get(c.frames);
       if (pause) {
         c.suspends.delete(c.frames);
         setState(c, 'suspended');
         flushEnded(c);
-        pause();
+        pause.resolve();
         return;
       }
       const f0 = c.frames;
@@ -2309,6 +2329,10 @@
         c.delayWriters.clear();
       }
       c.frames += QUANTUM;
+    }
+    if (c.frames < chunk.end) {
+      setTimer(() => render(c), 0);
+      return;
     }
     const rendered = makeBuffer(c.rate, chunk.output);
     const final = chunk.end === c.length;
