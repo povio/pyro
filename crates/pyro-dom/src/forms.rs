@@ -1714,7 +1714,8 @@ impl Dom {
                 return Ok(());
             }
         }
-        let before = ty.string_to_number(&self.value(id)?).unwrap_or(0.0);
+        let parsed = ty.string_to_number(&self.value(id)?);
+        let before = parsed.unwrap_or(0.0);
         let mut v = if r.mismatch(before) {
             if up {
                 r.ceil(before, step)
@@ -1730,7 +1731,9 @@ impl Dom {
         if let Some(hi) = max.filter(|&hi| v > hi) {
             v = r.floor(hi, step);
         }
-        if (up && v < before) || (!up && v > before) {
+        // From no value (zero), a step clamped back across it still sets one
+        // (Chrome: an empty number input with min 7 steps down to 7).
+        if parsed.is_some() && ((up && v < before) || (!up && v > before)) {
             return Ok(());
         }
         let text = match ty {
