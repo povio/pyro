@@ -22278,20 +22278,30 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                  // unreachable!();
  
                  // compute_leaf_layout(inputs, &node.style, |known_dimensions, available_space| {
-@@ -283,19 +1307,69 @@
-                         .and_then(|val| val.parse::<f32>().ok())
-                         .unwrap_or(2.0);
- 
+@@ -278,24 +1302,76 @@
+             NodeData::Element(element_data) | NodeData::AnonymousBlock(element_data) => {
+                 // TODO: deduplicate with single-line text input
+                 if *element_data.name.local == *"textarea" {
++                    // pyro: HTML § 4.10.11 "the textarea element": `rows` and `cols` are
++                    // non-negative integers greater than zero, else their defaults (2 rows of 20
++                    // characters): `rows="-1"` or `rows="0"` is 2 rows, not none.
+                     let rows = element_data
+                         .attr(local_name!("rows"))
+-                        .and_then(|val| val.parse::<f32>().ok())
+-                        .unwrap_or(2.0);
+-
 -                    let cols = element_data
 -                        .attr(local_name!("cols"))
 -                        .and_then(|val| val.parse::<f32>().ok());
++                        .and_then(positive_html_integer)
++                        .map_or(2.0, |rows| rows as f32);
++
 +                    // pyro: 20 when absent or not a valid positive integer (HTML § 4.10.11 "the
 +                    // textarea element": the default character width), not a fixed 300px.
 +                    let cols = Some(
 +                        element_data
 +                            .attr(local_name!("cols"))
-+                            .and_then(|val| val.trim().parse::<u32>().ok())
-+                            .filter(|&cols| cols > 0)
++                            .and_then(positive_html_integer)
 +                            .map_or(20.0, |cols| cols as f32),
 +                    );
  
@@ -22356,7 +22366,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                          },
                      );
                      if inputs.run_mode == RunMode::PerformLayout {
-@@ -308,87 +1382,282 @@
+@@ -308,87 +1384,282 @@
                                      .border()
                                      .resolve_or_zero(inputs.parent_size.width, resolve_calc_value)
                          };
@@ -22682,7 +22692,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                      };
  
                      // Get the element's intrinsic dimensions and default object size
-@@ -407,39 +1676,65 @@
+@@ -407,39 +1678,65 @@
                              }
                              #[cfg(feature = "svg")]
                              ImageData::Svg(svg) => {
@@ -22769,7 +22779,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                              // A canvas's content attributes determine its intrinsic size,
                              // overriding the widget-reported one; the widget-reported size
                              // in turn overrides the tag's fallback.
-@@ -472,6 +1767,103 @@
+@@ -472,6 +1769,103 @@
                          _ => unreachable!(),
                      };
  
@@ -22873,7 +22883,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                      #[cfg(feature = "writing-mode")]
                      let (intrinsic_sizes, default_object_size) =
                          if node.writing_mode().is_vertical() {
-@@ -488,126 +1880,694 @@
+@@ -488,126 +1882,694 @@
                              (intrinsic_sizes, default_object_size)
                          };
  
@@ -23220,8 +23230,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +                }
 +            }
 +        }
- 
--                    return output;
++
 +        // Absolutely positioned children take no part in the table grid. Their
 +        // static position is the top-left of the table's content box.
 +        let context = table_wrapper.ctx;
@@ -23440,7 +23449,8 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +            taffy::Point { x: x0 + offset.x, y: top + y0 + offset.y },
 +        ))
 +    }
-+
+ 
+-                    return output;
 +    /// pyro: the widest min-content width of a table's captions, with their margins.
 +    #[inline(never)]
 +    fn table_captions_min_width(
@@ -23657,7 +23667,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  impl TraversePartialTree for LayoutPassState<'_> {
      type ChildIter<'a>
          = RefCellChildIter<'a>
-@@ -667,7 +2627,21 @@
+@@ -667,7 +2629,21 @@
      }
  
      fn set_unrounded_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -23680,7 +23690,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn resolve_calc_value(&self, calc_ptr: *const (), parent_size: f32) -> f32 {
-@@ -675,11 +2649,32 @@
+@@ -675,11 +2651,32 @@
      }
  
      #[inline(always)]
@@ -23713,7 +23723,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          compute_cached_layout(self, node_id, inputs, |tree, node_id, inputs| {
              tree.compute_child_layout_internal(node_id, inputs, None)
          })
-@@ -693,22 +2688,379 @@
+@@ -693,22 +2690,379 @@
          Self: 'a;
  
      fn get_oof_item_style(&self, node_id: NodeId) -> Self::OofItemStyle<'_> {
@@ -24052,9 +24062,10 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
                  if node.oof_containing_block.get() == Some(containing_block) {
                      node.oof_containing_block.set(None);
 +                    self.doc.oof_hoisted.remove(&hoisted_id);
-+                }
-+            }
-+        }
+                 }
+             }
+         }
+-        hoisted.clear();
 +        let mut list = hoisted;
 +        list.clear();
 +        *self.node_from_id(node_id).hoisted_children.borrow_mut() = list;
@@ -24082,12 +24093,11 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +                        return between;
 +                    }
 +                    up = self.nodes[m].layout_parent.get();
-                 }
++                }
 +                return false;
-             }
++            }
 +            at = self.nodes[node].parent;
-         }
--        hoisted.clear();
++        }
 +        false
 +    }
 +
@@ -24096,7 +24106,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn add_hoisted_children(&mut self, node_id: NodeId, hoisted: &[NodeId]) {
-@@ -718,9 +3070,24 @@
+@@ -718,9 +3072,24 @@
              .borrow_mut()
              .extend(hoisted.iter().copied().map(dom_node_id));
          for &hoisted_id in hoisted {
@@ -24121,7 +24131,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
          }
      }
  
-@@ -732,6 +3099,148 @@
+@@ -732,6 +3101,148 @@
      }
  }
  
@@ -24270,7 +24280,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  impl taffy::CacheTree for LayoutPassState<'_> {
      #[inline]
      fn cache_get(
-@@ -739,10 +3248,12 @@
+@@ -739,10 +3250,12 @@
          node_id: NodeId,
          inputs: &taffy::LayoutInput,
      ) -> Option<taffy::LayoutOutput> {
@@ -24287,7 +24297,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -752,9 +3263,11 @@
+@@ -752,9 +3265,11 @@
          inputs: &taffy::LayoutInput,
          layout_output: taffy::LayoutOutput,
      ) {
@@ -24302,7 +24312,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      #[inline]
-@@ -782,16 +3295,245 @@
+@@ -782,16 +3297,245 @@
          self.child_layout_style(self.node_from_id(child_node_id))
      }
  
@@ -24552,7 +24562,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  }
  
-@@ -806,6 +3548,18 @@
+@@ -806,6 +3550,18 @@
      where
          Self: 'a;
  
@@ -24571,7 +24581,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      fn get_flexbox_container_style(&self, node_id: NodeId) -> Self::FlexboxContainerStyle<'_> {
          self.get_core_container_style(node_id)
      }
-@@ -844,6 +3598,30 @@
+@@ -844,6 +3600,30 @@
              element.detailed_layout_info = DetailedLayoutInfo::Grid(Box::new(detailed_grid_info));
          }
      }
@@ -24602,7 +24612,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  impl RoundTree for LayoutPassState<'_> {
-@@ -852,7 +3630,19 @@
+@@ -852,7 +3632,19 @@
      }
  
      fn set_final_layout(&mut self, node_id: NodeId, layout: &Layout) {
@@ -24623,7 +24633,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
      }
  
      fn is_out_of_flow(&self, node_id: NodeId) -> bool {
-@@ -868,6 +3658,30 @@
+@@ -868,6 +3660,30 @@
      fn get_hoisted_child_id(&self, node_id: NodeId, index: usize) -> NodeId {
          taffy_node_id(self.node_from_id(node_id).hoisted_children.borrow()[index])
      }
@@ -24654,7 +24664,7 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
  }
  
  pub(crate) struct TaffyDebugTree<'doc>(pub(crate) &'doc BaseDocument);
-@@ -972,3 +3786,229 @@
+@@ -972,3 +3788,240 @@
          })
      }
  }
@@ -24883,6 +24893,17 @@ diff --git a/packages/blitz-dom/src/layout/mod.rs b/packages/blitz-dom/src/layou
 +        crate::NodeData::Text(text) => text.content.chars().all(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{c}')),
 +        _ => false,
 +    })
++}
++
++/// pyro: HTML "rules for parsing non-negative integers" for an attribute that must be greater than
++/// zero (`<textarea rows cols>`): leading ASCII whitespace and a `+` are skipped, the leading digits
++/// are the value, and anything after them is ignored; none, a `-` sign or 0 is no value.
++fn positive_html_integer(value: &str) -> Option<u32> {
++    let value = value.trim_start_matches(|c: char| c.is_ascii_whitespace());
++    let value = value.strip_prefix('+').unwrap_or(value);
++    let digits = value.bytes().take_while(u8::is_ascii_digit).count();
++    let n = value[..digits].parse::<u64>().ok()?;
++    (n > 0).then(|| n.min(u64::from(u32::MAX)) as u32)
 +}
 diff --git a/packages/blitz-dom/src/layout/multicol.rs b/packages/blitz-dom/src/layout/multicol.rs
 new file mode 100644

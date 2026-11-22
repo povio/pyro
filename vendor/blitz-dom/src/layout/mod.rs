@@ -1302,18 +1302,20 @@ impl LayoutPassState<'_> {
             NodeData::Element(element_data) | NodeData::AnonymousBlock(element_data) => {
                 // TODO: deduplicate with single-line text input
                 if *element_data.name.local == *"textarea" {
+                    // pyro: HTML § 4.10.11 "the textarea element": `rows` and `cols` are
+                    // non-negative integers greater than zero, else their defaults (2 rows of 20
+                    // characters): `rows="-1"` or `rows="0"` is 2 rows, not none.
                     let rows = element_data
                         .attr(local_name!("rows"))
-                        .and_then(|val| val.parse::<f32>().ok())
-                        .unwrap_or(2.0);
+                        .and_then(positive_html_integer)
+                        .map_or(2.0, |rows| rows as f32);
 
                     // pyro: 20 when absent or not a valid positive integer (HTML § 4.10.11 "the
                     // textarea element": the default character width), not a fixed 300px.
                     let cols = Some(
                         element_data
                             .attr(local_name!("cols"))
-                            .and_then(|val| val.trim().parse::<u32>().ok())
-                            .filter(|&cols| cols > 0)
+                            .and_then(positive_html_integer)
                             .map_or(20.0, |cols| cols as f32),
                     );
 
@@ -4011,4 +4013,15 @@ fn empty_editing_host(nodes: &crate::NodeTree, node_id: blitz_traits::node_id::N
         crate::NodeData::Text(text) => text.content.chars().all(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{c}')),
         _ => false,
     })
+}
+
+/// pyro: HTML "rules for parsing non-negative integers" for an attribute that must be greater than
+/// zero (`<textarea rows cols>`): leading ASCII whitespace and a `+` are skipped, the leading digits
+/// are the value, and anything after them is ignored; none, a `-` sign or 0 is no value.
+fn positive_html_integer(value: &str) -> Option<u32> {
+    let value = value.trim_start_matches(|c: char| c.is_ascii_whitespace());
+    let value = value.strip_prefix('+').unwrap_or(value);
+    let digits = value.bytes().take_while(u8::is_ascii_digit).count();
+    let n = value[..digits].parse::<u64>().ok()?;
+    (n > 0).then(|| n.min(u64::from(u32::MAX)) as u32)
 }
