@@ -4964,6 +4964,10 @@ fn run_parser_script(page: &Rc<PageDom>, doc: NodeId, node: NodeId) -> JsResult<
             || info.kind == ScriptKind::Data
         {
             let _ = dom.clear_parser_inserted(node);
+            // Prepare step 4: without an `async` attribute it is now force async.
+            if !info.async_ {
+                let _ = dom.set_script_force_async(node, true);
+            }
             return Ok(());
         }
         info
