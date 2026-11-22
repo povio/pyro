@@ -86,6 +86,8 @@ pub enum ResourceKind {
     Download,
     /// An `<object>` element's data (destination "object").
     Object,
+    /// A `<link rel=preload as=fetch>` (destination "", CORS mode).
+    Fetch,
 }
 
 #[derive(Debug, Clone)]
@@ -394,6 +396,7 @@ impl ResourceLoader for NetLoader {
             ResourceKind::Video => pyro_net::Destination::Video,
             ResourceKind::Track => pyro_net::Destination::Track,
             ResourceKind::Download | ResourceKind::Object => pyro_net::Destination::Other,
+            ResourceKind::Fetch => pyro_net::Destination::Fetch,
         };
         // Resource Timing: the document that gets this fetch's entry.
         let document = requesting_document(browser, &request);

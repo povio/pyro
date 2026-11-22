@@ -232,6 +232,10 @@ impl Browser {
                         match attr("as").as_deref().map(str::to_ascii_lowercase).as_deref() {
                             Some("script") => ResourceKind::Script,
                             Some("style") => ResourceKind::Stylesheet,
+                            // Sec-Fetch-Dest font, track and "" (empty).
+                            Some("font") => ResourceKind::Font,
+                            Some("track") => ResourceKind::Track,
+                            Some("fetch") => ResourceKind::Fetch,
                             _ => ResourceKind::Image,
                         }
                     };
