@@ -35,7 +35,9 @@ pub struct FetchLimits {
 impl Default for FetchLimits {
     fn default() -> Self {
         Self {
-            max_requests: 64,
+            // Chrome throws for no number of pending requests; 64 failed pages that
+            // start one per encoding label (encoding/single-byte-decoder.any.html).
+            max_requests: 1024,
             max_body_bytes: 16 * 1024 * 1024,
             max_total_body_bytes: 64 * 1024 * 1024,
             max_body_chunks: 8192,
