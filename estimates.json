@@ -2,26 +2,28 @@
  "basis": "census 5892e136 strict pages (Chrome strict pass, LP not strict); ESTIMATES, nothing measured",
  "tiers": {
   "implemented": {
-   "distinct_census_pages": 224,
+   "distinct_census_pages": 229,
    "studio_css_reported_pages_not_deduped": 0,
    "by_dir": {
     "html/canvas": 207,
-    "html/semantics": 4,
+    "fetch/api": 4,
     "FileAPI": 4,
+    "html/semantics": 4,
     "fetch/data-urls": 3,
     "encoding": 2,
     "mathml": 2,
+    "svg/styling": 1,
     "html/rendering": 1,
     "quirks": 1
    }
   },
   "in_progress": {
-   "distinct_census_pages": 557,
+   "distinct_census_pages": 650,
    "studio_css_reported_pages_not_deduped": 38,
    "by_dir": {
     "html/semantics": 209,
+    "html/canvas": 138,
     "html/interaction": 108,
-    "html/canvas": 45,
     "html/syntax": 34,
     "dom/events": 21,
     "scheduler": 19,
@@ -29,36 +31,35 @@
     "html/dom": 17,
     "pointerevents": 11,
     "fetch/content-encoding": 9,
-    "shadow-dom": 7,
     "selection": 7,
+    "shadow-dom": 7,
     "navigation-api": 6,
-    "uievents": 5,
-    "html/editing": 5,
     "intersection-observer": 5,
+    "html/editing": 5,
+    "uievents": 5,
     "svg/types": 4,
     "mathml": 3,
-    "close-watcher": 3,
-    "inert": 3,
     "event-timing": 3,
+    "inert": 3,
+    "close-watcher": 3,
+    "fetch/fetch-later": 2,
+    "svg/animations": 2,
+    "html/rendering": 2,
     "soft-navigation-heuristics": 2,
     "dom/nodes": 2,
     "resource-timing": 2,
-    "html/rendering": 2,
-    "svg/animations": 2,
-    "fetch/fetch-later": 2,
-    "html/browsers": 1,
-    "editing": 1,
+    "pointerlock": 1,
     "document-picture-in-picture": 1,
-    "pointerlock": 1
+    "editing": 1,
+    "html/browsers": 1
    }
   },
   "queued": {
-   "distinct_census_pages": 636,
+   "distinct_census_pages": 543,
    "studio_css_reported_pages_not_deduped": 122,
    "by_dir": {
     "svg/animations": 229,
     "referrer-policy": 114,
-    "html/canvas": 93,
     "content-security-policy": 72,
     "html/semantics": 40,
     "intersection-observer": 36,
@@ -95,7 +96,7 @@
    "pages": null
   },
   "Q04": {
-   "state": "implemented, unbuilt",
+   "state": "implemented-unbuilt",
    "pages": 1
   },
   "Q05": {
@@ -347,7 +348,7 @@
    "pages": 77
   },
   "C03": {
-   "state": "frozen",
+   "state": "implemented-unbuilt",
    "pages": 30
   },
   "C04": {
@@ -355,8 +356,12 @@
    "pages": 19
   },
   "C05": {
-   "state": "proposed",
+   "state": "claimed",
    "pages": 93
+  },
+  "C05a": {
+   "state": "claimed",
+   "pages": null
   },
   "P01": {
    "state": "proposed",
@@ -458,6 +463,10 @@
    "state": "claimed",
    "pages": 34
   },
+  "OWN-body-textstream": {
+   "state": "implemented-unbuilt",
+   "pages": 4
+  },
   "E01": {
    "state": "implemented-unbuilt",
    "pages": 2
@@ -467,6 +476,6 @@
    "pages": null
   }
  },
- "implemented_total_estimate": 224,
+ "implemented_total_estimate": 229,
  "milestones_reached": []
 }
