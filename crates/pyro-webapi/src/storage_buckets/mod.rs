@@ -12,6 +12,11 @@ use crate::util::arg_string;
 use catalog::{Bucket, Error, Options, StorageKey};
 
 pub(crate) fn storage_key(s: &Scope<'_>, page: &PageDom) -> Option<StorageKey> {
+    // The document's browser-owned origin policy takes precedence over the
+    // URL fallback used by standalone binding environments.
+    if page.has_opaque_origin() {
+        return None;
+    }
     Some(StorageKey {
         origin: crate::storage::tuple_origin(s, page)?,
         top_level_site: page.cookie_partition_key(),
