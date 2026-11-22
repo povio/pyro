@@ -586,15 +586,9 @@ pub(crate) fn format_typed(
                     break;
                 }
             }
-            if tag == "b" {
-                super::clear_remaining_bold(page, dom, host, typed, (typed, 0), (typed, units))?;
-                continue;
-            }
-            let parent = dom.parent_element(typed).ok()??;
-            let style = layout.computed_style_value(dom, parent, property);
-            if matches!(style.as_str(), "normal" | "400") {
-                continue;
-            }
+            let font = if tag == "b" { super::FontToggle::Bold } else { super::FontToggle::Italic };
+            super::clear_remaining_font(page, dom, font, host, typed, (typed, 0), (typed, units))?;
+            continue;
         }
         let doc = dom.node_document(typed).ok()?;
         let css = !enabled || dom.document_data(doc).ok()?.style_with_css;
