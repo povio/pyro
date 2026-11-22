@@ -38,21 +38,21 @@
     "workers": 9,
     "encoding": 7,
     "fetch/range": 6,
-    "fetch/corb": 6,
     "fetch/data-urls": 6,
+    "fetch/corb": 6,
     "fetch/stale-while-revalidate": 5,
     "FileAPI": 4,
     "fetch/nosniff": 3,
     "fetch/http-cache": 3,
-    "xhr": 2,
     "fetch/orb": 2,
+    "xhr": 2,
     "IndexedDB": 1,
-    "fetch/redirects": 1,
-    "quirks": 1,
     "fetch/images": 1,
-    "fetch/security": 1,
     "svg/styling": 1,
-    "fetch/redirect-navigate": 1
+    "fetch/redirects": 1,
+    "fetch/redirect-navigate": 1,
+    "quirks": 1,
+    "fetch/security": 1
    }
   },
   "in_progress": {
@@ -85,10 +85,10 @@
     "html/editing": 4,
     "fetch/security": 4,
     "html/user-activation": 3,
-    "fetch/content-type": 1,
-    "html/scripting": 1,
     "fetch/http-cache": 1,
-    "html/select": 1
+    "fetch/content-type": 1,
+    "html/select": 1,
+    "html/scripting": 1
    }
   },
   "queued": {
