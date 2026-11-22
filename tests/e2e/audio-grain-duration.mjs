@@ -14,8 +14,10 @@ const pages = retro ? ['setValueAtTime', 'setTargetAtTime', 'linearRampToValueAt
 const offlineClose = batch === 'offline-close';
 const offlineQuantum = batch === 'offline-quantum';
 const compressor = batch === 'compressor';
-const batchDirectory = compressor ? '/webaudio/the-audio-api/' : offlineClose || offlineQuantum ? '/webaudio/the-audio-api/the-offlineaudiocontext-interface/' : directory;
+const reverse = batch === 'reverse-loop';
+const batchDirectory = reverse ? '/webaudio/the-audio-api/the-oscillatornode-interface/' : compressor ? '/webaudio/the-audio-api/' : offlineClose || offlineQuantum ? '/webaudio/the-audio-api/the-offlineaudiocontext-interface/' : directory;
 const batchPages = compressor ? ['the-dynamicscompressornode-interface/dynamicscompressor-basic.html', 'the-dynamicscompressornode-interface/ctor-dynamicscompressor.html', 'the-audioparam-interface/k-rate-dynamics-compressor-connections.html'] : offlineQuantum ? ['offlineaudiocontext-rendersizehint.html', 'offlineaudiocontext-suspend-rendersizehint.https.html', 'offlineaudiocontext-close.html'] : offlineClose ? ['ctor-offlineaudiocontext.html', 'offlineaudiocontext-close.html'] : pages;
+if (reverse) batchPages.splice(0, batchPages.length, 'osc-basic-waveform.html');
 const allowed = new Set([...batchPages.map(name => batchDirectory + name), '/resources/testharness.js', '/resources/testharnessreport.js', '/webaudio/resources/audit-util.js', '/webaudio/resources/audit.js', ...(periodic || offlineClose ? ['/webaudio/resources/audionodeoptions.js'] : [])]);
 const browser = await chromium.launch({ executablePath });
 if (hold) allowed.add('/webaudio/resources/audio-param.js');
@@ -135,6 +137,31 @@ try {
     }
     return {status: 0, tests};
   });
+  if (reverse) {
+    if (modulePath) assert.ok(await page.evaluate(() => installedAudio.OscillatorNode === OscillatorNode && installedAudio.PeriodicWave === PeriodicWave && installedAudio.AudioBuffer === AudioBuffer));
+    outcomes['reverse-loop-pcm'] = await page.evaluate(async () => {
+      const tests = [], pcm = {};
+      for (const [name, offset, speed, loop, expected] of [
+        ['reverse lead-in', 7, -1, true, [7,6,5,4,3,2,4,3]],
+        ['reverse below loop', 1, -1, true, [2,4,3,2]],
+        ['reverse inside loop', 3, -1, true, [3,2,4,3]],
+        ['reverse at duration', 8, -1, false, [0,7,6,5]],
+        ['reverse past duration', 10, -1, false, [0,7,6,5]],
+        ['forward lead-in', 1, 1, true, [1,2,3,4,2]],
+        ['reverse fractional lead-in', 6.5, -1, true, [6.5,5.5,3,3.5,2.5]],
+      ]) {
+        const rate = 32768, context = new OfflineAudioContext(1, expected.length, rate);
+        const buffer = context.createBuffer(1, 8, rate);
+        buffer.getChannelData(0).set([0,1,2,3,4,5,6,7]);
+        const src = new AudioBufferSourceNode(context, {buffer, playbackRate: speed, loop, loopStart: 2/rate, loopEnd: 5/rate});
+        src.connect(context.destination); src.start(0, offset/rate);
+        const data = Array.from((await context.startRendering()).getChannelData(0));
+        pcm[name] = data;
+        tests.push([name, expected.every((value, frame) => data[frame] === value) ? 0 : 1]);
+      }
+      return {status: 0, tests, pcm};
+    });
+  }
   console.log(JSON.stringify(outcomes));
   for (const {status, tests} of Object.values(outcomes)) {
     assert.equal(status, 0);
