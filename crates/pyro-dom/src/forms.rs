@@ -495,6 +495,81 @@ fn is_valid_email(a: &str) -> bool {
 
 mod datetime;
 
+/// An `<input>`'s state before its type attribute is written.
+pub(crate) struct InputTypeBefore {
+    ty: InputType,
+    /// The element's value in value mode (else unused).
+    value: String,
+}
+
+impl Dom {
+    pub(crate) fn input_type_before_change(&self, i: u32) -> InputTypeBefore {
+        let ty = self.input_type_idx(i);
+        let value = if ty.value_mode() == ValueMode::Value {
+            self.value(self.id_of(i)).unwrap_or_default()
+        } else {
+            String::new()
+        };
+        InputTypeBefore { ty, value }
+    }
+
+    /// HTML "type attribute state change" value steps: move the value
+    /// between the value modes, then the new state's value sanitization
+    /// (stored sanitized only for free text; other states sanitize on
+    /// read). Setting the value content attribute waits for the type
+    /// mutation to be queued (`apply_pending_input_value_attr`).
+    pub(crate) fn input_type_changed(&mut self, i: u32, before: InputTypeBefore) {
+        let new = self.input_type_idx(i);
+        if new == before.ty {
+            return;
+        }
+        let (old_mode, new_mode) = (before.ty.value_mode(), new.value_mode());
+        if old_mode == ValueMode::Value && matches!(new_mode, ValueMode::Default | ValueMode::DefaultOn) {
+            if !before.value.is_empty() {
+                self.pending_input_value_attr = Some((i, before.value));
+            }
+            return;
+        }
+        let has_control = self.n(i).element().is_some_and(|e| e.control.is_some());
+        if !has_control {
+            return;
+        }
+        let id = self.id_of(i);
+        if old_mode != new_mode {
+            // Into value mode: the value content attribute, not dirty.
+            // Into or out of filename mode: no value (no selected files).
+            let Ok(c) = self.control_state_mut(id) else { return };
+            c.value = None;
+            if new_mode == ValueMode::Value {
+                c.dirty_value = false;
+            }
+            return;
+        }
+        if new_mode != ValueMode::Value || !new.has_length_limits() {
+            return;
+        }
+        let Some(stored) = self.n(i).element().and_then(|e| e.control.as_ref()).and_then(|c| c.value.clone()) else {
+            return;
+        };
+        let sanitized = sanitize(new, &stored);
+        if sanitized != stored {
+            // A changed value moves the cursor to the end, direction "none".
+            let end = utf16_len(&sanitized);
+            let Ok(c) = self.control_state_mut(id) else { return };
+            c.value = Some(sanitized);
+            c.selection = (end, end);
+            c.selection_set = true;
+        }
+    }
+
+    /// The value content attribute an `<input>`'s type change left to set.
+    pub(crate) fn apply_pending_input_value_attr(&mut self, i: u32) {
+        if let Some((_, value)) = self.pending_input_value_attr.take_if(|(idx, _)| *idx == i) {
+            let _ = self.set_attribute(self.id_of(i), "value", &value);
+        }
+    }
+}
+
 impl Dom {
     pub(crate) fn html_local(&self, idx: u32) -> Option<&LocalName> {
         self.n(idx).element().filter(|e| e.is_html()).map(|e| &e.name.local)

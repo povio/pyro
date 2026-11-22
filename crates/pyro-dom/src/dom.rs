@@ -303,6 +303,9 @@ pub struct Dom {
     /// Only controls with registered ranges have an entry. Weak references
     /// let unobserved ranges die independently of their control.
     pub(crate) value_ranges: rustc_hash::FxHashMap<u32, Vec<std::rc::Weak<crate::forms::OpaqueRange>>>,
+    /// An `<input>` whose type change left the value content attribute to
+    /// set (value mode to default mode), set once the type mutation is queued.
+    pub(crate) pending_input_value_attr: Option<(u32, String)>,
     pub(crate) live_iterators: Vec<std::rc::Weak<crate::live_iterator::LiveIterator>>,
     /// The document whose window a node was created for, by node slot: for
     /// the nodes that moved to a document of another window, and for the
@@ -407,6 +410,7 @@ impl Dom {
             mutation: MutationState::default(),
             live_ranges: Vec::new(),
             value_ranges: Default::default(),
+            pending_input_value_attr: None,
             live_iterators: Vec::new(),
             creation_docs: Default::default(),
             upgrades: Default::default(),
@@ -3750,6 +3754,8 @@ impl Dom {
         let tracked_input = plain && self.value_ranges.contains_key(&i)
             && self.html_local(i) == Some(&local_name!("input"));
         let old_range_type = (tracked_input && name.local == local_name!("type")).then(|| self.input_type_idx(i));
+        let type_change = (plain && name.local == local_name!("type") && self.html_local(i) == Some(&local_name!("input")))
+            .then(|| self.input_type_before_change(i));
         let old_range_value = (tracked_input && name.local == local_name!("value"))
             .then(|| self.value(self.id_of(i)).ok()).flatten();
         let track_href = self.blob_hyperlinks.is_some() && name.local == local_name!("href") && (plain || name.ns == ns!(xlink));
@@ -3781,6 +3787,9 @@ impl Dom {
             if self.value(self.id_of(i)).is_ok_and(|value| value != old) {
                 self.replace_all_value_ranges(i);
             }
+        }
+        if let Some(before) = type_change {
+            self.input_type_changed(i, before);
         }
         if plain && &*name.local == "points" && !self.svg_points.is_empty() {
             if let Some(lists) = self.svg_points.get(&i).and_then(std::rc::Weak::upgrade) {

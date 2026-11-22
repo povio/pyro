@@ -283,3 +283,51 @@ fn opaque_ranges_reset_only_when_the_relevant_value_changes() {
         assert!(!dom.control_state(control).unwrap().unwrap().custom_validity.as_deref().unwrap().is_empty());
     }
 }
+
+/// html/semantics/forms/the-input-element/type-change-state.html: the
+/// value mode transitions of a type attribute change.
+#[test]
+fn input_type_change_moves_the_value_between_value_modes() {
+    let (dom, d) = doc(r#"<input id=a><input id=b type=range><input id=c type=date><input id=e><input id=f type=hidden>"#);
+    let mut dom = dom.borrow_mut();
+    const INITIAL: &str = "  foo\rbar  ";
+    // Value mode → default/default-on: the value goes to the value attribute.
+    let a = el(&dom, d, "a");
+    dom.set_value(a, INITIAL).unwrap();
+    dom.set_attribute(a, "type", "checkbox").unwrap();
+    assert_eq!(dom.value(a).unwrap(), "  foobar  ");
+    assert_eq!(dom.get_attribute(a, "value").unwrap().as_deref(), Some("  foobar  "));
+    // The value as sanitized by the old state.
+    let b = el(&dom, d, "b");
+    dom.set_value(b, INITIAL).unwrap();
+    dom.set_attribute(b, "type", "hidden").unwrap();
+    assert_eq!(dom.value(b).unwrap(), "50");
+    // Value mode → filename: no value.
+    let c = el(&dom, d, "c");
+    dom.set_value(c, INITIAL).unwrap();
+    dom.set_attribute(c, "type", "file").unwrap();
+    assert_eq!(dom.value(c).unwrap(), "");
+    // Free text → url: the new state's sanitization, cursor at the end.
+    let e = el(&dom, d, "e");
+    dom.set_value(e, INITIAL).unwrap();
+    dom.set_selection_range(e, 2, 5).unwrap();
+    dom.set_attribute(e, "type", "url").unwrap();
+    assert_eq!(dom.value(e).unwrap(), "foobar");
+    assert_eq!(dom.selection(e).unwrap(), (6, 6));
+    // Text → search keeps value and selection.
+    dom.set_attribute(e, "type", "search").unwrap();
+    dom.set_selection_range(e, 1, 3).unwrap();
+    dom.set_attribute(e, "type", "text").unwrap();
+    assert_eq!(dom.value(e).unwrap(), "foobar");
+    assert_eq!(dom.selection(e).unwrap(), (1, 3));
+    // Default mode → value mode: the value attribute, not dirty.
+    let f = el(&dom, d, "f");
+    dom.set_attribute(f, "type", "text").unwrap();
+    dom.set_value(f, "typed").unwrap();
+    dom.set_attribute(f, "type", "hidden").unwrap();
+    dom.set_value(f, "attr").unwrap();
+    dom.set_attribute(f, "type", "text").unwrap();
+    assert_eq!(dom.value(f).unwrap(), "attr");
+    dom.set_attribute(f, "value", "later").unwrap();
+    assert_eq!(dom.value(f).unwrap(), "later", "not dirty: follows the attribute");
+}
