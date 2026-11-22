@@ -1,0 +1,170 @@
+[
+  [
+    "editing/run/formatblock.html?4001-5000",
+    "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<div>\"]] \"<div>[foo</div>bar]\" queryCommandValue(\"formatblock\") after",
+    1,
+    [
+      "Fail",
+      "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<div>\"]] \"<div>[foo</div>bar]\" queryCommandValue(\"formatblock\") after"
+    ],
+    [
+      "Fail",
+      "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<div>\"]] \"<div>[foo</div>bar]\" queryCommandValue(\"formatblock\") after"
+    ],
+    [
+      "Pass",
+      "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<div>\"]] \"<div>[foo</div>bar]\" queryCommandValue(\"formatblock\") after"
+    ],
+    "complete",
+    "OK",
+    "assert_equals: Wrong result returned expected \"div\" but got \"\"",
+    "guard-history-001"
+  ],
+  [
+    "editing/run/formatblock.html?4001-5000",
+    "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<div>\"]] \"<h1>[foo</h1><h2>bar]</h2>\" compare innerHTML",
+    1,
+    [
+      "Fail",
+      "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<div>\"]] \"<h1>[foo</h1><h2>bar]</h2>\" compare innerHTML"
+    ],
+    [
+      "Fail",
+      "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<div>\"]] \"<h1>[foo</h1><h2>bar]</h2>\" compare innerHTML"
+    ],
+    [
+      "Pass",
+      "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<div>\"]] \"<h1>[foo</h1><h2>bar]</h2>\" compare innerHTML"
+    ],
+    "complete",
+    "OK",
+    "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<div>foo</div><div>bar</div>\" but got \"<div>foo<br>bar</div>\"",
+    "guard-history-001"
+  ],
+  [
+    "editing/run/formatblock.html?4001-5000",
+    "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<div>\"]] \"<p>[foo<h1>bar]</h1>\" compare innerHTML",
+    1,
+    [
+      "Fail",
+      "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<div>\"]] \"<p>[foo<h1>bar]</h1>\" compare innerHTML"
+    ],
+    [
+      "Fail",
+      "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<div>\"]] \"<p>[foo<h1>bar]</h1>\" compare innerHTML"
+    ],
+    [
+      "Pass",
+      "[[\"defaultparagraphseparator\",\"div\"],[\"formatblock\",\"<div>\"]] \"<p>[foo<h1>bar]</h1>\" compare innerHTML"
+    ],
+    "complete",
+    "OK",
+    "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<div>foo</div><div>bar</div>\" but got \"<div>foo<br>bar</div>\"",
+    "guard-history-001"
+  ],
+  [
+    "editing/run/formatblock.html?4001-5000",
+    "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<div>\"]] \"<div>[foo</div>bar]\" queryCommandValue(\"formatblock\") after",
+    1,
+    [
+      "Fail",
+      "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<div>\"]] \"<div>[foo</div>bar]\" queryCommandValue(\"formatblock\") after"
+    ],
+    [
+      "Fail",
+      "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<div>\"]] \"<div>[foo</div>bar]\" queryCommandValue(\"formatblock\") after"
+    ],
+    [
+      "Pass",
+      "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<div>\"]] \"<div>[foo</div>bar]\" queryCommandValue(\"formatblock\") after"
+    ],
+    "complete",
+    "OK",
+    "assert_equals: Wrong result returned expected \"div\" but got \"\"",
+    "guard-history-001"
+  ],
+  [
+    "editing/run/formatblock.html?4001-5000",
+    "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<div>\"]] \"<h1>[foo</h1><h2>bar]</h2>\" compare innerHTML",
+    1,
+    [
+      "Fail",
+      "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<div>\"]] \"<h1>[foo</h1><h2>bar]</h2>\" compare innerHTML"
+    ],
+    [
+      "Fail",
+      "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<div>\"]] \"<h1>[foo</h1><h2>bar]</h2>\" compare innerHTML"
+    ],
+    [
+      "Pass",
+      "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<div>\"]] \"<h1>[foo</h1><h2>bar]</h2>\" compare innerHTML"
+    ],
+    "complete",
+    "OK",
+    "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<div>foo</div><div>bar</div>\" but got \"<div>foo<br>bar</div>\"",
+    "guard-history-001"
+  ],
+  [
+    "editing/run/formatblock.html?4001-5000",
+    "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<div>\"]] \"<p>[foo<h1>bar]</h1>\" compare innerHTML",
+    1,
+    [
+      "Fail",
+      "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<div>\"]] \"<p>[foo<h1>bar]</h1>\" compare innerHTML"
+    ],
+    [
+      "Fail",
+      "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<div>\"]] \"<p>[foo<h1>bar]</h1>\" compare innerHTML"
+    ],
+    [
+      "Pass",
+      "[[\"defaultparagraphseparator\",\"p\"],[\"formatblock\",\"<div>\"]] \"<p>[foo<h1>bar]</h1>\" compare innerHTML"
+    ],
+    "complete",
+    "OK",
+    "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<div>foo</div><div>bar</div>\" but got \"<div>foo<br>bar</div>\"",
+    "guard-history-001"
+  ],
+  [
+    "editing/run/inserttext.html?1001-2000",
+    "[[\"inserttext\",\"a\"]] \"<a href=/>foo[]</a>bar\" compare innerHTML",
+    1,
+    [
+      "Fail",
+      "[[\"inserttext\",\"a\"]] \"<a href=/>foo[]</a>bar\" compare innerHTML"
+    ],
+    [
+      "Fail",
+      "[[\"inserttext\",\"a\"]] \"<a href=/>foo[]</a>bar\" compare innerHTML"
+    ],
+    [
+      "Pass",
+      "[[\"inserttext\",\"a\"]] \"<a href=/>foo[]</a>bar\" compare innerHTML"
+    ],
+    "complete",
+    "OK",
+    "assert_equals: Unexpected innerHTML (after normalizing inline style) expected \"<a href=\\\"/\\\">fooa</a>bar\" but got \"<a href=\\\"/\\\">foo</a>abar\"",
+    "guard-history-001"
+  ],
+  [
+    "editing/plaintext-only/plaintext-only-in-designMode.html",
+    "contenteditable=plaintext-only in the design mode should not suppress style of inserting HTML",
+    1,
+    [
+      "Fail",
+      "contenteditable=plaintext-only in the design mode should not suppress style of inserting HTML"
+    ],
+    [
+      "Pass",
+      "contenteditable=plaintext-only in the design mode should not suppress style of inserting HTML"
+    ],
+    [
+      "Pass",
+      "contenteditable=plaintext-only in the design mode should not suppress style of inserting HTML"
+    ],
+    "complete",
+    "OK",
+    "assert_equals: expected \"<div contenteditable=\\\"plaintext-only\\\">A<b>b</b>C</div>\" but got \"<div contenteditable=\\\"plaintext-only\\\">AbC</div>\"",
+    "guard-main-004"
+  ]
+]

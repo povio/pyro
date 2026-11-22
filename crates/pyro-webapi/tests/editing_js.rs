@@ -625,6 +625,17 @@ fn nested_paragraph_join_preserves_the_destination_and_undo() {
 }
 
 #[test]
+fn insert_html_uses_the_editing_hosts_content_mode() {
+    let e = env("<body><div id=plain contenteditable='plaintext-only'>ABC</div><div contenteditable='false'><div id=island contenteditable='plaintext-only'>ABC</div></div></body>");
+    let r = &e.main;
+    eval(r, "const insert=el=>{el.focus(); const t=el.firstChild;getSelection().setBaseAndExtent(t,1,t,2);return document.execCommand('insertHTML',false,'<b>b</b>')};document.designMode='on'");
+    assert_eq!(eval(r, "[insert(plain),plain.innerHTML].join()"), "true,A<b>b</b>C");
+    assert_eq!(eval(r, "document.execCommand('undo'); plain.innerHTML"), "ABC");
+    assert_eq!(eval(r, "[insert(island),island.innerHTML].join()"), "true,AbC");
+    assert_eq!(eval(r, "document.designMode='off'; [insert(plain),plain.innerHTML].join()"), "true,AbC");
+}
+
+#[test]
 fn paragraph_insertion_leaves_select_subtrees_intact() {
     let e = env("<body><div id=ed contenteditable><div>L<select><optgroup><option>abc</option><option selected>def</option></optgroup></select>R</div></div></body>");
     let r = &e.main;
