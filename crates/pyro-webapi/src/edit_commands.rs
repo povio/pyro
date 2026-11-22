@@ -2744,29 +2744,64 @@ fn carry_list_text_style(page: &PageDom, dom: &mut Dom, source: NodeId, destinat
 fn convert_list_items(page: &PageDom, dom: &mut Dom, host: NodeId, tag: &str, start: Point, end: Point) -> Option<(Point, Point)> {
     let first_point = editing::deep_forward(dom, start);
     let last_point = if start == end { first_point } else { editing::deep_backward(dom, end) };
-    let item_at = |mut n| -> Option<NodeId> {
-        while n != host {
-            if dom.element(n).is_ok_and(|el| el.is_html() && &**el.local_name() == "li") { return Some(n); }
-            n = dom.parent_element(n).ok()??;
-        }
-        None
-    };
-    let first = item_at(first_point.0)?;
-    let last = item_at(last_point.0)?;
+    let first = ancestor_item(dom, first_point.0, host)?;
+    let last = ancestor_item(dom, last_point.0, host)?;
     let source = dom.parent_element(first).ok()??;
-    if source == host || dom.parent_element(last).ok()?? != source
-        || !dom.element(source).is_ok_and(|el| el.is_html() && matches!(&**el.local_name(), "ol" | "ul") && &**el.local_name() != tag)
-    { return None; }
+    if source == host || !(local_html(dom, source, "ol") || local_html(dom, source, "ul")) || local_html(dom, source, tag) {
+        return None;
+    }
+
+    // An outer paragraph and its subordinate list paragraphs each need
+    // conversion, but an unselected subordinate list keeps its type.
+    let nested = start != end && dom.contains(source, last).ok()? && dom.descendants(source).ok()?.any(|n|
+        local_html(dom, n, "ol") || local_html(dom, n, "ul"));
+    if nested {
+        let mut runs: Vec<(NodeId, NodeId, NodeId)> = Vec::new();
+        for text in texts_in(dom, source, start, end) {
+            if !rich_node(dom, text) { return None; }
+            let item = ancestor_item(dom, text, host)?;
+            let list = dom.parent_element(item).ok()??;
+            if !(local_html(dom, list, "ol") || local_html(dom, list, "ul")) { return None; }
+            if local_html(dom, list, tag) { continue; }
+            if let Some(run) = runs.iter_mut().find(|r| r.0 == list) { run.2 = item; }
+            else { runs.push((list, item, item)); }
+        }
+        if runs.is_empty() { return None; }
+        for &(list, first, last) in &runs {
+            let children: Vec<_> = dom.children(list).ok()?.collect();
+            let run = children.get(dom.index_in_parent(first).ok()? as usize..=dom.index_in_parent(last).ok()? as usize)?;
+            if !run.iter().all(|&n| editable_list_item(dom, host, n)) { return None; }
+        }
+        for (list, first, last) in runs.into_iter().rev() {
+            convert_list_run(page, dom, host, tag, list, first, last)?;
+        }
+    } else {
+        if dom.parent_element(last).ok()?? != source { return None; }
+        convert_list_run(page, dom, host, tag, source, first, last)?;
+    }
+    Some((if start.0 == source { first_point } else { start }, if end.0 == source { last_point } else { end }))
+}
+
+fn ancestor_item(dom: &Dom, mut node: NodeId, host: NodeId) -> Option<NodeId> {
+    while node != host {
+        if local_html(dom, node, "li") { return Some(node); }
+        node = dom.parent_element(node).ok()??;
+    }
+    None
+}
+
+fn editable_list_item(dom: &Dom, host: NodeId, node: NodeId) -> bool {
+    local_html(dom, node, "li") && editing::editing_host(dom, node) == Some(host)
+        || dom.char_data(node).is_ok_and(|s| s.trim().is_empty())
+}
+
+fn convert_list_run(page: &PageDom, dom: &mut Dom, host: NodeId, tag: &str, source: NodeId, first: NodeId, last: NodeId) -> Option<()> {
     let parent = dom.parent_element(source).ok()??;
     let begin = dom.index_in_parent(first).ok()? as usize;
     let finish = dom.index_in_parent(last).ok()? as usize + 1;
     let children: Vec<_> = dom.children(source).ok()?.collect();
     let run = children.get(begin..finish)?;
-    if run.is_empty() || !run.iter().all(|&n| {
-        dom.element(n).is_ok_and(|el| el.is_html() && &**el.local_name() == "li")
-            && editing::editing_host(dom, n) == Some(host)
-            || dom.char_data(n).is_ok_and(|s| s.trim().is_empty())
-    }) { return None; }
+    if run.is_empty() || !run.iter().all(|&n| editable_list_item(dom, host, n)) { return None; }
 
     let list = dom.create_element(dom.node_document(host).ok()?, tag).ok()?;
     // Preserve authored presentation on the selected items. Numbering and
@@ -2804,7 +2839,7 @@ fn convert_list_items(page: &PageDom, dom: &mut Dom, host: NodeId, tag: &str, st
             dom.remove_node(right).ok()?;
         }
     }
-    Some((if start.0 == source { first_point } else { start }, if end.0 == source { last_point } else { end }))
+    Some(())
 }
 
 /// Listify the anonymous paragraph containing a selected host text node.
@@ -3411,6 +3446,17 @@ pub(crate) fn query_state(page: &PageDom, doc: NodeId, command: &str) -> bool {
             let Some(host) = editing::editing_host(&dom, start.0) else {
                 return false;
             };
+            if start != end {
+                if let Some(list) = ancestor_named(&dom, start.0, host, &["ol", "ul"]) {
+                    let other = if tag == "ol" { "ul" } else { "ol" };
+                    let nested = ancestor_named(&dom, list, host, &["ol", "ul"]).is_some()
+                        || dom.descendants(list).is_ok_and(|mut nodes| nodes.any(|n| local_html(&dom, n, "ol") || local_html(&dom, n, "ul")));
+                    if nested {
+                        return local_html(&dom, list, tag) && ancestor_named(&dom, end.0, host, &["ol", "ul"]) == Some(list)
+                            && !dom.descendants(list).is_ok_and(|mut nodes| nodes.any(|n| local_html(&dom, n, other)));
+                    }
+                }
+            }
             let list = ancestor_named(&dom, start.0, host, &[tag]);
             if start != end && ancestor_named(&dom, start.0, host, &["td", "th"]).is_some() {
                 return list.is_some() && list == ancestor_named(&dom, end.0, host, &[tag]);
