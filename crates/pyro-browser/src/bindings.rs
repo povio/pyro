@@ -417,6 +417,34 @@ impl PageHooks for Hooks {
                     .filter(|_| !request.window_features.noopener)
                     .and_then(|t| b.page(page.page)?.frames.named_frame(page, t)),
             };
+            let opens_context = named.is_none()
+                && request
+                    .target
+                    .as_deref()
+                    .is_some_and(|t| !matches!(t.to_ascii_lowercase().as_str(), "" | "_self" | "_top" | "_parent"));
+            // `window.open("javascript:...")`: the popup opens on its initial
+            // about:blank document, and the script runs there (HTML navigates
+            // the new browsing context to the javascript: URL), not in the
+            // opener.
+            let mut popup_script = None;
+            if opens_context && request.method == "GET" {
+                if let Some(source) = javascript_url_source(&request.url) {
+                    let realm = request.popup.as_ref().and_then(|ticket| {
+                        let prebuilt = ticket.take_prebuilt()?;
+                        let realm = prebuilt
+                            .downcast_ref::<crate::frames::PrebuiltPopup>()
+                            .and_then(|p| {
+                                let root = p.host.root.borrow();
+                                let realm = root.main_realm().cloned();
+                                realm
+                            });
+                        ticket.set_prebuilt(prebuilt);
+                        realm
+                    });
+                    popup_script = realm.map(|realm| (realm, source));
+                    request.url = "about:blank".into();
+                }
+            }
             // HTML "navigate to a javascript: URL": the script runs in the
             // target document; a string result replaces that document.
             if let Some(source) = javascript_url_source(&request.url) {
@@ -460,6 +488,11 @@ impl PageHooks for Hooks {
                             referrer_policy: request.referrer_policy.or_else(|| b.doc(page)?.main_frame.page_dom.as_ref().map(|d| d.referrer_policy())),
                         },
                     );
+                    if let Some((realm, source)) = popup_script {
+                        if let Ok(scope) = realm.scope() {
+                            let _ = crate::frames::javascript_url_result(&scope, &source);
+                        }
+                    }
                 }
                 return;
             }
