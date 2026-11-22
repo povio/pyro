@@ -59,6 +59,11 @@ pub(crate) struct Directives {
     pub s_maxage: Option<Option<u64>>,
     /// Response-only `stale-while-revalidate` seconds (RFC 5861 §3).
     pub stale_while_revalidate: Option<u64>,
+    /// Response-only `must-revalidate` (RFC 9111 §5.2.2.2): once stale, the
+    /// entry is never served without revalidation (`proxy-revalidate`, its
+    /// shared-cache form, matters only where stale entries are served, which
+    /// is the private cache).
+    pub must_revalidate: bool,
 }
 
 impl Directives {
@@ -87,6 +92,7 @@ impl Directives {
                     "public" if !request => d.public = true,
                     "stale-while-revalidate" if !request => d.stale_while_revalidate = seconds(),
                     "private" if !request => d.private = true,
+                    "must-revalidate" if !request => d.must_revalidate = true,
                     "min-fresh" if request => d.min_fresh = seconds(),
                     "only-if-cached" if request => d.only_if_cached = true,
                     _ => {}
@@ -292,6 +298,7 @@ impl HttpCache {
             && !req.no_cache
             && req.max_age.is_none()
             && req.min_fresh.is_none()
+            && !response.must_revalidate
             && response.stale_while_revalidate.is_some_and(|window| age < lifetime + window as f64);
         if fresh_enough {
             Lookup::Hit(entry.cached(age))
