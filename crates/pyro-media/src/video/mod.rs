@@ -8,6 +8,7 @@ use std::sync::Arc;
 use bytes::Bytes;
 
 pub mod demux;
+pub mod encode;
 mod packet;
 pub use packet::{PacketConfig, PacketDecoder, PacketFrame};
 #[cfg(any(feature = "av1", feature = "h264"))]
