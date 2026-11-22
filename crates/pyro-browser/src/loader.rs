@@ -2242,15 +2242,19 @@ impl Browser {
         parser.set_transport_charset(resource.charset.as_deref());
         // HTML encoding sniffing: a child document without a declared encoding
         // inherits its same-origin container document's.
+        let mut inherited = None;
         if page.child.is_some() {
             let parent = self.page(page.page).map(|p| p.frames.parent_key(page)).filter(|&k| k != page);
-            let inherited = parent.and_then(|k| self.doc(k)).and_then(|d| d.main_frame.page_dom.clone()).and_then(|pd| {
+            inherited = parent.and_then(|k| self.doc(k)).and_then(|d| d.main_frame.page_dom.clone()).and_then(|pd| {
                 let dom = pd.dom.borrow();
                 let data = dom.document_data(pd.document()).ok()?;
                 (origin_of(&data.url.to_string()) == origin).then_some(data.charset)
             });
-            parser.set_fallback_charset(inherited);
         }
+        // Otherwise the locale default: windows-1252 for Chrome's en-US, no UTF-8
+        // sniffing (encoding/sniffing.html). file: keeps UTF-8, which Chrome detects there.
+        let http = resource.url.starts_with("http://") || resource.url.starts_with("https://");
+        parser.set_fallback_charset(inherited.or(http.then_some("windows-1252")));
         // An image is shown in an image document (HTML § 7.6.6 "Page load processing model for
         // media"): Chromium's markup, the image at the top left in a frame, centred on a dark
         // background in a window.
