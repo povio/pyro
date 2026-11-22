@@ -23,8 +23,8 @@
     "referrer-policy": 114,
     "html/browsers": 97,
     "fetch/api": 74,
-    "html/editing": 52,
     "content-security-policy": 52,
+    "html/editing": 52,
     "fetch/fetch-later": 29,
     "html/dom": 24,
     "html/webappapis": 23,
@@ -37,32 +37,32 @@
     "encoding": 7,
     "fetch/corb": 6,
     "fetch/data-urls": 6,
-    "fetch/stale-while-revalidate": 5,
     "fetch/range": 5,
+    "fetch/stale-while-revalidate": 5,
     "FileAPI": 4,
     "html/rendering": 3,
     "fetch/http-cache": 3,
     "fetch/nosniff": 3,
-    "fetch/orb": 2,
     "xhr": 2,
-    "fetch/redirect-navigate": 1,
+    "fetch/orb": 2,
     "svg/styling": 1,
     "quirks": 1,
     "fetch/security": 1,
+    "fetch/redirect-navigate": 1,
     "IndexedDB": 1
    }
   },
   "in_progress": {
    "scope": {
-    "macbook_in_scope": 123,
+    "macbook_in_scope": 116,
     "studio_in_scope": 92,
     "other_dirs_out_of_scope": 0,
     "macbook_worker_variants_if_enabled": 6,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 141,
+   "distinct_census_pages": 134,
    "owner_reported_unlisted": 0,
-   "selector_union": 362,
+   "selector_union": 355,
    "owner_estimate_reduction": 221,
    "of_which_tentative": 197,
    "studio_css_reported_pages_not_deduped": 72,
@@ -74,18 +74,18 @@
     "html/syntax": 30,
     "content-security-policy": 20,
     "html/infrastructure": 11,
-    "fetch/fetch-later": 10,
     "html/browsers": 9,
     "fetch/api": 7,
     "html/dom": 5,
     "fetch/security": 4,
     "html/webappapis": 3,
+    "fetch/fetch-later": 3,
     "fetch/cross-origin-resource-policy": 2,
-    "fetch/http-cache": 1,
     "fetch/content-type": 1,
-    "fetch/redirects": 1,
+    "fetch/http-cache": 1,
     "fetch/images": 1,
-    "fetch/range": 1
+    "fetch/range": 1,
+    "fetch/redirects": 1
    }
   },
   "queued": {
@@ -107,8 +107,8 @@
     "webidl": 19,
     "fetch/compression-dictionary": 8,
     "html/interaction": 5,
-    "svg/path": 4,
     "html/semantics": 4,
+    "svg/path": 4,
     "workers": 3,
     "html/webappapis": 2,
     "dom/nodes": 1
@@ -2295,9 +2295,16 @@
   },
   "R-FETCH-LATER-C": {
    "state": "reserved",
-   "in_scope_pages": 10,
+   "in_scope_pages": 3,
    "out_of_scope_pages": 0,
-   "pages": 10,
+   "pages": 3,
+   "tentative": 0
+  },
+  "R-FETCH-LATER-C-excl": {
+   "state": "excluded",
+   "in_scope_pages": 7,
+   "out_of_scope_pages": 0,
+   "pages": 7,
    "tentative": 0
   },
   "R-FETCH-ORB": {
@@ -2533,6 +2540,13 @@
   },
   "OOS-imagebitmap-renderingcontext": {
    "state": "implemented-unbuilt",
+   "in_scope_pages": 0,
+   "out_of_scope_pages": 0,
+   "pages": 0,
+   "tentative": 0
+  },
+  "R-WASM-ASYNC": {
+   "state": "active",
    "in_scope_pages": 0,
    "out_of_scope_pages": 0,
    "pages": 0,
