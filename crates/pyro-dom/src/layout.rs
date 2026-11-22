@@ -5096,9 +5096,16 @@ impl Layout {
                     return format!("{}px", crate::computed::fmt_num(f64::from(size)));
                 }
             }
-            // A declared absolute length is the used size the renderless layout cannot derive.
+            // A declared absolute length is the used size the renderless layout cannot derive,
+            // unless the box is flexed or a `min-*`/`max-*` of the axis may override it (a
+            // fieldset's `min-inline-size: min-content`): the renderer's used size then.
             if let Some(px) = declared.filter(|v| v.ends_with("px")) {
-                if !self.style.style_overridden() && self.is_flex_item(dom, el) {
+                let (min, max) = if name == "width" { ("min-width", "max-width") } else { ("min-height", "max-height") };
+                let constrained = || {
+                    self.style.computed_value(dom, el, min).is_some_and(|v| !matches!(v.as_str(), "0px" | "auto"))
+                        || self.style.computed_value(dom, el, max).is_some_and(|v| v != "none")
+                };
+                if !self.style.style_overridden() && (self.is_flex_item(dom, el) || constrained()) {
                     if let Some(used) = self.synced_geometry_source(dom)
                         .and_then(|source| source.resolved_style_value(crate::snapshot::render_key(el), name))
                         .filter(|value| value.ends_with("px"))
