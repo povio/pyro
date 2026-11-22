@@ -177,7 +177,14 @@ impl JsClass for Response {
                 let current = hidden(s, d, HEADERS)?;
                 let pairs = s.unwrap::<Headers>(current).map(|h| h.pairs()).unwrap_or_default();
                 let headers = HeadersData::from_pairs(pairs, d.origin == Origin::Error);
-                return wrap_script(s, None, d.origin, d.head.clone(), d.body.clone(), headers);
+                // Its own copy of the bytes: the two bodies' streams read
+                // independently (one native body has one stream cursor).
+                let body = if d.body.is_null() {
+                    d.body.clone()
+                } else {
+                    Body::constructed(s, Some(d.body.constructed_bytes()), d.body.mime.borrow().clone())
+                };
+                return wrap_script(s, None, d.origin, d.head.clone(), body, headers);
             }
             let signal = hidden(s, d, SIGNAL)?;
             wrap(s, &d.head, d.body.clone(), d.credentials, Some(signal))
