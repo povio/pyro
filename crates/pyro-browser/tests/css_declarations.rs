@@ -1004,6 +1004,28 @@ fn typed_numeric_writes_preserve_units_and_math_until_replaced() {
 }
 
 #[test]
+fn typed_step_keywords_stay_keywords_in_specified_timing_functions() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        const el = document.body.appendChild(document.createElement('div')), map = el.attributeStyleMap;
+        const result = [];
+        for (const name of ['animation-timing-function', 'transition-timing-function']) {
+            for (const keyword of ['step-start', 'step-end']) {
+                map.set(name, new CSSKeywordValue(keyword));
+                const specified = map.get(name);
+                result.push(specified.constructor.name, String(specified), el.style.getPropertyValue(name),
+                            String(el.computedStyleMap().get(name)));
+            }
+            el.style.setProperty(name, 'steps(1, start)');
+            result.push(map.get(name).constructor.name);
+        }
+        result.join('|')
+    "#);
+    let one = "CSSKeywordValue|step-start|step-start|steps(1, start)|CSSKeywordValue|step-end|step-end|steps(1)|CSSStyleValue";
+    assert_eq!(actual, format!("{one}|{one}"));
+}
+
+#[test]
 fn typed_shorthand_and_grid_line_writes_preserve_valid_declarations() {
     let (_t, root) = page();
     let actual = eval(&root, r#"

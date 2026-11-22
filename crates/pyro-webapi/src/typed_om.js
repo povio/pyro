@@ -1351,7 +1351,11 @@
   // against the property), or a string parsed as the property.
   const integerLonghands = new Set(['order', 'orphans', 'widows', 'z-index', 'column-count', 'math-depth']);
   const opacityLonghands = new Set(['opacity', 'fill-opacity', 'flood-opacity', 'stop-opacity', 'stroke-opacity']);
+  // Step keywords that Stylo stores as steps(1, start|end); their specified Typed OM value stays the keyword.
+  const STEP_KEYWORDS = new Set(['step-start', 'step-end']);
+  const timingFunctionLonghands = new Set(['animation-timing-function', 'transition-timing-function']);
   function retainsTypedOrigin(name, value, text) {
+    if (timingFunctionLonghands.has(name)) return value instanceof CSSKeywordValue && STEP_KEYWORDS.has(text);
     if (name === 'column-rule-width' || name === 'column-rule-style')
       return value instanceof CSSNumericValue || value instanceof CSSKeywordValue && !CSS_WIDE.test(value.value);
     if (opacityLonghands.has(name)) return value instanceof CSSMathValue || isUnit(value) && value.unit === 'percent';
