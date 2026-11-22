@@ -1863,6 +1863,34 @@ impl Browser {
         }
     }
 
+    /// The CSP a document at `url` committing in frame `page` inherits (CSP3 § 4.2.1): one a
+    /// `javascript:` result set aside (the document it replaces); else for `about:srcdoc` its
+    /// parent's; for `about:blank`, `blob:` and `data:` its parent's, or in a popup's top-level
+    /// frame its creator's (as the document that started the navigation usually is); `None` for
+    /// any other URL. Always takes what a `javascript:` result set aside.
+    fn local_scheme_csp(&mut self, page: FrameKey, url: &str) -> Option<pyro_webapi::csp::InheritedCsp> {
+        if let Some((key, inherited)) = self.csp_inherit_next.take() {
+            if key == page {
+                return Some(inherited);
+            }
+        }
+        let bare = url.split(['?', '#']).next().unwrap_or(url);
+        let scheme = bare.split(':').next().unwrap_or("").to_ascii_lowercase();
+        let local = matches!(scheme.as_str(), "blob" | "data")
+            || bare.eq_ignore_ascii_case("about:blank")
+            || bare.eq_ignore_ascii_case("about:srcdoc");
+        if !local {
+            return None;
+        }
+        let host = self.page(page.page).map(|p| p.frames.clone())?;
+        if page.child.is_some() {
+            let parent = host.parent_key(page);
+            return host.page_dom(parent).map(|dom| pyro_webapi::csp::InheritedCsp::of(&dom));
+        }
+        let creator = host.creator_csp.borrow().clone();
+        creator
+    }
+
     pub(crate) fn begin_document(
         &mut self,
         page: FrameKey,
@@ -1932,6 +1960,12 @@ impl Browser {
         let bypass_csp = self.page(page.page).is_some_and(|p| p.bypass_csp);
         if bypass_csp {
             let _ = dom.borrow_mut().set_csp_bypassed(doc, true);
+        }
+        // A local-scheme document inherits its policies before its parser starts, so a `<meta>`
+        // of its own adds to them ([`Browser::local_scheme_csp`]).
+        let inherited = self.local_scheme_csp(page, &resource.url);
+        if let Some(inherited) = inherited.filter(|_| !bypass_csp && resource.header_csp.is_none()) {
+            inherited.apply(&page_dom);
         }
         if let Some(csp) = resource.header_csp.as_deref().filter(|_| !bypass_csp) {
             let (enforce, report_only) = csp.split_once('\n').unwrap_or((csp, ""));

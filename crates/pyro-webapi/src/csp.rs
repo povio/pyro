@@ -21,8 +21,10 @@
 //! matches no nonce-source.
 //!
 //! Not covered (explicitly): WebAssembly compilation (`wasm_eval_check` exists, nothing calls
-//! it); `report-uri` / `report-to` delivery (violation records only); local-scheme documents
-//! (`about:blank`, `about:srcdoc`, `data:` frames) do not inherit their creator's policies;
+//! it); `report-uri` / `report-to` delivery (violation records only); a local-scheme document
+//! (`about:blank`, `about:srcdoc`, `blob:`, `data:`, a `javascript:` result) inherits its
+//! policies ([`InheritedCsp`]) from its parent, else its popup's creator (a `javascript:` result
+//! from the document it replaces), not from the document that started its navigation;
 //! `frame-src` is checked against the parent's policies (a `javascript:` navigation against its
 //! initiator's, [`NavigationInitiator`]); `Page.setBypassCSP` applies from
 //! the next document committed; a blocked `sendBeacon` sends nothing and still returns true
@@ -97,8 +99,37 @@ pub fn policy_list(page: &PageDom) -> Option<Arc<PolicyList>> {
 
 /// The policies of `page`'s document as delivered (each with its delivery, header or `<meta>`,
 /// and disposition), for a worker that inherits them (a `data:` or `blob:` script).
-pub(crate) fn inherited_policies(page: &PageDom) -> Vec<pyro_dom::CspPolicy> {
+pub fn inherited_policies(page: &PageDom) -> Vec<pyro_dom::CspPolicy> {
     page.dom.borrow().csp_policies(page.document()).to_vec()
+}
+
+/// What a local-scheme document (`about:blank`, `about:srcdoc`, `blob:`, `data:`, a
+/// `javascript:` result) takes from the document it inherits from (CSP3 § 4.2.1, HTML policy
+/// containers): a copy of its policies, so a `<meta>` of its own adds to its list only, and the
+/// origin its `'self'` means.
+#[derive(Clone, Debug, Default)]
+pub struct InheritedCsp {
+    pub policies: Vec<pyro_dom::CspPolicy>,
+    pub self_origin: Option<String>,
+}
+
+impl InheritedCsp {
+    /// `page`'s, now.
+    pub fn of(page: &PageDom) -> InheritedCsp {
+        InheritedCsp { policies: inherited_policies(page), self_origin: self_origin(page) }
+    }
+
+    /// Gives `page`'s document, new and its parser not started, these policies. When its own
+    /// origin is opaque (`data:`, a sandboxed frame) and nothing set its precursor origin yet,
+    /// `'self'` keeps meaning the creator's origin (as Chrome).
+    pub fn apply(&self, page: &PageDom) {
+        if !self.policies.is_empty() {
+            let _ = page.dom.borrow_mut().inherit_csp_policies(page.document(), &self.policies);
+        }
+        if self.self_origin.is_some() && self_origin(page).is_none() {
+            page.set_csp_precursor_origin(self.self_origin.clone());
+        }
+    }
 }
 
 /// The pre-request check of `request` against `page`'s CSP list (CSP3 "Should request be
