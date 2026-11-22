@@ -3,15 +3,15 @@
  "tiers": {
   "implemented": {
    "scope": {
-    "macbook_in_scope": 490,
+    "macbook_in_scope": 492,
     "studio_in_scope": 29,
     "other_dirs_out_of_scope": 16,
-    "macbook_worker_variants_if_enabled": 174,
+    "macbook_worker_variants_if_enabled": 180,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 691,
+   "distinct_census_pages": 699,
    "owner_reported_unlisted": 5,
-   "selector_union": 741,
+   "selector_union": 749,
    "owner_estimate_reduction": 55,
    "of_which_tentative": 127,
    "studio_css_reported_pages_not_deduped": 0,
@@ -20,7 +20,7 @@
     "html/canvas": 338,
     "html/semantics": 113,
     "html/interaction": 100,
-    "fetch/api": 46,
+    "fetch/api": 54,
     "fetch/fetch-later": 29,
     "fetch/content-encoding": 21,
     "scheduler": 19,
@@ -33,12 +33,12 @@
     "FileAPI": 4,
     "html/browsers": 4,
     "fetch/nosniff": 3,
-    "fetch/data-urls": 3,
     "fetch/http-cache": 3,
+    "fetch/data-urls": 3,
     "xhr": 2,
+    "html/rendering": 1,
     "quirks": 1,
     "IndexedDB": 1,
-    "html/rendering": 1,
     "svg/styling": 1
    }
   },
@@ -62,8 +62,8 @@
     "html/semantics": 135,
     "html/browsers": 85,
     "html/syntax": 30,
-    "fetch/api": 23,
     "html/webappapis": 23,
+    "fetch/api": 23,
     "html/infrastructure": 3
    }
   },
@@ -1092,6 +1092,20 @@
    "pages": 10,
    "tentative": 0
   },
+  "R-FETCH-1b": {
+   "state": "implemented-unbuilt",
+   "in_scope_pages": 4,
+   "out_of_scope_pages": 0,
+   "pages": 4,
+   "tentative": 0
+  },
+  "R-FETCH-1a": {
+   "state": "implemented-unbuilt",
+   "in_scope_pages": 4,
+   "out_of_scope_pages": 0,
+   "pages": 4,
+   "tentative": 0
+  },
   "R-FETCH-2": {
    "state": "implemented-unbuilt",
    "in_scope_pages": 14,
@@ -1555,12 +1569,12 @@
    "tentative": 0
   }
  },
- "implemented_total_estimate": 720,
+ "implemented_total_estimate": 728,
  "milestones_reached": [
   250,
   500
  ],
- "macbook_in_scope_implemented": 490,
+ "macbook_in_scope_implemented": 492,
  "macbook_in_scope_milestones": [
   100,
   200,
