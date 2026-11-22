@@ -2543,6 +2543,37 @@ fn initial_caret(page: &PageDom, dom: &Dom, host: NodeId) -> Option<Point> {
 
 /// Focusing a host without the selection inside puts the caret at its start.
 pub fn caret_on_focus(page: &Rc<PageDom>, el: NodeId) {
+    // As Chromium: focusing a text field (a textarea, or an input that takes typed text)
+    // collapses the document's selection just before it, in its parent.
+    let before_field = {
+        let dom = page.dom.borrow();
+        let field = dom.element(el).is_ok_and(|e| {
+            e.is_html()
+                && match &*e.name.local {
+                    "textarea" => true,
+                    "input" => matches!(
+                        dom.input_type(el),
+                        Ok(pyro_dom::forms::InputType::Text
+                            | pyro_dom::forms::InputType::Search
+                            | pyro_dom::forms::InputType::Url
+                            | pyro_dom::forms::InputType::Tel
+                            | pyro_dom::forms::InputType::Email
+                            | pyro_dom::forms::InputType::Password
+                            | pyro_dom::forms::InputType::Number)
+                    ),
+                    _ => false,
+                }
+        });
+        let parent = dom.parent(el).ok().flatten().filter(|_| field);
+        parent.and_then(|p| {
+            let index = dom.children(p).ok()?.position(|c| c == el)?;
+            Some((p, index as u32))
+        })
+    };
+    if let Some(point) = before_field {
+        set_selection(page, point, point);
+        return;
+    }
     let host = {
         let dom = page.dom.borrow();
         match editing_host(&dom, el) {
