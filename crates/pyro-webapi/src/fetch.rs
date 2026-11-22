@@ -596,6 +596,10 @@ pub(crate) fn parse_request<'s>(
         "manual" => RedirectMode::Manual,
         _ => return Err(JsError::Type("Invalid fetch redirect mode".into())),
     };
+    // RequestInit `priority` is a RequestPriority enum; fetch has no use for it.
+    if !matches!(string_option(s, init, "priority", "auto")?.as_str(), "high" | "low" | "auto") {
+        return Err(JsError::Type("Invalid fetch priority".into()));
+    }
     if request.mode == RequestMode::NoCors && !matches!(request.method, Method::GET | Method::HEAD | Method::POST) {
         return Err(JsError::Type("Invalid no-cors method".into()));
     }

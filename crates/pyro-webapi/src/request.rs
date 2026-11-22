@@ -304,6 +304,13 @@ fn construct<'s>(
             )
         }
     };
+    if let Some(priority) = string_option(s, init, "priority")? {
+        if !matches!(priority.as_str(), "high" | "low" | "auto") {
+            return Err(JsError::Type(format!(
+                "Failed to construct 'Request': The provided value '{priority}' is not a valid enum value of type RequestPriority."
+            ).into()));
+        }
+    }
     let window_option = option(s, init, "window")?;
     if !window_option.is_undefined() && !window_option.is_null() {
         return Err(JsError::Type("Failed to construct 'Request': 'window' member must be null".into()));
