@@ -14,12 +14,14 @@ const pages = retro ? ['setValueAtTime', 'setTargetAtTime', 'linearRampToValueAt
 const offlineClose = batch === 'offline-close';
 const offlineQuantum = batch === 'offline-quantum';
 const compressor = batch === 'compressor';
+const destinationCount = batch === 'destination-count';
 const reverse = batch === 'reverse-loop';
 const detuning = batch === 'osc-detune';
 const resampling = batch === 'resampling';
-const batchDirectory = reverse || detuning ? '/webaudio/the-audio-api/the-oscillatornode-interface/' : compressor ? '/webaudio/the-audio-api/' : offlineClose || offlineQuantum ? '/webaudio/the-audio-api/the-offlineaudiocontext-interface/' : directory;
+const batchDirectory = destinationCount ? '/webaudio/the-audio-api/the-destinationnode-interface/' : reverse || detuning ? '/webaudio/the-audio-api/the-oscillatornode-interface/' : compressor ? '/webaudio/the-audio-api/' : offlineClose || offlineQuantum ? '/webaudio/the-audio-api/the-offlineaudiocontext-interface/' : directory;
 const batchPages = compressor ? ['the-dynamicscompressornode-interface/dynamicscompressor-basic.html', 'the-dynamicscompressornode-interface/ctor-dynamicscompressor.html', 'the-audioparam-interface/k-rate-dynamics-compressor-connections.html'] : offlineQuantum ? ['offlineaudiocontext-rendersizehint.html', 'offlineaudiocontext-suspend-rendersizehint.https.html', 'offlineaudiocontext-close.html'] : offlineClose ? ['ctor-offlineaudiocontext.html', 'offlineaudiocontext-close.html'] : pages;
 if (reverse) batchPages.splice(0, batchPages.length, 'osc-basic-waveform.html');
+if (destinationCount) batchPages.splice(0, batchPages.length, 'destination.html');
 if (detuning) batchPages.splice(0, batchPages.length, 'osc-basic-waveform.html', 'detune-limiting.html');
 if (resampling) batchPages.splice(0, batchPages.length, 'buffer-resampling.html', 'sub-sample-buffer-stitching.html');
 const allowed = new Set([...batchPages.map(name => batchDirectory + name), '/resources/testharness.js', '/resources/testharnessreport.js', '/webaudio/resources/audit-util.js', '/webaudio/resources/audit.js', ...(periodic || offlineClose ? ['/webaudio/resources/audionodeoptions.js'] : [])]);
@@ -49,6 +51,7 @@ try {
     if (modulePath && resampling) assert.ok(await page.evaluate(() => installedAudio.OscillatorNode === OscillatorNode && installedAudio.AudioBuffer === AudioBuffer && installedAudio.ChannelMergerNode === ChannelMergerNode));
     if (modulePath && detuning) assert.ok(await page.evaluate(() => installedAudio.OscillatorNode === OscillatorNode && installedAudio.PeriodicWave === PeriodicWave && installedAudio.ChannelMergerNode === ChannelMergerNode));
     if (modulePath && compressor) assert.ok(await page.evaluate(() => installedAudio.AudioContext === AudioContext && installedAudio.DynamicsCompressorNode === globalThis.DynamicsCompressorNode));
+    if (modulePath && destinationCount) assert.ok(await page.evaluate(() => installedAudio.AudioContext === AudioContext && installedAudio.AudioDestinationNode === AudioDestinationNode));
     if (modulePath && retro) assert.ok(await page.evaluate(() => installedAudio.AudioParam === AudioParam && new OfflineAudioContext(1, 128, 44100).createGain().gain instanceof AudioParam));
     await page.waitForFunction(() => globalThis.results);
     outcomes[name] = await page.evaluate(() => globalThis.results);
