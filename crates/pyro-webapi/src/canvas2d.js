@@ -838,9 +838,17 @@
       }
       if (o.detached) throw domError('InvalidStateError', 'OffscreenCanvas object is detached.');
       if (type !== '2d') return null;
-      // CanvasRenderingContext2DSettings.colorSpace (validated on every call).
-      const space = colorSpace(options);
       if (!o.context) {
+        // CanvasRenderingContext2DSettings, converted member by member in
+        // dictionary order when the context is made (a cached context
+        // ignores its argument).
+        const d = dict(options);
+        void !!d.alpha;
+        const raw = d.colorSpace;
+        const space = raw === undefined ? 'srgb' : String(raw);
+        if (!COLOR_SPACES.includes(space)) throw new TypeErrorC(`The provided value '${space}' is not a valid enum value of type PredefinedColorSpace.`);
+        void !!d.desynchronized;
+        void !!d.willReadFrequently;
         o.context = natives.offscreenContext(this, o.width, o.height, o.placeholder, space);
       }
       return o.context;
