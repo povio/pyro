@@ -1911,6 +1911,7 @@ impl Browser {
                         l.blocked = false;
                     }
                     match res {
+                        _ if b.script_moved(page, &element) => {}
                         Ok(text) => {
                             b.execute_at_insertion_point(page, &text, &u, &element);
                             b.script_loaded(page, &element, true);
@@ -2084,6 +2085,7 @@ impl Browser {
                 return;
             }
             match res {
+                _ if b.script_moved(page, &element) => {}
                 Ok(text) if ty == ScriptType::Classic => {
                     b.execute_external(page, &text, &u, &element);
                     b.script_loaded(page, &element, true);
@@ -2123,6 +2125,22 @@ impl Browser {
             bindings.unblock_rendering(element.node);
             pyro_webapi::lifecycle::resource_loaded(&bindings, element.node, ok);
         }
+    }
+
+    /// HTML "execute the script element" step 2: a script whose node document
+    /// is no longer its preparation-time document (the document of the frame
+    /// that prepared it, `page`) was moved to another document since it was
+    /// prepared. It returns before anything else: the script does not run,
+    /// its fetch or parse error is not reported, and it gets neither `load`
+    /// nor `error`. Checked where a prepared script's fetch completes, before
+    /// executing it; rendering stops waiting for it.
+    fn script_moved(&self, page: FrameKey, element: &ResourceNode) -> bool {
+        let Some(bindings) = self.doc(page).and_then(|p| p.main_frame.page_dom.clone()) else { return false };
+        let moved = bindings.dom.borrow().node_document(element.node).ok() != Some(bindings.document());
+        if moved {
+            bindings.unblock_rendering(element.node);
+        }
+        moved
     }
 
     /// HTML "block rendering" on a script whose fetch starts, if it is
@@ -2268,6 +2286,8 @@ impl Browser {
                 (n.ty, n.url.clone(), n.element.clone(), n.external)
             };
             match source {
+                // Moved to another document while it waited: the next one runs.
+                _ if self.script_moved(page, &element) => {}
                 Ok(text) if ty == ScriptType::Classic => {
                     self.execute_external(page, &text, &url, &element);
                     self.script_loaded(page, &element, true);
@@ -2646,6 +2666,10 @@ impl Browser {
                     done();
                     return;
                 }
+                if browser.script_moved(page, &element) {
+                    done();
+                    return;
+                }
                 match result {
                     Ok(text) if module => {
                         let once = std::cell::RefCell::new(Some(done));
@@ -2722,6 +2746,7 @@ impl Browser {
                 return;
             }
             match res {
+                _ if b.script_moved(page, &element) => {}
                 Ok(text) if module => {
                     b.execute_module(page, &text, &u, false, Some(element), true);
                 }
