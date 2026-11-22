@@ -1,0 +1,26 @@
+{
+  "main": {
+    "cases": 160,
+    "lossesAgainstRevision2": []
+  },
+  "exact": {
+    "cases": 50,
+    "lossesAgainstRevision2": []
+  },
+  "markup": {
+    "cases": 10,
+    "lossesAgainstRevision2": []
+  },
+  "external": {
+    "cases": 12,
+    "lossesAgainstRevision2": []
+  },
+  "pending": {
+    "cases": 16,
+    "lossesAgainstRevision2": []
+  },
+  "glyphs": {
+    "cases": 36,
+    "lossesAgainstRevision2": []
+  }
+}

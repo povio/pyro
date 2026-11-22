@@ -3440,6 +3440,9 @@ impl PlaceholderCaret {
 }
 
 enum Saved {
+    /// Invalid foreColor is an undoable selection-only command. Its inverse
+    /// uses the same endpoints because the command makes no DOM mutation.
+    UnchangedForeground { anchor: Point, focus: Point },
     Control { value: String, selection: ControlSelection, opposite: Option<ControlSelection> },
     /// Saved anchor and focus offsets, in selection direction.
     Host { html: String, selection: Option<(u32, u32)>, table_selection: Option<TableSelection>, list_paragraphs: Vec<ListParagraph>, placeholder: Option<PlaceholderCaret> },
@@ -3458,6 +3461,7 @@ const UNDO_BYTES: usize = 16 << 20;
 impl Saved {
     fn bytes(&self) -> usize {
         match self {
+            Saved::UnchangedForeground { .. } => 2 * size_of::<Point>(),
             Saved::Control { value, .. } => value.len(),
             Saved::Host { html, table_selection, list_paragraphs, placeholder, .. } => html.len()
                 + table_selection.as_ref().map_or(0, |s| s.path.len() * size_of::<u32>())
@@ -3578,6 +3582,16 @@ pub(crate) fn note_control_edited(page: &PageDom, el: NodeId) {
     }
 }
 
+fn record_unchanged_foreground(page: &PageDom, host: NodeId) {
+    let Some((anchor, focus)) = editing::selection(page) else { return };
+    let mut history = page.undo.borrow_mut();
+    if !history.replaying {
+        history.typing = None;
+        history.pending_typing = false;
+        history.push(Step { target: host, saved: Saved::UnchangedForeground { anchor, focus } });
+    }
+}
+
 /// Before an editing host's content changes by an edit.
 pub(crate) fn record_host_edit(page: &PageDom, host: NodeId, input_type: &str) {
     record(page, host, input_type, false);
@@ -3590,6 +3604,15 @@ pub(crate) fn note_host_edited(page: &PageDom, host: NodeId) {
 
 fn restore(page: &Rc<PageDom>, target: NodeId, saved: Saved) {
     match saved {
+        Saved::UnchangedForeground { anchor, focus } => {
+            let dom = page.dom.borrow();
+            let valid = |(node, offset)| dom.contains(target, node).unwrap_or(false)
+                && editing::editing_host(&dom, node) == Some(target) && offset <= editing::len(&dom, node);
+            if valid(anchor) && valid(focus) {
+                drop(dom);
+                editing::set_selection(page, anchor, focus);
+            }
+        }
         Saved::Control { value, selection, .. } => {
             {
                 let mut dom = page.dom.borrow_mut();
@@ -3664,7 +3687,10 @@ fn undo(page: &Rc<PageDom>, backward: bool, source: EditSource) -> bool {
         }
         return true;
     }
-    let mut current = save(page, step.target);
+    let mut current = match &step.saved {
+        Saved::UnchangedForeground { anchor, focus } => Some(Saved::UnchangedForeground { anchor: *anchor, focus: *focus }),
+        _ => save(page, step.target),
+    };
     if let (Saved::Control { selection, opposite: Some(other), .. },
         Some(Saved::Control { selection: inverse, opposite, .. })) = (&step.saved, &mut current)
     {
