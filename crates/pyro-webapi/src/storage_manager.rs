@@ -180,8 +180,30 @@ pub(crate) fn define_file_system_globals<W: JsClass>(def: &mut ClassDef<W>) wher
     file_system_global!(def, "FileSystemWritableFileStream");
 }
 
-pub(crate) fn define_sync_access_global<W: JsClass>(def: &mut ClassDef<W>) where W::Data: WindowHost {
-    file_system_global!(def, "FileSystemSyncAccessHandle");
+/// Worker interfaces belong on the global object itself. Registering one as
+/// a member of WorkerGlobalScope would also expose it on the interface prototype.
+pub(crate) fn install_worker_file_system_globals(s: &Scope<'_>) -> JsResult<()> {
+    macro_rules! install {
+        ($interface:ident) => {{
+            struct $interface;
+            impl pyro_js::LazyGlobalInterface for $interface {
+                const NAME: &'static str = stringify!($interface);
+                fn value<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
+                    let page = crate::target::page_of(s)?;
+                    crate::opfs::module(s, &page, dedicated_worker(s))?.get_atom(Self::NAME)
+                }
+            }
+            s.define_lazy_global_interface::<$interface>()?;
+        }};
+    }
+    install!(FileSystemHandle);
+    install!(FileSystemDirectoryHandle);
+    install!(FileSystemFileHandle);
+    install!(FileSystemWritableFileStream);
+    if dedicated_worker(s) {
+        install!(FileSystemSyncAccessHandle);
+    }
+    Ok(())
 }
 
 pub(crate) fn hide_file_system_globals(s: &Scope<'_>) -> JsResult<()> {

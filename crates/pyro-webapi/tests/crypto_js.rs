@@ -434,6 +434,33 @@ fn navigator_storage_reports_usage_and_no_persistence() {
 }
 
 #[test]
+fn dedicated_worker_file_system_interfaces_are_own_data_properties() {
+    let server = Server::new();
+    let env = Env::new(&server.url);
+    let script = r#"
+        const names = ['FileSystemHandle', 'FileSystemDirectoryHandle', 'FileSystemFileHandle',
+                       'FileSystemWritableFileStream', 'FileSystemSyncAccessHandle'];
+        const valid = names.every(name => {
+            const d = Object.getOwnPropertyDescriptor(self, name);
+            return d && !('get' in d) && !('set' in d) && d.writable && !d.enumerable && d.configurable &&
+                typeof d.value === 'function' && d.value === self[name] &&
+                !Object.hasOwn(WorkerGlobalScope.prototype, name) &&
+                !Object.hasOwn(DedicatedWorkerGlobalScope.prototype, name);
+        });
+        self.FileSystemHandle = 42;
+        postMessage([valid, self.FileSystemHandle === 42,
+                     delete self.FileSystemHandle, !('FileSystemHandle' in self)].join());
+    "#;
+    env.eval(&format!(
+        "globalThis.answer = ''; const worker = new Worker(URL.createObjectURL(new Blob([{}], {{type:'text/javascript'}})));
+         worker.onmessage = e => answer = e.data; worker.onerror = e => answer = e.message;",
+        serde_json_string(script)
+    ));
+    env.until("answer.length > 0");
+    assert_eq!(env.eval("answer"), "true,true,true,true");
+}
+
+#[test]
 fn dedicated_workers_expose_streams_file_reader_crypto_keys_and_storage() {
     let server = Server::new();
     let env = Env::new(&server.url);

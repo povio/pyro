@@ -1005,7 +1005,6 @@ impl JsClass for WorkerGlobalScope {
         crate::trusted_types::define_globals(def);
         def.getter("fonts", |s, g| crate::font_loading::fonts(s, &g.target.page));
         crate::storage_manager::define_globals(def);
-        crate::storage_manager::define_file_system_globals(def);
         crate::websocket::define_worker_globals(def);
         def.getter("indexedDB", |s, g| crate::indexeddb::window_factory(s, &g.target.page));
         crate::indexeddb::define_globals(def);
@@ -1107,7 +1106,6 @@ impl JsClass for DedicatedWorkerGlobalScope {
     type Data = ScopeData;
     type Parent = WorkerGlobalScope;
     fn define(def: &mut ClassDef<Self>) {
-        crate::storage_manager::define_sync_access_global(def);
         crate::canvas::define_video_globals(def);
         def.getter("name", |s, g| Ok(s.string(&g.name)));
         def.method("postMessage", 1, |s, g, a| {
@@ -1346,8 +1344,8 @@ fn install(s: &Scope<'_>, page: &Rc<PageDom>, global: &str) -> JsResult<()> {
     {
         page.define_properties.borrow_mut().insert(s.realm_id(), Persistent::new(s, define));
     }
-    if secure_worker(s) == Some(false) {
-        crate::storage_manager::hide_file_system_globals(s)?;
+    if secure_worker(s) == Some(true) {
+        crate::storage_manager::install_worker_file_system_globals(s)?;
     }
     if s.global_data::<DedicatedWorkerGlobalScope>().is_some_and(|g| !g.secure) {
         s.global().delete("VideoDecoder")?;
