@@ -548,7 +548,11 @@ pub(crate) fn construct<'s, C: JsClass<Data = EventData>>(
 ) -> JsResult<Object<'s>> {
     let ty = arg_string(&a, 0, C::NAME)?;
     let page = page_of(s)?;
-    let init = a.get(1).as_object();
+    let dictionary = a.get(1);
+    if iface == EventInterface::InterestEvent && !dictionary.is_nullish() && !dictionary.is_object() {
+        return Err(JsError::Type("InterestEventInit must be an object, null, or undefined".into()));
+    }
+    let init = dictionary.as_object();
     let core = EventCore::new(
         &page,
         iface,
@@ -1763,7 +1767,7 @@ fn fill_formdata<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>
 }
 
 /// `source` of a ToggleEventInit or CommandEventInit: an Element or null.
-fn fill_source<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>, iface: &str) -> JsResult<()> {
+fn fill_source<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>, iface: &str, owner: Option<&PageDom>) -> JsResult<()> {
     let Some(o) = init else { return Ok(()) };
     let v = o.get_atom("source")?;
     if v.is_undefined() || v.is_null() {
@@ -1772,6 +1776,11 @@ fn fill_source<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>,
     let element = s.unwrap::<crate::node::Node>(v).filter(|n| n.page().dom.borrow().element(n.id).is_ok());
     match element {
         Some(n) => {
+            // TargetKey is local to a DOM store. Documents in a browsing
+            // context group share one, including ordinary same-origin frames.
+            if owner.is_some_and(|page| !Rc::ptr_eq(&page.dom, &n.page().dom)) {
+                return Err(JsError::Type("node belongs to another page".into()));
+            }
             f.submitter = Some(n.target.key);
             Ok(())
         }
@@ -1784,12 +1793,12 @@ fn fill_source<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>,
 fn fill_toggle<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
     f.old_state = get_str(init, "oldState")?;
     f.new_state = get_str(init, "newState")?;
-    fill_source(s, f, init, "ToggleEvent")
+    fill_source(s, f, init, "ToggleEvent", None)
 }
 
 fn fill_command<'s>(s: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
     f.command = get_str(init, "command")?;
-    fill_source(s, f, init, "CommandEvent")
+    fill_source(s, f, init, "CommandEvent", None)
 }
 
 /// `ToggleEvent` (HTML): details, popover and dialog `beforetoggle` /
@@ -1836,7 +1845,7 @@ impl JsClass for InterestEvent {
     fn define(def: &mut ClassDef<Self>) {
         def.constructor(1, |s, nt, a| {
             construct::<InterestEvent>(s, nt, a, EventInterface::InterestEvent, |s, fields, init| {
-                fill_source(s, fields, init, "InterestEvent")
+                fill_source(s, fields, init, "InterestEvent", Some(page_of(s)?.as_ref()))
             })
         });
         def.getter("source", |s, e| {
