@@ -472,6 +472,7 @@ impl<A: DomAccess> TreeSink for Sink<A> {
                 return false;
             }
         }
+        let mut reference_target = None;
         let mut mode = ShadowRootMode::Open;
         let mut flags = 0;
         for a in attrs {
@@ -481,6 +482,7 @@ impl<A: DomAccess> TreeSink for Sink<A> {
             match &*a.name.local {
                 "shadowrootmode" if a.value.eq_ignore_ascii_case("closed") => mode = ShadowRootMode::Closed,
                 "shadowrootcustomelementregistry" => flags |= shadow_flags::KEEP_REGISTRY_NULL,
+                "shadowrootreferencetarget" => reference_target = Some(markup5ever::LocalName::from(&*a.value)),
                 "shadowrootclonable" => flags |= shadow_flags::CLONABLE,
                 "shadowrootserializable" => flags |= shadow_flags::SERIALIZABLE,
                 "shadowrootdelegatesfocus" => flags |= shadow_flags::DELEGATES_FOCUS,
@@ -492,6 +494,9 @@ impl<A: DomAccess> TreeSink for Sink<A> {
         }
         let Some(root) = self.dom.with(|d| {
             let sr = d.attach_declarative_shadow(*host, mode, flags)?;
+            if let NodeKind::Fragment(f) = &mut d.n_mut(sr).kind {
+                f.reference_target = reference_target;
+            }
             if flags & shadow_flags::KEEP_REGISTRY_NULL == 0 && d.n(*host).owner_doc == self.doc {
                 if let Some(registry) = self.fragment_document_registry {
                     d.set_registry_idx(sr, registry);

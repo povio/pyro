@@ -1195,6 +1195,14 @@ impl JsClass for ShadowRoot {
                 _ => "open",
             }))
         });
+        def.accessor(
+            "referenceTarget",
+            |s, n| Ok(n.page().dom.borrow().shadow_reference_target(n.id).js()?.map_or(s.null(), |id| s.string(id))),
+            |_s, n, value| {
+                let target = shadow_reference_value(value)?;
+                n.page().dom.borrow_mut().set_shadow_reference_target(n.id, target.as_deref()).js()
+            },
+        );
         def.getter("delegatesFocus", |s, n| shadow_flag(s, n, pyro_dom::shadow_flags::DELEGATES_FOCUS));
         def.getter("clonable", |s, n| shadow_flag(s, n, pyro_dom::shadow_flags::CLONABLE));
         def.getter("serializable", |s, n| shadow_flag(s, n, pyro_dom::shadow_flags::SERIALIZABLE));
@@ -1660,6 +1668,7 @@ impl JsClass for Element {
                     ).into()))
                 }
             };
+            let target = shadow_reference_value(o.get_atom("referenceTarget")?)?;
             if o.get_atom("serializable")?.to_bool() {
                 flags |= pyro_dom::shadow_flags::SERIALIZABLE;
             }
@@ -1687,6 +1696,7 @@ impl JsClass for Element {
             let sr = dom.attach_shadow_with(n.id, mode, flags).js()?;
             // Reattaching to a declarative root clears its children but keeps its registry.
             if existing.is_none() {
+                dom.set_shadow_reference_target(sr, target.as_deref()).js()?;
                 if let Some(registry) = registry {
                     dom.set_registry_association(sr, registry).js()?;
                 }
@@ -1745,6 +1755,14 @@ fn insert_adjacent(dom: &mut pyro_dom::Dom, el: NodeId, pos: &str, node: NodeId)
 }
 
 // ----- document -------------------------------------------------------------
+
+fn shadow_reference_value(value: Value<'_>) -> JsResult<Option<String>> {
+    if value.is_null() || value.is_undefined() {
+        Ok(None)
+    } else {
+        Ok(Some(dom_string(value)?))
+    }
+}
 
 // Read and type-check this dictionary member before converting later
 // members. DOM checks whether a global registry belongs to the appropriate

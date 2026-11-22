@@ -1041,11 +1041,9 @@ pub fn reset_form(page: &Rc<PageDom>, form: NodeId) {
     // selects.
     let controls: Vec<NodeId> = {
         let dom = page.dom.borrow();
-        let Ok(root) = dom.root_node(form, false) else { return };
         let mut out = Vec::new();
-        for n in dom.descendants(root).into_iter().flatten() {
-            let resettable = matches!(local(&dom, n).as_deref(), Some("input" | "select" | "textarea"));
-            if resettable && dom.form_owner(n).ok().flatten() == Some(form) {
+        for n in dom.owned_form_elements(form).unwrap_or_default() {
+            if matches!(local(&dom, n).as_deref(), Some("input" | "select" | "textarea")) {
                 out.push(n);
                 if local(&dom, n).as_deref() == Some("select") {
                     out.extend(dom.select_options(n).unwrap_or_default());
@@ -1820,14 +1818,12 @@ fn blocks_implicit_submission(ty: InputType) -> bool {
 /// button and never submit without one.
 fn implicit_submission(dom: &Dom, field: NodeId) -> ImplicitSubmission {
     let Some(form) = dom.form_owner(field).ok().flatten() else { return ImplicitSubmission::Nothing };
-    let Ok(root) = dom.root_node(form, false) else { return ImplicitSubmission::Nothing };
+    let Ok(controls) = dom.owned_form_elements(form) else { return ImplicitSubmission::Nothing };
     let trigger = dom.input_type(field).is_ok_and(blocks_implicit_submission);
     let mut blocking = 0;
-    for n in dom.descendants(root).into_iter().flatten() {
+    for n in controls {
         let Some(name) = local(dom, n) else { continue };
-        if !matches!(name.as_str(), "input" | "button") || dom.form_owner(n).ok().flatten() != Some(form) {
-            continue;
-        }
+        if !matches!(name.as_str(), "input" | "button") { continue; }
         if is_submit_button(dom, n) {
             if !dom.is_disabled(n).unwrap_or(false) {
                 return ImplicitSubmission::Click(n);
