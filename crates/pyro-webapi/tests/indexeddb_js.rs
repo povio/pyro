@@ -872,6 +872,34 @@ fn worker_idb_interfaces_start_as_own_data_properties() {
 }
 
 #[test]
+fn data_worker_uses_opaque_origin_for_indexeddb() {
+    let env = crate::support::network::Env::with_engine_origin(
+        "http://idb.test/page",
+        Rc::new(Engine::new().unwrap()),
+        Some("http://idb.test".into()),
+    );
+    env.eval(
+        r#"
+        globalThis.reply = null;
+        const source = `
+          const syncResult = fn => { try { fn(); return 'returned'; } catch (error) { return error.name; } };
+          const results = [self.origin, typeof IDBKeyRange, indexedDB.cmp(1, 2),
+            syncResult(() => indexedDB.open('worker-db')),
+            syncResult(() => indexedDB.deleteDatabase('worker-db'))];
+          indexedDB.databases().then(() => results.push('resolved'), error => results.push(error.name))
+            .then(() => postMessage(results.join('|')));`;
+        globalThis.worker = new Worker('data:text/javascript,' + encodeURIComponent(source));
+        worker.onmessage = event => { reply = event.data; };
+        worker.onerror = event => { reply = 'error: ' + event.message; };
+        "#,
+    );
+    env.until("reply !== null");
+    let reply = env.eval("reply");
+    env.eval("worker.terminate()");
+    assert_eq!(reply, "null|function|-1|SecurityError|SecurityError|SecurityError");
+}
+
+#[test]
 fn dedicated_workers_share_the_owner_partition() {
     let env = crate::support::network::Env::new("http://idb.test/page");
     env.eval(

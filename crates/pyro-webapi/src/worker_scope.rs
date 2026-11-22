@@ -584,7 +584,12 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
     let window = page.create_window_target(document);
     *page.net.borrow_mut() = Some(start.net.clone());
     page.set_hooks(Some(Rc::new(ScopeHooks { sched: event_loop.scheduler(), handle: event_loop.handle() })));
-    let origin = start.origin.clone().or_else(|| Some(start.url.origin().ascii_serialization()));
+    let worker_origin = if start.url.scheme() == "data" {
+        Some(start.url.origin().ascii_serialization())
+    } else {
+        start.origin.clone()
+    };
+    let origin = worker_origin.clone().or_else(|| Some(start.url.origin().ascii_serialization()));
     let realm = engine.create_realm(RealmOptions { name: String::new(), global_class: Some(class), origin })?;
     let scope = ScopeData {
         target: EventTargetData::window(&page, window),
@@ -618,7 +623,7 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
         page: Rc::downgrade(&page),
         net: start.net.clone(),
         shared: start.shared.clone(),
-        origin: start.origin.clone(),
+        origin: worker_origin,
         url: start.url.to_string(),
         sched: event_loop.scheduler(),
     })));
