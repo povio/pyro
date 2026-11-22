@@ -248,10 +248,6 @@ pub struct PageDom {
     /// pyro: whether a paced check of those states is queued, and the DOM version and scroll
     /// generation they were last read at (`layout_api::schedule_content_visibility_check`).
     pub(crate) cv_auto_check: Cell<(bool, Option<(u64, u64)>)>,
-    /// pyro: completed scrolls per scroll target (document, element or None: the viewport), for
-    /// a smooth scroll's promise to tell whether a later scroll interrupted it
-    /// (`layout_api::scroll_promise`).
-    pub(crate) scroll_serials: RefCell<std::collections::HashMap<(NodeId, Option<NodeId>), u64>>,
     /// The DOM version scroll offsets were last re-clamped at, and whether a
     /// re-clamp is queued for the next frame (`layout_api::clamp_scrolls`).
     pub(crate) scroll_clamp: Cell<(Option<u64>, bool)>,
@@ -1023,7 +1019,6 @@ impl PageDom {
             pending_scrolls: Default::default(),
             cv_auto_states: Default::default(),
             cv_auto_check: Default::default(),
-            scroll_serials: Default::default(),
             scroll_clamp: Default::default(),
             fetch_state: Default::default(),
             xhr_state: Default::default(),

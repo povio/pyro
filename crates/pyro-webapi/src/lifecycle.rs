@@ -47,7 +47,7 @@ fn flush_autofocus(page: &Rc<PageDom>, _doc: NodeId) {
 /// Asks for a rendering update of the top-level page(s) sharing `page`'s DOM, whose flush
 /// handles the autofocus candidates: a child frame's candidates join its top-level
 /// document's, whose page may be idle (no animation frame of its own pending).
-fn request_top_level_frames(page: &Rc<PageDom>) {
+pub(crate) fn request_top_level_frames(page: &Rc<PageDom>) {
     if !page.is_nested_frame() {
         if let Some(hooks) = page.hooks() {
             hooks.request_animation_frame();

@@ -118,6 +118,7 @@ mod service_worker;
 mod show_picker;
 mod service_worker_scope;
 mod smil;
+pub mod smooth_scroll;
 pub mod sri;
 pub mod storage;
 mod storage_manager;

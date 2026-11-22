@@ -326,6 +326,10 @@ pub struct Layout {
     /// pyro: the box each scroller (`None`: the viewport) last snapped to on each axis (x, y), to
     /// snap to again after layout changes (CSS Scroll Snap 1 § 6.2.3).
     snapped: FxHashMap<Option<NodeId>, [Option<SnapBox>; 2]>,
+    /// pyro: the scrollers (`None`: the viewport) a smooth scroll is moving
+    /// ([`Self::set_smooth_scrolling`]): they neither re-snap nor snap while it runs, which would
+    /// pull each step back to the snap position it leaves.
+    smooth_targets: rustc_hash::FxHashSet<Option<NodeId>>,
     /// pyro: the elements each scroller's snap events last reported it snapped to on each axis
     /// (x, y), to fire `scrollsnapchanging` / `scrollsnapchange` when they change
     /// ([`Self::take_snap_changes`]).
@@ -633,6 +637,7 @@ impl Layout {
             scroll_targets: FxHashMap::default(),
             scroll_anchors: FxHashMap::default(),
             snapped: FxHashMap::default(),
+            smooth_targets: Default::default(),
             reported_snaps: FxHashMap::default(),
             unsnapped_checked: None,
             initially_snapped: Default::default(),
@@ -3195,6 +3200,71 @@ impl Layout {
         self.write_scroll(dom, el, ScrollWrite::By { left, top })
     }
 
+    /// pyro: the scroll offsets of `target` (`None`: the viewport).
+    pub fn scroll_position(&self, target: Option<NodeId>) -> (i32, i32) {
+        match target {
+            Some(el) => self.element_scroll.get(&el).copied().unwrap_or((0, 0)),
+            None => self.window_scroll,
+        }
+    }
+
+    /// pyro: the scroll offsets of every scrolled element and of the viewport (`None`), for a
+    /// smooth scroll to find where the boxes a scroll write moved started from.
+    pub fn scroll_positions(&self) -> Vec<(Option<NodeId>, (i32, i32))> {
+        let mut out: Vec<_> = self.element_scroll.iter().map(|(&el, &pos)| (Some(el), pos)).collect();
+        out.push((None, self.window_scroll));
+        out
+    }
+
+    /// pyro: whether a smooth scroll is moving `target` (`None`: the viewport): while one is, the
+    /// box keeps the snap target it had but neither re-snaps ([`Self::resnap`]) nor snaps
+    /// ([`Self::snap_unsnapped`]) after layout changes.
+    pub fn set_smooth_scrolling(&mut self, target: Option<NodeId>, running: bool) {
+        if running {
+            self.smooth_targets.insert(target);
+        } else {
+            self.smooth_targets.remove(&target);
+        }
+    }
+
+    /// pyro: `pos` clamped to the scroll range `target` (`None`: the viewport) has now, on each
+    /// axis (a smooth scroll's step, after the box's content shrank).
+    pub fn clamp_scroll_position(&self, dom: &Dom, target: Option<NodeId>, pos: (i32, i32)) -> (i32, i32) {
+        match target {
+            Some(el) => (
+                self.clamp_scroll(dom, el, Axis::Width, pos.0 as i64),
+                self.clamp_scroll(dom, el, Axis::Height, pos.1 as i64),
+            ),
+            None => {
+                let (rx, ry) = self.viewport_scroll_range(dom);
+                (pos.0.clamp(rx.0, rx.1), pos.1.clamp(ry.0, ry.1))
+            }
+        }
+    }
+
+    /// pyro: puts `target` (`None`: the viewport) at `pos`, a step of a smooth scroll (CSSOM View
+    /// § 4.1 "perform a smooth scroll"): neither snapped nor clamped, as its ends are offsets a
+    /// scroll write chose (snapped and clamped there). Whether it moved.
+    pub fn set_scroll_position(&mut self, dom: &Dom, target: Option<NodeId>, pos: (i32, i32)) -> bool {
+        if self.scroll_position(target) == pos {
+            return false;
+        }
+        match target {
+            Some(el) => {
+                if self.owned(dom, el).is_none() {
+                    return false;
+                }
+                self.element_scroll.insert(el, pos);
+            }
+            None => self.window_scroll = pos,
+        }
+        self.scroll_generation = self.scroll_generation.wrapping_add(1);
+        if let Some(el) = target {
+            self.capture_scroll_anchor(dom, el);
+        }
+        true
+    }
+
     /// `scrollByAxis` (Element.zig:2206-2211): whether the container moved.
     pub fn scroll_by_axis(&mut self, dom: &Dom, el: NodeId, axis: Axis, delta: i32) -> bool {
         let w = match axis {
@@ -3582,6 +3652,10 @@ impl Layout {
         let mut snapped: Vec<(Option<NodeId>, [Option<SnapBox>; 2])> = self.snapped.iter().map(|(k, v)| (*k, *v)).collect();
         snapped.sort_by_key(|(k, _)| k.map(|k| (k.idx, k.gen)));
         for (scroller, targets) in snapped {
+            // (A smooth scroll is moving it: it keeps its snap target, and lands snapped.)
+            if self.smooth_targets.contains(&scroller) {
+                continue;
+            }
             if let Some(el) = scroller {
                 if !dom.is_connected(el).unwrap_or(false) || !self.is_visible(dom, el) {
                     self.snapped.remove(&scroller);
@@ -3666,6 +3740,7 @@ impl Layout {
             // (The root's snap type is the viewport's, below.)
             if Some(el) == root
                 || self.snapped.contains_key(&Some(el))
+                || self.smooth_targets.contains(&Some(el))
                 || !dom.is_connected(el).unwrap_or(false)
                 || !self.is_visible(dom, el)
             {
@@ -3685,7 +3760,7 @@ impl Layout {
             }
         }
         // The viewport, when the root's `scroll-snap-type` snaps mandatorily.
-        if !self.snapped.contains_key(&None) {
+        if !self.snapped.contains_key(&None) && !self.smooth_targets.contains(&None) {
             let mandatory = root.is_some_and(|root| {
                 self.style.computed_value(dom, root, "scroll-snap-type").unwrap_or_default().ends_with("mandatory")
             });

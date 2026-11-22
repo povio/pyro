@@ -845,7 +845,12 @@ fn run_animation_frame(scope: &Scope<'_>) {
             let Ok(scope) = realm.scope() else { return };
             let Some(w) = scope.global_data::<Window>() else { return };
             let mut frame = w.animation.borrow_mut();
-            if frame.timer.is_none() && !(frame.callbacks.is_empty() && frame.native_callbacks.is_empty()) {
+            // (A smooth scroll that was running when rendering blocked needs a frame too, though
+            // no callback asks for one: it would stall otherwise.)
+            if frame.timer.is_none()
+                && (!(frame.callbacks.is_empty() && frame.native_callbacks.is_empty())
+                    || pyro_webapi::smooth_scroll::running(&w.target.page))
+            {
                 let realm_weak = realm.downgrade();
                 frame.timer = Some(w.sched.set_timer(Duration::ZERO, false, true, move |_browser: &mut Browser| {
                     let Some(realm) = realm_weak.upgrade() else { return };
@@ -860,6 +865,9 @@ fn run_animation_frame(scope: &Scope<'_>) {
     // then autofocus candidates flush before the scroll steps.
     pyro_webapi::lifecycle::reveal(&w.target.page);
     pyro_webapi::lifecycle::flush_autofocus_candidates(&w.target.page);
+    // pyro: running smooth scrolls advance a frame, queueing their scroll events for the
+    // scroll steps that follow (CSSOM View § 4.1).
+    pyro_webapi::smooth_scroll::step(&w.target.page);
     pyro_webapi::layout_api::flush_pending_scrolls(&w.target.page);
     // pyro: the frame determines `content-visibility: auto` relevance anew (CSS Contain 2 § 4.1).
     pyro_webapi::layout_api::content_visibility_frame(&w.target.page);
@@ -913,6 +921,9 @@ fn run_animation_frame(scope: &Scope<'_>) {
     // HTML-in-Canvas: the `paint` events of `<canvas content=drawable>` (none without one).
     pyro_webapi::html_in_canvas::run_paint_step(&w.target.page);
     w.target.page.sync_frame_resources();
+    // pyro: a smooth scroll still running asks for the next frame (its frame timers were cleared
+    // above).
+    pyro_webapi::smooth_scroll::request_frames(&w.target.page);
 }
 
 fn clear_timer<'s>(s: &Scope<'s>, w: &WindowData, a: Args<'s>) -> JsResult<Value<'s>> {
