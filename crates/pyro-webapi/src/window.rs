@@ -565,6 +565,16 @@ fn protocol_handler<'s>(s: &Scope<'s>, page: &Rc<PageDom>, args: pyro_js::Args<'
             | "webcal"
             | "wtai"
             | "xmpp"
+            // Chromium's decentralized schemes (whatwg/html#5482, WPT protocol.tentative).
+            | "cabal"
+            | "dat"
+            | "did"
+            | "dweb"
+            | "ethereum"
+            | "hyper"
+            | "ipfs"
+            | "ipns"
+            | "ssb"
     );
     let custom = scheme
         .strip_prefix("web+")
