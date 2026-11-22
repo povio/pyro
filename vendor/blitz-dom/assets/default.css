@@ -1597,3 +1597,23 @@ dialog:modal, :popover-open {
 pre, listing, plaintext, xmp, code, kbd, samp, tt {
     text-autospace: no-autospace;
 }
+
+/* pyro: permission elements (WICG PEPC and the install element, tentative): as in Chromium, a
+   control the page cannot disguise. The properties it ignores are important here, so no author
+   declaration applies; the bounds it puts on others are the style adjuster's
+   (`adjust_for_permission_element`). WPT html/semantics/permission-element. */
+geolocation, install, usermedia, camera, microphone {
+    cursor: pointer !important;
+    border-image: none !important;
+    background-image: none !important;
+    clip-path: none !important;
+    filter: none !important;
+    mask: none !important;
+    transform: none !important;
+    content-visibility: visible !important;
+    contain: none !important;
+    container-type: normal !important;
+    container-name: none !important;
+    contain-intrinsic-size: none !important;
+    corner-shape: round !important;
+}

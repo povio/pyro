@@ -1001,6 +1001,87 @@ impl<'a, 'b: 'a> StyleAdjuster<'a, 'b> {
         border.set_border_bottom_left_radius(BorderCornerRadius::zero());
     }
 
+    /// pyro: the bounds a permission element (`<geolocation>`, `<install>`, `<usermedia>`,
+    /// `<camera>`, `<microphone>`: WICG PEPC, tentative) puts on its own style, as Chromium does,
+    /// so the control stays legible: `font-weight` at least 200, `font-style` normal or italic,
+    /// `word-spacing` within [0, 0.5em], `letter-spacing` within [-0.05em, 0.2em], no inset
+    /// `box-shadow`, no negative `outline-offset`, and no horizontal (vertical) padding unless
+    /// `width` (`height`) is `auto`. The properties it ignores outright are `!important` in the
+    /// UA sheet (WPT html/semantics/permission-element).
+    #[cfg(feature = "servo")]
+    fn adjust_for_permission_element<E>(&mut self, element: Option<E>)
+    where
+        E: TElement,
+    {
+        use crate::values::computed::font::{FontStyle, FontWeight};
+        use crate::values::computed::text::LetterSpacing;
+        use crate::values::computed::{Length, LengthPercentage, OutlineOffset, Size};
+        if self.style.pseudo.is_some() {
+            return;
+        }
+        let is_permission_element = element.is_some_and(|e| {
+            e.is_html_element()
+                && matches!(&**e.local_name(), "geolocation" | "install" | "usermedia" | "camera" | "microphone")
+        });
+        if !is_permission_element {
+            return;
+        }
+        let font = self.style.get_font();
+        let em = font.font_size.computed_size().px();
+        let weight = font.font_weight;
+        let font_style = font.font_style;
+        let light = weight.value() < 200.;
+        let slanted = font_style != FontStyle::NORMAL && font_style != FontStyle::ITALIC;
+        if light {
+            self.style.set_font_weight(FontWeight::from_float(200.));
+        }
+        if slanted {
+            self.style.set_font_style(FontStyle::NORMAL);
+        }
+        if light || slanted {
+            // The font cache key covers weight and style.
+            self.style.mutate_font().compute_font_hash();
+        }
+        let text = self.style.get_inherited_text();
+        let word_spacing = text.word_spacing.to_length().map(|l| l.px());
+        let letter_spacing = text.letter_spacing.0.to_length().map(|l| l.px());
+        if let Some(px) = word_spacing {
+            let clamped = px.max(0.).min(0.5 * em);
+            if clamped != px {
+                self.style.set_word_spacing(LengthPercentage::new_length(Length::new(clamped)));
+            }
+        }
+        if let Some(px) = letter_spacing {
+            let clamped = px.max(-0.05 * em).min(0.2 * em);
+            if clamped != px {
+                self.style.set_letter_spacing(LetterSpacing(LengthPercentage::new_length(Length::new(clamped))));
+            }
+        }
+        let initial = self.style.default_style();
+        if self.style.get_effects().box_shadow.0.iter().any(|shadow| shadow.inset) {
+            self.style.mutate_effects().reset_box_shadow(initial.get_effects());
+        }
+        let negative_offset = match self.style.get_outline().outline_offset {
+            OutlineOffset::Length(length) => length.px() < 0.,
+            OutlineOffset::Inset => true,
+        };
+        if negative_offset {
+            self.style.set_outline_offset(OutlineOffset::Length(Length::new(0.)));
+        }
+        let position = self.style.get_position();
+        let (width_auto, height_auto) = (matches!(position.width, Size::Auto), matches!(position.height, Size::Auto));
+        if !width_auto {
+            let padding = self.style.mutate_padding();
+            padding.reset_padding_left(initial.get_padding());
+            padding.reset_padding_right(initial.get_padding());
+        }
+        if !height_auto {
+            let padding = self.style.mutate_padding();
+            padding.reset_padding_top(initial.get_padding());
+            padding.reset_padding_bottom(initial.get_padding());
+        }
+    }
+
     /// pyro: a `::scroll-marker-group` contains its layout always, and its size unless it is
     /// absolutely positioned, whatever its `contain` says (CSS Overflow 5 recommends the UA rule
     /// `::scroll-marker-group { contain: size !important }`; Chromium contains its layout too and
@@ -1333,6 +1414,7 @@ impl<'a, 'b: 'a> StyleAdjuster<'a, 'b> {
         {
             self.adjust_for_scroll_marker_group();
             self.adjust_for_author_styled_button(element, author_or_user_specified_properties);
+            self.adjust_for_permission_element(element);
             self.adjust_for_backface_in_3d_context(layout_parent_style);
         }
         if !try_tactic.is_empty() {
