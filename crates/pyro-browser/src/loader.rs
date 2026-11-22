@@ -1942,7 +1942,17 @@ impl Browser {
                 };
                 match resolved {
                     Some(u) => Some(u),
-                    None => return, // spec: error event (needs pyro-webapi)
+                    None => {
+                        // HTML prepare step 31.4: a URL that does not parse
+                        // gets `error` in a task (no insertion point then).
+                        let loader_id = self.frame_loader(page);
+                        self.scheduler().post(TaskSource::DomManipulation, move |b| {
+                            if b.frame_loader(page) == loader_id {
+                                b.script_loaded(page, &element, false);
+                            }
+                        });
+                        return;
+                    }
                 }
             }
             None => None,
@@ -1974,15 +1984,18 @@ impl Browser {
                     if let Some(mut l) = b.load_mut(page) {
                         l.blocked = false;
                     }
+                    // "Execute the script element" fires `load`/`error` while
+                    // the parser's insertion point is still defined: their
+                    // handlers' `document.write`s go in at the script.
                     match res {
                         _ if b.script_moved(page, &element) => {}
-                        Ok(text) => {
-                            b.execute_at_insertion_point(page, &text, &u, &element);
+                        Ok(text) => b.at_insertion_point(page, |b| {
+                            b.execute_classic(page, &text, &u, &element);
                             b.script_loaded(page, &element, true);
-                        }
+                        }),
                         Err(e) => {
                             b.report_load_error(page, &e);
-                            b.script_loaded(page, &element, false);
+                            b.at_insertion_point(page, |b| b.script_loaded(page, &element, false));
                         }
                     }
                     b.continue_parsing(page);
@@ -2792,17 +2805,25 @@ impl Browser {
     /// page, so `document.write` parses at the insertion point, then prepares
     /// the external and module scripts that markup contained.
     fn execute_at_insertion_point(&mut self, page: FrameKey, text: &str, url: &str, element: &ResourceNode) {
+        self.at_insertion_point(page, |b| b.execute_classic(page, text, url, element));
+    }
+
+    /// Runs `run` (a parser script's execution, or its `load`/`error`
+    /// event) with the network parser lent to the page, so
+    /// `document.write` parses at the insertion point, then prepares the
+    /// external and module scripts the written markup contained.
+    fn at_insertion_point(&mut self, page: FrameKey, run: impl FnOnce(&mut Browser)) {
         let bindings = self.doc(page).and_then(|p| p.main_frame.page_dom.clone());
         let lent = self.load_mut(page).and_then(|mut l| {
             let parser = l.parser.take()?;
             Some((parser, l.loader_id.clone()))
         });
         let (Some(bindings), Some((parser, loader_id))) = (bindings, lent) else {
-            self.execute_classic(page, text, url, element);
+            run(self);
             return;
         };
         bindings.lend_network_parser(parser);
-        self.execute_classic(page, text, url, element);
+        run(self);
         let parser = bindings.reclaim_network_parser();
         // The script may have started another document's load.
         match self.load_mut(page) {
