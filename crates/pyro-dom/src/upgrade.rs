@@ -145,6 +145,16 @@ impl Dom {
         std::mem::take(&mut self.upgrades.queued)
     }
 
+    /// Put back reactions a caller took but could not run yet, ahead of any
+    /// queued since, keeping their order.
+    pub fn requeue_upgrade_reactions(&mut self, mut items: Vec<UpgradeCandidate>) {
+        if items.is_empty() {
+            return;
+        }
+        items.append(&mut self.upgrades.queued);
+        self.upgrades.queued = items;
+    }
+
     /// Whether `el` is still a candidate: connected, and not custom.
     pub fn awaits_upgrade(&self, el: NodeId) -> bool {
         self.check(el).is_ok_and(|i| self.upgrade_candidate(i) && self.is_connected_idx(i))
