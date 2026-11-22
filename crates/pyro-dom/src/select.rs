@@ -858,13 +858,19 @@ impl Dom {
             }
             Target => self.is_url_target(idx),
             Checked => self.checkedness_idx(idx) || self.option_selected_idx(idx),
-            Indeterminate => {
-                e.control.as_ref().is_some_and(|c| c.indeterminate)
-                    // A progress bar without a value (HTML §4.16.3).
-                    || (e.is_html()
-                        && e.name.local == local_name!("progress")
-                        && e.attr_local(&local_name!("value")).is_none())
-            }
+            // HTML § 4.16.3: a checkbox whose indeterminate IDL attribute is true, a radio button
+            // whose group has no checked radio button, a progress bar without a value.
+            Indeterminate => match self.html_local(idx).map(|l| &**l) {
+                Some("input") => match self.input_type_idx(idx) {
+                    crate::forms::InputType::Checkbox => e.control.as_ref().is_some_and(|c| c.indeterminate),
+                    crate::forms::InputType::Radio => {
+                        self.radio_group(idx).into_iter().all(|r| !self.checkedness_idx(r))
+                    }
+                    _ => false,
+                },
+                Some("progress") => e.attr_local(&local_name!("value")).is_none(),
+                _ => false,
+            },
             Disabled => self.is_disabled_idx(idx),
             Enabled => (self.is_form_control_idx(idx) || self.is_face_idx(idx)) && !self.is_disabled_idx(idx),
             State(s) => self.has_custom_state_idx(idx, s),
