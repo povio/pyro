@@ -128,9 +128,37 @@ fn attached_aac_seek_presents_decoded_tone_with_unspecified_codecs() {
     assert_attached_tone("audio/mp4");
 }
 
+/// A browser thread's task queue: media element tasks, MediaSource events and
+/// SourceBuffer updates run when the test drains it, as between page tasks.
+#[cfg(feature = "test-hooks")]
+#[derive(Default)]
+struct Tasks(RefCell<std::collections::VecDeque<Box<dyn FnOnce()>>>);
+#[cfg(feature = "test-hooks")]
+impl Tasks {
+    fn drain(&self) {
+        for _ in 0..10_000 {
+            let task = self.0.borrow_mut().pop_front();
+            let Some(task) = task else { return };
+            task();
+        }
+        panic!("task loop did not settle");
+    }
+}
+#[cfg(feature = "test-hooks")]
+struct Hooks(Rc<Tasks>);
+#[cfg(feature = "test-hooks")]
+impl PageHooks for Hooks {
+    fn post_task(&self, task: Box<dyn FnOnce()>) {
+        self.0 .0.borrow_mut().push_back(task);
+    }
+    fn navigate(&self, _: NavigationRequest) {}
+}
+
 #[cfg(feature = "test-hooks")]
 fn assert_attached_tone(mime: &str) {
     let e = env("<audio id='audio'></audio>");
+    let tasks = Rc::new(Tasks::default());
+    e.page.set_hooks(Some(Rc::new(Hooks(tasks.clone()))));
     let scope = e.main.scope().unwrap();
     scope.global().set_atom("audioMime", scope.string(mime)).unwrap();
     let bytes = include_bytes!("../../pyro-media/tests/fixtures/fragmented-tone.mp4");
@@ -139,6 +167,8 @@ fn assert_attached_tone(mime: &str) {
         eval(&e.main, &format!("const tone = Uint8Array.of({bytes}).buffer; tone.byteLength")),
         include_bytes!("../../pyro-media/tests/fixtures/fragmented-tone.mp4").len().to_string()
     );
+    // Resource selection runs in a task: the source opens there, and its URL
+    // stays registered until the sourceopen listener revokes it.
     assert_eq!(
         eval(
             &e.main,
@@ -146,17 +176,43 @@ fn assert_attached_tone(mime: &str) {
         const audio = document.getElementById("audio");
         const source = new MediaSource();
         const url = URL.createObjectURL(source);
+        const seen = [];
+        source.addEventListener("sourceopen", () => {
+            seen.push("sourceopen");
+            URL.revokeObjectURL(url);
+        }, { once: true });
+        audio.addEventListener("seeked", () => seen.push("seeked"));
         audio.src = url;
         audio.load();
-        URL.revokeObjectURL(url);
-        const buffer = source.addSourceBuffer(audioMime);
-        buffer.appendBuffer(tone);
-        source.endOfStream();
-        audio.currentTime = 0.4;
-        String(audio.readyState)
+        source.readyState
     "#
         ),
-        "4"
+        "closed"
+    );
+    tasks.drain();
+    assert_eq!(
+        eval(
+            &e.main,
+            r#"
+        const buffer = source.addSourceBuffer(audioMime);
+        buffer.addEventListener("updateend", () => seen.push("updateend"));
+        buffer.appendBuffer(tone);
+        [seen.join(), source.readyState, buffer.updating].join("|")
+    "#
+        ),
+        "sourceopen|open|true"
+    );
+    tasks.drain();
+    assert_eq!(
+        eval(&e.main, r#"source.endOfStream(); [seen.join(), buffer.updating, source.readyState].join("|")"#),
+        "sourceopen,updateend|false|ended"
+    );
+    tasks.drain();
+    assert_eq!(eval(&e.main, "audio.currentTime = 0.4; String(audio.seeking)"), "true");
+    tasks.drain();
+    assert_eq!(
+        eval(&e.main, r#"[seen.join(), audio.seeking, audio.readyState].join("|")"#),
+        "sourceopen,updateend,seeked|false|4"
     );
     let node = e.page.dom.borrow().get_element_by_id(e.page.document(), "audio").unwrap().unwrap();
     let (time, rate, pcm) = e.page.media_audio_channel(node).expect("attached decoder output");

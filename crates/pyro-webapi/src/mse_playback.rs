@@ -165,8 +165,12 @@ pub(super) struct Attachment {
 impl Attachment {
     pub(super) fn video_frame(&mut self, position: f64, duration: f64) -> Option<Frame> {
         // The final frame remains visible with the clock parked at the exclusive range end.
-        let position =
-            if self.ended && position == duration && position > 0. { position.next_down() } else { position };
+        let position = if self.ended && position == duration && position > 0. {
+            // The next double below (f64::next_down needs Rust 1.86).
+            f64::from_bits(position.to_bits() - 1)
+        } else {
+            position
+        };
         self.presentation.frame(position)
     }
 
@@ -232,7 +236,9 @@ pub(super) fn attach(page: &Rc<PageDom>, node: NodeId, gen: u32, url: &str) -> O
                     st.ready = HAVE_METADATA;
                     events.push("loadedmetadata");
                 }
-                if status == "decode" || status == "network" {
+                // The end-of-stream error is reported once per load: later
+                // notifications still carry the source's error status.
+                if (status == "decode" || status == "network") && st.error.is_none() {
                     st.error_serial = st.error_serial.wrapping_add(1);
                     st.error = Some((
                         if status == "decode" { 3 } else { 2 },
