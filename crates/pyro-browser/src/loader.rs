@@ -1991,6 +1991,33 @@ impl Browser {
         self.fetch_script(page, url, kind, ScriptFetch::default(), done);
     }
 
+    /// A script element's fetch. A module script fetched as an import is
+    /// (no integrity, referrer policy or credentials of its own, a CORS
+    /// request without credentials across origins) shares the document's
+    /// module fetches ([`Browser::fetch_imported_module`]): concurrent loads of
+    /// a URL are one fetch, as HTML's module map joins them, and a failure is
+    /// not kept. Anything else is a fetch of its own.
+    fn fetch_element_script(
+        &mut self,
+        page: FrameKey,
+        url: String,
+        kind: ResourceKind,
+        opts: ScriptFetch,
+        done: impl FnOnce(&mut Browser, Result<String, String>) + 'static,
+    ) {
+        let shared = kind == ResourceKind::ModuleScript
+            && opts.integrity.is_none()
+            && opts.referrer_policy.is_none()
+            && opts.credentials.is_none()
+            && opts.module.is_none_or(|ty| ty == ModuleType::JavaScript)
+            && opts.crossorigin.as_deref().is_none_or(|c| !c.eq_ignore_ascii_case("use-credentials"));
+        if shared {
+            self.fetch_imported_module(page, url, Box::new(done));
+        } else {
+            self.fetch_script(page, url, kind, opts, done);
+        }
+    }
+
     /// [`Browser::fetch_text`] honouring a script's `crossorigin` (CORS
     /// mode) and `integrity` (a mismatch is an error).
     pub(crate) fn fetch_script(
@@ -2087,7 +2114,7 @@ impl Browser {
         self.load_mut(page).expect("load").deferred.push_back(ps.clone());
         let kind = if ty == ScriptType::Module { ResourceKind::ModuleScript } else { ResourceKind::Script };
         let loader_id = self.current_loader(page);
-        self.fetch_script(page, url, kind, opts, move |b, res| {
+        self.fetch_element_script(page, url, kind, opts, move |b, res| {
             if b.current_loader(page) != loader_id {
                 return;
             }
@@ -2122,7 +2149,7 @@ impl Browser {
         };
         let kind = if ty == ScriptType::Module { ResourceKind::ModuleScript } else { ResourceKind::Script };
         let u = url.clone();
-        self.fetch_script(page, url, kind, opts, move |b, res| {
+        self.fetch_element_script(page, url, kind, opts, move |b, res| {
             if b.frame_loader(page) != loader_id {
                 return;
             }
@@ -2840,7 +2867,7 @@ impl Browser {
         };
         if external {
             let kind = if module { ResourceKind::ModuleScript } else { ResourceKind::Script };
-            self.fetch_script(page, url, kind, ScriptFetch::of(&info), on_fetched);
+            self.fetch_element_script(page, url, kind, ScriptFetch::of(&info), on_fetched);
         } else {
             on_fetched(self, Ok(info.inline_text));
         }
@@ -2886,7 +2913,7 @@ impl Browser {
         let kind = if module { ResourceKind::ModuleScript } else { ResourceKind::Script };
         let u = url.clone();
         let current = bindings.clone();
-        self.fetch_script(page, url, kind, ScriptFetch::of(&info), move |b, res| {
+        self.fetch_element_script(page, url, kind, ScriptFetch::of(&info), move |b, res| {
             if !b.doc(page).and_then(|p| p.main_frame.page_dom.clone()).is_some_and(|d| Rc::ptr_eq(&d, &current)) {
                 return;
             }
