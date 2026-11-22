@@ -2148,6 +2148,7 @@ impl Browser {
         let module = (kind == ResourceKind::ModuleScript).then(|| module.unwrap_or(ModuleType::JavaScript));
         let cors = kind == ResourceKind::ModuleScript || crossorigin.is_some();
         let initiator = Some(pyro_webapi::resource_timing::Initiator::Script);
+        let request_url = url.clone();
         let req = FetchRequest {
             parser_priority,
             post: None,
@@ -2196,11 +2197,23 @@ impl Browser {
                             // A module script is UTF-8 whatever its charset
                             // says (HTML "fetch a single module script").
                             None if module.is_some() => Ok(pyro_webapi::module_script::utf8_decode(&r.body)),
-                            None => Ok(pyro_net::decode_text_first(
-                                &r.body,
-                                &[r.charset.as_deref(), charset.as_deref(), document_charset],
-                            )
-                            .into_owned()),
+                            None => {
+                                // HTML "fetch a classic script": a response that is not CORS-same-origin
+                                // makes the script's errors muted.
+                                if let Some(state) = b.doc(page) {
+                                    if is_opaque(&r, cors, &state.main_frame.origin) {
+                                        if let Some(bindings) = &state.main_frame.page_dom {
+                                            bindings.mute_script_errors(&r.url);
+                                            bindings.mute_script_errors(&request_url);
+                                        }
+                                    }
+                                }
+                                Ok(pyro_net::decode_text_first(
+                                    &r.body,
+                                    &[r.charset.as_deref(), charset.as_deref(), document_charset],
+                                )
+                                .into_owned())
+                            }
                         }
                     }
                     Ok(r) => Err(format!("HTTP {} for {}", r.status, r.url)),

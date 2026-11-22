@@ -213,7 +213,16 @@ pub fn report_exception(s: &Scope<'_>, exception: &JsException) -> bool {
         return true;
     }
     let ev = EventCore::trusted(&page, EventInterface::ErrorEvent, "error", false, true);
-    {
+    // HTML "muted errors": an exception from a classic script fetched CORS-cross-origin reports
+    // "Script error." with no location and a null error (the console report keeps the details).
+    if exception.url.as_deref().is_some_and(|url| page.script_errors_muted(url)) {
+        let mut fields = ev.fields.borrow_mut();
+        fields.message = "Script error.".to_owned();
+        fields.filename = String::new();
+        fields.lineno = 0;
+        fields.colno = 0;
+        fields.error = None;
+    } else {
         let mut fields = ev.fields.borrow_mut();
         fields.message = format!("Uncaught {}", exception.text());
         fields.filename = match &exception.url {

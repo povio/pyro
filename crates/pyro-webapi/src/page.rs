@@ -117,6 +117,9 @@ pub struct PageDom {
     /// The document's render-blocking element set (see `render_blocking`).
     pub(crate) render_blocking: crate::render_blocking::RenderBlocking,
     connected_iframes: RefCell<FxHashSet<NodeId>>,
+    /// URLs of the classic scripts this document fetched CORS-cross-origin (tainting "opaque"):
+    /// their errors are muted (HTML "muted errors": "Script error.", no location, no error).
+    muted_scripts: RefCell<FxHashSet<String>>,
     pub(crate) selectors: RefCell<SelectorCache>,
     /// Attribute and tag names by JavaScript string identity (see `names`).
     pub(crate) names: crate::names::NameTable,
@@ -927,6 +930,7 @@ impl PageDom {
             flushing_iframes: Cell::new(false),
             render_blocking: Default::default(),
             connected_iframes: RefCell::new(FxHashSet::default()),
+            muted_scripts: RefCell::new(FxHashSet::default()),
             selectors: RefCell::new(SelectorCache::default()),
             names: Default::default(),
             collection_members: RefCell::default(),
@@ -1400,6 +1404,17 @@ impl PageDom {
 
     pub fn has_opaque_origin(&self) -> bool {
         self.opaque_origin.get()
+    }
+
+    /// Marks the classic script at `url` as fetched CORS-cross-origin: an exception thrown from
+    /// it is reported with muted errors (`lifecycle::report_exception`).
+    pub fn mute_script_errors(&self, url: &str) {
+        self.muted_scripts.borrow_mut().insert(url.to_owned());
+    }
+
+    /// Whether exceptions from the script at `url` are reported with muted errors.
+    pub fn script_errors_muted(&self, url: &str) -> bool {
+        self.muted_scripts.borrow().contains(url)
     }
 
     /// HTML "activation notification": trusted user input reached the
