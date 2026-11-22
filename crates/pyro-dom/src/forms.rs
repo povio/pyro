@@ -1838,6 +1838,33 @@ impl Dom {
         matches!(&self.n(doc).kind, NodeKind::Document(d) if d.focus_visible)
     }
 
+    /// Whether the focused element of `doc` matches `:focus-visible`: the flag its focusing set
+    /// (keyboard modality, script focus without a pointer focus), or, as Chrome decides it when it
+    /// matches, the element is a field a virtual keyboard would type into (a textarea, a text-like
+    /// input), whatever focused it. A button that becomes `type=text` while focused shows the ring
+    /// (WPT css/selectors `focus-visible-027`).
+    pub(crate) fn focus_visible_now(&self, doc: u32) -> bool {
+        if self.focus_visible_flag(doc) {
+            return true;
+        }
+        let f = self.focused_idx(doc);
+        f != NIL
+            && match self.html_local(f).map(|l| &**l) {
+                Some("textarea") => true,
+                Some("input") => matches!(
+                    self.input_type_idx(f),
+                    InputType::Text
+                        | InputType::Search
+                        | InputType::Tel
+                        | InputType::Url
+                        | InputType::Email
+                        | InputType::Password
+                        | InputType::Number
+                ),
+                _ => false,
+            }
+    }
+
     /// The element being activated (`:active`), if any.
     pub fn activated(&self, doc: NodeId) -> Option<NodeId> {
         let d = self.check(doc).ok()?;
@@ -1870,7 +1897,7 @@ impl Dom {
 
     /// Whether the focused element matches `:focus-visible`.
     pub fn focus_visible(&self, doc: NodeId) -> bool {
-        self.check(doc).is_ok_and(|d| self.focus_visible_flag(d))
+        self.check(doc).is_ok_and(|d| self.focus_visible_now(d))
     }
 
     /// Sets whether the focused element matches `:focus-visible`.
