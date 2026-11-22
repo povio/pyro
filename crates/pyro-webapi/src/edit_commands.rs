@@ -1872,6 +1872,8 @@ fn extend_mixed_inline(dom: &mut Dom, wrapper: NodeId, text: NodeId, tag: &str, 
             "i" => ("font-style", "italic"),
             "u" => ("text-decoration-line", "underline"),
             "strike" => ("text-decoration-line", "line-through"),
+            "sub" => ("vertical-align", "sub"),
+            "sup" => ("vertical-align", "super"),
             _ => return None,
         };
         let decls = crate::css::parse_declarations(&attrs[0].value);
@@ -1927,7 +1929,7 @@ fn format_inline(page: &Rc<PageDom>, host: NodeId, tag: &str, carriers: &[&str],
             };
             let mut last_wrapper: Option<NodeId> = None;
             let use_css = dom.document_data(doc).is_ok_and(|d| d.style_with_css);
-            let mixed_run = matches!(tag, "b" | "i" | "u" | "strike") && texts.first().zip(texts.get(1)).is_some_and(|(&first, &next)| {
+            let mixed_run = matches!(tag, "b" | "i" | "u" | "strike" | "sub" | "sup") && texts.first().zip(texts.get(1)).is_some_and(|(&first, &next)| {
                 if !editing::is_text(&dom, first) { return false; }
                 let Some(sibling) = dom.next_sibling(first).ok().flatten() else { return false };
                 if !dom.contains(sibling, next).unwrap_or(false) { return false; }
@@ -1939,6 +1941,8 @@ fn format_inline(page: &Rc<PageDom>, host: NodeId, tag: &str, carriers: &[&str],
                     "b" => style.value("font-weight") == "bold",
                     "i" => style.value("font-style") == "italic",
                     "u" => style.value("text-decoration-line").split_whitespace().any(|v| v == "underline"),
+                    "sub" => style.value("vertical-align") == "sub",
+                    "sup" => style.value("vertical-align") == "super",
                     _ => style.value("text-decoration-line").split_whitespace().any(|v| v == "line-through"),
                 }
             });
@@ -2000,6 +2004,8 @@ fn format_inline(page: &Rc<PageDom>, host: NodeId, tag: &str, carriers: &[&str],
                 }
                 let style = if !use_css { None } else if mixed_run && matches!(tag, "strike" | "u") {
                     Some(("text-decoration-line", if tag == "u" { "underline" } else { "line-through" }))
+                } else if mixed_run && matches!(tag, "sub" | "sup") {
+                    Some(("vertical-align", if tag == "sub" { "sub" } else { "super" }))
                 } else { inline_css(tag) };
                 let Ok(w) = dom.create_element(doc, if style.is_some() { "span" } else { tag }) else {
                     continue;

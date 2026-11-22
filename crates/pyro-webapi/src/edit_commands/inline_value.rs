@@ -852,8 +852,14 @@ pub(super) fn change_selected_script(
     let (selection, remove) = {
         let dom = page.dom.borrow();
         let selection = super::inline_texts(page, &dom, host, start, end);
-        if selection.len() != 1 { return false; }
-        let Some((carrier, active)) = script_carrier(page, &dom, selection[0], host) else { return false };
+        let Some(&first) = selection.first() else { return false };
+        let Some((carrier, active)) = script_carrier(page, &dom, first, host) else { return false };
+        if selection.len() > 1 && (active != tag || !selection.iter().all(|&text| {
+            script_carrier(page, &dom, text, host).is_some_and(|(el, script)| {
+                el != host && script == tag && dom.element(el).is_ok_and(|e| e.is_html()
+                    && matches!(&**e.local_name(), "span" | "sub" | "sup"))
+            })
+        })) { return false; }
         if carrier == host || !dom.element(carrier).is_ok_and(|e| e.is_html()
             && matches!(&**e.local_name(), "span" | "sub" | "sup")) { return false; }
         (selection, active == tag)
@@ -862,27 +868,28 @@ pub(super) fn change_selected_script(
     editing::apply_edit(page, host, input_type, None, None, |page| {
         let mut dom = page.dom.borrow_mut();
         let texts = super::split_texts(&mut dom, selection, start, end);
-        let Some(&text) = texts.first() else { return };
-        while let Some((carrier, active)) = script_carrier(page, &dom, text, host) {
-            if !remove && active == tag { break; }
-            if clear_script(page, &mut dom, text, host) != Some(true)
-                || script_carrier(page, &dom, text, host).is_some_and(|(next, _)| next == carrier) { break; }
-        }
-        if !remove && selected_script(page, &dom, text, host) != Some(tag) {
-            let Ok(doc) = dom.node_document(text) else { return };
-            let Ok(Some(parent)) = dom.parent_element(text) else { return };
-            let css = dom.document_data(doc).is_ok_and(|d| d.style_with_css);
-            let reuse = css && parent != host && editing::local(&dom, parent) == "span" && dom.child_count(parent).ok() == Some(1);
-            let el = if reuse { parent } else {
-                let Ok(el) = dom.create_element(doc, if css { "span" } else { tag }) else { return };
-                let _ = dom.insert_before(parent, el, Some(text));
-                let _ = dom.append_child(el, text);
-                el
-            };
-            if css {
-                let mut style = DeclarationBlock::parse(dom.get_attribute(el, "style").ok().flatten().unwrap_or(""));
-                style.set("vertical-align", if tag == "sup" { "super" } else { "sub" }, false);
-                let _ = dom.set_attribute(el, "style", &style.css_text());
+        for &text in &texts {
+            while let Some((carrier, active)) = script_carrier(page, &dom, text, host) {
+                if !remove && active == tag { break; }
+                if clear_script(page, &mut dom, text, host) != Some(true)
+                    || script_carrier(page, &dom, text, host).is_some_and(|(next, _)| next == carrier) { break; }
+            }
+            if !remove && selected_script(page, &dom, text, host) != Some(tag) {
+                let Ok(doc) = dom.node_document(text) else { return };
+                let Ok(Some(parent)) = dom.parent_element(text) else { return };
+                let css = dom.document_data(doc).is_ok_and(|d| d.style_with_css);
+                let reuse = css && parent != host && editing::local(&dom, parent) == "span" && dom.child_count(parent).ok() == Some(1);
+                let el = if reuse { parent } else {
+                    let Ok(el) = dom.create_element(doc, if css { "span" } else { tag }) else { return };
+                    let _ = dom.insert_before(parent, el, Some(text));
+                    let _ = dom.append_child(el, text);
+                    el
+                };
+                if css {
+                    let mut style = DeclarationBlock::parse(dom.get_attribute(el, "style").ok().flatten().unwrap_or(""));
+                    style.set("vertical-align", if tag == "sup" { "super" } else { "sub" }, false);
+                    let _ = dom.set_attribute(el, "style", &style.css_text());
+                }
             }
         }
         drop(dom);
