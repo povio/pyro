@@ -685,10 +685,9 @@ fn legacy_canceled_activation(page: &Rc<PageDom>, el: NodeId, legacy: LegacyPreA
     match legacy {
         LegacyPreActivation::Checkbox { checked, indeterminate } => {
             let _ = dom.set_checked(el, checked);
-            if indeterminate {
-                if let Ok(state) = dom.control_state_mut(el) {
-                    state.indeterminate = true;
-                }
+            // Both as they were, whatever the listeners set meanwhile.
+            if let Ok(state) = dom.control_state_mut(el) {
+                state.indeterminate = indeterminate;
             }
         }
         LegacyPreActivation::Radio { was_checked, previously_checked } => {
