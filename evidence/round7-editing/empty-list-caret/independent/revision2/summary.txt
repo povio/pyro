@@ -1,0 +1,7 @@
+3039 ('matched', 'Fail', 'Fail', 'Fail')
+170 ('matched', 'Fail', 'Fail', 'Pass')
+29309 ('matched', 'Pass', 'Pass', 'Pass')
+790 ('matched', 'Pass', 'Pass', 'Fail')
+8 ('matched', 'Fail', 'Pass', 'Pass')
+17 ('signed only', None, None, 'Fail')
+19 ('signed only', None, None, 'Pass')
