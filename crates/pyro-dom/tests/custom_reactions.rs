@@ -121,3 +121,40 @@ fn form_associated_elements_track_owner_and_disabled_state() {
     dom.clear_custom_states(el).unwrap();
     assert_eq!(dom.query_selector(d, &parse_selectors(":state(open)").unwrap()).unwrap(), None);
 }
+
+#[test]
+fn defined_selector_respects_the_namespace_and_custom_element_state() {
+    let mut dom = Dom::new();
+    let inert = dom.create_document(DocumentKind::Html, "about:blank");
+    let svg = dom.create_element_ns(inert, Some("http://www.w3.org/2000/svg"), "a-a").unwrap();
+    let reserved = dom.create_element(inert, "font-face").unwrap();
+    let candidate = dom.create_element(inert, "a-a").unwrap();
+    let builtin = dom.create_element(inert, "button").unwrap();
+    dom.set_is_value(builtin, Some(LocalName::from("a-a"))).unwrap();
+    let defined = parse_selectors(":defined").unwrap();
+    for (element, expected) in [(svg, true), (reserved, true), (candidate, false), (builtin, false)] {
+        assert_eq!(dom.matches(element, &defined).unwrap(), expected);
+    }
+    dom.set_custom_defined(candidate).unwrap();
+    assert!(dom.matches(candidate, &defined).unwrap());
+}
+
+#[test]
+fn detached_fragment_creation_queues_only_its_registry_definition() {
+    use pyro_dom::upgrade::UpgradeCandidate;
+    let (dom, doc) = doc("<body></body>");
+    let mut dom = dom.borrow_mut();
+    dom.enable_custom_upgrades();
+    let name = LocalName::from("x-badge");
+    dom.note_registry_definition(doc, RegistryAssociation::Scoped(7), &name, &name, vec![]);
+    let host = dom.create_element(doc, "div").unwrap();
+    let root = dom.attach_shadow(host, ShadowRootMode::Open).unwrap();
+    for (registry, expected) in [(RegistryAssociation::Scoped(7), true), (RegistryAssociation::Default, false), (RegistryAssociation::Null, false)] {
+        dom.set_registry_association(root, registry).unwrap();
+        let frag = pyro_dom::parse::parse_setter_fragment_in(&mut dom, host, root, "<x-badge></x-badge>").unwrap();
+        let child = dom.first_child(frag).unwrap().unwrap();
+        assert_eq!(dom.registry_association(child).unwrap(), registry);
+        let queued = dom.take_upgrade_reactions();
+        if expected { assert_eq!(queued, [UpgradeCandidate::Created(child)]); } else { assert!(queued.is_empty()); }
+    }
+}

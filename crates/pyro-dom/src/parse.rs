@@ -1531,6 +1531,7 @@ fn parse_fragment_with(
             dom.link_raw(k, frag.idx, NIL);
         }
     }
+    dom.upgrades_after_fragment_parse(frag.idx);
     // Only the synthetic fallback context belongs to this parse.
     dom.release_candidate(tmp);
     if body_context {

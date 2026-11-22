@@ -450,6 +450,14 @@ impl ElementData {
             is_value: None,
         }
     }
+    /// DOM defines both uncustomized elements and successfully upgraded elements.
+    /// Only HTML elements are eligible for the undefined custom element state.
+    pub(crate) fn is_defined(&self) -> bool {
+        self.flags & element_flags::CUSTOM_DEFINED != 0
+            || !self.is_html()
+            || (self.is_value.is_none() && !crate::dom::is_valid_custom_element_name(&self.name.local))
+    }
+
     /// Whether a custom element definition named `name` may be this element's: an autonomous one
     /// of its local name, or a customized built-in one of its is value.
     pub fn may_be_defined_as(&self, name: &LocalName) -> bool {

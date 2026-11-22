@@ -844,6 +844,13 @@ pub fn class_for(dom: &Dom, id: NodeId) -> ElClass {
     if !e.is_html() {
         return ElClass::Other;
     }
+    if e.flags & pyro_dom::node::element_flags::CUSTOM_FAILED != 0
+        && e.is_value.is_none() && dom.custom_definition_owner(id).is_ok_and(|owner| owner.is_none())
+    {
+        // The failed fallback created by synchronous autonomous construction
+        // never received a definition. A failed upgrade keeps its own class.
+        return ElClass::Unknown;
+    }
     html_class_for_local(&e.name.local)
 }
 

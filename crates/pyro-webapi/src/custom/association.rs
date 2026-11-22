@@ -103,7 +103,7 @@ pub(super) fn pin_registry(obj: &RegistryObject, page: &Rc<PageDom>, doc: NodeId
             if *key != obj.key {
                 continue;
             }
-            dom.note_custom_definition(name, definition.observed.clone());
+            dom.note_registry_definition(doc, key.association(), name, &definition.local_name, definition.observed.clone());
             if definition.disable_shadow {
                 dom.disable_shadow_for_registry(doc, key.association(), name, &definition.local_name);
             }

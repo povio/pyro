@@ -1257,7 +1257,7 @@ impl Dom {
         // The directionality of an element whose content decides it (`dir=auto`, `<bdi>`).
         let auto_dir = self.has_auto_directionality(n).then(|| self.directionality_idx(n));
         // A custom element not defined yet is not `:defined`.
-        let undefined = e.is_html() && local.contains('-') && e.flags & crate::node::element_flags::CUSTOM_DEFINED == 0;
+        let undefined = !e.is_defined();
         if !kind && !editable && natural.is_none() && auto_dir.is_none() && !undefined {
             return None;
         }

@@ -12,9 +12,14 @@ pub(crate) struct UpgradeQueue {
     /// Some window defined a custom element: until then no insertion walks a
     /// subtree looking for candidates.
     enabled: bool,
-    /// Candidates in the order they became connected (shadow-including tree
-    /// order within one insertion).
-    queued: Vec<NodeId>,
+    /// Preserve reaction order across parser creations and connected insertions.
+    queued: Vec<UpgradeCandidate>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum UpgradeCandidate {
+    Connected(NodeId),
+    Created(NodeId),
 }
 
 impl Dom {
@@ -48,7 +53,24 @@ impl Dom {
         while i != NIL {
             if self.upgrade_candidate(i) {
                 let id = self.id_of(i);
-                self.upgrades.queued.push(id);
+                self.upgrades.queued.push(UpgradeCandidate::Connected(id));
+                self.touch_hook();
+            }
+            i = self.next_shadow_including(i, root);
+        }
+    }
+
+    /// Creating an element during fragment parsing enqueues an upgrade when
+    /// its registry has a matching definition, even for a detached fragment.
+    /// The bindings resolve the definition in its own registry at the reaction
+    /// boundary. Template contents are a distinct tree and are not traversed.
+    pub(crate) fn upgrades_after_fragment_parse(&mut self, root: u32) {
+        if !self.upgrades.enabled { return; }
+        let mut i = root;
+        while i != NIL {
+            if self.upgrade_candidate(i) && self.fragment_definition_exists(i) {
+                let id = self.id_of(i);
+                self.upgrades.queued.push(UpgradeCandidate::Created(id));
                 self.touch_hook();
             }
             i = self.next_shadow_including(i, root);
@@ -81,6 +103,12 @@ impl Dom {
     /// The queued candidates, in order; cleared. One may have been removed,
     /// upgraded or collected since: check it before use.
     pub fn take_upgrade_candidates(&mut self) -> Vec<NodeId> {
+        self.take_upgrade_reactions().into_iter().map(|item| match item {
+            UpgradeCandidate::Connected(node) | UpgradeCandidate::Created(node) => node,
+        }).collect()
+    }
+
+    pub fn take_upgrade_reactions(&mut self) -> Vec<UpgradeCandidate> {
         std::mem::take(&mut self.upgrades.queued)
     }
 

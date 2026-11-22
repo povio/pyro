@@ -235,23 +235,7 @@ pub(crate) fn is_being_constructed(page: &PageDom, el: NodeId) -> bool {
     CONSTRUCTIONS.with(|frames| frames.borrow().iter().any(|f| f.el == el && Rc::ptr_eq(&page.dom, &f.page.dom)))
 }
 
-fn valid_name(name: &str) -> bool {
-    const RESERVED: &[&str] = &[
-        "annotation-xml",
-        "color-profile",
-        "font-face",
-        "font-face-src",
-        "font-face-uri",
-        "font-face-format",
-        "font-face-name",
-        "missing-glyph",
-    ];
-    name.starts_with(|c: char| c.is_ascii_lowercase())
-        && name.contains('-')
-        && pyro_dom::dom::is_valid_element_local_name(name)
-        && !name.chars().any(|c| c.is_ascii_uppercase())
-        && !RESERVED.contains(&name)
-}
+use pyro_dom::dom::is_valid_custom_element_name as valid_name;
 
 /// HTML's active custom element constructor map and per-definition
 /// construction stack. Lookups select the innermost invocation of the same
@@ -571,13 +555,16 @@ pub(crate) fn run_upgrades(page: &Rc<PageDom>) {
     loop {
         let batch = {
             let Ok(mut dom) = page.dom.try_borrow_mut() else { return };
-            dom.take_upgrade_candidates()
+            dom.take_upgrade_reactions()
         };
         if batch.is_empty() {
             return;
         }
-        for el in batch {
-            try_upgrade(page, el);
+        for candidate in batch {
+            match candidate {
+                pyro_dom::upgrade::UpgradeCandidate::Connected(el) => try_upgrade(page, el),
+                pyro_dom::upgrade::UpgradeCandidate::Created(el) => try_upgrade_element(page, el),
+            }
         }
     }
 }
@@ -651,13 +638,35 @@ pub(crate) fn create_element_value<'s>(
     };
     if lookup {
         if let Some((owner, key)) = registry_for_node(s, page, el) {
-            let ctor = {
+            let definition = {
                 let dom = page.dom.borrow();
                 let e = dom.element(el).js()?;
-                owner.custom_elements.borrow().ctor_for(s, key, e.local_name(), e.is_value.as_ref())
+                let registry = owner.custom_elements.borrow();
+                registry.def_key(key, e.local_name(), e.is_value.as_ref()).map(|name| {
+                    let ctor = registry.defs[&(key, name.clone())].ctor.get(s);
+                    let fallback = (name == *e.local_name()).then(|| e.name.clone());
+                    (ctor, fallback)
+                })
             };
-            if let Some(ctor) = ctor {
-                upgrade(s, page, el, ctor)?;
+            if let Some((ctor, fallback)) = definition {
+                if let Err(error) = upgrade(s, page, el, ctor) {
+                    // Synchronous construction reports failures in the
+                    // definition's realm. An autonomous constructor can
+                    // retain its own partially constructed element; DOM
+                    // returns a fresh failed HTMLUnknownElement instead.
+                    let realm = owner.realms.borrow().get(&key.realm).and_then(|r| r.upgrade());
+                    if let Some(realm) = realm {
+                        if let Ok(home) = realm.scope() { home.report_exception(&error); }
+                    }
+                    if let Some(name) = fallback {
+                        let mut dom = page.dom.borrow_mut();
+                        let failed = dom.create_element_raw(doc, name).js()?;
+                        dom.set_registry_association(failed, key.association()).js()?;
+                        dom.set_custom_failed(failed).js()?;
+                        drop(dom);
+                        return Ok(crate::node::wrap_created_node(s, page, doc, failed)?.value());
+                    }
+                }
                 return Ok(wrap_node(s, page, el)?.value());
             }
         }
@@ -892,7 +901,7 @@ impl JsClass for CustomElementRegistry {
                 let install_hooks = with_registry(&arena, |r| !std::mem::replace(&mut r.parser_hooks, true));
                 let mut dom = arena.dom.borrow_mut();
                 dom.enable_custom_upgrades();
-                dom.note_custom_definition(&key.1, observed.clone());
+                dom.note_registry_definition(arena.document(), association, &key.1, &local_name, observed.clone());
                 if disable_shadow {
                     dom.disable_shadow_for_registry(arena.document(), association, &key.1, &local_name);
                 }

@@ -1580,6 +1580,7 @@ impl Dom {
     /// Called once the registry has no live wrapper or DOM references.
     pub fn forget_scoped_registry(&mut self, registry: u64) {
         self.scoped_registry_docs.remove(&registry);
+        self.forget_registry_definitions(RegistryAssociation::Scoped(registry), None);
         self.shadow_disabled.retain(|(_, association, _, _)| *association != RegistryAssociation::Scoped(registry));
     }
 
@@ -1848,7 +1849,8 @@ impl Dom {
             return None;
         }
         let id = self.id_of(h);
-        let sr = self.attach_shadow_with(id, mode, flags | shadow_flags::DECLARATIVE).ok()?.idx;
+        let flags = flags | shadow_flags::DECLARATIVE | shadow_flags::AVAILABLE_TO_INTERNALS;
+        let sr = self.attach_shadow_with(id, mode, flags).ok()?.idx;
         let registry = if flags & shadow_flags::KEEP_REGISTRY_NULL != 0 { RegistryAssociation::Null } else { self.registry_idx(self.n(h).owner_doc) };
         self.set_registry_idx(sr, registry);
         Some(sr)
@@ -4557,6 +4559,7 @@ impl Dom {
         }
         if owner == i {
             let doc = self.id_of(i);
+            self.forget_registry_definitions(RegistryAssociation::Default, Some(doc));
             self.scoped_registry_docs.retain(|_, docs| {
                 docs.retain(|(_, known)| *known != doc);
                 !docs.is_empty()
@@ -4771,6 +4774,25 @@ pub fn is_valid_element_local_name(name: &str) -> bool {
         return false;
     }
     chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '.' | ':' | '_') || c >= '\u{80}')
+}
+
+/// HTML "valid custom element name".
+pub fn is_valid_custom_element_name(name: &str) -> bool {
+    const RESERVED: &[&str] = &[
+        "annotation-xml",
+        "color-profile",
+        "font-face",
+        "font-face-src",
+        "font-face-uri",
+        "font-face-format",
+        "font-face-name",
+        "missing-glyph",
+    ];
+    name.starts_with(|c: char| c.is_ascii_lowercase())
+        && name.contains('-')
+        && is_valid_element_local_name(name)
+        && !name.chars().any(|c| c.is_ascii_uppercase())
+        && !RESERVED.contains(&name)
 }
 
 /// DOM "valid attribute local name".

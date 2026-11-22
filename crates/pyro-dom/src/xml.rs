@@ -637,6 +637,7 @@ pub(crate) fn parse_fragment(
     let fragment = dom.create_fragment(dom.node_document(context)?)?;
     let registry = dom.registry_association(context)?;
     attach(dom, fragment, nodes, registry);
+    dom.upgrades_after_fragment_parse(fragment.index());
     Ok(fragment)
 }
 
