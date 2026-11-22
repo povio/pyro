@@ -1951,6 +1951,7 @@ impl Browser {
                     sandbox.top_navigation_needs_activation |= flags.top_navigation_needs_activation;
                     sandbox.document_domain_blocked |= flags.document_domain_blocked;
                     sandbox.forms_blocked |= flags.forms_blocked;
+                    sandbox.propagates_to_popups |= flags.propagates_to_popups;
                 }
                 if flags.forms_blocked {
                     page_dom.set_forms_sandboxed(true);

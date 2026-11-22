@@ -796,6 +796,7 @@ impl FrameHost {
         sandbox.popups_blocked |= ancestor.sandbox.popups_blocked;
         sandbox.document_domain_blocked |= ancestor.sandbox.document_domain_blocked;
         sandbox.forms_blocked |= ancestor.sandbox.forms_blocked;
+        sandbox.propagates_to_popups |= ancestor.sandbox.propagates_to_popups;
         // Blink's Page::kMaxNumberOfFrames: a page holds at most 1000 subframes.
         if self.children.borrow().len() >= 1000 {
             return Err(JsError::Range("child frame limit reached".into()));
@@ -1177,6 +1178,9 @@ pub(crate) struct Sandbox {
     pub document_domain_blocked: bool,
     /// The sandboxed forms browsing context flag (no `allow-forms`): no form submission.
     pub forms_blocked: bool,
+    /// The sandbox propagates to auxiliary browsing contexts flag (no
+    /// `allow-popups-to-escape-sandbox`): popups take these flags.
+    pub propagates_to_popups: bool,
 }
 impl Sandbox {
     pub fn parse(value: Option<&str>) -> Self {
@@ -1196,6 +1200,41 @@ impl Sandbox {
             top_navigation_needs_activation: !top && top_by_activation,
             document_domain_blocked: true,
             forms_blocked: !tokens.iter().any(|t| t.eq_ignore_ascii_case("allow-forms")),
+            propagates_to_popups: !tokens.iter().any(|t| t.eq_ignore_ascii_case("allow-popups-to-escape-sandbox")),
+        }
+    }
+
+    /// The flags as `PopupTicket` sandbox bits (0: nothing sandboxed).
+    pub fn to_bits(self) -> u32 {
+        [
+            self.opaque,
+            self.scripts_disabled,
+            self.automatic_features_blocked,
+            self.popups_blocked,
+            self.navigation_blocked,
+            self.top_navigation_blocked,
+            self.top_navigation_needs_activation,
+            self.document_domain_blocked,
+            self.forms_blocked,
+            self.propagates_to_popups,
+        ]
+        .iter()
+        .enumerate()
+        .fold(0, |bits, (i, &set)| if set { bits | 1 << i } else { bits })
+    }
+    pub fn from_bits(bits: u32) -> Self {
+        let set = |i: u32| bits & (1 << i) != 0;
+        Self {
+            opaque: set(0),
+            scripts_disabled: set(1),
+            automatic_features_blocked: set(2),
+            popups_blocked: set(3),
+            navigation_blocked: set(4),
+            top_navigation_blocked: set(5),
+            top_navigation_needs_activation: set(6),
+            document_domain_blocked: set(7),
+            forms_blocked: set(8),
+            propagates_to_popups: set(9),
         }
     }
 

@@ -625,6 +625,9 @@ pub struct Page {
     /// URL (origin, opaque-origin token, base URL), as a child frame's do
     /// from its parent.
     opener_origin: Option<(String, u64, String)>,
+    /// A popup's sandboxing flags from the sandboxed document that opened it (HTML "popup
+    /// sandboxing flag set"): its top-level documents take them.
+    popup_sandbox: Option<frames::Sandbox>,
     user_agent_override: Option<pyro_webapi::UserAgentOverride>,
     /// `navigator.maxTouchPoints` of its documents (touch emulation).
     max_touch_points: u32,
@@ -1626,6 +1629,7 @@ impl Browser {
             popup: None,
             script_closable: false,
             opener_origin: None,
+            popup_sandbox: None,
             user_agent_override: None,
             max_touch_points: 0,
             script_execution_disabled: false,
@@ -1727,6 +1731,9 @@ impl Browser {
             .and_then(|p| self.contexts.iter().find(|c| c.id == p.context))
             .map(|c| c.local_storage.clone());
         let Some(p) = self.page_mut(page) else { return };
+        if ticket.sandbox_bits() != 0 {
+            p.popup_sandbox = Some(frames::Sandbox::from_bits(ticket.sandbox_bits()));
+        }
         let session = ticket.session_storage();
         p.session_storage = session.clone();
         p.frames.settings.borrow_mut().session = session.clone();
@@ -2212,13 +2219,17 @@ impl Browser {
                 flags.top_navigation_needs_activation |= parent.sandbox.top_navigation_needs_activation;
                 flags.document_domain_blocked |= parent.sandbox.document_domain_blocked;
                 flags.forms_blocked |= parent.sandbox.forms_blocked;
+                flags.propagates_to_popups |= parent.sandbox.propagates_to_popups;
             }
             flags
         } else {
             // A top-level document: the page's script switch, which its
-            // frames inherit like a sandbox without `allow-scripts`.
+            // frames inherit like a sandbox without `allow-scripts`, and a popup's sandboxing
+            // flags from its creator (HTML "popup sandboxing flag set").
             let disabled = self.page(page.page).is_some_and(|p| p.script_execution_disabled);
-            frames::Sandbox { scripts_disabled: disabled, ..Default::default() }
+            let mut flags = self.page(page.page).and_then(|p| p.popup_sandbox).unwrap_or_default();
+            flags.scripts_disabled |= disabled;
+            flags
         };
         self.doc_mut(page).ok_or(JsError::ContextDestroyed)?.main_frame.sandbox = sandbox;
         let inherit_url = matches!(opts.url.as_str(), "about:blank" | "about:srcdoc") && inherit_from.is_some();

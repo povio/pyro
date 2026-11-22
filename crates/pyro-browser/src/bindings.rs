@@ -493,6 +493,12 @@ impl PageHooks for Hooks {
             // popup page; the embedder creates and navigates it.
             if new_context && request.method == "GET" {
                 let frame = b.doc(page).map(|p| (p.main_frame.id.clone(), p.main_frame.sandbox.popups_blocked));
+                // HTML "popup sandboxing flag set": the popup takes the sandbox of the document
+                // that opened it unless that allows popups to escape it.
+                let sandbox = b.doc(page).map(|p| p.main_frame.sandbox).filter(|s| s.propagates_to_popups);
+                if let (Some(ticket), Some(sandbox)) = (request.popup.as_ref(), sandbox) {
+                    ticket.set_sandbox_bits(sandbox.to_bits());
+                }
                 if let Some((frame_id, false)) = frame {
                     b.emit(
                         page.page,

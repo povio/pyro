@@ -60,6 +60,9 @@ pub struct PopupState {
     /// `window.open` ran (HTML creates it synchronously), until the embedder
     /// turns it into the popup page (`PopupTicket::take_prebuilt`).
     prebuilt: RefCell<Option<Box<dyn std::any::Any>>>,
+    /// The sandboxing flags the popup's documents take from its creator (HTML "popup sandboxing
+    /// flag set"), as the embedder encodes them; 0 for none.
+    sandbox: Cell<u32>,
 }
 
 impl std::fmt::Debug for PopupState {
@@ -97,6 +100,7 @@ impl PopupTicket {
             page: RefCell::new(Weak::new()),
             opener_cleared: Cell::new(false),
             prebuilt: RefCell::new(None),
+            sandbox: Cell::new(0),
         });
         (Rc::new(Self(state.clone())), state)
     }
@@ -113,6 +117,14 @@ impl PopupTicket {
     /// The browsing context name the popup was opened with ("" for `_blank`).
     pub fn name(&self) -> &str {
         &self.0.name
+    }
+
+    /// The popup sandboxing flag set the embedder recorded for the popup (0: none).
+    pub fn sandbox_bits(&self) -> u32 {
+        self.0.sandbox.get()
+    }
+    pub fn set_sandbox_bits(&self, bits: u32) {
+        self.0.sandbox.set(bits);
     }
 
     /// The session storage namespace the popup page must use.
