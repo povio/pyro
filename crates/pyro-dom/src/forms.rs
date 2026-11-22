@@ -130,21 +130,17 @@ impl Dom {
         }
     }
 
-    /// A clean textarea's relevant value follows its descendant text. Read
-    /// it only for a tracked control before a tree or character-data change.
-    pub(crate) fn tracked_textarea_value(&self, mut node: u32) -> Option<(NodeId, String)> {
-        if self.value_ranges.is_empty() { return None }
-        while node != NIL {
-            if self.value_ranges.contains_key(&node) && self.html_local(node) == Some(&local_name!("textarea")) {
-                let el = self.n(node).element()?;
-                if el.control.as_ref().is_none_or(|control| control.value.is_none()) {
-                    let id = self.id_of(node);
-                    return Some((id, self.value(id).ok()?));
-                }
-            }
-            node = self.n(node).parent;
+    /// Only direct text children supply a clean textarea's default value.
+    pub(crate) fn tracked_textarea_value(&self, parent: u32) -> Option<(NodeId, String)> {
+        if !self.value_ranges.contains_key(&parent) || self.html_local(parent) != Some(&local_name!("textarea")) {
+            return None;
         }
-        None
+        let el = self.n(parent).element()?;
+        if el.control.as_ref().is_some_and(|control| control.value.is_some()) {
+            return None;
+        }
+        let id = self.id_of(parent);
+        Some((id, self.value(id).ok()?))
     }
 
     pub(crate) fn update_tracked_textarea(&mut self, old: Option<(NodeId, String)>) {
@@ -956,11 +952,7 @@ impl Dom {
             }
             "textarea" => match e.control.as_ref().and_then(|c| c.value.as_ref()) {
                 Some(v) => v.clone(),
-                None => {
-                    let mut s = String::new();
-                    self.collect_text(i, &mut s);
-                    s.replace("\r\n", "\n").replace('\r', "\n")
-                }
+                None => self.child_text_content(id).replace("\r\n", "\n").replace('\r', "\n"),
             },
             "select" => match self.selected_options_idx(i).first() {
                 Some(&o) => self.option_value(self.id_of(o))?,
