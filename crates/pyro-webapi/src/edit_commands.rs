@@ -1541,14 +1541,14 @@ fn relink_text(dom: &mut Dom, host: NodeId, text: NodeId, href: &str, entire_run
         }
     }
     dom.remove_attribute(anchor, "id").ok()?;
-    let outside = if let Some(style) = style.filter(|_| entire_run == Some(anchor)) {
+    let outside = if let Some(style) = style.as_deref().filter(|_| entire_run == Some(anchor)) {
         // A selection confined to this link inherits the old presentation
         // outside the new link. Its own link color can therefore take effect.
         dom.append_child(replacement, branch).ok()?;
-        link_style_shell(dom, doc, replacement, &style)?
+        link_style_shell(dom, doc, replacement, style)?
     } else {
-        let content = match dom.get_attribute(anchor, "style").ok()?.map(str::to_owned) {
-            Some(style) => link_style_shell(dom, doc, branch, &style)?,
+        let content = match style.as_deref() {
+            Some(style) => link_style_shell(dom, doc, branch, style)?,
             None => branch,
         };
         dom.append_child(replacement, content).ok()?;
