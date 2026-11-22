@@ -1,0 +1,316 @@
+{
+  "parentEvidence": "89d5bb203b935ce356e870cfa24e5f0854dee6d5",
+  "sourceEvidenceSHA256": {
+    "base": "d7e9584c6acfeb71b67d127201b9479a2da6cbef230cd68602b64e9c44ad3511",
+    "candidate": "d77f3fe902e3e62609ee0a5bb669e589dc80641164de248011b9bc73ac3cef4f",
+    "chrome158": "83ca20b83374594c929fb3706926fc462b2916b9246a1f1bacd9880dd4261c31"
+  },
+  "runs": {
+    "base": [
+      {
+        "dir": "webcodecs",
+        "url": "webcodecs/video-encoder-flush.https.any.html?av1",
+        "source": "webcodecs/video-encoder-flush.https.any.js",
+        "blob": "291f4df3bc00528f3b2f2b6063d7775fc22237cc",
+        "environment": "window",
+        "long": false,
+        "protocol": "https",
+        "status": "complete",
+        "ms": 46,
+        "error": null,
+        "subtests": [
+          {
+            "name": "Test reset during flush",
+            "status": "Fail",
+            "msg": "promise_test: Unhandled rejection with value: object \"ReferenceError: Can't find variable: VideoEncoder\""
+          },
+          {
+            "name": "Test new flush after reset in a flush callback",
+            "status": "Fail",
+            "msg": "promise_test: Unhandled rejection with value: object \"ReferenceError: Can't find variable: VideoEncoder\""
+          }
+        ],
+        "harnessStatus": "OK"
+      },
+      {
+        "dir": "webcodecs",
+        "url": "webcodecs/video-encoder-flush.https.any.html?vp8",
+        "source": "webcodecs/video-encoder-flush.https.any.js",
+        "blob": "291f4df3bc00528f3b2f2b6063d7775fc22237cc",
+        "environment": "window",
+        "long": false,
+        "protocol": "https",
+        "status": "complete",
+        "ms": 47,
+        "error": null,
+        "subtests": [
+          {
+            "name": "Test reset during flush",
+            "status": "Fail",
+            "msg": "promise_test: Unhandled rejection with value: object \"ReferenceError: Can't find variable: VideoEncoder\""
+          },
+          {
+            "name": "Test new flush after reset in a flush callback",
+            "status": "Fail",
+            "msg": "promise_test: Unhandled rejection with value: object \"ReferenceError: Can't find variable: VideoEncoder\""
+          }
+        ],
+        "harnessStatus": "OK"
+      },
+      {
+        "dir": "webcodecs",
+        "url": "webcodecs/video-encoder-flush.https.any.worker.html?av1",
+        "source": "webcodecs/video-encoder-flush.https.any.js",
+        "blob": "291f4df3bc00528f3b2f2b6063d7775fc22237cc",
+        "environment": "dedicatedworker",
+        "long": false,
+        "protocol": "https",
+        "status": "complete",
+        "ms": 59,
+        "error": null,
+        "subtests": [
+          {
+            "name": "Test reset during flush",
+            "status": "Fail",
+            "msg": "promise_test: Unhandled rejection with value: object \"ReferenceError: Can't find variable: VideoEncoder\""
+          },
+          {
+            "name": "Test new flush after reset in a flush callback",
+            "status": "Fail",
+            "msg": "promise_test: Unhandled rejection with value: object \"ReferenceError: Can't find variable: VideoEncoder\""
+          }
+        ],
+        "harnessStatus": "OK"
+      },
+      {
+        "dir": "webcodecs",
+        "url": "webcodecs/video-encoder-flush.https.any.worker.html?vp8",
+        "source": "webcodecs/video-encoder-flush.https.any.js",
+        "blob": "291f4df3bc00528f3b2f2b6063d7775fc22237cc",
+        "environment": "dedicatedworker",
+        "long": false,
+        "protocol": "https",
+        "status": "complete",
+        "ms": 99,
+        "error": null,
+        "subtests": [
+          {
+            "name": "Test reset during flush",
+            "status": "Fail",
+            "msg": "promise_test: Unhandled rejection with value: object \"ReferenceError: Can't find variable: VideoEncoder\""
+          },
+          {
+            "name": "Test new flush after reset in a flush callback",
+            "status": "Fail",
+            "msg": "promise_test: Unhandled rejection with value: object \"ReferenceError: Can't find variable: VideoEncoder\""
+          }
+        ],
+        "harnessStatus": "OK"
+      }
+    ],
+    "candidate": [
+      {
+        "dir": "webcodecs",
+        "url": "webcodecs/video-encoder-flush.https.any.html?av1",
+        "source": "webcodecs/video-encoder-flush.https.any.js",
+        "blob": "291f4df3bc00528f3b2f2b6063d7775fc22237cc",
+        "environment": "window",
+        "long": false,
+        "protocol": "https",
+        "status": "error",
+        "ms": 10022,
+        "error": "Unhandled rejection: Video encoder configure failed.",
+        "subtests": [
+          {
+            "name": "Test reset during flush",
+            "status": "Fail",
+            "msg": "assert_unreached: unexpected error Reached unreachable code"
+          },
+          {
+            "name": "Test new flush after reset in a flush callback",
+            "status": "Timeout",
+            "msg": "Test timed out"
+          }
+        ],
+        "harnessStatus": "Error"
+      },
+      {
+        "dir": "webcodecs",
+        "url": "webcodecs/video-encoder-flush.https.any.html?vp8",
+        "source": "webcodecs/video-encoder-flush.https.any.js",
+        "blob": "291f4df3bc00528f3b2f2b6063d7775fc22237cc",
+        "environment": "window",
+        "long": false,
+        "protocol": "https",
+        "status": "error",
+        "ms": 10021,
+        "error": "Unhandled rejection: Video encoder configure failed.",
+        "subtests": [
+          {
+            "name": "Test reset during flush",
+            "status": "Fail",
+            "msg": "assert_unreached: unexpected error Reached unreachable code"
+          },
+          {
+            "name": "Test new flush after reset in a flush callback",
+            "status": "Timeout",
+            "msg": "Test timed out"
+          }
+        ],
+        "harnessStatus": "Error"
+      },
+      {
+        "dir": "webcodecs",
+        "url": "webcodecs/video-encoder-flush.https.any.worker.html?av1",
+        "source": "webcodecs/video-encoder-flush.https.any.js",
+        "blob": "291f4df3bc00528f3b2f2b6063d7775fc22237cc",
+        "environment": "dedicatedworker",
+        "long": false,
+        "protocol": "https",
+        "status": "timeout",
+        "ms": 10028,
+        "error": null,
+        "subtests": [
+          {
+            "name": "Test reset during flush",
+            "status": "Fail",
+            "msg": "assert_unreached: unexpected error Reached unreachable code"
+          },
+          {
+            "name": "Test new flush after reset in a flush callback",
+            "status": "Timeout",
+            "msg": "Test timed out"
+          }
+        ],
+        "harnessStatus": "Timeout"
+      },
+      {
+        "dir": "webcodecs",
+        "url": "webcodecs/video-encoder-flush.https.any.worker.html?vp8",
+        "source": "webcodecs/video-encoder-flush.https.any.js",
+        "blob": "291f4df3bc00528f3b2f2b6063d7775fc22237cc",
+        "environment": "dedicatedworker",
+        "long": false,
+        "protocol": "https",
+        "status": "timeout",
+        "ms": 10010,
+        "error": null,
+        "subtests": [
+          {
+            "name": "Test reset during flush",
+            "status": "Fail",
+            "msg": "assert_unreached: unexpected error Reached unreachable code"
+          },
+          {
+            "name": "Test new flush after reset in a flush callback",
+            "status": "Timeout",
+            "msg": "Test timed out"
+          }
+        ],
+        "harnessStatus": "Timeout"
+      }
+    ],
+    "chrome158": [
+      {
+        "dir": "webcodecs",
+        "url": "webcodecs/video-encoder-flush.https.any.html?av1",
+        "source": "webcodecs/video-encoder-flush.https.any.js",
+        "blob": "291f4df3bc00528f3b2f2b6063d7775fc22237cc",
+        "environment": "window",
+        "long": false,
+        "protocol": "https",
+        "status": "complete",
+        "ms": 782,
+        "error": null,
+        "subtests": [
+          {
+            "name": "Test reset during flush",
+            "status": "Pass",
+            "msg": ""
+          },
+          {
+            "name": "Test new flush after reset in a flush callback",
+            "status": "Pass",
+            "msg": ""
+          }
+        ],
+        "harnessStatus": "OK"
+      },
+      {
+        "dir": "webcodecs",
+        "url": "webcodecs/video-encoder-flush.https.any.html?vp8",
+        "source": "webcodecs/video-encoder-flush.https.any.js",
+        "blob": "291f4df3bc00528f3b2f2b6063d7775fc22237cc",
+        "environment": "window",
+        "long": false,
+        "protocol": "https",
+        "status": "complete",
+        "ms": 102,
+        "error": null,
+        "subtests": [
+          {
+            "name": "Test reset during flush",
+            "status": "Pass",
+            "msg": ""
+          },
+          {
+            "name": "Test new flush after reset in a flush callback",
+            "status": "Pass",
+            "msg": ""
+          }
+        ],
+        "harnessStatus": "OK"
+      },
+      {
+        "dir": "webcodecs",
+        "url": "webcodecs/video-encoder-flush.https.any.worker.html?av1",
+        "source": "webcodecs/video-encoder-flush.https.any.js",
+        "blob": "291f4df3bc00528f3b2f2b6063d7775fc22237cc",
+        "environment": "dedicatedworker",
+        "long": false,
+        "protocol": "https",
+        "status": "complete",
+        "ms": 226,
+        "error": null,
+        "subtests": [
+          {
+            "name": "Test reset during flush",
+            "status": "Pass",
+            "msg": ""
+          },
+          {
+            "name": "Test new flush after reset in a flush callback",
+            "status": "Pass",
+            "msg": ""
+          }
+        ],
+        "harnessStatus": "OK"
+      },
+      {
+        "dir": "webcodecs",
+        "url": "webcodecs/video-encoder-flush.https.any.worker.html?vp8",
+        "source": "webcodecs/video-encoder-flush.https.any.js",
+        "blob": "291f4df3bc00528f3b2f2b6063d7775fc22237cc",
+        "environment": "dedicatedworker",
+        "long": false,
+        "protocol": "https",
+        "status": "complete",
+        "ms": 289,
+        "error": null,
+        "subtests": [
+          {
+            "name": "Test reset during flush",
+            "status": "Pass",
+            "msg": ""
+          },
+          {
+            "name": "Test new flush after reset in a flush callback",
+            "status": "Pass",
+            "msg": ""
+          }
+        ],
+        "harnessStatus": "OK"
+      }
+    ]
+  }
+}
