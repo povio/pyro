@@ -1,0 +1,554 @@
+[
+  {
+    "url": "fetch/api/headers/headers-basic.any.html",
+    "name": "Appending a value pair during iteration causes it to be reached during iteration",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.html",
+    "name": "Check Symbol.iterator method",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.html",
+    "name": "Check append method",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.html",
+    "name": "Check delete method",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.html",
+    "name": "Check entries method",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Fail",
+    "base": "Fail",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.html",
+    "name": "Check forEach method",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.html",
+    "name": "Check get method",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.html",
+    "name": "Check has method",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.html",
+    "name": "Check keys method",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Fail",
+    "base": "Fail",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.html",
+    "name": "Check set method",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.html",
+    "name": "Check values method",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Fail",
+    "base": "Fail",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.html",
+    "name": "Create headers from empty object",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.html",
+    "name": "Create headers from no parameter",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.html",
+    "name": "Create headers from undefined parameter",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.html",
+    "name": "Create headers with 1 should throw",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.html",
+    "name": "Create headers with existing headers",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.html",
+    "name": "Create headers with existing headers with custom iterator",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.html",
+    "name": "Create headers with null should throw",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.html",
+    "name": "Create headers with record",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.html",
+    "name": "Create headers with sequence",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.html",
+    "name": "Iteration skips elements removed while iterating",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.html",
+    "name": "Prepending a value pair before the current element position causes it to be skipped during iteration and adds the current element a second time",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.html",
+    "name": "Removing elements already iterated over causes an element to be skipped during iteration",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.sharedworker.html",
+    "name": "Appending a value pair during iteration causes it to be reached during iteration",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.sharedworker.html",
+    "name": "Check Symbol.iterator method",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.sharedworker.html",
+    "name": "Check append method",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.sharedworker.html",
+    "name": "Check delete method",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.sharedworker.html",
+    "name": "Check entries method",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Fail",
+    "base": "Fail",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.sharedworker.html",
+    "name": "Check forEach method",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.sharedworker.html",
+    "name": "Check get method",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.sharedworker.html",
+    "name": "Check has method",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.sharedworker.html",
+    "name": "Check keys method",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Fail",
+    "base": "Fail",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.sharedworker.html",
+    "name": "Check set method",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.sharedworker.html",
+    "name": "Check values method",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Fail",
+    "base": "Fail",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.sharedworker.html",
+    "name": "Create headers from empty object",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.sharedworker.html",
+    "name": "Create headers from no parameter",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.sharedworker.html",
+    "name": "Create headers from undefined parameter",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.sharedworker.html",
+    "name": "Create headers with 1 should throw",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.sharedworker.html",
+    "name": "Create headers with existing headers",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.sharedworker.html",
+    "name": "Create headers with existing headers with custom iterator",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.sharedworker.html",
+    "name": "Create headers with null should throw",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.sharedworker.html",
+    "name": "Create headers with record",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.sharedworker.html",
+    "name": "Create headers with sequence",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.sharedworker.html",
+    "name": "Iteration skips elements removed while iterating",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.sharedworker.html",
+    "name": "Prepending a value pair before the current element position causes it to be skipped during iteration and adds the current element a second time",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.sharedworker.html",
+    "name": "Removing elements already iterated over causes an element to be skipped during iteration",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.worker.html",
+    "name": "Appending a value pair during iteration causes it to be reached during iteration",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.worker.html",
+    "name": "Check Symbol.iterator method",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.worker.html",
+    "name": "Check append method",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.worker.html",
+    "name": "Check delete method",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.worker.html",
+    "name": "Check entries method",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Fail",
+    "base": "Fail",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.worker.html",
+    "name": "Check forEach method",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.worker.html",
+    "name": "Check get method",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.worker.html",
+    "name": "Check has method",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.worker.html",
+    "name": "Check keys method",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Fail",
+    "base": "Fail",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.worker.html",
+    "name": "Check set method",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.worker.html",
+    "name": "Check values method",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Fail",
+    "base": "Fail",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.worker.html",
+    "name": "Create headers from empty object",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.worker.html",
+    "name": "Create headers from no parameter",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.worker.html",
+    "name": "Create headers from undefined parameter",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.worker.html",
+    "name": "Create headers with 1 should throw",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.worker.html",
+    "name": "Create headers with existing headers",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.worker.html",
+    "name": "Create headers with existing headers with custom iterator",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.worker.html",
+    "name": "Create headers with null should throw",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.worker.html",
+    "name": "Create headers with record",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.worker.html",
+    "name": "Create headers with sequence",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.worker.html",
+    "name": "Iteration skips elements removed while iterating",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.worker.html",
+    "name": "Prepending a value pair before the current element position causes it to be skipped during iteration and adds the current element a second time",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  },
+  {
+    "url": "fetch/api/headers/headers-basic.any.worker.html",
+    "name": "Removing elements already iterated over causes an element to be skipped during iteration",
+    "chrome158": "Pass",
+    "observed-fada294a3": "Pass",
+    "base": "Pass",
+    "candidate": "Pass"
+  }
+]

@@ -1,0 +1,15 @@
+source c5afdca9ee664f7aa97887388b359ad121125a54
+tree 62c1e8acb1caf0aa6a9b6c973fe6b4e40fbdb317
+parent f841246092d333d84ea1e57367aeed1b4143cfb2 fada294a39210c7e5552ea8cc977fe4f58a8b7e1
+clean before and after, target /Users/xban1x/Library/Caches/lightningpanda/round7-calc-size-45cbd3f26/target
+PYRO_BUILD_JOBS=1 CARGO_BUILD_JOBS=1 build-exact, wptiter with render, release-fast, LTO false, 16 codegen units, incremental
+rustc 1.100.0 (0ef1bc386 2026-11-09)
+binary: rustc
+commit-hash: 0ef1bc386059596dada8fb65b50425aab2ea637a
+commit-date: 2026-11-09
+host: aarch64-apple-darwin
+release: 1.100.0
+LLVM version: 23.1.5
+3deb71f8e7d14daf174e35340a4ff0c1900b0e9f576503adeb5facbb1201f029  /Users/xban1x/Library/Caches/lightningpanda/jsc/0e0dd7038a7a-6f4649e395e0/lib/libJavaScriptCore.a
+49e054d8398857bd65fc09e77bd2b6d6c7d443eb0f6c982bc0507740069e1dcb  /Users/xban1x/Library/Caches/lightningpanda/round7-headers-0a1f01b72/parent/pyro
+1c2c2d40a9d1d2f194b0a1d7e470d3199a8492d1b2bf0327a90079ae23bf9e4e  /Users/xban1x/Library/Caches/lightningpanda/round7-headers-0a1f01b72/parent/build.log
