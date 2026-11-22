@@ -544,10 +544,17 @@ pub(crate) fn hide_showing_popover(
 pub(crate) fn source_option<'s>(s: &pyro_js::Scope<'s>, v: pyro_js::Value<'s>) -> JsResult<Option<NodeId>> {
     let Some(o) = v.as_object() else { return Ok(None) };
     let source = o.get_atom("source")?;
-    if source.is_nullish() {
+    // Web IDL: `source` is a (non-nullable) HTMLElement: absent is none, null or anything that
+    // is not an element throws.
+    if source.is_undefined() {
         return Ok(None);
     }
-    Ok(s.unwrap::<crate::node::Node>(source).map(|n| n.id))
+    match s.unwrap::<crate::node::Node>(source) {
+        Some(n) if n.page().dom.borrow().element(n.id).is_ok() => Ok(Some(n.id)),
+        _ => Err(JsError::Type(
+            "Failed to read the 'source' property: The provided value is not of type 'HTMLElement'.".into(),
+        )),
+    }
 }
 
 // ----- light dismiss and close requests --------------------------------------------
