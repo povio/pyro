@@ -27,12 +27,12 @@
     "fetch/cross-origin-resource-policy": 10,
     "encoding": 7,
     "FileAPI": 4,
-    "fetch/nosniff": 3,
     "fetch/data-urls": 3,
+    "fetch/nosniff": 3,
     "xhr": 2,
-    "html/rendering": 1,
     "svg/styling": 1,
-    "quirks": 1
+    "quirks": 1,
+    "html/rendering": 1
    }
   },
   "in_progress": {
@@ -60,15 +60,15 @@
   },
   "queued": {
    "scope": {
-    "macbook_in_scope": 216,
+    "macbook_in_scope": 215,
     "studio_in_scope": 308,
     "other_dirs_out_of_scope": 297,
     "macbook_worker_variants_if_enabled": 17,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 712,
+   "distinct_census_pages": 711,
    "owner_reported_unlisted": 0,
-   "selector_union": 844,
+   "selector_union": 843,
    "owner_estimate_reduction": 132,
    "of_which_tentative": 190,
    "studio_css_reported_pages_not_deduped": 122,
@@ -86,13 +86,13 @@
     "html/dom": 13,
     "workers": 12,
     "fetch/stale-while-revalidate": 5,
-    "fetch/range": 5,
     "html/interaction": 5,
+    "fetch/range": 5,
     "svg/path": 4,
     "html/infrastructure": 3,
     "fetch/data-urls": 3,
     "fetch/http-cache": 3,
-    "encoding": 2,
+    "encoding": 1,
     "dom/nodes": 1
    }
   }
@@ -1107,7 +1107,7 @@
    "tentative": 0
   },
   "R-ENC-2": {
-   "state": "proposed",
+   "state": "held",
    "in_scope_pages": 1,
    "out_of_scope_pages": 0,
    "pages": 1,
