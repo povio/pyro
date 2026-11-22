@@ -208,6 +208,70 @@ fn bounded_transition_inset(
     })
 }
 
+/// Whether `style`'s value in anchor slot `slot` (`left`, `right`, `top`, `bottom`, `width`,
+/// `height`, `min-width`, `min-height`, `max-width`, `max-height`) has an `anchor()` or
+/// `anchor-size()`, which layout resolves ([`crate::style::StyleEngine::anchor_used`]).
+pub fn anchor_slot_queries(style: &style::properties::ComputedValues, slot: usize) -> bool {
+    use style::values::computed::length::{MaxSize, Size};
+    use style::values::computed::position::Inset;
+    let pos = style.get_position();
+    let inset = |v: &Inset| matches!(v, Inset::AnchorFunction(_) | Inset::AnchorSizeFunction(_) | Inset::AnchorContainingCalcFunction(_));
+    let size = |v: &Size| matches!(v, Size::AnchorSizeFunction(_) | Size::AnchorContainingCalcFunction(_));
+    let max = |v: &MaxSize| matches!(v, MaxSize::AnchorSizeFunction(_) | MaxSize::AnchorContainingCalcFunction(_));
+    match slot {
+        0 => inset(&pos.left),
+        1 => inset(&pos.right),
+        2 => inset(&pos.top),
+        3 => inset(&pos.bottom),
+        4 => size(&pos.width),
+        5 => size(&pos.height),
+        6 => size(&pos.min_width),
+        7 => size(&pos.min_height),
+        8 => max(&pos.max_width),
+        9 => max(&pos.max_height),
+        _ => false,
+    }
+}
+
+/// `style` with the `anchor()`/`anchor-size()` values of the anchor slots `slots` picks
+/// ([`anchor_slot_queries`]) replaced by their used px `px`: the computed values a CSS transition
+/// runs between, as Chrome computes `anchor()` to px before it transitions (WPT css-anchor-position
+/// `anchor-transition-*`). `None`: nothing to replace.
+pub fn with_anchor_px(
+    style: &crate::timing::StyleSnapshot,
+    px: &[Option<f32>; 10],
+    slots: impl Fn(usize) -> bool,
+) -> Option<crate::timing::StyleSnapshot> {
+    use style::properties::animated_properties::AnimationValue;
+    use style::values::computed::length::{MaxSize, Size};
+    use style::values::computed::position::Inset;
+    use style::values::computed::{CSSPixelLength, LengthPercentage};
+    use style::values::generics::NonNegative;
+    let mut out: Option<style::properties::ComputedValues> = None;
+    for (slot, px) in px.iter().enumerate() {
+        let Some(px) = *px else { continue };
+        if !slots(slot) || !anchor_slot_queries(style, slot) {
+            continue;
+        }
+        let lp = LengthPercentage::new_length(CSSPixelLength::new(px));
+        let value = match slot {
+            0 => AnimationValue::Left(Inset::LengthPercentage(lp)),
+            1 => AnimationValue::Right(Inset::LengthPercentage(lp)),
+            2 => AnimationValue::Top(Inset::LengthPercentage(lp)),
+            3 => AnimationValue::Bottom(Inset::LengthPercentage(lp)),
+            4 => AnimationValue::Width(Size::LengthPercentage(NonNegative(lp))),
+            5 => AnimationValue::Height(Size::LengthPercentage(NonNegative(lp))),
+            6 => AnimationValue::MinWidth(Size::LengthPercentage(NonNegative(lp))),
+            7 => AnimationValue::MinHeight(Size::LengthPercentage(NonNegative(lp))),
+            8 => AnimationValue::MaxWidth(MaxSize::LengthPercentage(NonNegative(lp))),
+            9 => AnimationValue::MaxHeight(MaxSize::LengthPercentage(NonNegative(lp))),
+            _ => continue,
+        };
+        value.set_longhand_in_style(out.get_or_insert_with(|| (**style).clone()));
+    }
+    out.map(style::servo_arc::Arc::new)
+}
+
 pub(crate) fn transition_endpoint_value(
     physical: style::properties::PropertyDeclarationId,
     style: &style::properties::ComputedValues,

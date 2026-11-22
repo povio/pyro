@@ -11814,7 +11814,7 @@ diff -ruN a/values/computed/image.rs b/values/computed/image.rs
      }
 diff -ruN a/values/computed/length.rs b/values/computed/length.rs
 --- a/values/computed/length.rs	2026-11-11 19:55:57
-+++ b/values/computed/length.rs	2026-11-22 18:07:36
++++ b/values/computed/length.rs	2026-11-22 21:26:13
 @@ -453,6 +453,8 @@
  pub type NonNegativeLengthPercentageOrNormal =
      GenericLengthPercentageOrNormal<NonNegativeLengthPercentage>;
@@ -11824,11 +11824,10 @@ diff -ruN a/values/computed/length.rs b/values/computed/length.rs
  /// A computed `fit-tolerance` value.
  pub type FitTolerance = GenericFitTolerance<NonNegativeLengthPercentage>;
  
-@@ -461,10 +463,134 @@
- 
+@@ -462,9 +464,150 @@
  /// A computed value for `min-width`, `min-height`, `width` or `height` property.
  pub type Size = GenericSize<NonNegativeLengthPercentage>;
-+
+ 
 +impl crate::values::animated::Animate for Size {
 +    fn animate(&self, other: &Self, procedure: crate::values::animated::Procedure) -> Result<Self, ()> {
 +        self.animate_size(other, procedure, false)
@@ -11892,7 +11891,16 @@ diff -ruN a/values/computed/length.rs b/values/computed/length.rs
 +            (Self::LengthPercentage(from), Self::CalcSizeAny(to)) => Ok(Self::CalcSizeAny(from.animate(to, procedure)?)),
 +            (Self::LengthPercentage(from), Self::LengthPercentage(to)) => Ok(Self::LengthPercentage(from.animate(to, procedure)?)),
 +            (Self::AnchorContainingCalcFunction(from), Self::AnchorContainingCalcFunction(to)) => Ok(Self::AnchorContainingCalcFunction(from.animate(to, procedure)?)),
-+            (Self::AnchorSizeFunction(from), Self::AnchorSizeFunction(to)) => Ok(Self::AnchorSizeFunction(from.animate(to, procedure)?)),
++            (Self::AnchorSizeFunction(from), Self::AnchorSizeFunction(to)) if from.animate(to, procedure).is_ok() => Ok(Self::AnchorSizeFunction(from.animate(to, procedure)?)),
++            // pyro: other `anchor-size()` values, or a length at the other end: through a
++            // `calc()` of both, which layout resolves (Chrome interpolates their px).
++            (Self::AnchorSizeFunction(_) | Self::AnchorContainingCalcFunction(_), Self::AnchorSizeFunction(_) | Self::AnchorContainingCalcFunction(_) | Self::LengthPercentage(_)) |
++            (Self::LengthPercentage(_), Self::AnchorSizeFunction(_) | Self::AnchorContainingCalcFunction(_)) => {
++                use crate::values::computed::length_percentage::anchor_interpolation as anchor;
++                let from = anchor::size_node(self).ok_or(())?;
++                let to = anchor::size_node(other).ok_or(())?;
++                Ok(Self::AnchorContainingCalcFunction(NonNegative(anchor::mix(from, to, procedure, style_traits::values::specified::AllowedNumericType::NonNegative))))
++            },
 +            _ => {
 +                let any = matches!(self, Self::CalcSizeAny(_)) || matches!(other, Self::CalcSizeAny(_)) ||
 +                    (allow_keywords && (matches!(self, Self::LengthPercentage(_)) || matches!(other, Self::LengthPercentage(_))));
@@ -11921,7 +11929,7 @@ diff -ruN a/values/computed/length.rs b/values/computed/length.rs
 +        }
 +    }
 +}
- 
++
  /// A computed value for `max-width` or `max-height` property.
  pub type MaxSize = GenericMaxSize<NonNegativeLengthPercentage>;
  
@@ -11950,7 +11958,15 @@ diff -ruN a/values/computed/length.rs b/values/computed/length.rs
 +            (Self::None, Self::None) => Ok(Self::None),
 +            (Self::LengthPercentage(from), Self::LengthPercentage(to)) => Ok(Self::LengthPercentage(from.animate(to, procedure)?)),
 +            (Self::AnchorContainingCalcFunction(from), Self::AnchorContainingCalcFunction(to)) => Ok(Self::AnchorContainingCalcFunction(from.animate(to, procedure)?)),
-+            (Self::AnchorSizeFunction(from), Self::AnchorSizeFunction(to)) => Ok(Self::AnchorSizeFunction(from.animate(to, procedure)?)),
++            (Self::AnchorSizeFunction(from), Self::AnchorSizeFunction(to)) if from.animate(to, procedure).is_ok() => Ok(Self::AnchorSizeFunction(from.animate(to, procedure)?)),
++            // pyro: as `Size::animate_size`.
++            (Self::AnchorSizeFunction(_) | Self::AnchorContainingCalcFunction(_), Self::AnchorSizeFunction(_) | Self::AnchorContainingCalcFunction(_) | Self::LengthPercentage(_)) |
++            (Self::LengthPercentage(_), Self::AnchorSizeFunction(_) | Self::AnchorContainingCalcFunction(_)) => {
++                use crate::values::computed::length_percentage::anchor_interpolation as anchor;
++                let from = anchor::max_size_node(self).ok_or(())?;
++                let to = anchor::max_size_node(other).ok_or(())?;
++                Ok(Self::AnchorContainingCalcFunction(NonNegative(anchor::mix(from, to, procedure, style_traits::values::specified::AllowedNumericType::NonNegative))))
++            },
 +            _ => Ok(Self::Calculation(Box::new(operand(self)?.animate_size(operand(other)?.as_ref(), procedure, allow_keywords)?))),
 +        }
 +    }
@@ -11959,7 +11975,7 @@ diff -ruN a/values/computed/length.rs b/values/computed/length.rs
  #[cfg(feature = "gecko")]
  use crate::{
      gecko_bindings::structs::AnchorPosResolutionParams, logical_geometry::PhysicalAxis,
-@@ -512,6 +638,7 @@
+@@ -512,6 +655,7 @@
              "Sizes should only change axes"
          );
          match self {
@@ -11967,7 +11983,7 @@ diff -ruN a/values/computed/length.rs b/values/computed/length.rs
              Self::FitContentFunction(lp)
              | Self::LengthPercentage(lp)
              | Self::AnchorContainingCalcFunction(lp) => {
-@@ -537,7 +664,10 @@
+@@ -537,7 +681,10 @@
              "Sizes should only change axes"
          );
          match self {
@@ -11978,7 +11994,7 @@ diff -ruN a/values/computed/length.rs b/values/computed/length.rs
              | Self::LengthPercentage(lp)
              | Self::AnchorContainingCalcFunction(lp) => {
                  lp.try_tactic_adjustment(old_side, new_side);
-@@ -548,7 +678,13 @@
+@@ -548,7 +695,13 @@
              | Self::MinContent
              | Self::FitContent
              | Self::WebkitFillAvailable
@@ -11995,7 +12011,7 @@ diff -ruN a/values/computed/length.rs b/values/computed/length.rs
          }
 diff -ruN a/values/computed/length_percentage.rs b/values/computed/length_percentage.rs
 --- a/values/computed/length_percentage.rs	2026-11-11 19:55:57
-+++ b/values/computed/length_percentage.rs	2026-11-22 18:49:43
++++ b/values/computed/length_percentage.rs	2026-11-22 21:25:52
 @@ -149,6 +149,10 @@
          Self::new_percent(Percentage::hundred())
      }
@@ -12007,10 +12023,12 @@ diff -ruN a/values/computed/length_percentage.rs b/values/computed/length_percen
      fn to_calc_node(&self) -> CalcNode {
          match self.unpack() {
              Unpacked::Length(l) => CalcNode::Leaf(ComputedLeaf::Length(l)),
-@@ -159,6 +163,21 @@
+@@ -157,6 +161,21 @@
+             )),
+             Unpacked::Calc(p) => p.node.clone(),
          }
-     }
- 
++    }
++
 +    pub(crate) fn substitute_size(&self, basis: &Self) -> Self {
 +        let mut result = self.to_calc_node();
 +        result.visit_depth_first(|node| {
@@ -12024,11 +12042,9 @@ diff -ruN a/values/computed/length_percentage.rs b/values/computed/length_percen
 +            }
 +        });
 +        Self::new_calc(result, AllowedNumericType::All)
-+    }
-+
+     }
+ 
      fn map_lengths(&self, mut map_fn: impl FnMut(Length) -> Length) -> Self {
-         match self.unpack() {
-             Unpacked::Length(l) => Self::new_length(map_fn(l)),
 @@ -234,6 +253,9 @@
      pub fn new_calc(mut node: CalcNode, clamping_mode: AllowedNumericType) -> Self {
          node.simplify_and_sort();
@@ -12039,7 +12055,7 @@ diff -ruN a/values/computed/length_percentage.rs b/values/computed/length_percen
          match node {
              CalcNode::Leaf(l) => match l {
                  ComputedLeaf::Length(l) => {
-@@ -317,13 +339,36 @@
+@@ -317,10 +339,33 @@
      /// Resolves the percentage.
      #[inline]
      pub fn resolve(&self, basis: Length) -> Length {
@@ -12053,9 +12069,9 @@ diff -ruN a/values/computed/length_percentage.rs b/values/computed/length_percen
              Unpacked::Percentage(p) => (basis * p.0).normalized(),
 -            Unpacked::Calc(c) => c.resolve(basis),
 +            Unpacked::Calc(c) => c.resolve_size(size, basis),
-         }
-     }
- 
++        }
++    }
++
 +    /// Resolves an intrinsic calculation without assuming an indefinite percentage basis is zero.
 +    pub fn resolve_size_with_optional_basis(&self, size: Length, basis: Option<Length>) -> Option<Length> {
 +        if let Some(basis) = basis { return Some(self.resolve_size(size, basis)); }
@@ -12071,12 +12087,9 @@ diff -ruN a/values/computed/length_percentage.rs b/values/computed/length_percen
 +                let ComputedLeaf::Length(length) = value else { return None };
 +                Some(Length::new(calc.clamping_mode.clamp(length.px())).normalized())
 +            }
-+        }
-+    }
-+
-     /// Resolves the percentage. Just an alias of resolve().
-     #[inline]
-     pub fn percentage_relative_to(&self, basis: Length) -> Length {
+         }
+     }
+ 
 @@ -640,15 +685,42 @@
  }
  
@@ -12156,19 +12169,118 @@ diff -ruN a/values/computed/length_percentage.rs b/values/computed/length_percen
  
                  Self::new_calc(
                      CalcNode::Sum(vec![one, other].into()),
-@@ -1003,6 +1090,12 @@
+@@ -1002,6 +1089,12 @@
+ 
  /// A wrapper of LengthPercentage, whose value must be >= 0.
  pub type NonNegativeLengthPercentage = NonNegative<LengthPercentage>;
- 
++
 +impl crate::values::generics::length::SizeCalculationCss for NonNegativeLengthPercentage {
 +    fn calculation_css<const SIZE: bool, W: Write>(&self, dest: &mut CssWriter<W>) -> fmt::Result {
 +        self.0.to_calc_node().write_size_calculation::<SIZE, _>(dest)
 +    }
 +}
-+
+ 
  impl NonNegativeLengthPercentage {
      /// Returns the used value.
-     #[inline]
+@@ -1050,3 +1143,98 @@
+         });
+     }
+ }
++
++/// pyro: interpolation of `anchor()` and `anchor-size()` values that do not interpolate as
++/// functions (other anchors, sides or sizes, or a length at the other end). The result is a
++/// `calc()` that weighs both ends, its anchor functions left for layout to resolve as it resolves
++/// any other: what Chrome gets by computing them to px before it interpolates.
++pub(crate) mod anchor_interpolation {
++    use super::{CalcNode, CalcPercentageLeaf, ComputedLeaf, LengthPercentage, Percentage};
++    use crate::typed_om::NumericBaseType;
++    use crate::values::animated::Procedure;
++    use crate::values::computed::length::{MaxSize, Size};
++    use crate::values::computed::position::{AnchorSide, Inset};
++    use crate::values::generics::calc::{CalcNodeLeaf, GenericAnchorFunctionFallback};
++    use crate::values::generics::length::GenericAnchorSizeFunction;
++    use crate::values::generics::position::{GenericAnchorFunction, GenericAnchorSide};
++    use crate::values::generics::Optional;
++    use style_traits::values::specified::AllowedNumericType;
++
++    type Fallback = Optional<Box<GenericAnchorFunctionFallback<ComputedLeaf>>>;
++
++    fn fallback<T>(value: Option<&T>, node: impl Fn(&T) -> Option<CalcNode>) -> Option<Fallback> {
++        Some(match value {
++            None => Optional::None,
++            Some(value) => Optional::Some(Box::new(GenericAnchorFunctionFallback::new(false, node(value)?))),
++        })
++    }
++
++    fn side(side: &AnchorSide) -> GenericAnchorSide<Box<CalcNode>> {
++        match side {
++            GenericAnchorSide::Keyword(keyword) => GenericAnchorSide::Keyword(*keyword),
++            GenericAnchorSide::Percentage(Percentage(p)) => GenericAnchorSide::Percentage(Box::new(CalcNode::Leaf(
++                ComputedLeaf::Percentage(CalcPercentageLeaf::new(*p, Optional::Some(NumericBaseType::Length))),
++            ))),
++        }
++    }
++
++    fn anchor_size<T>(
++        f: &GenericAnchorSizeFunction<T>,
++        node: impl Fn(&T) -> Option<CalcNode>,
++    ) -> Option<CalcNode> {
++        Some(CalcNode::AnchorSize(Box::new(GenericAnchorSizeFunction {
++            target_element: f.target_element.clone(),
++            size: f.size,
++            fallback: fallback(f.fallback.as_ref(), node)?,
++        })))
++    }
++
++    /// An inset as a calc node (`None`: `auto`).
++    pub fn inset_node(value: &Inset) -> Option<CalcNode> {
++        Some(match value {
++            Inset::LengthPercentage(lp) | Inset::AnchorContainingCalcFunction(lp) => lp.to_calc_node(),
++            Inset::Auto => return None,
++            Inset::AnchorFunction(f) => CalcNode::Anchor(Box::new(GenericAnchorFunction {
++                target_element: f.target_element.clone(),
++                side: side(&f.side),
++                fallback: fallback(f.fallback.as_ref(), inset_node)?,
++            })),
++            Inset::AnchorSizeFunction(f) => return anchor_size(&**f, inset_node),
++        })
++    }
++
++    /// A size as a calc node (`None`: a keyword).
++    pub fn size_node(value: &Size) -> Option<CalcNode> {
++        match value {
++            Size::LengthPercentage(lp) | Size::AnchorContainingCalcFunction(lp) => Some(lp.0.to_calc_node()),
++            Size::AnchorSizeFunction(f) => anchor_size(&**f, size_node),
++            _ => None,
++        }
++    }
++
++    /// A max size as a calc node (`None`: `none` or a keyword).
++    pub fn max_size_node(value: &MaxSize) -> Option<CalcNode> {
++        match value {
++            MaxSize::LengthPercentage(lp) | MaxSize::AnchorContainingCalcFunction(lp) => Some(lp.0.to_calc_node()),
++            MaxSize::AnchorSizeFunction(f) => anchor_size(&**f, max_size_node),
++            _ => None,
++        }
++    }
++
++    /// `from` and `to` weighed by `procedure`, as one calc.
++    pub fn mix(from: CalcNode, to: CalcNode, procedure: Procedure, clamping: AllowedNumericType) -> LengthPercentage {
++        fn product_with(mut node: CalcNode, product: f32) -> CalcNode {
++            let mut number = CalcNode::Leaf(ComputedLeaf::new_number(product));
++            if !node.try_product_in_place(&mut number) {
++                CalcNode::Product(vec![node, number].into())
++            } else {
++                node
++            }
++        }
++        let (l, r) = procedure.weights();
++        LengthPercentage::new_calc(
++            CalcNode::Sum(vec![product_with(from, l as f32), product_with(to, r as f32)].into()),
++            clamping,
++        )
++    }
++}
 diff -ruN a/values/computed/mod.rs b/values/computed/mod.rs
 --- a/values/computed/mod.rs	2026-11-11 19:55:57
 +++ b/values/computed/mod.rs	2026-11-22 21:15:04
@@ -12350,7 +12462,7 @@ diff -ruN a/values/computed/mod.rs b/values/computed/mod.rs
      #[inline]
 diff -ruN a/values/computed/position.rs b/values/computed/position.rs
 --- a/values/computed/position.rs	2026-11-11 19:55:57
-+++ b/values/computed/position.rs	2026-11-17 14:08:59
++++ b/values/computed/position.rs	2026-11-22 21:26:13
 @@ -21,7 +21,7 @@
      PositionOrAuto as GenericPositionOrAuto, ZIndex as GenericZIndex,
  };
@@ -12360,6 +12472,55 @@ diff -ruN a/values/computed/position.rs b/values/computed/position.rs
      GridTemplateAreas, ObjectFit, PositionAnchor, PositionArea, PositionAreaAxis,
      PositionAreaKeyword, PositionAreaType, PositionTryFallbacks, PositionTryFallbacksTryTactic,
      PositionTryFallbacksTryTacticKeyword, PositionTryOrder, PositionVisibility, ScopedName,
+@@ -144,6 +144,48 @@
+ 
+ /// A computed type for `inset` properties.
+ pub type Inset = GenericInset<Percentage, LengthPercentage>;
++
++/// pyro: as the derived interpolation, but `anchor()` and `anchor-size()` values that do not
++/// interpolate as functions (other anchors or sides, or a length at the other end) interpolate
++/// through a `calc()` of both, which layout resolves (Chrome interpolates their px).
++impl crate::values::animated::Animate for Inset {
++    fn animate(&self, other: &Self, procedure: crate::values::animated::Procedure) -> Result<Self, ()> {
++        use crate::values::animated::Animate;
++        use crate::values::computed::length_percentage::anchor_interpolation as anchor;
++        match (self, other) {
++            (Self::LengthPercentage(from), Self::LengthPercentage(to)) => {
++                return Ok(Self::LengthPercentage(from.animate(to, procedure)?))
++            },
++            (Self::Auto, Self::Auto) => return Ok(Self::Auto),
++            (Self::AnchorFunction(from), Self::AnchorFunction(to)) => {
++                if let Ok(value) = from.animate(to, procedure) {
++                    return Ok(Self::AnchorFunction(value));
++                }
++            },
++            (Self::AnchorSizeFunction(from), Self::AnchorSizeFunction(to)) => {
++                if let Ok(value) = from.animate(to, procedure) {
++                    return Ok(Self::AnchorSizeFunction(value));
++                }
++            },
++            (Self::AnchorContainingCalcFunction(from), Self::AnchorContainingCalcFunction(to)) => {
++                return Ok(Self::AnchorContainingCalcFunction(from.animate(to, procedure)?))
++            },
++            _ => {},
++        }
++        let queries = |value: &Self| !matches!(value, Self::LengthPercentage(_) | Self::Auto);
++        if !queries(self) && !queries(other) {
++            return Err(());
++        }
++        let from = anchor::inset_node(self).ok_or(())?;
++        let to = anchor::inset_node(other).ok_or(())?;
++        Ok(Self::AnchorContainingCalcFunction(anchor::mix(
++            from,
++            to,
++            procedure,
++            style_traits::values::specified::AllowedNumericType::All,
++        )))
++    }
++}
+ impl TryTacticAdjustment for Inset {
+     // https://drafts.csswg.org/css-anchor-position-1/#swap-due-to-a-try-tactic:
+     //
 diff -ruN a/values/computed/text.rs b/values/computed/text.rs
 --- a/values/computed/text.rs	2026-11-11 19:55:57
 +++ b/values/computed/text.rs	2026-11-19 18:38:15
@@ -13732,6 +13893,20 @@ diff -ruN a/values/generics/mod.rs b/values/generics/mod.rs
  )]
  #[repr(transparent)]
  pub struct GreaterThanOrEqualToOne<T>(pub T);
+diff -ruN a/values/generics/position.rs b/values/generics/position.rs
+--- a/values/generics/position.rs	2026-11-11 19:55:57
++++ b/values/generics/position.rs	2026-11-22 21:26:13
+@@ -380,8 +380,9 @@
+ /// as well as `LengthPercentageOrAuto | AnchorFunction`. This increases
+ /// the size of the style struct, which would not be great.
+ /// On the other hand, we trade for code duplication, so... :(
++/// pyro: `Animate` is the computed value's (`computed::position`): anchor functions interpolate
++/// through `calc()`.
+ #[derive(
+-    Animate,
+     Clone,
+     ComputeSquaredDistance,
+     Debug,
 diff -ruN a/values/generics/text.rs b/values/generics/text.rs
 --- a/values/generics/text.rs	2026-11-11 19:55:57
 +++ b/values/generics/text.rs	2026-11-16 17:29:45

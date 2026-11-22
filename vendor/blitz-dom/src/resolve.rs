@@ -241,6 +241,8 @@ impl BaseDocument {
 
             // Next we resolve layout with the data resolved by stlist
             self.resolve_layout_in_flush();
+            // pyro: boxes gone in this layout keep no used `anchor()` px to transition from.
+            self.forget_boxless_anchor_used();
             timer.record_time("layout");
             phase_profile::mark(4, &mut phase_t);
             let changed_containers = self.refresh_container_query_sizes();

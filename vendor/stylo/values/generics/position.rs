@@ -380,8 +380,9 @@ impl<N> ToAnimatedZero for AspectRatio<N> {
 /// as well as `LengthPercentageOrAuto | AnchorFunction`. This increases
 /// the size of the style struct, which would not be great.
 /// On the other hand, we trade for code duplication, so... :(
+/// pyro: `Animate` is the computed value's (`computed::position`): anchor functions interpolate
+/// through `calc()`.
 #[derive(
-    Animate,
     Clone,
     ComputeSquaredDistance,
     Debug,

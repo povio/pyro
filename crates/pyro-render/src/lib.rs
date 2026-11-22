@@ -2369,6 +2369,20 @@ impl Renderer {
         moves.into_iter().filter_map(|id| m.key_of(id)).collect()
     }
 
+    /// pyro: the mirrored elements of `page` whose used `anchor()`/`anchor-size()` values changed
+    /// since the last call, by render key, with their values then and now
+    /// (`BaseDocument::take_anchor_evals`); elements no longer mirrored are left out.
+    pub fn anchor_used(&self, page: u64, key: u64) -> Option<[Option<f32>; blitz_dom::ANCHOR_USED_SLOTS]> {
+        let m = self.mirrors.get(&page)?;
+        m.doc.anchor_used(m.node(key)?)
+    }
+
+    pub fn take_anchor_evals(&mut self, page: u64) -> Vec<(u64, [Option<f32>; blitz_dom::ANCHOR_USED_SLOTS], [Option<f32>; blitz_dom::ANCHOR_USED_SLOTS])> {
+        let Some(m) = self.mirrors.get_mut(&page) else { return Vec::new() };
+        let evals = m.doc.take_anchor_evals();
+        evals.into_iter().filter_map(|e| Some((m.key_of(e.node)?, e.before, e.after))).collect()
+    }
+
     pub fn take_style_changes(
         &mut self,
         page: u64,

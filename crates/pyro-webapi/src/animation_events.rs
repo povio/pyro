@@ -742,6 +742,10 @@ fn update(page: &Rc<PageDom>, defer: bool) {
         // Style change events of the elements whose style changed.
         if state.transitions_tracked(&dom, style) {
             transitions_from_changes(state, &dom, style, now_ms, &mut planned);
+        } else {
+            // Untracked: the used `anchor()` px changes are dropped, so the first tracked style
+            // change event does not transition from a long-stale value.
+            let _ = style.take_anchor_evals(&dom);
         }
         let mut transitions = state.transitions.borrow_mut();
         let count = transitions.len();
@@ -974,6 +978,8 @@ pub(crate) fn style_flush(page: &Rc<PageDom>, read: Option<NodeId>) {
         let Some(layout) = page.try_layout() else { return };
         let style = layout.style();
         if !state.transitions_tracked(&dom, style) {
+            // (As `update`: untracked used `anchor()` px changes are dropped.)
+            let _ = style.take_anchor_evals(&dom);
             return;
         }
         track_style_changes(state, &dom, style);
@@ -1084,7 +1090,11 @@ fn transitions_from_changes(
     drop_removed_hidden_roots(state, dom);
     cancel_orphaned_transitions(state, dom, style, now_ms, planned);
     let changes = style.take_style_changes(dom);
-    if changes.is_empty() {
+    // The elements whose used `anchor()`/`anchor-size()` px changed since the last style change
+    // event, with their px then and now.
+    let mut evals: FxHashMap<NodeId, ([Option<f32>; 10], [Option<f32>; 10])> =
+        style.take_anchor_evals(dom).into_iter().map(|(el, before, after)| (el, (before, after))).collect();
+    if changes.is_empty() && evals.is_empty() {
         return;
     }
     let rules = state.rules(dom, style);
@@ -1106,6 +1116,7 @@ fn transitions_from_changes(
             }
             continue;
         }
+        let (before, now) = anchor_px_styles(style, el, before, now, evals.remove(&el));
         let (was_none, is_none) = (displays_none(&before), displays_none(&now));
         if !was_none && !is_none {
             start_transitions(state, dom, style, &rules, el, &before, &now, now_ms, &mut starting);
@@ -1146,6 +1157,20 @@ fn transitions_from_changes(
             }
         }
     }
+    // An element whose `anchor()`/`anchor-size()` px changed with no style change (its anchor
+    // moved or resized, another element took the anchor name): its computed values changed, as
+    // Chrome computes them to px (WPT css-anchor-position `anchor-transition-eval`, `-name`).
+    for (el, (px_before, px_now)) in evals {
+        if !dom.in_document_tree(el) || hidden.contains(&el) {
+            continue;
+        }
+        let Some(now) = style.stylo_style(dom, el) else { continue };
+        if displays_none(&now) || displays_none_or_hidden(dom, style, el) {
+            continue;
+        }
+        let (before, now) = anchor_px_pair(&now, &now, &px_before, &px_now);
+        start_transitions(state, dom, style, &rules, el, &before, &now, now_ms, &mut starting);
+    }
     starting.commit(state, planned);
     if !hidden.is_empty() {
         let mut running = state.transitions.borrow_mut();
@@ -1161,6 +1186,46 @@ fn transitions_from_changes(
             state.bump();
         }
     }
+}
+
+/// The before-change and after-change styles `before` and `now` of `el` with their `anchor()` and
+/// `anchor-size()` insets and sizes computed to the px layout used then and now (`eval`: the px of
+/// an element whose px changed since the last style change event; otherwise its px now, for both),
+/// as Chrome computes them before it transitions: a changed `position-anchor` or anchor
+/// transitions though the text of `top: anchor(top)` stays the same.
+fn anchor_px_styles(
+    style: &pyro_dom::style::StyleEngine,
+    el: NodeId,
+    before: StyleSnapshot,
+    now: StyleSnapshot,
+    eval: Option<([Option<f32>; 10], [Option<f32>; 10])>,
+) -> (StyleSnapshot, StyleSnapshot) {
+    let queries = |s: &StyleSnapshot| (0..10).any(|slot| pyro_dom::animation::anchor_slot_queries(s, slot));
+    if eval.is_none() && !queries(&before) && !queries(&now) {
+        return (before, now);
+    }
+    let Some((px_before, px_now)) = eval.or_else(|| style.anchor_used(el).map(|px| (px, px))) else {
+        return (before, now);
+    };
+    anchor_px_pair(&before, &now, &px_before, &px_now)
+}
+
+/// [`anchor_px_styles`] with the px known: a slot is replaced in both styles, or (one of them
+/// without its px) in neither.
+fn anchor_px_pair(
+    before: &StyleSnapshot,
+    now: &StyleSnapshot,
+    px_before: &[Option<f32>; 10],
+    px_now: &[Option<f32>; 10],
+) -> (StyleSnapshot, StyleSnapshot) {
+    let queries = pyro_dom::animation::anchor_slot_queries;
+    let both = |slot: usize| {
+        (!queries(before, slot) || px_before[slot].is_some()) && (!queries(now, slot) || px_now[slot].is_some())
+    };
+    (
+        pyro_dom::animation::with_anchor_px(before, px_before, both).unwrap_or_else(|| before.clone()),
+        pyro_dom::animation::with_anchor_px(now, px_now, both).unwrap_or_else(|| now.clone()),
+    )
 }
 
 /// Cancels running transition `transition` (unless it ended or was canceled already): its
