@@ -507,6 +507,15 @@ impl JsClass for Navigator {
         def.getter("webdriver", |s, _p| Ok(s.boolean(true)));
         def.getter("doNotTrack", |s, _p| Ok(s.null()));
         def.getter("pdfViewerEnabled", |s, _p| Ok(s.boolean(false)));
+        // HTML: without a PDF viewer the plugin and MIME type lists are empty ([SameObject]).
+        def.getter("plugins", |s, p| {
+            let key = pyro_js::IdentityKey(p.id() | (1 << 57), 12);
+            same_object(s, p, key, || s.wrap::<PluginArray>((), Some(key)))
+        });
+        def.getter("mimeTypes", |s, p| {
+            let key = pyro_js::IdentityKey(p.id() | (1 << 57), 13);
+            same_object(s, p, key, || s.wrap::<MimeTypeArray>((), Some(key)))
+        });
         def.method("javaEnabled", 0, |s, _p, _a| Ok(s.boolean(false)));
         def.method("sendBeacon", 1, |s, p, a| {
             a.require(1, "Navigator.sendBeacon")?;
@@ -905,6 +914,45 @@ pub fn css_namespace<'s>(s: &Scope<'s>) -> JsResult<Value<'s>> {
     Ok(o.value())
 }
 
+/// `navigator.plugins`: always empty (no PDF viewer).
+pub struct PluginArray;
+impl JsClass for PluginArray {
+    const NAME: &'static str = "PluginArray";
+    type Data = ();
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        def.getter("length", |s, _d| Ok(s.number(0.0)));
+        def.method("item", 1, |s, _d, a| {
+            a.require(1, "PluginArray.item")?;
+            Ok(s.null())
+        });
+        def.method("namedItem", 1, |s, _d, a| {
+            a.require(1, "PluginArray.namedItem")?;
+            Ok(s.null())
+        });
+        def.method("refresh", 0, |s, _d, _a| Ok(s.undefined()));
+    }
+}
+
+/// `navigator.mimeTypes`: always empty (no PDF viewer).
+pub struct MimeTypeArray;
+impl JsClass for MimeTypeArray {
+    const NAME: &'static str = "MimeTypeArray";
+    type Data = ();
+    type Parent = NoParent;
+    fn define(def: &mut ClassDef<Self>) {
+        def.getter("length", |s, _d| Ok(s.number(0.0)));
+        def.method("item", 1, |s, _d, a| {
+            a.require(1, "MimeTypeArray.item")?;
+            Ok(s.null())
+        });
+        def.method("namedItem", 1, |s, _d, a| {
+            a.require(1, "MimeTypeArray.namedItem")?;
+            Ok(s.null())
+        });
+    }
+}
+
 struct BarProp;
 impl JsClass for BarProp {
     const NAME: &'static str = "BarProp";
@@ -924,6 +972,8 @@ fn bar_prop<'s>(s: &Scope<'s>, page: &Rc<PageDom>, slot: u64) -> JsResult<Value<
 pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<BarProp>();
     engine.register::<Navigator>();
+    engine.register::<PluginArray>();
+    engine.register::<MimeTypeArray>();
     engine.register::<crate::user_activation::UserActivation>();
     engine.register::<Screen>();
     engine.register::<VisualViewport>();
