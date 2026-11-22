@@ -295,6 +295,7 @@ impl Browser {
             cancel.disarm();
         }
         sheet.pending = false;
+        let parser_inserted = sheet.parser_inserted;
         let environment = link_environment(bindings, node);
         let quirks = bindings.dom.borrow().is_quirks_mode(bindings.document());
         let sheet_url = result.as_ref().map(|r| r.url.clone()).unwrap_or_default();
@@ -337,6 +338,14 @@ impl Browser {
         bindings.unblock_rendering(node);
         if !imports.is_empty() && bindings.dom.borrow_mut().add_ref(node).is_ok() {
             let hold = Rc::new(ResourceNode { dom: bindings.dom.clone(), node });
+            // HTML: the `@import`s are the sheet's critical subresources, so a parser-inserted
+            // link of matching media keeps blocking the parser's scripts until they are loaded
+            // (WPT the-script-element/execution-timing/106-import.html, 150-import.html).
+            let script_blocking = parser_inserted && {
+                let dom = bindings.dom.borrow();
+                let media = dom.get_attribute(node, "media").ok().flatten().unwrap_or("");
+                media.is_empty() || pyro_dom::media::matches(media, &bindings.viewport())
+            };
             let generation = {
                 let Some(mut doc) = self.doc_mut(page) else { return };
                 let sheets = &mut doc.stylesheets;
@@ -350,7 +359,7 @@ impl Browser {
                         pending: 0,
                         started: 0,
                         failed: false,
-                        script_blocking: false,
+                        script_blocking,
                         cancels: Vec::new(),
                         link: true,
                     },
