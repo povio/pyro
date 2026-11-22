@@ -27,8 +27,8 @@
     "html/browsers": 40,
     "fetch/fetch-later": 29,
     "html/dom": 24,
-    "fetch/content-encoding": 21,
     "html/webappapis": 21,
+    "fetch/content-encoding": 21,
     "scheduler": 19,
     "html/syntax": 12,
     "fetch/cross-origin-resource-policy": 10,
@@ -43,73 +43,73 @@
     "fetch/http-cache": 3,
     "xhr": 2,
     "quirks": 1,
-    "IndexedDB": 1,
+    "svg/styling": 1,
     "html/rendering": 1,
-    "svg/styling": 1
+    "IndexedDB": 1
    }
   },
   "in_progress": {
    "scope": {
-    "macbook_in_scope": 178,
+    "macbook_in_scope": 169,
     "studio_in_scope": 4,
     "other_dirs_out_of_scope": 0,
     "macbook_worker_variants_if_enabled": 15,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 168,
+   "distinct_census_pages": 159,
    "owner_reported_unlisted": 0,
-   "selector_union": 423,
-   "owner_estimate_reduction": 255,
-   "of_which_tentative": 200,
+   "selector_union": 399,
+   "owner_estimate_reduction": 240,
+   "of_which_tentative": 195,
    "studio_css_reported_pages_not_deduped": 4,
    "studio_css_listed_distinct": 0,
    "by_dir": {
     "html/canvas": 161,
-    "html/semantics": 124,
-    "html/browsers": 33,
+    "html/semantics": 85,
+    "html/browsers": 35,
     "html/syntax": 30,
     "fetch/metadata": 27,
+    "html/infrastructure": 13,
     "fetch/fetch-later": 10,
     "fetch/api": 9,
     "IndexedDB": 6,
-    "html/webappapis": 5,
     "html/dom": 5,
     "fetch/security": 5,
+    "html/webappapis": 5,
     "fetch/cross-origin-resource-policy": 2,
-    "fetch/content-type": 1,
     "fetch/range": 1,
-    "fetch/http-cache": 1,
+    "fetch/content-type": 1,
     "fetch/images": 1,
     "fetch/redirects": 1,
+    "fetch/http-cache": 1,
     "fetch/redirect-navigate": 1
    }
   },
   "queued": {
    "scope": {
-    "macbook_in_scope": 21,
+    "macbook_in_scope": 15,
     "studio_in_scope": 142,
     "other_dirs_out_of_scope": 23,
     "macbook_worker_variants_if_enabled": 0,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 68,
+   "distinct_census_pages": 62,
    "owner_reported_unlisted": 0,
-   "selector_union": 93,
-   "owner_estimate_reduction": 25,
+   "selector_union": 77,
+   "owner_estimate_reduction": 15,
    "of_which_tentative": 19,
    "studio_css_reported_pages_not_deduped": 122,
    "studio_css_listed_distinct": 0,
    "by_dir": {
     "content-security-policy": 20,
     "webidl": 19,
-    "html/infrastructure": 13,
     "fetch/compression-dictionary": 8,
     "fetch/corb": 6,
     "html/interaction": 5,
-    "html/semantics": 5,
-    "html/browsers": 5,
     "svg/path": 4,
+    "html/semantics": 4,
     "workers": 3,
+    "html/browsers": 3,
     "html/rendering": 2,
     "fetch/orb": 2,
     "dom/nodes": 1
@@ -846,7 +846,7 @@
    "tentative": 0
   },
   "F03": {
-   "state": "claimed",
+   "state": "split",
    "in_scope_pages": 63,
    "out_of_scope_pages": 0,
    "pages": 63,
@@ -892,6 +892,13 @@
    "in_scope_pages": 6,
    "out_of_scope_pages": 0,
    "pages": 6,
+   "tentative": 0
+  },
+  "F03p2": {
+   "state": "deferred",
+   "in_scope_pages": 0,
+   "out_of_scope_pages": 0,
+   "pages": 0,
    "tentative": 0
   },
   "F03e": {
@@ -1910,7 +1917,7 @@
    "tentative": 0
   },
   "R-HTML-26r": {
-   "state": "proposed",
+   "state": "reserved",
    "in_scope_pages": 16,
    "out_of_scope_pages": 0,
    "pages": 16,
