@@ -1,0 +1,834 @@
+[
+  {
+    "url": "editing/run/backcolor.html",
+    "name": "[[\"backcolor\",\"#00FFFF\"]] \"fo[o<span style=background-color:tan>bar</span>b]az\" compare innerHTML",
+    "occ": 1,
+    "commands": [
+      [
+        "backcolor",
+        "#00FFFF"
+      ]
+    ],
+    "html": "fo[o<span style=background-color:tan>bar</span>b]az",
+    "statuses": [
+      "Fail",
+      "Pass",
+      "Pass"
+    ]
+  },
+  {
+    "url": "editing/run/backcolor.html",
+    "name": "[[\"stylewithcss\",\"false\"],[\"backcolor\",\"#00FFFF\"]] \"<span style=\\\"display: block; background-color: aqua\\\"><span style=\\\"display: block; background-color: tan\\\">b[ar]</span></span>\" compare innerHTML",
+    "occ": 1,
+    "commands": [
+      [
+        "stylewithcss",
+        "false"
+      ],
+      [
+        "backcolor",
+        "#00FFFF"
+      ]
+    ],
+    "html": "<span style=\"display: block; background-color: aqua\"><span style=\"display: block; background-color: tan\">b[ar]</span></span>",
+    "statuses": [
+      "Pass",
+      "Fail",
+      "Pass"
+    ]
+  },
+  {
+    "url": "editing/run/backcolor.html",
+    "name": "[[\"stylewithcss\",\"false\"],[\"backcolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o</span><span style=background-color:tan>b]ar</span>\" compare innerHTML",
+    "occ": 1,
+    "commands": [
+      [
+        "stylewithcss",
+        "false"
+      ],
+      [
+        "backcolor",
+        "#00FFFF"
+      ]
+    ],
+    "html": "<span style=background-color:tan>fo[o</span><span style=background-color:tan>b]ar</span>",
+    "statuses": [
+      "Pass",
+      "Fail",
+      "Fail"
+    ]
+  },
+  {
+    "url": "editing/run/backcolor.html",
+    "name": "[[\"stylewithcss\",\"false\"],[\"backcolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o</span><span style=background-color:yellow>b]ar</span>\" compare innerHTML",
+    "occ": 1,
+    "commands": [
+      [
+        "stylewithcss",
+        "false"
+      ],
+      [
+        "backcolor",
+        "#00FFFF"
+      ]
+    ],
+    "html": "<span style=background-color:tan>fo[o</span><span style=background-color:yellow>b]ar</span>",
+    "statuses": [
+      "Pass",
+      "Fail",
+      "Fail"
+    ]
+  },
+  {
+    "url": "editing/run/backcolor.html",
+    "name": "[[\"stylewithcss\",\"false\"],[\"backcolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o<span style=background-color:transparent>b]ar</span></span>\" compare innerHTML",
+    "occ": 1,
+    "commands": [
+      [
+        "stylewithcss",
+        "false"
+      ],
+      [
+        "backcolor",
+        "#00FFFF"
+      ]
+    ],
+    "html": "<span style=background-color:tan>fo[o<span style=background-color:transparent>b]ar</span></span>",
+    "statuses": [
+      "Pass",
+      "Fail",
+      "Fail"
+    ]
+  },
+  {
+    "url": "editing/run/backcolor.html",
+    "name": "[[\"stylewithcss\",\"false\"],[\"backcolor\",\"#00FFFF\"]] \"fo[o<span style=background-color:tan>b]ar</span>baz\" compare innerHTML",
+    "occ": 1,
+    "commands": [
+      [
+        "stylewithcss",
+        "false"
+      ],
+      [
+        "backcolor",
+        "#00FFFF"
+      ]
+    ],
+    "html": "fo[o<span style=background-color:tan>b]ar</span>baz",
+    "statuses": [
+      "Pass",
+      "Fail",
+      "Fail"
+    ]
+  },
+  {
+    "url": "editing/run/backcolor.html",
+    "name": "[[\"stylewithcss\",\"false\"],[\"backcolor\",\"#00FFFF\"]] \"foo<span style=background-color:tan>ba[r</span>]baz\" compare innerHTML",
+    "occ": 1,
+    "commands": [
+      [
+        "stylewithcss",
+        "false"
+      ],
+      [
+        "backcolor",
+        "#00FFFF"
+      ]
+    ],
+    "html": "foo<span style=background-color:tan>ba[r</span>]baz",
+    "statuses": [
+      "Pass",
+      "Fail",
+      "Fail"
+    ]
+  },
+  {
+    "url": "editing/run/backcolor.html",
+    "name": "[[\"stylewithcss\",\"false\"],[\"backcolor\",\"#00FFFF\"]] \"foo<span style=background-color:tan>ba[r</span>b]az\" compare innerHTML",
+    "occ": 1,
+    "commands": [
+      [
+        "stylewithcss",
+        "false"
+      ],
+      [
+        "backcolor",
+        "#00FFFF"
+      ]
+    ],
+    "html": "foo<span style=background-color:tan>ba[r</span>b]az",
+    "statuses": [
+      "Pass",
+      "Fail",
+      "Fail"
+    ]
+  },
+  {
+    "url": "editing/run/backcolor.html",
+    "name": "[[\"stylewithcss\",\"false\"],[\"backcolor\",\"#00FFFF\"]] \"foo[<span style=background-color:tan>b]ar</span>baz\" compare innerHTML",
+    "occ": 1,
+    "commands": [
+      [
+        "stylewithcss",
+        "false"
+      ],
+      [
+        "backcolor",
+        "#00FFFF"
+      ]
+    ],
+    "html": "foo[<span style=background-color:tan>b]ar</span>baz",
+    "statuses": [
+      "Pass",
+      "Fail",
+      "Fail"
+    ]
+  },
+  {
+    "url": "editing/run/backcolor.html",
+    "name": "[[\"stylewithcss\",\"true\"],[\"backcolor\",\"#00FFFF\"]] \"<span style=\\\"display: block; background-color: aqua\\\"><span style=\\\"display: block; background-color: tan\\\">b[ar]</span></span>\" compare innerHTML",
+    "occ": 1,
+    "commands": [
+      [
+        "stylewithcss",
+        "true"
+      ],
+      [
+        "backcolor",
+        "#00FFFF"
+      ]
+    ],
+    "html": "<span style=\"display: block; background-color: aqua\"><span style=\"display: block; background-color: tan\">b[ar]</span></span>",
+    "statuses": [
+      "Pass",
+      "Fail",
+      "Pass"
+    ]
+  },
+  {
+    "url": "editing/run/backcolor.html",
+    "name": "[[\"stylewithcss\",\"true\"],[\"backcolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o</span><span style=background-color:tan>b]ar</span>\" compare innerHTML",
+    "occ": 1,
+    "commands": [
+      [
+        "stylewithcss",
+        "true"
+      ],
+      [
+        "backcolor",
+        "#00FFFF"
+      ]
+    ],
+    "html": "<span style=background-color:tan>fo[o</span><span style=background-color:tan>b]ar</span>",
+    "statuses": [
+      "Pass",
+      "Fail",
+      "Fail"
+    ]
+  },
+  {
+    "url": "editing/run/backcolor.html",
+    "name": "[[\"stylewithcss\",\"true\"],[\"backcolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o</span><span style=background-color:yellow>b]ar</span>\" compare innerHTML",
+    "occ": 1,
+    "commands": [
+      [
+        "stylewithcss",
+        "true"
+      ],
+      [
+        "backcolor",
+        "#00FFFF"
+      ]
+    ],
+    "html": "<span style=background-color:tan>fo[o</span><span style=background-color:yellow>b]ar</span>",
+    "statuses": [
+      "Pass",
+      "Fail",
+      "Fail"
+    ]
+  },
+  {
+    "url": "editing/run/backcolor.html",
+    "name": "[[\"stylewithcss\",\"true\"],[\"backcolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o<span style=background-color:transparent>b]ar</span></span>\" compare innerHTML",
+    "occ": 1,
+    "commands": [
+      [
+        "stylewithcss",
+        "true"
+      ],
+      [
+        "backcolor",
+        "#00FFFF"
+      ]
+    ],
+    "html": "<span style=background-color:tan>fo[o<span style=background-color:transparent>b]ar</span></span>",
+    "statuses": [
+      "Pass",
+      "Fail",
+      "Fail"
+    ]
+  },
+  {
+    "url": "editing/run/backcolor.html",
+    "name": "[[\"stylewithcss\",\"true\"],[\"backcolor\",\"#00FFFF\"]] \"fo[o<span style=background-color:tan>b]ar</span>baz\" compare innerHTML",
+    "occ": 1,
+    "commands": [
+      [
+        "stylewithcss",
+        "true"
+      ],
+      [
+        "backcolor",
+        "#00FFFF"
+      ]
+    ],
+    "html": "fo[o<span style=background-color:tan>b]ar</span>baz",
+    "statuses": [
+      "Pass",
+      "Fail",
+      "Fail"
+    ]
+  },
+  {
+    "url": "editing/run/backcolor.html",
+    "name": "[[\"stylewithcss\",\"true\"],[\"backcolor\",\"#00FFFF\"]] \"foo<span style=background-color:tan>ba[r</span>]baz\" compare innerHTML",
+    "occ": 1,
+    "commands": [
+      [
+        "stylewithcss",
+        "true"
+      ],
+      [
+        "backcolor",
+        "#00FFFF"
+      ]
+    ],
+    "html": "foo<span style=background-color:tan>ba[r</span>]baz",
+    "statuses": [
+      "Pass",
+      "Fail",
+      "Fail"
+    ]
+  },
+  {
+    "url": "editing/run/backcolor.html",
+    "name": "[[\"stylewithcss\",\"true\"],[\"backcolor\",\"#00FFFF\"]] \"foo<span style=background-color:tan>ba[r</span>b]az\" compare innerHTML",
+    "occ": 1,
+    "commands": [
+      [
+        "stylewithcss",
+        "true"
+      ],
+      [
+        "backcolor",
+        "#00FFFF"
+      ]
+    ],
+    "html": "foo<span style=background-color:tan>ba[r</span>b]az",
+    "statuses": [
+      "Pass",
+      "Fail",
+      "Fail"
+    ]
+  },
+  {
+    "url": "editing/run/backcolor.html",
+    "name": "[[\"stylewithcss\",\"true\"],[\"backcolor\",\"#00FFFF\"]] \"foo[<span style=background-color:tan>b]ar</span>baz\" compare innerHTML",
+    "occ": 1,
+    "commands": [
+      [
+        "stylewithcss",
+        "true"
+      ],
+      [
+        "backcolor",
+        "#00FFFF"
+      ]
+    ],
+    "html": "foo[<span style=background-color:tan>b]ar</span>baz",
+    "statuses": [
+      "Pass",
+      "Fail",
+      "Fail"
+    ]
+  },
+  {
+    "url": "editing/run/hilitecolor.html",
+    "name": "[[\"hilitecolor\",\"#00FFFF\"]] \"fo[o<span style=background-color:tan>bar</span>b]az\" compare innerHTML",
+    "occ": 1,
+    "commands": [
+      [
+        "hilitecolor",
+        "#00FFFF"
+      ]
+    ],
+    "html": "fo[o<span style=background-color:tan>bar</span>b]az",
+    "statuses": [
+      "Fail",
+      "Pass",
+      "Pass"
+    ]
+  },
+  {
+    "url": "editing/run/hilitecolor.html",
+    "name": "[[\"stylewithcss\",\"false\"],[\"hilitecolor\",\"#00FFFF\"]] \"<font size=6>[foo]</font>\" compare innerHTML",
+    "occ": 1,
+    "commands": [
+      [
+        "stylewithcss",
+        "false"
+      ],
+      [
+        "hilitecolor",
+        "#00FFFF"
+      ]
+    ],
+    "html": "<font size=6>[foo]</font>",
+    "statuses": [
+      "Fail",
+      "Pass",
+      "Pass"
+    ]
+  },
+  {
+    "url": "editing/run/hilitecolor.html",
+    "name": "[[\"stylewithcss\",\"false\"],[\"hilitecolor\",\"#00FFFF\"]] \"<span style=\\\"display: block; background-color: aqua\\\"><span style=\\\"display: block; background-color: tan\\\">b[ar]</span></span>\" compare innerHTML",
+    "occ": 1,
+    "commands": [
+      [
+        "stylewithcss",
+        "false"
+      ],
+      [
+        "hilitecolor",
+        "#00FFFF"
+      ]
+    ],
+    "html": "<span style=\"display: block; background-color: aqua\"><span style=\"display: block; background-color: tan\">b[ar]</span></span>",
+    "statuses": [
+      "Pass",
+      "Fail",
+      "Pass"
+    ]
+  },
+  {
+    "url": "editing/run/hilitecolor.html",
+    "name": "[[\"stylewithcss\",\"false\"],[\"hilitecolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o</span><span style=background-color:tan>b]ar</span>\" compare innerHTML",
+    "occ": 1,
+    "commands": [
+      [
+        "stylewithcss",
+        "false"
+      ],
+      [
+        "hilitecolor",
+        "#00FFFF"
+      ]
+    ],
+    "html": "<span style=background-color:tan>fo[o</span><span style=background-color:tan>b]ar</span>",
+    "statuses": [
+      "Pass",
+      "Fail",
+      "Fail"
+    ]
+  },
+  {
+    "url": "editing/run/hilitecolor.html",
+    "name": "[[\"stylewithcss\",\"false\"],[\"hilitecolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o</span><span style=background-color:yellow>b]ar</span>\" compare innerHTML",
+    "occ": 1,
+    "commands": [
+      [
+        "stylewithcss",
+        "false"
+      ],
+      [
+        "hilitecolor",
+        "#00FFFF"
+      ]
+    ],
+    "html": "<span style=background-color:tan>fo[o</span><span style=background-color:yellow>b]ar</span>",
+    "statuses": [
+      "Pass",
+      "Fail",
+      "Fail"
+    ]
+  },
+  {
+    "url": "editing/run/hilitecolor.html",
+    "name": "[[\"stylewithcss\",\"false\"],[\"hilitecolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o<span style=background-color:transparent>b]ar</span></span>\" compare innerHTML",
+    "occ": 1,
+    "commands": [
+      [
+        "stylewithcss",
+        "false"
+      ],
+      [
+        "hilitecolor",
+        "#00FFFF"
+      ]
+    ],
+    "html": "<span style=background-color:tan>fo[o<span style=background-color:transparent>b]ar</span></span>",
+    "statuses": [
+      "Pass",
+      "Fail",
+      "Fail"
+    ]
+  },
+  {
+    "url": "editing/run/hilitecolor.html",
+    "name": "[[\"stylewithcss\",\"false\"],[\"hilitecolor\",\"#00FFFF\"]] \"[foo<font size=6>bar</font>baz]\" compare innerHTML",
+    "occ": 1,
+    "commands": [
+      [
+        "stylewithcss",
+        "false"
+      ],
+      [
+        "hilitecolor",
+        "#00FFFF"
+      ]
+    ],
+    "html": "[foo<font size=6>bar</font>baz]",
+    "statuses": [
+      "Fail",
+      "Pass",
+      "Pass"
+    ]
+  },
+  {
+    "url": "editing/run/hilitecolor.html",
+    "name": "[[\"stylewithcss\",\"false\"],[\"hilitecolor\",\"#00FFFF\"]] \"[foo<span style=font-size:xx-large>bar</span>baz]\" compare innerHTML",
+    "occ": 1,
+    "commands": [
+      [
+        "stylewithcss",
+        "false"
+      ],
+      [
+        "hilitecolor",
+        "#00FFFF"
+      ]
+    ],
+    "html": "[foo<span style=font-size:xx-large>bar</span>baz]",
+    "statuses": [
+      "Fail",
+      "Pass",
+      "Pass"
+    ]
+  },
+  {
+    "url": "editing/run/hilitecolor.html",
+    "name": "[[\"stylewithcss\",\"false\"],[\"hilitecolor\",\"#00FFFF\"]] \"fo[o<span style=background-color:tan>b]ar</span>baz\" compare innerHTML",
+    "occ": 1,
+    "commands": [
+      [
+        "stylewithcss",
+        "false"
+      ],
+      [
+        "hilitecolor",
+        "#00FFFF"
+      ]
+    ],
+    "html": "fo[o<span style=background-color:tan>b]ar</span>baz",
+    "statuses": [
+      "Pass",
+      "Fail",
+      "Fail"
+    ]
+  },
+  {
+    "url": "editing/run/hilitecolor.html",
+    "name": "[[\"stylewithcss\",\"false\"],[\"hilitecolor\",\"#00FFFF\"]] \"foo<span style=background-color:tan>ba[r</span>]baz\" compare innerHTML",
+    "occ": 1,
+    "commands": [
+      [
+        "stylewithcss",
+        "false"
+      ],
+      [
+        "hilitecolor",
+        "#00FFFF"
+      ]
+    ],
+    "html": "foo<span style=background-color:tan>ba[r</span>]baz",
+    "statuses": [
+      "Pass",
+      "Fail",
+      "Fail"
+    ]
+  },
+  {
+    "url": "editing/run/hilitecolor.html",
+    "name": "[[\"stylewithcss\",\"false\"],[\"hilitecolor\",\"#00FFFF\"]] \"foo<span style=background-color:tan>ba[r</span>b]az\" compare innerHTML",
+    "occ": 1,
+    "commands": [
+      [
+        "stylewithcss",
+        "false"
+      ],
+      [
+        "hilitecolor",
+        "#00FFFF"
+      ]
+    ],
+    "html": "foo<span style=background-color:tan>ba[r</span>b]az",
+    "statuses": [
+      "Pass",
+      "Fail",
+      "Fail"
+    ]
+  },
+  {
+    "url": "editing/run/hilitecolor.html",
+    "name": "[[\"stylewithcss\",\"false\"],[\"hilitecolor\",\"#00FFFF\"]] \"foo[<span style=background-color:tan>b]ar</span>baz\" compare innerHTML",
+    "occ": 1,
+    "commands": [
+      [
+        "stylewithcss",
+        "false"
+      ],
+      [
+        "hilitecolor",
+        "#00FFFF"
+      ]
+    ],
+    "html": "foo[<span style=background-color:tan>b]ar</span>baz",
+    "statuses": [
+      "Pass",
+      "Fail",
+      "Fail"
+    ]
+  },
+  {
+    "url": "editing/run/hilitecolor.html",
+    "name": "[[\"stylewithcss\",\"true\"],[\"hilitecolor\",\"#00FFFF\"]] \"<font size=6>[foo]</font>\" compare innerHTML",
+    "occ": 1,
+    "commands": [
+      [
+        "stylewithcss",
+        "true"
+      ],
+      [
+        "hilitecolor",
+        "#00FFFF"
+      ]
+    ],
+    "html": "<font size=6>[foo]</font>",
+    "statuses": [
+      "Fail",
+      "Pass",
+      "Pass"
+    ]
+  },
+  {
+    "url": "editing/run/hilitecolor.html",
+    "name": "[[\"stylewithcss\",\"true\"],[\"hilitecolor\",\"#00FFFF\"]] \"<span style=\\\"display: block; background-color: aqua\\\"><span style=\\\"display: block; background-color: tan\\\">b[ar]</span></span>\" compare innerHTML",
+    "occ": 1,
+    "commands": [
+      [
+        "stylewithcss",
+        "true"
+      ],
+      [
+        "hilitecolor",
+        "#00FFFF"
+      ]
+    ],
+    "html": "<span style=\"display: block; background-color: aqua\"><span style=\"display: block; background-color: tan\">b[ar]</span></span>",
+    "statuses": [
+      "Pass",
+      "Fail",
+      "Pass"
+    ]
+  },
+  {
+    "url": "editing/run/hilitecolor.html",
+    "name": "[[\"stylewithcss\",\"true\"],[\"hilitecolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o</span><span style=background-color:tan>b]ar</span>\" compare innerHTML",
+    "occ": 1,
+    "commands": [
+      [
+        "stylewithcss",
+        "true"
+      ],
+      [
+        "hilitecolor",
+        "#00FFFF"
+      ]
+    ],
+    "html": "<span style=background-color:tan>fo[o</span><span style=background-color:tan>b]ar</span>",
+    "statuses": [
+      "Pass",
+      "Fail",
+      "Fail"
+    ]
+  },
+  {
+    "url": "editing/run/hilitecolor.html",
+    "name": "[[\"stylewithcss\",\"true\"],[\"hilitecolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o</span><span style=background-color:yellow>b]ar</span>\" compare innerHTML",
+    "occ": 1,
+    "commands": [
+      [
+        "stylewithcss",
+        "true"
+      ],
+      [
+        "hilitecolor",
+        "#00FFFF"
+      ]
+    ],
+    "html": "<span style=background-color:tan>fo[o</span><span style=background-color:yellow>b]ar</span>",
+    "statuses": [
+      "Pass",
+      "Fail",
+      "Fail"
+    ]
+  },
+  {
+    "url": "editing/run/hilitecolor.html",
+    "name": "[[\"stylewithcss\",\"true\"],[\"hilitecolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o<span style=background-color:transparent>b]ar</span></span>\" compare innerHTML",
+    "occ": 1,
+    "commands": [
+      [
+        "stylewithcss",
+        "true"
+      ],
+      [
+        "hilitecolor",
+        "#00FFFF"
+      ]
+    ],
+    "html": "<span style=background-color:tan>fo[o<span style=background-color:transparent>b]ar</span></span>",
+    "statuses": [
+      "Pass",
+      "Fail",
+      "Fail"
+    ]
+  },
+  {
+    "url": "editing/run/hilitecolor.html",
+    "name": "[[\"stylewithcss\",\"true\"],[\"hilitecolor\",\"#00FFFF\"]] \"[foo<font size=6>bar</font>baz]\" compare innerHTML",
+    "occ": 1,
+    "commands": [
+      [
+        "stylewithcss",
+        "true"
+      ],
+      [
+        "hilitecolor",
+        "#00FFFF"
+      ]
+    ],
+    "html": "[foo<font size=6>bar</font>baz]",
+    "statuses": [
+      "Fail",
+      "Pass",
+      "Pass"
+    ]
+  },
+  {
+    "url": "editing/run/hilitecolor.html",
+    "name": "[[\"stylewithcss\",\"true\"],[\"hilitecolor\",\"#00FFFF\"]] \"[foo<span style=font-size:xx-large>bar</span>baz]\" compare innerHTML",
+    "occ": 1,
+    "commands": [
+      [
+        "stylewithcss",
+        "true"
+      ],
+      [
+        "hilitecolor",
+        "#00FFFF"
+      ]
+    ],
+    "html": "[foo<span style=font-size:xx-large>bar</span>baz]",
+    "statuses": [
+      "Fail",
+      "Pass",
+      "Pass"
+    ]
+  },
+  {
+    "url": "editing/run/hilitecolor.html",
+    "name": "[[\"stylewithcss\",\"true\"],[\"hilitecolor\",\"#00FFFF\"]] \"fo[o<span style=background-color:tan>b]ar</span>baz\" compare innerHTML",
+    "occ": 1,
+    "commands": [
+      [
+        "stylewithcss",
+        "true"
+      ],
+      [
+        "hilitecolor",
+        "#00FFFF"
+      ]
+    ],
+    "html": "fo[o<span style=background-color:tan>b]ar</span>baz",
+    "statuses": [
+      "Pass",
+      "Fail",
+      "Fail"
+    ]
+  },
+  {
+    "url": "editing/run/hilitecolor.html",
+    "name": "[[\"stylewithcss\",\"true\"],[\"hilitecolor\",\"#00FFFF\"]] \"foo<span style=background-color:tan>ba[r</span>]baz\" compare innerHTML",
+    "occ": 1,
+    "commands": [
+      [
+        "stylewithcss",
+        "true"
+      ],
+      [
+        "hilitecolor",
+        "#00FFFF"
+      ]
+    ],
+    "html": "foo<span style=background-color:tan>ba[r</span>]baz",
+    "statuses": [
+      "Pass",
+      "Fail",
+      "Fail"
+    ]
+  },
+  {
+    "url": "editing/run/hilitecolor.html",
+    "name": "[[\"stylewithcss\",\"true\"],[\"hilitecolor\",\"#00FFFF\"]] \"foo<span style=background-color:tan>ba[r</span>b]az\" compare innerHTML",
+    "occ": 1,
+    "commands": [
+      [
+        "stylewithcss",
+        "true"
+      ],
+      [
+        "hilitecolor",
+        "#00FFFF"
+      ]
+    ],
+    "html": "foo<span style=background-color:tan>ba[r</span>b]az",
+    "statuses": [
+      "Pass",
+      "Fail",
+      "Fail"
+    ]
+  },
+  {
+    "url": "editing/run/hilitecolor.html",
+    "name": "[[\"stylewithcss\",\"true\"],[\"hilitecolor\",\"#00FFFF\"]] \"foo[<span style=background-color:tan>b]ar</span>baz\" compare innerHTML",
+    "occ": 1,
+    "commands": [
+      [
+        "stylewithcss",
+        "true"
+      ],
+      [
+        "hilitecolor",
+        "#00FFFF"
+      ]
+    ],
+    "html": "foo[<span style=background-color:tan>b]ar</span>baz",
+    "statuses": [
+      "Pass",
+      "Fail",
+      "Fail"
+    ]
+  }
+]

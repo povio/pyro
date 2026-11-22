@@ -1,0 +1,59 @@
+{
+  "after": {
+    "origText": 160,
+    "idCount": 192,
+    "originalOwnsId": 192,
+    "html": 144,
+    "glyphs": 176,
+    "anchor": 160,
+    "focus": 160,
+    "direction": 192,
+    "text": 176,
+    "mixed": 192,
+    "connected": 160,
+    "value": 96
+  },
+  "twice": {
+    "origText": 160,
+    "idCount": 192,
+    "originalOwnsId": 192,
+    "html": 144,
+    "glyphs": 176,
+    "anchor": 160,
+    "focus": 160,
+    "direction": 192,
+    "text": 176,
+    "mixed": 192,
+    "connected": 160,
+    "value": 96
+  },
+  "undo": {
+    "undo": 192
+  },
+  "onceUndo": {
+    "origText": 160,
+    "idCount": 192,
+    "originalOwnsId": 176,
+    "html": 128,
+    "glyphs": 128,
+    "anchor": 120,
+    "focus": 120,
+    "direction": 192,
+    "text": 176,
+    "mixed": 160,
+    "value": 64
+  },
+  "restored": {
+    "origText": 144,
+    "idCount": 192,
+    "originalOwnsId": 160,
+    "html": 112,
+    "glyphs": 192,
+    "anchor": 192,
+    "focus": 192,
+    "direction": 192,
+    "text": 176,
+    "mixed": 96,
+    "value": 96
+  }
+}

@@ -1,0 +1,354 @@
+[
+  [
+    "editing/run/backcolor.html",
+    "[[\"backcolor\",\"#00FFFF\"]] \"fo[o<span style=background-color:tan>bar</span>b]az\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/backcolor.html",
+    "[[\"stylewithcss\",\"false\"],[\"backcolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o</span><span style=background-color:tan>b]ar</span>\" compare innerHTML",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "editing/run/backcolor.html",
+    "[[\"stylewithcss\",\"false\"],[\"backcolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o</span><span style=background-color:yellow>b]ar</span>\" compare innerHTML",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "editing/run/backcolor.html",
+    "[[\"stylewithcss\",\"false\"],[\"backcolor\",\"#00FFFF\"]] \"fo[o<span style=background-color:tan>b]ar</span>baz\" compare innerHTML",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "editing/run/backcolor.html",
+    "[[\"stylewithcss\",\"false\"],[\"backcolor\",\"#00FFFF\"]] \"foo<span style=background-color:tan>ba[r</span>]baz\" compare innerHTML",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "editing/run/backcolor.html",
+    "[[\"stylewithcss\",\"false\"],[\"backcolor\",\"#00FFFF\"]] \"foo<span style=background-color:tan>ba[r</span>b]az\" compare innerHTML",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "editing/run/backcolor.html",
+    "[[\"stylewithcss\",\"false\"],[\"backcolor\",\"#00FFFF\"]] \"foo[<span style=background-color:tan>b]ar</span>baz\" compare innerHTML",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "editing/run/backcolor.html",
+    "[[\"stylewithcss\",\"true\"],[\"backcolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o</span><span style=background-color:tan>b]ar</span>\" compare innerHTML",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "editing/run/backcolor.html",
+    "[[\"stylewithcss\",\"true\"],[\"backcolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o</span><span style=background-color:yellow>b]ar</span>\" compare innerHTML",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "editing/run/backcolor.html",
+    "[[\"stylewithcss\",\"true\"],[\"backcolor\",\"#00FFFF\"]] \"fo[o<span style=background-color:tan>b]ar</span>baz\" compare innerHTML",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "editing/run/backcolor.html",
+    "[[\"stylewithcss\",\"true\"],[\"backcolor\",\"#00FFFF\"]] \"foo<span style=background-color:tan>ba[r</span>]baz\" compare innerHTML",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "editing/run/backcolor.html",
+    "[[\"stylewithcss\",\"true\"],[\"backcolor\",\"#00FFFF\"]] \"foo<span style=background-color:tan>ba[r</span>b]az\" compare innerHTML",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "editing/run/backcolor.html",
+    "[[\"stylewithcss\",\"true\"],[\"backcolor\",\"#00FFFF\"]] \"foo[<span style=background-color:tan>b]ar</span>baz\" compare innerHTML",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "editing/run/hilitecolor.html",
+    "[[\"hilitecolor\",\"#00FFFF\"]] \"fo[o<span style=background-color:tan>bar</span>b]az\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/hilitecolor.html",
+    "[[\"stylewithcss\",\"false\"],[\"hilitecolor\",\"#00FFFF\"]] \"<font size=6>[foo]</font>\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/hilitecolor.html",
+    "[[\"stylewithcss\",\"false\"],[\"hilitecolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o</span><span style=background-color:tan>b]ar</span>\" compare innerHTML",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "editing/run/hilitecolor.html",
+    "[[\"stylewithcss\",\"false\"],[\"hilitecolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o</span><span style=background-color:yellow>b]ar</span>\" compare innerHTML",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "editing/run/hilitecolor.html",
+    "[[\"stylewithcss\",\"false\"],[\"hilitecolor\",\"#00FFFF\"]] \"[foo<font size=6>bar</font>baz]\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/hilitecolor.html",
+    "[[\"stylewithcss\",\"false\"],[\"hilitecolor\",\"#00FFFF\"]] \"[foo<span style=font-size:xx-large>bar</span>baz]\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/hilitecolor.html",
+    "[[\"stylewithcss\",\"false\"],[\"hilitecolor\",\"#00FFFF\"]] \"fo[o<span style=background-color:tan>b]ar</span>baz\" compare innerHTML",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "editing/run/hilitecolor.html",
+    "[[\"stylewithcss\",\"false\"],[\"hilitecolor\",\"#00FFFF\"]] \"foo<span style=background-color:tan>ba[r</span>]baz\" compare innerHTML",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "editing/run/hilitecolor.html",
+    "[[\"stylewithcss\",\"false\"],[\"hilitecolor\",\"#00FFFF\"]] \"foo<span style=background-color:tan>ba[r</span>b]az\" compare innerHTML",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "editing/run/hilitecolor.html",
+    "[[\"stylewithcss\",\"false\"],[\"hilitecolor\",\"#00FFFF\"]] \"foo[<span style=background-color:tan>b]ar</span>baz\" compare innerHTML",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "editing/run/hilitecolor.html",
+    "[[\"stylewithcss\",\"true\"],[\"hilitecolor\",\"#00FFFF\"]] \"<font size=6>[foo]</font>\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/hilitecolor.html",
+    "[[\"stylewithcss\",\"true\"],[\"hilitecolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o</span><span style=background-color:tan>b]ar</span>\" compare innerHTML",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "editing/run/hilitecolor.html",
+    "[[\"stylewithcss\",\"true\"],[\"hilitecolor\",\"#00FFFF\"]] \"<span style=background-color:tan>fo[o</span><span style=background-color:yellow>b]ar</span>\" compare innerHTML",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "editing/run/hilitecolor.html",
+    "[[\"stylewithcss\",\"true\"],[\"hilitecolor\",\"#00FFFF\"]] \"[foo<font size=6>bar</font>baz]\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/hilitecolor.html",
+    "[[\"stylewithcss\",\"true\"],[\"hilitecolor\",\"#00FFFF\"]] \"[foo<span style=font-size:xx-large>bar</span>baz]\" compare innerHTML",
+    1,
+    "Fail",
+    "Pass",
+    "Pass"
+  ],
+  [
+    "editing/run/hilitecolor.html",
+    "[[\"stylewithcss\",\"true\"],[\"hilitecolor\",\"#00FFFF\"]] \"fo[o<span style=background-color:tan>b]ar</span>baz\" compare innerHTML",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "editing/run/hilitecolor.html",
+    "[[\"stylewithcss\",\"true\"],[\"hilitecolor\",\"#00FFFF\"]] \"foo<span style=background-color:tan>ba[r</span>]baz\" compare innerHTML",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "editing/run/hilitecolor.html",
+    "[[\"stylewithcss\",\"true\"],[\"hilitecolor\",\"#00FFFF\"]] \"foo<span style=background-color:tan>ba[r</span>b]az\" compare innerHTML",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "editing/run/hilitecolor.html",
+    "[[\"stylewithcss\",\"true\"],[\"hilitecolor\",\"#00FFFF\"]] \"foo[<span style=background-color:tan>b]ar</span>baz\" compare innerHTML",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "input-events/input-events-exec-command.html",
+    "Calling execCommand(\"backColor\", false, #0000FF88) (data value)",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "input-events/input-events-exec-command.html",
+    "Calling execCommand(\"backColor\", false, #0000FF88) (inputType value)",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "input-events/input-events-exec-command.html",
+    "Calling execCommand(\"backColor\", false, #00FF00FF) (data value)",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "input-events/input-events-exec-command.html",
+    "Calling execCommand(\"backColor\", false, #00FF00FF) (inputType value)",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "input-events/input-events-exec-command.html",
+    "Calling execCommand(\"backColor\", false, orange) (data value)",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "input-events/input-events-exec-command.html",
+    "Calling execCommand(\"backColor\", false, orange) (inputType value)",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "input-events/input-events-exec-command.html",
+    "Calling execCommand(\"hiliteColor\", false, #0000FF88) (data value)",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "input-events/input-events-exec-command.html",
+    "Calling execCommand(\"hiliteColor\", false, #0000FF88) (inputType value)",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "input-events/input-events-exec-command.html",
+    "Calling execCommand(\"hiliteColor\", false, #00FF00FF) (data value)",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "input-events/input-events-exec-command.html",
+    "Calling execCommand(\"hiliteColor\", false, #00FF00FF) (inputType value)",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "input-events/input-events-exec-command.html",
+    "Calling execCommand(\"hiliteColor\", false, orange) (data value)",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ],
+  [
+    "input-events/input-events-exec-command.html",
+    "Calling execCommand(\"hiliteColor\", false, orange) (inputType value)",
+    1,
+    "Pass",
+    "Fail",
+    "Fail"
+  ]
+]

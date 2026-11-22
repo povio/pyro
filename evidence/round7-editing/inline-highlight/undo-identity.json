@@ -1,0 +1,2190 @@
+{
+  "onceUndo": [
+    {
+      "fixture": {
+        "shape": "already",
+        "selection": "part",
+        "cmd": "hiliteColor",
+        "css": false,
+        "reverse": false
+      },
+      "arms": {
+        "parent": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": false,
+          "secondUndo": false,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            true,
+            true,
+            true
+          ]
+        },
+        "first": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "R2": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "R3": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "signed": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            true,
+            true,
+            true
+          ]
+        }
+      }
+    },
+    {
+      "fixture": {
+        "shape": "already",
+        "selection": "part",
+        "cmd": "backColor",
+        "css": false,
+        "reverse": false
+      },
+      "arms": {
+        "parent": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": false,
+          "secondUndo": false,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            true,
+            true,
+            true
+          ]
+        },
+        "first": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "R2": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "R3": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "signed": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            true,
+            true,
+            true
+          ]
+        }
+      }
+    },
+    {
+      "fixture": {
+        "shape": "already",
+        "selection": "part",
+        "cmd": "hiliteColor",
+        "css": false,
+        "reverse": true
+      },
+      "arms": {
+        "parent": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": false,
+          "secondUndo": false,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            true,
+            true,
+            true
+          ]
+        },
+        "first": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "R2": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "R3": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "signed": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            true,
+            true,
+            true
+          ]
+        }
+      }
+    },
+    {
+      "fixture": {
+        "shape": "already",
+        "selection": "part",
+        "cmd": "backColor",
+        "css": false,
+        "reverse": true
+      },
+      "arms": {
+        "parent": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": false,
+          "secondUndo": false,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            true,
+            true,
+            true
+          ]
+        },
+        "first": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "R2": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "R3": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "signed": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            true,
+            true,
+            true
+          ]
+        }
+      }
+    },
+    {
+      "fixture": {
+        "shape": "already",
+        "selection": "part",
+        "cmd": "hiliteColor",
+        "css": true,
+        "reverse": false
+      },
+      "arms": {
+        "parent": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": false,
+          "secondUndo": false,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            true,
+            true,
+            true
+          ]
+        },
+        "first": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "R2": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "R3": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "signed": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            true,
+            true,
+            true
+          ]
+        }
+      }
+    },
+    {
+      "fixture": {
+        "shape": "already",
+        "selection": "part",
+        "cmd": "backColor",
+        "css": true,
+        "reverse": false
+      },
+      "arms": {
+        "parent": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": false,
+          "secondUndo": false,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            true,
+            true,
+            true
+          ]
+        },
+        "first": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "R2": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "R3": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "signed": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            true,
+            true,
+            true
+          ]
+        }
+      }
+    },
+    {
+      "fixture": {
+        "shape": "already",
+        "selection": "part",
+        "cmd": "hiliteColor",
+        "css": true,
+        "reverse": true
+      },
+      "arms": {
+        "parent": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": false,
+          "secondUndo": false,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            true,
+            true,
+            true
+          ]
+        },
+        "first": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "R2": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "R3": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "signed": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            true,
+            true,
+            true
+          ]
+        }
+      }
+    },
+    {
+      "fixture": {
+        "shape": "already",
+        "selection": "part",
+        "cmd": "backColor",
+        "css": true,
+        "reverse": true
+      },
+      "arms": {
+        "parent": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": false,
+          "secondUndo": false,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            true,
+            true,
+            true
+          ]
+        },
+        "first": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "R2": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "R3": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "signed": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            true,
+            true,
+            true
+          ]
+        }
+      }
+    }
+  ],
+  "restored": [
+    {
+      "fixture": {
+        "shape": "already",
+        "selection": "full",
+        "cmd": "hiliteColor",
+        "css": false,
+        "reverse": false
+      },
+      "arms": {
+        "parent": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": false,
+          "secondUndo": false,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            true,
+            true,
+            true
+          ]
+        },
+        "first": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            false,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "R2": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            false,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "R3": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            false,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "signed": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            false,
+            true,
+            true
+          ],
+          "afterUndo": [
+            true,
+            true,
+            true
+          ]
+        }
+      }
+    },
+    {
+      "fixture": {
+        "shape": "already",
+        "selection": "part",
+        "cmd": "hiliteColor",
+        "css": false,
+        "reverse": false
+      },
+      "arms": {
+        "parent": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": false,
+          "secondUndo": false,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            true,
+            true,
+            true
+          ]
+        },
+        "first": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "R2": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "R3": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "signed": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            true,
+            true,
+            true
+          ]
+        }
+      }
+    },
+    {
+      "fixture": {
+        "shape": "already",
+        "selection": "full",
+        "cmd": "backColor",
+        "css": false,
+        "reverse": false
+      },
+      "arms": {
+        "parent": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": false,
+          "secondUndo": false,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            true,
+            true,
+            true
+          ]
+        },
+        "first": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            false,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "R2": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            false,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "R3": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            false,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "signed": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            false,
+            true,
+            true
+          ],
+          "afterUndo": [
+            true,
+            true,
+            true
+          ]
+        }
+      }
+    },
+    {
+      "fixture": {
+        "shape": "already",
+        "selection": "part",
+        "cmd": "backColor",
+        "css": false,
+        "reverse": false
+      },
+      "arms": {
+        "parent": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": false,
+          "secondUndo": false,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            true,
+            true,
+            true
+          ]
+        },
+        "first": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "R2": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "R3": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "signed": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            true,
+            true,
+            true
+          ]
+        }
+      }
+    },
+    {
+      "fixture": {
+        "shape": "already",
+        "selection": "full",
+        "cmd": "hiliteColor",
+        "css": false,
+        "reverse": true
+      },
+      "arms": {
+        "parent": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": false,
+          "secondUndo": false,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            true,
+            true,
+            true
+          ]
+        },
+        "first": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            false,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "R2": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            false,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "R3": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            false,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "signed": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            false,
+            true,
+            true
+          ],
+          "afterUndo": [
+            true,
+            true,
+            true
+          ]
+        }
+      }
+    },
+    {
+      "fixture": {
+        "shape": "already",
+        "selection": "part",
+        "cmd": "hiliteColor",
+        "css": false,
+        "reverse": true
+      },
+      "arms": {
+        "parent": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": false,
+          "secondUndo": false,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            true,
+            true,
+            true
+          ]
+        },
+        "first": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "R2": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "R3": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "signed": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            true,
+            true,
+            true
+          ]
+        }
+      }
+    },
+    {
+      "fixture": {
+        "shape": "already",
+        "selection": "full",
+        "cmd": "backColor",
+        "css": false,
+        "reverse": true
+      },
+      "arms": {
+        "parent": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": false,
+          "secondUndo": false,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            true,
+            true,
+            true
+          ]
+        },
+        "first": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            false,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "R2": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            false,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "R3": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            false,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "signed": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            false,
+            true,
+            true
+          ],
+          "afterUndo": [
+            true,
+            true,
+            true
+          ]
+        }
+      }
+    },
+    {
+      "fixture": {
+        "shape": "already",
+        "selection": "part",
+        "cmd": "backColor",
+        "css": false,
+        "reverse": true
+      },
+      "arms": {
+        "parent": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": false,
+          "secondUndo": false,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            true,
+            true,
+            true
+          ]
+        },
+        "first": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "R2": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "R3": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "signed": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            true,
+            true,
+            true
+          ]
+        }
+      }
+    },
+    {
+      "fixture": {
+        "shape": "already",
+        "selection": "full",
+        "cmd": "hiliteColor",
+        "css": true,
+        "reverse": false
+      },
+      "arms": {
+        "parent": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": false,
+          "secondUndo": false,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            true,
+            true,
+            true
+          ]
+        },
+        "first": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            false,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "R2": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            false,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "R3": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            false,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "signed": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            false,
+            true,
+            true
+          ],
+          "afterUndo": [
+            true,
+            true,
+            true
+          ]
+        }
+      }
+    },
+    {
+      "fixture": {
+        "shape": "already",
+        "selection": "part",
+        "cmd": "hiliteColor",
+        "css": true,
+        "reverse": false
+      },
+      "arms": {
+        "parent": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": false,
+          "secondUndo": false,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            true,
+            true,
+            true
+          ]
+        },
+        "first": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "R2": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "R3": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "signed": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            true,
+            true,
+            true
+          ]
+        }
+      }
+    },
+    {
+      "fixture": {
+        "shape": "already",
+        "selection": "full",
+        "cmd": "backColor",
+        "css": true,
+        "reverse": false
+      },
+      "arms": {
+        "parent": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": false,
+          "secondUndo": false,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            true,
+            true,
+            true
+          ]
+        },
+        "first": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            false,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "R2": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            false,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "R3": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            false,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "signed": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            false,
+            true,
+            true
+          ],
+          "afterUndo": [
+            true,
+            true,
+            true
+          ]
+        }
+      }
+    },
+    {
+      "fixture": {
+        "shape": "already",
+        "selection": "part",
+        "cmd": "backColor",
+        "css": true,
+        "reverse": false
+      },
+      "arms": {
+        "parent": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": false,
+          "secondUndo": false,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            true,
+            true,
+            true
+          ]
+        },
+        "first": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "R2": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "R3": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "signed": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            true,
+            true,
+            true
+          ]
+        }
+      }
+    },
+    {
+      "fixture": {
+        "shape": "already",
+        "selection": "full",
+        "cmd": "hiliteColor",
+        "css": true,
+        "reverse": true
+      },
+      "arms": {
+        "parent": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": false,
+          "secondUndo": false,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            true,
+            true,
+            true
+          ]
+        },
+        "first": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            false,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "R2": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            false,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "R3": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            false,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "signed": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            false,
+            true,
+            true
+          ],
+          "afterUndo": [
+            true,
+            true,
+            true
+          ]
+        }
+      }
+    },
+    {
+      "fixture": {
+        "shape": "already",
+        "selection": "part",
+        "cmd": "hiliteColor",
+        "css": true,
+        "reverse": true
+      },
+      "arms": {
+        "parent": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": false,
+          "secondUndo": false,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            true,
+            true,
+            true
+          ]
+        },
+        "first": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "R2": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "R3": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "signed": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            true,
+            true,
+            true
+          ]
+        }
+      }
+    },
+    {
+      "fixture": {
+        "shape": "already",
+        "selection": "full",
+        "cmd": "backColor",
+        "css": true,
+        "reverse": true
+      },
+      "arms": {
+        "parent": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": false,
+          "secondUndo": false,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            true,
+            true,
+            true
+          ]
+        },
+        "first": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            false,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "R2": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            false,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "R3": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            false,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "signed": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            false,
+            true,
+            true
+          ],
+          "afterUndo": [
+            true,
+            true,
+            true
+          ]
+        }
+      }
+    },
+    {
+      "fixture": {
+        "shape": "already",
+        "selection": "part",
+        "cmd": "backColor",
+        "css": true,
+        "reverse": true
+      },
+      "arms": {
+        "parent": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": false,
+          "secondUndo": false,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            true,
+            true,
+            true
+          ]
+        },
+        "first": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "R2": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "R3": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            false,
+            false,
+            false
+          ]
+        },
+        "signed": {
+          "firstReturn": true,
+          "repeatReturn": true,
+          "undo": true,
+          "secondUndo": true,
+          "after": [
+            true,
+            true,
+            true
+          ],
+          "afterUndo": [
+            true,
+            true,
+            true
+          ]
+        }
+      }
+    }
+  ]
+}
