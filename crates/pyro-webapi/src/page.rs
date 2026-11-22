@@ -277,6 +277,9 @@ pub struct PageDom {
     /// Resource Timing: the document's entry buffer (`resource_timing`).
     pub(crate) resource_timings: crate::resource_timing::ResourceTimings,
     pub(crate) focus_values: RefCell<FxHashMap<NodeId, String>>,
+    /// Scoped focusgroup memory: per owner, the item focused last (the
+    /// group's tab stop on re-entry unless the owner says `nomemory`).
+    pub(crate) focusgroup_memory: RefCell<FxHashMap<NodeId, NodeId>>,
     /// ARIA element reflection (`ariaLabelledByElements`, ...): per element and attribute, the
     /// elements set explicitly and the frozen array last returned (html.rs `AriaRefs`).
     pub(crate) aria_refs: RefCell<FxHashMap<(NodeId, &'static str), crate::html::AriaRefs>>,
@@ -974,6 +977,7 @@ impl PageDom {
             timing: Cell::new(DocumentTiming::default()),
             resource_timings: Default::default(),
             focus_values: RefCell::new(FxHashMap::default()),
+            focusgroup_memory: RefCell::new(FxHashMap::default()),
             aria_refs: RefCell::new(FxHashMap::default()),
             focus_transition: RefCell::new(None),
             editing_target: Cell::new(None),

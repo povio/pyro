@@ -241,6 +241,22 @@ impl Dom {
         found.filter(|&n| n != current)
     }
 
+    /// The element Tab or Shift+Tab lands on when entering a focusgroup
+    /// segment (`segment`: its items in tree order, one tab stop for all):
+    /// the owner's remembered item when it is in the segment and the owner
+    /// keeps memory, else the first item with `focusgroupstart`, else the
+    /// first item.
+    pub fn focusgroup_entry(&self, segment: &[NodeId], memory: Option<NodeId>) -> Option<NodeId> {
+        if let Some(m) = memory.filter(|m| segment.contains(m)) {
+            return Some(m);
+        }
+        segment
+            .iter()
+            .copied()
+            .find(|&n| self.element(n).is_ok_and(|e| e.attr("focusgroupstart").is_some()))
+            .or_else(|| segment.first().copied())
+    }
+
     /// `a` precedes `b` in shadow-including tree order.
     fn compare_tree_order(&self, a: NodeId, b: NodeId) -> bool {
         self.compare_document_position(b, a).is_ok_and(|p| p & 0x02 != 0)

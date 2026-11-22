@@ -208,6 +208,12 @@ pub fn focus_element_with_transition(page: &Rc<PageDom>, el: NodeId, token: &Foc
         let visible = !page.pointer_modality.get() || takes_typed_text(&dom, el);
         let _ = dom.set_focus_visible(doc, visible);
         let _ = dom.set_focused(doc, Some(el));
+        // The focusgroup's memory follows focus onto its items.
+        if let Some((owner, flags)) = dom.focusgroup_owner_of(el) {
+            if flags.memory {
+                page.focusgroup_memory.borrow_mut().insert(owner, el);
+            }
+        }
     }
     if is_text_control(&page.dom.borrow(), el) {
         page.editing_target.set(Some(el));
@@ -1949,13 +1955,56 @@ pub fn insert_text(page: &Rc<PageDom>, text: &str) {
 /// Sequential focus navigation (Tab / Shift+Tab) from the focused element
 /// through the flattened tabindex-ordered scopes of the document, its
 /// shadow trees and slots (see `pyro_dom::focus_nav`), over focusable areas.
+///
+/// A focusgroup segment (a run of one owner's items with nothing else
+/// between them in that order) is one tab stop: navigation passes over the
+/// other items of the segment it leaves, and entering a segment lands on
+/// its entry (`Dom::focusgroup_entry`) from either side.
 fn focus_next(page: &Rc<PageDom>, _from: NodeId, backward: bool) {
     let next = {
         let layout = page.layout();
         let dom = page.dom.borrow();
         let doc = page.document();
+        let area = |n: NodeId| is_focusable_area(&layout, &dom, n);
+        let step = |cur: Option<NodeId>| dom.sequential_focus_target_with_layout(doc, cur, backward, &area, &layout);
         let current = dom.focused(doc).ok().flatten();
-        dom.sequential_focus_target_with_layout(doc, current, backward, &|n| is_focusable_area(&layout, &dom, n), &layout)
+        let owner_of = |n: NodeId| dom.focusgroup_owner_of(n).map(|(o, _)| o);
+        let leaving = current.and_then(owner_of);
+        let mut next = step(current);
+        let mut guard = 0usize;
+        // Pass over the rest of the segment being left.
+        while let (Some(n), Some(o)) = (next, leaving) {
+            if owner_of(n) != Some(o) || guard > 100_000 {
+                break;
+            }
+            guard += 1;
+            next = step(Some(n));
+        }
+        match next {
+            Some(n) => match owner_of(n) {
+                Some(owner) => {
+                    // The segment entered: `n` and the items of `owner`
+                    // right after it in this direction.
+                    let mut segment = vec![n];
+                    let mut cur = n;
+                    while let Some(m) = step(Some(cur)) {
+                        if owner_of(m) != Some(owner) || segment.len() > 100_000 {
+                            break;
+                        }
+                        segment.push(m);
+                        cur = m;
+                    }
+                    if backward {
+                        segment.reverse();
+                    }
+                    let memory = page.focusgroup_memory.borrow().get(&owner).copied();
+                    let memory = memory.filter(|&m| dom.focusgroup_owner_of(m).is_some_and(|(o, f)| o == owner && f.memory));
+                    dom.focusgroup_entry(&segment, memory)
+                }
+                None => Some(n),
+            },
+            None => None,
+        }
     };
     if let Some(n) = next {
         focus_element(page, n);
