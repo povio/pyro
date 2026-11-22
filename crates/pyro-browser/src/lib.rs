@@ -2403,7 +2403,7 @@ impl Browser {
         let host = self.pages[pos].frames.clone();
         host.invalidate_focus(page.into(), false);
         host.retire_children(page.into());
-        host.drain_retired();
+        host.drain_retired_disposing();
         let loader = self.pages[pos].main_frame.loader_id.clone();
         self.forget_network_activity(page.into(), &loader);
         self.pages[pos].main_frame.realms = host.root.borrow().realms.clone();

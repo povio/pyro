@@ -1018,22 +1018,54 @@ impl FrameHost {
     pub fn has_retired(&self) -> bool {
         !self.retired.borrow().is_empty()
     }
+    /// Ends the frames removed from this page (`detach`). Their windows linger while script
+    /// still holds them, as a navigated child frame's do (`Realm::linger`): a removed iframe's
+    /// window answers `parent`/`top` with null instead of throwing.
     pub fn drain_retired(&self) {
+        self.drain_retired_with(true);
+    }
+    /// `drain_retired` for a page going away: the removed frames' realms end at once.
+    pub fn drain_retired_disposing(&self) {
+        self.drain_retired_with(false);
+    }
+    fn drain_retired_with(&self, linger: bool) {
         let retired = std::mem::take(&mut *self.retired.borrow_mut());
         for state in retired {
             let frame = state.main_frame;
             // pyro: what its layout loaded or waits for goes with it (`forget_document`).
             self.layout_bodies.forget_document(&crate::document_client(&frame));
+            let linger = linger && frame.page_dom.is_some();
             if let Some(dom) = &frame.page_dom {
-                dom.dispose();
-            }
-            for world in frame.realms {
-                window::cancel_timers(&world.realm);
-                if let Some(dom) = &frame.page_dom {
-                    pyro_webapi::lifecycle::realm_disposed(dom, world.realm.id());
+                if linger {
+                    dom.detach();
+                } else {
+                    dom.dispose();
                 }
-                world.realm.dispose();
+            }
+            let mut lingered = true;
+            for world in frame.realms {
+                if linger {
+                    window::release_roots(&world.realm);
+                } else {
+                    window::cancel_timers(&world.realm);
+                }
+                if let Some(dom) = &frame.page_dom {
+                    if linger {
+                        pyro_webapi::lifecycle::realm_detached(dom, world.realm.id());
+                    } else {
+                        pyro_webapi::lifecycle::realm_disposed(dom, world.realm.id());
+                    }
+                }
+                if !(linger && world.realm.linger()) {
+                    lingered = false;
+                    world.realm.dispose();
+                }
                 self.emit(PageEvent::RealmDestroyed { frame_id: frame.id.clone(), realm: world.realm.id() });
+            }
+            if linger && !lingered {
+                if let Some(dom) = &frame.page_dom {
+                    dom.dispose();
+                }
             }
             if let Some(dom) = &frame.page_dom {
                 let _ = dom.dom.borrow_mut().set_document_active(dom.document(), false);
@@ -1337,6 +1369,11 @@ impl FrameHost {
         key: FrameKey,
         top: bool,
     ) -> pyro_js::JsResult<pyro_js::Value<'s>> {
+        // HTML `parent`/`top`: null once the window's navigable is gone (its container, or an
+        // ancestor's, was removed: `detach` dropped the frame and its descendants).
+        if self.with_frame(key, |_| ()).is_none() {
+            return Ok(s.null());
+        }
         self.window_value(s, key, if top { self.page.into() } else { self.parent_key(key) })
     }
     pub fn frame_element<'s>(
