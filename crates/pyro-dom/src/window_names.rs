@@ -38,8 +38,9 @@ pub fn window_name_hash(units: impl Iterator<Item = u16>) -> u64 {
     units.fold(0xcbf29ce484222325, |h, u| (h ^ u64::from(u)).wrapping_mul(0x100000001b3))
 }
 
-/// Whether this element's `name` attribute names it on the Window. An iframe
-/// names its child window, which the caller resolves.
+/// Whether this element's `name` attribute names it on the Window. An iframe or
+/// frame names its child window (its target name), which the caller resolves, as
+/// an object or embed with one does.
 pub(crate) fn named_by_name(e: &ElementData) -> bool {
     // Atoms compare as integers: asked of every node entering a tree.
     use markup5ever::local_name;
@@ -48,6 +49,7 @@ pub(crate) fn named_by_name(e: &ElementData) -> bool {
             e.name.local,
             local_name!("embed")
                 | local_name!("form")
+                | local_name!("frame")
                 | local_name!("iframe")
                 | local_name!("img")
                 | local_name!("object")

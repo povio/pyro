@@ -32,20 +32,36 @@ impl pyro_js::NamedProperties for WindowNamedProperties {
     fn resolve<'s>(&self, s: &Scope<'s>, name: &str) -> JsResult<Option<Value<'s>>> {
         let page = &self.0;
         let doc = page.document();
-        // Iframes by `name` stand for their child window, not for themselves.
-        let (frames, found) = {
+        // Navigable containers named by `name` (their child navigable's target name) stand for
+        // their child window, which comes first: iframe, frame, and an object or embed showing a
+        // document. An object or embed without one is a named element itself; an iframe or frame
+        // without one names nothing.
+        let named = page.dom.borrow().window_named_elements(doc, name).js()?;
+        let kinds: Vec<Option<bool>> = {
             let dom = page.dom.borrow();
-            let (frames, found): (Vec<_>, Vec<_>) =
-                dom.window_named_elements(doc, name).js()?.into_iter().partition(|&el| {
-                    dom.element(el).is_ok_and(|e| &*e.name.local == "iframe" && e.is_html() && e.id() != Some(name))
-                });
-            (frames, found)
+            named
+                .iter()
+                .map(|&el| {
+                    dom.element(el).ok().and_then(|e| {
+                        let local = &*e.name.local;
+                        let container = e.is_html()
+                            && matches!(local, "iframe" | "frame" | "object" | "embed")
+                            && e.attr("name") == Some(name);
+                        // Some(keeps itself without a window)
+                        container.then(|| matches!(local, "object" | "embed"))
+                    })
+                })
+                .collect()
         };
-        for frame in frames {
-            if let Some(window) = page.frame_window(s, frame)? {
-                return Ok(Some(window));
+        for (&el, kind) in named.iter().zip(&kinds) {
+            if kind.is_some() {
+                if let Some(window) = page.frame_window(s, el)? {
+                    return Ok(Some(window));
+                }
             }
         }
+        let found: Vec<_> =
+            named.iter().zip(&kinds).filter(|(_, kind)| kind.unwrap_or(true)).map(|(&el, _)| el).collect();
         match found[..] {
             [] => Ok(None),
             [el] => Ok(Some(crate::node::wrap_node(s, page, el)?.value())),
