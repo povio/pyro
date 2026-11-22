@@ -4775,6 +4775,14 @@ fn open_document(page: &Rc<PageDom>, doc: NodeId) -> JsResult<()> {
         // the written markup's doctype (or its absence) says otherwise.
         dom.set_quirks_mode(doc, pyro_dom::QuirksMode::NoQuirks).js()?;
     }
+    // HTML document open steps: a frame's document opened from another
+    // document's script takes the entry document's URL, without its fragment
+    // (the frame's history entry is replaced, `PageHooks::document_reopened`).
+    if doc == page.document() && !page.is_disposed() {
+        if let Some(url) = entry_document_url(page, doc) {
+            page.dom.borrow_mut().set_document_url(doc, &url).js()?;
+        }
+    }
     page.set_ready_state(doc, "loading");
     let mut parser = pyro_dom::parse::DocumentParser::new(page.dom.clone(), doc, !page.scripting_disabled()).js()?;
     parser.enable_template_patches();
@@ -4788,6 +4796,21 @@ fn open_document(page: &Rc<PageDom>, doc: NodeId) -> JsResult<()> {
         hooks.document_reopened();
     }
     Ok(())
+}
+
+/// The URL (fragment removed) of the entry global object's document when it
+/// is not `doc` of `page`.
+fn entry_document_url(page: &Rc<PageDom>, doc: NodeId) -> Option<String> {
+    let realm = pyro_js::entry_realm()?;
+    let scope = realm.scope().ok()?;
+    let entry = crate::target::page_of(&scope).ok()?;
+    let entry_doc = entry.document();
+    if Rc::ptr_eq(&entry, page) && entry_doc == doc {
+        return None;
+    }
+    let dom = entry.dom.borrow();
+    let url = &dom.document_data(entry_doc).ok()?.url;
+    Some(url.split('#').next().unwrap_or_default().to_owned())
 }
 
 /// `document.write`/`writeln`.

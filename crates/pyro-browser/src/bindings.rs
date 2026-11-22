@@ -588,13 +588,21 @@ impl PageHooks for Hooks {
     fn document_reopened(&self) {
         // At once, not in the task below: a navigation the same script
         // starts commits against the opened document.
-        let nav = self
-            .frames
-            .upgrade()
-            .filter(|host| host.matches(self.page, &self.loader))
-            .and_then(|host| host.nav(self.page));
+        let host = self.frames.upgrade().filter(|host| host.matches(self.page, &self.loader));
+        let nav = host.as_ref().and_then(|host| host.nav(self.page));
         if let Some(nav) = nav {
             nav.document_opened();
+            // The open took the entry document's URL: the frame's current
+            // history entry and location follow (HTML "URL and history
+            // update steps", replacing the entry).
+            let url = host.as_ref().and_then(|host| host.page_dom(self.page)).and_then(|page| {
+                let dom = page.dom.borrow();
+                let url = dom.document_data(page.document()).ok().map(|d| d.url.to_string());
+                url
+            });
+            if let Some(url) = url.filter(|url| *url != nav.url()) {
+                nav.document_opened_url(&url);
+            }
         }
         let page = self.page;
         let loader = self.loader.clone();

@@ -434,6 +434,12 @@ impl PageNav {
         self.set_url_sync(url);
     }
 
+    /// `document.open()` gave the document its entry document's URL: the
+    /// current entry takes it, without a new entry or a navigation.
+    pub(crate) fn document_opened_url(&self, url: &str) {
+        self.update_initial_blank_url(url);
+    }
+
     fn set_url_sync(&self, url: &str) {
         self.state.borrow_mut().url = url.to_string();
         if let Some((dom, doc)) = self.document.borrow().as_ref() {
