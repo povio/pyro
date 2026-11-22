@@ -3,16 +3,16 @@
  "tiers": {
   "implemented": {
    "scope": {
-    "macbook_in_scope": 915,
+    "macbook_in_scope": 852,
     "studio_in_scope": 111,
     "other_dirs_out_of_scope": 21,
     "macbook_worker_variants_if_enabled": 217,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 1237,
+   "distinct_census_pages": 1174,
    "owner_reported_unlisted": 5,
    "selector_union": 1431,
-   "owner_estimate_reduction": 199,
+   "owner_estimate_reduction": 262,
    "of_which_tentative": 188,
    "studio_css_reported_pages_not_deduped": 0,
    "studio_css_listed_distinct": 38,
@@ -28,8 +28,8 @@
     "fetch/fetch-later": 29,
     "html/dom": 24,
     "fetch/content-encoding": 21,
-    "html/infrastructure": 20,
     "html/webappapis": 20,
+    "html/infrastructure": 20,
     "scheduler": 19,
     "html/syntax": 12,
     "fetch/cross-origin-resource-policy": 10,
@@ -44,8 +44,8 @@
     "fetch/nosniff": 3,
     "xhr": 2,
     "quirks": 1,
-    "svg/styling": 1,
-    "IndexedDB": 1
+    "IndexedDB": 1,
+    "svg/styling": 1
    }
   },
   "in_progress": {
@@ -93,11 +93,11 @@
     "content-security-policy": 20,
     "webidl": 19,
     "html/canvas": 7,
-    "html/browsers": 5,
     "html/interaction": 5,
+    "html/browsers": 5,
     "svg/path": 4,
-    "html/webappapis": 3,
     "workers": 3,
+    "html/webappapis": 3,
     "dom/nodes": 1
    }
   }
@@ -1889,14 +1889,14 @@
    "tentative": 0
   }
  },
- "implemented_total_estimate": 1275,
+ "implemented_total_estimate": 1212,
  "milestones_reached": [
   250,
   500,
   750,
   1000
  ],
- "macbook_in_scope_implemented": 915,
+ "macbook_in_scope_implemented": 852,
  "macbook_in_scope_milestones": [
   100,
   200,
@@ -1905,7 +1905,6 @@
   500,
   600,
   700,
-  800,
-  900
+  800
  ]
 }
