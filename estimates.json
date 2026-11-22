@@ -3,6 +3,7 @@
  "tiers": {
   "implemented": {
    "distinct_census_pages": 231,
+   "of_which_tentative": 0,
    "studio_css_reported_pages_not_deduped": 0,
    "by_dir": {
     "html/canvas": 207,
@@ -10,9 +11,9 @@
     "fetch/api": 4,
     "FileAPI": 4,
     "fetch/data-urls": 3,
-    "xhr": 2,
     "mathml": 2,
     "encoding": 2,
+    "xhr": 2,
     "quirks": 1,
     "svg/styling": 1,
     "html/rendering": 1
@@ -20,6 +21,7 @@
   },
   "in_progress": {
    "distinct_census_pages": 650,
+   "of_which_tentative": 196,
    "studio_css_reported_pages_not_deduped": 38,
    "by_dir": {
     "html/semantics": 209,
@@ -28,35 +30,36 @@
     "html/syntax": 34,
     "dom/events": 21,
     "scheduler": 19,
-    "html/dom": 17,
     "scroll-animations": 17,
+    "html/dom": 17,
     "pointerevents": 11,
     "fetch/content-encoding": 9,
     "selection": 7,
     "shadow-dom": 7,
     "navigation-api": 6,
-    "html/editing": 5,
     "uievents": 5,
+    "html/editing": 5,
     "intersection-observer": 5,
     "svg/types": 4,
+    "event-timing": 3,
     "close-watcher": 3,
     "mathml": 3,
-    "event-timing": 3,
     "inert": 3,
-    "fetch/fetch-later": 2,
     "resource-timing": 2,
     "soft-navigation-heuristics": 2,
-    "dom/nodes": 2,
-    "svg/animations": 2,
     "html/rendering": 2,
-    "pointerlock": 1,
+    "fetch/fetch-later": 2,
+    "svg/animations": 2,
+    "dom/nodes": 2,
     "editing": 1,
-    "html/browsers": 1,
-    "document-picture-in-picture": 1
+    "document-picture-in-picture": 1,
+    "pointerlock": 1,
+    "html/browsers": 1
    }
   },
   "queued": {
    "distinct_census_pages": 543,
+   "of_which_tentative": 22,
    "studio_css_reported_pages_not_deduped": 122,
    "by_dir": {
     "svg/animations": 229,
@@ -78,407 +81,508 @@
  "per_brief": {
   "OWN-blob-textstream": {
    "state": "implemented-unbuilt",
-   "pages": 4
+   "pages": 4,
+   "tentative": 0
   },
   "OWN-xhr-send-usp": {
    "state": "implemented-unbuilt",
-   "pages": 2
+   "pages": 2,
+   "tentative": 0
   },
   "Q01": {
    "state": "claimed",
-   "pages": 161
+   "pages": 161,
+   "tentative": 30
   },
   "Q02": {
    "state": "frozen",
-   "pages": 1
+   "pages": 1,
+   "tentative": 0
   },
   "Q03": {
    "state": "frozen",
-   "pages": 1
+   "pages": 1,
+   "tentative": 0
   },
   "Q03b": {
    "state": "proposed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "Q04": {
    "state": "implemented-unbuilt",
-   "pages": 1
+   "pages": 1,
+   "tentative": 0
   },
   "Q05": {
    "state": "implemented-unbuilt",
-   "pages": 3
+   "pages": 3,
+   "tentative": 0
   },
   "Q06": {
    "state": "claimed",
-   "pages": 1
+   "pages": 1,
+   "tentative": 0
   },
   "Q07": {
    "state": "implemented-unbuilt",
-   "pages": 2
+   "pages": 2,
+   "tentative": 0
   },
   "Q08": {
    "state": "proposed",
-   "pages": 1
+   "pages": 1,
+   "tentative": 0
   },
   "Q09": {
    "state": "frozen",
-   "pages": 2
+   "pages": 2,
+   "tentative": 0
   },
   "Q10": {
    "state": "retired",
-   "pages": 0
+   "pages": 0,
+   "tentative": 0
   },
   "Q11": {
    "state": "proposed",
-   "pages": 4
+   "pages": 4,
+   "tentative": 0
   },
   "Q12": {
    "state": "claimed",
-   "pages": 16
+   "pages": 16,
+   "tentative": 0
   },
   "S01": {
    "state": "merged",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "S02": {
    "state": "claimed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "S03": {
    "state": "proposed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "S04": {
    "state": "proposed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "SC-Q01-color-interp-8bit-rounding": {
    "state": "claimed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "SC-Q02-border-like-width-snap-after-interp": {
    "state": "claimed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "SC-Q03-image-props-transitions-start": {
    "state": "proposed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "SC-Q04-scroll-methods-return-promise": {
    "state": "proposed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "SC-Q05-no-transition-for-inherited-change": {
    "state": "proposed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "SC-Q06-transitionend-longhand-alias-names": {
    "state": "proposed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "SC-Q07-font-size-transition-under-zoom": {
    "state": "proposed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "SC-Q08-align-content-in-fragmentation": {
    "state": "proposed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "SC-Q09-contain-intrinsic-size-auto-remembered": {
    "state": "claimed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "SC-Q10-system-font-keywords": {
    "state": "proposed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "SC-Q11-highlight-pseudo-computed-inheritance": {
    "state": "proposed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "SC-Q12-Highlight-setlike-interface": {
    "state": "proposed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "SC-Q13-integer-interp-rounding": {
    "state": "proposed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "SC-Q14-overflow-clip-margin-discrete": {
    "state": "claimed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "SC-Q15-position-area-geometry": {
    "state": "proposed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "SC-Q16-anchor-scrollable-containing-block": {
    "state": "proposed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "SC-Q17-multicol-getClientRects-wm-dir": {
    "state": "proposed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "SC-Q18-sticky-constraints": {
    "state": "proposed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "SC-Q18a": {
    "state": "claimed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "SC-Q19-overlay-property": {
    "state": "proposed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "SC-Q20-container-query-nested-containers": {
    "state": "proposed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "SC-Q21-container-query-fractional-sizes": {
    "state": "proposed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "SC-Q22-container-units-svg-and-animation": {
    "state": "proposed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "SC-Q23-cascade-layer-fontface-counterstyle": {
    "state": "proposed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "SC-Q25-page-rule-selector-validation": {
    "state": "claimed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "SC-Q26-css-syntax-eof-serialization": {
    "state": "proposed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "SC-Q27-tiny-number-exponent-serialization": {
    "state": "proposed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "SC-Q28-transform-interp-mismatched-primitives": {
    "state": "proposed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "SC-Q29-hit-test-border-radius-clip": {
    "state": "proposed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "SC-Q30-marker-hit-testing": {
    "state": "proposed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "SC-Q31-marker-animations": {
    "state": "proposed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "SC-Q32-smooth-scroll-behavior": {
    "state": "proposed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "SC-Q33-scroll-anchoring-start-edge": {
    "state": "proposed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "SC-Q34-env-parsing": {
    "state": "claimed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "SC-Q35-picker-pseudo-parsing": {
    "state": "proposed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "SC-Q36-mask-shorthand-none-layers": {
    "state": "proposed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "SC-Q37-shape-outside-path-absolute": {
    "state": "proposed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "SC-Q38-text-transform-innerText": {
    "state": "proposed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "SC-Q39-steps-calc-count": {
    "state": "proposed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "SC-Q40-starting-style-rule-parsing": {
    "state": "proposed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "SC-Q41-typed-om-idl-length-enumerable": {
    "state": "proposed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "SC-Q42-animation-duration-auto-resolved": {
    "state": "claimed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "SC-Q43-resize-interactive": {
    "state": "proposed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "SC-Q44-text-input-scroll-on-blur": {
    "state": "proposed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "SC-Q45-intrinsic-percent-replaced-cyclic": {
    "state": "proposed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "SC-Q46-clip-path-calc-zero-simplify": {
    "state": "proposed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "SC-Q47-clip-additive-composition": {
    "state": "proposed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "SC-Q48-corner-shape-shape-outside": {
    "state": "proposed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "C01": {
    "state": "implemented-unbuilt",
-   "pages": 100
+   "pages": 100,
+   "tentative": 0
   },
   "C02": {
    "state": "frozen",
-   "pages": 77
+   "pages": 77,
+   "tentative": 0
   },
   "C03": {
    "state": "implemented-unbuilt",
-   "pages": 30
+   "pages": 30,
+   "tentative": 0
   },
   "C04": {
    "state": "claimed",
-   "pages": 19
+   "pages": 19,
+   "tentative": 0
   },
   "C05": {
    "state": "claimed",
-   "pages": 93
+   "pages": 93,
+   "tentative": 0
   },
   "C05a": {
    "state": "claimed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   },
   "P01": {
    "state": "proposed",
-   "pages": 0
+   "pages": 0,
+   "tentative": 0
   },
   "P02": {
    "state": "proposed",
-   "pages": 2
+   "pages": 2,
+   "tentative": 0
   },
   "P03": {
    "state": "proposed",
-   "pages": 6
+   "pages": 6,
+   "tentative": 0
   },
   "P04": {
    "state": "implemented-unbuilt",
-   "pages": 2
+   "pages": 2,
+   "tentative": 0
   },
   "P05": {
    "state": "proposed",
-   "pages": 0
+   "pages": 0,
+   "tentative": 0
   },
   "P06": {
    "state": "active",
-   "pages": 19
+   "pages": 19,
+   "tentative": 19
   },
   "P07": {
    "state": "claimed",
-   "pages": 9
+   "pages": 9,
+   "tentative": 0
   },
   "P08": {
    "state": "proposed",
-   "pages": 8
+   "pages": 8,
+   "tentative": 0
   },
   "P09": {
    "state": "proposed",
-   "pages": 0
+   "pages": 0,
+   "tentative": 0
   },
   "P10": {
    "state": "proposed",
-   "pages": 1
+   "pages": 1,
+   "tentative": 0
   },
   "P11": {
    "state": "proposed",
-   "pages": 19
+   "pages": 19,
+   "tentative": 0
   },
   "P12": {
    "state": "proposed",
-   "pages": 0
+   "pages": 0,
+   "tentative": 0
   },
   "P13": {
    "state": "proposed",
-   "pages": 5
+   "pages": 5,
+   "tentative": 0
   },
   "P14": {
    "state": "proposed",
-   "pages": 229
+   "pages": 229,
+   "tentative": 21
   },
   "P15": {
    "state": "proposed",
-   "pages": 36
+   "pages": 36,
+   "tentative": 0
   },
   "F01": {
    "state": "proposed",
-   "pages": 139
+   "pages": 139,
+   "tentative": 0
   },
   "F02": {
    "state": "claimed",
-   "pages": 108
+   "pages": 108,
+   "tentative": 108
   },
   "F03": {
    "state": "claimed",
-   "pages": 63
+   "pages": 63,
+   "tentative": 5
   },
   "F04": {
    "state": "claimed",
-   "pages": 66
+   "pages": 66,
+   "tentative": 0
   },
   "F05": {
    "state": "proposed",
-   "pages": 36
+   "pages": 36,
+   "tentative": 0
   },
   "F06": {
    "state": "proposed",
-   "pages": 20
+   "pages": 20,
+   "tentative": 0
   },
   "F07": {
    "state": "proposed",
-   "pages": 40
+   "pages": 40,
+   "tentative": 1
   },
   "F08": {
    "state": "claimed",
-   "pages": 31
+   "pages": 31,
+   "tentative": 0
   },
   "F09": {
    "state": "claimed",
-   "pages": 30
+   "pages": 30,
+   "tentative": 0
   },
   "F10": {
    "state": "claimed",
-   "pages": 34
+   "pages": 34,
+   "tentative": 34
   },
   "OWN-body-textstream": {
    "state": "implemented-unbuilt",
-   "pages": 4
+   "pages": 4,
+   "tentative": 0
   },
   "E01": {
    "state": "implemented-unbuilt",
-   "pages": 2
+   "pages": 2,
+   "tentative": 0
   },
   "E02": {
    "state": "claimed",
-   "pages": null
+   "pages": null,
+   "tentative": null
   }
  },
  "implemented_total_estimate": 231,

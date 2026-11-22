@@ -82,8 +82,8 @@ def main(ledger,out):
         except: pass
       else: u|=pg
     for p in u: byd['/'.join(p.split('/')[:2]) if p.split('/')[0] in('html','fetch','svg','dom') else p.split('/')[0]]+=1
-    res['tiers'][t]={'distinct_census_pages':len(u),'studio_css_reported_pages_not_deduped':css,'by_dir':dict(byd.most_common())}
-  res['per_brief']={i:{'state':st,'pages':(len(pg) if pg is not None else None)} for i,(st,pg,r) in per.items()}
+    res['tiers'][t]={'distinct_census_pages':len(u),'of_which_tentative':sum(1 for x in u if 'tentative' in x),'studio_css_reported_pages_not_deduped':css,'by_dir':dict(byd.most_common())}
+  res['per_brief']={i:{'state':st,'pages':(len(pg) if pg is not None else None),'tentative':(sum(1 for x in pg if 'tentative' in x) if pg is not None else None)} for i,(st,pg,r) in per.items()}
   cum=res['tiers']['implemented']['distinct_census_pages']+res['tiers']['implemented']['studio_css_reported_pages_not_deduped']
   res['implemented_total_estimate']=cum
   res['milestones_reached']=[m for m in (250,500,750,1000) if cum>=m]
