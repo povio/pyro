@@ -2433,7 +2433,7 @@ pub(crate) fn navigation_module<'s>(s: &Scope<'s>, nav: &Rc<PageNav>) -> JsResul
         natives.set_atom("active", f.value())?;
     }
     // resolve(url) -> the absolute URL, or SyntaxError.
-    native!("resolve", |s, nav, a| Ok(s.string(parse(&nav, a.get(0))?.as_str())));
+    native!("resolve", |s, nav, a| Ok(s.string(parse_str(&nav, &a.get(0).to_string()?)?.as_str())));
     // navigate(url, replace, stateJSON?) -> whether it stayed in the
     // document. Its `navigate` event was fired by the caller.
     native!("navigate", |s, nav, a| {
