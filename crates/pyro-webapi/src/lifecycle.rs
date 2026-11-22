@@ -36,28 +36,114 @@ pub fn dom_content_loaded(page: &Rc<PageDom>, doc: NodeId) {
     page.note_timing(|t| &mut t.dom_content_loaded_end);
 }
 
-/// HTML "flush autofocus candidates" (simplified): the first `autofocus`
-/// element of the top-level document gets focus when nothing has it.
-fn flush_autofocus(page: &Rc<PageDom>, doc: NodeId) {
-    if page.scripting_disabled() {
+/// After parsing: the autofocus elements the parser inserted are flushed at the next rendering
+/// update (HTML "flush autofocus candidates"), which the page may not have asked for yet.
+fn flush_autofocus(page: &Rc<PageDom>, _doc: NodeId) {
+    if page.dom.borrow().has_autofocus_insertions() {
+        if let Some(hooks) = page.hooks() {
+            hooks.request_animation_frame();
+        }
+    }
+}
+
+/// The page whose top-level document's autofocus candidates `el` joins: its own document's
+/// when that is a top-level one, the top-level `page`'s for a child frame of the same origin,
+/// none in a cross-origin frame or a document without a browsing context.
+fn autofocus_top_page(page: &Rc<PageDom>, el: NodeId) -> Option<Rc<PageDom>> {
+    let doc = page.dom.borrow().node_document(el).ok()?;
+    let owner = crate::custom::document_page(page, doc)?;
+    if !owner.is_nested_frame() {
+        return Some(owner);
+    }
+    (!page.is_nested_frame() && owner.origin_key() == page.origin_key()).then(|| page.clone())
+}
+
+/// HTML's autofocus insertion steps for the elements inserted since the last flush: each
+/// moves to the end of its top-level document's candidates, unless that document already
+/// processed autofocus.
+fn collect_autofocus_candidates(page: &Rc<PageDom>) {
+    let inserted = page.dom.borrow_mut().take_autofocus_insertions();
+    for el in inserted {
+        let Some(top) = autofocus_top_page(page, el) else { continue };
+        if top.autofocus_processed.get() {
+            continue;
+        }
+        let mut candidates = top.autofocus_candidates.borrow_mut();
+        candidates.retain(|&c| c != el);
+        candidates.push(el);
+    }
+}
+
+/// HTML "flush autofocus candidates" for the top-level document of `page`, at its rendering
+/// update (before the scroll steps and the animation frame callbacks). The first candidate
+/// that is (or delegates to) a focusable area in a fully active document of this top-level
+/// one gets focus, unless something is focused already or a URL fragment targets an element;
+/// either way autofocus is then processed for good. An element in a `<dialog>` is left to
+/// the dialog's own focusing steps.
+pub fn flush_autofocus_candidates(page: &Rc<PageDom>) {
+    if page.is_disposed() || page.is_nested_frame() {
         return;
     }
-    let candidate = {
-        let dom = page.dom.borrow();
-        if dom.focused(doc).ok().flatten().is_some() {
-            return;
-        }
-        let Ok(mut desc) = dom.descendants(doc) else { return };
-        desc.find(|&id| {
-            dom.element(id).is_ok_and(|e| {
-                e.attr("autofocus").is_some()
-                    && (e.is_html() || e.namespace() == &markup5ever::ns!(svg) || e.namespace() == &markup5ever::ns!(mathml))
-            }) && crate::input::is_focusable_area(&page.layout(), &dom, id)
-        })
-    };
-    if let Some(el) = candidate {
-        crate::input::focus_element(page, el);
+    collect_autofocus_candidates(page);
+    if page.autofocus_processed.get() || page.autofocus_candidates.borrow().is_empty() {
+        return;
     }
+    let doc = page.document();
+    let settled = {
+        let dom = page.dom.borrow();
+        dom.focused(doc).ok().flatten().is_some() || dom.url_target_element(doc).is_some()
+    };
+    if settled {
+        page.autofocus_candidates.borrow_mut().clear();
+        page.autofocus_processed.set(true);
+        return;
+    }
+    loop {
+        let el = {
+            let mut candidates = page.autofocus_candidates.borrow_mut();
+            if candidates.is_empty() {
+                return;
+            }
+            candidates.remove(0)
+        };
+        let Some((owner, target)) = autofocus_target(page, el) else { continue };
+        page.autofocus_candidates.borrow_mut().clear();
+        page.autofocus_processed.set(true);
+        crate::input::focus_element(&owner, target);
+        return;
+    }
+}
+
+/// The candidate `el`'s page and what takes focus for it, if anything.
+fn autofocus_target(page: &Rc<PageDom>, el: NodeId) -> Option<(Rc<PageDom>, NodeId)> {
+    let doc = page.dom.borrow().node_document(el).ok()?;
+    let owner = crate::custom::document_page(page, doc)?;
+    if !owner.is_fully_active() {
+        return None;
+    }
+    let target = {
+        let layout = owner.layout();
+        let dom = page.dom.borrow();
+        if !dom.is_connected(el).unwrap_or(false) || dom.url_target_element(doc).is_some() {
+            return None;
+        }
+        let mut ancestor = dom.parent(el).ok().flatten();
+        while let Some(a) = ancestor {
+            if dom.element(a).is_ok_and(|e| e.is_html() && &*e.name.local == "dialog") {
+                return None;
+            }
+            ancestor = dom.parent(a).ok().flatten();
+        }
+        let area = |n: NodeId| crate::input::is_focusable_area(&layout, &dom, n);
+        if area(el) {
+            Some(el)
+        } else if dom.is_delegates_focus_host(el) {
+            dom.focus_delegate(el, &area)
+        } else {
+            None
+        }
+    }?;
+    Some((owner, target))
 }
 
 /// readyState=complete, then `load` and `pageshow` at the window (with

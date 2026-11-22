@@ -841,6 +841,8 @@ fn run_animation_frame(scope: &Scope<'_>) {
         }));
         return;
     }
+    // HTML "update the rendering": autofocus candidates flush before the scroll steps.
+    pyro_webapi::lifecycle::flush_autofocus_candidates(&w.target.page);
     pyro_webapi::layout_api::flush_pending_scrolls(&w.target.page);
     // pyro: the frame determines `content-visibility: auto` relevance anew (CSS Contain 2 § 4.1).
     pyro_webapi::layout_api::content_visibility_frame(&w.target.page);

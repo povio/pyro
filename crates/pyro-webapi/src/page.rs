@@ -302,6 +302,10 @@ pub struct PageDom {
     images_sweep_at: Cell<usize>,
     /// Pending `HTMLImageElement.decode()` promises (`crate::image_decode`).
     pub(crate) image_decodes: RefCell<FxHashMap<NodeId, Vec<crate::image_decode::PendingDecode>>>,
+    /// HTML: the top-level document's "autofocus candidates" (`lifecycle::flush_autofocus_candidates`).
+    pub(crate) autofocus_candidates: RefCell<Vec<NodeId>>,
+    /// HTML: the top-level document's "autofocus processed flag".
+    pub(crate) autofocus_processed: Cell<bool>,
     /// Encoded bytes of loaded `<img>`s the embedder kept for canvas use
     /// ([`PageDom::set_image_bytes`]), decoded on first use.
     image_bytes: RefCell<FxHashMap<NodeId, ImageBytes>>,
@@ -1007,6 +1011,8 @@ impl PageDom {
             available_images: RefCell::new(Vec::new()),
             images_sweep_at: Cell::new(64),
             image_decodes: RefCell::new(FxHashMap::default()),
+            autofocus_candidates: RefCell::new(Vec::new()),
+            autofocus_processed: Cell::new(false),
             image_bytes: RefCell::new(FxHashMap::default()),
             image_bytes_kept: Cell::new((0, 0)),
             image_bytes_refused: Cell::new(0),

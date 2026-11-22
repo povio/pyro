@@ -132,6 +132,10 @@ pub(crate) struct ResourceQueue {
     /// fetch the loader has not started yet: what prepare saw, and the
     /// preparation-time document. Each entry pins its node.
     pub(crate) prepared_scripts: rustc_hash::FxHashMap<NodeId, (ScriptInfo, NodeId)>,
+    /// Elements with `autofocus` connected since the embedder last took them, in insertion
+    /// (tree) order: HTML's autofocus insertion steps, which the embedder completes by
+    /// appending them to their top-level document's autofocus candidates.
+    pub(crate) autofocus: Vec<NodeId>,
 }
 
 impl Dom {
@@ -153,6 +157,25 @@ impl Dom {
         // not execute; it is not a document tree of its own).
         // (`push_resource` keeps a `<use>` instance's resources from loading.)
         self.is_connected_idx(i) || self.is_fragment_parse_host(self.n(i).owner_doc)
+    }
+
+    /// The elements with `autofocus` inserted into a document since the last call, in
+    /// insertion order (each insertion again; the embedder keeps the last).
+    pub fn take_autofocus_insertions(&mut self) -> Vec<NodeId> {
+        std::mem::take(&mut self.resources.autofocus)
+    }
+
+    /// Whether `take_autofocus_insertions` would return anything.
+    pub fn has_autofocus_insertions(&self) -> bool {
+        !self.resources.autofocus.is_empty()
+    }
+
+    /// An HTML, SVG or MathML element with an `autofocus` attribute.
+    fn is_autofocus_idx(&self, i: u32) -> bool {
+        self.n(i).element().is_some_and(|e| {
+            e.attr_local(&local_name!("autofocus")).is_some()
+                && (e.is_html() || e.name.ns == ns!(svg) || e.name.ns == ns!(mathml))
+        })
     }
 
     /// Whether `take_resource_events` would return anything.
@@ -311,6 +334,9 @@ impl Dom {
             if !parser_script {
                 self.push_resource(node, k, ResourceReason::Connected);
             }
+        }
+        if self.is_connected_idx(node) && self.is_autofocus_idx(node) {
+            self.resources.autofocus.push(self.id_of(node));
         }
         if meta {
             self.process_viewport_meta(node);
@@ -472,7 +498,12 @@ impl Dom {
         // walk had with a stack, kept without one.
         let mut i = node;
         let mut metas = false;
+        let track_autofocus = reason == ResourceReason::Connected && self.is_connected_idx(node);
+        let mut autofocus = Vec::new();
         while i != NIL {
+            if track_autofocus && self.is_autofocus_idx(i) {
+                autofocus.push(self.id_of(i));
+            }
             if let Some(k) = self.resource_kind(i) {
                 // Parser-inserted scripts are driven by ParseStep::Script.
                 let parser_script = k == ResourceKind::Script
@@ -484,6 +515,8 @@ impl Dom {
             metas |= self.is_html_meta(i);
             i = self.next_shadow_including_rev(i, node);
         }
+        // The walk is in reverse: the insertion steps run in tree order.
+        self.resources.autofocus.extend(autofocus.into_iter().rev());
         if metas && reason == ResourceReason::Connected {
             self.process_viewport_metas(node);
         }
@@ -692,6 +725,26 @@ mod language_attribute_tests {
         let kind = |id: &str| dom.script_info(dom.get_element_by_id(doc, id).unwrap().unwrap()).unwrap().kind;
         assert_eq!(kind("h"), ScriptKind::Data);
         assert_eq!(kind("s"), ScriptKind::Classic);
+    }
+
+    /// Autofocus insertions are recorded in tree order, again on each insertion.
+    #[test]
+    fn autofocus_insertions_in_insertion_order() {
+        let dom_ref: DomRef = Rc::new(RefCell::new(Dom::new()));
+        dom_ref.borrow_mut().set_resource_tracking(true);
+        let doc = parse_document(
+            &dom_ref,
+            "http://test/",
+            "<!doctype html><input id=a autofocus><div><input id=b autofocus><input id=c></div>",
+        );
+        let mut dom = dom_ref.borrow_mut();
+        let id = |dom: &Dom, name: &str| dom.get_element_by_id(doc, name).unwrap().unwrap();
+        let (a, b) = (id(&dom, "a"), id(&dom, "b"));
+        assert_eq!(dom.take_autofocus_insertions(), [a, b]);
+        let div = dom.parent(b).unwrap().unwrap();
+        dom.append_child(div, a).unwrap();
+        assert_eq!(dom.take_autofocus_insertions(), [a]);
+        assert!(!dom.has_autofocus_insertions());
     }
 
     /// `event` + `for` other than window's onload: never run, like `nomodule`
