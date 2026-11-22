@@ -1,0 +1,88 @@
+{
+  "pauses": [
+    [
+      "suspended",
+      384
+    ],
+    [
+      "suspended",
+      32768
+    ]
+  ],
+  "events": 1,
+  "sameBuffer": true,
+  "length": 65539,
+  "final": "closed",
+  "trace": [
+    [
+      "before",
+      "suspended",
+      0
+    ],
+    [
+      "start returned",
+      "suspended",
+      0
+    ],
+    [
+      "microtask",
+      "suspended",
+      0
+    ],
+    [
+      "statechange",
+      "running",
+      0
+    ],
+    [
+      "statechange",
+      "suspended",
+      384
+    ],
+    [
+      "timer",
+      "suspended",
+      384
+    ],
+    [
+      "statechange",
+      "running",
+      384
+    ],
+    [
+      "statechange",
+      "suspended",
+      32768
+    ],
+    [
+      "resume fulfilled",
+      "suspended",
+      32768
+    ],
+    [
+      "statechange",
+      "running",
+      32768
+    ],
+    [
+      "statechange",
+      "closed",
+      65539
+    ],
+    [
+      "complete",
+      "closed",
+      65539
+    ],
+    [
+      "render fulfilled",
+      "closed",
+      65539
+    ],
+    [
+      "resume fulfilled",
+      "closed",
+      65539
+    ]
+  ]
+}
