@@ -341,6 +341,7 @@ impl BaseDocument {
             client: self.request_client(),
             inline: Some(self.inline_urls.clone()),
             policies: self.sheet_policies.clone(),
+            quirks_mode: self.sheet_quirks_mode(),
         }
     }
 

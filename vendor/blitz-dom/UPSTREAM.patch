@@ -2595,7 +2595,7 @@ diff --git a/packages/blitz-dom/src/config.rs b/packages/blitz-dom/src/config.rs
      /// User Agent stylesheets, in cascade order. Defaults to `vec![UserAgentStylesheet::default_sheet()]`.
      ///
      /// The list is used as given, so replacing it removes the default sheet unless it is
-@@ -68,6 +241,26 @@
+@@ -68,6 +241,28 @@
      /// How deeply this document is nested within other documents
      /// (0 for a root document). Used to limit `<iframe>` nesting depth.
      pub subdocument_depth: usize,
@@ -2610,7 +2610,9 @@ diff --git a/packages/blitz-dom/src/config.rs b/packages/blitz-dom/src/config.rs
 +    pub xml_document: bool,
 +    /// pyro: a document in quirks mode: a percentage height whose containing block is a block
 +    /// of `auto` height resolves against the nearest ancestor that has one (Quirks Mode §3.5,
-+    /// "The percentage height calculation quirk"). Defaults to `false`.
++    /// "The percentage height calculation quirk"), and the document's author sheets parse with
++    /// the unitless length quirk (Quirks Mode §3.6; `BaseDocument::sheet_quirks_mode`). Defaults
++    /// to `false`.
 +    pub quirks_mode: bool,
 +    /// pyro: a document in quirks or limited-quirks mode: a line without text, preserved white
 +    /// space or inline boxes with edges has no strut (Quirks Mode §3.3, "The line height
@@ -2622,7 +2624,7 @@ diff --git a/packages/blitz-dom/src/config.rs b/packages/blitz-dom/src/config.rs
      /// Devtools provider notified of DOM mutations (e.g. by a remote inspector)
      #[cfg(feature = "devtools")]
      pub devtools_provider: Option<Arc<dyn DevtoolsProvider>>,
-@@ -77,7 +270,11 @@
+@@ -77,7 +272,11 @@
      fn default() -> Self {
          Self {
              viewport: None,
@@ -2634,7 +2636,7 @@ diff --git a/packages/blitz-dom/src/config.rs b/packages/blitz-dom/src/config.rs
              ua_stylesheets: vec![UserAgentStylesheet::default_sheet()],
              net_provider: None,
              navigation_provider: None,
-@@ -89,6 +286,12 @@
+@@ -89,6 +288,12 @@
              incremental: None,
              abort_signal: None,
              subdocument_depth: 0,
@@ -2658,17 +2660,18 @@ diff --git a/packages/blitz-dom/src/cssom.rs b/packages/blitz-dom/src/cssom.rs
          CssRule::FontPaletteValues(_) => "CSSFontPaletteValuesRule",
          CssRule::CounterStyle(_) => "CSSCounterStyleRule",
          CssRule::Keyframes(_) => "CSSKeyframesRule",
-@@ -337,6 +338,9 @@
+@@ -337,6 +338,10 @@
              shell_provider: self.shell_provider.clone(),
              abort_signal: self.abort_signal.clone(),
              import_depth: 0,
 +            client: self.request_client(),
 +            inline: Some(self.inline_urls.clone()),
 +            policies: self.sheet_policies.clone(),
++            quirks_mode: self.sheet_quirks_mode(),
          }
      }
  
-@@ -522,6 +526,7 @@
+@@ -522,6 +527,7 @@
                  &self.shell_provider,
                  &guard,
                  self.abort_signal.as_ref(),
@@ -3955,7 +3958,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                              ResourceHandler::boxed(
                                  self.tx.clone(),
                                  self.id,
-@@ -1256,6 +2099,12 @@
+@@ -1256,6 +2099,13 @@
                                      guard: self.guard.clone(),
                                      net_provider: self.net_provider.clone(),
                                      abort_signal: self.abort_signal.clone(),
@@ -3965,10 +3968,11 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
 +                                        .filter(|_| marked)
 +                                        .map(str::to_owned),
 +                                    policies: self.sheet_policies.clone(),
++                                    quirks_mode: self.sheet_quirks_mode(),
                                  },
                              ),
                          );
-@@ -1266,12 +2115,101 @@
+@@ -1266,12 +2116,101 @@
      }
  
      pub fn process_style_element(&mut self, target_id: NodeId) {
@@ -4072,7 +4076,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub fn remove_user_agent_stylesheet(&mut self, sheet: &UserAgentStylesheet) {
          if self.useragent_stylesheets().any(|s| *s == sheet.0) {
              self.stylist
-@@ -1279,9 +2217,112 @@
+@@ -1279,9 +2218,120 @@
          }
      }
  
@@ -4177,6 +4181,14 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
 +        (self.subdocument_depth > 0).then(|| self.frame_client.clone().unwrap_or_default())
 +    }
 +
++    /// pyro: the quirks mode the document's author sheets (`<style>`, linked and imported) parse
++    /// in: a quirks-mode document's allow the unitless length quirk on the properties Quirks Mode
++    /// §3.6 lists, as Chromium's. Style attributes, CSSOM edits and the stylist's selector
++    /// matching stay in no-quirks mode, as pyro's CSSOM parses them.
++    pub(crate) fn sheet_quirks_mode(&self) -> QuirksMode {
++        if self.nodes.quirks_mode { QuirksMode::Quirks } else { QuirksMode::NoQuirks }
++    }
++
 +    /// pyro: what a link's `href` resolves against, and the document's own URL (without a
 +    /// fragment), which links to it are visited at (`ElementData::flush_link_visited`).
 +    pub(crate) fn link_urls(&self) -> (url::Url, url::Url) {
@@ -4187,7 +4199,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      }
  
      /// Iterate over the author stylesheets (from `<style>` and `<link>` nodes)
-@@ -1305,11 +2346,58 @@
+@@ -1305,11 +2355,61 @@
      }
  
      pub fn make_stylesheet(&self, css: impl AsRef<str>, origin: Origin) -> DocumentStyleSheet {
@@ -4204,7 +4216,9 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
 +        // bundle. Sheets are immutable here (pyro's CSSOM edits
 +        // the text and syncs it, not Blitz's rules).
 +        let css = css.as_ref();
-+        let shared = origin == Origin::Author && !css.contains("@import");
++        // pyro: a quirks-mode document's sheets parse differently (`sheet_quirks_mode`), so they
++        // are neither taken from nor given to other documents.
++        let shared = origin == Origin::Author && !css.contains("@import") && !self.nodes.quirks_mode;
 +        if shared {
 +            if let Some(sheet) = crate::util::shared_sheet(css, self.url.as_str()) {
 +                // A stylist holds a sheet once: another element of this
@@ -4239,6 +4253,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
 +
 +    /// pyro: [`Self::parse_stylesheet`] with the sheet's media list (`<style media>`).
 +    fn parse_stylesheet_with_media(&self, css: &str, origin: Origin, media: MediaList) -> Stylesheet {
++        let quirks_mode = if origin == Origin::Author { self.sheet_quirks_mode() } else { QuirksMode::NoQuirks };
 +        Stylesheet::from_str(
              css.as_ref(),
              self.url.url_extra_data(),
@@ -4248,16 +4263,18 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
              self.guard.clone(),
              Some(&StylesheetLoader {
                  tx: self.tx.clone(),
-@@ -1318,22 +2406,48 @@
+@@ -1318,22 +2418,49 @@
                  shell_provider: self.shell_provider.clone(),
                  abort_signal: self.abort_signal.clone(),
                  import_depth: 0,
 +                client: self.request_client(),
 +                inline: Some(self.inline_urls.clone()),
 +                policies: self.sheet_policies.clone(),
++                quirks_mode,
              }),
              None,
-             QuirksMode::NoQuirks,
+-            QuirksMode::NoQuirks,
++            quirks_mode,
              AllowImportRules::Yes,
 -        );
 -
@@ -4301,7 +4318,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let old = self.nodes_to_stylesheet.insert(node_id, stylesheet.clone());
          self.stylesheet_generation += 1;
  
-@@ -1351,18 +2465,16 @@
+@@ -1351,18 +2478,16 @@
              &self.shell_provider,
              &self.guard.read(),
              self.abort_signal.as_ref(),
@@ -4324,7 +4341,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
          if let Some(insertion_point) = insertion_point {
              self.stylist.insert_stylesheet_before(
-@@ -1376,6 +2488,50 @@
+@@ -1376,6 +2501,50 @@
          }
      }
  
@@ -4375,7 +4392,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub fn handle_messages(&mut self) {
          // Remove event Reciever from the Document so that we can process events
          // without holding a borrow to the Document
-@@ -1396,6 +2552,155 @@
+@@ -1396,6 +2565,155 @@
          }
      }
  
@@ -4531,7 +4548,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Whether the Document has pending requests for "critical" resources (that should block rendering)
      pub fn has_pending_critical_resources(&self) -> bool {
          !self.pending_critical_resources.is_empty()
-@@ -1409,6 +2714,41 @@
+@@ -1409,6 +2727,41 @@
              Err(err) => {
                  if let Some(url) = res.resolved_url.as_ref() {
                      let waiting_nodes = self.pending_images.remove(url).unwrap_or_default();
@@ -4573,7 +4590,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                      #[cfg(feature = "tracing")]
                      tracing::warn!(
                          url = url.as_str(),
-@@ -1429,9 +2769,31 @@
+@@ -1429,9 +2782,31 @@
          };
  
          match resource {
@@ -4607,7 +4624,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
              }
              Resource::ImportedCss(import_rule, sheet) => {
                  let mut guard = self.guard.write();
-@@ -1441,9 +2803,10 @@
+@@ -1441,9 +2816,10 @@
                  self.stylist
                      .force_stylesheet_origins_dirty(style::stylesheets::OriginSet::all());
              }
@@ -4620,7 +4637,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
                  let Some(url) = res.resolved_url.as_ref() else {
                      return;
-@@ -1453,6 +2816,8 @@
+@@ -1453,6 +2829,8 @@
              }
              #[cfg(feature = "svg")]
              Resource::Svg(_kind, svg) => {
@@ -4629,7 +4646,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                  // Create the ImageData and cache it
                  let image = ImageData::Svg(svg);
  
-@@ -1469,18 +2834,33 @@
+@@ -1469,18 +2847,33 @@
                  self.apply_iframe_html(node_id, res.request_id, res.resolved_url, &html);
              }
              Resource::Font(bytes, overrides) => {
@@ -4664,7 +4681,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                      ..Default::default()
                  };
  
-@@ -1489,6 +2869,12 @@
+@@ -1489,6 +2882,12 @@
                  global_font_ctx
                      .collection
                      .register_fonts(font.clone(), Some(info_override));
@@ -4677,7 +4694,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
                  #[cfg(feature = "parallel-construct")]
                  {
-@@ -1504,7 +2890,23 @@
+@@ -1504,7 +2903,23 @@
                  }
                  drop(global_font_ctx);
  
@@ -4702,7 +4719,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                  self.invalidate_inline_contexts();
              }
              Resource::None => {
-@@ -1513,6 +2915,49 @@
+@@ -1513,6 +2928,49 @@
          }
      }
  
@@ -4752,7 +4769,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Cache a loaded image and apply it to all nodes waiting on it
      /// (`<img>` elements, `background-image` layers and `mask-image` layers).
      fn apply_loaded_image(&mut self, url: &str, image: ImageData) {
-@@ -1541,25 +2986,92 @@
+@@ -1541,25 +2999,92 @@
                      if element.custom_widget_data().is_some() {
                          continue;
                      }
@@ -4847,7 +4864,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                  }
              }
          }
-@@ -1580,7 +3092,75 @@
+@@ -1580,7 +3105,75 @@
          self.snapshot_node_impl(node_id, None)
      }
  
@@ -4923,7 +4940,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let node = &mut self.nodes[node_id];
  
          // Do not snapshot nodes that have never been styled. A snapshot records an element's
-@@ -1700,14 +3280,24 @@
+@@ -1700,14 +3293,24 @@
          state: ElementState,
          cb: impl FnOnce(&mut Node),
      ) {
@@ -4951,7 +4968,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          self.hit_with_scrollbar(x, y).0
      }
  
-@@ -1718,7 +3308,7 @@
+@@ -1718,7 +3321,7 @@
      /// This implements the hit-testing semantics of `document.elementFromPoint()`.
      /// Hit testing consults layout, so [`resolve`](Self::resolve) should be called
      /// before this method to ensure layout is up to date.
@@ -4960,7 +4977,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let viewport = self.viewport();
          let scale = viewport.scale();
          let (viewport_width, viewport_height) = (
-@@ -1753,7 +3343,7 @@
+@@ -1753,7 +3356,7 @@
      /// by its ancestor elements (which is correct for non-overlapping content).
      /// As with [`element_from_point`](Self::element_from_point), layout should be
      /// resolved before calling this method.
@@ -4969,7 +4986,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let mut element_ids = Vec::new();
          let mut current = self.element_from_point(x, y);
          while let Some(node_id) = current {
-@@ -1813,9 +3403,36 @@
+@@ -1813,9 +3416,36 @@
          Some(id)
      }
  
@@ -5006,7 +5023,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
              let shell_provider = self.shell_provider.clone();
              self.snapshot_node_and(id, ElementState::FOCUS | ElementState::FOCUSRING, |node| {
                  node.blur(shell_provider)
-@@ -1853,17 +3470,25 @@
+@@ -1853,17 +3483,25 @@
  
          // Remove focus from the old node
          if let Some(id) = self.focus_node_id {
@@ -5033,7 +5050,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
          // Update :focus-within on the ancestor chains (shared prefix stays)
          let old_node_path = self.maybe_node_element_ancestors(self.focus_node_id);
-@@ -1895,6 +3520,38 @@
+@@ -1895,6 +3533,38 @@
          true
      }
  
@@ -5072,7 +5089,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub fn active_node(&mut self) -> bool {
          let Some(hover_node_id) = self.get_hover_node_id() else {
              return false;
-@@ -1991,10 +3648,12 @@
+@@ -1991,10 +3661,12 @@
      /// thumb under the point (shares the traversal, so it costs nothing
      /// extra).
      pub(crate) fn hit_with_scrollbar(
@@ -5086,7 +5103,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          if TDocument::as_node(&self.root_node())
              .first_element_child()
              .is_none()
-@@ -2078,6 +3737,54 @@
+@@ -2078,6 +3750,54 @@
          true
      }
  
@@ -5141,7 +5158,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub fn clear_hover(&mut self) -> bool {
          // The pointer is no longer over the document, so stop re-resolving
          // hover state against it.
-@@ -2147,12 +3854,142 @@
+@@ -2147,12 +3867,142 @@
          self.mousedown_node_id
      }
  
@@ -5284,7 +5301,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Returns the current CSS media type used to evaluate `@media` rules.
      pub fn media_type(&self) -> &MediaType {
          &self.media_type
-@@ -2168,6 +4005,13 @@
+@@ -2168,6 +4018,13 @@
          self.queue_device_changes(DeviceChanges::MEDIA_TYPE);
      }
  
@@ -5298,7 +5315,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub fn viewport(&self) -> &Viewport {
          &self.viewport
      }
-@@ -2188,6 +4032,12 @@
+@@ -2188,6 +4045,12 @@
          self.viewport.clone()
      }
  
@@ -5311,7 +5328,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Returns whether incremental layout is currently enabled for this document.
      ///
      /// Both modes run the same style → damage → box construction → layout
-@@ -2248,6 +4098,111 @@
+@@ -2248,6 +4111,111 @@
  
      /// Record pending [`DeviceChanges`] and request a redraw so that they are
      /// flushed (via [`Self::flush_pending_device_changes`]) on the next resolve.
@@ -5423,7 +5440,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub(crate) fn queue_device_changes(&mut self, changes: DeviceChanges) {
          if changes.is_empty() {
              return;
-@@ -2264,12 +4219,14 @@
+@@ -2264,12 +4232,14 @@
              return;
          }
  
@@ -5443,7 +5460,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
          // Text is shaped at a specific scale factor, so cached inline layouts
          // must be invalidated when the scale changes, as must every node's
-@@ -2314,9 +4271,26 @@
+@@ -2314,9 +4284,26 @@
          drop(root_styles);
  
          let old_device = self.stylist.device();
@@ -5471,7 +5488,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let origins = {
              let guard = &self.guard;
              let guards = StylesheetGuards {
-@@ -2338,7 +4312,9 @@
+@@ -2338,7 +4325,9 @@
          // when the viewport size changes, even if no media query results
          // changed. Invalidate just the elements whose styles use viewport
          // units (tracked via per-element computed value flags).
@@ -5482,7 +5499,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
              if self
                  .stylist
                  .get_custom_property_initial_values_flags()
-@@ -2460,10 +4436,19 @@
+@@ -2460,10 +4449,19 @@
              pos.x += node.unrounded_layout().location.x - node.scroll_offset().x as f32;
              pos.y += node.unrounded_layout().location.y - node.scroll_offset().y as f32;
              current = node.containing_block();
@@ -5502,7 +5519,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      /// Computes the size and position of the `Node` relative to the viewport
      pub fn get_client_bounding_rect(&self, node_id: NodeId) -> Option<BoundingRect> {
          // Non-atomic inline elements have no layout box of their own: return
-@@ -2620,6 +4605,35 @@
+@@ -2620,6 +4618,35 @@
          self.find_element_by_tag_name(&local_name!("title"))
      }
  
@@ -5538,7 +5555,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
      pub fn with_text_input(
          &mut self,
          node_id: NodeId,
-@@ -2643,12 +4657,22 @@
+@@ -2643,12 +4670,22 @@
      /// Recompute the scroll offset of the text input at `node_id` (if any) so that its caret
      /// remains visible within the input's content box.
      pub(crate) fn clamp_text_input_scroll(&mut self, node_id: NodeId) {
@@ -5566,7 +5583,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  
          if let Some(text_input) = node
              .element_data_mut()
-@@ -2677,7 +4701,7 @@
+@@ -2677,7 +4714,7 @@
      /// Find the text position (inline_root_id, byte_offset) at a given point.
      /// Uses hit() for proper coordinate transformation, then finds the inline root
      /// and byte offset.
@@ -5575,7 +5592,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let hit = self.hit(x, y)?;
          let hit_node = self.get_node(hit.node_id)?;
          let inline_root = hit_node.inline_root_ancestor()?;
-@@ -2835,6 +4859,10 @@
+@@ -2835,6 +4872,10 @@
      /// Get all selection ranges as Vec<(node_id, start_offset, end_offset)>.
      /// Returns empty vec if no selection.
      pub fn get_text_selection_ranges(&self) -> Vec<(NodeId, usize, usize)> {
@@ -5586,7 +5603,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
          let lookup = |parent_id, idx| self.find_anonymous_block_by_index(parent_id, idx);
  
          let anchor_node = match self.text_selection.anchor.resolve_node_id(lookup) {
-@@ -3782,6 +5810,7 @@
+@@ -3782,6 +5823,7 @@
                      family_name: Some(String::from(ALIAS)),
                      weight: Some(800.0),
                      style: Some(parley::fontique::FontStyle::Italic),
@@ -5594,7 +5611,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
                  },
              )),
          };
-@@ -3804,6 +5833,52 @@
+@@ -3804,6 +5846,52 @@
               not the font file's internal `name` table entry",
          );
      }
@@ -5647,7 +5664,7 @@ diff --git a/packages/blitz-dom/src/document.rs b/packages/blitz-dom/src/documen
  }
  
  #[cfg(test)]
-@@ -3846,3 +5921,154 @@
+@@ -3846,3 +5934,154 @@
          assert!(doc.has_changes());
      }
  }
@@ -41340,7 +41357,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              return;
          }
  
-@@ -1382,6 +1971,11 @@
+@@ -1382,6 +1971,12 @@
                  guard: self.doc.guard.clone(),
                  net_provider: self.doc.net_provider.clone(),
                  abort_signal: self.doc.abort_signal.clone(),
@@ -41349,10 +41366,11 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
 +                // attribute page content cannot write).
 +                policy: self.doc.engine_attr(target_id, crate::document::SHEET_POLICY_ATTRIBUTE).map(str::to_owned),
 +                policies: self.doc.sheet_policies.clone(),
++                quirks_mode: self.doc.sheet_quirks_mode(),
              },
          );
  
-@@ -1391,11 +1985,12 @@
+@@ -1391,11 +1986,12 @@
                  .insert(handler.request_id());
          }
  
@@ -41370,7 +41388,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
      }
  
      fn unload_stylesheet(&mut self, node_id: NodeId) {
-@@ -1413,6 +2008,11 @@
+@@ -1413,6 +2009,11 @@
              }
          };
  
@@ -41382,7 +41400,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          let guard = self.doc.guard.read();
          self.doc.stylist.remove_stylesheet(stylesheet, &guard);
          self.doc
-@@ -1420,21 +2020,127 @@
+@@ -1420,21 +2021,127 @@
              .force_stylesheet_origins_dirty(OriginSet::all());
  
          self.doc.nodes_to_stylesheet.remove(&node_id);
@@ -41515,7 +41533,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                      let node = &mut self.doc.nodes[target_id];
                      node.element_data_mut().unwrap().special_data =
                          SpecialElementData::Image(Box::new(cached_image.clone()));
-@@ -1458,15 +2164,18 @@
+@@ -1458,15 +2165,18 @@
                      .pending_images
                      .insert(src_string.to_string(), vec![(target_id, ImageType::Image)]);
  
@@ -41536,7 +41554,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
                      ),
                  );
              }
-@@ -1483,6 +2192,15 @@
+@@ -1483,6 +2193,15 @@
              return;
          }
  
@@ -41552,7 +41570,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
          let node = &self.doc.nodes[target_id];
          let Some(element) = node.element_data() else {
              return;
-@@ -1544,12 +2262,27 @@
+@@ -1544,12 +2263,27 @@
              return;
          }
  
@@ -41581,7 +41599,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
              let id = self.create_text_node(&value);
              self.append_children(target_id, &[id]);
              return;
-@@ -1579,6 +2312,20 @@
+@@ -1579,6 +2313,20 @@
      }
  }
  
@@ -41602,7 +41620,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
  /// Set 'checked' state on an input based on given attributevalue
  fn set_input_checked_state(element: &mut ElementData, value: String) {
      let Ok(checked) = value.parse() else {
-@@ -2377,6 +3124,50 @@
+@@ -2377,6 +3125,50 @@
          }
      }
  
@@ -41653,7 +41671,7 @@ diff --git a/packages/blitz-dom/src/mutator.rs b/packages/blitz-dom/src/mutator.
      fn qual_name(name: &str) -> crate::QualName {
          crate::QualName::new(None, crate::ns!(), crate::LocalName::from(name))
      }
-@@ -3088,3 +3879,254 @@
+@@ -3088,3 +3880,254 @@
          );
      }
  }
@@ -42092,7 +42110,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
      /// Stylesheet loaded for an `@import` rule, to be attached to the rule on the document thread
      ImportedCss(ServoArc<Locked<ImportRule>>, ServoArc<Stylesheet>),
      Font(Bytes, FontFaceOverrides),
-@@ -140,6 +285,13 @@
+@@ -140,6 +285,15 @@
      pub guard: SharedRwLock,
      pub net_provider: Arc<dyn NetProvider>,
      pub abort_signal: Option<AbortSignal>,
@@ -42103,10 +42121,12 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
 +    pub policy: Option<String>,
 +    /// pyro: the document's sheet policies, which this sheet's goes into.
 +    pub policies: SheetPolicies,
++    /// pyro: the document's quirks mode for its sheets (`BaseDocument::sheet_quirks_mode`).
++    pub quirks_mode: QuirksMode,
  }
  
  impl NetHandler for ResourceHandler<StylesheetHandler> {
-@@ -148,12 +300,32 @@
+@@ -148,12 +302,32 @@
      }
  
      fn bytes(self: Box<Self>, resolved_url: String, bytes: Bytes) {
@@ -42140,17 +42160,19 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
              None,
              None,
              Origin::Author,
-@@ -166,6 +338,9 @@
+@@ -166,18 +340,33 @@
                  shell_provider: self.shell_provider.clone(),
                  abort_signal: self.data.abort_signal.clone(),
                  import_depth: 0,
 +                client: self.data.client.clone(),
 +                inline: None,
 +                policies: self.data.policies.clone(),
++                quirks_mode: self.data.quirks_mode,
              }),
              None, // error_reporter
-             QuirksMode::NoQuirks,
-@@ -173,11 +348,22 @@
+-            QuirksMode::NoQuirks,
++            self.data.quirks_mode,
+         );
  
          self.respond(
              resolved_url,
@@ -42174,7 +42196,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
  /// Maximum depth of nested `@import` rules. Imports nested deeper than this
  /// are refused, preventing unbounded recursion (e.g. a stylesheet whose
  /// resolved `@import` URL yields another stylesheet importing in turn, with
-@@ -194,6 +380,14 @@
+@@ -194,6 +383,17 @@
      /// Depth of `@import` nesting for the stylesheet this loader is parsing
      /// (0 for a top-level stylesheet)
      pub(crate) import_depth: usize,
@@ -42186,10 +42208,13 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
 +    pub(crate) inline: Option<InlineUrls>,
 +    /// pyro: the document's sheet policies (`SheetPolicies`).
 +    pub(crate) policies: SheetPolicies,
++    /// pyro: the document's quirks mode for its sheets, imported ones too
++    /// (`BaseDocument::sheet_quirks_mode`).
++    pub(crate) quirks_mode: QuirksMode,
  }
  impl ServoStylesheetLoader for StylesheetLoader {
      fn request_stylesheet(
-@@ -224,10 +418,21 @@
+@@ -224,10 +424,21 @@
          };
  
          let url = import.url.url().unwrap().clone();
@@ -42212,7 +42237,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
              ResourceHandler::boxed(
                  self.tx.clone(),
                  self.doc_id,
-@@ -262,12 +467,34 @@
+@@ -262,12 +473,34 @@
  
  impl NetHandler for ResourceHandler<NestedStylesheetHandler> {
      fn bytes(self: Box<Self>, resolved_url: String, bytes: Bytes) {
@@ -42248,7 +42273,16 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
              None,
              None,
              Origin::Author,
-@@ -288,6 +515,7 @@
+@@ -275,7 +508,7 @@
+             self.data.lock.clone(),
+             Some(&self.data.loader),
+             None, // error_reporter
+-            QuirksMode::NoQuirks,
++            self.data.loader.quirks_mode,
+         ));
+ 
+         // Fetch @font-face fonts
+@@ -288,6 +521,7 @@
              &self.shell_provider,
              &self.data.lock.read(),
              self.data.loader.abort_signal.as_ref(),
@@ -42256,7 +42290,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
          );
  
          let import_rule = self.data.import_rule.clone();
-@@ -300,6 +528,10 @@
+@@ -300,6 +534,10 @@
      overrides: FontFaceOverrides,
  }
  impl NetHandler for ResourceHandler<FontFaceHandler> {
@@ -42267,7 +42301,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
      fn bytes(mut self: Box<Self>, resolved_url: String, bytes: Bytes) {
          let result = self.data.parse(bytes);
          self.respond(resolved_url, result)
-@@ -387,6 +619,7 @@
+@@ -387,6 +625,7 @@
      shell_provider: &Arc<dyn ShellProvider>,
      read_guard: &SharedRwLockReadGuard,
      abort_signal: Option<&AbortSignal>,
@@ -42275,7 +42309,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
  ) {
      fetch_font_face_rules(
          sheet.contents(read_guard).rules(read_guard).iter(),
-@@ -397,6 +630,7 @@
+@@ -397,6 +636,7 @@
          shell_provider,
          read_guard,
          abort_signal,
@@ -42283,7 +42317,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
      )
  }
  
-@@ -409,10 +643,45 @@
+@@ -409,10 +649,45 @@
      node_id: Option<NodeId>,
      network_provider: &Arc<dyn NetProvider>,
      shell_provider: &Arc<dyn ShellProvider>,
@@ -42331,7 +42365,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
          .filter_map(|rule| match rule {
              CssRule::FontFace(font_face) => {
                  let descriptor = &font_face.read_with(read_guard).descriptors;
-@@ -421,13 +690,68 @@
+@@ -421,13 +696,68 @@
                  // Capture the @font-face descriptors so parley can register
                  // the font under the CSS-declared family name (and weight /
                  // style) rather than whatever metadata the TTF reports.
@@ -42405,7 +42439,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
                  };
                  Some((src, overrides))
              }
-@@ -435,9 +759,11 @@
+@@ -435,9 +765,11 @@
          })
          .for_each(|(source_list, overrides)| {
              if let Some((url, format)) = preferred_font_source(source_list) {
@@ -42418,7 +42452,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
                      ResourceHandler::boxed(
                          tx.clone(),
                          doc_id,
-@@ -450,6 +776,11 @@
+@@ -450,6 +782,11 @@
          })
  }
  
@@ -42430,7 +42464,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
  /// The first source in an `@font-face` `src` list that is in a format we
  /// support, with its resolved url and format.
  fn preferred_font_source(source_list: &SourceList) -> Option<(Url, FontFaceSourceFormatKeyword)> {
-@@ -468,6 +799,11 @@
+@@ -468,6 +805,11 @@
              return None;
          };
  
@@ -42442,7 +42476,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
          let format = match &url_source.format_hint {
              Some(FontFaceSourceFormat::Keyword(keyword)) => *keyword,
              Some(FontFaceSourceFormat::String(string)) => font_format_from_string(string),
-@@ -564,7 +900,10 @@
+@@ -564,7 +906,10 @@
              // Stylo emits `Oblique(0deg, 0deg)` for the literal CSS `normal`
              // keyword. Map that back to `Normal` so parley's font matching
              // doesn't misclassify upright fonts.
@@ -42454,7 +42488,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
                  Fq::Normal
              } else {
                  Fq::Oblique(angle)
-@@ -585,51 +924,121 @@
+@@ -585,51 +930,121 @@
  
  pub struct ImageHandler {
      kind: ImageType,
@@ -42603,7 +42637,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
  
          Err(format!(
              "Could not parse image ({} bytes): image-crate error: {image_err}; svg fallback error: {svg_err}",
-@@ -649,6 +1058,62 @@
+@@ -649,6 +1064,62 @@
          FontStyleRange::Oblique(Angle::from_degrees(min_deg), Angle::from_degrees(max_deg))
      }
  
@@ -42666,7 +42700,7 @@ diff --git a/packages/blitz-dom/src/net.rs b/packages/blitz-dom/src/net.rs
      /// The source picked from the `src` list of each `@font-face` rule in `css`
      fn preferred_sources(css: &str) -> Vec<Option<(String, FontFaceSourceFormatKeyword)>> {
          let lock = SharedRwLock::new();
-@@ -800,3 +1265,11 @@
+@@ -800,3 +1271,11 @@
          );
      }
  }
@@ -57629,7 +57663,7 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
      })
  }
  
-@@ -1737,3 +3082,745 @@
+@@ -1737,3 +3082,842 @@
  
      // let val = CSSInlineStyleDeclaration();
  }
@@ -58373,6 +58407,103 @@ diff --git a/packages/blitz-dom/src/stylo.rs b/packages/blitz-dom/src/stylo.rs
 +        drop(m);
 +        d.doc.resolve(0.0);
 +        assert_eq!(boxes(&d.doc, ids[1]), (false, true), "the last child again");
++    }
++}
++
++/// pyro: a quirks-mode document's author sheets parse with the unitless length quirk (Quirks
++/// Mode §3.6) on the properties that allow it; a no-quirks document's, its style attributes and
++/// the shorthands Quirks Mode excludes do not.
++#[cfg(test)]
++mod unitless_length_quirk_tests {
++    use crate::{Attribute, BaseDocument, DocumentConfig, qual_name};
++    use blitz_traits::shell::{ColorScheme, Viewport};
++    use style::values::computed::CSSPixelLength;
++
++    /// `<style>{css}</style>` and `<div id=t style={inline}>` in a document of the given mode,
++    /// resolved; the div's computed width, border-top-width, outline-width and letter-spacing
++    /// in px (`None`: `auto`).
++    fn widths(quirks: bool, css: &str, inline: &str) -> (Option<f32>, f32, f32, f32) {
++        let mut doc = BaseDocument::new(DocumentConfig {
++            viewport: Some(Viewport::new(400, 300, 1.0, ColorScheme::Light)),
++            quirks_mode: quirks,
++            ..Default::default()
++        });
++        let root_id = doc.root_node().id;
++        let mut m = doc.mutate();
++        let html = m.create_element(qual_name!("html"), vec![]);
++        let head = m.create_element(qual_name!("head"), vec![]);
++        let style = m.create_element(qual_name!("style"), vec![]);
++        let text = m.create_text_node(css);
++        m.append_children(style, &[text]);
++        m.append_children(head, &[style]);
++        let body = m.create_element(qual_name!("body"), vec![]);
++        let mut attrs = vec![Attribute { name: qual_name!("id"), value: "t".into() }];
++        if !inline.is_empty() {
++            attrs.push(Attribute { name: qual_name!("style"), value: inline.into() });
++        }
++        let div = m.create_element(qual_name!("div"), attrs);
++        m.append_children(body, &[div]);
++        m.append_children(html, &[head, body]);
++        m.append_children(root_id, &[html]);
++        drop(m);
++        doc.resolve(0.0);
++        let s = doc.nodes[div].primary_styles().unwrap();
++        let width = match &s.get_position().width {
++            style::values::generics::length::GenericSize::LengthPercentage(lp) => {
++                Some(lp.0.to_length().unwrap().px())
++            }
++            _ => None,
++        };
++        let px = |l: CSSPixelLength| l.px();
++        (
++            width,
++            px(s.get_border().border_top_width.0.into()),
++            px(s.get_outline().outline_width.0.into()),
++            s.get_inherited_text().letter_spacing.0.to_length().unwrap().px(),
++        )
++    }
++
++    const SHEET: &str = "#t { width: 12; letter-spacing: +3; border: solid 7; outline: solid 5; \
++                         outline-width: 6 }";
++
++    #[test]
++    fn quirks_sheet_takes_unitless_lengths() {
++        let (width, border, outline, spacing) = widths(true, SHEET, "");
++        assert_eq!(width, Some(12.0), "width: 12");
++        assert_eq!(spacing, 3.0, "letter-spacing: +3");
++        // `border` and `outline` (and `outline-width`) are not on the quirk's list: medium.
++        assert_eq!(border, 3.0, "border: solid 7");
++        assert_eq!(outline, 3.0, "outline: solid 5; outline-width: 6");
++    }
++
++    #[test]
++    fn no_quirks_sheet_rejects_unitless_lengths() {
++        // The same text as the quirks test, parsed first or second: a quirks document's sheet
++        // is not shared with this one.
++        let _ = widths(true, SHEET, "");
++        let (width, border, _, spacing) = widths(false, SHEET, "");
++        assert_eq!(width, None);
++        assert_eq!(spacing, 0.0);
++        assert_eq!(border, 3.0);
++        let (width, ..) = widths(true, SHEET, "");
++        assert_eq!(width, Some(12.0), "and the no-quirks sheet is not given to a quirks document");
++    }
++
++    #[test]
++    fn quirks_sheet_keeps_zero_and_units() {
++        let (width, ..) = widths(true, "#t { width: 0 }", "");
++        assert_eq!(width, Some(0.0));
++        let (width, ..) = widths(true, "#t { width: 4px; width: calc(1) }", "");
++        assert_eq!(width, Some(4.0), "calc(1) is not a quirky length");
++        let (width, ..) = widths(true, "#t { width: 4px; width: +/**/1 }", "");
++        assert_eq!(width, Some(4.0), "a comment between sign and number is not one either");
++    }
++
++    #[test]
++    fn style_attribute_stays_no_quirks() {
++        // As pyro's CSSOM parses `element.style`: the two agree.
++        let (width, ..) = widths(true, "", "width: 12");
++        assert_eq!(width, None);
 +    }
 +}
 diff --git a/packages/blitz-dom/src/stylo_device.rs b/packages/blitz-dom/src/stylo_device.rs

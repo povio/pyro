@@ -252,7 +252,9 @@ pub struct DocumentConfig {
     pub xml_document: bool,
     /// pyro: a document in quirks mode: a percentage height whose containing block is a block
     /// of `auto` height resolves against the nearest ancestor that has one (Quirks Mode §3.5,
-    /// "The percentage height calculation quirk"). Defaults to `false`.
+    /// "The percentage height calculation quirk"), and the document's author sheets parse with
+    /// the unitless length quirk (Quirks Mode §3.6; `BaseDocument::sheet_quirks_mode`). Defaults
+    /// to `false`.
     pub quirks_mode: bool,
     /// pyro: a document in quirks or limited-quirks mode: a line without text, preserved white
     /// space or inline boxes with edges has no strut (Quirks Mode §3.3, "The line height

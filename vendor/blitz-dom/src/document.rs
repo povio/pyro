@@ -2105,6 +2105,7 @@ impl BaseDocument {
                                         .filter(|_| marked)
                                         .map(str::to_owned),
                                     policies: self.sheet_policies.clone(),
+                                    quirks_mode: self.sheet_quirks_mode(),
                                 },
                             ),
                         );
@@ -2316,6 +2317,14 @@ impl BaseDocument {
         (self.subdocument_depth > 0).then(|| self.frame_client.clone().unwrap_or_default())
     }
 
+    /// pyro: the quirks mode the document's author sheets (`<style>`, linked and imported) parse
+    /// in: a quirks-mode document's allow the unitless length quirk on the properties Quirks Mode
+    /// §3.6 lists, as Chromium's. Style attributes, CSSOM edits and the stylist's selector
+    /// matching stay in no-quirks mode, as pyro's CSSOM parses them.
+    pub(crate) fn sheet_quirks_mode(&self) -> QuirksMode {
+        if self.nodes.quirks_mode { QuirksMode::Quirks } else { QuirksMode::NoQuirks }
+    }
+
     /// pyro: what a link's `href` resolves against, and the document's own URL (without a
     /// fragment), which links to it are visited at (`ElementData::flush_link_visited`).
     pub(crate) fn link_urls(&self) -> (url::Url, url::Url) {
@@ -2358,7 +2367,9 @@ impl BaseDocument {
         // bundle. Sheets are immutable here (pyro's CSSOM edits
         // the text and syncs it, not Blitz's rules).
         let css = css.as_ref();
-        let shared = origin == Origin::Author && !css.contains("@import");
+        // pyro: a quirks-mode document's sheets parse differently (`sheet_quirks_mode`), so they
+        // are neither taken from nor given to other documents.
+        let shared = origin == Origin::Author && !css.contains("@import") && !self.nodes.quirks_mode;
         if shared {
             if let Some(sheet) = crate::util::shared_sheet(css, self.url.as_str()) {
                 // A stylist holds a sheet once: another element of this
@@ -2393,6 +2404,7 @@ impl BaseDocument {
 
     /// pyro: [`Self::parse_stylesheet`] with the sheet's media list (`<style media>`).
     fn parse_stylesheet_with_media(&self, css: &str, origin: Origin, media: MediaList) -> Stylesheet {
+        let quirks_mode = if origin == Origin::Author { self.sheet_quirks_mode() } else { QuirksMode::NoQuirks };
         Stylesheet::from_str(
             css.as_ref(),
             self.url.url_extra_data(),
@@ -2409,9 +2421,10 @@ impl BaseDocument {
                 client: self.request_client(),
                 inline: Some(self.inline_urls.clone()),
                 policies: self.sheet_policies.clone(),
+                quirks_mode,
             }),
             None,
-            QuirksMode::NoQuirks,
+            quirks_mode,
             AllowImportRules::Yes,
         )
     }

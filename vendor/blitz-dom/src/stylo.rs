@@ -3824,3 +3824,100 @@ mod box_generating_pseudo_tests {
         assert_eq!(boxes(&d.doc, ids[1]), (false, true), "the last child again");
     }
 }
+
+/// pyro: a quirks-mode document's author sheets parse with the unitless length quirk (Quirks
+/// Mode §3.6) on the properties that allow it; a no-quirks document's, its style attributes and
+/// the shorthands Quirks Mode excludes do not.
+#[cfg(test)]
+mod unitless_length_quirk_tests {
+    use crate::{Attribute, BaseDocument, DocumentConfig, qual_name};
+    use blitz_traits::shell::{ColorScheme, Viewport};
+    use style::values::computed::CSSPixelLength;
+
+    /// `<style>{css}</style>` and `<div id=t style={inline}>` in a document of the given mode,
+    /// resolved; the div's computed width, border-top-width, outline-width and letter-spacing
+    /// in px (`None`: `auto`).
+    fn widths(quirks: bool, css: &str, inline: &str) -> (Option<f32>, f32, f32, f32) {
+        let mut doc = BaseDocument::new(DocumentConfig {
+            viewport: Some(Viewport::new(400, 300, 1.0, ColorScheme::Light)),
+            quirks_mode: quirks,
+            ..Default::default()
+        });
+        let root_id = doc.root_node().id;
+        let mut m = doc.mutate();
+        let html = m.create_element(qual_name!("html"), vec![]);
+        let head = m.create_element(qual_name!("head"), vec![]);
+        let style = m.create_element(qual_name!("style"), vec![]);
+        let text = m.create_text_node(css);
+        m.append_children(style, &[text]);
+        m.append_children(head, &[style]);
+        let body = m.create_element(qual_name!("body"), vec![]);
+        let mut attrs = vec![Attribute { name: qual_name!("id"), value: "t".into() }];
+        if !inline.is_empty() {
+            attrs.push(Attribute { name: qual_name!("style"), value: inline.into() });
+        }
+        let div = m.create_element(qual_name!("div"), attrs);
+        m.append_children(body, &[div]);
+        m.append_children(html, &[head, body]);
+        m.append_children(root_id, &[html]);
+        drop(m);
+        doc.resolve(0.0);
+        let s = doc.nodes[div].primary_styles().unwrap();
+        let width = match &s.get_position().width {
+            style::values::generics::length::GenericSize::LengthPercentage(lp) => {
+                Some(lp.0.to_length().unwrap().px())
+            }
+            _ => None,
+        };
+        let px = |l: CSSPixelLength| l.px();
+        (
+            width,
+            px(s.get_border().border_top_width.0.into()),
+            px(s.get_outline().outline_width.0.into()),
+            s.get_inherited_text().letter_spacing.0.to_length().unwrap().px(),
+        )
+    }
+
+    const SHEET: &str = "#t { width: 12; letter-spacing: +3; border: solid 7; outline: solid 5; \
+                         outline-width: 6 }";
+
+    #[test]
+    fn quirks_sheet_takes_unitless_lengths() {
+        let (width, border, outline, spacing) = widths(true, SHEET, "");
+        assert_eq!(width, Some(12.0), "width: 12");
+        assert_eq!(spacing, 3.0, "letter-spacing: +3");
+        // `border` and `outline` (and `outline-width`) are not on the quirk's list: medium.
+        assert_eq!(border, 3.0, "border: solid 7");
+        assert_eq!(outline, 3.0, "outline: solid 5; outline-width: 6");
+    }
+
+    #[test]
+    fn no_quirks_sheet_rejects_unitless_lengths() {
+        // The same text as the quirks test, parsed first or second: a quirks document's sheet
+        // is not shared with this one.
+        let _ = widths(true, SHEET, "");
+        let (width, border, _, spacing) = widths(false, SHEET, "");
+        assert_eq!(width, None);
+        assert_eq!(spacing, 0.0);
+        assert_eq!(border, 3.0);
+        let (width, ..) = widths(true, SHEET, "");
+        assert_eq!(width, Some(12.0), "and the no-quirks sheet is not given to a quirks document");
+    }
+
+    #[test]
+    fn quirks_sheet_keeps_zero_and_units() {
+        let (width, ..) = widths(true, "#t { width: 0 }", "");
+        assert_eq!(width, Some(0.0));
+        let (width, ..) = widths(true, "#t { width: 4px; width: calc(1) }", "");
+        assert_eq!(width, Some(4.0), "calc(1) is not a quirky length");
+        let (width, ..) = widths(true, "#t { width: 4px; width: +/**/1 }", "");
+        assert_eq!(width, Some(4.0), "a comment between sign and number is not one either");
+    }
+
+    #[test]
+    fn style_attribute_stays_no_quirks() {
+        // As pyro's CSSOM parses `element.style`: the two agree.
+        let (width, ..) = widths(true, "", "width: 12");
+        assert_eq!(width, None);
+    }
+}
