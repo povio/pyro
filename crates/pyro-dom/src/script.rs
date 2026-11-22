@@ -439,7 +439,13 @@ impl Dom {
             return;
         }
         if let Ok(i) = self.check(img) {
-            self.push_resource(i, ResourceKind::Img, ResourceReason::AttrChanged);
+            // An SVG `<image>`'s request is its own kind (`SVGImageElement.decode()`).
+            let kind = if self.resource_kind(i) == Some(ResourceKind::SvgImage) {
+                ResourceKind::SvgImage
+            } else {
+                ResourceKind::Img
+            };
+            self.push_resource(i, kind, ResourceReason::AttrChanged);
         }
     }
 

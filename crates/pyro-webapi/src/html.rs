@@ -3940,6 +3940,8 @@ static LEN_414: collections::SvgLengthAttr = collections::SvgLengthAttr { attr: 
 simple_class!(SvgImageElement, "SVGImageElement", SvgGraphicsElement, |def| {
     svg_aspect_ratio(def);
     svg_href(def);
+    // As HTMLImageElement's, for the request of its href (SVG 2 / HTML image decode).
+    def.method("decode", 0, |s, n, _a| crate::image_decode::decode(s, n.page(), n.id));
     def.getter("x", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_324)?.value()));
     def.getter("y", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_327)?.value()));
     def.getter("width", |s, n| Ok(collections::animated_length(s, n.page(), n.id, &LEN_330)?.value()));

@@ -938,8 +938,10 @@ impl Browser {
         let loaded = state.main_frame.loaded;
         let href = {
             let dom = bindings.dom.borrow();
+            // pyro: a pending `decode()` fetches a disconnected one too, as Chrome does.
             let connected = dom.is_connected(node).unwrap_or(false)
-                || dom.root_node(node, true).ok().is_some_and(|r| dom.is_connected(r).unwrap_or(false));
+                || dom.root_node(node, true).ok().is_some_and(|r| dom.is_connected(r).unwrap_or(false))
+                || bindings.has_pending_decode(node);
             connected
                 .then(|| {
                     dom.get_attribute(node, "href")
@@ -950,7 +952,7 @@ impl Browser {
                 })
                 .flatten()
         };
-        let source = match href {
+        let source = match href.as_deref() {
             None => Source::None,
             Some(v) if v.trim().is_empty() => Source::None,
             Some(v) => {
@@ -965,6 +967,15 @@ impl Browser {
         // pyro: its `crossorigin` (a CORS settings attribute) is its request's mode, as an `<img>`'s.
         let cors = image_cors(&bindings.dom.borrow(), node);
         self.fetch_for_load_event(page, node, &bindings, loader, base, loaded, source, true, cors);
+        // pyro: the attribute value the request is for, which `decode()` settles against.
+        if let Some(raw) = href {
+            if let Some(mut image) = self.doc_mut(page).and_then(|p| p.filter_map(|p| p.images.entries.get_mut(&node)))
+            {
+                if image.pending {
+                    image.src = raw;
+                }
+            }
+        }
     }
 
     /// Fetches `source` for `node`'s `load` / `error` events only (`<object>`,
@@ -1104,6 +1115,7 @@ impl Browser {
         let hold = entry._node.take();
         let url = entry.url.clone();
         let cors = entry.request_state.0;
+        let raw_src = entry.src.clone();
         drop(state);
         // pyro: an SVG `<image>`'s raster goes into the list of available images (a canvas draws
         // it from there), clean only for a CORS response or a non-opaque one of the document's
@@ -1185,6 +1197,10 @@ impl Browser {
                             || !matches!(r.mime.as_str(), "image/png" | "image/gif" | "image/jpeg" | "image/webp"))
                 })
         });
+        // pyro: an SVG `<image>`'s request settles its `decode()` calls, as an `<img>`'s does.
+        if image {
+            bindings.image_loaded(node, &raw_src, ok);
+        }
         pyro_webapi::lifecycle::resource_loaded(bindings, node, ok);
         drop(hold);
         self.maybe_fire_load(page);
