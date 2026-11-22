@@ -431,10 +431,18 @@ fn matches_kind(dom: &Dom, root: NodeId, id: NodeId, kind: &CollectionKind) -> b
         CollectionKind::Anchors => html && local == "a" && e.attr("name").is_some(),
         CollectionKind::Empty => false,
         CollectionKind::FormElements => {
-            html && (matches!(local, "button" | "fieldset" | "input" | "object" | "output" | "select" | "textarea")
-                || e.flags & pyro_dom::node::element_flags::FORM_ASSOCIATED != 0)
-                && !(local == "input" && e.attr("type").is_some_and(|t| t.eq_ignore_ascii_case("image")))
-                && dom.form_owner(id).ok().flatten() == Some(root)
+            let listed = html
+                && matches!(local, "button" | "fieldset" | "input" | "object" | "output" | "select" | "textarea")
+                || e.flags & pyro_dom::node::element_flags::FORM_ASSOCIATED != 0;
+            // HTML: a fieldset's `elements` are its listed descendants (whatever their form owner,
+            // image buttons included); a form's are the listed elements it owns, but image buttons.
+            if is_fieldset(dom, root) {
+                listed
+            } else {
+                listed
+                    && !(local == "input" && e.attr("type").is_some_and(|t| t.eq_ignore_ascii_case("image")))
+                    && dom.form_owner(id).ok().flatten() == Some(root)
+            }
         }
         _ => false,
     }
@@ -452,6 +460,11 @@ fn qualified_name_is(e: &pyro_dom::node::ElementData, wanted: &str) -> bool {
     }
 }
 
+/// Whether `root` is an HTML `<fieldset>` (whose `elements` are its listed descendants).
+fn is_fieldset(dom: &Dom, root: NodeId) -> bool {
+    dom.element(root).is_ok_and(|e| e.is_html() && &*e.name.local == "fieldset")
+}
+
 fn compute(dom: &Dom, root: NodeId, kind: &CollectionKind) -> Vec<NodeId> {
     match kind {
         CollectionKind::Children => dom.element_children(root).map(|i| i.collect()).unwrap_or_default(),
@@ -462,7 +475,7 @@ fn compute(dom: &Dom, root: NodeId, kind: &CollectionKind) -> Vec<NodeId> {
         | CollectionKind::SectionRows
         | CollectionKind::RowCells => crate::html::table_collection(dom, root, kind),
         CollectionKind::Labels => crate::html::labels_for(dom, root),
-        CollectionKind::FormElements => {
+        CollectionKind::FormElements if !is_fieldset(dom, root) => {
             dom.owned_form_elements(root).unwrap_or_default().into_iter().filter(|&n| matches_kind(dom, root, n, kind)).collect()
         }
         _ => dom
