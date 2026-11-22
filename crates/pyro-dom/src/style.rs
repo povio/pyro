@@ -2014,6 +2014,11 @@ impl StyleEngine {
         self.computed(dom, el).is_some_and(|c| c.pointer_events_none)
     }
 
+    /// Combined host and CSS inertness, falling back to the DOM rule without a styled box.
+    pub fn is_inert(&self, dom: &Dom, el: NodeId) -> bool {
+        self.computed(dom, el).map_or_else(|| dom.is_inert(el), |c| c.inert)
+    }
+
     /// Blink's VisibleToHitTestRequest, ignoring display:none (StyleManager.zig:687-692).
     /// Inert content is not hit-testable (Blink's UsedPointerEvents).
     pub fn is_hit_testable(&self, dom: &Dom, el: NodeId) -> bool {

@@ -1396,3 +1396,18 @@ fn css_inert_inherits_and_explicit_auto_restores_author_inert_descendants() {
     "#);
     assert_eq!(actual, "inert|start|false|auto|child|true|inert|start");
 }
+
+#[test]
+fn find_skips_nonrendered_duplicates_and_modal_focus_escapes_inherited_inertness() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        document.body.innerHTML='<section inert><p>NeedlePhrase</p><dialog id=dlg><button id=inside>Button</button></dialog></section><script type=application/json>NeedlePhrase</script><div hidden>NeedlePhrase</div><button id=outside>Outside</button>';
+        const result=[window.find('NeedlePhrase')];
+        dlg.showModal();inside.focus();
+        result.push(getComputedStyle(inside).interactivity,document.activeElement.id);
+        outside.focus();result.push(document.activeElement.id);
+        dlg.close();
+        result.join('|')
+    "#);
+    assert_eq!(actual, "false|auto|inside|inside");
+}
