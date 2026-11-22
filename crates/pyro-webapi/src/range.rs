@@ -189,6 +189,7 @@ fn before_after(r: &RangeData, s: &Scope<'_>, a: &Args<'_>, start: bool, after: 
 /// Render just the selected cells, retaining empty column positions. Lists
 /// and other block content provide line breaks in place of a cell separator.
 fn selected_table_text(page: &PageDom, dom: &Dom, start: Point, end: Point) -> Option<String> {
+    use crate::editing;
     let whole = (start.0 == end.0 && end.1.checked_sub(start.1) == Some(1))
         .then(|| dom.child_at(start.0, start.1).ok().flatten()).flatten()
         .filter(|&n| dom.element(n).is_ok_and(|el| el.is_html() && &**el.local_name() == "table"));
