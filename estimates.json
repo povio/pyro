@@ -26,12 +26,12 @@
     "encoding": 7,
     "FileAPI": 4,
     "fetch/api": 4,
-    "IndexedDB": 3,
     "fetch/data-urls": 3,
+    "IndexedDB": 3,
     "xhr": 2,
-    "quirks": 1,
     "svg/styling": 1,
-    "html/rendering": 1
+    "html/rendering": 1,
+    "quirks": 1
    }
   },
   "in_progress": {
@@ -61,16 +61,16 @@
   },
   "queued": {
    "scope": {
-    "macbook_in_scope": 28,
+    "macbook_in_scope": 75,
     "studio_in_scope": 308,
     "other_dirs_out_of_scope": 297,
     "macbook_worker_variants_if_enabled": 19,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 534,
+   "distinct_census_pages": 581,
    "owner_reported_unlisted": 0,
-   "selector_union": 562,
-   "owner_estimate_reduction": 28,
+   "selector_union": 629,
+   "owner_estimate_reduction": 48,
    "of_which_tentative": 27,
    "studio_css_reported_pages_not_deduped": 122,
    "studio_css_listed_distinct": 0,
@@ -78,20 +78,22 @@
     "svg/animations": 229,
     "referrer-policy": 114,
     "content-security-policy": 72,
-    "html/semantics": 40,
+    "html/semantics": 58,
+    "html/browsers": 38,
     "intersection-observer": 36,
     "webidl": 19,
+    "html/dom": 13,
     "workers": 12,
-    "html/browsers": 5,
-    "fetch/range": 5,
-    "fetch/stale-while-revalidate": 5,
     "html/interaction": 5,
+    "fetch/stale-while-revalidate": 5,
+    "fetch/range": 5,
     "svg/path": 4,
     "fetch/http-cache": 3,
     "fetch/data-urls": 3,
+    "html/infrastructure": 3,
     "IndexedDB": 3,
-    "encoding": 2,
     "fetch/nosniff": 2,
+    "encoding": 2,
     "fetch/corb": 1,
     "dom/nodes": 1,
     "fetch/api": 1
@@ -1189,6 +1191,34 @@
    "in_scope_pages": 1,
    "out_of_scope_pages": 0,
    "pages": 1,
+   "tentative": 0
+  },
+  "R-HTML-1": {
+   "state": "proposed",
+   "in_scope_pages": 21,
+   "out_of_scope_pages": 0,
+   "pages": 21,
+   "tentative": 0
+  },
+  "R-HTML-2": {
+   "state": "proposed",
+   "in_scope_pages": 33,
+   "out_of_scope_pages": 0,
+   "pages": 33,
+   "tentative": 0
+  },
+  "R-HTML-3": {
+   "state": "proposed",
+   "in_scope_pages": 9,
+   "out_of_scope_pages": 0,
+   "pages": 9,
+   "tentative": 0
+  },
+  "R-HTML-4": {
+   "state": "proposed",
+   "in_scope_pages": 4,
+   "out_of_scope_pages": 0,
+   "pages": 4,
    "tentative": 0
   }
  },
