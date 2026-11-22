@@ -2860,6 +2860,49 @@ impl PageDom {
         true
     }
 
+    /// pyro: `el`'s bytes taken from the list of available images when it kept none of its own:
+    /// an image that loaded before the document first used a canvas API kept none
+    /// ([`PageDom::wants_image_bytes`]: `createImageBitmap(img)` in the `load` handler of a
+    /// `new Image()`, WPT html/canvas/element/manual/imagebitmap), while the list keeps the
+    /// request's bytes whatever the document draws. Only for an `src` (no `srcset`, not in a
+    /// `<picture>`), whose request the list is keyed by. Whether `el` has bytes now.
+    pub(crate) fn adopt_available_image_bytes(&self, el: NodeId) -> bool {
+        if self.image_bytes.borrow().contains_key(&el) {
+            return true;
+        }
+        let (url, cors, policy) = {
+            let dom = self.dom.borrow();
+            let Ok(Some(src)) = dom.get_attribute(el, "src") else { return false };
+            if src.trim().is_empty() || dom.get_attribute(el, "srcset").ok().flatten().is_some() {
+                return false;
+            }
+            let in_picture = dom
+                .parent(el)
+                .ok()
+                .flatten()
+                .and_then(|p| dom.element(p).ok().map(|e| e.is_html() && &*e.name.local == "picture"))
+                .unwrap_or(false);
+            if in_picture {
+                return false;
+            }
+            let cors = match dom.get_attribute(el, "crossorigin").ok().flatten() {
+                None => 0,
+                Some(v) if v.eq_ignore_ascii_case("use-credentials") => 2,
+                Some(_) => 1,
+            };
+            let policy =
+                pyro_net::ReferrerPolicy::from_attribute(dom.get_attribute(el, "referrerpolicy").ok().flatten());
+            (crate::html::resolve_url(&dom, el, src.trim()), cors, policy)
+        };
+        let policy = policy.unwrap_or_else(|| self.referrer_policy());
+        let Some(image) = self.available_html_image(&url, cors, policy, self.document_url_parsed()) else {
+            return false;
+        };
+        let Some((bytes, clean)) = image.bytes else { return false };
+        self.set_image_bytes(el, bytes.bytes().clone(), clean);
+        self.image_bytes.borrow().contains_key(&el)
+    }
+
     /// Whether loaded images' bytes should be kept for canvas use
     /// ([`PageDom::set_image_bytes`]): the document has a `<canvas>`, or a
     /// canvas API was used. A flag test for pages without canvases.

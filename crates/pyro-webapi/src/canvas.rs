@@ -937,6 +937,9 @@ fn image_source(
                         ));
                     }
                 }
+                // An image that loaded before the document used a canvas API kept no bytes of its
+                // own: the list of available images has them.
+                source_page.adopt_available_image_bytes(n.id);
                 // pyro: drawn as the image element's `image-orientation` shows it (Blink; the
                 // source of the preference is not specified, w3c/csswg-drafts#4666).
                 let from_image = {
