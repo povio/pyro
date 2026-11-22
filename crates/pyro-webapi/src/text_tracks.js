@@ -275,6 +275,12 @@
         }
       }
       for (const s of changed) native.check(s.element);
+      if (changed.length) {
+        // A mode change queues `change` at the list and runs "time marches on", so the
+        // newly shown tracks' active cues are current without waiting for a playback tick.
+        queue(mediaLists.get(l.media),new E('change'));
+        updatePlayback(l,false);
+      }
     }
     function addTextTrack(media,kind,label,language) {
       kind=string(kind);
@@ -327,6 +333,8 @@
         for (const c of file.cues) {
           const cue=parsedCue(c,regions); setCueOwner(cue,s.track); s.cues.push(cue);
         }
+        // The track's cues changed: "time marches on" (active cues, enter, cuechange).
+        cuesChanged(s);
         return true;
       }
     };
