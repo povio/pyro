@@ -712,3 +712,11 @@ parent's end padding, as in Chromium (WPT `scrollable-overflow-zero-one-axis`, a
 keeping its `margin-inline-end` in `scrollable-overflow-*-flex-item-margin-inline-end*`). Such a box sitting exactly
 on the scroll origin is not wholly unreachable (the start edge is compared strictly). Covered by pyro-layout
 `flow::a_box_empty_in_one_axis_still_extends_its_scrollers_overflow_like_chromium`.
+
+## The default overflow limit of a position-area box is its original containing block (WPT round 7)
+
+`src/compute/oof.rs` (`OofAxis::overflow_limit`, `solve_oof_box`): when a `position-area` cell replaces the
+containing block, an overflowing box with default overflow alignment is still kept inside the union of its IMCB and
+the original containing block (css-align-3 § auto-safety-position; Chrome), not the cell alone. Fallback fit tests
+still use the cell. WPT css-anchor-position `last-successful-{basic,animation,change-fallbacks,change-try-rule,
+intermediate-ignored}` ("No successful position, keep flip-block").
