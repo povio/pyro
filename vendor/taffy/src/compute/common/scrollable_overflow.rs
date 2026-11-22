@@ -68,7 +68,9 @@ pub(crate) fn compute_scrollable_overflow_contribution(
         width: if propagates.x { f32_max(size.width, scrollable_overflow_rect.right) } else { size.width },
         height: if propagates.y { f32_max(size.height, scrollable_overflow_rect.bottom) } else { size.height },
     };
-    if end_extent.width <= 0.0 || end_extent.height <= 0.0 {
+    // A box empty in both axes contributes nothing. One empty in a single axis still contributes its extent
+    // in the other axis (and its end margin and the parent's end padding), as in Chromium.
+    if end_extent.width <= 0.0 && end_extent.height <= 0.0 {
         return Rect::ZERO;
     }
     let start_extent = Point {
@@ -81,9 +83,17 @@ pub(crate) fn compute_scrollable_overflow_contribution(
         top: location.y + start_extent.y,
         bottom: location.y + end_extent.height,
     };
-    let is_wholly_unreachable =
-        (if reversed.x { contribution.left >= parent_size.width } else { contribution.right <= 0.0 })
-            || (if reversed.y { contribution.top >= parent_size.height } else { contribution.bottom <= 0.0 });
+    // A box with zero extent in an axis that sits exactly on the scroll origin is reachable, not wholly
+    // before it: the strict comparison on the start edge keeps it (and leaves non-empty boxes unchanged).
+    let is_wholly_unreachable = (if reversed.x {
+        contribution.left >= parent_size.width && contribution.right > parent_size.width
+    } else {
+        contribution.right <= 0.0 && contribution.left < 0.0
+    }) || (if reversed.y {
+        contribution.top >= parent_size.height && contribution.bottom > parent_size.height
+    } else {
+        contribution.bottom <= 0.0 && contribution.top < 0.0
+    });
     if parent_is_scroll_container && is_wholly_unreachable {
         Rect::ZERO
     } else {

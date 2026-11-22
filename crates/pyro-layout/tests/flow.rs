@@ -5147,3 +5147,30 @@ fn orthogonal_block_child_stretches_only_for_justify_self_stretch() {
     assert_eq!(size("v-stretch"), [20.0, 40.0], "horizontal child in vertical-lr, stretch");
     assert_eq!(size("v-normal"), [20.0, 20.0], "horizontal child in vertical-lr, normal");
 }
+
+#[test]
+fn a_box_empty_in_one_axis_still_extends_its_scrollers_overflow_like_chromium() {
+    // Taffy dropped any box with zero size in either axis from its parent's scrollable overflow, so a
+    // 0x100 child of a 100x0 scroller left scrollHeight at 0, and a flex item shrunk to zero width lost
+    // its margin-inline-end (scrollWidth stayed 100). Chromium counts both (WPT css-overflow
+    // scrollable-overflow-zero-one-axis.html and scrollable-overflow-*-flex-item-margin-inline-end*.html).
+    let p = page(
+        r#"<!doctype html><body style="margin:0">
+<div id=block style="overflow:scroll;width:100px;height:0"><div style="width:0;height:100px"></div></div>
+<div id=blockw style="overflow:scroll;width:0;height:100px"><div style="width:100px;height:0"></div></div>
+<div id=row style="overflow:scroll;width:100px;height:0;display:flex"><div style="width:0;height:100px"></div></div>
+<div id=col style="overflow:scroll;width:0;height:100px;display:flex;flex-direction:column"><div style="width:100px;height:0"></div></div>
+<div id=margin style="overflow:auto;width:100px;height:100px;display:flex"><div style="width:50px;height:50px;margin-inline-end:950px"></div></div>
+<div id=rtl style="overflow:hidden;width:100px;height:100px;display:flex;direction:rtl"><div style="width:50px;height:50px;margin-inline-end:950px"></div></div>
+<div id=clip style="overflow:clip;width:100px;height:100px;display:flex"><div style="width:50px;height:50px;margin-inline-end:950px"></div></div>"#,
+    );
+    let sh = |id: &str| p.layout.scroll_height(&p.dom, p.id(id));
+    assert_eq!(sh("block"), 100.0);
+    assert_eq!(sw(&p, "blockw"), 100.0);
+    assert_eq!(sh("row"), 100.0);
+    assert_eq!(sw(&p, "col"), 100.0);
+    assert_eq!(sw(&p, "margin"), 950.0);
+    assert_eq!(sw(&p, "rtl"), 950.0);
+    // Not a scroll container: the margin does not extend it.
+    assert_eq!(sw(&p, "clip"), 100.0);
+}
