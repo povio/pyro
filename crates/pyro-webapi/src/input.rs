@@ -595,7 +595,10 @@ fn svg_link_href(dom: &Dom, el: NodeId) -> Option<&str> {
 /// browsers, `a`/`area` with an `href` and a `details`' own `summary`.
 fn has_activation_behavior(dom: &Dom, el: NodeId) -> bool {
     match local(dom, el).as_deref() {
-        Some("input" | "button" | "label") => true,
+        Some("input" | "button") => true,
+        // A label without a labeled control does nothing (as Chromium): a click in it activates
+        // what is around it, such as a button it is in.
+        Some("label") => dom.labeled_control(el).ok().flatten().is_some(),
         Some("a" | "area") => dom.has_attribute(el, "href").unwrap_or(false),
         Some("summary") => dom.is_details_summary(el),
         _ => svg_link_href(dom, el).is_some(),
