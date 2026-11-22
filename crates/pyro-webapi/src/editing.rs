@@ -600,10 +600,9 @@ fn delete_range_with_merging(
     placeholder: bool,
     merge_blocks: bool,
 ) -> Point {
-    if start.0 == end.0 && end.1.checked_sub(start.1) == Some(1)
-        && let Some(child) = dom.child_at(start.0, start.1).ok().flatten()
-        && html_select(dom, child) && editing_host(dom, child) == Some(host)
-    {
+    let selected_child = (start.0 == end.0 && end.1.checked_sub(start.1) == Some(1))
+        .then(|| dom.child_at(start.0, start.1).ok().flatten()).flatten();
+    if let Some(child) = selected_child.filter(|&el| html_select(dom, el) && editing_host(dom, el) == Some(host)) {
         let _ = dom.remove_child(start.0, child);
         let next = deep_forward(dom, start);
         return if editing_host(dom, next.0) == Some(host) && is_text(dom, next.0) {
