@@ -36,6 +36,7 @@ pub(crate) mod hyphenate;
 pub(crate) mod inline;
 pub(crate) mod line_clamp;
 pub(crate) mod list;
+pub(crate) mod math;
 pub mod multicol;
 pub(crate) mod paint_tree;
 pub(crate) mod replaced;
@@ -979,6 +980,7 @@ impl LayoutPassState<'_> {
             ChildLayout::Grid => self.grid_layout(node_id, inputs),
             ChildLayout::Table => self.compute_table_root_layout(node_id, inputs),
             ChildLayout::Multicol { inline_root } => self.compute_multicol_layout(node_id, inputs, inline_root),
+            ChildLayout::MathFraction => self.compute_math_fraction_layout(node_id, inputs),
         }
     }
 
@@ -1870,6 +1872,11 @@ impl LayoutPassState<'_> {
                     return ChildLayout::Table;
                 }
 
+                // pyro: an ordinary MathML fraction, built as one (`math::construct_fraction`).
+                if node.flags.contains(NodeFlags::IS_MATH_FRACTION) {
+                    return ChildLayout::MathFraction;
+                }
+
                 if node.flags.is_inline_root() {
                     return match multicol::is_multicol_node(node) {
                         true => ChildLayout::Multicol { inline_root: true },
@@ -2392,6 +2399,8 @@ enum ChildLayout {
     /// pyro: a multi-column container, whose content is a block or (`inline_root`) an inline
     /// formatting context.
     Multicol { inline_root: bool },
+    /// pyro: an ordinary MathML fraction (`layout::math`).
+    MathFraction,
 }
 
 impl TraversePartialTree for LayoutPassState<'_> {

@@ -1918,6 +1918,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                         cx.draw_selection_tint(scene);
                         cx.draw_content_gradient(scene);
                     }
+                    cx.draw_math_fraction_bar(scene);
                     #[cfg(feature = "custom-widget")]
                     cx.draw_custom_widget(scene);
                     if !skipped {
@@ -7535,6 +7536,21 @@ impl ElementCx<'_, '_> {
         );
         let transform = self.transform * Affine::translate(content.origin().to_vec2());
         scene.fill(Fill::NonZero, transform, anyrender::Paint::Gradient(&gradient), gradient_transform, &tile);
+    }
+
+    /// pyro: an ordinary MathML fraction's bar (`blitz_dom::layout::math`), across its content
+    /// box at the height its layout placed it, in its `color` (Chromium's
+    /// `MathMLPainter::PaintFractionBar`).
+    fn draw_math_fraction_bar(&self, scene: &mut impl PaintScene) {
+        let Some([top, thickness]) = self.element.math_fraction_bar else { return };
+        let content = self.frame.content_box;
+        if content.width() <= 0.0 || thickness <= 0.0 {
+            return;
+        }
+        let y = top as f64 * self.scale;
+        let rect = Rect::new(content.x0, y, content.x1, y + thickness as f64 * self.scale);
+        let color = self.style.clone_color().as_srgb_color();
+        scene.fill(Fill::NonZero, self.transform, color, None, &rect);
     }
 
     /// pyro: Chromium's 16x16 broken-image icon (its `IDR_BROKENIMAGE` resource, as Chrome draws it at

@@ -198,6 +198,9 @@ bitflags! {
         const POSITION_TRY_OPTIONS = 1 << 38;
         const POSITION_VISIBILITY_CHECK = 1 << 39;
         const ANCHOR_QUERIES = 1 << 40;
+        /// pyro: the node is an ordinary MathML fraction whose numerator and denominator are its
+        /// layout children (`layout::math`). Set by its construction.
+        const IS_MATH_FRACTION = 1 << 41;
     }
 }
 
@@ -398,6 +401,7 @@ impl NodeFlags {
         self.remove(Self::IS_TABLE_ROOT);
         self.remove(Self::IS_INLINE_WITH_ONLY_BLOCK_CHILDREN);
         self.remove(Self::IS_SPLIT_INLINE);
+        self.remove(Self::IS_MATH_FRACTION);
     }
 }
 

@@ -112,6 +112,9 @@ pub struct ElementData {
     /// pyro: this box (an element or a `::before`/`::after`) shows the gradient its `content` is
     /// in place of content, as an image without a natural size (`util::content_gradient`).
     pub content_gradient: bool,
+    /// pyro: an ordinary MathML fraction's bar, as its last layout placed it: its top (from the
+    /// border box's top) and thickness, CSS px (`layout::math`). `None` without one.
+    pub math_fraction_bar: Option<[f32; 2]>,
 
     /// Parley text layout (elements with inline inner display mode only)
     pub inline_layout_data: Option<Box<TextLayout>>,
@@ -455,6 +458,7 @@ impl Clone for ElementData {
             image_broken: self.image_broken,
             image_failed: self.image_failed,
             content_gradient: self.content_gradient,
+            math_fraction_bar: None,
             reference_images: self.reference_images.clone(),
             inline_layout_data: self.inline_layout_data.clone(),
             list_item_data: self.list_item_data.clone(),
@@ -594,6 +598,7 @@ impl ElementData {
             image_broken: false,
             image_failed: false,
             content_gradient: false,
+            math_fraction_bar: None,
             reference_images: ThinVec::new(),
 
             stylo_element_data: Default::default(),
