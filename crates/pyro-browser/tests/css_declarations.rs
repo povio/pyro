@@ -1316,3 +1316,25 @@ fn reading_flow_and_order_compute_through_the_cascade() {
     "#);
     assert_eq!(actual, "normal|0|grid-rows|-4|flex-visual|4|var(--flow)");
 }
+
+#[test]
+fn tab_uses_reading_flow_in_both_directions_and_observes_style_changes() {
+    use pyro_webapi::input::{dispatch_key, KeyInput, KeyKind, Modifiers};
+    let mut thread = crate::browser_thread().unwrap();
+    let page = thread.browser.create_page().unwrap();
+    let frame = &thread.browser.page(page).unwrap().main_frame;
+    let root = frame.main_realm().unwrap();
+    let bindings = frame.page_dom.as_ref().unwrap();
+    eval(root, "document.body.innerHTML='<button id=start></button><section id=box style=\"reading-flow:source-order\"><button id=a style=\"reading-order:2\"></button><button id=b></button></section><button id=end></button>'; start.focus()");
+    let tab = |backward| {
+        let key = KeyInput { key:"Tab".into(), code:"Tab".into(), modifiers: Modifiers { shift:backward, ..Default::default() }, ..Default::default() };
+        dispatch_key(bindings, KeyKind::KeyDown, &key);
+        eval(root, "document.activeElement.id")
+    };
+    assert_eq!(tab(false), "b");
+    assert_eq!(tab(false), "a");
+    assert_eq!(tab(false), "end");
+    assert_eq!(tab(true), "a");
+    eval(root, "box.style.readingFlow='normal'; start.focus()");
+    assert_eq!(tab(false), "a");
+}
