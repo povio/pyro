@@ -65,7 +65,7 @@ def main(ledger,out):
   L=[json.loads(l) for l in open(ledger)]
   per={};
   for r in L:
-    if r['kind']!='brief' and r['id'] not in SEL: continue
+    if r['kind']!='brief' and r['id'] not in SEL and not isinstance(r.get('page_list'),list): continue
     i=r['id']
     if isinstance(r.get('page_list'),list): pages=set(r['page_list'])&strict
     elif i=='Q01': pages=set(q01)&strict
