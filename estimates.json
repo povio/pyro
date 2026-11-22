@@ -33,19 +33,19 @@
     "html/syntax": 12,
     "fetch/cross-origin-resource-policy": 10,
     "workers": 9,
-    "encoding": 7,
     "html/infrastructure": 7,
+    "encoding": 7,
     "fetch/data-urls": 6,
     "fetch/range": 5,
     "fetch/stale-while-revalidate": 5,
     "FileAPI": 4,
-    "fetch/nosniff": 3,
     "fetch/http-cache": 3,
+    "fetch/nosniff": 3,
     "xhr": 2,
-    "svg/styling": 1,
-    "html/rendering": 1,
     "IndexedDB": 1,
-    "quirks": 1
+    "quirks": 1,
+    "svg/styling": 1,
+    "html/rendering": 1
    }
   },
   "in_progress": {
@@ -71,48 +71,49 @@
     "html/browsers": 22,
     "html/infrastructure": 13,
     "fetch/fetch-later": 10,
-    "IndexedDB": 6,
     "html/webappapis": 6,
+    "IndexedDB": 6,
     "fetch/corb": 6,
-    "fetch/api": 5,
     "html/dom": 5,
+    "fetch/api": 5,
     "fetch/orb": 2,
     "html/rendering": 2
    }
   },
   "queued": {
    "scope": {
-    "macbook_in_scope": 19,
+    "macbook_in_scope": 44,
     "studio_in_scope": 142,
     "other_dirs_out_of_scope": 23,
     "macbook_worker_variants_if_enabled": 0,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 66,
+   "distinct_census_pages": 91,
    "owner_reported_unlisted": 0,
-   "selector_union": 81,
-   "owner_estimate_reduction": 15,
-   "of_which_tentative": 17,
+   "selector_union": 126,
+   "owner_estimate_reduction": 35,
+   "of_which_tentative": 18,
    "studio_css_reported_pages_not_deduped": 122,
    "studio_css_listed_distinct": 0,
    "by_dir": {
+    "html/rendering": 45,
     "content-security-policy": 20,
     "webidl": 19,
     "fetch/compression-dictionary": 8,
     "html/interaction": 5,
     "fetch/security": 5,
-    "svg/path": 4,
     "html/semantics": 4,
     "fetch/api": 4,
+    "svg/path": 4,
     "workers": 3,
     "fetch/cross-origin-resource-policy": 2,
-    "fetch/redirects": 1,
-    "fetch/redirect-navigate": 1,
+    "fetch/http-cache": 1,
+    "dom/nodes": 1,
     "fetch/content-type": 1,
     "fetch/images": 1,
+    "fetch/redirects": 1,
     "fetch/range": 1,
-    "fetch/http-cache": 1,
-    "dom/nodes": 1
+    "fetch/redirect-navigate": 1
    }
   }
  },
@@ -2244,6 +2245,13 @@
    "out_of_scope_pages": 0,
    "pages": 27,
    "tentative": 5
+  },
+  "R-HTML-RENDER": {
+   "state": "proposed",
+   "in_scope_pages": 45,
+   "out_of_scope_pages": 0,
+   "pages": 45,
+   "tentative": 1
   }
  },
  "implemented_total_estimate": 1289,
