@@ -2247,6 +2247,13 @@ impl Browser {
                     }
                 });
                 Ok(())
+            } else if host
+                .nav(key)
+                .is_some_and(|nav| nav.navigate_to_fragment_from(&url, &crate::nav::NavigateSource::default()))
+            {
+                // HTML "navigate an iframe or frame": the document's own URL with another fragment
+                // is a fragment navigation of it (`src="about:blank#1"` on an initial about:blank).
+                Ok(())
             } else if url == "about:blank" && frame.url == "about:blank" && !frame.dom_content_loaded {
                 // A script that opened the initial document since (append,
                 // then `contentDocument.open()`) finishes it with `close()`.

@@ -632,6 +632,14 @@ impl PageNav {
 
     /// Same-document navigation (pushState/replaceState/fragment).
     fn same_document(&self, url: &str, state: Option<HistoryState>, kind: SameDocumentKind) {
+        // HTML "navigate": a navigation of the initial about:blank document replaces, a fragment
+        // navigation included; that leaves the document initial (the next navigation replaces it
+        // too).
+        let kind = if kind == SameDocumentKind::Fragment && self.state.borrow().initial {
+            SameDocumentKind::Replace
+        } else {
+            kind
+        };
         self.persist_scroll();
         let mut pushed_from = None;
         {
@@ -650,7 +658,9 @@ impl PageNav {
             let step = current.map_or(self.joint.current.get(), |e| e.step);
             let scroll_manual = current.is_some_and(|e| e.scroll_manual);
             let mut entry = Entry { url: url.to_string(), state, doc, id, key, nav_state, step, scroll_manual };
-            st.initial = false;
+            if kind != SameDocumentKind::Replace {
+                st.initial = false;
+            }
             if st.entries.is_empty() {
                 st.entries.push(entry);
             } else if kind == SameDocumentKind::Replace {
