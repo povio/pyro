@@ -29,13 +29,13 @@
     "encoding": 7,
     "fetch/stale-while-revalidate": 5,
     "FileAPI": 4,
-    "fetch/data-urls": 3,
     "fetch/nosniff": 3,
     "fetch/http-cache": 3,
+    "fetch/data-urls": 3,
     "xhr": 2,
+    "quirks": 1,
     "html/rendering": 1,
     "svg/styling": 1,
-    "quirks": 1,
     "IndexedDB": 1
    }
   },
@@ -59,8 +59,8 @@
     "html/semantics": 136,
     "html/browsers": 89,
     "html/syntax": 30,
-    "fetch/api": 23,
     "html/webappapis": 23,
+    "fetch/api": 23,
     "html/dom": 13,
     "html/infrastructure": 3
    }
@@ -69,28 +69,26 @@
    "scope": {
     "macbook_in_scope": 25,
     "studio_in_scope": 178,
-    "other_dirs_out_of_scope": 291,
+    "other_dirs_out_of_scope": 26,
     "macbook_worker_variants_if_enabled": 13,
     "studio_worker_variants_if_enabled": 0
    },
-   "distinct_census_pages": 381,
+   "distinct_census_pages": 116,
    "owner_reported_unlisted": 0,
-   "selector_union": 409,
+   "selector_union": 144,
    "owner_estimate_reduction": 28,
-   "of_which_tentative": 27,
+   "of_which_tentative": 6,
    "studio_css_reported_pages_not_deduped": 122,
    "studio_css_listed_distinct": 0,
    "by_dir": {
-    "svg/animations": 229,
     "html/semantics": 40,
-    "intersection-observer": 36,
     "referrer-policy": 36,
     "content-security-policy": 20,
     "webidl": 19,
     "workers": 6,
+    "html/interaction": 5,
     "fetch/range": 5,
     "html/browsers": 5,
-    "html/interaction": 5,
     "svg/path": 4,
     "fetch/data-urls": 3,
     "dom/nodes": 1
@@ -729,14 +727,14 @@
    "tentative": 0
   },
   "P14": {
-   "state": "proposed",
+   "state": "deferred",
    "in_scope_pages": 0,
    "out_of_scope_pages": 229,
    "pages": 229,
    "tentative": 21
   },
   "P15": {
-   "state": "proposed",
+   "state": "deferred",
    "in_scope_pages": 0,
    "out_of_scope_pages": 36,
    "pages": 36,
