@@ -303,6 +303,8 @@ pub struct PageDom {
     /// dispatched, so a listener whose actions unload it again (removing an ancestor frame) does
     /// not run them twice.
     unloading: Cell<bool>,
+    /// `beforeunload` listeners of this document running now (HTML "unload counter").
+    before_unload_depth: Cell<u32>,
     /// Navigation Timing of the document, recorded as the lifecycle steps
     /// run (`lifecycle`).
     timing: Cell<DocumentTiming>,
@@ -1055,6 +1057,7 @@ impl PageDom {
             transition_captures: RefCell::new(None),
             transition_quota: RefCell::new(None),
             unloading: Cell::new(false),
+            before_unload_depth: Cell::new(0),
             timing: Cell::new(DocumentTiming::default()),
             resource_timings: Default::default(),
             focus_values: RefCell::new(FxHashMap::default()),
@@ -2823,6 +2826,21 @@ impl PageDom {
     pub(crate) fn set_hidden(&self, hidden: bool) {
         self.hidden.set(hidden);
     }
+    /// HTML "unload counter" above 0: the document's `beforeunload` listeners are running, or it
+    /// is being unloaded (`pagehide`, `unload`, and after). History traversals it asks for are
+    /// ignored.
+    pub fn in_unload(&self) -> bool {
+        self.unloading.get() || self.before_unload_depth.get() > 0
+    }
+
+    pub(crate) fn enter_before_unload(&self) {
+        self.before_unload_depth.set(self.before_unload_depth.get() + 1);
+    }
+
+    pub(crate) fn leave_before_unload(&self) {
+        self.before_unload_depth.set(self.before_unload_depth.get().saturating_sub(1));
+    }
+
     /// Marks the document as unloading; false when it already was.
     pub(crate) fn start_unloading(&self) -> bool {
         !self.unloading.replace(true)

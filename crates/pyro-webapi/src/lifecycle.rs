@@ -230,7 +230,9 @@ pub fn before_unload(page: &Rc<PageDom>) -> bool {
         return false;
     }
     let ev = EventCore::trusted(page, EventInterface::BeforeUnloadEvent, "beforeunload", false, true);
+    page.enter_before_unload();
     let canceled = !fire_for_document(page, window, page.document(), &ev);
+    page.leave_before_unload();
     let asked = ev.fields.borrow().data.as_deref().is_some_and(|text| !text.is_empty());
     canceled || asked
 }

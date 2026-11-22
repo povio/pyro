@@ -1839,14 +1839,14 @@ impl JsClass for History {
         def.method("replaceState", 2, |s, n, a| change_state(s, n, a, SameDocumentKind::Replace));
         def.method("back", 0, |s, n, _a| {
             require_fully_active(n, "back")?;
-            if n.rate_limit_allows() {
+            if !in_unload(s) && n.rate_limit_allows() {
                 n.traverse_joint(-1);
             }
             Ok(s.undefined())
         });
         def.method("forward", 0, |s, n, _a| {
             require_fully_active(n, "forward")?;
-            if n.rate_limit_allows() {
+            if !in_unload(s) && n.rate_limit_allows() {
                 n.traverse_joint(1);
             }
             Ok(s.undefined())
@@ -1854,7 +1854,7 @@ impl JsClass for History {
         def.method("go", 0, |s, n, a| {
             let d = a.get(0).to_number()?;
             require_fully_active(n, "go")?;
-            if n.rate_limit_allows() {
+            if !in_unload(s) && n.rate_limit_allows() {
                 n.traverse_joint(if d.is_finite() { d.trunc() as i64 } else { 0 });
             }
             Ok(s.undefined())
@@ -1870,6 +1870,13 @@ static NAVIGATION_RATE_LIMIT: std::sync::atomic::AtomicBool = std::sync::atomic:
 /// `--disable-ipc-flooding-protection`). For the whole process.
 pub fn set_navigation_rate_limit(on: bool) {
     NAVIGATION_RATE_LIMIT.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// HTML "traverse the history by a delta" from a document whose unload counter is above 0 (its
+/// `beforeunload`, `pagehide` or `unload` listeners run) does nothing: the navigation that is
+/// unloading it wins (WPT the-history-interface/traverse-during-beforeunload, -unload).
+fn in_unload(s: &Scope<'_>) -> bool {
+    s.global_data::<crate::Window>().is_some_and(|w| pyro_webapi::WindowHost::page(w).in_unload())
 }
 
 /// HTML: History's methods throw a SecurityError for a document that is not
