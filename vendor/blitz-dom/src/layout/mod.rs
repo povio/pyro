@@ -2688,6 +2688,10 @@ impl LayoutContainingBlock for LayoutPassState<'_> {
         Self: 'a;
 
     fn get_oof_item_style(&self, node_id: NodeId) -> Self::OofItemStyle<'_> {
+        // pyro: the box is laid out: it records the anchors it resolves anew (`touch_cv_anchor_uses`).
+        if self.uses_anchor_queries(node_id) {
+            self.touch_cv_anchor_uses(dom_node_id(node_id));
+        }
         let mut style = self.child_layout_style(self.node_from_id(node_id));
         if !self.try_styles.is_empty() {
             if let Some(value) = self.try_styles.get(&node_id) { style.style.use_fallback(value); }

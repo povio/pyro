@@ -870,6 +870,9 @@ fn run_animation_frame(scope: &Scope<'_>) {
     // the document before its first animation frame callback runs. One flag and stamp check
     // for a document that neither animates nor transitions, or did not change.
     w.target.page.update_animations();
+    // pyro: the `contentvisibilityautostatechange` events of the relevance the frame determined,
+    // before its callbacks (CSS Contain 2 § 4.1; none, and no layout, without a listener).
+    pyro_webapi::layout_api::content_visibility_events(&w.target.page);
     let (handles, native): (Vec<u32>, _) = {
         clear_frame_timers(w);
         let mut frame = w.animation.borrow_mut();

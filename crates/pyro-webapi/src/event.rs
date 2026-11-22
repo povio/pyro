@@ -54,6 +54,8 @@ pub enum EventInterface {
     CommandEvent,
     InterestEvent,
     TaskPriorityChangeEvent,
+    /// CSS Containment `contentvisibilityautostatechange`.
+    ContentVisibilityAutoStateChangeEvent,
     /// HTML-in-Canvas `paint` (`crate::html_in_canvas`).
     CanvasPaintEvent,
     /// CSS Scroll Snap 2 `scrollsnapchange` / `scrollsnapchanging`.
@@ -210,6 +212,8 @@ pub struct EventFields {
     pub new_state: String,
     /// `CommandEvent.command`.
     pub command: String,
+    /// `ContentVisibilityAutoStateChangeEvent.skipped`.
+    pub skipped: bool,
     /// `CanvasPaintEvent.changedElements`, and the frozen array made of
     /// them on first read ([SameObject]).
     pub changed_elements: Vec<NodeId>,
@@ -474,6 +478,9 @@ pub fn wrap_event<'s>(s: &Scope<'s>, core: &EventData) -> JsResult<Object<'s>> {
         EventInterface::InterestEvent => s.wrap::<InterestEvent>(d, Some(key)),
         EventInterface::CanvasPaintEvent => s.wrap::<CanvasPaintEvent>(d, Some(key)),
         EventInterface::SnapEvent => s.wrap::<SnapEvent>(d, Some(key)),
+        EventInterface::ContentVisibilityAutoStateChangeEvent => {
+            s.wrap::<ContentVisibilityAutoStateChangeEvent>(d, Some(key))
+        }
         EventInterface::ClipboardEvent => crate::editing_globals::wrap_clipboard_event(s, d, key),
     }?;
     define_unforgeables(s, &core.page, wrapper)?;
@@ -1910,6 +1917,33 @@ impl JsClass for CommandEvent {
     }
 }
 
+/// CSS Containment `ContentVisibilityAutoStateChangeEvent`: fired at a
+/// `content-visibility: auto` element when its contents start or stop
+/// being skipped.
+pub struct ContentVisibilityAutoStateChangeEvent;
+impl JsClass for ContentVisibilityAutoStateChangeEvent {
+    const NAME: &'static str = "ContentVisibilityAutoStateChangeEvent";
+    type Data = EventData;
+    type Parent = Event;
+    fn define(def: &mut ClassDef<Self>) {
+        def.constructor(1, |s, nt, a| {
+            construct::<ContentVisibilityAutoStateChangeEvent>(
+                s,
+                nt,
+                a,
+                EventInterface::ContentVisibilityAutoStateChangeEvent,
+                fill_cv_auto_state,
+            )
+        });
+        def.getter("skipped", |s, e| Ok(s.boolean(e.fields.borrow().skipped)));
+    }
+}
+
+fn fill_cv_auto_state<'s>(_: &Scope<'s>, f: &mut EventFields, init: Option<Object<'s>>) -> JsResult<()> {
+    f.skipped = get_bool(init, "skipped")?;
+    Ok(())
+}
+
 /// Event carrying the source element of an interest transition.
 pub struct InterestEvent;
 impl JsClass for InterestEvent {
@@ -2330,6 +2364,7 @@ pub(crate) fn register(engine: &pyro_js::Engine) {
     engine.register::<ToggleEvent>();
     engine.register::<CanvasPaintEvent>();
     engine.register::<SnapEvent>();
+    engine.register::<ContentVisibilityAutoStateChangeEvent>();
     engine.register::<CommandEvent>();
     engine.register::<InterestEvent>();
 }

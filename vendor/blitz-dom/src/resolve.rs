@@ -453,16 +453,25 @@ impl BaseDocument {
 
     /// pyro: whether `style` makes a `content-visibility: auto` element whose contents can be
     /// skipped (containment applies: not `display: contents`/`none`, a non-atomic inline, a table
-    /// or an internal table box).
-    fn is_cv_auto(node: &crate::Node) -> bool {
+    /// or an internal table box). `nodes`: the tree `node` is in.
+    fn is_cv_auto(nodes: &crate::NodeTree, node: &crate::Node) -> bool {
         use style::values::specified::box_::{ContentVisibility, DisplayInside, DisplayOutside};
+        // (An outermost `<svg>` element, one whose parent is no SVG element, is a replaced box, atomic
+        // inline: containment applies, as Chrome. The test `damage_inline_svgs` makes.)
+        let svg = node.element_data().is_some_and(|el| {
+            el.name.ns == markup5ever::ns!(svg) && el.name.local == crate::local_name!("svg")
+        }) && !node
+            .parent
+            .and_then(|p| nodes.get(p))
+            .and_then(|p| p.element_data())
+            .is_some_and(|e| e.name.ns == markup5ever::ns!(svg));
         node.is_element()
             && node.primary_styles().is_some_and(|style| {
                 let display = style.get_box().display;
                 style.get_box().slow_clone_content_visibility() == ContentVisibility::Auto
                     && !display.is_contents()
                     && !display.is_none()
-                    && !(display.outside() == DisplayOutside::Inline && display.inside() == DisplayInside::Flow)
+                    && (svg || !(display.outside() == DisplayOutside::Inline && display.inside() == DisplayInside::Flow))
                     && display.inside() != DisplayInside::Table
                     && display.outside() != DisplayOutside::InternalTable
             })
@@ -475,7 +484,7 @@ impl BaseDocument {
         let new: Vec<NodeId> = self
             .nodes
             .iter()
-            .filter(|(_, node)| !node.flags.contains(NodeFlags::CV_DETERMINED) && Self::is_cv_auto(node))
+            .filter(|(_, node)| !node.flags.contains(NodeFlags::CV_DETERMINED) && Self::is_cv_auto(&self.nodes, node))
             .map(|(id, _)| id)
             .collect();
         for id in new {
@@ -553,6 +562,31 @@ impl BaseDocument {
                 at = self.nodes[n].parent;
             }
         }
+        // pyro: the anchors positioned boxes used at the last rendering frame
+        // (`commit_cv_anchor_frame`) hold their ancestors (inclusive) up to one the positioned box is
+        // in: an anchor offscreen keeps rendering for a box anchored to it outside its skippable
+        // subtree, not for one inside it (as Chrome; WPT css-contain
+        // `content-visibility-anchor-positioning-003` to `-006`).
+        let mut anchor_steps = 0u64;
+        for &(anchor, positioned) in &self.cv_anchor_frame {
+            let mut theirs: HashSet<NodeId> = HashSet::new();
+            let mut at = self.nodes.get(positioned).map(|_| positioned);
+            while let Some(n) = at {
+                anchor_steps += 1;
+                theirs.insert(n);
+                at = self.nodes[n].parent;
+            }
+            let mut at = self.nodes.get(anchor).map(|_| anchor);
+            while let Some(n) = at {
+                anchor_steps += 1;
+                if theirs.contains(&n) {
+                    break;
+                }
+                holders.insert(n);
+                at = self.nodes[n].parent;
+            }
+        }
+        self.cv_work.set(self.cv_work.get() + anchor_steps);
         // (Chain steps walked, for `cv_work`.)
         let steps = std::cell::Cell::new(0u64);
         // Whether a node is in skipped contents (a skipped ancestor), memoized up the parents.
@@ -652,7 +686,7 @@ impl BaseDocument {
         let mut changed = false;
         for id in candidates {
             steps.set(steps.get() + 1);
-            if !Self::is_cv_auto(&self.nodes[id]) {
+            if !Self::is_cv_auto(&self.nodes, &self.nodes[id]) {
                 // No longer `auto`: shown as its style says.
                 let node = &mut self.nodes[id];
                 if node.flags.contains(NodeFlags::CV_SKIPPED) {
@@ -769,6 +803,19 @@ impl BaseDocument {
         cv.chain(remembered).collect()
     }
 
+    /// pyro: the `content-visibility: auto` elements in the document whose relevance was
+    /// determined, and whether they skip their contents (for `contentvisibilityautostatechange`,
+    /// CSS Contain 2 § 4.1), read at a rendering frame's start, when no query forces any.
+    pub fn content_visibility_auto_states(&self) -> Vec<(NodeId, bool)> {
+        use crate::node::NodeFlags;
+        self.cv_auto
+            .iter()
+            .filter_map(|&id| self.nodes.get(id).map(|n| (id, n)))
+            .filter(|(_, n)| n.flags.is_in_document() && n.flags.contains(NodeFlags::CV_DETERMINED) && Self::is_cv_auto(&self.nodes, n))
+            .map(|(id, n)| (id, n.flags.contains(NodeFlags::CV_SKIPPED)))
+            .collect()
+    }
+
     /// pyro: takes the `content-visibility: auto` state another document of the page determined
     /// (`content_visibility_state`): its elements skip or show their contents as there, with its
     /// remembered sizes, until relevance is determined here again.
@@ -787,7 +834,7 @@ impl BaseDocument {
             // (An element only a size is remembered for: no relevance to take. One not styled yet
             // is taken as there, as `update_content_visibility` drops it if it is no `auto` one.)
             let node = &self.nodes[id];
-            if node.primary_styles().is_some() && !Self::is_cv_auto(node) {
+            if node.primary_styles().is_some() && !Self::is_cv_auto(&self.nodes, node) {
                 continue;
             }
             let node = &self.nodes[id];
@@ -2502,6 +2549,8 @@ impl BaseDocument {
         self.last_layout_space = Some(available_space);
         self.anchor_index.get_mut().clear();
         self.layout_ran = true;
+        // pyro: the anchors positioned boxes laid out from here on resolve (`record_cv_anchor_use`).
+        self.cv_layout_pass.set(self.cv_layout_pass.get().wrapping_add(1));
         phase_profile::laid_out();
         self.mark_viewport_body();
 

@@ -318,6 +318,116 @@ pub fn content_visibility_frame(page: &Rc<PageDom>) {
     }
 }
 
+/// pyro: the `contentvisibilityautostatechange` events of a rendering update of `page` (CSS
+/// Contain 2 § 4.1), right after relevance is determined at its start
+/// ([`content_visibility_frame`]), before its animation frame callbacks: each
+/// `content-visibility: auto` element whose skipped state was determined for the first time, or
+/// changed since its last event, gets one (`skipped`), in tree order. Layouts that geometry reads
+/// force between frames fire none (WPT css-contain `content-visibility-with-top-layer-008`); a
+/// disconnected element none either (`-auto-state-changed-removed`). A page that listens for no
+/// such event lays nothing out for it.
+pub fn content_visibility_events(page: &Rc<PageDom>) {
+    const TYPE: &str = "contentvisibilityautostatechange";
+    if page.is_disposed() {
+        return;
+    }
+    // (Handler content attributes the parser set are registered first, as a dispatch does.)
+    if crate::target::unheard(page, TYPE) {
+        return;
+    }
+    let states = {
+        let (Ok(dom), Some(layout)) = (page.dom.try_borrow(), page.try_layout()) else { return };
+        let states = layout.content_visibility_auto_states(&dom);
+        // (What listeners change from here on is read again: `schedule_content_visibility_check`.)
+        page.cv_auto_check.set((page.cv_auto_check.get().0, Some((dom.version(), layout.scroll_generation()))));
+        states
+    };
+    let mut changed: Vec<(NodeId, bool)> = {
+        let mut recorded = page.cv_auto_states.borrow_mut();
+        let mut next = std::collections::HashMap::with_capacity(states.len());
+        let mut changed = Vec::new();
+        for (id, skipped) in states {
+            if recorded.get(&id) != Some(&skipped) {
+                changed.push((id, skipped));
+            }
+            next.insert(id, skipped);
+        }
+        // (Elements that left the document or `content-visibility: auto` are forgotten: one that
+        // comes back is determined anew.)
+        *recorded = next;
+        changed
+    };
+    if changed.is_empty() {
+        return;
+    }
+    {
+        let dom = page.dom.borrow();
+        let precedes = |a: NodeId, b: NodeId| dom.compare_document_position(b, a).is_ok_and(|p| p & 0x02 != 0);
+        changed.sort_by(|(a, _), (b, _)| {
+            if a == b {
+                std::cmp::Ordering::Equal
+            } else if precedes(*a, *b) {
+                std::cmp::Ordering::Less
+            } else {
+                std::cmp::Ordering::Greater
+            }
+        });
+    }
+    for (id, skipped) in changed {
+        // (A listener may have removed a later one.)
+        if !page.dom.borrow().is_connected(id).unwrap_or(false) {
+            page.cv_auto_states.borrow_mut().remove(&id);
+            continue;
+        }
+        let ev = crate::event::EventCore::trusted(
+            page,
+            crate::event::EventInterface::ContentVisibilityAutoStateChangeEvent,
+            TYPE,
+            false,
+            false,
+        );
+        ev.fields.borrow_mut().skipped = skipped;
+        crate::target::fire_at_node(page, id, &ev);
+    }
+}
+
+/// pyro: after a task of `page` that listens for `contentvisibilityautostatechange`: when the DOM
+/// or a scroll position changed since the states were last read, they are read again at the
+/// frame interval, as a rendering update without animation frame callbacks would (pyro runs
+/// frames only for them): relevance is determined, then the events fire
+/// ([`content_visibility_events`]). One lookup for a page without such a listener; none queued for
+/// a page whose DOM and scroll positions stay as they were (a quiet page stays idle).
+pub(crate) fn schedule_content_visibility_check(page: &Rc<PageDom>) {
+    const TYPE: &str = "contentvisibilityautostatechange";
+    let (pending, stamp) = page.cv_auto_check.get();
+    if pending || page.is_disposed() {
+        return;
+    }
+    {
+        let (Ok(dom), Some(layout)) = (page.dom.try_borrow(), page.try_layout()) else { return };
+        if !dom.listens_for(TYPE) && !dom.has_pending_inline_handlers() {
+            return;
+        }
+        if stamp == Some((dom.version(), layout.scroll_generation())) {
+            return;
+        }
+    }
+    page.cv_auto_check.set((true, stamp));
+    let p = page.clone();
+    page.post_delayed_task(
+        std::time::Duration::from_millis(16),
+        Box::new(move || {
+            p.cv_auto_check.set((false, p.cv_auto_check.get().1));
+            // (A listener removed meanwhile: no frame to run for it.)
+            if crate::target::unheard(&p, TYPE) {
+                return;
+            }
+            content_visibility_frame(&p);
+            content_visibility_events(&p);
+        }),
+    );
+}
+
 /// pyro: the ResizeObserver step of a rendering update of `page` (after its animation frame
 /// callbacks, immediately before its ResizeObserver callbacks): elements with
 /// `contain-intrinsic-size: auto` remember their sizes (CSS Sizing 4 § 5.1).

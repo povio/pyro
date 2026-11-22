@@ -236,6 +236,12 @@ pub struct PageDom {
     /// block the next document's events. The value: whether a `scrollend`
     /// follows (a scroll that ran to completion, not a layout clamp).
     pub(crate) pending_scrolls: RefCell<Vec<((NodeId, Option<NodeId>), bool, Rc<()>)>>,
+    /// pyro: whether each `content-visibility: auto` element skipped its contents when its
+    /// `contentvisibilityautostatechange` last fired (`layout_api::content_visibility_events`).
+    pub(crate) cv_auto_states: RefCell<std::collections::HashMap<NodeId, bool>>,
+    /// pyro: whether a paced check of those states is queued, and the DOM version and scroll
+    /// generation they were last read at (`layout_api::schedule_content_visibility_check`).
+    pub(crate) cv_auto_check: Cell<(bool, Option<(u64, u64)>)>,
     /// pyro: completed scrolls per scroll target (document, element or None: the viewport), for
     /// a smooth scroll's promise to tell whether a later scroll interrupted it
     /// (`layout_api::scroll_promise`).
@@ -1007,6 +1013,8 @@ impl PageDom {
             intersections: Default::default(),
             resizes: Default::default(),
             pending_scrolls: Default::default(),
+            cv_auto_states: Default::default(),
+            cv_auto_check: Default::default(),
             scroll_serials: Default::default(),
             scroll_clamp: Default::default(),
             fetch_state: Default::default(),
@@ -2423,6 +2431,8 @@ impl PageDom {
         crate::canvas::commit_frames(self);
         // Scrolling changes no DOM: deferred lazy media are checked whatever the task did.
         crate::media::lazy_after_task(self);
+        // pyro: so does `content-visibility: auto` relevance (one lookup without a listener).
+        crate::layout_api::schedule_content_visibility_check(self);
         if self.quiet_since_last_task() {
             return;
         }

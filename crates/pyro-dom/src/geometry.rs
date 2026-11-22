@@ -994,6 +994,11 @@ pub trait GeometrySource {
     fn content_visibility_state(&self) -> Vec<(u64, bool, [Option<f32>; 2])> {
         Vec::new()
     }
+    /// pyro: the `content-visibility: auto` elements whose relevance was determined, as of the
+    /// last sync, by key, and whether they skip their contents (`contentvisibilityautostatechange`).
+    fn content_visibility_auto_states(&self) -> Vec<(u64, bool)> {
+        Vec::new()
+    }
     /// pyro: whether, as of the last sync, some element may remember a size
     /// (`contain-intrinsic-size: auto`, CSS Sizing 4 § 5.1).
     fn has_remembered_size_candidates(&self) -> bool {
