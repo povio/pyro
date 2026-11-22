@@ -106,6 +106,7 @@ def main(ledger,out):
     for i,(st,pg,r) in per.items():
       if st in states and pg is not None and isinstance(r.get('est_pages_owner'),int) and r['est_pages_owner']<len(pg):
         d=len(pg)-r['est_pages_owner']
+        d=max(0,d-sum(1 for x in pg if W(x)))  # owner totals count all variants: take the excess from worker variants first
         if all(x.split('/')[0] in MB for x in pg): adj_mb+=d
         else: adj_oth+=d
     scope={'macbook_in_scope':mb_list-adj_mb+unl,'studio_in_scope':sd_list+len(cssu)+css,'other_dirs_out_of_scope':oth-adj_oth,'macbook_worker_variants_if_enabled':wk_mb,'studio_worker_variants_if_enabled':wk_sd}
