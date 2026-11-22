@@ -7,18 +7,10 @@
 //! and dispatched the event, then hands over a [`Violation`] and the policy's [`ReportTargets`]:
 //! - Trusted Types (`trusted_types.js`): after its event, in the same task, through the
 //!   module's `deliverReport` native.
-//! - The CSP fetch/inline/eval core (`crate::csp` once it lands): after `dispatch` in its
-//!   report task, one call per `pyro_net::csp::Violation` `v`:
-//!   ```ignore
-//!   crate::csp_report::report_violation(&page, &crate::csp_report::Violation {
-//!       blocked: v.blocked_url.clone(), effective_directive: v.effective_directive.clone(),
-//!       policy: v.original_policy.clone(), report_only: v.disposition == Disposition::Report,
-//!       source_file: v.source_file.clone(), sample: v.sample.clone(),
-//!       status_code: v.status_code, line: v.line, column: v.column, ..Default::default()
-//!   }, &crate::csp_report::ReportTargets { uris: v.report_uris.clone(), group: v.report_to.clone() });
-//!   ```
-//!   Its `report_uris` already leave out a `<meta>` policy's `report-uri`, as
-//!   [`ReportTargets::from_policy`] does here.
+//! - The CSP fetch/inline/eval core (`crate::csp::report`): after `dispatch`, in the same
+//!   task, a document's violation through `crate::csp::report_parts`. Its `report_uris`
+//!   already leave out a `<meta>` policy's `report-uri`, as [`ReportTargets::from_policy`] does
+//!   here.
 //!
 //! Requests go out through the page's network client, shaped like a `navigator.sendBeacon`
 //! POST that outlives its document, with no Resource Timing entry (as in Chrome). The two kinds
