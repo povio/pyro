@@ -1290,8 +1290,22 @@ impl Layout {
             return None;
         }
         let self_position = self.position_of(dom, el);
-        if self_position == Position::Fixed {
-            return None;
+        // A fixed box has no offset parent unless an ancestor establishes its containing block (a transform,
+        // filter, containment ...; CSSOM View §offsetParent, as Chromium does); then it is the nearest ancestor
+        // that can hold an absolutely positioned box (WPT css-grid abspos/positioned-grid-items-should-not-take-up-space-001).
+        let fixed = self_position == Position::Fixed;
+        if fixed {
+            let mut ancestor = dom.parent_element(el).ok().flatten();
+            loop {
+                let Some(a) = ancestor else { return None };
+                if self.is_root_container(dom, a) {
+                    return None;
+                }
+                if self.computed(dom, a).contains_fixed {
+                    break;
+                }
+                ancestor = dom.parent_element(a).ok().flatten();
+            }
         }
         let self_static = !self_position.is_positioned();
         let mut node = dom.n(idx).parent;
@@ -1310,6 +1324,9 @@ impl Layout {
                 return Some(dom.id_of(node));
             }
             if self.position_of(dom, dom.id_of(node)).is_positioned() {
+                return Some(dom.id_of(node));
+            }
+            if fixed && self.computed(dom, dom.id_of(node)).contains_absolute {
                 return Some(dom.id_of(node));
             }
             if self_static && matches!(tag, Some("td" | "th" | "table")) {
