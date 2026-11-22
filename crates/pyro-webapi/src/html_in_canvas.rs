@@ -517,8 +517,22 @@ pub(crate) fn clear_geometry(page: &Rc<PageDom>, canvas: NodeId, element: NodeId
 }
 
 /// `drawElementImage` (without `preserveElementGeometry`): the element's
-/// canvas transform becomes where it was drawn (6 values, 2D).
+/// canvas transform becomes where it was drawn. `values` (6, 2D) are in the
+/// canvas grid (bitmap px); the element's geometry is in CSS px of the
+/// canvas's box, as `updateElementGeometry` transforms are (WPT
+/// canvas-transform-get-bounding-client-rect maps those unscaled on a canvas
+/// whose bitmap is not its CSS size), so the grid's scale is taken out.
 pub(crate) fn set_drawn_transform(page: &Rc<PageDom>, canvas: NodeId, element: NodeId, values: Vec<f64>) {
+    let (sx, sy) = {
+        let layout = page.layout();
+        let dom = page.dom.borrow();
+        grid_scale(&layout, &dom, canvas)
+    };
+    let (sx, sy) = (if sx > 0.0 { sx } else { 1.0 }, if sy > 0.0 { sy } else { 1.0 });
+    let values = match values[..] {
+        [a, b, c, d, e, f] => vec![a / sx, b / sy, c / sx, d / sy, e / sx, f / sy],
+        _ => values,
+    };
     let mut state = page.html_in_canvas.borrow_mut();
     state.transforms.retain(|(c, e, _)| !(*c == canvas && *e == element));
     state.transforms.push((canvas, element, values));
