@@ -655,6 +655,8 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
     } else {
         realm.set_global_data::<DedicatedWorkerGlobalScope>(scope)?;
     }
+    // True while a module worker's top-level graph loads and evaluates.
+    let starting = Rc::new(Cell::new(false));
     // Static imports of a module worker and `import()` in any worker: the
     // worker's own fetches, like `importScripts`.
     realm.set_module_fetcher(Some(Rc::new(WorkerModuleFetcher {
@@ -666,7 +668,7 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
         url: start.url.to_string(),
         sched: event_loop.scheduler(),
         in_flight: Rc::default(),
-        classic_service: start.service.is_some() && !start.module,
+        service_graph: start.service.is_some().then(|| starting.clone()),
     })));
     {
         let s = realm.scope()?;
@@ -697,7 +699,7 @@ fn set_up(event_loop: &EventLoop<WorkerLoop>, start: WorkerStart) -> JsResult<(W
         id: start.id,
         poster: start.poster.clone(),
         in_error: false,
-        starting: Rc::new(Cell::new(false)),
+        starting,
         held: Vec::new(),
     };
     if script.is_none() && start.service.is_none() && !start.shared.closing.load(Ordering::Acquire) {
@@ -859,8 +861,10 @@ struct WorkerModuleFetcher {
     /// settles, so concurrent loads would each fetch it. Nothing stays once a
     /// fetch settles: a failed one is fetched again by the next request.
     in_flight: Rc<RefCell<HashMap<(String, pyro_js::ModuleType), Vec<pyro_js::ModuleRequest>>>>,
-    /// A classic service worker, whose every module request is an `import()`.
-    classic_service: bool,
+    /// A service worker's flag of its top-level module graph loading and
+    /// evaluating (never set for a classic one): any other module request is
+    /// an `import()`.
+    service_graph: Option<Rc<Cell<bool>>>,
 }
 
 impl pyro_js::ModuleFetcher for WorkerModuleFetcher {
@@ -871,7 +875,7 @@ impl pyro_js::ModuleFetcher for WorkerModuleFetcher {
     fn fetch(&self, realm: &Realm, url: String, request: pyro_js::ModuleRequest) {
         // HTML HostLoadImportedModule: `import()` in a ServiceWorkerGlobalScope
         // fails with a TypeError, at once (no task, no microtask checkpoint).
-        if self.classic_service {
+        if self.service_graph.as_ref().is_some_and(|loading| !loading.get()) {
             if let Ok(s) = realm.scope() {
                 let e = JsError::Type("import() is disallowed on ServiceWorkerGlobalScope".into());
                 if let Err(e) = request.reject(&s, &e) {
