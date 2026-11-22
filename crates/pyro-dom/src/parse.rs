@@ -855,12 +855,39 @@ pub fn is_xml_mime(mime: &str) -> bool {
 /// with the "get an attribute" algorithm, and `content` counts only with
 /// `http-equiv="content-type"`.
 pub fn prescan_charset(head: &[u8]) -> Option<&'static encoding_rs::Encoding> {
-    meta_charset(head).or_else(|| xml_encoding(head))
+    match meta_charset(head, true) {
+        MetaScan::Found(enc) => Some(enc),
+        _ => xml_encoding(head),
+    }
 }
 
-/// The `<meta>` part of the prescan.
-fn meta_charset(head: &[u8]) -> Option<&'static encoding_rs::Encoding> {
-    let b = &head[..head.len().min(1024)];
+/// What [`meta_charset`] found in the bytes so far.
+enum MetaScan {
+    Found(&'static encoding_rs::Encoding),
+    /// No `<meta>` declares an encoding, whatever bytes come next.
+    None,
+    /// More bytes could still bring one.
+    More,
+}
+
+/// The elements a `<head>` keeps: any other start tag ends the head for the scan.
+const HEAD_TAGS: [&[u8]; 10] =
+    [b"html", b"head", b"base", b"link", b"meta", b"object", b"script", b"noscript", b"style", b"title"];
+/// Elements whose contents are text, where a `<meta>` is no element.
+const RAW_TEXT_TAGS: [&[u8]; 9] =
+    [b"script", b"style", b"title", b"textarea", b"xmp", b"iframe", b"noembed", b"noframes", b"noscript"];
+/// The most bytes the scan waits for.
+const MAX_META_SCAN: usize = 64 * 1024;
+
+/// The `<meta>` part of the prescan, as Chromium scans so that a `<meta>` the tree builder would
+/// act on ("change the encoding") is found before decoding starts: the contents of raw text
+/// elements (`script`, `style`, `title`, ...) are skipped, the scan goes past the first 1024
+/// bytes while the head lasts (it stops at the first token after them once a `</head>` or a
+/// start tag a head does not hold was seen), and character references in the label are decoded
+/// (WPT html/syntax/charset). `eof`: `b` is the whole input, so nothing is [`MetaScan::More`].
+fn meta_charset(b: &[u8], eof: bool) -> MetaScan {
+    let more = if eof { MetaScan::None } else { MetaScan::More };
+    let mut in_head = true;
     let fix = |enc: &'static encoding_rs::Encoding| {
         if enc == encoding_rs::UTF_16LE || enc == encoding_rs::UTF_16BE {
             encoding_rs::UTF_8
@@ -873,11 +900,14 @@ fn meta_charset(head: &[u8]) -> Option<&'static encoding_rs::Encoding> {
     let starts_ci = |at: usize, s: &[u8]| b.len() >= at + s.len() && b[at..at + s.len()].eq_ignore_ascii_case(s);
     let mut pos = 0;
     while pos < b.len() {
+        if b[pos] == b'<' && ((!in_head && pos >= 1024) || pos >= MAX_META_SCAN) {
+            return MetaScan::None;
+        }
         if b[pos..].starts_with(b"<!--") {
             // The `-->` may share the dashes of `<!--`.
             match find(&b[pos + 2..], b"-->") {
                 Some(e) => pos = pos + 2 + e + 3,
-                None => return None,
+                None => return more,
             }
             continue;
         }
@@ -886,11 +916,12 @@ fn meta_charset(head: &[u8]) -> Option<&'static encoding_rs::Encoding> {
             let mut names: Vec<Vec<u8>> = Vec::new();
             let (mut got_pragma, mut need_pragma, mut charset) = (false, None::<bool>, None);
             while let Some((name, value)) = get_attribute(b, &mut pos) {
+                let value = decode_char_refs(&value);
                 if names.contains(&name) {
                     continue;
                 }
                 match name.as_slice() {
-                    b"http-equiv" if value == b"content-type" => got_pragma = true,
+                    b"http-equiv" if &*value == b"content-type" => got_pragma = true,
                     b"content" if charset.is_none() => {
                         if let Some(enc) = charset_from_content(&value) {
                             charset = Some(enc);
@@ -905,32 +936,104 @@ fn meta_charset(head: &[u8]) -> Option<&'static encoding_rs::Encoding> {
                 }
                 names.push(name);
             }
+            if pos >= b.len() && !eof {
+                // The tag may hold more attributes.
+                return MetaScan::More;
+            }
             match (need_pragma, charset) {
                 (None, _) | (_, None) => {}
                 (Some(true), _) if !got_pragma => {}
-                (_, Some(enc)) => return Some(fix(enc)),
+                (_, Some(enc)) => return MetaScan::Found(fix(enc)),
             }
             continue;
         }
         let tag_start = |at: usize| b.get(at).is_some_and(|c| c.is_ascii_alphabetic());
         if b[pos] == b'<' && (tag_start(pos + 1) || (b.get(pos + 1) == Some(&b'/') && tag_start(pos + 2))) {
-            // A tag: skip its name, then its attributes.
-            while pos < b.len() && !matches!(b[pos], b'\t' | b'\n' | b'\x0c' | b'\r' | b' ' | b'>') {
+            // A tag: its name, then its attributes.
+            let end_tag = b[pos + 1] == b'/';
+            let name_start = if end_tag { pos + 2 } else { pos + 1 };
+            pos = name_start;
+            while pos < b.len() && !matches!(b[pos], b'\t' | b'\n' | b'\x0c' | b'\r' | b' ' | b'>' | b'/') {
                 pos += 1;
             }
+            let name = b[name_start..pos].to_ascii_lowercase();
             while get_attribute(b, &mut pos).is_some() {}
+            if pos >= b.len() {
+                return more;
+            }
+            if end_tag {
+                if name == b"head" {
+                    in_head = false;
+                }
+                continue;
+            }
+            if !HEAD_TAGS.contains(&name.as_slice()) {
+                in_head = false;
+            }
+            if name == b"plaintext" {
+                return MetaScan::None;
+            }
+            if RAW_TEXT_TAGS.contains(&name.as_slice()) {
+                // Its text runs to its end tag, which the scan reads next.
+                let mut close = b"</".to_vec();
+                close.extend_from_slice(&name);
+                match (pos..b.len()).find(|&at| starts_ci(at, &close)) {
+                    Some(at) => pos = at,
+                    None => return more,
+                }
+            }
             continue;
         }
         if b[pos..].starts_with(b"<!") || b[pos..].starts_with(b"</") || b[pos..].starts_with(b"<?") {
             match b[pos..].iter().position(|&c| c == b'>') {
                 Some(e) => pos += e + 1,
-                None => return None,
+                None => return more,
             }
             continue;
         }
         pos += 1;
     }
-    None
+    more
+}
+
+/// The numeric character references (`&#119;`, `&#x77;`) and the named ones a label can hold,
+/// decoded in a lowercased attribute value, as the tree builder decodes them.
+fn decode_char_refs(value: &[u8]) -> std::borrow::Cow<'_, [u8]> {
+    if !value.contains(&b'&') {
+        return std::borrow::Cow::Borrowed(value);
+    }
+    let mut out = Vec::with_capacity(value.len());
+    let mut i = 0;
+    while i < value.len() {
+        if value[i] == b'&' {
+            let rest = &value[i + 1..];
+            let decoded = rest.iter().position(|&c| c == b';').and_then(|end| {
+                let body = std::str::from_utf8(&rest[..end]).ok()?;
+                let code = match body.strip_prefix('#') {
+                    Some(hex) if hex.starts_with('x') => u32::from_str_radix(&hex[1..], 16).ok()?,
+                    Some(dec) => dec.parse().ok()?,
+                    None => match body {
+                        "amp" => 0x26,
+                        "lt" => 0x3C,
+                        "gt" => 0x3E,
+                        "quot" => 0x22,
+                        "apos" => 0x27,
+                        _ => return None,
+                    },
+                };
+                Some((char::from_u32(code)?, end))
+            });
+            if let Some((c, end)) = decoded {
+                let mut buf = [0; 4];
+                out.extend_from_slice(c.to_ascii_lowercase().encode_utf8(&mut buf).as_bytes());
+                i += end + 2;
+                continue;
+            }
+        }
+        out.push(value[i]);
+        i += 1;
+    }
+    std::borrow::Cow::Owned(out)
 }
 
 fn trim_ascii(v: &[u8]) -> &[u8] {
@@ -1187,7 +1290,14 @@ impl DocumentParser {
             return ParseStep::NeedInput;
         }
         let decided = encoding_rs::Encoding::for_bom(&self.sniff).is_some() || self.transport_charset.is_some();
-        if !decided && self.sniff.len() < 1024 {
+        // The `<meta>` scan waits for its decision (at least the first 1024 bytes, more while
+        // the head lasts).
+        let waiting = if self.plaintext {
+            self.sniff.len() < 1024
+        } else {
+            matches!(meta_charset(&self.sniff, false), MetaScan::More) && self.sniff.len() < MAX_META_SCAN
+        };
+        if !decided && waiting {
             return ParseStep::NeedInput;
         }
         self.start_decoder();
