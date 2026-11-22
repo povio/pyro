@@ -1030,6 +1030,14 @@ fn find_text(page: &Rc<PageDom>, needle: &str, case_sensitive: bool, backwards: 
             true => (lo..=hi).rev().find(|&at| matches(text, at)),
         };
         if let Some(at) = found {
+            let searchable = {
+                let dom = page.dom.borrow();
+                dom.parent_element(*node).ok().flatten().is_some_and(|parent| {
+                    page.layout().style().computed(&dom, parent).is_some_and(|s|
+                        !s.inert && !s.in_display_none && !s.visibility_hidden)
+                })
+            };
+            if !searchable { continue; }
             // As Chromium: selecting the match starts a selection (`selectstart` at its text, which
             // a listener may cancel).
             if !crate::input::fire_simple(page, *node, "selectstart", true, true) {

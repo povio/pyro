@@ -647,8 +647,10 @@ pub struct ComputedStyle {
     pub visibility_hidden: bool,
     /// Inherited `pointer-events: none`.
     pub pointer_events_none: bool,
-    /// This element or a flat-tree ancestor has the `inert` attribute.
+    /// Inert for hit testing, focus and find, including computed CSS interactivity.
     pub inert: bool,
+    /// Host-language inertness propagated independently of CSS inheritance.
+    host_inert: bool,
     /// This element or a flat-tree ancestor has display:none.
     pub in_display_none: bool,
     /// This element or a flat-tree ancestor has opacity:0.
@@ -1517,11 +1519,12 @@ impl StyleEngine {
         // dialog"). One empty-set check when there is no modal dialog.
         if let Some(modal) = dom.topmost_modal() {
             if modal == el {
-                c.inert = e.is_html() && e.attr("inert").is_some();
+                c.host_inert = e.is_html() && e.attr("inert").is_some();
             } else if parent.is_none() && dom.check(modal).is_ok_and(|m| dom.n(m).owner_doc == dom.n(idx).owner_doc) {
-                c.inert = true;
+                c.host_inert = true;
             }
         }
+        c.inert |= c.host_inert;
         self.memo.borrow_mut().insert(el, c);
         c
     }
@@ -2011,6 +2014,11 @@ impl StyleEngine {
         self.computed(dom, el).is_some_and(|c| c.pointer_events_none)
     }
 
+    /// Combined host and CSS inertness, falling back to the DOM rule without a styled box.
+    pub fn is_inert(&self, dom: &Dom, el: NodeId) -> bool {
+        self.computed(dom, el).map_or_else(|| dom.is_inert(el), |c| c.inert)
+    }
+
     /// Blink's VisibleToHitTestRequest, ignoring display:none (StyleManager.zig:687-692).
     /// Inert content is not hit-testable (Blink's UsedPointerEvents).
     pub fn is_hit_testable(&self, dom: &Dom, el: NodeId) -> bool {
@@ -2333,7 +2341,8 @@ fn derive_computed(
         visibility_hidden: style.get_inherited_box().visibility != style::computed_values::visibility::T::Visible,
         pointer_events_none: style.get_inherited_ui().pointer_events
             == style::values::specified::ui::PointerEvents::None,
-        inert: above.inert || (e.is_html() && e.attr("inert").is_some()),
+        inert: style.get_inherited_ui().interactivity == style::values::specified::ui::Interactivity::Inert,
+        host_inert: above.host_inert || (e.is_html() && e.attr("inert").is_some()),
         in_display_none: display == Display::None || above.in_display_none,
         in_opacity_zero: above.in_opacity_zero || effects.opacity == 0.0,
         overflow_x_scrolls: ox == Overflow::Scroll,

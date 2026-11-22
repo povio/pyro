@@ -1,0 +1,397 @@
+{
+ "start": "2026-11-22T02:06:10.310Z",
+ "end": "2026-11-22T02:06:16.722Z",
+ "preciseHost": {
+  "durationSeconds": 6.412,
+  "hostBusyPct": 79.06
+ },
+ "perArm": {
+  "inert-base-95976a331": {
+   "orders": [
+    1,
+    4,
+    6,
+    7
+   ],
+   "elapsedSeconds": 3.766,
+   "weightedHostBusyPct": 80.47
+  },
+  "inert-7631b990c": {
+   "orders": [
+    2,
+    3,
+    5,
+    8
+   ],
+   "elapsedSeconds": 2.645,
+   "weightedHostBusyPct": 77.05
+  }
+ },
+ "perProcess": [
+  {
+   "order": 1,
+   "binary": "inert-base-95976a331",
+   "start": "2026-11-22T02:06:10.310Z",
+   "end": "2026-11-22T02:06:11.852Z",
+   "durationSeconds": 1.542,
+   "hostBusyPct": 88.898
+  },
+  {
+   "order": 2,
+   "binary": "inert-7631b990c",
+   "start": "2026-11-22T02:06:11.852Z",
+   "end": "2026-11-22T02:06:12.318Z",
+   "durationSeconds": 0.466,
+   "hostBusyPct": 64.8
+  },
+  {
+   "order": 3,
+   "binary": "inert-7631b990c",
+   "start": "2026-11-22T02:06:12.318Z",
+   "end": "2026-11-22T02:06:13.578Z",
+   "durationSeconds": 1.26,
+   "hostBusyPct": 93.705
+  },
+  {
+   "order": 4,
+   "binary": "inert-base-95976a331",
+   "start": "2026-11-22T02:06:13.578Z",
+   "end": "2026-11-22T02:06:14.885Z",
+   "durationSeconds": 1.307,
+   "hostBusyPct": 95.363
+  },
+  {
+   "order": 5,
+   "binary": "inert-7631b990c",
+   "start": "2026-11-22T02:06:14.886Z",
+   "end": "2026-11-22T02:06:15.361Z",
+   "durationSeconds": 0.475,
+   "hostBusyPct": 84.3
+  },
+  {
+   "order": 6,
+   "binary": "inert-base-95976a331",
+   "start": "2026-11-22T02:06:15.361Z",
+   "end": "2026-11-22T02:06:15.828Z",
+   "durationSeconds": 0.467,
+   "hostBusyPct": 51.88
+  },
+  {
+   "order": 7,
+   "binary": "inert-base-95976a331",
+   "start": "2026-11-22T02:06:15.828Z",
+   "end": "2026-11-22T02:06:16.278Z",
+   "durationSeconds": 0.45,
+   "hostBusyPct": 38.0
+  },
+  {
+   "order": 8,
+   "binary": "inert-7631b990c",
+   "start": "2026-11-22T02:06:16.278Z",
+   "end": "2026-11-22T02:06:16.722Z",
+   "durationSeconds": 0.444,
+   "hostBusyPct": 34.893
+  }
+ ],
+ "benchmarkSHA256": "e2c11efeb00373016abaf45b8b4dfcdce5fb90646876951f0c7ea8c5efb0ed55",
+ "minOneSecondBusyPct": 31.7,
+ "maxOneSecondBusyPct": 100,
+ "oneSecondSamples": [
+  {
+   "start": "2026-11-22T02:06:09.489Z",
+   "end": "2026-11-22T02:06:10.490Z",
+   "cpuBusyPct": 75.1
+  },
+  {
+   "start": "2026-11-22T02:06:10.490Z",
+   "end": "2026-11-22T02:06:11.493Z",
+   "cpuBusyPct": 100
+  },
+  {
+   "start": "2026-11-22T02:06:11.493Z",
+   "end": "2026-11-22T02:06:12.495Z",
+   "cpuBusyPct": 64.8
+  },
+  {
+   "start": "2026-11-22T02:06:12.495Z",
+   "end": "2026-11-22T02:06:13.496Z",
+   "cpuBusyPct": 98.3
+  },
+  {
+   "start": "2026-11-22T02:06:13.496Z",
+   "end": "2026-11-22T02:06:14.499Z",
+   "cpuBusyPct": 100
+  },
+  {
+   "start": "2026-11-22T02:06:14.499Z",
+   "end": "2026-11-22T02:06:15.501Z",
+   "cpuBusyPct": 84.3
+  },
+  {
+   "start": "2026-11-22T02:06:15.501Z",
+   "end": "2026-11-22T02:06:16.503Z",
+   "cpuBusyPct": 38
+  },
+  {
+   "start": "2026-11-22T02:06:16.503Z",
+   "end": "2026-11-22T02:06:17.504Z",
+   "cpuBusyPct": 31.7
+  }
+ ],
+ "hostIntervals": [
+  {
+   "at": "2026-11-22T02:06:16.580Z",
+   "elapsedMs": 30001,
+   "cpuBusyPct": 56.6,
+   "load": [
+    16.33837890625,
+    18.34765625,
+    18.0830078125
+   ],
+   "logicalCpu": 10,
+   "pressureLevel": "1",
+   "freePct": 84,
+   "swap": "total = 0.00M  used = 0.00M  free = 0.00M  (encrypted)",
+   "processes": {
+    "other": {
+     "n": 1148,
+     "pctCpu": 123.5,
+     "rssMiB": 38329
+    },
+    "ci-runner": {
+     "n": 3,
+     "pctCpu": 0,
+     "rssMiB": 90
+    },
+    "non-css": {
+     "n": 4,
+     "pctCpu": 0,
+     "rssMiB": 121
+    },
+    "independent-feature": {
+     "n": 1,
+     "pctCpu": 0,
+     "rssMiB": 9
+    },
+    "css-values": {
+     "n": 4,
+     "pctCpu": 142,
+     "rssMiB": 936
+    }
+   }
+  },
+  {
+   "at": "2026-11-22T02:06:46.583Z",
+   "elapsedMs": 30003,
+   "cpuBusyPct": 46,
+   "load": [
+    12.830078125,
+    17.294921875,
+    17.7099609375
+   ],
+   "logicalCpu": 10,
+   "pressureLevel": "1",
+   "freePct": 84,
+   "swap": "total = 0.00M  used = 0.00M  free = 0.00M  (encrypted)",
+   "processes": {
+    "other": {
+     "n": 1147,
+     "pctCpu": 230.9,
+     "rssMiB": 38150
+    },
+    "ci-runner": {
+     "n": 3,
+     "pctCpu": 0,
+     "rssMiB": 90
+    },
+    "non-css": {
+     "n": 4,
+     "pctCpu": 0,
+     "rssMiB": 121
+    },
+    "independent-feature": {
+     "n": 1,
+     "pctCpu": 0,
+     "rssMiB": 9
+    },
+    "css-values": {
+     "n": 1,
+     "pctCpu": 100,
+     "rssMiB": 1787
+    }
+   }
+  }
+ ],
+ "adjacentLaneSnapshots": [
+  {
+   "at": "2026-11-22T02:06:01.440Z",
+   "ciWorkerActive": false,
+   "allocation": {
+    "effectiveAt": "2026-11-22T02:04:45.998994+00:00",
+    "hostSlots": 2,
+    "lead": 0,
+    "editing": 0,
+    "css": 0,
+    "qa": 1,
+    "diagnostics": 0,
+    "ordinary": 1,
+    "policy": "0c6c998e8 remains held pending namespace/prefix-split identity and ID edge corrections; +43/-0 independent WPT and separate direct controls retained. No new compiler until corrected editing SHA and previous native exit."
+   },
+   "lanes": {
+    "lead": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "editing": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "css": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "qa": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "diagnostics": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ordinary": {
+     "processes": [
+      {
+       "pid": 92062,
+       "state": "S",
+       "kind": "cargo",
+       "jobs": null
+      },
+      {
+       "pid": 98197,
+       "state": "S",
+       "kind": "rustc",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 7.2
+    },
+    "idb": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "census": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ci": {
+     "processes": [
+      {
+       "pid": 14341,
+       "state": "SN",
+       "kind": "Runner.Listener",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 0
+    },
+    "unassigned": {
+     "processes": [],
+     "cpuCorePct": 0
+    }
+   }
+  },
+  {
+   "at": "2026-11-22T02:06:31.438Z",
+   "ciWorkerActive": false,
+   "allocation": {
+    "effectiveAt": "2026-11-22T02:04:45.998994+00:00",
+    "hostSlots": 2,
+    "lead": 0,
+    "editing": 0,
+    "css": 0,
+    "qa": 1,
+    "diagnostics": 0,
+    "ordinary": 1,
+    "policy": "0c6c998e8 remains held pending namespace/prefix-split identity and ID edge corrections; +43/-0 independent WPT and separate direct controls retained. No new compiler until corrected editing SHA and previous native exit."
+   },
+   "lanes": {
+    "lead": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "editing": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "css": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "qa": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "diagnostics": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ordinary": {
+     "processes": [
+      {
+       "pid": 92062,
+       "state": "S",
+       "kind": "cargo",
+       "jobs": null
+      },
+      {
+       "pid": 99122,
+       "state": "R",
+       "kind": "rustc",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 98.4
+    },
+    "idb": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "census": {
+     "processes": [],
+     "cpuCorePct": 0
+    },
+    "ci": {
+     "processes": [
+      {
+       "pid": 14341,
+       "state": "SN",
+       "kind": "Runner.Listener",
+       "jobs": null
+      }
+     ],
+     "cpuCorePct": 0
+    },
+    "unassigned": {
+     "processes": [],
+     "cpuCorePct": 0
+    }
+   }
+  }
+ ],
+ "censusAdmissions": [],
+ "qaStart": "2026-11-22T02:04:20.958463+00:00",
+ "qaEnd": "2026-11-22T02:04:21.281463+00:00",
+ "qaTimeMethod": "Head receipt modification time and runner-reported wallMs; approximate times. Receipt already complete before performance probe.",
+ "measuredCensusShardWindows": [],
+ "qaOverlapSeconds": 0,
+ "method": "Aggregate one-second percentages are weighted by exact overlap per process. 30-second host intervals include activity outside perf; process snapshots bracket the run. Hardware counters do not assign competition to a process.",
+ "nearbyBuildLogs": [
+  {
+   "name": "base-build.log",
+   "fromUTC": "2026-11-22T02:03:42.828+00:00",
+   "throughUTC": "2026-11-22T02:06:30.982+00:00",
+   "overlapSeconds": 6.412
+  }
+ ],
+ "scope": "Only ordinary, CSS-inert and descendant-auto focus/find/pointer fixtures; no fullscreen performance observations."
+}

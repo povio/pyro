@@ -1377,3 +1377,37 @@ fn grid_focus_interleaves_boxless_slot_assignments_and_shadow_siblings() {
     assert_eq!([tab(false), tab(false), tab(false), tab(false)], ["b","c","a","end"]);
     assert_eq!([tab(true), tab(true), tab(true), tab(true)], ["a","c","b","start"]);
 }
+
+#[test]
+fn css_inert_inherits_and_explicit_auto_restores_author_inert_descendants() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        document.body.innerHTML='<button id=start>start</button><section id=scope><button id=child>NeedleWord</button></section>';
+        start.focus();
+        scope.style.interactivity='inert';
+        child.focus();
+        const values=[getComputedStyle(child).interactivity,document.activeElement.id,window.find('NeedleWord')];
+        child.style.interactivity='auto';child.focus();
+        values.push(getComputedStyle(child).interactivity,document.activeElement.id,window.find('NeedleWord'));
+        scope.inert=true;scope.style.interactivity='auto';
+        start.focus();child.focus();
+        values.push(getComputedStyle(scope).interactivity,document.activeElement.id);
+        values.join('|')
+    "#);
+    assert_eq!(actual, "inert|start|false|auto|child|true|inert|start");
+}
+
+#[test]
+fn find_skips_nonrendered_duplicates_and_modal_focus_escapes_inherited_inertness() {
+    let (_t, root) = page();
+    let actual = eval(&root, r#"
+        document.body.innerHTML='<section inert><p>NeedlePhrase</p><dialog id=dlg><button id=inside>Button</button></dialog></section><script type=application/json>NeedlePhrase</script><div hidden>NeedlePhrase</div><button id=outside>Outside</button>';
+        const result=[window.find('NeedlePhrase')];
+        dlg.showModal();inside.focus();
+        result.push(getComputedStyle(inside).interactivity,document.activeElement.id);
+        outside.focus();result.push(document.activeElement.id);
+        dlg.close();
+        result.join('|')
+    "#);
+    assert_eq!(actual, "false|auto|inside|inside");
+}

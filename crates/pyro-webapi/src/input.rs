@@ -130,13 +130,11 @@ fn request_focus(page: &Rc<PageDom>, target: FocusTarget, prevent_scroll: bool) 
     (apply && live_document(page, doc, &token)).then_some(token)
 }
 
-/// A focusable area, or the dialog its focusing steps focus, that a modal
-/// dialog does not make inert. Without a modal dialog this is one
-/// empty-set check more than before.
+/// Recheck effective inertness after focus listeners have had a chance to change styles.
 fn can_focus(page: &PageDom, el: NodeId) -> bool {
     let dom = page.dom.borrow();
     (dom.is_focusable(el).unwrap_or(false) || page.popover.forced_focus(el))
-        && !(dom.topmost_modal().is_some() && dom.is_inert(el))
+        && !page.layout().style().is_inert(&dom, el)
 }
 
 /// HTML focusing steps, coordinated with the browsing-context owner.
@@ -344,7 +342,7 @@ fn takes_typed_text(dom: &Dom, el: NodeId) -> bool {
 /// a `display: none` subtree nor `visibility: hidden`, as Chrome's
 /// focusable-style check). An `<area>` is rendered through its image map.
 pub(crate) fn is_focusable_area(layout: &pyro_dom::layout::Layout, dom: &Dom, el: NodeId) -> bool {
-    if !dom.is_focusable(el).unwrap_or(false) || dom.is_inert(el) {
+    if !dom.is_focusable(el).unwrap_or(false) || layout.style().is_inert(dom, el) {
         return false;
     }
     if dom.element(el).is_ok_and(|e| e.is_html() && &*e.name.local == "area") {
@@ -364,7 +362,7 @@ pub fn run_focus_fixup(page: &Rc<PageDom>) {
         let layout = page.layout();
         let dom = page.dom.borrow();
         let Some(f) = dom.focused(page.document()).ok().flatten() else { return };
-        let focusable = dom.is_focusable(f).unwrap_or(false) && !dom.is_inert(f) && layout.is_visible(&dom, f);
+        let focusable = dom.is_focusable(f).unwrap_or(false) && !layout.style().is_inert(&dom, f) && layout.is_visible(&dom, f);
         (!focusable).then_some(f)
     };
     if let Some(f) = lost {
