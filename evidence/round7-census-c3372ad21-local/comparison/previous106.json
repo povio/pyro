@@ -2745,12 +2745,21 @@
   "shard": "ordinary-229"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-dest - Not sent to non-trustworthy cross-site destination - location"
+  ],
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "timeout",
+   null,
+   false,
+   43,
+   43
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-dest - Not sent to non-trustworthy cross-site destination - location",
    "chrome158": [
@@ -2785,12 +2794,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-dest - Not sent to non-trustworthy cross-site destination - location.assign"
+  ],
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "timeout",
+   null,
+   false,
+   43,
+   43
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-dest - Not sent to non-trustworthy cross-site destination - location.assign",
    "chrome158": [
@@ -2825,12 +2843,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-dest - Not sent to non-trustworthy cross-site destination - location.href"
+  ],
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "timeout",
+   null,
+   false,
+   43,
+   43
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-dest - Not sent to non-trustworthy cross-site destination - location.href",
    "chrome158": [
@@ -2865,12 +2892,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-dest - Not sent to non-trustworthy cross-site destination - location.replace"
+  ],
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "timeout",
+   null,
+   false,
+   43,
+   43
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-dest - Not sent to non-trustworthy cross-site destination - location.replace",
    "chrome158": [
@@ -2905,12 +2941,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-dest - Not sent to non-trustworthy same-origin destination - location"
+  ],
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "timeout",
+   null,
+   false,
+   43,
+   43
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-dest - Not sent to non-trustworthy same-origin destination - location",
    "chrome158": [
@@ -2945,12 +2990,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-dest - Not sent to non-trustworthy same-origin destination - location.assign"
+  ],
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "timeout",
+   null,
+   false,
+   43,
+   43
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-dest - Not sent to non-trustworthy same-origin destination - location.assign",
    "chrome158": [
@@ -2985,12 +3039,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-dest - Not sent to non-trustworthy same-origin destination - location.href"
+  ],
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "timeout",
+   null,
+   false,
+   43,
+   43
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-dest - Not sent to non-trustworthy same-origin destination - location.href",
    "chrome158": [
@@ -3025,12 +3088,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-dest - Not sent to non-trustworthy same-origin destination - location.replace"
+  ],
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "timeout",
+   null,
+   false,
+   43,
+   43
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-dest - Not sent to non-trustworthy same-origin destination - location.replace",
    "chrome158": [
@@ -3065,12 +3137,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-dest - Not sent to non-trustworthy same-site destination - location"
+  ],
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "timeout",
+   null,
+   false,
+   43,
+   43
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-dest - Not sent to non-trustworthy same-site destination - location",
    "chrome158": [
@@ -3105,12 +3186,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-dest - Not sent to non-trustworthy same-site destination - location.assign"
+  ],
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "timeout",
+   null,
+   false,
+   43,
+   43
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-dest - Not sent to non-trustworthy same-site destination - location.assign",
    "chrome158": [
@@ -3145,12 +3235,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-dest - Not sent to non-trustworthy same-site destination - location.href"
+  ],
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "timeout",
+   null,
+   false,
+   43,
+   43
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-dest - Not sent to non-trustworthy same-site destination - location.href",
    "chrome158": [
@@ -3185,12 +3284,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-dest - Not sent to non-trustworthy same-site destination - location.replace"
+  ],
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "timeout",
+   null,
+   false,
+   43,
+   43
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-dest - Not sent to non-trustworthy same-site destination - location.replace",
    "chrome158": [
@@ -3225,12 +3333,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-mode - Not sent to non-trustworthy cross-site destination - location.assign"
+  ],
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "timeout",
+   null,
+   false,
+   43,
+   43
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-mode - Not sent to non-trustworthy cross-site destination - location.assign",
    "chrome158": [
@@ -3265,12 +3382,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-mode - Not sent to non-trustworthy cross-site destination - location.href"
+  ],
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "timeout",
+   null,
+   false,
+   43,
+   43
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-mode - Not sent to non-trustworthy cross-site destination - location.href",
    "chrome158": [
@@ -3305,12 +3431,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-mode - Not sent to non-trustworthy cross-site destination - location.replace"
+  ],
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "timeout",
+   null,
+   false,
+   43,
+   43
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-mode - Not sent to non-trustworthy cross-site destination - location.replace",
    "chrome158": [
@@ -3345,11 +3480,17 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
+  "coverage": "measured",
   "current": null,
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
+  "currentPage": [
+   "timeout",
+   null,
+   false,
+   43,
+   43
+  ],
+  "currentState": "missingName",
   "currentSubtestDiagnostic": null,
   "original": {
    "canonical": "sec-fetch-site - HTTPS downgrade (header not sent) - location",
@@ -3385,11 +3526,17 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
+  "coverage": "measured",
   "current": null,
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
+  "currentPage": [
+   "timeout",
+   null,
+   false,
+   43,
+   43
+  ],
+  "currentState": "missingName",
   "currentSubtestDiagnostic": null,
   "original": {
    "canonical": "sec-fetch-site - HTTPS downgrade (header not sent) - location.assign",
@@ -3425,11 +3572,17 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
+  "coverage": "measured",
   "current": null,
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
+  "currentPage": [
+   "timeout",
+   null,
+   false,
+   43,
+   43
+  ],
+  "currentState": "missingName",
   "currentSubtestDiagnostic": null,
   "original": {
    "canonical": "sec-fetch-site - HTTPS downgrade (header not sent) - location.href",
@@ -3465,11 +3618,17 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
+  "coverage": "measured",
   "current": null,
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
+  "currentPage": [
+   "timeout",
+   null,
+   false,
+   43,
+   43
+  ],
+  "currentState": "missingName",
   "currentSubtestDiagnostic": null,
   "original": {
    "canonical": "sec-fetch-site - HTTPS downgrade (header not sent) - location.replace",
@@ -3505,11 +3664,17 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
+  "coverage": "measured",
   "current": null,
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
+  "currentPage": [
+   "timeout",
+   null,
+   false,
+   43,
+   43
+  ],
+  "currentState": "missingName",
   "currentSubtestDiagnostic": null,
   "original": {
    "canonical": "sec-fetch-site - HTTPS downgrade-upgrade - location.assign",
@@ -3545,11 +3710,17 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
+  "coverage": "measured",
   "current": null,
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
+  "currentPage": [
+   "timeout",
+   null,
+   false,
+   43,
+   43
+  ],
+  "currentState": "missingName",
   "currentSubtestDiagnostic": null,
   "original": {
    "canonical": "sec-fetch-site - HTTPS downgrade-upgrade - location.href",
@@ -3585,11 +3756,17 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
+  "coverage": "measured",
   "current": null,
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
+  "currentPage": [
+   "timeout",
+   null,
+   false,
+   43,
+   43
+  ],
+  "currentState": "missingName",
   "currentSubtestDiagnostic": null,
   "original": {
    "canonical": "sec-fetch-site - HTTPS downgrade-upgrade - location.replace",
@@ -3625,11 +3802,17 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
+  "coverage": "measured",
   "current": null,
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
+  "currentPage": [
+   "timeout",
+   null,
+   false,
+   43,
+   43
+  ],
+  "currentState": "missingName",
   "currentSubtestDiagnostic": null,
   "original": {
    "canonical": "sec-fetch-site - HTTPS upgrade - location.assign",
@@ -3665,11 +3848,17 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
+  "coverage": "measured",
   "current": null,
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
+  "currentPage": [
+   "timeout",
+   null,
+   false,
+   43,
+   43
+  ],
+  "currentState": "missingName",
   "currentSubtestDiagnostic": null,
   "original": {
    "canonical": "sec-fetch-site - HTTPS upgrade - location.href",
@@ -3705,11 +3894,17 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
+  "coverage": "measured",
   "current": null,
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
+  "currentPage": [
+   "timeout",
+   null,
+   false,
+   43,
+   43
+  ],
+  "currentState": "missingName",
   "currentSubtestDiagnostic": null,
   "original": {
    "canonical": "sec-fetch-site - HTTPS upgrade - location.replace",
@@ -3745,11 +3940,17 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
+  "coverage": "measured",
   "current": null,
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
+  "currentPage": [
+   "timeout",
+   null,
+   false,
+   43,
+   43
+  ],
+  "currentState": "missingName",
   "currentSubtestDiagnostic": null,
   "original": {
    "canonical": "sec-fetch-storage-access - Not sent to non-trustworthy cross-site destination - location",
@@ -3785,11 +3986,17 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
+  "coverage": "measured",
   "current": null,
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
+  "currentPage": [
+   "timeout",
+   null,
+   false,
+   43,
+   43
+  ],
+  "currentState": "missingName",
   "currentSubtestDiagnostic": null,
   "original": {
    "canonical": "sec-fetch-storage-access - Not sent to non-trustworthy cross-site destination - location.assign",
@@ -3825,11 +4032,17 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
+  "coverage": "measured",
   "current": null,
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
+  "currentPage": [
+   "timeout",
+   null,
+   false,
+   43,
+   43
+  ],
+  "currentState": "missingName",
   "currentSubtestDiagnostic": null,
   "original": {
    "canonical": "sec-fetch-storage-access - Not sent to non-trustworthy cross-site destination - location.href",
@@ -3865,11 +4078,17 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
+  "coverage": "measured",
   "current": null,
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
+  "currentPage": [
+   "timeout",
+   null,
+   false,
+   43,
+   43
+  ],
+  "currentState": "missingName",
   "currentSubtestDiagnostic": null,
   "original": {
    "canonical": "sec-fetch-storage-access - Not sent to non-trustworthy cross-site destination - location.replace",
@@ -3905,11 +4124,17 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
+  "coverage": "measured",
   "current": null,
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
+  "currentPage": [
+   "timeout",
+   null,
+   false,
+   43,
+   43
+  ],
+  "currentState": "missingName",
   "currentSubtestDiagnostic": null,
   "original": {
    "canonical": "sec-fetch-storage-access - Not sent to non-trustworthy same-origin destination - location",
@@ -3945,11 +4170,17 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
+  "coverage": "measured",
   "current": null,
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
+  "currentPage": [
+   "timeout",
+   null,
+   false,
+   43,
+   43
+  ],
+  "currentState": "missingName",
   "currentSubtestDiagnostic": null,
   "original": {
    "canonical": "sec-fetch-storage-access - Not sent to non-trustworthy same-origin destination - location.assign",
@@ -3985,11 +4216,17 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
+  "coverage": "measured",
   "current": null,
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
+  "currentPage": [
+   "timeout",
+   null,
+   false,
+   43,
+   43
+  ],
+  "currentState": "missingName",
   "currentSubtestDiagnostic": null,
   "original": {
    "canonical": "sec-fetch-storage-access - Not sent to non-trustworthy same-origin destination - location.href",
@@ -4025,11 +4262,17 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
+  "coverage": "measured",
   "current": null,
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
+  "currentPage": [
+   "timeout",
+   null,
+   false,
+   43,
+   43
+  ],
+  "currentState": "missingName",
   "currentSubtestDiagnostic": null,
   "original": {
    "canonical": "sec-fetch-storage-access - Not sent to non-trustworthy same-origin destination - location.replace",
@@ -4065,11 +4308,17 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
+  "coverage": "measured",
   "current": null,
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
+  "currentPage": [
+   "timeout",
+   null,
+   false,
+   43,
+   43
+  ],
+  "currentState": "missingName",
   "currentSubtestDiagnostic": null,
   "original": {
    "canonical": "sec-fetch-storage-access - Not sent to non-trustworthy same-site destination - location",
@@ -4105,11 +4354,17 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
+  "coverage": "measured",
   "current": null,
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
+  "currentPage": [
+   "timeout",
+   null,
+   false,
+   43,
+   43
+  ],
+  "currentState": "missingName",
   "currentSubtestDiagnostic": null,
   "original": {
    "canonical": "sec-fetch-storage-access - Not sent to non-trustworthy same-site destination - location.assign",
@@ -4145,11 +4400,17 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
+  "coverage": "measured",
   "current": null,
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
+  "currentPage": [
+   "timeout",
+   null,
+   false,
+   43,
+   43
+  ],
+  "currentState": "missingName",
   "currentSubtestDiagnostic": null,
   "original": {
    "canonical": "sec-fetch-storage-access - Not sent to non-trustworthy same-site destination - location.href",
@@ -4185,11 +4446,17 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
+  "coverage": "measured",
   "current": null,
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
+  "currentPage": [
+   "timeout",
+   null,
+   false,
+   43,
+   43
+  ],
+  "currentState": "missingName",
   "currentSubtestDiagnostic": null,
   "original": {
    "canonical": "sec-fetch-storage-access - Not sent to non-trustworthy same-site destination - location.replace",
@@ -4225,11 +4492,17 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
+  "coverage": "measured",
   "current": null,
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
+  "currentPage": [
+   "timeout",
+   null,
+   false,
+   43,
+   43
+  ],
+  "currentState": "missingName",
   "currentSubtestDiagnostic": null,
   "original": {
    "canonical": "sec-fetch-user - Not sent to non-trustworthy cross-site destination - location",
@@ -4265,11 +4538,17 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
+  "coverage": "measured",
   "current": null,
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
+  "currentPage": [
+   "timeout",
+   null,
+   false,
+   43,
+   43
+  ],
+  "currentState": "missingName",
   "currentSubtestDiagnostic": null,
   "original": {
    "canonical": "sec-fetch-user - Not sent to non-trustworthy cross-site destination - location.assign",
@@ -4305,11 +4584,17 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
+  "coverage": "measured",
   "current": null,
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
+  "currentPage": [
+   "timeout",
+   null,
+   false,
+   43,
+   43
+  ],
+  "currentState": "missingName",
   "currentSubtestDiagnostic": null,
   "original": {
    "canonical": "sec-fetch-user - Not sent to non-trustworthy cross-site destination - location.href",
@@ -4345,11 +4630,17 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
+  "coverage": "measured",
   "current": null,
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
+  "currentPage": [
+   "timeout",
+   null,
+   false,
+   43,
+   43
+  ],
+  "currentState": "missingName",
   "currentSubtestDiagnostic": null,
   "original": {
    "canonical": "sec-fetch-user - Not sent to non-trustworthy cross-site destination - location.replace",
@@ -4385,12 +4676,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-user - Not sent to non-trustworthy same-origin destination - location"
+  ],
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "timeout",
+   null,
+   false,
+   43,
+   43
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-user - Not sent to non-trustworthy same-origin destination - location",
    "chrome158": [
@@ -4425,12 +4725,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-user - Not sent to non-trustworthy same-origin destination - location.assign"
+  ],
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "timeout",
+   null,
+   false,
+   43,
+   43
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-user - Not sent to non-trustworthy same-origin destination - location.assign",
    "chrome158": [
@@ -4465,12 +4774,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-user - Not sent to non-trustworthy same-origin destination - location.href"
+  ],
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "timeout",
+   null,
+   false,
+   43,
+   43
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-user - Not sent to non-trustworthy same-origin destination - location.href",
    "chrome158": [
@@ -4505,12 +4823,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-user - Not sent to non-trustworthy same-origin destination - location.replace"
+  ],
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "timeout",
+   null,
+   false,
+   43,
+   43
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-user - Not sent to non-trustworthy same-origin destination - location.replace",
    "chrome158": [
@@ -4545,12 +4872,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-user - Not sent to non-trustworthy same-site destination - location"
+  ],
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "timeout",
+   null,
+   false,
+   43,
+   43
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-user - Not sent to non-trustworthy same-site destination - location",
    "chrome158": [
@@ -4585,12 +4921,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-user - Not sent to non-trustworthy same-site destination - location.assign"
+  ],
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "timeout",
+   null,
+   false,
+   43,
+   43
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-user - Not sent to non-trustworthy same-site destination - location.assign",
    "chrome158": [
@@ -4625,12 +4970,21 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
-  "current": null,
+  "coverage": "measured",
+  "current": [
+   "Pass",
+   "sec-fetch-user - Not sent to non-trustworthy same-site destination - location.href"
+  ],
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
-  "currentSubtestDiagnostic": null,
+  "currentPage": [
+   "timeout",
+   null,
+   false,
+   43,
+   43
+  ],
+  "currentState": "Pass",
+  "currentSubtestDiagnostic": "",
   "original": {
    "canonical": "sec-fetch-user - Not sent to non-trustworthy same-site destination - location.href",
    "chrome158": [
@@ -4665,11 +5019,17 @@
   "shard": "ordinary-266"
  },
  {
-  "coverage": "outsideRequestedShardSet",
+  "coverage": "measured",
   "current": null,
   "currentHead": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
-  "currentPage": null,
-  "currentState": "outsideRequestedShardSet",
+  "currentPage": [
+   "timeout",
+   null,
+   false,
+   43,
+   43
+  ],
+  "currentState": "missingName",
   "currentSubtestDiagnostic": null,
   "original": {
    "canonical": "sec-fetch-user - Not sent to non-trustworthy same-site destination - location.replace",

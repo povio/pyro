@@ -1,6 +1,6 @@
 # Cumulative non-CSS census, local allocation
 
-This publication covers 120 of the 160 local even-ordinal shards on 800×600/DPR1, four page jobs per shard. It contains 11,272 locally observed eligible URLs from the frozen 15,072-URL local allocation. Studio owns the other 15,107 URLs. Its results are outside this publication.
+This publication covers scope-summary.json of the 160 local even-ordinal shards on 800×600/DPR1, four page jobs per shard. It contains 15,072 locally observed eligible URLs from the frozen 15,072-URL local allocation. Studio owns the other 15,107 URLs. Its results are outside this publication.
 
 The candidate is exact c3372ad21df84bb4bb7386ae4f114fa185d10f30. The input, binary, runner, WPT, manifest and pinned JSC identities are recorded in machine-provenance.json. The signed reference comes from original Chrome stable 158.0.8127.37 observations and the comparison also retains previous LP 1f1be0324. Plan version 2 is published at 850ef1221795720b477d5e481627b3cfe1a5fbe6. Its 179 additional omissions and 1,469 earlier omissions remain separately visible. No Chrome WPT rerun is attributed here.
 

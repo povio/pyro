@@ -1,0 +1,83 @@
+{
+ "source": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+ "originalPublication": "01f49f43da24a20ecb20d99c967fc5de54272120",
+ "taskOrderSHA256": "db88ec59be1a3dd7395c14d4e6c08d5d1d88918d38959811c242d76a4437eadd",
+ "originalOfficialNonCss": 31827,
+ "originalEligible": 30359,
+ "frozenUrls": 30358,
+ "originallyWithheld": 1469,
+ "additionallyWithheld": 179,
+ "effectiveUrls": 30179,
+ "officialCoverageWithheld": 1648,
+ "checkedSources": 23518,
+ "sourceBlobsVerified": true,
+ "originalNamedLedgerSHA256": "9197a28dd9d8e52e210c5d7373f1f89642f58a92f398c4521e2d7ce70e5c959c",
+ "originalPortsNormalizerSHA256": "48102949ce8412b426c763bd5bfcf194a425ce3123624b424abf2e0bcaf61a5b",
+ "holdsChecked": {
+  "round7-local/census-1f1be0324/evidence/holds.json": {
+   "sha256": "6ac78c45b02dc2f5b20bbdbfedf1b5d1289f2ef17057920615c8554ae6d114b7",
+   "records": 1,
+   "overlap": 0
+  },
+  "round7-local/census-1f1be0324/evidence/observed-native-events.json": {
+   "sha256": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356",
+   "records": 0,
+   "overlap": 0
+  },
+  "round6-reference-158/census/export-final/studio-native-markers.json": {
+   "sha256": "716a51ad9e5f153c72277c6103623376e21ca6386a7057d2f9c20432985cf07c",
+   "records": 2,
+   "overlap": 0
+  },
+  "round6-reference-158/census/plans/native-observed.json": {
+   "sha256": "3bf2f104d5aac869c0a614d53e4b9a93a1d1a7d31a9824d1d40b0e16a881c9dc",
+   "records": 55,
+   "overlap": 0
+  },
+  "round6-single-head-evidence/evidence/round6-single-head-158/supplement/additional-holds.json": {
+   "sha256": "bb839a76fb7ffa989a45cf0cf8740ba766d7c591e1301f591bb9154067fc24e3",
+   "records": 34,
+   "overlap": 0
+  },
+  "round6-noncss-measure/manifest-runs/census-8e7144b7e/new-holds.json": {
+   "sha256": "6ac78c45b02dc2f5b20bbdbfedf1b5d1289f2ef17057920615c8554ae6d114b7",
+   "records": 1,
+   "overlap": 0
+  },
+  "round6-noncss-measure/deferred-classification/union-hold.json": {
+   "sha256": "bcb481f0e8e5f502e7de6cf99baec5b5bb5195bb05faf093382d3e5ab9b956f4",
+   "records": 56,
+   "overlap": 0
+  }
+ },
+ "laterReceipts": 1009,
+ "unreadable": [],
+ "ownership": {
+  "local": {
+   "shards": 160,
+   "original": 15152,
+   "effective": 15072
+  },
+  "studio": {
+   "shards": 160,
+   "original": 15206,
+   "effective": 15107
+  }
+ },
+ "duplicateUrls": 0,
+ "omitSHA256": "b52b3130d78666e052abed6bd77f64849fa5e55d7323b466d0ac58178be18515",
+ "effectiveManifestSHA256": "4a3badc8428aa0743c1747b1aecf70082d30e1a69cd9e6a17d8ce200eeb6a63e",
+ "reasonCodeCounts": {
+  "prior-explicit-fault-fixture": 5,
+  "explicit-fault-purpose-in-source-description": 36,
+  "explicit-native-fault-title-or-metadata": 29,
+  "explicit-native-fault-subtest-name": 137,
+  "explicit-infinite-loop-or-stack-exhaustion-oracle": 1,
+  "explicit-security-vulnerability-regression": 1
+ },
+ "dispositionRules": [
+  "Retain prior omissions and add expressly crash-named original subtests, page titles, assertion or description metadata, or an explicit fault-reproduction purpose stated in source prose.",
+  "Exclude the explicit origin-isolation vulnerability regression and explicitly targeted infinite-loop/stack-exhaustion oracle.",
+  "Retain incidental payload strings and bug references, comments describing avoided inputs, ordinary typed exceptions and ordinary timing-resolution checks. Preserve variant-specific statements when a named test only applies to one variant."
+ ]
+}

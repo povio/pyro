@@ -1,0 +1,17 @@
+{
+ "plan": "v2",
+ "head": "c3372ad21df84bb4bb7386ae4f114fa185d10f30",
+ "tree": "c4d45b20c3ea5429596bd4e7b7f2ca33c32065db",
+ "machineRole": "local",
+ "roleKeySHA256": "5361f642d901060c40971242ff00ce45e04b4f094591ca18448e4968a8e2c766",
+ "machineProvenanceSHA256": "c15aca38c11c7821b82dc99fc7a73be3211c72a74a999e088a70b49f69b60a23",
+ "readOnly": true,
+ "digests": {
+  "binarySHA256": "0f7889deca17cb4f8ff7bfd7756903728eec127a340b1b7a88ec6af6c2049bc2",
+  "jscSHA256": "3deb71f8e7d14daf174e35340a4ff0c1900b0e9f576503adeb5facbb1201f029",
+  "runnerSHA256": "b82c52329f881a5193e21ceb22634517c4cb776bd39bb080692c24eb21ac594a",
+  "manifestSHA256": "34a67512a84d43630f7adbecebd4378df5f410446591015cc6a20a3034e02819",
+  "effectiveManifestSHA256": "4a3badc8428aa0743c1747b1aecf70082d30e1a69cd9e6a17d8ce200eeb6a63e",
+  "originalTasksSHA256": "db88ec59be1a3dd7395c14d4e6c08d5d1d88918d38959811c242d76a4437eadd"
+ }
+}

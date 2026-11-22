@@ -1,0 +1,2021 @@
+{
+ "sourcePublication": "01f49f43da24a20ecb20d99c967fc5de54272120",
+ "effectiveManifestSha256": "4a3badc8428aa0743c1747b1aecf70082d30e1a69cd9e6a17d8ce200eeb6a63e",
+ "cohorts": {
+  "local": {
+   "priorLPUrls": 15072,
+   "priorLPStrictPages": 7697,
+   "priorLPObserved": 874330,
+   "priorLPPass": 823620,
+   "signedChrome158Urls": 15072,
+   "signedChrome158StrictPages": 12174,
+   "signedChrome158Observed": 879997,
+   "signedChrome158Pass": 856367,
+   "priorLPOnlyPass": 6435,
+   "signedChromeOnlyPass": 39182,
+   "commonPass": 817185,
+   "priorLPMissingName": 7133,
+   "signedChromeMissingName": 1466
+  },
+  "all": {
+   "priorLPUrls": 30179,
+   "priorLPStrictPages": 15344,
+   "priorLPObserved": 1789453,
+   "priorLPPass": 1690433,
+   "signedChrome158Urls": 30179,
+   "signedChrome158StrictPages": 24385,
+   "signedChrome158Observed": 1802021,
+   "signedChrome158Pass": 1754948,
+   "priorLPOnlyPass": 12238,
+   "signedChromeOnlyPass": 76753,
+   "commonPass": 1678195,
+   "priorLPMissingName": 15945,
+   "signedChromeMissingName": 3377
+  },
+  "studio": {
+   "priorLPUrls": 15107,
+   "priorLPStrictPages": 7647,
+   "priorLPObserved": 915123,
+   "priorLPPass": 866813,
+   "signedChrome158Urls": 15107,
+   "signedChrome158StrictPages": 12211,
+   "signedChrome158Observed": 922024,
+   "signedChrome158Pass": 898581,
+   "priorLPOnlyPass": 5803,
+   "signedChromeOnlyPass": 37571,
+   "commonPass": 861010,
+   "priorLPMissingName": 8812,
+   "signedChromeMissingName": 1911
+  }
+ },
+ "pageOutcomes": {
+  "local": {
+   "priorLP": {
+    "timeout:None": 147,
+    "complete:OK": 13579,
+    "timeout:Timeout": 672,
+    "error:Error": 669,
+    "error:None": 5
+   },
+   "signedChrome158": {
+    "complete:OK": 14465,
+    "timeout:None": 288,
+    "error:Error": 160,
+    "timeout:Timeout": 159
+   }
+  },
+  "all": {
+   "priorLP": {
+    "timeout:None": 293,
+    "complete:OK": 27206,
+    "timeout:Timeout": 1286,
+    "error:Error": 1388,
+    "error:None": 5,
+    "error:Optional Feature Unsupported": 1
+   },
+   "signedChrome158": {
+    "complete:OK": 28941,
+    "timeout:None": 569,
+    "error:Error": 346,
+    "timeout:Timeout": 323
+   }
+  },
+  "studio": {
+   "priorLP": {
+    "complete:OK": 13627,
+    "timeout:None": 146,
+    "timeout:Timeout": 614,
+    "error:Error": 719,
+    "error:Optional Feature Unsupported": 1
+   },
+   "signedChrome158": {
+    "complete:OK": 14476,
+    "timeout:None": 281,
+    "error:Error": 186,
+    "timeout:Timeout": 164
+   }
+  }
+ },
+ "perShard": {
+  "preflight-000": {
+   "priorLPPass": 22,
+   "priorLPStrictPages": 1,
+   "signedChrome158Pass": 81,
+   "signedChrome158StrictPages": 6
+  },
+  "guard-history-000": {
+   "priorLPPass": 23706,
+   "priorLPStrictPages": 19,
+   "signedChrome158Pass": 23865,
+   "signedChrome158StrictPages": 21
+  },
+  "guard-history-001": {
+   "priorLPPass": 23744,
+   "priorLPStrictPages": 18,
+   "signedChrome158Pass": 23818,
+   "signedChrome158StrictPages": 23
+  },
+  "guard-history-002": {
+   "priorLPPass": 12961,
+   "priorLPStrictPages": 34,
+   "signedChrome158Pass": 13038,
+   "signedChrome158StrictPages": 35
+  },
+  "guard-main-000": {
+   "priorLPPass": 1559,
+   "priorLPStrictPages": 49,
+   "signedChrome158Pass": 1686,
+   "signedChrome158StrictPages": 66
+  },
+  "guard-main-001": {
+   "priorLPPass": 3625,
+   "priorLPStrictPages": 46,
+   "signedChrome158Pass": 3860,
+   "signedChrome158StrictPages": 73
+  },
+  "guard-main-002": {
+   "priorLPPass": 1478,
+   "priorLPStrictPages": 51,
+   "signedChrome158Pass": 2020,
+   "signedChrome158StrictPages": 69
+  },
+  "guard-main-003": {
+   "priorLPPass": 3547,
+   "priorLPStrictPages": 44,
+   "signedChrome158Pass": 3628,
+   "signedChrome158StrictPages": 77
+  },
+  "guard-main-004": {
+   "priorLPPass": 2393,
+   "priorLPStrictPages": 44,
+   "signedChrome158Pass": 2672,
+   "signedChrome158StrictPages": 75
+  },
+  "guard-main-005": {
+   "priorLPPass": 4481,
+   "priorLPStrictPages": 53,
+   "signedChrome158Pass": 4596,
+   "signedChrome158StrictPages": 70
+  },
+  "guard-main-006": {
+   "priorLPPass": 4965,
+   "priorLPStrictPages": 44,
+   "signedChrome158Pass": 5136,
+   "signedChrome158StrictPages": 80
+  },
+  "guard-main-007": {
+   "priorLPPass": 3057,
+   "priorLPStrictPages": 45,
+   "signedChrome158Pass": 3310,
+   "signedChrome158StrictPages": 80
+  },
+  "guard-main-008": {
+   "priorLPPass": 5575,
+   "priorLPStrictPages": 54,
+   "signedChrome158Pass": 5682,
+   "signedChrome158StrictPages": 83
+  },
+  "guard-main-009": {
+   "priorLPPass": 2226,
+   "priorLPStrictPages": 53,
+   "signedChrome158Pass": 2526,
+   "signedChrome158StrictPages": 85
+  },
+  "guard-main-010": {
+   "priorLPPass": 6920,
+   "priorLPStrictPages": 52,
+   "signedChrome158Pass": 6984,
+   "signedChrome158StrictPages": 76
+  },
+  "guard-main-011": {
+   "priorLPPass": 7031,
+   "priorLPStrictPages": 44,
+   "signedChrome158Pass": 7424,
+   "signedChrome158StrictPages": 82
+  },
+  "guard-main-012": {
+   "priorLPPass": 4295,
+   "priorLPStrictPages": 51,
+   "signedChrome158Pass": 4451,
+   "signedChrome158StrictPages": 75
+  },
+  "guard-main-013": {
+   "priorLPPass": 4896,
+   "priorLPStrictPages": 59,
+   "signedChrome158Pass": 5031,
+   "signedChrome158StrictPages": 81
+  },
+  "guard-main-014": {
+   "priorLPPass": 3235,
+   "priorLPStrictPages": 41,
+   "signedChrome158Pass": 2987,
+   "signedChrome158StrictPages": 74
+  },
+  "guard-main-015": {
+   "priorLPPass": 5294,
+   "priorLPStrictPages": 54,
+   "signedChrome158Pass": 5772,
+   "signedChrome158StrictPages": 80
+  },
+  "guard-main-016": {
+   "priorLPPass": 2428,
+   "priorLPStrictPages": 51,
+   "signedChrome158Pass": 2520,
+   "signedChrome158StrictPages": 75
+  },
+  "guard-main-017": {
+   "priorLPPass": 13902,
+   "priorLPStrictPages": 55,
+   "signedChrome158Pass": 14786,
+   "signedChrome158StrictPages": 80
+  },
+  "guard-main-018": {
+   "priorLPPass": 3047,
+   "priorLPStrictPages": 52,
+   "signedChrome158Pass": 3090,
+   "signedChrome158StrictPages": 76
+  },
+  "guard-main-019": {
+   "priorLPPass": 1094,
+   "priorLPStrictPages": 54,
+   "signedChrome158Pass": 1198,
+   "signedChrome158StrictPages": 81
+  },
+  "guard-main-020": {
+   "priorLPPass": 3208,
+   "priorLPStrictPages": 47,
+   "signedChrome158Pass": 3379,
+   "signedChrome158StrictPages": 78
+  },
+  "guard-main-021": {
+   "priorLPPass": 4454,
+   "priorLPStrictPages": 52,
+   "signedChrome158Pass": 4584,
+   "signedChrome158StrictPages": 71
+  },
+  "guard-main-022": {
+   "priorLPPass": 5623,
+   "priorLPStrictPages": 50,
+   "signedChrome158Pass": 5162,
+   "signedChrome158StrictPages": 78
+  },
+  "guard-main-023": {
+   "priorLPPass": 6181,
+   "priorLPStrictPages": 47,
+   "signedChrome158Pass": 6389,
+   "signedChrome158StrictPages": 75
+  },
+  "guard-main-024": {
+   "priorLPPass": 3513,
+   "priorLPStrictPages": 57,
+   "signedChrome158Pass": 3506,
+   "signedChrome158StrictPages": 81
+  },
+  "guard-main-025": {
+   "priorLPPass": 4616,
+   "priorLPStrictPages": 54,
+   "signedChrome158Pass": 4866,
+   "signedChrome158StrictPages": 78
+  },
+  "guard-main-026": {
+   "priorLPPass": 3138,
+   "priorLPStrictPages": 47,
+   "signedChrome158Pass": 3398,
+   "signedChrome158StrictPages": 74
+  },
+  "guard-main-027": {
+   "priorLPPass": 3300,
+   "priorLPStrictPages": 53,
+   "signedChrome158Pass": 3392,
+   "signedChrome158StrictPages": 81
+  },
+  "guard-main-028": {
+   "priorLPPass": 1886,
+   "priorLPStrictPages": 54,
+   "signedChrome158Pass": 2129,
+   "signedChrome158StrictPages": 68
+  },
+  "guard-main-029": {
+   "priorLPPass": 5740,
+   "priorLPStrictPages": 55,
+   "signedChrome158Pass": 5921,
+   "signedChrome158StrictPages": 80
+  },
+  "ordinary-000": {
+   "priorLPPass": 4253,
+   "priorLPStrictPages": 44,
+   "signedChrome158Pass": 4445,
+   "signedChrome158StrictPages": 78
+  },
+  "ordinary-001": {
+   "priorLPPass": 4480,
+   "priorLPStrictPages": 56,
+   "signedChrome158Pass": 4688,
+   "signedChrome158StrictPages": 80
+  },
+  "ordinary-002": {
+   "priorLPPass": 3818,
+   "priorLPStrictPages": 49,
+   "signedChrome158Pass": 3969,
+   "signedChrome158StrictPages": 71
+  },
+  "ordinary-003": {
+   "priorLPPass": 2459,
+   "priorLPStrictPages": 38,
+   "signedChrome158Pass": 2592,
+   "signedChrome158StrictPages": 68
+  },
+  "ordinary-004": {
+   "priorLPPass": 14786,
+   "priorLPStrictPages": 48,
+   "signedChrome158Pass": 15018,
+   "signedChrome158StrictPages": 76
+  },
+  "ordinary-005": {
+   "priorLPPass": 14247,
+   "priorLPStrictPages": 51,
+   "signedChrome158Pass": 14373,
+   "signedChrome158StrictPages": 81
+  },
+  "ordinary-006": {
+   "priorLPPass": 4524,
+   "priorLPStrictPages": 52,
+   "signedChrome158Pass": 4859,
+   "signedChrome158StrictPages": 79
+  },
+  "ordinary-007": {
+   "priorLPPass": 3285,
+   "priorLPStrictPages": 51,
+   "signedChrome158Pass": 3741,
+   "signedChrome158StrictPages": 80
+  },
+  "ordinary-008": {
+   "priorLPPass": 6251,
+   "priorLPStrictPages": 47,
+   "signedChrome158Pass": 7032,
+   "signedChrome158StrictPages": 77
+  },
+  "ordinary-009": {
+   "priorLPPass": 5888,
+   "priorLPStrictPages": 41,
+   "signedChrome158Pass": 5977,
+   "signedChrome158StrictPages": 77
+  },
+  "ordinary-010": {
+   "priorLPPass": 3808,
+   "priorLPStrictPages": 43,
+   "signedChrome158Pass": 4292,
+   "signedChrome158StrictPages": 81
+  },
+  "ordinary-011": {
+   "priorLPPass": 17179,
+   "priorLPStrictPages": 54,
+   "signedChrome158Pass": 17169,
+   "signedChrome158StrictPages": 73
+  },
+  "ordinary-012": {
+   "priorLPPass": 2279,
+   "priorLPStrictPages": 45,
+   "signedChrome158Pass": 2368,
+   "signedChrome158StrictPages": 71
+  },
+  "ordinary-013": {
+   "priorLPPass": 9692,
+   "priorLPStrictPages": 57,
+   "signedChrome158Pass": 9797,
+   "signedChrome158StrictPages": 79
+  },
+  "ordinary-014": {
+   "priorLPPass": 3021,
+   "priorLPStrictPages": 56,
+   "signedChrome158Pass": 3076,
+   "signedChrome158StrictPages": 76
+  },
+  "ordinary-015": {
+   "priorLPPass": 4538,
+   "priorLPStrictPages": 55,
+   "signedChrome158Pass": 4643,
+   "signedChrome158StrictPages": 80
+  },
+  "ordinary-016": {
+   "priorLPPass": 6626,
+   "priorLPStrictPages": 46,
+   "signedChrome158Pass": 6732,
+   "signedChrome158StrictPages": 75
+  },
+  "ordinary-017": {
+   "priorLPPass": 7721,
+   "priorLPStrictPages": 49,
+   "signedChrome158Pass": 7847,
+   "signedChrome158StrictPages": 79
+  },
+  "ordinary-018": {
+   "priorLPPass": 4244,
+   "priorLPStrictPages": 44,
+   "signedChrome158Pass": 4375,
+   "signedChrome158StrictPages": 77
+  },
+  "ordinary-019": {
+   "priorLPPass": 3161,
+   "priorLPStrictPages": 51,
+   "signedChrome158Pass": 3329,
+   "signedChrome158StrictPages": 83
+  },
+  "ordinary-020": {
+   "priorLPPass": 3118,
+   "priorLPStrictPages": 49,
+   "signedChrome158Pass": 3206,
+   "signedChrome158StrictPages": 82
+  },
+  "ordinary-021": {
+   "priorLPPass": 4467,
+   "priorLPStrictPages": 50,
+   "signedChrome158Pass": 4807,
+   "signedChrome158StrictPages": 76
+  },
+  "ordinary-022": {
+   "priorLPPass": 7501,
+   "priorLPStrictPages": 47,
+   "signedChrome158Pass": 7747,
+   "signedChrome158StrictPages": 80
+  },
+  "ordinary-023": {
+   "priorLPPass": 12593,
+   "priorLPStrictPages": 47,
+   "signedChrome158Pass": 12708,
+   "signedChrome158StrictPages": 80
+  },
+  "ordinary-024": {
+   "priorLPPass": 7961,
+   "priorLPStrictPages": 54,
+   "signedChrome158Pass": 8083,
+   "signedChrome158StrictPages": 72
+  },
+  "ordinary-025": {
+   "priorLPPass": 2763,
+   "priorLPStrictPages": 54,
+   "signedChrome158Pass": 2704,
+   "signedChrome158StrictPages": 83
+  },
+  "ordinary-026": {
+   "priorLPPass": 5649,
+   "priorLPStrictPages": 47,
+   "signedChrome158Pass": 5754,
+   "signedChrome158StrictPages": 76
+  },
+  "ordinary-027": {
+   "priorLPPass": 2905,
+   "priorLPStrictPages": 51,
+   "signedChrome158Pass": 3129,
+   "signedChrome158StrictPages": 77
+  },
+  "ordinary-028": {
+   "priorLPPass": 4662,
+   "priorLPStrictPages": 54,
+   "signedChrome158Pass": 4780,
+   "signedChrome158StrictPages": 78
+  },
+  "ordinary-029": {
+   "priorLPPass": 3391,
+   "priorLPStrictPages": 54,
+   "signedChrome158Pass": 3512,
+   "signedChrome158StrictPages": 76
+  },
+  "ordinary-030": {
+   "priorLPPass": 8480,
+   "priorLPStrictPages": 52,
+   "signedChrome158Pass": 8946,
+   "signedChrome158StrictPages": 79
+  },
+  "ordinary-031": {
+   "priorLPPass": 3369,
+   "priorLPStrictPages": 48,
+   "signedChrome158Pass": 3550,
+   "signedChrome158StrictPages": 78
+  },
+  "ordinary-032": {
+   "priorLPPass": 5225,
+   "priorLPStrictPages": 51,
+   "signedChrome158Pass": 5299,
+   "signedChrome158StrictPages": 77
+  },
+  "ordinary-033": {
+   "priorLPPass": 1810,
+   "priorLPStrictPages": 49,
+   "signedChrome158Pass": 1970,
+   "signedChrome158StrictPages": 80
+  },
+  "ordinary-034": {
+   "priorLPPass": 6655,
+   "priorLPStrictPages": 55,
+   "signedChrome158Pass": 6887,
+   "signedChrome158StrictPages": 82
+  },
+  "ordinary-035": {
+   "priorLPPass": 5011,
+   "priorLPStrictPages": 48,
+   "signedChrome158Pass": 5232,
+   "signedChrome158StrictPages": 86
+  },
+  "ordinary-036": {
+   "priorLPPass": 16551,
+   "priorLPStrictPages": 53,
+   "signedChrome158Pass": 16607,
+   "signedChrome158StrictPages": 77
+  },
+  "ordinary-037": {
+   "priorLPPass": 8502,
+   "priorLPStrictPages": 53,
+   "signedChrome158Pass": 8741,
+   "signedChrome158StrictPages": 79
+  },
+  "ordinary-038": {
+   "priorLPPass": 6300,
+   "priorLPStrictPages": 49,
+   "signedChrome158Pass": 6399,
+   "signedChrome158StrictPages": 77
+  },
+  "ordinary-039": {
+   "priorLPPass": 6990,
+   "priorLPStrictPages": 47,
+   "signedChrome158Pass": 6871,
+   "signedChrome158StrictPages": 76
+  },
+  "ordinary-040": {
+   "priorLPPass": 4677,
+   "priorLPStrictPages": 40,
+   "signedChrome158Pass": 5012,
+   "signedChrome158StrictPages": 70
+  },
+  "ordinary-041": {
+   "priorLPPass": 6292,
+   "priorLPStrictPages": 50,
+   "signedChrome158Pass": 6341,
+   "signedChrome158StrictPages": 77
+  },
+  "ordinary-042": {
+   "priorLPPass": 3465,
+   "priorLPStrictPages": 54,
+   "signedChrome158Pass": 3711,
+   "signedChrome158StrictPages": 80
+  },
+  "ordinary-043": {
+   "priorLPPass": 6520,
+   "priorLPStrictPages": 47,
+   "signedChrome158Pass": 6804,
+   "signedChrome158StrictPages": 72
+  },
+  "ordinary-044": {
+   "priorLPPass": 5870,
+   "priorLPStrictPages": 48,
+   "signedChrome158Pass": 5974,
+   "signedChrome158StrictPages": 77
+  },
+  "ordinary-045": {
+   "priorLPPass": 6699,
+   "priorLPStrictPages": 53,
+   "signedChrome158Pass": 7145,
+   "signedChrome158StrictPages": 80
+  },
+  "ordinary-046": {
+   "priorLPPass": 7248,
+   "priorLPStrictPages": 47,
+   "signedChrome158Pass": 7353,
+   "signedChrome158StrictPages": 75
+  },
+  "ordinary-047": {
+   "priorLPPass": 5500,
+   "priorLPStrictPages": 55,
+   "signedChrome158Pass": 5667,
+   "signedChrome158StrictPages": 70
+  },
+  "ordinary-048": {
+   "priorLPPass": 4848,
+   "priorLPStrictPages": 47,
+   "signedChrome158Pass": 4905,
+   "signedChrome158StrictPages": 73
+  },
+  "ordinary-049": {
+   "priorLPPass": 2430,
+   "priorLPStrictPages": 48,
+   "signedChrome158Pass": 2548,
+   "signedChrome158StrictPages": 76
+  },
+  "ordinary-050": {
+   "priorLPPass": 4597,
+   "priorLPStrictPages": 50,
+   "signedChrome158Pass": 4679,
+   "signedChrome158StrictPages": 80
+  },
+  "ordinary-051": {
+   "priorLPPass": 3661,
+   "priorLPStrictPages": 44,
+   "signedChrome158Pass": 3858,
+   "signedChrome158StrictPages": 80
+  },
+  "ordinary-052": {
+   "priorLPPass": 2614,
+   "priorLPStrictPages": 40,
+   "signedChrome158Pass": 2801,
+   "signedChrome158StrictPages": 75
+  },
+  "ordinary-053": {
+   "priorLPPass": 4495,
+   "priorLPStrictPages": 47,
+   "signedChrome158Pass": 4799,
+   "signedChrome158StrictPages": 77
+  },
+  "ordinary-054": {
+   "priorLPPass": 4378,
+   "priorLPStrictPages": 47,
+   "signedChrome158Pass": 4336,
+   "signedChrome158StrictPages": 72
+  },
+  "ordinary-055": {
+   "priorLPPass": 7153,
+   "priorLPStrictPages": 43,
+   "signedChrome158Pass": 7451,
+   "signedChrome158StrictPages": 76
+  },
+  "ordinary-056": {
+   "priorLPPass": 6901,
+   "priorLPStrictPages": 49,
+   "signedChrome158Pass": 6985,
+   "signedChrome158StrictPages": 76
+  },
+  "ordinary-057": {
+   "priorLPPass": 3312,
+   "priorLPStrictPages": 43,
+   "signedChrome158Pass": 3537,
+   "signedChrome158StrictPages": 75
+  },
+  "ordinary-058": {
+   "priorLPPass": 4018,
+   "priorLPStrictPages": 44,
+   "signedChrome158Pass": 4188,
+   "signedChrome158StrictPages": 75
+  },
+  "ordinary-059": {
+   "priorLPPass": 1272,
+   "priorLPStrictPages": 45,
+   "signedChrome158Pass": 1367,
+   "signedChrome158StrictPages": 77
+  },
+  "ordinary-060": {
+   "priorLPPass": 3302,
+   "priorLPStrictPages": 46,
+   "signedChrome158Pass": 3506,
+   "signedChrome158StrictPages": 77
+  },
+  "ordinary-061": {
+   "priorLPPass": 6201,
+   "priorLPStrictPages": 51,
+   "signedChrome158Pass": 6421,
+   "signedChrome158StrictPages": 78
+  },
+  "ordinary-062": {
+   "priorLPPass": 5356,
+   "priorLPStrictPages": 46,
+   "signedChrome158Pass": 5491,
+   "signedChrome158StrictPages": 78
+  },
+  "ordinary-063": {
+   "priorLPPass": 5178,
+   "priorLPStrictPages": 46,
+   "signedChrome158Pass": 5388,
+   "signedChrome158StrictPages": 74
+  },
+  "ordinary-064": {
+   "priorLPPass": 2562,
+   "priorLPStrictPages": 47,
+   "signedChrome158Pass": 2733,
+   "signedChrome158StrictPages": 76
+  },
+  "ordinary-065": {
+   "priorLPPass": 4659,
+   "priorLPStrictPages": 46,
+   "signedChrome158Pass": 4793,
+   "signedChrome158StrictPages": 73
+  },
+  "ordinary-066": {
+   "priorLPPass": 3342,
+   "priorLPStrictPages": 45,
+   "signedChrome158Pass": 3910,
+   "signedChrome158StrictPages": 77
+  },
+  "ordinary-067": {
+   "priorLPPass": 11535,
+   "priorLPStrictPages": 48,
+   "signedChrome158Pass": 11741,
+   "signedChrome158StrictPages": 82
+  },
+  "ordinary-068": {
+   "priorLPPass": 3302,
+   "priorLPStrictPages": 52,
+   "signedChrome158Pass": 3538,
+   "signedChrome158StrictPages": 80
+  },
+  "ordinary-069": {
+   "priorLPPass": 8578,
+   "priorLPStrictPages": 45,
+   "signedChrome158Pass": 8714,
+   "signedChrome158StrictPages": 78
+  },
+  "ordinary-070": {
+   "priorLPPass": 5298,
+   "priorLPStrictPages": 60,
+   "signedChrome158Pass": 5491,
+   "signedChrome158StrictPages": 82
+  },
+  "ordinary-071": {
+   "priorLPPass": 4442,
+   "priorLPStrictPages": 43,
+   "signedChrome158Pass": 4674,
+   "signedChrome158StrictPages": 73
+  },
+  "ordinary-072": {
+   "priorLPPass": 5288,
+   "priorLPStrictPages": 54,
+   "signedChrome158Pass": 5589,
+   "signedChrome158StrictPages": 83
+  },
+  "ordinary-073": {
+   "priorLPPass": 9690,
+   "priorLPStrictPages": 38,
+   "signedChrome158Pass": 10196,
+   "signedChrome158StrictPages": 72
+  },
+  "ordinary-074": {
+   "priorLPPass": 1962,
+   "priorLPStrictPages": 40,
+   "signedChrome158Pass": 2097,
+   "signedChrome158StrictPages": 74
+  },
+  "ordinary-075": {
+   "priorLPPass": 4939,
+   "priorLPStrictPages": 52,
+   "signedChrome158Pass": 5015,
+   "signedChrome158StrictPages": 76
+  },
+  "ordinary-076": {
+   "priorLPPass": 4587,
+   "priorLPStrictPages": 40,
+   "signedChrome158Pass": 4700,
+   "signedChrome158StrictPages": 73
+  },
+  "ordinary-077": {
+   "priorLPPass": 6448,
+   "priorLPStrictPages": 45,
+   "signedChrome158Pass": 6643,
+   "signedChrome158StrictPages": 79
+  },
+  "ordinary-078": {
+   "priorLPPass": 11058,
+   "priorLPStrictPages": 51,
+   "signedChrome158Pass": 11079,
+   "signedChrome158StrictPages": 73
+  },
+  "ordinary-079": {
+   "priorLPPass": 6402,
+   "priorLPStrictPages": 48,
+   "signedChrome158Pass": 6649,
+   "signedChrome158StrictPages": 81
+  },
+  "ordinary-080": {
+   "priorLPPass": 2614,
+   "priorLPStrictPages": 44,
+   "signedChrome158Pass": 2859,
+   "signedChrome158StrictPages": 73
+  },
+  "ordinary-081": {
+   "priorLPPass": 9291,
+   "priorLPStrictPages": 36,
+   "signedChrome158Pass": 9617,
+   "signedChrome158StrictPages": 71
+  },
+  "ordinary-082": {
+   "priorLPPass": 4236,
+   "priorLPStrictPages": 51,
+   "signedChrome158Pass": 4314,
+   "signedChrome158StrictPages": 77
+  },
+  "ordinary-083": {
+   "priorLPPass": 3877,
+   "priorLPStrictPages": 50,
+   "signedChrome158Pass": 3980,
+   "signedChrome158StrictPages": 80
+  },
+  "ordinary-084": {
+   "priorLPPass": 10467,
+   "priorLPStrictPages": 50,
+   "signedChrome158Pass": 10780,
+   "signedChrome158StrictPages": 78
+  },
+  "ordinary-085": {
+   "priorLPPass": 5385,
+   "priorLPStrictPages": 38,
+   "signedChrome158Pass": 5574,
+   "signedChrome158StrictPages": 76
+  },
+  "ordinary-086": {
+   "priorLPPass": 4287,
+   "priorLPStrictPages": 48,
+   "signedChrome158Pass": 4415,
+   "signedChrome158StrictPages": 80
+  },
+  "ordinary-087": {
+   "priorLPPass": 9783,
+   "priorLPStrictPages": 44,
+   "signedChrome158Pass": 10044,
+   "signedChrome158StrictPages": 78
+  },
+  "ordinary-088": {
+   "priorLPPass": 3634,
+   "priorLPStrictPages": 42,
+   "signedChrome158Pass": 4157,
+   "signedChrome158StrictPages": 73
+  },
+  "ordinary-089": {
+   "priorLPPass": 1633,
+   "priorLPStrictPages": 48,
+   "signedChrome158Pass": 1876,
+   "signedChrome158StrictPages": 80
+  },
+  "ordinary-090": {
+   "priorLPPass": 4085,
+   "priorLPStrictPages": 39,
+   "signedChrome158Pass": 4345,
+   "signedChrome158StrictPages": 76
+  },
+  "ordinary-091": {
+   "priorLPPass": 5778,
+   "priorLPStrictPages": 50,
+   "signedChrome158Pass": 5957,
+   "signedChrome158StrictPages": 75
+  },
+  "ordinary-092": {
+   "priorLPPass": 4462,
+   "priorLPStrictPages": 48,
+   "signedChrome158Pass": 4531,
+   "signedChrome158StrictPages": 74
+  },
+  "ordinary-093": {
+   "priorLPPass": 4820,
+   "priorLPStrictPages": 47,
+   "signedChrome158Pass": 4840,
+   "signedChrome158StrictPages": 76
+  },
+  "ordinary-094": {
+   "priorLPPass": 3109,
+   "priorLPStrictPages": 52,
+   "signedChrome158Pass": 3240,
+   "signedChrome158StrictPages": 79
+  },
+  "ordinary-095": {
+   "priorLPPass": 2465,
+   "priorLPStrictPages": 41,
+   "signedChrome158Pass": 2630,
+   "signedChrome158StrictPages": 77
+  },
+  "ordinary-096": {
+   "priorLPPass": 5042,
+   "priorLPStrictPages": 47,
+   "signedChrome158Pass": 5200,
+   "signedChrome158StrictPages": 73
+  },
+  "ordinary-097": {
+   "priorLPPass": 2351,
+   "priorLPStrictPages": 41,
+   "signedChrome158Pass": 2751,
+   "signedChrome158StrictPages": 78
+  },
+  "ordinary-098": {
+   "priorLPPass": 2940,
+   "priorLPStrictPages": 45,
+   "signedChrome158Pass": 3093,
+   "signedChrome158StrictPages": 78
+  },
+  "ordinary-099": {
+   "priorLPPass": 2115,
+   "priorLPStrictPages": 32,
+   "signedChrome158Pass": 2334,
+   "signedChrome158StrictPages": 74
+  },
+  "ordinary-100": {
+   "priorLPPass": 3054,
+   "priorLPStrictPages": 49,
+   "signedChrome158Pass": 3229,
+   "signedChrome158StrictPages": 75
+  },
+  "ordinary-101": {
+   "priorLPPass": 4237,
+   "priorLPStrictPages": 48,
+   "signedChrome158Pass": 4387,
+   "signedChrome158StrictPages": 77
+  },
+  "ordinary-102": {
+   "priorLPPass": 4250,
+   "priorLPStrictPages": 43,
+   "signedChrome158Pass": 4465,
+   "signedChrome158StrictPages": 71
+  },
+  "ordinary-103": {
+   "priorLPPass": 5344,
+   "priorLPStrictPages": 48,
+   "signedChrome158Pass": 5522,
+   "signedChrome158StrictPages": 76
+  },
+  "ordinary-104": {
+   "priorLPPass": 4365,
+   "priorLPStrictPages": 47,
+   "signedChrome158Pass": 4642,
+   "signedChrome158StrictPages": 75
+  },
+  "ordinary-105": {
+   "priorLPPass": 8325,
+   "priorLPStrictPages": 57,
+   "signedChrome158Pass": 8520,
+   "signedChrome158StrictPages": 80
+  },
+  "ordinary-106": {
+   "priorLPPass": 3283,
+   "priorLPStrictPages": 51,
+   "signedChrome158Pass": 3421,
+   "signedChrome158StrictPages": 81
+  },
+  "ordinary-107": {
+   "priorLPPass": 3156,
+   "priorLPStrictPages": 43,
+   "signedChrome158Pass": 3501,
+   "signedChrome158StrictPages": 74
+  },
+  "ordinary-108": {
+   "priorLPPass": 5753,
+   "priorLPStrictPages": 48,
+   "signedChrome158Pass": 5974,
+   "signedChrome158StrictPages": 78
+  },
+  "ordinary-109": {
+   "priorLPPass": 2595,
+   "priorLPStrictPages": 45,
+   "signedChrome158Pass": 2747,
+   "signedChrome158StrictPages": 74
+  },
+  "ordinary-110": {
+   "priorLPPass": 6378,
+   "priorLPStrictPages": 45,
+   "signedChrome158Pass": 6675,
+   "signedChrome158StrictPages": 81
+  },
+  "ordinary-111": {
+   "priorLPPass": 3177,
+   "priorLPStrictPages": 42,
+   "signedChrome158Pass": 3461,
+   "signedChrome158StrictPages": 76
+  },
+  "ordinary-112": {
+   "priorLPPass": 6559,
+   "priorLPStrictPages": 50,
+   "signedChrome158Pass": 6791,
+   "signedChrome158StrictPages": 78
+  },
+  "ordinary-113": {
+   "priorLPPass": 7858,
+   "priorLPStrictPages": 43,
+   "signedChrome158Pass": 7966,
+   "signedChrome158StrictPages": 77
+  },
+  "ordinary-114": {
+   "priorLPPass": 8263,
+   "priorLPStrictPages": 51,
+   "signedChrome158Pass": 8358,
+   "signedChrome158StrictPages": 80
+  },
+  "ordinary-115": {
+   "priorLPPass": 10528,
+   "priorLPStrictPages": 54,
+   "signedChrome158Pass": 10694,
+   "signedChrome158StrictPages": 82
+  },
+  "ordinary-116": {
+   "priorLPPass": 1160,
+   "priorLPStrictPages": 36,
+   "signedChrome158Pass": 1350,
+   "signedChrome158StrictPages": 73
+  },
+  "ordinary-117": {
+   "priorLPPass": 2712,
+   "priorLPStrictPages": 45,
+   "signedChrome158Pass": 2971,
+   "signedChrome158StrictPages": 71
+  },
+  "ordinary-118": {
+   "priorLPPass": 5676,
+   "priorLPStrictPages": 48,
+   "signedChrome158Pass": 5806,
+   "signedChrome158StrictPages": 80
+  },
+  "ordinary-119": {
+   "priorLPPass": 6631,
+   "priorLPStrictPages": 53,
+   "signedChrome158Pass": 6835,
+   "signedChrome158StrictPages": 75
+  },
+  "ordinary-120": {
+   "priorLPPass": 5438,
+   "priorLPStrictPages": 51,
+   "signedChrome158Pass": 5657,
+   "signedChrome158StrictPages": 77
+  },
+  "ordinary-121": {
+   "priorLPPass": 8386,
+   "priorLPStrictPages": 49,
+   "signedChrome158Pass": 8543,
+   "signedChrome158StrictPages": 81
+  },
+  "ordinary-122": {
+   "priorLPPass": 8310,
+   "priorLPStrictPages": 55,
+   "signedChrome158Pass": 8555,
+   "signedChrome158StrictPages": 85
+  },
+  "ordinary-123": {
+   "priorLPPass": 5163,
+   "priorLPStrictPages": 43,
+   "signedChrome158Pass": 5364,
+   "signedChrome158StrictPages": 79
+  },
+  "ordinary-124": {
+   "priorLPPass": 6492,
+   "priorLPStrictPages": 52,
+   "signedChrome158Pass": 6601,
+   "signedChrome158StrictPages": 76
+  },
+  "ordinary-125": {
+   "priorLPPass": 1341,
+   "priorLPStrictPages": 51,
+   "signedChrome158Pass": 1621,
+   "signedChrome158StrictPages": 73
+  },
+  "ordinary-126": {
+   "priorLPPass": 7479,
+   "priorLPStrictPages": 46,
+   "signedChrome158Pass": 7643,
+   "signedChrome158StrictPages": 77
+  },
+  "ordinary-127": {
+   "priorLPPass": 3634,
+   "priorLPStrictPages": 49,
+   "signedChrome158Pass": 3699,
+   "signedChrome158StrictPages": 75
+  },
+  "ordinary-128": {
+   "priorLPPass": 3661,
+   "priorLPStrictPages": 51,
+   "signedChrome158Pass": 3741,
+   "signedChrome158StrictPages": 78
+  },
+  "ordinary-129": {
+   "priorLPPass": 2781,
+   "priorLPStrictPages": 45,
+   "signedChrome158Pass": 2946,
+   "signedChrome158StrictPages": 78
+  },
+  "ordinary-130": {
+   "priorLPPass": 11123,
+   "priorLPStrictPages": 53,
+   "signedChrome158Pass": 11168,
+   "signedChrome158StrictPages": 77
+  },
+  "ordinary-131": {
+   "priorLPPass": 10306,
+   "priorLPStrictPages": 52,
+   "signedChrome158Pass": 10417,
+   "signedChrome158StrictPages": 77
+  },
+  "ordinary-132": {
+   "priorLPPass": 9635,
+   "priorLPStrictPages": 54,
+   "signedChrome158Pass": 9715,
+   "signedChrome158StrictPages": 77
+  },
+  "ordinary-133": {
+   "priorLPPass": 7248,
+   "priorLPStrictPages": 61,
+   "signedChrome158Pass": 7353,
+   "signedChrome158StrictPages": 82
+  },
+  "ordinary-134": {
+   "priorLPPass": 4867,
+   "priorLPStrictPages": 49,
+   "signedChrome158Pass": 5031,
+   "signedChrome158StrictPages": 81
+  },
+  "ordinary-135": {
+   "priorLPPass": 6845,
+   "priorLPStrictPages": 54,
+   "signedChrome158Pass": 7023,
+   "signedChrome158StrictPages": 83
+  },
+  "ordinary-136": {
+   "priorLPPass": 1656,
+   "priorLPStrictPages": 53,
+   "signedChrome158Pass": 1816,
+   "signedChrome158StrictPages": 83
+  },
+  "ordinary-137": {
+   "priorLPPass": 2325,
+   "priorLPStrictPages": 45,
+   "signedChrome158Pass": 2485,
+   "signedChrome158StrictPages": 80
+  },
+  "ordinary-138": {
+   "priorLPPass": 2272,
+   "priorLPStrictPages": 44,
+   "signedChrome158Pass": 2414,
+   "signedChrome158StrictPages": 79
+  },
+  "ordinary-139": {
+   "priorLPPass": 3812,
+   "priorLPStrictPages": 45,
+   "signedChrome158Pass": 3938,
+   "signedChrome158StrictPages": 74
+  },
+  "ordinary-140": {
+   "priorLPPass": 2505,
+   "priorLPStrictPages": 48,
+   "signedChrome158Pass": 2665,
+   "signedChrome158StrictPages": 79
+  },
+  "ordinary-141": {
+   "priorLPPass": 4057,
+   "priorLPStrictPages": 43,
+   "signedChrome158Pass": 4247,
+   "signedChrome158StrictPages": 70
+  },
+  "ordinary-142": {
+   "priorLPPass": 8373,
+   "priorLPStrictPages": 58,
+   "signedChrome158Pass": 8440,
+   "signedChrome158StrictPages": 82
+  },
+  "ordinary-143": {
+   "priorLPPass": 7000,
+   "priorLPStrictPages": 50,
+   "signedChrome158Pass": 6834,
+   "signedChrome158StrictPages": 78
+  },
+  "ordinary-144": {
+   "priorLPPass": 3482,
+   "priorLPStrictPages": 49,
+   "signedChrome158Pass": 3686,
+   "signedChrome158StrictPages": 75
+  },
+  "ordinary-145": {
+   "priorLPPass": 7737,
+   "priorLPStrictPages": 46,
+   "signedChrome158Pass": 7951,
+   "signedChrome158StrictPages": 78
+  },
+  "ordinary-146": {
+   "priorLPPass": 8873,
+   "priorLPStrictPages": 51,
+   "signedChrome158Pass": 9203,
+   "signedChrome158StrictPages": 80
+  },
+  "ordinary-147": {
+   "priorLPPass": 10047,
+   "priorLPStrictPages": 52,
+   "signedChrome158Pass": 10140,
+   "signedChrome158StrictPages": 73
+  },
+  "ordinary-148": {
+   "priorLPPass": 6192,
+   "priorLPStrictPages": 43,
+   "signedChrome158Pass": 6473,
+   "signedChrome158StrictPages": 74
+  },
+  "ordinary-149": {
+   "priorLPPass": 7284,
+   "priorLPStrictPages": 44,
+   "signedChrome158Pass": 7410,
+   "signedChrome158StrictPages": 80
+  },
+  "ordinary-150": {
+   "priorLPPass": 3432,
+   "priorLPStrictPages": 50,
+   "signedChrome158Pass": 3644,
+   "signedChrome158StrictPages": 77
+  },
+  "ordinary-151": {
+   "priorLPPass": 7451,
+   "priorLPStrictPages": 47,
+   "signedChrome158Pass": 8139,
+   "signedChrome158StrictPages": 83
+  },
+  "ordinary-152": {
+   "priorLPPass": 2728,
+   "priorLPStrictPages": 51,
+   "signedChrome158Pass": 2961,
+   "signedChrome158StrictPages": 81
+  },
+  "ordinary-153": {
+   "priorLPPass": 2439,
+   "priorLPStrictPages": 45,
+   "signedChrome158Pass": 2639,
+   "signedChrome158StrictPages": 76
+  },
+  "ordinary-154": {
+   "priorLPPass": 7508,
+   "priorLPStrictPages": 55,
+   "signedChrome158Pass": 7616,
+   "signedChrome158StrictPages": 81
+  },
+  "ordinary-155": {
+   "priorLPPass": 5017,
+   "priorLPStrictPages": 40,
+   "signedChrome158Pass": 5103,
+   "signedChrome158StrictPages": 68
+  },
+  "ordinary-156": {
+   "priorLPPass": 6716,
+   "priorLPStrictPages": 56,
+   "signedChrome158Pass": 6857,
+   "signedChrome158StrictPages": 83
+  },
+  "ordinary-157": {
+   "priorLPPass": 2418,
+   "priorLPStrictPages": 45,
+   "signedChrome158Pass": 2743,
+   "signedChrome158StrictPages": 81
+  },
+  "ordinary-158": {
+   "priorLPPass": 4444,
+   "priorLPStrictPages": 48,
+   "signedChrome158Pass": 4657,
+   "signedChrome158StrictPages": 76
+  },
+  "ordinary-159": {
+   "priorLPPass": 8144,
+   "priorLPStrictPages": 54,
+   "signedChrome158Pass": 8323,
+   "signedChrome158StrictPages": 83
+  },
+  "ordinary-160": {
+   "priorLPPass": 7610,
+   "priorLPStrictPages": 53,
+   "signedChrome158Pass": 8210,
+   "signedChrome158StrictPages": 76
+  },
+  "ordinary-161": {
+   "priorLPPass": 3664,
+   "priorLPStrictPages": 49,
+   "signedChrome158Pass": 3861,
+   "signedChrome158StrictPages": 78
+  },
+  "ordinary-162": {
+   "priorLPPass": 4210,
+   "priorLPStrictPages": 41,
+   "signedChrome158Pass": 4452,
+   "signedChrome158StrictPages": 74
+  },
+  "ordinary-163": {
+   "priorLPPass": 4089,
+   "priorLPStrictPages": 47,
+   "signedChrome158Pass": 4247,
+   "signedChrome158StrictPages": 72
+  },
+  "ordinary-164": {
+   "priorLPPass": 6810,
+   "priorLPStrictPages": 41,
+   "signedChrome158Pass": 7460,
+   "signedChrome158StrictPages": 76
+  },
+  "ordinary-165": {
+   "priorLPPass": 3032,
+   "priorLPStrictPages": 51,
+   "signedChrome158Pass": 3576,
+   "signedChrome158StrictPages": 69
+  },
+  "ordinary-166": {
+   "priorLPPass": 3437,
+   "priorLPStrictPages": 44,
+   "signedChrome158Pass": 3644,
+   "signedChrome158StrictPages": 76
+  },
+  "ordinary-167": {
+   "priorLPPass": 7399,
+   "priorLPStrictPages": 49,
+   "signedChrome158Pass": 7496,
+   "signedChrome158StrictPages": 72
+  },
+  "ordinary-168": {
+   "priorLPPass": 7250,
+   "priorLPStrictPages": 41,
+   "signedChrome158Pass": 7482,
+   "signedChrome158StrictPages": 72
+  },
+  "ordinary-169": {
+   "priorLPPass": 4169,
+   "priorLPStrictPages": 53,
+   "signedChrome158Pass": 4400,
+   "signedChrome158StrictPages": 82
+  },
+  "ordinary-170": {
+   "priorLPPass": 5110,
+   "priorLPStrictPages": 47,
+   "signedChrome158Pass": 5034,
+   "signedChrome158StrictPages": 74
+  },
+  "ordinary-171": {
+   "priorLPPass": 3419,
+   "priorLPStrictPages": 48,
+   "signedChrome158Pass": 3530,
+   "signedChrome158StrictPages": 76
+  },
+  "ordinary-172": {
+   "priorLPPass": 4498,
+   "priorLPStrictPages": 38,
+   "signedChrome158Pass": 4658,
+   "signedChrome158StrictPages": 71
+  },
+  "ordinary-173": {
+   "priorLPPass": 2421,
+   "priorLPStrictPages": 39,
+   "signedChrome158Pass": 2522,
+   "signedChrome158StrictPages": 74
+  },
+  "ordinary-174": {
+   "priorLPPass": 6195,
+   "priorLPStrictPages": 48,
+   "signedChrome158Pass": 6423,
+   "signedChrome158StrictPages": 78
+  },
+  "ordinary-175": {
+   "priorLPPass": 2465,
+   "priorLPStrictPages": 51,
+   "signedChrome158Pass": 2731,
+   "signedChrome158StrictPages": 74
+  },
+  "ordinary-176": {
+   "priorLPPass": 9177,
+   "priorLPStrictPages": 50,
+   "signedChrome158Pass": 9494,
+   "signedChrome158StrictPages": 71
+  },
+  "ordinary-177": {
+   "priorLPPass": 6428,
+   "priorLPStrictPages": 39,
+   "signedChrome158Pass": 6907,
+   "signedChrome158StrictPages": 73
+  },
+  "ordinary-178": {
+   "priorLPPass": 2435,
+   "priorLPStrictPages": 45,
+   "signedChrome158Pass": 2696,
+   "signedChrome158StrictPages": 74
+  },
+  "ordinary-179": {
+   "priorLPPass": 2687,
+   "priorLPStrictPages": 47,
+   "signedChrome158Pass": 2861,
+   "signedChrome158StrictPages": 78
+  },
+  "ordinary-180": {
+   "priorLPPass": 4369,
+   "priorLPStrictPages": 49,
+   "signedChrome158Pass": 4534,
+   "signedChrome158StrictPages": 85
+  },
+  "ordinary-181": {
+   "priorLPPass": 4714,
+   "priorLPStrictPages": 48,
+   "signedChrome158Pass": 4814,
+   "signedChrome158StrictPages": 77
+  },
+  "ordinary-182": {
+   "priorLPPass": 2385,
+   "priorLPStrictPages": 51,
+   "signedChrome158Pass": 2718,
+   "signedChrome158StrictPages": 79
+  },
+  "ordinary-183": {
+   "priorLPPass": 3667,
+   "priorLPStrictPages": 44,
+   "signedChrome158Pass": 4001,
+   "signedChrome158StrictPages": 78
+  },
+  "ordinary-184": {
+   "priorLPPass": 7818,
+   "priorLPStrictPages": 58,
+   "signedChrome158Pass": 8129,
+   "signedChrome158StrictPages": 75
+  },
+  "ordinary-185": {
+   "priorLPPass": 6259,
+   "priorLPStrictPages": 52,
+   "signedChrome158Pass": 6443,
+   "signedChrome158StrictPages": 81
+  },
+  "ordinary-186": {
+   "priorLPPass": 7678,
+   "priorLPStrictPages": 52,
+   "signedChrome158Pass": 7738,
+   "signedChrome158StrictPages": 83
+  },
+  "ordinary-187": {
+   "priorLPPass": 8003,
+   "priorLPStrictPages": 51,
+   "signedChrome158Pass": 8037,
+   "signedChrome158StrictPages": 79
+  },
+  "ordinary-188": {
+   "priorLPPass": 10538,
+   "priorLPStrictPages": 49,
+   "signedChrome158Pass": 10991,
+   "signedChrome158StrictPages": 76
+  },
+  "ordinary-189": {
+   "priorLPPass": 1428,
+   "priorLPStrictPages": 48,
+   "signedChrome158Pass": 1698,
+   "signedChrome158StrictPages": 73
+  },
+  "ordinary-190": {
+   "priorLPPass": 1705,
+   "priorLPStrictPages": 40,
+   "signedChrome158Pass": 1873,
+   "signedChrome158StrictPages": 75
+  },
+  "ordinary-191": {
+   "priorLPPass": 1923,
+   "priorLPStrictPages": 48,
+   "signedChrome158Pass": 2062,
+   "signedChrome158StrictPages": 72
+  },
+  "ordinary-192": {
+   "priorLPPass": 5547,
+   "priorLPStrictPages": 45,
+   "signedChrome158Pass": 5976,
+   "signedChrome158StrictPages": 76
+  },
+  "ordinary-193": {
+   "priorLPPass": 7617,
+   "priorLPStrictPages": 46,
+   "signedChrome158Pass": 7853,
+   "signedChrome158StrictPages": 76
+  },
+  "ordinary-194": {
+   "priorLPPass": 2247,
+   "priorLPStrictPages": 43,
+   "signedChrome158Pass": 2427,
+   "signedChrome158StrictPages": 77
+  },
+  "ordinary-195": {
+   "priorLPPass": 6354,
+   "priorLPStrictPages": 43,
+   "signedChrome158Pass": 6558,
+   "signedChrome158StrictPages": 70
+  },
+  "ordinary-196": {
+   "priorLPPass": 9402,
+   "priorLPStrictPages": 52,
+   "signedChrome158Pass": 9531,
+   "signedChrome158StrictPages": 81
+  },
+  "ordinary-197": {
+   "priorLPPass": 7508,
+   "priorLPStrictPages": 48,
+   "signedChrome158Pass": 7703,
+   "signedChrome158StrictPages": 82
+  },
+  "ordinary-198": {
+   "priorLPPass": 6331,
+   "priorLPStrictPages": 54,
+   "signedChrome158Pass": 6569,
+   "signedChrome158StrictPages": 75
+  },
+  "ordinary-199": {
+   "priorLPPass": 5446,
+   "priorLPStrictPages": 55,
+   "signedChrome158Pass": 5692,
+   "signedChrome158StrictPages": 84
+  },
+  "ordinary-200": {
+   "priorLPPass": 4556,
+   "priorLPStrictPages": 46,
+   "signedChrome158Pass": 6829,
+   "signedChrome158StrictPages": 74
+  },
+  "ordinary-201": {
+   "priorLPPass": 4727,
+   "priorLPStrictPages": 51,
+   "signedChrome158Pass": 4860,
+   "signedChrome158StrictPages": 77
+  },
+  "ordinary-202": {
+   "priorLPPass": 1833,
+   "priorLPStrictPages": 41,
+   "signedChrome158Pass": 2095,
+   "signedChrome158StrictPages": 74
+  },
+  "ordinary-203": {
+   "priorLPPass": 4662,
+   "priorLPStrictPages": 47,
+   "signedChrome158Pass": 4985,
+   "signedChrome158StrictPages": 79
+  },
+  "ordinary-204": {
+   "priorLPPass": 2361,
+   "priorLPStrictPages": 48,
+   "signedChrome158Pass": 2459,
+   "signedChrome158StrictPages": 76
+  },
+  "ordinary-205": {
+   "priorLPPass": 5328,
+   "priorLPStrictPages": 41,
+   "signedChrome158Pass": 5478,
+   "signedChrome158StrictPages": 73
+  },
+  "ordinary-206": {
+   "priorLPPass": 2545,
+   "priorLPStrictPages": 50,
+   "signedChrome158Pass": 2684,
+   "signedChrome158StrictPages": 73
+  },
+  "ordinary-207": {
+   "priorLPPass": 2405,
+   "priorLPStrictPages": 45,
+   "signedChrome158Pass": 2534,
+   "signedChrome158StrictPages": 79
+  },
+  "ordinary-208": {
+   "priorLPPass": 6402,
+   "priorLPStrictPages": 50,
+   "signedChrome158Pass": 6501,
+   "signedChrome158StrictPages": 76
+  },
+  "ordinary-209": {
+   "priorLPPass": 5551,
+   "priorLPStrictPages": 53,
+   "signedChrome158Pass": 5715,
+   "signedChrome158StrictPages": 79
+  },
+  "ordinary-210": {
+   "priorLPPass": 1441,
+   "priorLPStrictPages": 53,
+   "signedChrome158Pass": 1656,
+   "signedChrome158StrictPages": 79
+  },
+  "ordinary-211": {
+   "priorLPPass": 6982,
+   "priorLPStrictPages": 48,
+   "signedChrome158Pass": 7019,
+   "signedChrome158StrictPages": 77
+  },
+  "ordinary-212": {
+   "priorLPPass": 5213,
+   "priorLPStrictPages": 56,
+   "signedChrome158Pass": 5298,
+   "signedChrome158StrictPages": 77
+  },
+  "ordinary-213": {
+   "priorLPPass": 8181,
+   "priorLPStrictPages": 46,
+   "signedChrome158Pass": 8564,
+   "signedChrome158StrictPages": 77
+  },
+  "ordinary-214": {
+   "priorLPPass": 5476,
+   "priorLPStrictPages": 44,
+   "signedChrome158Pass": 5629,
+   "signedChrome158StrictPages": 77
+  },
+  "ordinary-215": {
+   "priorLPPass": 4392,
+   "priorLPStrictPages": 47,
+   "signedChrome158Pass": 4465,
+   "signedChrome158StrictPages": 78
+  },
+  "ordinary-216": {
+   "priorLPPass": 2419,
+   "priorLPStrictPages": 45,
+   "signedChrome158Pass": 2547,
+   "signedChrome158StrictPages": 80
+  },
+  "ordinary-217": {
+   "priorLPPass": 4710,
+   "priorLPStrictPages": 52,
+   "signedChrome158Pass": 4828,
+   "signedChrome158StrictPages": 80
+  },
+  "ordinary-218": {
+   "priorLPPass": 6720,
+   "priorLPStrictPages": 44,
+   "signedChrome158Pass": 7001,
+   "signedChrome158StrictPages": 73
+  },
+  "ordinary-219": {
+   "priorLPPass": 3495,
+   "priorLPStrictPages": 54,
+   "signedChrome158Pass": 3784,
+   "signedChrome158StrictPages": 77
+  },
+  "ordinary-220": {
+   "priorLPPass": 6693,
+   "priorLPStrictPages": 44,
+   "signedChrome158Pass": 6837,
+   "signedChrome158StrictPages": 77
+  },
+  "ordinary-221": {
+   "priorLPPass": 266,
+   "priorLPStrictPages": 53,
+   "signedChrome158Pass": 402,
+   "signedChrome158StrictPages": 82
+  },
+  "ordinary-222": {
+   "priorLPPass": 3428,
+   "priorLPStrictPages": 48,
+   "signedChrome158Pass": 3513,
+   "signedChrome158StrictPages": 76
+  },
+  "ordinary-223": {
+   "priorLPPass": 2644,
+   "priorLPStrictPages": 44,
+   "signedChrome158Pass": 3067,
+   "signedChrome158StrictPages": 81
+  },
+  "ordinary-224": {
+   "priorLPPass": 5305,
+   "priorLPStrictPages": 48,
+   "signedChrome158Pass": 5438,
+   "signedChrome158StrictPages": 79
+  },
+  "ordinary-225": {
+   "priorLPPass": 4969,
+   "priorLPStrictPages": 53,
+   "signedChrome158Pass": 5364,
+   "signedChrome158StrictPages": 79
+  },
+  "ordinary-226": {
+   "priorLPPass": 4320,
+   "priorLPStrictPages": 53,
+   "signedChrome158Pass": 6436,
+   "signedChrome158StrictPages": 77
+  },
+  "ordinary-227": {
+   "priorLPPass": 7635,
+   "priorLPStrictPages": 49,
+   "signedChrome158Pass": 7704,
+   "signedChrome158StrictPages": 78
+  },
+  "ordinary-228": {
+   "priorLPPass": 3770,
+   "priorLPStrictPages": 57,
+   "signedChrome158Pass": 3941,
+   "signedChrome158StrictPages": 73
+  },
+  "ordinary-229": {
+   "priorLPPass": 3566,
+   "priorLPStrictPages": 43,
+   "signedChrome158Pass": 3961,
+   "signedChrome158StrictPages": 65
+  },
+  "ordinary-230": {
+   "priorLPPass": 3326,
+   "priorLPStrictPages": 55,
+   "signedChrome158Pass": 3392,
+   "signedChrome158StrictPages": 78
+  },
+  "ordinary-231": {
+   "priorLPPass": 4529,
+   "priorLPStrictPages": 49,
+   "signedChrome158Pass": 4708,
+   "signedChrome158StrictPages": 79
+  },
+  "ordinary-232": {
+   "priorLPPass": 7636,
+   "priorLPStrictPages": 53,
+   "signedChrome158Pass": 7832,
+   "signedChrome158StrictPages": 78
+  },
+  "ordinary-233": {
+   "priorLPPass": 7318,
+   "priorLPStrictPages": 43,
+   "signedChrome158Pass": 7502,
+   "signedChrome158StrictPages": 73
+  },
+  "ordinary-234": {
+   "priorLPPass": 6745,
+   "priorLPStrictPages": 47,
+   "signedChrome158Pass": 7104,
+   "signedChrome158StrictPages": 81
+  },
+  "ordinary-235": {
+   "priorLPPass": 2966,
+   "priorLPStrictPages": 47,
+   "signedChrome158Pass": 3117,
+   "signedChrome158StrictPages": 77
+  },
+  "ordinary-236": {
+   "priorLPPass": 3985,
+   "priorLPStrictPages": 44,
+   "signedChrome158Pass": 4164,
+   "signedChrome158StrictPages": 80
+  },
+  "ordinary-237": {
+   "priorLPPass": 4658,
+   "priorLPStrictPages": 44,
+   "signedChrome158Pass": 4828,
+   "signedChrome158StrictPages": 76
+  },
+  "ordinary-238": {
+   "priorLPPass": 4288,
+   "priorLPStrictPages": 52,
+   "signedChrome158Pass": 4430,
+   "signedChrome158StrictPages": 75
+  },
+  "ordinary-239": {
+   "priorLPPass": 8349,
+   "priorLPStrictPages": 50,
+   "signedChrome158Pass": 8610,
+   "signedChrome158StrictPages": 79
+  },
+  "ordinary-240": {
+   "priorLPPass": 6673,
+   "priorLPStrictPages": 47,
+   "signedChrome158Pass": 6903,
+   "signedChrome158StrictPages": 70
+  },
+  "ordinary-241": {
+   "priorLPPass": 3325,
+   "priorLPStrictPages": 43,
+   "signedChrome158Pass": 3632,
+   "signedChrome158StrictPages": 77
+  },
+  "ordinary-242": {
+   "priorLPPass": 4341,
+   "priorLPStrictPages": 49,
+   "signedChrome158Pass": 4764,
+   "signedChrome158StrictPages": 81
+  },
+  "ordinary-243": {
+   "priorLPPass": 12257,
+   "priorLPStrictPages": 43,
+   "signedChrome158Pass": 12434,
+   "signedChrome158StrictPages": 75
+  },
+  "ordinary-244": {
+   "priorLPPass": 10440,
+   "priorLPStrictPages": 48,
+   "signedChrome158Pass": 10524,
+   "signedChrome158StrictPages": 75
+  },
+  "ordinary-245": {
+   "priorLPPass": 3758,
+   "priorLPStrictPages": 49,
+   "signedChrome158Pass": 4011,
+   "signedChrome158StrictPages": 82
+  },
+  "ordinary-246": {
+   "priorLPPass": 5411,
+   "priorLPStrictPages": 47,
+   "signedChrome158Pass": 5603,
+   "signedChrome158StrictPages": 73
+  },
+  "ordinary-247": {
+   "priorLPPass": 3102,
+   "priorLPStrictPages": 51,
+   "signedChrome158Pass": 3224,
+   "signedChrome158StrictPages": 74
+  },
+  "ordinary-248": {
+   "priorLPPass": 5292,
+   "priorLPStrictPages": 47,
+   "signedChrome158Pass": 5452,
+   "signedChrome158StrictPages": 77
+  },
+  "ordinary-249": {
+   "priorLPPass": 2229,
+   "priorLPStrictPages": 39,
+   "signedChrome158Pass": 2453,
+   "signedChrome158StrictPages": 74
+  },
+  "ordinary-250": {
+   "priorLPPass": 3535,
+   "priorLPStrictPages": 43,
+   "signedChrome158Pass": 3632,
+   "signedChrome158StrictPages": 73
+  },
+  "ordinary-251": {
+   "priorLPPass": 7402,
+   "priorLPStrictPages": 48,
+   "signedChrome158Pass": 7541,
+   "signedChrome158StrictPages": 79
+  },
+  "ordinary-252": {
+   "priorLPPass": 6389,
+   "priorLPStrictPages": 51,
+   "signedChrome158Pass": 6418,
+   "signedChrome158StrictPages": 77
+  },
+  "ordinary-253": {
+   "priorLPPass": 1159,
+   "priorLPStrictPages": 42,
+   "signedChrome158Pass": 1330,
+   "signedChrome158StrictPages": 74
+  },
+  "ordinary-254": {
+   "priorLPPass": 5460,
+   "priorLPStrictPages": 56,
+   "signedChrome158Pass": 5554,
+   "signedChrome158StrictPages": 77
+  },
+  "ordinary-255": {
+   "priorLPPass": 4545,
+   "priorLPStrictPages": 56,
+   "signedChrome158Pass": 4612,
+   "signedChrome158StrictPages": 75
+  },
+  "ordinary-256": {
+   "priorLPPass": 3538,
+   "priorLPStrictPages": 48,
+   "signedChrome158Pass": 3604,
+   "signedChrome158StrictPages": 82
+  },
+  "ordinary-257": {
+   "priorLPPass": 2747,
+   "priorLPStrictPages": 51,
+   "signedChrome158Pass": 3027,
+   "signedChrome158StrictPages": 70
+  },
+  "ordinary-258": {
+   "priorLPPass": 6021,
+   "priorLPStrictPages": 43,
+   "signedChrome158Pass": 6113,
+   "signedChrome158StrictPages": 77
+  },
+  "ordinary-259": {
+   "priorLPPass": 6723,
+   "priorLPStrictPages": 53,
+   "signedChrome158Pass": 6754,
+   "signedChrome158StrictPages": 74
+  },
+  "ordinary-260": {
+   "priorLPPass": 3264,
+   "priorLPStrictPages": 49,
+   "signedChrome158Pass": 3328,
+   "signedChrome158StrictPages": 81
+  },
+  "ordinary-261": {
+   "priorLPPass": 4366,
+   "priorLPStrictPages": 54,
+   "signedChrome158Pass": 4463,
+   "signedChrome158StrictPages": 72
+  },
+  "ordinary-262": {
+   "priorLPPass": 4695,
+   "priorLPStrictPages": 54,
+   "signedChrome158Pass": 4835,
+   "signedChrome158StrictPages": 78
+  },
+  "ordinary-263": {
+   "priorLPPass": 5185,
+   "priorLPStrictPages": 46,
+   "signedChrome158Pass": 5334,
+   "signedChrome158StrictPages": 77
+  },
+  "ordinary-264": {
+   "priorLPPass": 4319,
+   "priorLPStrictPages": 43,
+   "signedChrome158Pass": 4491,
+   "signedChrome158StrictPages": 78
+  },
+  "ordinary-265": {
+   "priorLPPass": 3239,
+   "priorLPStrictPages": 54,
+   "signedChrome158Pass": 3413,
+   "signedChrome158StrictPages": 83
+  },
+  "ordinary-266": {
+   "priorLPPass": 1979,
+   "priorLPStrictPages": 50,
+   "signedChrome158Pass": 2223,
+   "signedChrome158StrictPages": 77
+  },
+  "ordinary-267": {
+   "priorLPPass": 3094,
+   "priorLPStrictPages": 51,
+   "signedChrome158Pass": 3421,
+   "signedChrome158StrictPages": 74
+  },
+  "ordinary-268": {
+   "priorLPPass": 5697,
+   "priorLPStrictPages": 45,
+   "signedChrome158Pass": 5851,
+   "signedChrome158StrictPages": 76
+  },
+  "ordinary-269": {
+   "priorLPPass": 8893,
+   "priorLPStrictPages": 50,
+   "signedChrome158Pass": 8927,
+   "signedChrome158StrictPages": 68
+  },
+  "ordinary-270": {
+   "priorLPPass": 7298,
+   "priorLPStrictPages": 49,
+   "signedChrome158Pass": 7437,
+   "signedChrome158StrictPages": 79
+  },
+  "ordinary-271": {
+   "priorLPPass": 2370,
+   "priorLPStrictPages": 49,
+   "signedChrome158Pass": 2497,
+   "signedChrome158StrictPages": 72
+  },
+  "ordinary-272": {
+   "priorLPPass": 3361,
+   "priorLPStrictPages": 49,
+   "signedChrome158Pass": 3576,
+   "signedChrome158StrictPages": 82
+  },
+  "ordinary-273": {
+   "priorLPPass": 9166,
+   "priorLPStrictPages": 49,
+   "signedChrome158Pass": 9409,
+   "signedChrome158StrictPages": 78
+  },
+  "ordinary-274": {
+   "priorLPPass": 5245,
+   "priorLPStrictPages": 57,
+   "signedChrome158Pass": 5365,
+   "signedChrome158StrictPages": 82
+  },
+  "ordinary-275": {
+   "priorLPPass": 5700,
+   "priorLPStrictPages": 48,
+   "signedChrome158Pass": 6039,
+   "signedChrome158StrictPages": 77
+  },
+  "ordinary-276": {
+   "priorLPPass": 4284,
+   "priorLPStrictPages": 53,
+   "signedChrome158Pass": 4397,
+   "signedChrome158StrictPages": 81
+  },
+  "ordinary-277": {
+   "priorLPPass": 4360,
+   "priorLPStrictPages": 46,
+   "signedChrome158Pass": 4496,
+   "signedChrome158StrictPages": 77
+  },
+  "ordinary-278": {
+   "priorLPPass": 5568,
+   "priorLPStrictPages": 50,
+   "signedChrome158Pass": 5796,
+   "signedChrome158StrictPages": 75
+  },
+  "ordinary-279": {
+   "priorLPPass": 4598,
+   "priorLPStrictPages": 45,
+   "signedChrome158Pass": 4836,
+   "signedChrome158StrictPages": 79
+  },
+  "ordinary-280": {
+   "priorLPPass": 5030,
+   "priorLPStrictPages": 51,
+   "signedChrome158Pass": 5220,
+   "signedChrome158StrictPages": 79
+  },
+  "ordinary-281": {
+   "priorLPPass": 5365,
+   "priorLPStrictPages": 53,
+   "signedChrome158Pass": 5534,
+   "signedChrome158StrictPages": 79
+  },
+  "ordinary-282": {
+   "priorLPPass": 3540,
+   "priorLPStrictPages": 50,
+   "signedChrome158Pass": 3701,
+   "signedChrome158StrictPages": 78
+  },
+  "ordinary-283": {
+   "priorLPPass": 4275,
+   "priorLPStrictPages": 45,
+   "signedChrome158Pass": 4442,
+   "signedChrome158StrictPages": 75
+  },
+  "ordinary-284": {
+   "priorLPPass": 2809,
+   "priorLPStrictPages": 53,
+   "signedChrome158Pass": 2914,
+   "signedChrome158StrictPages": 74
+  },
+  "ordinary-285": {
+   "priorLPPass": 3466,
+   "priorLPStrictPages": 40,
+   "signedChrome158Pass": 3823,
+   "signedChrome158StrictPages": 75
+  }
+ }
+}
