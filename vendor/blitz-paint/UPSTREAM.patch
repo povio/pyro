@@ -5081,7 +5081,7 @@ diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
  /// The default color for text selection highlights
  const SELECTION_COLOR: Color = Color::from_rgb8(180, 213, 255);
  
-@@ -42,6 +55,178 @@
+@@ -42,6 +55,184 @@
  /// Generally this will involve executing them to draw a rasterized image/texture. But in some cases it may choose to
  /// transform them to a vector format (e.g. SVG/PDF) or serialize them in raw form for later use.
  pub fn paint_scene(
@@ -5187,8 +5187,8 @@ diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
 +/// pyro: HTML-in-Canvas privacy: whether the paint of `id`'s subtree (`scene`) may show content a
 +/// page must not read back from a canvas, after `render::Privacy` left out the images of other
 +/// origins it can classify: any other image (a video frame, a nested canvas, an SVG `<image>`, an
-+/// `feImage`, one whose pixels are not among the `allowed` ones), a border, mask or list-style
-+/// image from an opaque response, a nested document, an embedded plugin or media element, or a
++/// `feImage`, one whose pixels are not among the `allowed` ones), a border, mask, list-style or
++/// referenced SVG document (`filter`, `clip-path`, `mask`) from an opaque response, a nested document, an embedded plugin or media element, or a
 +/// visited link (whose colours reveal history). The canvas drawn into is then no longer
 +/// origin-clean.
 +fn subtree_may_taint(doc: &BaseDocument, id: NodeId, scene: &Scene, allowed: &[u64]) -> bool {
@@ -5228,7 +5228,13 @@ diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
 +            let foreign = |images: &[Option<blitz_dom::node::ImageResourceData>]| {
 +                images.iter().flatten().any(|image| render::Privacy::opaque(&image.image))
 +            };
-+            if foreign(&element.border_images) || foreign(&element.mask_images) || foreign(&element.list_style_images) {
++            // (`reference_images`: the external SVG documents of its `clip-path`, `filter` and
++            // `mask` references, whose primitives and shapes reach the pixels.)
++            if foreign(&element.border_images)
++                || foreign(&element.mask_images)
++                || foreign(&element.list_style_images)
++                || foreign(&element.reference_images)
++            {
 +                return true;
 +            }
 +        }
@@ -5260,7 +5266,7 @@ diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
      scene: &mut impl PaintScene,
      doc: &mut BaseDocument,
      scale: f64,
-@@ -49,7 +234,44 @@
+@@ -49,7 +240,44 @@
      height: u32,
      x_offset: u32,
      y_offset: u32,
@@ -5305,7 +5311,7 @@ diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
      // Run `.paint()` on every custom widget in the document (and all subdocuments) ahead of time.
      // This helps us avoid borrow-checker issues as we recurse down the tree (`.paint()` require `&mut self`).
      //
-@@ -59,7 +281,7 @@
+@@ -59,7 +287,7 @@
      #[cfg(feature = "custom-widget")]
      build_custom_widget_scenes(&mut custom_widget_scenes, doc, scene, scale);
  
@@ -5314,7 +5320,7 @@ diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
          doc,
          scale,
          width,
-@@ -68,6 +290,10 @@
+@@ -68,6 +296,10 @@
          y_offset as f64,
          &custom_widget_scenes,
      );
@@ -5325,7 +5331,7 @@ diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
      generator.paint_scene(scene);
  
      // println!(
-@@ -78,6 +304,134 @@
+@@ -78,6 +310,134 @@
      // );
  }
  
@@ -5460,7 +5466,7 @@ diff --git a/packages/blitz-paint/src/lib.rs b/packages/blitz-paint/src/lib.rs
  #[cfg(feature = "custom-widget")]
  fn build_custom_widget_scenes(
      custom_widget_scenes: &mut CustomWidgetSceneMap,
-@@ -142,3 +496,9 @@
+@@ -142,3 +502,9 @@
  
      Some(widget_scene)
  }

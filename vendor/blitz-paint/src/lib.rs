@@ -157,8 +157,8 @@ pub fn paint_element_subtree(doc: &mut BaseDocument, id: NodeId, scale: f64) -> 
 /// pyro: HTML-in-Canvas privacy: whether the paint of `id`'s subtree (`scene`) may show content a
 /// page must not read back from a canvas, after `render::Privacy` left out the images of other
 /// origins it can classify: any other image (a video frame, a nested canvas, an SVG `<image>`, an
-/// `feImage`, one whose pixels are not among the `allowed` ones), a border, mask or list-style
-/// image from an opaque response, a nested document, an embedded plugin or media element, or a
+/// `feImage`, one whose pixels are not among the `allowed` ones), a border, mask, list-style or
+/// referenced SVG document (`filter`, `clip-path`, `mask`) from an opaque response, a nested document, an embedded plugin or media element, or a
 /// visited link (whose colours reveal history). The canvas drawn into is then no longer
 /// origin-clean.
 fn subtree_may_taint(doc: &BaseDocument, id: NodeId, scene: &Scene, allowed: &[u64]) -> bool {
@@ -198,7 +198,13 @@ fn subtree_may_taint(doc: &BaseDocument, id: NodeId, scene: &Scene, allowed: &[u
             let foreign = |images: &[Option<blitz_dom::node::ImageResourceData>]| {
                 images.iter().flatten().any(|image| render::Privacy::opaque(&image.image))
             };
-            if foreign(&element.border_images) || foreign(&element.mask_images) || foreign(&element.list_style_images) {
+            // (`reference_images`: the external SVG documents of its `clip-path`, `filter` and
+            // `mask` references, whose primitives and shapes reach the pixels.)
+            if foreign(&element.border_images)
+                || foreign(&element.mask_images)
+                || foreign(&element.list_style_images)
+                || foreign(&element.reference_images)
+            {
                 return true;
             }
         }
