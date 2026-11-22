@@ -64,9 +64,16 @@
     // transfers them afterwards. `streams` (internal callers) receives the
     // transferred streams' new streams, `resources` the transferred
     // canvas objects' and AudioData frames' copies.
+    // A VideoFrame's copy (`new VideoFrame(frame)` shares the frame's resource); DataCloneError
+    // for a closed frame.
+    function videoFrameCopy(frame) {
+        const VF = globalThis.VideoFrame;
+        if (typeof VF !== 'function') fail('Object type is not supported');
+        try { return new VF(frame); } catch (_) { fail('A VideoFrame is closed and could not be cloned'); }
+    }
     function clone(value, options, ports, keep, streams, resources, forStorage = false, clusterBound) {
         const memory = new M(), buffers = [], moved = [];
-        let piped, detached, audio, deferred;
+        let piped, detached, audio, deferred, closing;
         if (keep) for (let i = 0; i < keep.length; ++i) call(mapSet, memory, [keep[i], keep[i]]);
         if (options != null) {
             if (typeof options !== 'object' && typeof options !== 'function')
@@ -121,6 +128,16 @@
                             if (!audio) audio = [];
                             put(audio, audio.length, entry);
                             put(audio, audio.length, frame);
+                            continue;
+                        }
+                        // A VideoFrame (video_frame.js): a frame sharing its resource, the
+                        // original closed once the whole value cloned.
+                        if (call(objectTag, entry) === '[object VideoFrame]') {
+                            const frame = later(() => videoFrameCopy(entry));
+                            if (frame === null) continue;
+                            call(mapSet, memory, [entry, frame]);
+                            if (!closing) closing = [];
+                            put(closing, closing.length, entry);
                             continue;
                         }
                         // An ImageBitmap or OffscreenCanvas: its copy, the
@@ -274,6 +291,11 @@
                     const slots = parts[0] === 'DOMQuad' ? copy(parts[1], depth + 1) : parts[1];
                     return remember(source, host(parts[0], 11, slots));
                 }
+                // A VideoFrame is serializable (not for storage): a frame sharing its resource.
+                if (kind === '[object VideoFrame]') {
+                    if (forStorage) fail('Object cannot be serialized for storage');
+                    return remember(source, videoFrameCopy(source));
+                }
                 if (kind === '[object ImageData]') {
                     // Serializable: width, height, color space and a copy of the pixels, read
                     // through the interface's own getters (the realm's ImageData).
@@ -312,6 +334,11 @@
         }
         if (detached) for (let i = 0; i < detached.length; i += 2) {
             if (!host(detached[i], 17)) fail('The object is detached and could not be transferred');
+        }
+        // Transferred VideoFrames are closed: their copies hold the resource.
+        if (closing) for (let i = 0; i < closing.length; ++i) {
+            const close = globalThis.VideoFrame && globalThis.VideoFrame.prototype.close;
+            if (close) call(close, closing[i]);
         }
         // A getter can close a listed frame during serialization.
         if (audio) for (let i = 0; i < audio.length; i += 2) host(audio[i], 13);
