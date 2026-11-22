@@ -857,15 +857,15 @@ impl Dom {
     /// Form owner: `form` attribute target or nearest ancestor form.
     pub(crate) fn form_owner_idx(&self, idx: u32) -> u32 {
         let Some(e) = self.n(idx).element() else { return NIL };
-        if let Some(fid) = e.attr_local(&local_name!("form")) {
-            if !self.is_connected_idx(idx) {
+        // HTML "reset the form owner": a connected element with a `form` attribute is owned by the
+        // first element in its tree whose ID is the value, when that is a form (an empty value
+        // names no ID, so no owner); a disconnected one falls back to its nearest ancestor form.
+        if let Some(fid) = e.attr_local(&local_name!("form")).filter(|_| self.is_connected_idx(idx)) {
+            if fid.is_empty() {
                 return NIL;
             }
-            // The first element with that id in the tree: the tree scope's
-            // id map (an empty id is never indexed: walk for it).
             let root = self.root_idx(idx);
-            let found = if fid.is_empty() { self.walk_by_id(root, fid) } else { self.first_by_id(root, fid) };
-            let found = self.resolve_reference_target_idx(found);
+            let found = self.resolve_reference_target_idx(self.first_by_id(root, fid));
             return if found != NIL && self.html_local(found) == Some(&local_name!("form")) { found } else { NIL };
         }
         let mut p = self.n(idx).parent;
