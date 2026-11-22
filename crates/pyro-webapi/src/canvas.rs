@@ -1621,6 +1621,59 @@ fn draw_image<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>) -> JsResult<Value
     Ok(s.undefined())
 }
 
+/// HTML-in-Canvas `drawElementImage(element, dx, dy)`, `(element, dx, dy, dw, dh)` and
+/// `(element, sx, sy, sw, sh, dx, dy, dw, dh)`: draws a drawable element of this context's
+/// `<canvas content=drawable>`, painted alone at its CSS size (`crate::html_in_canvas::element_image`,
+/// which throws InvalidStateError for an element it may not draw), as `drawImage` draws a bitmap
+/// (the source rectangle in the element's CSS px). Returns the transform from the element's box to
+/// the canvas grid: the current transform, then the destination's offset and scale. Only this
+/// method reaches the element painting; nothing else in the context changes.
+fn draw_element_image<'s>(s: &Scope<'s>, c: &ContextData, a: Args<'s>) -> JsResult<Value<'s>> {
+    a.require(3, "CanvasRenderingContext2D.drawElementImage")?;
+    let n = a.len();
+    if !matches!(n, 3 | 5) && n < 9 {
+        return Err(JsError::Type(format!("Failed to execute 'drawElementImage' on 'CanvasRenderingContext2D': Valid arities are: [3, 5, 9], but {n} arguments provided.").into()));
+    }
+    let element = s
+        .unwrap::<crate::node::Node>(a.get(0))
+        .filter(|node| Rc::ptr_eq(&node.page().dom, &c.page.dom) && node.page().dom.borrow().element(node.id).is_ok())
+        .map(|node| node.id)
+        .ok_or_else(|| JsError::Type("Failed to execute 'drawElementImage' on 'CanvasRenderingContext2D': parameter 1 is not of type 'Element'.".into()))?;
+    let Target::Element(canvas) = c.target else {
+        return Err(JsError::dom("InvalidStateError", "Failed to execute 'drawElementImage': The canvas has no drawable content."));
+    };
+    let image = crate::html_in_canvas::element_image(&c.page, canvas, element)?;
+    let v = finite_args_from(&a, 1, if n >= 9 { 8 } else { n - 1 })?;
+    let Some(v) = v else { return Ok(s.undefined()) };
+    let (w, h) = (image.width, image.height);
+    let (src, dst) = match v.len() {
+        2 => (Rect::new(0.0, 0.0, w, h), Rect::new(v[0], v[1], v[0] + w, v[1] + h)),
+        4 => (Rect::new(0.0, 0.0, w, h), Rect::new(v[0], v[1], v[0] + v[2], v[1] + v[3])),
+        _ => (Rect::new(v[0], v[1], v[0] + v[2], v[1] + v[3]), Rect::new(v[4], v[5], v[4] + v[6], v[5] + v[7])),
+    };
+    c.sync_size();
+    let state = c.state.borrow().clone();
+    if let Some((pw, ph, rgba)) = image.pixels {
+        // Painted in sRGB, converted to the canvas's color space; the source rectangle maps
+        // onto the pixels (one per CSS px, rounded up).
+        let bitmap = pyro_canvas::pixmap_from_straight(rgba, pw, ph)
+            .and_then(Bitmap::new)
+            .and_then(|bitmap| convert_bitmap(bitmap, Space::Srgb, c.space));
+        if let Some(bitmap) = bitmap {
+            let (px, py) = (f64::from(pw) / w.max(1.0), f64::from(ph) / h.max(1.0));
+            let src = Rect::new(src.x0 * px, src.y0 * py, src.x1 * px, src.y1 * py);
+            c.surface.borrow_mut().draw_image(&bitmap, src, dst, &state.draw_state());
+        }
+    }
+    let scale = |to: f64, from: f64| if from != 0.0 { to / from } else { 1.0 };
+    let place = Affine::translate((dst.x0, dst.y0))
+        * Affine::scale_non_uniform(scale(dst.width(), src.width()), scale(dst.height(), src.height()))
+        * Affine::translate((-src.x0, -src.y0));
+    let [ma, mb, mc, md, me, mf] = (state.transform * place).as_coeffs();
+    let args = [ma, mb, mc, md, me, mf].map(|v| s.number(v));
+    module_helper(s, c, "matrix", &args)
+}
+
 fn finite_args_from(a: &Args<'_>, from: usize, n: usize) -> JsResult<Option<Vec<f64>>> {
     let mut v = Vec::with_capacity(n);
     for i in from..from + n {
@@ -2433,6 +2486,7 @@ impl ContextData {
             Ok(s.undefined())
         });
         def.method("drawImage", 3, draw_image);
+        def.method("drawElementImage", 3, draw_element_image);
         // Focus rings are not drawn.
         def.method("setLineDash", 1, |s, c, a| {
             a.require(1, "CanvasRenderingContext2D.setLineDash")?;

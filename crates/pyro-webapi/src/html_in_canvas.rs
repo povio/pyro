@@ -35,6 +35,9 @@ pub(crate) struct State {
     canvases: Vec<NodeId>,
     /// Canvases owing a `paint` event, with their changed drawable elements.
     pending: Vec<(NodeId, Vec<NodeId>)>,
+    /// Canvases a `paint` event was fired at since they became drawable:
+    /// `drawElementImage` draws only into those.
+    ready: Vec<NodeId>,
 }
 
 pub(crate) type Shared = RefCell<State>;
@@ -183,6 +186,8 @@ pub fn run_paint_step(page: &Rc<PageDom>) {
         // Forget canvases that left the document or stopped being drawable
         // (one reconnected later counts as new).
         state.canvases.retain(|&c| dom.is_connected(c).unwrap_or(false) && is_drawable_canvas(&dom, c));
+        let known = state.canvases.clone();
+        state.ready.retain(|c| known.contains(c));
         let mut events: Vec<(NodeId, Vec<NodeId>)> = std::mem::take(&mut state.pending)
             .into_iter()
             .filter(|(c, _)| dom.is_connected(*c).unwrap_or(false) && is_drawable_canvas(&dom, *c))
@@ -212,8 +217,73 @@ pub fn run_paint_step(page: &Rc<PageDom>) {
         events
     };
     for (canvas, changed) in events {
+        {
+            let mut state = page.html_in_canvas.borrow_mut();
+            if !state.ready.contains(&canvas) {
+                state.ready.push(canvas);
+            }
+        }
         let ev = crate::event::EventCore::trusted(page, crate::event::EventInterface::CanvasPaintEvent, "paint", false, false);
         ev.fields.borrow_mut().changed_elements = changed;
         crate::target::fire_at_node(page, canvas, &ev);
     }
+}
+
+/// What `drawElementImage` draws: the element painted alone at its CSS size
+/// (blitz `paint_element_subtree`), as straight sRGB RGBA, one pixel per CSS px.
+pub(crate) struct ElementImage {
+    /// The element's border box in CSS px.
+    pub width: f64,
+    pub height: f64,
+    /// The pixels (`None`: nothing to paint, an empty box).
+    pub pixels: Option<(u32, u32, Vec<u8>)>,
+}
+
+fn invalid_state(message: &str) -> pyro_js::JsError {
+    pyro_js::JsError::dom("InvalidStateError", format!("Failed to execute 'drawElementImage': {message}"))
+}
+
+/// HTML-in-Canvas: the image `drawElementImage` draws of `element` into the
+/// 2D context of `canvas`. InvalidStateError when the canvas's content is not
+/// drawable or it had no `paint` event since it became drawable, when
+/// `element` is not a drawable element of it (its nearest drawable canvas)
+/// or is in the top layer below it, or when either is not rendered
+/// (`display: none`).
+pub(crate) fn element_image(page: &Rc<PageDom>, canvas: NodeId, element: NodeId) -> pyro_js::JsResult<ElementImage> {
+    let layout = page.layout();
+    let dom = page.dom.borrow();
+    if !is_drawable_canvas(&dom, canvas) || !page.html_in_canvas.borrow().ready.contains(&canvas) {
+        return Err(invalid_state("The canvas has no drawable content painted yet."));
+    }
+    if !is_drawable(&dom, element) {
+        return Err(invalid_state("The element is not drawable."));
+    }
+    // `element`'s nearest drawable canvas above it must be `canvas`, with no
+    // top-layer element (a modal dialog, an open popover) in between.
+    let mut cur = parent(&dom, element);
+    loop {
+        let Some(a) = cur else { return Err(invalid_state("The element is not a child of the canvas.")) };
+        if a == canvas {
+            break;
+        }
+        if is_drawable_canvas(&dom, a) {
+            return Err(invalid_state("The element is not a child of the canvas."));
+        }
+        if dom.is_modal(a) || dom.is_popover_showing(a) {
+            return Err(invalid_state("The element is in the top layer."));
+        }
+        cur = parent(&dom, a);
+    }
+    // Rendered: neither it nor an ancestor (the canvas included) is `display: none`.
+    let mut cur = Some(element);
+    while let Some(a) = cur {
+        if dom.element(a).is_ok() && layout.style().computed_value(&dom, a, "display").as_deref() == Some("none") {
+            return Err(invalid_state("The element is not rendered."));
+        }
+        cur = parent(&dom, a);
+    }
+    let rect = layout.bounding_client_rect(&dom, element);
+    let key = pyro_dom::snapshot::render_key(element);
+    let pixels = layout.synced_geometry_source(&dom).and_then(|source| source.element_image(key, 1.0));
+    Ok(ElementImage { width: rect.width, height: rect.height, pixels })
 }
